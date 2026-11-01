@@ -14941,8 +14941,33 @@ function _instrHideTinyLabels(svg, natW) {
     if (!natW || !shown) return;
     var s = shown / natW;
     Array.prototype.forEach.call(svg.querySelectorAll('text'), function(t) {
+        if (t.classList.contains('iw-port-caption')) {
+            // a port caption keeps ~11 px on screen at every scale: its drawn
+            // size is the room it was given, never more (it is no headline)
+            var room = parseFloat(t.getAttribute('data-cap-fs')) || 20;
+            t.setAttribute('font-size', Math.min(room, Math.max(11, 11 / s)).toFixed(1));
+            return;
+        }
         var fs = parseFloat(t.getAttribute('font-size')) || 0;
-        var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX;
+        // A port's own name grows to the 9 px floor while it still fits the
+        // circle's chord; only a name that cannot fit is hidden, and the FEM
+        // caption under the grid names those ports instead.
+        var circ = t.parentNode && t.parentNode.querySelector &&
+            t.parentNode.classList && t.parentNode.classList.contains('iw-port-circle')
+            ? t.parentNode.querySelector('circle') : null;
+        if (circ) {
+            var fs0 = parseFloat(t.getAttribute('data-fs0'));
+            if (!fs0) { fs0 = fs; t.setAttribute('data-fs0', fs0); }
+            var r = parseFloat(circ.getAttribute('r')) || 0;
+            var need = _INSTR_MIN_LABEL_PX / s;
+            var chord = 2 * Math.sqrt(Math.max(0, r * r - need * need * 0.12));
+            var fits = 0.62 * Math.max(1, (t.textContent || '').length) * need <= chord;
+            fs = fs0 * s >= _INSTR_MIN_LABEL_PX ? fs0 : (fits ? Math.ceil(need * 10) / 10 : fs0);
+            t.setAttribute('font-size', fs);
+            var cy = parseFloat(circ.getAttribute('cy')) || 0;
+            t.setAttribute('y', cy + Math.round(fs * 0.36));
+        }
+        var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX - 0.05;
         if (tiny) t.setAttribute('data-iw-tiny', '1'); else t.removeAttribute('data-iw-tiny');
         t.style.display = tiny ? 'none' : '';
     });
@@ -15169,11 +15194,30 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                 perRow--;
             }
         }
+        // A multiplexed readout port's sub-circles and the TWPA pump's name are
+        // too small to read once Fit scales the rack (the tiny-label rule hides
+        // them). Each FEM names them once, in readable text, under its grid:
+        // "out 1 qA1-6", "pump 8 twpaA". Hover and drag are unchanged.
+        var capFont = 20, capLineH = 23;   // ~10 px on screen at the 0.5 Fit scale
+        // the caption never grows past capFont, so this many characters always
+        // stay inside the FEM column
+        var capMax = Math.max(4, Math.floor((femW - 10) / (0.62 * capFont)));
+        var capByFem = {};
+        var capLines = 0;
+        femIds.forEach(function(fid) {
+            var lines = [];
+            _iwCaptionLines(fems[fid]).forEach(function(full) {
+                _iwWrapCaption(full, capMax).forEach(function(l) { lines.push({text: l, full: full}); });
+            });
+            capByFem[fid] = lines;
+            capLines = Math.max(capLines, lines.length);
+        });
+        var capH = capLines ? capLines * capLineH + 6 : 0;
         var nBlocks = Math.ceil(femIds.length / perRow);
-        var blockStride = rows * rowH + marginBottom + 36;
+        var blockStride = rows * rowH + marginBottom + capH + 36;
         var totalFemW = perRow * femW + Math.max(0, perRow - 1) * femGap;
         var svgW = marginLeft + totalFemW + 20;
-        var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom;
+        var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom + capH;
 
         var svg = _svgEl('svg');
         svg.setAttribute('width', svgW);
@@ -15273,9 +15317,25 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
             // FEM label at bottom
             svg.appendChild(_svgText(
-                femX + femW / 2, top + rows * rowH + marginBottom - 8,
+                femX + femW / 2, top + rows * rowH + capH + marginBottom - 8,
                 'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '400', iw.femLabelColor, 'middle'
             ));
+
+            capByFem[femId].forEach(function(line, li) {
+                var shown = line.text;
+                var cap = _svgText(femX + 6, top + rows * rowH + 4 + (li + 1) * capLineH,
+                                   shown, capFont, '600', iw.femLabelColor, 'start');
+                cap.setAttribute('class', 'iw-port-caption');
+                cap.setAttribute('data-cap-fs', capFont);
+                cap.style.whiteSpace = 'pre';   // keeps a wrapped line's indent
+                cap.setAttribute('font-family', 'monospace');
+                if (shown !== line.full) {
+                    var full = _svgEl('title');
+                    full.textContent = line.full;
+                    cap.appendChild(full);
+                }
+                svg.appendChild(cap);
+            });
 
             // Output port rows
             for (var portNum = 1; portNum <= rows; portNum++) {
@@ -15371,6 +15431,104 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         popup.addEventListener('mouseleave', function() { _scheduleHidePopup(); });
     }
 };
+
+/* The caption lines of one FEM: every port holding several elements
+   (a multiplexed readout feedline), every TWPA port and every wired
+   digital port, as "<io> <port>
+   <names>", the names compacted by _iwCompactNames. */
+var _IW_CAPTION_IO = {output: 'out', input: 'in', digital: 'dig'};
+function _iwCaptionLines(femData) {
+    var lines = [], pumps = [];
+    var groups = [['output', femData.output_ports || femData.ports || {}],
+                  ['input', femData.input_ports || {}],
+                  ['digital', femData.digital_ports || {}]];
+    groups.forEach(function(gp) {
+        var ports = gp[1];
+        Object.keys(ports).sort(function(a, b) { return parseInt(a) - parseInt(b); }).forEach(function(pn) {
+            var list = ports[pn] || [];
+            var twpa = list.some(function(a) { return /^twpa/.test(a.role || ''); });
+            // a digital port's circle is too small for a name once Fit scales it
+            if (list.length < 2 && !twpa && gp[0] !== 'digital') return;
+            var names = [];
+            list.forEach(function(a) {
+                var n = a.element != null ? String(a.element) : String(a.label || '').replace(/\.[^.]+$/, '');
+                if (n && names.indexOf(n) < 0) names.push(n);
+            });
+            if (!names.length) return;
+            var solo = twpa && list.length === 1;
+            (solo ? pumps : lines).push((solo ? 'pump' : _IW_CAPTION_IO[gp[0]]) + ' ' + pn + ' ' + _iwCompactNames(names));
+        });
+    });
+    return lines.concat(pumps);
+}
+
+/* One caption split into lines of at most maxChars: breaks between names
+   (after a comma only inside a group wider than a line), continuation lines indented two spaces; a single piece longer
+   than a line is cut with an ellipsis (the line's <title> keeps it whole). */
+function _iwWrapCaption(line, maxChars) {
+    if (line.length <= maxChars) return [line];
+    // break between names, never inside one prefix group ("qB2,5" stays
+    // whole) unless the group alone is wider than a line
+    var pieces = [];
+    line.split(' ').forEach(function(w, wi) {
+        if (wi) pieces.push(' ');
+        if (w.length > maxChars - 2 && w.indexOf(',') >= 0) {
+            pieces = pieces.concat(w.match(/[^,]+,?/g));
+        } else if (w) {
+            pieces.push(w);
+        }
+    });
+    var out = [], cur = '';
+    pieces.forEach(function(pc) {
+        if (/^\s+$/.test(pc)) { if (cur) cur += ' '; return; }
+        var room = maxChars - (out.length ? 2 : 0);
+        if (cur && (cur + pc).length > room) {
+            out.push(cur.replace(/\s+$/, ''));
+            cur = '';
+            room = maxChars - 2;
+        }
+        if (!cur && pc.length > room) pc = pc.substring(0, room - 1) + '…';
+        cur += pc;
+    });
+    if (cur) out.push(cur.replace(/\s+$/, ''));
+    return out.map(function(l, i) { return i ? '  ' + l : l; });
+}
+
+/* "qA1 qA2 qA3 qA5" -> "qA1-3,5": names sharing a prefix and differing only
+   in a trailing number are written once, with runs as ranges. Anything else
+   is listed as it is. */
+function _iwCompactNames(names) {
+    var groups = [], byPre = {};
+    names.forEach(function(n) {
+        var m = /^(.*?)(\d+)$/.exec(n);
+        var pre = m ? m[1] : n;
+        if (!m) { groups.push({pre: n, nums: null}); return; }
+        if (!byPre[pre]) { byPre[pre] = {pre: pre, nums: []}; groups.push(byPre[pre]); }
+        if (byPre[pre].nums.every(function(x) { return x.s !== m[2]; })) {
+            byPre[pre].nums.push({v: parseInt(m[2], 10), s: m[2]});
+        }
+    });
+    var seen = {};
+    return groups.filter(function(g) {
+        if (g.nums) return true;
+        if (seen[g.pre]) return false;
+        return (seen[g.pre] = true);
+    }).map(function(g) {
+        if (!g.nums) return g.pre;
+        // a run is consecutive values written with the same width ("q01-03")
+        var nums = g.nums.slice().sort(function(a, b) { return a.v - b.v || a.s.length - b.s.length; });
+        var parts = [], i = 0;
+        while (i < nums.length) {
+            var j = i;
+            while (j + 1 < nums.length && nums[j + 1].v === nums[j].v + 1 &&
+                   nums[j + 1].s.length === nums[i].s.length) j++;
+            parts.push(j - i >= 2 ? nums[i].s + '-' + nums[j].s
+                : (j > i ? nums[i].s + ',' + nums[j].s : nums[i].s));
+            i = j + 1;
+        }
+        return g.pre + parts.join(',');
+    }).join(' ');
+}
 
 /**
  * Render one port cell: empty placeholder if no assignments; single row for ≤3 assignments;
