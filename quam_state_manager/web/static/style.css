@@ -4762,14 +4762,6 @@ td.col-delta .val-delta { margin-left: 0; }
     color: #fff; letter-spacing: 0.03em;
 }
 .topo-node-body { padding: 2px 0; }
-.topo-card-more-btn {
-    display: flex; align-items: center; justify-content: center; gap: 4px;
-    cursor: pointer; text-align: center;
-    font-size: var(--topo-card-more-size); color: var(--pico-muted-color); padding: 2px 0;
-    border-top: 1px dashed var(--pico-muted-color); margin: 1px 4px 0;
-    user-select: none;
-}
-.topo-card-more-btn:hover { color: var(--pico-primary); }
 /* docs/126 ② — modernized popup chrome (customer feedback: same info, less
    dated): soft 14px radius, layered shadow, translucent blurred surface, and
    theme-aware hairline borders (the old rgba(0,0,0,…) borders vanished on
@@ -10695,6 +10687,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
     color: var(--pico-primary); cursor: pointer;
 }
 .bulk-ro-link:hover { text-decoration: underline; }
+/* R4c: small icon controls keep their look, with a 24 px hit box */
+:where(.bulk-ro-link,.key-help-btn,.bulk-col-hist,.btn-xs) { position: relative; }
+:where(.bulk-ro-link,.key-help-btn,.bulk-col-hist,.btn-xs)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%,24px); height: max(100%,24px); transform: translate(-50%,-50%); }
 #bulk-pair-search-count, #bulk-pair-dirty-count { font-size: 0.82em; white-space: nowrap; }
 
 /* Conflict tray: the destructive 'Overwrite live (force)' must LOOK dangerous

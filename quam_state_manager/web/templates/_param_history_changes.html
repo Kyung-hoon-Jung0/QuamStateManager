@@ -76,7 +76,7 @@
         <p><strong>No parameter whose path starts with <code>{{ prefix }}</code> has changed.</strong></p>
         {% if contains %}
         <p>{{ contains_n }} changed path{{ '' if contains_n == 1 else 's' }} contain{{ 's' if contains_n == 1 else '' }} <code>{{ prefix }}</code>:</p>
-        <ul class="ph-changes-contains">{% for c in contains %}
+        <ul>{% for c in contains %}
           <li><a href="/param-history/changes?prefix={{ c | urlencode }}{% if cq %}&amp;{{ cq }}{% endif %}">{{ c }}</a></li>
         {% endfor %}{% if contains_n > contains|length %}<li class="muted">and {{ contains_n - contains|length }} more</li>{% endif %}</ul>
         {% endif %}
