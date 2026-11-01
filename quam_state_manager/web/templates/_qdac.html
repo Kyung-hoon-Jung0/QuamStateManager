@@ -1,10 +1,10 @@
-{# docs/136 — the QDAC-II component page.
+{% from "_ui.html" import ui_head_fold %}{# docs/136 — the QDAC-II component page.
 
    Same channel-scoped shape as _flux.html / _resonators.html, narrowed to the
    qubits the QDAC actually biases, plus the two things no per-qubit surface
    can show: the instrument itself, and the trigger CABLING. #}
-<div class="table-header-row ui-head ui-head--data">
-    <h2 class="ui-head-title">QDAC-II <small class="muted ui-count">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>
+<div class="table-header-row ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">QDAC-II <small class="muted ui-count">({{ total }} biased qubit{{ '' if total == 1 else 's' }})</small></h2>{{ ui_head_fold() }}
     {% if total %}<div class="table-filter">
         <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter QDAC channels" autocomplete="off"

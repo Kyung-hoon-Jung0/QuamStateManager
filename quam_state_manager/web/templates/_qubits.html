@@ -1,4 +1,4 @@
-{# docs/286: drive-pulse cells. A blank is an em dash whose title says
+{% from "_ui.html" import ui_head_fold %}{# docs/286: drive-pulse cells. A blank is an em dash whose title says
    why; a pointer string is never shown as a value. #}
 {% macro _blank_cell(why) -%}
 <td data-sort="-"><span class="muted" title="{{ why }}">&mdash;</span></td>
@@ -16,8 +16,8 @@
 {% if not op.present %}{{ _blank_cell(op.why) }}{% else %}{% set f = op[field] %}{% if f.state == 'num' %}<td title="{{ _op_title(op) }}">{% if unit_key == 'alpha' %}{{ "%.4g" | format(f.value) }}{% else %}{{ f.value | qty(unit_key) }}{% endif %}</td>{% elif f.state == 'text' %}<td><span class="muted" title="Stored as text &mdash; see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ f.value }}&quot;</span></td>{% else %}{{ _blank_cell(_op_title(op) ~ ': ' ~ field ~ '. ' ~ f.why) }}{% endif %}{% endif %}
 {%- endmacro %}
 
-<div class="table-header-row ui-head ui-head--data">
-    <h2 class="ui-head-title">Qubits <small class="muted ui-count">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
+<div class="table-header-row ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Qubits <small class="muted ui-count">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>{{ ui_head_fold() }}
     <div class="table-filter">
         <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"
                aria-label="Filter qubits" autocomplete="off"

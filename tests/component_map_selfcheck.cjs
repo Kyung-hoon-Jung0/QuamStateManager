@@ -394,6 +394,8 @@ async function checkComponentMap() {
   ok(fetches === 1, 'opening it loads exactly once');
   ok(win2.localStorage.getItem('quam_component_map_open') === 'open', 'the choice persists');
 
+  // WC-3's first-screen fit is pinned by chip_status_r4b_selfcheck.cjs (fitUnsized).
+
   // F2: the mount's data-cell reaches renderLayout through ComponentMap
   const win3 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="pairs" data-cell="120"'));
   win3.ComponentMap.mount(win3.document.getElementById('component-map'));
