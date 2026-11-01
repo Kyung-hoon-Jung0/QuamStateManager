@@ -282,7 +282,7 @@ def test_an_archived_chip_with_no_ledger_shows_its_snapshots_values(tmp_path):
     assert "run #7 scan" in page and "writer not proven" in page
     assert f"chip_key={env['key']}" in page and "/field/history?path=" not in page
     found = env["client"].get("/param-history/param-search",
-                              query_string={"q": "qA1.T1", "chip_key": env["key"]}).get_json()
+                              query_string={"q": "qubits.qA1.T1", "chip_key": env["key"]}).get_json()  # UD-1: prefix
     assert [(r["path"], r["changes"]) for r in found["results"]
             if r["path"] == "qubits.qA1.T1"] == [("qubits.qA1.T1", 4)], found
     # what it was built from is said; no folder opens as the chip, so no Open
