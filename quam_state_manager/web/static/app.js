@@ -14949,7 +14949,25 @@ function _instrHideTinyLabels(svg, natW) {
             return;
         }
         var fs = parseFloat(t.getAttribute('font-size')) || 0;
-        var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX;
+        // A port's own name grows to the 9 px floor while it still fits the
+        // circle's chord; only a name that cannot fit is hidden, and the FEM
+        // caption under the grid names those ports instead.
+        var circ = t.parentNode && t.parentNode.querySelector &&
+            t.parentNode.classList && t.parentNode.classList.contains('iw-port-circle')
+            ? t.parentNode.querySelector('circle') : null;
+        if (circ) {
+            var fs0 = parseFloat(t.getAttribute('data-fs0'));
+            if (!fs0) { fs0 = fs; t.setAttribute('data-fs0', fs0); }
+            var r = parseFloat(circ.getAttribute('r')) || 0;
+            var need = _INSTR_MIN_LABEL_PX / s;
+            var chord = 2 * Math.sqrt(Math.max(0, r * r - need * need * 0.12));
+            var fits = 0.62 * Math.max(1, (t.textContent || '').length) * need <= chord;
+            fs = fs0 * s >= _INSTR_MIN_LABEL_PX ? fs0 : (fits ? Math.ceil(need * 10) / 10 : fs0);
+            t.setAttribute('font-size', fs);
+            var cy = parseFloat(circ.getAttribute('cy')) || 0;
+            t.setAttribute('y', cy + Math.round(fs * 0.36));
+        }
+        var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX - 0.05;
         if (tiny) t.setAttribute('data-iw-tiny', '1'); else t.removeAttribute('data-iw-tiny');
         t.style.display = tiny ? 'none' : '';
     });
@@ -15409,19 +15427,22 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 };
 
 /* The caption lines of one FEM: every port holding several elements
-   (a multiplexed readout feedline) and every TWPA port, as "<io> <port>
+   (a multiplexed readout feedline), every TWPA port and every wired
+   digital port, as "<io> <port>
    <names>", the names compacted by _iwCompactNames. */
 var _IW_CAPTION_IO = {output: 'out', input: 'in', digital: 'dig'};
 function _iwCaptionLines(femData) {
     var lines = [], pumps = [];
     var groups = [['output', femData.output_ports || femData.ports || {}],
-                  ['input', femData.input_ports || {}]];
+                  ['input', femData.input_ports || {}],
+                  ['digital', femData.digital_ports || {}]];
     groups.forEach(function(gp) {
         var ports = gp[1];
         Object.keys(ports).sort(function(a, b) { return parseInt(a) - parseInt(b); }).forEach(function(pn) {
             var list = ports[pn] || [];
             var twpa = list.some(function(a) { return /^twpa/.test(a.role || ''); });
-            if (list.length < 2 && !twpa) return;
+            // a digital port's circle is too small for a name once Fit scales it
+            if (list.length < 2 && !twpa && gp[0] !== 'digital') return;
             var names = [];
             list.forEach(function(a) {
                 var n = a.element != null ? String(a.element) : String(a.label || '').replace(/\.[^.]+$/, '');
