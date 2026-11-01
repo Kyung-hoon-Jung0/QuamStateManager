@@ -55,9 +55,9 @@ def test_an_archived_grid_cell_carries_its_newest_recorded_value(tmp_path):
     env = _archived(tmp_path)
     grid = _grid(env)
     attrs, shown = _cell_value(grid, "qA1", "T1")
-    assert shown == "3e-05", shown               # 1e-5, 2e-5, 9e-5 (#7), then 3e-5: the newest
+    assert shown == "30.00", shown               # 1e-5, 2e-5, 9e-5 (#7), then 3e-5 s: the newest, shown in the header unit (us)
     assert "history-cell-latest" in attrs and "Newest recorded value" in attrs, attrs
-    assert _cell_value(grid, "qA2", "T1")[1] == "2e-05"
+    assert _cell_value(grid, "qA2", "T1")[1] == "20.00"
     body, _row = _drawer(env)
     text = _t(body)
     assert "latest recorded: 3e-05" in text and "current:" not in text, text[:300]

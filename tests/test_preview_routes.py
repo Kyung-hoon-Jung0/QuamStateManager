@@ -169,4 +169,4 @@ class TestDiagnosticsView:
     def test_summary_badge(self, client, tmp_path):
         self._load_broken(client, tmp_path)
         body = client.get("/diagnostics/summary").get_data(as_text=True)
-        assert "issue" in body and "diag-header-badge" in body
+        assert "to fix" in body and "diag-header-badge" in body

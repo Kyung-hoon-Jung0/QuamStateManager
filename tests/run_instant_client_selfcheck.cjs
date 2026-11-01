@@ -119,7 +119,7 @@ function ids(w) {
     await tick(80);
     const c = whenCell(w, 7);
     const sp = c && c.querySelector('span');
-    ok(sp && sp.textContent === '4/2', 'A2: an old run shows its day in the chosen zone (New York 4/2, not Seoul 4/3): "' + (sp && sp.textContent) + '"');
+    ok(sp && sp.textContent === '4/2 22:00', 'A2: an old run shows its day and time in the chosen zone (New York 4/2 22:00, not Seoul 4/3): "' + (sp && sp.textContent) + '"');
     ok(sp && /^2026-04-02 22:00:00 \(UTC-4\)/.test(sp.title), 'A2: ... and its title is that zone with its offset: "' + (sp && sp.title) + '"');
   }
 
