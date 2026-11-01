@@ -147,7 +147,9 @@ const shownPanels = (w) => Array.prototype.filter.call(w.document.querySelectorA
   await tick(120);
   ok(!has(wu, '.toast-success', 'Applied to the live chip.'),
      'B1 Ctrl+Z that reverted the apply takes its success toast away at once');
-  ok(has(wu, '.toast', 'Undone -> live'), 'B2 ...and its own toast says what holds now');
+  // LE-13: with the Undo trail on the page the step's message is a line in
+  // the panel instead of a toast
+  ok(has(wu, '.toast', 'Undone -> live') || Array.prototype.some.call(wu.document.querySelectorAll('.undo-trail-note'), n => n.textContent === 'Undone -> live'), 'B2 ...and its own message says what holds now');
   ok(has(wr, '.toast-success', 'Applied to the live chip.'),
      'B3 a refused step (nothing reverted) leaves the apply toast');
   await tick(4300);

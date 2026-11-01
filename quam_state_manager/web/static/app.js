@@ -6706,7 +6706,10 @@ document.addEventListener("cellsReverted", function(evt) {
     }
     // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
     // skip) arrives as level "warning" -- it must not read as a green success
-    if (d.message && window.showToast) window.showToast(d.message,
+    // LE-13: a landed step's message is a line in the Undo trail panel
+    // (undo-trail.js); only a refusal still toasts
+    var _inTrail = !!(window.UndoTrail && entries.length && d.level !== "warning" && d.level !== "error");
+    if (d.message && window.showToast && !_inTrail) window.showToast(d.message,
         d.level === "error" ? "error" : d.level === "warning" ? "warning" : "success");
     // Flash the reverted items that are on screen. NO automatic navigation
     // (docs/73's "open the owning surface" is retired): on the Pulses page a
@@ -27246,8 +27249,10 @@ window.UndoNav = (function () {
         el.classList.add("leu-flash");
         setTimeout(function () { el.classList.remove("leu-flash"); }, 900);
         if (el.scrollIntoView) {
-            try { el.scrollIntoView({ block: "center", behavior: "smooth" }); }
-            catch (e) { el.scrollIntoView(); }
+            // LE-8: "nearest" -- a cell already on screen must not move
+            // (block "center" shifted the grid ~45 px on every Ctrl+Z).
+            try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" }); }
+            catch (e) { el.scrollIntoView(false); }
         }
     }
 

@@ -194,9 +194,9 @@ def test_the_toasts_sit_above_the_open_undo_panel():
     css = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
     m = re.search(r"body\.undo-trail-on #status-bar\s*\{([^}]*)\}", css)
     assert m, "no lift rule for the toast sink"
-    assert re.search(r"bottom:\s*calc\(5rem \+ var\(--undo-trail-h", m.group(1)), m.group(1)
+    assert re.search(r"bottom:\s*calc\(0\.8rem \+ var\(--undo-trail-h", m.group(1)), m.group(1)
     panel = re.search(r"\.undo-trail \{([^}]*)\}", css).group(1)
-    assert "bottom: 5rem" in panel           # the rule lifts above THIS bottom
+    assert "bottom: 0.8rem" in panel           # the rule lifts above THIS bottom
     # the lift rule is the last word on #status-bar's bottom (after the composer's)
     assert css.rindex("body.undo-trail-on #status-bar") > css.rindex("body.ag-composer-on #status-bar")
 

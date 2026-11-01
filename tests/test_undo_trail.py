@@ -171,4 +171,4 @@ def test_review_fixes_of_4ffee11():
     manual = (_STATIC / "manual.js").read_text(encoding="utf-8")
     assert "e.preventDefault(); e.stopPropagation();" not in manual, "the ? handler must not silence click-away listeners"
     css = (_STATIC / "style.css").read_text(encoding="utf-8")
-    assert "position: fixed; right: 0.8rem; bottom: 5rem; z-index: 130;" in css, "the trail sits above the toast sink"
+    assert "position: fixed; right: 0.8rem; bottom: 0.8rem; z-index: 130;" in css, "LE-13: the trail docks in the corner; toasts lift above it"
