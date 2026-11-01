@@ -1,5 +1,5 @@
-{% from "_ui.html" import ui_head_fold %}<div class="table-header-row iw-header ui-head ui-head--data ui-head--page">
-    <h2 class="ui-head-title">Instrument Wiring</h2>{{ ui_head_fold() }}
+<div class="table-header-row iw-header ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Instrument Wiring</h2>
     {# QA diagnostics-r2-10: follows the state like the topbar pill (#diag-tray-slot) --
        an outerHTML swap on `load` replaced its own trigger, so it could never refresh. #}
     <span class="diag-header-slot" hx-get="/diagnostics/summary"

@@ -219,8 +219,8 @@ function chipWorld() {
     ok(+body.querySelector('svg').getAttribute('height') === 628, 'UD3.4: a repaint keeps the fitted size');
 
     const b = mapWorld(null, 17.3, 1300);   // needs 572 back: s .364 < 11/17.3
-    ok(b.s === null && b.h === 900 && b.fit === 'floor',
-      'UD3.5: when the 11px floor cannot bring the head in, the map keeps its natural size — ' + b.fit);
+    ok(Math.abs(b.s - 11 / 17.3) < 1e-9 && b.h === Math.round(900 * 11 / 17.3) && b.fit === 'floor',
+      'UD3.5 (UD-9 b): when the floor cannot bring the head in, the map still shrinks to the 11px floor — ' + b.fit + ' h=' + b.h);
     const c = mapWorld('open', 17.3, 1000);
     ok(c.s === null && c.h === 900, 'UD3.6: a user who chose open keeps the natural size');
     const e = mapWorld('1', 17.3, 1000);

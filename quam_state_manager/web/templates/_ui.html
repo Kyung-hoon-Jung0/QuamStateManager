@@ -50,7 +50,7 @@
 <h{{ level }} class="ui-head-title">{{ title }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}{% if badge %}{{ ui_badge(badge.text, badge.tone or 'neutral') }}{% endif %}</h{{ level }}>
 {%- if actions %}{{ ui_actions(actions) }}{% endif -%}
 {%- if gist and not data %}<p class="ui-head-gist">{{ gist }}</p>{% endif -%}
-{%- if page %}{{ ui_head_fold() }}{% endif -%}
+{%- if page and gist and not data %}{{ ui_head_fold() }}{% endif -%}
 </header>
 {%- endmacro -%}
 

@@ -1,4 +1,4 @@
-{% from "_ui.html" import ui_head_fold %}{# Chip Status > CZ gate plan. Every CZ operation of every pair: the frequency each qubit
+{# Chip Status > CZ gate plan. Every CZ operation of every pair: the frequency each qubit
    reaches, the detuning, the nearest |11> resonance and when the operation was last set.
    The physics, the estimate tiers and every refusal live in core/cz_gate_plan.py;
    cz-map.js draws the chip map, cz-plan.js the operation below it. #}
@@ -11,7 +11,7 @@
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
 <div class="table-header-row ui-head ui-head--data ui-head--page">
-    <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>{{ ui_head_fold() }}
+    <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
 </div>
 <div class="muted czp-lede">
     Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.

@@ -306,8 +306,10 @@ window.ComponentMap = (function () {
     var need = hr.bottom + hr.height - bottom;
     var floor = MIN_LABEL_PX / minFs;
     var s = need > 0 ? (H - need) / H : 1;
-    root.setAttribute("data-cmap-fit", s >= 1 ? "1" : (s >= floor ? s.toFixed(3) : "floor"));
-    if (s >= 1 || s < floor) return null;
+    // UD-9 (b): when the head cannot come in, still shrink to the label floor.
+    if (s < floor) s = Math.min(1, floor);
+    root.setAttribute("data-cmap-fit", s >= 1 ? "1" : (s > floor ? s.toFixed(3) : "floor"));
+    if (s >= 1) return null;
     function apply() {
       var g = body.querySelector("svg.cm-svg");
       if (!g || g.getAttribute("data-fit") === "1") return;
