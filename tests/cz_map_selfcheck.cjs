@@ -620,6 +620,10 @@ async function footerPins(only) {
 
     // v1.4.1: fixed 40 px cutoff -> compact names when their boxes fit the column.
     const pt5 = r5.traces.find(t => t.meta === 'partners');
+    // user-view sweep: the bare-number bar labels get their unit once on the drawing, and the
+    // partner tags carry a halo so a marker under them does not swallow the text
+    check((r5.layout.annotations || []).some(a => a.name === 'bar-unit' && /GHz/.test(a.text)), 'the bar labels name their unit (GHz) on the drawing');
+    check(pt5 && pt5.textfont && pt5.textfont.shadow === 'auto', 'partner tags carry a halo over the markers');
     const s12 = segments(r5).find(s => s.pair === 'q1-2' && near(s.x0, 0.12));
     check(pt5 && pt5.x.some((x, k) => near(x, 0.88) && near(pt5.y[k], s12.y) && pt5.text[k] === '↔ q2'), 'each segment names its partner at its right end, marked ↔ so it never reads as the bar owner');
     S21.width = 900; await S21.w.CzMap.paint(S21.root);
