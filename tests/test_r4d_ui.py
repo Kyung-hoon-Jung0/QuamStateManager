@@ -69,3 +69,11 @@ def test_agent_setup_polish():
     assert "AgentSetup.browseJournal()" in js and "browseJournal: browseJournal" in js
     assert 'getElementById("load-path-input")' in js
     assert '? "Change" :' not in js
+
+
+def test_trend_charts_fit_x_to_their_own_points():
+    js = (WEB / "static" / "app.js").read_text(encoding="utf-8")
+    i = js.index("D-123 (DS-12): fit the range")
+    seg = js[i:i + 1100]
+    assert "if (!isPt(ysR[ri])) continue;" in seg and "xaxis.range = [" in seg
+    assert "shaded band: moving average" in js

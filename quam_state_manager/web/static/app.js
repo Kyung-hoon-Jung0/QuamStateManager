@@ -20958,6 +20958,9 @@ window.DatasetTrends = (function () {
                in the viewer's zone -- no longer the folder's wall clock */
             bits.push('x = when each run saved its state, in '
                 + (window.SnapTime ? window.SnapTime.label() : 'your time zone') + '.');
+            /* D-123 (DS-12): one line on what the marks are */
+            bits.push("Line and points: each run's value; shaded band: moving average ± σ; "
+                + "each chart's time range fits its own points.");
             if (d.undated) bits.push(plural(d.undated, 'run') + ' whose date/time does not parse '
                 + (d.undated === 1 ? 'is' : 'are') + ' not placed on the time axis.');
         }
@@ -21172,6 +21175,20 @@ window.DatasetTrends = (function () {
             xaxis.type = 'date';
             xaxis.hoverformat = '%Y-%m-%d %H:%M:%S';
             xaxis.nticks = 8;
+            // D-123 (DS-12): fit the range to the runs that carry a value for
+            // THIS metric (a run without one is a gap, not a reason to draw
+            // the rest of the archive), padded by 5 % or 5 minutes
+            var ysR = ysOf(st, idx), lo = Infinity, hi = -Infinity;
+            for (var ri = 0; ri < ysR.length; ri++) {
+                if (!isPt(ysR[ri])) continue;
+                var tms = Date.parse(String(st.xs[ri]).replace(' ', 'T').slice(0, 19) + 'Z');
+                if (isFinite(tms)) { if (tms < lo) lo = tms; if (tms > hi) hi = tms; }
+            }
+            if (isFinite(lo)) {
+                var padMs = Math.max(5 * 60 * 1000, (hi - lo) * 0.05);
+                var iso = function (t) { return new Date(t).toISOString().slice(0, 19).replace('T', ' '); };
+                xaxis.range = [iso(lo - padMs), iso(hi + padMs)];
+            }
         } else {
             xaxis.type = 'category';
             xaxis.tickangle = mini.xTickAngle;
