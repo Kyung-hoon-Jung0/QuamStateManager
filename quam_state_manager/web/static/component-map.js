@@ -278,6 +278,7 @@ window.ComponentMap = (function () {
   }
   function fitUnsized(root, body) {
     root.removeAttribute("data-cmap-fit");
+    body._cmapFitApply = null;
     if (root.getAttribute("data-cm-pick") === "1") return null;
     // "open" / "0" are a person's choice; "1" is what every page view wrote
     // before only a person's toggle was recorded, so it chose nothing
@@ -318,7 +319,12 @@ window.ComponentMap = (function () {
       g.setAttribute("data-fit", "1");
     }
     apply();
-    if (window.MutationObserver) new MutationObserver(apply).observe(body, { childList: true });
+    // one observer per map body: a later load() replaces the callback only
+    body._cmapFitApply = apply;
+    if (window.MutationObserver && !body._cmapFitObs) {
+      body._cmapFitObs = new MutationObserver(function () { if (body._cmapFitApply) body._cmapFitApply(); });
+      body._cmapFitObs.observe(body, { childList: true });
+    }
     return s;
   }
 

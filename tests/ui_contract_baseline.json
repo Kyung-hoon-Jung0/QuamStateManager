@@ -15,7 +15,7 @@
   "static/journal.js": 3,
   "static/plot-theme.js": 20,
   "static/pulses.js": 11,
-  "static/style.css": 670,
+  "static/style.css": 666,
   "static/zline.js": 5,
   "templates/_bulkedit.html": 2,
   "templates/_instrument_preview.html": 1,
@@ -41,9 +41,7 @@
   "templates/_state_review.html": 1,
   "templates/workbench.html": 1
  },
- "contrast_failures": [
-  "light --ui-warn-border/--ui-surface-1"
- ],
+ "contrast_failures": [],
  "csp": {
   "hx_on": {
    "static/app.js": 4,
@@ -168,7 +166,7 @@
   "templates/_waveform_plot.html": 1,
   "templates/_wiring.html": 1,
   "templates/_zline.html": 2,
-  "templates/base.html": 9,
+  "templates/base.html": 6,
   "templates/calc_window.html": 1
  },
  "dead_class_names": [
@@ -189,8 +187,6 @@
   "ag-step-w",
   "ag-summary-link",
   "ag-waiting-link",
-  "agent-home-link",
-  "agent-title",
   "applied-log-wholesale",
   "archive-display",
   "as-body",
@@ -409,7 +405,6 @@
   "sh-event",
   "sh-event-",
   "sh-older-badge",
-  "shell-head",
   "sidebar-sel-offscreen",
   "sidebar-tool-icon",
   "sidebar-workspace",
@@ -503,7 +498,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16103,
-  "rules": 5916
+  "lines": 16071,
+  "rules": 5911
  }
 }

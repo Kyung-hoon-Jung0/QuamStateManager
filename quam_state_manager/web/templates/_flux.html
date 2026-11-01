@@ -5,6 +5,10 @@
                aria-label="Filter flux channels" autocomplete="off"
                oninput="filterTable(this, 'flux-table')">
         <small id="flux-table-filter-count" class="muted"></small>
+        {# D-118 (WC-9): the same /export route Resonators uses; no server change #}
+        <a class="outline btn-sm table-export" role="button" download
+           href="/export?props=z_joint_offset&props=z_independent_offset&props=z_flux_point&props=grid_location"
+           title="Download this table as CSV (stored values; each header names its unit)">Export CSV</a>
     </div>
 </div>
 
