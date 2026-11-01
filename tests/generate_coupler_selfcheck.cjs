@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
@@ -14,8 +14,11 @@ const w = dom.window;
 w.NumberInput = {fit() {}, attach() {}, format() {}, strip(s) { return String(s || ''); }};
 w.armPlainResize = function () {};
 w.renderInstrumentWiring = function () {};
-let available = false;
+let available = false, mode = 'answer', calls = 0;
 w.fetch = function (url) {
+  if (url === '/generate/capabilities') calls++;
+  if (url === '/generate/capabilities' && mode === 'hang') return new Promise(() => {});
+  if (url === '/generate/capabilities' && mode === 'fail') return Promise.reject(new Error('down'));
   if (url === '/generate/capabilities') return Promise.resolve({json: () => Promise.resolve({
     report: {inventory: [{id: 'pair.coupler_cz', available}]}
   })});
@@ -53,6 +56,20 @@ w.eval(js);
   s.qubitFlux = false;
   s.pairGate = 'cz_tunable';
   assert(t.guards[4]().includes('needs a qubit flux line'), 'official CZ stale draft still refused');
+  // a check still running, or one that failed, is not a missing package
+  s.pairGate = 'cz_coupler'; s.qubitFlux = false;
+  mode = 'hang'; s.env = 'slow-env'; t.sync();
+  assert(t.guards[4]().includes('checking this environment'), 'in-flight check says checking: ' + t.guards[4]());
+  mode = 'fail'; s.env = 'flaky-env'; calls = 0; t.sync();
+  await new Promise(resolve => w.setTimeout(resolve, 0));
+  await new Promise(resolve => w.setTimeout(resolve, 0));
+  assert.strictEqual(calls, 1, 'a failed check does not loop: ' + calls);
+  assert(t.guards[4]().includes('could not check'), 'failed check says so: ' + t.guards[4]());
+  mode = 'answer'; available = true; t.sync();
+  await new Promise(resolve => w.setTimeout(resolve, 0));
+  assert.strictEqual(calls, 2, 'the next change asks again');
+  assert.strictEqual(t.guards[4](), null, 'a retried check that answers unblocks Next');
+  s.env = null; s.pairGate = 'cz_coupler';
   dom.window.close();
   console.log('coupler selfcheck passed');
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });

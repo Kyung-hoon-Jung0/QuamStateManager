@@ -241,7 +241,7 @@
       }
       // Defense in depth for stale drafts: a coupler-only CZ needs the extension, and
       // the official CZGate (cz_tunable) requires a qubit flux pulse.
-      if (state.pairGate === "cz_coupler" && !_couplerCzAvailable) return COUPLER_CZ_BLOCKER;
+      if (state.pairGate === "cz_coupler" && !_couplerCzAvailable) return couplerCzBlocker();
       if (!state.qubitFlux && state.pairGate === "cz_tunable") {
         return "Fixed-frequency qubits can't use a tunable-coupler CZ (the CZ gate " +
                "needs a qubit flux line). Pick a flux-tunable architecture, or use " +
@@ -2704,12 +2704,24 @@
 
   var _couplerCzEnv = null;
   var _couplerCzAvailable = false;
+  // what is known about the coupler-only CZ in the chosen env: null (no env),
+  // "checking", "failed" (the check itself did not answer) or "done"
+  var _couplerCzCheck = null;
   var COUPLER_CZ_BLOCKER = "needs the qsm_quam_ext package in this environment (pip install <path to extensions/qsm_quam_ext>)";
+  // Name the real reason: a missing env, a check still running or a check that
+  // failed is not a missing package.
+  function couplerCzBlocker() {
+    if (!state.env) return "choose a Python environment first — the coupler-only CZ is checked in it";
+    if (_couplerCzCheck === "checking") return "checking this environment for the coupler-only CZ…";
+    if (_couplerCzCheck === "failed") return "could not check this environment for the coupler-only CZ — it is checked again on your next change";
+    return COUPLER_CZ_BLOCKER;
+  }
 
   function syncLineTypeToggles() {
     if (state.env && _couplerCzEnv !== state.env) {
       _couplerCzEnv = state.env;
       _couplerCzAvailable = false;
+      _couplerCzCheck = "checking";
       var selectedEnv = state.env;
       fetch("/generate/capabilities", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -2719,8 +2731,15 @@
         _couplerCzAvailable = !!((res.report || {}).inventory || []).some(function (r) {
           return r.id === "pair.coupler_cz" && r.available;
         });
+        _couplerCzCheck = "done";
         syncLineTypeToggles();
-      }).catch(function () { /* Remains disabled until capabilities can be read. */ });
+      }).catch(function () {
+        // Remains disabled; the next sync asks again instead of never.
+        if (state.env !== selectedEnv) return;
+        _couplerCzCheck = "failed";
+        syncLineTypeToggles();      // repaint first, with the env still marked...
+        _couplerCzEnv = null;       // ...then let the NEXT change ask again (no loop)
+      });
     }
     var mw = hasMwFem() || hasOpxPlus();
     var lf = hasLfFem() || hasOpxPlus();
@@ -2802,7 +2821,7 @@
         opt.disabled = (opt.value === "fixed_frequency") ? !mw : !lf;
         if (opt.value === "fixed_tunable_coupler") {
           opt.disabled = !lf || !_couplerCzAvailable;
-          opt.title = !_couplerCzAvailable ? COUPLER_CZ_BLOCKER : "";
+          opt.title = !_couplerCzAvailable ? couplerCzBlocker() : "";
         }
       });
       archSel.value = state.chipArch;
@@ -2822,7 +2841,7 @@
         "it comes back on its own, line pins too; picking an architecture here replaces it.";
     } else if (archNote) {
       if (state.chipArch === "fixed_tunable_coupler") {
-        archNote.textContent = !_couplerCzAvailable ? COUPLER_CZ_BLOCKER
+        archNote.textContent = !_couplerCzAvailable ? couplerCzBlocker()
           : "Fixed-frequency qubits; CZ flux on the coupler only.";
       } else if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
