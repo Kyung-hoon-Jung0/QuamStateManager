@@ -60,3 +60,12 @@ def test_blocked_network_step_focuses_the_first_bad_field():
 def test_pulse_rows_share_one_height():
     css = (WEB / "static" / "style.css").read_text(encoding="utf-8")
     assert "#pulses-table > tbody > tr:not(.pulse-vpad) > td { height: 30px; }" in css
+
+
+def test_agent_setup_polish():
+    js = (WEB / "static" / "agent-setup.js").read_text(encoding="utf-8")
+    assert '"Not set up yet</b> · "' in js.replace("'", '"') or "Not set up yet" in js
+    assert '" of " + steps.length + "</b> ready"' not in js
+    assert "AgentSetup.browseJournal()" in js and "browseJournal: browseJournal" in js
+    assert 'getElementById("load-path-input")' in js
+    assert '? "Change" :' not in js

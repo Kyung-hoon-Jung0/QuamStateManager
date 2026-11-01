@@ -151,7 +151,8 @@ window.AgentSetup = (function () {
     var nDone = steps.filter(Boolean).length;
     var parts = [];
     parts.push('<div class="asx-progress"><span class="asx-bar"><span style="width:' + Math.round(100 * nDone / steps.length) + '%"></span></span>'
-      + "<b>" + nDone + " of " + steps.length + "</b> ready"
+      // D-122: a count of steps, never a bare "0 of 4"
+      + (nDone ? "<b>" + nDone + " of " + steps.length + " steps</b> done" : "<b>Not set up yet</b> · " + steps.length + " short steps")
       + '<span class="muted asx-small"> · the agent inside SM works without any of this · nothing here starts hardware · every file SM changes keeps a backup</span></div>');
 
     // 1. connect
@@ -168,7 +169,7 @@ window.AgentSetup = (function () {
     env.push('<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">'
       + '<input id="as-calroot" type="text" value="' + esc(d.calibrations_folder || "") + '" placeholder="the folder that holds the calibration nodes">'
       + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Browse…</button>'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.calib()">' + (d.calibrations_folder ? "Change" : "Use this folder") + "</button></span>"
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.calib()">' + (d.calibrations_folder ? "Save" : "Use this folder") + "</button></span>"
       + (d.calibrations_folder ? state("ok", "Saved") : state("todo", "Not set")) + '<span id="as-calib-msg"></span></div>');
     env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
       + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
@@ -176,7 +177,8 @@ window.AgentSetup = (function () {
       + '<span id="as-dryrun-msg"></span></div>');
     env.push('<div class="asx-row" id="as-journal"><span class="asx-k">Journal folder</span><span class="asx-v asx-grow">'
       + '<input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="a folder beside the lab\'s data">'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Change" : "Use this folder") + "</button></span>"
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseJournal()">Browse…</button>'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Save" : "Use this folder") + "</button></span>"
       + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
       + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
     parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
@@ -319,9 +321,19 @@ window.AgentSetup = (function () {
       load();
     });
   }
-  function browseCalib() {
-    if (window.openFolderBrowser) window.openFolderBrowser("as-calroot", "", { autoSubmit: false });
+  // D-122: an empty field starts the browser at the other folder, else the
+  // open chip's folder -- never at the drive list
+  function browseFrom(id, otherId) {
+    if (!window.openFolderBrowser) return;
+    var el = document.getElementById(id), other = document.getElementById(otherId);
+    var chip = document.getElementById("load-path-input");
+    var empty = !(el && el.value.trim());
+    var near = (other && other.value.trim()) || (chip && chip.value.trim());
+    window.openFolderBrowser(id, "", { autoSubmit: false });
+    if (empty && near && window.navigateBrowser) window.navigateBrowser(near);
   }
+  function browseCalib() { browseFrom("as-calroot", "as-jroot"); }
+  function browseJournal() { browseFrom("as-jroot", "as-calroot"); }
   function calib() {
     var v = ((document.getElementById("as-calroot") || {}).value || "").trim();
     var msg = document.getElementById("as-calib-msg");
@@ -523,5 +535,5 @@ window.AgentSetup = (function () {
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, calib: calib, browseCalib: browseCalib, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           test: test, dryRun: dryRun, calib: calib, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();
