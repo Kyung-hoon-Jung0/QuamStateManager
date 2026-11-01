@@ -15566,38 +15566,33 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     var gripRoom = editable ? 4.5 : 0;
     var gcx = cx + gripRoom;
     var leftEdge;
-    if (assignments.length <= 3) {
-        // Single row: spread smaller circles horizontally
-        var sr = Math.max(10, Math.floor(r * 0.62));
-        if (editable) {
-            // a full row of three already spans the whole column (3 x 26 + 4 = 82 px at
-            // r 21): the circles give the grip its 9 px, never below the 10 px floor
-            var n1 = assignments.length;
-            sr = Math.max(10, Math.min(sr, Math.floor((3.8 * r - 9 - (n1 - 1) * 2) / (2 * n1))));
-        }
-        var spread = sr * 2 + 2;
-        var startX = gcx - (assignments.length - 1) * spread / 2;
-        leftEdge = startX - sr;
-        assignments.forEach(function(a, ai) {
-            _appendPortCircle(cell, startX + ai * spread, cy, sr, roleColors, a, rawWiring, editable, onPortHover);
-        });
-    } else {
-        // Two-row layout: first 3 on top row, remainder on bottom row
-        var sr2 = Math.max(9, Math.floor(r * 0.55));
-        var spread2 = sr2 * 2 + 2;
-        var rowOff = sr2 + 3;
-        var row1 = assignments.slice(0, 3);
-        var row2 = assignments.slice(3);
-        leftEdge = gcx - (row1.length - 1) * spread2 / 2 - sr2;
-        row1.forEach(function(a, ai) {
-            var rx = gcx - (row1.length - 1) * spread2 / 2 + ai * spread2;
-            _appendPortCircle(cell, rx, cy - rowOff, sr2, roleColors, a, rawWiring, editable, onPortHover);
-        });
-        row2.forEach(function(a, ai) {
-            var rx = gcx - (row2.length - 1) * spread2 / 2 + ai * spread2;
-            _appendPortCircle(cell, rx, cy + rowOff, sr2, roleColors, a, rawWiring, editable, onPortHover);
-        });
+    // The cluster stays inside its own port column (about 3.9 r wide, one
+    // grid row about 2.6 r high) for any member count: try every row width
+    // and keep the one giving the largest circles. The wizard's grip takes
+    // 9 px of the width.
+    var n = assignments.length;
+    var gap = 2;
+    var colW = 3.75 * r - (editable ? 9 : 0);   // a little air from the separators
+    var rowRoom = 2.6 * r;
+    var best = null;
+    for (var per = 1; per <= n; per++) {
+        var nRows = Math.ceil(n / per);
+        var srW = (colW - (per - 1) * gap) / (2 * per);
+        var srH = (rowRoom - (nRows - 1) * gap) / (2 * nRows);
+        var cand = Math.min(srW, srH, Math.floor(r * 0.62));
+        if (!best || cand > best.sr + 1e-9) best = {per: per, rows: nRows, sr: cand};
     }
+    var sr = Math.max(6, Math.floor(best.sr * 2) / 2);
+    var pitch = sr * 2 + gap;
+    var topY = cy - (best.rows - 1) * pitch / 2;
+    leftEdge = Infinity;
+    assignments.forEach(function(a, ai) {
+        var row = Math.floor(ai / best.per);
+        var inRow = Math.min(best.per, n - row * best.per);
+        var rx = gcx - (inRow - 1) * pitch / 2 + (ai - row * best.per) * pitch;
+        leftEdge = Math.min(leftEdge, rx - sr);
+        _appendPortCircle(cell, rx, topY + row * pitch, sr, roleColors, a, rawWiring, editable, onPortHover);
+    });
     if (editable) {
         // Feedline grip — drag to move the whole multiplexed feedline;
         // dragging a single circle moves just that one qubit.
