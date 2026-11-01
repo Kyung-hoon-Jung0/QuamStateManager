@@ -1090,7 +1090,7 @@ window.ChipStatus.mount = function (opts) {
         document.body.appendChild(probe);
         var m = (getComputedStyle(probe).color.match(/[\d.]+/g) || [255, 255, 255]).map(Number);
         probe.remove();
-        m = m.slice(0, 3);
+        m = m.length >= 3 ? m.slice(0, 3) : [255, 255, 255];   // an unparsed colour reads as white
         // D-96: the tile ground is the LIGHT one in every theme -- on a dark
         // surface both ends of the scale came out dark and the digits sank
         return _tmapLum(m) < 0.5 ? [250, 250, 248] : m;
@@ -1593,6 +1593,18 @@ window.ChipStatus.mount = function (opts) {
             metricTile('2Q gate fid. (IRB)', irbAgg, pct, fidRange, null, _ovStat('irb')), irbAgg, 'EPG', null));
         var irbCliffTile = _tid('irb_cliff', withErrLine(
             metricTile('2Q Clifford fid. (IRB×)', irbEpcAgg, pct, fidRange, null, _ovStat('irb_cliff')), irbEpcAgg, 'EPC', '×'));
+        // A converted tile with nothing to show says what it is built from, why
+        // it is empty and what fills it -- "no data" alone named none of that.
+        if (srbGateTile.muted && !srbDer.count) {
+            srbGateTile.sub = srbAgg.count
+                ? 'needs average_gates_per_clifford from the Standard-RB run (its folder was not found, or it predates that field)'
+                : 'no Standard-RB result yet — run 2Q Standard RB';
+        }
+        if (irbCliffTile.muted && !irbEpcAgg.count && !irbEpcAgg.bad) {
+            irbCliffTile.sub = irbAgg.count
+                ? 'needs average_gates_per_clifford — run 2Q Standard RB on the interleaved gate'
+                : 'no Interleaved-RB result yet — run 2Q Interleaved RB';
+        }
         // "excluded" alone would not say what happened. docs/184: the reason is
         // specific and the number it replaces was nonsense, so it is named.
         if (irbEpcDropped) {
@@ -4679,7 +4691,8 @@ window.ChipStatus.mount = function (opts) {
             if (key === 'T1' || key === 'T2ramsey' || key === 'T2echo') return (v).toFixed(1);
             if (key === 'f_01' || key === 'readout_frequency') return (v).toFixed(4);
             if (key === 'anharmonicity') return (v).toFixed(1);
-            if (typeof v === 'number') return v.toFixed(2);
+            // same significant figures as the map's own labels (0.03929, not 0.04)
+            if (typeof v === 'number') return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
             return String(v);
         }
 
@@ -4769,6 +4782,14 @@ window.ChipStatus.mount = function (opts) {
                 + '</span> <span>min ' + prop.fmtFn(agg.min) + '</span> <span>max ' + prop.fmtFn(agg.max)
                 + '</span> <span>(' + agg.count + '/' + topo.nodes.length + ' qubits)</span>'
                 + '</div>';
+            // a ghosted node says why: the stat line's count alone did not
+            var _noVal = topo.nodes.filter(function (n) { return _mv(n, def.key) == null && !_badFit(n, def.key); }).length;
+            if (_noVal > 0) {
+                sectionHtml += '<p class="muted topo-metric-novalue" style="margin:0 0 0.3rem">' + _noVal + ' of '
+                    + topo.nodes.length + ' qubits have no '
+                    + (def.source ? '<code>' + _esc(def.source) + '</code>' : _esc(def.title)) + ' value (shown faded'
+                    + (def.source ? '; fills once a run writes it' : '') + ')</p>';
+            }
 
             // ── Side-by-side: grid (left) + bar chart (right) ────────
             var chartId = secId + '-chart';
@@ -4875,11 +4896,11 @@ window.ChipStatus.mount = function (opts) {
                     // recolorBarCharts gives it (its tile carries no t), so a
                     // bar-palette switch no longer moves it off the low end.
                     var t = agg.count > 1 ? (_mv(n, def.key) - agg.min) / range : 0.5;
-                    return interpolateColor(t, _barColorScale);
+                    return _barFill(t, _tmap);
                 });
 
                 var displayVals = sorted.map(function(n) { return _mv(n, def.key); });
-                var xTitle = def.title;
+                var xTitle = _tmapTitle(def.title, def.key);   // the unit, as the map title carries it
                 if (def.key === 'T1' || def.key === 'T2ramsey' || def.key === 'T2echo') {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) * 1e6; });
                 } else if (def.key === 'f_01' || def.key === 'readout_frequency') {
@@ -4892,6 +4913,15 @@ window.ChipStatus.mount = function (opts) {
 
                 // Value annotations on each bar
                 var barText = displayVals.map(function(v) { return fmtBarLabel(v, def.key); });
+                var xAxis = {title: {text: xTitle}};
+                // a non-fidelity axis from 0 hides the spread between qubits
+                if (!/fidelity/.test(def.key) && displayVals.length) {
+                    var dLo = Math.min.apply(null, displayVals), dHi = Math.max.apply(null, displayVals);
+                    if (dLo > 0) {
+                        var dPad = (dHi - dLo) * 0.15 || Math.abs(dHi) * 0.01 || 1;
+                        xAxis.range = [Math.max(0, dLo - dPad), dHi + dPad];
+                    }
+                }
 
                 spec = {
                     chartId: chartId,
@@ -4908,7 +4938,7 @@ window.ChipStatus.mount = function (opts) {
                     }],
                     layout: {
                         margin: {l: 50, r: 60, t: 5, b: 28},
-                        xaxis: {title: {text: xTitle}},
+                        xaxis: xAxis,
                         yaxis: {autorange: 'reversed'},
                         plot_bgcolor: 'transparent', paper_bgcolor: 'transparent', bargap: 0.2
                     },
@@ -4977,6 +5007,12 @@ window.ChipStatus.mount = function (opts) {
         if (bhigh) bhigh.style.color = bs[bs.length - 1];
     }
 
+    // A bar beside a chip-map panel takes the map's own scale and fill, so the
+    // map legend reads for both; the tile-list fallback keeps the bar palette.
+    function _barFill(t, onMap) {
+        return onMap ? _tmapPaint(interpolateColor(t, dCfg.colorScale), _tmapSurface()).bg
+                     : interpolateColor(t, _barColorScale);
+    }
     // Helper: recolor all Plotly bar charts using _barColorScale
     function recolorBarCharts() {
         var stops = _barColorScale;
@@ -4995,9 +5031,10 @@ window.ChipStatus.mount = function (opts) {
                     var name = c.querySelector('.heatmap-cell-name');
                     if (name) cellMap[name.textContent.trim()] = parseFloat(c.getAttribute('data-heat-t'));
                 });
+                var onMap = !!gridEl.querySelector('.tmap');
                 var newColors = yLabels.map(function(label) {
                     var t = cellMap[label];
-                    return (t != null && !isNaN(t)) ? interpolateColor(t, stops) : stops[2];
+                    return (t != null && !isNaN(t)) ? _barFill(t, onMap) : stops[2];
                 });
                 Plotly.restyle(charts[j], {'marker.color': [newColors]}, [0]);
             } catch(e) {}
@@ -5048,6 +5085,7 @@ window.ChipStatus.mount = function (opts) {
             }
         }
         if (_rebuildHeroMap) _rebuildHeroMap();   // hero map repaints on the new palette
+        recolorBarCharts();                       // map-panel bars follow the map scale
         updateLegendSwatches();
     };
 
@@ -5397,6 +5435,18 @@ window.ChipStatus.mount = function (opts) {
             // as long as its target is on screen (Calibration, the last group,
             // stops ~150 px short of the top and used to light Frequencies).
             if (jumped) best = jumped;
+            // at the very top the first section is what is on screen, even when
+            // a short first section lets the second one reach the 130 px line
+            else if (pane && pane.scrollTop <= 2) {
+                var firstV = null, firstTop = Infinity;
+                Object.keys(TAB_SPEC).forEach(function (v) {
+                    var el = document.querySelector(TAB_SPEC[v].sel);
+                    if (!el || !el.getClientRects().length) return;
+                    var t = el.getBoundingClientRect().top;
+                    if (t < firstTop) { firstTop = t; firstV = v; }
+                });
+                if (firstV) best = firstV;
+            }
             if (best) _setActiveTab(best);
         }
         /* QA F-20: Back to Chip Status landed on the section ANCHOR, 300 px above
