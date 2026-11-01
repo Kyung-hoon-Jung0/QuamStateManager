@@ -69,11 +69,16 @@ class TestSidebarAffordance:
 
 
 class TestReportContent:
-    def test_standalone_dark_and_chromeless(self, client):
+    def test_standalone_themed_and_chromeless(self, client):
         b = client.get("/chip-status/report").get_data(as_text=True)
-        # standalone: its own <html>, forced DARK (r3: the report shows what
-        # users see in SM; print-color-adjust keeps the ink), no app chrome
-        assert 'data-theme="dark"' in b
+        # standalone: its own <html>; the screen follows the app theme (the
+        # shared boot) with page-only Theme buttons; paper and the download
+        # are light; print-color-adjust keeps the ink; no app chrome
+        assert "window.resolveSMTheme" in b
+        assert 'data-rep-theme="dark"' in b and 'data-rep-theme="light"' in b
+        assert "beforeprint" in b and "root.setAttribute('data-theme', 'light')" in b
+        assert "doc.setAttribute('data-theme', 'light')" in b
+        assert "localStorage.setItem" not in b.split("Screen theme")[1]
         assert "print-color-adjust: exact" in b
         assert "sidebar" not in b and "topbar" not in b
         assert 'id="pending-tray"' not in b

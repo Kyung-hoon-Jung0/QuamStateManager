@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 {# docs/126 #21 — the printable chip report; docs/277 — the shareable one.
-   STANDALONE by design: no base.html, no app chrome. Forced DARK theme (r3
-   feedback): the report shows what users see in SM, and print-color-adjust
-   makes the printer keep the dark background.
+   STANDALONE by design: no base.html, no app chrome. On screen it follows
+   the app's theme (the shared theme boot) and the toolbar's Theme buttons
+   switch it for this page only; paper and the downloaded file are always
+   LIGHT (the print handlers and buildStandalone set it), and
+   print-color-adjust keeps the light ink as drawn.
 
    docs/277: a Sections panel picks what the downloaded file holds. Overview
    and Chip Status render inline (the docs/188 tables, now in
@@ -13,8 +15,9 @@
    whitelist, the offline rule and the redaction rule before the file is
    saved. Every number in every section comes from the function its live page
    calls. #}
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
+{% include "_theme_boot.html" %}
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml"
@@ -29,8 +32,7 @@
     <style>
         /* report-local layout — theme TOKENS, not hardcoded colors, so the
            page (and the downloaded copy, which inlines the stylesheet under
-           the same data-theme="dark") renders exactly like SM's own dark
-           surfaces. Everything scoped so the shared stylesheet stays
+           data-theme="light") renders exactly like SM's own surfaces. Everything scoped so the shared stylesheet stays
            untouched. */
         body.chip-report { max-width: 1080px; margin: 0 auto; padding: 1.2rem 1.6rem 3rem;
                            background: var(--pico-background-color);
@@ -146,10 +148,12 @@
             body.chip-report { padding: 0.8rem 1rem 2rem; }
             .chip-report .rep-boxes { grid-template-columns: 1fr; }
         }
+        .chip-report .rep-theme { display: inline-flex; gap: 0.25rem; }
+        .chip-report .rep-theme [aria-pressed="true"] { background: var(--pico-primary-background); color: var(--pico-primary-inverse); border-color: var(--pico-primary-background); }
         @media print {
             .no-print { display: none !important; }
-            /* keep the dark ink — the browser's default background-stripping
-               would print light text on white paper */
+            /* paper is always light (beforeprint below); keep the drawn
+               colours instead of the browser's background stripping */
             body.chip-report { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             .chip-report h2 { break-after: avoid; }
             .chip-report table { break-inside: auto; }
@@ -167,6 +171,12 @@
     <div class="rep-toolbar no-print">
         <a class="rep-back" href="/topology">&larr; Back to Chip Status</a>
         <span class="rep-note" id="rep-status">One offline .html file with the checked sections.</span>
+        <span class="rep-theme" role="group" aria-label="Theme on this screen"
+              title="Theme on this screen only. Print and Download are always light.">
+            <button type="button" class="btn-sm outline" data-rep-theme="light">Light</button>
+            <button type="button" class="btn-sm outline" data-rep-theme="dark">Dark</button>
+            <button type="button" class="btn-sm outline" data-rep-theme="qm">QM</button>
+        </span>
         <button type="button" class="btn-sm" onclick="window.print()">Print</button>
         <button type="button" class="btn-sm outline" id="rep-download">Download HTML</button>
     </div>
@@ -540,7 +550,8 @@
                     if (keep.indexOf(el.getAttribute('data-rep-sec')) < 0) el.remove();
                     else el.removeAttribute('hidden');
                 });
-                doc.querySelectorAll('#rep-panel, #rep-download, #rep-status, iframe').forEach(function (el) { el.remove(); });
+                doc.setAttribute('data-theme', 'light');
+                doc.querySelectorAll('#rep-panel, #rep-download, #rep-status, .rep-theme, iframe').forEach(function (el) { el.remove(); });
                 doc.querySelectorAll('[data-rep-raw-tree]').forEach(function (el) {
                     el.removeAttribute('data-rep-raw-ready');
                     el.innerHTML = '<p class="rep-note">Opening the tree&hellip;</p>';
@@ -604,5 +615,33 @@
     })();
     </script>
 {% endif %}
+<script>
+/* Screen theme: page-only (never written to the app's saved theme); paper is
+   always light and the screen theme comes back after printing. */
+(function () {
+    var root = document.documentElement, onScreen = null;
+    function mark() {
+        var t = root.getAttribute('data-theme');
+        document.querySelectorAll('[data-rep-theme]').forEach(function (b) {
+            b.setAttribute('aria-pressed', b.getAttribute('data-rep-theme') === t ? 'true' : 'false');
+        });
+    }
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('[data-rep-theme]') : null;
+        if (!b) return;
+        root.setAttribute('data-theme', b.getAttribute('data-rep-theme'));
+        mark();
+    });
+    window.addEventListener('beforeprint', function () {
+        onScreen = root.getAttribute('data-theme');
+        root.setAttribute('data-theme', 'light');
+    });
+    window.addEventListener('afterprint', function () {
+        if (onScreen) root.setAttribute('data-theme', onScreen);
+        onScreen = null;
+    });
+    mark();
+})();
+</script>
 </body>
 </html>
