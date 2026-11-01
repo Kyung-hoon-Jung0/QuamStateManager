@@ -262,6 +262,64 @@ window.ComponentMap = (function () {
     pane.addEventListener("mouseleave", _paneLeave);
   }
 
+  // UD-3 (D-106): while the user has not chosen (no saved open/closed
+  // state) the drawing is scaled down so the table head reaches the first
+  // screen -- but never below an 11px map label. When that floor cannot bring
+  // the head in, the map keeps its natural size. A theme repaint rebuilds the
+  // SVG at natural size, so the observer puts the chosen size back.
+  var MIN_LABEL_PX = 11;
+  function _tableAfter(root) {
+    var pane = (root.closest && root.closest("#table-pane")) || document.body;
+    var ts = pane.querySelectorAll("table");
+    for (var i = 0; i < ts.length; i++) {
+      if (root.compareDocumentPosition(ts[i]) & Node.DOCUMENT_POSITION_FOLLOWING) return ts[i];
+    }
+    return null;
+  }
+  function fitUnsized(root, body) {
+    root.removeAttribute("data-cmap-fit");
+    if (root.getAttribute("data-cm-pick") === "1") return null;
+    // "open" / "0" are a person's choice; "1" is what every page view wrote
+    // before only a person's toggle was recorded, so it chose nothing
+    try {
+      var chosen = localStorage.getItem(openKey(root));
+      if (chosen !== null && chosen !== "1") return null;
+    } catch (e) { return null; }
+    var svg = body.querySelector("svg.cm-svg");
+    if (!svg) return null;
+    var W = parseFloat(svg.getAttribute("width")), H = parseFloat(svg.getAttribute("height"));
+    if (!(W > 0 && H > 0)) return null;
+    var minFs = Infinity, ts = svg.querySelectorAll("text");
+    for (var i = 0; i < ts.length; i++) {
+      var t = ts[i];
+      if (!t.getClientRects().length) continue;            // hidden by declutter / CSS
+      var f = parseFloat(getComputedStyle(t).fontSize);
+      if (f > 0 && f < minFs) minFs = f;
+    }
+    var table = _tableAfter(root);
+    var pane = (root.closest && root.closest("#table-pane")) || null;
+    if (!table || !isFinite(minFs)) return null;
+    var head = table.tHead || table;
+    var hr = head.getBoundingClientRect();
+    var bottom = pane ? pane.getBoundingClientRect().bottom : (window.innerHeight || 800);
+    // the head plus one more row's height must be on the first screen
+    var need = hr.bottom + hr.height - bottom;
+    var floor = MIN_LABEL_PX / minFs;
+    var s = need > 0 ? (H - need) / H : 1;
+    root.setAttribute("data-cmap-fit", s >= 1 ? "1" : (s >= floor ? s.toFixed(3) : "floor"));
+    if (s >= 1 || s < floor) return null;
+    function apply() {
+      var g = body.querySelector("svg.cm-svg");
+      if (!g || g.getAttribute("data-fit") === "1") return;
+      g.setAttribute("width", String(Math.round(W * s)));
+      g.setAttribute("height", String(Math.round(H * s)));
+      g.setAttribute("data-fit", "1");
+    }
+    apply();
+    if (window.MutationObserver) new MutationObserver(apply).observe(body, { childList: true });
+    return s;
+  }
+
   function mount(root) {
     if (!root || !window.TopoGraph) return;
     var body = root.querySelector(".cmap-body");
@@ -275,10 +333,17 @@ window.ComponentMap = (function () {
     try {
       var saved = localStorage.getItem(openKey(root));
       if (saved === "0") root.removeAttribute("open");
-      else if (saved === "1") root.setAttribute("open", "open");
+      else if (saved === "1" || saved === "open") root.setAttribute("open", "open");
     } catch (e) {}
+    // Only a person's toggle is a choice: a parsed <details open> fires its
+    // own toggle event, which used to be saved as one on every page view.
+    var sum = root.querySelector("summary");
+    if (sum) sum.addEventListener("click", function () { root._cmapByUser = true; });
     root.addEventListener("toggle", function () {
-      try { localStorage.setItem(openKey(root), root.open ? "1" : "0"); } catch (e) {}
+      if (root._cmapByUser) {
+        root._cmapByUser = false;
+        try { localStorage.setItem(openKey(root), root.open ? "open" : "0"); } catch (e) {}
+      }
       if (root.open && !root._cmapLoaded) load();
     });
 
@@ -311,6 +376,7 @@ window.ComponentMap = (function () {
           });
           _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);
+          fitUnsized(root, body);
         })
         .catch(function () {
           if (_active === mine && body.isConnected) {
@@ -323,5 +389,5 @@ window.ComponentMap = (function () {
     if (root.open) load();
   }
 
-  return { mount: mount };
+  return { mount: mount, fitUnsized: fitUnsized };
 })();

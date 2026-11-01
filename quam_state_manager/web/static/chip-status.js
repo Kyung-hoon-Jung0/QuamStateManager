@@ -2045,7 +2045,27 @@ window.ChipStatus.mount = function (opts) {
         var p = document.getElementById('ov-settings-pop');
         if (p) p.remove();
         document.removeEventListener('mousedown', _ovSetDocClose, true);
+        document.removeEventListener('scroll', _ovSetPlace, true);
+        window.removeEventListener('resize', _ovSetPlace);
+        _ovSetAnchor = null;
     }
+    /* R4-CS-3: the panel belongs to its button. It is placed below the
+       button (above it only when there is no room below) and follows it while
+       the page scrolls or resizes, so a scroll restored after a reload can no
+       longer leave it floating away from the button. */
+    var _ovSetAnchor = null;
+    function _ovSetPlace() {
+        var pop = document.getElementById('ov-settings-pop'), btn = _ovSetAnchor;
+        if (!pop || !btn || !btn.isConnected) return;
+        var r = btn.getBoundingClientRect();
+        var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
+        var h = pop.offsetHeight || 320, w = pop.offsetWidth || 330;
+        var top = r.bottom + 6;
+        if (top + h > vh - 8 && r.top - 6 - h >= 4) top = r.top - 6 - h;
+        pop.style.top = Math.max(4, top) + 'px';
+        pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
+    }
+    window._ovSetPlace = _ovSetPlace;
     function _ovStatOf(prefs, id) {
         if (id.indexOf('custom:') === 0) {
             var a = prefs.added[parseInt(id.slice(7), 10)];
@@ -2139,12 +2159,20 @@ window.ChipStatus.mount = function (opts) {
         pop.id = 'ov-settings-pop';
         document.body.appendChild(pop);
         _ovRenderSettingsBody(pop);
-        var r = btn && btn.getBoundingClientRect ? btn.getBoundingClientRect() : { bottom: 60, left: 200 };
-        var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
-        pop.style.top = Math.max(4, Math.min(r.bottom + 6, vh - (pop.offsetHeight || 320) - 8)) + 'px';
-        pop.style.left = Math.max(8, Math.min(r.left, vw - (pop.offsetWidth || 330) - 8)) + 'px';
+        _ovSetAnchor = (btn && btn.getBoundingClientRect) ? btn : null;
+        if (_ovSetAnchor) {
+            // no room below and none above: bring the button up first
+            var r0 = btn.getBoundingClientRect(), h0 = pop.offsetHeight || 320;
+            var vh0 = window.innerHeight || 800;
+            if (r0.bottom + 6 + h0 > vh0 - 8 && r0.top - 6 - h0 < 4) {
+                try { btn.scrollIntoView({ block: 'start' }); } catch (e) { /* old engine */ }
+            }
+            _ovSetPlace();
+        } else { pop.style.top = '60px'; pop.style.left = '200px'; }
         _ovFocusFirst(pop);                 // QA chipstatus-r2-20
         document.addEventListener('mousedown', _ovSetDocClose, true);
+        document.addEventListener('scroll', _ovSetPlace, true);
+        window.addEventListener('resize', _ovSetPlace);
     };
 
     function _ovOpenPopover(anchor, tileId) {
@@ -5867,15 +5895,15 @@ window.ChipStatus.mount = function (opts) {
                     return metricLabel(m) + ' ' + f(v) + ' (fail ' + (lower ? '> ' : '< ') + f(+th.fail) + ')';
                 }
                 avoid = ' &middot; <span class="verdict-avoid">avoid (below fail spec on '
-                    + _esc(whyKeys.map(metricLabel).join(', ')) + '): ' + failQubits.slice(0, 8).map(function(id) {
+                    + _esc(whyKeys.map(metricLabel).join(', ')) + '): <span class="verdict-avoid-chips">' + failQubits.slice(0, 8).map(function(id) {
                     // Escaped data-attr + delegated handler (no id in a JS string / onclick)
                     // so a hostile qubit name can't break out and execute. See _setupInspectDelegation.
                     return '<button type="button" class="verdict-avoid-chip" data-inspect-id="' + _esc(id) + '" data-inspect-kind="q"'
                         + ' title="' + _esc(id + ': ' + (failWhy[id] || []).map(function(m) { return _whyVal(id, m); }).join(', ')) + '">'
                         + _esc(id) + '</button>';
                 }).join('')
-                    + (moreN > 0 ? ' <span class="verdict-avoid-more">+' + moreN + ' more</span>' : '')
-                    + '</span>';
+                    + (moreN > 0 ? '<span class="verdict-avoid-more">+' + moreN + ' more</span>' : '')
+                    + '</span></span>';
             }
             // K6 (docs/308 stage 4): a dot + one bold conclusion + the evidence
             // sentence unchanged; green lives on the dot only (D-7).
@@ -5988,10 +6016,12 @@ window.ChipStatus.mount = function (opts) {
             var disp = METRIC_DISPLAY[k] || { unit: '', scale: 1, dec: 3 };
             var edited = _threshEdited(k);
             // Provenance cell: "default", or "edited" + a ↺ reset-this-row button.
+            // R4-CS-10: the "not a number" note sits in the row, beside the fields
+            var nan = '<span class="ui-pill ui-pill--danger thresh-nan" data-metric="' + k + '" hidden>not a number</span>';
             var prov = edited
                 ? '<span class="thresh-prov edited">edited <button type="button" class="thresh-reset-row" data-metric="' + k +
-                  '" title="Reset this metric to the spec default" aria-label="Reset to spec default">↺</button></span>'
-                : '<span class="thresh-prov default">default</span>';
+                  '" title="Reset this metric to the spec default" aria-label="Reset to spec default">↺</button>' + nan + '</span>'
+                : '<span class="thresh-prov default">default' + nan + '</span>';
             html += '<label class="thresh-label">' + labelHtml(k, false) + '</label>' +
                     // docs/192 CS02: the SAVED value rides on the field, so
                     // "typed but not applied" is a comparison rather than a flag
@@ -6031,6 +6061,10 @@ window.ChipStatus.mount = function (opts) {
                 inp.classList.remove('thresh-invalid'); inp.removeAttribute('aria-invalid');
                 _threshMarkDirty();
             });
+            // the browser keeps a non-number out of .value, so the change
+            // and blur events are where an abandoned "1.2.3" shows up too
+            inp.addEventListener('change', _threshMarkDirty);
+            inp.addEventListener('blur', _threshMarkDirty);
         });
         // No sweep after a build on purpose: `buildThresholdEditor` replaces the
         // whole innerHTML, so every field comes back with value === data-saved
@@ -6051,16 +6085,33 @@ window.ChipStatus.mount = function (opts) {
         // typed and then closed away must not hold back the page refresh (or
         // the spec re-read) for good, with the only line saying why hidden too.
         if (!host || host.hidden) return 0;
-        var n = 0;
+        var n = 0, bad = {};
         host.querySelectorAll('.thresh-in').forEach(function(inp) {
             var saved = inp.getAttribute('data-saved');
             var dirty = saved !== null && String(inp.value) !== String(saved);
             inp.classList.toggle('thresh-dirty', dirty);
             if (dirty) n++;
+            // R4-CS-10: a field that does not hold a number says so beside
+            // itself, and Update stays off until every field does
+            var nan = _threshNotANumber(inp);
+            if (nan) { bad[inp.getAttribute('data-metric')] = 1; inp.classList.add('thresh-invalid'); inp.setAttribute('aria-invalid', 'true'); }
         });
+        host.querySelectorAll('.thresh-nan').forEach(function(m) {
+            m.hidden = !bad[m.getAttribute('data-metric')];
+        });
+        var nBad = Object.keys(bad).length;
+        var ub = host.querySelector('.thresh-apply');
+        if (ub) {
+            ub.disabled = nBad > 0;
+            if (nBad) ub.title = 'Every field needs a number before the bands can be updated';
+            else ub.removeAttribute('title');
+        }
         var st = document.getElementById('thresh-status');
         if (st) {
-            if (n) {
+            if (nBad) {
+                st.classList.add('thresh-status-dirty');
+                st.textContent = 'a field is not a number — the colour bands cannot be updated until it is';
+            } else if (n) {
                 st.classList.add('thresh-status-dirty');
                 st.textContent = n + (n === 1 ? ' threshold is' : ' thresholds are')
                     + ' typed but NOT applied — press "Update colour bands"';
@@ -6074,6 +6125,16 @@ window.ChipStatus.mount = function (opts) {
         return n;
     }
     window._threshMarkDirty = _threshMarkDirty;
+    function _threshNotANumber(inp) {
+        if (inp.validity && inp.validity.badInput) return true;
+        var v = String(inp.value).trim();
+        return v === '' || !isFinite(parseFloat(v));
+    }
+    function _threshInvalidCount() {
+        var host = document.getElementById('topo-thresh-editor'), n = 0;
+        if (host) host.querySelectorAll('.thresh-in').forEach(function(inp) { if (_threshNotANumber(inp)) n++; });
+        return n;
+    }
 
     // QA chipstatus-r2-07: every view that judges against `thresholds` is
     // re-derived together -- the Health tile and the Overview 'Qubits In
@@ -6102,6 +6163,7 @@ window.ChipStatus.mount = function (opts) {
     }
     window.applyThresholds = function() {
         var host = document.getElementById('topo-thresh-editor'); if (!host) return;
+        if (_threshInvalidCount()) { _threshMarkDirty(); return; }   // R4-CS-10: Enter obeys the disabled button too
         // QA chipstatus-r2-06: only the bounds this person changed -- the same
         // typed-vs-saved comparison _threshMarkDirty draws. Re-posting every
         // field let a tab opened earlier erase another window's saved bands,
@@ -6170,6 +6232,7 @@ window.ChipStatus.mount = function (opts) {
             buildThresholdEditor();
             _rederiveSpecViews();
             var s2 = document.getElementById('thresh-status');
+            _threshReturn();
             if (s2) { s2.textContent = '✓ saved for everyone using this SM';
                       s2.classList.add('applied');
                       setTimeout(function() { if (s2) { s2.classList.remove('applied'); } }, 1600); }
@@ -6178,8 +6241,58 @@ window.ChipStatus.mount = function (opts) {
     window.toggleThresholdEditor = function() {
         var host = document.getElementById('topo-thresh-editor');
         if (!host) return;
-        if (host.hidden) { buildThresholdEditor(); host.hidden = false; _refreshSpec(); } else { host.hidden = true; }
+        if (host.hidden) {
+            buildThresholdEditor(); host.hidden = false; _refreshSpec();
+            // R4-CS-3: the editor opens where it can be seen, ready to type
+            _threshReveal(host);
+            var first = host.querySelector('.thresh-in');
+            if (first) { try { first.focus({ preventScroll: true }); } catch (e2) { first.focus(); } }
+        } else { host.hidden = true; _threshReturn(); }
     };
+    /* R4-CS-4: the sub-nav gear opens the one editor (D-99) in the Health
+       section; Update or closing it brings the reader back to where the
+       gear was pressed, with focus on the gear. */
+    var _threshBack = null;
+    function _threshPane() { return document.getElementById('table-pane'); }
+    // below the pinned sub-nav, not under it
+    function _threshReveal(host) {
+        var pane = _threshPane();
+        try { host.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ }
+        var nav = document.querySelector('.topo-subnav');
+        if (!pane || !nav) return;
+        var under = nav.getBoundingClientRect().bottom + 8 - host.getBoundingClientRect().top;
+        if (under > 0) pane.scrollTop -= under;
+    }
+    // the place is the section at the reading line and how far into it --
+    // panels above it may still be built while the editor is open
+    window._threshRememberReturn = function(gear) {
+        var pane = _threshPane(), at = null, off = 0;
+        if (pane) {
+            var line = pane.getBoundingClientRect().top + 130;
+            pane.querySelectorAll('.topo-section').forEach(function(sec) {
+                var t = sec.getBoundingClientRect().top;
+                if (sec.offsetParent && t <= line && (!at || t > at.t)) at = { el: sec, t: t };
+            });
+            if (at) off = at.t - pane.getBoundingClientRect().top;
+        }
+        _threshBack = { el: at && at.el, off: off, top: pane ? pane.scrollTop : null, gear: gear || null };
+    };
+    function _threshReturn() {
+        var b = _threshBack; _threshBack = null;
+        if (!b) return;
+        var pane = _threshPane();
+        function land() {
+            if (!pane) return;
+            if (b.el && b.el.isConnected) {
+                pane.scrollTop += b.el.getBoundingClientRect().top - pane.getBoundingClientRect().top - b.off;
+            } else if (b.top != null) pane.scrollTop = b.top;
+        }
+        land();
+        if (window.requestAnimationFrame) requestAnimationFrame(function() { requestAnimationFrame(land); });
+        if (b.gear && b.gear.isConnected) { try { b.gear.focus({ preventScroll: true }); } catch (e) {} }
+    }
+    window._threshReturnForTest = function() { return _threshBack; };
+    window._threshRevealForGear = _threshReveal;
     // QA chipstatus-r2-06: another window may have saved bands since this page
     // rendered. Opening the editor, and coming back to the tab, re-read the
     // server's answer -- never over a field typed and not yet applied.
@@ -7963,11 +8076,15 @@ window.ChipTrends = (function () {
         try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (e) { /* storage blocked */ }
         apply(on);
     };
-    window.chipOpenThresholds = function () {
+    window.chipOpenThresholds = function (gear) {
         var host = document.getElementById('topo-thresh-editor');
         if (!host || typeof window.toggleThresholdEditor !== 'function') return;
-        if (host.hidden) window.toggleThresholdEditor();
-        try { host.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ }
+        if (host.hidden) {
+            if (window._threshRememberReturn) window._threshRememberReturn(gear);
+            window.toggleThresholdEditor();
+        } else if (window._threshRevealForGear) {
+            window._threshRevealForGear(host);
+        }
     };
     function restore() {
         var v = null;
