@@ -77,7 +77,7 @@
   {% if is_loaded_chip %}
   <details class="ph-drift-card" open>
     <summary class="ph-drift-title">Live changes since baseline
-      <small class="muted">— what the live chip changed (formerly the main-screen alarm)</small></summary>
+      <small class="muted">— what the live chip changed</small></summary>
     <div id="live-drift-panel"
          hx-get="/state/drift/view?embed=1"
          hx-trigger="load, liveDriftChanged from:body"
@@ -345,9 +345,9 @@
     <div class="phf-row">
       <label class="phf-label">Properties</label>
       <span class="phf-allnone">
-        <button type="button" class="btn-xs outline"
+        <button type="button" class="btn-sm outline"
                 onclick="paramHistoryFilterSetRow(this, true)">All</button>
-        <button type="button" class="btn-xs outline"
+        <button type="button" class="btn-sm outline"
                 onclick="paramHistoryFilterSetRow(this, false)">None</button>
       </span>
       <input type="hidden" name="props" value="">
@@ -365,9 +365,9 @@
     <div class="phf-row">
       <label class="phf-label">Qubits</label>
       <span class="phf-allnone">
-        <button type="button" class="btn-xs outline"
+        <button type="button" class="btn-sm outline"
                 onclick="paramHistoryFilterSetRow(this, true)">All</button>
-        <button type="button" class="btn-xs outline"
+        <button type="button" class="btn-sm outline"
                 onclick="paramHistoryFilterSetRow(this, false)">None</button>
       </span>
       <input type="hidden" name="qubits" value="">
@@ -396,7 +396,7 @@
          chip selector and the filter form itself until a full reload. #}
       <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
          hx-select="unset" hx-swap="outerHTML" hx-push-url="true"
-         class="phf-chip" role="button" style="text-decoration:none">Reset filters</a>
+         class="btn-sm secondary" role="button" style="text-decoration:none">Reset filters</a>
       {% if is_loaded_chip %}{# S10 walk (N4): an import into the OPEN chip #}
       <button type="button" class="phf-backfill outline btn-sm"
               onclick="paramHistoryBackfill()">Import from workspace &#8635;</button>

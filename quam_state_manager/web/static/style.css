@@ -230,9 +230,9 @@
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e67e22;   /* Readout resonator   — orange   */
     --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
-    --role-z-color:         #3498db;   /* Flux / Z line       — blue     */
+    --role-z-color:         #2471a3;   /* Flux / Z line       — blue     */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
-    --role-twpa-pump-color: #e74c3c;   /* TWPA pump           — red      */
+    --role-twpa-pump-color: #c8392b;   /* TWPA pump           — red      */
     --role-twpa-ro-color:   #a93226;   /* TWPA readout        — dark red */
     --role-twpa-in-color:   #d63384;   /* TWPA input          — magenta  */
     --role-digital-color:   #54617a;   /* Digital output / trigger — slate */
@@ -1264,8 +1264,8 @@ html.topbar-hidden .topbar-reveal { display: block; }
     display: inline-flex; align-items: center; justify-content: center;
     width: 1.1rem; height: 1.1rem; margin: 0 0 0 0.2rem; padding: 0; line-height: 1;
     border: 1px solid var(--pico-muted-border-color); border-radius: 50%;
-    background: none; color: var(--pico-muted-color); font-size: 0.7rem; font-weight: 700;
-    cursor: help; opacity: 0.55; vertical-align: middle;
+    background: none; color: var(--ui-text); font-size: var(--ui-fs-xs); font-weight: 700;
+    cursor: help; opacity: 0.8; vertical-align: middle;
 }
 .key-help-btn:hover { opacity: 1; color: var(--pico-primary); border-color: var(--pico-primary); }
 /* docs/141 4w: on a Json-tree row the ? is hover-revealed like the row's
@@ -2883,7 +2883,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     display: flex; align-items: center; gap: 0.4rem;
 }
 .table-filter .table-export { margin: 0; white-space: nowrap; }
-.pair-czplan-link { margin-left: .4rem; font-size: .8em; white-space: nowrap; }
+.pair-czplan-link { margin-left: .4rem; font-size: var(--ui-fs-xs); white-space: nowrap; }
 /* P1-13: the readout LO / IF line in the qubit inspector */
 .ro-lo-if { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; margin: .5rem 0; font-size: .88em; }
 .calc-s4-src { display: block; min-height: 1em; }
@@ -3722,7 +3722,7 @@ table.prop-table tbody tr:hover td { background: var(--prop-table-row-hover-bg);
 
 .pointer-badge {
     font-family: var(--font-mono);
-    font-size: 0.8em; padding: 1px 4px; border-radius: 3px;
+    font-size: var(--ui-fs-xs); padding: 1px 4px; border-radius: 3px;
     background: var(--pointer-badge-bg); color: var(--pointer-badge-text); word-break: break-all;
 }
 .selfref-badge {
@@ -3866,7 +3866,7 @@ input.edit-input {
 .role-badge.xy      { background: var(--role-xy-color); color: #fff; }      /* purple, dark enough for white */
 .role-badge.rr      { background: var(--role-rr-color); color: #1a1a1a; }
 .role-badge.rr_in   { background: var(--role-rr-in-color); color: #fff; }      /* r6 P2-16: dark fill, white text */
-.role-badge.z       { background: var(--role-z-color); color: #1a1a1a; }
+.role-badge.z       { background: var(--role-z-color); color: #fff; }
 .role-badge.coupler { background: var(--role-coupler-color); color: #1a1a1a; }
 .role-badge.twpa_pump { background: var(--role-twpa-pump-color); color: #fff; }
 .role-badge.twpa_ro   { background: var(--role-twpa-ro-color); color: #fff; }
@@ -4911,7 +4911,7 @@ html.topbar-hidden .topo-hero-controls {
    normal text colour as TEXT (never a *-border/fill token as text — the
    light-theme washout rule). cursor:help signals the tooltip. */
 .topo-dashboard .metric-label[title] { cursor: help; }
-.topo-dashboard .metric-dir { font-size: 0.82em; font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: var(--pico-color); cursor: help; }
+.topo-dashboard .metric-dir { font-size: var(--ui-fs-xs); font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: var(--pico-color); cursor: help; }
 .topo-prop-value { flex: 1; padding: 1px 5px; text-align: right; font-family: monospace; border-radius: 2px; white-space: nowrap; }
 .topo-edge-label {
     position: absolute; z-index: 3; font-size: var(--topo-edge-label-size); font-family: monospace;
@@ -5472,7 +5472,7 @@ html.diag-page-live #diagnostics-banner-slot { display: none; }
 }
 .live-drift-banner .topo-change-banner-btn { background: var(--color-accent); color: #fff; }
 .live-drift-banner .topo-change-banner-btn:hover { filter: brightness(1.08); }
-.live-drift-banner .topo-change-banner-dismiss { color: var(--color-info-text); }
+.live-drift-banner .topo-change-banner-dismiss { color: var(--color-info-text); } .diag-error-banner .topo-change-banner-dismiss { color: inherit; }
 .live-drift-banner { margin: 0.5rem 1rem; }   /* base-level breathing room */
 
 /* Live-drift panel (embedded in State History) + overlay body. */
@@ -5662,7 +5662,7 @@ p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
 .tree-toggle {
     display: inline-block; width: 16px; text-align: center;
     cursor: pointer; user-select: none; flex-shrink: 0;
-    font-size: 0.7em; color: var(--pico-muted-color);
+    font-size: var(--ui-fs-xs); color: var(--pico-muted-color);
 }
 .tree-toggle:hover { color: var(--pico-color); }
 .tree-toggle-spacer { display: inline-block; width: 16px; flex-shrink: 0; }
@@ -6206,7 +6206,7 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 .bulk-seg:last-child { border-right: 0; }
 .bulk-seg:hover { background: color-mix(in srgb, var(--pico-primary) 7%, transparent); }
 .bulk-seg.active { background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
-    color: var(--pico-primary); font-weight: 600;
+    color: var(--pico-primary-hover); font-weight: 600;
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pico-primary) 55%, transparent); }
 
 /* ── All values (Live State Edit completeness tab) virtual scroller ──────────
@@ -8269,7 +8269,7 @@ button.recents-item:focus {
     flex: 0 0 auto;
     display: inline-flex; align-items: center; justify-content: center;
     width: 1.1em; min-width: 1.1em;
-    font-family: var(--font-mono); font-size: 0.733em; font-weight: 700;
+    font-family: var(--font-mono); font-size: var(--ui-fs-xs); font-weight: 700;
     font-variant-numeric: tabular-nums; line-height: 1.45;
     color: var(--pico-muted-color);
     background: none; border-radius: 0;
@@ -9389,7 +9389,7 @@ tr.gen-pop-row-linked > td {
 #gen-env-list .gen-env-status {
     flex: 0 0 auto; align-self: center; white-space: nowrap;
     font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-    font-size: 0.733em; font-weight: 600; line-height: 1.5;
+    font-size: var(--ui-fs-xs); font-weight: 600; line-height: 1.5;
     padding: 0 5px; border-radius: 8px;
     border: 1px solid transparent; background: none;
 }
@@ -10509,7 +10509,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-phys-why { display: block; font-size: 0.7em; opacity: 0.45; font-family: var(--font-ui); cursor: help; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
 .bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); z-index: 1; min-width: 4.6em; padding: 0 .4em; white-space: nowrap; background: var(--pico-card-background-color); border-left: 1px solid var(--pico-muted-border-color); box-shadow: -6px 0 6px -6px color-mix(in srgb, black 35%, transparent); }
-.btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }
+.btn-xs { padding: 0.05rem 0.5rem; font-size: var(--ui-fs-xs); width: auto; margin: 0; }
 .bulk-row-error { display: block; color: var(--color-error-text); font-size: 0.72em; max-width: 20ch; white-space: normal; }
 /* These two error spans use display:block, which OVERRIDES the HTML `hidden`
    attribute (class beats the UA [hidden]{display:none} rule) — so while hidden they
@@ -10649,7 +10649,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    rather than let the single value read as the only one. */
 .bulk-col-multi { margin-left: 0.15rem; font-size: 0.8em; color: var(--warn-fg, var(--pico-muted-color)); cursor: help; }
 .bulk-sort-caret { color: var(--pico-primary, #0172ad); font-size: 0.85em; }
-.bulk-col-stats { display: block; font-weight: 400; font-size: 0.72em; white-space: nowrap; }
+.bulk-col-stats { display: block; font-weight: 400; font-size: var(--ui-fs-sm); white-space: nowrap; }
 /* before / after hover panel on a modified cell */
 .bulk-td { position: relative; }
 .bulk-ba { display: none; position: absolute; left: 4px; top: 100%; z-index: 6; margin-top: 2px;
@@ -10935,7 +10935,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark-lab .spark-q { stroke-dasharray: 3 2; }
 /* v1.3.0: nowrap, so the table's auto layout gives the Waveform column the
    width of "-> x90_DragCosine" instead of wrapping it while Class stays wide */
-.pulse-alias-target { font-family: var(--font-mono); font-size: 0.8em; white-space: nowrap; }
+.pulse-alias-target { font-family: var(--font-mono); font-size: var(--ui-fs-sm); white-space: nowrap; }
 /* Multi-select checkboxes + compare bar */
 .pulse-sel-col { width: 28px; padding: 2px 4px !important; text-align: center; }
 .pulse-sel-col input[type="checkbox"] { margin: 0; }
@@ -10993,7 +10993,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 
 .pulse-flag-iq, .pulse-flag-readout {
-    font-size: 0.75em; font-weight: 700; padding: 0 4px; border-radius: 3px;
+    font-size: var(--ui-fs-xs); font-weight: 700; padding: 0 4px; border-radius: 3px;
     color: var(--pico-color); border: 1px solid var(--pico-muted-border-color);
     vertical-align: middle;
 }
@@ -12940,7 +12940,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* "a light SM blue" — a tint and blue text, not a solid block. Deliberately the
    same expression the Table/Flat control beside it uses, so two controls in one
    row read as one language rather than competing for attention. */
-.bulk-docbadge.active { color: var(--pico-primary); font-weight: 600;
+.bulk-docbadge.active { color: var(--pico-primary-hover); font-weight: 600;
     background: color-mix(in srgb, var(--pico-primary) 14%, transparent); }
 .bulk-docbadge.active:hover {
     background: color-mix(in srgb, var(--pico-primary) 20%, transparent); }
@@ -14097,7 +14097,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     background: var(--pico-card-sectioning-background-color);
     font-size: .82em;
 }
-.ag-wire-badge { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: .08em .5em; border-radius: .6em; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); flex: none; }
+.ag-wire-badge { font-size: var(--ui-fs-xs); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: .08em .5em; border-radius: .6em; border: 1px solid var(--pico-muted-border-color); color: var(--pico-muted-color); flex: none; }
 .ag-wire-ok   { color: var(--color-success-text); border-color: var(--color-success-border); }
 .ag-wire-warn { color: var(--color-warning-text); border-color: var(--color-warning-text); }
 .ag-wire-static { color: var(--pico-muted-color); }
@@ -14105,7 +14105,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-wire-cli { white-space: nowrap; }
 .ag-wire-cli b { font-weight: 600; }
 .ag-wire-off { color: var(--pico-muted-color); }
-.ag-wire-sep { color: var(--pico-muted-border-color); }
+.ag-wire-sep { color: var(--pico-muted-color); }
 .ag-wire-tested { color: var(--color-success-text); }
 /* a span, not a badge: inside a line of prose an outlined pill reads as a
    second status */
@@ -14502,7 +14502,7 @@ tr.diag-row-collapsed { display: none; }
     display: inline-flex; align-items: stretch; margin: 0 .2rem 0 .3rem;
     border: 1px solid var(--pico-muted-border-color); border-radius: 999px;
     overflow: hidden; white-space: nowrap; max-width: 100%;
-    --sc-accent: #22c55e;
+    --sc-accent: #16a34a;
 }
 .sync-control .state-status-badge.sync-control-main {
     margin: 0; border: 0; border-radius: 0; padding: 3px 8px 3px 10px;
@@ -14514,7 +14514,7 @@ tr.diag-row-collapsed { display: none; }
     font-weight: 500; color: var(--pico-muted-color); font-size: .92em;
     max-width: 16ch; overflow: hidden; text-overflow: ellipsis;
 }
-.sync-control-caret { color: var(--pico-muted-color); font-size: .8em; }
+.sync-control-caret { color: var(--pico-muted-color); font-size: var(--ui-fs-xs); }
 .sync-control-act {
     margin: 0; border: 0; border-left: 1px solid var(--pico-muted-border-color);
     border-radius: 0; padding: 2px 11px; width: auto;
@@ -14526,7 +14526,7 @@ tr.diag-row-collapsed { display: none; }
 .sync-control-act:disabled { opacity: .55; cursor: progress; }
 /* one colour per state family: green = in sync, amber = mine, blue = the live
    side moved, red = both sides touched one field / a refused apply */
-.sync-st-synced   { --sc-accent: #22c55e; }
+.sync-st-synced   { --sc-accent: #16a34a; }
 .sync-st-mine, .sync-st-staged { --sc-accent: #f59e0b; border-color: #f59e0b;
     background: color-mix(in srgb, #f59e0b 12%, transparent); }
 .sync-st-live, .sync-st-both { --sc-accent: #38bdf8; border-color: #38bdf8;
@@ -15250,7 +15250,7 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
 .ag-welcome p { margin: 0 0 .5rem; line-height: 1.45; }
 .ag-try { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 .55rem; }
 .ag-try-q { width: auto; margin: 0; padding: .25rem .7rem; font-size: .78rem; border-radius: 999px; cursor: pointer;
-    background: transparent; color: var(--color-accent); border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent); }
+    background: transparent; color: var(--ui-text); border: 1px solid color-mix(in srgb, var(--color-accent) 55%, transparent); }
 .ag-try-q:hover { background: color-mix(in srgb, var(--color-accent) 14%, transparent); }
 .ag-welcome-foot { font-size: .76rem; }
 /* docs/288: the Agent page's status lines read as ONE compact block */
@@ -15477,9 +15477,9 @@ details.jargon > .jargon-explain {
     --role-xy-color: #9b59b6;
     --role-rr-color: #e67e22;
     --role-rr-in-color: #9e4f00;
-    --role-z-color: #3498db;
+    --role-z-color: #2471a3;
     --role-coupler-color: #1abc9c;
-    --role-twpa-pump-color: #e74c3c;
+    --role-twpa-pump-color: #c8392b;
     --role-twpa-ro-color: #a93226;
     --role-twpa-in-color: #d63384;
     --role-digital-color: #54617a;

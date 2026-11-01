@@ -152,10 +152,10 @@ var UI_CONFIG = {
                                    in lightness (2.06, which also survives colour-blindness),
                                    stands out on both theme backgrounds and carries the white
                                    port label at 5.9:1 */
-        z:         '#3498db',   /* Flux / Z line       — blue     */
+        z:         '#2471a3',   /* Flux / Z line       — blue     */
         coupler:   '#1abc9c',   /* Coupler             — teal     */
         cr:        '#27ae60',   /* Cross-resonance drive — green  */
-        twpa_pump: '#e74c3c',   /* TWPA pump           — red      */
+        twpa_pump: '#c8392b',   /* TWPA pump           — red      */
         twpa_ro:   '#a93226',   /* TWPA readout        — dark red */
         twpa_in:   '#d63384',   /* TWPA input          — magenta  */
         digital:   '#54617a',   /* Digital output / trigger — slate */
@@ -182,11 +182,11 @@ var UI_CONFIG = {
     instrumentWiring: {
         gridBg:            '#f8f8f8',   /* background fill of the port grid area */
         gridBorder:        '#dddddd',   /* border drawn around the entire grid */
-        rowLabelColor:     '#aaaaaa',   /* color of the row number labels on the left */
+        rowLabelColor:     '#5f5f5f',   /* color of the row number labels on the left */
         separatorColor:    '#bbbbbb',   /* color of the vertical lines dividing FEM columns */
         subSeparatorColor: '#cccccc',   /* color of the dashed lines separating OUT and IN sub-columns */
-        subLabelColor:     '#999999',   /* color of the OUT / IN column header labels */
-        femLabelColor:     '#888888',   /* color of the FEM ID label at the bottom of each column */
+        subLabelColor:     '#5f5f5f',   /* color of the OUT / IN column header labels */
+        femLabelColor:     '#5f5f5f',   /* color of the FEM ID label at the bottom of each column */
         portLabelColor:    '#ffffff',   /* color of the text printed on colored port circles */
         emptyPortFill:     '#e8e8e8',   /* fill color of ports that are not physically present */
         emptyPortStroke:   '#cccccc',   /* border color of ports that are not physically present */
@@ -2489,11 +2489,11 @@ var _lightDefaults = {
     edgeFidelityBad: '#9ecae1',
     iwGridBg:        '#f8f8f8',
     iwGridBorder:    '#dddddd',
-    iwRowLabel:      '#aaaaaa',
+    iwRowLabel:      '#5f5f5f',
     iwSeparator:     '#bbbbbb',
     iwSubSeparator:  '#cccccc',
-    iwSubLabel:      '#999999',
-    iwFemLabel:      '#888888',
+    iwSubLabel:      '#5f5f5f',
+    iwFemLabel:      '#5f5f5f',
     iwEmptyFill:     '#e8e8e8',
     iwEmptyStroke:   '#cccccc',
     iwUnassignedFill:'#ffffff',
@@ -2522,11 +2522,11 @@ function _applyThemeToPlotly(theme) {
         t.edgeFidelityBad  = '#2e5578';
         iw.gridBg            = '#1e1e2e';
         iw.gridBorder        = '#444';
-        iw.rowLabelColor     = '#666';
+        iw.rowLabelColor     = '#a0a0a8';
         iw.separatorColor    = '#555';
         iw.subSeparatorColor = '#555';
-        iw.subLabelColor     = '#777';
-        iw.femLabelColor     = '#888';
+        iw.subLabelColor     = '#a0a0a8';
+        iw.femLabelColor     = '#a0a0a8';
         iw.emptyPortFill     = '#2a2a3a';
         iw.emptyPortStroke   = '#444';
         iw.unassignedFill    = '#1e1e2e';

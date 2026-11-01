@@ -137,7 +137,7 @@ class TestAllNoneTogglers:
 
     def test_buttons_use_house_button_style(self, filter_form):
         for m in re.finditer(r"<button[^>]*paramHistoryFilterSetRow[^>]*>", filter_form):
-            assert "btn-xs" in m.group(0)
+            assert "btn-sm" in m.group(0)  # R4 S9 (D-50): a command button, the house small size
 
 
 class TestClientWiring:

@@ -8,16 +8,15 @@
 </div>
 {% if show_running_banner %}<div id="qualibrate-running-slot" hx-swap-oob="innerHTML">{% include '_qualibrate_running_banner.html' %}</div>{% endif %}
 
+{% from '_ui.html' import ui_path %}
 {# ---- top strip: active project + provenance + versions ---- #}
 <div class="qualibrate-topstrip">
-    <p>
-        <strong>Active project:</strong>
-        {% if listing.active %}<code>{{ listing.active }}</code>{% else %}<span class="muted">(none)</span>{% endif %}
-        &nbsp;·&nbsp; <strong>Config root:</strong> <code>{{ listing.config_dir }}</code>
-        <small class="muted">(resolved via {{ listing.source }})</small>
-        &nbsp;·&nbsp; <strong>Versions:</strong>
-        {# v1.3.0 B2: a version the config does not set reads 'not set', never 'vNone' #}
-        {% for _k in ('qualibrate', 'quam') %}{{ ' / ' if not loop.first }}{{ _k }} {% if listing.versions[_k] is none %}<span class="muted">(version not set)</span>{% else %}v{{ listing.versions[_k] }}{% endif %}{% endfor %}
+    <table class="ui-table ui-table--kv qualibrate-kv"><tbody>
+        <tr><th class="ui-table-head" scope="row">Active project</th><td class="ui-table-cell">{% if listing.active %}<code class="ui-chip">{{ listing.active }}</code>{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th class="ui-table-head" scope="row">Config root</th><td class="ui-table-cell">{{ ui_path(listing.config_dir) }} <small class="muted">(resolved via {{ listing.source }})</small></td></tr>
+        <tr><th class="ui-table-head" scope="row">Versions</th><td class="ui-table-cell">
+        {#- v1.3.0 B2: a version the config does not set reads 'not set', never 'vNone' -#}
+        {% for _k in ('qualibrate', 'quam') %}{{ ' ' if not loop.first }}<code class="ui-chip">{{ _k }} {% if listing.versions[_k] is none %}(version not set){% else %}v{{ listing.versions[_k] }}{% endif %}</code>{% endfor %}
         {% if listing.versions.supported %}
         <span class="cell-good">&#10003;</span>
         {% else %}
@@ -30,10 +29,11 @@
         {% if listing.versions.newer %}
         <span class="muted" title="Newer than the v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} generation this reader was pinned to. SM read this config and resolved the paths it needs; it never writes these files, for any version.">newer than v{{ supported_versions.qualibrate }} — read fine</span>
         {% else %}
-        <span class="cell-bad" title="Differs from the v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} generation this reader was pinned to, and is not simply newer — a field SM expects may be missing. It never writes these files, for any version.">&#9888; unsupported</span>
+        <span class="ui-badge ui-badge--danger" title="Differs from the v{{ supported_versions.qualibrate }}/v{{ supported_versions.quam }} generation this reader was pinned to, and is not simply newer — a field SM expects may be missing. It never writes these files, for any version.">&#9888; unsupported</span>
         {% endif %}
         {% endif %}
-    </p>
+        </td></tr>
+    </tbody></table>
     <p class="muted">Everything on this page is read-only — QUAlibrate owns these files.
        Clicking <em>Open in SM</em> loads a project's chip + datasets into the State
        Manager without touching any qualibrate config.</p>
