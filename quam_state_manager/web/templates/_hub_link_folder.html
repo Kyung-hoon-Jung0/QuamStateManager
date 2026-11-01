@@ -20,7 +20,11 @@
 </div>
 {% endfor %}
 {% if not rows or not (rows | selectattr('matches', 'ge', 1) | list) %}
+{% if declared %}
+<p>This chip's data folder is set to <code>{{ declared | join(', ') }}</code>{% if dangling and (declared | reject('in', dangling) | list | length) == 0 %}, but SM cannot find that folder on this machine. Check the path in <code>extras.data_folder</code>.{% else %}, but no run in it matches this chip yet. Its runs may still be read in, or were saved by another chip: open Datasets to see what the folder holds.{% endif %}</p>
+{% else %}
 <p>No Datasets folder holds runs of this chip. Add it to Datasets or set <code>extras.data_folder</code>.</p>
+{% endif %}
 {% endif %}
 {% for row in linked %}
 <form hx-post="/hub/unlink-folder" hx-target="#hub-folder-body">

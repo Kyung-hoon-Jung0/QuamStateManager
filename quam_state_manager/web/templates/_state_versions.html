@@ -129,10 +129,10 @@
                    of a leap. Offered on every row, archives included
                    (comparing is always safe where restoring is not). #}
                 {% if r.why_diff %}
-                <button type="button" class="btn-xs outline sv-diff" disabled
+                <button type="button" class="btn-sm outline sv-diff" disabled
                         title="{{ r.why_diff }}">Diff</button>
                 {% else %}
-                <button type="button" class="btn-xs outline sv-diff"
+                <button type="button" class="btn-sm outline sv-diff"
                         onclick="StateVersions.diff('{{ r.ts }}', '{{ chip_key }}')"
                         title="Compare this version with the current working state. Opening writes nothing; inside, ✓ can stage single values into your working state (Review tray).">Diff</button>
                 {% endif %}
@@ -165,7 +165,7 @@
                 {% if not archive and not r.current and not r.why_write and not r.pending %}
                 {# docs/284: load this version into the working copy for review,
                    then Apply -- the State History door, gates and all #}
-                <button type="button" class="btn-xs outline sv-stage"
+                <button type="button" class="btn-sm outline sv-stage"
                         hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ chip_key | urlencode }}"
                         hx-target="#status-bar" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
@@ -178,7 +178,7 @@
                    affordance in the panel the least distinguishable one.
                    The two independent force gates are unchanged; this is the
                    styling and the wording catching up to what the button does. #}
-                <button type="button" class="btn-xs outline sv-restore live-diverged-overwrite"
+                <button type="button" class="btn-sm outline sv-restore live-diverged-overwrite"
                         hx-post="/state-history/{{ r.ts }}/restore-live?chip_key={{ chip_key | urlencode }}"
                         hx-target="#table-pane" hx-swap="innerHTML"
                         onclick="StateVersions.close()"

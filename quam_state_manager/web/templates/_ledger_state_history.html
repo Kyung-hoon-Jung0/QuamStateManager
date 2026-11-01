@@ -12,7 +12,7 @@
 {% if lv.rows %}
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
-            onclick="StateHistory.compareSelected()">Compare 2 selected</button>
+            onclick="StateHistory.compareSelected()">Compare (0 of 2 ticked)</button>
     <small class="muted sh-count">{{ version_count(lv) }}</small>
     {# P1-9 (UX round): jump to the page holding a day, instead of guessing pages #}
     <form class="sh-goto" hx-get="/state-history" hx-target="#table-pane" hx-swap="innerHTML"
@@ -117,8 +117,13 @@
 })();</script>
 {% endif %}
 {% else %}
-{% if lv.mode == 'ledger' %}
-<p class="muted" style="padding:1rem">No recorded states yet. The change history records
-   every run, every SM write and every state SM sees change outside SM.</p>
+{#- user-view sweep: the live-changes baseline above is not a recorded version,
+    so this line never says the chip has no states at all; while the history
+    builds it says so instead of showing an empty list -#}
+{% if lv.mode in ('ledger', 'building', 'preparing') %}
+<p class="muted" style="padding:1rem" role="status">{% if lv.mode == 'ledger' %}No version is recorded in the
+   change history yet. The change history records every run, every SM write and every state SM
+   sees change outside SM; the live-changes baseline above is kept apart from it.{% else %}The change
+   history is still being built; the recorded versions appear here as it finishes.{% endif %}</p>
 {% endif %}
 {% endif %}

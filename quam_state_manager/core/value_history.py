@@ -2130,10 +2130,33 @@ def folder_notes(left_out: dict | None, listing: dict | None = None) -> list[dic
     return out
 
 
+def _declared_folder_note(declared, dangling) -> dict | None:
+    """The note for a chip whose ``extras.data_folder`` is set but whose
+    history holds no runs: which folder, and the real reason."""
+    declared = [str(d) for d in (declared or []) if d]
+    if not declared:
+        return None
+    named = ", ".join(declared[:2]) + (" and more" if len(declared) > 2 else "")
+    missing = {str(d) for d in (dangling or [])}
+    if all(d in missing for d in declared):
+        text = (f"This chip's data folder is set to {named}, but SM cannot find that folder "
+                "on this machine. Check the path in extras.data_folder.")
+    else:
+        text = (f"This chip's data folder is set to {named}, but no run in it is in this "
+                "history yet: the history may still be reading it, or its runs were saved "
+                "by another chip. The Datasets page lists what the folder holds.")
+    return {"level": "info", "code": "folder_set_no_runs", "text": text, "folder": declared[0]}
+
+
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
-          newest: Any = _ABSENT, origin: str = "live", listing: dict | None = None) -> list[dict]:
+          newest: Any = _ABSENT, origin: str = "live", listing: dict | None = None,
+          declared: list | None = None, dangling: list | None = None) -> list[dict]:
     """What every surface says beside a ledger answer (docs/282 §1.3).
-    *listing*: a listing's own numbers (:func:`folder_notes`)."""
+    *listing*: a listing's own numbers (:func:`folder_notes`).
+    *declared* / *dangling*: the chip's own ``extras.data_folder`` values and
+    the ones SM cannot find on this machine. A chip that declares a folder is
+    never told "no data folder is linked" (user-view sweep): the note names
+    the folder and says why its runs are not in this history."""
     st = status or {}
     out: list[dict] = []
     state = st.get("state")
@@ -2178,8 +2201,9 @@ def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,
         else:
             text = ("No data folder is linked to this chip, so this history holds SM's own "
                     "writes and the states SM saw, and no runs. Link the folder its runs are saved in.")
-        out.append({"level": "info", "code": "no_folder_linked", "text": text,
-                    "link": {"offer": True, "url": "/hub/link-folder"}})
+        out.append(_declared_folder_note(declared, dangling) or {
+            "level": "info", "code": "no_folder_linked", "text": text,
+            "link": {"offer": True, "url": "/hub/link-folder"}})
     out.extend(folder_notes(ledger.get("left_out"), listing))
     out.extend(unreadable_runs_note(ledger.get("unreadable_runs")))
     if current is not _ABSENT and newest is not _ABSENT and not (
