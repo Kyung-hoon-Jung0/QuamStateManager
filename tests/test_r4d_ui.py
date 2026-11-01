@@ -55,3 +55,8 @@ def test_blocked_network_step_focuses_the_first_bad_field():
     assert "if (!first) first = el;" in seg and "first.focus(" in seg
     css = (WEB / "static" / "style.css").read_text(encoding="utf-8")
     assert ".gen-field input::placeholder" in css
+
+
+def test_pulse_rows_share_one_height():
+    css = (WEB / "static" / "style.css").read_text(encoding="utf-8")
+    assert "#pulses-table > tbody > tr:not(.pulse-vpad) > td { height: 30px; }" in css

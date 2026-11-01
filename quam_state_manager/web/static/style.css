@@ -2805,7 +2805,6 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .welcome h2 { margin-bottom: 0.5rem; }
 .welcome-lead { font-size: 1.02rem; color: var(--pico-color); margin: 0.2rem auto 0.4rem; max-width: 40rem; }
 .welcome-sub { color: var(--pico-muted-color); margin-bottom: 0.5rem; }
-.welcome-steps { text-align: left; margin-top: 1.5rem; }
 /* Collapsible feature tour — compact by default (all closed), each card carrying
    a real 2–3 line description. Left chevron rotates on open; Pico's right-floated
    summary::after is suppressed so only our chevron shows. */
@@ -4135,7 +4134,6 @@ input.edit-input {
 /* Compare / Trend                                                   */
 /* ---------------------------------------------------------------- */
 .compare-controls { margin-bottom: 1rem; }
-.compare-selectors { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
 .compare-fieldset {
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
     padding: 0.5rem 0.75rem; margin: 0;
@@ -4568,7 +4566,7 @@ td.col-delta .val-delta { margin-left: 0; }
     border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
     background: var(--pico-card-background-color, transparent);
 }
-.cmap-summary { cursor: pointer; font-size: .85em; font-weight: 600; color: var(--pico-muted-color); list-style-position: inside; }
+.cmap-summary { cursor: pointer; font-size: .85em; font-weight: 600; color: var(--pico-muted-color); list-style-position: inside; padding: 2px 0; }
 .cmap-summary small { font-weight: 400; }
 .cmap-body { position: relative; margin-top: .4rem; }
 .cm-scroll { overflow-x: auto; }
@@ -10887,6 +10885,8 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark-pending { display: block; width: 90px; height: 24px; }
 /* its spacer rows: pure height, no cell padding or border */
 #pulses-table tr.pulse-vpad > td { padding: 0 !important; border: 0 !important; }
+/* D-121: alias rows match pulse rows (30 px), one rhythm for the table */
+#pulses-table > tbody > tr:not(.pulse-vpad) > td { height: 30px; }
 /* the rows that size the virtual table's columns (pulses-vt.js renderSizer):
    counted by the column widths, never shown */
 #pulses-table tbody.pulse-vsizer > tr { visibility: collapse; }
