@@ -39533,6 +39533,10 @@ def _hub_param_changes_data(table) -> dict:
         first = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
         genesis_n = (sum(1 for post in index.path_postings.values() if first[0] in post)
                      if first else 0)
+        first_eid = first[0] if first else None
+        low_ = prefix.lower()
+        contains_src = ({path: index.path_postings.get(pid, ()) for path, pid in index.paths.items()
+                         if low_ in path.lower()} if prefix else {})
     low = prefix.lower()
     shown_n = _CHANGES_ROWS_AT if at else _CHANGES_ROWS
     groups = []
@@ -39603,6 +39607,11 @@ def _hub_param_changes_data(table) -> dict:
     stats = {"paths": len(table.paths), "rows": max(0, sum(table.counts.values()) - genesis_n),
              "genesis": genesis_n,
              "snapshots": table.snapshot_count(), "dirty": False}
+    # R4c: a prefix that finds nothing names the changed paths that CONTAIN
+    # it, so `f_01` leads to `qubits.qA2.resonator.f_01`
+    contains = (sorted(p for p, post in contains_src.items()
+                       if any(e != first_eid for e in post))
+                if low and not groups else [])
     archive = None
     extra_notes: list = []
     if archived:
@@ -39611,6 +39620,7 @@ def _hub_param_changes_data(table) -> dict:
         archive = _archive_chip_names(hm, key)
         extra_notes = _archive_ledger_notes(hm, table.ctx["path"], table.answer.get("ledger") or {})
     return {"groups": groups, "stats": stats, "prefix": prefix,
+            "contains": contains[:8], "contains_n": len(contains),
             "has_more": (not at) and result["cursor"] is not None, "oldest_ts": result["cursor"],
             "at_ts": at, "hub_mode": "ledger", "hub_notes": list(table.notes) + extra_notes,
             # S10 walk: an archived chip's page keeps its chip on every link

@@ -216,6 +216,18 @@ class TestFiltering:
         html = _get(env, "/param-history/changes?prefix=zzz.nope").get_data(as_text=True)
         assert "No parameter whose path starts with" in html
 
+    def test_a_prefix_matching_nothing_names_the_changed_paths_that_contain_it(self, env):
+        # R4c: `T1` starts no path, but the changed `qubits.qA1.T1` contains it
+        _snap(env, _state(t1=1e-5, amp=0.1))
+        _snap(env, _state(t1=2e-5, amp=0.1))
+        html = _get(env, "/param-history/changes?prefix=T1").get_data(as_text=True)
+        assert "No parameter whose path starts with" in html
+        assert "1 changed path contains" in html
+        assert "prefix=qubits.qA1.T1" in html
+        # an unchanged path that contains the text (only first-recorded) is not offered
+        html = _get(env, "/param-history/changes?prefix=amplitude").get_data(as_text=True)
+        assert "changed path" not in html
+
     def test_typeahead_returns_paths_with_change_counts(self, env):
         _snap(env, _state(t1=1e-5))
         _snap(env, _state(t1=2e-5))
