@@ -2347,3 +2347,23 @@ window.PulsesPage = (function () {
         }
     }, 250);
 })();
+
+/* User-view sweep: opening a pulse inspector shared the table pane's height with the
+   chip map, so no pulse row stayed visible. When the inspector goes from showing no
+   pulse to showing one, fold the map (never persisted: a programmatic toggle is not a
+   person's choice, see component-map.js). A commit that re-renders an open inspector
+   leaves the map as the user set it. */
+(function () {
+    var _had = false;
+    document.addEventListener("htmx:beforeSwap", function (e) {
+        var t = e.detail && e.detail.target;
+        if (t && t.id === "inspector-pane") _had = !!t.querySelector("#pulse-detail-root");
+    });
+    document.addEventListener("htmx:afterSwap", function (e) {
+        var t = e.detail && e.detail.target;
+        if (!t || t.id !== "inspector-pane" || _had) return;
+        if (!t.querySelector("#pulse-detail-root")) return;
+        var map = document.getElementById("component-map");
+        if (map && map.open && document.getElementById("pulses-owner-pick")) map.open = false;
+    });
+})();
