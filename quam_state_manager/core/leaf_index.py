@@ -900,6 +900,27 @@ class PathRank:
                 break
         return out
 
+    def search_prefix(self, query: str, limit: int = 50) -> list[dict]:
+        """The paths that START with ``query`` (case-folded), in rank order --
+        the same rule the Changes page filters its rows by (UD-1: the
+        typeahead never offers a path the filter would then not match)."""
+        from bisect import bisect_right
+        term = (query or "").strip().translate(_ASCII_FOLD)
+        limit = int(limit)
+        nl = chr(10)
+        if not term or limit <= 0 or nl in term:
+            return []
+        low, offs, out = self.low, self.offs, []
+        if low.startswith(term):
+            out.append(self._row(0))
+        needle = nl + term
+        pos = low.find(needle)
+        while pos >= 0 and len(out) < limit:
+            i = bisect_right(offs, pos + 1) - 1    # the row starting after this newline
+            out.append(self._row(i))
+            pos = low.find(needle, offs[i + 1] - 1)  # from the newline ending row i
+        return out
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Families — grouped and counted IN SQL

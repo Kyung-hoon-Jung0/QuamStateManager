@@ -39513,6 +39513,11 @@ def _hub_param_changes_data(table) -> dict:
         undone = {ev["eid"]: vh.undone_paths(conn, index, ev, sm) for ev in events
                   if ev.get("kind") in SM_KINDS}
         roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
+        # UD-2: the starting state records every parameter once; the page's
+        # count says how many values CHANGED, so those records are left out
+        first = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
+        genesis_n = (sum(1 for post in index.path_postings.values() if first[0] in post)
+                     if first else 0)
     low = prefix.lower()
     shown_n = _CHANGES_ROWS_AT if at else _CHANGES_ROWS
     groups = []
@@ -39575,9 +39580,13 @@ def _hub_param_changes_data(table) -> dict:
                        "trigger": None, "experiment": None, "label": label, "sub": sub,
                        "flags": flags, "uid": uid, "link_title": link,
                        "run_id": ev.get("run_id"), "total": len(changes),
+                       # UD-2: the ledger's starting state is one summary line
+                       # (it records every parameter once; none of them changed)
+                       "genesis": bool(ev.get("first")) and bool(rows) and all(r["is_first"] for r in rows),
                        "shown": len(rows), "rows": rows, "not_kept": unkept[:shown_n],
                        "not_kept_n": len(unkept)})
-    stats = {"paths": len(table.paths), "rows": sum(table.counts.values()),
+    stats = {"paths": len(table.paths), "rows": max(0, sum(table.counts.values()) - genesis_n),
+             "genesis": genesis_n,
              "snapshots": table.snapshot_count(), "dirty": False}
     archive = None
     extra_notes: list = []
@@ -39615,7 +39624,8 @@ def param_history_param_search():
     if table is None:
         return jsonify(ok=True, results=[], mode=ans["mode"])
     try:
-        return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
+        # UD-1: the page filters by prefix, so the typeahead offers prefix matches only
+        return jsonify(ok=True, results=table.path_rank().search_prefix(q, limit=30))
     except _ramcache.Warming:
         return jsonify(ok=True, results=[], mode=_hub_waiting(table, "changes_paths")["mode"])
     except Exception:  # noqa: BLE001 -- S10 C3: nothing to suggest, never a 500

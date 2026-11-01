@@ -72,7 +72,8 @@ def _get(env, url):
 
 def _groups(html: str) -> list[str]:
     """The Changes page's groups (raw HTML), newest first."""
-    return html.split('<div class="ph-change-group">')[1:]
+    # UD-2: the ledger's first event is a <details> summary group
+    return re.split(r'<(?:div|details) class="ph-change-group[^"]*"[^>]*>', html)[1:]
 
 
 def _row(group: str, path: str) -> str:
@@ -213,12 +214,13 @@ class TestFiltering:
     def test_a_prefix_matching_nothing_says_so(self, env):
         _snap(env, _state(t1=2e-5))
         html = _get(env, "/param-history/changes?prefix=zzz.nope").get_data(as_text=True)
-        assert "No parameter matching" in html
+        assert "No parameter whose path starts with" in html
 
     def test_typeahead_returns_paths_with_change_counts(self, env):
         _snap(env, _state(t1=1e-5))
         _snap(env, _state(t1=2e-5))
-        j = env["client"].get("/param-history/param-search?q=T1").get_json()
+        # UD-1: the typeahead offers what the prefix filter will match
+        j = env["client"].get("/param-history/param-search?q=qubits.qA1").get_json()
         assert j["ok"] is True
         hit = next(h for h in j["results"] if h["path"] == "qubits.qA1.T1")
         assert hit["changes"] == 2

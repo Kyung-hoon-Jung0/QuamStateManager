@@ -60,7 +60,8 @@ def text(html: str) -> str:
 
 def groups(html: str) -> list[str]:
     """The Changes page's groups, as text, newest first."""
-    return [text(g) for g in html.split('<div class="ph-change-group">')[1:]]
+    # UD-2: the ledger's first event is a folded <details> group
+    return [text(g) for g in re.split(r'<(?:div|details) class="ph-change-group[^"]*"[^>]*>', html)[1:]]
 
 
 def load(tmp_path, runs, live_state, *, sync=True):
@@ -383,8 +384,9 @@ class TestChanges:
         assert r.status_code == 400 and "open Changes again" in r.data.decode()
 
     def test_the_typeahead_offers_the_ledgers_paths(self, sm):
-        got = sm["client"].get("/param-history/param-search?q=T1").get_json()["results"]
-        assert {r["path"] for r in got} == {"qubits.qA1.T1", "qubits.qA2.T1"}
+        got = sm["client"].get("/param-history/param-search?q=qubits.qA").get_json()["results"]
+        assert {"qubits.qA1.T1", "qubits.qA2.T1"} <= {r["path"] for r in got}
+        assert all(r["path"].startswith("qubits.qA") for r in got)
 
     def test_a_full_page_after_a_swap_is_still_a_full_page(self, sm):
         c = sm["client"]
