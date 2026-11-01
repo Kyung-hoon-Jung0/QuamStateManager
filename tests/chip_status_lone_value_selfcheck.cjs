@@ -138,13 +138,20 @@ setTimeout(function () {
   const b2 = barColor(lone2qChart, 'q1-2');
   ok(norm(b2) === CITRUS.mid, 'L2: the lone 2Q bar is the same mid stop as its tile — ' + b2);
   const b1 = barColor(lone1qChart, 'q1');
-  ok(norm(b1) === CITRUS.mid, 'L4a: the lone 1Q bar is the mid stop — ' + b1);
+  // a bar beside a chip-map panel wears its map node's own fill (one scale)
+  function nodeFill(sec, q) {
+    const el = doc.querySelector('#' + sec + ' .tmap-node[data-qubit="' + q + '"]');
+    const m = el && /--ui-map-bg:\s*([^;]+)/.exec(el.getAttribute('style') || '');
+    return m ? norm(m[1]) : null;
+  }
+  ok(b1 && norm(b1) === nodeFill('mp-T1', 'q1'), 'L4a: the lone 1Q bar is its map node colour — ' + b1 + ' / ' + nodeFill('mp-T1', 'q1'));
 
   ok(norm(barColor(multi2qChart, 'q2-3')) === CITRUS.high && norm(barColor(multi2qChart, 'q1-2')) === CITRUS.low,
     'L5a: a multi-value 2Q panel is unchanged (max=high, min=low) — '
     + barColor(multi2qChart, 'q2-3') + ' / ' + barColor(multi2qChart, 'q1-2'));
-  ok(norm(barColor(multi1qChart, 'q3')) === CITRUS.high && norm(barColor(multi1qChart, 'q1')) === CITRUS.low,
-    'L5b: a multi-value 1Q panel is unchanged (max=high, min=low) — '
+  ok(norm(barColor(multi1qChart, 'q3')) === nodeFill('mp-f-01', 'q3') && norm(barColor(multi1qChart, 'q1')) === nodeFill('mp-f-01', 'q1')
+     && norm(barColor(multi1qChart, 'q3')) !== norm(barColor(multi1qChart, 'q1')),
+    'L5b: a multi-value 1Q panel: each bar is its map node colour — '
     + barColor(multi1qChart, 'q3') + ' / ' + barColor(multi1qChart, 'q1'));
 
   // The shipped palette switch: same palette, so nothing may move.

@@ -1231,10 +1231,37 @@ window.TopoGraph = (function () {
     }
     var pad = 8, gap = 5, x, y;
     if (surface === detailButton) {
-      // Above the stone fits the gap between rows without covering neighbours.
-      x = (a.left + a.right - b.width) / 2;
-      y = a.top - b.height - gap;
-      if (y < pad) y = a.bottom + gap;
+      // Above, below, right or left of the stone: the first spot that covers
+      // no pair badge or edge label of this map (above sat on the badge of a
+      // vertical edge and hid its value).
+      var svg = anchor.ownerSVGElement || anchor.closest('svg') || (anchor.parentNode && anchor.parentNode.querySelector && anchor.parentNode.querySelector('svg'));
+      var obst = svg ? Array.prototype.map.call(svg.querySelectorAll('.topo-pair-badge, text'), function (el) {
+        return anchor.contains(el) ? null : el.getBoundingClientRect();
+      }).filter(function (r) { return r && (r.width || r.height); }) : [];
+      // A stone: its diagonal corners first -- pair edges and their badges
+      // run on the axes, so a corner never sits on one. A pair: off its badge.
+      var cands = pair ? [
+        [(a.left + a.right - b.width) / 2, a.top - b.height - gap],
+        [(a.left + a.right - b.width) / 2, a.bottom + gap],
+        [a.right + gap, (a.top + a.bottom - b.height) / 2],
+        [a.left - b.width - gap, (a.top + a.bottom - b.height) / 2]] : [
+        [a.right - b.width * 0.25, a.top - b.height * 0.75],
+        [a.left - b.width * 0.75, a.top - b.height * 0.75],
+        [a.right - b.width * 0.25, a.bottom - b.height * 0.25],
+        [a.left - b.width * 0.75, a.bottom - b.height * 0.25],
+        [(a.left + a.right - b.width) / 2, a.top - b.height - gap]];
+      var bestHit = Infinity;
+      cands.forEach(function (c) {
+        if (c[1] < pad || c[0] < pad || c[0] + b.width > window.innerWidth - pad) return;
+        var hit = 0;
+        obst.forEach(function (r) {
+          var w = Math.min(c[0] + b.width, r.right) - Math.max(c[0], r.left);
+          var h = Math.min(c[1] + b.height, r.bottom) - Math.max(c[1], r.top);
+          if (w > 0 && h > 0) hit += w * h;
+        });
+        if (hit < bestHit) { bestHit = hit; x = c[0]; y = c[1]; }
+      });
+      if (x == null) { x = cands[1][0]; y = cands[1][1]; }
     } else {
       x = a.right + gap; y = a.top;
       if (x + b.width > window.innerWidth - pad) x = a.left - b.width - gap;
@@ -1473,10 +1500,28 @@ window.TopoGraph = (function () {
     host._linkedIndex = {pairs: pairs, qubits: qubits, adjacent: adjacent};
     if (host._linkedBound) return;
     host._linkedBound = true;
-    var lit = [];
+    var lit = [], hidden = [];
     function clear() {
       lit.forEach(function (el) { el.classList.remove('topo-linked'); });
       lit = [];
+      hidden.forEach(function (el) { el.style.visibility = ''; });
+      hidden = [];
+    }
+    // A badge shown on hover sits on its edge's midpoint, where the edge's own
+    // label (e.g. the frequency gap) is drawn: hide a label it would half-cover
+    // instead of leaving its clipped remains around the pill.
+    function unclutter() {
+      var shown = lit.filter(function (el) { return el.classList.contains('topo-pair-badge'); });
+      if (!shown.length) return;
+      var rects = shown.map(function (el) { return el.getBoundingClientRect(); });
+      host.querySelectorAll('svg text').forEach(function (t) {
+        if (t.closest('.topo-pair-badge, [data-link-id]')) return;
+        var r = t.getBoundingClientRect();
+        if (!r.width) return;
+        if (rects.some(function (b) { return r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom; })) {
+          t.style.visibility = 'hidden'; hidden.push(t);
+        }
+      });
     }
     function light(el) { el.classList.add('topo-linked'); lit.push(el); }
     function apply(target) {
@@ -1493,6 +1538,7 @@ window.TopoGraph = (function () {
         (index.qubits.get(id) || []).forEach(light);
         (index.adjacent.get(id) || []).forEach(light);
       }
+      unclutter();
     }
     host.addEventListener('mouseover', function (e) { apply(e.target); });
     host.addEventListener('focusin', function (e) { apply(e.target); });

@@ -62,12 +62,12 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
         assert.ok(child.textContent.trim(), 'a node keeps a non-empty native title');
       assert.ok(button(d).getAttribute('aria-label').startsWith('Expand '));
     });
-    await check('Expand fits above the stone without covering its neighbour', async () => {
+    await check('Expand sits on a stone corner, off every pair-edge axis', async () => {
       node.getBoundingClientRect = () => ({left: 200, right: 272, top: 200, bottom: 272, width: 72, height: 72});
       button(d).getBoundingClientRect = () => ({width: 60, height: 28});
       w.TopoGraph.positionDetail(button(d), node);
       if (!node.matches('[data-cm^="p:"]')) {
-        assert.equal(button(d).style.left, '206px'); assert.equal(button(d).style.top, '167px');
+        assert.equal(button(d).style.left, '257px'); assert.equal(button(d).style.top, '179px');
       }
       node.getBoundingClientRect = () => ({left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0});
     });

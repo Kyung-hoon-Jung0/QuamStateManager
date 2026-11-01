@@ -19,6 +19,9 @@
         <summary class="cmap-summary no-print">Chip layout</summary>
         <div class="cmap-body"><p class="muted" style="margin:0">Loading chip layout&hellip;</p></div>
     </details>
+    <p class="rep-cap rep-map-legend">Map key: each circle is a qubit, each line a
+       qubit pair (its name runs along the line). The map shows layout only;
+       every value is in the tables below.</p>
 
     {# ================================================================== #}
     {# Qubits — one section per family of numbers. The ID column repeats so #}
@@ -168,7 +171,7 @@
     <table class="rep-wide">
         <thead><tr><th>ID</th><th>Active</th><th>Bias source</th>
             <th>Joint offset (V)</th><th>Independent offset (V)</th><th>Flux point</th>
-            <th>Delay (ns)</th><th>&Phi;&#8320; voltage (V)</th><th>&Phi;&#8320; current (A)</th>
+            <th>Delay (ns)</th><th>&Phi;&#8320; voltage (V)</th><th title="Stored leaf phi0_current, shown as stored. The class declares amperes, but stored values are often in another unit, so no unit is claimed here.">phi0_current (as stored)</th>
             <th>df&#8320;&#8321;/d&Phi;&sup2; (Hz/&Phi;&#8320;&sup2;)</th></tr></thead>
         <tbody>
         {% for q in flux %}
