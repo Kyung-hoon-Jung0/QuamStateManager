@@ -230,9 +230,9 @@
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
     --role-rr-color:        #e3781a;   /* Readout resonator   — orange   */
     --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
-    --role-z-color:         #2471a3;   /* Flux / Z line       — blue     */
+    --role-z-color:         #2e86c1;   /* Flux / Z line - blue; dark theme 3.55:1 on the FEM card */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */
-    --role-twpa-pump-color: #c8392b;   /* TWPA pump           — red      */
+    --role-twpa-pump-color: #dc4535;   /* TWPA pump - red; dark theme 3.32:1 on the FEM card */
     --role-twpa-ro-color:   #a93226;   /* TWPA readout        — dark red */
     --role-twpa-in-color:   #d63384;   /* TWPA input          — magenta  */
     --role-digital-color:   #54617a;   /* Digital output / trigger — slate */
@@ -11575,6 +11575,7 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
     --plot-loss: #eab308;   /* measured loss: a hue no qubit, plan or resonance line uses */
 }
 [data-theme="light"] {
+    --role-z-color: #2471a3; --role-twpa-pump-color: #c8392b;   /* light theme keeps the darker fills (5.3:1 on white) */
     --plot-grid: rgba(60, 70, 90, 0.16);
     --plot-mark-edge: var(--pico-background-color);
     --plot-area-alpha: 0.3;

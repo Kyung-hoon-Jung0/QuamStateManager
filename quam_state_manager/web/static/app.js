@@ -15144,9 +15144,22 @@ function _watchInstrumentResize(container) {
     container._iwFitObs.observe(container);
 }
 
+var _iwDrawn = [];
+document.addEventListener('sm:themechange', function () {
+    // Redraw every rack still on the page in the new theme's colours
+    // (the floating panel redraws itself through FloatWiring.refresh).
+    _iwDrawn = _iwDrawn.filter(function (el) { return el.isConnected; });
+    _iwDrawn.slice().forEach(function (el) {
+        if (el.id !== 'float-wiring-diagram') window.renderInstrumentWiring.apply(null, el._iwArgs);
+    });
+});
 window.renderInstrumentWiring = function(containerId, data, rawWiring, options) {
     var container = document.getElementById(containerId);
     if (!container) return;
+    // R4c: remember the draw so a theme switch can redraw it (the rack's
+    // card and port colours are fixed when it is drawn).
+    container._iwArgs = [containerId, data, rawWiring, options];
+    if (_iwDrawn.indexOf(container) < 0) _iwDrawn.push(container);
     // editable: tag cells with data-* and skip the inspector click handlers
     // so a caller (the Generate Config wizard) can layer drag-drop on top.
     var editable = !!(options && options.editable);
@@ -15682,7 +15695,8 @@ function _appendWiringLegend(container, roleColors) {
         item.setAttribute('role', 'listitem');
         var sw = document.createElement('span');
         sw.className = 'iw-legend-swatch';
-        sw.style.background = r === 'other' ? (roleColors.fallback || '#999') : roleColors[r];
+        sw.style.background = r === 'other' ? (roleColors.fallback || '#999') :
+            (_IW_THEMED_FILL[r] ? 'var(' + _IW_THEMED_FILL[r] + ', ' + roleColors[r] + ')' : roleColors[r]);
         item.appendChild(sw);
         item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
         box.appendChild(item);
@@ -15709,6 +15723,7 @@ function _appendWiringLegend(container, roleColors) {
     container.appendChild(box);
 }
 
+var _IW_THEMED_FILL = {z: '--role-z-color', twpa_pump: '--role-twpa-pump-color'};
 /** Create a colored SVG circle for a port assignment with hover and double-click handlers. */
 function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, editable, onPortHover) {
     var color = roleColors[assignment.role] || '#999';
@@ -15731,6 +15746,11 @@ function _appendPortCircle(svg, cx, cy, r, roleColors, assignment, rawWiring, ed
     _svgAttrs(circle, {cx: cx, cy: cy, r: r, fill: color,
                        stroke: qdacShared ? (roleColors.digital || '#54617a') : 'rgba(0,0,0,0.15)',
                        'stroke-width': qdacShared ? 2 : 1.5});
+    // R4c: z and TWPA-pump fills follow the theme through their CSS tokens
+    // (the dark-theme value keeps 3:1 against the dark FEM card; the light
+    // one keeps the darker fill). The attribute stays as the fallback.
+    var themed = _IW_THEMED_FILL[qdacShared ? '' : assignment.role];
+    if (themed) circle.style.fill = 'var(' + themed + ', ' + color + ')';
     g.appendChild(circle);
     if (qdacShared) g.setAttribute('data-qdac-shared', '1');
 
