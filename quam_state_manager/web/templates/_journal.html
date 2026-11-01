@@ -1,13 +1,14 @@
-{# Calibration log (docs/173 S2): the story of the chip, one day at a time.
+{% from "_ui.html" import ui_head_fold %}{# Calibration log (docs/173 S2): the story of the chip, one day at a time.
    Header + filters here; the body (digest + cards) is its own partial so a
    day or filter change swaps only that. #}
 {# customer feedback 2026-09-08: the tagline used to sit INSIDE the h2 (it rendered at
    heading size); the title is one line, the tagline a small muted line under it. #}
-<div class="table-header-row jr-head ui-head">
+<div class="table-header-row jr-head ui-head ui-head--page">
     <div class="jr-head-title">
         <h2 class="ui-head-title">Calibration log{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
         <p class="muted jr-tagline ui-head-gist">every run, whoever ran it — what it wrote, why, and how it looked</p>
     </div>
+    {{ ui_head_fold() }}
 </div>
 
 <form id="jr-filters" class="jr-filters" hx-get="/journal/day" hx-target="#jr-body" hx-swap="innerHTML"

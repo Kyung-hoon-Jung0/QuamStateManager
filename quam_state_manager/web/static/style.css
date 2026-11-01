@@ -15142,8 +15142,6 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
    One primary button per card; paths and exact changes are disclosures.
    --------------------------------------------------------------------------- */
 .asx-page { max-width: 68rem; }
-.asx-title { display: flex; align-items: baseline; gap: 1rem; margin: .2rem 0 .5rem; }
-.asx-title h2 { font-size: 1.15rem; margin: 0; }
 .asx { display: flex; flex-direction: column; gap: .6rem; font-size: .86rem; }
 .asx-progress { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .35rem .6rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent); border-radius: .5rem;
