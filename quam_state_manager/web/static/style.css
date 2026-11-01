@@ -228,7 +228,7 @@
        Changing one without the other makes the badge pills differ from
        the SVG wiring diagram circles.                                  */
     --role-xy-color:        #9b59b6;   /* XY drive port       — purple   */
-    --role-rr-color:        #e67e22;   /* Readout resonator   — orange   */
+    --role-rr-color:        #e3781a;   /* Readout resonator   — orange   */
     --role-rr-in-color:     #9e4f00;   /* Readout input - burnt orange (v1.5.1 r6 P2-16: was a gold twin of rr) */
     --role-z-color:         #2471a3;   /* Flux / Z line       — blue     */
     --role-coupler-color:   #1abc9c;   /* Coupler             — teal     */

@@ -145,7 +145,7 @@ var UI_CONFIG = {
          pills stay in sync with the SVG diagram circles.              */
     roleColors: {
         xy:        '#9b59b6',   /* XY drive port       — purple   */
-        rr:        '#e67e22',   /* Readout resonator   — orange   */
+        rr:        '#e3781a',   /* Readout resonator   — orange (D-107: 3.01:1 with the white label) */
         rr_in:     '#9e4f00',   /* Readout input       - burnt orange. v1.5.1 (r6 P2-16): it was
                                    gold #f0a030, a near twin of rr's orange (luminance contrast
                                    1.33 between them); this darker one keeps the family, differs
