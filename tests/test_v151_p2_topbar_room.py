@@ -57,15 +57,18 @@ def test_the_floating_card_never_sits_on_the_page_title(tmp_path):
     c = _client(tmp_path)
     qubits = c.get("/qubits").get_data(as_text=True)
     topo = c.get("/topology").get_data(as_text=True)
-    sel = "html.topbar-hidden #table-pane:not(:has(.topo-subnav))"
+    # R4-TL-1: ONE reservation, above the banners (.shell-head) -- not under
+    # them in the pane, where the card covered the banner's first line
     css = (_STATIC / "style.css").read_text(encoding="utf-8")
-    rule = re.search(re.escape(sel) + r"::before\s*\{([^}]*)\}", css)
-    assert rule and "height: var(--floating-chrome-h)" in rule.group(1), "the pane reserves the floating band"
+    rule = re.search(r"html\.topbar-hidden \.shell-head\s*\{([^}]*)\}", css)
+    assert rule and "padding-top: var(--floating-chrome-h)" in rule.group(1), "the shell reserves the floating band"
+    assert "#table-pane:not(:has(.topo-subnav))" not in css, "no second reservation in the pane"
+    sel = "html.topbar-hidden .shell-head"
     run_css_cases(tmp_path, [
         {"name": "Qubits, bars collapsed", "html": qubits, "html_class": "topbar-hidden",
-         "checks": [{"sel": sel, "matches": True, "why": "an ordinary page reserves the band"}]},
+         "checks": [{"sel": sel, "matches": True, "why": "every page reserves the band above the banners"}]},
         {"name": "Chip Status, bars collapsed", "html": topo, "html_class": "topbar-hidden",
-         "checks": [{"sel": sel, "matches": False, "why": "its pinned tabs reserve it already"}]},
+         "checks": [{"sel": sel, "matches": True, "why": "the pinned tabs need no band of their own"}]},
     ])
 
 

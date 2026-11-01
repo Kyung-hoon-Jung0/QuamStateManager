@@ -406,14 +406,13 @@ class TestQaLayoutCss:
     def test_r2_10_the_pinned_tabs_clear_the_floating_chrome(self):
         """With the chrome collapsed the floating tray card (fixed, top 6px,
         z 120) sat on the pinned tabs; Overview opened the review modal."""
+        # R4-TL-1: the band is reserved once, above the banners, so the pane
+        # (and its pinned tabs) start below the card and add nothing of their own
         assert "html.topbar-hidden { --floating-chrome-h: 2.5rem; }" in self.CSS
-        pad = self._rule("html.topbar-hidden .topo-subnav")
-        assert "padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h))" in pad
+        assert "padding-top: var(--floating-chrome-h)" in self._rule("html.topbar-hidden .shell-head")
+        assert "html.topbar-hidden .topo-subnav" not in self.CSS
         # the flush pin itself is unchanged (docs/126 see-through strip)
         assert "top: calc(-1 * var(--table-pane-pad-v))" in self._rule(".topo-subnav")
-        # and every jump clears the taller bar
-        assert "scroll-margin-top: calc(3.2rem + var(--floating-chrome-h))" in self.CSS[
-            self.CSS.index("html.topbar-hidden .topo-dashboard .topo-section,"):]
 
     def test_f12_a_tall_hover_popup_scrolls_inside_the_viewport(self):
         """QA F-12: the q1-2 pair popup is 891 px tall; at 1366x768

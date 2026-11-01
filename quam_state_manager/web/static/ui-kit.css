@@ -92,9 +92,11 @@
     --ui-check-border: color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
     --ui-check-bg: color-mix(in srgb, var(--pico-primary) 5%, transparent);
     --ui-check-ring: 0 0 0 3px color-mix(in srgb, var(--pico-primary) 30%, transparent);
-    /* K3 page head fold (D-103): the glyph names what a press does */
-    --ui-fold-up: "\25B4";
-    --ui-fold-down: "\25BE";
+    /* K3 page head fold (D-103) */
+    --ui-head-corner: 1.8rem;   /* the pane's top-right toggle (.pageheader-toggle) */
+    --ui-fold-mark: 9px;        /* the drawn chevron's arm */
+    --ui-fold-nudge: 4px;       /* optical centring of a rotated square */
+    --ui-fold-stroke: 2px;
 }
 
 /* K3 head ------------------------------------------------------------- */
@@ -108,12 +110,13 @@
 /* D-103: a page head folds to one row -- title and actions stay, the gist
    and eyebrow hide. One app-wide choice: .ui-heads-compact on <html>
    (_ui_head_boot.html sets it before the first paint). The fold button sits
-   at the right end; the head keeps room for it. */
-.ui-head--page { position: relative; padding-right: var(--ui-icon-btn); }
-.ui-head-fold { position: absolute; top: 0; right: 0; font-size: var(--ui-fs-md); }
-.ui-head-fold::before { content: var(--ui-fold-up); }
-.ui-heads-compact .ui-head-fold::before { content: var(--ui-fold-down); }
-.ui-heads-compact .ui-head--page > .ui-head-fold { top: 50%; transform: translateY(-50%); }
+   at the right end of the title row, IN the row (R4b: an absolute corner put
+   it under the pane's own top-right toggle), clear of that corner. */
+.ui-head--page { padding-right: var(--ui-head-corner); }
+.ui-head > .ui-head-fold { order: 1; align-self: center; border: var(--ui-bw) solid var(--ui-border); }
+/* a drawn chevron (a text triangle measured ~5 px): up = fold, down = unfold */
+.ui-head-fold::before { content: ""; width: var(--ui-fold-mark); height: var(--ui-fold-mark); margin-top: var(--ui-fold-nudge); border: solid currentColor; border-width: var(--ui-fold-stroke) 0 0 var(--ui-fold-stroke); transform: rotate(45deg); }
+.ui-heads-compact .ui-head-fold::before { margin-top: 0; margin-bottom: var(--ui-fold-nudge); transform: rotate(225deg); }
 .ui-heads-compact .ui-head--page { flex-wrap: nowrap; align-items: center; }
 .ui-heads-compact .ui-head--page .ui-head-gist, .ui-heads-compact .ui-head--page .ui-head-eyebrow { display: none; }
 .ui-heads-compact .ui-head--page > .ui-actions { order: 2; flex: 0 1 auto; width: auto; }

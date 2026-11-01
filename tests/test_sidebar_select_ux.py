@@ -48,18 +48,19 @@ class TestTickBox:
         m = re.search(r"\.ui-check > input, \.ui-check-box \{([^}]*)\}", kit)
         assert m and "appearance: none" in m.group(1) and "var(--ui-check-border)" in m.group(1)
 
-    def test_the_tick_has_three_states_and_is_visible_before_it_is_ticked(self):
-        """docs/165 (customer): an empty box did not say it was tickable. The
-        tick mark EXISTS in every state and only its loudness changes -- a
-        faint grey ghost when empty, brighter under the pointer, on-accent on
-        the filled box when ticked. The tick's shape is the kit's (D-105);
-        the sidebar sets only colour and loudness."""
+    def test_the_tick_shows_only_under_the_pointer_focus_or_ticked(self):
+        """docs/165 gave the empty box a resting ghost tick; UD-4 (D-106)
+        replaced it: at rest the 22 px box alone says it is tickable (the
+        ghost read as ticked), the tick comes up under the pointer and on
+        keyboard focus, and is on-accent on the filled box when ticked. The
+        tick's shape is the kit's (D-105)."""
         kit = re.sub(r"/\*.*?\*/", "", _KIT, flags=re.S)
         assert re.search(r"\.ui-check-box::after \{[^}]*rotate\(45deg\)", kit)   # the tick's shape, defined once
         base = _rule(".tree-entry-label input[type=checkbox]::after")
         assert "var(--pico-muted-color)" in base       # grey while empty, no literal
         ghost = float(re.search(r"opacity:\s*([0-9.]+)", base).group(1))
-        assert 0 < ghost < 0.5, f"empty must be a HINT, not a tick: {ghost}"
+        assert ghost == 0, f"UD-4: no tick at rest: {ghost}"
+        assert re.search(r"\.tree-entry-label input\[type=checkbox\]:focus-visible::after", _CSS)
 
         css = re.sub(r"/\*.*?\*/", "", _CSS, flags=re.S)
         m = re.search(r"\.tree-entry-label:hover input\[type=checkbox\]::after[^{]*\{([^}]*)\}", css)

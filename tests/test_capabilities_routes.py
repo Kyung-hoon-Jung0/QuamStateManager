@@ -109,3 +109,29 @@ def test_build_blocker_refuses(client, monkeypatch, tmp_path):
     body = r.get_json()
     assert body["ok"] is False
     assert "build.quam" in [b["id"] for b in body["capability_blockers"]]
+
+
+def test_capabilities_reads_the_wizards_env_from_the_body(client, monkeypatch):
+    """R4-TL-5: like /generate/allocate (docs/134), the auto-picked env rides
+    in the body -- with no persisted selection the review used to answer 400."""
+    seen = []
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda _p: None)
+    monkeypatch.setattr(config_generator, "known_interpreter", lambda p, *a, **k: p == "picked-py")
+    monkeypatch.setattr(config_generator, "probe_capabilities",
+                        lambda py, *a, **k: seen.append(py) or _manifest(True))
+    r = client.post("/generate/capabilities", json={"spec": _SPEC, "python": "picked-py"})
+    assert r.status_code == 200 and seen == ["picked-py"]
+    r = client.post("/generate/capabilities", json={"spec": _SPEC, "python": "elsewhere-py"})
+    assert r.status_code == 403 and seen == ["picked-py"], "an undiscovered interpreter is never probed"
+    r = client.post("/generate/capabilities", json={"spec": _SPEC})
+    assert r.status_code == 400, "no body env and none selected: still a 400"
+
+
+def test_every_wizard_capabilities_call_carries_the_env():
+    from pathlib import Path
+    import re
+    js = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static" / "generate.js").read_text(encoding="utf-8")
+    calls = [m.start() for m in re.finditer(r'fetch\("/generate/capabilities"', js)]
+    assert calls
+    for i in calls:
+        assert re.search(r"python: (?:state\.env|selectedEnv)", js[i:i + 400]), js[i:i + 200]

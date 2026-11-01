@@ -1,4 +1,5 @@
-<div class="table-header-row diag-header-row ui-head">
+{% from '_ui.html' import ui_head_fold %}
+<div class="table-header-row diag-header-row ui-head ui-head--page">
   <h2 class="ui-head-title">Diagnostics</h2>
   <p class="ui-head-gist">Structural checks on state &amp; wiring{% if has_config %} &amp; config{% endif %}.</p>
   {% if diag_catalog %}
@@ -8,6 +9,7 @@
     <span class="diag-whatis-icon" aria-hidden="true">&#9432;</span> What is checked?
   </button>
   {% endif %}
+  {{ ui_head_fold() }}
 </div>
 
 {% if diag_catalog %}{% include '_diagnostics_checks.html' %}{% endif %}
