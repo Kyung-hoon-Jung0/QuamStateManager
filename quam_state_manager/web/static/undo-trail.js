@@ -99,6 +99,8 @@ window.UndoTrail = (function () {
                + '<span class="muted"> · ' + esc(st.tier === 'memory' ? 'typed' : st.tier === 'live' ? '→ live' : 'staged')
                + (st.age ? ' · <span class="undo-trail-age">edit ' + esc(st.age) + '</span>' : '')
                + (st.label ? ' · ' + esc(st.label) : '') + '</span></div>';
+            // LE-13: the step's own message, which used to be a separate toast
+            if (st.note) h += '<p class="muted undo-trail-note">' + esc(st.note) + '</p>';
             st.entries.slice(0, 6).forEach(function (e) {
                 h += '<div class="undo-trail-row"><code class="undo-trail-path" title="' + esc(e.dot_path) + '">' + esc(e.dot_path) + '</code>'
                    + '<span class="undo-trail-vals">' + (e.from !== undefined ? '<span class="undo-trail-from">' + esc(fmt(e.from)) + '</span> → ' : '')
@@ -177,8 +179,13 @@ window.UndoTrail = (function () {
         // users thought Ctrl+Z was broken.
         var tier = d.live === true ? 'live' : 'server';
         // T1-F2: a journal step says how old the edit it undid is
+        // LE-13: the head of the server's message ("Undone — in SM only, the
+        // chip file is unchanged") is shown in the step; app.js then skips
+        // the toast. A warning / error still toasts.
+        var note = (d.level === 'warning' || d.level === 'error') ? null
+            : (msg.split(': ')[0] || null);
         push({ kind: kind, tier: tier, entries: entries, label: d.tier_note || null,
-               age: d.age || null });
+               age: d.age || null, note: note });
     });
     // in-memory tier: LiveEditUndo announces each step
     document.addEventListener('quam:undo-step', function (evt) {

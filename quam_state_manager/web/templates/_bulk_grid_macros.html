@@ -17,7 +17,7 @@
                     {% for g in column_groups %}
                     <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
                         data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
-                        scope="colgroup">{{ g.label }}</th>
+                        scope="colgroup"><span class="bulk-group-label">{{ g.label }}</span></th>
                     {% endfor %}
                     <th class="bulk-apply-col" rowspan="2" scope="col"></th>
                 </tr>
@@ -96,7 +96,7 @@
                 {% for g in groups %}
                 <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
                     data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
-                    scope="colgroup">{{ g.label }}</th>
+                    scope="colgroup"><span class="bulk-group-label">{{ g.label }}</span></th>
                 {% endfor %}
                 <th class="bulk-apply-col" rowspan="2" scope="col"></th>
             </tr>
