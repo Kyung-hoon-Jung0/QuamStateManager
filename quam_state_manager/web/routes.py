@@ -45392,9 +45392,14 @@ def generate_capabilities():
     data = json_object()
     spec = data.get("spec") or {}
     force = bool(data.get("force"))
-    python_path = config_generator.get_selected_env(current_app.instance_path)
+    # R4-TL-5: like /generate/allocate (docs/134), the wizard's auto-picked env
+    # rides in the body; a persisted selection is only the fallback.
+    python_path = (str(data.get("python") or "").strip()
+                   or config_generator.get_selected_env(current_app.instance_path))
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
+    if not _interpreter_known(python_path):
+        return jsonify({"ok": False, "error": _UNKNOWN_INTERPRETER}), 403
     probe = config_generator.probe_capabilities(
         python_path, current_app.instance_path, force=force)
     # `qpu_roots` belongs in the manifest HERE too, not only at the build

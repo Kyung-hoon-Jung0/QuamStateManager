@@ -300,6 +300,11 @@
                        flush and the CSS can still anchor to the pill. Filled on
                        demand — the switches must show the CURRENT session. #}
                     <span id="auto-sync-pop-host"></span>
+                    {# R4-TL-1: with the bar hidden its Reload is unreachable, so the
+                       floating card carries one too (SmReload opens the same popup). #}
+                    <button type="button" class="ui-btn-icon topbar-float-reload" id="float-reload"
+                            aria-label="Reload" aria-haspopup="dialog" aria-expanded="false"
+                            title="Reload &#8212; re-read the chip (and optionally the Python env) and redraw the page">&#8635;</button>
                     {# sync-ux 2026-09-25 (default 3): another SM process on this folder is a
                        marker beside the control, not a full-width banner. #}
                     <span id="multi-instance-slot" class="multi-instance-slot"
@@ -1706,8 +1711,17 @@
         }
         // After leaving a page, the next run opens at least as tall as its
         // up arrow. Later run switches use the plain remembered choice again.
+        // R4-TP-1: with no remembered choice, an inspector on a page whose
+        // table IS the page (Pulses) keeps that table readable: 15% left
+        // 0 rows at 1366x768. A remembered choice always wins.
+        function firstOpenSizes() {
+            var S = UI_CONFIG.split;
+            return (S.tableFirstSizes && document.querySelector('#table-pane #pulses-total'))
+                ? S.tableFirstSizes : expandedSizes();
+        }
+        window.__smFirstOpenSizes = firstOpenSizes;      // (selfcheck)
         function openSizes() {
-            var sizes = userSizes() || expandedSizes();
+            var sizes = userSizes() || firstOpenSizes();
             if (navigation.collapsed && datasetInspector()) {
                 navigation.collapsed = false;
                 if (Number(sizes[1]) < Number(expandedSizes()[1])) sizes = expandedSizes();
@@ -1945,10 +1959,32 @@
                 // a table-pane swap (/workspace/select) at once; whichever
                 // lands last must still leave the inspector at that height.
                 applySizes(openSizes());
+                keepClickedRowInView();
             } else if (tid === "table-pane") {
                 initSplit();
             }
         });
+
+        // R4-TP-1: the row whose click opened the inspector stays on screen
+        // after the split moves (on Pulses the table sits under the chip map,
+        // so the shrunken pane used to show the map and no row at all).
+        var clickedRow = null;
+        scope.listen(document, "click", function(e) {
+            var r = e.target && e.target.closest ? e.target.closest("#table-pane tr") : null;
+            if (r) clickedRow = r;
+        }, true);
+        function keepClickedRowInView() {
+            var r = clickedRow;
+            clickedRow = null;
+            if (!r) return;
+            requestAnimationFrame(function() {
+                var pane = document.getElementById("table-pane");
+                if (!r.isConnected || !pane) return;
+                var p = pane.getBoundingClientRect(), b = r.getBoundingClientRect();
+                if (b.top < p.top || b.bottom > p.bottom) r.scrollIntoView({ block: "center" });
+            });
+        }
+        window.__smKeepClickedRowInView = keepClickedRowInView;   // (selfcheck)
 
         scope.listen(document.body, "inspector-closed", function() {
             initSplit();

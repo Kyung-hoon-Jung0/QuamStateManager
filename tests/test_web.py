@@ -227,7 +227,9 @@ class TestRound15ChromeHiding:
         assert ("html.topbar-hidden #pending-tray > :not(.state-status-badge)"
                 ":not(.auto-sync-wrap):not(.sync-control) { display: none; }") in css
         assert ("html.topbar-hidden #topbar-tray-slot > :not(#pending-tray)"
-                ":not(#auto-sync-pop-host) { display: none; }") in css
+                ":not(#auto-sync-pop-host):not(.topbar-float-reload) { display: none; }") in css
+        # R4-TL-1: the floating card carries a Reload (the bar's one is hidden)
+        assert 'id="float-reload"' in base and "html:not(.topbar-hidden) .topbar-float-reload { display: none; }" in css
         # docs/187 (3): the wrapper moved into `_auto_sync_pill.html`, which
         # BOTH trays include (the conflict tray replaces #pending-tray, and
         # used to lose the pill entirely). The rule is that the element this

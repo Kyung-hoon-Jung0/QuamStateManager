@@ -21,6 +21,7 @@ var UI_CONFIG = {
         expandedSizes:  [15, 85],  /* the fixed EXPANDED position: where the gutter up arrow moves the bar, and where an inspector opens when the user has made no choice yet. Customer ask (2026-08-27): the detail panel nearly full-screen, the upper table keeps a 15% sliver for context + grabbing. v1.3.0: a layout constant, never user-configured; the user's LAST action (a drag's height, or an arrow) is kept in localStorage "quam_split_user" and decides where the next inspector opens. */
         collapsedSizes: [85, 15],  /* the fixed COLLAPSED position: where the gutter down arrow (and SM's own collapses: menu navigation, Compare, Go to state) moves the bar -- inspector gets 15%. v1.3.0: a layout constant; the old set-low preset ("quam_split_collapsed") is gone. */
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
+        tableFirstSizes: [35, 65],  /* R4-TP-1: where an inspector opens on Pulses when the user has made no choice yet (the table pane keeps its rows at 1366x768; 15% left 0) */
         datasetExpandedSizes: [25, 75],  /* v1.3.0: the fixed EXPANDED position while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes. */
         gutterSize:     26          /* height of the drag handle in px (v1.3.0: 6 -> 24, so its buttons sit inside the gutter instead of over the selected row; 24 -> 26 for the larger up/down arrows) -- keep in sync with --split-gutter-size in style.css */
     },
@@ -21777,6 +21778,26 @@ function syncSidebarTreeHighlight(uid, date) {
     // wrong highlight.
     if (!date || (_pendingTreeHighlight && _pendingTreeHighlight.uid === uid)) return;
     var groups = tree.querySelectorAll('details.tree-date');
+    // R4-DS-14: a collapsed docs/142 lazy group ships EMPTY, so the run cannot
+    // be found and there is no "Show all" yet. Open the group of that date,
+    // load its runs with the group's own declared request, and retry on the
+    // swap (which then finds the row, or clicks "Show all" past the cap).
+    for (var j = 0; j < groups.length; j++) {
+        var g = groups[j];
+        var gl = g.querySelector('summary.tree-date-label');
+        var box = g.querySelector('ul.tree-entries');
+        if (!gl || !box || !g.hasAttribute('data-lazy-group') || !g.querySelector('.tree-lazy-hint')) continue;
+        if (gl.textContent.trim().indexOf(date) !== 0) continue;
+        _pendingTreeHighlight = { uid: uid, date: date };
+        if (g.__lazyAsked) return;     // already loading: the swap retries
+        _openTreeAncestors(g);
+        g.__lazyAsked = true;          // the toggle listener must not ask a second time
+        var vals = {};
+        try { vals = JSON.parse(g.getAttribute('hx-vals') || '{}'); } catch (e) {}
+        if (window.htmx) window.htmx.ajax('GET', g.getAttribute('hx-get'),
+                                          { target: box, swap: 'innerHTML', values: vals });
+        return;
+    }
     for (var i = 0; i < groups.length; i++) {
         var label = groups[i].querySelector('summary.tree-date-label');
         var btn = groups[i].querySelector('.tree-show-more-btn');
@@ -29296,7 +29317,12 @@ window.diskGuardLimit = function (gb) {
 window.SmReload = (function () {
     'use strict';
     var NOTE_KEY = 'sm_reload_note';
-    function btn() { return document.getElementById('topbar-reload'); }
+    // R4-TL-1: the floating card's Reload (bar hidden) anchors the popup when it is the one on screen
+    function btn() {
+        var f = document.getElementById('float-reload');
+        if (f && f.offsetParent !== null) return f;
+        return document.getElementById('topbar-reload');
+    }
     function pending() {
         var t = document.getElementById('pending-tray');
         var n = t ? parseInt(t.getAttribute('data-change-count') || '0', 10) : 0;
@@ -29393,7 +29419,7 @@ window.SmReload = (function () {
         });
     }
     document.addEventListener('click', function (e) {
-        var b = e.target && e.target.closest ? e.target.closest('#topbar-reload') : null;
+        var b = e.target && e.target.closest ? e.target.closest('#topbar-reload, #float-reload') : null;
         if (b) {
             e.preventDefault();
             var p = document.getElementById('sm-reload-pop');

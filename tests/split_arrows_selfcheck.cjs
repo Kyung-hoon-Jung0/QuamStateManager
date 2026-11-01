@@ -29,6 +29,9 @@
  *     nav_reopen_low / nav_reopen_high -- first run after navigation opens at
  *                     max(remembered inspector share, dataset expanded share)
  *     nav_run_only -- qubit opens do not consume the next-run navigation rule
+ *     table_first  -- R4-TP-1: on Pulses with no choice the table keeps 35 %, a
+ *                     remembered choice wins, and the clicked row is scrolled
+ *                     back into the shrunken pane
  * Driven by tests/test_split_arrows.py.
  */
 'use strict';
@@ -48,7 +51,7 @@ assert.ok(splitScript, 'the split script is found');
 
 const SPLIT = {
     defaultSizes: [55, 45], expandedSizes: [15, 85], collapsedSizes: [85, 15],
-    datasetExpandedSizes: [25, 75], minSizes: [0, 60], gutterSize: 26,
+    datasetExpandedSizes: [25, 75], minSizes: [0, 60], gutterSize: 26, tableFirstSizes: [35, 65],
 };
 const RUN = '<div id="ds-detail-root" data-uid="run-a">run</div>';
 const QUBIT = '<div class="qubit-detail">qubit</div>';
@@ -457,6 +460,35 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const bad = await boot({ storage: { quam_split_user: '"sideways"' } });
     bad.swap('inspector-pane', QUBIT);
     eq(bad.sizes(), SPLIT.expandedSizes, 'an unreadable stored choice falls back to the default');
+} else if (mode === 'table_first') {
+    const PULSES = '<span id="pulses-total"></span><table><tr id="row-a"><td>x90</td></tr></table>';
+    const s = await boot();
+    s.d.getElementById('table-pane').innerHTML = PULSES;
+    const pane = s.d.getElementById('table-pane'), row = s.d.getElementById('row-a');
+    pane.getBoundingClientRect = () => ({ top: 100, bottom: 200 });
+    row.getBoundingClientRect = () => ({ top: 400, bottom: 420 });
+    let scrolled = 0;
+    row.scrollIntoView = () => { scrolled++; };
+    row.click();
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), SPLIT.tableFirstSizes, 'no choice yet: on Pulses the table keeps its share');
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(scrolled, 1, 'the clicked row is scrolled back into the shrunken pane');
+    s.swap('inspector-pane', QUBIT);
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(scrolled, 1, 'a swap with no click scrolls nothing');
+    row.getBoundingClientRect = () => ({ top: 120, bottom: 140 });
+    row.click();
+    s.swap('inspector-pane', QUBIT);
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(scrolled, 1, 'a row still in view is left alone');
+    const q = await boot();
+    q.swap('inspector-pane', QUBIT);
+    eq(q.sizes(), SPLIT.expandedSizes, 'another page keeps the expanded default');
+    const u = await boot({ storage: { quam_split_user: '"up"' } });
+    u.d.getElementById('table-pane').innerHTML = PULSES;
+    u.swap('inspector-pane', QUBIT);
+    eq(u.sizes(), SPLIT.expandedSizes, 'a remembered choice wins on Pulses too');
 } else if (mode === 'still_click') {
     const s = await boot();
     s.swap('inspector-pane', RUN);

@@ -3,8 +3,11 @@
    through tomllib/tomli_w (comments destroyed on its next write) and a typo
    hard-errors every qualibrate process; guided overlay fixes arrive in a
    later tier. #}
-<div class="table-header-row ui-head">
+{% from '_ui.html' import ui_head_fold %}
+<div class="table-header-row ui-head ui-head--page">
     <h2 class="ui-head-title">QUAlibrate Projects <small class="muted ui-count">({{ listing.projects | length }})</small></h2>
+    <p class="ui-head-gist">The projects in your QUAlibrate config folder, read only: which chip state and data folder each one points at.</p>
+    {{ ui_head_fold() }}
 </div>
 {% if show_running_banner %}<div id="qualibrate-running-slot" hx-swap-oob="innerHTML">{% include '_qualibrate_running_banner.html' %}</div>{% endif %}
 
