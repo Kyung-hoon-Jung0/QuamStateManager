@@ -53,7 +53,7 @@
         control that changes the filter from outside the box (Clear) is a
         plain navigation, so nothing ever needs to overwrite it. #}
     <input type="text" id="ph-changes-prefix" hx-preserve="true" name="prefix" class="tree-search ui-search" value="{{ prefix }}"
-           placeholder="{{ search_hint() }}" title="{{ search_title() }} Matches the parameter path."
+           placeholder="{{ search_hint('path starts with') }}" title="Shows parameters whose path starts with this text (e.g. qubits.q1)."
            autocomplete="off" list="ph-param-paths">
     {#- the typeahead's datalist is preserved with the input: a swap would
         otherwise hand the box a fresh, empty list while the script's fetch
@@ -63,23 +63,61 @@
     <a class="btn-sm outline" role="button" href="/param-history/changes{% if cq %}?{{ cq }}{% endif %}">Clear</a>
     {% endif %}
     <span class="muted ph-changes-stat">
-      {{ '{:,}'.format(stats.rows) }} recorded changes over
+      {{ '{:,}'.format(stats.rows) }} recorded change{{ '' if stats.rows == 1 else 's' }} over
       {{ '{:,}'.format(stats.snapshots) }} event{{ '' if stats.snapshots == 1 else 's' }}
+      {%- if stats.genesis %} &middot; plus the first record of {{ '{:,}'.format(stats.genesis) }} parameter{{ '' if stats.genesis == 1 else 's' }}{% endif %}
       {%- if stats.dirty %} &middot; index rebuilding&hellip;{% endif %}
     </span>
   </form>
 
   {% if not groups %}
-    <p class="ph-changes-empty muted">
+    <div class="ph-changes-empty ui-state ui-state--empty">
       {% if prefix %}
-        No parameter matching <code>{{ prefix }}</code> has changed.
+        <p><strong>No parameter whose path starts with <code>{{ prefix }}</code> has changed.</strong></p>
+        <p class="muted"><a href="/param-history/changes{% if cq %}?{{ cq }}{% endif %}">Show every change</a></p>
       {% else %}
-        No change is recorded in this chip's change ledger yet.
+        <p><strong>No change is recorded in this chip's change ledger yet.</strong></p>
       {% endif %}
-    </p>
+    </div>
   {% else %}
   <div class="ph-changes">
     {% for g in groups %}
+    {% if g.genesis %}
+    {#- UD-2 (R4-HD-15): the ledger's first event is the whole starting state
+        -- every parameter recorded once, none of them changed -- so it is ONE
+        summary line, opened only on request #}
+    <details class="ph-change-group ui-disclosure" data-genesis>
+      <summary class="ph-change-head ui-disclosure-summary">
+        <span class="ph-change-when">{{ (g.timestamp or "") | ts_local(short=True) }}</span>
+        <span class="ph-change-exp vh-by">First record: {{ '{:,}'.format(g.total) }} parameter{{ '' if g.total == 1 else 's' }}</span>
+        <span class="muted vh-sub">{{ g.label }} &middot; the starting state, not changes</span>
+      </summary>
+      <div class="ui-disclosure-body">
+      <table class="ph-change-table">
+        <tbody>
+        {% for r in g.rows %}
+          <tr>
+            <td class="ph-change-path">{% if archive_chip %}<code>{{ r.path }}</code>{% else %}<button type="button" class="ph-path-btn"
+                      hx-get="/field/history?path={{ r.path | urlencode }}"
+                      hx-target="#inspector-pane" hx-swap="innerHTML"
+                      title="Open this parameter's full timeline">{{ r.path }}</button>{% endif %}</td>
+            <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first') }}</td>
+            <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if g.total > g.shown %}
+      <div class="ph-change-rest">
+        <button type="button" class="btn-xs outline"
+                hx-get="/param-history/changes?at={{ g.eid }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}{% if cq %}&amp;{{ cq }}{% endif %}"
+                hx-target="#param-history-root" hx-swap="outerHTML">
+          Show all {{ '{:,}'.format(g.total) }} from this event</button>
+      </div>
+      {% endif %}
+      </div>
+    </details>
+    {% else %}
     <div class="ph-change-group">
       <div class="ph-change-head">
         <span class="ph-change-when">{{ (g.timestamp or "") | ts_local(short=True) }}</span>
@@ -138,6 +176,7 @@
       </div>
       {% endif %}
     </div>
+    {% endif %}
     {% endfor %}
   </div>
 
