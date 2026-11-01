@@ -8287,13 +8287,13 @@ button.recents-item:focus {
 .gen-chassis-count-field select,
 #gen-chip-arch, #gen-pair-gate,
 #gen-naming-preset, #gen-preset-select,
-#gen-env-custom-path, #gen-output-path {
+#gen-env-custom-path, #gen-output-path, #gen-scripts-path {
     margin: 0; height: auto; width: auto;
     font-size: 0.867em; line-height: 1.3;
     --pico-form-element-spacing-vertical: var(--compact-field-pico-sv);
     --pico-form-element-spacing-horizontal: var(--compact-field-pico-sh);
 }
-#gen-env-custom-path, #gen-output-path {
+#gen-env-custom-path, #gen-output-path, #gen-scripts-path {
     font-family: var(--font-mono);   /* paths read better monospaced */
 }
 
@@ -8527,7 +8527,7 @@ button.recents-item:focus {
     border: 1px solid var(--pico-muted-border-color);
     background: var(--pico-card-background-color);
     font-size: 0.95em;
-    position: sticky; top: 0; z-index: 5;
+    position: sticky; bottom: 0; z-index: 5;
 }
 .gen-wiring-monitor.gen-monitor-ok  { border-color: #2ea043; }
 .gen-wiring-monitor.gen-monitor-bad { border-color: #d0342c; }

@@ -14940,11 +14940,23 @@ function _syncInstrumentSizeBar(container, key, fit, eff, widest, avail) {
    shared scale of D-95) and bring it back when the rack grows again; the
    port circle keeps its role colour and its hover still names the port. */
 var _INSTR_MIN_LABEL_PX = 9;
+/* uv-2: a structural label (FEM name, OUT/IN/DIG, port row number, title)
+   is never hidden: it is drawn at >= 9 px on screen instead, whatever the
+   scale, because without it the rack is a field of anonymous dots. */
+function _iwKeep(t) { t.setAttribute('data-iw-keep', '1'); return t; }
 function _instrHideTinyLabels(svg, natW) {
     var shown = svg.getBoundingClientRect().width;
     if (!natW || !shown) return;
     var s = shown / natW;
     Array.prototype.forEach.call(svg.querySelectorAll('text'), function(t) {
+        if (t.getAttribute('data-iw-keep')) {
+            var base = parseFloat(t.getAttribute('data-iw-fs') || t.getAttribute('font-size')) || 10;
+            t.setAttribute('data-iw-fs', base);
+            t.setAttribute('font-size', Math.max(base, _INSTR_MIN_LABEL_PX / s).toFixed(2));
+            t.removeAttribute('data-iw-tiny');
+            t.style.display = '';
+            return;
+        }
         var fs = parseFloat(t.getAttribute('font-size')) || 0;
         var tiny = fs > 0 && fs * s < _INSTR_MIN_LABEL_PX;
         if (tiny) t.setAttribute('data-iw-tiny', '1'); else t.removeAttribute('data-iw-tiny');
@@ -15110,7 +15122,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     // readout markers) — femW is per-controller, computed below.
     var outSubW = 82, inSubW = 66, digSubW = 66, femGap = 16;
     var rowH = 56, circleR = 21;
-    var marginLeft = 40, marginTop = 58, marginBottom = 40;
+    // uv-2: marginTop/marginBottom leave a header band above each FEM block
+    // for its identity label (it used to sit under the block).
+    var marginLeft = 40, marginTop = 78, marginBottom = 22;
 
     var controllers = (data && data.controllers) || {};
     if (Object.keys(controllers).length === 0) {
@@ -15174,7 +15188,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             }
         }
         var nBlocks = Math.ceil(femIds.length / perRow);
-        var blockStride = rows * rowH + marginBottom + 36;
+        var blockStride = rows * rowH + marginBottom + 56;
         var totalFemW = perRow * femW + Math.max(0, perRow - 1) * femGap;
         var svgW = marginLeft + totalFemW + 20;
         var svgH = marginTop + (nBlocks - 1) * blockStride + rows * rowH + marginBottom;
@@ -15203,6 +15217,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         // Controller title
         var iwTitle = _svgText(svgW / 2, 22, ctrlName + ' \u2014 OPX1000 Wiring', 14, '600', '#333', 'middle');
         iwTitle.setAttribute('class', 'iw-title');   // docs/290: themed (a fixed #333 vanished on dark)
+        iwTitle.setAttribute('data-iw-keep', '1');
         svg.appendChild(iwTitle);
 
         // Background rect for the grid area
@@ -15220,10 +15235,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
 
             // Row number labels on the left margin
             for (var rn = 1; rn <= rows; rn++) {
-                svg.appendChild(_svgText(
+                svg.appendChild(_iwKeep(_svgText(
                     marginLeft - 6, marginTop + bkY + (rn - 1) * rowH + rowH / 2 + 4,
                     rn, 10, '400', iw.rowLabelColor, 'end'
-                ));
+                )));
             }
         }
 
@@ -15260,8 +15275,8 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             svg.appendChild(subSep);
 
             // Sub-column header labels
-            svg.appendChild(_svgText(outCx, top - 4, 'OUT', 10, '700', iw.subLabelColor, 'middle'));
-            svg.appendChild(_svgText(inCx,  top - 4, 'IN',  10, '700', iw.subLabelColor, 'middle'));
+            svg.appendChild(_iwKeep(_svgText(outCx, top - 4, 'OUT', 10, '700', iw.subLabelColor, 'middle')));
+            svg.appendChild(_iwKeep(_svgText(inCx,  top - 4, 'IN',  10, '700', iw.subLabelColor, 'middle')));
 
             if (hasDigital) {
                 // Dashed separator between IN and DIG + the DIG header
@@ -15272,14 +15287,17 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     stroke: iw.subSeparatorColor, 'stroke-width': 1, 'stroke-dasharray': '4,4'
                 });
                 svg.appendChild(digSep);
-                svg.appendChild(_svgText(digCx, top - 4, 'DIG', 10, '700', iw.subLabelColor, 'middle'));
+                svg.appendChild(_iwKeep(_svgText(digCx, top - 4, 'DIG', 10, '700', iw.subLabelColor, 'middle')));
             }
 
-            // FEM label at bottom
-            svg.appendChild(_svgText(
-                femX + femW / 2, top + rows * rowH + marginBottom - 8,
-                'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '400', iw.femLabelColor, 'middle'
+            // uv-2: the FEM's identity heads its column (it sat under the block,
+            // where a wrapped block's label read as the next block's).
+            var femLbl = _iwKeep(_svgText(
+                femX + femW / 2, top - 24,
+                'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '600', iw.femLabelColor, 'middle'
             ));
+            femLbl.setAttribute('class', 'iw-fem-label');
+            svg.appendChild(femLbl);
 
             // Output port rows
             for (var portNum = 1; portNum <= rows; portNum++) {
@@ -15326,7 +15344,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                     // v1.5.1 (U P2-20): the input's OWN number -- drawn where the
                     // front panel has it (MW-FEM input 2 at the last row), it read
                     // as "IN 8" against the output row numbers on the left
-                    var inLbl = _svgText(inCx, ipy + inR + 9, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
+                    var inLbl = _svgText(inCx, ipy + inR + 13, 'in ' + portNumAtRow, 9, '700', iw.subLabelColor, 'middle');
                     inLbl.setAttribute('class', 'iw-in-port-label');
                     svg.appendChild(inLbl);
                 } else {
@@ -15347,7 +15365,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         block.setAttribute('data-controller', ctrlName);
         var head = document.createElement('h4');
         head.className = 'iw-chassis-head';
-        head.textContent = 'Chassis ' + chIdx + ' · ' + ctrlName;
+        // uv-2: the wizard keys controllers by number ("1"); it names them
+        // con<N> everywhere else (the monitor's "con1 slot 1"), so say that.
+        head.textContent = 'Chassis ' + chIdx + ' · ' + (/^\d+$/.test(ctrlName) ? 'con' + ctrlName : ctrlName);
         var meta = document.createElement('span');
         meta.className = 'iw-chassis-meta';
         meta.textContent = femIds.length + ' FEM' + (femIds.length === 1 ? '' : 's');
@@ -15429,7 +15449,9 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         });
     } else {
         // Two-row layout: first 3 on top row, remainder on bottom row
-        var sr2 = Math.max(9, Math.floor(r * 0.55));
+        // uv-2: >= 10 so a 3-char name fits at the 9 px label floor (an
+        // input port's r 17 gave 9 -> an 8 px label, always hidden).
+        var sr2 = Math.max(10, Math.floor(r * 0.55));
         var spread2 = sr2 * 2 + 2;
         var rowOff = sr2 + 3;
         var row1 = assignments.slice(0, 3);
@@ -15491,6 +15513,25 @@ function _appendWiringLegend(container, roleColors) {
         sw.style.background = r === 'other' ? (roleColors.fallback || '#999') : roleColors[r];
         item.appendChild(sw);
         item.appendChild(document.createTextNode(r === 'other' ? 'Other' : _WIRING_ROLE_WORDS[r]));
+        box.appendChild(item);
+    });
+    // uv-2: the uncoloured marks and the DIG column need a key too -- a free
+    // port (exists, nothing wired), a row where the FEM has no port at all
+    // (drawn smaller), and what the DIG column is.
+    var iw = UI_CONFIG.instrumentWiring;
+    [['iw-key-free', 'Free port', '.8rem', iw.unassignedFill, iw.unassignedStroke],
+     ['iw-key-none', 'No port on this row', '.45rem', iw.emptyPortFill, iw.emptyPortStroke],
+     ['iw-key-dig', 'DIG = digital outputs (triggers)', null]].forEach(function (k) {
+        var item = document.createElement('span');
+        item.className = 'iw-legend-item ' + k[0];
+        item.setAttribute('role', 'listitem');
+        if (k[2]) {
+            var sw = document.createElement('span');
+            sw.className = 'iw-legend-swatch';
+            sw.style.cssText = 'width:' + k[2] + ';height:' + k[2] + ';background:' + k[3] + ';border-color:' + k[4];
+            item.appendChild(sw);
+        }
+        item.appendChild(document.createTextNode(k[1]));
         box.appendChild(item);
     });
     container.appendChild(box);
@@ -15621,9 +15662,17 @@ function _showPortPopup(event, assignment) {
     // as the wizard's slot menu / drag ghost — r15, docs/70).
     var z = parseFloat(document.documentElement.style.zoom);
     if (!isFinite(z) || z <= 0) z = 1;
-    var px = event.clientX + 14;
-    var py = event.clientY - 10;
-    if (px + 340 > window.innerWidth) px = event.clientX - 340;
+    // uv-2: open BESIDE the whole port cell (a feedline cluster is up to six
+    // dots), on whichever side has room, so the card never covers the cluster
+    // it describes.
+    var cellEl = event.target && event.target.closest ? event.target.closest('.iw-port') : null;
+    var cr = cellEl ? cellEl.getBoundingClientRect()
+        : {left: event.clientX, right: event.clientX, top: event.clientY};
+    var pw = popup.offsetWidth || 340, ph = popup.offsetHeight || 200;
+    var px = cr.right + 10;
+    if (px + pw > window.innerWidth - 4) px = cr.left - 10 - pw;
+    if (px < 4) px = Math.max(4, event.clientX + 14);
+    var py = Math.max(4, Math.min(cr.top - 10, window.innerHeight - ph - 4));
     popup.style.left = (px / z) + 'px';
     popup.style.top = (py / z) + 'px';
 }
@@ -15648,7 +15697,10 @@ function _fmtVal(v, type) {
 
 /** Format a number to fixed decimals, or return null if value is null/undefined. */
 function _fmtNum(v, d) {
-    return (v != null && typeof v === 'number') ? v.toFixed(d) : null;
+    // uv-2: the shared renderer keeps the significant figures (a 4.46e-4
+    // threshold printed as 0.0004 under toFixed(4)).
+    if (v == null || typeof v !== 'number') return null;
+    return window.ValueDelta ? window.ValueDelta.formatValue(v) : v.toFixed(d);
 }
 
 /** Return role-specific key/value pairs for the port hover popup. */
