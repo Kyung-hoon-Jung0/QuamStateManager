@@ -5,6 +5,10 @@
        meta is mono+tabular. Every hx-* hook + .config-status-host targeting +
        hx-indicator/hx-disabled-elt preserved verbatim. #}
     <div class="config-status-actions">
+        {# uv-2: with no environment the button can only fail ("No Generate-Config
+           env selected"), so it is not offered; the page's own note sends the
+           user to the Environment step instead. #}
+        {% if env_selected is not defined or env_selected %}
         <button type="button"
                 class="btn-sync primary config-regen-btn"
                 hx-post="/config/regenerate"
@@ -18,6 +22,7 @@
         <span class="htmx-indicator config-status-spinner">
             <span class="config-status-spin" aria-hidden="true"></span>running <code>generate_config()</code>&hellip;
         </span>
+        {% endif %}
     </div>
 
     {# Export the generated config for bare QUA (no QUAM needed). Plain <a download>

@@ -330,12 +330,15 @@
           <button type="button" class="btn-sync primary" id="gen-wiring-next">Next &rarr;</button>
         </span>
       </div>
+      {# uv-2: the monitor follows the rack and docks to the BOTTOM of the
+         pane while the rack is in view -- docked at the top it covered the
+         rack's column headings and its port-1 row. #}
+      <div id="gen-wiring-diagram" class="gen-wiring-diagram">
+        <p class="muted">Run Auto-allocate to see the wiring diagram.</p>
+      </div>
       <div id="gen-wiring-monitor" class="gen-wiring-monitor" aria-live="polite">
         <span class="gen-monitor-idle">Hover a port to inspect it &middot;
           drag a port circle or grip to rewire</span>
-      </div>
-      <div id="gen-wiring-diagram" class="gen-wiring-diagram">
-        <p class="muted">Run Auto-allocate to see the wiring diagram.</p>
       </div>
       <div id="gen-wiring-issues" class="gen-wiring-issues"></div>
       {# docs/136 WS7 — the QDAC trigger cabling, AFTER auto-allocation. One
@@ -415,10 +418,10 @@
          qubit's typed values; rows and ports cross-highlight. renderPopWiring(). #}
       <details id="gen-pop-wiring" class="gen-pop-wiring" hidden>
         <summary class="gen-pop-wiring-summary">Wiring diagram</summary>
+        <div id="gen-pop-wiring-diagram" class="gen-wiring-diagram"></div>
         <div id="gen-pop-wiring-monitor" class="gen-wiring-monitor" aria-live="polite">
           <span class="gen-monitor-idle">Hover a port or table row to see its values</span>
         </div>
-        <div id="gen-pop-wiring-diagram" class="gen-wiring-diagram"></div>
       </details>
 
       <p id="gen-pop-hidden-note" class="muted" hidden></p>
