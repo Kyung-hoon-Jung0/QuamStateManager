@@ -15198,14 +15198,20 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         // too small to read once Fit scales the rack (the tiny-label rule hides
         // them). Each FEM names them once, in readable text, under its grid:
         // "out 1 qA1-6", "pump 8 twpaA". Hover and drag are unchanged.
+        var capFont = 20, capLineH = 23;   // ~10 px on screen at the 0.5 Fit scale
+        // the caption never grows past capFont, so this many characters always
+        // stay inside the FEM column
+        var capMax = Math.max(4, Math.floor((femW - 10) / (0.62 * capFont)));
         var capByFem = {};
         var capLines = 0;
         femIds.forEach(function(fid) {
-            var lines = _iwCaptionLines(fems[fid]);
+            var lines = [];
+            _iwCaptionLines(fems[fid]).forEach(function(full) {
+                _iwWrapCaption(full, capMax).forEach(function(l) { lines.push({text: l, full: full}); });
+            });
             capByFem[fid] = lines;
             capLines = Math.max(capLines, lines.length);
         });
-        var capFont = 20, capLineH = 23;   // ~10 px on screen at the 0.5 Fit scale
         var capH = capLines ? capLines * capLineH + 6 : 0;
         var nBlocks = Math.ceil(femIds.length / perRow);
         var blockStride = rows * rowH + marginBottom + capH + 36;
@@ -15315,17 +15321,17 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
                 'FEM\u00a0' + femId + '  (' + femData.type + ')', 10, '400', iw.femLabelColor, 'middle'
             ));
 
-            var capMax = Math.max(4, Math.floor((femW - 8) / (0.62 * capFont)));
             capByFem[femId].forEach(function(line, li) {
-                var shown = line.length > capMax ? line.substring(0, capMax - 1) + '…' : line;
+                var shown = line.text;
                 var cap = _svgText(femX + 6, top + rows * rowH + 4 + (li + 1) * capLineH,
                                    shown, capFont, '600', iw.femLabelColor, 'start');
                 cap.setAttribute('class', 'iw-port-caption');
                 cap.setAttribute('data-cap-fs', capFont);
+                cap.style.whiteSpace = 'pre';   // keeps a wrapped line's indent
                 cap.setAttribute('font-family', 'monospace');
-                if (shown !== line) {
+                if (shown !== line.full) {
                     var full = _svgEl('title');
-                    full.textContent = line;
+                    full.textContent = line.full;
                     cap.appendChild(full);
                 }
                 svg.appendChild(cap);
@@ -15456,6 +15462,38 @@ function _iwCaptionLines(femData) {
     return lines.concat(pumps);
 }
 
+/* One caption split into lines of at most maxChars: breaks between names
+   (after a comma only inside a group wider than a line), continuation lines indented two spaces; a single piece longer
+   than a line is cut with an ellipsis (the line's <title> keeps it whole). */
+function _iwWrapCaption(line, maxChars) {
+    if (line.length <= maxChars) return [line];
+    // break between names, never inside one prefix group ("qB2,5" stays
+    // whole) unless the group alone is wider than a line
+    var pieces = [];
+    line.split(' ').forEach(function(w, wi) {
+        if (wi) pieces.push(' ');
+        if (w.length > maxChars - 2 && w.indexOf(',') >= 0) {
+            pieces = pieces.concat(w.match(/[^,]+,?/g));
+        } else if (w) {
+            pieces.push(w);
+        }
+    });
+    var out = [], cur = '';
+    pieces.forEach(function(pc) {
+        if (/^\s+$/.test(pc)) { if (cur) cur += ' '; return; }
+        var room = maxChars - (out.length ? 2 : 0);
+        if (cur && (cur + pc).length > room) {
+            out.push(cur.replace(/\s+$/, ''));
+            cur = '';
+            room = maxChars - 2;
+        }
+        if (!cur && pc.length > room) pc = pc.substring(0, room - 1) + '…';
+        cur += pc;
+    });
+    if (cur) out.push(cur.replace(/\s+$/, ''));
+    return out.map(function(l, i) { return i ? '  ' + l : l; });
+}
+
 /* "qA1 qA2 qA3 qA5" -> "qA1-3,5": names sharing a prefix and differing only
    in a trailing number are written once, with runs as ranges. Anything else
    is listed as it is. */
@@ -15466,16 +15504,26 @@ function _iwCompactNames(names) {
         var pre = m ? m[1] : n;
         if (!m) { groups.push({pre: n, nums: null}); return; }
         if (!byPre[pre]) { byPre[pre] = {pre: pre, nums: []}; groups.push(byPre[pre]); }
-        byPre[pre].nums.push(parseInt(m[2], 10));
+        if (byPre[pre].nums.every(function(x) { return x.s !== m[2]; })) {
+            byPre[pre].nums.push({v: parseInt(m[2], 10), s: m[2]});
+        }
     });
-    return groups.map(function(g) {
+    var seen = {};
+    return groups.filter(function(g) {
+        if (g.nums) return true;
+        if (seen[g.pre]) return false;
+        return (seen[g.pre] = true);
+    }).map(function(g) {
         if (!g.nums) return g.pre;
-        var nums = g.nums.slice().sort(function(a, b) { return a - b; });
+        // a run is consecutive values written with the same width ("q01-03")
+        var nums = g.nums.slice().sort(function(a, b) { return a.v - b.v || a.s.length - b.s.length; });
         var parts = [], i = 0;
         while (i < nums.length) {
             var j = i;
-            while (j + 1 < nums.length && nums[j + 1] === nums[j] + 1) j++;
-            parts.push(j - i >= 2 ? nums[i] + '-' + nums[j] : (j > i ? nums[i] + ',' + nums[j] : String(nums[i])));
+            while (j + 1 < nums.length && nums[j + 1].v === nums[j].v + 1 &&
+                   nums[j + 1].s.length === nums[i].s.length) j++;
+            parts.push(j - i >= 2 ? nums[i].s + '-' + nums[j].s
+                : (j > i ? nums[i].s + ',' + nums[j].s : nums[i].s));
             i = j + 1;
         }
         return g.pre + parts.join(',');
