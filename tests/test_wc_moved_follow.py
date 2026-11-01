@@ -15,6 +15,7 @@ the real-Chrome check is the QA probe (drawn trace == served after Take live).
 """
 from __future__ import annotations
 
+import re
 import json
 import shutil
 import subprocess
@@ -81,7 +82,7 @@ def _snapshot(c) -> dict:
         assert body["ok"], body
         data[f"{LINE}|sum|{op}"] = body
     row = page.split(f'data-line="{LINE}"', 1)[1].split("</tr>", 1)[0]
-    fir = [td for td in row.split("<td>")][5].split("</td>")[0].strip()
+    fir = re.split(r"<td[^>]*>", row)[5].split("</td>")[0].strip()
     return {"page": page, "data": data, "fir_sum": fir}
 
 

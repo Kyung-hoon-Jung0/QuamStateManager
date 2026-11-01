@@ -21,7 +21,7 @@ function expandIncludes(text, parents = []) {
     });
 }
 const baseScripts = scripts(body);
-assert.equal(baseScripts.length, 6, 'extract every executable base body script');
+assert.equal(baseScripts.length, 8, 'extract every executable base body script');
 const allScripts = scripts(expandIncludes(body));
 assert(allScripts.length >= baseScripts.length, 'include scripts are exercised too');
 allScripts.forEach(source => assert(!/\{[{%]/.test(source), 'body scripts require no unresolved template values'));

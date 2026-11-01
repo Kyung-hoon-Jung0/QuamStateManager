@@ -135,7 +135,7 @@ def test_preflight_route_reports_the_banners_count(tmp_path):
     assert body["ok"] is False
     n = int(re.match(r"(\d+) error", c["detail"]).group(1))
     # the banner's own number ("<b>N</b> error(s) on ... would crash", QA F-N)
-    banner_n = int(re.search(r"<b>(\d+)</b>\s*error", banner).group(1))
+    banner_n = int(re.search(r"<b[^>]*>(\d+)\s*error", banner).group(1))
     assert n == banner_n >= 1
 
 

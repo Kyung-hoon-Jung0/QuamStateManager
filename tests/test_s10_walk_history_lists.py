@@ -147,7 +147,7 @@ def _counts(c) -> dict[str, int]:
     chip = get(c, "/state/version")
     out["badge"] = _num(re.search(r'<span class="state-version-count">([\d,]+)</span>', chip).group(1))
     page = get(c, "/topology")
-    out["button"] = _num(re.search(r'History \(<span id="history-count">([\d,]+)</span>\)', page).group(1))
+    out["button"] = _num(re.search(r'History <span class="ui-count"><span id="history-count">([\d,]+)</span></span>', page).group(1))
     drawer = get(c, "/api/history")
     out["drawer"] = _num(re.search(r'class="version-count[^"]*" data-total="\d+">([\d,]+) versions?<',
                                    drawer).group(1))
@@ -203,7 +203,7 @@ def test_no_count_while_the_ledger_catches_up(b_view, monkeypatch):
     assert first and first.groups() == ("1", "1500"), chip
     later = re.search(r'hx-trigger="load delay:(\d+)ms"', get(c, "/state/version?wait=3")).group(1)
     assert int(later) > 1500, "the re-ask backs off"
-    assert 'History (<span id="history-count">&hellip;</span>)' in get(c, "/topology")
+    assert 'History <span class="ui-count"><span id="history-count">&hellip;</span></span>' in get(c, "/topology")
     monkeypatch.undo()
     chip = get(c, "/state/version")
     assert re.search(r'<span class="state-version-count">[\d,]+</span>', chip) and "state-version-reask" not in chip

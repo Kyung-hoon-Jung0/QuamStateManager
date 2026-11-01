@@ -1213,7 +1213,7 @@
         <small class="settings-label">Layout</small>
         <div class="settings-options">
         <label class="ui-check"><input type="checkbox" id="topbar-toggle" onchange="toggleTopbar()">Hide top bar</label>
-        <script>(function(){var c=document.getElementById('topbar-toggle');c.checked=document.documentElement.classList.contains('topbar-hidden');new MutationObserver(function(){c.checked=document.documentElement.classList.contains('topbar-hidden');}).observe(document.documentElement,{attributes:true,attributeFilter:['class']});})();</script>
+        <script>(function(){var c=document.getElementById('topbar-toggle');if(!c||c.__smObs)return;c.__smObs=1;c.checked=document.documentElement.classList.contains('topbar-hidden');new MutationObserver(function(){c.checked=document.documentElement.classList.contains('topbar-hidden');}).observe(document.documentElement,{attributes:true,attributeFilter:['class']});})();</script>
         </div>
         </div>
         {# docs/160 (customer, CRITICAL): Ctrl+Z after Apply-to-live writes the
