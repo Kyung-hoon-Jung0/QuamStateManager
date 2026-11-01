@@ -336,7 +336,7 @@
     /* -- Warning (amber family) -- */
     --color-warning-text:    #856404;  /* text on warning backgrounds (pending tray, caution banners) */
     --color-warning-bg:      #fff3cd;  /* background for warning states */
-    --color-warning-border:  #ffc107;  /* border/accent for warning states */
+    --color-warning-border:  #b58500;  /* border/accent for warning states */
 
     /* -- Info (cyan family) -- */
     --color-info-text:       #0c5460;  /* text on info backgrounds (history-trigger-auto, toast-info) */
@@ -4583,7 +4583,7 @@ td.col-delta .val-delta { margin-left: 0; }
 
 /* base symbols — calm, muted; the highlight layer provides the emphasis */
 .cm-occluder { fill: var(--pico-card-background-color, #f7f7f7); pointer-events: none; }
-.cm-stone { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 1.4; }
+.cm-stone { fill: var(--ui-surface-2); stroke: var(--ui-border-strong); stroke-width: 1.4; }
 /* font-size deliberately NOT set here: a CSS rule would override the SVG
    font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
    and the attr is what scales the id with the cell (docs/93 F2). */
@@ -4889,7 +4889,7 @@ td.col-delta .val-delta { margin-left: 0; }
    normal text colour as TEXT (never a *-border/fill token as text — the
    light-theme washout rule). cursor:help signals the tooltip. */
 .topo-dashboard .metric-label[title] { cursor: help; }
-.topo-dashboard .metric-dir { font-size: var(--ui-fs-xs); font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: var(--pico-color); cursor: help; }
+.topo-dashboard .metric-dir { font-size: var(--ui-fs-xs); font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: inherit; cursor: help; }
 .topo-prop-value { flex: 1; padding: 1px 5px; text-align: right; font-family: monospace; border-radius: 2px; white-space: nowrap; }
 .topo-edge-label {
     position: absolute; z-index: 3; font-size: var(--topo-edge-label-size); font-family: monospace;
