@@ -1,10 +1,12 @@
 {# docs/115 (#14): the manual, at a permanent address. The BODY is the
    same fragment the landing shows — one source of truth for the mental
    model, so the two can never drift. #}
+{% from '_ui.html' import ui_head_fold %}
 <div class="help-page welcome">
-    <div class="table-header-row ui-head">
+    <div class="table-header-row ui-head ui-head--page">
         <h2 class="ui-head-title">Help &amp; getting started</h2>
         <p class="ui-head-gist">The working-copy model, the feature tour, and every shortcut. <span class="help-version muted" id="help-version">QUAM State Manager {{ sm_version }}</span></p>
+        {{ ui_head_fold() }}
     </div>
     {% include '_landing_getting_started.html' %}
 

@@ -81,7 +81,7 @@
         h.appendChild(t);
         if (acts && acts.length) h.appendChild(actions(acts));
         if (gist && !data) h.appendChild(el("p", "ui-head-gist", gist));
-        if (page) h.appendChild(headFold());
+        if (page && gist && !data) h.appendChild(headFold());
         return h;
     }
     function notice(tone, key, text, acts) {

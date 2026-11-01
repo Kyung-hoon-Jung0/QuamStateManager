@@ -383,11 +383,18 @@ async function checkComponentMap() {
   const root2 = win2.document.getElementById('component-map');
   ok(!root2.hasAttribute('open'), 'saved-closed collapse is restored on mount');
   ok(fetches === 0, 'a collapsed map does not fetch (lazy)');
+  // a person's toggle: the summary click comes first (R4b UD-3 -- a parsed
+  // <details open> fires toggle by itself, which is no choice)
+  const sum2 = root2.querySelector('summary');
+  if (sum2) sum2.dispatchEvent(new win2.Event('click'));
+  else root2._cmapByUser = true;
   root2.setAttribute('open', 'open');
   root2.dispatchEvent(new win2.Event('toggle'));
   await tick(); await tick();
   ok(fetches === 1, 'opening it loads exactly once');
-  ok(win2.localStorage.getItem('quam_component_map_open') === '1', 'the choice persists');
+  ok(win2.localStorage.getItem('quam_component_map_open') === 'open', 'the choice persists');
+
+  // WC-3's first-screen fit is pinned by chip_status_r4b_selfcheck.cjs (fitUnsized).
 
   // F2: the mount's data-cell reaches renderLayout through ComponentMap
   const win3 = makeWorld(PANE_HTML.replace('data-highlight="pairs"', 'data-highlight="pairs" data-cell="120"'));

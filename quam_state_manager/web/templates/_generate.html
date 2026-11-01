@@ -2,8 +2,10 @@
    in by phases C2-C8. Step panels carry data-step; generate.js shows one at
    a time and drives Back/Next navigation. #}
 <div id="generate-root" class="generate-root">
-  <div class="gen-header ui-head">
+  {% from '_ui.html' import ui_head_fold %}
+  <div class="gen-header ui-head ui-head--page">
     <h2 class="gen-title ui-head-title">Generate Configuration Files</h2>
+    <p class="ui-head-gist">Build a new chip's state.json and wiring.json, step by step, in a Python environment you choose.</p>
     <div class="gen-header-actions">
       {# Top mirror of the bottom Back/Next + step counter, so the user never has
          to scroll down to navigate (the bottom nav stays too). #}
@@ -16,6 +18,7 @@
       <button type="button" class="outline secondary btn-sm" id="gen-reset"
               title="Discard every step and start over (the environment is kept)">Start over</button>
     </div>
+    {{ ui_head_fold() }}
   </div>
 
   <ol class="gen-steps" id="gen-steps">

@@ -10,7 +10,7 @@
 {% if unknown_pair is not none %}
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
-<div class="table-header-row ui-head ui-head--data">
+<div class="table-header-row ui-head ui-head--data ui-head--page">
     <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
 </div>
 <div class="muted czp-lede">

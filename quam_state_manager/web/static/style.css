@@ -780,7 +780,7 @@ html[data-font-size="large"] { --font-size-base: 19px; }
                 transform 0.15s ease;
 }
 /* with the bars collapsed (--topbar-height 0) it sits in the band the pane
-   reserves for the floating card (--floating-chrome-h) */
+   reserves for the floating card (.shell-head, R4-TL-1) */
 html.topbar-hidden .quam-loader { top: 0.7rem; }
 .quam-loader.visible {
     opacity: 1;
@@ -904,7 +904,8 @@ html.topbar-hidden #topbar-tray-slot {
 /* The Auto-Sync pill floats too (user-confirmed), and its popup host stays —
    the popup is position:fixed inside that host, so hiding the host would
    swallow every click on the floating pill. */
-html.topbar-hidden #topbar-tray-slot > :not(#pending-tray):not(#auto-sync-pop-host) { display: none; }
+html.topbar-hidden #topbar-tray-slot > :not(#pending-tray):not(#auto-sync-pop-host):not(.topbar-float-reload) { display: none; }
+html:not(.topbar-hidden) .topbar-float-reload { display: none; }
 html.topbar-hidden #pending-tray {
     display: inline-flex; align-items: center; gap: .3rem; margin: 0; padding: 0;
     background: transparent; border: 0; box-shadow: none;
@@ -923,13 +924,10 @@ html.topbar-hidden { --topbar-height: 0px; }
 /* QA chipstatus-r2-10: the band the floating ☰ + tray card above covers at
    the top of the pane (card top 6px + ~42px tall: bottom measured 48px at a
    20px root). A bar that PINS there reserves it -- see .topo-subnav. */
+/* R4-TL-1: the band is reserved ONCE, above the banners (.shell-head), so the
+   card covers neither a banner, the sidebar's top, nor the page title. */
 html.topbar-hidden { --floating-chrome-h: 2.5rem; }
-/* v1.5.1 (U P2-6): the pane reserves that band too, so the floating card no
-   longer sits on the page title ("Qubits (5)"). A page with a pinned bar
-   (.topo-subnav) reserves it in the bar instead (QA chipstatus-r2-10). */
-html.topbar-hidden #table-pane:not(:has(.topo-subnav))::before {
-    content: ""; display: block; height: var(--floating-chrome-h);
-}
+html.topbar-hidden .shell-head { padding-top: var(--floating-chrome-h); }
 /* Always-reachable handle to bring the bar back (the Hide toggle is in the bar).
    It's a <button>, so set explicit colors — Pico would otherwise white-on-blue it. */
 .topbar-reveal {
@@ -1147,14 +1145,13 @@ html.topbar-hidden .topbar-reveal { display: block; }
 /* Undo trail panel (2026-08-28): bottom-right, compact, out of the way of
    the tray; the latest step is emphasised, older ones fade. */
 .undo-trail {
-    /* above the toast sink (right:1rem; bottom:1rem): every undo fires a
-       success toast in the same instant the panel appears, and a one-step
-       panel was entirely under it (review of 4ffee11) */
-    position: fixed; right: 0.8rem; bottom: 5rem; z-index: 130;
-    width: 380px; max-width: 92vw; max-height: 40vh; overflow-y: auto;
+    /* LE-13: a compact dock in the pane's corner; the step's own message is
+       a line inside it (no separate toast), other toasts lift above it */
+    position: fixed; right: 0.8rem; bottom: 0.8rem; z-index: 130;
+    width: 340px; max-width: 92vw; max-height: 40vh; overflow-y: auto;
     background: var(--pico-card-background-color); color: var(--pico-color);
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.22); font-size: 12.5px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.22); font-size: var(--ui-fs-sm);
 }
 .undo-trail[hidden] { display: none; }
 .undo-trail-head {
@@ -1162,7 +1159,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--pico-muted-border-color);
     position: sticky; top: 0; background: var(--pico-card-background-color); z-index: 1;
 }
-.undo-trail-head strong { font-size: 0.8rem; }
+.undo-trail-head strong { font-size: var(--ui-fs-sm); }
 .undo-trail-tools { display: flex; gap: 0.25rem; align-items: center; }
 .undo-trail-clear, .undo-trail-close {
     margin: 0; padding: 0 0.35rem; background: none; border: none; line-height: 1.4;
@@ -1171,18 +1168,18 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .undo-trail-close { font-size: 1.05rem; }
 .undo-trail-clear:hover, .undo-trail-close:hover { color: var(--pico-contrast); }
 .undo-trail-body { padding: 0.3rem 0.5rem 0.4rem; }
-.undo-trail-empty { margin: 0; font-size: 0.8em; }
+.undo-trail-empty, .undo-trail-note { margin: 0; font-size: var(--ui-fs-xs); white-space: normal; }
 .undo-trail-step { padding: 0.3rem 0 0.2rem; border-top: 1px solid var(--pico-muted-border-color); opacity: 0.7; }
 .undo-trail-step:first-child { border-top: none; }
 .undo-trail-step.undo-trail-latest { opacity: 1; }
-.undo-trail-kind { font-weight: 700; font-size: 0.78rem; margin-bottom: 0.15rem; }
-.undo-trail-row { display: flex; align-items: center; gap: 0.4rem; margin: 0.1rem 0; }
-.undo-trail-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82em; }
-.undo-trail-vals { flex: 0 1 auto; white-space: nowrap; font-family: var(--font-mono); font-size: 0.82em; }
+.undo-trail-kind { font-weight: 700; font-size: var(--ui-fs-xs); margin-bottom: 0.15rem; }
+.undo-trail-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.1rem 0.4rem; margin: 0.15rem 0; }
+.undo-trail-path { flex: 1 1 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-fs-xs); }
+.undo-trail-vals { flex: 1 1 auto; white-space: nowrap; font-family: var(--font-mono); font-size: var(--ui-fs-xs); }
 .undo-trail-from { color: var(--pico-muted-color); text-decoration: line-through; }
 .undo-trail-to { font-weight: 700; }
 .undo-trail-goto { flex: 0 0 auto; margin: 0; padding: 0 0.4rem; font-size: 0.72rem; line-height: 1.5; white-space: nowrap; }
-.undo-trail-more { font-size: 0.78em; padding-left: 0.2rem; }
+.undo-trail-more { font-size: var(--ui-fs-xs); padding-left: 0.2rem; }
 /* broad Json-tree search: the flat result list (see _searchTreeData) */
 .tree-search-results { margin: 0.2rem 0 0.4rem; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; max-height: 60vh; overflow-y: auto;
   /* docs/141 4am: the notice is the tree's FIRST child, i.e. off screen
@@ -2030,12 +2027,10 @@ details.tree-branch-active > summary {
    brightens the border, and the ghost tick below. */
 .tree-entry-label input[type=checkbox] { margin: 0.08em 0 0 0; width: 22px; height: 22px; border-radius: 5px; transition: border-color .12s, background .12s, box-shadow .12s; }
 .tree-entry-label:hover input[type=checkbox] { border-color: var(--pico-primary); }
-/* docs/165 (customer): the tick exists in EVERY state — what changes is how
-   loud it is. Empty, it is a faint grey ghost, which is what tells a person
-   the box is tickable at all; under the pointer it comes up; ticked it turns
-   white on the filled blue box. Three steps, so the control announces itself
-   instead of waiting to be discovered. */
-.tree-entry-label input[type=checkbox]::after { border-color: var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; opacity: 0.34; transition: opacity .12s, border-color .12s; }
+/* docs/165, amended by UD-4 (D-106): at rest the 22 px box alone says it is
+   tickable (a resting ghost tick read as ticked); the tick appears under the
+   pointer or keyboard focus, and ticked it is white on the filled blue box. */
+.tree-entry-label input[type=checkbox]::after { border-color: var(--pico-muted-color); border-width: 0 2.6px 2.6px 0; opacity: 0; transition: opacity .12s, border-color .12s; }
 .tree-entry-label:hover input[type=checkbox]::after,
 .tree-entry-label input[type=checkbox]:hover::after,
 .tree-entry-label input[type=checkbox]:focus-visible::after { opacity: 0.8; }
@@ -4343,15 +4338,6 @@ td.col-delta .val-delta { margin-left: 0; }
     margin: calc(-0.45rem - var(--table-pane-pad-v)) 0 0 0; padding: calc(0.45rem + var(--table-pane-pad-v)) 0 0 0;
     background: var(--pico-background-color);   /* opaque: covers what scrolls under the pinned bar; tab look = .ui-tabs */
 }
-/* QA chipstatus-r2-10: with the chrome collapsed the pane starts at y=0, the
-   very band the floating ☰ + sync/Auto-Sync card (fixed, z 120) sits on. The
-   pinned tabs under it could not be pressed; a press on Overview hit the
-   badge and opened the review modal. Same flush pin (negative top, so the
-   docs/126 see-through strip stays covered); the opaque padding now fills
-   the floating band and the buttons start below it. */
-html.topbar-hidden .topo-subnav {
-    padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h));
-}
 .topo-subnav-btn { margin: 0; white-space: nowrap; }   /* look = .ui-tab (docs/308 stage 2, A/B-2 b) */
 
 /* Left-sidebar Chip Status sub-items (mirror the in-page tab row, kept in sync). */
@@ -4409,9 +4395,6 @@ html.topbar-hidden .topo-subnav {
     padding: .35rem 0;
     background: var(--pico-background-color);
     box-shadow: 0 3px 5px -3px var(--pico-muted-color);
-}
-html.topbar-hidden .topo-hero-controls {
-    padding-top: calc(.35rem + var(--floating-chrome-h));
 }
 .topo-hero-bar { display: flex; gap: .3rem; flex-wrap: wrap; margin-bottom: .45rem; }
 .topo-hero-controls .topo-hero-bar { align-items: center; margin-bottom: 0; }
@@ -4771,7 +4754,6 @@ html.topbar-hidden .topo-hero-controls {
 
 /* ── HTML topology (always-visible property cards) ────────────────── */
 .topo-html-wrap { position: relative; overflow: hidden; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; margin-bottom: 0.5rem; }
-.topo-edges-svg { position: absolute; top: 0; left: 0; pointer-events: none; }
 .topo-node-card {
     position: absolute; border-radius: 6px; overflow: hidden; cursor: pointer;
     border: 1px solid rgba(0,0,0,0.12); box-shadow: 0 1px 4px rgba(0,0,0,0.08);
@@ -5038,11 +5020,6 @@ html.topbar-hidden .topo-hero-controls {
 .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: 3.2rem; }
 /* queue item 10: an RB Overview tile lands on its Standard / Interleaved sub-heading */
 .topo-dashboard .topo-section-title[data-rb-heading] { scroll-margin-top: 3.2rem; }
-/* QA chipstatus-r2-10: the bar is taller by the floating band when the chrome
-   is collapsed, so every jump target clears that too */
-html.topbar-hidden .topo-dashboard .topo-section,
-html.topbar-hidden .topo-dashboard .topo-section-title[data-rb-heading],
-html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: calc(3.2rem + var(--floating-chrome-h)); }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }
 .topo-density-ctl .density-preset {
@@ -5091,8 +5068,9 @@ html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-marg
 .topo-verdict-banner { margin: 0 0 0.6rem 0; }
 .topo-verdict-banner[hidden] { display: none; }
 .verdict-avoid { color: var(--pico-muted-color); }
+.verdict-avoid-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); vertical-align: baseline; }   /* R4-CS-18: one group with a gap, never one chip alone */
 .verdict-avoid-chip {
-    margin: 0.15rem 0 0.15rem 0.3rem; display: inline-block; padding: 0 0.4rem; width: auto; cursor: pointer;
+    margin: 0; display: inline-block; padding: 0 0.4rem; width: auto; cursor: pointer;
     font-size: var(--ui-fs-sm); font-weight: 600; border-radius: 4px; line-height: 1.5;
     border: 1px solid var(--color-error-border); background: transparent;
     color: var(--pico-contrast);
@@ -9988,7 +9966,7 @@ tr.gen-pop-row-linked > td {
 .diag-ok-badge { color: var(--color-success-text); border-color: var(--outcome-ok-color, #27ae60); background: transparent; }
 button.diag-badge { cursor: pointer; }
 
-.diag-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.diag-table { width: 100%; }   /* type + collapse = .ui-table (R4-TL-8) */
 .diag-table th, .diag-table td {
     text-align: left; padding: 0.4rem 0.6rem;
     border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
@@ -10168,7 +10146,6 @@ button.diag-badge { cursor: pointer; }
 .bulk-toolbar-title > .bulk-segmented { flex: 0 0 auto; width: auto; margin-bottom: 0; align-self: center; }
 .bulk-toolbar-title > .bulk-docbadges { margin-bottom: 0; }
 .bulk-panel .bulk-toolbar > details.bulk-colvis { margin-bottom: 0; }
-.bulk-chipbar > .bulk-chip-scroll { flex: 1 1 0; }
 /* a short window spends less on spacing and type -- nothing is hidden */
 @media screen and (max-height: 760px) {
     .bulk-toolbar-title h2 { font-size: 1.3rem; }
@@ -10180,12 +10157,10 @@ button.diag-badge { cursor: pointer; }
 /* docs/120 item 4 — quick-filter chips, in the row the readability cluster
    used to occupy. Its own line under the controls row: on a real chip this is
    ~17 chips, which would push the search box off a laptop screen if it shared
-   a row, and it wraps to a horizontal scroll rather than growing the toolbar
-   downward while the user works. */
-.bulk-chipbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+   a row; the chips wrap to a second line rather than hiding behind a scroller. */
+.bulk-chipbar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0.3rem;
     margin: 0.1rem 0 0.35rem; }
-.bulk-chip-scroll { display: flex; align-items: center; gap: 0.25rem;
-    overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; min-width: 0; }
+.bulk-chip-scroll { flex: 1 1 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; min-width: 0; }
 .bulk-chip { flex: 0 0 auto; margin: 0; width: auto;
     padding: 0.08rem 0.5rem; border-radius: 1rem;
     border: 1px solid var(--pico-muted-border-color);
@@ -10376,7 +10351,6 @@ html.topbar-hidden .chrome-reveal { display: block; }
 .bulk-font-ctl .bulk-bold-toggle { font-weight: 700; }
 .bulk-font-ctl .bulk-ls-label { font-size: 0.95em; }   /* the ↔ glyph */
 .bulk-font-ctl #bulk-ls-slider { width: 4.5rem; }       /* shorter than the size slider */
-.bulk-toolbar-spacer { flex: 1; }
 /* r6 item 5: the help lives in a <details> popover (the bulk-colvis dropdown
    pattern) anchored at the ⓘ immediately left of Properties — no boxed hint. */
 .bulk-hint-toggle { font-size: 1em; }
@@ -10387,7 +10361,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
     color: var(--pico-color);
 }
 .bulk-toolbar .btn-sm { margin: 0; padding: 0.15rem 0.8rem; width: auto; }
-.bulk-dirty-count { font-size: 0.82em; font-weight: 600; color: var(--color-warning-text); }
+.bulk-dirty-count { font-size: 0.82em; font-weight: 600; color: var(--color-warning-text); min-width: 9.5em; text-align: right; } /* LE-7: a fixed slot -- the first keypress must not reflow the toolbar */
 /* A second horizontal scrollbar ABOVE the table, synced to it — so a wide table
    can be scrolled left/right without first scrolling down to the bottom bar. */
 .bulk-scroll-top { overflow-x: auto; overflow-y: hidden; }
@@ -10426,7 +10400,7 @@ html.topbar-hidden .chrome-reveal { display: block; }
    by the band's measured height (--bulk-grouphead-h, set by JS; varies with font). */
 .bulk-table .bulk-head-row th { top: calc(var(--bulk-grouphead-h, 1.7rem) - var(--table-pane-pad-v, 0px)); }
 .bulk-group-row .bulk-group-head {
-    text-align: center; font-weight: 700; text-transform: none; letter-spacing: 0;
+    text-align: left; font-weight: 700; text-transform: none; letter-spacing: 0;
     color: var(--pico-color); background: var(--pico-card-sectioning-background-color);
     padding: 3px 8px; font-size: calc(0.82rem * var(--bulk-fs));
 }
@@ -10649,7 +10623,11 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
    rather than let the single value read as the only one. */
 .bulk-col-multi { margin-left: 0.15rem; font-size: 0.8em; color: var(--warn-fg, var(--pico-muted-color)); cursor: help; }
 .bulk-sort-caret { color: var(--pico-primary, #0172ad); font-size: 0.85em; }
-.bulk-col-stats { display: block; font-weight: 400; font-size: var(--ui-fs-sm); white-space: nowrap; }
+.bulk-col-stats { display: none; font-weight: 400; font-size: var(--ui-fs-sm); white-space: nowrap; }
+.bulk-col-head:hover > .bulk-col-stats:not(:empty), .bulk-col-head:focus-within > .bulk-col-stats:not(:empty) { display: block; position: absolute; left: 0; top: 100%; z-index: 5; padding: 2px 6px; background: var(--pico-card-background-color); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-sm); }
+.bulk-group-label { position: sticky; left: 6rem; }
+.bulk-cell.cell-best:not(:focus), .bulk-cell.cell-worst:not(:focus) { background: transparent; box-shadow: inset var(--ui-bw-strip) 0 0 var(--ui-accent); }
+.bulk-cell.cell-worst:not(:focus) { box-shadow: inset var(--ui-bw-strip) 0 0 var(--pico-muted-color); }
 /* before / after hover panel on a modified cell */
 .bulk-td { position: relative; }
 .bulk-ba { display: none; position: absolute; left: 4px; top: 100%; z-index: 6; margin-top: 2px;
@@ -13745,9 +13723,8 @@ td.vc-cell-takeable:focus-within .vc-take,
 .topo-trend-box { border: 1px solid var(--pico-muted-border-color);
     border-radius: .45rem; padding: .5rem .6rem .3rem;
     background: var(--pico-card-background-color); min-width: 0; }
-.topo-trend-title { font-size: .82rem; font-weight: 600; margin-bottom: .2rem;
-    font-family: var(--font-mono); }
-.topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
+.topo-trend-title { font-size: var(--ui-fs-md); font-weight: 600; margin-bottom: .2rem; }   /* R4-CS-9: UI face, not mono */
+.topo-trend-title .muted { font-weight: 400; }
 .topo-trend-chart { min-height: 300px; }
 /* RAM P2: a drawn Chip Status panel off screen skips layout/paint; its
    measured height is its placeholder (chip-status.js _skipWhenOffscreen). */
@@ -15142,8 +15119,6 @@ table.data-table.czp-table td.czp-prose, .czp-table td small { font-family: var(
    One primary button per card; paths and exact changes are disclosures.
    --------------------------------------------------------------------------- */
 .asx-page { max-width: 68rem; }
-.asx-title { display: flex; align-items: baseline; gap: 1rem; margin: .2rem 0 .5rem; }
-.asx-title h2 { font-size: 1.15rem; margin: 0; }
 .asx { display: flex; flex-direction: column; gap: .6rem; font-size: .86rem; }
 .asx-progress { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; padding: .35rem .6rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent); border-radius: .5rem;
@@ -15320,7 +15295,7 @@ svg .iw-title { fill: var(--pico-muted-color); }
    measured height, --undo-trail-h, set by undo-trail.js) -- a multi-line undo
    toast at the sink's usual bottom: 1rem covered the panel's buttons. Last in
    the file so it also wins over the composer lift (body.ag-composer-on). */
-body.undo-trail-on #status-bar { bottom: calc(5rem + var(--undo-trail-h, 0px) + 0.5rem); }
+body.undo-trail-on #status-bar { bottom: calc(0.8rem + var(--undo-trail-h, 0px) + 0.5rem); }
 .undo-trail-age { white-space: nowrap; }
 
 /* v1.5.1 (U P2-13): a visible "?" beside a term (templates/_jargon.html, a

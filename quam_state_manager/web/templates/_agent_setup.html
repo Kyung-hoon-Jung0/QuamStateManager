@@ -1,12 +1,15 @@
-{# docs/173 §3.5 + docs/288: Agent → setup. A few cards a person reads once:
+{% from "_ui.html" import ui_head_fold %}{# docs/173 §3.5 + docs/288: Agent → setup. A few cards a person reads once:
    what is ready, what is left, one primary button each. Every write is still a
    preview first and a press second, with a backup beside the file (the exact
    changes are one click away). The skeleton only -- agent-setup.js renders
    from GET /api/agent/setup. #}
 <div id="agent-setup" class="agent-setup asx-page">
-    <div class="asx-title">
-        <h2>Agent setup</h2>
+    {#- D-102: the page head, foldable (D-103). -#}
+    <header class="ui-head ui-head--page">
+        <h2 class="ui-head-title">Agent setup</h2>
         <a class="asx-link" href="/agent" hx-get="/agent" hx-target="#table-pane" hx-push-url="true">&larr; back to the Agent</a>
-    </div>
+        <p class="ui-head-gist">Connect a terminal agent, choose where runs and notes live, and check that it answers.</p>
+        {{ ui_head_fold() }}
+    </header>
     <div id="as-body"><p class="muted">Loading&hellip;</p></div>
 </div>

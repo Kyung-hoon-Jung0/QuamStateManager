@@ -16,7 +16,7 @@
 {% if not op.present %}{{ _blank_cell(op.why) }}{% else %}{% set f = op[field] %}{% if f.state == 'num' %}<td title="{{ _op_title(op) }}">{% if unit_key == 'alpha' %}{{ "%.4g" | format(f.value) }}{% else %}{{ f.value | qty(unit_key) }}{% endif %}</td>{% elif f.state == 'text' %}<td><span class="muted" title="Stored as text &mdash; see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ f.value }}&quot;</span></td>{% else %}{{ _blank_cell(_op_title(op) ~ ': ' ~ field ~ '. ' ~ f.why) }}{% endif %}{% endif %}
 {%- endmacro %}
 
-<div class="table-header-row ui-head ui-head--data">
+<div class="table-header-row ui-head ui-head--data ui-head--page">
     <h2 class="ui-head-title">Qubits <small class="muted ui-count">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
         <input class="ui-search" type="search" placeholder="{{ search_hint() }}" title="{{ search_title() }}"

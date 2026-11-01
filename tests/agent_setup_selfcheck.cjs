@@ -256,6 +256,30 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/Not saved: changing the limits needs a press in the SM window/.test(document.getElementById('as-lim-msg').textContent),
      "a refusal is said beside the button, in the server's words");
   limitsRefuse = null;
+  // R4-AG-1 (UD-5 a): the calibrations folder is set in the card, not on the hidden Runner page
+  {
+    const row = document.getElementById('as-calib');
+    ok(row && row.closest('#as-env') && !row.querySelector('a[href="/scheduler"]') && !/Experiment Runner/.test(document.getElementById('as-env').textContent),
+       'AG-1: the folder row lives in step 2 and no longer links to the hidden Experiment Runner');
+    const inp = document.getElementById('as-calroot');
+    ok(inp && inp.value === 'D:/lab/cal', 'AG-1: the field starts from the saved folder');
+    let browsed = null; window.openFolderBrowser = function (id, kind, o) { browsed = [id, o && o.autoSubmit]; };
+    ok(!!row.querySelector('button[onclick="AgentSetup.browseCalib()"]'), 'AG-1: a Browse button is in the row'); A.browseCalib();
+    ok(browsed && browsed[0] === 'as-calroot' && browsed[1] === false, 'AG-1: Browse opens the shared folder browser on that field, fill-only');
+    inp.value = '  D:/lab/cal2 ';
+    const n0 = calls.length;
+    A.calib(); await tick(40);
+    const p = calls.slice(n0).find(c => c.method === 'POST' && /\/scheduler\/settings$/.test(c.url));
+    ok(p && JSON.stringify(p.body) === '{"calibrations_folder":"D:/lab/cal2"}', 'AG-1: Use this folder POSTs exactly {calibrations_folder} through the existing settings door');
+    ok(calls.slice(n0).some(c => /\/api\/agent\/setup$/.test(c.url)), 'AG-1: a saved folder re-reads the setup status');
+    settingsBusy = true;
+    A.calib(); await tick(40);
+    ok(/scheduler is running/.test((document.getElementById('as-calib-msg') || {}).textContent || ''), 'AG-1: a refusal is said in the row, in the server words');
+    settingsBusy = false;
+    document.getElementById('as-calroot').value = '';
+    const n1 = calls.length; A.calib(); await tick(20);
+    ok(calls.length === n1 && /folder first/.test(document.getElementById('as-calib-msg').textContent), 'AG-1: an empty field posts nothing and says why');
+  }
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

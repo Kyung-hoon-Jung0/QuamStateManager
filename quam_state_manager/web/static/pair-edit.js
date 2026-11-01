@@ -515,6 +515,14 @@
                  cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
     }
 
+    // LE-1: a column extreme is a bar on the cell's left edge (not a fill,
+    // amber means "edited") and the cell's title names it.
+    function _markExt(cell, kind) {
+        var t = (cell.getAttribute('title') || '').replace(/ — column (max|min)$/, '');
+        cell.classList.remove('cell-best', 'cell-worst');
+        if (kind) { cell.classList.add(kind === 'max' ? 'cell-best' : 'cell-worst'); t += ' — column ' + kind; }
+        if (t) cell.setAttribute('title', t);
+    }
     function _recomputeStats(onlyKeys, tds) {
         var t = table(); if (!t) return;
         var ix = null;   // built lazily: a keyed pass over cold columns needs none
@@ -540,14 +548,14 @@
             var cells = ix.cells(c.key);
             var nums = [];
             cells.forEach(function (cell) { var n = _num(cell.value); if (n !== null) nums.push(n); });
-            cells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
+            cells.forEach(function (cell) { _markExt(cell, null); });
             if (nums.length < 2) { stat.textContent = ''; return; }
             var mn = Math.min.apply(null, nums), mx = Math.max.apply(null, nums);
             stat.textContent = 'min ' + (window.ValueDelta ? window.ValueDelta.formatValue(mn) : _grp(mn)) + ' · max ' + (window.ValueDelta ? window.ValueDelta.formatValue(mx) : _grp(mx));
             if (mn !== mx) cells.forEach(function (cell) {
                 var n = _num(cell.value);
-                if (n === mx) cell.classList.add('cell-best');
-                else if (n === mn) cell.classList.add('cell-worst');
+                if (n === mx) _markExt(cell, 'max');
+                else if (n === mn) _markExt(cell, 'min');
             });
         });
     }

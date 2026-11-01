@@ -1,4 +1,4 @@
-{% from "_ui.html" import ui_head_fold %}<div class="topo-dashboard">
+<div class="topo-dashboard">
 <header class="topology-toolbar ui-head ui-head--data ui-head--page">
     <h2 class="ui-head-title">Chip Status</h2>
     {% if diag_summary is defined and diag_summary %}
@@ -28,7 +28,6 @@
        diagram it controlled. The hero has no text labels on its edges —
        direction is the C/T/M markers and the chevrons — so the toggle
        would have been a control that silently does nothing. #}
-    {{ ui_head_fold() }}
 </header>
 
 {# Phase C — one scrolling dashboard. Sticky SCROLL-SPY jump bar: click
@@ -58,7 +57,7 @@
     {# D-97: warn/fail marks are off by default (clean screenshots); D-99: the gear opens the one thresholds editor #}
     <span class="ui-tabs-end topo-diag-end">
         <label class="ui-check" title="Mark every value that is outside its spec or a statistical outlier"><input type="checkbox" id="chip-diag-cb" onchange="window.chipSetDiag(this.checked)">Diagnosis</label>
-        <button type="button" class="ui-btn-icon" onclick="window.chipOpenThresholds()" title="Edit the pass / warn / fail thresholds" aria-label="Edit thresholds">&#9881;</button>
+        <button type="button" class="ui-btn-icon" onclick="window.chipOpenThresholds(this)" title="Edit the pass / warn / fail thresholds" aria-label="Edit thresholds">&#9881;</button>
     </span>
 </div>
 

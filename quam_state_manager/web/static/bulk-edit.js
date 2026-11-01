@@ -1664,6 +1664,14 @@
                  cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
     }
 
+    // LE-1: a column extreme is a bar on the cell's left edge (not a fill,
+    // amber means "edited") and the cell's title names it.
+    function _markExt(cell, kind) {
+        var t = (cell.getAttribute('title') || '').replace(/ — column (max|min)$/, '');
+        cell.classList.remove('cell-best', 'cell-worst');
+        if (kind) { cell.classList.add(kind === 'max' ? 'cell-best' : 'cell-worst'); t += ' — column ' + kind; }
+        if (t) cell.setAttribute('title', t);
+    }
     function _recomputeStats(onlyKeys, tds) {
         var t = table(); if (!t) return;
         var ix = null;   // built lazily: a keyed pass over cold columns needs none
@@ -1681,7 +1689,7 @@
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
             var allCells = ix.cells(c.key);
-            allCells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
+            allCells.forEach(function (cell) { _markExt(cell, null); });
             // Stats + extreme colouring cover the VISIBLE scope only — with a ⚏
             // Qubits selection active, chip-wide extremes on hidden rows would
             // mislead (and could colour nothing the user can see).
@@ -1698,8 +1706,8 @@
             // (max=cell-best, min=cell-worst) — these mark extremes, not quality.
             if (mn !== mx) cells.forEach(function (cell) {
                 var n = _num(cell.value);
-                if (n === mx) cell.classList.add('cell-best');
-                else if (n === mn) cell.classList.add('cell-worst');
+                if (n === mx) _markExt(cell, 'max');
+                else if (n === mn) _markExt(cell, 'min');
             });
         });
     }
@@ -2174,6 +2182,7 @@
         if (cell._freqJustMirrored) { coupled = false; }   // let a just-mirrored twin detune
         cell._freqJustMirrored = false;
         cell._freqCoupled = coupled;
+        cell._freqToasted = false;
         _setFreqLinkMark(cell, coupled);
         if (twin) _setFreqLinkMark(twin, coupled);
     }
@@ -2196,6 +2205,22 @@
         // into it to deliberately detune without the mirror snapping it back (A9).
         twin._freqJustMirrored = true;
         _markCellDirty(twin);
+        // LE-15: one edit wrote two cells -- say so once per focus session
+        if (!cell._freqToasted) {
+            cell._freqToasted = true;
+            if (window.showToast) window.showToast('1 edit + 1 linked (' + _colLabelOf(twin) + ')', 'info');
+        }
+    }
+    function _colLabelOf(cell) {
+        var td = cell.closest ? cell.closest('td[data-col-key]') : null;
+        var key = td ? td.getAttribute('data-col-key') : '';
+        var t = table();
+        var th = null;
+        if (key && t) Array.prototype.some.call(t.querySelectorAll('th.bulk-col-head[data-col-key]'), function (h) {
+            if (h.getAttribute('data-col-key') !== key) return false;
+            th = h.querySelector('.bulk-col-label'); return true;
+        });
+        return th ? th.textContent.trim() : (key || 'twin');
     }
 
     // Tag groups of >=2 same-node cells as linked (style + tooltip); the rare case

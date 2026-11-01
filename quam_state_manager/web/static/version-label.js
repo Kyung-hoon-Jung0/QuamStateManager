@@ -10,6 +10,7 @@
         button.focus();
     }
     document.addEventListener('click', function (e) {
+        if (!(e.target instanceof Element)) return;
         var button = e.target.closest('[data-version-label-open], [data-version-label-cancel]');
         if (!button) return;
         var editor = button.closest('.version-label-edit');
@@ -23,6 +24,7 @@
     });
     // Capture Escape before the page's drawer and panel dismiss handlers.
     document.addEventListener('keydown', function (e) {
+        if (!(e.target instanceof Element)) return;
         var editor = e.target.closest('.version-label-edit');
         if (!editor || editor.querySelector('form').hidden) return;
         if (e.key === 'Escape') {

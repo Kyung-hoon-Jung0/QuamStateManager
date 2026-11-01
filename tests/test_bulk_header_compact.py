@@ -47,7 +47,7 @@ def test_the_pickers_drop_the_details_margin_on_this_page_only():
 
 
 def test_the_and_button_shares_the_chips_line():
-    assert "flex: 1 1 0" in _decls(".bulk-chipbar > .bulk-chip-scroll")
+    assert "flex: 1 1 0" in _decls(".bulk-chip-scroll")   # LE-17: one rule, chips wrap
 
 
 def test_a_short_window_trims_spacing_and_hides_nothing():

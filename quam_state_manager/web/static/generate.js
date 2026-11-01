@@ -734,7 +734,7 @@
     var seq = ++_earlySeq;
     fetch("/generate/capabilities", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spec: state.spec, source_folder: state.sourcePath || null })
+      body: JSON.stringify({ spec: state.spec, python: state.env || null, source_folder: state.sourcePath || null })
     }).then(function (r) { return r.json(); }).then(function (res) {
       if (seq !== _earlySeq || state.step !== 5) return;
       var msg = res && res.root && res.root.blocker;
@@ -2704,7 +2704,7 @@
       var selectedEnv = state.env;
       fetch("/generate/capabilities", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec: state.spec })
+        body: JSON.stringify({ spec: state.spec, python: selectedEnv })
       }).then(function (r) { return r.json(); }).then(function (res) {
         if (state.env !== selectedEnv) return;
         _couplerCzAvailable = !!((res.report || {}).inventory || []).some(function (r) {
@@ -9942,7 +9942,7 @@
       // regenerate mode: the source chip's folder rides along so the server
       // can compare its CR schema flavor against the env (null in plain
       // Generate mode — no chip to compare).
-      body: JSON.stringify({ spec: state.spec,
+      body: JSON.stringify({ spec: state.spec, python: state.env || null,
                              source_folder: state.sourcePath || null })
     })
       .then(function (r) { return r.json(); })
@@ -10139,7 +10139,7 @@
       fetch("/generate/capabilities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec: state.spec, force: true,
+        body: JSON.stringify({ spec: state.spec, python: state.env || null, force: true,
                                source_folder: state.sourcePath || null })
       }).then(function () { renderCapabilityReport(box); });
     });
