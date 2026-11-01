@@ -561,3 +561,23 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
                     continue
             out[str(m)] = unit
     return out
+
+
+# [derived] Upper bound on a magnitude that can still be an output voltage.
+# The pair ``detuning`` is declared volts by its class (see ``pair_detuning``
+# above), but a chip may store a frequency in it (seen: ~5e8). No OPX analog
+# output reaches 10 V, so a larger magnitude cannot be the declared unit and
+# must not be printed under a "V" header.
+PLAUSIBLE_VOLT_MAX = 10.0
+
+
+def pair_detuning_cell(value: Any) -> tuple[str, bool]:
+    """``(text, unit_doubtful)`` for a pair's ``detuning`` table cell.
+
+    A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts;
+    a larger one renders raw (no scaling, no unit) with the doubt flag set.
+    """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if abs(value) > PLAUSIBLE_VOLT_MAX:
+            return repr(value), True
+    return qty_filter(value, "pair_detuning"), False

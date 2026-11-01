@@ -4620,7 +4620,7 @@ td.col-delta .val-delta { margin-left: 0; }
 /* highlight modes (docs/91 §3.3) — emphasis only, nothing appears/disappears */
 .cm-hl-qdac .cm-edge-line, .cm-hl-qdac .cm-arrow,
 .cm-hl-qdac .cm-res, .cm-hl-qdac .cm-feed, .cm-hl-qdac .cm-freq { opacity: .22; }
-.cm-hl-qdac .cm-stone, .cm-hl-qdac .cm-id { opacity: .5; }
+.cm-hl-qdac .cm-stone { opacity: .5; }
 .cm-hl-qdac .cm-flux { opacity: .35; }
 .cm-hl-qdac .cm-qdac { stroke: var(--pico-primary); stroke-width: 3.5; opacity: 1; }
 
@@ -4642,7 +4642,7 @@ td.col-delta .val-delta { margin-left: 0; }
 
 .cm-hl-resonators .cm-edge-line, .cm-hl-resonators .cm-arrow,
 .cm-hl-resonators .cm-flux, .cm-hl-resonators .cm-freq { opacity: .22; }
-.cm-hl-resonators .cm-stone, .cm-hl-resonators .cm-id { opacity: .5; }
+.cm-hl-resonators .cm-stone { opacity: .5; }
 .cm-hl-resonators .cm-res { stroke: var(--pico-primary); stroke-width: 2.2; }
 /* docs/93 F4 — colour encodes FEEDLINE IDENTITY on this page only (elsewhere
    colour still means selected/not). Each slot pairs its validated hue with a
@@ -4685,13 +4685,13 @@ td.col-delta .val-delta { margin-left: 0; }
 
 .cm-hl-flux .cm-res, .cm-hl-flux .cm-feed,
 .cm-hl-flux .cm-freq { opacity: .22; }
-.cm-hl-flux .cm-stone, .cm-hl-flux .cm-id { opacity: .5; }
+.cm-hl-flux .cm-stone { opacity: .5; }
 .cm-hl-flux .cm-edge-line, .cm-hl-flux .cm-arrow { opacity: .55; }   /* neighbour links = crosstalk candidates */
 .cm-hl-flux .cm-flux { stroke: var(--pico-primary); stroke-width: 3; }
 
 .cm-hl-couplers .cm-res, .cm-hl-couplers .cm-flux, .cm-hl-couplers .cm-feed,
 .cm-hl-couplers .cm-freq { opacity: .22; }
-.cm-hl-couplers .cm-stone, .cm-hl-couplers .cm-id { opacity: .5; }
+.cm-hl-couplers .cm-stone { opacity: .5; }
 .cm-hl-couplers .cm-edge-line, .cm-hl-couplers .cm-arrow { opacity: .3; }
 .cm-hl-couplers .cm-edge-hascoupler .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; opacity: 1; }
 .cm-hl-couplers .cm-coupler { stroke: var(--pico-primary); fill: var(--pico-primary); opacity: 1; }
