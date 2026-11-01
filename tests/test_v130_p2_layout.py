@@ -315,7 +315,7 @@ class TestL23PageHeaderToggleClearance:
     """The pane's top-right header toggle overlapped "Modify wiring..."."""
 
     def test_the_wiring_header_keeps_the_toggle_lane(self):
-        assert '<div class="table-header-row iw-header ui-head ui-head--data">' in _tpl("_instrument_wiring.html")
+        assert '<div class="table-header-row iw-header ui-head ui-head--data ui-head--page">' in _tpl("_instrument_wiring.html")
         assert "padding-right: 1.8rem" in _block(_css(), ".iw-header {")
 
 

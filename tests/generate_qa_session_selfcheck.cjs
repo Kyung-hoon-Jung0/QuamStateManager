@@ -69,7 +69,10 @@ catch (e) { console.error('SKIP: jsdom not installed'); process.exit(2); }
 
 const ROOT = path.join(__dirname, '..');
 const HTML = fs.readFileSync(
-  path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_generate.html'), 'utf8');
+  path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_generate.html'), 'utf8')
+  // D-103: the page head's fold macro (import + call) is Jinja the harness cannot run
+  .replace(/\{%-? *from ['"]_ui\.html['"] import ui_head_fold *-?%\}/g, '')
+  .replace(/\{\{-? *ui_head_fold\(\) *-?\}\}/g, '<button type="button" class="ui-btn-icon ui-head-fold"></button>');
 const GEN_JS = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'static', 'generate.js'), 'utf8');
 
