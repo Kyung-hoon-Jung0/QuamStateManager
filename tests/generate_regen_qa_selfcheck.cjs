@@ -332,6 +332,33 @@ var r9 = render({
   crosstalk_remapped_total: 2,
   crosstalk_unresolved: ['ports.analog_outputs.con1.5.3.crosstalk']
 });
+const portReports = render({
+  crosstalk_dropped_total: 90,
+  crosstalk_dropped: [{path: 'ports.analog_outputs.con1.5.1.crosstalk.2', reason: 'lines on different FEMs'}],
+  ports_conflict: [{port: 'ports.mw_outputs.con1.1.2', field: 'band', values: {q1: 2, q2: 3}}],
+  mw_band_conflicts: [{ports: ['out2', 'out3'], bands: [2, 3]}],
+  pointers_reaimed: [{path: 'input.downconverter_frequency', to: '#/ports/new/frequency'}],
+  upconverter_remapped: [{path: 'qubits.q1.xy.upconverter', to: 1}],
+  port_fields_dropped: [{port: 'ports.mw_outputs.con1.1.6', field: 'lo_mode', owner: 'q1.xy'}]
+});
+['crosstalk terms dropped', 'port field conflicts', 'MW coupled band conflicts',
+ 'port pointers re-aimed', 'line upconverters remapped', 'port fields dropped'].forEach(function (label) {
+  ok(portReports.lines.some(function (line) { return line.includes(label); }), 'port report: ' + label);
+});
+['crosstalk_dropped', 'ports_conflict', 'mw_band_conflicts', 'port_fields_dropped'].forEach(function (key) {
+  ok(doc.querySelector('.gen-merge-' + key + '.gen-merge-warn'), key + ' is a warning');
+});
+['pointers_reaimed', 'upconverter_remapped'].forEach(function (key) {
+  ok(doc.querySelector('.gen-merge-' + key + '.gen-merge-muted'), key + ' is muted');
+});
+ok(portReports.lines.some(function (line) {
+  return /90 crosstalk terms dropped/.test(line) && /lines on different FEMs/.test(line);
+}), 'port drop total and reason are visible');
+ok(portReports.lines.some(function (line) {
+  return /band \(q1 = 2, q2 = 3\)/.test(line);
+}), 'conflicting values name their owners');
+render({upconverter_remapped: [{path: 'qubits.q1.xy.upconverter', reason: 'no unique matching frequency'}]});
+ok(doc.querySelector('.gen-merge-upconverter_remapped.gen-merge-warn'), 'unmatched upconverter is a warning');
 ok(r9.lines.some(function (l) { return /^2 crosstalk terms renumbered/.test(l); }),
   'B9: renumbered crosstalk terms are counted from the total — got ' + JSON.stringify(r9.lines));
 ok(r9.lines.some(function (l) { return /con1\.5\.3\.crosstalk: kept as it was/.test(l); }),

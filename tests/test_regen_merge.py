@@ -1119,8 +1119,10 @@ def test_crosstalk_retains_and_reports_removed_target():
     old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {1: {"3": .13}})
     new, nw = _crosstalk_state({"q1": 1})
     result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] == {"3": .13}
-    assert result.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.1.crosstalk.3"]
+    # the term toward the removed line is dropped and reported, never kept
+    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] == {}
+    assert {"path": "ports.analog_outputs.con1.5.1.crosstalk.3",
+            "reason": "column line was removed"} in result.stats.crosstalk_dropped
 
 
 @pytest.mark.parametrize("pointer", ["#/extras/row", "#./saved_row"])
@@ -1164,12 +1166,15 @@ def test_crosstalk_new_owner_gets_defaults_on_vacated_port():
 def test_crosstalk_column_collision_is_reported_instead_of_overwritten():
     old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {3: {"1": .31, "7": .37}})
     new, nw = _crosstalk_state({"q1": 7, "q2": 3})
-    # never raise (a Re-generate must not die on it) and never guess: keep the
-    # carried row and name it
     r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-    assert r.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.3.crosstalk"]
-    assert not any(o.startswith("ports.analog_outputs.con1.5.3.crosstalk")
-                   for o, _ in r.stats.crosstalk_remapped)
+    assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["3"]["crosstalk"] == {"7": .31}
+    assert r.stats.crosstalk_dropped == [{
+        "path": "ports.analog_outputs.con1.5.3.crosstalk.7",
+        "reason": "column port now drives another line"}]
+    assert r.stats.crosstalk_remapped == [(
+        "ports.analog_outputs.con1.5.3.crosstalk.1",
+        "ports.analog_outputs.con1.5.3.crosstalk.7")]
+
 
 
 class TestAPortMovesWithItsOwner:
@@ -1237,30 +1242,22 @@ class TestAPortMovesWithItsOwner:
         assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
         assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
 
-    def test_a_renamed_qubit_keeps_the_port_number_identity(self):
-        # No owner in common -> nothing is known to have moved: today's
-        # port-number carry stands (never wiped to fresh on a guess).
+    def test_unrecorded_rename_keeps_rebuild_defaults(self):
         old, ow = self._old()
         new, nw = self._new({"qA": 1, "q2": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
-        assert r.stats.ports_fresh == []
-        # ...but it is NAMED, never silent (QA review of F1)
-        assert r.stats.ports_inherited == [
-            ("ports.analog_outputs.con1.5.1", "q1.z", "qA.z")]
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"] == new["ports"]["analog_outputs"]["con1"]["5"]["1"]
+        assert r.stats.ports_fresh == [("ports.analog_outputs.con1.5.1", "q1.z", "qA.z")]
+        assert r.stats.ports_inherited == []
 
-    def test_a_removed_qubits_port_taken_by_a_new_one_is_named(self):
-        # QA review of F1: q2 removed, q6 added onto the freed port 2. The
-        # port-number carry stands (a rename must keep it), but the report
-        # says whose calibration q6 got.
+    def test_a_removed_qubits_port_taken_by_a_new_one_is_fresh(self):
         old, ow = self._old()
         new, nw = self._new({"q1": 1, "q6": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        lf = r.merged["ports"]["analog_outputs"]["con1"]["5"]
-        assert lf["2"]["delay"] == 34 and lf["2"]["feedforward_filter"] == [0.2] * 48
-        assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
-        assert r.stats.ports_inherited == [
-            ("ports.analog_outputs.con1.5.2", "q2.z", "q6.z")]
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"] == new["ports"]["analog_outputs"]["con1"]["5"]["2"]
+        assert r.stats.ports_moved == []
+        assert r.stats.ports_fresh == [("ports.analog_outputs.con1.5.2", "q2.z", "q6.z")]
+        assert r.stats.ports_inherited == []
 
     def test_a_line_the_same_qubit_still_has_is_not_inherited(self):
         # q1 is still on the chip; only the path its line is written at
@@ -1314,14 +1311,14 @@ class TestAPortMovesWithItsOwner:
         assert p5["full_scale_power_dbm"] == -11 and p5["port_id"] == 5
         assert r.stats.ports_moved[0][2] == "q1.resonator (+1)"
 
-    def test_owners_from_two_old_ports_keep_the_identity(self):
-        # q1 (was port 1) and q2 (was port 2) now share port 2: owners
-        # disagree on a source -> no remap, the port-number carry stands.
+    def test_owners_from_two_old_ports_require_consensus(self):
         old, ow = self._old()
         new, nw = self._new({"q1": 2, "q2": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 34
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 141
         assert r.stats.ports_moved == []
+        assert any(c["field"] == "delay" and c["values"] == {"q1.z": 37, "q2.z": 34}
+                   for c in r.stats.ports_conflict)
 
 
 # ---------------------------------------------------------------------------
@@ -1624,3 +1621,15 @@ class TestClassChangeGroups:
         (g,) = class_change_groups([("(root)", "lab.Quam", "qb.Quam")],
                                    ["lab_top (the rebuild left it empty; x)"], old)
         assert g["dropped"] == 1
+
+
+def test_a_term_toward_a_removed_line_is_dropped_not_kept_on_its_empty_port():
+    """Real-chip stress: q3 removed; q1's term toward q3's old port stayed on that empty
+    port and would couple into whatever is cabled there next."""
+    old, ow = _crosstalk_state({"q1": 1, "q3": 3}, {1: {"3": .13, "1": 1.0}})
+    new, nw = _crosstalk_state({"q1": 1})
+    r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    row = r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"]
+    assert row == {"1": 1.0}
+    assert {"path": "ports.analog_outputs.con1.5.1.crosstalk.3",
+            "reason": "column line was removed"} in r.stats.crosstalk_dropped

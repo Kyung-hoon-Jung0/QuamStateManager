@@ -115,9 +115,14 @@ def _iter_leaves(obj: Any, prefix: str = ""):
 def _path_value(root: dict, dot_path: str) -> Any:
     node: Any = root
     for k in dot_path.split("."):
-        if not isinstance(node, dict) or k not in node:
+        if isinstance(node, dict) and k in node:
+            node = node[k]
+        elif isinstance(node, dict) and k.isdigit() and int(k) in node:
+            node = node[int(k)]
+        elif isinstance(node, list) and k.isdigit() and int(k) < len(node):
+            node = node[int(k)]
+        else:
             return None
-        node = node[k]
     return node
 
 
@@ -135,6 +140,10 @@ def _resolves(root: dict, pointer: str) -> bool:
             continue
         if isinstance(node, dict) and seg in node:
             node = node[seg]
+        elif isinstance(node, dict) and seg.isdigit() and int(seg) in node:
+            node = node[int(seg)]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
         else:
             return False
     return True
@@ -180,6 +189,12 @@ class MergeStats:
     ports_moved: list[tuple[str, str, str]] = field(default_factory=list)  # (old port, new port, owner) -- the port's calibration followed its line (QA F1)
     crosstalk_remapped: list[tuple[str, str]] = field(default_factory=list)  # old/new coefficient paths
     crosstalk_unresolved: list[str] = field(default_factory=list)  # retained coefficients naming absent ports
+    crosstalk_dropped: list[dict] = field(default_factory=list)
+    ports_conflict: list[dict] = field(default_factory=list)
+    pointers_reaimed: list[dict] = field(default_factory=list)
+    mw_band_conflicts: list[dict] = field(default_factory=list)
+    upconverter_remapped: list[dict] = field(default_factory=list)
+    port_fields_dropped: list[dict] = field(default_factory=list)
     ports_fresh: list[tuple[str, str, str]] = field(default_factory=list)  # (port, old owner, new owner) -- old values left with their line; rebuild defaults stand (QA F1)
     pairs_reversed: list[tuple[str, str]] = field(default_factory=list)  # (old id, new id) -- the rebuild has the pair only with control/target swapped (QA r2-09)
     ports_inherited: list[tuple[str, str, str]] = field(default_factory=list)  # (port, old owner, new owner) -- kept by port number from a line the rebuild removed (QA review of F1)
@@ -568,6 +583,10 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             cls = new.get("__class__")
             if isinstance(cls, str):
                 legal = schemas.get(cls)
+        # Attributes of an existing port are distinct from hardware entities.
+        # Only the destination class's declared fields may be grafted.
+        if top == "ports" and "port_id" in new:
+            graftable_here = True
         for k, ov in old.items():
             if ((k in new and k not in deferred)
                     or k in ("__class__", "__package_versions__")
@@ -1260,16 +1279,14 @@ def _pointer_target(src_path: str, pointer: str) -> str | None:
     if pointer.startswith("#/"):
         return ".".join(s for s in pointer[2:].split("/") if s)
     base = src_path.split(".")[:-1]              # the object holding the leaf
-    rest = pointer[1:]                           # "./x" or "../x" or "../../x"
-    if rest.startswith("./"):
-        rest = rest[2:]
-    else:
-        while rest.startswith("../"):
+    for seg in pointer[1:].split("/"):
+        if seg == "..":
             if not base:
                 return None
-            base = base[:-1]
-            rest = rest[3:]
-    return ".".join(base + [s for s in rest.split("/") if s])
+            base.pop()
+        elif seg and seg != ".":
+            base.append(seg)
+    return ".".join(base)
 
 
 def _walk_refs(obj: Any, path: str = ""):
@@ -1399,7 +1416,7 @@ def _only_carried(obj: Any, path: str, carry: set[str]) -> Any:
 # q1 fresh defaults on out6. A port's OWNERS are the channels in the STATE
 # whose pointer chain lands on it; each rebuilt port takes the OLD values of
 # the one old port its (surviving) owners came from. The port number stays the
-# rule whenever owners are unknown or disagree.
+# fallback only when no line identity is known on either side.
 # ---------------------------------------------------------------------------
 
 _PORT_IDENTITY_KEYS = ("controller_id", "fem_id", "port_id", "__class__")
@@ -1420,6 +1437,10 @@ def _land(doc: dict, dot_path: str, _depth: int = 0) -> str | None:
                     else _land(doc, ".".join([tgt, *segs[i:]]), _depth + 1))
         if isinstance(node, dict) and seg in node:
             node = node[seg]
+        elif isinstance(node, dict) and seg.isdigit() and int(seg) in node:
+            node = node[int(seg)]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
         else:
             return None
     if is_pointer(node):
@@ -1471,24 +1492,13 @@ def _port_moves(old_state: dict, new_state: dict,
                 new_wiring: dict | None = None,
                 inherited: dict[str, tuple[str, str]] | None = None
                 ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str]]]:
-    """Which rebuilt ports take which OLD port's values.
+    """Match calibration by surviving endpoint identity.
 
-    ``moves = {new port: (old port, owner)}`` -- every owner the two builds
-    share came from ONE other old port (a brand-new line beside them, e.g. a
-    qubit added to a moved feedline, brings no calibration and does not
-    count). ``fresh = {new port: (old owner, new owner)}`` -- the port's old
-    values LEFT with their line (it is some move's source) and only brand-new
-    lines use it now: the rebuild's defaults stand, never someone else's
-    calibration. Anything else keeps the port-number identity. ``new_state``
-    must be post-:func:`_reconcile_pair_ids`, so a pair's owner path matches
-    across a builder's pair-id drift.
-
-    ``inherited`` (optional, filled in place) -- ``{port: (old owner, new
-    owner)}`` for the port-number carry nothing else names: every line that
-    used the port belonged to a qubit / pair the rebuild no longer has (a
-    removed or renamed qubit), and only lines the source never had use it
-    now. The values stay (a rename must keep them), but the report says whose
-    they were (QA review of F1).
+    A destination with one source follows it. A destination with several
+    sources is handled by field consensus. If only new endpoints occupy a
+    formerly owned port, defaults stand, even when the former owner was
+    removed. Renames must be applied to source identities before this pass.
+    ``inherited`` remains an accepted argument for existing internal callers.
     """
     old_owners = _port_owners(old_state, old_wiring)
     if not old_owners:
@@ -1505,26 +1515,13 @@ def _port_moves(old_state: dict, new_state: dict,
         (o_port,) = known
         if o_port != n and o_port in old_ents:
             moves[n] = (o_port, _owner_label(shared))
-    moved_from = {o for o, _ in moves.values()}
     fresh: dict[str, tuple[str, str]] = {}
     for n, owners in new_owners.items():
-        if n in moves or n not in moved_from:
+        if n in moves or n not in old_owners:
             continue
         if any(o in old_port_of for o in owners):
             continue
         fresh[n] = (_owner_label(old_owners.get(n) or ()), _owner_label(owners))
-    if inherited is not None:
-        def gone(o: str) -> bool:           # its qubit / pair left the chip
-            segs = o.split(".")
-            return (len(segs) > 1 and segs[0] in _LISTED_ENTITY_COLLECTIONS
-                    and segs[1] not in (new_state.get(segs[0]) or {}))
-        for n, owners in new_owners.items():
-            olds = old_owners.get(n)
-            if (n in moves or n in fresh or not olds
-                    or any(o in old_port_of for o in owners)):
-                continue
-            if all(gone(o) for o in olds):
-                inherited[n] = (_owner_label(olds), _owner_label(owners))
     return moves, fresh
 
 
@@ -1565,10 +1562,201 @@ def _ports_view(old_state: dict, new_state: dict,
     return view
 
 
+def _port_sources(old, new, ow, nw):
+    """Destination -> source ports -> surviving endpoint owners."""
+    old_of = {o: p for p, owners in _port_owners(old, ow).items() for o in owners}
+    return {p: {src: {o for o in owners if old_of.get(o) == src}
+                for src in sorted({old_of[o] for o in owners if o in old_of}, key=natural_key)}
+            for p, owners in _port_owners(new, nw).items()}
+
+
+def _set_path(root, path, value):
+    parts = path.split(".")
+    node = root
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = copy.deepcopy(value)
+
+
+def _port_calibration_value(doc, path, seen=()):
+    """Resolve a port value in its original document, including object aliases."""
+    landed = _land(doc, path)
+    if landed is None or landed in seen:
+        return _MISSING
+    value = _path_value(doc, landed)
+    if isinstance(value, dict):
+        resolved = {k: _port_calibration_value(doc, f"{landed}.{k}", (*seen, landed)) for k in value}
+        return _MISSING if any(v is _MISSING for v in resolved.values()) else resolved
+    if isinstance(value, list):
+        resolved = [_port_calibration_value(doc, f"{landed}.{i}", (*seen, landed)) for i in range(len(value))]
+        return _MISSING if any(v is _MISSING for v in resolved) else resolved
+    return value
+
+
+def _port_consensus(view, old, sources, stats, wiring=None):
+    doc = _merged_doc(old, wiring)
+    for dest, srcs in sources.items():
+        if len(srcs) < 2:
+            continue
+        entries = {src: _path_value(old, src) for src in srcs}
+        agreed = {}
+        for key in sorted(set().union(*(entry.keys() for entry in entries.values())) - set(_PORT_IDENTITY_KEYS), key=natural_key):
+            vals = {src: _port_calibration_value(doc, f"{src}.{key}") if key in entry else _MISSING
+                    for src, entry in entries.items()}
+            first = next(iter(vals.values()))
+            if first is not _MISSING and all(v == first for v in vals.values()):
+                agreed[key] = copy.deepcopy(first)
+                if any(is_pointer(entry.get(key)) for entry in entries.values()):
+                    stats.pointers_reaimed.append({"path": dest + "." + key,
+                        "reason": "agreed source values inlined"})
+            else:
+                stats.ports_conflict.append({"port": dest, "field": key,
+                    "values": {_owner_label(srcs[src]): (v if v is not _MISSING else "<absent or unresolved>")
+                               for src, v in vals.items()}})
+        _set_path(view, dest, agreed)
+
+
+def _finish_port_values(old, new, merged, ow, nw, sources, stats, protect):
+    """Repair references using original context, after simultaneous value carry."""
+    old_doc = _merged_doc(old, ow)
+    old_entities = _port_entities(old.get("ports"))
+    destinations = {}
+    for dest, srcs in sources.items():
+        for src in srcs:
+            destinations.setdefault(src, set()).add(dest)
+    pending = []
+    for dest, srcs in sources.items():
+        port = _path_value(merged, dest)
+        if not isinstance(port, dict):
+            continue
+        for src, owners in srcs.items():
+            for key in _path_value(old, src):
+                if key not in port and key not in _PORT_IDENTITY_KEYS:
+                    stats.port_fields_dropped.append({"port": dest, "field": key,
+                        "owner": _owner_label(owners)})
+        if len(srcs) != 1:
+            continue
+        src = next(iter(srcs))
+        original = _path_value(old, src)
+        for suffix, val in _iter_leaves(original):
+            path = dest + "." + suffix
+            if not is_pointer(val) or suffix.startswith("crosstalk") or path in (protect or ()):
+                continue
+            if _path_value(merged, path) is None:
+                continue
+            original_path = src + "." + suffix
+            target = _pointer_target(original_path, val)
+            landed = _land(old_doc, original_path)
+            if landed is None:
+                rebuilt_value = _path_value(new, path)
+                if rebuilt_value is not None:
+                    _set_path(merged, path, rebuilt_value)
+                stats.pointers_reaimed.append({"path": path, "reason": "source target unresolved"})
+                continue
+            value = _path_value(old_doc, landed)
+            target_port = next((p for p in old_entities if target and
+                                (target == p or target.startswith(p + "."))), None)
+            if target_port:
+                choices = destinations.get(target_port, set())
+                if len(choices) == 1:
+                    target = next(iter(choices)) + target[len(target_port):]
+                else:
+                    target = None
+            pending.append((path, target, value, val))
+    # Inline first, so cycles introduced by swaps never affect validation.
+    for path, target, value, val in pending:
+        _set_path(merged, path, value)
+    for path, target, value, val in pending:
+        doc = _merged_doc(merged, nw)
+        landed = _land(doc, target) if target else None
+        aim = "#/" + target.replace(".", "/") if target else None
+        if landed and landed != path and _path_value(doc, landed) == value:
+            _set_path(merged, path, aim)
+        else:
+            aim = None
+        if aim != val:
+            stats.pointers_reaimed.append({"path": path, "from": val,
+                "to": aim, "reason": "line target moved" if aim else "old value inlined"})
+
+
+def _remap_upconverters(old, new, merged, sources, stats, protect, wiring=None):
+    old_doc = _merged_doc(old, wiring)
+    for dest, srcs in sources.items():
+        port = _path_value(merged, dest)
+        built = _path_value(new, dest)
+        lines = []
+        for src, owners in srcs.items():
+            original = _path_value(old, src)
+            table = original.get("upconverters")
+            if not isinstance(table, dict):
+                continue
+            for owner in sorted(owners):
+                line = owner.rsplit(".", 1)[0]
+                channel = _path_value(old, line)
+                if not isinstance(channel, dict) or "upconverter" not in channel:
+                    continue
+                if src == dest and "upconverters" in built:
+                    continue
+                index = channel["upconverter"]
+                frequency = _port_calibration_value(old_doc, f"{src}.upconverters.{index}.frequency")
+                lines.append((line + ".upconverter", index, frequency))
+        if not lines:
+            continue
+        single = "upconverter_frequency" in built
+        if single:
+            port.pop("upconverters", None)
+        else:
+            port["upconverters"] = copy.deepcopy(built.get("upconverters", {}))
+        frequencies = [frequency for _, _, frequency in lines]
+        conflict = single and any(f != frequencies[0] for f in frequencies)
+        if conflict:
+            port["upconverter_frequency"] = built["upconverter_frequency"]
+            stats.ports_conflict.append({"port": dest, "field": "upconverter_frequency",
+                "values": {path.rsplit(".", 1)[0]: (f if f is not _MISSING else "<unresolved>")
+                           for path, _, f in lines}})
+        for path, previous, frequency in lines:
+            if path in (protect or ()):
+                continue
+            matches = [k for k, v in built.get("upconverters", {}).items()
+                       if v.get("frequency") == frequency]
+            if frequency is _MISSING or conflict or (not single and len(matches) != 1):
+                rebuilt_index = _path_value(new, path)
+                if rebuilt_index is not None:
+                    _set_path(merged, path, rebuilt_index)
+                stats.upconverter_remapped.append({"path": path,
+                    "reason": "no unique matching frequency",
+                    "frequency": frequency if frequency is not _MISSING else "<unresolved>"})
+                continue
+            index = 1 if single else int(matches[0])
+            if single and dest + ".upconverter_frequency" not in (protect or ()):
+                port["upconverter_frequency"] = frequency
+            _set_path(merged, path, index)
+            stats.upconverter_remapped.append({"path": path, "from": previous,
+                "to": index, "frequency": frequency})
+
+
+def _check_mw_bands(merged, stats):
+    ents = _port_entities(merged.get("ports"))
+    for path, port in ents.items():
+        if not path.startswith("ports.mw_outputs."):
+            continue
+        prefix, number = path.rsplit(".", 1)
+        peer = {"1": ("mw_inputs", "1"), "2": ("mw_outputs", "3"),
+                "4": ("mw_outputs", "5"), "6": ("mw_outputs", "7"),
+                "8": ("mw_inputs", "2")}.get(number)
+        if peer is None:
+            continue
+        other = prefix.replace("ports.mw_outputs.", "ports." + peer[0] + ".") + "." + peer[1]
+        bands = [port.get("band"), ents.get(other, {}).get("band")]
+        if None not in bands and bands[0] != bands[1] and set(bands) != {1, 3}:
+            stats.mw_band_conflicts.append({"ports": [path, other], "bands": bands})
+
+
 def _carry_crosstalk(old_state: dict, merged: dict,
                      moves: dict[str, tuple[str, str]],
                      fresh: dict[str, tuple[str, str]], stats: MergeStats,
-                     old_wiring: dict | None, new_wiring: dict | None) -> None:
+                     old_wiring: dict | None, new_wiring: dict | None,
+                     rebuilt: dict | None = None) -> None:
     """Carry whole calibrated rows, renumbering columns simultaneously.
 
     A coefficient names another output in the same controller/FEM. Port rows
@@ -1580,48 +1768,84 @@ def _carry_crosstalk(old_state: dict, merged: dict,
     """
     old_doc = _merged_doc(old_state, old_wiring)
     new_doc = _merged_doc(merged, new_wiring)
-    columns: dict[str, dict[str, str]] = {}
-    for dest, (src, _) in moves.items():
-        if (src.startswith("ports.analog_outputs.")
-                and src.rsplit(".", 1)[0] == dest.rsplit(".", 1)[0]):
-            scope, number = src.rsplit(".", 1)
-            columns.setdefault(scope, {})[number] = dest.rsplit(".", 1)[1]
+    old_owners = _port_owners(old_state, old_wiring)
+    new_owners = _port_owners(merged, new_wiring)
+    new_port_of = {o: p for p, owners in new_owners.items() for o in owners}
+    sources = _port_sources(old_state, merged, old_wiring, new_wiring)
 
-    for dest, port in _port_entities(merged.get("ports")).items():
-        if not dest.startswith("ports.analog_outputs.") or dest in fresh:
-            continue
-        src = moves.get(dest, (dest, ""))[0]
+    def carry_row(dest, src):
         source_path = src + ".crosstalk"
         landed = _land(old_doc, source_path)
         row = _path_value(old_doc, landed) if landed else None
         if not isinstance(row, dict):
-            continue
+            return None
         scope = src.rsplit(".", 1)[0]
         dest_scope = dest.rsplit(".", 1)[0]
         remapped = {}
-        moved_keys: list[tuple[str, str]] = []
-        absent_keys: list[str] = []
-        collided = False
         for key, value in row.items():
-            number = columns.get(scope, {}).get(str(key))
-            renamed = (int(number) if isinstance(key, int) else number) if number else key
-            if renamed in remapped:
-                collided = True
-                break
-            remapped[renamed] = copy.deepcopy(value)
-            target_path = f"{dest}.crosstalk.{renamed}"
+            column = f"{scope}.{key}"
+            owners = old_owners.get(column, set())
+            targets = {new_port_of[o] for o in owners if o in new_port_of}
             original_path = f"{src}.crosstalk.{key}"
-            if original_path != target_path:
-                moved_keys.append((original_path, target_path))
-            if not _node_is_dict(merged, f"{dest_scope}.{renamed}"):
-                absent_keys.append(target_path)
-        if collided:
-            # two source keys name one port after renumbering (e.g. "1" and 1):
-            # never guess -- leave the carried row and report it
-            stats.crosstalk_unresolved.append(dest + ".crosstalk")
+            reason = None
+            if column == src:
+                target = dest  # Explicit self terms stay self, including a split.
+            elif len(targets) == 1:
+                target, = targets
+                if target.rsplit(".", 1)[0] != dest_scope:
+                    reason = "lines on different FEMs"
+            elif targets:
+                reason = "column port now drives another line"
+                target = column
+            elif owners:
+                # every line that column described was removed: the term has no
+                # partner any more, and keeping it would couple into whatever is
+                # cabled to that port next
+                reason = "column line was removed"
+                target = column
+            else:
+                target = f"{dest_scope}.{key}"
+                current = new_owners.get(target, set())
+                if current and current != owners:
+                    reason = "column port now drives another line"
+                else:
+                    stats.crosstalk_unresolved.append(f"{dest}.crosstalk.{key}")
+            if reason:
+                stats.crosstalk_dropped.append({"path": original_path, "reason": reason})
+                continue
+            number = target.rsplit(".", 1)[1]
+            renamed = int(number) if isinstance(key, int) else number
+            target_path = f"{dest}.crosstalk.{renamed}"
+            if renamed in remapped:
+                stats.crosstalk_dropped.append({"path": original_path,
+                    "reason": "column port now drives another line"})
+                continue
+            remapped[renamed] = copy.deepcopy(value)
+            if str(key) != str(renamed):
+                stats.crosstalk_remapped.append((original_path, target_path))
+        return remapped
+
+    for dest, port in _port_entities(merged.get("ports")).items():
+        if not dest.startswith("ports.analog_outputs.") or dest in fresh:
             continue
-        stats.crosstalk_remapped.extend(moved_keys)
-        stats.crosstalk_unresolved.extend(absent_keys)
+        srcs = sources.get(dest) or {moves.get(dest, (dest, ""))[0]: set()}
+        remap_start = len(stats.crosstalk_remapped)
+        unresolved_start = len(stats.crosstalk_unresolved)
+        rows = {src: carry_row(dest, src) for src in srcs}
+        remapped = next(iter(rows.values()))
+        if len(rows) > 1 and any(row != remapped for row in rows.values()):
+            del stats.crosstalk_remapped[remap_start:]
+            del stats.crosstalk_unresolved[unresolved_start:]
+            # Compare line relations after remapping, never raw port-number keys.
+            baseline = _path_value(rebuilt or {}, dest + ".crosstalk")
+            port["crosstalk"] = copy.deepcopy(baseline if baseline is not None else {})
+            stats.ports_conflict.append({"port": dest, "field": "crosstalk",
+                "values": {_owner_label(srcs[src]): row for src, row in rows.items()}})
+            continue
+        if remapped is None:
+            continue
+        src = next(iter(srcs))
+        source_path = src + ".crosstalk"
         # Keep an existing reference only if it still denotes the exact row.
         current = port.get("crosstalk")
         current_path = dest + ".crosstalk"
@@ -1927,7 +2151,7 @@ def _rewrite_ids(node: Any, pmap: dict, rename, parent: str | None = None,
         elif parent == "qubit_pairs":
             new_keys = {k: pmap.get(k, k) for k in node}
         else:
-            new_keys = {k: rename(k) for k in node}
+            new_keys = {k: rename(k) if isinstance(k, str) else k for k in node}
         # The token map is one-to-one (renamed, removed-and-reused and stale
         # ids each get their own name), so two keys cannot meet; should one
         # anyway, they are never merged into one.
@@ -2386,8 +2610,10 @@ def merge_states(old_state: dict, new_state: dict,
     inherited: dict[str, tuple[str, str]] = {}
     moves, fresh = _port_moves(old_state, new_state, old_wiring, new_wiring,
                                inherited)
+    sources = _port_sources(old_state, new_state, old_wiring, new_wiring)
     old_view = (_ports_view(old_state, new_state, moves, fresh)
-                if (moves or fresh) else old_state)
+                if (moves or fresh) else copy.deepcopy(old_state))
+    _port_consensus(old_view, old_state, sources, stats, old_wiring)
     stats.ports_moved = sorted(((o, n, who) for n, (o, who) in moves.items()),
                                key=lambda t: natural_key(t[1]))
     stats.ports_fresh = sorted(((n, was, now) for n, (was, now) in fresh.items()),
@@ -2427,7 +2653,11 @@ def merge_states(old_state: dict, new_state: dict,
     # A lab's own pointer forms come back where they change no value (see the helper)
     stats.source_forms_restored = sorted(
         _restore_source_forms(merged, old_view, new_wiring, protect_paths), key=natural_key)
-    _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring)
+    _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
+    _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
+                        sources, stats, protect_paths)
+    _remap_upconverters(old_state, new_state, merged, sources, stats, protect_paths, old_wiring)
+    _check_mw_bands(merged, stats)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200
@@ -2449,6 +2679,15 @@ def merge_states(old_state: dict, new_state: dict,
     moved_from += [(f"twpas.{o}", f"twpas.{n}") for o, n in stats.twpas_renamed]
     for p, ov in old_scalars:
         if p in merged_paths:
+            continue
+        # A schema rejection belongs to the destination line, even when its
+        # source hardware address disappears entirely.
+        if any(p == src + "." + record["field"] or
+               p.startswith(src + "." + record["field"] + ".")
+               for record in stats.port_fields_dropped
+               for src in sources.get(record["port"], {})):
+            continue
+        if any(p == record["path"] for record in stats.crosstalk_dropped):
             continue
         # QA F1: a moved port's values live at the port its line went to.
         if moved_from and any(
