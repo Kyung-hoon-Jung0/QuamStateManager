@@ -193,6 +193,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Package versions match", "The state's __package_versions__ stamp (written by quam ≥0.6) matches the selected env's installed versions."),
     ]),
     ("connectivity", [
+        ("error", "Port key matches identity", "Port dictionary keys agree with controller_id, fem_id and port_id; distinct entities do not claim the same physical identity within one port kind."),
         ("error", "Port exists", "Every channel's assigned opx_output / opx_input resolves to a real port declared in state.json 'ports'."),
         ("error", "No port collisions", "Two elements never share one physical port + upconverter (legal readout- and cross-resonance multiplexing and a TWPA's own pump/pump_ are allowed)."),
         ("error", "MW-FEM IF within ±500 MHz", "The element intermediate frequency (RF_frequency − port LO) stays inside the 1 GSa/s Nyquist limit the QUA compiler enforces."),
@@ -375,6 +376,7 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     # half-built memo in flight.
     _cp = activity.checkpoint
     findings.extend(_port_findings(root))
+    findings.extend(_port_identity_findings(root))
     _cp()
     findings.extend(_dangling_pointer_findings(store) if inc_store is not None
                     else _dangling_pointer_findings_cold(store))
@@ -871,6 +873,25 @@ def _port_key(parsed: tuple) -> dict:
     port_type, ctrl, fem, port = parsed
     io = "in" if "input" in port_type else "out"
     return {"ctrl": ctrl, "fem": fem, "port": port, "port_type": port_type, "io": io}
+
+
+def _port_identity_findings(root: dict) -> list[Finding]:
+    from quam_state_manager.core.port_identity import (
+        identity_message, port_identity_mismatches, port_users,
+    )
+    findings = []
+    for record in port_identity_mismatches(root):
+        path = record["path"]
+        kind = path.split(".")[1]
+        field = record["differ"][0] if record["differ"] else "port_id"
+        users = port_users(root, path)
+        findings.append(Finding(
+            "error", "port_identity", path, identity_message(record),
+            detail="Used by: " + (", ".join(users) or "no pointer users"),
+            jump_path=f"{path}.{field}",
+            port_key=_port_key((kind, *record["key"])),
+        ))
+    return findings
 
 
 def _port_label(parsed: tuple) -> str:

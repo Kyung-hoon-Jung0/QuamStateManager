@@ -12879,6 +12879,12 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        from quam_state_manager.web.port_identity import edit_offer, move_port
+        _identity_offer = edit_offer(target_path, parsed)
+        _identity_ack = request.form.get("port_identity_ack")
+        if _identity_offer and _identity_ack not in ("fix", "keep"):
+            return jsonify(ok=False, port_identity=_identity_offer,
+                           error=_identity_offer["message"]), 409
         _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
         if _cno:
             return jsonify(ok=False, error=_cno), 400
@@ -12906,7 +12912,15 @@ def field_edit():
             with modifier.store._lock:
                 map_apply.validate(ctx, dot_path, raw_value, _origin)
                 map_apply.checked(modifier, target_path, parsed, _origin)
-                _entry = modifier.set_value(target_path, parsed)
+                if _identity_offer and _identity_ack == "fix":
+                    _identity_entries, target_path = move_port(modifier, _identity_offer, parsed)
+                    _entry = _identity_entries[0]
+                    for entry in _identity_entries:
+                        entry.actor = _request_actor()
+                        if _origin is not None:
+                            entry.origin = copy.deepcopy(_origin)
+                else:
+                    _entry = modifier.set_value(target_path, parsed)
                 if _origin is not None:
                     _entry.origin = copy.deepcopy(_origin)
         finally:
@@ -12926,6 +12940,10 @@ def field_edit():
     if _lab_notes:
         _warn = " ".join(([_warn] if _warn else []) + _lab_notes)
     _wkw = {"warning": _warn} if _warn else {}
+    if _identity_offer and _identity_ack == "fix":
+        _wkw.update(group_id=_entry.group_id,
+                    port_identity_moved={"old_path": _identity_offer["old_path"],
+                                         "new_path": _identity_offer["new_path"]})
     # Echo what was ACTUALLY committed (the coercer may have kept the old
     # type) so the client can re-render the value with honest type styling.
     try:
@@ -32227,6 +32245,12 @@ def _live_unreadable_message(exc) -> str:
 _CRASH_BUDGET_S = 0.6
 
 
+def _port_identity_advisory(store):
+    from quam_state_manager.core.port_identity import identity_message, port_identity_mismatches
+    with store._lock:
+        return [identity_message(r) for r in port_identity_mismatches(store.merged)]
+
+
 def _crash_values_on_chip(store, budget_s: float | None = None) -> dict | None:
     """QA diagnostics-r2-04: the crash-class values a live write carries.
 
@@ -33606,6 +33630,7 @@ def state_overwrite_live_preflight():
         "replaced": replaced,
         "unsaved": unsaved,
         "hand_tuned": marked,
+        "port_identity": _port_identity_advisory(store),
         # QA diagnostics-r2-04: one more clause for the SAME confirm. w7
         # fq-sync: only when the lint is ready within the budget -- else the
         # confirm goes without it, and the write's own result names them.

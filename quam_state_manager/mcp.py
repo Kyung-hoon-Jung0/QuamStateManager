@@ -281,13 +281,14 @@ def t_state_edit(a: dict) -> Any:
     if not isinstance(value, str):
         value = json.dumps(value)
     form = {"dot_path": a["path"], "value": value, "expect_chip": chip.get("chip_token") or None,
-            "type_fix": a.get("type_fix"), "fsp_ack": a.get("fsp_ack")}
+            "type_fix": a.get("type_fix"), "fsp_ack": a.get("fsp_ack"),
+            "port_identity_ack": a.get("port_identity_ack")}
     code, body = sm.post_form("/field/edit", form)
     if code == 409:
-        if isinstance(body, dict) and (body.get("fsp_compensation") or body.get("type_fix")):
+        if isinstance(body, dict) and (body.get("fsp_compensation") or body.get("type_fix") or body.get("port_identity")):
             return {"staged": False, "needs_answer": True, "offer": body,
                     "how": "call state_edit again with type_fix='convert'|'keep' or fsp_ack='comp'|'solo' "
-                           "as the offer names"}
+                           "or port_identity_ack='fix'|'keep' as the offer names"}
         # D-11: any other 409 (the run lock, a chip switch, a pulse-structure
         # refusal) is a refusal, not a question an ack could answer
         return {"staged": False, "refused": body,
@@ -308,7 +309,9 @@ def t_state_edit(a: dict) -> Any:
            "note": "staged in SM's Review tray; nothing reached the chip. Call apply_to_live to write."}
     if len(entries) > 1:
         out["entries"] = entries
-        out["note"] = (f"staged {len(entries)} edits as ONE group (the FSP and its compensated amplitudes); "
+        bundle = ("the port move and its pointer users" if body.get("port_identity_moved")
+                  else "the FSP and its compensated amplitudes")
+        out["note"] = (f"staged {len(entries)} edits as ONE group ({bundle}); "
                        "nothing reached the chip. Call apply_to_live to write.")
     return out
 
@@ -607,11 +610,13 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                         query={"type": "string", "required": True}, limit={"type": "integer"}), t_state_search),
     "state_edit": (_s("STAGE one edit into SM's Review tray (nothing reaches the chip until apply_to_live). "
                       "Value may be a number, string, bool, null, list or dict. A 409 offer (type fix, FSP "
-                      "amplitude compensation) is returned for you to answer via type_fix / fsp_ack.",
+                      "amplitude compensation, port identity) is returned for you to answer via "
+                      "type_fix / fsp_ack / port_identity_ack.",
                       path={"type": "string", "required": True}, value={"required": True},
                       reason={"type": "string", "description": "why this value -- goes into the human's journal"},
                       type_fix={"type": "string", "enum": ["convert", "keep"]},
-                      fsp_ack={"type": "string", "enum": ["comp", "solo"]}), t_state_edit),
+                      fsp_ack={"type": "string", "enum": ["comp", "solo"]},
+                      port_identity_ack={"type": "string", "enum": ["fix", "keep"]}), t_state_edit),
     "tray": (_s("The staged edits waiting in SM's Review tray (each with its actor: agent or human)."), t_tray),
     "take_live": (_s("Pull the chip's live state.json/wiring.json into SM after a node wrote them. Only with an "
                      "EMPTY tray; refuses otherwise. sm_status / state_get say live_diverged when this is needed."),

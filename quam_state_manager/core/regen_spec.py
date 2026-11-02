@@ -673,6 +673,12 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     notes: list[str] = []
     info_notes: list[str] = []
 
+    from quam_state_manager.core.port_identity import identity_message, port_identity_mismatches
+    for mismatch in port_identity_mismatches(state):
+        notes.append(identity_message(mismatch) + ". Rebuild pins use the wiring "
+                     "pointer's dict-key address; QUAM config generation uses the "
+                     "resolved port's identity fields. Review the pins before rebuilding.")
+
     fems: dict[int, set[tuple[int, str]]] = defaultdict(set)
 
     def note_fem(cat: str, con: int, slot: int) -> None:
