@@ -398,7 +398,8 @@ def temperature_rows(controller: dict) -> list[dict]:
         rows.append({"key": k, "slot": slot,
                      "label": f"FEM slot {slot}" if slot is not None else str(k),
                      "value": None if v is None or v == NO_READING else v})
-    return rows
+    # FEM slots in slot order first, then the other sensors by name
+    return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
 
 
 def slot_temperatures(controller: dict) -> dict:

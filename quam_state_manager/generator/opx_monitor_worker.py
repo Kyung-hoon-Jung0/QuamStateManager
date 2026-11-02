@@ -145,7 +145,9 @@ class QmmTarget:
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
         jobs = call("get_jobs", self.qmm.get_jobs)
-        ans["jobs"] = [_job_row(j) for j in jobs] if jobs is not None else None
+        # newest first: the server lists them oldest first, hundreds deep
+        ans["jobs"] = (sorted((_job_row(j) for j in jobs), key=lambda r: r["created_at"] or "",
+                              reverse=True) if jobs is not None else None)
         ans["refused"] = refused
         return ans
 
