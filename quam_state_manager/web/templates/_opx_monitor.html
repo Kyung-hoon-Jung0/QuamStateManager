@@ -1,0 +1,13 @@
+{% import "_ui.html" as ui %}
+{#- OPX monitor (docs: study plan D-1..D-12): one page, five tabs. The body
+    re-fetches itself every interval on the read tabs; settings never poll. -#}
+<div class="opxmon-page" id="opxmon-page">
+{{ ui.ui_head('OPX monitor', 1, None, 'What the QM server reports right now: devices, open quantum machines, jobs, and alarms you set.', None, None, page=True) }}
+<div class="ui-tabs" role="tablist" aria-label="OPX monitor sections">
+  {%- for t in tabs %}
+  <a role="tab" class="ui-tab{% if t == tab %} active{% endif %}" aria-selected="{{ 'true' if t == tab else 'false' }}"
+     href="/opx-monitor/{{ t }}" hx-get="/opx-monitor/{{ t }}" hx-target="#table-pane" hx-push-url="true">{{ tab_labels[t] }}</a>
+  {%- endfor %}
+</div>
+{% include '_opx_monitor_body.html' %}
+</div>

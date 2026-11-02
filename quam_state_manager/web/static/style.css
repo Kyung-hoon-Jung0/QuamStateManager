@@ -16067,3 +16067,31 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-reference-foot > .ui-actions { margin-left: auto; }
 .env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 .env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
+
+/* ---- OPX monitor (core/opx_monitor.py) -- ui-kit tokens only, so light and dark follow ---- */
+.opxmon-page { padding: 0.5rem 1rem 2rem; max-width: 72rem; }
+.opxmon-status { margin: 0.6rem 0; padding: 0.35rem 0.6rem; border-radius: 6px; border: 1px solid var(--pico-muted-border-color); }
+.opxmon-status--ok { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
+.opxmon-status--stale, .opxmon-status--starting { border-color: var(--ui-warn-border); color: var(--ui-warn-text); background: var(--ui-warn-bg); }
+.opxmon-status--error { border-color: var(--ui-danger-border); color: var(--ui-danger-text); background: var(--ui-danger-bg); }
+.opxmon-status--unconfigured { color: var(--pico-muted-color); }
+.opxmon-target { font-weight: 600; }
+.opxmon-h { font-size: 1.05em; margin: 1.1rem 0 0.4rem; }
+.opxmon-table { width: auto; min-width: 28rem; }
+.opxmon-num { text-align: right; font-variant-numeric: tabular-nums; }
+.opxmon-fem { display: inline-flex; align-items: center; gap: 0.3em; margin: 0 0.6em 0.2em 0; padding: 0.05rem 0.45rem;
+              border: 1px solid var(--pico-muted-border-color); border-radius: 999px; font-size: 0.9em; }
+.opxmon-light { width: 0.65em; height: 0.65em; border-radius: 50%; background: var(--pico-muted-border-color); }
+.opxmon-fem--busy { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
+.opxmon-fem--busy .opxmon-light { background: var(--ui-ok-text); }
+.opxmon-fem--held { border-color: var(--ui-warn-border); color: var(--ui-warn-text); }
+.opxmon-fem--held .opxmon-light { background: var(--ui-warn-text); }
+.opxmon-settings fieldset { margin-bottom: 1rem; }
+.opxmon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.4rem 1rem; }
+.opxmon-grid .opxmon-wide { grid-column: 1 / -1; }
+.opxmon-actions { margin: 0; padding-left: 1.1rem; }
+.opxmon-alarm-slot { list-style: none; }
+.opxmon-alarm-badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 6px; font-size: 0.9em; text-decoration: none;
+                      color: var(--ui-danger-text); background: var(--ui-danger-bg); border: 1px solid var(--ui-danger-border); }
+.opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
+@media (max-width: 40rem) { .opxmon-page { padding: 0.5rem 0.5rem 2rem; } .opxmon-table { min-width: 0; } }

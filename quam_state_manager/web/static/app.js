@@ -8725,6 +8725,7 @@ window.Bundles = (function () {
         // and agent-setup.js (mounts on htmx:afterSwap) are lazy bundles, and without a map
         // entry the swapped shell stayed on "Loading..." forever (dry-run review round 1).
         [/^\/journal(\/|$|\?)/, ["journal"]],
+        [/^\/opx-monitor(\/|$|\?)/, ["opxmon"]],
         [/^\/agent\/setup(\/|$|\?)/, ["agent_setup"]],
     ];
     function forPath(path) {
