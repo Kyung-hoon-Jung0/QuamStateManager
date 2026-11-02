@@ -1611,8 +1611,38 @@ def _prune_removed_entity_refs(merged: dict, old_state: dict) -> list[str]:
     return dropped
 
 
+def _prune_removed_entries(obj: dict, sub: str, merged: dict, new_wiring: dict | None,
+                           removed_ids: set[str], stats: MergeStats) -> bool:
+    """Inside a grafted object, drop each entry KEYED by a removed qubit / pair whose
+    pointers no longer land (a lab QDAC block's ``channels.q17`` after q17 was removed
+    in the wizard), so the other qubits' entries survive. True when every pointer left
+    then lands; False (nothing changed) when a miss is not inside such an entry."""
+    def lands(v: str) -> bool:
+        wiring_side = v[2:].split("/", 1)[0] in ("wiring", "network")
+        if wiring_side and new_wiring is None:
+            return True
+        return _resolves(new_wiring if wiring_side else merged, v)
+
+    cut: dict[tuple, None] = {}
+    for p, v in _iter_leaves(obj):
+        if not (isinstance(v, str) and v.startswith("#/")) or lands(v):
+            continue
+        segs = p.split(".") if p else []
+        at = next((i for i, s in enumerate(segs) if s in removed_ids), None)
+        if at is None:
+            return False
+        cut[tuple(segs[:at + 1])] = None
+    for path in cut:
+        node = obj
+        for k in path[:-1]:
+            node = node[k]
+        gone = node.pop(path[-1])
+        stats.grafted -= _count_leaves(gone)    # its leaves are reported as not carried
+    return True
+
+
 def _ungraft_unlanded(merged: dict, stats: MergeStats,
-                      new_wiring: dict | None) -> None:
+                      new_wiring: dict | None, removed_ids: set[str] | None = None) -> None:
     """Put the NEW null back where an OLD typed object grafted over it points
     at something the rebuild does not have (QA review of regenerate-r2-14).
 
@@ -1650,6 +1680,9 @@ def _ungraft_unlanded(merged: dict, stats: MergeStats,
                 miss = v
                 break
         if miss is None:
+            continue
+        if removed_ids and _prune_removed_entries(obj, sub, merged, new_wiring,
+                                                   removed_ids, stats):
             continue
         parent[segs[-1]] = None
         n = _count_leaves(obj)
@@ -2226,7 +2259,9 @@ def merge_states(old_state: dict, new_state: dict,
     keep_ptr, inline = _pointer_decisions(old_view, _merged_doc(new_state, new_wiring))
     merged = _merge(old_view, new_state, "", stats, class_schemas, protect_paths,
                     keep_classes, carry_ports, env_fields, keep_ptr, inline)
-    _ungraft_unlanded(merged, stats, new_wiring)
+    removed_ids = {k for c in ("qubits", "qubit_pairs")
+                   for k in (old_view.get(c) or {}) if k not in (new_state.get(c) or {})}
+    _ungraft_unlanded(merged, stats, new_wiring, removed_ids)
     # A removed qubit/pair is still NAMED inside a list another object carried
     # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference
     # visibly here (reported with the residual loss) rather than ship it broken.

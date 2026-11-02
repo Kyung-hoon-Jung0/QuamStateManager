@@ -116,3 +116,32 @@ class TestPortsKeptForTheLab:
             "ports.analog_outputs.con1.7.1"}
         # an analog port is never put on an MW FEM
         assert _carryable_ports(old, new, declared_fems={("con1", "7"): "mw"}) == set()
+
+
+class TestARemovedQubitTakesOnlyItsOwnEntry:
+    """Review #7: removing a qubit in the wizard dropped a lab's whole QDAC block,
+    because one channel pointed at the removed qubit's wiring."""
+
+    def _states(self):
+        old = {"qubits": {"q1": {}, "q2": {}}, "dc_bias": {
+            "__class__": "lab.dc.DCBias",
+            "channels": {"q1": {"channel": "#/wiring/qubits/q1/z/dc_channel", "phi0_v": 4.9},
+                         "q2": {"channel": "#/wiring/qubits/q2/z/dc_channel", "phi0_v": 5.1}}}}
+        new = {"qubits": {"q1": {}}, "dc_bias": None}
+        new_wiring = {"wiring": {"qubits": {"q1": {"z": {"dc_channel": 1}}}}}
+        keep = {"lab.dc.DCBias": {"bases": [], "fields": ["channels"]}}
+        return old, new, new_wiring, keep
+
+    def test_the_other_qubits_keep_their_entries(self):
+        old, new, nw, keep = self._states()
+        r = merge_states(old, new, new_wiring=nw, keep_classes=keep, class_schemas={})
+        db = r.merged["dc_bias"]
+        assert db is not None and list(db["channels"]) == ["q1"]
+        assert db["channels"]["q1"]["phi0_v"] == 4.9
+        assert "dc_bias.channels.q2.phi0_v" in r.stats.residual_lost
+
+    def test_a_miss_outside_a_removed_entry_still_drops_the_object(self):
+        old, new, nw, keep = self._states()
+        old["dc_bias"]["channels"]["q1"]["channel"] = "#/wiring/qubits/q1/z/nowhere"
+        r = merge_states(old, new, new_wiring=nw, keep_classes=keep, class_schemas={})
+        assert r.merged["dc_bias"] is None
