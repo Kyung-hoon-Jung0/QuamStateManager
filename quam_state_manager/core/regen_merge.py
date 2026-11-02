@@ -334,6 +334,18 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
             return
         if _is_literal(n) and _is_literal(tgt) and compare_equal(tgt, n):
             keep.add(".".join(path))
+            return
+        if _is_literal(n) and not _is_literal(tgt):
+            # the rebuild wrote a literal and inverted or dropped the link's target:
+            # the builder's literal is a seed, the source's resolved value is the
+            # calibration (a lab whose CZ knobs live on the macro and the z op points
+            # at them lost amplitude/flat_length/padding to Populate seeds here)
+            try:
+                val = resolve_pointer(old, o, path)
+            except Exception:  # noqa: BLE001 -- unresolvable in the source: the literal stands
+                return
+            if _is_literal(val):
+                inline[".".join(path)] = val
 
     walk(old, new_doc, ())
     return keep, inline
@@ -621,6 +633,13 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             # link is kept, no value changes (v1.6.0 review)
             stats.old_pointers_kept.append(path)
             return old
+        if (inline and path in inline and not is_pointer(new)
+                and not (protect and path in protect)):
+            # a source pointer whose link the rebuild inverted: carry the value it
+            # resolved to in the source (see _pointer_decisions)
+            stats.pointers_inlined.append(path)
+            stats.carried += 1
+            return copy.deepcopy(inline[path])
         stats.kept_new_pointer += 1
         return new
     if protect and path in protect:

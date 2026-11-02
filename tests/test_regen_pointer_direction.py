@@ -56,7 +56,7 @@ def _new():
     """What the official builder writes: values on the op, the macro pointing at it."""
     return {"qubits": {"q1": {"z": {"operations": {"cz_SNZ_flux_pulse_q1_q2": {
                 "__class__": STOCK_PULSE, "length": "#./inferred_length", "id": "cz_SNZ_flux_pulse_q1_q2",
-                "digital_marker": None, "amplitude": 0.35, "flat_length": 70, "t_phi_eff": 12, "padding": 4,
+                "digital_marker": None, "amplitude": 0.45, "flat_length": 100, "t_phi_eff": 12, "padding": 20,
                 "axis_angle": None}}}}},
             "qubit_pairs": {"q1-2": {"macros": {"cz_SNZ": {
                 "__class__": STOCK_GATE, "id": "cz_SNZ", "fidelity": None, "phase_shift_control": 0.0,
@@ -72,11 +72,13 @@ def test_the_lab_pulse_class_and_every_knob_value_come_back_without_a_cycle():
     r = _run()
     op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
     assert op["__class__"] == LAB_PULSE
-    # the builder's literals stand where the lab pointer's direct target is itself a pointer
+    # the builder wrote Populate SEEDS (0.45/100/20) where the lab's pointer's target is
+    # now itself a pointer: the source's calibrated values come back, not the seeds
     assert op["amplitude"] == 0.35 and op["flat_length"] == 70 and op["padding"] == 4
     # the lab-only knobs come back as the VALUES they resolved to in the source
     assert op["b_over_a"] == 0.2777 and op["t_phi"] == 0 and op["neg_offset_v"] == 0.0008
-    assert sorted(r.stats.pointers_inlined) == [f"{OP}.b_over_a", f"{OP}.neg_offset_v", f"{OP}.t_phi"]
+    assert sorted(r.stats.pointers_inlined) == sorted(
+        f"{OP}.{k}" for k in ("amplitude", "b_over_a", "flat_length", "neg_offset_v", "padding", "t_phi"))
     # a stock-only default the lab class does not declare is dropped and said
     assert "t_phi_eff" not in op and f"{OP}.t_phi_eff" in r.stats.schema_dropped
     assert (OP, LAB_PULSE) in r.stats.class_kept and r.stats.class_changed == []
@@ -111,3 +113,13 @@ def test_one_hop_reads_quam_pointers_as_quam_does():
     assert _one_hop(doc, "#/a/w", ("c",)) == 2
     assert is_pointer(_one_hop(doc, "#/a/b/y", ("c",)))       # one hop only: a pointer stays a pointer
     assert _one_hop(doc, "#/a/missing", ("c",)) is _MISSING
+
+
+def test_a_populate_edit_still_wins_over_the_inverted_link():
+    """The user typed a new CZ amplitude in the wizard's Populate step: that one stands;
+    the knobs the user did not touch carry the source's values."""
+    r = merge_states(_old(), _new(), class_schemas=SCHEMAS, keep_classes=KEEP, env_fields=ENV_FIELDS,
+                     protect_paths={f"{OP}.amplitude"})
+    op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
+    assert op["amplitude"] == 0.45 and op["flat_length"] == 70 and op["padding"] == 4
+    assert f"{OP}.amplitude" not in r.stats.pointers_inlined
