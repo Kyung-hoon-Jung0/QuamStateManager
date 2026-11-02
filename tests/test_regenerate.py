@@ -657,9 +657,10 @@ class TestTheQaRegenerateFixesEndToEnd:
         p6 = merged["ports"]["analog_outputs"]["con1"]["5"]["6"]
         assert p6["delay"] == 37 and p6["feedforward_filter"] == [0.1] * 48
         assert p6["crosstalk"] == {"6": .91, "3": .13}
-        assert m["crosstalk_remapped_total"] == 2
+        assert m["crosstalk_remapped_total"] == 1
         assert m["crosstalk_unresolved"] == ["ports.analog_outputs.con1.5.6.crosstalk.3"]
         assert m["crosstalk_unresolved_total"] == 1
+
 
     def test_the_spec_twpa_list_reaches_the_merge(self, tmp_path, monkeypatch):
         old_state = {"twpas": {"twpa1": {"id": "twpa1", "settling_time": 40,

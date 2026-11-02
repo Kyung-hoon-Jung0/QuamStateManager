@@ -1164,12 +1164,15 @@ def test_crosstalk_new_owner_gets_defaults_on_vacated_port():
 def test_crosstalk_column_collision_is_reported_instead_of_overwritten():
     old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {3: {"1": .31, "7": .37}})
     new, nw = _crosstalk_state({"q1": 7, "q2": 3})
-    # never raise (a Re-generate must not die on it) and never guess: keep the
-    # carried row and name it
     r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-    assert r.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.3.crosstalk"]
-    assert not any(o.startswith("ports.analog_outputs.con1.5.3.crosstalk")
-                   for o, _ in r.stats.crosstalk_remapped)
+    assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["3"]["crosstalk"] == {"7": .31}
+    assert r.stats.crosstalk_dropped == [{
+        "path": "ports.analog_outputs.con1.5.3.crosstalk.7",
+        "reason": "column port now drives another line"}]
+    assert r.stats.crosstalk_remapped == [(
+        "ports.analog_outputs.con1.5.3.crosstalk.1",
+        "ports.analog_outputs.con1.5.3.crosstalk.7")]
+
 
 
 class TestAPortMovesWithItsOwner:

@@ -102,7 +102,7 @@ def line_ports(doc):
 
 
 def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
-                         qubit_sources=None, protected=None, reported=()):
+                         qubit_sources=None, protected=None, reported=(), dropped=(), rebuilt=None, schemas=None, stats=None):
     """Pure assertion over the two documents; inputs are never modified.
 
     ``protected`` maps destination leaf paths to deliberate new values.
@@ -130,7 +130,8 @@ def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
 
     oo, no = owners(old_lines), owners(new_lines, True)
     for port, lines in no.items():
-        if len(lines) > 1:
+        if len(lines) > 1 and not (port[1] == "mw_outputs" and
+                len(np[port].get("upconverters", {})) >= len(lines)):
             assert all(line in old_lines and
                        concrete(old, old_lines[line] + ("shareable",)) is True
                        for line in lines), ("unshareable collision", port, lines)
@@ -149,11 +150,11 @@ def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
                     if path in new_lines:
                         assert target[:5] == new_lines[path], ("wrong element port", path)
 
-    def relation(port, row, current_owners):
+    def relation(port, row, current_owners, self_labels=None):
         out = {}
         for number, value in row.items():
             address = port[:-1] + (str(number),)
-            labels = current_owners.get(address)
+            labels = self_labels if address == port and self_labels else current_owners.get(address)
             if not labels:
                 # A retained coefficient may name a removed line/unused slot.
                 former = oo.get(address, set())
@@ -166,6 +167,9 @@ def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
     for line, dest in new_lines.items():
         source_line = identity(line)
         if source_line not in old_lines:
+            if rebuilt is not None and dest in oo and not any(l in old_lines for l in no[dest]):
+                assert concrete(new, dest) == at(rebuilt, dest), ("fresh defaults", dest)
+                assert stats and any(p == ".".join(dest) for p, _, _ in stats.ports_fresh)
             continue  # A genuinely new line has no calibration to carry.
         src = old_lines[source_line]
         before, after = concrete(old, src), concrete(new, dest)
@@ -173,13 +177,58 @@ def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
             assert str(after[key]) == expected, ("physical identity", line, key)
         a = {k: v for k, v in before.items() if k not in IDENTITY}
         b = {k: v for k, v in after.items() if k not in IDENTITY}
+        if rebuilt is not None:
+            built = at(rebuilt, dest)
+            a = {**{k: deepcopy(v) for k, v in built.items() if k not in IDENTITY}, **a}
+            source_ports = {old_lines[l] for l in no[dest] if l in old_lines}
+            if len(source_ports) > 1:
+                inputs = [concrete(old, p) for p in source_ports]
+                expected = {k: deepcopy(v) for k, v in built.items() if k not in IDENTITY}
+                for key in set().union(*(p.keys() for p in inputs)) - IDENTITY:
+                    values = [p.get(key, "<absent>") for p in inputs]
+                    if all(v == values[0] for v in values) and values[0] != "<absent>":
+                        expected[key] = values[0]
+                    else:
+                        assert stats and any(c["port"] == ".".join(dest) and c["field"] == key
+                                             for c in stats.ports_conflict), ("unreported conflict", key)
+                a = expected
+            elif schemas and built.get("__class__") in schemas:
+                for key in list(a):
+                    if key not in built and key not in schemas[built["__class__"]]:
+                        a.pop(key)
+                        assert stats and {"port": ".".join(dest), "field": key,
+                            "owner": ".".join(line[1:-1])} in stats.port_fields_dropped
+            if "upconverters" in before and "upconverter_frequency" in built:
+                index = at(old, ("qubits", source_line[1], source_line[2])).get("upconverter", 1)
+                freq = before["upconverters"][str(index)]["frequency"]
+                a.pop("upconverters", None)
+                a["upconverter_frequency"] = freq
+                assert at(merged_state, ("qubits", line[1], line[2], "upconverter")) == 1
         for field, value in list(leaves(a)):
             full = dest + field
             if full in protected:
                 at(a, field[:-1])[field[-1]] = deepcopy(protected[full])
+        if "crosstalk" in a:
+            retained = {}
+            for number, value in a["crosstalk"].items():
+                column = src[:-1] + (str(number),)
+                old_labels = oo.get(column, set())
+                targets = ({dest} if column == src else
+                           {new_lines[l] for l in new_lines if identity(l) in old_labels})
+                reason = None
+                if targets and any(t[:-1] != dest[:-1] for t in targets):
+                    reason = "lines on different FEMs"
+                elif not targets and no.get(dest[:-1] + (str(number),), set()) - old_labels:
+                    reason = "column port now drives another line"
+                if reason:
+                    dot = ".".join(src + ("crosstalk", str(number)))
+                    assert {"path": dot, "reason": reason} in dropped, ("unreported drop", dot)
+                else:
+                    retained[number] = value
+            a["crosstalk"] = retained
         for values, address, own in ((a, src, oo), (b, dest, no)):
             if "crosstalk" in values:
-                values["crosstalk"] = relation(address, values["crosstalk"], own)
+                values["crosstalk"] = relation(address, values["crosstalk"], own, no.get(dest))
         if a != b:
             changed = [k for k in a.keys() | b.keys() if a.get(k) != b.get(k)]
             errors.append((source_line, src, dest, changed, a, b))
@@ -391,13 +440,16 @@ def run_case(case):
     elapsed = time.perf_counter() - start
     assert case == before, "merge/oracle must not mutate the source or builder inputs"
     line_identity_oracle(old, ow, result.merged, nw,
-                         reported=result.stats.residual_lost, **oracle)
+                         reported=result.stats.residual_lost, dropped=result.stats.crosstalk_dropped,
+                         rebuilt=new, stats=result.stats, **oracle)
     assert case == before
     return result, elapsed
 
 
 def known_finding(kind, seed):
     """Static scope of known failures; never classify by catching oracle errors."""
+    if kind in ('fem', 'controller', 'pair_swap', 'rename', 'removal'):
+        return None
     if kind in ("fem", "controller", "pair_swap"):
         return "F1: crosstalk cannot follow a line across hardware scopes"
     if kind == "xy_readout":
@@ -412,6 +464,7 @@ def known_finding(kind, seed):
     if kind == "populate" and selected[0] == 0:
         return "F6: protecting a pointer target drops an unprotected delay"
     return None
+
 
 
 CASES = []
@@ -484,7 +537,6 @@ def small_case(assignments, destinations, rows=None):
     return old, ow, new, nw, {}, {}
 
 
-@pytest.mark.xfail(strict=True, reason="F1: crosstalk crosses controller/FEM scope", raises=AssertionError)
 @pytest.mark.parametrize("destination", [P1[:3] + ("6", "1"),
                                         P1[:2] + ("con2", "5", "1")], ids=["fem", "controller"])
 def test_repro_cross_scope_crosstalk(destination):
@@ -512,7 +564,6 @@ def test_repro_pointer_delay_swap():
     run_case(case)
 
 
-@pytest.mark.xfail(strict=True, reason="F4: rename rejects integer crosstalk keys", raises=TypeError)
 def test_repro_rename_integer_crosstalk():
     renamed = ("qubits", "q8", "z", "opx_output")
     case = small_case({Z0: P1}, {renamed: P1}, {P1: {1: .11}})
@@ -520,7 +571,6 @@ def test_repro_rename_integer_crosstalk():
     run_case(case)
 
 
-@pytest.mark.xfail(strict=True, reason="F5: removed target collides with moved column", raises=AssertionError)
 def test_repro_removed_target_collision():
     run_case(small_case({Z0: P1, Z1: P2, Z2: P3}, {Z0: P1, Z1: P3},
                         {P1: {"2": .12, "3": .13}}))
@@ -553,11 +603,11 @@ def test_oracle_rejects_merge_mutations(monkeypatch, mutation):
     test_oracle_control()  # Establish that the unmutated merge is green.
     if mutation == "crosstalk":
         source = inspect.getsource(regen_merge._carry_crosstalk)
-        needle = "number = columns.get(scope, {}).get(str(key))"
+        needle = 'number = target.rsplit(".", 1)[1]'
         assert needle in source
         namespace = dict(vars(regen_merge))
         # Leave row carry intact and break ONLY column renumbering.
-        exec(source.replace(needle, "number = None"), namespace)
+        exec(source.replace(needle, "number = str(key)"), namespace)
         monkeypatch.setattr(regen_merge, "_carry_crosstalk", namespace["_carry_crosstalk"])
     else:
         original = regen_merge._ports_view
@@ -578,3 +628,34 @@ def test_oracle_rejects_unshareable_collision():
     case = small_case({Z0: P1, Z1: P2}, {Z0: P1, Z1: P1})
     with pytest.raises(AssertionError, match="unshareable collision"):
         run_case(case)
+
+
+from tests.port_audit_cases import AUDIT_CASES
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def test_shared_source_self_crosstalk_stays_self_on_split():
+    old, ow = minimal_chip({Z0: P1, Z1: P1}, {P1: {1: .11}})
+    at(old, P1)["shareable"] = True
+    template, nw = minimal_chip({Z0: P1, Z1: P2})
+    new = build_fresh(template, nw)
+    r = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert at(r.merged, P1)["crosstalk"] == {1: .11}
+    assert at(r.merged, P2)["crosstalk"] == {2: .11}
+    assert not r.stats.crosstalk_dropped
+
+    line_identity_oracle(old, ow, r.merged, nw, rebuilt=new, stats=r.stats,
+        reported=r.stats.residual_lost, dropped=r.stats.crosstalk_dropped)
