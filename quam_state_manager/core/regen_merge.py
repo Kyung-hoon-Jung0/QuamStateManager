@@ -1613,26 +1613,40 @@ def _prune_removed_entity_refs(merged: dict, old_state: dict) -> list[str]:
 
 def _prune_removed_entries(obj: dict, sub: str, merged: dict, new_wiring: dict | None,
                            removed_ids: set[str], stats: MergeStats) -> bool:
-    """Inside a grafted object, drop each entry KEYED by a removed qubit / pair whose
-    pointers no longer land (a lab QDAC block's ``channels.q17`` after q17 was removed
-    in the wizard), so the other qubits' entries survive. True when every pointer left
-    then lands; False (nothing changed) when a miss is not inside such an entry."""
+    """Drop entries keyed by, or pointing at, a removed entity even if all their
+    values are literal or their pointers still land. False (without mutation)
+    when a missing target outside those entries requires dropping the object."""
     def lands(v: str) -> bool:
         wiring_side = v[2:].split("/", 1)[0] in ("wiring", "network")
         if wiring_side and new_wiring is None:
             return True
         return _resolves(new_wiring if wiring_side else merged, v)
 
-    cut: dict[tuple, None] = {}
+    cut: set[tuple] = set()
+
+    def keyed(node: Any, path: tuple) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k in removed_ids:
+                    cut.add(path + (k,))
+                else:
+                    keyed(v, path + (k,))
+
+    keyed(obj, ())
+    pointers = []
     for p, v in _iter_leaves(obj):
-        if not (isinstance(v, str) and v.startswith("#/")) or lands(v):
+        if not (isinstance(v, str) and v.startswith("#/")):
             continue
-        segs = p.split(".") if p else []
-        at = next((i for i, s in enumerate(segs) if s in removed_ids), None)
-        if at is None:
+        path = tuple(p.split("."))
+        pointers.append((path, v))
+        if removed_ids.intersection(v[2:].split("/")) and len(path) > 1:
+            cut.add(path[:-1])
+    for path, v in pointers:
+        if not lands(v) and not any(path[:len(c)] == c for c in cut):
             return False
-        cut[tuple(segs[:at + 1])] = None
-    for path in cut:
+    for path in sorted(cut, key=len):
+        if any(path[:len(c)] == c for c in cut if len(c) < len(path)):
+            continue
         node = obj
         for k in path[:-1]:
             node = node[k]
@@ -1669,6 +1683,9 @@ def _ungraft_unlanded(merged: dict, stats: MergeStats,
         obj = parent.get(segs[-1]) if isinstance(parent, dict) else None
         if not isinstance(obj, dict):
             continue
+        if removed_ids and _prune_removed_entries(obj, sub, merged, new_wiring,
+                                                   removed_ids, stats):
+            continue
         miss = None
         for _, v in _iter_leaves(obj):
             if not (isinstance(v, str) and v.startswith("#/")):
@@ -1680,9 +1697,6 @@ def _ungraft_unlanded(merged: dict, stats: MergeStats,
                 miss = v
                 break
         if miss is None:
-            continue
-        if removed_ids and _prune_removed_entries(obj, sub, merged, new_wiring,
-                                                   removed_ids, stats):
             continue
         parent[segs[-1]] = None
         n = _count_leaves(obj)

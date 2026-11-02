@@ -363,3 +363,31 @@ def test_source_form_refusal_performance(monkeypatch):
     assert elapsed < 3.0, elapsed
     # Also pin the work bound so a fast host cannot hide whole-state rescans.
     assert hops < 20_000, hops
+
+
+@pytest.mark.parametrize("entry_key, removed_entry", [
+    ("q2", {"channel": 7, "gain": 5.1}),
+    ("q2", {"channel": "#/wiring/qubits/q2/z/dc_channel", "gain": 5.1}),
+    ("renamed_channel", {"channel": "#/wiring/qubits/q2/z/dc_channel", "gain": 5.1}),
+])
+@pytest.mark.parametrize("outside_miss", [False, True])
+def test_removed_entries_in_deferred_object(removed_entry, entry_key, outside_miss):
+    kept = {"channel": "#/wiring/qubits/q1/z/dc_channel", "gain": 4.9}
+    obj = {"__class__": "custom.Bias", "channels": {
+        "q1": kept, entry_key: removed_entry}}
+    if outside_miss:
+        obj["other"] = "#/missing"
+    old = {"qubits": {"q1": {}, "q2": {}}, "bias": obj}
+    new = {"qubits": {"q1": {}}, "bias": None}
+    # The removed entry's pointer still lands: pruning is about membership,
+    # independently of whether the wiring happens to retain the old channel.
+    wiring = {"wiring": {"qubits": {q: {"z": {"dc_channel": 1}}
+                                    for q in ("q1", "q2")}}}
+    keep = {"custom.Bias": {"bases": [], "fields": ["channels", "other"]}}
+    result = merge_states(old, new, new_wiring=wiring, keep_classes=keep, class_schemas={})
+    assert result.merged["bias"] == (None if outside_miss else {
+        "__class__": "custom.Bias", "channels": {"q1": kept}})
+    if outside_miss:
+        assert result.stats.rebuild_removed
+    else:
+        assert any(entry_key in p for p in result.stats.residual_lost)
