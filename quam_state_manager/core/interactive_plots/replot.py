@@ -163,6 +163,46 @@ def _warm_request(env, folder, source_root, timeout, progress=None):
     return None
 
 
+#: what the last plot-worker pre-warm did, for measurement and tests
+PREWARM_LOG: dict = {}
+
+
+def prewarm(env: str | None, *, timeout: int = 180) -> str:
+    """Start the plot worker for *env* and import the lab code into it, so the
+    first Interactive open does not pay that import. Holds ``machine_lock`` like
+    any replay (lab code never runs twice at once); an Interactive open arriving
+    meanwhile waits for it and then reuses the warm worker. Returns what happened."""
+    global _PLOT_WORKER
+    import time
+    from quam_state_manager.core import lab_worker
+    if not env or not Path(env).is_file():
+        return "no-env"
+    t0 = time.monotonic()
+    with lab_worker.machine_lock:
+        w = _PLOT_WORKER
+        if w is not None and w.context == "" and w.python_path == env and w.fresh():
+            state = "already-warm"
+        else:
+            if w is not None:
+                w.kill()
+                _PLOT_WORKER = None
+            try:
+                w = lab_worker.Worker(env, str(_script_path()), "@@SM-IPLOT@@", context="",
+                                      progress_marker="@@SM-IPLOT-PROG@@", kind="plot")
+            except Exception:  # noqa: BLE001 -- a warm-up that cannot start is no loss
+                PREWARM_LOG.update(state="spawn-failed", env=env)
+                return "spawn-failed"
+            lab_worker.retire_except(w)
+            if w.ask({"warm": True, "source_root": ""}, timeout) is None:
+                w.kill()
+                state = "failed"
+            else:
+                _PLOT_WORKER = w
+                state = "warm"
+    PREWARM_LOG.update(state=state, env=env, seconds=round(time.monotonic() - t0, 2))
+    return state
+
+
 def _invoke(env, folder, source_root, timeout, progress=None):
     from quam_state_manager.core import lab_worker
     total = 0

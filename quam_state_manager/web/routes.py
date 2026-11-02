@@ -2078,6 +2078,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_check_env_upgrade(current, current_app.instance_path)
         _prewarm_search_index(current)
         _maybe_prewarm_lab_worker(current, current_app.instance_path)   # w9/labwarm
+        _maybe_prewarm_plot_worker(current, current_app.instance_path)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -2189,6 +2190,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_check_env_upgrade(ctx, current_app.instance_path)
         _prewarm_search_index(ctx)
         _maybe_prewarm_lab_worker(ctx, current_app.instance_path)   # w9/labwarm
+        _maybe_prewarm_plot_worker(ctx, current_app.instance_path)
         return ctx
 
 
@@ -2685,6 +2687,41 @@ def _maybe_prewarm_lab_worker(ctx, inst, *, reason: str = "chip-open") -> None:
             logger.debug("lab worker pre-warm decision failed", exc_info=True)
 
     threading.Thread(target=_decide, daemon=True, name="lab-prewarm-decide").start()
+
+
+def _maybe_prewarm_plot_worker(ctx, inst, *, reason: str = "chip-open") -> None:
+    """Start the Interactive tab's plot worker for the open chip's env, off the
+    request path, so the first Interactive open does not wait for the lab code
+    to import. Runs on a daemon thread after the server is quiet; the worker
+    itself runs nothing node-specific until a replay asks."""
+    if (ctx or {}).get("store") is None:
+        return
+    app = current_app._get_current_object()
+    if app.config.get("TESTING") and not app.config.get("SM_PLOT_PREWARM_IN_TESTS"):
+        return
+    starter = app.config.get("SM_PLOT_PREWARM_STARTER")   # tests: record, never spawn
+
+    def _still_active() -> bool:
+        reg = app.config.get("contexts") or {}
+        return reg.get(app.config.get("active_context")) is ctx
+
+    def _decide():
+        try:
+            _lab_prewarm_wait(lambda: not _still_active())
+            if not _still_active():
+                return
+            python_path = config_generator.get_selected_env(inst)
+            if not python_path or not Path(python_path).is_file():
+                return
+            if starter is not None:
+                starter(python_path, reason)
+                return
+            from quam_state_manager.core.interactive_plots import replot
+            replot.prewarm(python_path)
+        except Exception:  # noqa: BLE001 -- a warm-up never breaks anything
+            logger.debug("plot worker pre-warm failed", exc_info=True)
+
+    threading.Thread(target=_decide, daemon=True, name="plot-prewarm-decide").start()
 
 
 def _attach_type_policy(ctx, inst=None) -> None:
@@ -36062,6 +36099,7 @@ def app_reload():
                 _attach_type_policy(ctx, inst)
                 _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
                 _maybe_prewarm_lab_worker(ctx, inst, reason="reload")
+                _maybe_prewarm_plot_worker(ctx, inst, reason="reload")
     logger.info("reload: %s", report)
     return jsonify(report)
 
@@ -45420,6 +45458,7 @@ def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
         _warm_state_schema_async(_ctx.get("store"), inst,
                                  live_folder=_ctx.get("path"))
         _maybe_prewarm_lab_worker(_ctx, inst, reason="env-select")
+        _maybe_prewarm_plot_worker(_ctx, inst, reason="env-select")
 
 
 @bp.route("/generate/capabilities", methods=["POST"])

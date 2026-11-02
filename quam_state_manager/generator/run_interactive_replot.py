@@ -935,6 +935,33 @@ def replay(args):
                 close()
 
 
+def _warm(source_root: str) -> dict:
+    """Import what every replay imports first (matplotlib, xarray, the lab's
+    quam_config and calibration_utils package), so the first real replay skips
+    it. Nothing node-specific runs; the answer carries the first-seen stats of
+    the lab files imported, so an edit after this import retires the worker."""
+    import importlib
+    import matplotlib
+    matplotlib.use("Agg")
+    if source_root and source_root not in sys.path:
+        sys.path.insert(0, source_root)
+    import matplotlib.pyplot  # noqa: F401
+    import xarray  # noqa: F401
+    errors = []
+    for name in ("quam_config", "calibration_utils"):
+        try:
+            importlib.import_module(name)
+        except Exception:  # noqa: BLE001 -- the replay itself reports import errors
+            errors.append(name)
+    sources = {}
+    for name, module in list(sys.modules.items()):
+        path = getattr(module, "__file__", None)
+        if path and (name.split(".")[0] in ("quam_config", "calibration_utils")) and path.endswith(".py"):
+            st = os.stat(path)
+            sources[str(Path(path).resolve())] = [st.st_mtime_ns, st.st_size]
+    return {"status": "ok", "warm": True, "failed": errors, "sources": sources}
+
+
 def serve():
     """One request and one marked response per line; imports stay warm."""
     from types import SimpleNamespace
@@ -951,6 +978,13 @@ def serve():
                 continue
             try:
                 spec = json.loads(line)
+                if spec.get("warm"):
+                    result = _warm(spec.get("source_root") or "")
+                    for path, stat in result.get("sources", {}).items():
+                        seen.setdefault(path, stat)
+                    out.write(SERVE_MARK + json.dumps(result, default=_json_default) + "\n")
+                    out.flush()
+                    continue
                 args = SimpleNamespace(run=spec["run"], source_root=spec.get("source_root") or "",
                                        only=spec.get("only") or "", util=spec.get("util") or "",
                                        qubits=spec.get("qubits") or "", out="", progress=say)
