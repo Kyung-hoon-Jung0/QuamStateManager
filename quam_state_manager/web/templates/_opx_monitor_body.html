@@ -15,7 +15,7 @@
 {%- endif %}
 
 {%- if tab == 'live' %}
-  <p class="opxmon-health" data-health="{{ st.health.color }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
+  <p class="opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ ([0, (st.interval_s * 3 - (st.age_s or 0)) * 1000] | max) | int if st.state == 'ok' else 0 }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
   <h3>Admin status</h3><p>Cluster health: {{ ac.health.status or 'unknown' }}; messages: {{ ac.health.messages if ac.health.messages is not none else 'none reported' }}; device messages: {{ ac.health.deviceMessages }}; clock: {{ ac.clock or 'unknown' }}; unreachable: {{ ac.hasUnreachableDevices }}</p>
   <p>Cluster packages: {% for p in ac.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>

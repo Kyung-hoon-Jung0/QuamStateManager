@@ -123,6 +123,7 @@
     {# docs/141 4p: the long-poll that wakes the run polls the moment a run
        folder changes — core (the new-run popup lives on every page). #}
     <script src="{{ asset_url('live-wake.js') }}"></script>
+    <script src="{{ asset_url('opx-health.js') }}"></script>
     <script src="{{ asset_url('agent-pill.js') }}"></script>
     <script src="{{ asset_url('agent.js') }}"></script>
     {# docs/261: the night summary's buttons (approve / reject / undo) -- core, a few lines #}
@@ -316,7 +317,7 @@
             </ul>
             <ul class="topbar-right">
                 <li class="opxmon-alarm-slot" id="opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
-                    hx-trigger="load, every 10s" hx-swap="innerHTML"></li>
+                    hx-trigger="load, every 10s" hx-request='{"timeout":5000}' hx-swap="innerHTML"></li>
                 {# v1.5.3 (design A): the bar keeps the chip name, the Sync status control and
                    Review (the tray); every other control lives in this one overflow menu.
                    The items are the same nodes (ids, classes, handlers) moved here, not
