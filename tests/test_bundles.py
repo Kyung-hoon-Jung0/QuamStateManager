@@ -19,7 +19,7 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js",
         "sidebar-typeahead.js", "auto-apply.js",
-        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
+        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js", "opx-health.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",

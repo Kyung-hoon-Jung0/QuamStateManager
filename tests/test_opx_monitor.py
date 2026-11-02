@@ -114,7 +114,7 @@ def test_temperature_and_alarm_only_for_returned_metrics(env):
     r = c.get("/opx-monitor/alarm-badge")
     assert "OPX alarm (1)" in r.get_data(as_text=True)
     toast = json.loads(r.headers["HX-Trigger"])["showToast"]["message"]
-    assert "FEM slot 2" in toast and "61.0" in toast
+    assert "FEM 1 temperature" in toast and "61.0" in toast  # mismatched population: raw key
     assert "HX-Trigger" not in c.get("/opx-monitor/alarm-badge").headers  # one toast per alarm
 
 
@@ -511,10 +511,15 @@ def test_d14_admin_health_and_unknown(env, monkeypatch):
     assert [u.rsplit('/api', 1)[1] for u, method, timeout in calls] == ['/v2/clusters', '/v2/devices/detailed']
     assert all(method == 'GET' and timeout == 2 for u, method, timeout in calls)
     a = answer(qms=(), temps={'Chassis': 40})
+    a['controllers'][0]['fems'] = {}
     assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'green'
     assert om.health(a, admin, {'temp:Chassis': 50}, 'stale')['color'] == 'grey'
     assert om.health(a, om.read_admin(None), {'temp:Chassis': 50}, 'ok')['color'] == 'grey'
     assert om.health(a, admin, {}, 'ok')['color'] == 'grey'
+    assert om.health(a, admin, {'temp:Chassis': 50, 'temp:missing': 70}, 'ok')['color'] == 'grey'
+    a['controllers'][0]['fems'] = {'1': 'LF'}
+    assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'grey'
+    a['controllers'][0]['fems'] = {}
     admin['cluster']['hasUnreachableDevices'] = True
     assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'red'
     app, m, w, clock, _ = env
@@ -605,3 +610,77 @@ def test_d18_mapping_mismatch_keeps_raw_keys(env):
     html = page(app, 'live')
     assert 'mapping unverified' in html and '>FEM 4</td>' in html
     assert 'title="sensor &#39;FEM 4&#39;"' not in html  # raw tooltip remains literal, not an inferred slot
+
+
+def test_round2_dom_selfcheck(env, tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    from pathlib import Path
+    from quam_state_manager.web import opx_monitor_routes as routes
+    app, m, w, clock, _ = env
+    pages = {}
+    w.script[:] = [answer(qms=(("QM-a", [], []),), temps={'FEM 0': 40, 'CRPS 0': 0.0})]
+    m.poll_once()
+    pages['unknown'] = page(app, 'live')
+    clock.t += 100
+    m.poll_once()
+    pages['trend'] = page(app, 'live')
+    pages['mapping'] = pages['trend']
+    clock.t += 1900
+    pages['stale'] = page(app, 'live')
+    m.poll_once()
+    pages['idle'] = page(app, 'cleanup')
+    a = answer()
+    a['jobs'][0]['created_at'] = '2026-01-01T00:00:00Z'
+    w.script[:] = [a]
+    m.poll_once()
+    candidates = [{'id': 7, 'url': '/dataset/fake:7', 'time': om.timestamp(a['jobs'][0]['created_at'])}]
+    monkeypatch.setattr(routes, '_run_candidates', lambda: (candidates, ''))
+    pages['unique'] = page(app, 'jobs')
+    candidates.append({**candidates[0], 'id': 8, 'url': '/dataset/fake:8'})
+    pages['ambiguous'] = page(app, 'jobs')
+    s = m.settings()
+    s.update(alarms_armed=True, thresholds={'temp:Chassis': 50})
+    om.save_settings(m.instance, s)
+    w.script[:] = [answer(temps={'Chassis': 60})]
+    m.poll_once()
+    pages['alarm'] = page(app, 'history')
+    fixture = tmp_path / 'pages.json'
+    fixture.write_text(json.dumps(pages), encoding='utf-8')
+    node = shutil.which('node')
+    if not node:
+        pytest.fail('node is required for the round 2 DOM selfcheck')
+    result = subprocess.run([node, str(Path(__file__).with_name('opx_monitor_selfcheck.cjs')), str(fixture)],
+                            capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_d13_remembers_activity_after_job_disappears(env):
+    from datetime import datetime, timezone
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], []),))]
+    m.poll_once()
+    clock.t += 1900
+    a = answer(qms=(("QM-a", [('j1', 'Done')], []),))
+    recent = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
+    a['open_qms'][0]['jobs'][0].update(created_at=recent, updated_at=recent)
+    w.script[:] = [a]
+    m.poll_once()
+    m._histories.clear()
+    w.script[:] = [answer(qms=(("QM-a", [], []),))]
+    m.poll_once()
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')
+    assert 'job created/last status update observed by SM' in page(app, 'cleanup')
+
+
+def test_unknown_job_list_is_not_none_or_a_gone_event(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    a = answer()
+    a['open_qms'][0]['jobs'] = None
+    w.script[:] = [a]
+    m.poll_once()
+    assert next(r for r in m.history().table() if r['job_id'] == 'j1')['open']
+    assert 'data-jobs="unknown"' in page(app, 'cleanup')
+    assert 'active or unknown job status' in page(app, 'cleanup')
+    assert 'Occupancy is unknown' in page(app, 'live')
