@@ -28,9 +28,9 @@ check('plain click still navigates', () => {
 check('drag threshold, indicator, reorder and persistence', () => {
     h.pointer('pointerdown',h.row('a'));
     h.pointer('pointermove',h.row('c'),0,3);
-    assert.equal(document.querySelector('.nav-order-dragging'),null);
+    assert.equal(document.querySelector('.ui-reorder-dragging'),null);
     h.pointer('pointermove',h.row('c'),0,10);
-    assert(h.row('c').classList.contains('nav-drop-after'));
+    assert(h.row('c').classList.contains('ui-reorder-after'));
     h.pointer('pointerup',h.row('c'),0,10);
     assert.equal(h.order(),'bca');
     assert.deepEqual(JSON.parse(localStorage.getItem(KEY)).main,['b','c','a']);
@@ -49,12 +49,12 @@ check('Escape cancels drag', () => {
     h=setup(); h.pointer('pointerdown',h.row('a')); h.pointer('pointermove',h.row('c'),0,10);
     document.dispatchEvent(new h.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
     h.pointer('pointerup',h.row('c')); assert.equal(h.order(),'abc'); assert.equal(localStorage.getItem(KEY),null);
-    assert.equal(document.querySelector('.nav-drop-after'),null);
+    assert.equal(document.querySelector('.ui-reorder-after'),null);
     assert.equal(h.row('a').querySelector('a').dispatchEvent(new h.w.MouseEvent('click',{bubbles:true,cancelable:true})), false);
 });
 check('a point over an expanded sub-menu targets its parent item', () => {
     h=setup(); h.pointer('pointerdown',h.row('c')); h.pointer('pointermove',h.row('s'),0,10);
-    assert(h.row('a').classList.contains('nav-drop-after')); h.pointer('pointerup',h.row('s'),0,10);
+    assert(h.row('a').classList.contains('ui-reorder-after')); h.pointer('pointerup',h.row('s'),0,10);
     assert.equal(h.order(),'acb'); assert.equal(h.row('s').parentElement.dataset.navGroup,'sub');
 });
 check('cannot drag across groups', () => {

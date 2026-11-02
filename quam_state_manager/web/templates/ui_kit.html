@@ -37,6 +37,11 @@
 <table class="ui-table ui-table-sticky1 ui-num-1 ui-num-2 ui-num-3 ui-num-4 ui-num-5 ui-num-6 ui-num-7 ui-num-8 ui-num-9 ui-num-10 ui-num-11 ui-num-12 ui-num-13 ui-num-14 ui-num-15" aria-label="Number columns by position"><thead><tr><th class="ui-table-head">Pair</th><th class="ui-table-head">Length (ns)</th></tr></thead><tbody><tr><td class="ui-table-cell">q1-2</td><td class="ui-table-cell">40</td></tr></tbody></table>
 <input type="search" class="ui-search" placeholder="{{ search_hint() }}" title="{{ search_title() }}" aria-label="Sample search">
 </section>
+{#- drag to reorder the sidebar menu (sidebar-order.js); ui-reorder-pending sits on <html> only until the saved order is applied -#}
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Menu reorder</h2>
+<ul class="ui-kit-side" aria-label="Reorder sample"><li class="ui-reorder-item ui-reorder-before">Drop line before</li><li class="ui-reorder-item ui-reorder-dragging">Being dragged</li><li class="ui-reorder-item ui-reorder-after">Drop line after</li></ul>
+<p class="ui-kit-label"><span class="ui-reorder-pending">ui-reorder-pending</span> is set on the page root while the saved order loads.</p>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

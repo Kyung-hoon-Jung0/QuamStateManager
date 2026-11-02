@@ -2,7 +2,7 @@
 (function () {
     'use strict';
     const KEY = 'quam_sidebar_order_v1';
-    if (!document.getElementById('sidebar')) document.documentElement.classList.add('nav-order-pending');
+    if (!document.getElementById('sidebar')) document.documentElement.classList.add('ui-reorder-pending');
     const defaults = new WeakMap();
     let drag = null;
     let suppressClick = null;
@@ -20,6 +20,7 @@
         const saved = read();
         groups().forEach(group => {
             const rows = items(group);
+            rows.forEach(row => row.classList.add('ui-reorder-item'));
             if (!defaults.has(group) || rows.some(row => !defaults.get(group).includes(row))) {
                 defaults.set(group, rows.slice());
             }
@@ -36,7 +37,7 @@
             });
             markers.forEach((marker, i) => marker.replaceWith(slots[i]));
         });
-        document.documentElement.classList.remove('nav-order-pending');
+        document.documentElement.classList.remove('ui-reorder-pending');
     }
     function restore(group, rows) {
         const markers = items(group).map(row => {
@@ -62,7 +63,7 @@
         return row && row.parentElement.matches('[data-nav-group]') ? row : null;
     }
     function clearIndicator() {
-        document.querySelectorAll('.nav-drop-before, .nav-drop-after').forEach(el => el.classList.remove('nav-drop-before', 'nav-drop-after'));
+        document.querySelectorAll('.ui-reorder-before, .ui-reorder-after').forEach(el => el.classList.remove('ui-reorder-before', 'ui-reorder-after'));
     }
     function finish(cancel) {
         if (!drag) return;
@@ -74,7 +75,7 @@
             }
         }
         if (drag.row.hasPointerCapture && drag.row.hasPointerCapture(drag.id)) drag.row.releasePointerCapture(drag.id);
-        drag.row.classList.remove('nav-order-dragging');
+        drag.row.classList.remove('ui-reorder-dragging');
         clearIndicator();
         drag = null;
     }
@@ -91,7 +92,7 @@
             drag.row.setPointerCapture(event.pointerId);
         }
         drag.active = true;
-        drag.row.classList.add('nav-order-dragging');
+        drag.row.classList.add('ui-reorder-dragging');
         event.preventDefault();
         clearIndicator();
         drag.target = null;
@@ -105,7 +106,7 @@
         const rect = target.getBoundingClientRect();
         drag.target = target;
         drag.after = event.clientY >= rect.top + rect.height / 2;
-        target.classList.add(drag.after ? 'nav-drop-after' : 'nav-drop-before');
+        target.classList.add(drag.after ? 'ui-reorder-after' : 'ui-reorder-before');
     }, { passive: false });
     document.addEventListener('pointerup', event => { if (drag && event.pointerId === drag.id) finish(false); });
     document.addEventListener('pointercancel', () => finish(true));

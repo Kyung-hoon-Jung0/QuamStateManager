@@ -58,7 +58,7 @@ const text = () => $('#gcz-several').textContent.replace(/\s+/g, ' ');
     const rows = [...d.querySelectorAll('input[data-gcz-pair]')];
     ok(rows.length === 2 && rows.every((b) => b.checked), 'Ready rows ticked by default');
     const cells = rows[0].closest('tr') ? [...rows[0].closest('tr').cells].map((c) => c.textContent) : [];
-    ok(JSON.stringify(cells.slice(1)) === JSON.stringify(['q1-2', 'Ready', 'q2', 'cz_gaussian_unipolar_pulse_q1_q2']), 'row cells: ' + JSON.stringify(cells));
+    ok(JSON.stringify(cells.slice(1)) === JSON.stringify(['q1-2', 'q2', 'cz_gaussian_unipolar_pulse_q1_q2, cz_gaussian_unipolar_coupler_pulse_q1_q2, cz_gaussian_bipolar_pulse_q1_q2, cz_gaussian_bipolar_coupler_pulse_q1_q2']), 'row cells: ' + JSON.stringify(cells));
     const cant = $('.gcz-sev-cant');
     ok(cant && !cant.querySelector('input'), "Can't has no checkbox");
     const gbox = $('input[data-gcz-group]');
