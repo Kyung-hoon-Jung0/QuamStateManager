@@ -114,7 +114,7 @@ def test_temperature_and_alarm_only_for_returned_metrics(env):
     r = c.get("/opx-monitor/alarm-badge")
     assert "OPX alarm (1)" in r.get_data(as_text=True)
     toast = json.loads(r.headers["HX-Trigger"])["showToast"]["message"]
-    assert "FEM 1" in toast and "61.0" in toast
+    assert "FEM slot 2" in toast and "61.0" in toast
     assert "HX-Trigger" not in c.get("/opx-monitor/alarm-badge").headers  # one toast per alarm
 
 
@@ -446,3 +446,29 @@ def test_post_routes_need_our_origin(env):
         assert c.post(url, data=data).status_code == 403
         assert c.post(url, data=data, headers={"Origin": "http://evil.example"}).status_code == 403
     assert not any(op.startswith("close") for op, _ in w.calls)
+
+
+# the shape one OPX1000 returned (QOP 3.7.3): sensors FEM 0..7 for slots 1..8,
+# 0.0 for an empty slot or an absent supply
+MEASURED_TEMPS = {"FEM 0": 67.06, "FEM 1": 65.08, "FEM 2": 68.55, "FEM 3": 0.0, "FEM 4": 55.17,
+                  "FEM 5": 52.69, "FEM 6": 60.12, "FEM 7": 0.0, "Chassis": 45.5, "Chassis CPU": 65.85,
+                  "CRPS 0": 37.0, "CRPS 1": 0.0, "CRPS 2": 0.0}
+MEASURED_FEMS = {"1": "MW", "2": "MW", "3": "MW", "5": "LF", "6": "LF", "7": "LF"}
+
+
+def test_fem_sensor_k_is_slot_k_plus_1_and_zero_is_no_sensor(env):
+    app, m, w, clock, _ = env
+    a = answer(temps=MEASURED_TEMPS)
+    a["controllers"][0]["fems"] = MEASURED_FEMS
+    w.script[:] = [a]
+    m.poll_once()
+    rows = {r["key"]: r for r in om.temperature_rows(a["controllers"][0])}
+    assert rows["FEM 0"]["slot"] == 1 and rows["FEM 4"]["slot"] == 5 and rows["Chassis"]["slot"] is None
+    assert rows["FEM 3"]["value"] is None and rows["CRPS 1"]["value"] is None
+    html = page(app, "live")
+    # slot 5 (LF) carries sensor FEM 4's reading, its raw key in the tooltip
+    assert "5 LF" in html and "title=\"sensor 'FEM 4'\">55.2 degC" in html
+    assert ">FEM slot 4</td>" in html and "no sensor" in html and "0.0</td>" not in html
+    offered = [x["key"] for x in om.offered_metrics(a)]
+    assert "temp:FEM 3" not in offered and "temp:CRPS 1" not in offered and "temp:FEM 4" in offered
+

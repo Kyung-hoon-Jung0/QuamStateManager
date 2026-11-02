@@ -56,7 +56,8 @@ def _view(tab: str) -> dict:
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],
             "offered": om.offered_metrics(st.get("answer")),
             "envs": _envs() if tab == "settings" else [],
-            "min_interval": om.MIN_INTERVAL_S}
+            "min_interval": om.MIN_INTERVAL_S,
+            "temperature_rows": om.temperature_rows, "slot_temperatures": om.slot_temperatures}
 
 
 @opxmon_bp.route("/opx-monitor")

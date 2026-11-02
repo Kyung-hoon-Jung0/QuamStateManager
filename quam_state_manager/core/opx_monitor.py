@@ -371,6 +371,41 @@ class History:
 
 # ------------------------------------------------------------------ alarms
 
+#: A temperature of exactly 0.0 is "no reading" (an empty FEM slot or an absent
+#: power supply), never 0 degC [measured on one OPX1000, QOP 3.7.3: the empty
+#: slots and the absent supplies read exactly 0.0 while every fitted unit read
+#: 37-69 degC]. Such a value is shown as "no sensor" and never judged by an alarm.
+NO_READING = 0.0
+
+
+def _fem_slot(sensor: str) -> Optional[int]:
+    """The FEM slot a ``FEM k`` sensor belongs to. The SDK numbers these sensors
+    from 0 while FEM slots are 1..8, so ``FEM k`` is slot ``k + 1`` [measured on
+    one OPX1000, QOP 3.7.3: the sensors of the two empty slots were FEM 3 and
+    FEM 7, i.e. slots 4 and 8]. Any other sensor name has no slot."""
+    parts = str(sensor).split()
+    if len(parts) == 2 and parts[0] == "FEM" and parts[1].isdigit():
+        return int(parts[1]) + 1
+    return None
+
+
+def temperature_rows(controller: dict) -> list[dict]:
+    """One row per sensor: the raw key, a label naming the slot, the reading or
+    None when the value means "no reading"."""
+    rows = []
+    for k, v in (controller.get("temperatures") or {}).items():
+        slot = _fem_slot(k)
+        rows.append({"key": k, "slot": slot,
+                     "label": f"FEM slot {slot}" if slot is not None else str(k),
+                     "value": None if v is None or v == NO_READING else v})
+    return rows
+
+
+def slot_temperatures(controller: dict) -> dict:
+    """``{slot (str): reading or None}`` for the FEM chips on the Live tab."""
+    return {str(r["slot"]): r for r in temperature_rows(controller) if r["slot"] is not None}
+
+
 def offered_metrics(answer: Optional[dict]) -> list[dict]:
     """The metrics the server actually returned, as alarm candidates.
 
@@ -378,9 +413,11 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
     only what an answer carried is offered (D-9)."""
     out: dict[str, dict] = {}
     for c in (answer or {}).get("controllers") or []:
-        for sensor in (c.get("temperatures") or {}):
-            k = f"temp:{sensor}"
-            out.setdefault(k, {"key": k, "label": f"{sensor} temperature", "unit": "degC",
+        for r in temperature_rows(c):
+            if r["value"] is None:
+                continue  # no reading: nothing to set a limit on
+            k = f"temp:{r['key']}"
+            out.setdefault(k, {"key": k, "label": f"{r['label']} temperature", "unit": "degC",
                                "direction": "above"})
         for m in (c.get("metrics") or {}):
             k = f"metric:{m}"
@@ -395,7 +432,7 @@ def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
     fired = []
     meta = {m["key"]: m for m in offered_metrics(answer)}
     for c in (answer or {}).get("controllers") or []:
-        values = {f"temp:{k}": v for k, v in (c.get("temperatures") or {}).items()}
+        values = {f"temp:{r['key']}": r["value"] for r in temperature_rows(c)}
         values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items()})
         for k, v in values.items():
             lim = thresholds.get(k)

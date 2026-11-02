@@ -29,10 +29,10 @@
     <tbody>
     {%- for c in ans.controllers %}
       <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell">{{ c.type or '' }}</td>
-        <td class="ui-table-cell">{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}
+        <td class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="opxmon-fem{% if k in busy %} opxmon-fem--busy{% elif k in held %} opxmon-fem--held{% endif %}"
                 title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% else %}No open QM claims this FEM{% endif %}">
-            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; held{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
+            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; held{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} degC{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -42,9 +42,10 @@
   {%- if any_t %}
   <table class="ui-table opxmon-table" aria-label="Temperatures">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Sensor</th><th class="ui-table-head">Reading (degC)</th></tr></thead>
-    <tbody>{% for c in any_t %}{% for k, v in c.temperatures.items() %}
-      <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell">{{ k }}</td><td class="ui-table-cell opxmon-num">{{ '%.1f'|format(v) }}</td></tr>{% endfor %}{% endfor %}</tbody>
+    <tbody>{% for c in any_t %}{% for r in temperature_rows(c) %}
+      <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell" title="sensor '{{ r.key }}'">{{ r.label }}</td><td class="ui-table-cell opxmon-num">{% if r.value is none %}<span class="ui-muted">no sensor</span>{% else %}{{ '%.1f'|format(r.value) }}{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
+  <p class="ui-note">A sensor named FEM k sits in slot k+1, and a reading of exactly 0.0 means no unit is fitted there (both measured on one OPX1000, QOP 3.7.3). Hover a sensor for its raw name.</p>
   {%- else %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">No temperature readings.</span> This server returned none (the SDK provides them from QOP 3.6 for OPX1000 controllers).</p>
   {%- endif %}
