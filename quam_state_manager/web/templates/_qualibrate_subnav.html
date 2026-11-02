@@ -11,7 +11,7 @@
    the useful part; the rest hides behind "… show all". #}
 {% set cap = 3 %}
 {% for p in listing.projects %}
-<li{% if loop.index > cap %} hidden data-subnav-extra{% endif %}>
+<li data-nav-key="project:{{ p.name }}"{% if loop.index > cap %} hidden data-subnav-extra{% endif %}>
     <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
           hx-target="#table-pane" class="qualibrate-open-form">
         <input type="hidden" name="project" value="{{ p.name }}">

@@ -16067,3 +16067,21 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-reference-foot > .ui-actions { margin-left: auto; }
 .env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 .env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
+
+/* Theme-aware sidebar reorder feedback. */
+html.nav-order-pending #sidebar { visibility: hidden; }
+#sidebar li[data-nav-key] { position: relative; touch-action: pan-y; }
+#sidebar .nav-order-dragging { opacity: 0.55; user-select: none; }
+#sidebar .nav-drop-before::before,
+#sidebar .nav-drop-after::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--color-accent);
+    pointer-events: none;
+    z-index: 1;
+}
+#sidebar .nav-drop-before::before { top: 0; }
+#sidebar .nav-drop-after::after { bottom: 0; }

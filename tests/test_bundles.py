@@ -17,7 +17,7 @@ from quam_state_manager.web.app import create_app
 _ROOT = Path(__file__).resolve().parent.parent
 _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
-CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js",
+CORE = {"sidebar-order.js", "htmx.min.js", "split.min.js", "search-query.js", "app.js",
         "sidebar-typeahead.js", "auto-apply.js",
         "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
