@@ -10777,6 +10777,47 @@
             "band / LO / power) moved with it";
           el.appendChild(ml);
         });
+        [
+          ["crosstalk_dropped", "crosstalk terms dropped", true],
+          ["ports_conflict", "port field conflicts; rebuild values kept", true],
+          ["mw_band_conflicts", "MW coupled band conflicts; check both bands", true],
+          ["port_fields_dropped", "port fields dropped by destination schema", true],
+          ["pointers_reaimed", "port pointers re-aimed or inlined", false],
+          ["upconverter_remapped", "line upconverters remapped or requiring review", false]
+        ].forEach(function (item) {
+          var records = m[item[0]] || [];
+          var count = m[item[0] + "_total"] != null ? m[item[0] + "_total"] : records.length;
+          if (!count) return;
+          var line = document.createElement("div");
+          var needsReview = item[2] || records.some(function (rec) {
+            return /unresolved|no unique/.test(rec.reason || "");
+          });
+          line.className = "gen-merge-detail gen-merge-" + item[0] +
+            (needsReview ? " gen-merge-warn" : " gen-merge-muted");
+          line.textContent = count + " " + item[1] + ": " +
+            records.slice(0, 6).map(function (rec) {
+              if (item[0] === "ports_conflict") {
+                return portLabel(rec.port) + " " + rec.field + " (" +
+                  Object.keys(rec.values || {}).map(function (owner) {
+                    return owner + " = " + JSON.stringify(rec.values[owner]);
+                  }).join(", ") + ")";
+              }
+              if (item[0] === "mw_band_conflicts") {
+                return (rec.ports || []).map(portLabel).join(" / ") +
+                  ": bands " + (rec.bands || []).join(" and ");
+              }
+              if (item[0] === "port_fields_dropped") {
+                return rec.owner + ": " + portLabel(rec.port) + "." + rec.field;
+              }
+              if (item[0] === "crosstalk_dropped") return rec.path + ": " + rec.reason;
+              if (item[0] === "pointers_reaimed") {
+                return rec.path + ": " + (rec.to || rec.reason || "source value inlined");
+              }
+              return rec.path + ": " + (rec.reason || (rec.from + " ? " + rec.to +
+                " at " + rec.frequency + " Hz"));
+            }).join("; ");
+          el.appendChild(line);
+        });
         // A moved port's crosstalk terms name other ports: renumbered with the move.
         var xtMovedN = (m.crosstalk_remapped_total != null)
             ? m.crosstalk_remapped_total : (m.crosstalk_remapped || []).length;
@@ -10799,7 +10840,7 @@
           fl.className = "gen-merge-detail gen-merge-warn gen-merge-port-fresh";
           fl.textContent = "⚠ " + f.now + " on " + portLabel(f.port) +
             ": fresh defaults — that port's calibration was " +
-            (f.was || "another line") + "'s and moved with it";
+            (f.was || "another line") + "'s; source identity differs";
           el.appendChild(fl);
         });
         // QA review of F1: kept by port number from a line that is gone.

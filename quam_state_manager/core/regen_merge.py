@@ -1492,24 +1492,13 @@ def _port_moves(old_state: dict, new_state: dict,
                 new_wiring: dict | None = None,
                 inherited: dict[str, tuple[str, str]] | None = None
                 ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str]]]:
-    """Which rebuilt ports take which OLD port's values.
+    """Match calibration by surviving endpoint identity.
 
-    ``moves = {new port: (old port, owner)}`` -- every owner the two builds
-    share came from ONE other old port (a brand-new line beside them, e.g. a
-    qubit added to a moved feedline, brings no calibration and does not
-    count). ``fresh = {new port: (old owner, new owner)}`` -- the port's old
-    values LEFT with their line (it is some move's source) and only brand-new
-    lines use it now: the rebuild's defaults stand, never someone else's
-    calibration. Anything else keeps the port-number identity. ``new_state``
-    must be post-:func:`_reconcile_pair_ids`, so a pair's owner path matches
-    across a builder's pair-id drift.
-
-    ``inherited`` (optional, filled in place) -- ``{port: (old owner, new
-    owner)}`` for the port-number carry nothing else names: every line that
-    used the port belonged to a qubit / pair the rebuild no longer has (a
-    removed or renamed qubit), and only lines the source never had use it
-    now. The values stay (a rename must keep them), but the report says whose
-    they were (QA review of F1).
+    A destination with one source follows it. A destination with several
+    sources is handled by field consensus. If only new endpoints occupy a
+    formerly owned port, defaults stand, even when the former owner was
+    removed. Renames must be applied to source identities before this pass.
+    ``inherited`` remains an accepted argument for existing internal callers.
     """
     old_owners = _port_owners(old_state, old_wiring)
     if not old_owners:
@@ -1526,26 +1515,13 @@ def _port_moves(old_state: dict, new_state: dict,
         (o_port,) = known
         if o_port != n and o_port in old_ents:
             moves[n] = (o_port, _owner_label(shared))
-    moved_from = {o for o, _ in moves.values()}
     fresh: dict[str, tuple[str, str]] = {}
     for n, owners in new_owners.items():
-        if n in moves or n not in moved_from:
+        if n in moves or n not in old_owners:
             continue
         if any(o in old_port_of for o in owners):
             continue
         fresh[n] = (_owner_label(old_owners.get(n) or ()), _owner_label(owners))
-    if inherited is not None:
-        def gone(o: str) -> bool:           # its qubit / pair left the chip
-            segs = o.split(".")
-            return (len(segs) > 1 and segs[0] in _LISTED_ENTITY_COLLECTIONS
-                    and segs[1] not in (new_state.get(segs[0]) or {}))
-        for n, owners in new_owners.items():
-            olds = old_owners.get(n)
-            if (n in moves or n in fresh or not olds
-                    or any(o in old_port_of for o in owners)):
-                continue
-            if all(gone(o) for o in olds):
-                inherited[n] = (_owner_label(olds), _owner_label(owners))
     return moves, fresh
 
 

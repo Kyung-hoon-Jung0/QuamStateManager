@@ -623,10 +623,9 @@ class TestTheQaRegenerateFixesEndToEnd:
             return {"ok": True, "status": "ok", "error": None, "result": result or {}}
         return fake_build
 
-    def test_a_port_kept_by_number_from_a_gone_line_is_reported(
+    def test_a_removed_owner_port_keeps_fresh_defaults_and_is_reported(
             self, tmp_path, monkeypatch):
-        # QA review of F1: q1 renamed qA on the same flux port -- the values
-        # stay (port-number identity) and the report says whose they were.
+        # Without a source rename record the new line keeps rebuild defaults.
         self._write(tmp_path / "old", *self._flux_chip(1, 37, [0.1] * 48))
         st, w = self._flux_chip(1, 141, None)
         st, w = (json.loads(json.dumps(x).replace("q1", "qA")) for x in (st, w))
@@ -635,8 +634,11 @@ class TestTheQaRegenerateFixesEndToEnd:
         out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
                                         tmp_path / "new",
                                         source_probe=lambda *a, **k: {"ok": False})
-        assert out["merge"]["ports_inherited"] == [
+        assert out["merge"]["ports_fresh"] == [
             {"port": "ports.analog_outputs.con1.5.1", "was": "q1.z", "now": "qA.z"}]
+        assert out["merge"]["ports_inherited"] == []
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        assert merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 141
 
     def test_a_moved_flux_line_takes_its_filters_and_the_report_names_it(
             self, tmp_path, monkeypatch):
@@ -661,6 +663,23 @@ class TestTheQaRegenerateFixesEndToEnd:
         assert m["crosstalk_unresolved"] == ["ports.analog_outputs.con1.5.6.crosstalk.3"]
         assert m["crosstalk_unresolved_total"] == 1
 
+    @pytest.mark.parametrize("case,stat", [
+        ("c3_d", "crosstalk_dropped"), ("c1_mw_e", "ports_conflict"),
+        ("c2_lf_d", "pointers_reaimed"), ("c1_mw_a", "mw_band_conflicts"),
+        ("c1_mw_d", "upconverter_remapped")])
+    def test_port_audit_reports_reach_build_result(self, tmp_path, monkeypatch, case, stat):
+        from tests import port_audit_cases
+        old, ow, new, nw = getattr(port_audit_cases, case)()
+        self._write(tmp_path / "old", old, ow)
+        monkeypatch.setattr(regenerate.config_generator, "run_generator", self._fake(new, nw))
+        out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1}, tmp_path / "new",
+                                        source_probe=lambda *a, **k: {"ok": False})
+        report = out["merge"]
+        assert report[stat]
+        assert report[stat + "_total"] == len(report[stat])
+        for key in ("crosstalk_dropped", "ports_conflict", "pointers_reaimed",
+                    "mw_band_conflicts", "upconverter_remapped", "port_fields_dropped"):
+            assert report[key + "_total"] == len(report[key])
 
     def test_the_spec_twpa_list_reaches_the_merge(self, tmp_path, monkeypatch):
         old_state = {"twpas": {"twpa1": {"id": "twpa1", "settling_time": 40,

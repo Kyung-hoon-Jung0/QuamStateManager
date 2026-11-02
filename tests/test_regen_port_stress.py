@@ -446,35 +446,11 @@ def run_case(case):
     return result, elapsed
 
 
-def known_finding(kind, seed):
-    """Static scope of known failures; never classify by catching oracle errors."""
-    if kind in ('fem', 'controller', 'pair_swap', 'rename', 'removal', 'xy_readout', 'pointer_delay', 'populate'):
-        return None
-    if kind in ("fem", "controller", "pair_swap"):
-        return "F1: crosstalk cannot follow a line across hardware scopes"
-    if kind == "xy_readout":
-        return "F2: shared LO pointer retains the source hardware address"
-    if kind == "pointer_delay":
-        return "F3: moved absolute delay pointer becomes a self-reference"
-    if kind == "rename":
-        return "F4: qubit_sources preprocessing raises on integer crosstalk keys"
-    selected = random.Random(seed).sample(range(8), 2)
-    if kind == "removal" and 7 in selected:
-        return "F5: removed crosstalk target collides with a moved column"
-    if kind == "populate" and selected[0] == 0:
-        return "F6: protecting a pointer target drops an unprotected delay"
-    return None
-
-
-
 CASES = []
 for _kind in MOVE_KINDS:
     # 100 independent seeds for EACH cycle length 3, 4, 5, and 6.
     for _seed in range(400) if _kind == "cycle" else SEEDS:
-        _finding = known_finding(_kind, _seed)
-        _marks = (pytest.mark.xfail(strict=True, reason=_finding,
-                  raises=TypeError if _kind == "rename" else AssertionError),) if _finding else ()
-        CASES.append(pytest.param(_kind, _seed, id=f"{_kind}-{_seed}", marks=_marks))
+        CASES.append(pytest.param(_kind, _seed, id=f"{_kind}-{_seed}"))
 
 
 @pytest.mark.parametrize("kind,seed", CASES)
@@ -629,6 +605,25 @@ def test_oracle_rejects_unshareable_collision():
 from tests.port_audit_cases import AUDIT_CASES
 
 
+@pytest.mark.parametrize("factory", AUDIT_CASES, ids=lambda f: f.__name__)
+def test_portaudit(factory):
+    old, ow, new, nw = factory()
+    before = deepcopy((old, ow, new, nw))
+    result = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    line_identity_oracle(old, ow, result.merged, nw, rebuilt=new, stats=result.stats,
+        reported=result.stats.residual_lost, dropped=result.stats.crosstalk_dropped)
+    assert (old, ow, new, nw) == before
+    if factory.__name__ == "c1_mw_a":
+        assert result.stats.mw_band_conflicts == [{
+            "ports": ["ports.mw_outputs.con1.1.2", "ports.mw_outputs.con1.1.3"], "bands": [3, 2]}]
+    if factory.__name__ in ("c1_mw_b", "c1_mw_c", "c2_lf_d", "c2_lf_e"):
+        assert result.stats.pointers_reaimed
+    if factory.__name__ == "c1_mw_d":
+        assert len(result.stats.upconverter_remapped) == 2
+    if factory.__name__ == "c1_mw_e":
+        assert {c["field"] for c in result.stats.ports_conflict} == {
+            "full_scale_power_dbm", "upconverter_frequency"}
+        assert at(result.merged, ("ports", "mw_outputs", "con1", "1", "2", "band")) == 2
 
 
 
@@ -654,6 +649,36 @@ def test_moved_port_schema_gate():
         reported=r.stats.residual_lost, dropped=r.stats.crosstalk_dropped)
 
 
+@pytest.mark.parametrize("rule", range(1, 8), ids=lambda n: f"R{n}")
+def test_rule_mutation_is_red(monkeypatch, rule):
+    from tests import port_audit_cases as audit
+    cases = {1: audit.c3_d, 2: audit.c1_mw_e, 3: audit.c2_lf_d,
+             4: audit.c1_mw_a, 5: audit.c1_mw_d, 7: audit.c2_lf_c}
+    if rule == 6:
+        test_moved_port_schema_gate()
+        source = inspect.getsource(regen_merge._merge)
+        needle = 'if top == "ports" and "port_id" in new:'
+        assert needle in source
+        namespace = dict(vars(regen_merge))
+        exec(source.replace(needle, 'if False:'), namespace)
+        monkeypatch.setattr(regen_merge, "_merge", namespace["_merge"])
+        with pytest.raises((AssertionError, KeyError)):
+            test_moved_port_schema_gate()
+    else:
+        test_portaudit(cases[rule])
+        helper = {1: "_carry_crosstalk", 2: "_port_consensus", 3: "_finish_port_values",
+                  4: "_check_mw_bands", 5: "_remap_upconverters"}.get(rule)
+        if helper:
+            monkeypatch.setattr(regen_merge, helper, lambda *args, **kwargs: None)
+        else:
+            source = inspect.getsource(regen_merge._port_moves)
+            needle = 'fresh[n] = (_owner_label(old_owners.get(n) or ()), _owner_label(owners))'
+            assert needle in source
+            namespace = dict(vars(regen_merge))
+            exec(source.replace(needle, 'inherited[n] = (_owner_label(old_owners.get(n) or ()), _owner_label(owners))'), namespace)
+            monkeypatch.setattr(regen_merge, "_port_moves", namespace["_port_moves"])
+        with pytest.raises(AssertionError):
+            test_portaudit(cases[rule])
 
 
 

@@ -1240,30 +1240,22 @@ class TestAPortMovesWithItsOwner:
         assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
         assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
 
-    def test_a_renamed_qubit_keeps_the_port_number_identity(self):
-        # No owner in common -> nothing is known to have moved: today's
-        # port-number carry stands (never wiped to fresh on a guess).
+    def test_unrecorded_rename_keeps_rebuild_defaults(self):
         old, ow = self._old()
         new, nw = self._new({"qA": 1, "q2": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["delay"] == 37
-        assert r.stats.ports_fresh == []
-        # ...but it is NAMED, never silent (QA review of F1)
-        assert r.stats.ports_inherited == [
-            ("ports.analog_outputs.con1.5.1", "q1.z", "qA.z")]
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"] == new["ports"]["analog_outputs"]["con1"]["5"]["1"]
+        assert r.stats.ports_fresh == [("ports.analog_outputs.con1.5.1", "q1.z", "qA.z")]
+        assert r.stats.ports_inherited == []
 
-    def test_a_removed_qubits_port_taken_by_a_new_one_is_named(self):
-        # QA review of F1: q2 removed, q6 added onto the freed port 2. The
-        # port-number carry stands (a rename must keep it), but the report
-        # says whose calibration q6 got.
+    def test_a_removed_qubits_port_taken_by_a_new_one_is_fresh(self):
         old, ow = self._old()
         new, nw = self._new({"q1": 1, "q6": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        lf = r.merged["ports"]["analog_outputs"]["con1"]["5"]
-        assert lf["2"]["delay"] == 34 and lf["2"]["feedforward_filter"] == [0.2] * 48
-        assert r.stats.ports_moved == [] and r.stats.ports_fresh == []
-        assert r.stats.ports_inherited == [
-            ("ports.analog_outputs.con1.5.2", "q2.z", "q6.z")]
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"] == new["ports"]["analog_outputs"]["con1"]["5"]["2"]
+        assert r.stats.ports_moved == []
+        assert r.stats.ports_fresh == [("ports.analog_outputs.con1.5.2", "q2.z", "q6.z")]
+        assert r.stats.ports_inherited == []
 
     def test_a_line_the_same_qubit_still_has_is_not_inherited(self):
         # q1 is still on the chip; only the path its line is written at
