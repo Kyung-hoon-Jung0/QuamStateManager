@@ -181,6 +181,7 @@ class MergeStats:
     rename_unmarked: bool = False  # docs/296: renamed, but the root class keeps no extras -- history cannot follow
     lab_objects_kept: list[tuple[str, str]] = field(default_factory=list)  # (path, class) -- v1.6.0 review: a lab object the env imports, kept under the lab's own class although the rebuild wrote no such object
     old_pointers_kept: list[str] = field(default_factory=list)  # v1.6.0 review: the source's pointer kept where the rebuild wrote the very literal it resolves to
+    source_forms_restored: list[str] = field(default_factory=list)  # a lab's own pointer/object form put back where every value reads the same
     pointers_inlined: list[str] = field(default_factory=list)  # v1.6.0 review: a grafted source pointer whose direct target is no literal in the rebuilt state, written as the value it resolved to in the source
 
 
@@ -1856,6 +1857,159 @@ def apply_rename_plan(state: dict, wiring: dict | None, tok: dict, pmap: dict, i
     return out, (_rewrite_ids(wiring, pmap, rename) if isinstance(wiring, dict) else wiring)
 
 
+class _Cycle(Exception):
+    pass
+
+
+def _hop(doc: dict, pointer: str, field_path: tuple) -> tuple[Any, tuple]:
+    """``_one_hop`` that also returns where it landed (the target's own path)."""
+    if pointer.startswith("#/"):
+        parts = [p for p in pointer[2:].split("/") if p]
+    else:
+        parts = list(field_path[:-1])
+        for seg in pointer[1:].split("/"):
+            if seg == "..":
+                parts = parts[:-1]
+            elif seg and seg != ".":
+                parts.append(seg)
+    node: Any = doc
+    for p in parts:
+        if isinstance(node, dict) and p in node:
+            node = node[p]
+        elif isinstance(node, list) and p.isdigit() and int(p) < len(node):
+            node = node[int(p)]
+        else:
+            return _MISSING, tuple(parts)
+    return node, tuple(parts)
+
+
+def _resolved_leaves(doc: dict, top: str) -> dict[str, Any]:
+    """Every leaf under ``doc[top]`` as the value QUAM would read: pointers followed
+    (a pointer to an object expands to its leaves), an unresolvable one kept as its
+    text. Raises ``_Cycle`` when a chain loops."""
+    out: dict[str, Any] = {}
+
+    def value(v: Any, path: tuple, seen: frozenset) -> Any:
+        hops = 0
+        while is_pointer(v):
+            hops += 1
+            if hops > 40:
+                raise _Cycle(".".join(path))
+            tgt, where = _hop(doc, v, path)
+            if tgt is _MISSING:
+                return ("<unresolved>", v)
+            if where in seen:
+                raise _Cycle(".".join(path))
+            seen = seen | {where}
+            v, path = tgt, where
+        return v, path, seen
+
+    def walk(node: Any, path: tuple, label: str, seen: frozenset, depth: int) -> None:
+        if depth > 60:
+            raise _Cycle(label)
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, path + (str(k),), f"{label}.{k}", seen, depth + 1)
+            return
+        if is_pointer(node):
+            r = value(node, path, seen | {path})
+            if isinstance(r, tuple) and len(r) == 2:
+                out[label] = r
+                return
+            v, where, seen2 = r
+            if isinstance(v, dict):
+                walk(v, where, label, seen2, depth + 1)
+            else:
+                out[label] = v
+            return
+        out[label] = node
+
+    if isinstance(doc.get(top), dict):
+        walk(doc[top], (top,), top, frozenset(), 0)
+    return out
+
+
+def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
+                          protect: set[str] | None) -> list[str]:
+    """Put back the SOURCE's own form (a lab's pointer direction, an inline object
+    the rebuild replaced with a link, a pointer to a different but equal field)
+    wherever doing so changes no value QUAM reads and closes no cycle.
+
+    A candidate is a place where the source and the merged state hold a different
+    raw form. They are tried together first, then one by one (objects before
+    pointers, so a link can land on an object put back before it); each attempt is
+    kept only if every leaf of the whole state resolves exactly as before (a
+    ``__class__`` is a leaf too) and no pointer chain loops."""
+    cands: list[tuple[str, tuple, Any]] = []
+
+    def walk(o: Any, m: Any, path: tuple) -> None:
+        if isinstance(o, dict) and isinstance(m, dict):
+            for k, ov in o.items():
+                if k in m:
+                    walk(ov, m[k], path + (k,))
+            return
+        if o == m:
+            return
+        if not (is_pointer(o) or is_pointer(m)):
+            return
+        dot = ".".join(path)
+        if protect and any(dot == p or dot.startswith(p + ".") or p.startswith(dot + ".")
+                           for p in protect):
+            return
+        cands.append((dot, path, o))
+
+    walk(old, merged, ())
+    if not cands:
+        return []
+    cands.sort(key=lambda c: (is_pointer(c[2]), c[0]))
+
+    def doc_of(state: dict) -> dict:
+        return _merged_doc(state, wiring)
+
+    def every_leaf(state: dict) -> dict[str, Any]:
+        d = doc_of(state)
+        out: dict[str, Any] = {}
+        for top, v in state.items():
+            if isinstance(v, dict):
+                out.update(_resolved_leaves(d, top))
+            else:
+                out[top] = v
+        return out
+
+    try:
+        before = every_leaf(merged)
+    except _Cycle:
+        return []
+
+    def setp(root: dict, path: tuple, v: Any) -> None:
+        node = root
+        for k in path[:-1]:
+            node = node[k]
+        node[path[-1]] = copy.deepcopy(v)
+
+    def ok(state: dict) -> bool:
+        try:
+            return every_leaf(state) == before
+        except _Cycle:
+            return False
+
+    trial = copy.deepcopy(merged)
+    for _, path, v in cands:
+        setp(trial, path, v)
+    if ok(trial):
+        for _, path, v in cands:
+            setp(merged, path, v)
+        return [c[0] for c in cands]
+    done = []
+    for dot, path, v in cands:
+        trial = copy.deepcopy(merged)
+        setp(trial, path, v)
+        if ok(trial):
+            setp(merged, path, v)
+            done.append(dot)
+    return done
+
+
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,
                  protect_paths: set[str] | None = None,
@@ -1955,6 +2109,9 @@ def merge_states(old_state: dict, new_state: dict,
     # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference
     # visibly here (reported with the residual loss) rather than ship it broken.
     ref_drops = _prune_removed_entity_refs(merged, old_state)
+    # A lab's own pointer forms come back where they change no value (see the helper)
+    stats.source_forms_restored = sorted(
+        _restore_source_forms(merged, old_view, new_wiring, protect_paths), key=natural_key)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200

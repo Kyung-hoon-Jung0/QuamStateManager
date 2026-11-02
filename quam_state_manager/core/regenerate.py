@@ -680,6 +680,8 @@ def run_regenerate(
         "old_pointers_kept_total": len(s.old_pointers_kept),
         "pointers_inlined": s.pointers_inlined[:80],
         "pointers_inlined_total": len(s.pointers_inlined),
+        "source_forms_restored": s.source_forms_restored[:80],
+        "source_forms_restored_total": len(s.source_forms_restored),
         # The CAUSE behind most cross-generation drops: the rebuild typed an
         # object differently from the source chip. Reported separately because
         # the remedy differs -- a dropped field is gone, a substituted class is

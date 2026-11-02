@@ -68,31 +68,64 @@ def _run():
     return merge_states(_old(), _new(), class_schemas=SCHEMAS, keep_classes=KEEP, env_fields=ENV_FIELDS)
 
 
-def test_the_lab_pulse_class_and_every_knob_value_come_back_without_a_cycle():
+def _resolve(doc, path, v, hops=0):
+    while is_pointer(v) and v != "#./inferred_length":
+        assert hops < 20, ("cycle", path)
+        hops += 1
+        tgt = _one_hop(doc, v, path)
+        assert tgt is not _MISSING, (path, v)
+        v = tgt
+    return v
+
+
+def test_the_lab_keeps_its_own_link_direction_and_every_knob_value():
+    """The rebuild writes values on the op and the macro pointing at it; the lab had the
+    reverse. Every value reads the same either way, so the lab's own form comes back:
+    the knobs on the macro object, the op pointing at them -- with no cycle."""
     r = _run()
     op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
-    assert op["__class__"] == LAB_PULSE
-    # the builder wrote Populate SEEDS (0.45/100/20) where the lab's pointer's target is
-    # now itself a pointer: the source's calibrated values come back, not the seeds
-    assert op["amplitude"] == 0.35 and op["flat_length"] == 70 and op["padding"] == 4
-    # the lab-only knobs come back as the VALUES they resolved to in the source
-    assert op["b_over_a"] == 0.2777 and op["t_phi"] == 0 and op["neg_offset_v"] == 0.0008
-    assert sorted(r.stats.pointers_inlined) == sorted(
-        f"{OP}.{k}" for k in ("amplitude", "b_over_a", "flat_length", "neg_offset_v", "padding", "t_phi"))
+    mac = r.merged["qubit_pairs"]["q1-2"]["macros"]["cz_SNZ"]
+    assert op["__class__"] == LAB_PULSE and (OP, LAB_PULSE) in r.stats.class_kept
+    old = _old()
+    # byte-for-byte the source's form, for the op and the macro's pulse
+    assert op == old["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
+    assert mac["flux_pulse_qubit"] == old["qubit_pairs"]["q1-2"]["macros"]["cz_SNZ"]["flux_pulse_qubit"]
+    assert f"{MAC}.flux_pulse_qubit" in r.stats.source_forms_restored
+    assert f"{OP}.amplitude" in r.stats.source_forms_restored
+    # and every knob reads the calibrated value, not the builder's seed
+    path = ("qubits", "q1", "z", "operations", "cz_SNZ_flux_pulse_q1_q2")
+    want = {"amplitude": 0.35, "flat_length": 70, "padding": 4, "b_over_a": 0.2777, "t_phi": 0,
+            "neg_offset_v": 0.0008}
+    for k, v in want.items():
+        assert _resolve(r.merged, path + (k,), op[k]) == v, k
     # a stock-only default the lab class does not declare is dropped and said
     assert "t_phi_eff" not in op and f"{OP}.t_phi_eff" in r.stats.schema_dropped
-    assert (OP, LAB_PULSE) in r.stats.class_kept and r.stats.class_changed == []
-    # the macro keeps the builder's link direction, and its lab-only target pulse
-    mac = r.merged["qubit_pairs"]["q1-2"]["macros"]["cz_SNZ"]
-    assert mac["flux_pulse_qubit"] == f"#/{OP.replace('.', '/')}"
     assert mac["flux_pulse_target"]["__class__"] == LAB_PULSE and mac["flux_pulse_target"]["amplitude"] == 0.149
-    assert (f"{MAC}.flux_pulse_target", LAB_PULSE) in r.stats.lab_objects_kept
-    # cycle-free: every pointer left in the op lands on a literal in one hop (the
-    # `#./inferred_length` self-reference is the class's own property, not a stored key)
-    for k, v in op.items():
-        if is_pointer(v) and v != "#./inferred_length":
-            tgt = _one_hop(r.merged, v, ("qubits", "q1", "z", "operations", "cz_SNZ_flux_pulse_q1_q2", k))
-            assert not is_pointer(tgt) and not isinstance(tgt, dict), (k, v, tgt)
+
+
+def test_a_form_is_not_put_back_where_it_would_change_a_value():
+    """The user changed the CZ amplitude in Populate: putting the lab's macro object back
+    would read the OLD amplitude, so the builder's form stands -- and every value is
+    still right (the typed amplitude, the calibrated rest)."""
+    r = merge_states(_old(), _new(), class_schemas=SCHEMAS, keep_classes=KEEP, env_fields=ENV_FIELDS,
+                     protect_paths={f"{OP}.amplitude"})
+    op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
+    mac = r.merged["qubit_pairs"]["q1-2"]["macros"]["cz_SNZ"]
+    assert op["amplitude"] == 0.45 and op["flat_length"] == 70 and op["padding"] == 4
+    assert mac["flux_pulse_qubit"] == f"#/{OP.replace('.', '/')}"
+    assert f"{MAC}.flux_pulse_qubit" not in r.stats.source_forms_restored
+
+
+def test_a_form_that_would_close_a_cycle_is_not_put_back():
+    from quam_state_manager.core.regen_merge import _restore_source_forms
+    # b.y is held (a Populate edit), so only a.x could go back -- and a.x -> b.y -> a.x loops
+    old = {"a": {"x": "#/b/y"}, "b": {"y": 1}}
+    merged = {"a": {"x": 1}, "b": {"y": "#/a/x"}}
+    assert _restore_source_forms(merged, old, None, {"b.y"}) == []
+    assert merged == {"a": {"x": 1}, "b": {"y": "#/a/x"}}
+    # both free: the source's own form is cycle-free and reads the same -> put back
+    assert sorted(_restore_source_forms(merged, old, None, None)) == ["a.x", "b.y"]
+    assert merged == old
 
 
 def test_a_source_pointer_whose_direct_target_is_a_literal_is_kept_as_a_link():
@@ -113,13 +146,3 @@ def test_one_hop_reads_quam_pointers_as_quam_does():
     assert _one_hop(doc, "#/a/w", ("c",)) == 2
     assert is_pointer(_one_hop(doc, "#/a/b/y", ("c",)))       # one hop only: a pointer stays a pointer
     assert _one_hop(doc, "#/a/missing", ("c",)) is _MISSING
-
-
-def test_a_populate_edit_still_wins_over_the_inverted_link():
-    """The user typed a new CZ amplitude in the wizard's Populate step: that one stands;
-    the knobs the user did not touch carry the source's values."""
-    r = merge_states(_old(), _new(), class_schemas=SCHEMAS, keep_classes=KEEP, env_fields=ENV_FIELDS,
-                     protect_paths={f"{OP}.amplitude"})
-    op = r.merged["qubits"]["q1"]["z"]["operations"]["cz_SNZ_flux_pulse_q1_q2"]
-    assert op["amplitude"] == 0.45 and op["flat_length"] == 70 and op["padding"] == 4
-    assert f"{OP}.amplitude" not in r.stats.pointers_inlined
