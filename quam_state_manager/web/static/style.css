@@ -16081,7 +16081,7 @@ html.nav-order-pending #sidebar { visibility: hidden; }
     height: 3px;
     border-radius: 2px;
     background: var(--color-accent);
-    box-shadow: 0 0 0 1px var(--color-accent), 0 0 6px var(--color-accent);
+    box-shadow: 0 0 0 2px var(--pico-background-color, #fff), 0 0 6px 2px var(--color-accent);
     pointer-events: none;
     z-index: 5;
 }
