@@ -159,7 +159,7 @@ def test_warm_plot_worker_is_reused_only_for_the_same_code(tmp_path, monkeypatch
     spawned, killed = [], []
 
     class Fake:
-        def __init__(self, python_path, script, marker, context=""):
+        def __init__(self, python_path, script, marker, context="", **_kw):
             self.python_path, self.context = python_path, context
             spawned.append(self)
 

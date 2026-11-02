@@ -251,10 +251,15 @@ class Worker:
     the caller falls back to one cold run. It is killed after ``WARM_IDLE_S``
     idle, when another env is selected, and at interpreter exit."""
 
-    def __init__(self, python_path: str, script: str, marker: str, *, signature=None, context="", idle_s=3600):
+    def __init__(self, python_path: str, script: str, marker: str, *, signature=None, context="", idle_s=3600,
+                 progress_marker: str | None = None):
         import queue
         import subprocess
         self.marker = marker
+        # D-2: a worker that reports progress marks those lines apart; they go to
+        # on_progress (one parsed dict each), never into the answer queue
+        self.progress_marker = progress_marker
+        self.on_progress = None
         self.signature = signature or _env_sig
         self.context = context
         self.idle_s = idle_s
@@ -296,6 +301,14 @@ class Worker:
     def _pump(self) -> None:
         try:
             for line in self.proc.stdout:          # type: ignore[union-attr]
+                if self.progress_marker and line.startswith(self.progress_marker):
+                    listener = self.on_progress
+                    if listener is not None:
+                        try:
+                            listener(json.loads(line[len(self.progress_marker):]))
+                        except Exception:  # noqa: BLE001 -- a bad line is only progress
+                            pass
+                    continue
                 if line.startswith(self.marker):
                     self._q.put(line[len(self.marker):])
         except Exception:  # noqa: BLE001

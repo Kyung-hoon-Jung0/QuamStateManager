@@ -138,10 +138,18 @@ def _warm_request(env, folder, source_root, timeout, progress=None):
         w = None
     try:
         if w is None:
-            w = lab_worker.Worker(env, str(_script_path()), "@@SM-IPLOT@@", context=context)
+            _say(progress, "starting the lab worker")
+            w = lab_worker.Worker(env, str(_script_path()), "@@SM-IPLOT@@", context=context,
+                                  progress_marker="@@SM-IPLOT-PROG@@")
             _PLOT_WORKER = w
         lab_worker.retire_except(w)
-        result = w.ask({"run": str(folder), "source_root": context}, timeout)
+        if progress is not None:
+            w.on_progress = lambda d: _say(progress, str(d.get("phase") or ""), int(d.get("i") or 0),
+                                           int(d.get("n") or 0), str(d.get("key") or ""))
+        try:
+            result = w.ask({"run": str(folder), "source_root": context}, timeout)
+        finally:
+            w.on_progress = None
         if result is not None:
             w.manifest = ([m["path"] for m in result.get("module_files", [])], result.get("module_trees", []))
             w.snapshot = snapshot(*w.manifest)
@@ -171,6 +179,7 @@ def _invoke(env, folder, source_root, timeout, progress=None):
         if result is not None:
             return result
         lab_worker.retire_except()
+        _say(progress, "starting the lab process")
         out_fd, out_path = tempfile.mkstemp(suffix="_iplot.json", prefix="qsm_")
         os.close(out_fd)
         try:

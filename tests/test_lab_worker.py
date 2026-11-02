@@ -18,7 +18,8 @@ def test_plot_serve_multiple_requests_and_bad_line(monkeypatch):
     monkeypatch.setattr(sys, "stdout", out)
     monkeypatch.setattr(runner, "replay", lambda args: {"figures": [args.run], "errors": []})
     assert runner.serve() == 0
-    results = [json.loads(line[len(runner.SERVE_MARK):]) for line in out.getvalue().splitlines()]
+    results = [json.loads(line[len(runner.SERVE_MARK):]) for line in out.getvalue().splitlines()
+               if line.startswith(runner.SERVE_MARK)]
     assert len(results) == 3
     assert results[0]["figures"] == ["a"] and results[2]["figures"] == ["b"]
     assert results[1]["status"] == "error"

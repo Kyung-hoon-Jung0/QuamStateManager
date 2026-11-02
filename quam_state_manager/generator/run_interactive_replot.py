@@ -742,6 +742,7 @@ def _execute(args):
                                  "trace": f"refusing non-identifier util name {util!r}"})
         return result
 
+    _progress(args, "importing lab code")
     try:
         import importlib
         import xarray as xr
@@ -764,6 +765,7 @@ def _execute(args):
         return result
 
     # qubits
+    _progress(args, "loading run state")
     try:
         qnames = [q for q in args.qubits.split(",") if q] or params.get("qubits") or []
         machine = Quam.load(os.path.join(args.run, "quam_state"))
@@ -804,6 +806,7 @@ def _execute(args):
             args.datasets.append(ds)
             opened[name] = ds
             return ds
+    _progress(args, "opening datasets")
     try:
         ds_raw = _open("ds_raw")
         ds_fit = _open("ds_fit")
@@ -826,10 +829,11 @@ def _execute(args):
     invocations = [(fname, call) for fname in plot_fns
                    for call in ([c for c in calls if plot_imports[c.func.id][1] == fname] or [None])]
     saved_context = {}
-    for fname, call in invocations:
+    for number, (fname, call) in enumerate(invocations, 1):
         function_key = re.sub(r"^plot_", "", fname)
         repeated = sum(original == fname for original, _ in invocations) > 1
         key = call_aliases.get(id(call), function_key) if repeated else function_key
+        _progress(args, "drawing figure", number, len(invocations), key)
         fn = plot_functions[fname]
         report = result["bind_report"][key] = {}
         try:
@@ -864,6 +868,17 @@ def _execute(args):
 
 
 SERVE_MARK = "@@SM-IPLOT@@"
+PROGRESS_MARK = "@@SM-IPLOT-PROG@@"
+
+
+def _progress(args, phase, i=0, n=0, key=""):
+    """Tell the parent what the replay is doing (serve mode only; never a percentage)."""
+    say = getattr(args, "progress", None)
+    if say is not None:
+        try:
+            say({"phase": phase, "i": i, "n": n, "key": key})
+        except Exception:  # noqa: BLE001 -- progress never breaks a replay
+            pass
 
 
 def _source_manifest(args, node_name):
@@ -926,6 +941,10 @@ def serve():
     out = sys.stdout
     sys.stdout = sys.stderr
     seen = {}
+
+    def say(record):
+        out.write(PROGRESS_MARK + json.dumps(record) + "\n")
+        out.flush()
     try:
         for line in sys.stdin:
             if not line.strip():
@@ -934,12 +953,13 @@ def serve():
                 spec = json.loads(line)
                 args = SimpleNamespace(run=spec["run"], source_root=spec.get("source_root") or "",
                                        only=spec.get("only") or "", util=spec.get("util") or "",
-                                       qubits=spec.get("qubits") or "", out="")
+                                       qubits=spec.get("qubits") or "", out="", progress=say)
                 result = replay(args)
                 for path, stat in result.get("sources", {}).items():
                     seen.setdefault(path, stat)
                 result["sources"] = {p: seen[p] for p in result.get("sources", {})}
                 result["status"] = "ok"
+                say({"phase": "converting", "i": 0, "n": 0, "key": ""})
             except BaseException:
                 result = {"status": "error", "figures": [], "errors": [
                     {"stage": "request", "trace": traceback.format_exc()}]}

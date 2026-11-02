@@ -17286,8 +17286,8 @@ function _observeInteractiveResize(container) {
  * Fetch one interactive figure's Plotly JSON and render it. Attaches the
  * click-to-edit handler when the recipe marked the figure clickable.
  */
-var INTERACTIVE_TILE_TIMEOUT_MS = 30000;
 function _fetchInteractiveFig(div, runId, figKey, gen, container) {
+    var INTERACTIVE_TILE_TIMEOUT_MS = 30000;
     if (div.getAttribute('data-rendered') === '1') return;
     div.setAttribute('data-rendered', '1');
     div.innerHTML = '<div class="plot-skeleton" aria-label="Loading figure"></div>';

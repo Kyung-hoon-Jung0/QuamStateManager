@@ -184,3 +184,84 @@ def test_a_second_process_result_is_picked_up_after_the_lab_lock(world, monkeypa
     monkeypatch.setattr(lab_worker.machine_lock, "acquire", acquire)
     out = R.replot_run(world.run, world.instance)
     assert out["figures"] and world.calls == []
+
+
+# ---------------------------------------------------------------------------
+# D-2: the worker streams phases on marked lines, apart from its answers
+# ---------------------------------------------------------------------------
+
+def test_serve_writes_progress_lines_apart_from_the_answer(monkeypatch):
+    import io, json, sys
+    from quam_state_manager.generator import run_interactive_replot as runner
+
+    def replay(args):
+        runner._progress(args, "importing lab code")
+        runner._progress(args, "drawing figure", 1, 2, "a")
+        runner._progress(args, "drawing figure", 2, 2, "b")
+        return {"figures": ["x"], "errors": []}
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"run":"r"}\n'))
+    out = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(runner, "replay", replay)
+    runner.serve()
+    lines = out.getvalue().splitlines()
+    prog = [json.loads(l[len(runner.PROGRESS_MARK):]) for l in lines if l.startswith(runner.PROGRESS_MARK)]
+    answers = [l for l in lines if l.startswith(runner.SERVE_MARK)]
+    assert [p["phase"] for p in prog] == ["importing lab code", "drawing figure", "drawing figure", "converting"]
+    assert prog[2] == {"phase": "drawing figure", "i": 2, "n": 2, "key": "b"}
+    assert len(answers) == 1 and json.loads(answers[0][len(runner.SERVE_MARK):])["figures"] == ["x"]
+    assert not runner.SERVE_MARK.startswith(runner.PROGRESS_MARK)
+    assert not runner.PROGRESS_MARK.startswith(runner.SERVE_MARK)
+
+
+def test_the_plan_count_is_the_figure_denominator():
+    import inspect
+    from quam_state_manager.generator import run_interactive_replot as runner
+    src = inspect.getsource(runner._execute)
+    assert '_progress(args, "drawing figure", number, len(invocations), key)' in src
+    assert src.index('"importing lab code"') < src.index('"loading run state"') < src.index('"opening datasets"')
+
+
+def test_the_worker_routes_progress_to_its_listener_never_the_answer(tmp_path):
+    import sys
+    from quam_state_manager.core import lab_worker
+    script = tmp_path / "w.py"
+    script.write_text(
+        "import sys,json\n"
+        "for line in sys.stdin:\n"
+        " print('@P'+json.dumps({'phase':'drawing figure','i':1,'n':3,'key':'k'}),flush=True)\n"
+        " print('@P'+'not json',flush=True)\n"
+        " print('@A'+json.dumps({'status':'ok','sources':{}}),flush=True)\n")
+    heard = []
+    with lab_worker.machine_lock:
+        w = lab_worker.Worker(sys.executable, str(script), "@A", progress_marker="@P")
+        try:
+            w.on_progress = heard.append
+            assert w.ask({}, 10) == {"status": "ok", "sources": {}}
+            w.on_progress = None
+            assert w.ask({}, 10)["status"] == "ok"      # no listener: progress is dropped
+        finally:
+            w.kill()
+    assert heard == [{"phase": "drawing figure", "i": 1, "n": 3, "key": "k"}]
+
+
+def test_a_warm_replay_reports_worker_phases_to_the_job(tmp_path, monkeypatch):
+    from quam_state_manager.core import lab_worker
+    heard = []
+
+    class FakeWorker:
+        context, python_path = "", None
+        def __init__(self, env, script, marker, **kw):
+            assert kw.get("progress_marker") == "@@SM-IPLOT-PROG@@"
+            self.python_path = env; self.proc = SimpleNamespace(pid=0)
+        def fresh(self): return True
+        def kill(self): pass
+        def ask(self, spec, timeout):
+            self.on_progress({"phase": "drawing figure", "i": 1, "n": 2, "key": "a"})
+            return {"figures": [], "module_files": [], "module_trees": []}
+    env = tmp_path / "python.exe"; env.write_text("")
+    monkeypatch.setattr(lab_worker, "Worker", FakeWorker)
+    monkeypatch.setattr(lab_worker, "retire_except", lambda *a: None)
+    monkeypatch.setattr(R, "_PLOT_WORKER", None)
+    R._warm_request(str(env), tmp_path, None, 10, lambda *a: heard.append(a))
+    assert ("drawing figure", 1, 2, "a") in heard
