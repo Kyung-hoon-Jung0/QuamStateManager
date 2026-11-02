@@ -6,6 +6,8 @@
 (function () {
     "use strict";
 
+    var lastResult = null;
+
     function body() { return document.getElementById("opxmon-body"); }
 
     function confirmText(btn) {
@@ -22,6 +24,7 @@
     }
 
     function say(text, bad) {
+        lastResult = {text: text, bad: bad};
         var b = body();
         var el = b && b.querySelector(".opxmon-close-result");
         if (!el) return;
@@ -61,7 +64,7 @@
                     ((j.skipped && j.skipped.length) ? " (skipped: " + j.skipped.map(function (id) { return id + ": " + ((j.skip_reasons || {})[id] || "already gone"); }).join(", ") + ")" : "") +
                     ". Written to History.", false);
                 else say("Not closed: " + ((j && j.error) || "no reason given"), true);
-                if (j && j.ok) { /* Keep the action result visible until the next page visit. */ }
+                refresh();
             }, function (err) {
                 say("Not closed: SM did not answer (" + err + ").", true);
                 btn.disabled = false;
@@ -91,6 +94,9 @@
 
     document.addEventListener("click", onClick);
     document.addEventListener("htmx:afterSwap", syncNav);
+    document.addEventListener("htmx:afterSwap", function () {
+        if (lastResult) say(lastResult.text, lastResult.bad);
+    });
     document.addEventListener("htmx:sendError", markUnreachable);
     document.addEventListener("htmx:responseError", markUnreachable);
     window.OpxMonitor = {confirmText: confirmText, onClick: onClick, markUnreachable: markUnreachable, syncNav: syncNav};
