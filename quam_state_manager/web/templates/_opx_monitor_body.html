@@ -70,6 +70,7 @@
   {%- endif %}
 
 {%- elif tab == 'jobs' %}
+  <p class="ui-muted">{{ run_reason }}</p>
   {%- if not cap.jobs %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">Not available for this target.</span> {{ cap.jobs_reason }}</p>
   {%- elif ans.open_qms is none %}
@@ -82,13 +83,13 @@
     <thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th></tr></thead>
     <tbody>{% for q in ans.open_qms %}<tr class="opxmon-qm-row" data-qm-id="{{ q.id }}"><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} ? idle{% endif %}</div></td>
       <td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
-      <td class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id[:8] }}</code> {{ j.status }}{% if j.created_at %} &middot; created <span class="ts-local" data-ts="{{ j.created_at }}">{{ j.created_at }}</span>{% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
+      <td class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id[:8] }}</code> {{ j.status }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-muted">{{ match.reason }}</span>{% if j.created_at %} &middot; created <span class="ts-local" data-ts="{{ j.created_at }}">{{ j.created_at }}</span>{% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
   </table>{% endif %}
   <p class="ui-note">The server does not report who opened a QM; the QM id and its jobs are what it gives.</p>
   {%- if ans.jobs is not none %}
   <h3 class="opxmon-h">Jobs the server lists <span class="ui-count">{{ ans.jobs|length }}</span></h3>
   {%- if ans.jobs %}<table class="ui-table opxmon-table" aria-label="Server jobs"><thead><tr><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head">Created</th><th class="ui-table-head">Last update</th></tr></thead>
-    <tbody>{% for j in ans.jobs[:100] %}<tr><td class="ui-table-cell"><code>{{ j.id }}</code></td><td class="ui-table-cell">{{ j.status }}</td><td class="ui-table-cell">{{ j.created_at or '' }}</td><td class="ui-table-cell">{{ j.updated_at or '' }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-note">None.</p>{% endif %}
+    <tbody>{% for j in ans.jobs[:100] %}<tr><td class="ui-table-cell"><code>{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-muted">{{ match.reason }}</span></td><td class="ui-table-cell">{{ j.status }}</td><td class="ui-table-cell">{{ j.created_at or '' }}</td><td class="ui-table-cell">{{ j.updated_at or '' }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-note">None.</p>{% endif %}
   {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">The server refused get_jobs: {{ ans.refused.get_jobs }}</p>{% endif %}
   {%- endif %}
 

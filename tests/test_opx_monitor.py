@@ -542,3 +542,32 @@ def test_d15_trends_gaps_zero_bounds_and_span(tmp_path, env):
     w.script[:] = [answer(temps={'Chassis': 42})]
     m.poll_once()
     assert 'actual span 0 s' in page(app, 'live') and '<polyline' in page(app, 'live')
+
+
+def test_d16_unique_run_only_and_open_chip_scope(env, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from quam_state_manager.web import opx_monitor_routes as routes
+    from quam_state_manager.web import routes as main
+    app, m, w, clock, _ = env
+    created = '2026-01-01T00:00:00Z'
+    a = answer()
+    a['open_qms'][0]['jobs'][0]['created_at'] = created
+    w.script[:] = [a]
+    m.poll_once()
+    assert 'No chip is open' in page(app, 'jobs') and 'probably #' not in page(app, 'jobs')
+    root = tmp_path / 'sample-data'
+    root.mkdir()
+    run = SimpleNamespace(created_at=created, run_id=7, folder_path=root / 'run7')
+    store = SimpleNamespace(scan_truncated=False, runs={7: run})
+    monkeypatch.setattr(main, '_active_ctx', lambda: {'type': 'quam'})
+    monkeypatch.setattr(main, '_hub_roots_for', lambda ctx: [(str(root), 'declared')])
+    used = []
+    monkeypatch.setattr(main, '_get_or_create_store', lambda p, **kw: used.append(p) or store)
+    html = page(app, 'jobs')
+    assert 'probably #7' in html and 'estimated from times' in html and used == [root]
+    store.runs[8] = SimpleNamespace(created_at=created, run_id=8, folder_path=root / 'run8')
+    html = page(app, 'jobs')
+    assert '2 runs at that time' in html and 'probably #' not in html
+    store.scan_truncated = True
+    assert 'incomplete' in page(app, 'jobs') and 'probably #' not in page(app, 'jobs')
+    assert 'url' not in routes.run_match({'created_at': created}, [])

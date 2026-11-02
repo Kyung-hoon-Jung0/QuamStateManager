@@ -42,6 +42,45 @@ def _envs():
         return []
 
 
+def _run_candidates():
+    """Use the existing chip-root rule and DatasetStore index, never all workspace runs."""
+    r = _r()
+    ctx = r._active_ctx()
+    if not ctx or ctx.get('type') != 'quam':
+        return [], 'No chip is open; run links are unavailable.'
+    roots = r._hub_roots_for(ctx)
+    if not roots:
+        return [], 'The open chip has no known dataset folders; run links are unavailable.'
+    candidates, seen = [], set()
+    for root, source in roots:
+        store = r._get_or_create_store(Path(root), rescan=True)
+        if store is None or store.scan_truncated:
+            return [], 'Dataset index is incomplete; run links are unavailable.'
+        for run in list(store.runs.values()):
+            instant = om.timestamp(run.created_at)
+            if instant is None:
+                return [], 'A run creation time or timezone is unknown; run links are unavailable.'
+            folder = str(run.folder_path.resolve())
+            if folder in seen:
+                continue
+            seen.add(folder)
+            candidates.append({'time': instant, 'id': run.run_id,
+                               'url': '/dataset/' + r._folder_key(root) + ':' + str(run.run_id)})
+    return candidates, ''
+
+
+def run_match(job, candidates, reason='', window=90):
+    if reason:
+        return {'reason': reason}
+    instant = om.timestamp(job.get('created_at'))
+    if instant is None:
+        return {'reason': 'Job creation time unknown; no estimated link.'}
+    matches = [r for r in candidates if abs(r['time'] - instant) <= window]
+    if len(matches) == 1:
+        return {**matches[0], 'reason': 'estimated from times (job and run creation, +/-90 s)'}
+    return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-90 s)'}
+
+
 def _view(tab: str) -> dict:
     m = monitor()
     st = m.status()
@@ -53,7 +92,12 @@ def _view(tab: str) -> dict:
     first = {r['qm_id']: r['first_seen'] for r in h.table() if not r.get('job_id')} if h else {}
     idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
-    return {"trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
+    try:
+        runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
+    except Exception:
+        runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
+    return {'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason),
+            "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],
