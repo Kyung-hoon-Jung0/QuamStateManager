@@ -36,12 +36,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function world() {
   const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'http://localhost/' });
   const w = dom.window;
-  const log = { menu: 0, status: 0 };
+  const log = { menu: 0, status: 0, urls: [] };
   const st = { status: { state: 'replaying', phase: 'opening datasets', label: 'opening datasets', elapsed: 2 }, menu: [STRIP, DONE] };
   w.fetch = function (url) {
+    log.urls.push(url);
     const body = (text) => Promise.resolve({ text: () => Promise.resolve(text), json: () => Promise.resolve(JSON.parse(text)) });
     if (/\/interactive\/status/.test(url)) { log.status++; return body(JSON.stringify(st.status)); }
-    if (/\/interactive$/.test(url)) { const html = st.menu[Math.min(log.menu, st.menu.length - 1)]; log.menu++; return body(html); }
+    if (/\/interactive(?:\?force=1)?$/.test(url)) { const html = st.menu[Math.min(log.menu, st.menu.length - 1)]; log.menu++; return body(html); }
     return new Promise(function () {});
   };
   w.matchMedia = w.matchMedia || function () { return { matches: false, addListener() {}, removeListener() {} }; };
@@ -108,6 +109,23 @@ function world() {
     await sleep(80);
     check('D1 on failed the menu is fetched again', log.menu === 2);
     check('D2 and the strip is gone', !c.querySelector('[data-replot-job]'));
+  }
+  // Retry reloads the same container, bypasses data-loaded, and then polls.
+  {
+    const { w, log, st, c } = world();
+    c.setAttribute('data-loaded', '1');
+    c.innerHTML = DONE;
+    const panel = w.document.getElementById('inspector-pane');
+    w.loadDatasetInteractive('u1', panel, true);
+    await sleep(60);
+    check('E1 Retry requests force on the default menu', log.urls[0] === '/dataset/u1/interactive?force=1');
+    check('E2 Retry replaces the existing menu with progress', !!c.querySelector('[data-replot-job]'));
+    check('E3 Retry polls the new job', log.status > 0);
+    st.status = { state: 'done', elapsed: 1 };
+    await sleep(80);
+    check('E4 completion refetches without force', log.urls.filter(u => u === '/dataset/u1/interactive').length === 1);
+    check('E5 completion replaces progress in the same container', c.innerHTML === DONE);
+    check('E6 obsolete loader is removed', typeof w.loadDatasetReplot === 'undefined');
   }
   if (failures) { console.error(failures + ' failure(s)'); process.exit(1); }
   console.log('interactive progress selfcheck: all ok');

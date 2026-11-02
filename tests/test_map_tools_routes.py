@@ -26,7 +26,8 @@ def rig(tmp_path, monkeypatch):
         {"op": "replace", "path": "/quam/qubits/q0/amplitude", "old": .3, "value": .4}]}))
     run = SimpleNamespace(folder_path=str(tmp_path), experiment_name="synthetic", id=1)
     monkeypatch.setattr(replot, "replot_capability", lambda *_: {"available": True})
-    monkeypatch.setattr(replot, "replot_run", lambda *_: {"figures": [figure]})
+    monkeypatch.setattr(replot, "replot_run", lambda *_, **kwargs: {"figures": [figure]})
+    monkeypatch.setattr(replot, "peek", lambda *_: {"figures": [figure]})
     from quam_state_manager.web.app import create_app
     from quam_state_manager.web import routes
     monkeypatch.setattr(routes, "_resolve_run", lambda _: (SimpleNamespace(runs={1: run}), 1, ""))

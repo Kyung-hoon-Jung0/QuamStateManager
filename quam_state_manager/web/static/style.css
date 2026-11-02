@@ -5532,13 +5532,7 @@ table code { font-size: 0.88em; }
     display: flex; align-items: center; gap: 0.5rem;
     padding: 0.4rem 0.2rem 0.6rem;
 }
-/* Strategy-B "reproduce from experiment code" opt-in bar + reproduced-figure head */
-.ds-replot-bar {
-    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-    padding: 0.5rem 0.2rem; margin-bottom: 0.3rem;
-    border-bottom: 1px dashed var(--pico-muted-border-color, rgba(127,127,127,0.25));
-}
-.ds-replot-bar .btn-sm { margin: 0; }
+/* Reproduced-figure header */
 .ds-replot-head {
     display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
     padding: 0.5rem 0.2rem 0.4rem;
