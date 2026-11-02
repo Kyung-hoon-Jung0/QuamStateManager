@@ -738,6 +738,8 @@ class Monitor:
         self._lock = threading.Lock()
         self._worker = None
         self._worker_sig = None
+        self.section_times = {}
+        self.section_errors = {}
         self.last_answer: Optional[dict] = None
         self.last_ok_at: Optional[float] = None
         self.last_error: Optional[str] = None
@@ -785,6 +787,8 @@ class Monitor:
             self._worker = None
             self._worker_sig = None
             self.last_answer = None
+            self.section_times.clear()
+            self.section_errors.clear()
             self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
             self.last_ok_at = None
             self.last_error = None
@@ -854,6 +858,16 @@ class Monitor:
             self.admin = read_admin(s.get('admin_url'), selected_cluster)
             if s.get('admin_url') and not selected_cluster:
                 self.admin.update(known=False, reason='Admin cluster association unknown; QM cluster name is unavailable.')
+            fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
+            self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
+                                   for field, call in fields.items() if ans.get(field) is None}
+            for field in fields:
+                if ans.get(field) is not None:
+                    self.section_times[field] = now_iso()
+            if all(ans.get(field) is None for field in fields):
+                self.last_error = 'No data call answered. Check the SSH tunnel, port or power.'
+                self.last_answer = ans
+                return
             prev_ok = self.last_ok_at
             self.last_answer = ans
             self.last_ok_at = self.clock()
@@ -983,11 +997,16 @@ class Monitor:
             return out
         if "list_open_qms" in refused:
             out.update(close_reason=f"The server refused listing QMs: {refused['list_open_qms']}")
-        elif self.last_answer is None:
+        elif ans.get("open_qms") is None or self.status_state_unfresh():
             out.update(close_reason="No answer from the server yet.")
         else:
             out["close"] = True
+        out['live'] = ans.get('controllers') is not None
+        out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
         return out
+
+    def status_state_unfresh(self):
+        return self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.settings()['interval_s']
 
     def status(self) -> dict:
         s = self.settings()
@@ -1001,7 +1020,7 @@ class Monitor:
         elif not s.get("python"):
             state = "unconfigured"
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."
-        elif self.last_error and (age is None or self.last_try_at and self.last_try_at > (self.last_ok_at or 0)):
+        elif self.last_error:
             state = "error"
             sentence = self.last_error
             if age is not None:
@@ -1017,7 +1036,7 @@ class Monitor:
             sentence = f"Updated {age:.0f} s ago."
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
-        return {"state": state, "sentence": sentence, "age_s": age,
+        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "age_s": age,
                 'health': health(self.last_answer, self.admin, s['thresholds'], state), 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),

@@ -14,6 +14,7 @@
   {% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) }} {{ a.unit }} ({{ a.direction }} the limit {{ a.limit }}){% if not loop.last %}; {% endif %}{% endfor %}</div>
 {%- endif %}
 
+{% for section, error in st.section_errors.items() %}<p class="ui-muted opxmon-section-age" title="{{ error }}">{{ section|replace('_', ' ') }} unavailable; as of {{ st.section_times.get(section, 'never answered') }}</p>{% endfor %}
 {%- if tab == 'live' %}
   <p class="opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ ([0, (st.interval_s * 3 - (st.age_s or 0)) * 1000] | max) | int if st.state == 'ok' else 0 }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}

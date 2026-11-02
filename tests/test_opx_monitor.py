@@ -684,3 +684,16 @@ def test_unknown_job_list_is_not_none_or_a_gone_event(env):
     assert 'data-jobs="unknown"' in page(app, 'cleanup')
     assert 'active or unknown job status' in page(app, 'cleanup')
     assert 'Occupancy is unknown' in page(app, 'live')
+
+
+def test_d21_all_refused_is_error(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    a = {'controllers': None, 'open_qms': None, 'jobs': None,
+         'refused': {'get_devices': 'refused', 'list_open_qms': 'refused', 'get_jobs': 'refused'}}
+    w.script[:] = [a]
+    m.poll_once()
+    assert m.status()['state'] == 'error'
+    assert not m.capabilities()['close'] and not m.capabilities()['live']
+    html = page(app, 'live')
+    assert 'as of' in html and 'Updated 0' not in html
