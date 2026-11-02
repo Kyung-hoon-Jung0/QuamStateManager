@@ -1275,16 +1275,14 @@ def _pointer_target(src_path: str, pointer: str) -> str | None:
     if pointer.startswith("#/"):
         return ".".join(s for s in pointer[2:].split("/") if s)
     base = src_path.split(".")[:-1]              # the object holding the leaf
-    rest = pointer[1:]                           # "./x" or "../x" or "../../x"
-    if rest.startswith("./"):
-        rest = rest[2:]
-    else:
-        while rest.startswith("../"):
+    for seg in pointer[1:].split("/"):
+        if seg == "..":
             if not base:
                 return None
-            base = base[:-1]
-            rest = rest[3:]
-    return ".".join(base + [s for s in rest.split("/") if s])
+            base.pop()
+        elif seg and seg != ".":
+            base.append(seg)
+    return ".".join(base)
 
 
 def _walk_refs(obj: Any, path: str = ""):
@@ -1638,6 +1636,67 @@ def _port_consensus(view, old, sources, stats, wiring=None):
         _set_path(view, dest, agreed)
 
 
+def _finish_port_values(old, new, merged, ow, nw, sources, stats, protect):
+    """Repair references using original context, after simultaneous value carry."""
+    old_doc = _merged_doc(old, ow)
+    old_entities = _port_entities(old.get("ports"))
+    destinations = {}
+    for dest, srcs in sources.items():
+        for src in srcs:
+            destinations.setdefault(src, set()).add(dest)
+    pending = []
+    for dest, srcs in sources.items():
+        port = _path_value(merged, dest)
+        if not isinstance(port, dict):
+            continue
+        for src, owners in srcs.items():
+            for key in _path_value(old, src):
+                if key not in port and key not in _PORT_IDENTITY_KEYS:
+                    stats.port_fields_dropped.append({"port": dest, "field": key,
+                        "owner": _owner_label(owners)})
+        if len(srcs) != 1:
+            continue
+        src = next(iter(srcs))
+        original = _path_value(old, src)
+        for suffix, val in _iter_leaves(original):
+            path = dest + "." + suffix
+            if not is_pointer(val) or suffix.startswith("crosstalk") or path in (protect or ()):
+                continue
+            if _path_value(merged, path) is None:
+                continue
+            original_path = src + "." + suffix
+            target = _pointer_target(original_path, val)
+            landed = _land(old_doc, original_path)
+            if landed is None:
+                rebuilt_value = _path_value(new, path)
+                if rebuilt_value is not None:
+                    _set_path(merged, path, rebuilt_value)
+                stats.pointers_reaimed.append({"path": path, "reason": "source target unresolved"})
+                continue
+            value = _path_value(old_doc, landed)
+            target_port = next((p for p in old_entities if target and
+                                (target == p or target.startswith(p + "."))), None)
+            if target_port:
+                choices = destinations.get(target_port, set())
+                if len(choices) == 1:
+                    target = next(iter(choices)) + target[len(target_port):]
+                else:
+                    target = None
+            pending.append((path, target, value, val))
+    # Inline first, so cycles introduced by swaps never affect validation.
+    for path, target, value, val in pending:
+        _set_path(merged, path, value)
+    for path, target, value, val in pending:
+        doc = _merged_doc(merged, nw)
+        landed = _land(doc, target) if target else None
+        aim = "#/" + target.replace(".", "/") if target else None
+        if landed and landed != path and _path_value(doc, landed) == value:
+            _set_path(merged, path, aim)
+        else:
+            aim = None
+        if aim != val:
+            stats.pointers_reaimed.append({"path": path, "from": val,
+                "to": aim, "reason": "line target moved" if aim else "old value inlined"})
 
 
 
@@ -2540,6 +2599,8 @@ def merge_states(old_state: dict, new_state: dict,
     stats.source_forms_restored = sorted(
         _restore_source_forms(merged, old_view, new_wiring, protect_paths), key=natural_key)
     _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
+    _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
+                        sources, stats, protect_paths)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200

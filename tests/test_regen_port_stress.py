@@ -448,7 +448,7 @@ def run_case(case):
 
 def known_finding(kind, seed):
     """Static scope of known failures; never classify by catching oracle errors."""
-    if kind in ('fem', 'controller', 'pair_swap', 'rename', 'removal'):
+    if kind in ('fem', 'controller', 'pair_swap', 'rename', 'removal', 'xy_readout', 'pointer_delay', 'populate'):
         return None
     if kind in ("fem", "controller", "pair_swap"):
         return "F1: crosstalk cannot follow a line across hardware scopes"
@@ -544,7 +544,6 @@ def test_repro_cross_scope_crosstalk(destination):
                         {P1: {"1": .11, 2: .12}, P2: {"1": .21}}))
 
 
-@pytest.mark.xfail(strict=True, reason="F2: shared LO pointer keeps old port address", raises=AssertionError)
 def test_repro_shared_lo_pointer():
     paths = [("qubits", f"q{i}", line, "opx_output")
              for i in range(2) for line in ("xy", "resonator")]
@@ -557,7 +556,6 @@ def test_repro_shared_lo_pointer():
     run_case(case)
 
 
-@pytest.mark.xfail(strict=True, reason="F3: absolute delay pointer becomes self-referential", raises=AssertionError)
 def test_repro_pointer_delay_swap():
     case = small_case({Z0: P1, Z1: P2}, {Z0: P2, Z1: P1})
     at(case[0], P1)["delay"] = "#/" + "/".join(P2) + "/delay"
@@ -576,7 +574,6 @@ def test_repro_removed_target_collision():
                         {P1: {"2": .12, "3": .13}}))
 
 
-@pytest.mark.xfail(strict=True, reason="F6: Populate target edit loses pointer-valued delay", raises=AssertionError)
 def test_repro_populate_pointer_target():
     case = small_case({Z0: P1}, {Z0: P2})
     at(case[0], P1)["delay"] = "#./offset"
