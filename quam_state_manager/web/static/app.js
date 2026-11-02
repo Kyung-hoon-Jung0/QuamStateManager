@@ -16747,12 +16747,13 @@ function _updateVarRowStates() {
  * (via IntersectionObserver) as its tile scrolls into view.
  * @param {number} runId
  * @param {Element} [panel]  enclosing dataset column (pinned/split scoping)
+ * @param {boolean} [force] bypass the cached replay through a background job
  */
-window.loadDatasetInteractive = function(runId, panel) {
+window.loadDatasetInteractive = function(runId, panel, force) {
     panel = panel || document.getElementById('inspector-pane') || document;
     var container = panel.querySelector ? panel.querySelector('[id$="interactive-container"]')
                                         : document.getElementById('ds-interactive-container');
-    if (!container || container.getAttribute('data-loaded') === '1') return;
+    if (!container || (!force && container.getAttribute('data-loaded') === '1')) return;
     container.setAttribute('data-loaded', '1');
     // Per-container generation: bumping invalidates in-flight tile fetches so a
     // stale dataset's response can't paint into a reused container.
@@ -16762,7 +16763,7 @@ window.loadDatasetInteractive = function(runId, panel) {
     if (container._io) { try { container._io.disconnect(); } catch (e) {} container._io = null; }
     container._rendered = [];
 
-    fetch('/dataset/' + runId + '/interactive')
+    fetch('/dataset/' + runId + '/interactive' + (force ? '?force=1' : ''))
         .then(function(r) { return r.text(); })
         .then(function(html) {
             if (container._gen !== gen) return;  // superseded while fetching
@@ -16796,9 +16797,7 @@ window.loadDatasetInteractive = function(runId, panel) {
             }, { rootMargin: '200px' });
             container._io = io;
             plots.forEach(function(p) { io.observe(p); });
-            // docs/118: attach the size watcher at BOTH mount points, so a
-            // container reached by any path (not just a tab click) tracks its
-            // own geometry.
+            // Track the container geometry after mounting its figure menu.
             _observeInteractiveResize(container);
         })
         .catch(function(e) {
@@ -16852,74 +16851,6 @@ function _pollInteractiveJob(container, runId, gen, panel) {
 }
 
 /**
- * Strategy-B: reproduce a run's figures by re-running its own plotting.py in the
- * selected QM env. Mirrors loadDatasetInteractive but targets #ds-replot-container
- * and points its tiles at the replot endpoint (via data-endpoint in the partial).
- * @param {string|number} runId  dataset uid
- * @param {Element} [panel]       enclosing tab/column (scoping)
- * @param {boolean} [force]       re-run even if cached (Regenerate / analysis edit)
- */
-window.loadDatasetReplot = function(runId, panel, force) {
-    panel = panel || document.getElementById('inspector-pane') || document;
-    // Suffix/contains match (not prefix) so the selectors survive the "pinned-"
-    // id prefix added when a dataset column is pinned — mirrors loadDatasetInteractive.
-    var container = panel.querySelector ? panel.querySelector('[id$="ds-replot-container"]')
-                                        : document.getElementById('ds-replot-container');
-    if (!container) return;
-    var btn = panel.querySelector ? panel.querySelector('[id*="ds-replot-btn-"]') : null;
-    if (!force && container.getAttribute('data-loaded') === '1') return;
-    container.setAttribute('data-loaded', '1');
-    container._gen = (container._gen || 0) + 1;
-    var gen = container._gen;
-    if (container._io) { try { container._io.disconnect(); } catch (e) {} container._io = null; }
-    container._rendered = [];
-    if (btn) { btn.setAttribute('aria-busy', 'true'); btn.disabled = true; }
-    container.innerHTML = '<p class="muted" style="padding:1rem">Re-running the experiment plotting… (first run can take a few seconds)</p>';
-
-    fetch('/dataset/' + runId + '/replot' + (force ? '?force=1' : ''))
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            if (container._gen !== gen) return;
-            container.innerHTML = html;
-            if (btn) { btn.removeAttribute('aria-busy'); btn.disabled = false; }
-            var savedCols = parseInt(localStorage.getItem('quam_interactive_cols'), 10);
-            if (!(savedCols >= 1 && savedCols <= 3)) savedCols = 2;
-            var listEl = container.querySelector('.ds-interactive-list');
-            if (listEl) listEl.style.setProperty('--ds-cols', savedCols);
-            container.querySelectorAll('.ds-col-btn').forEach(function(b) {
-                b.classList.toggle('active', parseInt(b.getAttribute('data-cols'), 10) === savedCols);
-            });
-            var plots = container.querySelectorAll('.ds-interactive-plot');
-            if (!plots.length) return;
-            if (typeof IntersectionObserver === 'undefined') {
-                plots.forEach(function(p) { _fetchInteractiveFig(p, runId, p.getAttribute('data-fig'), gen, container); });
-                return;
-            }
-            var io = new IntersectionObserver(function(entries) {
-                entries.forEach(function(e) {
-                    e.target._isVisible = e.isIntersecting;
-                    if (e.isIntersecting) {
-                        _fetchInteractiveFig(e.target, runId, e.target.getAttribute('data-fig'), gen, container);
-                    }
-                });
-                _pruneInteractiveTiles(container);
-            }, { rootMargin: '200px' });
-            container._io = io;
-            plots.forEach(function(p) { io.observe(p); });
-            // docs/118: attach the size watcher at BOTH mount points, so a
-            // container reached by any path (not just a tab click) tracks its
-            // own geometry.
-            _observeInteractiveResize(container);
-        })
-        .catch(function(e) {
-            if (container._gen !== gen) return;
-            if (btn) { btn.removeAttribute('aria-busy'); btn.disabled = false; }
-            container.innerHTML = '<p style="color:var(--pico-del-color)">Error: ' + e.message + '</p>';
-            container.setAttribute('data-loaded', '0');
-        });
-};
-
-/**
  * Set the Interactive grid's column count (1–3), persist it, mark the active
  * toolbar button, and resize already-rendered Plotly plots to the new cell
  * width. Scoped to the interactive container holding the clicked button so
@@ -16929,9 +16860,8 @@ window.loadDatasetReplot = function(runId, panel, force) {
  */
 window.setInteractiveCols = function(n, btn) {
     n = Math.max(1, Math.min(3, parseInt(n, 10) || 2));
-    // datasets-r2-22: a reproduced-figure list's own buttons scope to ITS
-    // container (#ds-replot-container), not the recipe grid beside it.
-    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"], [id$="replot-container"]'))
+    // Scope to this dataset column, including pinned columns.
+    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"]'))
              || document.getElementById('ds-interactive-container')
              || document;
     scope.querySelectorAll('.ds-interactive-list').forEach(function(list) {

@@ -90,6 +90,12 @@ class _MachineLock:
 
 
 machine_lock = _MachineLock()
+# This also leases the active workers, not just their registry. Keep it held
+# through ask/run: same-kind replacement (including another server process),
+# environment changes and cold fallback can retire a worker. Separate worker
+# interpreters could execute concurrently, but releasing only around ask would
+# let those lifecycle operations kill an in-flight replay. Narrowing requires
+# busy-worker leases shared across processes, including idle expiry/retirement.
 _SLOT: dict[str, "Worker"] = {}
 # the pre-D-3 single-slot record; still retired so an older SM's worker is stopped
 _RECORD = _COORD_DIR / "qsm_lab_worker.json"

@@ -24,7 +24,7 @@
     <span class="ds-replot-title">Reproduced from <code>calibration_utils.{{ util }}</code></span>
     {% endif %}
     <button type="button" class="btn-sm secondary"
-            onclick="loadDatasetReplot('{{ uid }}', this.closest('.dataset-tab-content'), true)"
+            onclick="loadDatasetInteractive('{{ uid }}', this.closest('.dataset-tab-content'), true)"
             title="Re-run the plotting code (picks up edits to analysis.py / plotting.py)">
         {% if o.state == "ok" %}↻ Regenerate{% else %}↻ Retry{% endif %}
     </button>

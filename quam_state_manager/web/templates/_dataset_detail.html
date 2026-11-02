@@ -451,18 +451,6 @@
 {# ── Tab: Interactive ── #}
 <div class="dataset-tab-content hidden" id="ds-tab-interactive">
     {% if run.has_interactive %}
-    {# Strategy-B: reproduce figures by re-running the experiment's own plotting.py
-       in the selected QM env. Opt-in (subprocess + env), so it never slows the
-       default recipe view below. #}
-    <div class="ds-replot-bar">
-        <button type="button" class="btn-sm" id="ds-replot-btn-{{ uid }}"
-                onclick="loadDatasetReplot('{{ uid }}', this.closest('.dataset-tab-content'), false)"
-                title="Re-run this experiment's plotting.py on the saved data — exact, and tracks analysis changes">
-            ⚡ Reproduce from experiment code
-        </button>
-        <small class="muted">Exact figures via the experiment's own plotting — tracks analysis edits.</small>
-    </div>
-    <div id="ds-replot-container" data-run-id="{{ uid }}" data-loaded="0"></div>
     <div id="ds-interactive-container" data-run-id="{{ uid }}" data-loaded="0">
         <p class="muted" style="padding:1rem">Loading interactive figures…</p>
     </div>

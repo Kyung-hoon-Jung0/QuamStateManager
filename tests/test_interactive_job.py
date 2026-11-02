@@ -57,6 +57,17 @@ def world(tmp_path, monkeypatch):
                           payload=payload, instance=app.instance_path)
     gate.set()
 
+    # Finish jobs while their synthetic worker/environment are still patched.
+    # Otherwise a job can write its result into the next test's cleared cache.
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        with R._LOCK:
+            active = any(j["state"] in ("starting", "replaying") for j in R._JOBS.values())
+        if not active:
+            break
+        time.sleep(.01)
+    assert not active, "synthetic replay job did not finish during teardown"
+
 
 def _wait(client, job, states=("done", "failed"), limit=10.0):
     end = time.monotonic() + limit
@@ -127,6 +138,51 @@ def test_a_second_click_joins_the_same_job(world):
     assert len(world.calls) == 1
 
 
+def test_replot_door_duplicates_the_default_figures(world):
+    """Measure both menus and their tile payloads against the same fake replay."""
+    import re
+    world.payload["util"] = "fit_thing"
+    world.gate.set()
+    job = _job(world.client.get("/dataset/u/interactive").data.decode())
+    _wait(world.client, job)
+    default = world.client.get("/dataset/u/interactive").data.decode()
+    extra = world.client.get("/dataset/u/replot").data.decode()
+    tiles = lambda html: re.findall(r'class="ds-interactive-plot"[^>]*data-fig="([^"]+)"', html)
+    assert tiles(default) == tiles(extra) == ["fit"]
+    # Both menus point to the very same tile endpoint, so mounting the extra
+    # menu produces a second visible copy without adding a figure or a replay.
+    assert 'data-endpoint="replot/plot"' in default and 'data-endpoint="replot/plot"' in extra
+    a = world.client.get("/dataset/u/replot/plot?fig=fit")
+    b = world.client.get("/dataset/u/replot/plot?fig=fit")
+    assert a.status_code == b.status_code == 200 and a.json == b.json
+    assert len(world.calls) == 1
+    print("duplicate door: default=1 tile, extra=1 identical tile, replay calls=1")
+
+
+def test_interactive_has_one_container_and_retry_forces_a_background_job(world):
+    from pathlib import Path
+    detail = (Path(__file__).resolve().parents[1] / "quam_state_manager" /
+              "web/templates/_dataset_detail.html").read_text(encoding="utf-8")
+    assert 'id="ds-replot-container"' not in detail
+    assert 'ds-replot-bar' not in detail
+    assert detail.count('id="ds-interactive-container"') == 1
+    world.gate.set()
+    job = _job(world.client.get("/dataset/u/interactive").data.decode())
+    _wait(world.client, job)
+    done = world.client.get("/dataset/u/interactive").data.decode()
+    assert "loadDatasetInteractive('u', this.closest('.dataset-tab-content'), true)" in done
+    before = len(world.calls)
+    world.gate.clear()
+    try:
+        retry = world.client.get("/dataset/u/interactive?force=1").data.decode()
+        assert _job(retry), "Retry must bypass the cached menu and return a job"
+    finally:
+        world.gate.set()
+    _wait(world.client, _job(retry))
+    assert len(world.calls) == before + 1
+    assert not _job(world.client.get("/dataset/u/interactive").data.decode())
+
+
 def test_the_job_still_caches_when_nobody_is_polling(world):
     job = _job(world.client.get("/dataset/u/interactive").data.decode())
     # the client navigated away (gen bump): nobody asks for status
@@ -165,6 +221,34 @@ def test_a_hold_never_answers_a_direct_replay(world, tmp_path):
 def test_an_unknown_job_reads_unknown(world):
     s = world.client.get("/dataset/u/interactive/status?job=nope").get_json()
     assert s["state"] == "unknown"
+
+
+def test_interactive_lab_check_wait_measurement(world, monkeypatch):
+    """Use the real driver and draw locks, with fake slow worker responses."""
+    from concurrent.futures import ThreadPoolExecutor
+    from quam_state_manager.core import lab_waveform
+    entered = threading.Event()
+
+    def slow(*args, **kwargs):
+        entered.set()
+        time.sleep(.7)
+        return dict(world.payload, module_files=[], module_trees=[])
+
+    monkeypatch.setattr(R, "_invoke", slow)
+    monkeypatch.setattr(lab_waveform, "cached", lambda *a: None)
+    monkeypatch.setattr(lab_waveform, "_env_sig", lambda *a: ())
+    monkeypatch.setattr(lab_waveform, "_run", lambda *a: {
+        "ok": True, "items": [{"ok": True}], "sources": {}})
+    with ThreadPoolExecutor(2) as pool:
+        replay = pool.submit(R.replot_run, world.run, world.instance, force=True)
+        assert entered.wait(5)
+        t0 = time.monotonic()
+        result = lab_waveform.draw("/fake/py", [("fake.Pulse", {})])
+        waited = time.monotonic() - t0
+        replay.result(timeout=5)
+    assert result[0]["ok"]
+    print(f"lab check during 0.7 s replay: {waited:.3f} s")
+    assert waited >= .5
 
 
 def test_a_second_process_result_is_picked_up_after_the_lab_lock(world, monkeypatch):

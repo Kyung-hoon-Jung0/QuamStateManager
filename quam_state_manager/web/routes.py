@@ -43654,13 +43654,14 @@ def dataset_interactive(uid):
     if capability["available"]:
         # D-1: a valid cached replay renders as before; anything else starts (or
         # joins) a background job and the saved/recipe figures answer at once
-        result = replot.peek(run, current_app.instance_path)
+        force = request.args.get("force") == "1"
+        result = None if force else replot.peek(run, current_app.instance_path)
         if result is None:
-            job = replot.start_job(run, current_app.instance_path)
+            job = replot.start_job(run, current_app.instance_path, force=force)
             if job is not None:
                 return render_template("_replot_progress.html", uid=uid, job=job) +                     render_template("_dataset_interactive.html", run_id=run_id, uid=uid,
                                     figures=figures)
-            result = replot.replot_run(run, current_app.instance_path)
+            result = replot.replot_run(run, current_app.instance_path, force=force)
         reproduced = replot.replot_menu(result)
         covered = {f["key"] for f in reproduced}
         legacy = [f for f in figures if f["key"] not in covered]
