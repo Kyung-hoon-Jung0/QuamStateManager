@@ -1078,6 +1078,95 @@ def _chip(z_ports, extra_ports=None):
     return qubits, wiring, ports
 
 
+def _crosstalk_state(lines, rows=None):
+    qubits, wiring, _ = _chip(lines)
+    ports = {str(p): {**_lf(p, p * 10), "crosstalk": (rows or {}).get(p, {})}
+             for p in lines.values()}
+    return {"qubits": qubits, "ports": {"analog_outputs": {"con1": {"5": ports}}}}, wiring
+
+
+@pytest.mark.parametrize("key_type", [str, int])
+@pytest.mark.parametrize("destinations", [(3, 1, 5), (3, 5, 1), (7, 3, 5), (1, 3, 5)])
+def test_crosstalk_columns_follow_port_moves(key_type, destinations):
+    """Swap, three-cycle, empty destination, and byte-identical no-op rows."""
+    import copy
+
+    numbers = (1, 3, 5)
+    lines = dict(zip(("q1", "q2", "q3"), numbers))
+    # Both cross directions, an explicit self term, and an unmoved target.
+    rows = {1: {key_type(3): .13, key_type(1): .91, key_type(5): .15},
+            3: {key_type(1): .31}, 5: {key_type(1): .51}}
+    old, ow = _crosstalk_state(lines, rows)
+    before = copy.deepcopy(old)
+    new, nw = _crosstalk_state(dict(zip(lines, destinations)))
+    result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    ports = result.merged["ports"]["analog_outputs"]["con1"]["5"]
+    mapping = dict(zip(numbers, destinations))
+    for source, row in rows.items():
+        expected = {key_type(mapping[int(k)]): v for k, v in row.items()}
+        actual = ports[str(mapping[source])]["crosstalk"]
+        assert actual == expected
+        assert all(type(k) is key_type for k in actual)
+        if destinations == numbers:
+            assert json.dumps(actual).encode() == json.dumps(row).encode()
+    assert old == before
+    assert result.stats.crosstalk_unresolved == []
+    assert result.stats.residual_lost == []
+
+
+def test_crosstalk_retains_and_reports_removed_target():
+    old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {1: {"3": .13}})
+    new, nw = _crosstalk_state({"q1": 1})
+    result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] == {"3": .13}
+    assert result.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.1.crosstalk.3"]
+
+
+@pytest.mark.parametrize("pointer", ["#/extras/row", "#./saved_row"])
+def test_crosstalk_pointer_rows_follow_moves(pointer):
+    old, ow = _crosstalk_state({"q1": 1, "q2": 3})
+    port = old["ports"]["analog_outputs"]["con1"]["5"]["1"]
+    port["crosstalk"] = pointer
+    port["saved_row"] = {"3": .13, "1": .91}
+    old["extras"] = {"row": {"3": .13, "1": .91}}
+    new, nw = _crosstalk_state({"q1": 3, "q2": 1})
+    result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["3"]["crosstalk"] == {"1": .13, "3": .91}
+    assert result.merged["extras"]["row"] == {"3": .13, "1": .91}
+
+
+def test_crosstalk_mapping_is_scoped_to_controller_and_fem():
+    old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {1: {"3": .13}})
+    new, nw = _crosstalk_state({"q1": 3, "q2": 1})
+    for state in (old, new):
+        state["ports"]["analog_outputs"]["con1"]["6"] = {
+            "1": {**_lf(1, 0), "fem_id": 6, "crosstalk": {"3": .23}},
+            "3": {**_lf(3, 0), "fem_id": 6}}
+        state["ports"]["analog_outputs"]["con2"] = {"5": {
+            "1": {**_lf(1, 0), "controller_id": "con2", "crosstalk": {"3": .33}},
+            "3": {**_lf(3, 0), "controller_id": "con2"}}}
+    result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    ports = result.merged["ports"]["analog_outputs"]
+    assert ports["con1"]["6"]["1"]["crosstalk"] == {"3": .23}
+    assert ports["con2"]["5"]["1"]["crosstalk"] == {"3": .33}
+
+
+def test_crosstalk_new_owner_gets_defaults_on_vacated_port():
+    old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {1: {"3": .13}})
+    new, nw = _crosstalk_state({"q1": 7, "q2": 3, "q3": 1})
+    result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    ports = result.merged["ports"]["analog_outputs"]["con1"]["5"]
+    assert ports["7"]["crosstalk"] == {"3": .13}
+    assert ports["1"]["crosstalk"] == {}
+
+
+def test_crosstalk_column_collision_is_reported_instead_of_overwritten():
+    old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {3: {"1": .31, "7": .37}})
+    new, nw = _crosstalk_state({"q1": 7, "q2": 3})
+    with pytest.raises(ValueError, match="Crosstalk keys collide"):
+        merge_states(old, new, old_wiring=ow, new_wiring=nw)
+
+
 class TestAPortMovesWithItsOwner:
     """QA F1: moving q1's flux line from out1 to out6 must take q1's measured
     delay + predistortion filters to out6 -- and a qubit that lands on out1

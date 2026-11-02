@@ -726,6 +726,10 @@ def run_regenerate(
         "ports_moved": [{"from": o, "to": n, "owner": w}
                         for o, n, w in s.ports_moved[:80]],
         "ports_moved_total": len(s.ports_moved),
+        "crosstalk_remapped": s.crosstalk_remapped[:80],
+        "crosstalk_remapped_total": len(s.crosstalk_remapped),
+        "crosstalk_unresolved": s.crosstalk_unresolved[:80],
+        "crosstalk_unresolved_total": len(s.crosstalk_unresolved),
         "ports_fresh": [{"port": n, "was": w, "now": v}
                         for n, w, v in s.ports_fresh[:80]],
         # ...and ports kept by port number from a line the rebuild removed

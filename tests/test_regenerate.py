@@ -640,7 +640,9 @@ class TestTheQaRegenerateFixesEndToEnd:
 
     def test_a_moved_flux_line_takes_its_filters_and_the_report_names_it(
             self, tmp_path, monkeypatch):
-        self._write(tmp_path / "old", *self._flux_chip(1, 37, [0.1] * 48))
+        state, wiring = self._flux_chip(1, 37, [0.1] * 48)
+        state["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] = {"1": .91, "3": .13}
+        self._write(tmp_path / "old", state, wiring)
         monkeypatch.setattr(regenerate.config_generator, "run_generator",
                             self._fake(*self._flux_chip(6, 141, None)))
         out = regenerate.run_regenerate("py", tmp_path / "old", {"x": 1},
@@ -654,6 +656,10 @@ class TestTheQaRegenerateFixesEndToEnd:
         merged = json.loads((tmp_path / "new" / "state.json").read_text())
         p6 = merged["ports"]["analog_outputs"]["con1"]["5"]["6"]
         assert p6["delay"] == 37 and p6["feedforward_filter"] == [0.1] * 48
+        assert p6["crosstalk"] == {"6": .91, "3": .13}
+        assert m["crosstalk_remapped_total"] == 2
+        assert m["crosstalk_unresolved"] == ["ports.analog_outputs.con1.5.6.crosstalk.3"]
+        assert m["crosstalk_unresolved_total"] == 1
 
     def test_the_spec_twpa_list_reaches_the_merge(self, tmp_path, monkeypatch):
         old_state = {"twpas": {"twpa1": {"id": "twpa1", "settling_time": 40,

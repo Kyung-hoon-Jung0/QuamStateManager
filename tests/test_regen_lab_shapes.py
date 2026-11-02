@@ -14,6 +14,25 @@ from quam_state_manager.core.regen_merge import (
 XY = "qubits.q1.xy.operations"
 
 
+def test_crosstalk_row_in_custom_object_follows_port_swap():
+    import copy
+
+    old = {"ports": {"analog_outputs": {"con1": {"5": {
+        "1": _port(5, 1, crosstalk="#/correction/row"),
+        "3": _port(5, 3, crosstalk={"1": .31})}}}},
+        "qubits": {"q1": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/1"}},
+                   "q2": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/3"}}},
+        "correction": {"__class__": "custom.Correction", "row": {"3": .13, "1": .91}}}
+    new = copy.deepcopy(old)
+    new["qubits"]["q1"]["z"]["opx_output"] = "#/ports/analog_outputs/con1/5/3"
+    new["qubits"]["q2"]["z"]["opx_output"] = "#/ports/analog_outputs/con1/5/1"
+    result = merge_states(old, new)
+    ports = result.merged["ports"]["analog_outputs"]["con1"]["5"]
+    assert ports["3"]["crosstalk"] == {"1": .13, "3": .91}
+    assert ports["1"]["crosstalk"] == {"3": .31}
+    assert result.merged["correction"] == old["correction"]
+
+
 def _drag(alpha_x90):
     return {"qubits": {"q1": {"xy": {"operations": {
         "x180": {"alpha": -0.62, "length": 16},
