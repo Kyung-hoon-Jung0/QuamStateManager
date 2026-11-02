@@ -701,7 +701,11 @@ def health(answer, admin, thresholds, state):
         unknown.append('temperatures unknown')
     if any('temperatures' in k for k in ans.get('refused', {})):
         unknown.append('some temperature readings unavailable')
+    if any(c.get('fems') and not temperature_mapping_verified(c) for c in controllers or []):
+        unknown.append('populated slots and temperature sensors disagree')
     values = [(r['key'], r['value']) for c in controllers or [] for r in temperature_rows(c) if r['value'] is not None]
+    if any(k.startswith('temp:') and k[5:] not in {name for name, value in values} for k in thresholds):
+        unknown.append('a configured temperature input is unavailable')
     def valid_limit(key):
         try:
             return math.isfinite(float(thresholds.get('temp:' + key)))
