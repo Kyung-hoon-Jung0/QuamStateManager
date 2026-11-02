@@ -16098,7 +16098,7 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .opxmon-close.outline, .opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
 
 .opxmon-health-dot--grey { color: var(--color-text-muted); }
-.opxmon-health-dot--green { color: var(--ui-success-text); }
+.opxmon-health-dot--green { color: var(--ui-ok-text); }
 .opxmon-health-dot--amber { color: var(--ui-warn-text); }
 .opxmon-health-dot--red { color: var(--ui-danger-text); }
 .opxmon-health { font-size: .85em; }

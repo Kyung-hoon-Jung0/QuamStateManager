@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import subprocess
@@ -129,6 +130,9 @@ def load_settings(instance) -> dict:
         d = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(d, dict):
             raise ValueError('expected an object')
+        if (d.get('target') is not None and not isinstance(d['target'], dict)) or any(
+                d.get(k) is not None and not isinstance(d[k], str) for k in ('python', 'admin_url')):
+            raise ValueError('invalid settings fields')
     except FileNotFoundError:
         d = {}
     except (OSError, ValueError):
@@ -148,7 +152,7 @@ def load_settings(instance) -> dict:
     d["alarms_armed"] = bool(d.get("alarms_armed", False))
     try:
         d['idle_minutes'] = max(0.01, min(10080, float(d.get('idle_minutes') or 30)))
-        if not __import__('math').isfinite(d['idle_minutes']):
+        if not math.isfinite(d['idle_minutes']):
             d['idle_minutes'] = 30
     except (ValueError, TypeError):
         d['idle_minutes'] = 30
@@ -433,6 +437,11 @@ class History:
                 for key, value in values.items():
                     if value is None or key not in thresholds:
                         continue
+                    try:
+                        if not math.isfinite(float(thresholds[key])):
+                            continue
+                    except (TypeError, ValueError):
+                        continue
                     ident = (c['name'], key)
                     old = self.alarm_states.get(ident)
                     active = ident in fired
@@ -677,6 +686,8 @@ def health(answer, admin, thresholds, state):
     else:
         c = admin['cluster']
         status = c['health']['status']
+        if 'UNKNOWN' in str(status).upper() or any('UNKNOWN' in str(d['status']).upper() for d in admin['devices']):
+            unknown.append('admin status unknown')
         if status != 'OPERATIONAL_CLUSTER' or c['hasUnreachableDevices'] or any(d['unreachable'] for d in c['devices']) or any(d['status'] != 'OPERATIONAL_DEVICE' for d in admin['devices']):
             bad.append('admin reports unhealthy or unreachable devices')
     if ans.get('open_qms') is None:
@@ -684,8 +695,15 @@ def health(answer, admin, thresholds, state):
     controllers = ans.get('controllers')
     if not controllers or any(not c.get('temperatures') for c in controllers):
         unknown.append('temperatures unknown')
+    if any('temperatures' in k for k in ans.get('refused', {})):
+        unknown.append('some temperature readings unavailable')
     values = [(r['key'], r['value']) for c in controllers or [] for r in temperature_rows(c) if r['value'] is not None]
-    if not values or any('temp:' + k not in thresholds for k, v in values):
+    def valid_limit(key):
+        try:
+            return math.isfinite(float(thresholds.get('temp:' + key)))
+        except (TypeError, ValueError):
+            return False
+    if not values or any(not valid_limit(k) for k, v in values):
         unknown.append('temperature limits incomplete')
     if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)):
         bad.append('temperature above limit')
@@ -821,7 +839,10 @@ class Monitor:
                 self.last_error = f"The server refused the poll: {r.get('error')}"
                 return
             ans = r.get("result") or {}
-            self.admin = read_admin(s.get('admin_url'), (s.get('target') or {}).get('cluster_name'))
+            selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
+            self.admin = read_admin(s.get('admin_url'), selected_cluster)
+            if s.get('admin_url') and not selected_cluster:
+                self.admin.update(known=False, reason='Admin cluster association unknown; QM cluster name is unavailable.')
             prev_ok = self.last_ok_at
             self.last_answer = ans
             self.last_ok_at = self.clock()
