@@ -643,6 +643,20 @@ from tests.port_audit_cases import AUDIT_CASES
 
 
 
+def test_multi_source_consensus_resolves_pointer_values():
+    case = small_case({Z0: P1, Z1: P2}, {Z0: P3, Z1: P3})
+    old, ow, new, nw, _, _ = case
+    for path in (P1, P2):
+        at(old, path)["shareable"] = True
+    at(old, P1)["delay"] = "#./saved_delay"
+    at(old, P1)["saved_delay"] = 37
+    at(old, P2)["delay"] = 37
+    at(new, P3)["shareable"] = True
+    r = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert at(r.merged, P3)["delay"] == 37
+    assert not any(c["field"] == "delay" for c in r.stats.ports_conflict)
+    line_identity_oracle(old, ow, r.merged, nw, rebuilt=new, stats=r.stats,
+        reported=r.stats.residual_lost, dropped=r.stats.crosstalk_dropped)
 
 
 

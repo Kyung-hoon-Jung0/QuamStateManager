@@ -115,9 +115,14 @@ def _iter_leaves(obj: Any, prefix: str = ""):
 def _path_value(root: dict, dot_path: str) -> Any:
     node: Any = root
     for k in dot_path.split("."):
-        if not isinstance(node, dict) or k not in node:
+        if isinstance(node, dict) and k in node:
+            node = node[k]
+        elif isinstance(node, dict) and k.isdigit() and int(k) in node:
+            node = node[int(k)]
+        elif isinstance(node, list) and k.isdigit() and int(k) < len(node):
+            node = node[int(k)]
+        else:
             return None
-        node = node[k]
     return node
 
 
@@ -135,6 +140,10 @@ def _resolves(root: dict, pointer: str) -> bool:
             continue
         if isinstance(node, dict) and seg in node:
             node = node[seg]
+        elif isinstance(node, dict) and seg.isdigit() and int(seg) in node:
+            node = node[int(seg)]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
         else:
             return False
     return True
@@ -1426,6 +1435,10 @@ def _land(doc: dict, dot_path: str, _depth: int = 0) -> str | None:
                     else _land(doc, ".".join([tgt, *segs[i:]]), _depth + 1))
         if isinstance(node, dict) and seg in node:
             node = node[seg]
+        elif isinstance(node, dict) and seg.isdigit() and int(seg) in node:
+            node = node[int(seg)]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
         else:
             return None
     if is_pointer(node):
@@ -1579,10 +1592,50 @@ def _port_sources(old, new, ow, nw):
             for p, owners in _port_owners(new, nw).items()}
 
 
+def _set_path(root, path, value):
+    parts = path.split(".")
+    node = root
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = copy.deepcopy(value)
 
 
+def _port_calibration_value(doc, path, seen=()):
+    """Resolve a port value in its original document, including object aliases."""
+    landed = _land(doc, path)
+    if landed is None or landed in seen:
+        return _MISSING
+    value = _path_value(doc, landed)
+    if isinstance(value, dict):
+        resolved = {k: _port_calibration_value(doc, f"{landed}.{k}", (*seen, landed)) for k in value}
+        return _MISSING if any(v is _MISSING for v in resolved.values()) else resolved
+    if isinstance(value, list):
+        resolved = [_port_calibration_value(doc, f"{landed}.{i}", (*seen, landed)) for i in range(len(value))]
+        return _MISSING if any(v is _MISSING for v in resolved) else resolved
+    return value
 
 
+def _port_consensus(view, old, sources, stats, wiring=None):
+    doc = _merged_doc(old, wiring)
+    for dest, srcs in sources.items():
+        if len(srcs) < 2:
+            continue
+        entries = {src: _path_value(old, src) for src in srcs}
+        agreed = {}
+        for key in sorted(set().union(*(entry.keys() for entry in entries.values())) - set(_PORT_IDENTITY_KEYS), key=natural_key):
+            vals = {src: _port_calibration_value(doc, f"{src}.{key}") if key in entry else _MISSING
+                    for src, entry in entries.items()}
+            first = next(iter(vals.values()))
+            if first is not _MISSING and all(v == first for v in vals.values()):
+                agreed[key] = copy.deepcopy(first)
+                if any(is_pointer(entry.get(key)) for entry in entries.values()):
+                    stats.pointers_reaimed.append({"path": dest + "." + key,
+                        "reason": "agreed source values inlined"})
+            else:
+                stats.ports_conflict.append({"port": dest, "field": key,
+                    "values": {_owner_label(srcs[src]): (v if v is not _MISSING else "<absent or unresolved>")
+                               for src, v in vals.items()}})
+        _set_path(view, dest, agreed)
 
 
 
@@ -2443,8 +2496,10 @@ def merge_states(old_state: dict, new_state: dict,
     inherited: dict[str, tuple[str, str]] = {}
     moves, fresh = _port_moves(old_state, new_state, old_wiring, new_wiring,
                                inherited)
+    sources = _port_sources(old_state, new_state, old_wiring, new_wiring)
     old_view = (_ports_view(old_state, new_state, moves, fresh)
-                if (moves or fresh) else old_state)
+                if (moves or fresh) else copy.deepcopy(old_state))
+    _port_consensus(old_view, old_state, sources, stats, old_wiring)
     stats.ports_moved = sorted(((o, n, who) for n, (o, who) in moves.items()),
                                key=lambda t: natural_key(t[1]))
     stats.ports_fresh = sorted(((n, was, now) for n, (was, now) in fresh.items()),

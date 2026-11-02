@@ -1317,14 +1317,14 @@ class TestAPortMovesWithItsOwner:
         assert p5["full_scale_power_dbm"] == -11 and p5["port_id"] == 5
         assert r.stats.ports_moved[0][2] == "q1.resonator (+1)"
 
-    def test_owners_from_two_old_ports_keep_the_identity(self):
-        # q1 (was port 1) and q2 (was port 2) now share port 2: owners
-        # disagree on a source -> no remap, the port-number carry stands.
+    def test_owners_from_two_old_ports_require_consensus(self):
         old, ow = self._old()
         new, nw = self._new({"q1": 2, "q2": 2})
         r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 34
+        assert r.merged["ports"]["analog_outputs"]["con1"]["5"]["2"]["delay"] == 141
         assert r.stats.ports_moved == []
+        assert any(c["field"] == "delay" and c["values"] == {"q1.z": 37, "q2.z": 34}
+                   for c in r.stats.ports_conflict)
 
 
 # ---------------------------------------------------------------------------
