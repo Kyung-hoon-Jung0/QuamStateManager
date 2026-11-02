@@ -485,12 +485,10 @@ def run_regenerate(
                                          new_state, new_wiring))
 
     twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
-    if twpa_renames:
-        safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
     # a lab's own plain wiring values (a QDAC dc_channel) -- before the merge, so
     # the state objects that point at them land
     wiring_carried = regen_merge.graft_wiring_values(old_wiring, new_wiring)
-    if wiring_carried:
+    if twpa_renames or wiring_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
     # The build subprocess harvests the env's dataclass field schemas for every
