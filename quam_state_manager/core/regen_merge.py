@@ -1701,6 +1701,21 @@ def _finish_port_values(old, new, merged, ow, nw, sources, stats, protect):
 
 
 
+def _check_mw_bands(merged, stats):
+    ents = _port_entities(merged.get("ports"))
+    for path, port in ents.items():
+        if not path.startswith("ports.mw_outputs."):
+            continue
+        prefix, number = path.rsplit(".", 1)
+        peer = {"1": ("mw_inputs", "1"), "2": ("mw_outputs", "3"),
+                "4": ("mw_outputs", "5"), "6": ("mw_outputs", "7"),
+                "8": ("mw_inputs", "2")}.get(number)
+        if peer is None:
+            continue
+        other = prefix.replace("ports.mw_outputs.", "ports." + peer[0] + ".") + "." + peer[1]
+        bands = [port.get("band"), ents.get(other, {}).get("band")]
+        if None not in bands and bands[0] != bands[1] and set(bands) != {1, 3}:
+            stats.mw_band_conflicts.append({"ports": [path, other], "bands": bands})
 
 
 def _carry_crosstalk(old_state: dict, merged: dict,
@@ -2601,6 +2616,7 @@ def merge_states(old_state: dict, new_state: dict,
     _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
     _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
                         sources, stats, protect_paths)
+    _check_mw_bands(merged, stats)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in
     # the build-result transparency panel, TRUNCATED to the first 80/200

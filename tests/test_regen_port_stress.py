@@ -656,6 +656,23 @@ def test_multi_source_consensus_resolves_pointer_values():
         reported=r.stats.residual_lost, dropped=r.stats.crosstalk_dropped)
 
 
+@pytest.mark.parametrize("out,group,peer", [(1, "mw_inputs", 1), (2, "mw_outputs", 3),
+    (4, "mw_outputs", 5), (6, "mw_outputs", 7), (8, "mw_inputs", 2)])
+@pytest.mark.parametrize("bands,conflict", [((2, 3), True), ((1, 3), False), ((2, 2), False)])
+def test_all_mw_coupled_band_pairs(out, group, peer, bands, conflict):
+    from tests.port_audit_cases import chip, put, mwo, mwi
+    lines = {("q1", "xy", "opx_output"): ("mw_outputs", "con1", 1, out),
+             ("q2", "xy", "opx_input" if group == "mw_inputs" else "opx_output"):
+                (group, "con1", 1, peer)}
+    old, ow = chip(lines)
+    new, nw = chip(lines)
+    old["ports"] = {}
+    put(old["ports"], "mw_outputs", "con1", 1, out, mwo("con1", 1, out, band=bands[0]))
+    put(old["ports"], group, "con1", 1, peer, (mwi if group == "mw_inputs" else mwo)("con1", 1, peer, band=bands[1]))
+    new["ports"] = deepcopy(old["ports"])
+    r = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert bool(r.stats.mw_band_conflicts) is conflict
+    assert r.merged["ports"] == old["ports"]
 
 
 def test_shared_source_self_crosstalk_stays_self_on_split():
