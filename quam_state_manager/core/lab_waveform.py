@@ -145,7 +145,7 @@ class _Worker(lab_worker.Worker):
     def __init__(self, python_path: str):
         from quam_state_manager.core.config_generator import _script_path
         super().__init__(python_path, str(_script_path("run_pulse_waveform.py")),
-                         _WARM_MARK, signature=_env_sig)
+                         _WARM_MARK, signature=_env_sig, kind="waveform")
 
     def ask(self, items, timeout):
         return super().ask({"items": items}, timeout)

@@ -25,22 +25,45 @@ def test_plot_serve_multiple_requests_and_bad_line(monkeypatch):
     assert results[1]["status"] == "error"
 
 
-def test_worker_reuses_then_retires_across_kinds(tmp_path):
+def test_worker_reuses_then_retires_within_its_kind(tmp_path):
+    """D-3 (docs/305): one slot per kind. The same kind retires the old worker;
+    another kind under the same env survives; another env retires both; a cold
+    run (no worker) retires every kind."""
     script = tmp_path / "worker.py"
     script.write_text('import sys,json\nfor line in sys.stdin:\n print("@"+json.dumps({"status":"ok","sources":{},"echo":json.loads(line)}),flush=True)\n')
-    with lab_worker.machine_lock:
-        a = lab_worker.Worker(sys.executable, str(script), "@")
-        try:
+    made = []
+    try:
+        with lab_worker.machine_lock:
+            a = lab_worker.Worker(sys.executable, str(script), "@", kind="plot"); made.append(a)
             assert a.ask({"kind": "plot"}, 5)["echo"] == {"kind": "plot"}
             assert a.ask({"kind": "plot"}, 5) and a.requests == 2
-            b = lab_worker.Worker(sys.executable, str(script), "@")
-            try:
-                assert a.proc.poll() is not None
-                assert b.ask({"kind": "waveform"}, 5)
-            finally:
-                b.kill()
-        finally:
-            a.kill()
+            b = lab_worker.Worker(sys.executable, str(script), "@", kind="waveform"); made.append(b)
+            assert a.proc.poll() is None, "another kind survives"
+            assert b.ask({"kind": "waveform"}, 5) and a.ask({"kind": "plot"}, 5)
+            a2 = lab_worker.Worker(sys.executable, str(script), "@", kind="plot"); made.append(a2)
+            for _ in range(250):
+                if a.proc.poll() is not None:
+                    break
+                time.sleep(.02)
+            assert a.proc.poll() is not None, "the same kind retires"
+            assert b.proc.poll() is None
+            other_env = tmp_path / "other" / "python.exe"
+            lab_worker.retire_except(kind="plot", env=str(other_env))
+            for _ in range(250):
+                if b.proc.poll() is not None and a2.proc.poll() is not None:
+                    break
+                time.sleep(.02)
+            assert b.proc.poll() is not None and a2.proc.poll() is not None, "an env change retires both"
+            c = lab_worker.Worker(sys.executable, str(script), "@", kind="waveform"); made.append(c)
+            lab_worker.retire_except()
+            for _ in range(250):
+                if c.proc.poll() is not None:
+                    break
+                time.sleep(.02)
+            assert c.proc.poll() is not None, "a cold run retires every kind"
+    finally:
+        for w in made:
+            w.kill()
 
 
 def test_idle_expiry_and_global_env_lock(tmp_path):
@@ -325,3 +348,41 @@ def test_cold_waveform_reports_decode_failures(tmp_path, monkeypatch):
             pass
     assert result is not None and result.get("ok") is False
     assert "decode" in result.get("error", "")
+
+
+def test_another_process_keeps_my_other_kind_unless_its_env_differs(tmp_path):
+    """D-3 across SM processes: the per-kind record keeps a plot worker alive when
+    another process starts a waveform worker under the same env, and retires it
+    under a different env (the path differs only in letter case: same interpreter)."""
+    import os
+    import subprocess
+    from pathlib import Path
+    script = tmp_path / "waiting.py"
+    script.write_text('import time\ntime.sleep(60)\n')
+    code = (
+        'import sys\nfrom quam_state_manager.core import lab_worker\n'
+        'with lab_worker.machine_lock:\n'
+        ' w=lab_worker.Worker(sys.argv[2],sys.argv[1],"@",kind="waveform")\n'
+        ' w.kill()\n'
+    )
+
+    def child(python_path):
+        proc = subprocess.run([sys.executable, "-B", "-c", code, str(script), python_path],
+                              cwd=Path(__file__).resolve().parents[1], capture_output=True, timeout=30,
+                              env=dict(os.environ, TMPDIR=str(tmp_path), TMP=str(tmp_path), TEMP=str(tmp_path)))
+        assert proc.returncode == 0, proc.stderr
+
+    with lab_worker.machine_lock:
+        w = lab_worker.Worker(sys.executable, str(script), "@", kind="plot")
+    try:
+        child(sys.executable)
+        assert w.proc.poll() is None, "same env: my plot worker survives"
+        if os.name == "nt":
+            child(sys.executable.upper())
+            for _ in range(250):
+                if w.proc.poll() is not None:
+                    break
+                time.sleep(.02)
+            assert w.proc.poll() is not None, "another env: it is retired"
+    finally:
+        w.kill()

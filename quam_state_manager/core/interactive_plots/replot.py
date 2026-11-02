@@ -140,7 +140,7 @@ def _warm_request(env, folder, source_root, timeout, progress=None):
         if w is None:
             _say(progress, "starting the lab worker")
             w = lab_worker.Worker(env, str(_script_path()), "@@SM-IPLOT@@", context=context,
-                                  progress_marker="@@SM-IPLOT-PROG@@")
+                                  progress_marker="@@SM-IPLOT-PROG@@", kind="plot")
             _PLOT_WORKER = w
         lab_worker.retire_except(w)
         if progress is not None:

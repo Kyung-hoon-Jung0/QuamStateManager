@@ -1,4 +1,10 @@
-"""One lab subprocess slot across worker kinds and SM processes."""
+"""One lab subprocess slot per worker kind, across SM processes (D-3, docs/305).
+
+The plot replay worker and the pulse-waveform worker each keep their own slot, so a
+pulse check no longer throws away a warm Interactive replay (or the other way round).
+One ``machine_lock`` still serialises them: lab code never runs twice at once. A new
+worker retires the old one of its kind, and any worker of another kind started under
+a different env; a cold run retires every kind."""
 from __future__ import annotations
 
 import atexit
@@ -84,8 +90,17 @@ class _MachineLock:
 
 
 machine_lock = _MachineLock()
-_SLOT = None
+_SLOT: dict[str, "Worker"] = {}
+# the pre-D-3 single-slot record; still retired so an older SM's worker is stopped
 _RECORD = _COORD_DIR / "qsm_lab_worker.json"
+
+
+def _record(kind: str) -> Path:
+    return _COORD_DIR / f"qsm_lab_worker.{kind}.json"
+
+
+def _records() -> list[Path]:
+    return [_RECORD] + sorted(_COORD_DIR.glob("qsm_lab_worker.*.json"))
 
 
 def _kill_tree(proc):
@@ -177,19 +192,12 @@ def command(argv, *, timeout):
         return -1, "", str(exc)
 
 
-def retire_except(worker=None):
-    """Retire the previous slot before any warm or cold lab process starts.
-
-    Call while holding machine_lock. PID creation time prevents PID reuse from
-    targeting a different process. The record covers other SM instances too.
-    """
-    global _SLOT
-    if _SLOT is not None and _SLOT is not worker:
-        _SLOT.kill()
-        _SLOT = None
+def _retire_record(path: Path, keep_pid=None, keep_env=None) -> None:
     try:
-        rec = json.loads(_RECORD.read_text(encoding="utf-8"))
-        if worker is not None and rec["pid"] == worker.proc.pid:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        if keep_pid is not None and rec["pid"] == keep_pid:
+            return
+        if keep_env is not None and rec.get("env") == keep_env:
             return
         proc = psutil.Process(rec["pid"])
         if proc.create_time() == rec["created"]:
@@ -197,21 +205,47 @@ def retire_except(worker=None):
             proc.wait(timeout=5)
     except (OSError, ValueError, KeyError, psutil.Error):
         pass
-    _RECORD.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def retire_except(worker=None, *, kind=None, env=None):
+    """Retire what may not run beside the next lab process.
+
+    Call while holding machine_lock. With a *worker* (or a *kind* and its *env*):
+    the other worker of that kind, and workers of other kinds under another env.
+    With neither (a cold run): every kind. PID creation time prevents PID reuse
+    from targeting a different process; the records cover other SM instances too.
+    """
+    if worker is not None:
+        kind, env = worker.kind, worker.python_path
+    keep_pid = worker.proc.pid if worker is not None else None
+    for k, w in list(_SLOT.items()):
+        if w is worker:
+            continue
+        if kind is None or k == kind or w.python_path != env:
+            w.kill()
+            _SLOT.pop(k, None)
+    for path in _records():
+        name = path.name[len("qsm_lab_worker."):-len(".json")] if path != _RECORD else None
+        if kind is None or name is None:
+            _retire_record(path, keep_pid)
+        elif name == kind:
+            _retire_record(path, keep_pid)
+        else:
+            _retire_record(path, keep_pid, keep_env=env)
 
 
 def register(worker):
-    global _SLOT
-    _SLOT = worker
+    _SLOT[worker.kind] = worker
     proc = psutil.Process(worker.proc.pid)
-    _RECORD.write_text(json.dumps({"pid": proc.pid, "created": proc.create_time()}), encoding="utf-8")
+    _record(worker.kind).write_text(json.dumps({"pid": proc.pid, "created": proc.create_time(),
+                                                "env": worker.python_path}), encoding="utf-8")
 
 
 def shutdown():
-    global _SLOT
-    if _SLOT is not None:
-        _SLOT.kill()
-        _SLOT = None
+    for kind, w in list(_SLOT.items()):
+        w.kill()
+        _SLOT.pop(kind, None)
 
 
 atexit.register(shutdown)
@@ -252,7 +286,7 @@ class Worker:
     idle, when another env is selected, and at interpreter exit."""
 
     def __init__(self, python_path: str, script: str, marker: str, *, signature=None, context="", idle_s=3600,
-                 progress_marker: str | None = None):
+                 progress_marker: str | None = None, kind: str = "lab"):
         import queue
         import subprocess
         self.marker = marker
@@ -263,7 +297,8 @@ class Worker:
         self.signature = signature or _env_sig
         self.context = context
         self.idle_s = idle_s
-        retire_except()
+        self.kind = kind
+        retire_except(kind=kind, env=python_path)
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)

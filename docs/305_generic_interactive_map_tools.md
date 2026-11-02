@@ -51,14 +51,36 @@ replay holds at most 64 responses and 64 MiB. Browser maps are reduced to at mos
 coalesce. Opening Interactive may write this instance cache or materialize a
 historical source copy; it does not stage a state edit.
 
-## One lab worker slot
+## One lab worker slot per kind (D-3, 2026-11-02)
 
-Reproduction and waveform drawing use separate line protocols and interpreters
-in one shared slot. A machine lock covers active requests; switching kind or
-environment retires the previous idle process, including across SM processes
-using the same coordination directory. PID creation time protects the ownership
-record against PID reuse. Retirement targets the lab child, not an SM server.
-QA uses an isolated coordination directory and never retires the user's worker.
+Reproduction and waveform drawing use separate line protocols and interpreters,
+each in its own slot (`plot`, `waveform`). One machine lock still covers every
+active request, so lab code never runs twice at once. A new worker retires the
+previous worker of its kind and any worker of the other kind started under a
+different environment; a cold run retires every kind. This replaces the single
+shared slot, where a pulse check threw away a warm replay: measured on a real lab
+env, Interactive replay -> pulse check -> replay of another run went from 7.2 s
+(cold again) to 1.2 s (warm), and the next pulse check from 1.75 s to 0.01 s.
+The cost is up to two idle lab interpreters at once (each under the same RSS
+cap). Retirement works across SM processes using the same coordination
+directory (one ownership record per kind; the older single record is still
+retired). PID creation time protects the records against PID reuse. Retirement
+targets the lab child, not an SM server. QA uses an isolated coordination
+directory and never retires the user's worker.
+
+## Menu first, replay as a job (D-1, D-2, D-4, 2026-11-02)
+
+A valid cached replay renders the Interactive menu as before. Otherwise the menu
+starts or joins a background job (keyed by the request key) and answers at once
+with the saved/recipe figures under a progress strip; `GET
+/dataset/<uid>/interactive/status?job=` reports the phase the lab worker streams
+(importing lab code, loading run state, opening datasets, drawing figure i of N,
+converting) and the server-measured elapsed seconds, never a percentage. The
+client re-fetches the menu when the job ends; a result the caches would not keep
+is held 60 s for that re-fetch. Nothing cancels a job. The disk cache is re-read
+once the lab lock is held (another SM process may have made the replay). The
+worker memoizes source-file hashes by (mtime_ns, size), and a replay whose lab
+code failed to import is cached under its watch set until Retry.
 
 Imported source changes retire a warm worker. A renewed idle deadline prevents
 an old timer callback from stopping a recently used worker. Idle expiry is one
