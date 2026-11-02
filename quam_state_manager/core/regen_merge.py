@@ -341,9 +341,19 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
                     nv = resolve_pointer(new_doc, n, path)
                 except Exception:  # noqa: BLE001 -- unresolvable: the rebuild's link stands
                     return
+                # ...but only where the SOURCE itself held the two apart: its value at
+                # the link's target differs from its own literal. A source that held
+                # them equal agreed with the link (a readout downconverter equal to the
+                # upconverter it shares an LO with), so the link stands and follows a
+                # value the user changed in Populate.
+                try:
+                    src_tgt = resolve_pointer(old_root, n, path)
+                except Exception:  # noqa: BLE001
+                    src_tgt = _MISSING
                 if (_is_literal(nv) and type(nv) is not bool
                         and isinstance(nv, (int, float)) == isinstance(o, (int, float))
-                        and not compare_equal(nv, o)):
+                        and not compare_equal(nv, o)
+                        and _is_literal(src_tgt) and not compare_equal(src_tgt, o)):
                     unlink[".".join(path)] = o
             return
         tgt = _one_hop(new_doc, o, path)
@@ -374,6 +384,7 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
             if _is_literal(val):
                 inline[".".join(path)] = val
 
+    old_root = old
     walk(old, new_doc, ())
     # an unlinked literal is a value carried at a leaf the rebuild made a pointer:
     # reuse the inline channel (the leaf branch carries it unless Populate holds it)
@@ -2081,22 +2092,44 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         except _Cycle:
             return False
 
-    trial = copy.deepcopy(merged)
-    for _, path, v in cands:
-        setp(trial, path, v)
-    if ok(trial):
-        for _, path, v in cands:
-            setp(merged, path, v)
-        return [c[0] for c in cands]
-    done = []
-    for dot, path, v in cands:
-        trial = copy.deepcopy(merged)
-        setp(trial, path, v)
-        if ok(trial):
-            setp(merged, path, v)
-            done.append(dot)
-    return done
+    def get(root: dict, path: tuple) -> Any:
+        node = root
+        for k in path:
+            node = node[k]
+        return node
 
+    done: list[str] = []
+
+    def attempt(group: list) -> None:
+        """Put a group back; keep it if the state reads the same, else halve it."""
+        if not group:
+            return
+        saved = [(path, copy.deepcopy(get(merged, path))) for _, path, _ in group]
+        for _, path, v in group:
+            setp(merged, path, v)
+        if ok(merged):
+            done.extend(dot for dot, _, _ in group)
+            return
+        for path, v in reversed(saved):
+            setp(merged, path, v)
+        if len(group) == 1:
+            return
+        mid = len(group) // 2
+        attempt(group[:mid])
+        attempt(group[mid:])
+
+    # all together first (forms that only work as a set, a link and the object it
+    # lands on); else objects first, then pointers, each halved until it holds
+    saved = copy.deepcopy(merged)
+    for _, path, v in cands:
+        setp(merged, path, v)
+    if ok(merged):
+        return [c[0] for c in cands]
+    merged.clear()
+    merged.update(saved)
+    attempt([c for c in cands if not is_pointer(c[2])])
+    attempt([c for c in cands if is_pointer(c[2])])
+    return done
 
 def merge_states(old_state: dict, new_state: dict,
                  class_schemas: dict[str, list[str]] | None = None,

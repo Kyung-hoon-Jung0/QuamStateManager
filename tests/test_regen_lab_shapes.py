@@ -40,6 +40,34 @@ class TestALabsOwnLiteralBeatsTheBuildersLink:
         assert r.merged["qubits"]["q1"]["xy"]["operations"]["x90"]["alpha"] == "#../x180/alpha"
 
 
+    def test_a_link_the_source_agreed_with_follows_a_populate_change(self):
+        """Review: a readout downconverter equal to the upconverter it shares an LO with.
+        The user moved the LO in Populate; the builder's link must carry the new LO to
+        the input too, never the stale source literal."""
+        def st(down):
+            return {"ports": {
+                "mw_outputs": {"con1": {"1": {"1": {"upconverter_frequency": 7.0e9}}}},
+                "mw_inputs": {"con1": {"1": {"1": {"downconverter_frequency": down}}}}}}
+        new = st("#/ports/mw_outputs/con1/1/1/upconverter_frequency")
+        new["ports"]["mw_outputs"]["con1"]["1"]["1"]["upconverter_frequency"] = 7.2e9
+        r = merge_states(st(7.0e9), new,
+                         protect_paths={"ports.mw_outputs.con1.1.1.upconverter_frequency"})
+        inp = r.merged["ports"]["mw_inputs"]["con1"]["1"]["1"]
+        assert inp["downconverter_frequency"] == "#/ports/mw_outputs/con1/1/1/upconverter_frequency"
+        assert r.merged["ports"]["mw_outputs"]["con1"]["1"]["1"]["upconverter_frequency"] == 7.2e9
+        assert r.stats.links_not_taken == []
+
+    def test_restoring_many_forms_stays_fast_when_one_fails(self):
+        import time
+        ops = {f"op{i}": {"a": 1.0, "b": "#./a"} for i in range(300)}
+        old = {"qubits": {"q": {"ops": {k: {"a": 1.0, "b": 1.0} for k in ops}}}}
+        old["qubits"]["q"]["ops"]["op0"]["b"] = "#./zz"          # cannot land: refused
+        t = time.perf_counter()
+        r = merge_states(old, {"qubits": {"q": {"ops": ops}}})
+        assert time.perf_counter() - t < 5
+        assert len(r.stats.source_forms_restored) == 299
+
+
 class TestWiringValues:
     def test_a_plain_lab_value_under_a_rebuilt_line_is_carried(self):
         old = {"wiring": {"qubits": {"q1": {"z": {"opx_output": "#/ports/a/con1/5/1", "dc_channel": 3}},
