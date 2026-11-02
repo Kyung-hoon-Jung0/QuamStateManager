@@ -10777,6 +10777,23 @@
             "band / LO / power) moved with it";
           el.appendChild(ml);
         });
+        // A moved port's crosstalk terms name other ports: renumbered with the move.
+        var xtMovedN = (m.crosstalk_remapped_total != null)
+            ? m.crosstalk_remapped_total : (m.crosstalk_remapped || []).length;
+        if (xtMovedN) {
+          var xl = document.createElement("div");
+          xl.className = "gen-merge-muted gen-merge-detail gen-merge-xtalk-moved";
+          xl.textContent = xtMovedN + " crosstalk term" + (xtMovedN === 1 ? "" : "s") +
+            " renumbered to follow the moved ports (each line keeps its coupling to the same lines)";
+          el.appendChild(xl);
+        }
+        (m.crosstalk_unresolved || []).slice(0, 6).forEach(function (p) {
+          var ul = document.createElement("div");
+          ul.className = "gen-merge-detail gen-merge-warn gen-merge-xtalk-unresolved";
+          ul.textContent = "⚠ " + p + ": kept as it was — it names a port this chip no longer drives, " +
+            "or two terms would land on one port; check it";
+          el.appendChild(ul);
+        });
         (m.ports_fresh || []).slice(0, 6).forEach(function (f) {
           var fl = document.createElement("div");
           fl.className = "gen-merge-detail gen-merge-warn gen-merge-port-fresh";

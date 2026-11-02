@@ -327,6 +327,15 @@ ok(r.lines.some(function (l) {
 ok(r.lines.some(function (l) {
   return /q6\.z on analog_outputs con1\/5\/1: fresh defaults/.test(l) && /q1\.z/.test(l); }),
   'B2: a port left on fresh defaults names whose values moved away');
+var r9 = render({
+  crosstalk_remapped: [['ports.analog_outputs.con1.5.1.crosstalk.3', 'ports.analog_outputs.con1.5.3.crosstalk.1']],
+  crosstalk_remapped_total: 2,
+  crosstalk_unresolved: ['ports.analog_outputs.con1.5.3.crosstalk']
+});
+ok(r9.lines.some(function (l) { return /^2 crosstalk terms renumbered/.test(l); }),
+  'B9: renumbered crosstalk terms are counted from the total — got ' + JSON.stringify(r9.lines));
+ok(r9.lines.some(function (l) { return /con1\.5\.3\.crosstalk: kept as it was/.test(l); }),
+  'B9: an unresolved crosstalk row is named — got ' + JSON.stringify(r9.lines));
 ok(r.lines.some(function (l) {
   return /pair q2-3 was rebuilt reversed as q3-2/.test(l) && /139/.test(l); }),
   'B3: a reversed pair is named with its loss');
