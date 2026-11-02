@@ -472,3 +472,24 @@ def test_fem_sensor_k_is_slot_k_plus_1_and_zero_is_no_sensor(env):
     offered = [x["key"] for x in om.offered_metrics(a)]
     assert "temp:FEM 3" not in offered and "temp:CRPS 1" not in offered and "temp:FEM 4" in offered
 
+
+
+def test_d13_idle_recheck_skips_new_activity(env):
+    from types import SimpleNamespace
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], []),))]
+    m.poll_once()
+    clock.t += 1900
+    m.poll_once()
+    assert 'Close idle QMs (1)' in page(app, 'cleanup')
+    assert 'since SM first saw it' in page(app, 'jobs')
+    qmm = _FakeQmm(['QM-a'])
+    qm = _FakeQM(qmm.closed, 'QM-a')
+    qm.get_jobs = lambda: [SimpleNamespace(id='job-new', status='Running')]
+    qmm.get_qm = lambda qid: qm
+    result = _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)
+    assert result['closed'] == [] and result['skipped'] == ['QM-a']
+    assert 'active' in result['skip_reasons']['QM-a'] and not qmm.closed
+    qm.get_jobs = lambda: []
+    assert _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)['closed'] == ['QM-a']
+    assert not om.idle_state({'jobs': None}, '2020-01-01T00:00:00Z', clock.t)['idle']

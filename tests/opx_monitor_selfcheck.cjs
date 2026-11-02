@@ -47,7 +47,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   ok(w.__posts[0][1].body.get('qm_id') === 'QM-x' && !w.__posts[0][1].body.get('all'), 'the POST names that QM only');
   const res = w.document.querySelector('.opxmon-close-result');
   ok(!res.hidden && /Closed: QM-x/.test(res.textContent), 'the result is shown');
-  ok(w.__refreshed === 1, 'the body re-fetches after a close');
+  ok(!res.hidden, 'the action result stays visible');
 
   w = world();
   w.__reply = { ok: false, error: 'The server refused: busy' };

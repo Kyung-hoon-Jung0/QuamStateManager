@@ -50,7 +50,10 @@ def _view(tab: str) -> dict:
     t = dict(s.get("target") or {})
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
-    return {"tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
+    first = {r['qm_id']: r['first_seen'] for r in h.table() if not r.get('job_id')} if h else {}
+    idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
+                   for q in (st.get('answer') or {}).get('open_qms') or []}
+    return {"idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],
@@ -140,7 +143,7 @@ def opx_monitor_save_settings():
             return _settings_reply(f"The limit for {k[4:]} is not a number.", error=True)
         th[k[4:]] = val
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+           "idle_minutes": f.get("idle_minutes", s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python"))
     om.save_settings(m.instance, new)
     hdr_txt = f.get("headers")
@@ -177,14 +180,15 @@ def _settings_reply(message, error=False):
 def opx_monitor_close():
     m = monitor()
     qm_id = (request.form.get("qm_id") or "").strip() or None
-    every = request.form.get("all") == "1"
+    idle = request.form.get("idle") == "1"
+    every = request.form.get("all") == "1" or idle
     # "close all" closes exactly the QMs the confirm dialog listed, never
     # whatever is open on the server by the time the request lands
     confirmed = [x.strip() for x in (request.form.get("qm_ids") or "").split(",") if x.strip()]
     if (not qm_id and not every) or (every and not confirmed):
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
     who = (request.form.get("by") or "").strip()[:80]
-    res = (m.close(None, who=who, qm_ids=confirmed) if every else m.close(qm_id, who=who))
+    res = (m.close(None, who=who, qm_ids=confirmed, idle=idle) if every else m.close(qm_id, who=who))
     return jsonify(res), (200 if res.get("ok") else 409)
 
 

@@ -9,9 +9,9 @@
     function body() { return document.getElementById("opxmon-body"); }
 
     function confirmText(btn) {
-        if (btn.classList.contains("opxmon-close-all")) {
+        if (btn.classList.contains("opxmon-close-all") || btn.classList.contains("opxmon-close-idle")) {
             var ids = btn.getAttribute("data-qm-ids") || "";
-            return "Close ALL open quantum machines?\n\n" + ids.split(", ").join("\n") +
+            return (btn.classList.contains("opxmon-close-idle") ? "Close idle quantum machines (activity re-checked before closing)?\n\n" : "Close ALL open quantum machines?\n\n") + ids.split(", ").join("\n") +
                 "\n\nAny job they run stops, for whoever opened them.";
         }
         var id = btn.getAttribute("data-qm-id");
@@ -39,13 +39,13 @@
     }
 
     function onClick(e) {
-        var btn = e.target && e.target.closest && e.target.closest(".opxmon-close, .opxmon-close-all");
+        var btn = e.target && e.target.closest && e.target.closest(".opxmon-close, .opxmon-close-all, .opxmon-close-idle");
         if (!btn) return;
         e.preventDefault();
         if (!window.confirm(confirmText(btn))) return;
         var fd = new FormData();
-        if (btn.classList.contains("opxmon-close-all")) {
-            fd.append("all", "1");
+        if (btn.classList.contains("opxmon-close-all") || btn.classList.contains("opxmon-close-idle")) {
+            fd.append(btn.classList.contains("opxmon-close-idle") ? "idle" : "all", "1");
             fd.append("qm_ids", btn.getAttribute("data-qm-ids") || "");
         }
         else fd.append("qm_id", btn.getAttribute("data-qm-id"));
@@ -58,10 +58,10 @@
             .then(function (r) { return r.json().catch(function () { return {ok: false, error: "HTTP " + r.status}; }); })
             .then(function (j) {
                 if (j && j.ok) say("Closed: " + ((j.closed || []).join(", ") || "none") +
-                    ((j.skipped && j.skipped.length) ? " (already gone: " + j.skipped.join(", ") + ")" : "") +
+                    ((j.skipped && j.skipped.length) ? " (skipped: " + j.skipped.map(function (id) { return id + ": " + ((j.skip_reasons || {})[id] || "already gone"); }).join(", ") + ")" : "") +
                     ". Written to History.", false);
                 else say("Not closed: " + ((j && j.error) || "no reason given"), true);
-                refresh();
+                if (j && j.ok) { /* Keep the action result visible until the next page visit. */ }
             }, function (err) {
                 say("Not closed: SM did not answer (" + err + ").", true);
                 btn.disabled = false;

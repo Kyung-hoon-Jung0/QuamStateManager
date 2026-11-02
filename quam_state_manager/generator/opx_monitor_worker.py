@@ -133,10 +133,11 @@ class QmmTarget:
         qm_ids = call("list_open_qms", self.qmm.list_open_qms)
         qms = []
         for qid in qm_ids or []:
-            row = {"id": str(qid), "jobs": [], "ports": None}
+            row = {"id": str(qid), "jobs": None, "ports": None}
             qm = call(f"get_qm({qid})", lambda: self.qmm.get_qm(qid))
             if qm is not None:
                 jobs = call(f"qm.get_jobs({qid})", qm.get_jobs)
+                row['jobs'] = [] if jobs is not None else None
                 for j in jobs or []:
                     row["jobs"].append(_job_row(j))
                 cfg = call(f"qm.get_config({qid})", qm.get_config)
@@ -172,6 +173,34 @@ class QmmTarget:
             except Exception as exc:  # noqa: BLE001
                 failed[qid] = _err_text(exc)
         return {"closed": closed, "skipped": skipped, "failed": failed}
+
+    def close_idle(self, qm_ids, first_seen, idle_minutes):
+        # Load the pure activity rule without importing the SM package or qm into SM.
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location('monitor_rules', Path(__file__).resolve().parents[1] / 'core' / 'opx_monitor.py')
+        rules = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rules)
+        closed, skipped, failed, reasons = [], [], {}, {}
+        for qid in map(str, qm_ids):
+            try:
+                if qid not in set(map(str, self.qmm.list_open_qms())):
+                    skipped.append(qid)
+                    reasons[qid] = 'already gone'
+                    continue
+                qm = self.qmm.get_qm(qid)
+                jobs = [_job_row(j) for j in qm.get_jobs()]
+                state = rules.idle_state({'jobs': jobs}, first_seen.get(qid), time.time(), idle_minutes)
+                if not state['idle']:
+                    skipped.append(qid)
+                    reasons[qid] = state['basis']
+                    continue
+                qm.close()
+                closed.append(qid)
+            except Exception as exc:
+                skipped.append(qid)
+                reasons[qid] = 'activity unknown: ' + _err_text(exc)
+        return {'closed': closed, 'skipped': skipped, 'failed': failed, 'skip_reasons': reasons}
 
 
 def _job_row(j):
@@ -229,6 +258,8 @@ def main():
                 res = target.close_qm(str(req["qm_id"]))
             elif op == "close_qms":
                 res = target.close_qms(list(req.get("qm_ids") or []))
+            elif op == 'close_idle':
+                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 30))
             else:
                 raise ValueError(f"unknown op {op!r}")
             _out({"ok": True, "result": res, "took_s": round(time.time() - t0, 3)})

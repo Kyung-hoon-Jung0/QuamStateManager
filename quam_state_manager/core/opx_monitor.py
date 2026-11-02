@@ -69,6 +69,32 @@ def clamp_interval(v) -> float:
     return max(MIN_INTERVAL_S, min(MAX_INTERVAL_S, f))
 
 
+def timestamp(value):
+    try:
+        dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        return dt.timestamp() if dt.tzinfo else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def idle_state(q, first_seen, now, minutes=30):
+    """Conservative activity judgement, including queued jobs and unknown jobs."""
+    jobs = q.get('jobs')
+    if jobs is None or any(str(j.get('status', '')).lower() not in
+                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed') for j in jobs):
+        return {'idle': False, 'basis': 'active or unknown job status', 'last_activity': None}
+    times = [(timestamp(first_seen), 'SM first saw it')]
+    times += [(timestamp(j.get(k)), 'job created/last status update') for j in jobs
+              for k in ('created_at', 'updated_at')]
+    valid = [(t, b) for t, b in times if t is not None]
+    if not valid or any(timestamp(j.get('created_at')) is None or timestamp(j.get('updated_at')) is None for j in jobs):
+        return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
+    t, basis = max(valid)
+    age = max(0, now - t)
+    return {'idle': age > minutes * 60, 'last_activity': t,
+            'basis': f'no job for {age / 60:.0f} min, since {basis}'}
+
+
 # ---------------------------------------------------------------- settings
 
 def _dir(instance: str | Path) -> Path:
@@ -98,22 +124,37 @@ def load_settings(instance) -> dict:
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
         if not isinstance(d, dict):
-            d = {}
-    except (OSError, ValueError):
+            raise ValueError('expected an object')
+    except FileNotFoundError:
         d = {}
+    except (OSError, ValueError):
+        backup = p.with_suffix('.json.corrupt')
+        try:
+            if not backup.exists():
+                backup.write_bytes(p.read_bytes())
+            message = 'Settings file is corrupt or unreadable; a backup is kept as settings.json.corrupt. Save corrected Monitor settings.'
+        except OSError:
+            message = 'Settings file is corrupt or unreadable; backup could not be written. Check file permissions.'
+        d = {'settings_error': message}
     d.setdefault("target", None)
     d.setdefault("python", None)
     d["interval_s"] = clamp_interval(d.get("interval_s", DEFAULT_INTERVAL_S))
     th = d.get("thresholds")
     d["thresholds"] = th if isinstance(th, dict) else {}
     d["alarms_armed"] = bool(d.get("alarms_armed", False))
+    try:
+        d['idle_minutes'] = max(0.01, min(10080, float(d.get('idle_minutes') or 30)))
+        if not __import__('math').isfinite(d['idle_minutes']):
+            d['idle_minutes'] = 30
+    except (ValueError, TypeError):
+        d['idle_minutes'] = 30
     return d
 
 
 def save_settings(instance, settings: dict) -> None:
     d = _dir(instance)
     d.mkdir(parents=True, exist_ok=True)
-    clean = {k: settings.get(k) for k in ("target", "python", "interval_s", "thresholds", "alarms_armed")}
+    clean = {k: settings.get(k) for k in ("target", "python", "interval_s", "thresholds", "alarms_armed", "idle_minutes")}
     tmp = d / "settings.json.tmp"
     tmp.write_text(json.dumps(clean, indent=1), encoding="utf-8")
     os.replace(tmp, d / "settings.json")
@@ -623,7 +664,7 @@ class Monitor:
         self._stop.set()
 
     # -- actions
-    def close(self, qm_id: Optional[str], who: str = "", qm_ids: Optional[list] = None) -> dict:
+    def close(self, qm_id: Optional[str], who: str = "", qm_ids: Optional[list] = None, idle=False) -> dict:
         """Close one QM (``qm_id``) or the QMs the user confirmed (``qm_ids``,
         "close all" as listed on the page). Only a QM that is open on the server
         at that moment AND was named is closed -- a QM opened after the page
@@ -642,7 +683,10 @@ class Monitor:
             try:
                 w = self._ensure_worker(s)
                 r = (w.request("close_qm", qm_id=qm_id) if not every
-                     else w.request("close_qms", qm_ids=names))
+                     else w.request("close_idle" if idle else "close_qms", qm_ids=names,
+                                    **({'first_seen': {r['qm_id']: r['first_seen'] for r in self.history().table()
+                                                      if not r.get('job_id')},
+                                        'idle_minutes': s['idle_minutes']} if idle else {})))
             except WorkerError as exc:
                 r = {"ok": False, "error": str(exc)}
                 self._drop_worker(str(exc))
@@ -660,12 +704,13 @@ class Monitor:
         err = r.get("error") or ("; ".join(f"{k}: {v}" for k, v in failed.items()) or None)
         h = self.history()
         if h is not None:
-            h.log_action("close_qm" if not every else "close_all",
+            h.log_action("close_idle" if idle else ("close_qm" if not every else "close_all"),
                          {"qm_ids": closed or names, "ok": ok, "error": err,
                           "skipped": skipped or None, "by": who or None})
         if r.get("ok"):
             self.poll_once()
-        return {"ok": ok, "error": err, "closed": closed, "skipped": skipped}
+        return {"ok": ok, "error": err, "closed": closed, "skipped": skipped,
+                "skip_reasons": (r.get('result') or {}).get('skip_reasons', {}) if every else {}}
 
     # -- what the page shows
     def capabilities(self) -> dict:
@@ -694,7 +739,9 @@ class Monitor:
         s = self.settings()
         now = self.clock()
         age = (now - self.last_ok_at) if self.last_ok_at else None
-        if not s.get("target"):
+        if s.get('settings_error'):
+            state, sentence = 'error', s['settings_error']
+        elif not s.get("target"):
             state = "unconfigured"
             sentence = "No OPX connection is set up. Choose one under Monitor settings."
         elif not s.get("python"):
