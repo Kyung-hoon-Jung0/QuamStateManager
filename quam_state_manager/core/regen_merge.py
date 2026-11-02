@@ -1699,6 +1699,60 @@ def _finish_port_values(old, new, merged, ow, nw, sources, stats, protect):
                 "to": aim, "reason": "line target moved" if aim else "old value inlined"})
 
 
+def _remap_upconverters(old, new, merged, sources, stats, protect, wiring=None):
+    old_doc = _merged_doc(old, wiring)
+    for dest, srcs in sources.items():
+        port = _path_value(merged, dest)
+        built = _path_value(new, dest)
+        lines = []
+        for src, owners in srcs.items():
+            original = _path_value(old, src)
+            table = original.get("upconverters")
+            if not isinstance(table, dict):
+                continue
+            for owner in sorted(owners):
+                line = owner.rsplit(".", 1)[0]
+                channel = _path_value(old, line)
+                if not isinstance(channel, dict) or "upconverter" not in channel:
+                    continue
+                if src == dest and "upconverters" in built:
+                    continue
+                index = channel["upconverter"]
+                frequency = _port_calibration_value(old_doc, f"{src}.upconverters.{index}.frequency")
+                lines.append((line + ".upconverter", index, frequency))
+        if not lines:
+            continue
+        single = "upconverter_frequency" in built
+        if single:
+            port.pop("upconverters", None)
+        else:
+            port["upconverters"] = copy.deepcopy(built.get("upconverters", {}))
+        frequencies = [frequency for _, _, frequency in lines]
+        conflict = single and any(f != frequencies[0] for f in frequencies)
+        if conflict:
+            port["upconverter_frequency"] = built["upconverter_frequency"]
+            stats.ports_conflict.append({"port": dest, "field": "upconverter_frequency",
+                "values": {path.rsplit(".", 1)[0]: (f if f is not _MISSING else "<unresolved>")
+                           for path, _, f in lines}})
+        for path, previous, frequency in lines:
+            if path in (protect or ()):
+                continue
+            matches = [k for k, v in built.get("upconverters", {}).items()
+                       if v.get("frequency") == frequency]
+            if frequency is _MISSING or conflict or (not single and len(matches) != 1):
+                rebuilt_index = _path_value(new, path)
+                if rebuilt_index is not None:
+                    _set_path(merged, path, rebuilt_index)
+                stats.upconverter_remapped.append({"path": path,
+                    "reason": "no unique matching frequency",
+                    "frequency": frequency if frequency is not _MISSING else "<unresolved>"})
+                continue
+            index = 1 if single else int(matches[0])
+            if single and dest + ".upconverter_frequency" not in (protect or ()):
+                port["upconverter_frequency"] = frequency
+            _set_path(merged, path, index)
+            stats.upconverter_remapped.append({"path": path, "from": previous,
+                "to": index, "frequency": frequency})
 
 
 def _check_mw_bands(merged, stats):
@@ -2616,6 +2670,7 @@ def merge_states(old_state: dict, new_state: dict,
     _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
     _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
                         sources, stats, protect_paths)
+    _remap_upconverters(old_state, new_state, merged, sources, stats, protect_paths, old_wiring)
     _check_mw_bands(merged, stats)
     stats.ports_carried.sort(key=natural_key)
     # Every one of these lists is a set of dot-paths shown to the user in

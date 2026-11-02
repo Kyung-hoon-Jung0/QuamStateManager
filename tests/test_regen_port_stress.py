@@ -638,6 +638,23 @@ from tests.port_audit_cases import AUDIT_CASES
 
 
 
+@pytest.mark.parametrize("matches", [True, False], ids=["dict-match", "dict-unmatched"])
+def test_upconverter_destination_dictionary(matches):
+    from tests.port_audit_cases import c1_mw_d
+    old, ow, new, nw = c1_mw_d()
+    dest = ("ports", "mw_outputs", "con1", "1", "6")
+    port = at(new, dest)
+    port.pop("upconverter_frequency")
+    port["upconverters"] = {"1": {"frequency": 5e9}, "3": {"frequency": 6e9 if matches else 7e9}}
+    new["qubits"]["q1"]["xy"]["upconverter"] = 1
+    r = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert at(r.merged, dest)["upconverters"] == port["upconverters"]
+    assert r.merged["qubits"]["q1"]["xy"]["upconverter"] == (3 if matches else 1)
+    report = next(item for item in r.stats.upconverter_remapped if item["path"] == "qubits.q1.xy.upconverter")
+    if matches:
+        assert report["from"] == 2 and report["to"] == 3
+    else:
+        assert report["reason"] == "no unique matching frequency"
 
 
 def test_multi_source_consensus_resolves_pointer_values():
