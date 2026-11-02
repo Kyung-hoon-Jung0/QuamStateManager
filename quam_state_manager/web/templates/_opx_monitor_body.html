@@ -85,10 +85,10 @@
   </table>{% endif %}
   <p class="ui-note">The server does not report who opened a QM; the QM id and its jobs are what it gives.</p>
   {%- if ans.jobs is not none %}
-  <h3 class="opxmon-h">{{ [job_limit, ans.jobs|length]|min }} of {{ ans.jobs|length }} jobs shown</h3>
+  <h3 class="opxmon-h">{{ [job_limit, ans.jobs|length]|min }} of {{ ans.jobs_total if ans.jobs_total is defined and ans.jobs_total is not none else ans.jobs|length }} jobs shown</h3>
   {%- if ans.jobs %}<table class="ui-table opxmon-table" aria-label="Server jobs"><thead><tr><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head">Created</th><th class="ui-table-head">Last update</th></tr></thead>
     <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td class="ui-table-cell"><code>{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-muted">{{ match.reason }}</span></td><td class="ui-table-cell">{{ j.status }}</td><td class="ui-table-cell"><span class="ts-local" data-utc="{{ j.created_at or '' }}">{{ local_time(j.created_at) }}</span></td><td class="ui-table-cell"><span class="ts-local" data-utc="{{ j.updated_at or '' }}">{{ local_time(j.updated_at) }}</span></td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-note">None.</p>{% endif %}
-  {% if ans.jobs|length > job_limit %}<a class="btn-sm" href="/opx-monitor/jobs?limit={{ job_limit + 100 }}">Show more</a>{% endif %}
+  {% if (ans.jobs_total or ans.jobs|length) > job_limit %}<a class="btn-sm" href="/opx-monitor/jobs?limit={{ job_limit + 100 }}">Show more</a>{% endif %}
   {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">The server refused get_jobs: {{ ans.refused.get_jobs }}</p>{% endif %}
   {%- endif %}
 

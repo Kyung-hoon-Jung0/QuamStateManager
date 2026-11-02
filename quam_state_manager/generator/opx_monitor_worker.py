@@ -88,8 +88,9 @@ class QmmTarget:
         if t.get("headers"):
             kw["connection_headers"] = dict(t["headers"])
         self.qmm = QuantumMachinesManager(**kw)
+        self._config_cache = {}
 
-    def poll(self):
+    def poll(self, include_jobs=False, job_limit=100):
         refused = {}
         ans = {"kind": "qmm"}
 
@@ -131,6 +132,10 @@ class QmmTarget:
         ans["controllers"] = controllers if devs is not None else None
 
         qm_ids = call("list_open_qms", self.qmm.list_open_qms)
+        cache = getattr(self, '_config_cache', {})
+        if qm_ids is not None:
+            cache = {qid: ports for qid, ports in cache.items() if qid in set(map(str, qm_ids))}
+        self._config_cache = cache
         qms = []
         for qid in qm_ids or []:
             row = {"id": str(qid), "jobs": None, "ports": None}
@@ -140,15 +145,19 @@ class QmmTarget:
                 row['jobs'] = [] if jobs is not None else None
                 for j in jobs or []:
                     row["jobs"].append(_job_row(j))
-                cfg = call(f"qm.get_config({qid})", qm.get_config)
-                if isinstance(cfg, dict):
-                    row["ports"] = _used_fems(cfg)
+                if str(qid) not in cache:
+                    cfg = call(f"qm.get_config({qid})", qm.get_config)
+                    if isinstance(cfg, dict):
+                        cache[str(qid)] = _used_fems(cfg)
+                row['ports'] = cache.get(str(qid))
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
-        jobs = call("get_jobs", self.qmm.get_jobs)
+        jobs = call("get_jobs", self.qmm.get_jobs) if include_jobs else None
+        ans["jobs_total"] = len(jobs) if jobs is not None else None
+        ans["jobs_requested"] = include_jobs
         # newest first: the server lists them oldest first, hundreds deep
         ans["jobs"] = (sorted((_job_row(j) for j in jobs), key=lambda r: r["created_at"] or "",
-                              reverse=True) if jobs is not None else None)
+                              reverse=True)[:max(100, min(1000, job_limit))] if jobs is not None else None)
         ans["refused"] = refused
         return ans
 
@@ -264,7 +273,7 @@ def main():
             if op == "quit":
                 return
             if op == "poll":
-                res = target.poll()
+                res = target.poll(include_jobs=req.get("include_jobs", False), job_limit=req.get("job_limit", 100))
             elif op == "close_qm":
                 res = target.close_qm(str(req["qm_id"]))
             elif op == "close_qms":

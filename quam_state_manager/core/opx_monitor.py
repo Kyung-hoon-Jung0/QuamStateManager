@@ -801,6 +801,8 @@ class Monitor:
         self.last_error: Optional[str] = None
         self.last_try_at: Optional[float] = None
         self.wanted_until = 0.0
+        self.jobs_until = 0.0
+        self.job_limit = 100
         self._thread = None
         self._stop = threading.Event()
         self._histories: dict[str, History] = {}
@@ -898,7 +900,7 @@ class Monitor:
             self.last_try_at = self.clock()
             try:
                 w = self._ensure_worker(s)
-                r = w.request("poll")
+                r = w.request("poll", include_jobs=self.clock() < self.jobs_until, job_limit=self.job_limit)
             except WorkerError as exc:
                 self._drop_worker(str(exc))
                 return
@@ -914,7 +916,7 @@ class Monitor:
             self.admin = read_admin(s.get('admin_url'), selected_cluster)
             fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
             self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
-                                   for field, call in fields.items() if ans.get(field) is None}
+                                   for field, call in fields.items() if ans.get(field) is None and (field != 'jobs' or ans.get('jobs_requested', True))}
             for field in fields:
                 if ans.get(field) is not None:
                     self.section_times[field] = now_iso()
@@ -943,11 +945,20 @@ class Monitor:
                 logger.warning("opx monitor: history write failed: %s", exc)
         self.alarms = evaluate_alarms(ans, s.get("thresholds") or {}) if s.get("alarms_armed") else []
 
-    def want(self):
+    def want(self, tab=None, job_limit=100):
         """A monitor page asked: keep polling for a few intervals."""
         s = self.settings()
         self.wanted_until = self.clock() + WANT_INTERVALS * s["interval_s"]
+        if tab == 'jobs':
+            self.jobs_until = self.wanted_until
+            self.job_limit = max(100, min(1000, job_limit))
+        elif tab is not None:
+            self.jobs_until = 0
         self._start_thread()
+
+    def poll_interval(self):
+        s = self.settings()
+        return s['interval_s'] if self.clock() < self.wanted_until else max(60, s['interval_s'])
 
     def should_poll(self) -> bool:
         s = self.settings()
@@ -978,7 +989,7 @@ class Monitor:
                 return
             t0 = self.clock()
             self.poll_once()
-            wait = max(0.2, self.settings()["interval_s"] - (self.clock() - t0))
+            wait = max(0.2, self.poll_interval() - (self.clock() - t0))
             self._stop.wait(wait)
 
     def stop(self):
@@ -1084,7 +1095,7 @@ class Monitor:
         elif age is None:
             state = "starting"
             sentence = "Connecting to the server..."
-        elif age > STALE_INTERVALS * s["interval_s"]:
+        elif age > STALE_INTERVALS * self.poll_interval():
             state = "stale"
             sentence = f"No fresh answer for {age:.0f} s; the values below are from then."
         else:
@@ -1096,7 +1107,7 @@ class Monitor:
                 'health': health(self.last_answer, self.admin, s['thresholds'], state), 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
-                "interval_s": s["interval_s"], "alarms": alarms,
+                "interval_s": self.poll_interval(), "alarms": alarms,
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}
 
     def new_alarm_toasts(self) -> list[dict]:

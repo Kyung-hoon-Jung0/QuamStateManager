@@ -16118,3 +16118,7 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .opxmon-hot {color:var(--ui-danger-text)}
 .opxmon-hottest {font-size:.85rem; color:var(--pico-muted-color)}
 .opxmon-confirm {white-space:pre-line; padding:.7rem; margin:.5rem 0}
+
+#opxmon-alarm-slot {display:flex; align-items:center; gap:.5rem; min-width:0; max-width:38vw}
+#opxmon-alarm-slot .opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:22rem}
+#opxmon-alarm-slot .opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}

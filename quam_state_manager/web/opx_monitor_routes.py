@@ -113,7 +113,7 @@ def _view(tab: str) -> dict:
 def opx_monitor_page(tab="live"):
     if tab not in TABS:
         tab = "live"
-    monitor().want()
+    monitor().want(tab, request.args.get("limit", 100, type=int))
     r = _r()
     tpl = "_opx_monitor.html" if r._is_htmx() else "opx_monitor.html"
     return render_template(tpl, **r._ctx(page="opx_monitor", **_view(tab)))
@@ -124,7 +124,7 @@ def opx_monitor_body():
     tab = request.args.get("tab", "live")
     if tab not in TABS:
         tab = "live"
-    monitor().want()
+    monitor().want(tab, request.args.get("limit", 100, type=int))
     return render_template("_opx_monitor_body.html", **_view(tab))
 
 

@@ -783,3 +783,23 @@ def test_d27_tiles_empty_slot_and_shared_baseline(env):
     assert om.temperature_rows(a['controllers'][0])[1]['empty']
     s = m.trends().series(clock.t)
     assert ',18.13' in s['con1/FEM 0']['paths'][0]
+
+
+def test_d28_cache_jobs_and_backoff(env):
+    from types import SimpleNamespace
+    from quam_state_manager.generator.opx_monitor_worker import QmmTarget
+    calls = []
+    q = SimpleNamespace(get_jobs=lambda: [], get_config=lambda: calls.append('config') or {})
+    t = QmmTarget.__new__(QmmTarget)
+    t.qmm = SimpleNamespace(version_dict=lambda: {}, cluster_name='sample', get_devices=lambda: SimpleNamespace(controllers={}), list_open_qms=lambda: ['QM-fable'], get_qm=lambda qid: q, get_jobs=lambda: calls.append('jobs') or [])
+    t.poll(); t.poll()
+    assert calls == ['config']
+    t.poll(include_jobs=True)
+    assert calls == ['config', 'jobs']
+    app, m, w, clock, _ = env
+    assert m.poll_interval() == 60
+    m.want('jobs', 200)
+    m.poll_once()
+    assert w.calls[-1] == ('poll', {'include_jobs': True, 'job_limit': 200})
+    m.want('live')
+    assert m.jobs_until == 0 and m.poll_interval() == 5
