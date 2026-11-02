@@ -53,7 +53,7 @@ def _view(tab: str) -> dict:
     first = {r['qm_id']: r['first_seen'] for r in h.table() if not r.get('job_id')} if h else {}
     idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
-    return {"idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
+    return {"trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],

@@ -524,3 +524,21 @@ def test_d14_admin_health_and_unknown(env, monkeypatch):
     p.write_text('{broken')
     assert 'corrupt' in page(app, 'settings')
     assert p.with_suffix('.json.corrupt').read_text() == '{broken'
+
+
+def test_d15_trends_gaps_zero_bounds_and_span(tmp_path, env):
+    store = om.TemperatureTrends(tmp_path / 'trend.jsonl')
+    store.append(answer(temps={'FEM 0': 40, 'CRPS 1': 0.0}), 100, 5)
+    store.append(answer(temps={'FEM 0': 45}), 105, 5)
+    store.append(answer(temps={'FEM 0': 50}), 200, 5)
+    trend = store.series(200)['con1/FEM 0']
+    assert len(trend['paths']) == 2
+    assert trend['min'] == 40 and trend['max'] == 50 and trend['span_s'] == 100
+    assert 'con1/CRPS 1' not in store.series(200)
+    assert om.TemperatureTrends(store.path).series(200) == store.series(200)
+    store.append(answer(temps={'FEM 0': 55}), 90000, 5)
+    assert store.series(90000)['con1/FEM 0']['samples'] == 1
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'Chassis': 42})]
+    m.poll_once()
+    assert 'actual span 0 s' in page(app, 'live') and '<polyline' in page(app, 'live')

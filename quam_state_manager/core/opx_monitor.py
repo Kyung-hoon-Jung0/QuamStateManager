@@ -496,6 +496,83 @@ def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
 
 # ----------------------------------------------------------------- monitor
 
+class TemperatureTrends:
+    """24 hours of poll samples; display keeps extrema and explicit gaps."""
+    MAX_POLLS = 43201  # 24 h at the minimum supported two-second interval
+    MAX_SENSORS = 256
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.rows = []
+        self.lock = threading.Lock()
+        try:
+            for line in self.path.read_text(encoding='utf-8').splitlines()[-self.MAX_POLLS:]:
+                try:
+                    row = json.loads(line)
+                    if isinstance(row, dict) and isinstance(row.get('t'), (float, int)) and isinstance(row.get('v'), dict):
+                        self.rows.append(row)
+                except ValueError:
+                    continue
+        except OSError:
+            pass
+        self.writes = 0
+
+    def append(self, answer, at, interval):
+        values = {c['name'] + '/' + r['key']: r['value'] for c in answer.get('controllers') or []
+                  for r in temperature_rows(c) if r['value'] is not None}
+        row = {'t': at, 'interval': interval, 'v': dict(list(values.items())[:self.MAX_SENSORS])}
+        with self.lock:
+            self.rows = [r for r in self.rows if at - 86400 <= r['t'] <= at][-self.MAX_POLLS + 1:] + [row]
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.writes += 1
+            if self.writes == 1 or self.writes % 500 == 0:
+                tmp = self.path.with_suffix('.tmp')
+                tmp.write_text(''.join(json.dumps(r) + '\n' for r in self.rows), encoding='utf-8')
+                os.replace(tmp, self.path)
+            else:
+                with self.path.open('a', encoding='utf-8') as f:
+                    f.write(json.dumps(row) + '\n')
+
+    def series(self, now):
+        with self.lock:
+            rows = [r for r in self.rows if now - 86400 <= r['t'] <= now]
+        keys = sorted({k for r in rows for k in r['v']})[:self.MAX_SENSORS]
+        out = {}
+        for key in keys:
+            segments, segment, prev = [], [], None
+            for row in rows:
+                value = row['v'].get(key)
+                gap = prev is not None and row['t'] - prev['t'] > 3 * min(row['interval'], prev['interval'])
+                if value is None or gap:
+                    if segment:
+                        segments.append(segment)
+                    segment = []
+                if value is not None:
+                    segment.append((row['t'], value))
+                prev = row
+            if segment:
+                segments.append(segment)
+            points = [p for seg in segments for p in seg]
+            if not points:
+                continue
+            start, end = points[0][0], points[-1][0]
+            lo, hi = min(p[1] for p in points), max(p[1] for p in points)
+            paths = []
+            # Split first, then downsample each segment into time buckets. Never join gaps.
+            for seg in segments:
+                buckets = {}
+                for t, v in seg:
+                    buckets.setdefault(int((t - start) / max(1, end - start) * 120), []).append((t, v))
+                reduced = []
+                for bucket in buckets.values():
+                    reduced.extend(sorted(set((bucket[0], min(bucket, key=lambda p: p[1]),
+                                               max(bucket, key=lambda p: p[1]), bucket[-1]))))
+                paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-(v-lo)/max(1,hi-lo)*32:.2f}' for t, v in reduced))
+            out[key] = {'min': lo, 'max': hi, 'start': datetime.fromtimestamp(start, timezone.utc).isoformat(),
+                        'end': datetime.fromtimestamp(end, timezone.utc).isoformat(), 'span_s': end-start,
+                        'paths': paths, 'samples': len(points)}
+        return out
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
@@ -594,6 +671,15 @@ class Monitor:
         self._fails = 0
         self._retry_at = 0.0
         self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
+        self._trends = {}
+
+    def trends(self):
+        key = target_key(self.settings().get('target'))
+        if not key:
+            return None
+        if key not in self._trends:
+            self._trends[key] = TemperatureTrends(_dir(self.instance) / 'trends' / (key + '.jsonl'))
+        return self._trends[key]
 
     # -- settings shortcuts
     def settings(self) -> dict:
@@ -689,6 +775,10 @@ class Monitor:
             self.last_answer = ans
             self.last_ok_at = self.clock()
             self.last_error = None
+            try:
+                self.trends().append(ans, self.last_ok_at, s['interval_s'])
+            except OSError:
+                self.last_error = 'Temperature trend could not be saved.'
         h = self.history(target_key(s["target"]))
         at = datetime.fromtimestamp(self.last_ok_at, timezone.utc).isoformat(timespec="seconds")
         prev_iso = (datetime.fromtimestamp(prev_ok, timezone.utc).isoformat(timespec="seconds")

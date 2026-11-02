@@ -50,7 +50,10 @@
   <table class="ui-table opxmon-table" aria-label="Temperatures">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Sensor</th><th class="ui-table-head">Reading (degC)</th></tr></thead>
     <tbody>{% for c in any_t %}{% for r in temperature_rows(c) %}
-      <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell" title="sensor '{{ r.key }}'">{{ r.label }}</td><td class="ui-table-cell opxmon-num">{% if r.value is none %}<span class="ui-muted">no sensor</span>{% else %}{{ '%.1f'|format(r.value) }}{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
+      <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell" title="sensor '{{ r.key }}'">{{ r.label }}</td><td class="ui-table-cell opxmon-num">{% if r.value is none %}<span class="ui-muted">no sensor</span>{% else %}{{ '%.1f'|format(r.value) }}{% endif %}
+      {% set trend = trends.get(c.name ~ '/' ~ r.key) %}{% if trend %}
+      <svg class="opxmon-sparkline" viewBox="0 0 240 40" width="240" height="40" role="img" aria-label="Temperature trend with gaps"><title>Recorded samples only; gaps are not interpolated</title>{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="1.5"/>{% endfor %}</svg>
+      <span class="ui-muted">min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} degC; actual span {{ trend.span_s|int }} s ({{ trend.start }} to {{ trend.end }}); {{ trend.samples }} samples; display downsampled with extrema</span>{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
   <p class="ui-note">A sensor named FEM k sits in slot k+1, and a reading of exactly 0.0 means no unit is fitted there (both measured on one OPX1000, QOP 3.7.3). Hover a sensor for its raw name.</p>
   {%- else %}
