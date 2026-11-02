@@ -387,6 +387,7 @@ class History:
         if not isinstance(answer, dict) or answer.get("open_qms") is None:
             return 0
         seen: dict[str, dict] = {}
+        unknown_jobs = {q['id'] for q in answer.get('open_qms') or [] if q.get('jobs') is None}
         for q in answer.get("open_qms") or []:
             seen[self._key(q.get("id"))] = {"ev": "qm_seen", "qm_id": q.get("id")}
             for j in q.get("jobs") or []:
@@ -404,6 +405,8 @@ class History:
                     evs.append({"ev": "job_status", "qm_id": base["qm_id"],
                                 "job_id": base["job_id"], "status": base["status"], "t": at})
             for k, row in self.rows.items():
+                if row.get('job_id') and row.get('qm_id') in unknown_jobs:
+                    continue  # a refused job list is not evidence that a job disappeared
                 if row.get("open") and k not in seen:
                     evs.append({"ev": "job_gone" if row.get("job_id") else "qm_gone",
                                 "qm_id": row.get("qm_id"), "job_id": row.get("job_id"),
