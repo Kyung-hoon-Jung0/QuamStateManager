@@ -85,7 +85,9 @@ def idle_state(q, first_seen, now, minutes=30):
     if jobs is None or any(str(j.get('status', '')).lower() not in
                            ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed') for j in jobs):
         return {'idle': False, 'basis': 'active or unknown job status', 'last_activity': None}
-    times = [(timestamp(first_seen), 'SM first saw it')]
+    remembered = first_seen if isinstance(first_seen, dict) else {'first_seen': first_seen}
+    times = [(timestamp(remembered.get('first_seen')), 'SM first saw it'),
+             (timestamp(remembered.get('job_activity')), 'job created/last status update observed by SM')]
     times += [(timestamp(j.get(k)), 'job created/last status update') for j in jobs
               for k in ('created_at', 'updated_at')]
     valid = [(t, b) for t, b in times if t is not None]
@@ -305,13 +307,15 @@ class History:
                 row = self.rows[k] = {"qm_id": ev.get("qm_id"), "job_id": ev.get("job_id"),
                                       "first_seen": t, "last_seen": t, "status": ev.get("status"),
                                       "open": True, "user": ev.get("user"),
-                                      "description": ev.get("description")}
+                                      "description": ev.get("description"), 'job_activity': ev.get('job_activity')}
             else:
                 row["open"] = True
                 row["last_seen"] = t
         elif row is not None and kind == "job_status":
             row["status"] = ev.get("status")
             row["last_seen"] = t
+        elif row is not None and kind == 'qm_activity':
+            row['job_activity'] = ev['job_activity']
         elif row is not None and kind in ("qm_gone", "job_gone"):
             row["open"] = False
             row["last_seen"] = ev.get("last_seen") or t
@@ -358,7 +362,7 @@ class History:
             base = {"qm_id": r.get("qm_id"), "job_id": r.get("job_id")}
             lines.append({"ev": "job_seen" if r.get("job_id") else "qm_seen", **base,
                           "t": r.get("first_seen"), "status": r.get("status"),
-                          "user": r.get("user"), "description": r.get("description")})
+                          "user": r.get("user"), "description": r.get("description"), 'job_activity': r.get('job_activity')})
             if r.get("job_id"):
                 lines.append({"ev": "job_status", **base, "status": r.get("status"),
                               "t": r.get("last_seen")})
@@ -400,6 +404,14 @@ class History:
                     evs.append({"ev": "job_gone" if row.get("job_id") else "qm_gone",
                                 "qm_id": row.get("qm_id"), "job_id": row.get("job_id"),
                                 "t": at, "last_seen": last_ok_at or row.get("last_seen")})
+            for q in answer.get('open_qms') or []:
+                times = [j.get(k) for j in q.get('jobs') or [] for k in ('created_at', 'updated_at')
+                         if timestamp(j.get(k)) is not None]
+                if times:
+                    newest = max(times, key=timestamp)
+                    old = self.rows.get(self._key(q['id']), {}).get('job_activity')
+                    if old is None or timestamp(newest) > (timestamp(old) or 0):
+                        evs.append({'ev': 'qm_activity', 't': at, 'qm_id': q['id'], 'job_activity': newest})
             self._append(evs)
             # last-seen moves in RAM every poll and reaches the file with the gone event
             for k in seen:
@@ -893,7 +905,7 @@ class Monitor:
                 w = self._ensure_worker(s)
                 r = (w.request("close_qm", qm_id=qm_id) if not every
                      else w.request("close_idle" if idle else "close_qms", qm_ids=names,
-                                    **({'first_seen': {r['qm_id']: r['first_seen'] for r in self.history().table()
+                                    **({'first_seen': {r['qm_id']: r for r in self.history().table()
                                                       if not r.get('job_id')},
                                         'idle_minutes': s['idle_minutes']} if idle else {})))
             except WorkerError as exc:
@@ -914,7 +926,8 @@ class Monitor:
         h = self.history()
         if h is not None:
             h.log_action("close_idle" if idle else ("close_qm" if not every else "close_all"),
-                         {"qm_ids": closed or names, "ok": ok, "error": err,
+                         {"qm_ids": closed, "ok": ok, "error": err,
+                          'requested_ids': names, 'skip_reasons': (r.get('result') or {}).get('skip_reasons', {}) if every else {},
                           "skipped": skipped or None, "by": who or None})
         if r.get("ok"):
             self.poll_once()

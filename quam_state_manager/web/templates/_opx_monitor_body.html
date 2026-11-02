@@ -1,6 +1,6 @@
 {%- set ans = st.answer or {} -%}
 {%- set cap = st.capabilities -%}
-{%- set polls = tab != 'settings' and st.state != 'unconfigured' -%}
+{%- set polls = tab in ('live', 'jobs', 'history') and st.state != 'unconfigured' -%}
 <div id="opxmon-body" class="opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
      {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
@@ -103,7 +103,7 @@
   {%- else %}<p class="ui-state ui-state--empty"><span class="ui-state-key">Nothing recorded yet.</span></p>{% endif %}
   {%- if actions %}
   <h3 class="opxmon-h">Alarm events and clean-up actions</h3>
-  <ul class="opxmon-actions">{% for a in actions %}<li>{% if a.ev in ['alarm_raise', 'alarm_clear'] %}{{ a.t }} &middot; {{ a.ev }} {{ a.controller }} {{ a.key }} = {{ a.value }} (threshold {{ a.limit }}){% else %}{{ a.t }} &middot; {{ 'close all' if a.action == 'close_all' else 'close' }} {{ (a.qm_ids or []) | join(', ') }} &middot; {{ 'done' if a.ok else 'failed: ' ~ (a.error or '') }}{% if a.by %} &middot; by {{ a.by }}{% endif %}{% endif %}</li>{% endfor %}</ul>
+  <ul class="opxmon-actions">{% for a in actions %}<li>{% if a.ev in ['alarm_raise', 'alarm_clear'] %}{{ a.t }} &middot; {{ a.ev }} {{ a.controller }} {{ a.key }} = {{ a.value }} (threshold {{ a.limit }}){% else %}{{ a.t }} &middot; {{ 'close all' if a.action == 'close_all' else 'close' }} closed: {{ (a.qm_ids or []) | join(', ') or 'none' }}{% if a.skipped %}; skipped: {% for id in a.skipped %}{{ id }} ({{ (a.skip_reasons or {}).get(id, 'already gone') }}){% if not loop.last %}, {% endif %}{% endfor %}{% endif %} &middot; {{ 'done' if a.ok else 'failed: ' ~ (a.error or '') }}{% if a.by %} &middot; by {{ a.by }}{% endif %}{% endif %}</li>{% endfor %}</ul>
   {%- endif %}
 
 {%- elif tab == 'cleanup' %}

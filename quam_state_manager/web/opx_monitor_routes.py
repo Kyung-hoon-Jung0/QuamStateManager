@@ -89,7 +89,7 @@ def _view(tab: str) -> dict:
     t = dict(s.get("target") or {})
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
-    first = {r['qm_id']: r['first_seen'] for r in h.table() if not r.get('job_id')} if h else {}
+    first = {r['qm_id']: r for r in h.table() if not r.get('job_id')} if h else {}
     idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
     try:
