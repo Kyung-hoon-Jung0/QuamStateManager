@@ -112,6 +112,15 @@ def _iter_leaves(obj: Any, prefix: str = ""):
         yield prefix, obj
 
 
+def _path_value(root: dict, dot_path: str) -> Any:
+    node: Any = root
+    for k in dot_path.split("."):
+        if not isinstance(node, dict) or k not in node:
+            return None
+        node = node[k]
+    return node
+
+
 def _resolves(root: dict, pointer: str) -> bool:
     """Does an ABSOLUTE ``#/a/b/c`` pointer land on a node in ``root``?
 
@@ -181,6 +190,8 @@ class MergeStats:
     rename_unmarked: bool = False  # docs/296: renamed, but the root class keeps no extras -- history cannot follow
     lab_objects_kept: list[tuple[str, str]] = field(default_factory=list)  # (path, class) -- v1.6.0 review: a lab object the env imports, kept under the lab's own class although the rebuild wrote no such object
     old_pointers_kept: list[str] = field(default_factory=list)  # v1.6.0 review: the source's pointer kept where the rebuild wrote the very literal it resolves to
+    links_not_taken: list[str] = field(default_factory=list)  # a source literal kept where the rebuild linked the field to another holding a different value (x90's own DRAG alpha)
+    wiring_values_carried: list[str] = field(default_factory=list)  # a lab's plain wiring values under a line the rebuild also made (a QDAC dc_channel)
     source_forms_restored: list[str] = field(default_factory=list)  # a lab's own pointer/object form put back where every value reads the same
     pointers_inlined: list[str] = field(default_factory=list)  # v1.6.0 review: a grafted source pointer whose direct target is no literal in the rebuilt state, written as the value it resolved to in the source
 
@@ -312,6 +323,7 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
     from quam_state_manager.core.pointer_resolver import resolve_pointer
     keep: set[str] = set()
     inline: dict[str, Any] = {}
+    unlink: dict[str, Any] = {}
 
     def walk(o: Any, n: Any, path: tuple[str, ...]) -> None:
         if isinstance(o, dict):
@@ -319,6 +331,20 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
                 walk(ov, n.get(k, _MISSING) if isinstance(n, dict) else _MISSING, path + (k,))
             return
         if not is_pointer(o):
+            # the mirror case: the SOURCE holds its own literal (a lab that calibrated
+            # x90's DRAG alpha apart from x180's) where the rebuild links the field to
+            # another one holding a DIFFERENT value -- the link would silently replace
+            # the calibration with its target's, so the literal is carried
+            if (is_pointer(n) and _is_literal(o) and not isinstance(o, bool)
+                    and isinstance(o, (int, float, str))):
+                try:
+                    nv = resolve_pointer(new_doc, n, path)
+                except Exception:  # noqa: BLE001 -- unresolvable: the rebuild's link stands
+                    return
+                if (_is_literal(nv) and type(nv) is not bool
+                        and isinstance(nv, (int, float)) == isinstance(o, (int, float))
+                        and not compare_equal(nv, o)):
+                    unlink[".".join(path)] = o
             return
         tgt = _one_hop(new_doc, o, path)
         if n is _MISSING:
@@ -349,6 +375,9 @@ def _pointer_decisions(old: dict, new_doc: dict) -> tuple[set[str], dict[str, An
                 inline[".".join(path)] = val
 
     walk(old, new_doc, ())
+    # an unlinked literal is a value carried at a leaf the rebuild made a pointer:
+    # reuse the inline channel (the leaf branch carries it unless Populate holds it)
+    inline.update(unlink)
     return keep, inline
 
 
@@ -634,11 +663,11 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             # link is kept, no value changes (v1.6.0 review)
             stats.old_pointers_kept.append(path)
             return old
-        if (inline and path in inline and not is_pointer(new)
-                and not (protect and path in protect)):
-            # a source pointer whose link the rebuild inverted: carry the value it
-            # resolved to in the source (see _pointer_decisions)
-            stats.pointers_inlined.append(path)
+        if inline and path in inline and not (protect and path in protect):
+            # a source pointer whose link the rebuild inverted, or a source literal the
+            # rebuild linked to a different value: carry the source's value (see
+            # _pointer_decisions)
+            (stats.links_not_taken if is_pointer(new) else stats.pointers_inlined).append(path)
             stats.carried += 1
             return copy.deepcopy(inline[path])
         stats.kept_new_pointer += 1
@@ -1075,6 +1104,41 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
     return carried
 
 
+def _plain_value(v: Any) -> bool:
+    if isinstance(v, list):
+        return all(_plain_value(x) for x in v)
+    return isinstance(v, (int, float, bool)) or (isinstance(v, str) and not is_pointer(v))
+
+
+def graft_wiring_values(old_wiring: dict | None, new_wiring: dict) -> list[str]:
+    """Carry the SOURCE's own plain values in ``wiring.wiring`` that the rebuild has no
+    key for, under a line the rebuild also made (a lab's QDAC ``dc_channel: 1`` beside
+    the flux line's ``opx_output``). Only plain values -- a pointer into ``ports`` is the
+    rebuild's cabling and stays the rebuild's -- and only where the line still exists,
+    so a line the user removed brings nothing back. Returns the dot paths carried."""
+    if not isinstance(old_wiring, dict) or not isinstance(new_wiring, dict):
+        return []
+    carried: list[str] = []
+
+    def walk(o: dict, n: dict, path: str) -> None:
+        for k, ov in o.items():
+            sub = f"{path}.{k}"
+            if k in n:
+                if isinstance(ov, dict) and isinstance(n[k], dict):
+                    walk(ov, n[k], sub)
+                continue
+            if ov is not None and _plain_value(ov):
+                n[k] = copy.deepcopy(ov)
+                carried.append(sub)
+
+    ow, nw = old_wiring.get("wiring"), new_wiring.get("wiring")
+    if isinstance(ow, dict) and isinstance(nw, dict):
+        for k, ov in ow.items():
+            if k != "network" and isinstance(ov, dict) and isinstance(nw.get(k), dict):
+                walk(ov, nw[k], f"wiring.{k}")
+    return sorted(carried, key=natural_key)
+
+
 def graft_network_settings(old_wiring: dict | None, new_wiring: dict,
                            held: list[str] | None = None,
                            requested: dict | None = None) -> list[str]:
@@ -1214,7 +1278,8 @@ def _hits(target: str, entity: str) -> bool:
 
 def _carryable_ports(old_state: dict, new_state: dict,
                      old_wiring: dict | None = None,
-                     new_wiring: dict | None = None) -> set[str]:
+                     new_wiring: dict | None = None,
+                     declared_fems: dict | None = None) -> set[str]:
     old_ents = _port_entities(old_state.get("ports"))
     if not old_ents:
         return set()
@@ -1222,13 +1287,36 @@ def _carryable_ports(old_state: dict, new_state: dict,
     new_hw = {_port_hw(p, e) for p, e in new_ents.items()}
     new_doc = _merged_doc(new_state, new_wiring)
     # (a port the rebuild has is merged normally -- it never reaches the graft)
+    # ...or on a FEM the build spec still declares (one the rebuild drew no line on:
+    # a lab's spare flux outputs keep their measured delay and filters), of the
+    # matching kind -- an analog port on an LF FEM, an MW port on an MW FEM
+    def declared(p: str, e: dict) -> bool:
+        kind = (declared_fems or {}).get(_port_hw(p, e))
+        if kind is None:
+            return False
+        group = p.split(".")[1] if p.count(".") else ""
+        if group.startswith("mw_"):
+            return kind == "mw"
+        if group.startswith("analog_"):
+            return kind == "lf"
+        return True
     cand = {p for p, e in old_ents.items()
-            if p not in new_ents and _port_hw(p, e) in new_hw}
+            if p not in new_ents and (_port_hw(p, e) in new_hw or declared(p, e))}
     if not cand:
         return set()
 
     internal: dict[str, list[str]] = {p: [] for p in cand}
+    # A lab's own top-level object the rebuild writes nothing for (a QDAC `dc_bias`
+    # whose triggers use OPX digital outputs) is grafted back by the merge when the env
+    # holds its class; a port only IT references is its cabling, not a removed qubit's,
+    # and is carried with it (the graft is still undone if anything fails to land).
+    lab_tops = {k for k, v in old_state.items()
+                if isinstance(v, dict) and isinstance(v.get("__class__"), str)
+                and not v["__class__"].startswith(("quam.", "quam_builder."))
+                and new_state.get(k) is None}
     for src, kind, val in _walk_refs(_merged_doc(old_state, old_wiring)):
+        if src.split(".", 1)[0] in lab_tops:
+            continue
         inside = src == "ports" or src.startswith("ports.")
         if kind == "tuple":
             if inside:
@@ -2017,7 +2105,8 @@ def merge_states(old_state: dict, new_state: dict,
                  new_wiring: dict | None = None,
                  keep_classes: dict | None = None,
                  twpa_ids: Any = None,
-                 env_fields: dict | None = None) -> MergeResult:
+                 env_fields: dict | None = None,
+                 declared_fems: dict | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
 
     ``twpa_ids`` -- the TWPA ids the build spec asked for (QA r2-10): an OLD
@@ -2067,7 +2156,7 @@ def merge_states(old_state: dict, new_state: dict,
     # calibration in the merge.
     new_state = _reconcile_pair_ids(old_state, new_state,
                                     old_wiring, new_wiring)   # align pair ids first
-    carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring)
+    carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring, declared_fems)
     # QA F1: the OLD side the merge reads -- a port's values moved to wherever
     # its line went. QA r2-10: minus the TWPAs the user took off step 4.
     inherited: dict[str, tuple[str, str]] = {}

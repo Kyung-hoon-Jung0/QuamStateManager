@@ -267,6 +267,18 @@ def _source_class_env_view(python_path, old_state, instance_path=None,
     return view or None
 
 
+def _spec_fems(spec: dict) -> dict:
+    """``{("con1", "7"): "lf", ...}`` -- every FEM the build spec declares."""
+    out: dict = {}
+    for c in ((spec or {}).get("instruments") or {}).get("controllers") or []:
+        if not isinstance(c, dict):
+            continue
+        for f in c.get("fems") or []:
+            if isinstance(f, dict) and f.get("slot") is not None:
+                out[(f"con{c.get('con')}", str(f.get("slot")))] = str(f.get("fem") or "").lower()
+    return out
+
+
 def _spec_twpa_ids(spec: dict) -> list[str] | None:
     """The TWPA ids the build spec asks for (entries are ``{"id": ...}``
     objects or, in old sidecars, bare strings); ``None`` when the spec says
@@ -475,6 +487,11 @@ def run_regenerate(
     twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
     if twpa_renames:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
+    # a lab's own plain wiring values (a QDAC dc_channel) -- before the merge, so
+    # the state objects that point at them land
+    wiring_carried = regen_merge.graft_wiring_values(old_wiring, new_wiring)
+    if wiring_carried:
+        safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
     # The build subprocess harvests the env's dataclass field schemas for every
     # class the fresh state carries (run_build._collect_class_schemas) — the
@@ -532,8 +549,10 @@ def run_regenerate(
                                       new_wiring=new_wiring,
                                       keep_classes=keep_classes,
                                       twpa_ids=_spec_twpa_ids(spec),
-                                      env_fields=env_fields)
+                                      env_fields=env_fields,
+                                      declared_fems=_spec_fems(spec))
     result.stats.populate_conflicts.extend(pop_conflicts)
+    result.stats.wiring_values_carried = wiring_carried
     if add_report and add_report.get("added"):
         add_report["merge_skipped"] = additions.restore_paths(
             result.merged, new_state, [e["path"] for e in add_report["added"]])
@@ -585,6 +604,14 @@ def run_regenerate(
     if net_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
+    # the merge judged "dangling" against the state alone; a pointer into the wiring
+    # written above (a carried QDAC dc_channel) lands -- only what still fails is said
+    if result.stats.dangling_grafts:
+        doc = regen_merge._merged_doc(result.merged, new_wiring)
+        result.stats.dangling_grafts = [
+            p for p in result.stats.dangling_grafts
+            if not (isinstance(regen_merge._path_value(result.merged, p), str)
+                    and regen_merge._resolves(doc, regen_merge._path_value(result.merged, p)))]
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
     # QA F12: the merged chip, not the build spec, decides -- a merge can
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
@@ -682,6 +709,10 @@ def run_regenerate(
         "pointers_inlined_total": len(s.pointers_inlined),
         "source_forms_restored": s.source_forms_restored[:80],
         "source_forms_restored_total": len(s.source_forms_restored),
+        "links_not_taken": s.links_not_taken[:80],
+        "links_not_taken_total": len(s.links_not_taken),
+        "wiring_values_carried": s.wiring_values_carried[:80],
+        "wiring_values_carried_total": len(s.wiring_values_carried),
         # The CAUSE behind most cross-generation drops: the rebuild typed an
         # object differently from the source chip. Reported separately because
         # the remedy differs -- a dropped field is gone, a substituted class is
