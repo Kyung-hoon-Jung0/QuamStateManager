@@ -43614,7 +43614,15 @@ def dataset_interactive(uid):
     from quam_state_manager.core.interactive_plots import replot
     capability = replot.replot_capability(run, current_app.instance_path)
     if capability["available"]:
-        result = replot.replot_run(run, current_app.instance_path)
+        # D-1: a valid cached replay renders as before; anything else starts (or
+        # joins) a background job and the saved/recipe figures answer at once
+        result = replot.peek(run, current_app.instance_path)
+        if result is None:
+            job = replot.start_job(run, current_app.instance_path)
+            if job is not None:
+                return render_template("_replot_progress.html", uid=uid, job=job) +                     render_template("_dataset_interactive.html", run_id=run_id, uid=uid,
+                                    figures=figures)
+            result = replot.replot_run(run, current_app.instance_path)
         reproduced = replot.replot_menu(result)
         covered = {f["key"] for f in reproduced}
         legacy = [f for f in figures if f["key"] not in covered]
@@ -43628,6 +43636,16 @@ def dataset_interactive(uid):
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
                            reproduction_hint=capability["reason"])
+
+
+@bp.route("/dataset/<uid>/interactive/status")
+def dataset_interactive_status(uid):
+    """JSON status of the background replay a ``/interactive`` menu started: ``?job=``."""
+    from quam_state_manager.core.interactive_plots import replot
+    status = replot.job_status(request.args.get("job", ""))
+    if status is None:
+        return jsonify({"state": "unknown", "phase": "", "elapsed": 0})
+    return jsonify({k: status.get(k) for k in ("state", "phase", "label", "i", "n", "key", "elapsed")})
 
 
 @bp.route("/dataset/<uid>/interactive/plot")

@@ -122,7 +122,7 @@ def replot_capability(run, instance_path) -> dict:
 _PLOT_WORKER = None
 
 
-def _warm_request(env, folder, source_root, timeout):
+def _warm_request(env, folder, source_root, timeout, progress=None):
     global _PLOT_WORKER
     from quam_state_manager.core import lab_worker
     if not Path(env).is_file():
@@ -155,7 +155,7 @@ def _warm_request(env, folder, source_root, timeout):
     return None
 
 
-def _invoke(env, folder, source_root, timeout):
+def _invoke(env, folder, source_root, timeout, progress=None):
     from quam_state_manager.core import lab_worker
     total = 0
     for name in ("ds_raw.h5", "ds_fit.h5"):
@@ -167,7 +167,7 @@ def _invoke(env, folder, source_root, timeout):
         return {"schema": "iplot/v2", "figures": [], "errors": [{"stage": "datasets",
                 "trace": "Run data exceeds 300 MiB; use saved figures or the raw data viewer"}]}
     with lab_worker.machine_lock:
-        result = _warm_request(env, folder, source_root, timeout)
+        result = _warm_request(env, folder, source_root, timeout, progress)
         if result is not None:
             return result
         lab_worker.retire_except()
@@ -204,37 +204,87 @@ def _remember(key, meta, result, size):
         _CACHE.pop(next(iter(_CACHE)))
 
 
-def replot_run(run, instance_path, *, source_root: str | None = None,
-               force: bool = False, timeout: int = 180) -> dict:
-    """Warm replay with a content-validated RAM LRU and instance disk cache."""
+def _request(run, instance_path, source_root=None):
+    """The cache context of one replay request, or ``None`` with no env selected."""
     from quam_state_manager.core import config_generator
     from . import replot_cache as cache
     folder = Path(getattr(run, "folder_path", "") or "").resolve()
-    key = str(folder)
     env = config_generator.get_selected_env(instance_path)
     if not env:
-        return {"schema": "iplot/v2", "figures": [],
-                "errors": [{"stage": "env", "trace": "No environment selected"}]}
-    context = {"folder": key, "inputs": _fingerprint(folder), "env": env,
+        return None
+    context = {"folder": str(folder), "inputs": _fingerprint(folder), "env": env,
                "env_sig": cache.digest(config_generator._env_signature(env)),
                "pythonpath": os.environ.get("PYTHONPATH", ""),
                "source_root": str(Path(source_root).resolve()) if source_root else "live",
                "instance": str(Path(instance_path).resolve()), "schema": cache.SCHEMA,
                "code": _replay_code_digest()}
+    return folder, env, context, cache.digest(context)
+
+
+# A finished result the caches would not keep (a timeout, a failure with nothing
+# saved to show) is held briefly, so the menu re-fetch that follows a background
+# job serves it instead of starting the replay again. request_key -> (until, result)
+_HELD: dict[str, tuple[float, dict]] = {}
+HOLD_S = 60.0
+
+
+def _lookup(key, context, request_key, disk, held=False):
+    """A valid cached (or briefly held) result, or ``None``. Call holding ``_LOCK``."""
+    import time
+    from . import replot_cache as cache
+    hit = _CACHE.get(key)
+    if hit and cache.valid(hit["meta"], context):
+        _CACHE.move_to_end(key)
+        return hit["result"]
+    found = disk.load(context)
+    if found:
+        meta, result, size = found
+        _remember(key, meta, result, size)
+        return result
+    kept = _HELD.get(request_key) if held else None
+    if kept and kept[0] > time.monotonic():
+        return kept[1]
+    return None
+
+
+def _cacheable(result) -> bool:
+    return bool(result.get("figures") or result.get("not_produced") or result.get("saved_figures"))
+
+
+def peek(run, instance_path, *, source_root: str | None = None):
+    """The result :func:`replot_run` would serve from a cache, without running anything."""
+    from . import replot_cache as cache
+    req = _request(run, instance_path, source_root)
+    if req is None:
+        return None
+    folder, _env, context, request_key = req
+    with _LOCK:
+        result = _lookup(str(folder), context, request_key, cache.DiskCache(instance_path), held=True)
+    return None if result is None else _with_click_contracts(result, run)
+
+
+def replot_run(run, instance_path, *, source_root: str | None = None,
+               force: bool = False, timeout: int = 180, progress=None,
+               hold: bool = False) -> dict:
+    """Warm replay with a content-validated RAM LRU and instance disk cache.
+
+    ``progress(phase, i, n, key)`` (optional) hears what the replay is doing."""
+    import time
+    from quam_state_manager.core import lab_worker
+    from . import replot_cache as cache
+    req = _request(run, instance_path, source_root)
+    if req is None:
+        return {"schema": "iplot/v2", "figures": [],
+                "errors": [{"stage": "env", "trace": "No environment selected"}]}
+    folder, env, context, request_key = req
+    key = str(folder)
     disk = cache.DiskCache(instance_path)
-    request_key = cache.digest(context)
     while True:
         with _LOCK:
-            hit = _CACHE.get(key)
-            if not force and hit and cache.valid(hit["meta"], context):
-                _CACHE.move_to_end(key)
-                return _with_click_contracts(hit["result"], run)
             if not force:
-                found = disk.load(context)
-                if found:
-                    meta, result, size = found
-                    _remember(key, meta, result, size)
-                    return _with_click_contracts(result, run)
+                found = _lookup(key, context, request_key, disk)
+                if found is not None:
+                    return _with_click_contracts(found, run)
             ev = _INFLIGHT.get(request_key)
             if ev is None:
                 ev = _INFLIGHT[request_key] = threading.Event()
@@ -243,25 +293,127 @@ def replot_run(run, instance_path, *, source_root: str | None = None,
         ev.wait(timeout=timeout + 10)
     try:
         from . import replot_revision
-        # DESIGN 2.5 ladder: current code -> run-time revision (git trees only)
-        # -> the saved figure; the chosen rung is labelled in the payload
-        result = replot_revision.reproduce(
-            folder, instance_path, source_root,
-            lambda root: _invoke(env, folder, root, timeout))
+        _say(progress, "waiting for the lab worker")
+        with lab_worker.machine_lock:
+            # another SM process may have made this replay while this one waited
+            if not force:
+                with _LOCK:
+                    found = disk.load(context)
+                    if found:
+                        _remember(key, *found)
+                        return _with_click_contracts(found[1], run)
+            # DESIGN 2.5 ladder: current code -> run-time revision (git trees only)
+            # -> the saved figure; the chosen rung is labelled in the payload
+            result = replot_revision.reproduce(
+                folder, instance_path, source_root,
+                lambda root: _invoke(env, folder, root, timeout, progress))
+        _say(progress, "saving the result")
+        kept = False
         with _LOCK:
-            if result.get("figures") or result.get("not_produced") or result.get("saved_figures"):
+            _HELD.pop(request_key, None)
+            if _cacheable(result):
                 try:
                     stored = disk.store(context, result)
                     if stored:
                         meta, size = stored
                         _remember(key, meta, result, size)
+                        kept = key in _CACHE
                 except (OSError, ValueError):
                     logger.debug("replay disk cache unavailable", exc_info=True)
+            now = time.monotonic()
+            for k in [k for k, (until, _r) in _HELD.items() if until <= now]:
+                _HELD.pop(k, None)
+            if hold and not kept:
+                _HELD[request_key] = (now + HOLD_S, result)
         return _with_click_contracts(result, run)
     finally:
         with _LOCK:
             _INFLIGHT.pop(request_key, None)
         ev.set()
+
+
+def _say(progress, phase, i=0, n=0, key=""):
+    if progress is not None:
+        try:
+            progress(phase, i, n, key)
+        except Exception:  # noqa: BLE001 -- a listener never breaks a replay
+            logger.debug("replay progress listener failed", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Background jobs (D-1): the menu answers at once, the replay runs here
+# ---------------------------------------------------------------------------
+
+_JOBS: dict[str, dict] = OrderedDict()
+_JOBS_MAX = 16
+
+
+def start_job(run, instance_path, *, force: bool = False) -> dict | None:
+    """Start (or join) the background replay of *run*; returns a copy of its status.
+
+    Keyed by the request key, so two tabs on one run share one job, and the
+    replay itself still coalesces with any tile call through ``_INFLIGHT``.
+    Nothing cancels a job: navigating away leaves it to finish and fill the cache."""
+    import time
+    req = _request(run, instance_path)
+    if req is None:
+        return None
+    request_key = req[3]
+    with _LOCK:
+        job = _JOBS.get(request_key)
+        if job is not None and job["state"] in ("starting", "replaying"):
+            return dict(job, elapsed=round(time.time() - job["t0"], 1), label=_label(job))
+        job = {"id": request_key, "state": "starting", "phase": "starting",
+               "i": 0, "n": 0, "key": "", "t0": time.time()}
+        _JOBS.pop(request_key, None)
+        _JOBS[request_key] = job
+        while len(_JOBS) > _JOBS_MAX:
+            oldest = next((k for k, j in _JOBS.items() if j["state"] in ("done", "failed")), None)
+            if oldest is None:
+                break
+            _JOBS.pop(oldest)
+        snapshot = dict(job, elapsed=0.0, label=_label(job))
+
+    def progress(phase, i=0, n=0, key=""):
+        with _LOCK:
+            job.update(state="replaying", phase=phase, i=i, n=n, key=key)
+
+    def work():
+        try:
+            result = replot_run(run, instance_path, force=force, progress=progress, hold=True)
+            state = "failed" if replot_outcome(result)["state"] == "failed" else "done"
+        except Exception:  # noqa: BLE001
+            logger.exception("background replay failed")
+            state = "failed"
+            with _LOCK:
+                _HELD[request_key] = (time.monotonic() + HOLD_S, {
+                    "schema": "iplot/v2", "figures": [],
+                    "errors": [{"stage": "subprocess", "trace": "The replay stopped unexpectedly"}]})
+        with _LOCK:
+            job.update(state=state, phase=state, t1=time.time())
+
+    threading.Thread(target=work, daemon=True, name="iplot-job").start()
+    return snapshot
+
+
+def job_status(job_id: str) -> dict | None:
+    """A copy of one job's status with ``elapsed`` seconds since its server start."""
+    import time
+    with _LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return None
+        out = dict(job)
+    out["elapsed"] = round((out.get("t1") or time.time()) - out["t0"], 1)
+    out["label"] = _label(out)
+    return out
+
+
+def _label(job) -> str:
+    if job.get("n"):
+        key = f" ({job['key']})" if job.get("key") else ""
+        return f"{job['phase']} {job.get('i', 0)} of {job['n']}{key}"
+    return str(job.get("phase") or "")
 
 
 def _with_click_contracts(result, run):

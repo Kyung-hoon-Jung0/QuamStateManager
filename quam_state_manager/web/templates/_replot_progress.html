@@ -1,0 +1,10 @@
+{# D-1/D-2 (docs/305): the replay runs as a background job; this strip says what it is
+   doing, in phases and elapsed seconds -- never a percentage (the lab's imports have
+   no denominator). app.js polls /interactive/status and re-fetches the menu on done. #}
+<div class="ds-replot-head muted" role="status" aria-live="polite"
+     data-replot-job="{{ job.id }}" data-run-id="{{ uid }}">
+    <span aria-busy="true"></span>
+    <span>Reproducing the figures from the experiment code: <span data-role="phase">{{ job.label or job.phase }}</span>
+        &middot; <span data-role="elapsed">{{ (job.elapsed or 0)|round|int }}</span> s</span>
+    <span data-role="slow" hidden>still working &mdash; the saved figures below are complete</span>
+</div>

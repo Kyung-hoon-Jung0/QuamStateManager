@@ -16767,6 +16767,7 @@ window.loadDatasetInteractive = function(runId, panel) {
         .then(function(html) {
             if (container._gen !== gen) return;  // superseded while fetching
             container.innerHTML = html;
+            _pollInteractiveJob(container, runId, gen, panel);
             // Apply the persisted column count (default 2) + reflect it in the toolbar.
             var savedCols = parseInt(localStorage.getItem('quam_interactive_cols'), 10);
             if (!(savedCols >= 1 && savedCols <= 3)) savedCols = 2;
@@ -16806,6 +16807,49 @@ window.loadDatasetInteractive = function(runId, panel) {
             container.setAttribute('data-loaded', '0');
         });
 };
+
+/**
+ * D-1/D-2 (docs/305): the menu came back before the replay finished. Poll the
+ * background job, show its phase and the elapsed seconds the SERVER measured, and
+ * re-fetch the menu (now a cache hit) when it ends. Never cancels the job; stops on a
+ * newer load of this container (gen bump), a detached strip, or the end of the job.
+ */
+var INTERACTIVE_POLL_MS = 700;
+var INTERACTIVE_SLOW_S = 30;
+function _pollInteractiveJob(container, runId, gen, panel) {
+    var strip = container.querySelector('[data-replot-job]');
+    if (!strip) return;
+    var job = strip.getAttribute('data-replot-job');
+    function alive() {
+        return container._gen === gen && document.body.contains(strip);
+    }
+    function show(s) {
+        var phase = strip.querySelector('[data-role="phase"]');
+        var elapsed = strip.querySelector('[data-role="elapsed"]');
+        var slow = strip.querySelector('[data-role="slow"]');
+        if (phase && (s.label || s.phase)) phase.textContent = s.label || s.phase;
+        var secs = Math.max(0, Math.round(Number(s.elapsed) || 0));
+        if (elapsed) elapsed.textContent = String(secs);
+        if (slow) slow.hidden = secs < INTERACTIVE_SLOW_S;
+    }
+    function tick() {
+        if (!alive()) return;
+        fetch('/dataset/' + runId + '/interactive/status?job=' + encodeURIComponent(job))
+            .then(function(r) { return r.json(); })
+            .then(function(s) {
+                if (!alive()) return;
+                if (s.state === 'done' || s.state === 'failed' || s.state === 'unknown') {
+                    container.setAttribute('data-loaded', '0');
+                    window.loadDatasetInteractive(runId, panel);
+                    return;
+                }
+                show(s);
+                setTimeout(tick, INTERACTIVE_POLL_MS);
+            })
+            .catch(function() { if (alive()) setTimeout(tick, INTERACTIVE_POLL_MS); });
+    }
+    setTimeout(tick, INTERACTIVE_POLL_MS);
+}
 
 /**
  * Strategy-B: reproduce a run's figures by re-running its own plotting.py in the
@@ -17242,6 +17286,7 @@ function _observeInteractiveResize(container) {
  * Fetch one interactive figure's Plotly JSON and render it. Attaches the
  * click-to-edit handler when the recipe marked the figure clickable.
  */
+var INTERACTIVE_TILE_TIMEOUT_MS = 30000;
 function _fetchInteractiveFig(div, runId, figKey, gen, container) {
     if (div.getAttribute('data-rendered') === '1') return;
     div.setAttribute('data-rendered', '1');
@@ -17254,9 +17299,14 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
     // Tiles default to the recipe layer; replot tiles set data-endpoint="replot/plot"
     // so the same render/observer/clickable machinery serves both sources.
     var endpoint = div.getAttribute('data-endpoint') || 'interactive/plot';
-    fetch('/dataset/' + runId + '/' + endpoint + '?fig=' + encodeURIComponent(figKey))
+    // a stuck tile says so instead of a skeleton forever (scrolling back retries)
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function() { ctl.abort(); }, INTERACTIVE_TILE_TIMEOUT_MS) : null;
+    fetch('/dataset/' + runId + '/' + endpoint + '?fig=' + encodeURIComponent(figKey),
+          ctl ? {signal: ctl.signal} : undefined)
         .then(function(r) { return r.json(); })
         .then(function(d) {
+            if (timer) clearTimeout(timer);
             if (stale()) return;
             if (d.error) {
                 div.innerHTML = '<p style="color:var(--pico-del-color)">' + d.error + '</p>';
@@ -17359,8 +17409,14 @@ function _fetchInteractiveFig(div, runId, figKey, gen, container) {
             }
         })
         .catch(function(e) {
+            if (timer) clearTimeout(timer);
             if (stale()) return;
-            div.innerHTML = '<p style="color:var(--pico-del-color)">' + e.message + '</p>';
+            var msg = (e && e.name === 'AbortError')
+                ? 'This figure did not arrive within ' + (INTERACTIVE_TILE_TIMEOUT_MS / 1000)
+                  + ' s. Scroll it out of view and back to try again.'
+                : e.message;
+            div.innerHTML = '<p style="color:var(--pico-del-color)"></p>';
+            div.firstChild.textContent = msg;
             div.setAttribute('data-rendered', '0');
         });
 }
