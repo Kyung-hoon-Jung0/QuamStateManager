@@ -16078,10 +16078,12 @@ html.nav-order-pending #sidebar { visibility: hidden; }
     position: absolute;
     left: 0;
     right: 0;
-    height: 2px;
+    height: 3px;
+    border-radius: 2px;
     background: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent), 0 0 6px var(--color-accent);
     pointer-events: none;
-    z-index: 1;
+    z-index: 5;
 }
-#sidebar .nav-drop-before::before { top: 0; }
-#sidebar .nav-drop-after::after { bottom: 0; }
+#sidebar .nav-drop-before::before { top: -2px; }
+#sidebar .nav-drop-after::after { bottom: -2px; }

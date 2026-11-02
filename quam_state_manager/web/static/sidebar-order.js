@@ -96,8 +96,12 @@
         clearIndicator();
         drag.target = null;
         const hit = document.elementFromPoint ? document.elementFromPoint(event.clientX, event.clientY) : event.target;
-        const target = hit && rowFor(hit);
-        if (!target || target === drag.row || target.parentElement !== drag.group) return;
+        // A point over an expanded sub-menu names the item in THIS group that holds it.
+        let target = hit && hit.closest ? hit.closest('li[data-nav-key]') : null;
+        while (target && target.parentElement !== drag.group) {
+            target = target.parentElement && target.parentElement.closest('li[data-nav-key]');
+        }
+        if (!target || target === drag.row) return;
         const rect = target.getBoundingClientRect();
         drag.target = target;
         drag.after = event.clientY >= rect.top + rect.height / 2;

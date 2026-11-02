@@ -52,6 +52,11 @@ check('Escape cancels drag', () => {
     assert.equal(document.querySelector('.nav-drop-after'),null);
     assert.equal(h.row('a').querySelector('a').dispatchEvent(new h.w.MouseEvent('click',{bubbles:true,cancelable:true})), false);
 });
+check('a point over an expanded sub-menu targets its parent item', () => {
+    h=setup(); h.pointer('pointerdown',h.row('c')); h.pointer('pointermove',h.row('s'),0,10);
+    assert(h.row('a').classList.contains('nav-drop-after')); h.pointer('pointerup',h.row('s'),0,10);
+    assert.equal(h.order(),'acb'); assert.equal(h.row('s').parentElement.dataset.navGroup,'sub');
+});
 check('cannot drag across groups', () => {
     h=setup(); h.pointer('pointerdown',h.row('a')); h.pointer('pointermove',h.row('d'),0,10); h.pointer('pointerup',h.row('d')); assert.equal(h.order(),'abc');
 });
