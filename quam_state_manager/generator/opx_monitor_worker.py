@@ -157,7 +157,16 @@ class QmmTarget:
         if str(qm_id) not in open_now:
             raise RuntimeError(f"{qm_id} is no longer open; nothing was closed")
         qm = self.qmm.get_qm(qm_id)
-        return bool(qm.close())
+        return self._verified_close(str(qm_id), qm)
+
+    def _verified_close(self, qid, qm):
+        result = qm.close()
+        remaining = set(map(str, self.qmm.list_open_qms()))
+        if qid in remaining:
+            return {'closed': [], 'still_open': [qid], 'failed': {qid: 'still open after close'}}
+        if result is False:
+            return {'closed': [], 'still_open': [], 'failed': {qid: 'close returned False; no longer listed'}}
+        return {'closed': [qid], 'still_open': [], 'failed': {}}
 
     def close_qms(self, qm_ids):
         """Close each named QM that is open now; report the rest, never close others."""
@@ -168,8 +177,9 @@ class QmmTarget:
                 skipped.append(qid)
                 continue
             try:
-                self.qmm.get_qm(qid).close()
-                closed.append(qid)
+                result = self._verified_close(qid, self.qmm.get_qm(qid))
+                closed.extend(result['closed'])
+                failed.update(result['failed'])
             except Exception as exc:  # noqa: BLE001
                 failed[qid] = _err_text(exc)
         return {"closed": closed, "skipped": skipped, "failed": failed}
@@ -195,8 +205,9 @@ class QmmTarget:
                     skipped.append(qid)
                     reasons[qid] = state['basis']
                     continue
-                qm.close()
-                closed.append(qid)
+                result = self._verified_close(qid, qm)
+                closed.extend(result['closed'])
+                failed.update(result['failed'])
             except Exception as exc:
                 skipped.append(qid)
                 reasons[qid] = 'activity unknown: ' + _err_text(exc)

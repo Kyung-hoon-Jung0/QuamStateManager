@@ -962,11 +962,13 @@ class Monitor:
                 self._drop_worker(r["error"])
         finally:
             self._lock.release()
-        closed, skipped, failed = (names if r.get("ok") else []), [], {}
-        if r.get("ok") and every and isinstance(r.get("result"), dict):
+        closed, skipped, failed = [], [], {}
+        if r.get("ok") and isinstance(r.get("result"), dict):
             closed = list(r["result"].get("closed") or [])
             skipped = list(r["result"].get("skipped") or [])
             failed = dict(r["result"].get("failed") or {})
+        if r.get('ok') and not isinstance(r.get('result'), dict):
+            failed = {qid: 'Close outcome was not verified' for qid in names}
         ok = bool(r.get("ok")) and not failed
         err = r.get("error") or ("; ".join(f"{k}: {v}" for k, v in failed.items()) or None)
         h = self.history()
@@ -974,10 +976,10 @@ class Monitor:
             h.log_action("close_idle" if idle else ("close_qm" if not every else "close_all"),
                          {"qm_ids": closed, "ok": ok, "error": err,
                           'requested_ids': names, 'skip_reasons': (r.get('result') or {}).get('skip_reasons', {}) if every else {},
-                          "skipped": skipped or None, "by": who or None})
+                          "skipped": skipped or None, "failed": failed, "by": who or None})
         if r.get("ok"):
             self.poll_once()
-        return {"ok": ok, "error": err, "closed": closed, "skipped": skipped,
+        return {"ok": ok, "error": err, "closed": closed, "skipped": skipped, "failed": failed,
                 "skip_reasons": (r.get('result') or {}).get('skip_reasons', {}) if every else {}}
 
     # -- what the page shows

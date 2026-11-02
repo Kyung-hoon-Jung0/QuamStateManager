@@ -43,7 +43,7 @@ class FakeWorker:
                 raise item
             return {"ok": True, "result": item}
         if op == "close_qm":
-            return {"ok": True, "result": True}
+            return {"ok": True, "result": {"closed": [kw["qm_id"]], "failed": {}}}
         if op == "close_qms":
             open_now = {q["id"] for q in (self.script[0].get("open_qms") or [])}
             ids = list(kw.get("qm_ids") or [])
@@ -697,3 +697,19 @@ def test_d21_all_refused_is_error(env):
     assert not m.capabilities()['close'] and not m.capabilities()['live']
     html = page(app, 'live')
     assert 'as of' in html and 'Updated 0' not in html
+
+
+def test_d22_close_false_or_still_listed(env):
+    from types import SimpleNamespace
+    from quam_state_manager.generator.opx_monitor_worker import QmmTarget
+    for result, remaining in [(False, []), (True, ['QM-fable'])]:
+        t = QmmTarget.__new__(QmmTarget)
+        t.qmm = SimpleNamespace(list_open_qms=lambda: remaining)
+        outcome = t._verified_close('QM-fable', SimpleNamespace(close=lambda: result))
+        assert outcome['closed'] == [] and 'QM-fable' in outcome['failed']
+    app, m, w, clock, _ = env
+    m.poll_once()
+    original = w.request
+    w.request = lambda op, **kw: {'ok': True, 'result': False} if op == 'close_qm' else original(op, **kw)
+    assert not m.close('QM-a')['ok']
+    assert m.history().recent_actions()[0]['qm_ids'] == []
