@@ -45,13 +45,54 @@
         var btn = e.target && e.target.closest && e.target.closest(".opxmon-close, .opxmon-close-all, .opxmon-close-idle");
         if (!btn) return;
         e.preventDefault();
-        if (!window.confirm(confirmText(btn))) return;
+        var existing = document.querySelector('.opxmon-confirm');
+        if (existing) existing.remove();
+        var panel = document.createElement('section');
+        panel.className = 'opxmon-confirm ui-state';
+        panel.setAttribute('role', 'region');
+        panel.setAttribute('aria-label', 'Confirm close');
+        var message = document.createElement('p');
+        message.textContent = confirmText(btn);
+        panel.appendChild(message);
+        var ids = (btn.getAttribute('data-qm-ids') || btn.getAttribute('data-qm-id') || '').split(',').map(function (id) { return id.trim(); }).filter(Boolean);
+        ids.forEach(function (id) {
+            var row = Array.from(document.querySelectorAll('.opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
+            var detail = document.createElement('p');
+            detail.textContent = id + ': ' + (row ? row.getAttribute('data-basis') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
+            panel.appendChild(detail);
+        });
+        var typed = null;
+        if (btn.classList.contains('opxmon-close-all')) {
+            var label = document.createElement('label');
+            label.textContent = 'Type the count (' + ids.length + ') to close all';
+            typed = document.createElement('input');
+            typed.className = 'opxmon-confirm-count';
+            label.appendChild(typed); panel.appendChild(label);
+        }
+        var accept = document.createElement('button');
+        accept.type = 'button'; accept.className = 'btn-sm opxmon-confirm-accept'; accept.textContent = 'Confirm close';
+        var cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = 'btn-sm outline opxmon-confirm-cancel'; cancel.textContent = 'Cancel';
+        cancel.onclick = function () { panel.remove(); };
+        accept.onclick = function () {
+            if (typed && typed.value !== String(ids.length)) { typed.focus(); return; }
+            accept.disabled = true;
+            submitClose(btn, typed ? typed.value : null);
+            panel.remove();
+        };
+        panel.appendChild(accept); panel.appendChild(cancel);
+        btn.insertAdjacentElement('afterend', panel);
+        accept.focus();
+    }
+
+    function submitClose(btn, count) {
         var fd = new FormData();
         if (btn.classList.contains("opxmon-close-all") || btn.classList.contains("opxmon-close-idle")) {
             fd.append(btn.classList.contains("opxmon-close-idle") ? "idle" : "all", "1");
             fd.append("qm_ids", btn.getAttribute("data-qm-ids") || "");
         }
         else fd.append("qm_id", btn.getAttribute("data-qm-id"));
+        if (count !== null) fd.append('confirm_count', count);
         try {
             var who = window.localStorage && window.localStorage.getItem("quam_actor_name");
             if (who) fd.append("by", who);

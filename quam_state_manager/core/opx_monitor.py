@@ -80,7 +80,7 @@ def timestamp(value):
         return None
 
 
-def idle_state(q, first_seen, now, minutes=30):
+def idle_state(q, first_seen, now, minutes=120):
     """Conservative activity judgement, including queued jobs and unknown jobs."""
     jobs = q.get('jobs')
     if jobs is None or any(str(j.get('status', '')).lower() not in
@@ -151,11 +151,11 @@ def load_settings(instance) -> dict:
     d["thresholds"] = th if isinstance(th, dict) else {}
     d["alarms_armed"] = bool(d.get("alarms_armed", False))
     try:
-        d['idle_minutes'] = max(0.01, min(10080, float(d.get('idle_minutes') or 30)))
+        d['idle_minutes'] = max(0.01, min(10080, float(d.get('idle_minutes') or 120)))
         if not math.isfinite(d['idle_minutes']):
-            d['idle_minutes'] = 30
+            d['idle_minutes'] = 120
     except (ValueError, TypeError):
-        d['idle_minutes'] = 30
+        d['idle_minutes'] = 120
     return d
 
 

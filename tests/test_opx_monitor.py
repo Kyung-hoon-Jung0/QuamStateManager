@@ -740,3 +740,13 @@ def test_d24_bad_outranks_unknown_and_admin_auto(monkeypatch):
     assert om.health(a, {'known': False}, {'temp:FEM 0': 50}, 'ok')['color'] == 'red'
     assert om.health(a, admin, {}, 'ok')['color'] == 'green'
     assert om.temperature_limit('FEM 0', {'temp:all_fems': 80, 'temp:FEM 0': 50}) == 50
+
+
+def test_d25_inline_safety(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    html = page(app, 'cleanup')
+    assert 'opxmon-danger' in html and 'close_other_machines' in html
+    assert om.load_settings(m.instance)['idle_minutes'] == 120
+    response = app.test_client().post('/opx-monitor/close', data={'all': '1', 'qm_ids': 'QM-a'}, headers=ORIGIN)
+    assert response.status_code == 400 and not any(op.startswith('close') for op, _ in w.calls)

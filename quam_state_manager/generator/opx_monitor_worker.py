@@ -270,7 +270,7 @@ def main():
             elif op == "close_qms":
                 res = target.close_qms(list(req.get("qm_ids") or []))
             elif op == 'close_idle':
-                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 30))
+                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 120))
             else:
                 raise ValueError(f"unknown op {op!r}")
             _out({"ok": True, "result": res, "took_s": round(time.time() - t0, 3)})

@@ -42,7 +42,7 @@
         <td class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="opxmon-fem{% if k in busy %} opxmon-fem--busy{% elif k in held %} opxmon-fem--held{% endif %}"
                 title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% elif not occupancy.known %}Occupancy unknown{% else %}No open QM claims this FEM{% endif %}">
-            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; held{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} degC{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
+            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; claimed by an open QM{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} degC{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -86,7 +86,7 @@
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table opxmon-table" aria-label="Open quantum machines">
     <thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th></tr></thead>
-    <tbody>{% for q in ans.open_qms %}<tr class="opxmon-qm-row" data-qm-id="{{ q.id }}"><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} ? idle{% endif %}</div></td>
+    <tbody>{% for q in ans.open_qms %}<tr class="opxmon-qm-row" data-qm-id="{{ q.id }}"><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
       <td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       <td class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id[:8] }}</code> {{ j.status }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-muted">{{ match.reason }}</span>{% if j.created_at %} &middot; created <span class="ts-local" data-ts="{{ j.created_at }}">{{ j.created_at }}</span>{% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
   </table>{% endif %}
@@ -114,13 +114,14 @@
   {%- if not cap.close %}
   <p class="ui-state ui-state--empty opxmon-close-off"><span class="ui-state-key">Closing is not available.</span> {{ cap.close_reason }}</p>
   {%- else %}
+  <p class="ui-note">open_qm closes other machines by default (close_other_machines); an idle QM blocks others only when that is turned off or ports are not shareable.</p>
   <p class="ui-note">Closing a QM stops any job it runs, for whoever opened it. Each close asks first and is written to History.</p>
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
-    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} ? idle{% endif %}</div></td><td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
-      <td class="ui-table-cell"><button type="button" class="btn-sm outline opxmon-close" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
+      <td class="ui-table-cell"><button type="button" class="btn-sm outline opxmon-close" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
   <p><button type="button" class="btn-sm outline opxmon-close-idle" data-qm-ids="{{ idle_ids | join(', ') }}" {% if not idle_ids or st.state != 'ok' %}disabled{% endif %}>Close idle QMs ({{ idle_ids|length }})</button></p>
-  <p><button type="button" class="btn-sm outline opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p>
+  <details class="opxmon-danger"><summary>Danger</summary><p><button type="button" class="btn-sm outline opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p></details>
   {%- endif %}
   {%- endif %}
   <p class="opxmon-close-result" role="status" hidden></p>

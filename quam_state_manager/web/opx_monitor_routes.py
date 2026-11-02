@@ -231,6 +231,8 @@ def opx_monitor_close():
     confirmed = [x.strip() for x in (request.form.get("qm_ids") or "").split(",") if x.strip()]
     if (not qm_id and not every) or (every and not confirmed):
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
+    if request.form.get('all') == '1' and request.form.get('confirm_count') != str(len(confirmed)):
+        return jsonify({'ok': False, 'error': 'Type the count to confirm close all.'}), 400
     who = (request.form.get("by") or "").strip()[:80]
     res = (m.close(None, who=who, qm_ids=confirmed, idle=idle) if every else m.close(qm_id, who=who))
     return jsonify(res), (200 if res.get("ok") else 409)
