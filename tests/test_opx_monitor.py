@@ -770,3 +770,16 @@ def test_d26_format_count_rounding_and_frozen(env):
     for t in range(0, 181, 5):
         trends.append(answer(temps={'Chassis': 40}), clock.t + t, 5)
     assert trends.series(clock.t + 180)['con1/Chassis']['unchanged_min'] == 3
+
+
+def test_d27_tiles_empty_slot_and_shared_baseline(env):
+    app, m, w, clock, _ = env
+    a = answer(temps={'FEM 0': 67, 'FEM 1': 0, 'Chassis': 40})
+    a['controllers'][0]['fems'] = {'1': 'LF'}
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'empty slot' in html and 'opxmon-tile' in html and 'Shared y baseline' in html
+    assert om.temperature_rows(a['controllers'][0])[1]['empty']
+    s = m.trends().series(clock.t)
+    assert ',18.13' in s['con1/FEM 0']['paths'][0]

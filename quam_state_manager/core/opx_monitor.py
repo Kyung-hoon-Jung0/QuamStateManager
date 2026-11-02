@@ -495,6 +495,8 @@ def temperature_rows(controller: dict) -> list[dict]:
         rows.append({"key": k, "slot": slot,
                      "label": f"FEM slot {slot}" if slot is not None and verified else str(k),
                      'mapping_verified': verified,
+                     'empty': slot is not None and verified and str(slot) not in {str(k) for k in controller.get('fems') or {}} and v == NO_READING,
+                     'type': (controller.get('fems') or {}).get(str(slot), (controller.get('fems') or {}).get(slot, '')), 
                      "value": None if v is None or v == NO_READING else v})
     # FEM slots in slot order first, then the other sensors by name
     return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
@@ -634,7 +636,7 @@ class TemperatureTrends:
                 for bucket in buckets.values():
                     reduced.extend(sorted(set((bucket[0], min(bucket, key=lambda p: p[1]),
                                                max(bucket, key=lambda p: p[1]), bucket[-1]))))
-                paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-(v-lo)/max(1,hi-lo)*32:.2f}' for t, v in reduced))
+                paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-v/120*32:.2f}' for t, v in reduced))
             unchanged_start = segments[-1][-1][0]
             for t, v in reversed(segments[-1]):
                 if v != segments[-1][-1][1]:

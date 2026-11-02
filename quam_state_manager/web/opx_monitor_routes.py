@@ -92,11 +92,12 @@ def _view(tab: str) -> dict:
     first = {r['qm_id']: r for r in h.table() if not r.get('job_id')} if h else {}
     idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
+    hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: r['value'], default=None)
     try:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
+    return {'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],

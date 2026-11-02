@@ -16109,3 +16109,12 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .opxmon-verdict[data-health="red"] {color:var(--ui-danger-text)}
 .opxmon-status--ok {border:0; color:var(--pico-muted-color); padding:0; font-size:.8rem}
 .opxmon-details {margin:.5rem 0}
+
+.opxmon-tiles {display:flex; gap:.4rem; overflow-x:auto; padding:.4rem 0; align-items:flex-start}
+.opxmon-tile {flex:0 0 108px; margin:0; padding:.4rem; border:1px solid var(--pico-muted-border-color); border-radius:5px; font-size:.75rem}
+.opxmon-tile summary {list-style:none; display:flex; flex-direction:column; gap:.15rem; margin:0; font-size:.75rem}
+.opxmon-tile strong {font-size:1.1rem; font-variant-numeric:tabular-nums}
+.opxmon-tile[open] {flex-basis:250px}
+.opxmon-hot {color:var(--ui-danger-text)}
+.opxmon-hottest {font-size:.85rem; color:var(--pico-muted-color)}
+.opxmon-confirm {white-space:pre-line; padding:.7rem; margin:.5rem 0}
