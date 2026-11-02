@@ -2015,7 +2015,7 @@ def _hop(doc: dict, pointer: str, field_path: tuple) -> tuple[Any, tuple]:
     return node, tuple(parts)
 
 
-def _resolved_leaves(doc: dict, top: str) -> dict[str, Any]:
+def _resolved_leaves(doc: dict, top: str, path: tuple | None = None) -> dict[str, Any]:
     """Every leaf under ``doc[top]`` as the value QUAM would read: pointers followed
     (a pointer to an object expands to its leaves), an unresolvable one kept as its
     text. Raises ``_Cycle`` when a chain loops."""
@@ -2056,7 +2056,12 @@ def _resolved_leaves(doc: dict, top: str) -> dict[str, Any]:
             return
         out[label] = node
 
-    if isinstance(doc.get(top), dict):
+    if path is not None:
+        node = doc
+        for k in path:
+            node = node[k]
+        walk(node, path, ".".join(path), frozenset(), len(path) - 1)
+    elif isinstance(doc.get(top), dict):
         walk(doc[top], (top,), top, frozenset(), 0)
     return out
 
@@ -2070,8 +2075,9 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     A candidate is a place where the source and the merged state hold a different
     raw form. They are tried together first, then one by one (objects before
     pointers, so a link can land on an object put back before it); each attempt is
-    kept only if every leaf of the whole state resolves exactly as before (a
-    ``__class__`` is a leaf too) and no pointer chain loops."""
+    kept only if every affected leaf resolves exactly as before (a ``__class__``
+    is a leaf too) and no pointer chain loops. Independent subtrees need no
+    revalidation; the trial order and accepted set remain unchanged."""
     cands: list[tuple[str, tuple, Any]] = []
 
     def walk(o: Any, m: Any, path: tuple) -> None:
@@ -2095,23 +2101,77 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         return []
     cands.sort(key=lambda c: (is_pointer(c[2]), c[0]))
 
+    # Partition the document into small, stable subtrees. A candidate is always
+    # wholly inside one partition (stop early at a candidate that changes shape).
+    # Connect partitions using pointers from BOTH possible forms. This conservative
+    # graph includes chains, object references, missing targets and new cycles;
+    # no attempted substitution can affect a disconnected partition.
+    boundaries = {path for _, path, _ in cands}
+    doc = _merged_doc(merged, wiring)
+    units: dict[tuple, int] = {}
+
+    def partition(node: Any, path: tuple) -> None:
+        if path and (len(path) >= 4 or path in boundaries or not isinstance(node, dict)):
+            units[path] = len(units)
+        elif isinstance(node, dict):
+            for k, v in node.items():
+                partition(v, path + (k,))
+
+    partition(doc, ())
+    parents = list(range(len(units)))
+
+    def find(i: int) -> int:
+        while parents[i] != i:
+            parents[i] = parents[parents[i]]
+            i = parents[i]
+        return i
+
+    below: dict[tuple, list[int]] = {}
+    for path, i in units.items():
+        for depth in range(len(path) + 1):
+            below.setdefault(path[:depth], []).append(i)
+
+    def overlaps(path: tuple) -> list[int]:
+        for depth in range(1, len(path) + 1):
+            if path[:depth] in units:
+                return [units[path[:depth]]]
+        return below.get(path, [])
+
+    def connect(node: Any, path: tuple) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                connect(v, path + (k,))
+        elif is_pointer(node):
+            _, target = _hop(doc, node, path)
+            linked = overlaps(path) + overlaps(target)
+            if linked:
+                first = find(linked[0])
+                for i in linked[1:]:
+                    parents[find(i)] = first
+
+    connect(doc, ())
+    connect(_merged_doc(old, wiring), ())
+    components: dict[int, list[tuple]] = {}
+    for path, i in units.items():
+        if path[0] in merged:
+            components.setdefault(find(i), []).append(path)
+
+    def read_unit(d: dict, path: tuple) -> dict:
+        # Root scalars were never resolved by the original whole-state reader.
+        if len(path) == 1 and not isinstance(merged[path[0]], dict):
+            return {path[0]: merged[path[0]]}
+        return _resolved_leaves(d, path[0], path)
+
+    try:
+        baseline = {path: read_unit(doc, path)
+                    for paths in components.values() for path in paths}
+    except _Cycle:
+        return []
+
     def doc_of(state: dict) -> dict:
         return _merged_doc(state, wiring)
 
-    def every_leaf(state: dict) -> dict[str, Any]:
-        d = doc_of(state)
-        out: dict[str, Any] = {}
-        for top, v in state.items():
-            if isinstance(v, dict):
-                out.update(_resolved_leaves(d, top))
-            else:
-                out[top] = v
-        return out
-
-    try:
-        before = every_leaf(merged)
-    except _Cycle:
-        return []
+    candidate_components = {path: find(overlaps(path)[0]) for _, path, _ in cands}
 
     def setp(root: dict, path: tuple, v: Any) -> None:
         node = root
@@ -2119,9 +2179,12 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
             node = node[k]
         node[path[-1]] = copy.deepcopy(v)
 
-    def ok(state: dict) -> bool:
+    def ok(state: dict, group: list) -> bool:
         try:
-            return every_leaf(state) == before
+            affected = {candidate_components[path] for _, path, _ in group}
+            d = doc_of(state)
+            return all(read_unit(d, path) == baseline[path]
+                       for component in affected for path in components.get(component, []))
         except _Cycle:
             return False
 
@@ -2140,7 +2203,7 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         saved = [(path, copy.deepcopy(get(merged, path))) for _, path, _ in group]
         for _, path, v in group:
             setp(merged, path, v)
-        if ok(merged):
+        if ok(merged, group):
             done.extend(dot for dot, _, _ in group)
             return
         for path, v in reversed(saved):
@@ -2156,7 +2219,7 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     saved = copy.deepcopy(merged)
     for _, path, v in cands:
         setp(merged, path, v)
-    if ok(merged):
+    if ok(merged, cands):
         return [c[0] for c in cands]
     merged.clear()
     merged.update(saved)

@@ -7,11 +7,14 @@ from copy import deepcopy
 import json
 import random
 import time
+from typing import Any
 
 import pytest
 
 from quam_state_manager.core.pointer_resolver import is_pointer, resolve_pointer
-from quam_state_manager.core.regen_merge import graft_wiring_values, merge_states
+from quam_state_manager.core.regen_merge import (
+    _Cycle, _merged_doc, _resolved_leaves, graft_wiring_values, merge_states,
+)
 
 
 SEEDS = range(200)
@@ -191,29 +194,172 @@ def test_eight_qubit_performance(seed):
     merge(old, new)
 
 
-@pytest.mark.xfail(strict=True, reason="Project resolver intentionally returns #./ aliases unchanged")
-def test_self_alias_resolves_directly_reproducer():
+def test_self_alias_preserves_source():
     old = {"qubits": {"q0": {"amplitude": 0.25, "alias": "#./amplitude"}}}
-    result = merge_states(old, deepcopy(old))
-    assert resolve_pointer(result.merged, "#./amplitude", ("qubits", "q0", "alias")) == 0.25
+    assert merge_states(old, deepcopy(old)).merged == old
 
 
-@pytest.mark.xfail(strict=True, reason="Source-form restoration undoes embedded wiring swaps when external wiring is also supplied")
-def test_embedded_wiring_swap_reproducer():
-    # External wiring masks embedded wiring during source-form validation.
-    # The normal fuzz adapter above follows the separate-file production shape;
-    # keep this failing combined-document case rather than losing the finding.
-    old = {"qubits": {"q0": {"z": {"opx_output": "#/wiring/qubits/q0/z/opx_output"}}},
-           "ports": {"analog_outputs": {"con1": {"5": {
-               "1": {"__class__": "quam.components.ports.Port", "delay": 11},
-               "2": {"__class__": "quam.components.ports.Port", "delay": 22}}}}},
-           "wiring": {"qubits": {"q0": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/1"}}}}}
-    old["qubits"]["q1"] = {"z": {"opx_output": "#/wiring/qubits/q1/z/opx_output"}}
-    old["wiring"]["qubits"]["q1"] = {"z": {"opx_output": "#/ports/analog_outputs/con1/5/2"}}
-    new = deepcopy(old)
-    new["wiring"]["qubits"]["q0"]["z"]["opx_output"] = "#/ports/analog_outputs/con1/5/2"
-    new["wiring"]["qubits"]["q1"]["z"]["opx_output"] = "#/ports/analog_outputs/con1/5/1"
-    result = merge_states(old, new, old_wiring={"wiring": old["wiring"]},
-                          new_wiring={"wiring": new["wiring"]})
-    path = ("wiring", "qubits", "q0", "z", "opx_output")
-    assert at(result.merged, path) == at(new, path)
+# Embedded wiring is excluded: production reads state.json and wiring.json separately.
+
+
+# Frozen pre-optimization algorithm: compare both state and restoration order.
+def _old_restore_source_forms(merged: dict, old: dict, wiring: dict | None,
+                          protect: set[str] | None) -> list[str]:
+    """Put back the SOURCE's own form (a lab's pointer direction, an inline object
+    the rebuild replaced with a link, a pointer to a different but equal field)
+    wherever doing so changes no value QUAM reads and closes no cycle.
+
+    A candidate is a place where the source and the merged state hold a different
+    raw form. They are tried together first, then one by one (objects before
+    pointers, so a link can land on an object put back before it); each attempt is
+    kept only if every leaf of the whole state resolves exactly as before (a
+    ``__class__`` is a leaf too) and no pointer chain loops."""
+    cands: list[tuple[str, tuple, Any]] = []
+
+    def walk(o: Any, m: Any, path: tuple) -> None:
+        if isinstance(o, dict) and isinstance(m, dict):
+            for k, ov in o.items():
+                if k in m:
+                    walk(ov, m[k], path + (k,))
+            return
+        if o == m:
+            return
+        if not (is_pointer(o) or is_pointer(m)):
+            return
+        dot = ".".join(path)
+        if protect and any(dot == p or dot.startswith(p + ".") or p.startswith(dot + ".")
+                           for p in protect):
+            return
+        cands.append((dot, path, o))
+
+    walk(old, merged, ())
+    if not cands:
+        return []
+    cands.sort(key=lambda c: (is_pointer(c[2]), c[0]))
+
+    def doc_of(state: dict) -> dict:
+        return _merged_doc(state, wiring)
+
+    def every_leaf(state: dict) -> dict[str, Any]:
+        d = doc_of(state)
+        out: dict[str, Any] = {}
+        for top, v in state.items():
+            if isinstance(v, dict):
+                out.update(_resolved_leaves(d, top))
+            else:
+                out[top] = v
+        return out
+
+    try:
+        before = every_leaf(merged)
+    except _Cycle:
+        return []
+
+    def setp(root: dict, path: tuple, v: Any) -> None:
+        node = root
+        for k in path[:-1]:
+            node = node[k]
+        node[path[-1]] = deepcopy(v)
+
+    def ok(state: dict) -> bool:
+        try:
+            return every_leaf(state) == before
+        except _Cycle:
+            return False
+
+    def get(root: dict, path: tuple) -> Any:
+        node = root
+        for k in path:
+            node = node[k]
+        return node
+
+    done: list[str] = []
+
+    def attempt(group: list) -> None:
+        """Put a group back; keep it if the state reads the same, else halve it."""
+        if not group:
+            return
+        saved = [(path, deepcopy(get(merged, path))) for _, path, _ in group]
+        for _, path, v in group:
+            setp(merged, path, v)
+        if ok(merged):
+            done.extend(dot for dot, _, _ in group)
+            return
+        for path, v in reversed(saved):
+            setp(merged, path, v)
+        if len(group) == 1:
+            return
+        mid = len(group) // 2
+        attempt(group[:mid])
+        attempt(group[mid:])
+
+    # all together first (forms that only work as a set, a link and the object it
+    # lands on); else objects first, then pointers, each halved until it holds
+    saved = deepcopy(merged)
+    for _, path, v in cands:
+        setp(merged, path, v)
+    if ok(merged):
+        return [c[0] for c in cands]
+    merged.clear()
+    merged.update(saved)
+    attempt([c for c in cands if not is_pointer(c[2])])
+    attempt([c for c in cands if is_pointer(c[2])])
+    return done
+
+
+@pytest.mark.parametrize("seed", range(50))
+def test_source_forms_equal_old_algorithm(seed, monkeypatch):
+    from quam_state_manager.core import regen_merge
+    old, new = chip(seed)
+    actual = merge(old, new)
+    monkeypatch.setattr(regen_merge, "_restore_source_forms", _old_restore_source_forms)
+    expected = merge(old, new)
+    assert actual == expected
+
+    # Exercise refused candidates, chains, object expansion, cycles, missing
+    # targets, and protected subtrees with the identical original trial order.
+    rng = random.Random(seed)
+    state = {"data": {f"n{i}": {"value": rng.randrange(4), "alias": "#./value"}
+                      for i in range(12)}}
+    source = deepcopy(state)
+    for i, node in enumerate(source["data"].values()):
+        node["alias"] = rng.choice(["#./value", f"#/data/n{rng.randrange(12)}/alias",
+                                    f"#/data/n{rng.randrange(12)}/value", "#/missing"])
+        if i % 3 == 0:
+            node["value"] = f"#/data/n{rng.randrange(12)}"
+    protect = {f"data.n{seed % 12}.value"}
+    a, b = deepcopy(state), deepcopy(state)
+    # Retrieve the optimized function before replacing it for the second run.
+    monkeypatch.undo()
+    restored = regen_merge._restore_source_forms(a, source, None, protect)
+    expected_restored = _old_restore_source_forms(b, source, None, protect)
+    assert (a, restored) == (b, expected_restored)
+
+
+def test_source_form_refusal_performance(monkeypatch):
+    from quam_state_manager.core import regen_merge
+    hop = regen_merge._hop
+    hops = 0
+
+    def counted_hop(*args):
+        nonlocal hops
+        hops += 1
+        return hop(*args)
+
+    monkeypatch.setattr(regen_merge, "_hop", counted_hop)
+    def make():
+        return {"qubits": {f"q{q}": {"ops": {
+            f"op{i}": dict({f"p{j}": float(j) for j in range(49)}, b="#./p1")
+            for i in range(40)}} for q in range(10)}}
+    old, new = make(), make()
+    for qubit in old["qubits"].values():
+        for i in range(0, 40, 2):
+            qubit["ops"][f"op{i}"]["b"] = "#./p2"
+    start = time.perf_counter()
+    result = merge_states(old, new)
+    elapsed = time.perf_counter() - start
+    assert result.merged == new
+    assert not result.stats.source_forms_restored
+    assert elapsed < 3.0, elapsed
+    # Also pin the work bound so a fast host cannot hide whole-state rescans.
+    assert hops < 20_000, hops
