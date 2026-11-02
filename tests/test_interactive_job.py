@@ -265,3 +265,63 @@ def test_a_warm_replay_reports_worker_phases_to_the_job(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "_PLOT_WORKER", None)
     R._warm_request(str(env), tmp_path, None, 10, lambda *a: heard.append(a))
     assert ("drawing figure", 1, 2, "a") in heard
+
+
+# ---------------------------------------------------------------------------
+# D-4: fixed costs
+# ---------------------------------------------------------------------------
+
+def test_the_sha_memo_never_changes_the_fingerprint(tmp_path, monkeypatch):
+    import os
+    from quam_state_manager.generator import iplot_sources as S
+    tree = tmp_path / "pkg"; tree.mkdir()
+    files = []
+    for i in range(5):
+        f = tree / f"m{i}.py"; f.write_text(f"v = {i}"); files.append(f)
+    S._SHA_MEMO.clear()
+    cold = S.fingerprint([files[0]], [tree])
+    reads = []
+    real = S.Path.read_bytes
+    monkeypatch.setattr(S.Path, "read_bytes", lambda self: reads.append(self) or real(self))
+    warm = S.fingerprint([files[0]], [tree])
+    assert warm == cold and reads == [], "unchanged stats are not read again"
+    S._SHA_MEMO.clear()
+    assert S.fingerprint([files[0]], [tree]) == cold, "with and without the memo"
+    st = files[2].stat()
+    files[2].write_text("v = 9")                       # same size, new bytes
+    os.utime(files[2], ns=(st.st_atime_ns, st.st_mtime_ns + 10**9))
+    reads.clear()
+    edited = S.fingerprint([files[0]], [tree])
+    assert edited != cold and [p.name for p in reads] == ["m2.py"]
+    S._SHA_MEMO.clear()
+    assert S.fingerprint([files[0]], [tree]) == edited
+
+
+def test_an_import_failure_is_cached_until_retry(tmp_path, monkeypatch):
+    source = tmp_path / "imported.py"; source.write_text("x = 1")
+    run = SimpleNamespace(folder_path=str(tmp_path / "run"), experiment_name="05_x")
+    calls = []
+
+    def failing(*a):
+        calls.append(1)
+        return {"figures": [], "errors": [{"stage": "import", "trace": "ModuleNotFoundError: No module named 'lab'"}],
+                "module_files": [{"path": str(source)}], "module_trees": [],
+                "code_fingerprint": fingerprint([source])}
+    monkeypatch.setattr("quam_state_manager.core.config_generator.get_selected_env", lambda _: "env")
+    monkeypatch.setattr(R, "_invoke", failing)
+    with R._LOCK:
+        R._CACHE.clear(); R._INFLIGHT.clear(); R._HELD.clear()
+    inst = tmp_path / "instance"
+    first = R.replot_run(run, inst)
+    assert R.replot_outcome(first)["state"] == "failed"
+    n = len(calls)
+    with R._LOCK:
+        R._CACHE.clear()
+    assert R.peek(run, inst) is not None and R.replot_run(run, inst)["errors"][0]["stage"] == "import"
+    assert len(calls) == n, "the second open answers from the cache"
+    R.replot_run(run, inst, force=True)
+    assert len(calls) > n, "Retry runs it again"
+    source.write_text("x = 22")                        # the watched code changed
+    with R._LOCK:
+        R._CACHE.clear()
+    assert R.peek(run, inst) is None

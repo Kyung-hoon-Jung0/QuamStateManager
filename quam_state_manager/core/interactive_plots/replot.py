@@ -257,7 +257,13 @@ def _lookup(key, context, request_key, disk, held=False):
 
 
 def _cacheable(result) -> bool:
-    return bool(result.get("figures") or result.get("not_produced") or result.get("saved_figures"))
+    """Worth keeping: figures, a saved fallback, or (D-4) the lab code failing to
+    import. An import failure is keyed by the request (env, PYTHONPATH, inputs) and
+    watched through the files it did import, so a mismatched env answers at once until
+    one of them changes; Retry (force) always runs it again."""
+    if result.get("figures") or result.get("not_produced") or result.get("saved_figures"):
+        return True
+    return any(isinstance(e, dict) and e.get("stage") == "import" for e in result.get("errors") or [])
 
 
 def peek(run, instance_path, *, source_root: str | None = None):
