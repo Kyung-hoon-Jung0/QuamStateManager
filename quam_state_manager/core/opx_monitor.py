@@ -97,7 +97,7 @@ def idle_state(q, first_seen, now, minutes=120):
     t, basis = max(valid)
     age = max(0, now - t)
     return {'idle': age > minutes * 60, 'last_activity': t,
-            'basis': f'no job for {age / 60:.0f} min, since {basis}'}
+            'basis': f'no job for {int(age // 60)} min, since {basis}'}
 
 
 # ---------------------------------------------------------------- settings
@@ -635,7 +635,13 @@ class TemperatureTrends:
                     reduced.extend(sorted(set((bucket[0], min(bucket, key=lambda p: p[1]),
                                                max(bucket, key=lambda p: p[1]), bucket[-1]))))
                 paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-(v-lo)/max(1,hi-lo)*32:.2f}' for t, v in reduced))
-            out[key] = {'min': lo, 'max': hi, 'start': datetime.fromtimestamp(start, timezone.utc).isoformat(),
+            unchanged_start = segments[-1][-1][0]
+            for t, v in reversed(segments[-1]):
+                if v != segments[-1][-1][1]:
+                    break
+                unchanged_start = t
+            out[key] = {'unchanged_min': int((end - unchanged_start) // 60),
+                        'gap_min': int(max([now - end] + [b[0][0] - a[-1][0] for a, b in zip(segments, segments[1:])]) // 60), 'min': lo, 'max': hi, 'start': datetime.fromtimestamp(start, timezone.utc).isoformat(),
                         'end': datetime.fromtimestamp(end, timezone.utc).isoformat(), 'span_s': end-start,
                         'paths': paths, 'samples': len(points)}
         return out
@@ -686,6 +692,36 @@ def read_admin(url, cluster_name=None):
                 'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
     except Exception as exc:
         return {'known': False, 'reason': 'Admin input unknown: ' + type(exc).__name__}
+
+
+def local_time(value):
+    t = timestamp(value)
+    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)') if t is not None else 'not reported'
+
+
+def words(value):
+    if value is None:
+        return 'not reported'
+    if isinstance(value, dict):
+        return '; '.join(str(k) + ': ' + words(v) for k, v in value.items()) or 'none reported'
+    if isinstance(value, list):
+        return '; '.join(words(v) for v in value) or 'none reported'
+    return str(value).replace('OPERATIONAL_CLUSTER', 'Operational').replace('OPERATIONAL_DEVICE', 'Operational').replace('_', ' ').lower()
+
+
+def firmware_summary(admin):
+    cluster = admin.get('cluster') or {}
+    expected = {p['type']: p['version'] for p in cluster.get('packages') or []}
+    devices = admin.get('devices') or []
+    if not expected or not devices:
+        return 'Firmware consistency: not reported'
+    for d in devices:
+        actual = {p['type']: p['version'] for p in d.get('packages') or []}
+        if any(k not in actual for k in expected):
+            return 'Firmware consistency: not reported for all packages'
+        if any(actual[k] != v for k, v in expected.items()):
+            return 'Firmware consistency: package versions differ'
+    return 'Firmware consistency: reported packages agree'
 
 
 def temperature_limit(key, thresholds):

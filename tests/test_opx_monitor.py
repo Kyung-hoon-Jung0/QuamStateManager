@@ -750,3 +750,23 @@ def test_d25_inline_safety(env):
     assert om.load_settings(m.instance)['idle_minutes'] == 120
     response = app.test_client().post('/opx-monitor/close', data={'all': '1', 'qm_ids': 'QM-a'}, headers=ORIGIN)
     assert response.status_code == 400 and not any(op.startswith('close') for op, _ in w.calls)
+
+
+def test_d26_format_count_rounding_and_frozen(env):
+    app, m, w, clock, _ = env
+    a = answer(qms=())
+    a['jobs'] = [{'id': 'job-fable-' + str(i), 'status': 'Done', 'created_at': '2026-01-01T00:00:00.123456Z'} for i in range(313)]
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert '100 of 313 jobs shown' in html and 'Show more' in html
+    assert html.count('No chip is open') == 1 and 'data-utc=' in html
+    assert '.123456Z</span>' not in html
+    fs = __import__('datetime').datetime.fromtimestamp(clock.t - 50, __import__('datetime').timezone.utc).isoformat()
+    state = om.idle_state({'jobs': []}, {'first_seen': fs}, clock.t, 1)
+    assert not state['idle'] and state['basis'].startswith('no job for 0 min')
+    assert om.words('OPERATIONAL_CLUSTER') == 'operational'
+    trends = m.trends()
+    for t in range(0, 181, 5):
+        trends.append(answer(temps={'Chassis': 40}), clock.t + t, 5)
+    assert trends.series(clock.t + 180)['con1/Chassis']['unchanged_min'] == 3
