@@ -723,3 +723,20 @@ def test_d23_verdict_first(env):
     assert '<summary>Details</summary>' in html
     assert om.verdict({'open_qms': []}, {'color': 'green'}, {})['label'] == 'FREE'
     assert om.verdict(answer(), {'color': 'amber'}, {})['label'] == 'BUSY'
+
+
+def test_d24_bad_outranks_unknown_and_admin_auto(monkeypatch):
+    import io
+    from pathlib import Path
+    root = Path(__file__).parent / 'fixtures' / 'opx_monitor'
+    class Opener:
+        def open(self, req, timeout):
+            name = 'v2_clusters.json' if req.full_url.endswith('/clusters') else 'v2_devices_detailed.json'
+            return io.BytesIO((root / name).read_bytes())
+    monkeypatch.setattr(om.urllib.request, 'build_opener', lambda *a: Opener())
+    admin = om.read_admin('http://sample.invalid', 'any')
+    assert admin['known'] and admin['selection'] == 'auto-selected from admin'
+    a = answer(qms=(), temps={'FEM 0': 67, 'Chassis': 46})
+    assert om.health(a, {'known': False}, {'temp:FEM 0': 50}, 'ok')['color'] == 'red'
+    assert om.health(a, admin, {}, 'ok')['color'] == 'green'
+    assert om.temperature_limit('FEM 0', {'temp:all_fems': 80, 'temp:FEM 0': 50}) == 50

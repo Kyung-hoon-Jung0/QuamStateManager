@@ -542,7 +542,7 @@ def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
         values = {f"temp:{r['key']}": r["value"] for r in temperature_rows(c)}
         values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items()})
         for k, v in values.items():
-            lim = thresholds.get(k)
+            lim = temperature_limit(k[5:], thresholds) if k.startswith('temp:') else thresholds.get(k)
             if lim in (None, "") or v is None:
                 continue
             try:
@@ -648,7 +648,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def read_admin(url, cluster_name=None):
     """Only the two documented read routes, no redirects or connection headers."""
     if not url:
-        return {'known': False, 'reason': 'Admin input unknown. Set Admin URL under Monitor settings.'}
+        return {'known': False, 'not_applicable': True, 'reason': 'Admin n/a; no Admin URL configured.'}
     try:
         parsed = urlsplit(url)
         if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
@@ -665,9 +665,14 @@ def read_admin(url, cluster_name=None):
                     raise ValueError('unexpected admin response shape')
                 answers.append(answer)
         clusters, devices = answers
-        selected = [c for c in clusters if (c.get('name') == cluster_name if cluster_name else c.get('isCurrentCluster') is True)]
+        selected = [c for c in clusters if c.get('name') == cluster_name] if cluster_name and cluster_name != 'any' else []
+        automatic = not selected
+        if not selected:
+            selected = [c for c in clusters if c.get('isCurrentCluster') is True]
+        if len(selected) != 1 and len(clusters) == 1:
+            selected = clusters
         if len(selected) != 1:
-            raise ValueError('admin cluster selection is ambiguous or missing')
+            return {'known': False, 'reason': 'Choose an admin cluster: ' + ', '.join(str(c.get('name', 'unnamed')) for c in clusters)}
         c = selected[0]
         ds = [d for d in devices if d.get('clusterName') == c.get('name')]
         members = c.get('devices')
@@ -678,53 +683,45 @@ def read_admin(url, cluster_name=None):
                     and all(d.get('status') for d in ds)
                     and {d.get('hostname') for d in members} == {d.get('hostname') for d in ds})
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
-                'cluster': c, 'devices': ds}
+                'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
     except Exception as exc:
         return {'known': False, 'reason': 'Admin input unknown: ' + type(exc).__name__}
 
 
+def temperature_limit(key, thresholds):
+    return thresholds.get('temp:' + key, thresholds.get('temp:all_fems') if key.startswith('FEM ') else None)
+
+
 def health(answer, admin, thresholds, state):
-    unknown, bad = [], []
     ans = answer or {}
+    bad, unknown = [], []
+    known = bool(admin.get('known'))
     if state != 'ok':
         unknown.append('data not fresh')
-    if not admin.get('known'):
+    if not admin.get('known') and not admin.get('not_applicable'):
         unknown.append(admin.get('reason') or 'admin unknown')
-    else:
+    if admin.get('known'):
         c = admin['cluster']
-        status = c['health']['status']
-        if 'UNKNOWN' in str(status).upper() or any('UNKNOWN' in str(d['status']).upper() for d in admin['devices']):
+        statuses = [str(c['health']['status'])] + [str(d['status']) for d in admin['devices']]
+        if any('UNKNOWN' in v.upper() for v in statuses):
             unknown.append('admin status unknown')
-        if status != 'OPERATIONAL_CLUSTER' or c['hasUnreachableDevices'] or any(d['unreachable'] for d in c['devices']) or any(d['status'] != 'OPERATIONAL_DEVICE' for d in admin['devices']):
+        elif any(not v.startswith('OPERATIONAL_') for v in statuses) or c['hasUnreachableDevices'] or any(d['unreachable'] for d in c['devices']):
             bad.append('admin reports unhealthy or unreachable devices')
-    if ans.get('open_qms') is None:
-        unknown.append('open QM list unknown')
-    controllers = ans.get('controllers')
-    if not controllers or any(not c.get('temperatures') for c in controllers):
-        unknown.append('temperatures unknown')
-    if any('temperatures' in k for k in ans.get('refused', {})):
-        unknown.append('some temperature readings unavailable')
-    if any(c.get('fems') and not temperature_mapping_verified(c) for c in controllers or []):
-        unknown.append('populated slots and temperature sensors disagree')
-    values = [(r['key'], r['value']) for c in controllers or [] for r in temperature_rows(c) if r['value'] is not None]
-    if any(k.startswith('temp:') and k[5:] not in {name for name, value in values} for k in thresholds):
-        unknown.append('a configured temperature input is unavailable')
-    def valid_limit(key):
-        try:
-            return math.isfinite(float(thresholds.get('temp:' + key)))
-        except (TypeError, ValueError):
-            return False
-    if not values or any(not valid_limit(k) for k, v in values):
-        unknown.append('temperature limits incomplete')
-    if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)):
-        bad.append('temperature above limit')
-    if unknown:
-        return {'color': 'grey', 'reason': 'unknown: ' + '; '.join(unknown + bad)}
+    values = {r['key']: r['value'] for c in ans.get('controllers') or [] for r in temperature_rows(c) if r['value'] is not None}
+    for key in thresholds:
+        if key.startswith('temp:') and key != 'temp:all_fems' and key[5:] not in values:
+            unknown.append('a configured temperature input is unavailable')
+    if thresholds.get('temp:all_fems') is not None and not any(k.startswith('FEM ') for k in values):
+        unknown.append('configured FEM readings unavailable')
+    known = known or any(temperature_limit(k, thresholds) is not None for k in values)
+    if evaluate_alarms(ans, thresholds):
+        bad.append('temperature above limit' if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)) else 'metric outside limit')
     if bad:
-        return {'color': 'red', 'reason': '; '.join(bad)}
-    count = len(ans['open_qms'])
-    return {'color': 'amber' if count else 'green',
-            'reason': f'{count} open QMs hold resources' if count else 'admin operational; reported temperatures within configured limits; no open QMs; fresh data'}
+        return {'color': 'red', 'reason': bad[0], 'details': '; '.join(bad + unknown)}
+    if unknown or not known:
+        return {'color': 'grey', 'reason': unknown[0] if unknown else 'unknown: no health assessment configured', 'details': '; '.join(unknown)}
+    count = len(ans.get('open_qms') or [])
+    return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
 def verdict(answer, health_state, idle_states):
     ans = answer or {}
@@ -877,8 +874,6 @@ class Monitor:
             ans = r.get("result") or {}
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
             self.admin = read_admin(s.get('admin_url'), selected_cluster)
-            if s.get('admin_url') and not selected_cluster:
-                self.admin.update(known=False, reason='Admin cluster association unknown; QM cluster name is unavailable.')
             fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
             self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
                                    for field, call in fields.items() if ans.get(field) is None}

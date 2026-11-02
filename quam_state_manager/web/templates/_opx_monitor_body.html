@@ -20,7 +20,7 @@
   <p class="opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ ([0, (st.interval_s * 3 - (st.age_s or 0)) * 1000] | max) | int if st.state == 'ok' else 0 }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
   <details class="opxmon-details"><summary>Details</summary>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
-  <h3>Admin status</h3><p>Cluster health: {{ ac.health.status or 'unknown' }}; messages: {{ ac.health.messages if ac.health.messages is not none else 'none reported' }}; device messages: {{ ac.health.deviceMessages }}; clock: {{ ac.clock or 'unknown' }}; unreachable: {{ ac.hasUnreachableDevices }}</p>
+  <h3>Admin status</h3><p>{{ ac.name }} ({{ st.admin.selection }})</p><p>Cluster health: {{ ac.health.status or 'unknown' }}; messages: {{ ac.health.messages if ac.health.messages is not none else 'none reported' }}; device messages: {{ ac.health.deviceMessages }}; clock: {{ ac.clock or 'unknown' }}; unreachable: {{ ac.hasUnreachableDevices }}</p>
   <p>Cluster packages: {% for p in ac.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>
   {% for d in ac.devices or [] %}<p>{{ d.hostname }}; unreachable: {{ d.unreachable if d.unreachable is defined else 'unknown' }}</p>{% endfor %}
   {% for d in st.admin.devices or [] %}<p>{{ d.hostname }}; status: {{ d.status or 'unknown' }}; packages: {% for p in d.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>{% endfor %}
@@ -152,6 +152,7 @@
       <label>Idle minutes <input name="idle_minutes" value="{{ settings.idle_minutes }}" type="number" min="0.01" step="any"></label>
       <label>Interval (s, minimum {{ min_interval|int }}) <input name="interval_s" value="{{ settings.interval_s|int }}" inputmode="numeric"></label>
       <label><input type="checkbox" name="alarms_armed" value="1" {% if settings.alarms_armed %}checked{% endif %}> Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
+      <label>All FEMs limit (degC; no default is assumed) <input name="th__temp:all_fems" value="{{ settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
       {%- if offered %}
       <table class="ui-table opxmon-table" aria-label="Alarm limits"><thead><tr><th class="ui-table-head">Metric</th><th class="ui-table-head">Alarm when</th><th class="ui-table-head">Limit</th></tr></thead>
         <tbody>{% for m in offered %}<tr><td class="ui-table-cell">{{ m.label }} ({{ m.unit }})</td><td class="ui-table-cell">{{ m.direction }}</td>
