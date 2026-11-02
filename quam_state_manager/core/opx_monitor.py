@@ -465,18 +465,28 @@ def temperature_rows(controller: dict) -> list[dict]:
     """One row per sensor: the raw key, a label naming the slot, the reading or
     None when the value means "no reading"."""
     rows = []
+    verified = temperature_mapping_verified(controller)
     for k, v in (controller.get("temperatures") or {}).items():
         slot = _fem_slot(k)
         rows.append({"key": k, "slot": slot,
-                     "label": f"FEM slot {slot}" if slot is not None else str(k),
+                     "label": f"FEM slot {slot}" if slot is not None and verified else str(k),
+                     'mapping_verified': verified,
                      "value": None if v is None or v == NO_READING else v})
     # FEM slots in slot order first, then the other sensors by name
     return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
 
 
+def temperature_mapping_verified(controller):
+    populated = {str(k) for k in (controller.get('fems') or {})}
+    sensors = {str(_fem_slot(k)) for k, v in (controller.get('temperatures') or {}).items()
+               if _fem_slot(k) is not None and v not in (None, NO_READING)}
+    return bool(populated) and populated == sensors
+
+
 def slot_temperatures(controller: dict) -> dict:
     """``{slot (str): reading or None}`` for the FEM chips on the Live tab."""
-    return {str(r["slot"]): r for r in temperature_rows(controller) if r["slot"] is not None}
+    return {str(r["slot"]): r for r in temperature_rows(controller)
+            if r["slot"] is not None and r['mapping_verified']}
 
 
 def offered_metrics(answer: Optional[dict]) -> list[dict]:

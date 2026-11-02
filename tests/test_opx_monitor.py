@@ -591,3 +591,17 @@ def test_d17_alarm_raise_clear_missing_and_restart(env):
     assert [a['ev'] for a in events] == ['alarm_clear', 'alarm_raise']
     assert events[0]['value'] == 40 and events[0]['limit'] == 50 and events[0]['t']
     assert 'alarm_clear' in page(app, 'history') and 'threshold 50' in page(app, 'history')
+
+
+def test_d18_mapping_mismatch_keeps_raw_keys(env):
+    app, m, w, clock, _ = env
+    a = answer(temps=MEASURED_TEMPS)
+    a['controllers'][0]['fems'] = {'1': 'MW'}
+    w.script[:] = [a]
+    m.poll_once()
+    rows = {r['key']: r for r in om.temperature_rows(a['controllers'][0])}
+    assert rows['FEM 4']['label'] == 'FEM 4'
+    assert not om.slot_temperatures(a['controllers'][0])
+    html = page(app, 'live')
+    assert 'mapping unverified' in html and '>FEM 4</td>' in html
+    assert 'title="sensor &#39;FEM 4&#39;"' not in html  # raw tooltip remains literal, not an inferred slot

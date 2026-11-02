@@ -27,8 +27,8 @@
   {%- elif ans.controllers is none %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">No device data.</span> {% if ans.refused and ans.refused.get_devices %}The server refused get_devices: {{ ans.refused.get_devices }}{% else %}Nothing has been read yet.{% endif %}</p>
   {%- else %}
-  {%- set busy = {} %}{%- set held = {} %}
-  {%- for q in ans.open_qms or [] %}{% set running = q.jobs | selectattr('status', 'in', ['Running', 'running', 'Pending', 'pending', 'Queued', 'queued']) | list %}
+  {%- set busy = {} %}{%- set held = {} %}{% set occupancy = namespace(known=ans.open_qms is not none) %}{% for q in ans.open_qms or [] %}{% if q.jobs is none or q.ports is none %}{% set occupancy.known = false %}{% endif %}{% endfor %}
+  {%- for q in ans.open_qms or [] %}{% set running = (q.jobs or []) | selectattr('status', 'in', ['Running', 'running', 'Pending', 'pending', 'Queued', 'queued']) | list %}
     {%- for p in q.ports or [] %}{% if running %}{% set _ = busy.update({p: q.id}) %}{% else %}{% set _ = held.update({p: q.id}) %}{% endif %}{% endfor %}{% endfor %}
   {%- if ans.version %}<p class="opxmon-version">Server: {% for k, v in ans.version.items() %}{{ k }} {{ v }}{% if not loop.last %} &middot; {% endif %}{% endfor %}{% if ans.cluster_name %} &middot; cluster {{ ans.cluster_name }}{% endif %}</p>{% endif %}
   <table class="ui-table opxmon-table" aria-label="Controllers and FEM slots">
@@ -38,13 +38,14 @@
       <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell">{{ c.type or '' }}</td>
         <td class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="opxmon-fem{% if k in busy %} opxmon-fem--busy{% elif k in held %} opxmon-fem--held{% endif %}"
-                title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% else %}No open QM claims this FEM{% endif %}">
+                title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% elif not occupancy.known %}Occupancy unknown{% else %}No open QM claims this FEM{% endif %}">
             <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; held{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} degC{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
-  <p class="ui-note">Occupancy is read from the ports in each open QM's configuration (the server reports which QM is open and its jobs, not a per-FEM busy flag).</p>
+  <p class="ui-note">{% if not occupancy.known %}Occupancy is unknown because a QM list, jobs or configuration is missing. {% endif %}Occupancy is derived from the ports in each open QM's configuration (the server reports which QM is open and its jobs, not a per-FEM busy flag).</p>
   <h3 class="opxmon-h">Temperatures</h3>
+  {% for c in ans.controllers %}{% if not temperature_mapping_verified(c) %}<p class="ui-muted">{{ c.name }}: mapping unverified; populated FEM slots do not match the non-zero sensors. Raw sensor keys are shown.</p>{% endif %}{% endfor %}
   {%- set any_t = ans.controllers | selectattr('temperatures') | list %}
   {%- if any_t %}
   <table class="ui-table opxmon-table" aria-label="Temperatures">
@@ -55,7 +56,7 @@
       <svg class="opxmon-sparkline" viewBox="0 0 240 40" width="240" height="40" role="img" aria-label="Temperature trend with gaps"><title>Recorded samples only; gaps are not interpolated</title>{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="1.5"/>{% endfor %}</svg>
       <span class="ui-muted">min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} degC; actual span {{ trend.span_s|int }} s ({{ trend.start }} to {{ trend.end }}); {{ trend.samples }} samples; display downsampled with extrema</span>{% endif %}</td></tr>{% endfor %}{% endfor %}</tbody>
   </table>
-  <p class="ui-note">A sensor named FEM k sits in slot k+1, and a reading of exactly 0.0 means no unit is fitted there (both measured on one OPX1000, QOP 3.7.3). Hover a sensor for its raw name.</p>
+  <p class="ui-note">Where populated slots match non-zero sensors, FEM k is displayed as slot k+1 (measured on one OPX1000, QOP 3.7.3). Exactly 0.0 is treated as no sensor. Hover a sensor for its raw name.</p>
   {%- else %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">No temperature readings.</span> This server returned none (the SDK provides them from QOP 3.6 for OPX1000 controllers).</p>
   {%- endif %}

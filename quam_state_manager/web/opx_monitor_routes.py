@@ -104,7 +104,7 @@ def _view(tab: str) -> dict:
             "offered": om.offered_metrics(st.get("answer")),
             "envs": _envs() if tab == "settings" else [],
             "min_interval": om.MIN_INTERVAL_S,
-            "temperature_rows": om.temperature_rows, "slot_temperatures": om.slot_temperatures}
+            "temperature_mapping_verified": om.temperature_mapping_verified, "temperature_rows": om.temperature_rows, "slot_temperatures": om.slot_temperatures}
 
 
 @opxmon_bp.route("/opx-monitor")
