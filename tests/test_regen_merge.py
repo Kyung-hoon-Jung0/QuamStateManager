@@ -5,6 +5,7 @@ chip folder is absent) reproduces the P2 fidelity result: residual loss 0.
 """
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -1163,8 +1164,12 @@ def test_crosstalk_new_owner_gets_defaults_on_vacated_port():
 def test_crosstalk_column_collision_is_reported_instead_of_overwritten():
     old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {3: {"1": .31, "7": .37}})
     new, nw = _crosstalk_state({"q1": 7, "q2": 3})
-    with pytest.raises(ValueError, match="Crosstalk keys collide"):
-        merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    # never raise (a Re-generate must not die on it) and never guess: keep the
+    # carried row and name it
+    r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    assert r.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.3.crosstalk"]
+    assert not any(o.startswith("ports.analog_outputs.con1.5.3.crosstalk")
+                   for o, _ in r.stats.crosstalk_remapped)
 
 
 class TestAPortMovesWithItsOwner:

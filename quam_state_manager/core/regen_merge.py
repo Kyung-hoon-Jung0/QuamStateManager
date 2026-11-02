@@ -1599,18 +1599,29 @@ def _carry_crosstalk(old_state: dict, merged: dict,
         scope = src.rsplit(".", 1)[0]
         dest_scope = dest.rsplit(".", 1)[0]
         remapped = {}
+        moved_keys: list[tuple[str, str]] = []
+        absent_keys: list[str] = []
+        collided = False
         for key, value in row.items():
             number = columns.get(scope, {}).get(str(key))
             renamed = (int(number) if isinstance(key, int) else number) if number else key
             if renamed in remapped:
-                raise ValueError(f"Crosstalk keys collide at {dest}.crosstalk.{renamed}")
+                collided = True
+                break
             remapped[renamed] = copy.deepcopy(value)
             target_path = f"{dest}.crosstalk.{renamed}"
             original_path = f"{src}.crosstalk.{key}"
             if original_path != target_path:
-                stats.crosstalk_remapped.append((original_path, target_path))
+                moved_keys.append((original_path, target_path))
             if not _node_is_dict(merged, f"{dest_scope}.{renamed}"):
-                stats.crosstalk_unresolved.append(target_path)
+                absent_keys.append(target_path)
+        if collided:
+            # two source keys name one port after renumbering (e.g. "1" and 1):
+            # never guess -- leave the carried row and report it
+            stats.crosstalk_unresolved.append(dest + ".crosstalk")
+            continue
+        stats.crosstalk_remapped.extend(moved_keys)
+        stats.crosstalk_unresolved.extend(absent_keys)
         # Keep an existing reference only if it still denotes the exact row.
         current = port.get("crosstalk")
         current_path = dest + ".crosstalk"
