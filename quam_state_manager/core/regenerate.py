@@ -485,8 +485,8 @@ def run_regenerate(
                                          new_state, new_wiring))
 
     twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
-    # a lab's own plain wiring values (a QDAC dc_channel) -- before the merge, so
-    # the state objects that point at them land
+    # Carry plain wiring values from the renamed source: path matching must use
+    # the rebuilt qubit ids. Do this before merging state references to them.
     wiring_carried = regen_merge.graft_wiring_values(old_wiring, new_wiring)
     if twpa_renames or wiring_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)

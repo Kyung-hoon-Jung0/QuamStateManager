@@ -1125,13 +1125,20 @@ def graft_wiring_values(old_wiring: dict | None, new_wiring: dict) -> list[str]:
     """Carry the SOURCE's own plain values in ``wiring.wiring`` that the rebuild has no
     key for, under a line the rebuild also made (a lab's QDAC ``dc_channel: 1`` beside
     the flux line's ``opx_output``). Only plain values -- a pointer into ``ports`` is the
-    rebuild's cabling and stays the rebuild's -- and only where the line still exists,
-    so a line the user removed brings nothing back. Returns the dot paths carried."""
+    rebuild's cabling and stays the rebuild's -- and only where the line still exists
+    with the same set of port-reference keys. A change of line kind must not bring
+    back settings from the old kind. Returns the dot paths carried."""
     if not isinstance(old_wiring, dict) or not isinstance(new_wiring, dict):
         return []
     carried: list[str] = []
 
     def walk(o: dict, n: dict, path: str) -> None:
+        def port_keys(line: dict) -> set[str]:
+            return {k for k, v in line.items()
+                    if isinstance(v, str) and v.startswith("#/ports/")}
+
+        if port_keys(o) != port_keys(n):
+            return
         for k, ov in o.items():
             sub = f"{path}.{k}"
             if k in n:

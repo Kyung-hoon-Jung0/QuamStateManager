@@ -92,6 +92,34 @@ def test_merge_applied_to_build_output(tmp_path, monkeypatch):
     assert "cz_flattop" in merged["qubits"]["q1"]["z"]["operations"]  # tier2 graft
 
 
+def test_wiring_values_follow_renamed_source_qubit(tmp_path, monkeypatch):
+    old_state = {"qubits": {q: {} for q in ("q1", "q2")}}
+    old_wiring = {"wiring": {"qubits": {
+        "q1": {"z": {"dc_channel": 3}}, "q2": {"z": {"dc_channel": 7}}}}}
+    source = tmp_path / "old"
+    source.mkdir()
+    (source / "state.json").write_text(json.dumps(old_state))
+    (source / "wiring.json").write_text(json.dumps(old_wiring))
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir.mkdir(parents=True)
+        (out_dir / "state.json").write_text(json.dumps(old_state))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {"qubits": {
+            "q1": {"z": {}}, "q2": {"z": {}}}}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    output = tmp_path / "new"
+    result = regenerate.run_regenerate(
+        "py", source, {"qubits": ["q1", "q2"]}, output,
+        qubit_sources={"q1": "q2", "q2": "q1"},
+        source_probe=lambda *a, **k: {"ok": False})
+    assert result["ok"]
+    wiring = json.loads((output / "wiring.json").read_text())
+    assert wiring["wiring"]["qubits"]["q1"]["z"] == {"dc_channel": 7}
+    assert wiring["wiring"]["qubits"]["q2"]["z"] == {"dc_channel": 3}
+
+
 def test_spec_sidecar_written_and_preferred(tmp_path, monkeypatch):
     # A successful rebuild writes an EXACT spec sidecar; a later reconstruct of
     # the same folder prefers it (exact=True) over best-effort reconstruction.

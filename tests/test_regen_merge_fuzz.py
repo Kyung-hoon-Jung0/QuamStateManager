@@ -391,3 +391,24 @@ def test_removed_entries_in_deferred_object(removed_entry, entry_key, outside_mi
         assert result.stats.rebuild_removed
     else:
         assert any(entry_key in p for p in result.stats.residual_lost)
+
+
+@pytest.mark.parametrize("old_keys,new_keys", [
+    ((), ("opx_output",)), (("opx_output",), ()),
+    (("opx_output",), ("opx_input",)),
+    (("opx_output",), ("opx_output", "opx_input")),
+    ((), ()), (("opx_output",), ("opx_output",)),
+])
+def test_wiring_values_require_same_line_kind(old_keys, new_keys):
+    old_line = {k: "#/ports/old" for k in old_keys}
+    old_line.update(dc_channel=3, qdac_trigger="ext1")
+    new_line = {k: "#/ports/new" for k in new_keys}
+    old = {"wiring": {"qubits": {"q1": {"z": old_line}}}}
+    new = {"wiring": {"qubits": {"q1": {"z": deepcopy(new_line)}}}}
+    carried = graft_wiring_values(old, new)
+    if old_keys == new_keys:
+        new_line.update(dc_channel=3, qdac_trigger="ext1")
+        assert carried == ["wiring.qubits.q1.z.dc_channel", "wiring.qubits.q1.z.qdac_trigger"]
+    else:
+        assert carried == []
+    assert new["wiring"]["qubits"]["q1"]["z"] == new_line
