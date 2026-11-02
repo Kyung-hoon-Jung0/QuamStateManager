@@ -16102,3 +16102,10 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .opxmon-health-dot--amber { color: var(--ui-warn-text); }
 .opxmon-health-dot--red { color: var(--ui-danger-text); }
 .opxmon-health { font-size: .85em; }
+
+/* D-23: the verdict carries health; freshness is secondary. */
+.opxmon-verdict {font-size:1.2rem; margin:.6rem 0; display:flex; gap:.6rem; align-items:baseline; flex-wrap:wrap}
+.opxmon-verdict strong {font-size:1.8rem}
+.opxmon-verdict[data-health="red"] {color:var(--ui-danger-text)}
+.opxmon-status--ok {border:0; color:var(--pico-muted-color); padding:0; font-size:.8rem}
+.opxmon-details {margin:.5rem 0}

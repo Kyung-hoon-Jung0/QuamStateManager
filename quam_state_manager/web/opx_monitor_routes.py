@@ -96,7 +96,7 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason),
+    return {'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason),
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],

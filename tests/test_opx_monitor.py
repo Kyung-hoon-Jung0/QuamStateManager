@@ -713,3 +713,13 @@ def test_d22_close_false_or_still_listed(env):
     w.request = lambda op, **kw: {'ok': True, 'result': False} if op == 'close_qm' else original(op, **kw)
     assert not m.close('QM-a')['ok']
     assert m.history().recent_actions()[0]['qm_ids'] == []
+
+
+def test_d23_verdict_first(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    html = page(app, 'live')
+    assert html.index('opxmon-verdict') < html.index('opxmon-status')
+    assert '<summary>Details</summary>' in html
+    assert om.verdict({'open_qms': []}, {'color': 'green'}, {})['label'] == 'FREE'
+    assert om.verdict(answer(), {'color': 'amber'}, {})['label'] == 'BUSY'

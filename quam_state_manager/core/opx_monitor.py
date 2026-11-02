@@ -726,6 +726,27 @@ def health(answer, admin, thresholds, state):
     return {'color': 'amber' if count else 'green',
             'reason': f'{count} open QMs hold resources' if count else 'admin operational; reported temperatures within configured limits; no open QMs; fresh data'}
 
+def verdict(answer, health_state, idle_states):
+    ans = answer or {}
+    if health_state['color'] in ('red', 'grey'):
+        return {'label': 'PROBLEM', 'reason': health_state['reason']}
+    qms = ans.get('open_qms')
+    if qms is None:
+        return {'label': 'PROBLEM', 'reason': 'Open QM list unknown'}
+    active = [(q, j) for q in qms for j in q.get('jobs') or []
+              if str(j.get('status', '')).lower() in ('running', 'pending', 'queued')]
+    if active:
+        q, j = active[0]
+        return {'label': 'BUSY', 'reason': 'FEMs ' + ', '.join(q.get('ports') or ['unknown']),
+                'since': j.get('started_at') or j.get('created_at')}
+    if not qms:
+        return {'label': 'FREE', 'reason': 'No open QM'}
+    idle = sum(bool(v['idle']) for v in idle_states.values())
+    if idle == len(qms):
+        return {'label': 'OPEN-IDLE ' + str(idle), 'reason': 'Close eligible QMs under Clean up'}
+    return {'label': 'PROBLEM', 'reason': str(len(qms)) + ' open QMs; recent or unknown activity'}
+
+
 class Monitor:
     """One poller per SM process. ``worker_factory(python, target)`` is
     injectable so tests drive it with fake answers."""

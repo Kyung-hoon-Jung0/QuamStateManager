@@ -5,6 +5,7 @@
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
      {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
 {%- if flash %}<p class="ui-state {{ 'ui-state--error' if flash_error else 'opxmon-flash' }}" role="status">{{ flash }}</p>{% endif %}
+<div class="opxmon-verdict" data-health="{{ st.health.color }}"><strong>{{ verdict.label }}</strong> {{ verdict.reason }}{% if verdict.since %} since <span class="ts-local" data-utc="{{ verdict.since }}">{{ verdict.since }}</span>{% endif %}</div>
 <p class="opxmon-status opxmon-status--{{ st.state }}" role="status">
   {%- if st.target_label %}<span class="opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
   <span class="opxmon-sentence" data-state="{{ st.state }}">{{ st.sentence }}</span>
@@ -17,6 +18,7 @@
 {% for section, error in st.section_errors.items() %}<p class="ui-muted opxmon-section-age" title="{{ error }}">{{ section|replace('_', ' ') }} unavailable; as of {{ st.section_times.get(section, 'never answered') }}</p>{% endfor %}
 {%- if tab == 'live' %}
   <p class="opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ ([0, (st.interval_s * 3 - (st.age_s or 0)) * 1000] | max) | int if st.state == 'ok' else 0 }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
+  <details class="opxmon-details"><summary>Details</summary>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
   <h3>Admin status</h3><p>Cluster health: {{ ac.health.status or 'unknown' }}; messages: {{ ac.health.messages if ac.health.messages is not none else 'none reported' }}; device messages: {{ ac.health.deviceMessages }}; clock: {{ ac.clock or 'unknown' }}; unreachable: {{ ac.hasUnreachableDevices }}</p>
   <p>Cluster packages: {% for p in ac.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>
@@ -71,6 +73,7 @@
   {%- endif %}
   {%- endif %}
 
+</details>
 {%- elif tab == 'jobs' %}
   <p class="ui-muted">{{ run_reason }}</p>
   {%- if not cap.jobs %}
