@@ -569,7 +569,11 @@ class TemperatureTrends:
             for line in self.path.read_text(encoding='utf-8').splitlines()[-self.MAX_POLLS:]:
                 try:
                     row = json.loads(line)
-                    if isinstance(row, dict) and isinstance(row.get('t'), (float, int)) and isinstance(row.get('v'), dict):
+                    if (isinstance(row, dict) and isinstance(row.get('t'), (float, int))
+                            and math.isfinite(row['t']) and isinstance(row.get('v'), dict)
+                            and isinstance(row.get('interval'), (float, int)) and row['interval'] > 0
+                            and len(row['v']) <= self.MAX_SENSORS
+                            and all(isinstance(v, (int, float)) and math.isfinite(v) and v != 0 for v in row['v'].values())):
                         self.rows.append(row)
                 except ValueError:
                     continue
