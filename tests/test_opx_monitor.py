@@ -571,3 +571,23 @@ def test_d16_unique_run_only_and_open_chip_scope(env, monkeypatch, tmp_path):
     store.scan_truncated = True
     assert 'incomplete' in page(app, 'jobs') and 'probably #' not in page(app, 'jobs')
     assert 'url' not in routes.run_match({'created_at': created}, [])
+
+
+def test_d17_alarm_raise_clear_missing_and_restart(env):
+    app, m, w, clock, _ = env
+    s = m.settings()
+    s.update(alarms_armed=True, thresholds={'temp:Chassis': 50})
+    om.save_settings(app.instance_path, s)
+    w.script[:] = [answer(temps={'Chassis': 60})]
+    m.poll_once()
+    m.poll_once()
+    w.script[:] = [answer(temps={'Chassis': 0.0})]
+    m.poll_once()
+    assert [a['ev'] for a in m.history().recent_actions()] == ['alarm_raise']
+    m._histories.clear()
+    w.script[:] = [answer(temps={'Chassis': 40})]
+    m.poll_once()
+    events = m.history().recent_actions()
+    assert [a['ev'] for a in events] == ['alarm_clear', 'alarm_raise']
+    assert events[0]['value'] == 40 and events[0]['limit'] == 50 and events[0]['t']
+    assert 'alarm_clear' in page(app, 'history') and 'threshold 50' in page(app, 'history')

@@ -101,8 +101,8 @@
     <tbody>{% for r in history_rows %}<tr><td class="ui-table-cell"><code>{{ r.qm_id }}</code></td><td class="ui-table-cell">{% if r.job_id %}<code>{{ r.job_id }}</code>{% endif %}</td><td class="ui-table-cell">{{ r.status or '' }}</td><td class="ui-table-cell">{{ r.first_seen }}</td><td class="ui-table-cell">{{ r.last_seen }}</td><td class="ui-table-cell">{{ 'open' if r.open else 'gone' }}</td></tr>{% endfor %}</tbody></table>
   {%- else %}<p class="ui-state ui-state--empty"><span class="ui-state-key">Nothing recorded yet.</span></p>{% endif %}
   {%- if actions %}
-  <h3 class="opxmon-h">Clean-up actions</h3>
-  <ul class="opxmon-actions">{% for a in actions %}<li>{{ a.t }} &middot; {{ 'close all' if a.action == 'close_all' else 'close' }} {{ (a.qm_ids or []) | join(', ') }} &middot; {{ 'done' if a.ok else 'failed: ' ~ (a.error or '') }}{% if a.by %} &middot; by {{ a.by }}{% endif %}</li>{% endfor %}</ul>
+  <h3 class="opxmon-h">Alarm events and clean-up actions</h3>
+  <ul class="opxmon-actions">{% for a in actions %}<li>{% if a.ev in ['alarm_raise', 'alarm_clear'] %}{{ a.t }} &middot; {{ a.ev }} {{ a.controller }} {{ a.key }} = {{ a.value }} (threshold {{ a.limit }}){% else %}{{ a.t }} &middot; {{ 'close all' if a.action == 'close_all' else 'close' }} {{ (a.qm_ids or []) | join(', ') }} &middot; {{ 'done' if a.ok else 'failed: ' ~ (a.error or '') }}{% if a.by %} &middot; by {{ a.by }}{% endif %}{% endif %}</li>{% endfor %}</ul>
   {%- endif %}
 
 {%- elif tab == 'cleanup' %}

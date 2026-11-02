@@ -281,6 +281,7 @@ class History:
         self._lock = threading.Lock()
         self.rows: dict[str, dict] = {}
         self.actions: list[dict] = []
+        self.alarm_states = {}
         self._load()
 
     @staticmethod
@@ -291,6 +292,10 @@ class History:
         k = self._key(ev.get("qm_id"), ev.get("job_id"))
         t = ev.get("t")
         kind = ev.get("ev")
+        if kind in ('alarm_raise', 'alarm_clear'):
+            self.alarm_states[(ev.get('controller'), ev.get('key'))] = ev
+            self.actions.append(ev)
+            return
         if kind == "action":
             self.actions.append(ev)
             return
@@ -361,6 +366,9 @@ class History:
                 lines.append({"ev": "job_gone" if r.get("job_id") else "qm_gone", **base,
                               "t": r.get("last_seen"), "last_seen": r.get("last_seen")})
         self.actions = self.actions[-HISTORY_KEEP_ACTIONS:]
+        for event in self.alarm_states.values():
+            if event not in self.actions:
+                lines.append(event)
         lines.extend(self.actions)
         tmp = self.path.with_suffix(".jsonl.tmp")
         tmp.write_text("".join(json.dumps(x, default=str) + "\n" for x in lines), encoding="utf-8")
@@ -401,6 +409,27 @@ class History:
     def log_action(self, action: str, detail: dict) -> None:
         with self._lock:
             self._append([{"ev": "action", "t": now_iso(), "action": action, **detail}])
+
+    def observe_alarms(self, answer, thresholds, at):
+        """Unknown/missing readings never clear an alarm. Rebuild state on restart."""
+        fired = {(a['controller'], a['key']): a for a in evaluate_alarms(answer, thresholds)}
+        with self._lock:
+            events = []
+            for c in answer.get('controllers') or []:
+                values = {'temp:' + r['key']: r['value'] for r in temperature_rows(c)}
+                values.update({'metric:' + k: v for k, v in (c.get('metrics') or {}).items()})
+                for key, value in values.items():
+                    if value is None or key not in thresholds:
+                        continue
+                    ident = (c['name'], key)
+                    old = self.alarm_states.get(ident)
+                    active = ident in fired
+                    if active == bool(old and old['ev'] == 'alarm_raise'):
+                        continue
+                    events.append({'ev': 'alarm_raise' if active else 'alarm_clear', 't': at,
+                                   'controller': c['name'], 'key': key, 'value': value,
+                                   'limit': thresholds[key]})
+            self._append(events)
 
     def table(self, limit: int = 500) -> list[dict]:
         with self._lock:
@@ -786,6 +815,8 @@ class Monitor:
         if h is not None:
             try:
                 h.observe(ans, at, prev_iso)
+                if s.get('alarms_armed'):
+                    h.observe_alarms(ans, s['thresholds'], at)
             except OSError as exc:
                 logger.warning("opx monitor: history write failed: %s", exc)
         self.alarms = evaluate_alarms(ans, s.get("thresholds") or {}) if s.get("alarms_armed") else []
