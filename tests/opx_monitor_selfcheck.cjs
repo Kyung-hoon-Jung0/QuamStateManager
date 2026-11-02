@@ -55,6 +55,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   await tick();
   ok(/ALL/.test(w.__asked[0]) && /QM-x\nQM-y/.test(w.__asked[0]), 'close-all names every QM');
   ok(w.__posts[0][1].body.get('all') === '1', 'close-all POSTs all=1');
+  ok(w.__posts[0][1].body.get('qm_ids') === 'QM-x, QM-y', 'close-all POSTs exactly the confirmed ids');
   const r2 = w.document.querySelector('.opxmon-close-result');
   ok(/Not closed: The server refused: busy/.test(r2.textContent) && r2.classList.contains('ui-state--error'), 'a refusal is said as an error');
 

@@ -112,19 +112,14 @@ def opx_monitor_save_settings():
     m = monitor()
     s = m.settings()
     f = request.form
-    kind = f.get("kind", "qmm")
     msgs = []
-    if kind == "cloud":
-        backend = (f.get("backend") or "").strip()
-        target = {"kind": "cloud", "backend": backend} if backend else None
-    else:
-        host = (f.get("host") or "").strip()
-        port = (f.get("port") or "").strip()
-        if port and not port.isdigit():
-            return _settings_reply("Port must be a whole number.", error=True)
-        target = ({"kind": "qmm", "host": host, "port": int(port) if port else None,
-                   "cluster_name": (f.get("cluster_name") or "").strip() or None,
-                   "tls": _form_bool("tls")} if host else None)
+    host = (f.get("host") or "").strip()
+    port = (f.get("port") or "").strip()
+    if port and not port.isdigit():
+        return _settings_reply("Port must be a whole number.", error=True)
+    target = ({"kind": "qmm", "host": host, "port": int(port) if port else None,
+               "cluster_name": (f.get("cluster_name") or "").strip() or None,
+               "tls": _form_bool("tls")} if host else None)
     py = (f.get("python") or "").strip() or None
     if py and not Path(py).is_file():
         return _settings_reply("That Python interpreter does not exist.", error=True)
@@ -148,7 +143,7 @@ def opx_monitor_save_settings():
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python"))
     om.save_settings(m.instance, new)
     hdr_txt = f.get("headers")
-    if target is not None and kind == "qmm":
+    if target is not None:
         key = om.target_key(target)
         if _form_bool("clear_headers"):
             om.save_secret_headers(m.instance, key, {})
@@ -182,10 +177,13 @@ def opx_monitor_close():
     m = monitor()
     qm_id = (request.form.get("qm_id") or "").strip() or None
     every = request.form.get("all") == "1"
-    if not qm_id and not every:
+    # "close all" closes exactly the QMs the confirm dialog listed, never
+    # whatever is open on the server by the time the request lands
+    confirmed = [x.strip() for x in (request.form.get("qm_ids") or "").split(",") if x.strip()]
+    if (not qm_id and not every) or (every and not confirmed):
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
     who = (request.form.get("by") or "").strip()[:80]
-    res = m.close(None if every else qm_id, who=who)
+    res = (m.close(None, who=who, qm_ids=confirmed) if every else m.close(qm_id, who=who))
     return jsonify(res), (200 if res.get("ok") else 409)
 
 

@@ -40,6 +40,17 @@ START_TIMEOUT_S = 90.0
 WANT_INTERVALS = 3
 #: an answer older than this many intervals is labelled stale
 STALE_INTERVALS = 3
+#: after a worker could not start or died, wait this long before the next try,
+#: doubling per failure up to MAX_INTERVAL_S (a dead server never means a new
+#: env process every interval)
+RESTART_BACKOFF_S = 10.0
+#: a history file larger than this is compacted to its current rows
+HISTORY_MAX_BYTES = 2_000_000
+HISTORY_KEEP_ACTIONS = 200
+#: closed rows kept by a compaction (open rows are always kept)
+HISTORY_KEEP_ROWS = 5000
+NOT_QM_SERVER = ("This target is not a QM server. Only a QM server (host and port) exposes "
+                 "devices, open QMs and jobs; choose one under Monitor settings.")
 
 WORKER_SCRIPT = Path(__file__).resolve().parent.parent / "generator" / "opx_monitor_worker.py"
 
@@ -67,18 +78,13 @@ def _dir(instance: str | Path) -> Path:
 def target_key(target: dict) -> Optional[str]:
     if not target:
         return None
-    if target.get("kind") == "cloud":
-        ident = f"cloud|{target.get('backend', '')}"
-    else:
-        ident = f"qmm|{target.get('host', '')}|{target.get('port') or ''}|{target.get('cluster_name') or ''}"
+    ident = f"qmm|{target.get('host', '')}|{target.get('port') or ''}|{target.get('cluster_name') or ''}"
     return hashlib.sha1(ident.encode("utf-8")).hexdigest()[:12]
 
 
 def target_label(target: dict) -> str:
     if not target:
         return ""
-    if target.get("kind") == "cloud":
-        return f"cloud backend {target.get('backend', '')}"
     s = str(target.get("host", ""))
     if target.get("port"):
         s += f":{target['port']}"
@@ -284,6 +290,38 @@ class History:
                 f.write(json.dumps(ev, default=str) + "\n")
         for ev in evs:
             self._apply(ev)
+        try:
+            big = self.path.stat().st_size > HISTORY_MAX_BYTES
+        except OSError:
+            big = False
+        if big:
+            self._compact()
+
+    def _compact(self):
+        """Rewrite the file as the rows it describes (one seen/status/gone line
+        per row) plus the newest actions; what the page shows is unchanged."""
+        lines = []
+        closed = sorted((k for k, r in self.rows.items() if not r.get("open")),
+                        key=lambda k: self.rows[k].get("last_seen") or "")
+        for k in closed[:max(0, len(closed) - HISTORY_KEEP_ROWS)]:
+            del self.rows[k]
+        rows = sorted(self.rows.values(), key=lambda r: r.get("first_seen") or "")
+        for r in rows:
+            base = {"qm_id": r.get("qm_id"), "job_id": r.get("job_id")}
+            lines.append({"ev": "job_seen" if r.get("job_id") else "qm_seen", **base,
+                          "t": r.get("first_seen"), "status": r.get("status"),
+                          "user": r.get("user"), "description": r.get("description")})
+            if r.get("job_id"):
+                lines.append({"ev": "job_status", **base, "status": r.get("status"),
+                              "t": r.get("last_seen")})
+            if not r.get("open"):
+                lines.append({"ev": "job_gone" if r.get("job_id") else "qm_gone", **base,
+                              "t": r.get("last_seen"), "last_seen": r.get("last_seen")})
+        self.actions = self.actions[-HISTORY_KEEP_ACTIONS:]
+        lines.extend(self.actions)
+        tmp = self.path.with_suffix(".jsonl.tmp")
+        tmp.write_text("".join(json.dumps(x, default=str) + "\n" for x in lines), encoding="utf-8")
+        os.replace(tmp, self.path)
 
     def observe(self, answer: dict, at: str, last_ok_at: Optional[str] = None) -> int:
         """Record what one successful poll saw; returns the number of events written."""
@@ -399,6 +437,8 @@ class Monitor:
         self._histories: dict[str, History] = {}
         self.alarms: list[dict] = []
         self._toasted: set = set()
+        self._fails = 0
+        self._retry_at = 0.0
 
     # -- settings shortcuts
     def settings(self) -> dict:
@@ -428,6 +468,8 @@ class Monitor:
             self.last_error = None
             self.last_try_at = None
             self.alarms = []
+            self._fails = 0
+            self._retry_at = 0.0
 
     # -- polling
     def _ensure_worker(self, s: dict):
@@ -447,23 +489,41 @@ class Monitor:
         self._worker_sig = sig
         return self._worker
 
+    def _drop_worker(self, err: str):
+        """The worker failed: stop its process (never leave it running) and
+        back off before the next start. Caller holds ``_lock``."""
+        if self._worker is not None:
+            try:
+                self._worker.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        self._worker = None
+        self.last_error = err
+        self._fails += 1
+        self._retry_at = self.clock() + min(MAX_INTERVAL_S,
+                                            RESTART_BACKOFF_S * 2 ** (self._fails - 1))
+
     def poll_once(self) -> None:
         s = self.settings()
         if not s.get("target") or not s.get("python"):
             return
+        if (s["target"] or {}).get("kind", "qmm") != "qmm":
+            self.last_error = NOT_QM_SERVER
+            return
         with self._lock:
+            if self._worker is None and self.clock() < self._retry_at:
+                return  # backing off after a failure
             self.last_try_at = self.clock()
             try:
                 w = self._ensure_worker(s)
                 r = w.request("poll")
             except WorkerError as exc:
-                self.last_error = str(exc)
-                self._worker = None
+                self._drop_worker(str(exc))
                 return
             except Exception as exc:  # noqa: BLE001
-                self.last_error = f"The monitor worker failed: {type(exc).__name__}: {exc}"
-                self._worker = None
+                self._drop_worker(f"The monitor worker failed: {type(exc).__name__}: {exc}")
                 return
+            self._fails = 0
             if not r.get("ok"):
                 self.last_error = f"The server refused the poll: {r.get('error')}"
                 return
@@ -525,28 +585,49 @@ class Monitor:
         self._stop.set()
 
     # -- actions
-    def close(self, qm_id: Optional[str], who: str = "") -> dict:
-        """Close one QM (``qm_id``) or all (``None``); logged in History."""
+    def close(self, qm_id: Optional[str], who: str = "", qm_ids: Optional[list] = None) -> dict:
+        """Close one QM (``qm_id``) or the QMs the user confirmed (``qm_ids``,
+        "close all" as listed on the page). Only a QM that is open on the server
+        at that moment AND was named is closed -- a QM opened after the page
+        rendered is never touched. Logged in History."""
         s = self.settings()
         cap = self.capabilities()
         if not cap["close"]:
             return {"ok": False, "error": cap["close_reason"]}
-        names = [qm_id] if qm_id else [q.get("id") for q in (self.last_answer or {}).get("open_qms") or []]
-        with self._lock:
+        every = qm_id is None
+        names = [qm_id] if not every else [str(q).strip() for q in (qm_ids or []) if str(q).strip()]
+        if not names:
+            return {"ok": False, "error": "Nothing named to close."}
+        if not self._lock.acquire(timeout=CALL_TIMEOUT_S):
+            return {"ok": False, "error": "The monitor is busy talking to the server; try again."}
+        try:
             try:
                 w = self._ensure_worker(s)
-                r = (w.request("close_qm", qm_id=qm_id) if qm_id else w.request("close_all"))
+                r = (w.request("close_qm", qm_id=qm_id) if not every
+                     else w.request("close_qms", qm_ids=names))
             except WorkerError as exc:
                 r = {"ok": False, "error": str(exc)}
-                self._worker = None
+                self._drop_worker(str(exc))
+            except Exception as exc:  # noqa: BLE001
+                r = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                self._drop_worker(r["error"])
+        finally:
+            self._lock.release()
+        closed, skipped, failed = (names if r.get("ok") else []), [], {}
+        if r.get("ok") and every and isinstance(r.get("result"), dict):
+            closed = list(r["result"].get("closed") or [])
+            skipped = list(r["result"].get("skipped") or [])
+            failed = dict(r["result"].get("failed") or {})
+        ok = bool(r.get("ok")) and not failed
+        err = r.get("error") or ("; ".join(f"{k}: {v}" for k, v in failed.items()) or None)
         h = self.history()
         if h is not None:
-            h.log_action("close_qm" if qm_id else "close_all",
-                         {"qm_ids": names, "ok": bool(r.get("ok")), "error": r.get("error"),
-                          "by": who or None})
+            h.log_action("close_qm" if not every else "close_all",
+                         {"qm_ids": closed or names, "ok": ok, "error": err,
+                          "skipped": skipped or None, "by": who or None})
         if r.get("ok"):
             self.poll_once()
-        return {"ok": bool(r.get("ok")), "error": r.get("error"), "closed": names}
+        return {"ok": ok, "error": err, "closed": closed, "skipped": skipped}
 
     # -- what the page shows
     def capabilities(self) -> dict:
@@ -559,11 +640,9 @@ class Monitor:
         if not t:
             out.update(close_reason="No connection is set up yet (Monitor settings).")
             return out
-        if t.get("kind") == "cloud":
-            why = ("The cloud backend's client exposes no quantum-machine manager: it queues "
-                   "tasks and offers no call to list, inspect or close other users' QMs.")
-            out.update(close=False, close_reason=why, jobs=False, jobs_reason=why,
-                       live=False, live_reason=why)
+        if t.get("kind", "qmm") != "qmm":
+            out.update(close=False, close_reason=NOT_QM_SERVER, jobs=False,
+                       jobs_reason=NOT_QM_SERVER, live=False, live_reason=NOT_QM_SERVER)
             return out
         if "list_open_qms" in refused:
             out.update(close_reason=f"The server refused listing QMs: {refused['list_open_qms']}")
@@ -597,16 +676,19 @@ class Monitor:
         else:
             state = "ok"
             sentence = f"Updated {age:.0f} s ago."
+        # an alarm is judged only on a fresh answer: stale or failed data never alarms
+        alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
         return {"state": state, "sentence": sentence, "age_s": age,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
-                "interval_s": s["interval_s"], "alarms": list(self.alarms) if s.get("alarms_armed") else [],
+                "interval_s": s["interval_s"], "alarms": alarms,
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}
 
     def new_alarm_toasts(self) -> list[dict]:
         """Alarms not yet announced in this process (a toast fires once per alarm)."""
-        keys = {(a["controller"], a["key"]) for a in self.alarms}
-        fresh = [a for a in self.alarms if (a["controller"], a["key"]) not in self._toasted]
+        current = self.status()["alarms"]
+        keys = {(a["controller"], a["key"]) for a in current}
+        fresh = [a for a in current if (a["controller"], a["key"]) not in self._toasted]
         self._toasted = keys
         return fresh
 

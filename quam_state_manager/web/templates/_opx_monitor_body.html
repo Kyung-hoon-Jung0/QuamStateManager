@@ -17,9 +17,6 @@
 {%- if tab == 'live' %}
   {%- if not cap.live %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">Not available for this target.</span> {{ cap.live_reason }}</p>
-  {%- if st.target_kind == 'cloud' and ans.online is not none %}
-  <p>Backend status reported by the cloud service: <strong>{{ 'online' if ans.online else 'offline' }}</strong>{% if ans.description %} &middot; {{ ans.description }}{% endif %}</p>
-  {%- endif %}
   {%- elif ans.controllers is none %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">No device data.</span> {% if ans.refused and ans.refused.get_devices %}The server refused get_devices: {{ ans.refused.get_devices }}{% else %}Nothing has been read yet.{% endif %}</p>
   {%- else %}
@@ -113,8 +110,7 @@
 {%- elif tab == 'settings' %}
   <form class="opxmon-settings" hx-post="/opx-monitor/settings" hx-target="#opxmon-body" hx-swap="outerHTML">
     <fieldset><legend>Connection</legend>
-      <label><input type="radio" name="kind" value="qmm" {% if target.kind != 'cloud' %}checked{% endif %}> QM server (host and port)</label>
-      <label><input type="radio" name="kind" value="cloud" {% if target.kind == 'cloud' %}checked{% endif %}> Cloud backend (task queue)</label>
+      <p class="ui-note">A QM server (host and port). A task-queue cloud backend exposes no monitor API and cannot be watched here.</p>
       <div class="opxmon-grid">
         <label>Host <input name="host" value="{{ target.host or '' }}" autocomplete="off"></label>
         <label>Port <input name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
@@ -123,7 +119,6 @@
         <label class="opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
           <textarea name="headers" rows="2" placeholder="{{ 'stored -- leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
         {% if has_headers %}<label><input type="checkbox" name="clear_headers" value="1"> Remove the stored headers</label>{% endif %}
-        <label>Cloud backend name <input name="backend" value="{{ target.backend or '' }}" autocomplete="off"></label>
       </div>
     </fieldset>
     <fieldset><legend>Python environment with the QM SDK</legend>
@@ -142,7 +137,7 @@
         <tbody>{% for m in offered %}<tr><td class="ui-table-cell">{{ m.label }} ({{ m.unit }})</td><td class="ui-table-cell">{{ m.direction }}</td>
           <td class="ui-table-cell"><input name="th__{{ m.key }}" value="{{ settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
       {%- else %}
-      <p class="ui-state ui-state--empty opxmon-no-metrics"><span class="ui-state-key">No metrics to set limits on.</span> The server has not returned any temperature or metric reading yet{% if st.target_kind == 'cloud' %}, and the cloud client offers none{% endif %}.</p>
+      <p class="ui-state ui-state--empty opxmon-no-metrics"><span class="ui-state-key">No metrics to set limits on.</span> The server has not returned any temperature or metric reading yet.</p>
       {%- endif %}
     </fieldset>
     <button type="submit" class="btn-sm">Save</button>

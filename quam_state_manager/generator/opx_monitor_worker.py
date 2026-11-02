@@ -5,8 +5,10 @@ connection target and answers JSON-line requests on stdin with JSON lines on
 stdout:
 
     {"op": "poll"}                  -> server version, devices, open QMs, jobs
-    {"op": "close_qm", "qm_id": X}  -> qm.close() on one QM
-    {"op": "close_all"}             -> qmm.close_all_qms()
+    {"op": "close_qm", "qm_id": X}  -> qm.close() on one QM, only if it is open now
+    {"op": "close_qms", "qm_ids": [..]} -> qm.close() on each named QM that is open
+                                       now (never close_all_qms: a QM opened
+                                       after the user confirmed is not touched)
     {"op": "quit"}
 
 The target arrives once, as the first stdin line, ``{"target": {...}}`` (so a
@@ -39,6 +41,34 @@ def _ts(proto_ts):
         return proto_ts.ToDatetime().isoformat() + "Z"
     except Exception:
         return None
+
+
+def _num(v):
+    """A reading as a float, or None when the SDK handed something else."""
+    if isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+def _readings(src, name, refused, what):
+    out = {}
+    try:
+        items = dict(src).items()
+    except (TypeError, ValueError) as exc:
+        refused[f"{name}.{what}"] = _err_text(exc)
+        return None
+    for k, v in items:
+        f = _num(v)
+        if f is None:
+            if v is not None:
+                refused[f"{name}.{what}.{k}"] = f"not a number: {str(v)[:80]!r}"
+            continue
+        out[str(k)] = f
+    return out or None
 
 
 class QmmTarget:
@@ -86,17 +116,17 @@ class QmmTarget:
                 except Exception as exc:  # noqa: BLE001
                     refused[f"{name}.temperatures"] = _err_text(exc)
                     temps = None
-                row["temperatures"] = ({str(k): float(v) for k, v in dict(temps).items()
-                                        if v is not None} if temps else None)
+                row["temperatures"] = _readings(temps, name, refused, "temperatures") if temps else None
                 try:
                     m = c.metrics if hasattr(c, "metrics") else None
                 except Exception as exc:  # noqa: BLE001
                     refused[f"{name}.metrics"] = _err_text(exc)
                     m = None
-                row["metrics"] = ({k: float(getattr(m, k)) for k in
-                                   ("cpu_utilization_percent", "memory_available_gb",
-                                    "qop_cpu_percent", "qop_memory_percent", "disk_available_gb")
-                                   if getattr(m, k, None) is not None} if m is not None else None)
+                row["metrics"] = (_readings({k: getattr(m, k, None) for k in
+                                             ("cpu_utilization_percent", "memory_available_gb",
+                                              "qop_cpu_percent", "qop_memory_percent",
+                                              "disk_available_gb")}, name, refused, "metrics")
+                                  if m is not None else None)
                 controllers.append(row)
         ans["controllers"] = controllers if devs is not None else None
 
@@ -120,12 +150,26 @@ class QmmTarget:
         return ans
 
     def close_qm(self, qm_id):
+        open_now = {str(q) for q in self.qmm.list_open_qms()}
+        if str(qm_id) not in open_now:
+            raise RuntimeError(f"{qm_id} is no longer open; nothing was closed")
         qm = self.qmm.get_qm(qm_id)
         return bool(qm.close())
 
-    def close_all(self):
-        self.qmm.close_all_qms()
-        return True
+    def close_qms(self, qm_ids):
+        """Close each named QM that is open now; report the rest, never close others."""
+        open_now = {str(q) for q in self.qmm.list_open_qms()}
+        closed, skipped, failed = [], [], {}
+        for qid in [str(q) for q in qm_ids]:
+            if qid not in open_now:
+                skipped.append(qid)
+                continue
+            try:
+                self.qmm.get_qm(qid).close()
+                closed.append(qid)
+            except Exception as exc:  # noqa: BLE001
+                failed[qid] = _err_text(exc)
+        return {"closed": closed, "skipped": skipped, "failed": failed}
 
 
 def _job_row(j):
@@ -153,29 +197,6 @@ def _used_fems(cfg):
     return sorted(used)
 
 
-class CloudTarget:
-    """A task-queue cloud backend. Its client exposes no QM manager: only the
-    backend's own summary (online flag, description) can be read."""
-
-    def __init__(self, t):
-        from iqcc_cloud_client import IQCC_Cloud
-        self.client = IQCC_Cloud(quantum_computer_backend=t["backend"])
-
-    def poll(self):
-        s = getattr(self.client, "_summary", None) or {}
-        return {"kind": "cloud", "online": s.get("online"),
-                "description": s.get("description"), "version": None, "controllers": None,
-                "open_qms": None, "jobs": None,
-                "refused": {"list_open_qms": "not offered by the cloud client",
-                            "get_devices": "not offered by the cloud client",
-                            "get_jobs": "not offered by the cloud client"}}
-
-    def close_qm(self, qm_id):
-        raise RuntimeError("the cloud client offers no way to close another QM")
-
-    def close_all(self):
-        raise RuntimeError("the cloud client offers no way to close QMs")
-
 
 def main():
     logging.disable(logging.CRITICAL)
@@ -183,7 +204,9 @@ def main():
     first = sys.stdin.readline()
     try:
         t = json.loads(first)["target"]
-        target = CloudTarget(t) if t.get("kind") == "cloud" else QmmTarget(t)
+        if t.get("kind", "qmm") != "qmm":
+            raise ValueError("this target is not a QM server; only a QM server can be monitored")
+        target = QmmTarget(t)
         _out({"ok": True, "ready": True})
     except Exception as exc:  # noqa: BLE001
         _out({"ok": False, "ready": False, "error": _err_text(exc)})
@@ -202,8 +225,8 @@ def main():
                 res = target.poll()
             elif op == "close_qm":
                 res = target.close_qm(str(req["qm_id"]))
-            elif op == "close_all":
-                res = target.close_all()
+            elif op == "close_qms":
+                res = target.close_qms(list(req.get("qm_ids") or []))
             else:
                 raise ValueError(f"unknown op {op!r}")
             _out({"ok": True, "result": res, "took_s": round(time.time() - t0, 3)})

@@ -44,7 +44,10 @@
         e.preventDefault();
         if (!window.confirm(confirmText(btn))) return;
         var fd = new FormData();
-        if (btn.classList.contains("opxmon-close-all")) fd.append("all", "1");
+        if (btn.classList.contains("opxmon-close-all")) {
+            fd.append("all", "1");
+            fd.append("qm_ids", btn.getAttribute("data-qm-ids") || "");
+        }
         else fd.append("qm_id", btn.getAttribute("data-qm-id"));
         try {
             var who = window.localStorage && window.localStorage.getItem("quam_actor_name");
@@ -54,7 +57,9 @@
         return window.fetch("/opx-monitor/close", {method: "POST", body: fd, credentials: "same-origin"})
             .then(function (r) { return r.json().catch(function () { return {ok: false, error: "HTTP " + r.status}; }); })
             .then(function (j) {
-                if (j && j.ok) say("Closed: " + (j.closed || []).join(", ") + ". Written to History.", false);
+                if (j && j.ok) say("Closed: " + ((j.closed || []).join(", ") || "none") +
+                    ((j.skipped && j.skipped.length) ? " (already gone: " + j.skipped.join(", ") + ")" : "") +
+                    ". Written to History.", false);
                 else say("Not closed: " + ((j && j.error) || "no reason given"), true);
                 refresh();
             }, function (err) {

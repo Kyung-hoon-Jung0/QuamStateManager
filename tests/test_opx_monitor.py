@@ -42,8 +42,14 @@ class FakeWorker:
             if isinstance(item, Exception):
                 raise item
             return {"ok": True, "result": item}
-        if op in ("close_qm", "close_all"):
+        if op == "close_qm":
             return {"ok": True, "result": True}
+        if op == "close_qms":
+            open_now = {q["id"] for q in (self.script[0].get("open_qms") or [])}
+            ids = list(kw.get("qm_ids") or [])
+            return {"ok": True, "result": {"closed": [i for i in ids if i in open_now],
+                                           "skipped": [i for i in ids if i not in open_now],
+                                           "failed": {}}}
         return {"ok": False, "error": "unknown"}
 
     def kill(self):
@@ -121,8 +127,8 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     assert "The server refused list_open_qms: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "opxmon-close\"" not in html
-    r = app.test_client().post("/opx-monitor/close", data={"all": "1"}, headers=ORIGIN)
-    assert r.status_code == 409 and not any(c[0] == "close_all" for c in w.calls)
+    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    assert r.status_code == 409 and not any(c[0].startswith("close") for c in w.calls)
 
 
 def test_worker_death_is_a_sentence_never_green(env):
@@ -197,17 +203,150 @@ def test_close_one_logs_and_the_confirm_names_it(env):
     assert acts[0]["action"] == "close_qm" and acts[0]["by"] == "tester" and acts[0]["ok"]
 
 
-def test_cloud_target_disables_jobs_and_cleanup(env):
+def test_a_target_that_is_not_a_qm_server_is_one_sentence(env):
+    app, m, w, clock, started = env
+    s = om.load_settings(app.instance_path)
+    s["target"] = {"kind": "other", "backend": "b"}
+    om.save_settings(app.instance_path, s)
+    m.poll_once()
+    assert not started  # no worker is spawned for it
+    for tab in ("jobs", "cleanup", "live"):
+        assert "This target is not a QM server." in page(app, tab)
+
+
+def test_no_cloud_client_path_in_the_feature():
+    """The worker never imports a third-party cloud client (removed by decision)."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "quam_state_manager"
+    for f in ("generator/opx_monitor_worker.py", "core/opx_monitor.py", "web/opx_monitor_routes.py",
+              "web/templates/_opx_monitor_body.html"):
+        text = (root / f).read_text(encoding="utf-8").lower()
+        assert "cloud_client" not in text and "cloudtarget" not in text and 'name="backend"' not in text
+
+
+# ---- review round: closing, worker lifetime, stale alarms, history bound
+
+def test_close_all_closes_only_the_confirmed_qms(env):
+    """A QM opened after the page rendered is not in the confirm list and stays open."""
+    app, m, w, clock, _ = env
+    m.poll_once()
+    assert 'data-qm-ids="QM-a"' in page(app, "cleanup")
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]), ("QM-new", [], ["con1/2"])))]
+    c = app.test_client()
+    assert c.post("/opx-monitor/close", data={"all": "1"}, headers=ORIGIN).status_code == 400
+    r = c.post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    assert r.status_code == 200 and r.get_json()["closed"] == ["QM-a"]
+    sent = [kw for op, kw in w.calls if op.startswith("close")]
+    assert sent == [{"qm_ids": ["QM-a"]}] and not any(op == "close_all" for op, _ in w.calls)
+
+
+def test_close_all_reports_a_qm_already_gone(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    w.script[:] = [answer(qms=())]
+    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    j = r.get_json()
+    assert j["closed"] == [] and j["skipped"] == ["QM-a"]
+
+
+class _FakeQM:
+    def __init__(self, log, qid):
+        self.log, self.qid = log, qid
+
+    def close(self):
+        self.log.append(self.qid)
+        return True
+
+
+class _FakeQmm:
+    def __init__(self, open_ids, temps=None):
+        self.open_ids, self.closed, self.temps = list(open_ids), [], temps
+
+    def list_open_qms(self):
+        return list(self.open_ids)
+
+    def get_qm(self, qid):
+        return _FakeQM(self.closed, qid)
+
+    def close_all_qms(self):
+        self.closed.extend(self.open_ids)
+
+
+def _worker_target(qmm):
+    from quam_state_manager.generator import opx_monitor_worker as wk
+    t = wk.QmmTarget.__new__(wk.QmmTarget)
+    t.qmm = qmm
+    return t
+
+
+def test_worker_never_closes_an_unnamed_or_stale_qm():
+    qmm = _FakeQmm(["QM-a", "QM-new"])
+    t = _worker_target(qmm)
+    res = t.close_qms(["QM-a", "QM-old"])
+    assert qmm.closed == ["QM-a"] and res["skipped"] == ["QM-old"]
+    with pytest.raises(RuntimeError, match="no longer open"):
+        t.close_qm("QM-old")
+    assert qmm.closed == ["QM-a"]
+
+
+def test_worker_survives_a_temperature_of_the_wrong_type():
+    from types import SimpleNamespace
+    ctrl = SimpleNamespace(controller_type="OPX1000", fems={1: "LF"},
+                           temperatures={"FEM 1": "n/a", "FEM 2": 41, "FEM 3": None, "flag": True},
+                           metrics=SimpleNamespace(cpu_utilization_percent="12.5", qop_cpu_percent=[1]))
+    qmm = _FakeQmm([])
+    qmm.version_dict = lambda: {"server": "x"}
+    qmm.cluster_name = "c"
+    qmm.get_devices = lambda: SimpleNamespace(controllers={"con1": ctrl})
+    qmm.get_jobs = lambda: []
+    ans = _worker_target(qmm).poll()
+    c = ans["controllers"][0]
+    assert c["temperatures"] == {"FEM 2": 41.0}
+    assert c["metrics"] == {"cpu_utilization_percent": 12.5}
+    assert "con1.temperatures.FEM 1" in ans["refused"]
+    assert ans["open_qms"] == []
+
+
+def test_a_worker_that_fails_oddly_is_killed_and_restarts_back_off(env):
+    app, m, w, clock, started = env
+    w.script[:] = [ValueError("Expecting value: line 1 column 1")]
+    m.poll_once()
+    assert w.dead and m._worker is None and "ValueError" in m.last_error
+    n = len(started)
+    w.dead = False
+    m.poll_once()  # same instant: backing off, no new env process
+    assert len(started) == n
+    clock.t += om.RESTART_BACKOFF_S + 0.1
+    w.script[:] = [answer()]
+    m.poll_once()
+    assert len(started) == n + 1 and m.last_error is None
+
+
+def test_an_alarm_never_fires_on_stale_data(env):
     app, m, w, clock, _ = env
     s = om.load_settings(app.instance_path)
-    s["target"] = {"kind": "cloud", "backend": "b"}
+    s.update(thresholds={"temp:FEM 1": 55}, alarms_armed=True)
     om.save_settings(app.instance_path, s)
-    w.script[:] = [{"kind": "cloud", "online": True, "controllers": None, "open_qms": None,
-                    "jobs": None, "refused": {}}]
+    w.script[:] = [answer(temps={"FEM 1": 61.0})]
     m.poll_once()
-    for tab in ("jobs", "cleanup", "live"):
-        assert "exposes no quantum-machine manager" in page(app, tab)
-    assert "Backend status reported by the cloud service: <strong>online" in page(app, "live")
+    clock.t += 60  # the answer is now stale
+    c = app.test_client()
+    r = c.get("/opx-monitor/alarm-badge")
+    assert "HX-Trigger" not in r.headers and "OPX alarm (" not in r.get_data(as_text=True)
+    assert "role=\"alert\"" not in page(app, "live")
+
+
+def test_history_file_is_bounded_and_keeps_its_rows(env, monkeypatch):
+    app, m, w, clock, _ = env
+    monkeypatch.setattr(om, "HISTORY_MAX_BYTES", 4000)
+    for i in range(200):
+        w.script[:] = [answer(qms=(("QM-a", [("j1", "Running" if i % 2 else "Paused")], ["con1/1"]),))]
+        m.poll_once()
+        clock.t += 5
+    h = m.history()
+    assert h.path.stat().st_size <= 4000 + 2000
+    want = {r["job_id"]: (r["status"], r["open"]) for r in h.table()}
+    assert {r["job_id"]: (r["status"], r["open"]) for r in om.History(h.path).table()} == want
 
 
 def test_settings_secret_headers_never_rendered_or_in_settings(env):
@@ -295,4 +434,15 @@ def test_page_js_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("ok - ") >= 12, r.stdout
+    assert r.stdout.count("ok - ") >= 13, r.stdout
+
+
+def test_post_routes_need_our_origin(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    app.config["TESTING"] = False  # the guard is bypassed under TESTING
+    c = app.test_client()
+    for url, data in (("/opx-monitor/close", {"qm_id": "QM-a"}), ("/opx-monitor/settings", {"host": "x"})):
+        assert c.post(url, data=data).status_code == 403
+        assert c.post(url, data=data, headers={"Origin": "http://evil.example"}).status_code == 403
+    assert not any(op.startswith("close") for op, _ in w.calls)
