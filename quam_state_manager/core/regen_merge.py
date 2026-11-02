@@ -583,6 +583,10 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
             cls = new.get("__class__")
             if isinstance(cls, str):
                 legal = schemas.get(cls)
+        # Attributes of an existing port are distinct from hardware entities.
+        # Only the destination class's declared fields may be grafted.
+        if top == "ports" and "port_id" in new:
+            graftable_here = True
         for k, ov in old.items():
             if ((k in new and k not in deferred)
                     or k in ("__class__", "__package_versions__")
@@ -2693,6 +2697,15 @@ def merge_states(old_state: dict, new_state: dict,
     moved_from += [(f"twpas.{o}", f"twpas.{n}") for o, n in stats.twpas_renamed]
     for p, ov in old_scalars:
         if p in merged_paths:
+            continue
+        # A schema rejection belongs to the destination line, even when its
+        # source hardware address disappears entirely.
+        if any(p == src + "." + record["field"] or
+               p.startswith(src + "." + record["field"] + ".")
+               for record in stats.port_fields_dropped
+               for src in sources.get(record["port"], {})):
+            continue
+        if any(p == record["path"] for record in stats.crosstalk_dropped):
             continue
         # QA F1: a moved port's values live at the port its line went to.
         if moved_from and any(

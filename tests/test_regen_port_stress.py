@@ -583,7 +583,6 @@ def test_repro_populate_pointer_target():
     run_case(case)
 
 
-@pytest.mark.xfail(strict=True, reason="F7: source-only pointer target loses delay", raises=AssertionError)
 def test_repro_source_only_pointer_target():
     case = small_case({Z0: P1}, {Z0: P2})
     at(case[0], P1).update(delay="#./saved_delay", saved_delay=37)
@@ -633,6 +632,26 @@ from tests.port_audit_cases import AUDIT_CASES
 
 
 
+def test_moved_port_schema_gate():
+    from tests.port_audit_cases import c1_mw_b
+    old, ow, new, nw = c1_mw_b()
+    source = ("ports", "mw_inputs", "con1", "1", "1")
+    dest = ("ports", "mw_inputs", "con1", "2", "1")
+    at(old, source).update(lo_mode="direct", unsupported_mode="custom")
+    schemas = {}
+    for port in ports(new).values():
+        schemas.setdefault(port["__class__"], set()).update(port)
+    schemas[at(new, dest)["__class__"]].update({"gain_db", "lo_mode"})
+    schemas = {cls: sorted(fields) for cls, fields in schemas.items()}
+    r = regen_merge.merge_states(old, new, old_wiring=ow, new_wiring=nw, class_schemas=schemas)
+    assert at(r.merged, dest)["gain_db"] == 3
+    assert at(r.merged, dest)["lo_mode"] == "direct"
+    assert "unsupported_mode" not in at(r.merged, dest)
+    assert {"port": ".".join(dest), "field": "unsupported_mode", "owner": "q1.resonator"} in r.stats.port_fields_dropped
+    assert ".".join(dest + ("unsupported_mode",)) in r.stats.schema_dropped
+    assert not any(p.startswith(".".join(source)) for p in r.stats.residual_lost)
+    line_identity_oracle(old, ow, r.merged, nw, rebuilt=new, schemas=schemas, stats=r.stats,
+        reported=r.stats.residual_lost, dropped=r.stats.crosstalk_dropped)
 
 
 
