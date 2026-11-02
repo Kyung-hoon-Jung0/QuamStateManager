@@ -16096,3 +16096,9 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
 @media (max-width: 40rem) { .opxmon-page { padding: 0.5rem 0.5rem 2rem; } .opxmon-table { min-width: 0; } }
 .opxmon-close.outline, .opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
+
+.opxmon-health-dot--grey { color: var(--text-muted, grey); }
+.opxmon-health-dot--green { color: var(--success, green); }
+.opxmon-health-dot--amber { color: var(--warning, orange); }
+.opxmon-health-dot--red { color: var(--danger, red); }
+.opxmon-health { font-size: .85em; }

@@ -143,8 +143,8 @@ def opx_monitor_save_settings():
             return _settings_reply(f"The limit for {k[4:]} is not a number.", error=True)
         th[k[4:]] = val
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "idle_minutes": f.get("idle_minutes", s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
-    changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python"))
+           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": f.get("idle_minutes", s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+    changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
     hdr_txt = f.get("headers")
     if target is not None:

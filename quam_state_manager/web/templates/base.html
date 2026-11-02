@@ -315,8 +315,8 @@
                           hx-swap="innerHTML"></span></li>
             </ul>
             <ul class="topbar-right">
-                {% if opx_alarm_armed() %}<li class="opxmon-alarm-slot" id="opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
-                    hx-trigger="load, every 10s" hx-swap="innerHTML"></li>{% endif %}
+                <li class="opxmon-alarm-slot" id="opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
+                    hx-trigger="load, every 10s" hx-swap="innerHTML"></li>
                 {# v1.5.3 (design A): the bar keeps the chip name, the Sync status control and
                    Review (the tray); every other control lives in this one overflow menu.
                    The items are the same nodes (ids, classes, handlers) moved here, not

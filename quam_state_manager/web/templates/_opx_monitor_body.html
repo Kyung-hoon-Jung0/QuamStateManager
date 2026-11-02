@@ -15,6 +15,13 @@
 {%- endif %}
 
 {%- if tab == 'live' %}
+  <p class="opxmon-health" data-health="{{ st.health.color }}"><span class="opxmon-health-dot--{{ st.health.color }}">&#9679;</span> {{ st.health.reason }}</p>
+  {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
+  <h3>Admin status</h3><p>Cluster health: {{ ac.health.status or 'unknown' }}; messages: {{ ac.health.messages if ac.health.messages is not none else 'none reported' }}; device messages: {{ ac.health.deviceMessages }}; clock: {{ ac.clock or 'unknown' }}; unreachable: {{ ac.hasUnreachableDevices }}</p>
+  <p>Cluster packages: {% for p in ac.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>
+  {% for d in ac.devices or [] %}<p>{{ d.hostname }}; unreachable: {{ d.unreachable if d.unreachable is defined else 'unknown' }}</p>{% endfor %}
+  {% for d in st.admin.devices or [] %}<p>{{ d.hostname }}; status: {{ d.status or 'unknown' }}; packages: {% for p in d.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>{% endfor %}
+  {% else %}<p class="ui-muted">{{ st.admin.reason }}</p>{% endif %}
   {%- if not cap.live %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">Not available for this target.</span> {{ cap.live_reason }}</p>
   {%- elif ans.controllers is none %}
@@ -84,7 +91,7 @@
 
 {%- elif tab == 'history' %}
   <h3 class="opxmon-h">Quantum machines and jobs seen <span class="ui-count">{{ history_rows|length }}</span></h3>
-  <p class="ui-note">Recorded while the monitor polled. A QM or job that opened and closed between two polls is not seen. Last-seen is exact for closed rows; for open rows it moves with each poll.</p>
+  <p class="ui-note">History records jobs inside open QMs only. Recorded while the monitor polled. A QM or job that opened and closed between two polls is not seen. Last-seen is exact for closed rows; for open rows it moves with each poll.</p>
   {%- if history_rows %}
   <table class="ui-table opxmon-table" aria-label="History"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head">First seen (UTC)</th><th class="ui-table-head">Last seen (UTC)</th><th class="ui-table-head">Now</th></tr></thead>
     <tbody>{% for r in history_rows %}<tr><td class="ui-table-cell"><code>{{ r.qm_id }}</code></td><td class="ui-table-cell">{% if r.job_id %}<code>{{ r.job_id }}</code>{% endif %}</td><td class="ui-table-cell">{{ r.status or '' }}</td><td class="ui-table-cell">{{ r.first_seen }}</td><td class="ui-table-cell">{{ r.last_seen }}</td><td class="ui-table-cell">{{ 'open' if r.open else 'gone' }}</td></tr>{% endfor %}</tbody></table>
@@ -114,6 +121,7 @@
     <fieldset><legend>Connection</legend>
       <p class="ui-note">A QM server (host and port). A task-queue cloud backend exposes no monitor API and cannot be watched here.</p>
       <div class="opxmon-grid">
+        <label>Admin URL <input name="admin_url" value="{{ settings.admin_url or '' }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
         <label>Host <input name="host" value="{{ target.host or '' }}" autocomplete="off"></label>
         <label>Port <input name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
         <label>Cluster name <input name="cluster_name" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>

@@ -493,3 +493,34 @@ def test_d13_idle_recheck_skips_new_activity(env):
     qm.get_jobs = lambda: []
     assert _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)['closed'] == ['QM-a']
     assert not om.idle_state({'jobs': None}, '2020-01-01T00:00:00Z', clock.t)['idle']
+
+
+def test_d14_admin_health_and_unknown(env, monkeypatch):
+    from pathlib import Path
+    import io
+    root = Path(__file__).parent / 'fixtures' / 'opx_monitor'
+    calls = []
+    class Opener:
+        def open(self, req, timeout):
+            calls.append((req.full_url, req.method, timeout))
+            name = 'v2_clusters.json' if req.full_url.endswith('/clusters') else 'v2_devices_detailed.json'
+            return io.BytesIO((root / name).read_bytes())
+    monkeypatch.setattr(om.urllib.request, 'build_opener', lambda *a: Opener())
+    admin = om.read_admin('http://sample.invalid')
+    assert admin['known']
+    assert [u.rsplit('/api', 1)[1] for u, method, timeout in calls] == ['/v2/clusters', '/v2/devices/detailed']
+    assert all(method == 'GET' and timeout == 2 for u, method, timeout in calls)
+    a = answer(qms=(), temps={'Chassis': 40})
+    assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'green'
+    assert om.health(a, admin, {'temp:Chassis': 50}, 'stale')['color'] == 'grey'
+    assert om.health(a, om.read_admin(None), {'temp:Chassis': 50}, 'ok')['color'] == 'grey'
+    assert om.health(a, admin, {}, 'ok')['color'] == 'grey'
+    admin['cluster']['hasUnreachableDevices'] = True
+    assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'red'
+    app, m, w, clock, _ = env
+    m.poll_once()
+    assert 'Set Admin URL' in page(app, 'live')
+    p = om._dir(app.instance_path) / 'settings.json'
+    p.write_text('{broken')
+    assert 'corrupt' in page(app, 'settings')
+    assert p.with_suffix('.json.corrupt').read_text() == '{broken'

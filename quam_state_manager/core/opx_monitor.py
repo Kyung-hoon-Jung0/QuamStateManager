@@ -25,6 +25,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -154,7 +156,7 @@ def load_settings(instance) -> dict:
 def save_settings(instance, settings: dict) -> None:
     d = _dir(instance)
     d.mkdir(parents=True, exist_ok=True)
-    clean = {k: settings.get(k) for k in ("target", "python", "interval_s", "thresholds", "alarms_armed", "idle_minutes")}
+    clean = {k: settings.get(k) for k in ("target", "python", "interval_s", "thresholds", "alarms_armed", "idle_minutes", "admin_url")}
     tmp = d / "settings.json.tmp"
     tmp.write_text(json.dumps(clean, indent=1), encoding="utf-8")
     os.replace(tmp, d / "settings.json")
@@ -494,6 +496,79 @@ def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
 
 # ----------------------------------------------------------------- monitor
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def read_admin(url, cluster_name=None):
+    """Only the two documented read routes, no redirects or connection headers."""
+    if not url:
+        return {'known': False, 'reason': 'Admin input unknown. Set Admin URL under Monitor settings.'}
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
+            raise ValueError('Admin URL must be an HTTP(S) origin')
+        opener = urllib.request.build_opener(_NoRedirect)
+        answers = []
+        for path in ('/api/v2/clusters', '/api/v2/devices/detailed'):
+            with opener.open(urllib.request.Request(url.rstrip('/') + path, method='GET'), timeout=2) as response:
+                raw = response.read(1_000_001)
+                if len(raw) > 1_000_000:
+                    raise ValueError('admin response too large')
+                answer = json.loads(raw)
+                if not isinstance(answer, list):
+                    raise ValueError('unexpected admin response shape')
+                answers.append(answer)
+        clusters, devices = answers
+        selected = [c for c in clusters if (c.get('name') == cluster_name if cluster_name else c.get('isCurrentCluster') is True)]
+        if len(selected) != 1:
+            raise ValueError('admin cluster selection is ambiguous or missing')
+        c = selected[0]
+        ds = [d for d in devices if d.get('clusterName') == c.get('name')]
+        members = c.get('devices')
+        complete = (isinstance(c.get('health'), dict) and c['health'].get('status') is not None
+                    and isinstance(c.get('hasUnreachableDevices'), bool)
+                    and bool(members) and bool(ds)
+                    and all(isinstance(d.get('unreachable'), bool) for d in members)
+                    and all(d.get('status') for d in ds)
+                    and {d.get('hostname') for d in members} == {d.get('hostname') for d in ds})
+        return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
+                'cluster': c, 'devices': ds}
+    except Exception as exc:
+        return {'known': False, 'reason': 'Admin input unknown: ' + type(exc).__name__}
+
+
+def health(answer, admin, thresholds, state):
+    unknown, bad = [], []
+    ans = answer or {}
+    if state != 'ok':
+        unknown.append('data not fresh')
+    if not admin.get('known'):
+        unknown.append(admin.get('reason') or 'admin unknown')
+    else:
+        c = admin['cluster']
+        status = c['health']['status']
+        if status != 'OPERATIONAL_CLUSTER' or c['hasUnreachableDevices'] or any(d['unreachable'] for d in c['devices']) or any(d['status'] != 'OPERATIONAL_DEVICE' for d in admin['devices']):
+            bad.append('admin reports unhealthy or unreachable devices')
+    if ans.get('open_qms') is None:
+        unknown.append('open QM list unknown')
+    controllers = ans.get('controllers')
+    if not controllers or any(not c.get('temperatures') for c in controllers):
+        unknown.append('temperatures unknown')
+    values = [(r['key'], r['value']) for c in controllers or [] for r in temperature_rows(c) if r['value'] is not None]
+    if not values or any('temp:' + k not in thresholds for k, v in values):
+        unknown.append('temperature limits incomplete')
+    if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)):
+        bad.append('temperature above limit')
+    if unknown:
+        return {'color': 'grey', 'reason': 'unknown: ' + '; '.join(unknown + bad)}
+    if bad:
+        return {'color': 'red', 'reason': '; '.join(bad)}
+    count = len(ans['open_qms'])
+    return {'color': 'amber' if count else 'green',
+            'reason': f'{count} open QMs hold resources' if count else 'admin operational; reported temperatures within configured limits; no open QMs; fresh data'}
+
 class Monitor:
     """One poller per SM process. ``worker_factory(python, target)`` is
     injectable so tests drive it with fake answers."""
@@ -518,6 +593,7 @@ class Monitor:
         self._toasted: set = set()
         self._fails = 0
         self._retry_at = 0.0
+        self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
 
     # -- settings shortcuts
     def settings(self) -> dict:
@@ -543,6 +619,7 @@ class Monitor:
             self._worker = None
             self._worker_sig = None
             self.last_answer = None
+            self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
             self.last_ok_at = None
             self.last_error = None
             self.last_try_at = None
@@ -607,6 +684,7 @@ class Monitor:
                 self.last_error = f"The server refused the poll: {r.get('error')}"
                 return
             ans = r.get("result") or {}
+            self.admin = read_admin(s.get('admin_url'), (s.get('target') or {}).get('cluster_name'))
             prev_ok = self.last_ok_at
             self.last_answer = ans
             self.last_ok_at = self.clock()
@@ -764,6 +842,7 @@ class Monitor:
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
         return {"state": state, "sentence": sentence, "age_s": age,
+                'health': health(self.last_answer, self.admin, s['thresholds'], state), 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "interval_s": s["interval_s"], "alarms": alarms,
