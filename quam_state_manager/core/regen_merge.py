@@ -1797,6 +1797,12 @@ def _carry_crosstalk(old_state: dict, merged: dict,
             elif targets:
                 reason = "column port now drives another line"
                 target = column
+            elif owners:
+                # every line that column described was removed: the term has no
+                # partner any more, and keeping it would couple into whatever is
+                # cabled to that port next
+                reason = "column line was removed"
+                target = column
             else:
                 target = f"{dest_scope}.{key}"
                 current = new_owners.get(target, set())

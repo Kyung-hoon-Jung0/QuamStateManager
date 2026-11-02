@@ -1119,8 +1119,10 @@ def test_crosstalk_retains_and_reports_removed_target():
     old, ow = _crosstalk_state({"q1": 1, "q2": 3}, {1: {"3": .13}})
     new, nw = _crosstalk_state({"q1": 1})
     result = merge_states(old, new, old_wiring=ow, new_wiring=nw)
-    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] == {"3": .13}
-    assert result.stats.crosstalk_unresolved == ["ports.analog_outputs.con1.5.1.crosstalk.3"]
+    # the term toward the removed line is dropped and reported, never kept
+    assert result.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"] == {}
+    assert {"path": "ports.analog_outputs.con1.5.1.crosstalk.3",
+            "reason": "column line was removed"} in result.stats.crosstalk_dropped
 
 
 @pytest.mark.parametrize("pointer", ["#/extras/row", "#./saved_row"])
@@ -1619,3 +1621,15 @@ class TestClassChangeGroups:
         (g,) = class_change_groups([("(root)", "lab.Quam", "qb.Quam")],
                                    ["lab_top (the rebuild left it empty; x)"], old)
         assert g["dropped"] == 1
+
+
+def test_a_term_toward_a_removed_line_is_dropped_not_kept_on_its_empty_port():
+    """Real-chip stress: q3 removed; q1's term toward q3's old port stayed on that empty
+    port and would couple into whatever is cabled there next."""
+    old, ow = _crosstalk_state({"q1": 1, "q3": 3}, {1: {"3": .13, "1": 1.0}})
+    new, nw = _crosstalk_state({"q1": 1})
+    r = merge_states(old, new, old_wiring=ow, new_wiring=nw)
+    row = r.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["crosstalk"]
+    assert row == {"1": 1.0}
+    assert {"path": "ports.analog_outputs.con1.5.1.crosstalk.3",
+            "reason": "column line was removed"} in r.stats.crosstalk_dropped

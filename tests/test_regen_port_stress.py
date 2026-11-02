@@ -7,8 +7,8 @@ explicit Populate edit is the sole value exception. Crosstalk is a directed
 line-to-line relation, including self terms, independent of key spelling/type.
 
 Unreferenced source ports must retain their values if kept, or have every lost
-leaf reported. A removed line is outside the carry contract, but its crosstalk
-label remains meaningful when a retained coefficient names its former address.
+leaf reported. A removed line is outside the carry contract, and a coefficient toward it is
+dropped and reported (it would otherwise couple into whatever is cabled there next).
 """
 from copy import deepcopy
 import inspect
@@ -218,6 +218,8 @@ def line_identity_oracle(old_state, old_wiring, merged_state, new_wiring, *,
                 reason = None
                 if targets and any(t[:-1] != dest[:-1] for t in targets):
                     reason = "lines on different FEMs"
+                elif not targets and old_labels and column != src:
+                    reason = "column line was removed"
                 elif not targets and no.get(dest[:-1] + (str(number),), set()) - old_labels:
                     reason = "column port now drives another line"
                 if reason:
