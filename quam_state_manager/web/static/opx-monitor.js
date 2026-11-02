@@ -73,8 +73,20 @@
         t.setAttribute("data-state", "error");
     }
 
+    /* the sidebar's sub-links follow the tab shown (a tab click swaps only the pane) */
+    function syncNav() {
+        var b = body();
+        var nav = document.getElementById("opxmon-subnav");
+        if (!b || !nav) return;
+        var tab = b.getAttribute("data-tab");
+        nav.querySelectorAll("a").forEach(function (a) {
+            a.classList.toggle("active", a.getAttribute("href") === "/opx-monitor/" + tab);
+        });
+    }
+
     document.addEventListener("click", onClick);
+    document.addEventListener("htmx:afterSwap", syncNav);
     document.addEventListener("htmx:sendError", markUnreachable);
     document.addEventListener("htmx:responseError", markUnreachable);
-    window.OpxMonitor = {confirmText: confirmText, onClick: onClick, markUnreachable: markUnreachable};
+    window.OpxMonitor = {confirmText: confirmText, onClick: onClick, markUnreachable: markUnreachable, syncNav: syncNav};
 })();

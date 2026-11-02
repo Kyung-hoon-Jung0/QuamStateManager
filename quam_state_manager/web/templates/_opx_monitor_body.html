@@ -104,8 +104,8 @@
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
     <tbody>{% for q in ans.open_qms %}{% set jobs_txt = q.jobs | map(attribute='status') | join(', ') %}<tr><td class="ui-table-cell"><code>{{ q.id }}</code></td><td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td class="ui-table-cell">{{ jobs_txt or 'none' }}</td>
-      <td class="ui-table-cell"><button type="button" class="btn-sm opxmon-close" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
-  <p><button type="button" class="btn-sm opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p>
+      <td class="ui-table-cell"><button type="button" class="btn-sm outline opxmon-close" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+  <p><button type="button" class="btn-sm outline opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p>
   {%- endif %}
   {%- endif %}
   <p class="opxmon-close-result" role="status" hidden></p>

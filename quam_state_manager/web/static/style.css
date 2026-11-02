@@ -16095,3 +16095,4 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
                       color: var(--ui-danger-text); background: var(--ui-danger-bg); border: 1px solid var(--ui-danger-border); }
 .opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
 @media (max-width: 40rem) { .opxmon-page { padding: 0.5rem 0.5rem 2rem; } .opxmon-table { min-width: 0; } }
+.opxmon-close.outline, .opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
