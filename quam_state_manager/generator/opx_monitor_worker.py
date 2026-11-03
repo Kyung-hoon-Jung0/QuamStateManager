@@ -104,34 +104,37 @@ class QmmTarget:
         ans["version"] = call("version_dict", lambda: {str(k): str(v) for k, v in
                                                         dict(self.qmm.version_dict()).items()})
         ans["cluster_name"] = call("cluster_name", lambda: self.qmm.cluster_name)
-        devs = call("get_devices", self.qmm.get_devices)
-        controllers = []
-        if devs is not None:
-            for name, c in dict(devs.controllers).items():
-                row = {"name": str(name), "type": getattr(c, "controller_type", None)}
-                fems = getattr(c, "fems", None)
-                row["fems"] = {str(k): str(v) for k, v in dict(fems).items()} if fems else None
-                try:
-                    temps = c.temperatures if hasattr(c, "temperatures") else (
-                        {"controller": c.temperature} if hasattr(c, "temperature") else None)
-                except Exception as exc:  # noqa: BLE001
-                    refused[f"{name}.temperatures"] = _err_text(exc)
-                    temps = None
-                row["temperatures"] = _readings(temps, name, refused, "temperatures") if temps else None
-                try:
-                    m = c.metrics if hasattr(c, "metrics") else None
-                except Exception as exc:  # noqa: BLE001
-                    refused[f"{name}.metrics"] = _err_text(exc)
-                    m = None
-                row["metrics"] = (_readings({k: getattr(m, k, None) for k in
-                                             ("cpu_utilization_percent", "memory_available_gb",
-                                              "qop_cpu_percent", "qop_memory_percent",
-                                              "disk_available_gb")}, name, refused, "metrics")
-                                  if m is not None else None)
-                controllers.append(row)
-        ans["controllers"] = controllers if devs is not None else None
+        def read_devices():
+            devs = self.qmm.get_devices()
+            controllers = []
+            if devs is not None:
+                for name, c in dict(devs.controllers).items():
+                    row = {"name": str(name), "type": getattr(c, "controller_type", None)}
+                    fems = getattr(c, "fems", None)
+                    row["fems"] = {str(k): str(v) for k, v in dict(fems).items()} if fems else None
+                    try:
+                        temps = c.temperatures if hasattr(c, "temperatures") else (
+                            {"controller": c.temperature} if hasattr(c, "temperature") else None)
+                    except Exception as exc:  # noqa: BLE001
+                        refused[f"{name}.temperatures"] = _err_text(exc)
+                        temps = None
+                    row["temperatures"] = _readings(temps, name, refused, "temperatures") if temps else None
+                    try:
+                        m = c.metrics if hasattr(c, "metrics") else None
+                    except Exception as exc:  # noqa: BLE001
+                        refused[f"{name}.metrics"] = _err_text(exc)
+                        m = None
+                    row["metrics"] = (_readings({k: getattr(m, k, None) for k in
+                                                 ("cpu_utilization_percent", "memory_available_gb",
+                                                  "qop_cpu_percent", "qop_memory_percent",
+                                                  "disk_available_gb")}, name, refused, "metrics")
+                                      if m is not None else None)
+                    controllers.append(row)
+            return controllers if devs is not None else None
 
-        qm_ids = call("list_open_qms", self.qmm.list_open_qms)
+        ans["controllers"] = call("get_devices", read_devices)
+
+        qm_ids = call("list_open_qms", lambda: list(map(str, self.qmm.list_open_qms())))
         cache = getattr(self, '_config_cache', {})
         if qm_ids is not None:
             cache = {qid: ports for qid, ports in cache.items() if qid in set(map(str, qm_ids))}
@@ -141,22 +144,19 @@ class QmmTarget:
             row = {"id": str(qid), "jobs": None, "ports": None}
             qm = call(f"get_qm({qid})", lambda: self.qmm.get_qm(qid))
             if qm is not None:
-                jobs = call(f"qm.get_jobs({qid})", qm.get_jobs)
-                row['jobs'] = [] if jobs is not None else None
-                for j in jobs or []:
-                    row["jobs"].append(_job_row(j))
+                row['jobs'] = call(f"qm.get_jobs({qid})", lambda: [_job_row(j) for j in qm.get_jobs()])
                 if str(qid) not in cache:
                     cfg = call(f"qm.get_config({qid})", qm.get_config)
                     if isinstance(cfg, dict):
-                        cache[str(qid)] = _used_fems(cfg)
+                        cache[str(qid)] = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
                 row['ports'] = cache.get(str(qid))
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
-        jobs = call("get_jobs", self.qmm.get_jobs) if include_jobs else None
+        jobs = call("get_jobs", lambda: [_job_row(j) for j in self.qmm.get_jobs()]) if include_jobs else None
         ans["jobs_total"] = len(jobs) if jobs is not None else None
         ans["jobs_requested"] = include_jobs
         # newest first: the server lists them oldest first, hundreds deep
-        ans["jobs"] = (sorted((_job_row(j) for j in jobs), key=lambda r: r["created_at"] or "",
+        ans["jobs"] = (sorted(jobs, key=lambda r: r["created_at"] or "",
                               reverse=True)[:max(100, min(1000, job_limit))] if jobs is not None else None)
         ans["refused"] = refused
         return ans

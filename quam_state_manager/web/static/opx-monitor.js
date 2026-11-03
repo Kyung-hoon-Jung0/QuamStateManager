@@ -36,7 +36,7 @@
 
     function onClick(e) {
         var btn = e.target && e.target.closest && e.target.closest(".ui-opxmon-close, .ui-opxmon-close-all, .ui-opxmon-close-idle");
-        if (!btn) return;
+        if (!btn || btn.disabled) return;
         e.preventDefault();
         var existing = document.querySelector('.ui-opxmon-confirm');
         if (existing) existing.remove();
@@ -68,7 +68,7 @@
         cancel.type = 'button'; cancel.className = 'btn-sm outline ui-opxmon-confirm-cancel'; cancel.textContent = 'Cancel';
         cancel.onclick = function () { panel.remove(); };
         accept.onclick = function () {
-            if (typed && typed.value !== String(ids.length)) { typed.focus(); return; }
+            if (typed && typed.value !== String(ids.length)) { say("Nothing closed. Type " + ids.length + " to confirm closing all listed QMs.", true); typed.setAttribute("aria-invalid", "true"); typed.focus(); return; }
             accept.disabled = true;
             submitClose(btn, typed ? typed.value : null);
             panel.remove();
@@ -102,7 +102,7 @@
                 refresh();
             }, function (err) {
                 say("Not closed: SM did not answer (" + err + ").", true);
-                btn.disabled = false;
+                refresh();
             });
     }
 
@@ -111,12 +111,31 @@
         if (!t || t.id !== "ui-opxmon-body") return;
         var s = t.querySelector(".ui-opxmon-sentence");
         var line = t.querySelector(".ui-opxmon-status");
-        if (s) s.textContent = "SM did not answer the last refresh; the values below may be old.";
+        if (s) {
+            s.textContent = "SM did not answer the last refresh; the values below may be old.";
+            s.title = s.textContent;
+            s.setAttribute("data-state", "error");
+        }
         if (line) line.className = "ui-opxmon-status ui-opxmon-status--error";
         t.setAttribute("data-state", "error");
     }
 
     /* the sidebar's sub-links follow the tab shown (a tab click swaps only the pane) */
+    var observedBody = null, tableObserver = null;
+    function syncTables() {
+        var b = body();
+        if (!b) return;
+        b.querySelectorAll('.ui-opxmon-table').forEach(function (table) {
+            table.classList.toggle('ui-opxmon-table--stacked', b.clientWidth <= 768);
+        });
+        if (observedBody !== b && window.ResizeObserver) {
+            if (tableObserver) tableObserver.disconnect();
+            observedBody = b;
+            tableObserver = new window.ResizeObserver(syncTables);
+            tableObserver.observe(b);
+        }
+    }
+
     function syncNav() {
         var b = body();
         var nav = document.getElementById("ui-opxmon-subnav");
@@ -136,6 +155,10 @@
         }
     }, true);
     document.addEventListener("htmx:afterSwap", syncNav);
+    document.addEventListener("htmx:afterSwap", syncTables);
+    document.addEventListener("DOMContentLoaded", syncTables);
+    window.addEventListener("resize", syncTables);
+    syncTables();
     document.addEventListener("htmx:afterSwap", function () {
         if (lastResult) say(lastResult.text, lastResult.bad);
     });

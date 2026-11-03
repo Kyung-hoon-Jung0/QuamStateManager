@@ -10,7 +10,7 @@ pin(doc('d21').querySelector('[data-state="error"]') && /as of/.test(doc('d21').
 pin(/closed: none/.test(doc('d22').body.textContent) && /failed/.test(doc('d22').body.textContent), 'D-22 unverified close must not appear closed in History');
 pin(doc('d23').querySelector('.ui-opxmon-verdict strong').textContent === 'FREE' && doc('d23').querySelector('.ui-opxmon-details:not([open])'), 'D-23 verdict first with details collapsed');
 pin(doc('d24').querySelector('.ui-opxmon-verdict[data-health="red"]') && /limit 50/.test(doc('d24').body.textContent), 'D-24 exceeded limit must be red even with unknown admin');
-pin(doc('d25').querySelector('.ui-opxmon-danger:not([open]) .ui-opxmon-close-all') && /close_other_machines/.test(doc('d25').body.textContent), 'D-25 close all must be collapsed and sharing explained');
+pin(doc('d25').querySelector('.ui-opxmon-danger:not([open]) .ui-opxmon-close-all') && /Opening a new QM normally closes existing QMs/.test(doc('d25').body.textContent), 'D-25 close all must be collapsed and sharing explained');
 pin(/100 of 313 jobs shown/.test(doc('d26').body.textContent) && doc('d26').querySelector('.ts-local[data-utc]') && /Show more/.test(doc('d26').body.textContent), 'D-26 bounded count and local created time');
 pin(doc('d27').querySelector('.ui-opxmon-tiles .ui-opxmon-tile:not([open]) svg') && /empty slot/.test(doc('d27').body.textContent) && /unchanged for 15 min/.test(doc('d27').body.textContent), 'D-27 compact tiles distinguish empty and frozen sensors');
 pin(doc('d28').querySelector('.ui-opxmon-health[title]') && /temperature above limit/.test(doc('d28').body.textContent), 'D-28 top bar contains one worst reason with hover details');

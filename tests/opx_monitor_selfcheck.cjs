@@ -123,7 +123,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
     ok(/2 runs at that time/.test(doc('ambiguous').body.textContent) && !Array.from(doc('ambiguous').querySelectorAll('a')).some(a => /probably/.test(a.textContent)), 'D-16 ambiguous candidates have no run link');
     ok(/probably #7/.test(doc('unique').body.textContent) && /estimated from times/.test(doc('unique').body.textContent), 'D-16 unique match is explicitly estimated');
     ok(/alarm_raise/.test(doc('alarm').body.textContent) && /threshold 50/.test(doc('alarm').body.textContent), 'D-17 history includes alarm value and threshold');
-    ok(/mapping unverified/.test(doc('mapping').body.textContent) && Array.from(doc('mapping').querySelectorAll('.ui-opxmon-tile')).some(td => td.textContent.includes('FEM 0') && td.title.includes('FEM 0')), 'D-18 mismatch renders raw sensor key and tooltip');
+    ok(/physical slot has not been verified/.test(doc('mapping').body.textContent) && Array.from(doc('mapping').querySelectorAll('.ui-opxmon-tile')).some(td => td.textContent.includes('FEM 0') && td.title.includes('FEM 0')), 'D-18 mismatch renders raw sensor key and tooltip');
     ok(/not reported/.test(doc('mapping').body.textContent), 'D-18 zero reading is no sensor');
   }
   console.log(`${passes} passed, ${fails} failed`);

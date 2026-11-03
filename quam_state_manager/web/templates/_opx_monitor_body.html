@@ -1,6 +1,6 @@
 {%- set ans = st.answer or {} -%}
 {%- set cap = st.capabilities -%}
-{%- set polls = tab in ('live', 'jobs', 'history') and st.state != 'unconfigured' -%}
+{%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
 <div id="ui-opxmon-body" class="ui-opxmon-body" data-tab="{{ tab }}" data-state="{{ st.state }}"
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
      {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}&limit={{ job_limit }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
@@ -10,26 +10,30 @@
 {% if st.health.problem and st.health.details %}<p class="ui-note ui-opxmon-health-note">{{ st.health.details }}</p>{% endif %}
 <p class="ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}" role="status">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
-  <span class="ui-opxmon-sentence" title="{{ st.sentence }}" data-state="{{ st.state }}">{% if st.state == 'error' and not settings.settings_error %}Connection or data unavailable; {{ connection_hint(target.host) }}{% else %}{{ st.sentence }}{% endif %}</span>
+  <span class="ui-opxmon-sentence" title="{{ st.sentence }}" data-state="{{ st.state }}">{{ st.sentence }}</span>
 </p>
 {%- if st.alarms %}
 <div class="ui-state ui-state--error ui-opxmon-alarms" role="alert"><span class="ui-state-key">Alarm.</span>
   {% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ ('%.1f'|format(a.value)).removesuffix('.0') }} {{ a.unit }} ({{ a.direction }} the limit {{ '%g'|format(a.limit) }} {{ a.unit }}){% if not loop.last %}; {% endif %}{% endfor %}</div>
 {%- endif %}
 
-{% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-note ui-opxmon-section-age" title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ') }} unavailable; {{ 'as of ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
+{% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-note ui-opxmon-section-age" title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'as of ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
 {%- if tab == 'live' %}
-  {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({{ 'as of ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }})</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list %}<p>No temperature readings.</p>{% endif %}
+  {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({{ 'as of ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }})</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p>No temperature readings.</p>{% endif %}
   {% for group in ['fem', 'other'] if ans.controllers %}
   {% if group == 'other' %}<details class="ui-opxmon-other-temperatures"><summary>Other temperatures</summary>{% endif %}
   <div class="ui-opxmon-tiles" aria-label="{{ 'FEM temperatures' if group == 'fem' else 'Other temperatures' }}">
   {% for c in ans.controllers or [] %}{% for r in temperature_rows(c) if r.key.startswith('FEM ') == (group == 'fem') %}{% set limit = temperature_limit(r.key, settings.thresholds) %}{% set trend = trends.get(c.name ~ '/' ~ r.key) %}
   <details class="ui-opxmon-tile" title="{{ c.name }} / raw sensor {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}{% if trend and trend.unchanged_min >= 15 %}; unchanged for {{ trend.unchanged_min }} min{% endif %}">
     <summary><span>{{ r.label|replace('FEM slot', 'Slot') }} {{ r.type }}</span><strong class="{% if r.value is not none and limit is not none and r.value > limit %}ui-opxmon-hot{% endif %}">{% if r.empty %}empty slot{% elif r.value is none %}not reported{% else %}{{ ('%.1f'|format(r.value)).removesuffix('.0') }} °C{% endif %}</strong>
-    <small>{% if limit is not none %}limit {{ '%g'|format(limit) }} °C{% else %}no limit set{% endif %}</small>
-    {% if trend %}<svg viewBox="0 0 240 40" width="90" height="28" preserveAspectRatio="none" aria-label="Temperature trend, shared 0 to 120 °C baseline">{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>{% endfor %}</svg>{% endif %}</summary>
+    <small>{% if r.empty %}{% elif limit is not none %}limit {{ '%g'|format(limit) }} °C{% else %}no limit set{% endif %}</small>
+    {% if trend %}<svg viewBox="0 0 240 40" width="90" height="28" preserveAspectRatio="none" aria-label="Temperature trend, shared 0 to 120 °C baseline">{% for path in trend.paths %}<circle cx="{{ path.split()[0].split(',')[0] }}" cy="{{ path.split()[0].split(',')[1] }}" r="3" fill="currentColor"/><circle cx="{{ path.split()[-1].split(',')[0] }}" cy="{{ path.split()[-1].split(',')[1] }}" r="3" fill="currentColor"/><polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>{% endfor %}</svg>{% endif %}</summary>
     {% if trend %}<p>min {{ ('%.1f'|format(trend.min)).removesuffix('.0') }}, max {{ ('%.1f'|format(trend.max)).removesuffix('.0') }} °C; actual span {{ trend.span_s|int }} s</p><p>{{ local_time(trend.start) }} to {{ local_time(trend.end) }}; {{ trend.samples }} samples</p>{% if trend.unchanged_min >= 15 %}<p>unchanged for {{ trend.unchanged_min }} min</p>{% endif %}{% if trend.gap_min >= 1 %}<p>Recorded gap: no data for {{ trend.gap_min }} min</p>{% endif %}{% endif %}
-    <p>Raw key {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}. Shared y baseline {{ trend.y_min if trend else 0 }} to {{ trend.y_max if trend else 120 }} °C; gaps are not interpolated.</p>
+    <p>Sensor {{ r.key }}{% if not r.mapping_verified %}; its physical slot has not been verified{% endif %}. Chart scale {{ trend.y_min if trend else 0 }} to {{ trend.y_max if trend else 120 }} °C; circles mark the ends of recorded segments; spaces indicate missing readings.</p>
+  </details>{% endfor %}{% for r in unreadable_temps.get(c.name, []) if r.key.startswith('FEM ') == (group == 'fem') %}
+  <details class="ui-opxmon-tile ui-opxmon-tile--unreadable" title="{{ c.name }} / raw sensor {{ r.key }}: {{ r.reason }}">
+    <summary><span>{{ r.label }}</span><strong>unreadable</strong><small>{{ r.reason }}</small></summary>
+    <p>Sensor {{ r.key }} answered, but its value could not be read as a temperature: {{ r.reason }}. The other sensors are unaffected.</p>
   </details>{% endfor %}{% endfor %}
   </div>
   {% if group == 'other' %}</details>{% endif %}
@@ -49,13 +53,13 @@
   {%- set busy = {} %}{%- set held = {} %}{% set occupancy = namespace(known=ans.open_qms is not none) %}{% for q in ans.open_qms or [] %}{% if q.jobs is none or q.ports is none %}{% set occupancy.known = false %}{% endif %}{% endfor %}
   {%- for q in ans.open_qms or [] %}{% set running = (q.jobs or []) | selectattr('status', 'in', ['Running', 'running', 'Pending', 'pending', 'Queued', 'queued']) | list %}
     {%- for p in q.ports or [] %}{% if running %}{% set _ = busy.update({p: q.id}) %}{% elif q.jobs is not none %}{% set _ = held.update({p: q.id}) %}{% endif %}{% endfor %}{% endfor %}
-  {% if ans.version %}<p class="ui-opxmon-version">SDK {{ ans.version.get('qm-qua', 'not reported') }} (this PC) / QOP {{ ans.version.get('QOP', 'not reported') }} (server)</p>{% endif %}
+  {% if ans.version %}<p class="ui-opxmon-version">SDK {{ ans.version.get('qm-qua', 'not reported') }} (this PC){% if ans.version.get('QOP') %} / QOP {{ ans.version.get('QOP') }} (server){% endif %}</p>{% endif %}
   <table class="ui-table ui-opxmon-table" aria-label="Controllers and FEM slots">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Type</th><th class="ui-table-head">FEM slots</th></tr></thead>
     <tbody>
     {%- for c in ans.controllers %}
-      <tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell">{{ c.type or '' }}</td>
-        <td class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
+      <tr><td data-label="Controller" class="ui-table-cell">{{ c.name }}</td><td data-label="Type" class="ui-table-cell">{{ c.type or '' }}</td>
+        <td data-label="FEM slots" class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="ui-opxmon-fem{% if k in busy %} ui-opxmon-fem--busy{% elif k in held %} ui-opxmon-fem--held{% endif %}"
                 title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% elif not occupancy.known %}Occupancy unknown{% else %}No open QM claims this FEM{% endif %}">
             <span class="ui-opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; claimed by an open QM{% endif %}{% if tr %} <span class="ui-opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ ('%.1f'|format(tr.value)).removesuffix('.0') }} °C{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-note">the server reported no FEMs</span>{% endif %}</td></tr>
@@ -67,7 +71,7 @@
   {%- if any_m %}
   <h3 class="ui-opxmon-h">Controller metrics</h3>
   <table class="ui-table ui-opxmon-table" aria-label="Controller metrics"><thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Metric</th><th class="ui-table-head">Value</th></tr></thead>
-    <tbody>{% for c in any_m %}{% for k, v in c.metrics.items() %}<tr><td class="ui-table-cell">{{ c.name }}</td><td class="ui-table-cell">{{ k|replace('_', ' ') }}</td><td class="ui-table-cell ui-opxmon-num">{{ '%.1f'|format(v) }}</td></tr>{% endfor %}{% endfor %}</tbody></table>
+    <tbody>{% for c in any_m %}{% for k, v in c.metrics.items() %}<tr><td data-label="Controller" class="ui-table-cell">{{ c.name }}</td><td data-label="Metric" class="ui-table-cell">{{ k|replace('_', ' ') }}</td><td data-label="Value" class="ui-table-cell ui-opxmon-num">{{ '%.1f'|format(v) }}</td></tr>{% endfor %}{% endfor %}</tbody></table>
   {%- else %}
   <p class="ui-note">No controller metrics (CPU, memory, disk): the SDK provides them from QOP 3.8.</p>
   {%- endif %}
@@ -86,15 +90,15 @@
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table ui-opxmon-table" aria-label="Open quantum machines">
     <thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th></tr></thead>
-    <tbody>{% for q in ans.open_qms %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
-      <td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
-      <td class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id[:8] }}</code> {{ j.status }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-note">{{ match.reason }}</span>{% if j.created_at %} &middot; created <span class="ts-local" data-utc="{{ j.created_at }}">{{ local_time(j.created_at) }}</span>{% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
+    <tbody>{% for q in ans.open_qms %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td data-label="QM id" class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
+      <td data-label="FEMs claimed" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
+      <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id }}</code> {{ j.status }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-note">{{ match.reason }}</span>{% if j.created_at %} &middot; created <span class="ts-local" data-utc="{{ j.created_at }}">{{ local_time(j.created_at) }}</span>{% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
   </table>{% endif %}
   <p class="ui-note">The server does not report who opened a QM; the QM id and its jobs are what it gives.</p>
   {%- if ans.jobs is not none %}
   <h3 class="ui-opxmon-h">{{ [job_limit, ans.jobs|length]|min }} of {{ ans.jobs_total if ans.jobs_total is defined and ans.jobs_total is not none else ans.jobs|length }} jobs shown</h3>
   {%- if ans.jobs %}<table class="ui-table ui-opxmon-table" aria-label="Server jobs"><thead><tr><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head">Created</th><th class="ui-table-head">Last update</th></tr></thead>
-    <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td class="ui-table-cell"><code>{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-note">{{ match.reason }}</span></td><td class="ui-table-cell">{{ j.status }}</td><td class="ui-table-cell"><span class="ts-local" data-utc="{{ j.created_at or '' }}">{{ local_time(j.created_at) }}</span></td><td class="ui-table-cell"><span class="ts-local" data-utc="{{ j.updated_at or '' }}">{{ local_time(j.updated_at) }}</span></td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-note">None.</p>{% endif %}
+    <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td data-label="Job id" class="ui-table-cell"><code>{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-note">{{ match.reason }}</span></td><td data-label="Status" class="ui-table-cell">{{ j.status }}</td><td data-label="Created" class="ui-table-cell"><span class="ts-local" data-utc="{{ j.created_at or '' }}">{{ local_time(j.created_at) }}</span></td><td data-label="Last update" class="ui-table-cell"><span class="ts-local" data-utc="{{ j.updated_at or '' }}">{{ local_time(j.updated_at) }}</span></td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-note">None.</p>{% endif %}
   {% if (ans.jobs_total or ans.jobs|length) > job_limit %}<a class="btn-sm" href="/opx-monitor/jobs?limit={{ job_limit + 100 }}">Show more</a>{% endif %}
   {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">The server refused get_jobs: {{ ans.refused.get_jobs }}</p>{% else %}<p class="ui-note">Waiting for server jobs; this section has not answered this poll.</p>{% endif %}
   {%- endif %}
@@ -104,7 +108,7 @@
   <p class="ui-note">History records jobs inside open QMs only. Recorded while the monitor polled. A QM or job that opened and closed between two polls is not seen. Last-seen is exact for closed rows; for open rows it moves with each poll.</p>
   {%- if history_rows %}
   <table class="ui-table ui-opxmon-table" aria-label="History"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head">First seen (local)</th><th class="ui-table-head">Last seen (local)</th><th class="ui-table-head">Last observed</th></tr></thead>
-    <tbody>{% for r in history_rows %}<tr><td class="ui-table-cell"><code>{{ r.qm_id }}</code></td><td class="ui-table-cell">{% if r.job_id %}<code>{{ r.job_id }}</code>{% endif %}</td><td class="ui-table-cell">{{ r.status or '' }}</td><td class="ui-table-cell">{{ local_time(r.first_seen) }}</td><td class="ui-table-cell">{{ local_time(r.last_seen) }}</td><td class="ui-table-cell">{{ 'open' if r.open else 'gone' }}</td></tr>{% endfor %}</tbody></table>
+    <tbody>{% for r in history_rows %}<tr><td data-label="QM id" class="ui-table-cell"><code>{{ r.qm_id }}</code></td><td data-label="Job id" class="ui-table-cell">{% if r.job_id %}<code>{{ r.job_id }}</code>{% endif %}</td><td data-label="Status" class="ui-table-cell">{{ r.status or '' }}</td><td data-label="First seen (local)" class="ui-table-cell">{{ local_time(r.first_seen) }}</td><td data-label="Last seen (local)" class="ui-table-cell">{{ local_time(r.last_seen) }}</td><td data-label="Last observed" class="ui-table-cell">{{ 'open' if r.open else 'gone' }}</td></tr>{% endfor %}</tbody></table>
   {%- else %}<p class="ui-state ui-state--empty"><span class="ui-state-key">Nothing recorded yet.</span></p>{% endif %}
   {%- if actions %}
   <h3 class="ui-opxmon-h">Alarm events and clean-up actions</h3>
@@ -115,14 +119,14 @@
   {%- if not cap.close %}
   <p class="ui-state ui-state--empty ui-opxmon-close-off"><span class="ui-state-key">Closing is not available.</span> {{ cap.close_reason }}</p>
   {%- else %}
-  <p class="ui-note">open_qm closes other machines by default (close_other_machines); an idle QM blocks others only when that is turned off or ports are not shareable.</p>
+  <p class="ui-note">Opening a new QM normally closes existing QMs. If your program keeps them open, they may continue to reserve hardware ports.</p>
   <p class="ui-note">Closing a QM stops any job it runs, for whoever opened it. Each close asks first and is written to History.</p>
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table ui-opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
-    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
-      <td class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td data-label="QM id" class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td data-label="FEMs claimed" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td data-label="Jobs" class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
+      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
   <p><button type="button" class="btn-sm outline ui-opxmon-close-idle" data-qm-ids="{{ idle_ids | join(', ') }}" {% if not idle_ids or st.state != 'ok' %}disabled{% endif %}>Close idle QMs ({{ idle_ids|length }})</button></p>
-  <details class="ui-opxmon-danger"><summary>Danger</summary><p><button type="button" class="btn-sm outline ui-opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p></details>
+  <details class="ui-opxmon-danger"><summary>Danger</summary><p><button type="button" class="btn-sm outline ui-opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}" {% if st.state != 'ok' %}disabled{% endif %}>Close all {{ ans.open_qms|length }}&hellip;</button></p></details>
   {%- endif %}
   {%- endif %}
   <p class="ui-opxmon-close-result" role="status" hidden></p>
@@ -134,7 +138,7 @@
       <div class="ui-opxmon-grid">
         <label>Admin URL <input name="admin_url" value="{{ settings.admin_url or '' }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
         <label>Host <input name="host" value="{{ target.host or '' }}" autocomplete="off"></label>
-        <label>Port <input class="ui-opxmon-input-number" name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
+        <label>Port <input name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
         <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>
         <label><input type="checkbox" name="tls" value="1" {% if target.tls %}checked{% endif %}> TLS</label>
         <label class="ui-opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
@@ -143,12 +147,8 @@
       </div>
     </fieldset>
     <fieldset><legend>Python environment with the QM SDK</legend>
-      <select name="python">
-        <option value="">(none)</option>
-        {%- set ns = namespace(found=false) %}
-        {%- for e in envs %}<option value="{{ e.python }}" {% if e.python == settings.python %}{% set ns.found = true %}selected{% endif %}>{{ e.name or e.python }}</option>{% endfor %}
-        {%- if settings.python and not ns.found %}<option value="{{ settings.python }}" selected>{{ settings.python }}</option>{% endif %}
-      </select>
+      <label>Interpreter path <input name="python" list="ui-opxmon-interpreters" value="{{ settings.python or '' }}" placeholder="Full path to Python" autocomplete="off"></label>
+      <datalist id="ui-opxmon-interpreters">{% for e in envs %}<option value="{{ e.python }}">{{ e.name or e.python }}</option>{% endfor %}</datalist>
     </fieldset>
     <fieldset><legend>Polling and alarms</legend>
       <label>Idle minutes <input class="ui-opxmon-input-number" name="idle_minutes" value="{{ '%g'|format(settings.idle_minutes) }}" type="number" min="0.01" step="any"></label>
@@ -157,8 +157,8 @@
       <label>All FEMs limit (°C; no default is assumed) <input class="ui-opxmon-input-number" name="th__temp:all_fems" value="{{ settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
       {%- if offered %}
       <table class="ui-table ui-opxmon-table" aria-label="Alarm limits"><thead><tr><th class="ui-table-head">Metric</th><th class="ui-table-head">Alarm when</th><th class="ui-table-head">Limit</th></tr></thead>
-        <tbody>{% for m in offered %}<tr><td class="ui-table-cell">{{ m.label }} ({{ m.unit }})</td><td class="ui-table-cell">{{ m.direction }}</td>
-          <td class="ui-table-cell"><input class="ui-opxmon-input-number" name="th__{{ m.key }}" value="{{ settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
+        <tbody>{% for m in offered %}<tr><td data-label="Metric" class="ui-table-cell">{{ m.label }} ({{ m.unit }})</td><td data-label="Alarm when" class="ui-table-cell">{{ m.direction }}</td>
+          <td data-label="Limit" class="ui-table-cell"><input class="ui-opxmon-input-number" name="th__{{ m.key }}" value="{{ settings.thresholds.get(m.key, '') }}" inputmode="decimal" aria-label="Limit for {{ m.label }}"></td></tr>{% endfor %}</tbody></table>
       {%- else %}
       <p class="ui-state ui-state--empty ui-opxmon-no-metrics"><span class="ui-state-key">No metrics to set limits on.</span> The server has not returned any temperature or metric reading yet.</p>
       {%- endif %}

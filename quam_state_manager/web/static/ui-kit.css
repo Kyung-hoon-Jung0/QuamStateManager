@@ -116,6 +116,7 @@
     --ui-opxmon-fem-font: 0.9em;
     --ui-opxmon-light-size: 0.65em;
     --ui-opxmon-field-width: 14rem;
+    --ui-opxmon-tile-width: 7rem;
     --ui-opxmon-badge-padding-y: 0.1rem;
     --ui-opxmon-health-font: 0.85em;
     --ui-opxmon-verdict-font: 1.2rem;
@@ -383,11 +384,12 @@
 .ui-opxmon-status--ok {border:0; color:var(--ui-opxmon-muted); padding:0; font-size:var(--ui-opxmon-compact-font)}
 .ui-opxmon-details {margin:var(--ui-gap-2) 0}
 
-.ui-opxmon-tiles {display:flex; gap:var(--ui-opxmon-space-xs); padding:var(--ui-opxmon-tile-padding) 0; align-items:flex-start; min-width:0}
-.ui-opxmon-tile {flex:1 1 0; min-width:0; margin:0; padding:var(--ui-opxmon-tile-padding); border:var(--ui-bw) solid var(--ui-border); border-radius:var(--ui-r-btn); font-size:var(--ui-opxmon-tile-font)}
+.ui-opxmon-tiles {display:flex; flex-wrap:wrap; gap:var(--ui-opxmon-space-xs); padding:var(--ui-opxmon-tile-padding) 0; align-items:flex-start; min-width:0}
+.ui-opxmon-tile {flex:1 1 var(--ui-opxmon-tile-width); min-width:0; margin:0; padding:var(--ui-opxmon-tile-padding); border:var(--ui-bw) solid var(--ui-border); border-radius:var(--ui-r-btn); font-size:var(--ui-opxmon-tile-font)}
 .ui-opxmon-tile summary {list-style:none; display:flex; flex-direction:column; gap:var(--ui-opxmon-space-xxs); margin:0; font-size:var(--ui-opxmon-tile-font)}
 .ui-opxmon-tile strong {font-size:var(--ui-opxmon-heading-space); font-variant-numeric:tabular-nums}
-.ui-opxmon-tile--open {flex:2 1 0; overflow-wrap:anywhere}
+.ui-opxmon-tile--open {flex:2 1 var(--ui-opxmon-tile-width); overflow-wrap:anywhere}
+.ui-opxmon-tile--unreadable small {overflow-wrap:anywhere}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
 .ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
 .ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
@@ -430,6 +432,12 @@
 .ui-opxmon-close-idle { width: auto; }
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
 .ui-opxmon-flash, .ui-opxmon-alarms, .ui-opxmon-close-off, .ui-opxmon-no-metrics { overflow-wrap: anywhere; }
+
+.ui-opxmon-table--stacked { width:var(--ui-opxmon-full-width); min-width:0; }
+.ui-opxmon-table--stacked thead { display:none; }
+.ui-opxmon-table--stacked tbody, .ui-opxmon-table--stacked tr, .ui-opxmon-table--stacked td { display:block; width:var(--ui-opxmon-full-width); }
+.ui-opxmon-table--stacked tr { margin-bottom:var(--ui-opxmon-space-md); border-bottom:var(--ui-bw) solid var(--ui-border); }
+.ui-opxmon-table--stacked td::before { content:attr(data-label); display:block; font-weight:var(--ui-fw); color:var(--ui-text-2); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

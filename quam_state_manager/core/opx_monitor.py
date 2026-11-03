@@ -17,12 +17,12 @@ env, ``generator/opx_monitor_worker.py``). This module owns:
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import logging
 import math
 import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
@@ -86,7 +86,10 @@ def idle_state(q, first_seen, now, minutes=120):
     jobs = q.get('jobs')
     if jobs is None or any(str(j.get('status', '')).lower() not in
                            ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed') for j in jobs):
-        return {'idle': False, 'basis': 'active or unknown job status', 'last_activity': None}
+        statuses = sorted({str(j.get('status') or 'unknown') for j in jobs or []
+                           if str(j.get('status', '')).lower() not in
+                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed')})
+        return {'idle': False, 'basis': 'Job status: ' + ', '.join(statuses or ['unknown']), 'last_activity': None}
     remembered = first_seen if isinstance(first_seen, dict) else {'first_seen': first_seen}
     times = [(timestamp(remembered.get('first_seen')), 'SM first saw it'),
              (timestamp(remembered.get('job_activity')), 'job created/last status update observed by SM')]
@@ -224,7 +227,8 @@ class EnvWorker:
         flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
         self.proc = subprocess.Popen(
             [python, "-I", str(WORKER_SCRIPT)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env, creationflags=flags)
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8", env=env, creationflags=flags,
+            start_new_session=os.name != 'nt')
         self._q: "queue.Queue[Optional[str]]" = queue.Queue()
         threading.Thread(target=self._read, name="sm-opxmon-read", daemon=True).start()
         self._lock = threading.Lock()
@@ -270,9 +274,18 @@ class EnvWorker:
 
     def kill(self):
         try:
-            self.proc.kill()
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(self.proc.pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=0x08000000, timeout=10)
+            else:
+                os.killpg(self.proc.pid, signal.SIGKILL)
         except OSError:
             pass
+        finally:
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=10)
 
 
 # ----------------------------------------------------------------- history
@@ -497,7 +510,7 @@ def temperature_rows(controller: dict) -> list[dict]:
                      "label": f"FEM slot {slot}" if slot is not None and verified else str(k),
                      'mapping_verified': verified,
                      'empty': slot is not None and verified and str(slot) not in {str(k) for k in controller.get('fems') or {}} and v == NO_READING,
-                     'type': (controller.get('fems') or {}).get(str(slot), (controller.get('fems') or {}).get(slot, '')), 
+                     'type': (controller.get('fems') or {}).get(str(slot), (controller.get('fems') or {}).get(slot, '')) if verified else '',
                      "value": None if v is None or v == NO_READING else v})
     # FEM slots in slot order first, then the other sensors by name
     return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
@@ -508,6 +521,22 @@ def temperature_mapping_verified(controller):
     sensors = {str(_fem_slot(k)) for k, v in (controller.get('temperatures') or {}).items()
                if _fem_slot(k) is not None and v not in (None, NO_READING)}
     return bool(populated) and populated == sensors
+
+
+def unreadable_temperatures(answer: Optional[dict]) -> dict:
+    """``{controller: [{key, label, reason}]}`` for sensors whose reading could not
+    be read as a number. One bad sensor never hides the readable ones: the worker
+    drops only that sensor and records ``<controller>.temperatures.<sensor>``."""
+    out: dict = {}
+    for name, reason in ((answer or {}).get('refused') or {}).items():
+        ctrl, sep, sensor = str(name).partition('.temperatures.')
+        if sep and sensor:
+            slot = _fem_slot(sensor)
+            out.setdefault(ctrl, []).append({'key': sensor, 'slot': slot, 'reason': str(reason),
+                                             'label': sensor})
+    for rows in out.values():
+        rows.sort(key=lambda r: (r['slot'] is None, r['slot'] or 0, r['key']))
+    return out
 
 
 def slot_temperatures(controller: dict) -> dict:
@@ -658,12 +687,50 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def connection_hint(host):
-    """Mention a tunnel only for loopback connections."""
-    try:
-        loopback = ipaddress.ip_address(str(host).strip('[]')).is_loopback
-    except ValueError:
-        loopback = str(host).lower() == 'localhost'
-    return 'check the SSH tunnel, port or power.' if loopback else 'check the server connection, port or power.'
+    """Connection advice without assuming how the server is reached."""
+    return 'check the server connection, port or power.'
+
+
+def call_failure(name, error):
+    if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'unreachable', 'failed to connect', 'timeout')):
+        return f'Server unreachable while reading {name}: {error}'
+    if call_unreadable(error):
+        return f'Unreadable reply for {name}: {error}'
+    return f'The server refused {name}: {error}'
+
+
+def call_unreadable(error):
+    """The server answered, but the reply could not be read as data."""
+    text = str(error).lower()
+    return any(word in text for word in ('not a number', 'valueerror', 'typeerror', 'keyerror',
+                                        'attributeerror', 'dictionary update'))
+
+
+def failure_advice(errors, host):
+    """Connection advice only when a failure looks like a connection failure."""
+    texts = [str(e).lower() for e in (errors or {}).values()]
+    if any(call_failure('x', e).startswith('Server unreachable') for e in texts):
+        return connection_hint(host)
+    if texts and all(call_unreadable(e) for e in texts):
+        return 'The server answered, but some values could not be read; the affected sections are marked below.'
+    if texts:
+        return 'The server answered but declined some requests; check the account permissions or the QOP version.'
+    return connection_hint(host)
+
+
+def failure_headline(text):
+    """The short cause for the headline: the text before its first ``: ``.
+    The full text stays in the status line, so it is shown once in each length."""
+    head = str(text or '').split(': ', 1)[0].strip().rstrip('.')
+    if len(head) > 90:
+        head = head[:87].rstrip() + '...'
+    return head or 'No data call answered'
+
+
+def failure_summary(errors):
+    """One actionable cause; section tooltips retain each individual failure."""
+    return next((call_failure(name, error) for name, error in errors.items()),
+                'No data call answered.')
 
 
 def read_admin(url, cluster_name=None):
@@ -754,6 +821,8 @@ def temperature_limit(key, thresholds):
 
 
 def health(answer, admin, thresholds, state):
+    if state == 'unconfigured':
+        return {'color': 'grey', 'reason': 'health not assessed', 'details': ''}
     ans = answer or {}
     bad, unknown = [], []
     known = bool(admin.get('known'))
@@ -788,8 +857,10 @@ def health(answer, admin, thresholds, state):
     return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
 def verdict(answer, health_state, idle_states, state=None, age_s=None):
+    if state == 'unconfigured':
+        return {'label': 'Health not assessed', 'reason': 'Set up a connection in Monitor settings'}
     if state == 'starting':
-        return {'label': 'Connecting…', 'reason': 'Waiting for the first server answer'}
+        return {'label': 'Checking...', 'reason': 'Waiting for the first server answer'}
     result = _occupancy_verdict(answer, health_state, idle_states)
     if state == 'stale' and age_s is not None:
         result['label'] += f' — as of {age_s:.0f} s ago'
@@ -807,7 +878,8 @@ def _occupancy_verdict(answer, health_state, idle_states):
               if str(j.get('status', '')).lower() in ('running', 'pending', 'queued')]
     if active:
         q, j = active[0]
-        return {'label': 'BUSY', 'reason': 'FEMs ' + ', '.join(q.get('ports') or ['unknown']),
+        active_qms = {q['id'] for q, _ in active}
+        return {'label': 'BUSY', 'reason': f'{len(active_qms)} QMs with active jobs' if len(active_qms) > 1 else 'FEMs ' + ', '.join(q.get('ports') or ['unknown']),
                 'since': j.get('started_at') or j.get('created_at')}
     if not qms:
         return {'label': 'FREE', 'reason': 'No open QM'}
@@ -849,6 +921,8 @@ class Monitor:
         self.job_limit = 100
         self._thread = None
         self._stop = threading.Event()
+        self._wake = threading.Event()
+        self.viewer_check_pending = False
         self._histories: dict[str, History] = {}
         self.alarms: list[dict] = []
         self._toasted: set = set()
@@ -937,6 +1011,12 @@ class Monitor:
                                if name != 'jobs' or name in self.section_times or self.clock() < self.jobs_until}
 
     def poll_once(self) -> None:
+        try:
+            self._poll_once()
+        finally:
+            self.viewer_check_pending = False
+
+    def _poll_once(self) -> None:
         s = self.settings()
         if not s.get("target") or not s.get("python"):
             return
@@ -972,7 +1052,7 @@ class Monitor:
                 if ans.get(field) is not None:
                     self.section_times[field] = now_iso()
             if all(ans.get(field) is None for field in fields):
-                self.last_error = 'No data call answered; ' + connection_hint((s.get('target') or {}).get('host'))
+                self.last_error = failure_summary(ans.get('refused', {}))
                 self.last_answer = ans
                 return
             prev_ok = self.last_ok_at
@@ -999,10 +1079,15 @@ class Monitor:
     def want(self, tab=None, job_limit=100):
         """A monitor page asked: keep polling for a few intervals."""
         s = self.settings()
+        arriving = self.clock() >= self.wanted_until
+        if arriving and (self.last_try_at is None or self.clock() - self.last_try_at > s['interval_s']):
+            self.viewer_check_pending = True
         self.wanted_until = self.clock() + WANT_INTERVALS * s["interval_s"]
         if tab == 'jobs':
             self.jobs_until = self.wanted_until
             self.job_limit = max(100, min(1000, job_limit))
+        if arriving:
+            self._wake.set()
         self._start_thread()
 
     def poll_interval(self):
@@ -1027,6 +1112,7 @@ class Monitor:
 
     def _loop(self):
         while not self._stop.is_set():
+            self._wake.clear()
             if not self.should_poll():
                 with self._lock:
                     if self._worker is not None:
@@ -1039,10 +1125,15 @@ class Monitor:
             t0 = self.clock()
             self.poll_once()
             wait = max(0.2, self.poll_interval() - (self.clock() - t0))
-            self._stop.wait(wait)
+            self._wake.wait(wait)
 
     def stop(self):
         self._stop.set()
+        self._wake.set()
+        with self._lock:
+            if self._worker is not None:
+                self._worker.kill()
+                self._worker = None
 
     # -- actions
     def close(self, qm_id: Optional[str], who: str = "", qm_ids: Optional[list] = None, idle=False) -> dict:
@@ -1113,18 +1204,20 @@ class Monitor:
             return out
         if "list_open_qms" in refused:
             out.update(close_reason=f"The server refused listing QMs: {refused['list_open_qms']}")
+        elif self.last_error:
+            out.update(close_reason=f"Closing is disabled until a fresh answer ({failure_headline(self.last_error)}).")
         elif ans.get("open_qms") is None or self.status_state_unfresh():
             out.update(close_reason="No answer from the server yet.")
         else:
             out["close"] = True
         out['live_reason'] = ('The server refused get_devices: ' + refused['get_devices']) if 'get_devices' in refused else 'No device data has answered yet.'
-        out['jobs_reason'] = ('The server refused list_open_qms: ' + refused['list_open_qms']) if 'list_open_qms' in refused else 'No job data has answered yet.'
+        out['jobs_reason'] = call_failure('list_open_qms', refused['list_open_qms']) if 'list_open_qms' in refused else 'No job data has answered yet.'
         out['live'] = ans.get('controllers') is not None
         out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
         return out
 
     def status_state_unfresh(self):
-        return self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.last_poll_interval
+        return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
 
     def status(self) -> dict:
         s = self.settings()
@@ -1140,13 +1233,13 @@ class Monitor:
             sentence = "No Python environment with the QM SDK is chosen. Choose one under Monitor settings."
         elif self.last_error:
             state = "error"
-            sentence = self.last_error
+            sentence = self.last_error.rstrip('.') + '.'
             if age is not None:
                 sentence += f" The values below are from {age:.0f} s ago."
-        elif age is None:
+        elif age is None or self.viewer_check_pending:
             state = "starting"
-            sentence = "Connecting to the server..."
-        elif age > STALE_INTERVALS * self.last_poll_interval:
+            sentence = "Checking the server..."
+        elif age > STALE_INTERVALS * self.poll_interval():
             state = "stale"
             sentence = f"No fresh answer for {age:.0f} s; the values below are from then."
         else:
@@ -1155,13 +1248,17 @@ class Monitor:
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
         health_state = health(self.last_answer, self.admin, s['thresholds'], state)
-        if (self.last_error or self.section_errors or (self.last_answer or {}).get('refused')) and health_state['color'] != 'red':
-            health_state = {**health_state, 'problem': True, 'reason': 'Connection or data unavailable', 'details': connection_hint((s.get('target') or {}).get('host'))}
+        if self.last_error or self.section_errors or (self.last_answer or {}).get('refused'):
+            errors = (self.last_answer or {}).get('refused') or self.section_errors
+            cause = self.last_error or failure_summary(errors)
+            health_state = {**health_state, 'color': 'red', 'problem': True, 'reason': failure_headline(cause), 'details': failure_advice(errors if not self.last_error or errors else {'call': self.last_error}, (s.get('target') or {}).get('host'))}
+            if state == 'ok':
+                sentence = f'Last reply {age:.0f} s ago; some data unavailable. {cause}'
         return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
-                "valid_for_ms": max(0, int((STALE_INTERVALS * self.last_poll_interval - (age or 0)) * 1000)) if state == 'ok' else 0,
+                "valid_for_ms": max(0, int((STALE_INTERVALS * self.poll_interval() - (age or 0)) * 1000)) if state == 'ok' else 0,
                 "interval_s": self.poll_interval(), "alarms": alarms,
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}
 

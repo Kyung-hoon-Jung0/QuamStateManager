@@ -156,6 +156,7 @@ def test_stale_answer_is_labelled_with_its_age(env):
     app, m, w, clock, _ = env
     m.poll_once()
     clock.t += 40  # > 3 intervals with no new answer and no error
+    m.wanted_until = clock.t + 15
     html = page(app, "live")
     assert "No fresh answer for 40 s" in html and "ui-opxmon-status--stale" in html
 
@@ -407,12 +408,11 @@ def test_sidebar_has_the_menu(env):
     assert 'data-bundle-file="opx-monitor.js"' in html
 
 
-def test_real_worker_reports_a_bad_target(tmp_path):
-    """The real worker script with this interpreter: no qm installed here or a
-    dead host -- either way it must answer with a sentence, not hang."""
+def test_real_worker_rejects_unsupported_target_without_sdk(tmp_path):
+    """The real script rejects unsupported targets before importing the SDK."""
     import sys
     try:
-        w = om.EnvWorker(sys.executable, {"kind": "qmm", "host": "127.0.0.1", "port": 9}, start_timeout=60)
+        w = om.EnvWorker(sys.executable, {"kind": "unsupported", "host": "127.0.0.1", "port": 9}, start_timeout=60)
     except om.WorkerError as exc:
         assert "could not connect" in str(exc) or "exited" in str(exc)
     else:  # an env with qm: the connect is lazy, a poll reports refusals
@@ -489,7 +489,7 @@ def test_d13_idle_recheck_skips_new_activity(env):
     qmm.get_qm = lambda qid: qm
     result = _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)
     assert result['closed'] == [] and result['skipped'] == ['QM-a']
-    assert 'active' in result['skip_reasons']['QM-a'] and not qmm.closed
+    assert 'Running' in result['skip_reasons']['QM-a'] and not qmm.closed
     qm.get_jobs = lambda: []
     assert _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)['closed'] == ['QM-a']
     assert not om.idle_state({'jobs': None}, '2020-01-01T00:00:00Z', clock.t)['idle']
@@ -608,7 +608,7 @@ def test_d18_mapping_mismatch_keeps_raw_keys(env):
     assert rows['FEM 4']['label'] == 'FEM 4'
     assert not om.slot_temperatures(a['controllers'][0])
     html = page(app, 'live')
-    assert 'mapping unverified' in html and 'Raw key FEM 4' in html
+    assert 'mapping unverified' in html and 'Sensor FEM 4' in html
     assert 'title="sensor &#39;FEM 4&#39;"' not in html  # raw tooltip remains literal, not an inferred slot
 
 
@@ -682,7 +682,7 @@ def test_unknown_job_list_is_not_none_or_a_gone_event(env):
     m.poll_once()
     assert next(r for r in m.history().table() if r['job_id'] == 'j1')['open']
     assert 'data-jobs="unknown"' in page(app, 'cleanup')
-    assert 'active or unknown job status' in page(app, 'cleanup')
+    assert 'Job status: unknown' in page(app, 'cleanup')
     assert 'Occupancy is unknown' in page(app, 'live')
 
 
@@ -761,7 +761,7 @@ def test_d25_inline_safety(env):
     app, m, w, clock, _ = env
     m.poll_once()
     html = page(app, 'cleanup')
-    assert 'ui-opxmon-danger' in html and 'close_other_machines' in html
+    assert 'ui-opxmon-danger' in html and 'Opening a new QM normally closes existing QMs' in html
     assert om.load_settings(m.instance)['idle_minutes'] == 120
     response = app.test_client().post('/opx-monitor/close', data={'all': '1', 'qm_ids': 'QM-a'}, headers=ORIGIN)
     assert response.status_code == 400 and not any(op.startswith('close') for op, _ in w.calls)
@@ -794,7 +794,7 @@ def test_d27_tiles_empty_slot_and_shared_baseline(env):
     w.script[:] = [a]
     m.poll_once()
     html = page(app, 'live')
-    assert 'empty slot' in html and 'ui-opxmon-tile' in html and 'Shared y baseline' in html
+    assert 'empty slot' in html and 'ui-opxmon-tile' in html and 'Chart scale' in html
     assert om.temperature_rows(a['controllers'][0])[1]['empty']
     s = m.trends().series(clock.t)
     assert ',18.13' in s['con1/FEM 0']['paths'][0]
@@ -909,8 +909,8 @@ def test_round4_alarm_and_failed_calls(env):
     assert 'Temperatures unavailable (as of' in html
     assert 'No temperature readings.' not in html
     assert 'SSH tunnel' not in html
-    assert 'SSH tunnel' in om.connection_hint('localhost')
-    assert 'SSH tunnel' in om.connection_hint('::1')
+    assert 'SSH tunnel' not in om.connection_hint('localhost')
+    assert 'SSH tunnel' not in om.connection_hint('::1')
     assert 'SSH tunnel' not in om.connection_hint('service.invalid')
 
 
@@ -948,7 +948,7 @@ def test_round5_starting_before_first_poll(env):
     html = page(app, 'live')
     assert m.status()['state'] == 'starting'
     assert not w.calls and m.last_answer is None
-    assert '<strong>Connecting…</strong>' in html
+    assert '<strong>Checking...</strong>' in html
     assert '<strong>PROBLEM</strong>' not in html
     assert 'data-health="grey"' in html
 
@@ -980,6 +980,7 @@ def test_round5_stale_headline(env):
     app, m, w, clock, _ = env
     m.poll_once()
     clock.t += 60
+    m.wanted_until = clock.t + 15
     assert '<strong>BUSY — as of 60 s ago</strong>' in page(app, 'live')
 
 
@@ -1017,3 +1018,311 @@ def test_round5_display_formatting(env):
     assert re.search(r'\(UTC[+-]\d{1,2}(?::\d{2})?\)$', om.local_time('2026-11-02T20:25:40Z'))
     badge = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
     assert 'limit 50 °C' in badge and '50.0 °C' not in badge
+
+# Real-Chrome stress regression pins. Every check uses a fake worker or SDK.
+def test_stress_d1_unconfigured(env):
+    app, m, *_ = env
+    om.save_settings(m.instance, {})
+    assert m.status()['health']['reason'] == 'health not assessed'
+    html = page(app, 'live')
+    assert 'Health not assessed' in html and '<strong>PROBLEM' not in html
+
+
+def test_stress_d2_cleanup_poll_and_close(env):
+    app, m, w, *_ = env
+    m.poll_once()
+    assert 'hx-get="/opx-monitor/body?tab=cleanup' in page(app, 'cleanup')
+    original = w.request
+    def request(op, **kw):
+        result = original(op, **kw)
+        if op.startswith('close'):
+            w.script[:] = [answer(qms=())]
+        return result
+    w.request = request
+    assert m.close('QM-a')['closed'] == ['QM-a']
+    assert 'data-qm-id="QM-a"' not in page(app, 'cleanup')
+
+
+def test_stress_d3_viewer_wakes_and_uses_viewer_freshness(env):
+    app, m, w, clock, _ = env
+    s = m.settings(); s['alarms_armed'] = True; om.save_settings(m.instance, s)
+    m.poll_once()
+    assert m.last_poll_interval == 60
+    clock.t += 52
+    m.want('cleanup')
+    assert m._wake.is_set()
+    assert m.status_state_unfresh() and not m.capabilities()['close']
+    m.viewer_check_pending = False
+    assert m.status()['state'] == 'stale'
+    assert m.status()['valid_for_ms'] == 0
+
+
+def test_stress_d5_error_cause(env):
+    app, m, w, *_ = env
+    a = answer(refused={'list_open_qms': 'ConnectionError: service unavailable'})
+    a['open_qms'] = None; a['jobs'] = None
+    w.script[:] = [a]; m.poll_once()
+    html = page(app, 'jobs')
+    assert 'Server unreachable while reading list_open_qms' in html
+    assert 'Updated 0 s ago' not in html
+    a = answer(refused={'con1.temperatures.FEM 0': "not a number: 'hot'"})
+    w.script[:] = [a]; m.poll_once()
+    # the headline is short; the full cause is said once, in the status line
+    assert "not a number" not in m.status()['health']['reason']
+    assert "not a number: 'hot'" in m.status()['sentence']
+    assert m.status()['health']['reason'].startswith('Unreadable reply')
+    assert 'connection' not in m.status()['health']['details']
+    a = answer(refused={'get_devices': 'PermissionError: not permitted'})
+    w.script[:] = [a]; m.poll_once()
+    assert m.status()['health']['reason'].startswith('The server refused')
+    assert 'permissions' in m.status()['health']['details']
+
+
+def test_stress_d5b_malformed_device_section():
+    from types import SimpleNamespace
+    qmm = _FakeQmm([])
+    qmm.version_dict = lambda: {}
+    qmm.cluster_name = ''
+    qmm.get_devices = lambda: SimpleNamespace(controllers='not-a-dict')
+    qmm.get_jobs = lambda: [SimpleNamespace(id='job-still-visible', status='Done')]
+    a = _worker_target(qmm).poll(include_jobs=True)
+    assert a['controllers'] is None and 'get_devices' in a['refused']
+    assert a['open_qms'] == [] and a['jobs'][0]['id'] == 'job-still-visible'
+
+
+def test_stress_d6_full_job_ids(env):
+    app, m, w, *_ = env
+    ids = ['shared-prefix-job-%04d' % i for i in range(40)]
+    w.script[:] = [answer(qms=(('QM-many', [(j, 'Running') for j in ids], []),))]
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert all('<code>' + j + '</code>' in html.split('Server jobs')[0] for j in ids)
+
+
+def test_stress_d7_unverified_type():
+    c = {'fems': {'2': 'MW'}, 'temperatures': {'FEM 1': 45, 'FEM 4': 50}}
+    assert all(not r['mapping_verified'] and not r['type'] for r in om.temperature_rows(c))
+
+
+def test_stress_d8_busy_empty_version(env):
+    app, m, w, *_ = env
+    a = answer(qms=(('QM-a', [('j1','Running')], ['con1/1']), ('QM-b', [('j2','Running')], ['con1/2'])), temps={'FEM 0': 40, 'FEM 1': 0})
+    a['version'] = {'QOP': ''}; a['controllers'][0]['fems'] = {'1':'LF'}
+    s = m.settings(); s['thresholds'] = {'temp:all_fems':70}; om.save_settings(m.instance,s)
+    w.script[:] = [a]; m.poll_once()
+    html = page(app, 'live')
+    assert '2 QMs with active jobs' in html and 'QOP  (server)' not in html
+    import re
+    empty = next(x for x in re.findall(r'<details class="ui-opxmon-tile".*?</details>',html,re.S) if 'empty slot' in x)
+    assert 'limit 70' not in empty
+
+
+def test_stress_r2_plain_language(env):
+    app, m, w, *_ = env
+    w.script[:] = [answer(temps={'FEM 1':45})]; m.poll_once()
+    html = page(app, 'cleanup') + page(app, 'live')
+    assert 'close_other_machines' not in html
+    assert 'active or unknown job status' not in html
+    assert 'Job status: Running' in html
+    assert 'Raw key' not in html and 'Shared y baseline' not in html
+    assert 'SSH tunnel' not in om.connection_hint('localhost')
+
+
+def test_stress_r3_section_labels(env):
+    app, m, w, *_ = env
+    m.section_errors = {'jobs':'missing'}
+    assert '>Jobs unavailable;' in page(app, 'history')
+
+
+def test_stress_r4_outage_red(env):
+    app, m, w, *_ = env
+    w.script[:] = [om.WorkerError('Server unreachable')]; m.poll_once()
+    html = page(app,'live')
+    assert 'ui-opxmon-verdict--red' in html and '<strong>PROBLEM</strong>' in html
+
+
+def test_stress_r5_settings(env):
+    app, m, *_ = env
+    html = page(app,'settings')
+    assert '<input name="python" list=' in html
+    assert '<input name="port"' in html
+
+
+def test_stress_r6_returning_viewer_checks(env):
+    app, m, w, clock, _ = env
+    m.poll_once(); clock.t += 25
+    html = page(app,'live')
+    assert '<strong>Checking' in html and '<strong>BUSY' not in html
+
+
+def test_stress_r7_gap_markers(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'FEM 0':45})]
+    m.poll_once(); clock.t += 60; m.poll_once()
+    html = page(app,'live')
+    assert html.count('<circle ') >= 4 and 'spaces indicate missing readings' in html
+
+
+def test_stress_browser_pins():
+    import os, subprocess
+    from pathlib import Path
+    r = subprocess.run(['node', str(Path(__file__).with_name('opx_monitor_stress_selfcheck.cjs'))], capture_output=True,text=True,encoding='utf-8',timeout=30)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_stress_kill_tree(tmp_path):
+    import os, subprocess, sys, time
+    # Use the actual EnvWorker launcher with a tiny fake JSON-lines worker.
+    script = tmp_path / 'tree_worker.py'
+    marker = tmp_path / 'child.pid'
+    script.write_text("import subprocess,sys,json,time\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,'-c','import time; time.sleep(120)'])\nPath(" + repr(str(marker)) + ").write_text(str(p.pid))\nprint(json.dumps({'ready':True}),flush=True)\nfor line in sys.stdin: pass\n", encoding='utf-8')
+    original = om.WORKER_SCRIPT
+    om.WORKER_SCRIPT = script
+    worker = None
+    try:
+        worker = om.EnvWorker(sys.executable, {})
+        child = int(marker.read_text())
+        worker.kill()
+        if os.name == 'nt':
+            import ctypes
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000,False,child)
+            if handle:
+                code = ctypes.c_ulong()
+                ctypes.windll.kernel32.GetExitCodeProcess(handle,ctypes.byref(code))
+                ctypes.windll.kernel32.CloseHandle(handle)
+                assert code.value != 259, 'descendant survived'
+        else:
+            # A reparented zombie is stopped; Linux /proc retains it until reaped.
+            stat = Path(f'/proc/{child}/stat')
+            assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+    finally:
+        om.WORKER_SCRIPT = original
+        if worker and worker.alive(): worker.kill()
+        if marker.exists() and os.name == 'nt':
+            subprocess.run(['taskkill','/PID',marker.read_text(),'/T','/F'],capture_output=True)
+
+
+def test_stress_r1_responsive(env):
+    from pathlib import Path
+    app, m, *_ = env
+    m.poll_once()
+    html = page(app,'cleanup')
+    css = (Path(__file__).resolve().parents[1]/'quam_state_manager/web/static/ui-kit.css').read_text(encoding='utf-8')
+    assert '.ui-opxmon-tiles {display:flex; flex-wrap:wrap;' in css
+    assert '.ui-opxmon-table--stacked tr, .ui-opxmon-table--stacked td { display:block;' in css
+    assert 'data-label="FEMs claimed"' in html
+
+
+
+def test_stress_pending_until_reply(env):
+    app, m, w, clock, _ = env
+    m.poll_once(); clock.t += 9; m.want('live')
+    original = w.request
+    def request(op, **kw):
+        assert m.status()['state'] == 'starting'
+        assert m.viewer_check_pending and not m.capabilities()['close']
+        return original(op, **kw)
+    w.request = request
+    m.poll_once()
+    assert m.status()['state'] == 'ok' and not m.viewer_check_pending
+
+
+def test_stress_malformed_jobs_keep_other_sections():
+    from types import SimpleNamespace
+    class Broken:
+        @property
+        def metadata(self):
+            raise ValueError('bad job payload')
+    qmm = _FakeQmm([])
+    qmm.version_dict = lambda: {}
+    qmm.cluster_name = ''
+    qmm.get_devices = lambda: SimpleNamespace(controllers={})
+    qmm.get_jobs = lambda: [Broken()]
+    a = _worker_target(qmm).poll(include_jobs=True)
+    assert a['controllers'] == [] and a['open_qms'] == []
+    assert a['jobs'] is None and 'get_jobs' in a['refused']
+
+
+def test_stress_d3_sleeping_poller_wakes(env):
+    import threading
+    import time
+    import types
+    app, m, w, clock, _ = env
+    s = m.settings(); s['alarms_armed'] = True; om.save_settings(m.instance,s)
+    polled = threading.Event()
+    original = w.request
+    def request(op, **kw):
+        result = original(op, **kw)
+        if op == 'poll': polled.set()
+        return result
+    w.request = request
+    m._start_thread = types.MethodType(om.Monitor._start_thread,m)
+    try:
+        m.ensure_running_if_armed()
+        assert polled.wait(2)
+        # Let the first fake poll leave its lock and enter the 60 s alarm wait.
+        with m._lock: pass
+        time.sleep(0.05)
+        polled.clear(); clock.t += 52
+        m.want('cleanup')
+        assert polled.wait(2), 'viewer did not wake the sleeping poller'
+    finally:
+        m.stop()
+        if m._thread: m._thread.join(timeout=2)
+    assert not m._thread.is_alive() and w.dead
+
+
+def test_one_unreadable_sensor_does_not_hide_the_others(env):
+    """A single sensor that is not a number is shown as unreadable with its
+    reason; every readable sensor keeps its value."""
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(), temps={'FEM 1': 51.5, 'Back plane': 41.25},
+                          refused={'con1.temperatures.FEM 0': "not a number: 'NaN?'"})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'Temperatures unavailable' not in html
+    assert '51.5 °C' in html and '41.2' in html
+    assert 'ui-opxmon-tile--unreadable' in html
+    assert '<strong>unreadable</strong>' in html
+    assert "not a number: &#39;NaN?&#39;" in html
+    assert om.unreadable_temperatures(m.status()['answer']) == {
+        'con1': [{'key': 'FEM 0', 'slot': 1, 'reason': "not a number: 'NaN?'", 'label': 'FEM 0'}]}
+
+
+def test_a_whole_temperature_failure_still_says_unavailable(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(), refused={'con1.temperatures': 'read failed'})]
+    m.poll_once()
+    assert 'Temperatures unavailable' in page(app, 'live')
+
+
+def test_a_connection_failure_is_said_once_short_then_in_full(env):
+    """Headline: the short cause. Status line: the full error. Advice: connection.
+    Close: disabled with a reason naming the failure."""
+    app, m, w, clock, _ = env
+    m.poll_once()
+    assert m.capabilities()['close']
+    full = ('The QM SDK could not connect: ConnectionError: Failed to connect to QOP at '
+            '127.0.0.1:9510')
+    w.script[:] = [om.WorkerError(full)]
+    clock.t += 5
+    m.poll_once()
+    st = m.status()
+    assert st['health']['reason'] == 'The QM SDK could not connect'
+    assert full in st['sentence']
+    assert 'connection' in st['health']['details']
+    cap = m.capabilities()
+    assert not cap['close'] and 'The QM SDK could not connect' in cap['close_reason']
+    html = page(app, 'live')
+    import re as _re
+    visible = _re.sub(r'<[^>]*>', ' ', html)
+    assert visible.count('127.0.0.1:9510') == 1  # said once, in the status line
+    assert '127.0.0.1:9510. The values below' in visible
+
+
+def test_every_sensor_unreadable_is_not_called_no_readings(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(), temps=None, refused={'con1.temperatures.FEM 0': "not a number: 'hot'"})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'No temperature readings.' not in html and '<strong>unreadable</strong>' in html

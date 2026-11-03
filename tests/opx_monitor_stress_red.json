@@ -1,0 +1,132 @@
+[
+  {
+    "item": "D1",
+    "pin": "test_stress_d1_unconfigured",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D2 polling",
+    "pin": "test_stress_d2_cleanup_poll_and_close",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D2 refresh",
+    "pin": "test_stress_browser_pins",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D2 count feedback",
+    "pin": "test_stress_browser_pins",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D2 stale close controls",
+    "pin": "test_stress_browser_pins",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D3 wake",
+    "pin": "test_stress_d3_viewer_wakes_and_uses_viewer_freshness",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D3 freshness",
+    "pin": "test_stress_d3_viewer_wakes_and_uses_viewer_freshness",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D4",
+    "pin": "test_stress_browser_pins",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D5",
+    "pin": "test_stress_d5_error_cause",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D5b",
+    "pin": "test_stress_d5b_malformed_device_section",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D6",
+    "pin": "test_stress_d6_full_job_ids",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D7",
+    "pin": "test_stress_d7_unverified_type",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D8 busy",
+    "pin": "test_stress_d8_busy_empty_version",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D8 empty slot",
+    "pin": "test_stress_d8_busy_empty_version",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D8 QOP version",
+    "pin": "test_stress_d8_busy_empty_version",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R1",
+    "pin": "test_stress_r1_responsive",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R2",
+    "pin": "test_stress_r2_plain_language",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R3",
+    "pin": "test_stress_r3_section_labels",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R4",
+    "pin": "test_stress_r4_outage_red",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R5",
+    "pin": "test_stress_r5_settings",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R6",
+    "pin": "test_stress_r6_returning_viewer_checks",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R7",
+    "pin": "test_stress_r7_gap_markers",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "R6 in-flight check",
+    "pin": "test_stress_pending_until_reply",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D5b job section",
+    "pin": "test_stress_malformed_jobs_keep_other_sections",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "D3 sleeping poller",
+    "pin": "test_stress_d3_sleeping_poller_wakes",
+    "reverted_result": "RED"
+  },
+  {
+    "item": "Process tree",
+    "pin": "test_stress_kill_tree",
+    "reverted_result": "RED"
+  }
+]
