@@ -138,7 +138,7 @@
         <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>
         <label><input type="checkbox" name="tls" value="1" {% if target.tls %}checked{% endif %}> TLS</label>
         <label class="ui-opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
-          <textarea name="headers" rows="2" placeholder="{{ 'stored -- leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
+          <textarea name="headers" rows="2" placeholder="{{ 'stored — leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
         {% if has_headers %}<label><input type="checkbox" name="clear_headers" value="1"> Remove the stored headers</label>{% endif %}
       </div>
     </fieldset>

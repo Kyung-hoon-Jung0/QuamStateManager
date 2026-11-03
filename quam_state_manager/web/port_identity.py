@@ -40,6 +40,8 @@ def edit_offer(path, value):
 def edit_offers(path, value):
     """Include identity leaves supplied through whole-object write doors."""
     if isinstance(value, dict):
+        if len(path.split('.')) >= 6:   # identity leaves sit at depth 6; nothing deeper can be one
+            return []
         return [offer for key, child in value.items()
                 for offer in edit_offers(path + "." + str(key), child)]
     offer = edit_offer(path, value)

@@ -161,6 +161,8 @@ _NON_STAGING_POSTS = {
     'main.workspace_refresh',
     'main.workspace_remove',
     'main.workspace_select',
+    'opx_monitor.opx_monitor_close',          # closes a QM on the instrument; no chip state
+    'opx_monitor.opx_monitor_save_settings',  # machine-wide monitor settings file
 }
 
 def test_every_post_route_is_locked_or_explicitly_non_staging(tmp_path):

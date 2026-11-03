@@ -230,10 +230,13 @@ class Modifier:
                 raise ValueError(f"Invalid dot_path: {dot_path!r}")
             source_file = self.store.source_file_for(dot_path)
 
-            parent, leaf = _navigate_to_parent(self.store.merged, dot_path)
-            key_order = list(parent)
+            try:
+                parent, leaf = _navigate_to_parent(self.store.merged, dot_path)
+                key_order = list(parent) if isinstance(parent, dict) else []
+            except KeyError:
+                leaf, key_order = None, []     # _remove_at raises the user-facing error
             removed = self._remove_at(dot_path, source_file)
-            key_index = key_order.index(leaf)
+            key_index = key_order.index(leaf) if leaf in key_order else None
             old_value = copy.deepcopy(removed)
 
             entry = ChangeEntry(
