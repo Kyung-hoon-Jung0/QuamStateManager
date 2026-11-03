@@ -157,9 +157,8 @@ const DATA = {
     ok(focused() === 'qubits.q1.xy.amplitude', 'Left inside a value stays for native caret movement');
     tree.querySelector('.tree-node[data-path="qubits"] > .tree-row').focus();
     key('Enter');
-    ok(tree.querySelector('.tree-node[data-path="qubits"] > .tree-children').style.display === 'none',
-       'Enter on a key row toggles it');
-    key('Enter');
+    ok(!!tree.querySelector('.tree-json-textarea'), 'Enter on a container opens its JSON editor');
+    key('Escape');
 
     // ── 3 + 4. Enter on a value edits; the editor hands focus back ────────
     tree.querySelector('.tree-node[data-path="qubits.q2"] > .tree-row').focus();

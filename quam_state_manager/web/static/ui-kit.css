@@ -139,17 +139,22 @@
 }
 
 /* Stage 0 parts: roving scalar editor (D-1/D-2/D-7). */
-.ui-tree-value {
+.ui-tree-value.ui-tree-value {
     display: inline-flex;
     align-items: center;
-    min-width: var(--ui-tree-value-min);
+    min-width: 0;
     padding: var(--ui-tree-value-pad);
     border: var(--ui-bw) solid var(--ui-border);
     border-radius: var(--ui-r-sm);
     background: var(--ui-surface-0);
     cursor: text;
 }
-.ui-tree-editor {
+.ui-tree-value.ui-tree-mounted {
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+}
+.ui-tree-editor.ui-tree-editor {
     font: inherit;
     color: inherit;
     background: transparent;
@@ -162,6 +167,10 @@
     color: var(--ui-warn-text);
     background: var(--ui-warn-bg);
     border-color: var(--ui-warn-border);
+}
+.ui-tree-resolved {
+    color: var(--ui-text-2);
+    font-size: var(--ui-fs-xs);
 }
 
 /* K3 head ------------------------------------------------------------- */

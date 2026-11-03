@@ -17,7 +17,8 @@ def test_tree_free_edit():
     r = run()
     assert r.returncode == 0 and "ALL OK" in r.stdout, r.stdout + r.stderr
 
-@pytest.mark.parametrize("mutation", ["one", "escape", "caret", "flight", "cache", "lazy", "tab", "undo", "global", "multi"])
+@pytest.mark.parametrize("mutation", ["one", "escape", "caret", "flight", "cache", "lazy", "tab", "undo", "text_undo", "global", "multi", "search", "off", "render", "pane", "fsp"])
 def test_tree_free_edit_mutations(mutation):
     r = run(mutation)
+    assert "mutation target exists" not in r.stderr, r.stderr
     assert r.returncode != 0 and "AssertionError" in r.stderr, r.stdout + r.stderr

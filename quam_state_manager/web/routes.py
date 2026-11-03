@@ -3514,6 +3514,32 @@ _REDO_MAX_FRAMES = 100
 _UNDO_LIVE_FILE = "undo_live.json"
 
 
+def _tree_commit_on_leave() -> bool:
+    """D-7: one machine setting; absent or malformed files default to ON."""
+    try:
+        doc = safe_io.read_json(Path(current_app.instance_path) / "tree_edit.json", attempts=1)
+        return doc.get("commit_on_leave", True) is not False if isinstance(doc, dict) else True
+    except Exception:  # A viewer setting must never prevent a page opening.
+        return True
+
+
+@bp.route("/settings/tree-edit", methods=["GET", "POST"])
+def settings_tree_edit():
+    if request.method == "GET":
+        return jsonify({"ok": True, "commit_on_leave": _tree_commit_on_leave()})
+    raw = request.values.get("commit_on_leave")
+    if raw not in ("0", "1"):
+        return jsonify({"ok": False, "error": "commit_on_leave must be 0 or 1"}), 400
+    enabled = raw == "1"
+    try:
+        path = Path(current_app.instance_path) / "tree_edit.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        safe_io.atomic_write_json(path, {"commit_on_leave": enabled})
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "commit_on_leave": enabled})
+
+
 def _undo_live_path() -> Path:
     return Path(current_app.instance_path) / _UNDO_LIVE_FILE
 
@@ -6633,6 +6659,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "change_count": _change_count(),
         # docs/160: the Settings toggle reflects the machine-wide setting
         "undo_live": _undo_live_enabled(),
+        "tree_commit_on_leave": _tree_commit_on_leave(),
         # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
         # directly, so on a FULL page render the tray's context comes from
         # HERE, not from _render_tray — and the Review drawer loops over

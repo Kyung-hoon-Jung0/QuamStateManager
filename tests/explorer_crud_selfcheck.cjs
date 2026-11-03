@@ -273,7 +273,7 @@ function nodeAt(container, p) {
     expandAll(c);
     const leaf = nodeAt(c, 'qubits.qA1.f_01');
     leaf.querySelector('.tree-val').click();
-    await tick(20);
+    await tick(200); // D-19 focus dwell
     const chip = leaf.querySelector('.tree-type-chip');
     ok(!!chip && /number · env/.test(chip.textContent), 'C6: type chip in the editor');
   }
@@ -836,7 +836,7 @@ function nodeAt(container, p) {
     let chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
     ok(!!chip && /reach the app/.test(chip.textContent),
        'C18: a failed inline edit says the app could not be reached (' + (chip && chip.textContent) + ')');
-    ok(val.textContent === before, 'C18: the display still reverts to the stored value');
+    ok(val.querySelector('input').value === before, 'C18: the display still reverts to the stored value');
     ok(!!chip && chip.title.indexOf("Couldn't reach the app") === 0,
        'C18: the chip ellipsizes, so its hover title carries the whole reason');
 

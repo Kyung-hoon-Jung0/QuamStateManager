@@ -2727,6 +2727,22 @@ window.toggleUndoLive = function() {
         .catch(function () { if (window.showToast) window.showToast("Could not change the setting.", "error"); });
 };
 
+window.toggleTreeCommitOnLeave = function () {
+    var box = document.getElementById("tree-edit-toggle");
+    var previous = window.__treeCommitOnLeave !== false;
+    box.disabled = true;
+    fetch("/settings/tree-edit", { method: "POST",
+        body: new URLSearchParams({ commit_on_leave: box.checked ? "1" : "0" }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) throw new Error(d.error);
+            window.__treeCommitOnLeave = box.checked = d.commit_on_leave;
+        }).catch(function () {
+            box.checked = previous;
+            if (window.showToast) window.showToast("Could not change the tree setting.", "error");
+        }).finally(function () { box.disabled = false; });
+};
+
 /**
  * Per-page header collapse (Item 4): hide the current page's .table-header-row
  * heading to give the list/content more vertical room. The class lives on <body>
@@ -3030,7 +3046,8 @@ document.addEventListener('keydown', function(evt) {
     if (evt.key !== '[' && evt.key !== ']') return;
     if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
     var a = document.activeElement;
-    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)
+            && !(a.matches('.ui-tree-editor') && window.TreeInlineEdit && !window.TreeInlineEdit.busy(a))) return;
     // Only when a dataset detail is open (so [ ] stays free elsewhere).
     if (!document.getElementById('ds-detail-root')) return;
     evt.preventDefault();
@@ -5673,7 +5690,9 @@ window.livePushExtrasLine = function (typedPaths) {
         var bar = document.getElementById("explorer-livediff-bar");
         if (bar && !bar.hidden) return null;   // the diff overlay owns the tree
         if ((Date.now() - (window.__lastUserAct || 0)) < 2000
-                || document.querySelector(".json-tree .ui-tree-dirty")) {
+                || document.querySelector(".json-tree .ui-tree-dirty")
+                || (document.activeElement && document.activeElement.matches('.ui-tree-editor')
+                    && window.TreeInlineEdit.busy(document.activeElement))) {
             _treeFollowTimer = setTimeout(followOnExplorer, 2000);
             return null;
         }
@@ -11334,6 +11353,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
 
         delete nodeEl._lazyData; // free memory, prevent double-build
+        if (_kc) _treeResume(_kc, null);
         // JT-07: a row built on first expand carries its pending tint too.
         if (_kc && _PENDING_TREES.indexOf(_kc.id) >= 0) _treeApplyPending(children, true);
     }
@@ -11517,6 +11537,22 @@ window.clearDetailPanelSearch = function(btnEl) {
             .trim();
         el.classList.add("tree-val-" + _typeOf(v));
         if (_isPointer(v)) el.classList.add("tree-val-pointer");
+        // Server undo/redo and live patches also repaint through here. A
+        // clean focused editor follows the committed value; a dirty draft
+        // keeps its typing and gets the new Escape baseline.
+        var tree = el.closest(".json-tree"), node = el.closest(".tree-node");
+        var path = node && node.dataset.path;
+        var state = tree && ((tree._editor && tree._editor.path === path && tree._editor)
+            || (tree._editDrafts && tree._editDrafts.get(path)));
+        if (state) {
+            var input = state.input, clean = input.value === input.defaultValue;
+            input.defaultValue = _treeLiteral(el);
+            if (clean) input.value = input.defaultValue;
+            var dirty = input.value !== input.defaultValue;
+            el.classList.toggle("ui-tree-dirty", dirty);
+            el.classList.toggle("tree-val-editing", dirty);
+            if (!el.contains(input)) el.textContent = dirty ? input.value : el._treeDisplay;
+        }
     }
 
     /* The model's container holding dotPath's final key, walked exactly as
@@ -12045,6 +12081,10 @@ window.clearDetailPanelSearch = function(btnEl) {
        promise for every write still in flight -- or null when there is none,
        so a caller with nothing to wait for stays synchronous. */
     var _inflightEdits = new Set();
+    var _treeEditMemory = new Map();
+    function _treeEditKey(tree) {
+        return tree._editContext + "|" + tree.id;
+    }
     // D-2/D-3: one mounted editor per tree. The write transport below retains
     // the existing parser and server offers; focus never creates a write door.
     function _treeValueDisplay(el, text) {
@@ -12056,6 +12096,66 @@ window.clearDetailPanelSearch = function(btnEl) {
         return el.classList.contains("tree-val-string") || el.classList.contains("tree-val-pointer")
             ? JSON.stringify(String(v)) : String(v);
     }
+    function _treeFindValue(tree, path) {
+        if (!tree) return null;
+        var node = tree.querySelector('.tree-node[data-path="' + _cssAttrVal(path) + '"]');
+        return node && node.querySelector(':scope > .tree-row > .ui-tree-value');
+    }
+    function _treePark(tree) {
+        var s = tree._editor;
+        if (!s) return null;
+        var saved = { path: s.path, start: s.input.selectionStart, end: s.input.selectionEnd,
+                      direction: s.input.selectionDirection, focused: document.activeElement === s.input };
+        s.leave(true);
+        _treeEditMemory.set(_treeEditKey(tree), { drafts: tree._editDrafts, saved: saved });
+        return saved;
+    }
+    function _treeResume(tree, saved) {
+        var drafts = tree._editDrafts;
+        if (drafts) drafts.forEach(function (s, path) {
+            var el = _treeFindValue(tree, path);
+            if (el && s.input.value !== s.input.defaultValue) {
+                el.textContent = s.input.value;
+                el.classList.add("ui-tree-dirty");
+            }
+        });
+        if (!saved || !saved.focused) return;
+        var el = _treeFindValue(tree, saved.path);
+        if (!el) return;
+        _makeValueEditable(el, saved.path);
+        var input = tree._editor.input;
+        input.setSelectionRange(saved.start, saved.end, saved.direction);
+    }
+    // D-19: a short focus dwell avoids a request storm while arrowing.
+    // Values already visited use the per-path cache until a mutation.
+    function _treePeek(tree, state) {
+        clearTimeout(tree._peekTimer);
+        tree._peekTimer = setTimeout(function () {
+            if (tree._editor !== state) return;
+            var path = state.path, el = state.el;
+            var cache = tree._peekCache || (tree._peekCache = new Map());
+            if (!cache.has(path)) cache.set(path, fetch("/field/peek?dot_path=" + encodeURIComponent(path))
+                .then(function (r) { return r.json(); }).catch(function () { return {}; }));
+            cache.get(path).then(function (d) {
+                if (tree._editor !== state || state.el !== el) return;
+                el.querySelectorAll(".tree-type-chip, .ui-tree-resolved").forEach(function (c) { c.remove(); });
+                var expected = d.expected && d.expected[path];
+                if (expected) {
+                    var chip = document.createElement("span");
+                    chip.className = "tree-type-chip";
+                    chip.textContent = expected.type + " \u00b7 " + expected.source;
+                    el.appendChild(chip);
+                }
+                var resolved = d.resolved && d.resolved[path];
+                if (resolved && resolved.is_pointer) {
+                    var preview = document.createElement("span");
+                    preview.className = "ui-tree-resolved";
+                    preview.textContent = " \u2192 " + (resolved.resolvable ? _formatValue(resolved.resolved_value) : "unresolved");
+                    el.appendChild(preview);
+                }
+            });
+        }, 160);
+    }
     function _makeValueEditable(el, path) {
         var tree = el.closest(".json-tree");
         if (!tree) return;
@@ -12064,6 +12164,11 @@ window.clearDetailPanelSearch = function(btnEl) {
             return;
         }
         if (tree._editor) tree._editor.leave();
+        var drafts = tree._editDrafts || (tree._editDrafts = new Map());
+        if (drafts.has(path)) {
+            drafts.get(path).mount(el);
+            return;
+        }
         var input = document.createElement("input");
         input.type = "text";
         input.className = "tree-edit-input ui-tree-editor";
@@ -12075,23 +12180,38 @@ window.clearDetailPanelSearch = function(btnEl) {
         el._treeDisplay = el.textContent;
         el.textContent = "";
         el.appendChild(input);
-        var state = { el: el, input: input, path: path, pending: null };
+        el.classList.add("ui-tree-mounted");
+        var state = { el: el, input: input, path: path, pending: null, context: tree._editContext };
         tree._editor = state;
         function dirty() {
             var changed = input.value !== input.defaultValue;
             el.classList.toggle("ui-tree-dirty", changed);
             el.classList.toggle("tree-val-editing", changed);
             input.size = Math.max(10, input.value.length + 2);
+            if (changed || state.pending) drafts.set(path, state);
+            else drafts.delete(path);
+            if (drafts.size) {
+                var saved = tree._editor === state ? { path: path, start: input.selectionStart,
+                    end: input.selectionEnd, direction: input.selectionDirection,
+                    focused: document.activeElement === input } : null;
+                _treeEditMemory.set(_treeEditKey(tree), { drafts: drafts, saved: saved });
+            } else _treeEditMemory.delete(_treeEditKey(tree));
+            if (tree._editor !== state) el.textContent = changed ? input.value : el._treeDisplay;
         }
         function flush() {
+            if (tree._editContext !== state.context) return null;
             if (state.pending) return state.pending.then(flush);
             if (input.value === input.defaultValue) return null;
             var sent = input.value;
-            var p = _writeTreeValue(el, path, sent).then(function () {
+            var p = _writeTreeValue(el, path, sent, tree).then(function () {
                 // D-8: keys typed while the request was in flight belong to
                 // the next edit; never replace them with the server echo.
-                input.defaultValue = _treeLiteral(el);
+                var current = _treeFindValue(tree, path);
+                if (current) el = state.el = current;
+                var stored = _treeModelGet(tree, path, el.dataset.editVal);
+                input.defaultValue = typeof stored === "string" ? JSON.stringify(stored) : _formatValue(stored);
                 if (input.value === sent) input.value = input.defaultValue;
+                if (tree._editor === state) _treePeek(tree, state);
                 dirty();
             });
             state.pending = p;
@@ -12099,14 +12219,32 @@ window.clearDetailPanelSearch = function(btnEl) {
             return p.then(function () {
                 state.pending = null;
                 _inflightEdits.delete(p);
-                if (tree._editor !== state && input.value !== input.defaultValue) return flush();
+                if (window.__treeCommitOnLeave !== false && tree._editor !== state
+                        && input.value !== input.defaultValue) return flush();
             });
         }
-        state.leave = function () {
-            flush();
+        state.mount = function (target) {
+            el = state.el = target;
+            tree = target.closest(".json-tree");
+            drafts = tree._editDrafts;
+            tree._editor = state;
+            el._treeDisplay = _formatValue(_treeModelGet(tree, path, el.dataset.editVal));
+            el.textContent = "";
+            el.appendChild(input);
+            el.classList.add("ui-tree-mounted");
+            el._flushEdit = flush;
+            _treePeek(tree, state);
+            dirty();
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        };
+        state.leave = function (preserve) {
+            if (!preserve && window.__treeCommitOnLeave !== false) flush();
+            if (preserve || input.value !== input.defaultValue || state.pending) drafts.set(path, state);
             input.remove();
-            el.textContent = el._treeDisplay;
+            el.classList.remove("ui-tree-mounted");
             if (tree._editor === state) tree._editor = null;
+            dirty();
         };
         el._flushEdit = flush;
         input.addEventListener("input", dirty);
@@ -12126,21 +12264,10 @@ window.clearDetailPanelSearch = function(btnEl) {
         });
         input.addEventListener("blur", function () {
             setTimeout(function () {
-                if (tree._editor === state && document.activeElement !== input) state.leave();
+                if (tree._editor === state && document.activeElement !== input && !state.pending) state.leave();
             }, 100);
         });
-        // D-19: memoise by path until a mutation, never fetch on each visit.
-        var cache = tree._peekCache || (tree._peekCache = new Map());
-        if (!cache.has(path)) cache.set(path, fetch("/field/peek?dot_path=" + encodeURIComponent(path))
-            .then(function (r) { return r.json(); }).catch(function () { return {}; }));
-        cache.get(path).then(function (d) {
-            var expected = d.expected && d.expected[path];
-            if (!expected || tree._editor !== state) return;
-            var chip = document.createElement("span");
-            chip.className = "tree-type-chip";
-            chip.textContent = expected.type + " · " + expected.source;
-            el.appendChild(chip);
-        });
+        _treePeek(tree, state);
         dirty();
         input.focus();
         input.setSelectionRange(input.value.length, input.value.length);
@@ -12150,14 +12277,22 @@ window.clearDetailPanelSearch = function(btnEl) {
             return input.value !== input.defaultValue || input.selectionStart !== input.selectionEnd;
         },
         settle: function (root) {
+            if (window.__treeCommitOnLeave === false) {
+                (root || document).querySelectorAll(".json-tree").forEach(_treePark);
+                if (root && root.matches && root.matches(".json-tree")) _treePark(root);
+            }
             var eds = (root || document).querySelectorAll(".ui-tree-value:has(input)");
             for (var i = 0; i < eds.length; i++) {
-                if (typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
+                if (window.__treeCommitOnLeave !== false && typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
             }
             if (!_inflightEdits.size) return null;
-            return Promise.all(Array.from(_inflightEdits).map(function (p) {
-                return p.catch(function () {});
-            }));
+            function wait() {
+                if (!_inflightEdits.size) return null;
+                return Promise.all(Array.from(_inflightEdits).map(function (p) {
+                    return p.catch(function () {});
+                })).then(wait);
+            }
+            return wait();
         }
     };
 
@@ -12192,7 +12327,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             : "Unexpected reply from the app — reload the page to see the stored value.";
     }
 
-    function _writeTreeValue(valEl, dotPath, typed) {
+    function _writeTreeValue(valEl, dotPath, typed, ownerTree) {
+        var ownerContext = ownerTree._editContext;
         var currentDisplay = valEl._treeDisplay === undefined ? valEl.textContent : valEl._treeDisplay;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
@@ -12301,10 +12437,14 @@ window.clearDetailPanelSearch = function(btnEl) {
             };
             _myP = _post(null)
             .then(function handleData(data) {
+                if (ownerTree._editContext !== ownerContext) return;
+                valEl = _treeFindValue(ownerTree, dotPath) || valEl;
                 if (!data.ok && data.fsp_compensation) {
                     // r12-B: never silent — the compensation offer first.
                     return new Promise(function (resolve, reject) {
                     window._openFspPopup(data.fsp_compensation, function(mode, plan) {
+                        var back = _treeFindValue(ownerTree, dotPath);
+                        if (back) _makeValueEditable(back, dotPath); // D-11: every popup exit
                         if (mode === "cancel") { resolve(); return; }   // nothing committed
                         if (mode === "solo") {
                             _post({fsp_ack: "solo"}).then(handleData).then(resolve, reject);
@@ -12387,7 +12527,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     _treeValueDisplay(valEl, newVal);
                     valEl.dataset.editVal = newVal;
                 }
-                _treeModelSet(valEl.closest ? valEl.closest(".json-tree") : null, dotPath,
+                _treeModelSet(ownerTree, dotPath,
                               data.stored_kind !== undefined ? data.stored : newVal);
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
@@ -12928,17 +13068,19 @@ window.clearDetailPanelSearch = function(btnEl) {
         var r = node && node.querySelector(":scope > .tree-row");
         if (r) r.focus();
     }
-    function _treeExit(tree) {
+    function _treeExit(tree, backwards) {
         var controls = document.querySelectorAll('a[href],button,input,select,textarea,[tabindex="0"]');
-        for (var i = 0; i < controls.length; i++) {
+        var layout = document.body.getClientRects().length > 0;
+        for (var i = backwards ? controls.length - 1 : 0; i >= 0 && i < controls.length; i += backwards ? -1 : 1) {
             var c = controls[i];
             if (!tree.contains(c) && !c.disabled && !c.closest('[hidden]') && c.tabIndex >= 0
-                    && (tree.compareDocumentPosition(c) & 4)) {
+                    && (!layout || c.getClientRects().length > 0)
+                    && (tree.compareDocumentPosition(c) & (backwards ? 2 : 4))) {
                 c.focus();
                 return;
             }
         }
-        tree.blur();
+        if (document.activeElement && tree.contains(document.activeElement)) document.activeElement.blur();
     }
     // D-5: value navigation reuses the structural walk, expanding only the
     // branch being entered. No scan of every rendered leaf on each key.
@@ -12971,6 +13113,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (r && r.hasAttribute("tabindex") && r.isConnected) r.focus({ preventScroll: true });
     }
     function _attachTreeKeys(container) {
+        container.setAttribute("role", "tree");
         container.tabIndex = 0;          // a re-render starts with focus outside
         if (container._treeKeys) return;
         container._treeKeys = true;
@@ -12989,6 +13132,12 @@ window.clearDetailPanelSearch = function(btnEl) {
                 container._kbRow = e.target;
                 var v = e.target.querySelector(":scope > .ui-tree-value");
                 if (v) _makeValueEditable(v, e.target.parentElement.dataset.path);
+            } else if (e.target && e.target.closest) {
+                var row = e.target.closest(".tree-row");
+                if (row) container._kbRow = row;
+                if (e.target.classList.contains("ui-tree-value")) {
+                    _makeValueEditable(e.target, row.parentElement.dataset.path);
+                }
             }
         });
         container.addEventListener("focusout", function (e) {
@@ -13015,9 +13164,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (!onRow && t !== container) return;       // an editor, a button, ...
             var node = onRow ? t.parentElement : null;
             var k = e.key, to = null;
-            if (node && (k === "Tab" || (inValue && (k === "ArrowDown" || k === "ArrowUp")))) {
+            var valueRow = node && t.querySelector(':scope > .tree-val');
+            if (node && (k === "Tab" || (valueRow && (k === "ArrowDown" || k === "ArrowUp")))) {
                 to = _kbValueMove(node, k === "ArrowUp" || (k === "Tab" && e.shiftKey) ? -1 : 1, k === "Tab");
-                if (!to && k === "Tab") { e.preventDefault(); _treeExit(container); return; }
+                if (!to && k === "Tab") { e.preventDefault(); _treeExit(container, e.shiftKey); return; }
             }
             else if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
             else if (k === "End" || (!node && k === "ArrowUp")) to = _kbEnds(container, true);
@@ -13037,7 +13187,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 } else if (k === "ArrowLeft") {
                     if (open) _kbCollapse(node); else to = _kbParent(node);
                 } else if (ch && k === "Enter") {
-                    _toggleNode(node);
+                    var editor = t.querySelector(':scope > .tree-json-edit-btn');
+                    if (editor) editor.click(); else _toggleNode(node);
                 } else {
                     var act = ch ? t.querySelector(":scope > .tree-json-edit-btn")
                                  : t.querySelector(":scope > .tree-val");
@@ -13627,6 +13778,19 @@ window.clearDetailPanelSearch = function(btnEl) {
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
+        var editContext = (window.__chipKey || "") + "|" + (window.__chipToken || "");
+        var savedEditor = _treePark(container);
+        if (container._editContext !== undefined && container._editContext !== editContext) {
+            savedEditor = null;
+            container._editDrafts = null;
+            container._peekCache = null;
+        }
+        container._editContext = editContext;
+        var editMemory = _treeEditMemory.get(_treeEditKey(container));
+        if (!container._editDrafts && editMemory) {
+            container._editDrafts = editMemory.drafts;
+            savedEditor = editMemory.saved;
+        }
         // A full (re)render is a new context (chip load / switch) — drop any stale
         // key-copy so its paste buttons don't linger against a different chip.
         _clearTreeCopy();
@@ -13687,6 +13851,18 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         // JT-07: a fresh render (reload, soft refresh, live-diff) reads the tray.
         if (_PENDING_TREES.indexOf(containerId) >= 0) _treeApplyPending(container, false);
+        if (savedEditor) {
+            var segs = savedEditor.path.split(".");
+            for (var depth = 1; depth < segs.length; depth++) {
+                var ancestor = container.querySelector('.tree-node[data-path="' + _cssAttrVal(segs.slice(0, depth).join(".")) + '"]');
+                if (ancestor) {
+                    _materializeChildren(ancestor);
+                    var children = ancestor.querySelector(':scope > .tree-children');
+                    if (children && children.style.display === "none") _toggleNode(ancestor);
+                }
+            }
+        }
+        _treeResume(container, savedEditor);
     };
 
     /* QA JT-17: the search memo (_lastSearchQuery) means "the tree shows q's
@@ -13815,7 +13991,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     window.jsonTreeSearch = function(containerId, query) {
         _debounce('tree-search-' + containerId, function() {
             var c = document.getElementById(containerId);
-            if (c) _searchTree(c, query);
+            if (c) {
+                var savedEditor = _treePark(c);
+                _searchTree(c, query);
+                _treeResume(c, savedEditor);
+            }
         }, 200);
     };
 })();

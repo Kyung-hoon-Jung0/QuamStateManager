@@ -24,6 +24,7 @@
        A chip switch always does a full reload (HX-Redirect), refreshing this. #}
     <script>
       window.__chipToken = {{ (chip_token if chip_token is defined else '')|tojson }};
+      window.__treeCommitOnLeave = {{ tree_commit_on_leave|default(true)|tojson }};
       {# v1.5.1 (SB-F2/F5): this page's chip FOLDER (two copies of one design
          share a token, never a key); tab-chip.js sends it on every write. #}
       window.__chipKey = {{ (chip_key if chip_key is defined else '')|tojson }};
@@ -1258,6 +1259,9 @@
         <label class="ui-check" title="On: Ctrl+Z / Ctrl+Shift+Z on an already-applied change writes the live chip right away (through the same Apply door, refused if the chip moved). Off: the reverted value only waits in the review tray until you press Apply."><input type="checkbox" id="undo-live-toggle"
                 data-on="{{ '1' if undo_live else '0' }}"{% if undo_live %} checked{% endif %}
                 onchange="toggleUndoLive()">Ctrl+Z writes live</label>
+        <label class="ui-check"><input type="checkbox" id="tree-edit-toggle"
+                {% if tree_commit_on_leave|default(true) %}checked{% endif %}
+                onchange="toggleTreeCommitOnLeave()">Json Tree: commit when leaving a field</label>
         </div>
         </div>
         {# docs/109: how MW amplitude annotations read — some labs think in dBm,
