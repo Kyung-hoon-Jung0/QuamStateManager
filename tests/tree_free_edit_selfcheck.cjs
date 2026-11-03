@@ -26,14 +26,24 @@ const mutations = {
     peek_retry: ['cache.delete(path); return {};', 'return {};'],
     tooltip: ['chip.title = (expected.class_path', 'chip.unusedTitle = (expected.class_path'],
     pointer: ['if (resolved && resolved.is_pointer)', 'if (false)'],
-    brackets: ["if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;", "if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable) && !(a.matches('.ui-tree-editor') && window.TreeInlineEdit && !window.TreeInlineEdit.busy(a))) return;"],
+    brackets: ["if (a && a.matches && a.matches('.ui-tree-editor')) return;\n    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;", "if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable) && !(a.matches('.ui-tree-editor') && window.TreeInlineEdit && !window.TreeInlineEdit.busy(a))) return;"],
+    source: ['var editSource = _treeEditSource(container, data, options);', 'var editSource = "";'],
+    source_key: ['JSON.stringify([tree._editContext, tree.id, tree._editSource])', 'JSON.stringify([tree._editContext, tree.id])'],
+    stale_token: ['container._editContext !== editContext', 'false'],
+    display_order: ['_treeValueDisplay(el, _formatValue(v));\n        el.dataset.editVal', '/* mutant: baseline updated too late */\n        el.dataset.editVal'],
     multi: ["var nd = a && a.closest && a.closest('.tree-node');", "var nd = a && a.tagName !== 'INPUT' && a.closest && a.closest('.tree-node');"],
     cache: ['if (!cache.has(path)) cache.set', 'if (true) cache.set'],
 };
 if (process.env.TREE_MUTATION) {
-    const [before, after] = mutations[process.env.TREE_MUTATION];
-    assert(source.includes(before), 'mutation target exists');
-    source = source.replaceAll(before, after);
+    if (process.env.TREE_MUTATION !== 'chip_context') {
+        const [before, after] = mutations[process.env.TREE_MUTATION];
+        assert(source.includes(before), 'mutation target exists');
+        source = source.replaceAll(before, after);
+        if (process.env.TREE_MUTATION === 'display_order') {
+            source = source.replace('if (!el.contains(input)) el.textContent = dirty ? input.value : el._treeDisplay;\n        }',
+                'if (!el.contains(input)) el.textContent = dirty ? input.value : el._treeDisplay;\n        }\n        _treeValueDisplay(el, _formatValue(v));');
+        }
+    }
 }
 const dom = new JSDOM('<!doctype html><input id="search"><div id="tree"></div><button id="after">After</button>',
     {runScripts:'outside-only', pretendToBeVisual:true, url:'http://localhost/explorer'});
@@ -131,7 +141,26 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     const search=d.getElementById('search'); search.type='search';pane.appendChild(search);
     const detail=d.createElement('div');detail.id='ds-detail-root';d.body.appendChild(detail);
     const runMoves=[];w.dsNavRun=step=>runMoves.push(step);
+    w.renderJsonTree('tree',{a:'',b:2},{defaultDepth:1,crud:true});
     focus('a');
+    // jsdom has no native text insertion: apply the browser default only when
+    // keydown is accepted, so navigation/preventDefault cannot fake typing.
+    const bracketInput=d.activeElement;
+    // Empty string literals display as two quotes; use a clean empty buffer
+    // to exercise the first bracket with a caret and no selected text.
+    bracketInput.value=bracketInput.defaultValue='';
+    bracketInput.setSelectionRange(0,0);
+    assert.equal(w.TreeInlineEdit.busy(bracketInput),false,'bracket typing starts in a clean editor');
+    for (const ch of '[1,2]') {
+        assert.equal(d.activeElement,bracketInput,'typing keeps the clean editor');
+        if (key(ch)) {
+            bracketInput.setRangeText(ch,bracketInput.selectionStart,bracketInput.selectionEnd,'end');
+            bracketInput.dispatchEvent(new w.Event('input',{bubbles:true}));
+        }
+    }
+    assert.equal(bracketInput.value,'[1,2]','clean editor accepts the complete bracket literal');
+    assert.deepEqual(runMoves,[],'typing a bracket literal never navigates datasets');
+    key('Escape');
     for (const dirtyText of [false,true]) {
         if (dirtyText) type('19');
         for (const ch of ['/', '?', 'x', '[', ']']) {
@@ -143,6 +172,7 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     }
     assert.equal(runMoves.length,0,'brackets never navigate while a value has focus');
     detail.remove();
+    w.renderJsonTree('tree',{a:1,b:3},{defaultDepth:1,crud:true});focus('a');
     key('Escape');
     refused=true;type('invalid text');const refusedInput=d.activeElement;key('Enter');await tick();
     assert.equal(d.activeElement,refusedInput,'refusal keeps focus');
@@ -219,6 +249,74 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     fsp=false;type('4');key('Enter');await tick(80);
     assert.equal(tree._treeData.b,4,'FSP Cancel resolves so a later edit on the same field commits');
     assert.equal(d.activeElement.value,'4','later edit remains in the roving input');
+
+    w.__treeCommitOnLeave=false;
+    const swapTree = (data, sourceTag) => {
+        w.TreeInlineEdit.settle(d.body);
+        const next=d.createElement('div');next.id='tree';
+        if (sourceTag !== undefined) next.dataset.treeSource=sourceTag;
+        tree.replaceWith(next);tree=next;
+        w.renderJsonTree('tree',data,{defaultDepth:1,crud:true});
+    };
+    // An explicit switch is the only partial allowed to advance tab identity.
+    const identityTemplate=fs.readFileSync(path.join(staticDir,'../templates/_chip_context.html'),'utf8');
+    const routes=fs.readFileSync(path.join(staticDir,'../routes.py'),'utf8');
+    assert(routes.includes('identity = render_template("_chip_context.html",'),'in-place switch renders identity');
+    assert(routes.includes('make_response(identity + "\\n" + body'),'identity precedes swapped content scripts');
+    const switchIdentity=(key,token)=>{
+        const script=identityTemplate.match(/<script>([\s\S]*?)<\/script>/)[1]
+            .replace('{{ chip_key|tojson }}',JSON.stringify(key))
+            .replace('{{ chip_token|tojson }}',JSON.stringify(token));
+        if (process.env.TREE_MUTATION !== 'chip_context') w.eval(script);
+    };
+    switchIdentity('folder-one','token-one');
+    swapTree({a:1,b:2},'state.json');focus('a');type('91');focus('b');
+    switchIdentity('folder-two','token-two');
+    swapTree({a:7,b:8},'state.json');
+    assert.equal(val('a').textContent,'7','in-place switch cannot repaint an earlier folder draft');
+    assert.equal(w.__chipKey,'folder-two','in-place switch refreshes folder key');
+    assert.equal(w.__chipToken,'token-two','in-place switch refreshes write token');
+    focus('a');type('9');key('Enter');await tick();
+    const lastEdit=calls.filter(c=>c.url==='/field/edit').at(-1);
+    assert.equal(new w.URLSearchParams(lastEdit.body).get('expect_chip'),'token-two','write uses current identity');
+
+    type('92');focus('b');
+    w.__chipToken='token-three';
+    w.renderJsonTree('tree',{a:10,b:11},{defaultDepth:1,crud:true});
+    assert.equal(val('a').textContent,'10','stale token clears drafts on the same element');
+    assert(!val('a').classList.contains('ui-tree-dirty'),'stale token clears dirty state');
+
+    focus('a');type('93');focus('b');
+    swapTree({a:20,b:21},'snapshot:two');
+    assert.equal(val('a').textContent,'20','new source with reused element id cannot inherit drafts');
+    focus('a');type('94');focus('b');
+    tree.dataset.treeSource='snapshot:three';
+    w.renderJsonTree('tree',{a:30,b:31},{defaultDepth:1,crud:true});
+    assert.equal(val('a').textContent,'30','source change on the same element clears drafts');
+    focus('a');type('95');focus('b');
+    swapTree({a:30,b:31},'snapshot:three');
+    assert.equal(val('a').textContent,'95','same explicit source preserves drafts across pane replacement');
+    focus('a');key('Escape');
+    swapTree({a:40,b:41});focus('a');type('96');focus('b');
+    swapTree({a:50,b:51});
+    assert.equal(val('a').textContent,'50','unmarked different data objects do not share drafts');
+
+    // A pending detached draft becomes clean when a matching patch arrives.
+    // Its next repaint must read the NEW display baseline, even before settle.
+    focus('a');delay=80;type('52');key('Enter');focus('b');
+    w._paintTreeLeaf(tree,'a',52);
+    const leaf=val('a'), writes=[];
+    const textContent=Object.getOwnPropertyDescriptor(w.Node.prototype,'textContent');
+    Object.defineProperty(leaf,'textContent',{
+        configurable:true,get(){return textContent.get.call(this);},
+        set(text){writes.push(text);textContent.set.call(this,text);}
+    });
+    w._paintTreeLeaf(tree,'a',53);
+    assert(writes.length>0,'clean detached draft repaints');
+    assert(writes.every(text=>text==='53'),'display baseline precedes every clean detached draft repaint');
+    assert.equal(leaf.textContent,'53','clean detached draft shows current committed value');
+    delete leaf.textContent;
+    await tick(110);delay=0;
     console.log('ALL OK: Stage A pins');
     w.close();
 })().catch(e=>{console.error(e);process.exitCode=1;w.close();});

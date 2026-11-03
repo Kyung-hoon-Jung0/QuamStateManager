@@ -3046,6 +3046,8 @@ document.addEventListener('keydown', function(evt) {
     if (evt.key !== '[' && evt.key !== ']') return;
     if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
     var a = document.activeElement;
+    // D-4: even a clean roving value editor owns printable brackets.
+    if (a && a.matches && a.matches('.ui-tree-editor')) return;
     if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
     // Only when a dataset detail is open (so [ ] stays free elsewhere).
     if (!document.getElementById('ds-detail-root')) return;
@@ -11529,6 +11531,7 @@ window.clearDetailPanelSearch = function(btnEl) {
      * value and the type colour class. An inline commit's echo, a revert and
      * a batch's other rows all paint through it, so the three cannot drift. */
     function _paintLeafEl(el, v) {
+        // Update the display baseline before an unmounted clean draft uses it.
         _treeValueDisplay(el, _formatValue(v));
         el.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
         el.className = el.className
@@ -12081,8 +12084,22 @@ window.clearDetailPanelSearch = function(btnEl) {
        so a caller with nothing to wait for stays synchronous. */
     var _inflightEdits = new Set();
     var _treeEditMemory = new Map();
+    var _treeDataIds = new WeakMap(), _treeDataId = 0;
+    function _treeEditSource(tree, data, options) {
+        var marker = tree.closest('[data-tree-source], [data-source], [data-ref], [data-ts]');
+        var source = options ? options.source : undefined;
+        if (source === undefined && marker) source = [marker.getAttribute('data-tree-source'),
+            marker.getAttribute('data-source'), marker.getAttribute('data-ref'), marker.getAttribute('data-ts')];
+        if (source !== undefined) return JSON.stringify(source);
+        // Unmarked callers get object identity, never just a reused element id.
+        if (data && typeof data === 'object') {
+            if (!_treeDataIds.has(data)) _treeDataIds.set(data, ++_treeDataId);
+            return 'object:' + _treeDataIds.get(data);
+        }
+        return JSON.stringify([typeof data, data]);
+    }
     function _treeEditKey(tree) {
-        return tree._editContext + "|" + tree.id;
+        return JSON.stringify([tree._editContext, tree.id, tree._editSource]);
     }
     // D-2/D-3: one mounted editor per tree. The write transport below retains
     // the existing parser and server offers; focus never creates a write door.
@@ -12188,7 +12205,8 @@ window.clearDetailPanelSearch = function(btnEl) {
         el.textContent = "";
         el.appendChild(input);
         el.classList.add("ui-tree-mounted");
-        var state = { el: el, input: input, path: path, pending: null, context: tree._editContext };
+        var state = { el: el, input: input, path: path, pending: null,
+            context: tree._editContext, source: tree._editSource };
         tree._editor = state;
         function dirty() {
             var changed = input.value !== input.defaultValue;
@@ -12206,11 +12224,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (tree._editor !== state) el.textContent = changed ? input.value : el._treeDisplay;
         }
         function flush() {
-            if (tree._editContext !== state.context) return null;
+            if (tree._editContext !== state.context || tree._editSource !== state.source) return null;
             if (state.pending) return state.pending.then(flush);
             if (input.value === input.defaultValue) return null;
             var sent = input.value;
             var p = _writeTreeValue(el, path, sent, tree).then(function (result) {
+                if (tree._editContext !== state.context || tree._editSource !== state.source) return;
                 if (result === false) { dirty(); return false; }
                 // D-8: keys typed while the request was in flight belong to
                 // the next edit; never replace them with the server echo.
@@ -12337,6 +12356,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
     function _writeTreeValue(valEl, dotPath, typed, ownerTree) {
         var ownerContext = ownerTree._editContext;
+        var ownerSource = ownerTree._editSource;
         var currentDisplay = valEl._treeDisplay === undefined ? valEl.textContent : valEl._treeDisplay;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
@@ -12445,7 +12465,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             };
             _myP = _post(null)
             .then(function handleData(data) {
-                if (ownerTree._editContext !== ownerContext) return;
+                if (ownerTree._editContext !== ownerContext || ownerTree._editSource !== ownerSource) return;
                 valEl = _treeFindValue(ownerTree, dotPath) || valEl;
                 if (!data.ok && data.fsp_compensation) {
                     // r12-B: never silent — the compensation offer first.
@@ -13782,13 +13802,16 @@ window.clearDetailPanelSearch = function(btnEl) {
         var container = document.getElementById(containerId);
         if (!container) return;
         var editContext = (window.__chipKey || "") + "|" + (window.__chipToken || "");
+        var editSource = _treeEditSource(container, data, options);
         var savedEditor = _treePark(container);
-        if (container._editContext !== undefined && container._editContext !== editContext) {
+        if (container._editContext !== undefined && (container._editContext !== editContext
+                || container._editSource !== editSource)) {
             savedEditor = null;
             container._editDrafts = null;
             container._peekCache = null;
         }
         container._editContext = editContext;
+        container._editSource = editSource;
         var editMemory = _treeEditMemory.get(_treeEditKey(container));
         if (!container._editDrafts && editMemory) {
             container._editDrafts = editMemory.drafts;

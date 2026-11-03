@@ -998,6 +998,17 @@ class TestWorkspace:
         assert "hx-swap-oob" in body
         assert "live-diverged-slot" in body
 
+        # The explicit in-place switch advances this tab's draft/write identity
+        # before any scripts in the new pane run.
+        from quam_state_manager.web import routes
+        with client.application.test_request_context():
+            expected_key = routes._ctx_chip_key(routes._active_ctx()) or ""
+            expected_token = routes._active_chip_token() or ""
+        identity_script = body.split("</script>", 1)[0]
+        for name, expected in (("__chipKey", expected_key), ("__chipToken", expected_token)):
+            encoded = identity_script.split(f"window.{name} = ", 1)[1].split(";", 1)[0]
+            assert json.loads(encoded) == expected
+
     def test_hx_vals_escapes_backslashes(self, client, synth_folder):
         client.post("/workspace/add", data={"folder": str(synth_folder)})
         resp = client.get("/workspace/tree")

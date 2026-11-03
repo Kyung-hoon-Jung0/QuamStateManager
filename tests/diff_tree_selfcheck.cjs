@@ -117,7 +117,9 @@ ok(!!ldelta && ldelta.textContent.indexOf(
 window.renderJsonTree('t-plain', A, { defaultDepth: 99, crud: true });
 const pl = document.getElementById('t-plain');
 const pv = nodeAt(pl, 'qubits.qA1.T1').querySelector('.tree-val');
-ok(pv && pv.style.cursor === 'pointer', 'the Explorer tree still opens the editor on click');
+pv.click();
+ok(pv.querySelector('.ui-tree-editor') === document.activeElement,
+   'the Explorer tree mounts a focused editor on click');
 ok(pl.querySelectorAll('.tree-diff').length === 0, 'and carries no diff marks');
 
 console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');

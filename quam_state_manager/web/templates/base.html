@@ -21,7 +21,7 @@
        the chip that was active when this page was rendered. Sent as expect_chip on
        every edit POST so a stale tab (another tab switched the active chip) is
        caught by the server's 409 gate instead of writing onto the wrong chip.
-       A chip switch always does a full reload (HX-Redirect), refreshing this. #}
+       Explicit in-place switches refresh these via _chip_context.html. #}
     <script>
       window.__chipToken = {{ (chip_token if chip_token is defined else '')|tojson }};
       window.__treeCommitOnLeave = {{ tree_commit_on_leave|default(true)|tojson }};

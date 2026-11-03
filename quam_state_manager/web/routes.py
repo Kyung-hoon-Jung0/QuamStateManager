@@ -36325,7 +36325,10 @@ def workspace_select():
         if request.form.get("inplace") == "1":
             body = qubits()
             if isinstance(body, str):
-                resp = make_response(body + "\n" + _tray_oob() + _diverged_oob())
+                identity = render_template("_chip_context.html",
+                                           chip_key=_ctx_chip_key(_active_ctx()) or "",
+                                           chip_token=_active_chip_token() or "")
+                resp = make_response(identity + "\n" + body + "\n" + _tray_oob() + _diverged_oob())
                 resp.headers["HX-Trigger"] = "diagnostics-changed"
                 return resp
             # qubits() returned a Response/tuple (unexpected) — fall through to
