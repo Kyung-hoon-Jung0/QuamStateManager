@@ -1,9 +1,34 @@
 # Changelog
 
-## Unreleased
+## v1.6.2 (2026-11-03)
 
-- Add an OPX monitor with live status, temperature trends, job history, and confirmed idle cleanup.
-- Show neutral startup status, measured occupancy, and the age of stale readings.
+### OPX monitor (new menu)
+
+- Live, Jobs, History, Clean up and Monitor settings for the QM server: devices, open QMs, jobs, FEM temperatures with trends, an alarm log and a health dot.
+- The headline is a measured verdict (FREE / BUSY / OPEN N, with the idle count) and never claims "ok" or "fresh" when a call failed; nothing configured reads "health not assessed", not a problem.
+- Closing a QM is confirmed in the page and verified by re-listing the open QMs; the history records only verified results.
+
+### Re-generate
+
+- Port re-cabling keeps every line's own values: crosstalk is rebuilt line to line, shared port fields carry only when the sources agree, pointers are re-aimed at their original lines, upconverters follow their source frequencies, and band conflicts are reported.
+- A crosstalk term toward a removed line is dropped and reported, never left on an empty port.
+- The source chip's own pointer forms, separately calibrated literals, lab wiring values and spare ports are kept; removing a qubit drops only its own entries.
+
+### Port key check
+
+- A port whose dict key disagrees with its controller_id / fem_id / port_id is a Diagnostics error.
+- Every editing door offers Fix (move the port, retarget every pointer, one undo) or Keep before writing such a value.
+
+### Other
+
+- The sidebar menu can be reordered by press-and-hold drag; the order is remembered.
+- The Interactive tab no longer shows a second Reproduce bar; Retry forces a fresh replay.
+
+## v1.6.1 (2026-11-02)
+
+- Interactive answers the menu first and replays in the background with honest progress phases; the plot worker is warmed when a chip opens.
+- Re-generate keeps calibrated values a source pointer resolved to when the rebuild inverts the link.
+- Generate, report, Trends, Pulses, wiring and Chip Status readability fixes from the user-view sweep.
 
 ## v0.1.0 (2026-04-05)
 
