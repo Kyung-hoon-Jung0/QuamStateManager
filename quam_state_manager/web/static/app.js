@@ -14841,7 +14841,7 @@ window.TreeMulti = (function () {
 window.TreeFind = (function () {
     'use strict';
     var tree, bar, find, hits = [], plan = [], serial = 0, current = 0, token, planSeq, ready = false;
-    var lastReplaced = null, timer = null, running = null, pserial = 0;
+    var lastReplaced = null, timer = null, running = null, pserial = 0, quiet = false;
     var DEBOUNCE_MS = 150, SLICE_MS = 8, BUDGET_MS = window.__treeFindBudgetMs || 2000;
     var TM = window.TreeMulti;
     var TOGGLES = [
@@ -14996,8 +14996,9 @@ window.TreeFind = (function () {
             }};
         });
     }
-    function refresh() {
+    function refresh(keepQuiet) {
         if (!bar) return;
+        if (keepQuiet !== true) quiet = false;
         serial++; pserial++; plan = []; ready = false;
         if (running) { running.cancel(); running = null; }
         clearTimeout(timer);
@@ -15093,10 +15094,14 @@ window.TreeFind = (function () {
         }
         return el;
     }
+    function sameValue(a, b) { return a === b || (kindOf(a) === kindOf(b) && textOf(a) === textOf(b)); }
     function paintInline() {
         tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
-        if (!bar || replText() === '') return;
-        var byPath = new Map(hits.filter(function (r) { return !r.key; }).map(function (r) { return [r.path, r]; }));
+        if (!bar || bar.hidden || quiet || replText() === '') return;
+        var byPath = new Map(hits.filter(function (r) {
+            // a hint that changes nothing is noise: numbers compare by value
+            return !r.key && !sameValue(r.old, typeof r.old === 'number' && r.next !== '' && isFinite(Number(r.next)) ? Number(r.next) : r.next);
+        }).map(function (r) { return [r.path, r]; }));
         tree.querySelectorAll('.tree-node[data-path]').forEach(function (node) {
             var hit = byPath.get(node.dataset.path);
             if (!hit) return;
@@ -15124,19 +15129,20 @@ window.TreeFind = (function () {
             plan = data.results; planSeq = data.mutation_seq;
             plan.forEach(function (r) { var h = selected.find(function (s) { return s.path === r.dot_path; }); if (h) r.ord = h.ord; });
             if (plan.some(function (r) { return r.skip; })) bar.querySelector('details').open = true;
-            list(plan.map(function (r) { return {path:r.dot_path, old:r.old_value, next:r.new_value, skip:r.skip, rename:r.rename}; }));
-            ready = plan.some(function (r) { return !r.skip; });
-            status(plan.filter(function (r) { return !r.skip; }).length + ' replacements; ' + plan.filter(function (r) { return r.skip; }).length + ' skipped');
+            // a row whose value would stay the same is no replacement (server: `unchanged`)
+            list(plan.filter(function (r) { return !r.unchanged; }).map(function (r) { return {path:r.dot_path, old:r.old_value, next:r.new_value, skip:r.skip, rename:r.rename}; }));
+            ready = plan.some(function (r) { return !r.skip && !r.unchanged; });
+            status(plan.filter(function (r) { return !r.skip && !r.unchanged; }).length + ' replacements; ' + plan.filter(function (r) { return r.skip; }).length + ' skipped');
             return {plan:plan, seq:planSeq, ready:ready};
         } catch (err) { if (id === pserial) status('Preview failed: ' + err.message); }
     }
     async function applyPlan(all, snap) {
         if (snap && snap.plan) { plan = snap.plan; planSeq = snap.seq; ready = snap.ready; }
-        var updates = plan.filter(function (r) { return !r.skip; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });
-        if (!updates.length || !ready) return;
+        var updates = plan.filter(function (r) { return !r.skip && !r.unchanged; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });
+        if (!updates.length || !ready) { if (snap && snap.plan && !updates.length) status('Nothing to replace: every match already has that value'); return; }
         ready = false;
         var applied = plan.slice();   // a refresh below resets `plan`
-        var lastOrd = plan.reduce(function (m, r) { return r.skip || r.ord === undefined ? m : Math.max(m, r.ord); }, -1);
+        var lastOrd = plan.reduce(function (m, r) { return r.skip || r.unchanged || r.ord === undefined ? m : Math.max(m, r.ord); }, -1);
         try {
             var response = await window.fetch('/field/edit-batch', {method:'POST', headers:{'Content-Type':'application/json'},
                 // D-43: an FSP replaced here is written at once (solo); the
@@ -15148,13 +15154,16 @@ window.TreeFind = (function () {
             if (data.tray_html && window._swapPendingTray) window._swapPendingTray(data.tray_html);
             var skipped = plan.filter(function (r) { return r.skip; });
             if (updates.length === 1 && lastOrd >= 0) lastReplaced = lastOrd;
-            refresh(); await flush();
+            // the write landed: the old -> new hints are history now (cleared
+            // until the find or replace text changes again)
+            quiet = true;
+            refresh(true); await flush();
             if (skipped.length) bar.querySelector('details').open = true;
             if (skipped.length) list(skipped.map(function (r) { return {path:r.dot_path, old:r.old_value, skip:r.skip, rename:r.rename}; }));
             status('Replaced ' + updates.length + ' value' + (updates.length === 1 ? '' : 's') + '; Ctrl+Z undoes this group');
             if (all) window.ReplaceNotice.show((data.results || []).filter(function (r) {
                 var p = applied.find(function (x) { return x.dot_path === r.dot_path; });
-                return r.applied && !(p && JSON.stringify(p.old_value) === JSON.stringify(r.new_value));   // a no-op is not a change
+                return r.applied && p && !p.unchanged && !sameValue(p.old_value, r.new_value);   // a no-op is not a change
             }).map(function (r) {
                 var p = applied.find(function (x) { return x.dot_path === r.dot_path; });
                 return {path:r.dot_path, old:p ? p.old_value : undefined, next:r.new_value};

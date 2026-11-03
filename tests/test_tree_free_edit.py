@@ -50,6 +50,7 @@ def test_tree_find():
     'find_literal_rep', 'find_whole_number', 'find_review', 'find_review_more', 'find_expect_seq',
     'find_advance', 'find_label', 'chord_palette', 'chord_stop', 'chord_expiry', 'chord_other_key',
     'empty_refuse', 'empty_confirm', 'mac_code', 'multi_label', 'multi_full_old',
+    'noop_written', 'noop_hint', 'hint_after_write', 'hint_back_on_input',
     'notice_list', 'notice_skip', 'notice_timer', 'notice_hover', 'notice_focus', 'notice_scroll', 'notice_leave',
 ])
 def test_tree_find_mutations(mutation):
@@ -92,7 +93,7 @@ def test_tree_find_server_undo(tmp_path):
         server.server_close()
 
 
-@pytest.mark.parametrize('mutation', [None, 'preview_pointer', 'preview_readonly', 'preview_type', 'preview_key'])
+@pytest.mark.parametrize('mutation', [None, 'preview_pointer', 'preview_readonly', 'preview_type', 'preview_key', 'preview_unchanged'])
 def test_replace_preview_policy(tmp_path, mutation):
     """Refusal pins run against the real server and executable route mutations."""
     import inspect
@@ -118,6 +119,7 @@ def test_replace_preview_policy(tmp_path, mutation):
             'preview_readonly': ('if reason:\n                    raise ValueError(reason)', 'if False:\n                    raise ValueError(reason)'),
             'preview_key': ('if _pulse_is_renamable(path):', 'if False:'),
             'preview_type': ('modifier._checked_value(path, old, parsed, coerce=True, enforce=True)', 'parsed'),
+            'preview_unchanged': ('if _same_leaf_value(old, result["new_value"]):', 'if False:'),
         }[mutation]
         assert before in source
         namespace = dict(vars(routes))
@@ -135,6 +137,9 @@ def test_replace_preview_policy(tmp_path, mutation):
         rows = {r['dot_path'].split('.')[-1]: r for r in response.json['results']}
         assert rows['old'].get('rename') == {'path': 'qubits.item.xy.operations.old', 'new_name': 'new', 'retarget': '1'}
         assert rows['real']['new_value'] == 5.0e9
+        assert not rows['real'].get('unchanged'), 'a real change is a change'
+        same = client.post('/field/replace-preview', json={'updates': [{'dot_path': 'settings.other', 'value': '2'}]})
+        assert same.json['results'][0].get('unchanged') is True, 'a replacement to the same value is marked unchanged'
         assert isinstance(rows['real']['new_value'], float), 'real remains real'
         for key, reason in [('other', 'coerce'), ('pointer', 'pointer'), ('id', 'read-only')]:
             assert reason.lower() in rows[key].get('skip', '').lower(), (key, rows[key])

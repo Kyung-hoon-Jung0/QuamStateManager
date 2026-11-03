@@ -15569,6 +15569,11 @@ def field_fsp_compensation():
     return jsonify(ok=True, plans=plans)
 
 
+def _same_leaf_value(old, new) -> bool:
+    """True when *new* is exactly the stored *old* (same type, same value)."""
+    return type(old) is type(new) and old == new
+
+
 @bp.route("/field/replace-preview", methods=["POST"])
 def field_replace_preview():
     """Read-only replacement plan using the edit door's parser and policy."""
@@ -15610,6 +15615,10 @@ def field_replace_preview():
                     raise ValueError(reason)
                 result["new_value"] = modifier._checked_value(path, old, parsed, coerce=True, enforce=True)
                 result["value"] = raw
+                if _same_leaf_value(old, result["new_value"]):
+                    # a replacement that leaves the value as it was is no change:
+                    # never written, never counted, never listed as replaced
+                    result["unchanged"] = True
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 result["skip"] = str(exc)
             results.append(result)

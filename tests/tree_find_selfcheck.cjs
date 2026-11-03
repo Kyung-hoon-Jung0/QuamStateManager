@@ -70,6 +70,10 @@ const mutations = {
     mac_code: ["return m ? m[1].toLowerCase() : key;", 'return key;'],
     multi_label: ["st.key ? 'Key name' : 'Equal to'", "'Path'"],
     multi_full_old: ["oldEl.title = String(fmt(r.value));", ''],
+    noop_written: ["return !r.skip && !r.unchanged; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });", "return !r.skip; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });"],
+    noop_hint: ["return !r.key && !sameValue(r.old,", "return !r.key || !sameValue(r.old,"],
+    hint_after_write: ["if (!bar || bar.hidden || quiet || replText() === '') return;", "if (!bar || bar.hidden || replText() === '') return;"],
+    hint_back_on_input: ["if (keepQuiet !== true) quiet = false;", "/* stays quiet */"],
     find_rename: ["'/api/pulse/rename', {source: '#inspector-pane'", "'/field/edit-batch', {source: '#inspector-pane'"],
 };
 if (process.env.FIND_MUTATION) {
@@ -98,7 +102,8 @@ w.fetch = async (url, options) => {
         const old = r.dot_path.split('.').reduce((v,k)=>v[k], model);
         const skip = r.key ? 'key rename' : w.TreeMulti.skipReason(tree,r.dot_path,old,false)
             || (typeof old === 'number' && !Number.isFinite(Number(r.value)) ? 'Cannot coerce' : null);
-        return {dot_path:r.dot_path,old_value:old,new_value:typeof old==='number'?Number(r.value):r.value,value:r.value,skip};
+        const nv = typeof old==='number'?Number(r.value):r.value;
+        return {dot_path:r.dot_path,old_value:old,new_value:nv,value:r.value,skip,unchanged:!skip && nv===old};
     }),mutation_seq:7})};
     if (url === '/field/edit-batch') {
         posts.push(body);
@@ -354,7 +359,36 @@ function button(label) { return [...d.querySelectorAll('#tree-find button')].fin
     assert(d.getElementById('ui-replace-notice'),'stays while being scrolled');
     await tick(1200);
     assert(!d.getElementById('ui-replace-notice'),'leaves once scrolling stopped');
-    w.ReplaceNotice.ms(6000);
+    w.ReplaceNotice.ms(6000);w.ReplaceNotice.hide();
+    // a replacement that leaves a value as it was is no change: never written,
+    // never listed in the notice, never counted, no inline `2 -> 2` hint
+    w.TreeFind.close();fresh();focus('items.first.amplitude');key('h',{ctrlKey:true});
+    await set('regex',true);await set('find','^(1|2)$');await set('replace','2');
+    assert(tree.querySelector('.tree-node[data-path="items.first.amplitude"] .ui-tree-find-inline'),'a real change keeps its hint');
+    assert(!tree.querySelector('.tree-node[data-path="items.second.amplitude"] .ui-tree-find-inline'),'no hint for 2 -> 2');
+    const nb0=posts.length;
+    d.querySelector('#tree-find [name=replace]').focus();key('Enter',{ctrlKey:true,altKey:true});await tick(150);
+    assert.equal(posts.length,nb0+1,'Replace All still writes the real changes');
+    assert(!posts.at(-1).updates.some(u=>u.dot_path==='items.second.amplitude'),'the no-op row is not written');
+    note=d.getElementById('ui-replace-notice');
+    const noted=[...note.querySelectorAll('.ui-replace-notice-list li code')].map(c=>c.textContent);
+    assert(!noted.includes('items.second.amplitude'),'the no-op row is not listed: '+noted);
+    assert(new RegExp('^Replaced '+posts.at(-1).updates.length+' value').test(note.textContent),'count excludes no-ops: '+note.textContent);
+    w.ReplaceNotice.hide();await set('regex',false);
+    // once the write lands the old -> new hints are cleared, even while the
+    // search still matches; typing in the replace field brings them back
+    w.TreeFind.close();fresh();focus('items.first.amplitude');key('h',{ctrlKey:true});
+    const realPaint=w._paintTreeLeaf;w._paintTreeLeaf=()=>{};   // the model keeps matching
+    await set('find','same');await set('replace','other2');
+    assert(tree.querySelector('.ui-tree-find-inline'),'hint before the write');
+    d.querySelector('#tree-find [name=replace]').focus();key('Enter',{ctrlKey:true,altKey:true});await tick(150);
+    await w.TreeFind.flush();await tick(40);
+    assert(!tree.querySelector('.ui-tree-find-inline'),'hints cleared once the write landed');
+    await set('replace','other3');
+    assert(tree.querySelector('.ui-tree-find-inline'),'a new replacement text shows hints again');
+    w.TreeFind.close();
+    assert(!tree.querySelector('.ui-tree-find-inline'),'closing the replace row clears hints');
+    w._paintTreeLeaf=realPaint;w.ReplaceNotice.hide();
     w.TreeFind.close();fresh();focus('items.first.amplitude');key('h',{ctrlKey:true});
     // D-40 Replace One advances past the field it replaced
     await set('find','same');await set('replace','same2');
