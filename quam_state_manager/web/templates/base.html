@@ -1260,6 +1260,14 @@
                 onchange="toggleUndoLive()">Ctrl+Z writes live</label>
         </div>
         </div>
+        <div class="settings-group">
+        <small class="settings-label">Auto-Sync</small>
+        <div class="settings-options">
+        <label class="ui-check" title="On: opening a chip turns Auto-Sync on for it (take live changes, keep your edits on top, write your edits to the chip file). A chip you turned Auto-Sync off for stays off. Off: Auto-Sync starts off and is turned on from the top bar."><input type="checkbox" id="auto-sync-open-toggle"
+                data-on="{{ '1' if auto_sync_on_open else '0' }}"{% if auto_sync_on_open %} checked{% endif %}
+                onchange="toggleAutoSyncOnOpen()">Turn on Auto-Sync when a chip opens</label>
+        </div>
+        </div>
         {# docs/109: how MW amplitude annotations read — some labs think in dBm,
            others in volts. ONE global viewer setting (quam_phys_unit) drives
            every surface (Live-Edit sub-lines, Components tables, inspectors);

@@ -2704,6 +2704,25 @@ window.toggleTopbar = function() {
 /* docs/160: "Ctrl+Z writes live" is a MACHINE-WIDE server setting (it decides
    whether a keypress writes the instrument), so the Settings button posts to
    the server and reflects the answer -- never a localStorage flag. */
+/* "Turn on Auto-Sync when a chip opens": a machine-wide server setting, sent as
+   the state the box now shows (never a bare flip -- two windows share it). */
+window.toggleAutoSyncOnOpen = function() {
+    var b = document.getElementById("auto-sync-open-toggle");
+    var want = !!(b && b.checked);
+    fetch("/settings/auto-sync-on-open", { method: "POST",
+            body: JSON.stringify({ enabled: want }),
+            headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" } })
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+            if (!j || !j.ok) { if (b) b.checked = !want; if (window.showToast) window.showToast("Could not change the setting.", "error"); return; }
+            if (b) { b.checked = !!j.enabled; b.setAttribute("data-on", j.enabled ? "1" : "0"); }
+            if (window.showToast) window.showToast(j.enabled
+                ? "Auto-Sync will turn on when a chip opens."
+                : "Auto-Sync will start off when a chip opens.", "success");
+        })
+        .catch(function () { if (b) b.checked = !want; if (window.showToast) window.showToast("Could not change the setting.", "error"); });
+};
+
 window.toggleUndoLive = function() {
     var b = document.getElementById("undo-live-toggle");
     // The press means what the presser could SEE (docs/120): send the state
