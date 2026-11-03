@@ -889,9 +889,14 @@ class Monitor:
                 pass
         self._worker = None
         self.last_error = err
+        self._sections_failed(err)
         self._fails += 1
         self._retry_at = self.clock() + min(MAX_INTERVAL_S,
                                             RESTART_BACKOFF_S * 2 ** (self._fails - 1))
+
+    def _sections_failed(self, error):
+        self.section_errors = {name: error for name in ('controllers', 'open_qms', 'jobs')
+                               if name != 'jobs' or name in self.section_times or self.clock() < self.jobs_until}
 
     def poll_once(self) -> None:
         s = self.settings()
@@ -917,6 +922,7 @@ class Monitor:
             self._fails = 0
             if not r.get("ok"):
                 self.last_error = f"The server refused the poll: {r.get('error')}"
+                self._sections_failed(self.last_error)
                 return
             ans = r.get("result") or {}
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')

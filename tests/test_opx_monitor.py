@@ -699,6 +699,21 @@ def test_d21_all_refused_is_error(env):
     assert 'as of' in html and 'Updated 0' not in html
 
 
+def test_d21_transport_failure_labels_retained_sections(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    previous = dict(m.section_times)
+    clock.t += 5
+    w.script[:] = [om.WorkerError('Connection refused')]
+    m.poll_once()
+    assert m.section_times == previous
+    assert set(m.section_errors) == {'controllers', 'open_qms', 'jobs'}
+    html = page(app, 'live')
+    assert 'controllers unavailable; as of' in html
+    assert 'open qms unavailable; as of' in html
+    assert m.status()['state'] == 'error' and not m.capabilities()['close']
+
+
 def test_d22_close_false_or_still_listed(env):
     from types import SimpleNamespace
     from quam_state_manager.generator.opx_monitor_worker import QmmTarget
