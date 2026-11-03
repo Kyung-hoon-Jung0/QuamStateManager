@@ -12,7 +12,7 @@ pin(doc('d23').querySelector('.opxmon-verdict strong').textContent === 'FREE' &&
 pin(doc('d24').querySelector('.opxmon-verdict[data-health="red"]') && /limit 50/.test(doc('d24').body.textContent), 'D-24 exceeded limit must be red even with unknown admin');
 pin(doc('d25').querySelector('.opxmon-danger:not([open]) .opxmon-close-all') && /close_other_machines/.test(doc('d25').body.textContent), 'D-25 close all must be collapsed and sharing explained');
 pin(/100 of 313 jobs shown/.test(doc('d26').body.textContent) && doc('d26').querySelector('.ts-local[data-utc]') && /Show more/.test(doc('d26').body.textContent), 'D-26 bounded count and local created time');
-pin(doc('d27').querySelector('.opxmon-tiles .opxmon-tile:not([open]) svg') && /empty slot/.test(doc('d27').body.textContent) && /unchanged for 3 min/.test(doc('d27').body.textContent), 'D-27 compact tiles distinguish empty and frozen sensors');
+pin(doc('d27').querySelector('.opxmon-tiles .opxmon-tile:not([open]) svg') && /empty slot/.test(doc('d27').body.textContent) && /unchanged for 15 min/.test(doc('d27').body.textContent), 'D-27 compact tiles distinguish empty and frozen sensors');
 pin(doc('d28').querySelector('.opxmon-health[title]') && /temperature above limit/.test(doc('d28').body.textContent), 'D-28 top bar contains one worst reason with hover details');
 const css = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/style.css'), 'utf8');
 const bar = new JSDOM('<style>a {margin:-3px -10px}' + css.slice(css.indexOf('#opxmon-alarm-slot')) + '</style><li id="opxmon-alarm-slot">' + pages.d28 + '</li>').window;

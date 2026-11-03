@@ -713,7 +713,13 @@ def read_admin(url, cluster_name=None):
 
 def local_time(value):
     t = timestamp(value)
-    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S (UTC%z)') if t is not None else 'not reported'
+    if t is None:
+        return 'not reported'
+    local = datetime.fromtimestamp(t).astimezone()
+    offset = int(local.utcoffset().total_seconds() // 60)
+    hours, minutes = divmod(abs(offset), 60)
+    zone = f"UTC{'+' if offset >= 0 else '-'}{hours}" + (f':{minutes:02d}' if minutes else '')
+    return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone})'
 
 
 def words(value):
@@ -774,13 +780,23 @@ def health(answer, admin, thresholds, state):
     if bad:
         return {'color': 'red', 'reason': bad[0], 'details': '; '.join(bad + unknown)}
     if admin.get('problem'):
-        return {'color': 'grey', 'problem': True, 'reason': admin['reason']}
+        return {'color': 'grey', 'problem': True, 'reason': admin['reason'],
+                'details': 'The SDK itself answers.' if state == 'ok' else ''}
     if unknown or not known:
         return {'color': 'grey', 'reason': unknown[0] if unknown else 'health not assessed: no admin URL / no limits set', 'details': '; '.join(unknown)}
     count = len(ans.get('open_qms') or [])
     return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
-def verdict(answer, health_state, idle_states):
+def verdict(answer, health_state, idle_states, state=None, age_s=None):
+    if state == 'starting':
+        return {'label': 'Connecting…', 'reason': 'Waiting for the first server answer'}
+    result = _occupancy_verdict(answer, health_state, idle_states)
+    if state == 'stale' and age_s is not None:
+        result['label'] += f' — as of {age_s:.0f} s ago'
+    return result
+
+
+def _occupancy_verdict(answer, health_state, idle_states):
     ans = answer or {}
     if health_state['color'] == 'red' or health_state.get('problem'):
         return {'label': 'PROBLEM', 'reason': health_state['reason']}
@@ -798,7 +814,15 @@ def verdict(answer, health_state, idle_states):
     idle = sum(bool(v['idle']) for v in idle_states.values())
     if idle == len(qms):
         return {'label': 'OPEN-IDLE ' + str(idle), 'reason': 'Close eligible QMs under Clean up'}
-    return {'label': 'OPEN ' + str(len(qms)), 'reason': 'in use / recent activity'}
+    if idle:
+        return {'label': f'OPEN {len(qms)} · {idle} idle', 'reason': 'Close idle QMs under Clean up'}
+    if all(q.get('jobs') == [] for q in qms):
+        reason = 'open, no job seen yet; not idle yet'
+    elif any(q.get('jobs') is None for q in qms):
+        reason = 'open; job activity unavailable; idle not established'
+    else:
+        reason = 'open; no running job reported; idle not established'
+    return {'label': 'OPEN ' + str(len(qms)), 'reason': reason}
 
 
 class Monitor:

@@ -106,7 +106,7 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any('.temperatures' in k for k in (st.get('answer') or {}).get('refused', {})), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
+    return {'temperature_failed': 'controllers' in st['section_errors'] or any('.temperatures' in k for k in (st.get('answer') or {}).get('refused', {})), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
@@ -154,9 +154,10 @@ def opx_alarm_badge():
     fresh = m.new_alarm_toasts() if st.get("alarms_armed") else []
     if fresh:
         a = fresh[0]
+        value = f"{a['value']:.1f}".removesuffix('.0')
         more = f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""
         resp.headers["HX-Trigger"] = json.dumps({"showToast": {
-            "message": f"OPX alarm: {a['controller']} {a['label']} = {a['value']:.1f} {a['unit']} "
+            "message": f"OPX alarm: {a['controller']} {a['label']} = {value} {a['unit']} "
                        f"({a['direction']} limit {a['limit']:g} {a['unit']}){more}", "level": "warning"}})
     return resp
 

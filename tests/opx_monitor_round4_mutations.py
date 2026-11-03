@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / 'quam_state_manager/core/opx_monitor.py'
 PINS = [
     ("unknown health", "if health_state['color'] == 'red' or health_state.get('problem'):", "if health_state['color'] in ('red', 'grey'):", 'test_round4_unconfigured_health_preserves_occupancy'),
-    ("recent activity", "return {'label': 'OPEN ' + str(len(qms)), 'reason': 'in use / recent activity'}", "return {'label': 'PROBLEM', 'reason': 'recent activity'}", 'test_round4_recent_open_is_normal'),
+    ("recent activity", "return {'label': 'OPEN ' + str(len(qms)), 'reason': reason}", "return {'label': 'PROBLEM', 'reason': 'recent activity'}", 'test_round4_recent_open_is_normal'),
 ]
 
 if __name__ == '__main__':

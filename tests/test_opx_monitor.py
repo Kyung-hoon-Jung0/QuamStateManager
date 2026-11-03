@@ -114,7 +114,7 @@ def test_temperature_and_alarm_only_for_returned_metrics(env):
     r = c.get("/opx-monitor/alarm-badge")
     assert "OPX alarm (1)" in r.get_data(as_text=True)
     toast = json.loads(r.headers["HX-Trigger"])["showToast"]["message"]
-    assert "FEM 1 temperature" in toast and "61.0" in toast  # mismatched population: raw key
+    assert "FEM 1 temperature" in toast and "61 °C" in toast  # mismatched population: raw key
     assert "HX-Trigger" not in c.get("/opx-monitor/alarm-badge").headers  # one toast per alarm
 
 
@@ -710,7 +710,7 @@ def test_d21_transport_failure_labels_retained_sections(env):
     assert set(m.section_errors) == {'controllers', 'open_qms', 'jobs'}
     html = page(app, 'live')
     assert 'Temperatures unavailable (as of' in html
-    assert 'open qms unavailable; as of' in html
+    assert 'Open QMs unavailable; as of' in html
     assert m.status()['state'] == 'error' and not m.capabilities()['close']
 
 
@@ -849,7 +849,7 @@ def test_round3_dom_selfcheck(env, tmp_path):
     s = m.settings(); s['thresholds'] = {'temp:FEM 0': 50}; om.save_settings(m.instance, s)
     m.poll_once()
     pages['d23'] = page(app, 'live')
-    for _ in range(36):
+    for _ in range(180):
         clock.t += 5
         m.poll_once()
     pages['d27'] = page(app, 'live')
@@ -888,7 +888,7 @@ def test_round4_recent_open_is_normal(env):
     w.script[:] = [answer(qms=(("QM-placeholder", [], []),), temps={'Chassis': 40})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong>OPEN 1</strong> in use / recent activity' in html
+    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
     assert '<strong>PROBLEM</strong>' not in html
 
 
@@ -899,8 +899,8 @@ def test_round4_alarm_and_failed_calls(env):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong>PROBLEM</strong>' in html
-    assert 'Above limit: FEM 0 60.0 °C' in html
-    assert 'limit 50.0 °C' in html
+    assert 'Above limit: FEM 0 60 °C' in html
+    assert 'limit 50 °C' in html
     assert 'Hottest: Chassis' not in html
     w.script[:] = [om.WorkerError('read failed')]
     m.poll_once()
@@ -934,3 +934,86 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     admin = om.read_admin('https://service.invalid')
     assert admin['problem'] and 'SSH tunnel' not in admin['reason']
     assert om.verdict({'open_qms': []}, om.health({}, admin, {}, 'ok'), {})['label'] == 'PROBLEM'
+    m.admin = admin
+    w.script[:] = [answer(qms=())]
+    m.poll_once()
+    m.admin = admin
+    html = page(app, 'live')
+    assert '<strong>PROBLEM</strong>' in html
+    assert 'The SDK itself answers.' in html
+
+
+def test_round5_starting_before_first_poll(env):
+    app, m, w, clock, _ = env
+    html = page(app, 'live')
+    assert m.status()['state'] == 'starting'
+    assert not w.calls and m.last_answer is None
+    assert '<strong>Connecting…</strong>' in html
+    assert '<strong>PROBLEM</strong>' not in html
+    assert 'data-health="grey"' in html
+
+
+def test_round5_mixed_idle_headline(env):
+    app, m, w, clock, _ = env
+    old = (('QM-old-a', [], []), ('QM-old-b', [], []))
+    w.script[:] = [answer(qms=old)]
+    m.poll_once()
+    clock.t += 3 * 3600
+    w.script[:] = [answer(qms=old + (('QM-new', [], []),))]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>OPEN 3 · 2 idle</strong> Close idle QMs under Clean up' in html
+    assert 'in use / recent activity' not in html
+    assert 'Close idle QMs (2)' in page(app, 'cleanup')
+
+
+def test_round5_no_job_seen_headline(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(('QM-new', [], []),))]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>OPEN 1</strong> open, no job seen yet; not idle yet' in html
+    assert 'in use' not in html
+
+
+def test_round5_stale_headline(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    clock.t += 60
+    assert '<strong>BUSY — as of 60 s ago</strong>' in page(app, 'live')
+
+
+def test_round5_frozen_cue_only_after_fifteen_minutes(env):
+    import re
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'FEM 0': 50})]
+    m.poll_once()
+    for _ in range(179):
+        clock.t += 5
+        m.poll_once()
+    html = page(app, 'live')
+    assert 'unchanged for' not in html
+    clock.t += 5
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'unchanged for 15 min' in html
+    # Hover and expanded details carry the cue; the collapsed summary cannot grow.
+    summaries = re.findall(r'<summary>(.*?)</summary>', html, re.S)
+    assert all('unchanged for' not in summary for summary in summaries)
+
+
+def test_round5_display_formatting(env):
+    import re
+    app, m, w, clock, _ = env
+    s = m.settings()
+    s.update(thresholds={'temp:FEM 0': 50}, alarms_armed=True)
+    om.save_settings(m.instance, s)
+    w.script[:] = [answer(temps={'FEM 0': 60})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'limit 50 °C' in html and '50.0 °C' not in html
+    assert '60 °C' in html and '60.0 °C' not in html
+    assert 'Idle minutes <input name="idle_minutes" value="120"' in page(app, 'settings')
+    assert re.search(r'\(UTC[+-]\d{1,2}(?::\d{2})?\)$', om.local_time('2026-11-02T20:25:40Z'))
+    badge = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
+    assert 'limit 50 °C' in badge and '50.0 °C' not in badge
