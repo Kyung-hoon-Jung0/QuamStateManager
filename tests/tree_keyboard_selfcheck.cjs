@@ -147,14 +147,16 @@ const DATA = {
     key('ArrowRight');
     ok(focused() === 'qubits.q1.f_01', 'ArrowRight on an open node steps into its first child (' + focused() + ')');
     key('ArrowDown');
-    ok(focused() === 'qubits.q1.xy.amplitude', 'ArrowDown materialises the next value branch');
+    ok(focused() === 'flag', 'ArrowDown skips collapsed branches to the next visible value');
+    ok(q1.querySelector('.tree-node[data-path="qubits.q1.xy"] > .tree-children').style.display === 'none',
+       'ArrowDown leaves skipped branches collapsed');
     key('ArrowDown');
-    ok(focused() === 'qubits.q2.f_01', 'ArrowDown enters the next lazy branch');
+    ok(focused() === 'flag', 'ArrowDown at the final visible value stays there');
     key('ArrowUp');
-    ok(focused() === 'qubits.q1.xy.amplitude', 'ArrowUp returns to the previous value');
+    ok(focused() === 'qubits.q1.f_01', 'ArrowUp returns to the previous visible value');
     const caret = doc.activeElement.selectionStart;
     key('ArrowLeft');
-    ok(focused() === 'qubits.q1.xy.amplitude', 'Left inside a value stays for native caret movement');
+    ok(focused() === 'qubits.q1.f_01', 'Left inside a value stays for native caret movement');
     tree.querySelector('.tree-node[data-path="qubits"] > .tree-row').focus();
     key('Enter');
     ok(!!tree.querySelector('.tree-json-textarea'), 'Enter on a container opens its JSON editor');

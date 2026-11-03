@@ -16,11 +16,17 @@ const mutations = {
     escape: ['input.value = input.defaultValue;\n                dirty();', '/* mutant: retain typing */'],
     caret: ['input.setSelectionRange(input.value.length, input.value.length);', 'input.select();'],
     flight: ['if (input.value === sent) input.value = input.defaultValue;', 'input.value = input.defaultValue;'],
-    lazy: ['if (ch && ch.style.display === "none") {\n                _toggleNode(n);', 'if (false) {'],
+    visible: ["var v = n.querySelector(':scope > .tree-row > .tree-val');", "var ch = n.querySelector(':scope > .tree-children'); if (ch && ch.style.display === \"none\") { _toggleNode(n); if (dir < 0) n = _kbDeepLast(n); } var v = n.querySelector(':scope > .tree-row > .tree-val');"],
     tab: ['!editableOnly || v.classList.contains("ui-tree-value")', 'true'],
     undo: ['&& !inInline && !inTreeEditor) return;', '&& !inInline) return;'],
     text_undo: ['if (inTreeEditor && a.value !== a.defaultValue) return;', '/* mutant: let server undo dirty text */'],
-    global: ['if (a && a.matches && a.matches(".ui-tree-editor")) return window.TreeInlineEdit.busy(a);', 'if (a && a.matches && a.matches(".ui-tree-editor")) return true;'],
+    global: ['if (a && a.matches && a.matches(".ui-tree-editor")) return true;', 'if (a && a.matches && a.matches(".ui-tree-editor")) return window.TreeInlineEdit.busy(a);'],
+    fsp_cancel: ['if (mode === "cancel") { resolve(); return; }', 'if (mode === "cancel") { return; }'],
+    refusal: ['if (result === false) { dirty(); return false; }', '/* mutant: discard refused typing */'],
+    peek_retry: ['cache.delete(path); return {};', 'return {};'],
+    tooltip: ['chip.title = (expected.class_path', 'chip.unusedTitle = (expected.class_path'],
+    pointer: ['if (resolved && resolved.is_pointer)', 'if (false)'],
+    brackets: ["if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;", "if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable) && !(a.matches('.ui-tree-editor') && window.TreeInlineEdit && !window.TreeInlineEdit.busy(a))) return;"],
     multi: ["var nd = a && a.closest && a.closest('.tree-node');", "var nd = a && a.tagName !== 'INPUT' && a.closest && a.closest('.tree-node');"],
     cache: ['if (!cache.has(path)) cache.set', 'if (true) cache.set'],
 };
@@ -35,14 +41,24 @@ const w = dom.window, d = w.document;
 const calls = [];
 let delay = 0;
 let fsp = false;
+let refused = false;
+let peekFailure = null;
 w.fetch = (url, opts) => {
     calls.push({url:String(url), body: opts && opts.body});
     let data = {ok:true, expected:{}};
+    if (String(url).startsWith('/field/peek')) {
+        const p = new w.URL(url, w.location.href).searchParams.get('dot_path');
+        if (peekFailure === 'network') return Promise.reject(new Error('offline'));
+        if (peekFailure === 'http') return Promise.resolve({ok:false,json:async()=>({ok:true})});
+        if (peekFailure === 'body') return Promise.resolve({ok:true,json:async()=>({ok:false})});
+        data.expected[p] = {type:'real',source:'schema',class_path:'model.Settings',field:p,detail:'Expected scalar'};
+        if (p === 'pointer') data.resolved = {[p]:{is_pointer:true,resolvable:true,resolved_value:42}};
+    }
     if (url === '/field/edit') {
         const b = new w.URLSearchParams(opts.body);
         let v = b.get('value');
         try { v = JSON.parse(v); } catch (_) {}
-        data = fsp && !b.get('fsp_ack') ? {ok:false,fsp_compensation:{port:'test',fsp_old:1,fsp_new:2,factor:1,amps:[]}} : {ok:true, stored:v, stored_kind:typeof v};
+        data = refused ? {ok:false,error:"Refused value"} : fsp && !b.get('fsp_ack') ? {ok:false,fsp_compensation:{port:'test',fsp_old:1,fsp_new:2,factor:1,amps:[]}} : {ok:true, stored:v, stored_kind:typeof v};
     }
     return new Promise(resolve => setTimeout(() => resolve({ok:true, json:async()=>data}), delay));
 };
@@ -81,9 +97,21 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     focus('b'); await tick(190); const before=count(); focus('a'); focus('b'); await tick(190);
     assert.equal(count(),before,'peek cached across visits');
 
-    assert(node('branch.inner')._lazyData,'setup: the destination branch is still lazy');
-    focus('b'); key('ArrowDown');
-    assert.equal(d.activeElement.getAttribute('aria-label'),'branch.inner.amplitude','arrow materialises lazy branch');
+    const collapsed = {top:1};
+    for (let i=0;i<5;i++) collapsed['group'+i]=Object.fromEntries(Array.from({length:20},(_,j)=>['value'+j,j]));
+    collapsed.last=2;
+    w.renderJsonTree('tree',collapsed,{defaultDepth:0,crud:true});
+    focus('top');
+    let presses=0;
+    while (d.activeElement.getAttribute('aria-label')!=='last' && presses<6) {key('ArrowDown');presses++;}
+    assert.equal(d.activeElement.getAttribute('aria-label'),'last','Down reaches last within six visible-row presses');
+    for (let i=0;i<5;i++) {
+        assert.equal(node('group'+i).querySelector(':scope > .tree-children').style.display,'none','groups stay collapsed');
+        assert(node('group'+i)._lazyData,'groups remain lazy');
+    }
+    key('ArrowUp');assert.equal(d.activeElement.getAttribute('aria-label'),'top','Up skips collapsed branches too');
+    w.renderJsonTree('tree',{branch:{inner:{amplitude:0.1}}},{defaultDepth:99,crud:true});
+    focus('branch.inner.amplitude');
     key('F1'); assert.deepEqual(manuals,['branch.inner.amplitude'],'F1 from value');
     w._treeReadOnly={skip_leaves:['locked']};
     w.renderJsonTree('tree',{a:1,locked:2,b:3},{defaultDepth:1,crud:true});
@@ -101,8 +129,46 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert(ajax.some(u=>u==='/undo'),'clean Ctrl Z reaches server');
     const pane=d.createElement('div');pane.id='table-pane';d.body.appendChild(pane);
     const search=d.getElementById('search'); search.type='search';pane.appendChild(search);
-    focus('a'); key('/');
-    assert.equal(d.activeElement,search,'global shortcut alive with clean tree focus');
+    const detail=d.createElement('div');detail.id='ds-detail-root';d.body.appendChild(detail);
+    const runMoves=[];w.dsNavRun=step=>runMoves.push(step);
+    focus('a');
+    for (const dirtyText of [false,true]) {
+        if (dirtyText) type('19');
+        for (const ch of ['/', '?', 'x', '[', ']']) {
+            const input=d.activeElement;
+            assert.equal(key(ch),true,'printable key is not prevented');
+            assert.equal(d.activeElement,input,'printable key keeps value focus, clean or dirty');
+            assert(!d.querySelector('#kb-cheatsheet'),'printable key never opens shortcut sheet');
+        }
+    }
+    assert.equal(runMoves.length,0,'brackets never navigate while a value has focus');
+    detail.remove();
+    key('Escape');
+    refused=true;type('invalid text');const refusedInput=d.activeElement;key('Enter');await tick();
+    assert.equal(d.activeElement,refusedInput,'refusal keeps focus');
+    assert.equal(refusedInput.value,'invalid text','refusal keeps typed text');
+    assert(val('a').classList.contains('ui-tree-dirty'),'refusal stays amber');
+    assert.equal(tree._treeData.a,1,'refusal leaves stored value');
+    refused=false;key('Escape');
+    for (const failure of ['network','http','body']) {
+        const retry='retry_'+failure;
+        w.renderJsonTree('tree',{[retry]:1,other:2},{defaultDepth:1,crud:true});
+        peekFailure=failure;focus(retry);await tick(190);
+        const countRetry=()=>calls.filter(c=>c.url.includes('dot_path='+retry)).length;
+        const beforeRetry=countRetry();
+        peekFailure=null;focus('other');focus(retry);await tick(190);
+        assert.equal(countRetry(),beforeRetry+1,'failed peek retries on next focus: '+failure);
+        assert.equal(val(retry).querySelector('.tree-type-chip').title,'model.Settings.'+retry+' \u2014 Expected scalar','type tooltip includes field and detail');
+    }
+    w.renderJsonTree('tree',{pointer:'#/target',target:42},{defaultDepth:1,crud:true});
+    focus('pointer');await tick(190);
+    const preview=val('pointer').querySelector('.ui-tree-resolved');
+    assert(preview,'pointer has resolved preview');
+    assert.equal(d.activeElement.value,'"#/target"','pointer input stays literal');
+    assert.equal(preview.textContent.trim(),'\u2192 42','pointer preview shows resolved value');
+    assert(d.activeElement.compareDocumentPosition(preview)&4,'preview follows input');
+    const css=fs.readFileSync(path.join(staticDir,'ui-kit.css'),'utf8');
+    assert(/\.ui-tree-resolved\s*\{[^}]*color: var\(--ui-text-2\)/.test(css),'pointer preview is muted');
     w.renderJsonTree('tree',{items:{first:{amplitude:1},second:{amplitude:2}}},{defaultDepth:99,crud:true});
     focus('items.first.amplitude'); key('d',{ctrlKey:true});
     assert(w.TreeMulti.state(),'Ctrl D creates selection');
@@ -147,6 +213,12 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(d.activeElement.getAttribute('aria-label'),'b','FSP close restores field focus');
     assert.equal(d.activeElement.value,'2','FSP close without choice reverts');
     assert.equal(tree._treeData.b,2,'FSP never writes before a choice');
+    // Use the same roving state: a pending Cancel must settle before Enter can write again.
+    type('3');key('Enter');await tick();
+    d.querySelector('.fsp-card .ch-close').click();await tick();
+    fsp=false;type('4');key('Enter');await tick(80);
+    assert.equal(tree._treeData.b,4,'FSP Cancel resolves so a later edit on the same field commits');
+    assert.equal(d.activeElement.value,'4','later edit remains in the roving input');
     console.log('ALL OK: Stage A pins');
     w.close();
 })().catch(e=>{console.error(e);process.exitCode=1;w.close();});

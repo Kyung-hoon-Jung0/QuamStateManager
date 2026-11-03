@@ -3046,8 +3046,7 @@ document.addEventListener('keydown', function(evt) {
     if (evt.key !== '[' && evt.key !== ']') return;
     if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
     var a = document.activeElement;
-    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)
-            && !(a.matches('.ui-tree-editor') && window.TreeInlineEdit && !window.TreeInlineEdit.busy(a))) return;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
     // Only when a dataset detail is open (so [ ] stays free elsewhere).
     if (!document.getElementById('ds-detail-root')) return;
     evt.preventDefault();
@@ -7566,7 +7565,7 @@ window.PhysAmp = (function () {
 (function () {
     function _typing() {
         var a = document.activeElement;
-        if (a && a.matches && a.matches(".ui-tree-editor")) return window.TreeInlineEdit.busy(a);
+        if (a && a.matches && a.matches(".ui-tree-editor")) return true;
         return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                      || a.isContentEditable);
     }
@@ -12135,7 +12134,13 @@ window.clearDetailPanelSearch = function(btnEl) {
             var path = state.path, el = state.el;
             var cache = tree._peekCache || (tree._peekCache = new Map());
             if (!cache.has(path)) cache.set(path, fetch("/field/peek?dot_path=" + encodeURIComponent(path))
-                .then(function (r) { return r.json(); }).catch(function () { return {}; }));
+                .then(function (r) {
+                    if (!r.ok) throw new Error("peek failed");
+                    return r.json();
+                }).then(function (d) {
+                    if (!d.ok || (d.errors && d.errors[path])) throw new Error("peek failed");
+                    return d;
+                }).catch(function () { cache.delete(path); return {}; }));
             cache.get(path).then(function (d) {
                 if (tree._editor !== state || state.el !== el) return;
                 el.querySelectorAll(".tree-type-chip, .ui-tree-resolved").forEach(function (c) { c.remove(); });
@@ -12143,6 +12148,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (expected) {
                     var chip = document.createElement("span");
                     chip.className = "tree-type-chip";
+                    chip.title = (expected.class_path ? expected.class_path + "." + expected.field : "") +
+                        (expected.detail ? " \u2014 " + expected.detail : "");
                     chip.textContent = expected.type + " \u00b7 " + expected.source;
                     el.appendChild(chip);
                 }
@@ -12203,7 +12210,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (state.pending) return state.pending.then(flush);
             if (input.value === input.defaultValue) return null;
             var sent = input.value;
-            var p = _writeTreeValue(el, path, sent, tree).then(function () {
+            var p = _writeTreeValue(el, path, sent, tree).then(function (result) {
+                if (result === false) { dirty(); return false; }
                 // D-8: keys typed while the request was in flight belong to
                 // the next edit; never replace them with the server echo.
                 var current = _treeFindValue(tree, path);
@@ -12216,10 +12224,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             });
             state.pending = p;
             _inflightEdits.add(p);
-            return p.then(function () {
+            return p.then(function (result) {
                 state.pending = null;
                 _inflightEdits.delete(p);
-                if (window.__treeCommitOnLeave !== false && tree._editor !== state
+                if (result !== false && window.__treeCommitOnLeave !== false && tree._editor !== state
                         && input.value !== input.defaultValue) return flush();
             });
         }
@@ -12500,7 +12508,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     valEl.classList.add("tree-val-error");
                     setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                     _showEditError(valEl, data.error);
-                    return;
+                    return false;
                 }
                 // docs/120 item 25: the rejection chip has an 8-second life and
                 // was only ever cleared by a NEWER rejection, so after a fix it
@@ -12568,6 +12576,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 valEl.classList.add("tree-val-error");   // jsontree-r2-18: never silent
                 setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                 _showEditError(valEl, _netFail(e));
+                return false;
             });
             var _p = _myP;
             _inflightEdits.add(_p);
@@ -13082,16 +13091,10 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         if (document.activeElement && tree.contains(document.activeElement)) document.activeElement.blur();
     }
-    // D-5: value navigation reuses the structural walk, expanding only the
-    // branch being entered. No scan of every rendered leaf on each key.
+    // D-5: walk visible rows only; folding is an explicit action.
     function _kbValueMove(node, dir, editableOnly) {
         for (var n = dir > 0 ? _kbNext(node) : _kbPrev(node); n;
                 n = dir > 0 ? _kbNext(n) : _kbPrev(n)) {
-            var ch = n.querySelector(':scope > .tree-children');
-            if (ch && ch.style.display === "none") {
-                _toggleNode(n);
-                if (dir < 0) n = _kbDeepLast(n);
-            }
             var v = n.querySelector(':scope > .tree-row > .tree-val');
             if (v && (!editableOnly || v.classList.contains("ui-tree-value"))) return n;
         }
