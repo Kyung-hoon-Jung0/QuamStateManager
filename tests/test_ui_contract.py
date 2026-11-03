@@ -552,6 +552,10 @@ _STAGE4_SELECTORS = {
     ".sidebar-nav a", ".sidebar-nav a:hover:not(.active)",
     ".sidebar-nav .nav-subitems li a", ".sidebar-nav .nav-subitems li a:hover:not(.active)",
     ".tree-search-icon",
+    # Json tree free edit (2026-11-03): hover actions hide while the roving editor is
+    # mounted (docs/145 rule, re-keyed from .tree-val-editing to the kit marker).
+    ".tree-row:has(.ui-tree-mounted) .tree-row-actions",
+    ".tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help",
 }
 
 

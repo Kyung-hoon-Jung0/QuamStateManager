@@ -530,6 +530,11 @@
 .ui-wrap-value-rest { grid-column: 2 / -1; }
 .ui-tree-find-inline { margin-left: var(--ui-gap-2); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); background: var(--ui-accent-bg); color: var(--ui-text); font-family: var(--ui-font-mono); }
 
+/* Json tree: pointer target hint, draft counter, suggestions in the page flow (never over rows). */
+.ui-typeahead-inflow.ui-typeahead-inflow { position: static; width: auto; max-height: 12rem; margin-block: var(--ui-gap-1); }
+.ui-tree-target { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--ui-warn-text); font-size: var(--ui-fs-xs); margin-left: var(--ui-gap-1); }
+.ui-tree-drafts { margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,
@@ -747,11 +752,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* K12: the search glyph is one neutral colour, not a colour emoji */
 .tree-search-icon { filter: grayscale(1); }
 
-.ui-tree-target { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--ui-warn-text); font-size: var(--ui-fs-xs); margin-left: var(--ui-gap-1); }
-.ui-tree-drafts { display: block; margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
-.ui-tree-drafts[hidden] { display: none; }
 
-.sm-typeahead.sm-typeahead-tree { position: static; width: auto; max-height: 12rem; margin-block: var(--ui-gap-1); }
 
 .tree-row:has(.ui-tree-mounted) .tree-row-actions,
 .tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help { display: none; }

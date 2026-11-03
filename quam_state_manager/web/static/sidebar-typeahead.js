@@ -335,6 +335,7 @@ window.Typeahead = (function () {
         p.textContent = '';
         var treeSearch = st.input.id === 'explorer-search';
         p.classList.toggle('sm-typeahead-tree', treeSearch);
+        p.classList.toggle('ui-typeahead-inflow', treeSearch);
         if (treeSearch) {
             var toolbar = st.input.closest('.tree-toolbar');
             if (toolbar) toolbar.after(p);
