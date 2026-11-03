@@ -49566,6 +49566,8 @@ def _sched_bool(value) -> bool:
 _SCHEDULER_MUTATOR_ENDPOINTS = {
     # generic + legacy field editors (all call modifier.set_value)
     "main.field_edit", "main.field_edit_batch",
+    # Edit as JSON stages through the batch door, so it holds the run lock too.
+    "main.tree_json_edit_save",
     "main.qubit_edit", "main.pair_edit",
     # subtree creation (pulses refactored qubit_add_pulse -> the /api/pulse/* CRUD)
     "main.pair_add_gate",

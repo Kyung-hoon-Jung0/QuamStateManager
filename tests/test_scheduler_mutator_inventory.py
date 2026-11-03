@@ -154,6 +154,7 @@ _NON_STAGING_POSTS = {
     'main.settings_tree_edit',          # machine-wide tree auto-save setting file
     'main.settings_auto_sync_on_open',  # machine-wide setting file; arming happens at chip open
     'main.field_replace_preview',       # read-only plan under the store lock; writes nothing
+    'main.field_fsp_compensation',      # read-only: returns the compensation plan; the Yes write goes through edit-batch
     'main.state_archive',
     'main.state_history_label',
     'main.state_history_snapshot',
