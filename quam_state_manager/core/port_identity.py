@@ -6,12 +6,36 @@ from collections import defaultdict
 IDENTITY_FIELDS = ("controller_id", "fem_id", "port_id")
 
 
+def normalize_identity(value):
+    """Return an integer or literal claim, or None for an unresolved claim."""
+    if value is None or isinstance(value, str) and value.startswith("#"):
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return value
+
+
+def identity_disagrees(value, key):
+    claim = normalize_identity(value)
+    return claim is not None and (
+        isinstance(claim, bool) or claim != normalize_identity(key))
+
+
 def _items(value):
     return value.items() if isinstance(value, dict) else ()
 
 
 def port_identity_mismatches(state: dict) -> list[dict]:
-    """Compare present identity claims as strings; absent fields make no claim.
+    """Compare literal claims numerically where possible; skip unresolved claims.
 
     Duplicate identities are scoped to the port kind: an input and an output
     with the same numeric address are distinct hardware resources. Only a
@@ -31,11 +55,12 @@ def port_identity_mismatches(state: dict) -> list[dict]:
                     record = {"path": f"ports.{kind}.{con}.{fem}.{port}",
                               "key": key, "fields": fields,
                               "differ": [f for f, k in zip(IDENTITY_FIELDS, key)
-                                         if f in entity and str(entity[f]) != k],
+                                         if identity_disagrees(entity.get(f), k)],
                               "duplicate_paths": []}
                     records.append(record)
-                    if all(f in entity for f in IDENTITY_FIELDS):
-                        identities[(kind, *map(str, fields))].append(record)
+                    claims = tuple(normalize_identity(v) for v in fields)
+                    if all(v is not None and not isinstance(v, bool) for v in claims):
+                        identities[(kind, *map(str, claims))].append(record)
     for group in identities.values():
         if len(group) > 1:
             for record in group:

@@ -6,9 +6,10 @@ import pytest
 
 from quam_state_manager.core.port_identity import port_identity_mismatches
 from quam_state_manager.core.loader import QuamStore
-from quam_state_manager.core.diagnostics import lint_state
+from quam_state_manager.core.diagnostics import lint_state, _port_identity_findings
 from quam_state_manager.core.regen_spec import reconstruct_spec
 from quam_state_manager.web.app import create_app
+from quam_state_manager.web.port_identity import edit_offer
 
 KINDS = ("analog_outputs", "analog_inputs", "mw_outputs", "mw_inputs", "digital_outputs")
 BASE = "ports.analog_outputs.con1.2.1"
@@ -53,6 +54,49 @@ def test_string_comparison_and_missing_claims(fem, port):
         assert port_identity_mismatches(s) == []
 
 
+@pytest.mark.parametrize("field", ("controller_id", "fem_id", "port_id"))
+@pytest.mark.parametrize("value", [5, "5", 5.0, "05", None, "#/ports/..", "#./x"])
+def test_normalized_identity_claims(field, value):
+    entity = {"controller_id": 5, "fem_id": 5, "port_id": 5}
+    entity[field] = value
+    s = {"ports": {"analog_outputs": {"5": {"5": {"5": entity}}}}}
+    assert port_identity_mismatches(s) == []
+
+
+@pytest.mark.parametrize("value", [6, "6", 6.0, "06", 5.5, "invalid", True])
+def test_normalized_identity_mismatch(value):
+    s = state(port="5")
+    s["ports"]["analog_outputs"]["con1"]["2"]["5"]["port_id"] = value
+    assert port_identity_mismatches(s)[0]["differ"] == ["port_id"]
+
+
+@pytest.mark.parametrize("field", ("controller_id", "fem_id", "port_id"))
+def test_bool_is_not_an_integer_claim(field):
+    entity = {"controller_id": 1, "fem_id": 1, "port_id": 1}
+    entity[field] = True
+    s = {"ports": {"analog_outputs": {"1": {"1": {"1": entity}}}}}
+    assert port_identity_mismatches(s)[0]["differ"] == [field]
+
+
+@pytest.mark.parametrize("value", [None, "#/ports/..", "#./x"])
+def test_unresolved_claims_do_not_claim_duplicates(value):
+    s = state()
+    ports = s["ports"]["analog_outputs"]["con1"]["2"]
+    ports["1"]["port_id"] = value
+    ports["9"] = dict(ports["1"])
+    assert port_identity_mismatches(s) == []
+
+
+def test_duplicate_claims_use_numeric_normalization():
+    s = state(port="5")
+    ports = s["ports"]["analog_outputs"]["con1"]["2"]
+    ports["5"]["port_id"] = 5.0
+    ports["9"] = dict(ports["5"], port_id="05")
+    rows = port_identity_mismatches(s)
+    assert len(rows) == 2
+    assert all(row["duplicate_paths"] for row in rows)
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_duplicates_report_both_entities(kind):
     s = state(kind)
@@ -85,6 +129,16 @@ def test_diagnostic_error_names_values_users_and_pin():
     assert "qubits.q1.z.opx_output" in f.detail
     assert f.jump_path == BASE + ".port_id"
     assert f.port_key == {"ctrl": "con1", "fem": "2", "port": "1", "port_type": "analog_outputs", "io": "out"}
+
+
+@pytest.mark.parametrize("kind,io", [("analog_inputs", "in"), ("digital_outputs", "out")])
+def test_diagnostic_identity_pin_preserves_port_kind(kind, io):
+    s = state(kind)
+    s["ports"][kind]["con1"]["2"]["1"]["port_id"] = 3
+    findings = _port_identity_findings(s)
+    assert len(findings) == 1
+    assert findings[0].port_key["port_type"] == kind
+    assert findings[0].port_key["io"] == io
 
 
 def test_reconstruct_notes_explain_both_addresses_and_which_is_used():
@@ -147,10 +201,37 @@ def test_keep_as_typed_and_apply_confirmation(env):
     assert client.post("/state/apply-to-live").status_code == 200
 
 
-def test_matching_edit_does_not_ask(env):
+@pytest.mark.parametrize("value", ["1", "1.0", "01"])
+def test_matching_edit_does_not_ask(env, value):
     client, _ = env
-    r = client.post("/field/edit", data={"dot_path": BASE + ".port_id", "value": "1"})
+    r = client.post("/field/edit", data={"dot_path": BASE + ".port_id", "value": value})
     assert r.status_code == 200 and r.get_json()["ok"]
+
+
+@pytest.mark.parametrize("value", [1, "1", 1.0, "01", None, "#/ports/..", "#./x"])
+def test_edit_offer_uses_normalized_claims(value):
+    assert edit_offer(BASE + ".port_id", value) is None
+
+
+@pytest.mark.parametrize("field", ["fem_id", "port_id"])
+@pytest.mark.parametrize("value", [True, False, 1.5, "1.5", "invalid", float("inf"), float("nan")])
+def test_edit_offer_does_not_build_noninteger_path(field, value):
+    assert edit_offer(BASE + "." + field, value) is None
+
+
+@pytest.mark.parametrize("value", [4, "4", 4.0, "04"])
+def test_edit_offer_builds_integer_path(value):
+    assert edit_offer(BASE + ".port_id", value)["new_path"] == "ports.analog_outputs.con1.2.4"
+
+
+def test_integral_float_move_uses_integer_path(env):
+    client, ctx = env
+    r = client.post("/field/edit", data={"dot_path": BASE + ".port_id", "value": "4.0",
+                                        "port_identity_ack": "fix"})
+    assert r.status_code == 200 and r.get_json()["ok"], r.get_json()
+    assert r.get_json()["port_identity_moved"]["new_path"] == "ports.analog_outputs.con1.2.4"
+    assert ctx["store"].get_value("wiring.qubits.q1.z.opx_output") == "#/ports/analog_outputs/con1/2/4"
+    assert port_identity_mismatches(ctx["store"].state) == []
 
 
 def test_move_collision_leaves_state_untouched(env):

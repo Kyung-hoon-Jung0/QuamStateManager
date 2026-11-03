@@ -4,7 +4,9 @@ from __future__ import annotations
 import copy
 
 from quam_state_manager.core.loader import _walk
-from quam_state_manager.core.port_identity import IDENTITY_FIELDS
+from quam_state_manager.core.port_identity import (
+    IDENTITY_FIELDS, identity_disagrees, normalize_identity,
+)
 
 
 def edit_offer(path, value):
@@ -12,10 +14,18 @@ def edit_offer(path, value):
     if len(parts) != 6 or parts[0] != "ports" or parts[-1] not in IDENTITY_FIELDS:
         return None
     index = IDENTITY_FIELDS.index(parts[-1]) + 2
-    if str(value) == parts[index]:
+    if not identity_disagrees(value, parts[index]):
+        return None
+    normalized = normalize_identity(value)
+    if isinstance(normalized, bool):
+        return None
+    if index != 2 and not isinstance(normalized, int):
+        return None
+    segment = str(normalized)
+    if not segment or any(c in segment for c in ". /#\\"):
         return None
     new_parts = parts[:5]
-    new_parts[index] = str(value)
+    new_parts[index] = segment
     return {"path": path, "field": parts[-1], "key_value": parts[index],
             "typed_value": value, "old_path": ".".join(parts[:5]),
             "new_path": ".".join(new_parts),
@@ -30,8 +40,11 @@ def move_port(modifier, offer, value):
     """Caller holds the store lock. All changes share one undo group."""
     store = modifier.store
     old, new = offer["old_path"], offer["new_path"]
-    segment = str(value)
-    if not segment or any(c in segment for c in ". /#\\"):
+    normalized = normalize_identity(value)
+    segment = str(normalized)
+    if (normalized is None or isinstance(normalized, bool)
+            or offer["field"] != "controller_id" and not isinstance(normalized, int)
+            or not segment or any(c in segment for c in ". /#\\")):
         raise ValueError("This value cannot be used as a port dict key; keep as typed or choose a valid key")
     try:
         store.get_value(new)
