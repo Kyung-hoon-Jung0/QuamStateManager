@@ -23,24 +23,25 @@
     <strong class="as-title" id="as-state">Auto-Sync is {% if _as %}ON{% else %}OFF{% endif %}</strong>
     {% if not _as %}<small class="as-sub muted">Tick what it should do, then turn it on.</small>{% endif %}
     {# sync-ux 2026-09-25 (user decision 3, 2026-09-25): when first armed, Auto-Sync TAKES
-       live changes and keeps the user's unapplied edits on top. "Replace" and
-       "push" start unticked: a live write still needs a press unless push is
-       explicitly chosen (docs/117/160). A re-opened panel shows the session as
-       it stands. #}
+       live changes and keeps the user's unapplied edits on top. The first-open
+       ticks come from routes.AUTO_SYNC_DEFAULT_MODES, the same modes a chip
+       open arms (user decision 2026-11-03: take + push ticked, "replace"
+       unticked). A re-opened panel shows the session as it stands. #}
+    {% set _d = auto_sync_defaults or {} %}
     <label class="as-row">
       <input type="checkbox" name="pull" value="1" id="as-pull"
-             {% if not _as or _as.pull %}checked{% endif %}
+             {% if (_as and _as.pull) or (not _as and _d.pull) %}checked{% endif %}
              onchange="AutoSync.syncNested()">
       <span>&#8595; Take live changes automatically
         <small class="muted">your unapplied edits stay on top</small></span></label>
     <label class="as-row as-row-sub">
       <input type="checkbox" name="pull_replace" value="1" id="as-pull-replace"
-             {% if _as and _as.pull_replace %}checked{% endif %}>
+             {% if (_as and _as.pull_replace) or (not _as and _d.pull_replace) %}checked{% endif %}>
       <span class="as-danger">&hellip;even over my unapplied edits (live wins)
         <small class="muted">each live change discards your unapplied edits (no Ctrl+Z)</small></span></label>
     <label class="as-row">
       <input type="checkbox" name="push" value="1" id="as-push"
-             {% if _as and _as.push %}checked{% endif %}>
+             {% if (_as and _as.push) or (not _as and _d.push) %}checked{% endif %}>
       <span>&#8593; Write my edits to the live chip automatically
         <small class="muted">each Enter writes; a live change meanwhile is merged (if Take is on) or stops and asks</small></span></label>
     <div class="as-actions">

@@ -290,7 +290,9 @@ class TestAutoSync:
         def checked(i):
             j = out.index(f'id="{i}"')
             return "checked" in out[j:out.index(">", j)]
-        assert checked("as-pull") and not checked("as-pull-replace") and not checked("as-push")
+        # 2026-11-03 user decision (Auto-Sync on by default): the first-open
+        # ticks are take + push, never "replace" -- routes.AUTO_SYNC_DEFAULT_MODES.
+        assert checked("as-pull") and not checked("as-pull-replace") and checked("as-push")
 
     def test_SYNCEXP09_typed_cells_are_not_discarded_work(self, chip):
         client, folder = chip

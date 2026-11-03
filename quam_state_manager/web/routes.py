@@ -6633,6 +6633,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "change_count": _change_count(),
         # docs/160: the Settings toggle reflects the machine-wide setting
         "undo_live": _undo_live_enabled(),
+        "auto_sync_on_open": _auto_sync_on_open_enabled(),
         # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
         # directly, so on a FULL page render the tray's context comes from
         # HERE, not from _render_tray — and the Review drawer loops over
@@ -8898,6 +8899,7 @@ def qualibrate_open_project():
         logger.warning("project zone default failed for %s", name, exc_info=True)
     try:
         opened = _activate_quam(state["native"])
+        _maybe_auto_arm_on_open(opened)
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
     if env_changed:
@@ -9061,7 +9063,7 @@ def load():
         return render_template("_status.html", message="No folder specified", level="error"), 400
 
     try:
-        _activate_quam(folder)
+        _maybe_auto_arm_on_open(_activate_quam(folder))
     except (FileNotFoundError, ValueError, OSError) as e:
         # docs/114 (#15): a wrong folder used to answer with a 6-second corner
         # toast — gone before it was read. Render a PERSISTENT inline panel
@@ -30128,6 +30130,204 @@ def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Auto-Sync on open. Users keep Auto-Sync on almost all the time, so when a
+# person opens a chip the session is armed for them: take live changes (their
+# unapplied edits stay on top -- never the destructive "replace") and write
+# their edits to the chip. It goes through the same gates the pill does, so an
+# archive, a read-only folder or an already-diverged chip still opens with
+# Auto-Sync off and the pill's normal reason; a chip another live SM window
+# holds is also left off (two windows writing one chip file is a trap).
+#
+# Two facts persist in instance/ (machine-wide, they survive a restart):
+#   * the setting itself ("Turn on Auto-Sync when a chip opens", default ON);
+#   * the chips a person turned Auto-Sync OFF for -- those are never armed
+#     again on open until the person turns it on for that chip again.
+# The session itself is still never persisted (docs/117). Setting OFF means no
+# call below arms anything: the behaviour before this feature.
+
+#: The session a chip open arms, and the panel's first-open ticks: take live
+#: changes ON, write my edits ON, "even over my unapplied edits" OFF (user
+#: decision: keep my edits, take the chip's changes). One place to flip.
+AUTO_SYNC_DEFAULT_MODES = {"pull": True, "pull_replace": False, "push": True}
+_AUTO_SYNC_OPEN_FILE = "auto_sync_on_open.json"
+_AUTO_SYNC_CHIPS_FILE = "auto_sync_chips.json"
+_AUTO_SYNC_OPEN_TOAST = ("Auto-Sync is on: your edits are written to the chip "
+                         "file. Turn it off in the top bar.")
+
+
+def _auto_sync_open_path() -> Path:
+    return Path(current_app.instance_path) / _AUTO_SYNC_OPEN_FILE
+
+
+def _auto_sync_on_open_enabled() -> bool:
+    """The machine setting; absent or unreadable means the default, ON.
+
+    ``SM_AUTO_SYNC_ON_OPEN_DEFAULT=0`` changes only the ABSENT-file default
+    (the test suite sets it, like ``SM_DISABLE_ENV_WARMUP``, so the many tests
+    that open a chip and then exercise a manual path keep their premise; the
+    pins of this feature set it back to 1)."""
+    default = os.environ.get("SM_AUTO_SYNC_ON_OPEN_DEFAULT", "1") != "0"
+    try:
+        p = _auto_sync_open_path()
+        try:
+            mt = p.stat().st_mtime_ns
+        except OSError:
+            return default
+        cache = current_app.config.get("_auto_sync_open_cache")
+        if cache and cache[0] == mt:
+            return bool(cache[1])
+        doc = safe_io.read_json(p, attempts=1)
+        val = bool(doc.get("enabled", True)) if isinstance(doc, dict) else True
+        current_app.config["_auto_sync_open_cache"] = (mt, val)
+        return val
+    except Exception:  # noqa: BLE001 -- a bad file must never block an open
+        return default
+
+
+def _set_auto_sync_on_open(enabled: bool) -> None:
+    p = _auto_sync_open_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    safe_io.atomic_write_json(p, {"enabled": bool(enabled)})
+    current_app.config.pop("_auto_sync_open_cache", None)
+
+
+_AUTO_SYNC_CHIPS_LOCK = threading.Lock()
+
+
+def _auto_sync_chips_read() -> dict:
+    empty = {"off": [], "announced": []}
+    p = Path(current_app.instance_path) / _AUTO_SYNC_CHIPS_FILE
+    try:
+        if not p.exists():
+            return empty
+        doc = safe_io.read_json(p, attempts=1)
+    except Exception:  # noqa: BLE001 -- unreadable: nothing recorded
+        return empty
+    if not isinstance(doc, dict):
+        return empty
+    return {k: [str(x) for x in (doc.get(k) or []) if isinstance(x, str)]
+            for k in ("off", "announced")}
+
+
+def _auto_sync_chips_update(key: str, *, off: bool | None = None,
+                            announced: bool | None = None) -> None:
+    """Record (or clear) a chip's opt-out / first-toast fact. Never raises."""
+    if not key:
+        return
+    try:
+        with _AUTO_SYNC_CHIPS_LOCK:
+            doc = _auto_sync_chips_read()
+            changed = False
+            for name, want in (("off", off), ("announced", announced)):
+                if want is None:
+                    continue
+                have = key in doc[name]
+                if want and not have:
+                    doc[name].append(key)
+                    changed = True
+                elif not want and have:
+                    doc[name] = [k for k in doc[name] if k != key]
+                    changed = True
+            if changed:
+                p = Path(current_app.instance_path) / _AUTO_SYNC_CHIPS_FILE
+                p.parent.mkdir(parents=True, exist_ok=True)
+                safe_io.atomic_write_json(p, doc)
+    except Exception:  # noqa: BLE001
+        logger.warning("Auto-Sync chip record failed", exc_info=True)
+
+
+def _auto_sync_chip_key(ctx: dict | None) -> str:
+    path = (ctx or {}).get("path") or ""
+    if not path:
+        return ""
+    try:
+        return path_match.fs_key(path)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _auto_sync_user_choice(ctx: dict | None, on: bool) -> None:
+    """A person turned Auto-Sync on or off for this chip (the pill's own
+    doors). OFF is remembered so the chip is not armed again on open."""
+    _auto_sync_chips_update(_auto_sync_chip_key(ctx), off=not on)
+
+
+def _auto_sync_foreign_window(ctx: dict) -> bool:
+    """True when another live SM window has this same chip open."""
+    try:
+        from quam_state_manager.core import instances as _inst
+        key = _auto_sync_chip_key(ctx)
+        return any(p.chip_fs_key and p.chip_fs_key == key
+                   for p in _inst.peers(current_app.instance_path))
+    except Exception:  # noqa: BLE001 -- unknown means "do not arm"
+        return True
+
+
+def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
+    """Arm Auto-Sync (take live keeping edits + push) for a chip a PERSON just
+    opened. Called only from the user-facing open routes; the scheduler, the
+    agent and autofit never come here. Returns True when it armed."""
+    try:
+        if not ctx or ctx.get("type") != "quam" or ctx.get("auto_apply"):
+            return False
+        if not _auto_sync_on_open_enabled():
+            return False
+        key = _auto_sync_chip_key(ctx)
+        chips = _auto_sync_chips_read()
+        if not key or key in chips["off"]:
+            return False
+        push_ok, _ = _auto_apply_armable(ctx)
+        pull_ok, _ = _auto_pull_armable(ctx)
+        if not (push_ok and pull_ok):
+            return False                    # the pill shows off with its reason
+        if _auto_sync_foreign_window(ctx):
+            return False
+        ctx["auto_apply"] = _new_auto_session(**AUTO_SYNC_DEFAULT_MODES)
+        if key not in chips["announced"]:
+            ctx["_auto_sync_open_toast"] = _AUTO_SYNC_OPEN_TOAST
+            _auto_sync_chips_update(key, announced=True)
+        return True
+    except Exception:  # noqa: BLE001 -- arming never blocks opening a chip
+        logger.warning("Auto-Sync on open failed", exc_info=True)
+        return False
+
+
+@bp.app_context_processor
+def _auto_sync_defaults_context():
+    # The panel's first-open ticks, on every render of it (one constant).
+    return {"auto_sync_defaults": AUTO_SYNC_DEFAULT_MODES}
+
+
+@bp.app_context_processor
+def _auto_sync_open_toast_context():
+    # One-shot, consumed when the tray renders (the TrayNoticeToast path).
+    return {"auto_sync_open_toast": lambda: (_active_ctx() or {}).pop(
+        "_auto_sync_open_toast", "")}
+
+
+@bp.route("/settings/auto-sync-on-open", methods=["POST"])
+def settings_auto_sync_on_open():
+    """Set (``enabled`` true/false, JSON or form) the machine setting "Turn on
+    Auto-Sync when a chip opens". A missing ``enabled`` toggles it."""
+    data = json_object(fallback=request.form.to_dict)
+    raw = data.get("enabled")
+    if raw is None:
+        new = not _auto_sync_on_open_enabled()
+    elif isinstance(raw, bool):
+        new = raw
+    elif isinstance(raw, str) and raw.strip().lower() in ("1", "0", "true", "false", "on", "off"):
+        new = raw.strip().lower() in ("1", "true", "on")
+    else:
+        raise BadBody("'enabled' must be true or false.")
+    try:
+        _set_auto_sync_on_open(new)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "enabled": new})
+
+
 @bp.route("/auto-sync/panel")
 def auto_sync_panel():
     """The Auto-Sync switches, fetched when the pill is clicked.
@@ -30164,6 +30364,7 @@ def auto_sync_set():
 
     if not (want_pull or want_push):
         ctx.pop("auto_apply", None)
+        _auto_sync_user_choice(ctx, on=False)
         return _tray_html()
 
     # Each direction is gated on ITS OWN question, and a refusal on one must not
@@ -30201,6 +30402,7 @@ def auto_sync_set():
         for k in ("armed_at", "pre_ts", "last_snap", "flushes"):
             sess[k] = prev.get(k, sess[k])
     ctx["auto_apply"] = sess
+    _auto_sync_user_choice(ctx, on=True)
     resp = make_response(_tray_html())
     trig: dict[str, Any] = {"autoApplyArmed": True}
     if want_push and not push_ok:
@@ -30573,6 +30775,7 @@ def auto_apply_arm():
     if not ok:
         return render_template("_status.html", message=why, level="warning"), 409
     ctx["auto_apply"] = _new_auto_session(pull=False, pull_replace=False, push=True)
+    _auto_sync_user_choice(ctx, on=True)
     resp = make_response(_tray_html())
     # Pending edits made BEFORE arming are flushed by the client's first
     # mutation-driven pass; the label said so before the press.
@@ -30589,6 +30792,7 @@ def auto_apply_disarm():
     sess = _auto_apply_state(ctx)
     if ctx is not None:
         ctx.pop("auto_apply", None)
+        _auto_sync_user_choice(ctx, on=False)
     if sess and sess.get("flushes"):
         try:
             _history().check_and_snapshot(
@@ -36277,7 +36481,7 @@ def workspace_select():
         return render_template("_status.html", message="No path specified", level="error"), 400
 
     try:
-        _activate_quam(path)
+        _maybe_auto_arm_on_open(_activate_quam(path))
     except (FileNotFoundError, ValueError, OSError) as e:
         # Corrupt/unreadable state.json raises ValueError (bad JSON) or OSError,
         # not FileNotFoundError — catch all three (matching /load) so a bad chip
@@ -47151,7 +47355,7 @@ def generate_load():
     if not folder:
         return jsonify({"ok": False, "error": "No folder given."}), 400
     try:
-        _activate_quam(folder)
+        _maybe_auto_arm_on_open(_activate_quam(folder))
     except (FileNotFoundError, ValueError, OSError) as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     _remember_load_path(folder)

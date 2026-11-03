@@ -42,6 +42,11 @@ if not os.environ.get("QSM_LAB_WORKER_DIR"):
 # default; the pins that are about it either call `verify_manifest` directly or
 # clear this variable themselves.
 os.environ.setdefault("SM_DISABLE_HISTORY_VERIFY", "1")
+# Auto-Sync turns itself on when a person opens a chip (default ON in
+# production). Most tests open a chip and then drive the MANUAL path, so the
+# absent-setting default is OFF here; tests/test_auto_sync_on_open.py sets it
+# back to ON to pin the feature.
+os.environ.setdefault("SM_AUTO_SYNC_ON_OPEN_DEFAULT", "0")
 
 # docs/271 review P2-1: a live write that reaches apply_to_live with no record
 # is an unrecorded door. Production records it as "unattributed" (a person's
