@@ -62,7 +62,7 @@ def test_witness_fields_ship_only_when_there_is_something():
     assert ser == {}
     routes._trend_witness_fields(ser, [{"k": "20261014_061809_e99", "v": 0.97968, "run": 1124,
                                         "why": "not_kept", "who": "#1125", "held": 0.97622}], 3.45e-6)
-    assert ser["left_out"] == [["20261014_061809_e99", 0.97968, 1124, "not_kept", "#1125", 0.97622, 0]]
+    assert ser["left_out"] == [["20261014_061809_e99", 0.97968, 1124, "not_kept", "#1125", 0.97622, 0, None, None]]
     assert ser["now"] == 3.45e-6
 
 
@@ -88,8 +88,8 @@ def test_trend_chart_unit_is_the_tables_unit():
     assert routes._trend_display_unit("T1") == ("\u00b5s", 1e6)
     assert routes._trend_display_unit("T2echo") == ("\u00b5s", 1e6)
     assert routes._trend_display_unit("f_01") == ("GHz", 1e-9)
-    unit, scale = routes._trend_display_unit("gate_fidelity_avg")
-    assert scale == 1.0
+    unit, scale = routes._trend_display_unit("gate_fidelity_avg")  # stress2: fidelities read in %
+    assert (unit, scale) == ("%", 100.0)
 
 
 # ---------------------------------------------------------------- T4

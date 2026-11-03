@@ -449,7 +449,8 @@ class TestTheAxisSaysWhatItMeans:
 
     def test_the_chart_payload_carries_the_unit(self, client):
         body = client.get("/topology/trends?metrics=f_01").get_data(as_text=True)
-        assert '"unit": "Hz"' in body
+        # fix/trends-stress: drawn in the tables' unit (GHz), with its scale
+        assert '"unit": "GHz"' in body and '"scale": 1e-09' in body
 
     def test_ticks_use_si_prefixes_and_the_title_carries_the_unit(self):
         """4.3B is not a physics unit -- but `~s` was the wrong cure.
@@ -479,8 +480,10 @@ class TestTheAxisSaysWhatItMeans:
     def test_a_constant_series_is_not_drawn_against_zero(self):
         src = _P_read()
         assert "_flat" in src
-        assert "range: _flat || undefined" in src
-        assert "autorange: _flat ? false : true" in src
+        # fix/trends-stress2: the range is the line's own when an outlier
+        # left-out value is drawn on its edge (_clipped), else the flat one
+        assert "range: (_clipped ? _yr : _flat) || undefined" in src
+        assert "autorange: (_clipped || _flat) ? false : true" in src
 
 
 def _P_read():

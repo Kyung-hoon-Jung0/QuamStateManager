@@ -86,8 +86,8 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   // T1: the "now" marker
   const now = T1.data.filter(t => t.meta === 'now');
   ok(now.length === 1 && now[0].name === 'q4', 'T1: one "now" mark, for the series whose value now differs');
-  ok(Math.abs(now[0].y[0] - 3.45) < 1e-9 && now[0].x[0] === q4.x[q4.x.length - 1],
-     'T1: at the right end, at the value now (' + now[0].y + ')');
+  ok(Math.abs(now[0].y[0] - 3.45) < 1e-9 && now[0].x[0] === T1.layout.xaxis.range[1],
+     'T1: at the right edge of the window, at the value now (' + now[0].y + ' @ ' + now[0].x + ')');
   ok(now[0].legendgroup === q4.legendgroup && now[0].showlegend === false, 'T1: it toggles with its line');
   ok((T1.layout.annotations || []).some(a => /now \(q4\): current value differs from the newest recorded run value/.test(a.text)),
      'T1: the chart says it in words');
@@ -98,7 +98,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   const line = IRB.data.find(t => !t.meta);
   ok(line.y.length === 2 && line.y.every(v => v === 0.97622), 'T2: the step line is unchanged');
   const lo = IRB.data.find(t => t.meta === 'left_out');
-  ok(lo && lo.mode === 'markers' && lo.marker.symbol === 'circle-open' && lo.y[0] === 0.97968,
+  ok(lo && lo.mode === 'markers' && [].concat(lo.marker.symbol)[0] === 'circle-open' && lo.y[0] === 0.97968,
      'T2: the left-out run value is a hollow marker off the line');
   ok(lo.customdata[0][1] === 'saved by #1124 · not in the next recorded state (#1125 still had 0.97622)',
      'T2: its hover names the run that saved it and the one that still had the earlier value (' + lo.customdata[0][1] + ')');

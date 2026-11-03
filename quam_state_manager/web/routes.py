@@ -13964,6 +13964,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
     # Never ``uid`` (that one names a WRITER); a surface that opens it says,
     # on the opened run, that the run is not proven to have measured it.
     saved_uid = None
+    first_uid = None
     if prov == "run_proven":
         label = f"{run} {exp}".strip()
         title = (f"Run {run} ({exp}) wrote this value: its node.json records the patch "
@@ -14001,6 +14002,15 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         title = (f"The change ledger begins at run {run}; the value was already set then. "
                  f"Who set it is not recorded.")
         trigger = "auto"
+        # the run whose saved state the ledger starts with: a Trends point
+        # opens it like a run_saved one (?via=saved -- it carried the value,
+        # not proven to set it). Its own key: the drawers' links stay the
+        # writer's and the first saver's only.
+        if "source_gone" not in p["flags"] and rid is not None:
+            key = folder or ""
+            if key not in uid_memo:
+                uid_memo[key] = _uid_for_run_ref(folder, rid, uid_roots)
+            first_uid = uid_memo[key]
     elif prov == "run_uncertain_chip":
         label = f"{run} (chip uncertain)"
         sub = "not named as writer"
@@ -14086,7 +14096,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
             "link_title": link_title, "flag_text": flags, "display": display,
-            "fill": fill, "usable": usable, "saved_uid": saved_uid}
+            "fill": fill, "usable": usable, "saved_uid": saved_uid, "first_uid": first_uid}
 
 
 def _vh_wait_message(ans: dict) -> str:
@@ -19125,7 +19135,24 @@ def _trend_display_unit(metric: str) -> tuple[str, float]:
     spec = _units.display_spec(str(metric or "").replace("*", "x"))
     if spec and spec.get("unit"):
         return spec["unit"], float(spec["scale"])
+    if _trend_is_fraction_fidelity(metric):
+        # a fidelity is stored as a fraction (0.976) and read as a percent
+        # (97.6 %) on every other Chip Status surface
+        return "%", 100.0
     return _trend_unit(metric), 1.0
+
+
+def _trend_is_fraction_fidelity(metric: str) -> bool:
+    """A Trends metric whose value is a fidelity stored as a fraction: the
+    curated 1Q gate / readout fidelities, and a pair family whose leaf is a
+    fidelity (never a decay base, an error or a run id)."""
+    m = str(metric or "")
+    if m.startswith("gate_fidelity_") or m in _TREND_LABEL_OVERRIDES:
+        return True
+    try:
+        return _trend_leaf_kind(m) == "fidelity"
+    except Exception:  # noqa: BLE001 -- an unknown spelling keeps its stored unit
+        return False
 
 
 def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[dict]:
@@ -19337,7 +19364,7 @@ def _trend_witness_fields(ser: dict, left_out, now) -> None:
       (``LedgerTable.now_unlike``): the held line must not read as current.
     """
     rows = [[d["k"], d["v"], d.get("run"), d["why"], d["who"], d.get("held"),
-             1 if d.get("now") else 0]
+             1 if d.get("now") else 0, d.get("uid"), d.get("saved_uid")]
             for d in (left_out or ()) if d.get("k")]
     if rows:
         ser["left_out"] = rows
@@ -19974,6 +20001,18 @@ _TREND_LABEL_OVERRIDES: dict[str, str] = {
 }
 
 
+def _trend_axis_title(metric: str | None) -> str:
+    """A Trends chart's y-axis title: the metric's human name (the pill's
+    words); a parameter path with no name of its own reads as its last
+    segments with spaces, never as the raw dotted key."""
+    m = str(metric or "")
+    lab = _trend_metric_label(m)
+    if lab and lab != m:
+        return lab
+    segs = [s for s in m.replace("*.", "").split(".") if s and not s.isdigit()]
+    return " ".join(s.replace("_", " ") for s in segs[-2:]) if segs else m
+
+
 def _trend_metric_label(metric: str | None) -> str:
     """What a CURATED metric is called on this page — the same string the pill
     and the chart title carry, so a message about a chart names the chart."""
@@ -20269,6 +20308,7 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                 "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": unit,
                 "scale": scale,
                 "label": _trend_pair_label(metric) if kind == "pair" else "",
+                "ytitle": _trend_axis_title(metric) if kind != "pair" else "",
                 "typed": typed}
 
     charts = [_chart(m, k, by_metric[(m, k)]) for (m, k) in order]
@@ -20335,6 +20375,9 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     for c in charts:
         if c.get("kind") == "pair" and c["metric"] in _pair_labels:
             c["label"] = _pair_labels[c["metric"]]
+        if c.get("kind") == "pair":
+            # the y axis says what the chart title says, never the raw key
+            c["ytitle"] = c.get("label") or _trend_axis_title(c["metric"])
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.

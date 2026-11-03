@@ -139,7 +139,7 @@ def left_out(row: dict) -> list[dict]:
             continue
         out.append({"t_us": nk.get("t_us"), "eid": nk.get("eid"), "v": nk["value"],
                     "run": nk.get("run_id"), "exp": nk.get("experiment"), "why": "not_kept",
-                    **_left_by(nk.get("by") or {})})
+                    "_pt": nk, **_left_by(nk.get("by") or {})})
     for ex in row.get("excursions") or ():
         back = _left_by(ex.get("back") or {})
         for p in ex.get("points") or ():
@@ -147,7 +147,7 @@ def left_out(row: dict) -> list[dict]:
                 continue
             out.append({"t_us": p.get("t_us"), "eid": p.get("eid"), "v": p["value"],
                         "run": p.get("run_id"), "exp": p.get("experiment"), "why": "excursion",
-                        **back})
+                        "_pt": p, **back})
     out.sort(key=lambda d: (d["t_us"] if d["t_us"] is not None else -1, d["eid"] or 0))
     return out
 
@@ -599,6 +599,11 @@ class LedgerTable:
             # docs/301 F9: an unproven point opens the run that saved it,
             # and that run then says it is not proven to have measured it
             info["saved_uid"] = view["saved_uid"]
+        elif view.get("first_uid"):
+            # the run whose saved state the ledger starts with ("first
+            # recorded in #N") opens the same way on a Trends chart, with the
+            # same note; its own key, so the drawers' links are unchanged
+            info["first_uid"] = view["first_uid"]
         return event_key(p["t_us"], p["eid"]), info
 
     def _newest(self, ans):
@@ -946,12 +951,30 @@ class LedgerTable:
                         "raw_pointer": via[0]["pointer"] if via else None,
                         "left_out": self._left_out_keyed(row),
                         "now": (self.now_unlike(leaf, values[-1]["value"])
-                                if prop in _VALUE_PATHS else None)})
+                                if prop in _VALUE_PATHS
+                                else self.now_unlike_derived(comps[paths[0]], values[-1]["value"]))})
         return out
 
     def _left_out_keyed(self, row: dict) -> list[dict]:
-        """:func:`left_out` with each value's chart axis key (``k``)."""
-        return [dict(d, k=event_key(d.pop("t_us"), d["eid"])) for d in left_out(row)]
+        """:func:`left_out` with each value's chart axis key (``k``) and the
+        run that saved it, openable as a main point is (``uid`` on proof,
+        else ``saved_uid``: the run that saved it, not proven to have
+        measured it)."""
+        out = []
+        for d in left_out(row):
+            pt = d.pop("_pt", None)
+            d["k"] = event_key(d.pop("t_us"), d["eid"])
+            if pt is not None and d.get("run") is not None:
+                try:
+                    view = self.present(pt, self.roots, self.uid_memo, now=self._now)
+                except Exception:  # noqa: BLE001 -- a link is a convenience, never a failure
+                    view = {}
+                if view.get("uid"):
+                    d["uid"] = view["uid"]
+                elif view.get("saved_uid") or view.get("first_uid"):
+                    d["saved_uid"] = view.get("saved_uid") or view["first_uid"]
+            out.append(d)
+        return out
 
     def now_unlike(self, path: str, last: Any) -> Any:
         """The chip's value at *path* now, when it is a number and the
@@ -968,6 +991,27 @@ class LedgerTable:
         if not tgt.get("has_current"):
             return None
         cur = value_history.comparable(tgt)
+        if not _plain_number(cur):
+            return None
+        if _plain_number(last) and value_history.rules.same(cur, last):
+            return None
+        return cur
+
+    def now_unlike_derived(self, comp, last: Any) -> Any:
+        """:meth:`now_unlike` of a derived metric (a readout fidelity over a
+        confusion matrix): the formula applied to the matrix the chip holds
+        now, compared with the series' last value. The matrix's elements are
+        the recorded facts, so the chart follows an edit of any of them."""
+        base, paths, _compose, prop = comp
+        self.fact("currents", tuple(paths))
+        tgt = self.target(base, container=True)
+        matrix = tgt.get("current") if tgt.get("has_current") else None
+        if not isinstance(matrix, list) or not matrix:
+            return None
+        try:
+            cur = _DERIVED_FIDELITY_PROPS[prop][1](matrix)
+        except Exception:  # noqa: BLE001 -- a matrix the formula cannot read has no value now
+            return None
         if not _plain_number(cur):
             return None
         if _plain_number(last) and value_history.rules.same(cur, last):
