@@ -150,6 +150,7 @@
     cursor: text;
 }
 .ui-tree-value.ui-tree-mounted {
+    flex-wrap: wrap;
     max-width: none;
     overflow: visible;
     text-overflow: clip;
@@ -162,6 +163,9 @@
     margin: 0;
     padding: 0;
     min-width: var(--ui-tree-value-min);
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
 }
 .ui-tree-dirty {
     color: var(--ui-warn-text);
@@ -692,3 +696,12 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .sidebar-nav .nav-subitems li a:hover:not(.active) { color: var(--ui-text); background: var(--ui-surface-2); }
 /* K12: the search glyph is one neutral colour, not a colour emoji */
 .tree-search-icon { filter: grayscale(1); }
+
+.ui-tree-target { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--ui-warn-text); font-size: var(--ui-fs-xs); margin-left: var(--ui-gap-1); }
+.ui-tree-drafts { display: block; margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
+.ui-tree-drafts[hidden] { display: none; }
+
+.sm-typeahead.sm-typeahead-tree { position: static; width: auto; max-height: 12rem; margin-block: var(--ui-gap-1); }
+
+.tree-row:has(.ui-tree-mounted) .tree-row-actions,
+.tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help { display: none; }

@@ -7,6 +7,23 @@ const {JSDOM} = require('jsdom');
 const staticDir = path.join(__dirname, '../quam_state_manager/web/static');
 let source = fs.readFileSync(path.join(staticDir, 'app.js'), 'utf8').replace(/\r\n/g, '\n');
 const mutations = {
+    auto_blur: ["window.addEventListener('blur', _treeAutoCommitAll);", '/* reverted window blur commit */'],
+    auto_hidden: ["if (document.visibilityState === 'hidden') _treeAutoCommitAll();", '/* reverted hidden commit */'],
+    auto_pagehide: ["window.addEventListener('pagehide', _treeAutoCommitAll);", '/* reverted pagehide commit */'],
+    auto_nav: ["if (target && target.id === 'table-pane') window.TreeInlineEdit.settle(target);", "if (target && target.id === 'table-pane' && window.__treeCommitOnLeave === false) window.TreeInlineEdit.settle(target);"],
+    press_mount: ['el.addEventListener("pointerdown", function(e)', 'el.addEventListener("unused-pointerdown", function(e)'],
+    pointer_cached: ['_treePointerPreview(el, el._treeResolved);', '/* reverted immediate pointer hint */'],
+    pointer_hint: ["hint.textContent = ' edits '", "hint.textContent = ' target '"],
+    pointer_toast: ["window.showToast('Edited ' + data.resolved_path, 'success')", "window.showToast('Edited value', 'success')"],
+    pointer_flash: ["target.classList.add('leu-flash');", "/* reverted target flash */"],
+    idle_pointer: ['if (_isPointer(shown)) _treeQueuePointer(valEl, path);', '/* reverted idle preview */'],
+    draft_jump: ['_treeExpandDraft(tree, next);', '/* reverted draft jump expansion */'],
+    draft_count: ['_treeDraftHeader(tree);', '/* reverted draft count */'],
+    input_width: ['input.style.minWidth = input.size + "ch";', '/* reverted content width */'],
+    input_literal: ["if (el.classList.contains('tree-val-number')) v = window.NumberInput.strip(v);", '/* reverted raw numeric editor */'],
+    input_echo: ['typeof stored === "number" ? String(stored) : _formatValue(stored)', '_formatValue(stored)'],
+    sync_snapshot: ['var _seen = opts.seenView.count;', 'var _seen = (document.getElementById("pending-tray") || {dataset:{changeCount:"0"}}).dataset.changeCount;'],
+    sync_count: ['? "0" : v', '? null : v'],
     relink: ['if (valEl.classList.contains("tree-val-pointer") && _isPointer(newVal))\n                body.append("pointer_mode", "relink");', '/* reverted relink transport */'],
     echo_target: ['if (data.resolved_path && data.resolved_path !== dotPath)', 'if (false)'],
     draft_storage: ['_treeSaveDrafts(tree);', '/* reverted persistence */'],
@@ -42,7 +59,7 @@ const mutations = {
     cache: ['if (!cache.has(path)) cache.set', 'if (true) cache.set'],
 };
 if (process.env.TREE_MUTATION) {
-    if (!['chip_context','draft_style'].includes(process.env.TREE_MUTATION)) {
+    if (!['chip_context','draft_style','suggestion_flow','suggestion_outside','pointer_layout'].includes(process.env.TREE_MUTATION)) {
         const [before, after] = mutations[process.env.TREE_MUTATION];
         assert(source.includes(before), 'mutation target exists');
         source = source.replaceAll(before, after);
@@ -57,6 +74,7 @@ const dom = new JSDOM('<!doctype html><input id="search"><div id="tree"></div><b
 const realms=[dom];
 const w = dom.window, d = w.document;
 const calls = [];
+const toasts = [];
 let delay = 0;
 let fsp = false;
 let refused = false;
@@ -70,7 +88,7 @@ w.fetch = (url, opts) => {
         if (peekFailure === 'http') return Promise.resolve({ok:false,json:async()=>({ok:true})});
         if (peekFailure === 'body') return Promise.resolve({ok:true,json:async()=>({ok:false})});
         data.expected[p] = {type:'real',source:'schema',class_path:'model.Settings',field:p,detail:'Expected scalar'};
-        if (p === 'pointer') data.resolved = {[p]:{is_pointer:true,resolvable:true,resolved_value:42}};
+        if (p === 'pointer') data.resolved = {[p]:{is_pointer:true,resolvable:true,resolved_value:42,resolved_path:'target',shared_by:['one','two']}};
     }
     if (url === '/field/edit') {
         const b = new w.URLSearchParams(opts.body);
@@ -87,6 +105,7 @@ w.htmx = {ajax:async(method,url)=>{ajax.push(url);}, trigger(){}, process(){}};
 w.eval(fs.readFileSync(path.join(staticDir,'search-query.js'),'utf8'));
 w.eval(source);
 w.eval(fs.readFileSync(path.join(staticDir,'manual.js'),'utf8'));
+w.showToast=(message)=>toasts.push(message);
 const manuals=[]; w.openConfigManual=o=>manuals.push(o.path);
 const tick = (ms=20) => new Promise(r=>setTimeout(r,ms));
 let tree = d.getElementById('tree');
@@ -97,6 +116,11 @@ const key = (key,opts={}) => d.activeElement.dispatchEvent(new w.KeyboardEvent('
 const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(new w.Event('input',{bubbles:true}));};
 (async()=>{
     w.renderJsonTree('tree',{a:1,b:'hello',branch:{inner:{amplitude:0.1}}},{defaultDepth:1,crud:true});
+    val('a').dispatchEvent(new w.MouseEvent('pointerdown',{bubbles:true,cancelable:true,button:0}));
+    assert.equal(d.activeElement.getAttribute('aria-label'),'a','first pointerdown mounts before click or debounce');
+    w.jsonTreeSearch('tree','a'); await tick(230);
+    assert.equal(d.activeElement.getAttribute('aria-label'),'a','pending search preserves pointer-mounted focus');
+    w.jsonTreeSearch('tree',''); await tick(230);
     focus('a');
     assert.equal(tree.getAttribute('role'),'tree','accessible tree role');
     assert.equal(d.activeElement.tagName,'INPUT','focus mounts immediately');
@@ -205,7 +229,12 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
         assert.equal(val(retry).querySelector('.tree-type-chip').title,'model.Settings.'+retry+' \u2014 Expected scalar','type tooltip includes field and detail');
     }
     w.renderJsonTree('tree',{pointer:'#/target',target:42,other:77},{defaultDepth:1,crud:true});
-    focus('pointer');await tick(190);
+    await tick(100);
+    assert(val('pointer').querySelector('.ui-tree-resolved'),'unfocused pointer has resolved preview');
+    focus('pointer');
+    assert(val('pointer').querySelector('.ui-tree-target'),'cached target hint is visible immediately on focus');
+    await tick(190);
+    assert.equal(val('pointer').querySelector('.ui-tree-target').textContent.trim(),'edits target (shared by 2)','pointer editing names target and sharing');
     const preview=val('pointer').querySelector('.ui-tree-resolved');
     assert(preview,'pointer has resolved preview');
     assert.equal(d.activeElement.value,'"#/target"','pointer input stays literal');
@@ -215,11 +244,16 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/field/edit').at(-1).body).get('pointer_mode'),'relink','pointer transport explicitly relinks');
     assert.equal(tree._treeData.pointer,'#/other','relink model uses server echo');
     type('9');key('Enter');await tick();
+    assert(toasts.includes('Edited other'),'commit toast names pointer target');
+    assert(val('other').classList.contains('leu-flash'),'visible target flashes');
     assert.equal(tree._treeData.other,9,'plain value updates the server write target');
     assert.equal(tree._treeData.target,42,'plain value leaves the former target unchanged');
     assert.equal(tree._treeData.pointer,'#/other','plain value preserves pointer model');
     let css=fs.readFileSync(path.join(staticDir,'ui-kit.css'),'utf8');
     if (process.env.TREE_MUTATION==='draft_style') css=css.replace('outline: var(--ui-bw) dashed var(--ui-warn-border);','');
+    if (process.env.TREE_MUTATION==='pointer_layout') css=css.replace('.ui-tree-target { flex-basis: 100%;','.ui-tree-target {');
+    assert(/\.ui-tree-target\s*\{[^}]*flex-basis: 100%/.test(css),'pointer target hint gets its own line');
+    assert(css.includes('.tree-row:has(.ui-tree-mounted) .tree-row-actions'),'mounted editor hides overlapping actions');
     assert(/\.ui-tree-resolved\s*\{[^}]*color: var\(--ui-text-2\)/.test(css),'pointer preview is muted');
     assert(/\.ui-tree-dirty[^}]*outline: var\(--ui-bw\) dashed var\(--ui-warn-border\)/.test(css),'draft has dashed token outline');
     assert(/\.ui-tree-dirty::after[^}]*content: "draft"/.test(css),'draft has explicit marker');
@@ -241,6 +275,10 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     key('Escape');
     w.__treeCommitOnLeave=false;
     type('"OFF draft"');focus('b');await tick(140);
+    assert.equal(tree.querySelector('.ui-tree-drafts').textContent,'1 draft','header counts parked drafts');
+    tree.querySelector('.ui-tree-drafts').click();
+    assert.equal(d.activeElement.getAttribute('aria-label'),'a','draft count jumps to draft');
+    focus('b');
     assert.equal(tree._treeData.a,'line\ntext','OFF leaves uncommitted');
     assert(val('a').classList.contains('ui-tree-dirty'),'OFF draft is amber');
     w.renderJsonTree('tree',tree._treeData,{defaultDepth:1,crud:true});
@@ -378,6 +416,80 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     const cleanUnload=new fresh.window.Event('beforeunload',{cancelable:true});fresh.window.dispatchEvent(cleanUnload);
     assert(!cleanUnload.defaultPrevented,'clean tree does not prompt on unload');
     fresh.window.close();
+    w.__treeCommitOnLeave = false;w.__chipToken='draft-header-pin';
+    w.renderJsonTree('tree',{branch:{deep:{draft:1}},other:2},{defaultDepth:99,crud:true});
+    focus('branch.deep.draft');type('3');focus('other');
+    w.jsonTreeCollapseAll('tree');tree.querySelector('.ui-tree-drafts').click();
+    assert.equal(d.activeElement.getAttribute('aria-label'),'branch.deep.draft','draft header jumps into collapsed branch');
+    assert.equal(node('branch').querySelector('.tree-children').style.display,'','draft jump opens ancestors');
+    key('Escape');
+    assert.equal(tree.querySelector('.ui-tree-drafts').textContent,'0 drafts','discard updates header immediately');
+    assert(tree.querySelector('.ui-tree-drafts').hidden,'no drafts: the count is not shown');
+    w.__treeCommitOnLeave = true;
+    w.renderJsonTree('tree',{long:1234567890123,other:1},{defaultDepth:1,crud:true});
+    focus('long'); await tick(190);
+    assert.equal(d.activeElement.value,'1234567890123','editing has no thousands separators');
+    assert(parseInt(d.activeElement.style.minWidth)>=d.activeElement.value.length,'input minimum fits full content beside chip');
+    type('2345678901234'); key('Enter'); await tick();
+    assert.equal(d.activeElement.value,'2345678901234','commit echo stays ungrouped');
+    d.getElementById('pending-tray')?.remove();
+    w.doStateSync('apply'); await tick();
+    assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/state/sync').at(-1).body).get('seen_changes'),'0','missing tray fails closed with declared zero');
+    w._applyInFlight=false;
+    const syncTray=d.createElement('div');syncTray.id='pending-tray';syncTray.dataset.changeCount='1';d.body.append(syncTray);
+    let releaseSync;
+    w._pendingGridCommits=[new Promise(r=>releaseSync=r)];
+    w.doStateSync('apply');
+    syncTray.dataset.changeCount='3';
+    w._pendingGridCommits=[];releaseSync({ok:true});await tick(100);
+    assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/state/sync').at(-1).body).get('seen_changes'),'2','sync Apply declares its rendered count plus its own commit, never the refreshed tray');
+    tree.id='explorer-tree-state';
+    const toolbar=d.createElement('div');toolbar.className='tree-toolbar';
+    const searchInput=d.createElement('input');searchInput.id='explorer-search';toolbar.append(searchInput);tree.before(toolbar);
+    let typeahead=fs.readFileSync(path.join(staticDir,'sidebar-typeahead.js'),'utf8');
+    if(process.env.TREE_MUTATION==='suggestion_flow') typeahead=typeahead.replace("p.classList.toggle('sm-typeahead-tree', treeSearch);", "p.classList.toggle('sm-typeahead-tree', false);");
+    if(process.env.TREE_MUTATION==='suggestion_outside') typeahead=typeahead.replace("document.addEventListener('pointerdown'", "document.addEventListener('unused-pointerdown'");
+    w.eval(typeahead);
+    searchInput.focus();searchInput.value='lon';searchInput.setSelectionRange(3,3);searchInput.dispatchEvent(new w.Event('input',{bubbles:true}));await tick(80);
+    const suggestions=d.getElementById('sm-typeahead');
+    assert(suggestions && !suggestions.hidden,'tree typeahead opens');
+    assert(suggestions.classList.contains('sm-typeahead-tree'),'tree suggestions use flow placement so rows cannot be covered');
+    d.body.dispatchEvent(new w.MouseEvent('pointerdown',{bubbles:true,button:0}));
+    assert(suggestions.hidden,'outside pointerdown closes suggestions before click');
+    await tick(220);
+    // Auto-save: every way of leaving commits the open editor (ON default).
+    w.__treeCommitOnLeave = true; refused = false; delay = 0;
+    const edits = () => calls.filter(c => c.url === '/field/edit').length;
+    const leaveBy = async (name, fire, value) => {
+        w.renderJsonTree(tree.id,{x:1,y:2},{defaultDepth:1,crud:true});
+        focus('x'); type(value); const n = edits();
+        fire(); await tick(60);
+        assert(edits() > n, name + ' commits the open editor');
+        assert.equal(tree._treeData.x, Number(value), name + ' stores the typed value');
+    };
+    await leaveBy('window blur', () => w.dispatchEvent(new w.Event('blur')), '11');
+    let vis = 'visible';
+    Object.defineProperty(d, 'visibilityState', {configurable:true, get:() => vis});
+    await leaveBy('tab hidden', () => { vis = 'hidden'; d.dispatchEvent(new w.Event('visibilitychange')); }, '12');
+    vis = 'visible';
+    await leaveBy('pagehide', () => w.dispatchEvent(new w.Event('pagehide')), '13');
+    const navPane = d.createElement('div'); navPane.id = 'table-pane'; tree.before(navPane); navPane.append(tree);
+    await leaveBy('htmx navigation', () => d.body.dispatchEvent(new w.CustomEvent('htmx:beforeSwap',
+        {bubbles:true, cancelable:true, detail:{target:navPane, shouldSwap:true}})), '14');
+    // A refused auto-commit keeps the draft and its reason.
+    w.renderJsonTree(tree.id,{x:1,y:2},{defaultDepth:1,crud:true});
+    focus('x'); type('99'); refused = true;
+    w.dispatchEvent(new w.Event('blur')); await tick(60);
+    assert.equal(tree._treeData.x, 1, 'refused auto-commit stores nothing');
+    assert(val('x').classList.contains('ui-tree-dirty'), 'refused auto-commit keeps the draft');
+    refused = false;
+    // OFF is respected: leaving never commits.
+    w.__treeCommitOnLeave = false;
+    w.renderJsonTree(tree.id,{x:1,y:2},{defaultDepth:1,crud:true});
+    focus('x'); type('77'); const nOff = edits();
+    w.dispatchEvent(new w.Event('blur')); w.dispatchEvent(new w.Event('pagehide')); await tick(60);
+    assert.equal(edits(), nOff, 'OFF: leaving the window does not commit');
+    w.__treeCommitOnLeave = true;
     console.log('ALL OK: Stage A pins');
     w.close();
 })().catch(e=>{console.error(e);process.exitCode=1;realms.forEach(r=>r.window.close());});

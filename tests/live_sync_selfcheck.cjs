@@ -10,7 +10,7 @@
  *     (LiveSurfacePatch) reach the discovered-collection grids (wiring doc):
  *     real pair-edit.js factory instance holding a pointer cell.
  *  C. liveedit-r2-06 -- the tray Apply waits for the click-away row commit its
- *     own mousedown started, then declares the tray as it is after it.
+ *     own mousedown started, then declares the rendered view captured at the press.
  *     Real bulk-edit.js focusout + real doStateSync.
  *  D. liveedit-r2-05 -- the one-click apply asks for the same-field collision
  *     check; a collision is asked ONCE (human) or bannered (automatic), and
@@ -253,8 +253,8 @@ function discard(w, detail) {
     releaseB({ ok: true, results: [{ dot_path: DP, applied: true, display: '#/ports/analog_outputs/con1/5/3' }],
                tray_html: '<div id="pending-tray" data-change-count="2" data-change-sig="S2"></div>' });
     await sleep(60);
-    ok(S.sync.length === 1 && /seen_sig=S2(&|$)/.test(S.sync[0].body),
-       'B8 ...then declares the tray after it: ' + (S.sync[0] && S.sync[0].body));
+    ok(S.sync.length === 1 && !/seen_sig=S2/.test(S.sync[0].body) && /seen_changes=\d/.test(S.sync[0].body),
+       'B8 declares the view at the press plus its own commit, never the refreshed tray: ' + (S.sync[0] && S.sync[0].body));
 }
 
 /* ── C. r2-06: Apply waits for the row commit its own click started ──── */
@@ -286,9 +286,26 @@ function discard(w, detail) {
     await sleep(60);
     ok(S.sync.length === 1, 'C3 once it lands, exactly one apply is posted (got ' + S.sync.length + ')');
     const body = S.sync[0] ? S.sync[0].body : '';
-    ok(/seen_changes=2(&|$)/.test(body) && /seen_sig=S2(&|$)/.test(body),
-       'C4 ...declaring the tray AFTER the commit (2 edits, sig S2), so the docs/179 gate matches: ' + body);
+    ok(/seen_changes=2(&|$)/.test(body) && !/seen_sig=S2/.test(body),
+       'C4 declares the view at the press (1) plus its OWN commit (1) = 2, not the refreshed tray sig: ' + body);
     ok(S.confirms.length === 0, 'C5 no "another window" confirm');
+
+    // D2: the commit's tray also carries ANOTHER window's edit (3 rows). The
+    // press declares what its tray showed (2) plus its own commit (1) = 3,
+    // never the 4 the refreshed tray shows.
+    S.sync.length = 0;
+    const cd = cellOf(w, 'q3', 'T1');
+    cd.focus(); cd.value = '2.5e-05';
+    cd.dispatchEvent(new w.Event('input', { bubbles: true }));
+    cd.dispatchEvent(new w.FocusEvent('focusout', { bubbles: true,
+        relatedTarget: w.document.querySelector('#pending-tray') }));
+    w.doStateSync('apply');
+    release({ ok: true, results: [{ dot_path: 'qubits.q3.T1', applied: true, display: '2.5e-05' }],
+              tray_html: '<div id="pending-tray" data-change-count="4" data-change-sig="S4"></div>' });
+    await sleep(60);
+    const bd = S.sync[0] ? S.sync[0].body : '';
+    ok(S.sync.length === 1 && /seen_changes=3(&|$)/.test(bd) && !/seen_sig=S4/.test(bd),
+       'C5b D2: another window edit riding the commit tray is NOT declared as seen: ' + bd);
 
     // The commit fails: nothing is applied, and the user is told why.
     S.sync.length = 0; S.toasts.length = 0;

@@ -609,3 +609,22 @@ class TestNothingLeftToApply:
         _edit(app_client, "qubits.q1.f_01", "6.2e9")
         sig, ctx = self._sig_and_ctx(app_client)
         assert self._refusal(app_client, ctx, sig) is None
+
+
+@pytest.mark.parametrize("door", ["/state/sync", "/state/apply-to-live"])
+@pytest.mark.parametrize("seen", [0, 1])
+def test_sync_apply_declared_count_cannot_be_overridden_by_signature(app_client, door, seen):
+    """A newer signature must never grant consent for a lower declared count."""
+    from quam_state_manager.web.routes import _change_log_sig
+    _edit(app_client, "qubits.q1.f_01", "6.2e9")
+    _edit(app_client, "qubits.q2.T1", "1.9e-5")
+    ctx = app_client._app.config["contexts"][app_client._app.config["active_context"]]
+    # The HTML can be refreshed independently; the presser still declares its view.
+    sig = _change_log_sig(ctx["store"])
+    before = {name: (app_client._folder / name).read_bytes()
+              for name in ("state.json", "wiring.json")}
+    reply = app_client.post(door, data={"mode": "apply", "seen_changes": str(seen), "seen_sig": sig})
+    assert reply.status_code == 409, reply.get_data(as_text=True)
+    assert reply.json["status"] == "unseen_changes"
+    assert reply.json["paths"] == ["qubits.q1.f_01", "qubits.q2.T1"][seen:]
+    assert {name: (app_client._folder / name).read_bytes() for name in before} == before

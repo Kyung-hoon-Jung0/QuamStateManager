@@ -3514,11 +3514,19 @@ _REDO_MAX_FRAMES = 100
 _UNDO_LIVE_FILE = "undo_live.json"
 
 
+_TREE_EDIT_SETTING_VERSION = 2
+
+
 def _tree_commit_on_leave() -> bool:
-    """D-7: one machine setting; absent or malformed files default to ON."""
+    """D-7: one machine setting, default ON (auto-save). Versioned: a file
+    written before the auto-save default (no version) does not hold an
+    explicit choice against it, so it reads as the default; an OFF saved at
+    the current version is respected."""
     try:
         doc = safe_io.read_json(Path(current_app.instance_path) / "tree_edit.json", attempts=1)
-        return doc.get("commit_on_leave", True) is not False if isinstance(doc, dict) else True
+        if not isinstance(doc, dict) or doc.get("version") != _TREE_EDIT_SETTING_VERSION:
+            return True
+        return doc.get("commit_on_leave", True) is not False
     except Exception:  # A viewer setting must never prevent a page opening.
         return True
 
@@ -3534,7 +3542,10 @@ def settings_tree_edit():
     try:
         path = Path(current_app.instance_path) / "tree_edit.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        safe_io.atomic_write_json(path, {"commit_on_leave": enabled})
+        # Versioned: only a file carrying the current version is a choice made
+        # against the current default (auto-save ON). An older file is reset.
+        safe_io.atomic_write_json(path, {"commit_on_leave": enabled,
+                                         "version": _TREE_EDIT_SETTING_VERSION})
     except OSError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True, "commit_on_leave": enabled})
@@ -31616,8 +31627,11 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     Deliberately count-based rather than seq-based. A seq can run ahead for
     reasons that harm nobody (a save, another tab merely reloading), and a
     refusal that fires when the change set is identical would be noise on the
-    one button that must stay trustworthy. Absent parameter ⇒ None ⇒ byte-
+    one button that must stay trustworthy. Absent parameter => None => byte-
     identical to before, so no caller that has not opted in can be refused.
+    Every SM window's own Apply always declares (doStateSync sends "0" when
+    its tray published no count). A matching signature never overrides a
+    LOWER declared count: the count is what the presser saw.
     """
     seen_raw = request.values.get("seen_changes")
     seen_sig = (request.values.get("seen_sig") or "").strip()
@@ -31701,7 +31715,7 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                     "chip is about to be written with — another State Manager "
                     "window changed them. Applying now would write ITS edits "
                     "to the live chip.")}
-    if seen_sig:
+    if seen_sig and (seen is None or have <= seen):
         return None                      # the set matches: nothing unseen
 
     if have <= seen:

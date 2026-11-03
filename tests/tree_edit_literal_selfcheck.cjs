@@ -249,7 +249,7 @@ window.renderJsonTree('explorer-tree-state', {
        '1.11e-05 over the displayed ' + t1Shown + ' posts nothing');
     n0 = numPosts();
     const fShown = await typeInto('qubits.q1.f_01', '4500000000');
-    ok(fShown === '4,500,000,000' && numPosts() === n0,
+    ok(fShown === '4500000000' && numPosts() === n0,
        '4500000000 over the displayed ' + fShown + ' posts nothing');
     n0 = numPosts();
     await typeInto('qubits.q1.T1', '1.12e-05');
