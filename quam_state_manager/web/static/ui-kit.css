@@ -13,6 +13,8 @@
  */
 
 :root {
+    --ui-tree-value-min: 10ch;
+    --ui-tree-value-pad: .15em .35em;
     /* text */
     --ui-text: var(--pico-color);
     --ui-text-2: var(--color-text-muted);
@@ -134,6 +136,32 @@
     --ui-opxmon-number-width: 7rem;
     --ui-opxmon-lh-tile: 1.25;
 
+}
+
+/* Stage 0 parts: roving scalar editor (D-1/D-2/D-7). */
+.ui-tree-value {
+    display: inline-flex;
+    align-items: center;
+    min-width: var(--ui-tree-value-min);
+    padding: var(--ui-tree-value-pad);
+    border: var(--ui-bw) solid var(--ui-border);
+    border-radius: var(--ui-r-sm);
+    background: var(--ui-surface-0);
+    cursor: text;
+}
+.ui-tree-editor {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: none;
+    margin: 0;
+    padding: 0;
+    min-width: var(--ui-tree-value-min);
+}
+.ui-tree-dirty {
+    color: var(--ui-warn-text);
+    background: var(--ui-warn-bg);
+    border-color: var(--ui-warn-border);
 }
 
 /* K3 head ------------------------------------------------------------- */

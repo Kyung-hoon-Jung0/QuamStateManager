@@ -111,7 +111,7 @@ function openAll(win, p) {
 function valText(win, p) {
   const n = nodeAt(win, p);
   const v = n && n.querySelector(':scope > .tree-row > .tree-val');
-  return v ? v.textContent : null;
+  return v ? (v.querySelector('input') ? v.querySelector('input').value : v.textContent) : null;
 }
 function isPending(win, p) {
   const n = nodeAt(win, p);

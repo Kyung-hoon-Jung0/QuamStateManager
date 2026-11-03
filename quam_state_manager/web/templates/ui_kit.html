@@ -75,6 +75,9 @@
 <form class="ui-opxmon-settings"><fieldset><legend>Sample settings</legend><div class="ui-opxmon-grid"><label>Idle minutes <input class="ui-opxmon-input-number" type="number" value="10"></label><label class="ui-opxmon-wide">Note <textarea rows="2">Sample</textarea></label></div><p class="ui-note">Changes apply after saving.</p></fieldset></form>
 </div></div>
 </section>
+<p>Tree value: <span class="ui-tree-value" tabindex="-1">0.125</span>
+<span class="ui-tree-value"><input class="ui-tree-editor" aria-label="sample.amplitude" value="0.125"></span>
+<span class="ui-tree-value ui-tree-dirty" tabindex="-1">0.25 (uncommitted)</span></p>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

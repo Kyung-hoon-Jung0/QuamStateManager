@@ -5673,7 +5673,7 @@ window.livePushExtrasLine = function (typedPaths) {
         var bar = document.getElementById("explorer-livediff-bar");
         if (bar && !bar.hidden) return null;   // the diff overlay owns the tree
         if ((Date.now() - (window.__lastUserAct || 0)) < 2000
-                || document.querySelector(".json-tree .tree-val-editing")) {
+                || document.querySelector(".json-tree .ui-tree-dirty")) {
             _treeFollowTimer = setTimeout(followOnExplorer, 2000);
             return null;
         }
@@ -7547,6 +7547,7 @@ window.PhysAmp = (function () {
 (function () {
     function _typing() {
         var a = document.activeElement;
+        if (a && a.matches && a.matches(".ui-tree-editor")) return window.TreeInlineEdit.busy(a);
         return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                      || a.isContentEditable);
     }
@@ -9471,9 +9472,11 @@ document.addEventListener("keydown", function(evt) {
     // ignored here (real Chrome: no request, no trail, nothing). Same rule
     // as a grid cell: a DIRTY field undoes the typing (back to the committed
     // value); a CLEAN one falls through to the server tier.
+    var inTreeEditor = !!(a && a.matches && a.matches(".ui-tree-editor"));
+    if (inTreeEditor && a.value !== a.defaultValue) return; // D-15: native text history
     var inInline = !!(a && a.matches && a.matches('form.inline-edit input[name="value"]'));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
-        && !inGridCell && !inChPanel && !inInline) return;
+        && !inGridCell && !inChPanel && !inInline && !inTreeEditor) return;
     // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
     // and used to fill the queue in under a second, then keep undoing for
     // seconds after the key was released. The repeats are ignored; the user
@@ -11126,8 +11129,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                     };
                 })(valEl);
             } else {
-                valEl.title = _isPointer(shown) ? "Pointer \u2014 click to edit" : "Click to edit";
-                valEl.style.cursor = "pointer";
+                valEl.title = "Type to edit; Enter commits; Escape reverts";
+                valEl.classList.add("ui-tree-value");
+                valEl.tabIndex = -1;
                 (function(el, p) {
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
                 })(valEl, path);
@@ -11463,6 +11467,7 @@ window.clearDetailPanelSearch = function(btnEl) {
      * from BEFORE the edit (real-Chrome check, 2026-08-28). Dot-form numeric
      * segments index lists, exactly as _buildFlatIndex walks them. */
     function _treeModelSet(container, dotPath, value) {
+        if (container) container._peekCache = null;
         if (!container || container._treeData == null || !dotPath) return false;
         var segs = String(dotPath).split(".");
         var cur = container._treeData;
@@ -11505,7 +11510,7 @@ window.clearDetailPanelSearch = function(btnEl) {
      * value and the type colour class. An inline commit's echo, a revert and
      * a batch's other rows all paint through it, so the three cannot drift. */
     function _paintLeafEl(el, v) {
-        el.textContent = _formatValue(v);
+        _treeValueDisplay(el, _formatValue(v));
         el.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
         el.className = el.className
             .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
@@ -12040,9 +12045,112 @@ window.clearDetailPanelSearch = function(btnEl) {
        promise for every write still in flight -- or null when there is none,
        so a caller with nothing to wait for stays synchronous. */
     var _inflightEdits = new Set();
+    // D-2/D-3: one mounted editor per tree. The write transport below retains
+    // the existing parser and server offers; focus never creates a write door.
+    function _treeValueDisplay(el, text) {
+        el._treeDisplay = text;
+        if (!el.querySelector(".ui-tree-editor")) el.textContent = text;
+    }
+    function _treeLiteral(el) {
+        var v = el.dataset.editVal;
+        return el.classList.contains("tree-val-string") || el.classList.contains("tree-val-pointer")
+            ? JSON.stringify(String(v)) : String(v);
+    }
+    function _makeValueEditable(el, path) {
+        var tree = el.closest(".json-tree");
+        if (!tree) return;
+        if (tree._editor && tree._editor.el === el) {
+            tree._editor.input.focus();
+            return;
+        }
+        if (tree._editor) tree._editor.leave();
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "tree-edit-input ui-tree-editor";
+        input.autocomplete = "off";
+        input.tabIndex = -1;
+        input.setAttribute("role", "textbox");
+        input.setAttribute("aria-label", path);
+        input.value = input.defaultValue = _treeLiteral(el);
+        el._treeDisplay = el.textContent;
+        el.textContent = "";
+        el.appendChild(input);
+        var state = { el: el, input: input, path: path, pending: null };
+        tree._editor = state;
+        function dirty() {
+            var changed = input.value !== input.defaultValue;
+            el.classList.toggle("ui-tree-dirty", changed);
+            el.classList.toggle("tree-val-editing", changed);
+            input.size = Math.max(10, input.value.length + 2);
+        }
+        function flush() {
+            if (state.pending) return state.pending.then(flush);
+            if (input.value === input.defaultValue) return null;
+            var sent = input.value;
+            var p = _writeTreeValue(el, path, sent).then(function () {
+                // D-8: keys typed while the request was in flight belong to
+                // the next edit; never replace them with the server echo.
+                input.defaultValue = _treeLiteral(el);
+                if (input.value === sent) input.value = input.defaultValue;
+                dirty();
+            });
+            state.pending = p;
+            _inflightEdits.add(p);
+            return p.then(function () {
+                state.pending = null;
+                _inflightEdits.delete(p);
+                if (tree._editor !== state && input.value !== input.defaultValue) return flush();
+            });
+        }
+        state.leave = function () {
+            flush();
+            input.remove();
+            el.textContent = el._treeDisplay;
+            if (tree._editor === state) tree._editor = null;
+        };
+        el._flushEdit = flush;
+        input.addEventListener("input", dirty);
+        input.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape") state.escaped = false;
+            if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); flush(); }
+            if (e.key === "Escape") {
+                e.preventDefault(); e.stopPropagation();
+                if (state.escaped && input.value === input.defaultValue) {
+                    _treeExit(tree);
+                    return;
+                }
+                input.value = input.defaultValue;
+                dirty();
+                state.escaped = true;
+            }
+        });
+        input.addEventListener("blur", function () {
+            setTimeout(function () {
+                if (tree._editor === state && document.activeElement !== input) state.leave();
+            }, 100);
+        });
+        // D-19: memoise by path until a mutation, never fetch on each visit.
+        var cache = tree._peekCache || (tree._peekCache = new Map());
+        if (!cache.has(path)) cache.set(path, fetch("/field/peek?dot_path=" + encodeURIComponent(path))
+            .then(function (r) { return r.json(); }).catch(function () { return {}; }));
+        cache.get(path).then(function (d) {
+            var expected = d.expected && d.expected[path];
+            if (!expected || tree._editor !== state) return;
+            var chip = document.createElement("span");
+            chip.className = "tree-type-chip";
+            chip.textContent = expected.type + " · " + expected.source;
+            el.appendChild(chip);
+        });
+        dirty();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+    }
     window.TreeInlineEdit = {
+        busy: function (input) {
+            return input.value !== input.defaultValue || input.selectionStart !== input.selectionEnd;
+        },
         settle: function (root) {
-            var eds = (root || document).querySelectorAll(".tree-val-editing");
+            var eds = (root || document).querySelectorAll(".ui-tree-value:has(input)");
             for (var i = 0; i < eds.length; i++) {
                 if (typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
             }
@@ -12084,9 +12192,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             : "Unexpected reply from the app — reload the page to see the stored value.";
     }
 
-    function _makeValueEditable(valEl, dotPath) {
-        if (valEl.querySelector("input")) return; // already editing
-        var currentDisplay = valEl.textContent;
+    function _writeTreeValue(valEl, dotPath, typed) {
+        var currentDisplay = valEl._treeDisplay === undefined ? valEl.textContent : valEl._treeDisplay;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
         // docs/145 (customer): a string edits AS ITS JSON LITERAL -- the file
@@ -12099,35 +12206,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                         || valEl.classList.contains("tree-val-pointer");
         var shownVal = isStringKind ? JSON.stringify(String(editVal)) : editVal;
 
-        var input = document.createElement("input");
-        input.type = "text";
-        input.autocomplete = "off";     // never a target of Back's form restore
-        input.className = "tree-edit-input";
-        input.defaultValue = shownVal;  // R3 MINOR 5: what "typed, not committed" compares to
-        input.value = shownVal;
-        input.size = Math.max(10, shownVal.length + 2);
-
-        valEl.textContent = "";
-        valEl.appendChild(input);
-        valEl.classList.add("tree-val-editing");
-        input.focus();
-        input.select();
-
-        // expected-type chip (env schema / user assignment / inference) —
-        // fetched on editor open only, never per keystroke
-        fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                var e = d.expected && d.expected[dotPath];
-                if (!e || !valEl.contains(input)) return;
-                var chip = document.createElement("span");
-                chip.className = "tree-type-chip";
-                chip.textContent = e.type + " · " + e.source;
-                chip.title = (e.class_path ? e.class_path + "." + e.field + " — " : "") +
-                             (e.detail || "");
-                valEl.appendChild(chip);
-            }).catch(function () {});
-
+        var input = { value: typed };
+        function cancel() {}
         var committed = false;
         var _myP = null;   // jsontree-r2-17: this editor's in-flight write
 
@@ -12195,10 +12275,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             }
             committed = true;
-            var refocus = document.activeElement === input;   // QA JT-20
-            valEl.textContent = currentDisplay;
-            valEl.classList.remove("tree-val-editing");
-            if (refocus) _kbRefocusRow(valEl);
+
 
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
@@ -12226,10 +12303,11 @@ window.clearDetailPanelSearch = function(btnEl) {
             .then(function handleData(data) {
                 if (!data.ok && data.fsp_compensation) {
                     // r12-B: never silent — the compensation offer first.
+                    return new Promise(function (resolve, reject) {
                     window._openFspPopup(data.fsp_compensation, function(mode, plan) {
-                        if (mode === "cancel") return;   // nothing committed
+                        if (mode === "cancel") { resolve(); return; }   // nothing committed
                         if (mode === "solo") {
-                            _post({fsp_ack: "solo"}).then(handleData);
+                            _post({fsp_ack: "solo"}).then(handleData).then(resolve, reject);
                             return;
                         }
                         fetch("/field/edit-batch", {
@@ -12268,9 +12346,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                                 if (bad) bd.error = bad.dot_path + ": " + bad.error;
                             }
                             return handleData(bd);
-                          });
+                          }).then(resolve, reject);
                     });
-                    return;
+                    });
                 }
                 if (!data.ok && data.type_fix) {
                     // r14 ⑩: the field is stored as TEXT ("0.13") — the legacy
@@ -12306,7 +12384,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (data.stored_kind !== undefined) {
                     _paintLeafEl(valEl, data.stored);
                 } else {
-                    valEl.textContent = newVal;
+                    _treeValueDisplay(valEl, newVal);
                     valEl.dataset.editVal = newVal;
                 }
                 _treeModelSet(valEl.closest ? valEl.closest(".json-tree") : null, dotPath,
@@ -12345,8 +12423,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             })
             .catch(function(e) {
-                valEl.textContent = currentDisplay;
-                valEl.classList.remove("tree-val-editing");
+                _treeValueDisplay(valEl, currentDisplay);
+
                 valEl.classList.add("tree-val-error");   // jsontree-r2-18: never silent
                 setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                 _showEditError(valEl, _netFail(e));
@@ -12356,27 +12434,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             _p.then(function () { _inflightEdits.delete(_p); });
             return _p;
         }
-        valEl._flushEdit = commit;
-
-        function cancel() {
-            if (committed) return;
-            committed = true;
-            var refocus = document.activeElement === input;   // QA JT-20
-            valEl.textContent = currentDisplay;
-            valEl.classList.remove("tree-val-editing");
-            if (refocus) _kbRefocusRow(valEl);
-        }
-
-        input.addEventListener("keydown", function(e) {
-            if (e.key === "Enter")  { e.preventDefault(); commit(); }
-            if (e.key === "Escape") { cancel(); }
-        });
-        // Tab / click-away / focus-loss COMMITS (like Enter), instead of the old
-        // discard-on-blur. Escape still cancels (it sets `committed` first, so this
-        // blur→commit is a no-op after it), and an unchanged value is a no-op via
-        // the guard in commit(). The 100ms defer lets an Escape keydown win the race.
-        input.addEventListener("blur", function() { setTimeout(commit, 100); });
+        return commit();
     }
+
 
     // ── Copy a key's value → paste into an EMPTY same-key field elsewhere ──────
     // Double-clicking a key copies its value here; every empty field with the same
@@ -12868,6 +12928,30 @@ window.clearDetailPanelSearch = function(btnEl) {
         var r = node && node.querySelector(":scope > .tree-row");
         if (r) r.focus();
     }
+    function _treeExit(tree) {
+        var controls = document.querySelectorAll('a[href],button,input,select,textarea,[tabindex="0"]');
+        for (var i = 0; i < controls.length; i++) {
+            var c = controls[i];
+            if (!tree.contains(c) && !c.disabled && !c.closest('[hidden]') && c.tabIndex >= 0
+                    && (tree.compareDocumentPosition(c) & 4)) {
+                c.focus();
+                return;
+            }
+        }
+        tree.blur();
+    }
+    // D-5: value navigation reuses the structural walk, expanding only the
+    // branch being entered. No scan of every rendered leaf on each key.
+    function _kbValueMove(node, dir, editableOnly) {
+        for (var n = dir > 0 ? _kbNext(node) : _kbPrev(node); n;
+                n = dir > 0 ? _kbNext(n) : _kbPrev(n)) {
+            var ch = n.querySelector(':scope > .tree-children');
+            if (ch && ch.style.display === "none") _toggleNode(n);
+            var v = n.querySelector(':scope > .tree-row > .tree-val');
+            if (v && (!editableOnly || v.classList.contains("ui-tree-value"))) return n;
+        }
+        return null;
+    }
     function _kbCollapse(node) {
         var ch = node.querySelector(":scope > .tree-children");
         var tg = node.querySelector(":scope > .tree-row > .tree-toggle");
@@ -12900,6 +12984,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (e.target !== container) container.tabIndex = -1;
             if (e.target && e.target.classList && e.target.classList.contains("tree-row")) {
                 container._kbRow = e.target;
+                var v = e.target.querySelector(":scope > .ui-tree-value");
+                if (v) _makeValueEditable(v, e.target.parentElement.dataset.path);
             }
         });
         container.addEventListener("focusout", function (e) {
@@ -12914,14 +13000,23 @@ window.clearDetailPanelSearch = function(btnEl) {
             _kbFocus(node && _kbReachable(node) ? node : _kbEnds(container, false));
         });
         container.addEventListener("keydown", function (e) {
-            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            if (e.ctrlKey || e.metaKey) return;
             var t = e.target;
+            var inValue = t && t.classList && t.classList.contains("ui-tree-editor");
+            if (inValue && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight"
+                    || e.key === "Home" || e.key === "End")) return;
+            if (e.altKey && e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            if (inValue) t = t.closest(".tree-row");
             var onRow = !!(t && t.classList && t.classList.contains("tree-row")
                            && t.parentElement && t.parentElement.classList.contains("tree-node"));
             if (!onRow && t !== container) return;       // an editor, a button, ...
             var node = onRow ? t.parentElement : null;
             var k = e.key, to = null;
-            if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
+            if (node && (k === "Tab" || (inValue && (k === "ArrowDown" || k === "ArrowUp")))) {
+                to = _kbValueMove(node, k === "ArrowUp" || (k === "Tab" && e.shiftKey) ? -1 : 1, k === "Tab");
+                if (!to && k === "Tab") { e.preventDefault(); _treeExit(container); return; }
+            }
+            else if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
             else if (k === "End" || (!node && k === "ArrowUp")) to = _kbEnds(container, true);
             else if (!node) return;
             else if (k === "ArrowDown") to = _kbNext(node);
