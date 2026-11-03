@@ -13966,6 +13966,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
     # Never ``uid`` (that one names a WRITER); a surface that opens it says,
     # on the opened run, that the run is not proven to have measured it.
     saved_uid = None
+    first_uid = None
     if prov == "run_proven":
         label = f"{run} {exp}".strip()
         title = (f"Run {run} ({exp}) wrote this value: its node.json records the patch "
@@ -14003,6 +14004,15 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         title = (f"The change ledger begins at run {run}; the value was already set then. "
                  f"Who set it is not recorded.")
         trigger = "auto"
+        # the run whose saved state the ledger starts with: a Trends point
+        # opens it like a run_saved one (?via=saved -- it carried the value,
+        # not proven to set it). Its own key: the drawers' links stay the
+        # writer's and the first saver's only.
+        if "source_gone" not in p["flags"] and rid is not None:
+            key = folder or ""
+            if key not in uid_memo:
+                uid_memo[key] = _uid_for_run_ref(folder, rid, uid_roots)
+            first_uid = uid_memo[key]
     elif prov == "run_uncertain_chip":
         label = f"{run} (chip uncertain)"
         sub = "not named as writer"
@@ -14088,7 +14098,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
             "link_title": link_title, "flag_text": flags, "display": display,
-            "fill": fill, "usable": usable, "saved_uid": saved_uid}
+            "fill": fill, "usable": usable, "saved_uid": saved_uid, "first_uid": first_uid}
 
 
 def _vh_wait_message(ans: dict) -> str:
@@ -14287,7 +14297,18 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
             return None
         return f"{v * spec['scale']:.9g} {spec['unit']}"
 
+    def scaled(v: Any) -> Any:
+        if (spec is None or isinstance(v, bool) or not isinstance(v, (int, float))
+                or not math.isfinite(v)):
+            return v
+        return float(f"{v * spec['scale']:.12g}")
+
     for pt in pts:
+        # T5: the change beside a value is in the value's own unit ("+26.5 us",
+        # never "+2.65e-05" beside "30 us")
+        if pt.get("has_prev"):
+            pt["delta_old"], pt["delta_new"] = scaled(pt.get("prev_value")), scaled(pt.get("value"))
+            pt["delta_unit"] = spec["unit"] if spec else ""
         if pt.get("removed") or pt.get("via_holder") or pt.get("retarget"):
             continue
         shown = in_unit(pt.get("value"))
@@ -19118,6 +19139,37 @@ def _trend_unit(metric: str) -> str:
     return ""
 
 
+def _trend_display_unit(metric: str) -> tuple[str, float]:
+    """``(unit, scale)`` a Trends chart draws *metric* in: the FIXED unit the
+    inspector, the qubit table and the value drawer show that field in
+    (``core.units.display_spec``: T1 / T2 in us, f_01 in GHz), so one
+    quantity reads in one unit on every surface; ``shown = stored * scale``.
+    A field with no known display unit keeps the grid's stored-unit label
+    (:func:`_trend_unit`) at scale 1."""
+    from quam_state_manager.core import units as _units
+    spec = _units.display_spec(str(metric or "").replace("*", "x"))
+    if spec and spec.get("unit"):
+        return spec["unit"], float(spec["scale"])
+    if _trend_is_fraction_fidelity(metric):
+        # a fidelity is stored as a fraction (0.976) and read as a percent
+        # (97.6 %) on every other Chip Status surface
+        return "%", 100.0
+    return _trend_unit(metric), 1.0
+
+
+def _trend_is_fraction_fidelity(metric: str) -> bool:
+    """A Trends metric whose value is a fidelity stored as a fraction: the
+    curated 1Q gate / readout fidelities, and a pair family whose leaf is a
+    fidelity (never a decay base, an error or a run id)."""
+    m = str(metric or "")
+    if m.startswith("gate_fidelity_") or m in _TREND_LABEL_OVERRIDES:
+        return True
+    try:
+        return _trend_leaf_kind(m) == "fidelity"
+    except Exception:  # noqa: BLE001 -- an unknown spelling keeps its stored unit
+        return False
+
+
 def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[dict]:
     """The SQLite property index — one call returns EVERY qubit for a metric.
 
@@ -19159,6 +19211,7 @@ def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[di
                 row["held"] = {p["timestamp"]: p["held"] for p in r["values"] if p.get("held")}
                 # what each point says about who set it (S7's words)
                 row["attr"] = dict(r.get("_attrs") or {})
+                _trend_witness_fields(row, r.get("left_out"), r.get("now"))
             # S10 C5: row["leaf"] (read only by the deleted per-point writer check) -> gone
             out.append(row)
     return out
@@ -19295,6 +19348,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                     ser["held"] = held
                 if ledger:
                     ser["attr"] = dict(tbl.attrs.get(dp) or {})
+                    _trend_witness_fields(ser, tbl.left_out.get(dp), tbl.now_values.get(dp))
                 out.append(ser)
         return out
     # Not entity-scoped (a port, a top-level key) — one line, and the path
@@ -19309,8 +19363,28 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                "kind": "", "points": pts}
         if ledger:
             ser["attr"] = dict(tbl.attrs.get(dot_path) or {})
+            _trend_witness_fields(ser, tbl.left_out.get(dot_path), tbl.now_values.get(dot_path))
         out.append(ser)
     return out
+
+
+def _trend_witness_fields(ser: dict, left_out, now) -> None:
+    """What a trend line shows beside its in-force values (only when there
+    is something to show, so a plain series ships as before):
+
+    * ``left_out`` -- each run value the witness rule keeps out of the line
+      (``hub_status.left_out``), drawn as a hollow marker OFF the line:
+      ``[key, value, run id, why, who, held value, now?]``;
+    * ``now`` -- the chip's value now, when it is not the line's last value
+      (``LedgerTable.now_unlike``): the held line must not read as current.
+    """
+    rows = [[d["k"], d["v"], d.get("run"), d["why"], d["who"], d.get("held"),
+             1 if d.get("now") else 0, d.get("uid"), d.get("saved_uid")]
+            for d in (left_out or ()) if d.get("k")]
+    if rows:
+        ser["left_out"] = rows
+    if now is not None:
+        ser["now"] = now
 
 
 # The family grouping is done IN SQL (`leaf_index.path_families`), never by
@@ -19942,6 +20016,18 @@ _TREND_LABEL_OVERRIDES: dict[str, str] = {
 }
 
 
+def _trend_axis_title(metric: str | None) -> str:
+    """A Trends chart's y-axis title: the metric's human name (the pill's
+    words); a parameter path with no name of its own reads as its last
+    segments with spaces, never as the raw dotted key."""
+    m = str(metric or "")
+    lab = _trend_metric_label(m)
+    if lab and lab != m:
+        return lab
+    segs = [s for s in m.replace("*.", "").split(".") if s and not s.isdigit()]
+    return " ".join(s.replace("_", " ") for s in segs[-2:]) if segs else m
+
+
 def _trend_metric_label(metric: str | None) -> str:
     """What a CURATED metric is called on this page — the same string the pill
     and the chart title carry, so a message about a chart names the chart."""
@@ -20232,9 +20318,12 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         by_metric[key].append(s)
 
     def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
+        unit, scale = _trend_display_unit(metric)
         return {"metric": metric, "kind": kind, "series": rows,
-                "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": _trend_unit(metric),
+                "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": unit,
+                "scale": scale,
                 "label": _trend_pair_label(metric) if kind == "pair" else "",
+                "ytitle": _trend_axis_title(metric) if kind != "pair" else "",
                 "typed": typed}
 
     charts = [_chart(m, k, by_metric[(m, k)]) for (m, k) in order]
@@ -20301,6 +20390,9 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     for c in charts:
         if c.get("kind") == "pair" and c["metric"] in _pair_labels:
             c["label"] = _pair_labels[c["metric"]]
+        if c.get("kind") == "pair":
+            # the y axis says what the chart title says, never the raw key
+            c["ytitle"] = c.get("label") or _trend_axis_title(c["metric"])
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.
@@ -20520,6 +20612,20 @@ def _hub_metric_meta(table) -> dict:
                  # named only on proof (docs/283 §1.2)
                  "run": best["run_id"] if proven else None,
                  "writer": {"run": best["run_id"], "uid": info["uid"]} if proven else None}
+        if not matches and len(paths) == 1:
+            # T3: the value now IS in the ledger when an earlier event recorded
+            # it (an older state loaded, a value put back by hand): say where,
+            # never "not in history"
+            dp = paths[0]
+            cur = vh.comparable(ans["targets"][dp])
+            for p in reversed(rows[dp].get("points") or rows[dp]["effective"]):
+                if p.get("removed") or p["ord"] >= rows[dp]["effective"][-1]["ord"]:
+                    continue
+                if cur is not vh.ABSENT and _vh_same(cur, p["value"]):
+                    seen = _vh_present(p, table.roots, table.uid_memo, now=table._now)
+                    entry["current_at"] = {"ts": p["t"], "run": p.get("run_id"),
+                                           "label": seen["label"]}
+                    break
         if len(paths) == 1 and not best["removed"]:
             value = best["value"]
             if isinstance(value, float) and not math.isfinite(value):
@@ -39100,10 +39206,22 @@ def param_history():
         return wait(hub_answer)
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
+        window_note = None
         if none_props or none_qubits or none_triggers:
             rows = []
         else:
             rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)
+            if ("since" not in request.args and since is not None
+                    and not any(not v.get("held") for r in rows for v in r["values"])
+                    and (hub_answer.get("ledger") or {}).get("events")):
+                # T6: the DEFAULT window (the last 7 days) holds no recorded
+                # change while the ledger has events: a page reading "0
+                # recorded changes shown" until All is pressed looked empty.
+                # The default view shows them all and says why.
+                rows = _hub_grid_rows(hub_table, props, qubit_filter, None, until, triggers)
+                since_raw = "all"
+                window_note = ("No change was recorded in the last 7 days, so every recorded "
+                               "change is shown. Pick a range under Date to narrow it.")
     except _ramcache.Warming:
         return wait(_hub_waiting(hub_table, "param_history_grid"))
     except LedgerUnreadable:
@@ -39284,6 +39402,7 @@ def param_history():
                 [] if is_loaded_chip else _archive_ledger_notes(hm, target_path, hub_answer["ledger"])),
             hub_mode="ledger",
             since=since_raw,
+            window_note=window_note,
             triggers_filter=raw_triggers,
             none_triggers=none_triggers,
             only_changed=only_changed,
@@ -39721,6 +39840,35 @@ def _hub_param_changes(table, data: dict | None = None) -> tuple[str, int]:
     return html, 200
 
 
+def _changes_live_doubts(table, events, low: str, shown_n: int) -> dict:
+    """T4: ``{(eid, path): verdict}`` for the rows of a Changes page whose
+    stored verdict is ``open`` (the newest change of a path, no later event
+    has read the chip yet) -- decided by the chip's value now where SM knows
+    it (``routes._vh_live``) through ``hub_witness.live_tail``, the one rule
+    Trends and the value drawer already apply. ``None`` = confirmed (no
+    doubt to show). A path whose value now SM does not know stays open."""
+    from quam_state_manager.core import hub_rules, hub_witness
+    want = {}
+    for ev in events:
+        for c in [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)][:shown_n]:
+            if c.get("doubt") == hub_witness.OPEN and c["op"] != "gone":
+                want[(ev["eid"], c["path"])] = c["new"]
+    if not want or getattr(table, "_live", None) is None:
+        return {}
+    try:
+        paths = sorted({p for _e, p in want})
+        live = table._live(table.ctx, {p: table.target(p) for p in paths}) or {}
+    except Exception:  # noqa: BLE001 -- the chip's value is not known: the rows stay open
+        logger.debug("changes live tail failed", exc_info=True)
+        return {}
+    out = {}
+    for (eid, path), new in want.items():
+        if path in live:
+            code = hub_witness.live_tail(hub_witness.OPEN, new, live[path], hub_rules.same)
+            out[(eid, path)] = None if code == hub_witness.CONFIRMED else code
+    return out
+
+
 def _hub_param_changes_data(table) -> dict:
     """What the ledger page of :func:`param_history_changes` lists:
     ``{"bad": (message, status)}`` for an invalid page reference, else the
@@ -39772,6 +39920,7 @@ def _hub_param_changes_data(table) -> dict:
                          if low_ in path.lower()} if prefix else {})
     low = prefix.lower()
     shown_n = _CHANGES_ROWS_AT if at else _CHANGES_ROWS
+    live_doubt = _changes_live_doubts(table, events, low, shown_n)
     groups = []
     for ev in events:
         changes = [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)]
@@ -39799,7 +39948,10 @@ def _hub_param_changes_data(table) -> dict:
                          "proven": pt["provenance"] == "run_proven",
                          "who": info["sub"] if ev.get("kind") == "run" else "",
                          # P0-1: a change not confirmed on the chip is never a plain change
-                         "doubt": _VH_WITNESS_TEXT.get(c.get("doubt") or ""),
+                         # (T4: the newest one decided by the chip's value now, as
+                         # Trends and the value drawer decide it)
+                         "doubt": _VH_WITNESS_TEXT.get(
+                             live_doubt.get((ev["eid"], c["path"]), c.get("doubt")) or ""),
                          "undone": bool(pt["undone"])})
         head = vh._point(ev, None, None, "set", False, roots, sm)
         info = _vh_present(head, table.roots, table.uid_memo)
@@ -39897,7 +40049,11 @@ def _pending_decisions_for(loaded_path: Path) -> list[dict[str, Any]]:
         state = _backfill_state.get(key)
     if not state:
         return []
-    return list(state.get("pending_decisions", []) or [])
+    from quam_state_manager.core.history import _DATE_PATTERN
+    # T6: a date folder is never a chip label (a backfill state kept from
+    # before that rule may still list one)
+    return [d for d in (state.get("pending_decisions", []) or [])
+            if not _DATE_PATTERN.match(str(d.get("data_folder") or ""))]
 
 
 def _last_backfill_failures(loaded_path: Path) -> tuple[list[dict[str, Any]], int]:
@@ -40416,7 +40572,9 @@ def _fold_ledger_times(topo, times):
     if not (times["q"] or times["p"]):
         return topo
 
-    def fold(rec, t_us):
+    runs = times.get("runs") or {}
+
+    def fold(rec, t_us, run=None):
         stamp = rec.get("last_calibrated")
         ms = int(t_us // 1000) if isinstance(t_us, (int, float)) else None
         if ms is None and stamp is None:
@@ -40424,6 +40582,9 @@ def _fold_ledger_times(topo, times):
         out = dict(rec)
         if ms is not None:
             out["last_run_change"] = ms
+            if run:
+                # T4: the run whose saved state the age comes from (a tooltip names it)
+                out["last_run_change_run"] = run
         if ms is not None and (stamp is None or ms > stamp):
             out["last_calibrated"], out["last_calibrated_from"] = ms, "run"
         else:
@@ -40431,8 +40592,10 @@ def _fold_ledger_times(topo, times):
         return out
 
     out = dict(topo)
-    out["nodes"] = [fold(n, times["q"].get(str(n.get("id")))) for n in topo.get("nodes") or []]
-    out["edges"] = [fold(e, times["p"].get(str(e.get("pair_id")))) for e in topo.get("edges") or []]
+    out["nodes"] = [fold(n, times["q"].get(str(n.get("id"))), (runs.get("q") or {}).get(str(n.get("id"))))
+                    for n in topo.get("nodes") or []]
+    out["edges"] = [fold(e, times["p"].get(str(e.get("pair_id"))), (runs.get("p") or {}).get(str(e.get("pair_id"))))
+                    for e in topo.get("edges") or []]
     cal = [r["last_calibrated"] for r in out["nodes"] + out["edges"] if r.get("last_calibrated")]
     if isinstance(topo.get("summary"), dict):
         out["summary"] = dict(topo["summary"], oldest_calibration=min(cal) if cal else None,

@@ -32,6 +32,10 @@
  *     table_first  -- R4-TP-1: on Pulses with no choice the table keeps 35 %, a
  *                     remembered choice wins, and the clicked row is scrolled
  *                     back into the shrunken pane
+ *     trend_chart  -- fix/trends-stress T7: a run opened from a trend chart's
+ *                     point leaves the table pane room for the whole chart and
+ *                     scrolls it into view (SM's own move: the user's choice
+ *                     is untouched); a run opened any other way is unchanged
  * Driven by tests/test_split_arrows.py.
  */
 'use strict';
@@ -460,6 +464,43 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const bad = await boot({ storage: { quam_split_user: '"sideways"' } });
     bad.swap('inspector-pane', QUBIT);
     eq(bad.sizes(), SPLIT.expandedSizes, 'an unreadable stored choice falls back to the default');
+} else if (mode === 'trend_chart') {
+    const TRENDS = '<div class="topo-trends-grid"><div class="topo-trend-box" id="box-a">'
+        + '<div class="topo-trend-chart" id="chart-a"></div></div></div>';
+    const s = await boot();
+    s.d.getElementById('table-pane').innerHTML = TRENDS;
+    const pane = s.d.getElementById('table-pane'), ins = s.d.getElementById('inspector-pane');
+    const box = s.d.getElementById('box-a');
+    pane.getBoundingClientRect = () => ({ top: 60, bottom: 260, height: 200 });
+    ins.getBoundingClientRect = () => ({ top: 286, bottom: 886, height: 600 });
+    box.getBoundingClientRect = () => ({ top: 300, bottom: 624, height: 324 });
+    let scrolled = [];
+    box.scrollIntoView = (o) => { scrolled.push(o && o.block); };
+    assert.equal(typeof s.w.__smKeepChartInView, 'function', 'the chart hook is published');
+    s.w.__smKeepChartInView(s.d.getElementById('chart-a'));
+    s.swap('inspector-pane', RUN);
+    const got = s.sizes();
+    assert.ok(got[0] >= Math.ceil((324 + 24) / 800 * 100) && got[0] <= 70,
+              'the table pane keeps room for the whole chart: ' + JSON.stringify(got));
+    assert.equal(s.user(), null, 'SM\'s move is not the user\'s choice');
+    await new Promise(r => setTimeout(r, 50));
+    assert.deepEqual(scrolled, ['start'], 'the clicked chart is scrolled into view');
+    // a run opened any other way: the run default, nothing scrolled
+    const t = await boot();
+    t.d.getElementById('table-pane').innerHTML = TRENDS;
+    t.swap('inspector-pane', RUN);
+    eq(t.sizes(), SPLIT.datasetExpandedSizes, 'a run opened elsewhere keeps the run position');
+    // a remembered choice that already leaves room wins
+    const u = await boot({ storage: { quam_split_user: '[60,40]' } });
+    u.d.getElementById('table-pane').innerHTML = TRENDS;
+    const b2 = u.d.getElementById('box-a');
+    u.d.getElementById('table-pane').getBoundingClientRect = () => ({ height: 480 });
+    u.d.getElementById('inspector-pane').getBoundingClientRect = () => ({ height: 320 });
+    b2.getBoundingClientRect = () => ({ top: 100, bottom: 424, height: 324 });
+    b2.scrollIntoView = () => {};
+    u.w.__smKeepChartInView(b2);
+    u.swap('inspector-pane', RUN);
+    eq(u.sizes(), [60, 40], 'a remembered choice with room enough is kept');
 } else if (mode === 'table_first') {
     const PULSES = '<span id="pulses-total"></span><table><tr id="row-a"><td>x90</td></tr></table>';
     const s = await boot();

@@ -6912,6 +6912,12 @@ class HistoryManager:
         aligned_by_folder: dict[str, list[Any]] = {}
         for e in scan["aligned"]:
             df = _data_folder_name(getattr(e, "quam_state_path", "")) or "(unknown)"
+            if _DATE_PATTERN.match(df):
+                # T6: runs saved straight under ``data/<date>/`` carry no chip
+                # label -- the folder after ``data`` is a DATE, not a name
+                # another chip could have. Asking "same chip?" per day beside
+                # "all N experiments are for this chip" contradicted itself.
+                df = "(unknown)"
             aligned_by_folder.setdefault(df, []).append(e)
 
         # An aligned entry is ingestable iff:

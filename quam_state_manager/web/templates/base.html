@@ -1984,7 +1984,7 @@
                 // click fires both an inspector-pane swap (dataset detail) and
                 // a table-pane swap (/workspace/select) at once; whichever
                 // lands last must still leave the inspector at that height.
-                applySizes(openSizes());
+                applySizes(fitClickedChart(openSizes()));
                 keepClickedRowInView();
             } else if (tid === "table-pane") {
                 initSplit();
@@ -1994,20 +1994,50 @@
         // R4-TP-1: the row whose click opened the inspector stays on screen
         // after the split moves (on Pulses the table sits under the chip map,
         // so the shrunken pane used to show the map and no row at all).
+        // T7 (fix/trends-stress): ...and so does a TREND CHART whose point
+        // opened a run: the run opens in the inspector, the chart keeps room
+        // for its whole height and stays in view (it was squeezed off screen,
+        // so the next point could not be clicked).
+        var CHART_SEL = "#table-pane .topo-trend-box, #table-pane .trend-chart-box";
         var clickedRow = null;
         scope.listen(document, "click", function(e) {
-            var r = e.target && e.target.closest ? e.target.closest("#table-pane tr") : null;
+            var t = e.target && e.target.closest ? e.target : null;
+            var r = t ? (t.closest(CHART_SEL) || t.closest("#table-pane tr")) : null;
             if (r) clickedRow = r;
         }, true);
+        // Plotly's point click is not a DOM click on the chart element in
+        // every browser (it can land on its drag layer, which is inside the
+        // chart too) -- so it is named here as well.
+        window.__smKeepChartInView = function(el) {
+            var box = el && el.closest ? el.closest(CHART_SEL) : null;
+            if (box) clickedRow = box;
+        };
+        // The split SM opens the run at, widened so the clicked chart's box
+        // fits in the table pane (SM's own move: never the user's choice).
+        function fitClickedChart(sizes) {
+            var box = clickedRow;
+            if (!box || !box.matches || !box.matches(CHART_SEL)) return sizes;
+            var pane = document.getElementById("table-pane");
+            var ins = document.getElementById("inspector-pane");
+            if (!pane || !ins) return sizes;
+            var total = pane.getBoundingClientRect().height + ins.getBoundingClientRect().height;
+            var need = box.getBoundingClientRect().height + 24;
+            if (!(total > 0) || !(need > 0)) return sizes;
+            var top = Math.min(70, Math.ceil(need / total * 100));
+            if (top <= Number(sizes[0])) return sizes;
+            return [top, 100 - top];
+        }
+        window.__smFitClickedChart = fitClickedChart;   // (selfcheck)
         function keepClickedRowInView() {
             var r = clickedRow;
             clickedRow = null;
             if (!r) return;
+            var chart = r.matches && r.matches(CHART_SEL);
             requestAnimationFrame(function() {
                 var pane = document.getElementById("table-pane");
                 if (!r.isConnected || !pane) return;
                 var p = pane.getBoundingClientRect(), b = r.getBoundingClientRect();
-                if (b.top < p.top || b.bottom > p.bottom) r.scrollIntoView({ block: "center" });
+                if (b.top < p.top || b.bottom > p.bottom) r.scrollIntoView({ block: chart ? "start" : "center" });
             });
         }
         window.__smKeepClickedRowInView = keepClickedRowInView;   // (selfcheck)

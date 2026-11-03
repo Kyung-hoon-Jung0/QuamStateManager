@@ -20974,7 +20974,9 @@ window.DatasetTrends = (function () {
     function render(st) {
         var d = st.data, root = st.root;
         var count = part(root, 'count');
-        if (count) count.textContent = '(' + plural(d.n_runs, 'run') + ')';
+        // T7: the experiment's total; each chart says how many of those runs
+        // carry its value (a qubit a run did not measure has fewer points)
+        if (count) count.textContent = '(' + plural(d.n_runs, 'run') + ' in total)';
         var notes = part(root, 'notes');
         if (notes) { notes.textContent = notesFor(d); notes.hidden = !notes.textContent; }
         var charts = part(root, 'charts');
@@ -21014,6 +21016,13 @@ window.DatasetTrends = (function () {
                 metric.className = 'trend-chart-metric';
                 metric.textContent = ' — ' + metricTitle(st, s.m);
                 label.appendChild(metric);
+                var nPts = 0;
+                for (var ri = 0; ri < rows.length; ri++) if (isPt(s.v[rows[ri]])) nPts++;
+                var cnt = document.createElement('span');
+                cnt.className = 'trend-chart-count muted';
+                cnt.textContent = ' · ' + plural(nPts, 'run');
+                cnt.title = 'Runs of this experiment that carry this value for ' + s.q;
+                label.appendChild(cnt);
                 var host = document.createElement('div');
                 host.id = 'trend-chart-' + idx;
                 host.className = 'trend-mini-chart';
@@ -21099,7 +21108,11 @@ window.DatasetTrends = (function () {
     /* ---- one chart ---- */
     function ysOf(st, idx) {
         var s = st.data.series[idx];
-        return st.rows.map(function (i) { return s.v[i]; });
+        var k = displayOf(st, s.m).scale;
+        return st.rows.map(function (i) {
+            var v = s.v[i];
+            return (k !== 1 && typeof v === 'number' && isFinite(v)) ? v * k : v;
+        });
     }
     function tracesFor(st, idx) {
         var s = st.data.series[idx];
@@ -21214,7 +21227,42 @@ window.DatasetTrends = (function () {
         var u = st.units && Object.prototype.hasOwnProperty.call(st.units, m) ? st.units[m] : '';
         return typeof u === 'string' ? u : '';
     }
-    function metricTitle(st, m) { var u = unitOf(st, m); return u ? m + ' (' + u + ')' : m; }
+    /* T5: the unit a metric is DRAWN in. A coherence time (a fit metric
+       named t1 / t2..., its error included) is shown in us, the unit Chip
+       Status, the tables, the inspector and the value drawer use for T1 / T2
+       (core/units.py), whatever time unit the run's fit file declares; any
+       other metric keeps its declared unit. shown = stored * scale. */
+    var TIME_TO_US = { 's': 1e6, 'ms': 1e3, '\u00b5s': 1, 'us': 1, 'ns': 1e-3 };
+    /* A coherence-time fit metric whose fit file declares NO unit (an echo
+       fit's T2_echo, a Ramsey fit's decay time) is stored in seconds when
+       every value is a coherence-time magnitude (0 < |v| <= 10 ms); a decay
+       RATE (1/s) is ~1e4..1e7 and keeps its own label. Drawn in us like T1. */
+    var COHERENCE_RE = /^(t[12](?![0-9])|decay(_error)?$)/i;
+    function _secondsLike(st, m) {
+        var ser = (st.data && st.data.series) ? st.data.series : [];
+        var n = 0;
+        for (var i = 0; i < ser.length; i++) {
+            if (ser[i].m !== m) continue;
+            var vs = ser[i].v || [];
+            for (var j = 0; j < vs.length; j++) {
+                var v = vs[j];
+                if (typeof v !== 'number' || !isFinite(v)) continue;
+                if (v === 0 || Math.abs(v) > 1e-2) return false;
+                n++;
+            }
+        }
+        return n > 0;
+    }
+    function displayOf(st, m) {
+        var u = unitOf(st, m);
+        if (COHERENCE_RE.test(String(m || ''))) {
+            if (Object.prototype.hasOwnProperty.call(TIME_TO_US, u)) return { unit: '\u00b5s', scale: TIME_TO_US[u] };
+            if (!u && _secondsLike(st, m)) return { unit: '\u00b5s', scale: 1e6 };
+        }
+        return { unit: u, scale: 1 };
+    }
+    window.__trendsDisplayOf = displayOf;     // (selfcheck)
+    function metricTitle(st, m) { var u = displayOf(st, m).unit; return u ? m + ' (' + u + ')' : m; }
     function askUnits(st) {
         if (st.unitsAsked) { applyUnits(st); return; }
         st.unitsAsked = true;
@@ -21237,6 +21285,12 @@ window.DatasetTrends = (function () {
             if (!s || !unitOf(st, s.m)) return;
             var lab = el.parentNode && el.parentNode.querySelector('.trend-chart-metric');
             if (lab) lab.textContent = ' — ' + metricTitle(st, s.m);
+            if (displayOf(st, s.m).scale !== 1 && el._trendRendered) {
+                // T5: the numbers change with the unit -- draw the chart again
+                el._trendRendered = false;
+                renderOne(st, idx);
+                return;
+            }
             if (el.layout && window.Plotly && typeof window.Plotly.relayout === 'function') {
                 try { window.Plotly.relayout(el, { 'yaxis.title.text': metricTitle(st, s.m) }); } catch (e) {}
             }
@@ -21282,7 +21336,8 @@ window.DatasetTrends = (function () {
             return;
         }
         return Promise.resolve(window._plotlyRender(el, tracesFor(st, idx), layoutFor(st, idx),
-                                                    { responsive: true, displayModeBar: false }))
+                                                    { responsive: true, displayModeBar: false,
+                                                      showTips: false }))
             .then(function () { offScaleNote(st, idx, el); bindRunClicks(el); });
     }
 
@@ -21335,6 +21390,8 @@ window.DatasetTrends = (function () {
                 var uid = uidOf(evt, el);
                 if (!uid) return;
                 var url = '/dataset/' + uid;
+                // T7: the chart keeps its room and stays in view (base.html)
+                if (window.__smKeepChartInView) window.__smKeepChartInView(el);
                 if (window.htmx && window.htmx.ajax) {
                     window.htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane',
                                                    swap: 'innerHTML' });
@@ -21431,8 +21488,36 @@ window.DatasetTrends = (function () {
         body.appendChild(frag);
     }
 
+    /* fix/trends-stress2 item 3: a run folder landing (the run watcher's
+       wake, live-wake.js) re-asks an open Trends view, so the new run's point
+       appears without a reload. The server's trend index takes the run in on
+       the same tick (core/run_ingest), so one ask a moment later and one
+       more for a slow share are enough; the page scroll is kept. */
+    var RUN_FOLLOW_MS = [1500, 6000];
+    var _runTimers = [];
+    function _refreshOpen() {
+        var view = document.getElementById('trends-view');
+        if (!view || !view.isConnected || document.hidden) return;
+        var sel = document.getElementById('trend-exp-select');
+        if (!sel || !sel.value || sel.value !== view.getAttribute('data-experiment')) return;
+        if (typeof window.loadTrendData !== 'function') return;
+        var pane = document.getElementById('table-pane');
+        var top = pane ? pane.scrollTop : 0;
+        window.loadTrendData();
+        if (pane) {
+            document.addEventListener('htmx:afterSettle', function keep() {
+                document.removeEventListener('htmx:afterSettle', keep);
+                try { pane.scrollTop = top; } catch (e) {}
+            });
+        }
+    }
+    document.addEventListener('sm:runs-changed', function () {
+        _runTimers.forEach(clearTimeout);
+        _runTimers = RUN_FOLLOW_MS.map(function (ms) { return setTimeout(_refreshOpen, ms); });
+    });
+
     return { mount: mount, EAGER: EAGER, LINES_ABOVE: LINES_ABOVE, FIG_PAGE: FIG_PAGE,
-             robustRange: robustRange };
+             robustRange: robustRange, RUN_FOLLOW_MS: RUN_FOLLOW_MS, _refreshOpen: _refreshOpen };
 })();
 
 /* ------------------------------------------------------------------ */
@@ -23007,7 +23092,15 @@ window.trendStatTraces = function(x, values, opts) {
     var st = window.rollingStats(ys, opts.win);
     var color = opts.color || '#4f9cf9';
     var upper = st.mean.map(function(m, i) { return m + st.std[i]; });
-    var lower = st.mean.map(function(m, i) { return m - st.std[i]; });
+    // T7: mean - sigma of a quantity that is never negative (an error bar, a
+    // time, a fidelity) dipped below zero and drew a band where no value can
+    // be; such a band is cut at zero. A series with a negative value keeps
+    // the plain band.
+    var nonNeg = ys.every(function(v) { return v >= 0; });
+    var lower = st.mean.map(function(m, i) {
+        var lo = m - st.std[i];
+        return (nonNeg && lo < 0) ? 0 : lo;
+    });
     var group = opts.legendgroup || 'trendstats';
     return [
         { x: xs, y: upper, type: 'scatter', mode: 'lines',

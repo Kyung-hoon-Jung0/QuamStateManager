@@ -100,6 +100,58 @@ def source_of(point: dict) -> str:
     return "auto"
 
 
+def _plain_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v
+
+
+def _left_by(by: dict) -> dict:
+    """Who read the earlier value back (a not-kept value's witness, an
+    excursion's return), in the words :func:`routes._vh_not_kept_view` uses."""
+    kind = by.get("kind")
+    out = {"held": None if by.get("removed") else by.get("value")}
+    if kind == "live":
+        out["who"] = "the chip"
+        out["now"] = True
+    elif kind == "run":
+        out["who"] = f"#{by.get('run_id')}" if by.get("run_id") is not None else "the next run"
+    elif kind == value_history.OBSERVED_KIND:
+        out["who"] = "SM's snapshot of the chip"
+    elif kind is not None:
+        out["who"] = "the next SM write"
+    else:
+        out["who"] = "the next event"
+    return out
+
+
+def left_out(row: dict) -> list[dict]:
+    """The saved values a value series leaves out -- the run saved them, but
+    the witness rule (``hub_witness``) keeps them out of chip history:
+    ``not_kept`` (the next recorded state still had the earlier value) and the
+    points of an ``excursion`` (not confirmed before the value came back).
+    One dict per value, oldest first: ``{"t_us", "eid", "v", "run", "exp",
+    "why", "who", "held"[, "now"]}`` -- ``why`` is the
+    ``hub_witness.WORDS`` key. A chart draws them OFF its line (hollow), so a
+    run's own result stays visible without being read as the chip's value.
+    Nothing here judges: the verdicts are the read's (``value_history``)."""
+    out = []
+    for nk in row.get("not_kept") or ():
+        if nk.get("removed") or not _plain_number(nk.get("value")):
+            continue
+        out.append({"t_us": nk.get("t_us"), "eid": nk.get("eid"), "v": nk["value"],
+                    "run": nk.get("run_id"), "exp": nk.get("experiment"), "why": "not_kept",
+                    "_pt": nk, **_left_by(nk.get("by") or {})})
+    for ex in row.get("excursions") or ():
+        back = _left_by(ex.get("back") or {})
+        for p in ex.get("points") or ():
+            if p.get("removed") or not _plain_number(p.get("value")):
+                continue
+            out.append({"t_us": p.get("t_us"), "eid": p.get("eid"), "v": p["value"],
+                        "run": p.get("run_id"), "exp": p.get("experiment"), "why": "excursion",
+                        "_pt": p, **back})
+    out.sort(key=lambda d: (d["t_us"] if d["t_us"] is not None else -1, d["eid"] or 0))
+    return out
+
+
 def is_proven(points: list[dict]) -> bool:
     """A value made of several leaves (a confusion matrix, an RB block) was
     written by an event only when EVERY leaf change at that event is proven:
@@ -376,6 +428,11 @@ class LedgerTable:
                                          declared=ctx.get("extras_data_declared"),
                                          dangling=ctx.get("extras_data_dangling"))
         self.attrs: dict = {}
+        #: per path of :meth:`leaf_series_many`: the values the series leaves
+        #: out (:func:`left_out`) and the chip's value now when it differs
+        #: from the series' last one (:meth:`now_unlike`)
+        self.left_out: dict = {}
+        self.now_values: dict = {}
         self._fam = None
 
     @property
@@ -542,6 +599,11 @@ class LedgerTable:
             # docs/301 F9: an unproven point opens the run that saved it,
             # and that run then says it is not proven to have measured it
             info["saved_uid"] = view["saved_uid"]
+        elif view.get("first_uid"):
+            # the run whose saved state the ledger starts with ("first
+            # recorded in #N") opens the same way on a Trends chart, with the
+            # same note; its own key, so the drawers' links are unchanged
+            info["first_uid"] = view["first_uid"]
         return event_key(p["t_us"], p["eid"]), info
 
     def _newest(self, ans):
@@ -615,6 +677,8 @@ class LedgerTable:
                 return rows, attrs
             kept_rows, attrs = self._kept_rows(("leaf", dp), (dp,), ans, build)
             rows = list(kept_rows)
+            self.left_out[dp] = self._left_out_keyed(ans["rows"][dp])
+            self.now_values[dp] = self.now_unlike(dp, rows[-1][1]) if rows else None
             if hold_to_newest and rows and newest and rows[-1][0] != newest:
                 last = rows[-1]
                 rows.append((newest, last[1], None, None, None, None, last[0]))
@@ -666,11 +730,14 @@ class LedgerTable:
                 # P0-1: a run's value the chip never kept did not calibrate it,
                 # and the run that still found the old value did not either
                 verdicts = hub_witness.of(conn, index).prime()
+                # T4: ... nor did the newest change of a value the chip does not
+                # hold now (the live tail Trends and the value drawer apply)
+                live_left = self._live_left(conn, index, verdicts)
 
                 def skip(pid, eid) -> bool:
                     # ... nor did an excursion of unconfirmed saves that came back
                     # (hub_witness.excursions): the verdicts' drop set, as everywhere
-                    return pid is not None and eid in verdicts.drop(pid)
+                    return pid is not None and (eid in verdicts.drop(pid) or (pid, eid) in live_left)
                 lane = getattr(index, "lane", None)
                 if lane is not None:
                     rows = self._lane_change_times(conn, index, lane, where, CHIP_UNCERTAIN, skip)
@@ -719,8 +786,64 @@ class LedgerTable:
                 group = out["q"] if parts[0] == "qubits" else out["p"] if parts[0] == "qubit_pairs" else None
                 if group is not None and (parts[1] not in group or t > group[parts[1]]):
                     group[parts[1]] = t
+            # T4: the run each age comes from (its tooltip names it): the run
+            # event at that instant -- several at one instant name none
+            out["runs"] = {"q": {}, "p": {}}
+            want = {t for g in ("q", "p") for t in out[g].values()}
+            if want:
+                with ledger_read(), hub_index.snapshot(self.binding) as (conn, _index):
+                    by_t: dict = {}
+                    marks = ",".join("?" * len(want))
+                    for t, rid, exp in conn.execute(
+                            "SELECT t_utc_us, run_id, experiment FROM events WHERE kind = 'run'"
+                            f" AND t_utc_us IN ({marks})", tuple(want)):
+                        by_t.setdefault(t, []).append((rid, exp))
+                for g in ("q", "p"):
+                    for ent, t in out[g].items():
+                        hits = by_t.get(t) or []
+                        if len(hits) == 1 and hits[0][0] is not None:
+                            out["runs"][g][ent] = {"run": hits[0][0], "experiment": hits[0][1]}
             return out
         return self.part(("run_change_times",), compute)
+
+    def _live_left(self, conn, index, verdicts) -> frozenset:
+        """T4: ``{(pid, eid)}`` -- the newest change of each qubit / pair path
+        whose verdict is ``open`` (nothing read the chip after it) and whose
+        value the chip does NOT hold now, where SM knows the chip's value
+        (``hub_witness.live_tail``, the rule Trends and the value drawer
+        apply). Such a change leaves the in-force series, so it dates
+        nothing. The chip's value of each path is recorded as a fact of this
+        part (``live``), so the answer is recomputed when it moves."""
+        from quam_state_manager.core import hub_rules, hub_witness
+        if self._live is None:
+            return frozenset()
+        open_rows = {}
+        for path, pid in index.paths.items():
+            if not path.startswith(("qubits.", "qubit_pairs.")):
+                continue
+            tail = verdicts.tail(pid)
+            if tail is not None and tail[1] == hub_witness.OPEN:
+                open_rows[path] = (pid, tail[0])
+        if not open_rows:
+            return frozenset()
+        paths = tuple(sorted(open_rows))
+        self.fact("live", paths)
+        try:
+            live = self._live(self.ctx, {p: self.target(p) for p in paths}) or {}
+        except Exception:  # noqa: BLE001 -- the chip's value is not known: nothing leaves
+            return frozenset()
+        out = set()
+        for path, (pid, eid) in open_rows.items():
+            if path not in live:
+                continue
+            row = conn.execute("SELECT op, num, txt FROM changes WHERE pid = ? AND eid = ?",
+                               (pid, eid)).fetchone()
+            if row is None or row[1] is None:
+                continue          # only a number is compared here; anything else stays
+            if hub_witness.live_tail(hub_witness.OPEN, row[1], live[path],
+                                     hub_rules.same) != hub_witness.CONFIRMED:
+                out.add((pid, eid))
+        return frozenset(out)
 
     def _lane_change_times(self, conn, index, lane, where, uncertain, skip):
         """:meth:`run_change_times` through a folder view (S10 C1.5): only
@@ -822,10 +945,78 @@ class LedgerTable:
                                "held": values[-1]["timestamp"]})
             tgt = ans["targets"].get(leaf) or {}
             via = tgt.get("via") or []
+            row = ans["rows"][leaf if prop in _VALUE_PATHS else paths[0]]
             out.append({"qubit": q, "property": prop, "values": values,
                         "count": len(values), "_leaf": leaf, "_attrs": attrs,
-                        "raw_pointer": via[0]["pointer"] if via else None})
+                        "raw_pointer": via[0]["pointer"] if via else None,
+                        "left_out": self._left_out_keyed(row),
+                        "now": (self.now_unlike(leaf, values[-1]["value"])
+                                if prop in _VALUE_PATHS
+                                else self.now_unlike_derived(comps[paths[0]], values[-1]["value"]))})
         return out
+
+    def _left_out_keyed(self, row: dict) -> list[dict]:
+        """:func:`left_out` with each value's chart axis key (``k``) and the
+        run that saved it, openable as a main point is (``uid`` on proof,
+        else ``saved_uid``: the run that saved it, not proven to have
+        measured it)."""
+        out = []
+        for d in left_out(row):
+            pt = d.pop("_pt", None)
+            d["k"] = event_key(d.pop("t_us"), d["eid"])
+            if pt is not None and d.get("run") is not None:
+                try:
+                    view = self.present(pt, self.roots, self.uid_memo, now=self._now)
+                except Exception:  # noqa: BLE001 -- a link is a convenience, never a failure
+                    view = {}
+                if view.get("uid"):
+                    d["uid"] = view["uid"]
+                elif view.get("saved_uid") or view.get("first_uid"):
+                    d["saved_uid"] = view.get("saved_uid") or view["first_uid"]
+            out.append(d)
+        return out
+
+    def now_unlike(self, path: str, last: Any) -> Any:
+        """The chip's value at *path* now, when it is a number and the
+        series' last (in-force) value is not that number -- else None.
+
+        A held line ends at the newest recorded value; when the chip's state
+        holds another one (an edit not applied yet, a change made outside SM,
+        an older state loaded), the chart must not imply the held value is
+        current (the drawer's ``current_differs`` note says the same). The
+        current value is a recorded fact of this part (``currents``), so the
+        chart is recomputed when it moves."""
+        self.fact("currents", (path,))
+        tgt = self.target(path)
+        if not tgt.get("has_current"):
+            return None
+        cur = value_history.comparable(tgt)
+        if not _plain_number(cur):
+            return None
+        if _plain_number(last) and value_history.rules.same(cur, last):
+            return None
+        return cur
+
+    def now_unlike_derived(self, comp, last: Any) -> Any:
+        """:meth:`now_unlike` of a derived metric (a readout fidelity over a
+        confusion matrix): the formula applied to the matrix the chip holds
+        now, compared with the series' last value. The matrix's elements are
+        the recorded facts, so the chart follows an edit of any of them."""
+        base, paths, _compose, prop = comp
+        self.fact("currents", tuple(paths))
+        tgt = self.target(base, container=True)
+        matrix = tgt.get("current") if tgt.get("has_current") else None
+        if not isinstance(matrix, list) or not matrix:
+            return None
+        try:
+            cur = _DERIVED_FIDELITY_PROPS[prop][1](matrix)
+        except Exception:  # noqa: BLE001 -- a matrix the formula cannot read has no value now
+            return None
+        if not _plain_number(cur):
+            return None
+        if _plain_number(last) and value_history.rules.same(cur, last):
+            return None
+        return cur
 
     def _curated_row(self, ans, prop, leaf, paths):
         """``(values, attrs)`` of one (qubit, property): every change point

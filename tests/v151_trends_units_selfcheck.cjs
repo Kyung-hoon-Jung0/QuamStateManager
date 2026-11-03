@@ -7,7 +7,8 @@
  * Flask test client; this harness runs the SHELL's inline script and the
  * SHIPPED app.js (window.DatasetTrends) on them.
  *
- * Pinned: the axis title is "t1 (ns)" -- on a chart drawn before the units
+ * Pinned: the axis title is "t1 (\u00b5s)" (fix/trends-stress T5: a coherence time
+ * declared in ns is drawn in us, as every other surface) -- on a chart drawn before the units
  * answered (relayout) and on one drawn after (its layout) -- the chart label
  * says it too, the numbers follow PlotTheme.axisNumberFormat (SI, never "B"),
  * and a metric no fit file declares keeps its bare name.
@@ -83,11 +84,11 @@ async function until(fn, ms) { const t = Date.now(); while (!fn() && Date.now() 
     const drawn = draws.find((x) => x.el === box);
     const relaid = relayouts.filter((x) => x.el === box).pop();
     const title = (relaid && relaid.upd['yaxis.title.text']) || (drawn && (drawn.layout.yaxis.title.text || drawn.layout.yaxis.title));
-    ok(title === 't1 (ns)', 'the t1 axis title carries its unit: ' + title);
+    ok(title === 't1 (\u00b5s)', 'the t1 axis title carries its unit: ' + title);
     const label = box.parentNode.querySelector('.trend-chart-label').textContent.replace(/\s+/g, ' ').trim();
-    ok(/ — t1 \(ns\)$/.test(label), 'and so does its label: ' + label);
+    ok(/ — t1 \(\u00b5s\) · \d+ runs?$/.test(label), 'and so does its label: ' + label);
     const late = draws.filter((x) => x.el !== draws[0].el && x.el.id !== 'trend-chart-' + bare);
-    ok(late.some((x) => / \(ns\)$/.test(String(x.layout.yaxis.title))),
+    ok(late.some((x) => / \((ns|\u00b5s)\)$/.test(String(x.layout.yaxis.title))),
        'a chart drawn after the answer has the unit in its own layout');
     const bareBox = d.getElementById('trend-chart-' + bare);
     const bareLabel = bareBox.parentNode.querySelector('.trend-chart-label').textContent;

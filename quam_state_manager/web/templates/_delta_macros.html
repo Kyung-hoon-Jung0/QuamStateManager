@@ -17,10 +17,10 @@
      {{ delta_cell(old, new) }}          → table cell content, "–" when meaningless
 #}
 
-{% macro delta_chip(old, new, extra_class='') -%}
+{% macro delta_chip(old, new, extra_class='', unit='') -%}
 {%- set d = old | value_delta(new) -%}
 {%- if d -%}
-<span class="val-delta delta-{{ d.dir }}{% if extra_class %} {{ extra_class }}{% endif %}" title="{{ d.title }}">{{ d.text }}{% if d.pct_text %} <span class="val-delta-pct">({{ d.pct_text }})</span>{% endif %}</span>
+<span class="val-delta delta-{{ d.dir }}{% if extra_class %} {{ extra_class }}{% endif %}" title="{{ d.title }}{% if unit %} ({{ unit }}){% endif %}">{{ d.text }}{% if unit %} {{ unit }}{% endif %}{% if d.pct_text %} <span class="val-delta-pct">({{ d.pct_text }})</span>{% endif %}</span>
 {%- endif -%}
 {%- endmacro %}
 

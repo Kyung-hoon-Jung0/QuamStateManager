@@ -276,9 +276,17 @@ window.ChipStatus.metaInfo = (function () {
         var edited = e.matches_current === false
             || (!e.gone && typeof e.value === 'number' && !_same(e.value, ctx.cur));
         if (edited) {
-            lines.push('Not in this chip’s change ledger yet — edited, or changed after the newest recorded change.');
-            lines.push('The ledger’s newest change of it: ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
-            tag = 'not in history';
+            // T3: the value now is not the NEWEST recorded one -- which does
+            // not make it absent from the history (an older state loaded, a
+            // value put back): where the ledger has it, say so
+            var at = e.current_at;
+            lines.push('The value now is not the newest recorded one: an edit not applied to the chip yet, '
+                + 'or a change made outside SM since the last run.');
+            if (at && at.ts) {
+                lines.push('It was recorded earlier: ' + when(snapMs(at.ts)) + ' — ' + (at.label || ''));
+            }
+            lines.push('The newest recorded change: ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
+            tag = at && at.ts ? 'earlier record' : 'not newest record';
         } else if (e.gone) {
             lines.push('Removed at ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
             tag = 'removed';
@@ -769,6 +777,24 @@ if (!window.ChipStatus._sweepBound) {
     });
     document.addEventListener('htmx:historyRestore', function () { window.ChipStatus._sweep(false); });
 }
+
+/* fix/trends-stress T4: the age of a qubit / pair dated by the change ledger
+   names the run whose saved state it comes from (the ledger's own run-change
+   time, with the exclusions Trends applies: a value the next recorded state
+   or the chip now does not hold dates nothing). The run is never named as
+   the WRITER -- only its saved state is the record. */
+/* item 3: when an open Trends section asks again after a run folder lands
+   (ms after the wake): the run's ingest into the change ledger takes a few
+   seconds; the later asks cover a slow share. */
+window.ChipStatus.RUN_FOLLOW_MS = [2500, 7000, 15000, 30000];
+
+window.ChipStatus.calAgeRunTitle = function (n, age) {
+    var r = n && n.last_run_change_run;
+    var who = r && r.run != null
+        ? 'run #' + r.run + (r.experiment ? ' ' + r.experiment : '') + '\u2019s saved state'
+        : 'a run\u2019s saved state';
+    return 'last moved in ' + who + ' ' + age + ' (change ledger; the run is not named as its writer)';
+};
 
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
@@ -2789,8 +2815,7 @@ window.ChipStatus.mount = function (opts) {
                 if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
                 return { cls: 'hs-' + ac, text: _ageLabel(ms),
                          title: n.last_calibrated_from === 'run'
-                             ? 'last moved in a run\u2019s saved state ' + _ageLabel(ms)
-                               + ' (change ledger; the run is not named as its writer)'
+                             ? window.ChipStatus.calAgeRunTitle(n, _ageLabel(ms))
                              : 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {
@@ -4419,7 +4444,9 @@ window.ChipStatus.mount = function (opts) {
         if (recorded) cnt.push(recorded + (' recorded change' + (recorded === 1 ? '' : 's')));
         if (first) cnt.push(first + ' first recorded, writer unknown');
         if (none) cnt.push(none + ' not in history');
-        if (edited) cnt.push(edited + ' not in history yet');
+        // T3: a value that differs from its newest record may well be in the
+        // history (an earlier record) -- never "not in history yet"
+        if (edited) cnt.push(edited + ' differ' + (edited === 1 ? 's' : '') + ' from the newest record');
         if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
         // S10 walk: a count shown is grouped ("3,552 recorded events")
@@ -5260,11 +5287,32 @@ window.ChipStatus.mount = function (opts) {
         }, 400);
     }
     document.addEventListener('stateHistoryChanged', _onHistoryChanged);
+    // fix/trends-stress2 item 3: a run folder landing (the run watcher's
+    // wake, live-wake.js) reaches the change ledger only after its ingest,
+    // which no snapshot-store signal announces -- so a built Trends section
+    // asks again a few times over the next ~half minute; each answer is a
+    // patch (a chart whose data did not move is kept, RAM P2).
+    var _runTimers = [];
+    function _onRunsChanged() {
+        _runTimers.forEach(clearTimeout);
+        _runTimers = (window.ChipStatus.RUN_FOLLOW_MS || []).map(function (ms) {
+            return setTimeout(function () {
+                if (!document.getElementById('topo-health-tiles')) return;   // not mounted
+                if (_chipSectionBuilt.trends && window.ChipTrends && window.ChipTrends.reload
+                        && !document.hidden) {
+                    window.ChipTrends.reload();
+                }
+            }, ms);
+        });
+    }
+    document.addEventListener('sm:runs-changed', _onRunsChanged);
     // torn down through the r2-04 registry: a #table-pane swap AND a history
     // restore (which fires no beforeSwap) both leave nothing behind
     window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _histTeardown() {
         clearTimeout(_histTimer);
+        _runTimers.forEach(clearTimeout);
         document.removeEventListener('stateHistoryChanged', _onHistoryChanged);
+        document.removeEventListener('sm:runs-changed', _onRunsChanged);
     });
 
     function _throttle(fn, ms) {
@@ -7531,9 +7579,28 @@ window.ChipTrends = (function () {
     // the same naive spelling the points use: a number would be read
     // through the browser's zone and land a zone offset away
     function _naive(t) { return new Date(t).toISOString().slice(0, 19); }
+    /* The last change time of the history proper, when the newest few
+       change times (at most max(2, 10 % of them)) come after a gap more
+       than twice the span of everything before it (and over 6 h) and none
+       of them is a run's (an SM write, a value seen outside a run): null
+       when there is no such late tail. */
+    function _lateCut(times) {
+        var es = times.slice().sort(function (a, b) { return a.t - b.t; });
+        var n = es.length;
+        if (n < 3) return null;
+        var maxTail = Math.max(2, Math.floor(n * 0.1));
+        for (var k = 1; k <= maxTail && n - k - 1 >= 0; k++) {
+            var i = n - k - 1;            // es[i] = last change before the tail
+            if (!es[i + 1].late) return null;   // a run's change is history: never cut
+            var gap = es[i + 1].t - es[i].t;
+            if (gap > Math.max(2 * (es[i].t - es[0].t), 6 * HOUR_MS)) return es[i].t;
+        }
+        return null;
+    }
     function _viewWindow(charts, marks) {
         var lo = Infinity, hi = -Infinity, heldHi = -Infinity;
         var allLo = Infinity, allHi = -Infinity;
+        var changeTimes = [];
         (charts || []).forEach(function (c) {
             if (!c || !c.series || !c.series.length || _axisFor(c.series) !== 'date') return;
             c.series.forEach(function (s) {
@@ -7544,12 +7611,26 @@ window.ChipTrends = (function () {
                     if (t < allLo) allLo = t;
                     if (t > allHi) allHi = t;
                     if (held[p[0]]) { if (t > heldHi) heldHi = t; return; }
+                    var pv = s.attr && s.attr[String(p[0])] && s.attr[String(p[0])].provenance;
+                    // an SM write / a value seen outside a run (never a run's)
+                    changeTimes.push({ t: t, late: !!pv && !/^(run|first_record)/.test(pv) });
                     if (t < lo) lo = t;
                     if (t > hi) hi = t;
                 });
             });
         });
         if (!isFinite(allLo)) return null;
+        // fix/trends-stress2 item 4: one change long after every other (an SM
+        // edit applied today, weeks after the last run) is a tail too -- it
+        // used to stretch EVERY chart of the view to today and squeeze the
+        // run history into its left tenth. The window keeps the history; the
+        // late change is named at the right edge (_applyWindow) and the
+        // "now" mark stands there.
+        var cut = _lateCut(changeTimes);
+        if (cut != null && cut < hi) {
+            if (hi > heldHi) heldHi = hi;
+            hi = cut;
+        }
         var win;
         if (isFinite(lo) && isFinite(heldHi) && heldHi > hi
                 && heldHi - hi > Math.max(2 * (hi - lo), HOUR_MS)) {
@@ -7564,7 +7645,9 @@ window.ChipTrends = (function () {
             });
             // a little room so an edge marker is not cut in half
             var span = allHi - allLo;
-            var pad2 = span > 0 ? span * 0.02 : HOUR_MS / 2;
+            // 4 %: the "now" mark stands on the right edge, clear of the
+            // line's last point (_nowAtEdge)
+            var pad2 = span > 0 ? span * 0.04 : HOUR_MS / 2;
             win = { lo: allLo - pad2, hi: allHi + pad2, focus: false };
         }
         win.range = [_naive(win.lo), _naive(win.hi)];
@@ -7576,22 +7659,30 @@ window.ChipTrends = (function () {
         layout.xaxis.range = win.range.slice();
         layout.xaxis.autorange = false;
         if (!win.focus) return;
-        var heldHi = -Infinity;
+        var heldHi = -Infinity, lateHi = -Infinity, lateN = 0;
         series.forEach(function (s) {
             var held = s.held || {};
             s.points.forEach(function (p) {
-                if (!held[p[0]]) return;
                 var t = _ms(_iso(p[0]));
-                if (t > heldHi) heldHi = t;
+                if (held[p[0]]) { if (t > heldHi) heldHi = t; return; }
+                // a change after the window (a late SM write, item 4)
+                if (t > win.hi) { lateN++; if (t > lateHi) lateHi = t; }
             });
         });
-        if (!(heldHi > win.hi)) return;      // nothing of this chart runs past the window
-        var until = new Date(heldHi).toISOString().slice(0, 10);
+        if (!(heldHi > win.hi) && !lateN) return;   // nothing of this chart runs past the window
+        var until = new Date(Math.max(heldHi, lateHi)).toISOString().slice(0, 10);
+        var text = lateN
+            ? 'changed ' + new Date(lateHi).toISOString().slice(0, 10) + ' (outside the runs) \u2192'
+            : 'held to ' + until + ' \u2192';
         layout.annotations = (layout.annotations || []).concat([{
             x: 1, xref: 'paper', y: 1, yref: 'paper', xanchor: 'right', yanchor: 'top',
-            showarrow: false, text: 'held to ' + until + ' \u2192', font: { size: 11 },
-            hovertext: 'Each line keeps its last value until ' + until
-                + ' (the newest record). Double-click the chart to see the whole span.'
+            showarrow: false, text: text, font: { size: 11 },
+            hovertext: (lateN
+                ? lateN + ' later change' + (lateN === 1 ? '' : 's') + ' (an SM write or a change made '
+                  + 'outside a run) until ' + until + ' lie right of this window; the mark on the '
+                  + 'right edge shows the newest value. '
+                : 'Each line keeps its last value until ' + until + ' (the newest record). ')
+                + 'Double-click the chart to see the whole span.'
         }]);
     }
 
@@ -7662,18 +7753,113 @@ window.ChipTrends = (function () {
        The text rule for a value with a unit is PlotTheme.siFormat; a unit that
        already carries its scale (ns, dBm) takes no SI prefix ("mdBm" is no
        unit). */
-    function _hoverValue(v, unit) {
+    // a unit that already carries its scale (the fixed display units the
+    // server picks: us for T1/T2, GHz for f_01, ns, dBm) takes no SI prefix
+    var _SCALED_UNIT = /^(ns|dBm|\u00b5s|ms|GHz|MHz|kHz|mV|\u00b5V|%)$/;
+    function _hoverValue(v, unit, digits) {
         if (typeof v !== 'number' || !isFinite(v)) return '';
         var PT = window.PlotTheme;
         if (!PT || !PT.siFormat) return String(v) + (unit ? ' ' + unit : '');
-        if (unit === 'ns' || unit === 'dBm') return PT.siFormat(v, '') + ' ' + unit;
+        // a chart whose values differ only past the 6th digit (two f_01
+        // values kHz apart, in GHz) says them with enough digits to differ
+        if (digits && digits > 6) {
+            if (!unit || _SCALED_UNIT.test(unit)) {
+                return String(+v.toPrecision(digits)) + (unit ? ' ' + unit : '');
+            }
+            var a = Math.abs(v);
+            var SC = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'],
+                      [1e-6, '\u00b5'], [1e-9, 'n'], [1e-12, 'p']];
+            for (var i = 0; i < SC.length; i++) {
+                if (a >= SC[i][0] || i === SC.length - 1) {
+                    return String(+(v / SC[i][0]).toPrecision(digits)) + ' ' + SC[i][1] + unit;
+                }
+            }
+        }
+        if (unit && _SCALED_UNIT.test(unit)) return PT.siFormat(v, '') + ' ' + unit;
         return PT.siFormat(v, unit || '');
     }
+    /* A difference in its own scale: 4.7 kHz, not 4.7e-6 GHz -- a unit that
+       carries a scale goes back to its base unit and takes an SI prefix. */
+    var _BASE_OF = { 'GHz': [1e9, 'Hz'], 'MHz': [1e6, 'Hz'], 'kHz': [1e3, 'Hz'],
+                     'µs': [1e-6, 's'], 'ms': [1e-3, 's'], 'ns': [1e-9, 's'],
+                     'mV': [1e-3, 'V'], 'µV': [1e-6, 'V'] };
+    function _diffValue(d, unit) {
+        var PT = window.PlotTheme;
+        var b = _BASE_OF[unit];
+        if (b && PT && PT.siFormat) return PT.siFormat(d * b[0], b[1]);
+        if (unit === '%') return String(+d.toPrecision(3)) + ' %';
+        return _hoverValue(d, unit);
+    }
+    /* The significant digits a chart's hover needs so that two different
+       values never print alike: enough to resolve the smallest difference
+       between distinct values (6 = the default, at most 12). */
+    function _digitsFor(values) {
+        var xs = values.filter(function (v) { return typeof v === 'number' && isFinite(v); })
+            .sort(function (a, b) { return a - b; });
+        var maxAbs = 0, minD = Infinity, i;
+        for (i = 0; i < xs.length; i++) if (Math.abs(xs[i]) > maxAbs) maxAbs = Math.abs(xs[i]);
+        for (i = 1; i < xs.length; i++) {
+            var d = xs[i] - xs[i - 1];
+            if (d > maxAbs * 1e-10) minD = Math.min(minD, d);   // float noise is not a difference
+        }
+        if (!(maxAbs > 0) || !isFinite(minD)) return 6;
+        return Math.max(6, Math.min(12, Math.ceil(Math.log10(maxAbs / minD)) + 2));
+    }
+    /* T5: one unit per quantity. The server names the unit a chart is drawn
+       in and its scale from the stored value (core.units.display_spec: T1 in
+       us, f_01 in GHz -- the unit the tables, the inspector and the value
+       drawer use); every number drawn is the stored value times it. */
+    function _scaled(v, scale) {
+        return (typeof v === 'number' && isFinite(v) && scale && scale !== 1)
+            ? v * scale : v;           // never rounded: the hover formats it
+    }
+    /* T2: the words beside a run value the witness rule keeps off the line
+       (hub_witness.WORDS), and T1's beside the chip's value now. */
+    var _LEFT_WORDS = {
+        not_kept: 'not in the next recorded state',
+        excursion: 'not confirmed before the value came back'
+    };
+    function _leftOutLine(r, unit, scale, digits) {
+        // r: [key, value, run, why, who, held value, held is the chip now,
+        //     uid, saved uid]
+        var held = _hoverValue(_scaled(r[5], scale), unit, digits) || (r[5] == null ? 'no value' : String(r[5]));
+        var saw = r[6] ? 'holds ' + held + ' now'
+            : (r[3] === 'excursion' ? 'came back to ' + held : 'still had ' + held);
+        return (r[2] != null ? 'saved by #' + r[2] : 'saved') + ' \u00b7 '
+            + (_LEFT_WORDS[r[3]] || r[3]) + ' (' + _esc(r[4]) + ' ' + saw + ')';
+    }
+    /* The y-axis title: the server's human name of the metric (ytitle for a
+       qubit metric, the pair family's label), never the raw dotted key. */
+    function _axisTitle(c) {
+        return (c && (c.ytitle || c.label)) || (c && c.metric) || '';
+    }
+    /* A left-out value beyond the line's y range [lo, hi] is drawn on the
+       edge it lies beyond: {y, dir} (dir +1 above, -1 below, 0 inside). */
+    function _edgeY(y, range) {
+        if (!range || typeof y !== 'number' || !isFinite(y)) return { y: y, dir: 0 };
+        if (y > range[1]) return { y: range[1], dir: 1 };
+        if (y < range[0]) return { y: range[0], dir: -1 };
+        return { y: y, dir: 0 };
+    }
+    /* The "now" mark stands at the window's right edge (cliponaxis false),
+       apart from the line's own last point -- on the same spot the held
+       point, the "now" mark and a hollow value hid one another's hover. */
+    function _nowAtEdge(traces, win) {
+        if (!win || !win.range) return;
+        traces.forEach(function (t) {
+            if (t.meta === 'now') t.x = [win.range[1]];
+        });
+    }
+    var NOW_NOTE = 'current value differs from the newest recorded run value';
+    var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
+        + 'chip yet, or a change made outside SM since the last run.';
     function _hintLine(info) {
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
         // docs/301 F9: the run whose saved state first carried the value --
         // opened with a note that it is not proven to have measured it
-        if (info && info.saved_uid) {
+        // ...and a "first recorded in #N" point: the run whose saved state the
+        // ledger starts with (first_uid), opened the same way
+        if (info && (info.saved_uid || info.first_uid)) {
             return '<i style="opacity:.7">click to open the run that saved it'
                  + ' (not proven to have measured it)</i>';
         }
@@ -7684,7 +7870,7 @@ window.ChipTrends = (function () {
         return '';
     }
 
-    function _openSnapDataset(evt) {
+    function _openSnapDataset(evt, host) {
         try {
             if (!evt || !evt.points || !evt.points.length) return;
             var cd = evt.points[0].customdata;
@@ -7702,6 +7888,9 @@ window.ChipTrends = (function () {
             // navigation to a 404, no error.
             if (!uid && !saved) return;
             var url = '/dataset/' + (uid || (saved + '?via=saved'));
+            // T7: the chart keeps its room and stays in view while the run
+            // opens in the inspector (base.html fitClickedChart)
+            if (host && window.__smKeepChartInView) window.__smKeepChartInView(host);
             if (window.htmx && window.htmx.ajax) {
                 // `source` is not optional: htmx reads the SOURCE element's
                 // hx-sync, and without one every dataset load shares body's
@@ -7740,7 +7929,7 @@ window.ChipTrends = (function () {
                 host.removeAllListeners('plotly_hover');
                 host.removeAllListeners('plotly_unhover');
             }
-            host.on('plotly_click', _openSnapDataset);
+            host.on('plotly_click', function (evt) { _openSnapDataset(evt, host); });
             host.on('plotly_hover', function (evt) {
                 try {
                     if (!evt || !evt.points || !evt.points.length) return;
@@ -7816,7 +8005,12 @@ window.ChipTrends = (function () {
     function _rewindow(host, series, cWin, marks) {
         var P = window.Plotly;
         if (!cWin || !P || typeof P.relayout !== 'function' || !host || !host._fullLayout) return false;
-        var lx = { xaxis: {}, annotations: _markNotes(marks || []) };
+        // the chart's own notes (its key to the marks) stay; the rename
+        // marks and the window note are this window's
+        var own = ((host.layout && host.layout.annotations) || []).filter(function (a) {
+            return a && a.xref === 'paper' && a.xanchor === 'left' && a.yanchor === 'bottom';
+        });
+        var lx = { xaxis: {}, annotations: _markNotes(marks || []).concat(own) };
         _applyWindow(lx, series, cWin);
         var upd = { 'xaxis.range': lx.xaxis.range, 'xaxis.autorange': false,
                     annotations: lx.annotations };
@@ -7931,16 +8125,44 @@ window.ChipTrends = (function () {
             // Give a constant series a range around ITS OWN value instead.
             var _lo = Infinity, _hi = -Infinity;
             var _maxAbs = 0;          // largest magnitude, for the tick format
+            var _sc = (typeof c.scale === 'number' && isFinite(c.scale) && c.scale) ? c.scale : 1;
             c.series.forEach(function (s2) {
                 s2.points.forEach(function (p) {
-                    if (typeof p[1] === 'number' && isFinite(p[1])) {
-                        if (p[1] < _lo) _lo = p[1];
-                        if (p[1] > _hi) _hi = p[1];
-                        var a = Math.abs(p[1]);
+                    var y = _scaled(p[1], _sc);
+                    if (typeof y === 'number' && isFinite(y)) {
+                        if (y < _lo) _lo = y;
+                        if (y > _hi) _hi = y;
+                        var a = Math.abs(y);
                         if (a > _maxAbs) _maxAbs = a;
                     }
                 });
+                // the "now" mark sits on the line's axis; a left-out value
+                // does NOT widen it (an outlier run result squeezed the line
+                // into the top of the chart) -- one outside it is drawn on
+                // the edge, its hover saying the real value
+                var yn = _scaled(s2.now, _sc);
+                if (typeof yn === 'number' && isFinite(yn)) {
+                    if (yn < _lo) _lo = yn;
+                    if (yn > _hi) _hi = yn;
+                }
             });
+            // a left-out value NEAR the line (within twice its span, or 0.5 %
+            // of its size) widens the axis as before; only an outlier beyond
+            // that is drawn on the edge instead
+            if (isFinite(_lo) && isFinite(_hi)) {
+                var _ext = Math.max(2 * (_hi - _lo), 0.005 * Math.max(Math.abs(_lo), Math.abs(_hi)));
+                var _l0 = _lo, _h0 = _hi;
+                c.series.forEach(function (s2) {
+                    (s2.left_out || []).forEach(function (r) {
+                        var y = _scaled(r[1], _sc);
+                        if (typeof y !== 'number' || !isFinite(y)) return;
+                        if (y >= _l0 - _ext && y <= _h0 + _ext) {
+                            if (y < _lo) _lo = y;
+                            if (y > _hi) _hi = y;
+                        }
+                    });
+                });
+            }
             /* Numbers on the axis are PlotTheme's decision (axisNumberFormat
                there): Plotly's default writes 4.9e9 as "4.9B", and the earlier
                cure for that put an SI prefix on bare ratios. No local copy --
@@ -7957,14 +8179,30 @@ window.ChipTrends = (function () {
                     _flat = [_lo - _pad, _hi + _pad];
                 }
             }
-            var traces = c.series.map(function (s) {
+            var cScale = (typeof c.scale === 'number' && isFinite(c.scale) && c.scale) ? c.scale : 1;
+            var extraTraces = [];
+            var colorway = (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || null;
+            // enough digits that two different values in this chart never
+            // read alike (an f_01 "now" kHz away from the line)
+            var cDigits = _digitsFor(c.series.reduce(function (acc, s3) {
+                s3.points.forEach(function (p) { acc.push(_scaled(p[1], cScale)); });
+                acc.push(_scaled(s3.now, cScale));
+                (s3.left_out || []).forEach(function (r) { acc.push(_scaled(r[1], cScale)); });
+                return acc;
+            }, []));
+            // the line's own y range (points + "now"): a left-out value
+            // outside it is drawn ON the edge it lies beyond (_edgeY)
+            var _yr = _flat || ((isFinite(_lo) && isFinite(_hi) && _hi > _lo)
+                ? [_lo - (_hi - _lo) * 0.08, _hi + (_hi - _lo) * 0.08] : null);
+            var _clipped = false;
+            var traces = c.series.map(function (s, si) {
                 var held = (s.held && Object.keys(s.held).length) ? s.held : null;
                 var tr = {
                     x: s.points.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
-                    y: s.points.map(function (p) { return p[1]; }),
+                    y: s.points.map(function (p) { return _scaled(p[1], cScale); }),
                     // docs/301 F10: the value as the hover says it, with its unit
-                    text: s.points.map(function (p) { return _hoverValue(p[1], c.unit); }),
+                    text: s.points.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit, cDigits); }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
                     customdata: s.points.map(function (p) { return p[0]; }),
@@ -8009,7 +8247,7 @@ window.ChipTrends = (function () {
                     if (ov) {
                         return [p[0], _provLine(ov),
                                 _hintLine(ov), ov.uid || null,
-                                (!ov.uid && ov.saved_uid) || null];
+                                (!ov.uid && (ov.saved_uid || ov.first_uid)) || null];
                     }
                     return [p[0], '', '', null];
                 });
@@ -8018,8 +8256,126 @@ window.ChipTrends = (function () {
                     + '<br>%{customdata[1]}'
                     + '<br>%{customdata[2]}'
                     + '<extra></extra>';
+                // the line, its left-out values and its "now" mark are one
+                // entity: one legend entry toggles them together, one colour
+                tr.legendgroup = 'ent:' + s.entity;
+                var col = colorway ? colorway[si % colorway.length] : undefined;
+                if (col) {
+                    tr.line.color = col;
+                    tr.marker = tr.marker || { size: 5 };
+                    tr.marker.color = col;
+                }
+                // T2: a run's own result the witness rule keeps out of the
+                // line (the next recorded state still had the earlier value,
+                // or it came back before anything confirmed it) -- a HOLLOW
+                // marker off the line, so it is visible without reading as
+                // the chip's value. Clicking it opens the run that saved it.
+                var lo = (s.left_out || []).filter(function (r) {
+                    return typeof r[1] === 'number' && isFinite(r[1]);
+                });
+                if (lo.length && axisType === 'date') {
+                    // a value beyond the line's range sits ON that edge as an
+                    // open triangle pointing the way it lies; its hover keeps
+                    // the real value
+                    var edge = lo.map(function (r) { return _edgeY(_scaled(r[1], cScale), _yr); });
+                    if (edge.some(function (e) { return e.dir; })) _clipped = true;
+                    extraTraces.push({
+                        x: lo.map(function (r) { return _iso(r[0]); }),
+                        y: edge.map(function (e) { return e.y; }),
+                        text: lo.map(function (r, i) {
+                            return _hoverValue(_scaled(r[1], cScale), c.unit, cDigits)
+                                + (edge[i].dir ? ' (off the scale ' + (edge[i].dir > 0 ? 'above' : 'below') + ')' : '');
+                        }),
+                        customdata: lo.map(function (r) {
+                            // the run that saved it opens like a main point:
+                            // its uid on proof (r[7]), else the run whose
+                            // saved state carried it (r[8], ?via=saved)
+                            var ov = s.attr && s.attr[String(r[0])];
+                            var uid = r[7] || (ov && ov.uid) || null;
+                            var sv = uid ? null : (r[8] || (ov && (ov.saved_uid || ov.first_uid)) || null);
+                            return [r[0], _leftOutLine(r, c.unit, cScale, cDigits),
+                                    (uid || sv) ? _hintLine({ uid: uid, saved_uid: sv })
+                                        : (r[2] != null ? _hintLine({ run: r[2] }) : ''),
+                                    uid, sv];
+                        }),
+                        mode: 'markers', type: 'scatter', name: s.entity,
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'left_out', cliponaxis: false,
+                        marker: { symbol: edge.map(function (e) {
+                                      return e.dir > 0 ? 'triangle-up-open'
+                                          : (e.dir < 0 ? 'triangle-down-open' : 'circle-open'); }),
+                                  size: 9, color: col,
+                                  line: { width: 1.5, color: col } },
+                        hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
+                            + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
+                    });
+                }
+                // item 4: a change right of the window (a late SM write) --
+                // the line inside the window must not read as the value now,
+                // so the newest such value stands on the right edge (unless
+                // the "now" mark below already says what the chip holds)
+                var hasNow = typeof s.now === 'number' && isFinite(s.now) && s.points.length;
+                if (cWin && cWin.focus && !hasNow) {
+                    var late = null;
+                    s.points.forEach(function (p) {
+                        if (held && held[p[0]]) return;
+                        if (_ms(_iso(p[0])) > cWin.hi && typeof p[1] === 'number' && isFinite(p[1])) late = p;
+                    });
+                    if (late) {
+                        var lov = s.attr && s.attr[String(late[0])];
+                        var lwhen = _iso(late[0]);
+                        extraTraces.push({
+                            x: [cWin.range[1]], y: [_scaled(late[1], cScale)],
+                            text: [_hoverValue(_scaled(late[1], cScale), c.unit, cDigits)],
+                            customdata: [['', 'changed ' + _esc(lwhen ? String(lwhen).replace('T', ' ') : '')
+                                          + (lov ? ' · ' + _provLine(lov) : ''), '', null]],
+                            mode: 'markers', type: 'scatter', name: s.entity,
+                            legendgroup: 'ent:' + s.entity, showlegend: false,
+                            meta: 'late', cliponaxis: false,
+                            marker: { symbol: 'diamond-open', size: 11, color: col,
+                                      line: { width: 1.5, color: col } },
+                            hovertemplate: '%{fullData.name} · newest: %{text}'
+                                + '<br>%{customdata[1]}<extra></extra>'
+                        });
+                    }
+                }
+                // T1: the chip's value now differs from the line's last
+                // value -- the held line must not read as current, so a "now"
+                // marker at the right end says what the chip holds.
+                if (hasNow) {
+                    var nowTxt = _hoverValue(_scaled(s.now, cScale), c.unit, cDigits);
+                    // the line's last value and the difference, so "differs"
+                    // is visible in the numbers (item 6)
+                    var lastV = null;
+                    for (var li = s.points.length - 1; li >= 0; li--) {
+                        if (typeof s.points[li][1] === 'number' && isFinite(s.points[li][1])) { lastV = s.points[li][1]; break; }
+                    }
+                    var diffTxt = '';
+                    if (lastV != null) {
+                        var dv = _scaled(s.now, cScale) - _scaled(lastV, cScale);
+                        diffTxt = 'line: ' + _hoverValue(_scaled(lastV, cScale), c.unit, cDigits)
+                            + ' · difference ' + (dv > 0 ? '+' : '−')
+                            + _diffValue(Math.abs(dv), c.unit) + '<br>';
+                    }
+                    extraTraces.push({
+                        // placed at the window's right edge when the chart has
+                        // one (_nowAtEdge), apart from the line's own last point
+                        x: [tr.x[tr.x.length - 1]], y: [_scaled(s.now, cScale)], text: [nowTxt],
+                        customdata: [['', diffTxt + NOW_NOTE, NOW_TITLE]],
+                        mode: 'markers', type: 'scatter', name: s.entity,
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'now', cliponaxis: false,
+                        marker: { symbol: 'star-diamond', size: 13, color: col,
+                                  line: { width: 1, color: 'rgba(0,0,0,0.45)' } },
+                        hovertemplate: '%{fullData.name} \u00b7 now: %{text}'
+                            + '<br>%{customdata[1]}<br><i style="opacity:.7">%{customdata[2]}</i><extra></extra>'
+                    });
+                }
                 return tr;
             });
+            var nowSeries = extraTraces.filter(function (t) { return t.meta === 'now'; })
+                .map(function (t) { return t.name; });
+            traces = traces.concat(extraTraces);
             var layout = {
                 /* v1.5.1 (U P2-4): t clears Plotly's toolbar (~28 px, top
                    right), which sat on the newest points and caught their hover */
@@ -8037,20 +8393,50 @@ window.ChipTrends = (function () {
                              ? { text: 'time' + _tzNote() }
                              : undefined,
                          automargin: true },
-                yaxis: { title: { text: ((c.metric.indexOf('*') >= 0 && c.label) ? c.label : c.metric)
-                                        + (c.unit ? ' (' + c.unit + ')' : ''),
+                // the metric's human name (the server's ytitle / pair label),
+                // never the raw key; the raw key is in the chart's title tip
+                yaxis: { title: { text: _axisTitle(c) + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },
                          tickformat: _numFmt.tickformat,
                          exponentformat: _numFmt.exponentformat,
                          automargin: true,
-                         range: _flat || undefined,
-                         autorange: _flat ? false : true },
+                         range: (_clipped ? _yr : _flat) || undefined,
+                         autorange: (_clipped || _flat) ? false : true },
+                // a marker under the pointer is the one picked: never the
+                // nearest point in x across every series (overlapping marks)
+                hovermode: 'closest', hoverdistance: 12,
                 plot_bgcolor: 'transparent', paper_bgcolor: 'transparent',
             };
             // Zoom/pan matter MORE here than anywhere else in the app: the
             // question this page answers is "when did this drift", which needs
             // a closer look at a region.
+            // the key to the marks beside the line, said in words (not only
+            // by shape): ★ the chip's value now, ○ a run's value the chip did
+            // not keep -- one line each, only for what this chart draws
+            var keyLines = [];
+            if (nowSeries.length) {
+                keyLines.push('★ chip value now (' + nowSeries.map(_esc).join(', ') + '): ' + NOW_NOTE);
+            }
+            if (extraTraces.some(function (t) { return t.meta === 'left_out'; })) {
+                keyLines.push('○ measured by a run, not kept on the chip'
+                    + (_clipped ? ' (△▽: off the scale, on its edge)' : ''));
+            }
+            if (extraTraces.some(function (t) { return t.meta === 'late'; })) {
+                keyLines.push('◇ newest value, changed after the runs shown (right edge)');
+            }
+            if (keyLines.length) {
+                layout.annotations = (layout.annotations || []).concat([{
+                    x: 0, xref: 'paper', y: 1, yref: 'paper', xanchor: 'left', yanchor: 'bottom',
+                    align: 'left', showarrow: false, font: { size: 11 }, hovertext: NOW_TITLE,
+                    text: keyLines.join('<br>')
+                }]);
+                layout.margin.t = Math.max(layout.margin.t, 26 + 15 * keyLines.length);
+            }
             var cfg = {
+                // T7: Plotly's "Double-click to zoom back out" tip is a toast
+                // pinned to the page's top right, over the Diagnosis control;
+                // the "held to" note already says how to see the whole span
+                showTips: false,
                 displayModeBar: 'hover', responsive: true,
                 modeBarButtonsToRemove: ['lasso2d', 'select2d'],
                 displaylogo: false };
@@ -8070,9 +8456,10 @@ window.ChipTrends = (function () {
                     return { type: 'line', xref: 'x', yref: 'paper', x0: m.x, x1: m.x, y0: 0, y1: 1,
                              line: { dash: 'dot', width: 1, color: '#888' } };
                 });
-                layout.annotations = _markNotes(marks);
+                layout.annotations = _markNotes(marks).concat(layout.annotations || []);
             }
             _applyWindow(layout, c.series, cWin);
+            _nowAtEdge(traces, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
             }

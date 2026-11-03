@@ -18,6 +18,13 @@
  *      params URL; its version differing from the charts' is said (never
  *      mixed silently), and Reload re-picks.
  *   H. a 202 warming answer is asked again; an error is shown; empty cases.
+ *   J. (fix/trends-stress T7) each chart says how many runs carry ITS value,
+ *      the header says the experiment's total; the statistics band of a
+ *      quantity that is never negative stays at or above zero; Plotly's
+ *      "Double-click to zoom back out" toast is off.
+ *   K. (fix/trends-stress T5) a coherence time (t1 / t2...) is drawn in us
+ *      whatever time unit the run's fit file declares; other metrics keep
+ *      their unit.
  *   I. a few extreme values (failed fits) do not flatten the rest: the y axis
  *      is the rest's, each off-scale value is a triangle on the edge with its
  *      real value in the hover, clickable, and the label counts them; a click
@@ -119,7 +126,7 @@ async function view(body, opts) {
   {
     const p = H.payload(1234, [{ q: 'q1', m: 'm', v: new Array(1234).fill(1) }], { incomplete: 2, indexing: true });
     const { root } = await view(p);
-    ok(text(root.querySelector('[data-role="count"]')) === '(1,234 runs)', 'E: the run count (' + text(root.querySelector('[data-role="count"]')) + ')');
+    ok(text(root.querySelector('[data-role="count"]')) === '(1,234 runs in total)', 'E: the run count (' + text(root.querySelector('[data-role="count"]')) + ')');
     const notes = text(root.querySelector('[data-role="notes"]'));
     ok(/2 runs whose files could not be read .* are not shown/.test(notes), 'E: unreadable runs are counted (' + notes + ')');
     ok(/still being indexed/.test(notes), 'E: a truncated scan is said');
@@ -286,6 +293,44 @@ async function view(body, opts) {
   ok(R([1, 2, 3, 4, 5, 6, 1e9]) === null, 'I: under 8 values -> autorange');
   ok(R([1, 2, 3, 4, 5, 6, 7, 1e9]) !== null, 'I: 8 values -> judged');
   ok(R(base.map((x, i) => (i === 3 ? true : x)).concat([1e9])) === null, 'I: a flag series -> autorange');
+
+  // J. fix/trends-stress T7
+  {
+    const p = H.payload(5, [{ q: 'q1', m: 't1_error', v: [1500, null, 450, 520, 580] },
+                            { q: 'q2', m: 't1_error', v: [900, 800, 700, 650, 600] }]);
+    const { W, root, doc } = await view(p, { until: (w) => w.draws.length >= 2 });
+    const lab = (id) => text(doc.getElementById(id).parentNode.querySelector('.trend-chart-label'));
+    ok(/\u00b7 4 runs$/.test(lab('trend-chart-0')) && /\u00b7 5 runs$/.test(lab('trend-chart-1')),
+       'J: each chart counts the runs that carry its value (' + lab('trend-chart-0') + ' | ' + lab('trend-chart-1') + ')');
+    ok(text(root.querySelector('[data-role="count"]')) === '(5 runs in total)', 'J: the header is the total');
+    ok(W.draws.every((d) => d.config && d.config.showTips === false), 'J: no "double-click to zoom back out" toast');
+    const ys = [12, 1, 15, 0.5, 14, 2, 13, 0.2, 16, 1];
+    const xs = ys.map((_, i) => i);
+    const band = W.w.trendStatTraces(xs, ys, {});
+    ok(band.length === 3 && Math.min.apply(null, band[1].y) >= 0,
+       'J: the band of a never-negative series stays at or above zero (min ' + Math.min.apply(null, band[1].y) + ')');
+    const mixed = W.w.trendStatTraces(xs, ys.map((v, i) => (i === 3 ? -0.5 : v)), {});
+    ok(Math.min.apply(null, mixed[1].y) < 0, 'J: a series with a negative value keeps the plain band');
+  }
+
+  // K. fix/trends-stress T5
+  {
+    const W = H.world();
+    W.box.units = { t1: 'ns', t1_error: 'ns', amp: 'V' };
+    W.answers.push({ body: H.payload(4, [{ q: 'q1', m: 't1', v: [10000, 12000, 11000, 12500] },
+                                         { q: 'q1', m: 'amp', v: [0.1, 0.2, 0.15, 0.12] }]) });
+    W.mount();
+    await H.until(() => W.draws.filter((d) => d.el.id === 'trend-chart-0').length >= 2, 4000);
+    const last = W.draws.filter((d) => d.el.id === 'trend-chart-0').pop();
+    const tr = dataTraceOf(last);
+    ok(tr && Math.abs(tr.y[0] - 10) < 1e-9 && /t1 \(\u00b5s\)/.test(String(last.layout.yaxis.title)),
+       'K: a t1 fit in ns is drawn in us (' + (tr && tr.y[0]) + ', ' + last.layout.yaxis.title + ')');
+    const amp = W.draws.filter((d) => d.el.id === 'trend-chart-1').pop();
+    ok(amp && Math.abs(dataTraceOf(amp).y[0] - 0.1) < 1e-12, 'K: any other metric keeps its unit and numbers');
+    const D = W.w.__trendsDisplayOf;
+    ok(D({ units: { t2_ramsey: 's' } }, 't2_ramsey').scale === 1e6 && D({ units: { t12: 'ns' } }, 't12').scale === 1,
+       'K: s -> us for t2, and a name that only starts with t1 digits is not a coherence time');
+  }
 
   // docs/301 F40: the dashboard's charts carry the house theme (unthemed, Plotly
   // drew a near-white grid on the dark page)
