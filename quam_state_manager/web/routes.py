@@ -6243,6 +6243,30 @@ def type_fix_plan():
     return render_template("_type_fix_plan.html", plan=plan)
 
 
+def _port_edit_refusal(path, value):
+    from quam_state_manager.web.port_identity import edit_offers
+    offers = edit_offers(path, value)
+    ack = request.form.get("port_ack") or request.form.get("port_identity_ack")
+    if offers and ack not in ("fix", "keep"):
+        return jsonify(ok=False, port_identity=offers,
+                       error="Confirm the port identity changes before writing"), 409
+    return None
+
+
+def _port_set_value(modifier, path, value, **kwargs):
+    """Stage an acknowledged legacy edit with the same undoable move policy."""
+    from quam_state_manager.web.port_identity import edit_offer, edit_offers, move_port, stage_write
+    offer = edit_offer(path, value)
+    ack = request.form.get("port_ack") or request.form.get("port_identity_ack")
+    if offer and ack == "fix":
+        entries, _target = move_port(modifier, offer, value, group_id=kwargs.get("group_id"))
+        return entries[0]
+    if edit_offers(path, value) and ack == "fix":
+        entries, _moves = stage_write(modifier, path, value, **kwargs)
+        return entries[0]
+    return modifier.set_value(path, value, **kwargs)
+
+
 @bp.route("/type-fix/apply", methods=["POST"])
 def type_fix_apply():
     """Convert the selected stored-as-text values, in ONE change group.
@@ -6291,6 +6315,16 @@ def type_fix_apply():
         return jsonify(ok=False, error="None of the selected fields are "
                                        "convertible any more.", unknown=unknown), 409
 
+    from quam_state_manager.web.port_identity import edit_offer, move_port
+    port_ack = payload.get("port_ack")
+    port_offers = [dict(offer, row=n) for n, r in enumerate(rows)
+                   if (offer := edit_offer(r["path"], r["proposed_value"]))]
+    if port_offers and port_ack not in ("fix", "keep"):
+        return jsonify(ok=False, port_identity=port_offers,
+                       error="Confirm the port identity changes before converting"), 409
+    port_moves = []
+    port_retargets = []
+
     # 1. Persist the user type assignment FIRST for every row that needs one:
     #    without an enforced expectation the modifier's legacy coercion would
     #    faithfully cast the number back to the old value's string type.
@@ -6313,16 +6347,27 @@ def type_fix_apply():
         _attach_type_policy(ctx, inst)
 
     # 2. One change GROUP so the whole repair is a single Ctrl+Z.
-    gid = modifier.new_group_id() if len(rows) > 1 else None
+    gid = modifier.new_group_id() if len(rows) > 1 or port_offers else None
     applied: list = []
     converted: list[dict] = []
     for r in rows:
         if any(f["path"] == r["path"] for f in failures):
             continue
         try:
-            entry = modifier.set_value(r["path"], r["proposed_value"],
-                                       group_id=gid, _defer_hooks=True)
-            applied.append(entry)
+            target = r["path"]
+            for old, new in port_moves:
+                if target == old or target.startswith(old + "."):
+                    target = new + target[len(old):]
+            offer = edit_offer(target, r["proposed_value"])
+            if offer and port_ack == "fix":
+                entries, target = move_port(modifier, offer, r["proposed_value"], group_id=gid)
+                applied.extend(entries)
+                port_moves.append((offer["old_path"], offer["new_path"]))
+                port_retargets.extend(offer.get("retargets", []))
+            else:
+                entry = modifier.set_value(target, r["proposed_value"],
+                                           group_id=gid, _defer_hooks=True)
+                applied.append(entry)
             converted.append({"path": r["path"],
                               "value": r["proposed_value"],
                               "type": r["proposed_type"]})
@@ -6360,6 +6405,7 @@ def type_fix_apply():
         changes.append(c)
     return jsonify(ok=True, converted=converted, count=len(converted),
                    failures=failures, unknown=unknown, changes=changes,
+                   port_identity_moved=port_moves, port_pointer_retargets=port_retargets,
                    tray_html=_tray_html())
 
 
@@ -12200,6 +12246,9 @@ def qubit_edit(name: str):
         if _sr is not None:
             raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        refusal = _port_edit_refusal(target_path, parsed)
+        if refusal is not None:
+            return refusal
         # Mint one group id when the freq-mirror can fire, so the primary edit
         # and its mirrored twin share it and a single Ctrl+Z reverts both
         # atomically (otherwise one undo reverts only the twin → f_01≠RF
@@ -12223,7 +12272,7 @@ def qubit_edit(name: str):
                 return render_template(
                     "_status.html", level="error",
                     message=_lab_refusal_text(_lab[0])), 400
-            entry = modifier.set_value(target_path, parsed, group_id=gid)
+            entry = _port_set_value(modifier, target_path, parsed, group_id=gid)
         finally:
             _lab_rel()
         mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=gid) if freq_sync else None
@@ -12879,12 +12928,14 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
-        from quam_state_manager.web.port_identity import edit_offer, move_port
+        from quam_state_manager.web.port_identity import (
+            edit_offer, edit_offers, move_port, stage_write, pointer_retargets)
         _identity_offer = edit_offer(target_path, parsed)
-        _identity_ack = request.form.get("port_identity_ack")
-        if _identity_offer and _identity_ack not in ("fix", "keep"):
-            return jsonify(ok=False, port_identity=_identity_offer,
-                           error=_identity_offer["message"]), 409
+        _identity_ack = request.form.get("port_ack") or request.form.get("port_identity_ack")
+        _identity_offers = edit_offers(target_path, parsed)
+        if _identity_offers and _identity_ack not in ("fix", "keep"):
+            return jsonify(ok=False, port_identity=_identity_offer or _identity_offers,
+                           error="Confirm the port identity changes before writing"), 409
         _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
         if _cno:
             return jsonify(ok=False, error=_cno), 400
@@ -12912,7 +12963,10 @@ def field_edit():
             with modifier.store._lock:
                 map_apply.validate(ctx, dot_path, raw_value, _origin)
                 map_apply.checked(modifier, target_path, parsed, _origin)
-                if _identity_offer and _identity_ack == "fix":
+                if not _identity_offer and _identity_offers and _identity_ack == "fix":
+                    _identity_entries, _moves = stage_write(modifier, target_path, parsed)
+                    _entry = _identity_entries[0]
+                elif _identity_offer and _identity_ack == "fix":
                     _identity_entries, target_path = move_port(modifier, _identity_offer, parsed)
                     _entry = _identity_entries[0]
                     for entry in _identity_entries:
@@ -12940,10 +12994,14 @@ def field_edit():
     if _lab_notes:
         _warn = " ".join(([_warn] if _warn else []) + _lab_notes)
     _wkw = {"warning": _warn} if _warn else {}
+    if _identity_offers and not _identity_offer and _identity_ack == "fix":
+        _wkw.update(group_id=_entry.group_id, port_identity_moved=_moves,
+                    port_pointer_retargets=pointer_retargets(_identity_entries))
     if _identity_offer and _identity_ack == "fix":
         _wkw.update(group_id=_entry.group_id,
                     port_identity_moved={"old_path": _identity_offer["old_path"],
-                                         "new_path": _identity_offer["new_path"]})
+                                         "new_path": _identity_offer["new_path"]},
+                    port_pointer_retargets=_identity_offer.get("retargets", []))
     # Echo what was ACTUALLY committed (the coercer may have kept the old
     # type) so the client can re-render the value with honest type styling.
     try:
@@ -14975,6 +15033,13 @@ def field_create():
                     path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
+        from quam_state_manager.web.port_identity import edit_offers, stage_write, pointer_retargets
+        _offers = edit_offers(dot_path, parsed)
+        _ack = request.form.get("port_ack") or request.form.get("port_identity_ack")
+        _created_entries, _created_moves = [], []
+        if _offers and _ack not in ("fix", "keep"):
+            return jsonify(ok=False, port_identity=_offers,
+                           error="Confirm the port identity changes before creating"), 409
         # w9/pulsegate: a new key that is a pulse (an operations entry, a gate
         # slot, a pulse-class dict) is created on the Pulses page
         _psc = _pulse_structure_change(modifier.store, "create", dot_path, parsed)
@@ -14992,7 +15057,10 @@ def field_create():
             if _lab:
                 return jsonify(ok=False, lab_refused=True,
                                error=_lab_refusal_text(_lab[0])), 400
-            modifier.create_subtree(dot_path, parsed)
+            if _offers and _ack == "fix":
+                _created_entries, _created_moves = stage_write(modifier, dot_path, parsed, create=True)
+            else:
+                modifier.create_subtree(dot_path, parsed)
         finally:
             _lab_rel()
         _invalidate_engine_cache(ctx)
@@ -15013,6 +15081,8 @@ def field_create():
             pass
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
     return jsonify(ok=True, tray_html=_tray_html(), created_path=dot_path,
+                   port_identity_moved=_created_moves,
+                   port_pointer_retargets=pointer_retargets(_created_entries),
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
@@ -15410,12 +15480,33 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
 
+    # Preflight EVERY identity row before type assignments or any batch write,
+    # even for independent batches. A single answer covers all listed rows.
+    from quam_state_manager.web.port_identity import (
+        edit_offer, edit_offers, move_port, stage_write, pointer_retargets)
+    _port_ack = str(_pj.get("port_ack") or request.form.get("port_ack") or "")
+    _port_offers = []
+    for _n, (_dp, _rv, _create) in enumerate(pairs):
+        if _rv is _BATCH_DELETE:
+            continue
+        try:
+            _target = _resolve_edit_path(modifier.store, _dp)
+            _value = (_parse_for_target(modifier.store, _target, _rv)
+                      if isinstance(_rv, str) else _rv)
+            _offers = edit_offers(_target, _value)
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue  # ordinary validation below reports invalid rows
+        _port_offers.extend(dict(o, row=_n, dot_path=_dp) for o in _offers)
+    if _port_offers and _port_ack not in ("fix", "keep"):
+        return jsonify(ok=False, port_identity=_port_offers,
+                       error="Confirm the port identity changes before writing this batch"), 409
+
     from quam_state_manager.web import map_apply
     for (_dp, _rv, _create), _row_origin in zip(pairs, _origins):
         map_apply.validate(ctx, _dp, _rv, _row_origin,
                            create=_create, delete=_rv is _BATCH_DELETE)
 
-    independent = bool(_pj.get("independent"))
+    independent = bool(_pj.get("independent")) and not (_port_offers and _port_ack == "fix")
 
     # w9/pulsegate: a row that adds, removes or renames a pulse is the Pulses
     # page's job. Atomic: nothing is written (409, the rows named). An
@@ -15582,7 +15673,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # One group id when this batch commits MORE THAN ONE field (a grid row with
     # several edited cells, a plot Apply-All) so a single Ctrl+Z undoes the whole
     # batch atomically. A single-field batch stays ungrouped (undoes on its own).
-    _batch_gid = modifier.new_group_id() if len(pairs) > 1 else None
+    _batch_gid = modifier.new_group_id() if len(pairs) > 1 or _port_offers else None
     # QA diagnostics-r2-15: a multi-request gesture (the grids' Apply all posts
     # one atomic batch per row) asks for ONE group: "new" mints one even for a
     # single field; a gid is JOINED only while it is still the top of the log
@@ -15605,6 +15696,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 _batch_gid = modifier.new_group_id()
         ok_overall = True
         _ps_moved = False
+        _port_moves = []
         for _row_n, (dot_path, raw_value, allow_create) in enumerate(pairs):
             if _ps_moved and not pulse_door and _row_n not in _ps_skip:
                 # an earlier row changed structure: this one is judged again
@@ -15652,7 +15744,11 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     continue
                 # Follow pointers to the real literal when the path isn't navigable
                 # as-is (keeps the posted dot_path in `results` for row matching).
-                target_path = _resolve_edit_path(modifier.store, dot_path)
+                _write_path = dot_path
+                for _old, _new in _port_moves:
+                    if _write_path == _old or _write_path.startswith(_old + "."):
+                        _write_path = _new + _write_path[len(_old):]
+                target_path = _resolve_edit_path(modifier.store, _write_path)
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
                     # GATE-ID permits only filling a null/absent gate target ID
@@ -15680,8 +15776,35 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     raise ValueError(_cno)    # SU-11: the grid's own door too
                 try:
                     map_apply.checked(modifier, target_path, parsed, _origins[_row_n])
-                    entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
-                                               group_id=_batch_gid)
+                    _offer = edit_offer(target_path, parsed)
+                    if not _offer and edit_offers(target_path, parsed) and _port_ack == "fix":
+                        _entries, _moves = stage_write(modifier, target_path, parsed,
+                                                      create=allow_create, group_id=_batch_gid)
+                        for _e in _entries:
+                            if _origins[_row_n] is not None:
+                                _e.origin = copy.deepcopy(_origins[_row_n])
+                        applied_entries.extend(_entries)
+                        _port_moves.extend(_moves)
+                        results.append({"dot_path": dot_path, "resolved_path": target_path,
+                                        "applied": True, "new_value": parsed,
+                                        "port_identity_moved": _moves,
+                                        "port_pointer_retargets": pointer_retargets(_entries)})
+                        continue
+                    elif _offer and _port_ack == "fix":
+                        _entries, target_path = move_port(modifier, _offer, parsed, group_id=_batch_gid)
+                        for _e in _entries:
+                            if _origins[_row_n] is not None:
+                                _e.origin = copy.deepcopy(_origins[_row_n])
+                        applied_entries.extend(_entries)
+                        _port_moves.append((_offer["old_path"], _offer["new_path"]))
+                        results.append({"dot_path": dot_path, "resolved_path": target_path,
+                                        "applied": True, "new_value": modifier.store.get_value(target_path),
+                                        "port_identity_moved": _offer,
+                                        "port_pointer_retargets": _offer.get("retargets", [])})
+                        continue
+                    else:
+                        entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
+                                                   group_id=_batch_gid)
                 except KeyError:
                     if not allow_create:
                         raise
@@ -16603,6 +16726,9 @@ def pair_edit(name: str):
         if _sr is not None:
             raise ValueError(_sr)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        refusal = _port_edit_refusal(target_path, parsed)
+        if refusal is not None:
+            return refusal
         # Group primary + freq-mirror twin under one id (see qubit_edit) so a
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
         gid = (modifier.new_group_id()
@@ -16623,7 +16749,7 @@ def pair_edit(name: str):
                 return render_template(
                     "_status.html", level="error",
                     message=_lab_refusal_text(_lab[0])), 400
-            entry = modifier.set_value(target_path, parsed, group_id=gid)
+            entry = _port_set_value(modifier, target_path, parsed, group_id=gid)
         finally:
             _lab_rel()
         # No-op for pair-level fields (their paths carry no f_01/RF suffix); covers
@@ -23865,7 +23991,10 @@ def pulse_edit():
                                         probe if probe is not None else value)
             if _lab_no:
                 return _lab_edit_refused(_lab_no, dot_path, probe)
-            modifier.set_value(dot_path, value)
+            refusal = _port_edit_refusal(dot_path, value)
+            if refusal is not None:
+                return refusal
+            _port_set_value(modifier, dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
             # uncoerced (the field's CURRENT value is a pointer string).
@@ -23892,7 +24021,10 @@ def pulse_edit():
                 return _lab_edit_refused(_lab_no, dot_path, parsed)
             # enforce=False: literal mode IS the explicit, audited type-CHANGE
             # surface — forcing a type-assign ceremony here was rejected.
-            modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
+            refusal = _port_edit_refusal(dot_path, parsed)
+            if refusal is not None:
+                return refusal
+            _port_set_value(modifier, dot_path, parsed, coerce=False, enforce=False)
         else:  # value — follow pointer aliases to the real write target
             parsed = _parse_value(raw_value)
             _noop_edit = False
@@ -23928,7 +24060,10 @@ def pulse_edit():
                 _dflt = _pulse_ref_default_target(store, dot_path, raw_current)
                 if target.get("resolvable"):
                     # the leaf IS a pointer — write at its resolved target
-                    modifier.set_value(target["resolved_path"], parsed)
+                    refusal = _port_edit_refusal(target["resolved_path"], parsed)
+                    if refusal is not None:
+                        return refusal
+                    _port_set_value(modifier, target["resolved_path"], parsed)
                 elif _dflt:
                     # v1.3.0 (PU-02): the pointer names a field its object does
                     # not store (the page showed its class default) -- the edit
@@ -23938,9 +24073,15 @@ def pulse_edit():
                     # dangling pointer: the old value's str type is
                     # meaningless — write the typed literal uncoerced
                     # (coercing would stringify 40 into "40")
-                    modifier.set_value(dot_path, parsed, coerce=False)
+                    refusal = _port_edit_refusal(dot_path, parsed)
+                    if refusal is not None:
+                        return refusal
+                    _port_set_value(modifier, dot_path, parsed, coerce=False)
             else:
-                modifier.set_value(target_path, parsed)
+                refusal = _port_edit_refusal(target_path, parsed)
+                if refusal is not None:
+                    return refusal
+                _port_set_value(modifier, target_path, parsed)
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         return render_template("_status.html", message=str(exc),
                                level="error"), 400

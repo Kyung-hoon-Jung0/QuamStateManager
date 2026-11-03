@@ -65,19 +65,52 @@ The check is included in the diagnostics catalogue.
 
 `/field/edit` returns a 409 offer before staging a disagreeing identity field.
 The browser offers **Fix other side too**, **Keep as typed**, or **Cancel**.
-`port_identity_ack=fix` moves the port entry and retargets absolute pointers,
-including references to its subfields; missing destination parent dictionaries
+`port_ack=fix` (the original `port_identity_ack` remains accepted on the
+single-field door) moves the port entry and retargets pointers, including
+references to its subfields; missing destination parent dictionaries
 are created explicitly. Existing destination entries are never overwritten.
 The move and pointer edits form one undo group and roll back on failure.
 The page refreshes after a successful move so trees show the new key.
-`port_identity_ack=keep` stages only the typed field. The MCP state-edit bridge
+`port_ack=keep` stages only the typed field. The MCP state-edit bridge
 also exposes these answers. No choice silently rewrites the other side.
 
 The overwrite-live preflight adds identity warnings to its existing confirmation;
 the user can still apply. This advisory does not introduce a blocking gate.
-Batch and other editing doors retain their existing policies; the requested edit
-offer applies to `/field/edit`. Diagnostics detect inconsistencies regardless of
-which door or external editor introduced them.
+The same offer covers `/field/edit-batch`, `/type-fix/apply`, `/field/create`,
+the legacy qubit/pair inspector editors, and pulse edits whose aliases reach a
+port identity leaf. Whole-object writes are inspected recursively. Batch offers
+are an array with each offending row's index, path, typed identity and proposed
+move. Any offending row returns **409 before any batch value or type assignment
+is written**, including an independent batch. Resubmit with `port_ack=fix|keep`.
+Fix groups every move, pointer rewrite and ordinary row into one Ctrl+Z group;
+a failure rolls back that whole gesture. Later rows follow earlier moves of the
+same port. Keep preserves the ordinary batch write policy. Unusable dictionary
+keys still require acknowledgment; Fix refuses them without writes, while Keep
+retains the typed value subject to the existing type checks.
+
+The shared browser transport shows every offer in one Fix/Keep/Cancel dialog.
+It covers TreeMulti (including Ctrl+H), bulk paste/fill-down and other fetch batch
+callers, type conversion, and legacy HTMX inspectors. Requests retain their rows,
+undo-group token and headers when resubmitted. Cancel never resubmits. Successful
+Fix reloads the displayed trees/grids after their response is processed.
+
+The route audit also found constrained writes to extras, frequencies, pulse IDs
+and links, and historical undo/redo/replay of already accepted changes. These do
+not introduce a newly typed port identity. Regen populate remains out of scope.
+Diagnostics still detect inconsistencies introduced by external editors.
+
+Pointer users and moves resolve each pointer at its own holder using the
+project's `pointer_to_abs` rules: `#/` starts at the root, `#../` starts two
+segments above the holder, and `#./` starts at its containing object. Resolution
+follows chains and pointers crossed inside a target path. This is the editable
+field-target interpretation of `#./`; unresolved runtime aliases remain
+unresolved. Relative spellings are retained when they still reach the intended
+post-move target; otherwise the rewrite uses an absolute pointer. Move responses
+list rewritten holders and pointer values in `port_pointer_retargets` (batch
+rows also include this list). Before committing, every pointer that resolved
+before the move must still resolve at its relocated holder. A newly dangling
+pointer aborts the move and rolls back its new parents, structural changes and
+pointer edits. Already unresolved pointers do not independently block a move.
 
 ## Verification
 
@@ -117,3 +150,44 @@ three were killed by test assertion failures:
 
 Temporary measurements, raw data and mutation logs are ignored local artifacts
 and are not committed.
+
+
+## Follow-up verification
+
+The follow-up adds batch preflight/answers, mixed rows, multiple port moves,
+several identity fields on one port, one-step undo, failed-batch rollback,
+whole-object offers, legacy inspector and pulse-alias doors, created identity
+leaves, and type-conversion preflight. Pointer cases cover relative users at
+depths one and two, absolute/relative/self chains, retained relative spellings,
+subfield targets, and rollback when a relative reference to an external sibling
+would become dangling.
+
+The TreeMulti DOM selfcheck runs the shipped identity transport through Ctrl+H
+and Apply. It verifies that every row is listed, no resend occurs while the
+choice is pending, Cancel makes no second request, and Fix/Keep preserve the
+batch rows and group token while adding the explicit acknowledgment.
+
+PowerShell expands the requested diagnostics glob before invoking pytest:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$diagTests = @(rg --files tests -g 'test_diagnostics*.py')
+conda run -n <test-environment> python -m pytest tests/test_port_identity.py @diagTests tests/test_tree_multi.py -q -p no:cacheprovider
+node tests/tree_multi_selfcheck.cjs
+node --check quam_state_manager/web/static/port-identity.js
+```
+
+Mutation A removes the batch 409 guard: both atomic and independent preflight
+tests fail because the route returns 200 and writes without acknowledgment.
+Mutation B skips relative pointers: relative-user/chain tests fail. A second B
+mutation skips relative retargets only in the move planner: the depth-one and
+depth-two successful-move assertions fail because the invariant refuses the
+newly dangling pointers (400 instead of 200). Each mutation was restored before
+the normal verification run. Mutation logs remain ignored
+local artifacts.
+
+Final follow-up run: **340 passed, 1 skipped** for the requested selection.
+The existing NumPy/SciPy compatibility warning remains. The standalone
+TreeMulti/HTMX DOM selfcheck, JavaScript syntax checks, and `git diff --check`
+also passed. The shared transport test additionally verifies that HTMX Keep
+retains request headers and values, and HTMX Cancel never resubmits.

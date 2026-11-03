@@ -78,17 +78,52 @@ def identity_message(record: dict) -> str:
     return message
 
 
-def port_users(root: dict, path: str) -> list[str]:
-    """Absolute pointer users, including chains through wiring and subfields."""
+def pointer_landing(root: dict, path: str) -> str | None:
+    """Resolve a pointer holder to its final path, including relative chains.
+
+    Use the project's pointer_to_abs rules at EACH pointer's own location.
+    Runtime self aliases with absent targets, cycles and missing paths return None.
+    """
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+
+    def walk(segments, seen):
+        node, location = root, []
+        remaining = list(segments)
+        while True:
+            if isinstance(node, str) and node.startswith('#'):
+                holder = tuple(location)
+                if holder in seen or len(seen) >= 64:
+                    return None
+                target = pointer_to_abs(node, location)
+                if target is None:
+                    return None
+                return walk(target + remaining, seen | {holder})
+            if not remaining:
+                return '.'.join(location)
+            segment = remaining.pop(0)
+            try:
+                if isinstance(node, dict):
+                    key = segment if segment in node else int(segment)
+                    node = node[key]
+                elif isinstance(node, list):
+                    node = node[int(segment)]
+                else:
+                    return None
+            except (KeyError, ValueError, IndexError, TypeError):
+                return None
+            location.append(segment)
+
+    return walk(path.split('.'), set())
+
+
+def pointer_landings(root: dict) -> dict[str, str]:
     from quam_state_manager.core.loader import _walk
-    pointers = [(p, v) for p, v, _ in _walk(root)
-                if isinstance(v, str) and v.startswith("#/")]
-    targets = {"#/" + path.replace(".", "/")}
-    users = set()
-    while True:
-        found = {p for p, v in pointers if p not in users
-                 and any(v == t or v.startswith(t + "/") for t in targets)}
-        if not found:
-            return sorted(users)
-        users.update(found)
-        targets.update("#/" + p.replace(".", "/") for p in found)
+    return {p: target for p, v, _ in _walk(root)
+            if isinstance(v, str) and v.startswith('#')
+            and (target := pointer_landing(root, p)) is not None}
+
+
+def port_users(root: dict, path: str) -> list[str]:
+    """Direct, chained and relative users of a port or its subfields."""
+    return sorted(p for p, target in pointer_landings(root).items()
+                  if target == path or target.startswith(path + '.'))
