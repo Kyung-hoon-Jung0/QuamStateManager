@@ -38,6 +38,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   ok(w.document.querySelector('.opxmon-confirm') && w.__asked.length === 0, 'D-25 inline confirmation replaces native confirm');
   ok(/QM-x/.test(w.document.querySelector('.opxmon-confirm').textContent) && /con1\/2, con1\/3/.test(w.document.querySelector('.opxmon-confirm').textContent) && /Running/.test(w.document.querySelector('.opxmon-confirm').textContent),
      'the question names the QM, its FEMs and its jobs');
+  ok(w.document.querySelectorAll('.opxmon-confirm p').length === 2 && (w.document.querySelector('.opxmon-confirm').textContent.match(/con1\/2/g) || []).length === 1, 'round 4 confirmation has one resource summary');
   ok(w.__posts.length === 0, 'declining sends nothing');
 
   w.document.querySelector('.opxmon-confirm-cancel').click();
@@ -105,7 +106,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;
     ok(/Close idle QMs \(1\)/.test(doc('idle').body.textContent) && /since SM first saw it/.test(doc('idle').body.textContent), 'D-13 rendered idle count states its basis');
-    ok(doc('unknown').querySelector('[data-health="grey"]') && /PROBLEM/.test(doc('unknown').body.textContent), 'D-14 unknown admin is grey');
+    ok(doc('unknown').querySelector('[data-health="grey"]') && /OPEN 1/.test(doc('unknown').body.textContent), 'round 4 unassessed health is muted while occupancy remains OPEN');
     ok(doc('stale').querySelector('[data-health="grey"]') && /fresh/.test(doc('stale').body.textContent), 'D-14 stale data is grey');
     ok(doc('trend').querySelectorAll('svg polyline').length === 2 && /actual span 100 s/.test(doc('trend').body.textContent), 'D-15 real markup has separate gap segments and actual span');
     ok(/2 runs at that time/.test(doc('ambiguous').body.textContent) && !Array.from(doc('ambiguous').querySelectorAll('a')).some(a => /probably/.test(a.textContent)), 'D-16 ambiguous candidates have no run link');

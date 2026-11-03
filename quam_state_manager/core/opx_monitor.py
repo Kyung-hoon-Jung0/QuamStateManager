@@ -17,6 +17,7 @@ env, ``generator/opx_monitor_worker.py``). This module owns:
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import math
@@ -526,7 +527,7 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
             if r["value"] is None:
                 continue  # no reading: nothing to set a limit on
             k = f"temp:{r['key']}"
-            out.setdefault(k, {"key": k, "label": f"{r['label']} temperature", "unit": "degC",
+            out.setdefault(k, {"key": k, "label": f"{r['label']} temperature", "unit": "°C",
                                "direction": "above"})
         for m in (c.get("metrics") or {}):
             k = f"metric:{m}"
@@ -656,12 +657,23 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def connection_hint(host):
+    """Mention a tunnel only for loopback connections."""
+    try:
+        loopback = ipaddress.ip_address(str(host).strip('[]')).is_loopback
+    except ValueError:
+        loopback = str(host).lower() == 'localhost'
+    return 'check the SSH tunnel, port or power.' if loopback else 'check the server connection, port or power.'
+
+
 def read_admin(url, cluster_name=None):
     """Only the two documented read routes, no redirects or connection headers."""
     if not url:
         return {'known': False, 'not_applicable': True, 'reason': 'Admin n/a; no Admin URL configured.'}
+    admin_host = None
     try:
         parsed = urlsplit(url)
+        admin_host = parsed.hostname
         if parsed.scheme not in ('http', 'https') or not parsed.netloc or parsed.path not in ('', '/') or parsed.query or parsed.fragment or parsed.username:
             raise ValueError('Admin URL must be an HTTP(S) origin')
         opener = urllib.request.build_opener(_NoRedirect)
@@ -696,7 +708,7 @@ def read_admin(url, cluster_name=None):
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
                 'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
     except Exception as exc:
-        return {'known': False, 'reason': 'Admin unavailable; check the admin URL, tunnel or power.', 'details': str(exc)[:400]}
+        return {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
 
 
 def local_time(value):
@@ -761,14 +773,16 @@ def health(answer, admin, thresholds, state):
         bad.append('temperature above limit' if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)) else 'metric outside limit')
     if bad:
         return {'color': 'red', 'reason': bad[0], 'details': '; '.join(bad + unknown)}
+    if admin.get('problem'):
+        return {'color': 'grey', 'problem': True, 'reason': admin['reason']}
     if unknown or not known:
-        return {'color': 'grey', 'reason': unknown[0] if unknown else 'unknown: no health assessment configured', 'details': '; '.join(unknown)}
+        return {'color': 'grey', 'reason': unknown[0] if unknown else 'health not assessed: no admin URL / no limits set', 'details': '; '.join(unknown)}
     count = len(ans.get('open_qms') or [])
     return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
 def verdict(answer, health_state, idle_states):
     ans = answer or {}
-    if health_state['color'] in ('red', 'grey'):
+    if health_state['color'] == 'red' or health_state.get('problem'):
         return {'label': 'PROBLEM', 'reason': health_state['reason']}
     qms = ans.get('open_qms')
     if qms is None:
@@ -784,7 +798,7 @@ def verdict(answer, health_state, idle_states):
     idle = sum(bool(v['idle']) for v in idle_states.values())
     if idle == len(qms):
         return {'label': 'OPEN-IDLE ' + str(idle), 'reason': 'Close eligible QMs under Clean up'}
-    return {'label': 'PROBLEM', 'reason': str(len(qms)) + ' open QMs; recent or unknown activity'}
+    return {'label': 'OPEN ' + str(len(qms)), 'reason': 'in use / recent activity'}
 
 
 class Monitor:
@@ -934,7 +948,7 @@ class Monitor:
                 if ans.get(field) is not None:
                     self.section_times[field] = now_iso()
             if all(ans.get(field) is None for field in fields):
-                self.last_error = 'No data call answered. Check the SSH tunnel, port or power.'
+                self.last_error = 'No data call answered; ' + connection_hint((s.get('target') or {}).get('host'))
                 self.last_answer = ans
                 return
             prev_ok = self.last_ok_at
@@ -1116,8 +1130,11 @@ class Monitor:
             sentence = f"Updated {age:.0f} s ago."
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
+        health_state = health(self.last_answer, self.admin, s['thresholds'], state)
+        if (self.last_error or self.section_errors or (self.last_answer or {}).get('refused')) and health_state['color'] != 'red':
+            health_state = {**health_state, 'problem': True, 'reason': 'Connection or data unavailable', 'details': connection_hint((s.get('target') or {}).get('host'))}
         return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "age_s": age,
-                'health': health(self.last_answer, self.admin, s['thresholds'], state), 'admin': self.admin,
+                'health': health_state, 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
                 "valid_for_ms": max(0, int((STALE_INTERVALS * self.last_poll_interval - (age or 0)) * 1000)) if state == 'ok' else 0,

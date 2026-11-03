@@ -11,16 +11,9 @@
     function body() { return document.getElementById("opxmon-body"); }
 
     function confirmText(btn) {
-        if (btn.classList.contains("opxmon-close-all") || btn.classList.contains("opxmon-close-idle")) {
-            var ids = btn.getAttribute("data-qm-ids") || "";
-            return (btn.classList.contains("opxmon-close-idle") ? "Close idle quantum machines (activity re-checked before closing)?\n\n" : "Close ALL open quantum machines?\n\n") + ids.split(", ").join("\n") +
-                "\n\nAny job they run stops, for whoever opened them.";
-        }
-        var id = btn.getAttribute("data-qm-id");
-        var ports = btn.getAttribute("data-ports") || "unknown";
-        var jobs = btn.getAttribute("data-jobs") || "none";
-        return "Close quantum machine " + id + "?\n\nFEMs claimed: " + ports +
-            "\nJobs: " + jobs + "\n\nAny job it runs stops, for whoever opened it.";
+        return (btn.classList.contains("opxmon-close-all") ? "Close ALL listed QMs?" :
+            btn.classList.contains("opxmon-close-idle") ? "Close idle QMs (activity re-checked)?" : "Close this QM?") +
+            " Any running job will stop.";
     }
 
     function say(text, bad) {
@@ -58,7 +51,7 @@
         ids.forEach(function (id) {
             var row = Array.from(document.querySelectorAll('.opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
             var detail = document.createElement('p');
-            detail.textContent = id + ': ' + (row ? row.getAttribute('data-basis') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
+            detail.textContent = id + ': ' + (row ? (row.getAttribute('data-basis') || 'activity unknown') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
             panel.appendChild(detail);
         });
         var typed = null;

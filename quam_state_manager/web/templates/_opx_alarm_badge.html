@@ -1,7 +1,7 @@
 <a href="/opx-monitor/live" class="opxmon-health" data-health="{{ st.health.color }}" data-valid-ms="{{ st.valid_for_ms }}" title="{{ st.health.details or st.health.reason }}"><span class="opxmon-health-dot opxmon-health-dot--{{ st.health.color }}" aria-hidden="true">&#9679;</span> OPX {{ st.health.reason }}</a>
 {%- if st.alarms_armed and st.alarms -%}
 <a class="opxmon-alarm-badge" href="/opx-monitor/live" hx-get="/opx-monitor/live" hx-target="#table-pane" hx-push-url="true"
-   title="{% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) }} {{ a.unit }} ({{ a.direction }} limit {{ a.limit }})&#10;{% endfor %}">&#9888; OPX alarm ({{ st.alarms|length }})</a>
+   title="{% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) }} {{ a.unit }} ({{ a.direction }} limit {{ a.limit }} {{ a.unit }})&#10;{% endfor %}">&#9888; OPX alarm ({{ st.alarms|length }})</a>
 {%- elif st.alarms_armed and st.state in ('error', 'stale') -%}
 <a class="opxmon-alarm-badge opxmon-alarm-badge--blind" href="/opx-monitor/live" hx-get="/opx-monitor/live" hx-target="#table-pane" hx-push-url="true"
    title="{{ st.sentence }}">OPX monitor: no fresh data</a>

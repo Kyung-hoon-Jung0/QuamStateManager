@@ -5,30 +5,35 @@
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
      {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}&limit={{ job_limit }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
 {%- if flash %}<p class="ui-state {{ 'ui-state--error' if flash_error else 'opxmon-flash' }}" role="status">{{ flash }}</p>{% endif %}
-<div class="opxmon-verdict opxmon-health" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><strong>{{ verdict.label }}</strong> {{ verdict.reason }}{% if verdict.since %} since <span class="ts-local" data-utc="{{ verdict.since }}">{{ local_time(verdict.since) }}</span>{% endif %}{% if hottest %}<small class="opxmon-hottest">Hottest: {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} degC / {% set limit = temperature_limit(hottest.key, settings.thresholds) %}{{ 'limit ' ~ limit ~ ' degC' if limit is not none else 'no limit set' }}</small>{% endif %}</div>
+<div class="opxmon-verdict opxmon-health" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><strong>{{ verdict.label }}</strong> {{ verdict.reason }}{% if verdict.since %} since <span class="ts-local" data-utc="{{ verdict.since }}">{{ local_time(verdict.since) }}</span>{% endif %}{% if hottest and not temperature_failed %}<small class="opxmon-hottest">{% set breached = temperature_limit(hottest.key, settings.thresholds) is not none and hottest.value > temperature_limit(hottest.key, settings.thresholds) %}{{ 'Above limit:' if breached else 'Hottest:' }} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C / {% set limit = temperature_limit(hottest.key, settings.thresholds) %}{{ 'limit ' ~ limit ~ ' °C' if limit is not none else 'no limit set' }}</small>{% endif %}</div>
+{% if st.health.color == 'grey' and not st.health.problem %}<p class="ui-muted opxmon-health-note">{{ st.health.reason }}</p>{% endif %}
 <p class="opxmon-status opxmon-status--{{ st.state }}" role="status">
   {%- if st.target_label %}<span class="opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
-  <span class="opxmon-sentence" title="{{ st.sentence }}" data-state="{{ st.state }}">{% if st.state == 'error' and not settings.settings_error %}Connection or data unavailable; check the SSH tunnel, port or power.{% else %}{{ st.sentence }}{% endif %}</span>
+  <span class="opxmon-sentence" title="{{ st.sentence }}" data-state="{{ st.state }}">{% if st.state == 'error' and not settings.settings_error %}Connection or data unavailable; {{ connection_hint(target.host) }}{% else %}{{ st.sentence }}{% endif %}</span>
 </p>
 {%- if st.alarms %}
 <div class="ui-state ui-state--error opxmon-alarms" role="alert"><span class="ui-state-key">Alarm.</span>
-  {% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) }} {{ a.unit }} ({{ a.direction }} the limit {{ a.limit }}){% if not loop.last %}; {% endif %}{% endfor %}</div>
+  {% for a in st.alarms %}{{ a.controller }} {{ a.label }} = {{ '%.1f'|format(a.value) }} {{ a.unit }} ({{ a.direction }} the limit {{ a.limit }} {{ a.unit }}){% if not loop.last %}; {% endif %}{% endfor %}</div>
 {%- endif %}
 
-{% for section, error in st.section_errors.items() %}<p class="ui-muted opxmon-section-age" title="{{ error }}">{{ section|replace('_', ' ') }} unavailable; as of {{ local_time(st.section_times.get(section)) }}</p>{% endfor %}
+{% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-muted opxmon-section-age" title="{{ error }}">{{ section|replace('_', ' ') }} unavailable; {{ 'as of ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
 {%- if tab == 'live' %}
-  {% if not (ans.controllers or [])|selectattr('temperatures')|list %}<p>No temperature readings.</p>{% endif %}
-  <div class="opxmon-tiles" aria-label="Temperatures">
-  {% for c in ans.controllers or [] %}{% for r in temperature_rows(c) %}{% set limit = temperature_limit(r.key, settings.thresholds) %}{% set trend = trends.get(c.name ~ '/' ~ r.key) %}
+  {% if temperature_failed or ans.controllers is none %}<p class="ui-muted">Temperatures unavailable ({{ 'as of ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }})</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list %}<p>No temperature readings.</p>{% endif %}
+  {% for group in ['fem', 'other'] if ans.controllers %}
+  {% if group == 'other' %}<details class="opxmon-other-temperatures"><summary>Other temperatures</summary>{% endif %}
+  <div class="opxmon-tiles" aria-label="{{ 'FEM temperatures' if group == 'fem' else 'Other temperatures' }}">
+  {% for c in ans.controllers or [] %}{% for r in temperature_rows(c) if r.key.startswith('FEM ') == (group == 'fem') %}{% set limit = temperature_limit(r.key, settings.thresholds) %}{% set trend = trends.get(c.name ~ '/' ~ r.key) %}
   <details class="opxmon-tile" title="{{ c.name }} / raw sensor {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}">
-    <summary><span>{{ r.label }} {{ r.type }}</span><strong class="{% if r.value is not none and limit is not none and r.value > limit %}opxmon-hot{% endif %}">{% if r.empty %}empty slot{% elif r.value is none %}not reported{% else %}{{ '%.1f'|format(r.value) }} degC{% endif %}</strong>
+    <summary><span>{{ r.label|replace('FEM slot', 'Slot') }} {{ r.type }}</span><strong class="{% if r.value is not none and limit is not none and r.value > limit %}opxmon-hot{% endif %}">{% if r.empty %}empty slot{% elif r.value is none %}not reported{% else %}{{ '%.1f'|format(r.value) }} °C{% endif %}</strong>
     {% if trend and trend.unchanged_min >= 1 %}<small>unchanged for {{ trend.unchanged_min }} min</small>{% endif %}
-    <small>{% if limit is not none %}limit {{ limit }} degC{% else %}no limit set{% endif %}</small>
-    {% if trend %}<svg viewBox="0 0 240 40" width="90" height="20" aria-label="Temperature trend, shared 0 to 120 degC baseline">{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="2"/>{% endfor %}</svg>{% endif %}</summary>
-    {% if trend %}<p>min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} degC; actual span {{ trend.span_s|int }} s</p><p>{{ local_time(trend.start) }} to {{ local_time(trend.end) }}; {{ trend.samples }} samples</p>{% if trend.unchanged_min >= 1 %}<p>unchanged for {{ trend.unchanged_min }} min</p>{% endif %}{% if trend.gap_min >= 1 %}<p>Recorded gap: no data for {{ trend.gap_min }} min</p>{% endif %}{% endif %}
-    <p>Raw key {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}. Shared y baseline {{ trend.y_min if trend else 0 }} to {{ trend.y_max if trend else 120 }} degC; gaps are not interpolated.</p>
+    <small>{% if limit is not none %}limit {{ limit }} °C{% else %}no limit set{% endif %}</small>
+    {% if trend %}<svg viewBox="0 0 240 40" width="90" height="28" preserveAspectRatio="none" aria-label="Temperature trend, shared 0 to 120 °C baseline">{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke"/>{% endfor %}</svg>{% endif %}</summary>
+    {% if trend %}<p>min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} °C; actual span {{ trend.span_s|int }} s</p><p>{{ local_time(trend.start) }} to {{ local_time(trend.end) }}; {{ trend.samples }} samples</p>{% if trend.unchanged_min >= 1 %}<p>unchanged for {{ trend.unchanged_min }} min</p>{% endif %}{% if trend.gap_min >= 1 %}<p>Recorded gap: no data for {{ trend.gap_min }} min</p>{% endif %}{% endif %}
+    <p>Raw key {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}. Shared y baseline {{ trend.y_min if trend else 0 }} to {{ trend.y_max if trend else 120 }} °C; gaps are not interpolated.</p>
   </details>{% endfor %}{% endfor %}
   </div>
+  {% if group == 'other' %}</details>{% endif %}
+  {% endfor %}
   <details class="opxmon-details"><summary>Details</summary>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
   <h3>Admin status</h3><p>{{ ac.name }} ({{ st.admin.selection }})</p><p>Cluster health: <span title="{{ ac.health.status }}">{{ words(ac.health.status) }}</span>; messages: {{ words(ac.health.messages) }}; device messages: {{ words(ac.health.deviceMessages) }}; clock: {{ words(ac.clock) }}; unreachable: {{ words(ac.hasUnreachableDevices) }}</p>
@@ -53,7 +58,7 @@
         <td class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
           <span class="opxmon-fem{% if k in busy %} opxmon-fem--busy{% elif k in held %} opxmon-fem--held{% endif %}"
                 title="{% if k in busy %}A running job's QM ({{ busy[k] }}) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no job running{% elif not occupancy.known %}Occupancy unknown{% else %}No open QM claims this FEM{% endif %}">
-            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; claimed by an open QM{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} degC{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
+            <span class="opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; running{% elif k in held %} &middot; claimed by an open QM{% endif %}{% if tr %} <span class="opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} °C{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-muted">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
   </table>
@@ -130,7 +135,7 @@
         <label>Admin URL <input name="admin_url" value="{{ settings.admin_url or '' }}" placeholder="HTTP(S) origin" autocomplete="off"></label>
         <label>Host <input name="host" value="{{ target.host or '' }}" autocomplete="off"></label>
         <label>Port <input name="port" value="{{ target.port or '' }}" inputmode="numeric" autocomplete="off"></label>
-        <label>Cluster name <input name="cluster_name" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>
+        <label>Cluster name <input name="cluster_name" placeholder="{{ 'auto: ' ~ (st.admin.cluster.name if st.admin.cluster else ans.cluster_name) if st.admin.cluster or ans.cluster_name else 'auto: detected cluster' }}" value="{{ target.cluster_name or '' }}" autocomplete="off"></label>
         <label><input type="checkbox" name="tls" value="1" {% if target.tls %}checked{% endif %}> TLS</label>
         <label class="opxmon-wide">Connection headers (JSON, stored under this SM's instance folder, never shown again)
           <textarea name="headers" rows="2" placeholder="{{ 'stored -- leave empty to keep' if has_headers else 'optional' }}" autocomplete="off"></textarea></label>
@@ -149,7 +154,7 @@
       <label>Idle minutes <input name="idle_minutes" value="{{ settings.idle_minutes }}" type="number" min="0.01" step="any"></label>
       <label>Interval (s, minimum {{ min_interval|int }}) <input name="interval_s" value="{{ settings.interval_s|int }}" inputmode="numeric"></label>
       <label><input type="checkbox" name="alarms_armed" value="1" {% if settings.alarms_armed %}checked{% endif %}> Arm alarms (keeps polling while SM runs; alarms show in the top bar and as a toast)</label>
-      <label>All FEMs limit (degC; no default is assumed) <input name="th__temp:all_fems" value="{{ settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
+      <label>All FEMs limit (°C; no default is assumed) <input name="th__temp:all_fems" value="{{ settings.thresholds.get('temp:all_fems', '') }}" inputmode="decimal"></label>
       {%- if offered %}
       <table class="ui-table opxmon-table" aria-label="Alarm limits"><thead><tr><th class="ui-table-head">Metric</th><th class="ui-table-head">Alarm when</th><th class="ui-table-head">Limit</th></tr></thead>
         <tbody>{% for m in offered %}<tr><td class="ui-table-cell">{{ m.label }} ({{ m.unit }})</td><td class="ui-table-cell">{{ m.direction }}</td>

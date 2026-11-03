@@ -467,7 +467,7 @@ def test_fem_sensor_k_is_slot_k_plus_1_and_zero_is_no_sensor(env):
     assert rows["FEM 3"]["value"] is None and rows["CRPS 1"]["value"] is None
     html = page(app, "live")
     # slot 5 (LF) carries sensor FEM 4's reading, its raw key in the tooltip
-    assert "5 LF" in html and "title=\"sensor 'FEM 4'\">55.2 degC" in html
+    assert "5 LF" in html and "title=\"sensor 'FEM 4'\">55.2 °C" in html
     assert 'empty slot' in html and '0.0</td>' not in html
     offered = [x["key"] for x in om.offered_metrics(a)]
     assert "temp:FEM 3" not in offered and "temp:CRPS 1" not in offered and "temp:FEM 4" in offered
@@ -709,7 +709,7 @@ def test_d21_transport_failure_labels_retained_sections(env):
     assert m.section_times == previous
     assert set(m.section_errors) == {'controllers', 'open_qms', 'jobs'}
     html = page(app, 'live')
-    assert 'controllers unavailable; as of' in html
+    assert 'Temperatures unavailable (as of' in html
     assert 'open qms unavailable; as of' in html
     assert m.status()['state'] == 'error' and not m.capabilities()['close']
 
@@ -865,3 +865,72 @@ def test_round3_dom_selfcheck(env, tmp_path):
     assert node, 'jsdom checks require node'
     result = subprocess.run([node, str(Path(__file__).with_name('opx_monitor_round3_selfcheck.cjs')), str(fixture)], capture_output=True, text=True, encoding='utf-8', timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
+
+@pytest.mark.parametrize('mode,label', [('free', 'FREE'), ('busy', 'BUSY'), ('open', 'OPEN 1'), ('idle', 'OPEN-IDLE 1')])
+def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
+    app, m, w, clock, _ = env
+    a = answer(qms=() if mode == 'free' else (("QM-placeholder", [('job-placeholder', 'Running')] if mode == 'busy' else [], []),))
+    w.script[:] = [a]
+    m.poll_once()
+    if mode == 'idle':
+        clock.t += 7300
+        m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>' + label + '</strong>' in html
+    assert 'health not assessed: no admin URL / no limits set' in html
+    assert 'opxmon-health-note' in html
+    assert '<strong>PROBLEM</strong>' not in html
+
+
+def test_round4_recent_open_is_normal(env):
+    app, m, w, clock, _ = env
+    s = m.settings(); s['thresholds'] = {'temp:Chassis': 80}; om.save_settings(m.instance, s)
+    w.script[:] = [answer(qms=(("QM-placeholder", [], []),), temps={'Chassis': 40})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>OPEN 1</strong> in use / recent activity' in html
+    assert '<strong>PROBLEM</strong>' not in html
+
+
+def test_round4_alarm_and_failed_calls(env):
+    app, m, w, clock, _ = env
+    s = m.settings(); s.update(thresholds={'temp:FEM 0': 50}, alarms_armed=True); om.save_settings(m.instance, s)
+    w.script[:] = [answer(qms=(), temps={'FEM 0': 60, 'Chassis': 70})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>PROBLEM</strong>' in html
+    assert 'Above limit: FEM 0 60.0 °C' in html
+    assert 'limit 50.0 °C' in html
+    assert 'Hottest: Chassis' not in html
+    w.script[:] = [om.WorkerError('read failed')]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>PROBLEM</strong>' in html
+    assert 'Temperatures unavailable (as of' in html
+    assert 'No temperature readings.' not in html
+    assert 'SSH tunnel' not in html
+    assert 'SSH tunnel' in om.connection_hint('localhost')
+    assert 'SSH tunnel' in om.connection_hint('::1')
+    assert 'SSH tunnel' not in om.connection_hint('service.invalid')
+
+
+def test_round4_auto_cluster_placeholder(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    m.admin = {'known': False, 'cluster': {'name': 'cluster-placeholder'}}
+    assert 'placeholder="auto: cluster-placeholder"' in page(app, 'settings')
+
+def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(), refused={'con1.temperatures': 'read failed'})]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '<strong>PROBLEM</strong>' in html
+    assert 'Temperatures unavailable (as of' in html
+    assert 'No temperature readings.' not in html
+    def unavailable(*args):
+        raise OSError('unreachable')
+    monkeypatch.setattr(om.urllib.request, 'build_opener', unavailable)
+    admin = om.read_admin('https://service.invalid')
+    assert admin['problem'] and 'SSH tunnel' not in admin['reason']
+    assert om.verdict({'open_qms': []}, om.health({}, admin, {}, 'ok'), {})['label'] == 'PROBLEM'
