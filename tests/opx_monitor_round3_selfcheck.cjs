@@ -14,6 +14,10 @@ pin(doc('d25').querySelector('.opxmon-danger:not([open]) .opxmon-close-all') && 
 pin(/100 of 313 jobs shown/.test(doc('d26').body.textContent) && doc('d26').querySelector('.ts-local[data-utc]') && /Show more/.test(doc('d26').body.textContent), 'D-26 bounded count and local created time');
 pin(doc('d27').querySelector('.opxmon-tiles .opxmon-tile:not([open]) svg') && /empty slot/.test(doc('d27').body.textContent) && /unchanged for 3 min/.test(doc('d27').body.textContent), 'D-27 compact tiles distinguish empty and frozen sensors');
 pin(doc('d28').querySelector('.opxmon-health[title]') && /temperature above limit/.test(doc('d28').body.textContent), 'D-28 top bar contains one worst reason with hover details');
+const css = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/style.css'), 'utf8');
+const bar = new JSDOM('<style>a {margin:-3px -10px}' + css.slice(css.indexOf('#opxmon-alarm-slot')) + '</style><li id="opxmon-alarm-slot">' + pages.d28 + '</li>').window;
+pin(bar.getComputedStyle(bar.document.querySelector('.opxmon-health')).marginLeft === '0px', 'D-28 navbar negative margins must not overlap the badge');
+bar.close();
 const window = new JSDOM(pages.d25, {url:'http://localhost', runScripts:'outside-only'}).window;
 let posts = 0;
 window.confirm = () => {throw new Error('Native confirm is forbidden');};
