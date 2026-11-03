@@ -281,21 +281,22 @@ class TestNeverSilent:
         assert "_fspCompUpdates" in app_js
         assert "Apply FSP + compensate" in app_js
         assert "the\n" not in ""  # noop
+        # D-44: every edit door commits the FSP at once and the offer follows
+        # the write (X-SM-Fsp-Changed -> FspAfterReplace). The pre-commit 409
+        # answer is retired from every edit door; the popup itself stays for
+        # the Re-generate wizard (generate.js).
+        assert "X-SM-Fsp-Changed" in app_js and "FspAfterReplace.offer" in app_js
         for f in ("bulk-edit.js", "pair-edit.js", "all-values.js"):
             js = (static / f).read_text(encoding="utf-8")
-            assert "fsp_compensation" in js, f"{f} must offer the popup"
-            assert "fsp_ack" in js
-        # docs/36 amendment: the plot-apply popup — BOTH handlers must route
-        # the r12 fsp 409 and the r14 type_fix 409 (they used to dead-end on
-        # the raw error string).
+            assert "fsp_compensation" not in js and "_openFspPopup" not in js, f
         i1 = app_js.index("function applyPlotRow")
         i2 = app_js.index("function applyAllPlotRows")
         i3 = app_js.index("function _markPlotRowApplied")
         for name, region in (("applyPlotRow", app_js[i1:i2]),
                              ("applyAllPlotRows", app_js[i2:i3])):
-            for tok in ("fsp_compensation", "_openFspPopup", "fsp_ack",
-                        "_fspCompUpdates", "type_fix", "_confirmTypeFix"):
-                assert tok in region, f"{name} must handle the {tok} 409"
+            assert "fsp_compensation" not in region, name
+            assert "type_fix" in region and "_confirmTypeFix" in region, name
+        assert "_openFspPopup" in (static / "generate.js").read_text(encoding="utf-8")
         # 2026-08-04: the popup's action row uses the global compact CTA
         # family (one filled CTA, the rest restrained) — the cnb-* classes
         # are banner-scoped and fell through to Pico defaults here.
