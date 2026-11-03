@@ -12946,7 +12946,10 @@ window.clearDetailPanelSearch = function(btnEl) {
         for (var n = dir > 0 ? _kbNext(node) : _kbPrev(node); n;
                 n = dir > 0 ? _kbNext(n) : _kbPrev(n)) {
             var ch = n.querySelector(':scope > .tree-children');
-            if (ch && ch.style.display === "none") _toggleNode(n);
+            if (ch && ch.style.display === "none") {
+                _toggleNode(n);
+                if (dir < 0) n = _kbDeepLast(n);
+            }
             var v = n.querySelector(':scope > .tree-row > .tree-val');
             if (v && (!editableOnly || v.classList.contains("ui-tree-value"))) return n;
         }

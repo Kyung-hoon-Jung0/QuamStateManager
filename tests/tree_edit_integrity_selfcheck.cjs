@@ -347,4 +347,5 @@ function typeInto(win, p, text, how) {
 
   if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
   console.log('all tree edit-integrity checks passed');
+  process.exit(0);
 })().catch(function (e) { console.error(e); process.exit(1); });

@@ -179,6 +179,7 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
     window.FormData = global.FormData;
     const identityPosts = [];
     window.fetch = function (url, options) {
+        if (String(url).startsWith("/field/peek")) return Promise.resolve({json: async () => ({expected:{}})});
         const body = JSON.parse(options.body);
         identityPosts.push(body);
         const result = body.port_ack ? {ok: true, results: body.updates.map(u => ({
