@@ -88,6 +88,7 @@ class ChangeEntry:
     # MCP bridge. The tray shows it; a human's Apply names the agent's share.
     actor: str = "human"
     origin: dict | None = None
+    key_index: int | None = None  # Original dictionary position for deleted keys.
 
     def __setattr__(self, name, value):
         object.__setattr__(self, name, value)

@@ -393,7 +393,7 @@ def test_relative_spelling_preserved_and_self_chain(env):
     assert pointer_landing(store.merged, new + '.nested.link') == new + '.fem_id'
 
 
-def test_dangling_invariant_rolls_back_move(env):
+def test_moved_holder_external_target_is_preserved(env):
     client, ctx = env
     modifier, store = ctx['modifier'], ctx['store']
     modifier.create_subtree('ports.analog_outputs.con1.2.shared', 7)
@@ -402,8 +402,9 @@ def test_dangling_invariant_rolls_back_move(env):
     count = len(store.change_log)
     response = client.post('/field/edit', data={
         'dot_path': BASE + '.fem_id', 'value': '3', 'port_ack': 'fix'})
-    assert response.status_code == 400
-    assert 'dangling pointers' in response.get_json()['error']
+    assert response.status_code == 200, response.get_json()
+    assert store.get_value('ports.analog_outputs.con1.3.1.external') == '#/ports/analog_outputs/con1/2/shared'
+    assert client.post('/undo').status_code == 200
     assert (store.state, store.wiring) == before
     assert len(store.change_log) == count
 
@@ -554,3 +555,98 @@ def test_container_identity_ack_and_undo(env, door, ack):
         assert len({e.group_id for e in store.change_log}) == 1
     assert client.post('/undo').status_code == 200
     assert (store.state, store.wiring) == before
+
+
+def test_moved_relative_holder_does_not_reland_on_other_port(env):
+    from quam_state_manager.core.port_identity import pointer_landing
+    client, ctx = env
+    mod, store = ctx['modifier'], ctx['store']
+    mod.create_subtree(BASE + '.delay', '#../2/delay')
+    mod.create_subtree('ports.analog_outputs.con1.2.2', {'port_id': 2, 'delay': 20})
+    mod.create_subtree('ports.analog_outputs.con1.3', {'2': {'port_id': 2, 'delay': 30}})
+    target = 'ports.analog_outputs.con1.2.2.delay'
+    assert pointer_landing(store.merged, BASE + '.delay') == target
+    response = client.post('/field/edit', data={
+        'dot_path': BASE + '.fem_id', 'value': '3', 'port_ack': 'fix'})
+    assert response.status_code == 200, response.get_json()
+    holder = 'ports.analog_outputs.con1.3.1.delay'
+    assert pointer_landing(store.merged, holder) == target
+    assert store.get_value(pointer_landing(store.merged, holder)) == 20
+
+
+def test_move_failure_restores_dictionary_order(env, monkeypatch):
+    client, ctx = env
+    mod, store = ctx['modifier'], ctx['store']
+    parent = BASE.rsplit('.', 1)[0]
+    mod.create_subtree(parent + '.2', {'port_id': 2})
+    before = copy.deepcopy(list(store.get_value(parent).items()))
+    log = list(store.change_log)
+    original = mod.set_value
+    def fail_pointer(path, value, **kwargs):
+        if path.startswith('wiring.'):
+            raise ValueError('injected failure')
+        return original(path, value, **kwargs)
+    monkeypatch.setattr(mod, 'set_value', fail_pointer)
+    response = client.post('/field/edit', data={
+        'dot_path': BASE + '.port_id', 'value': '4', 'port_ack': 'fix'})
+    assert response.status_code == 400
+    assert list(store.get_value(parent).items()) == before
+    assert store.change_log == log
+
+
+@pytest.mark.parametrize('created', [False, True])
+def test_stage_write_failure_removes_partial_write(env, monkeypatch, created):
+    from quam_state_manager.web.port_identity import stage_write
+    import quam_state_manager.web.port_identity as identity
+    _, ctx = env
+    mod, store = ctx['modifier'], ctx['store']
+    path = BASE + '.port_id' if created else BASE
+    if created:
+        mod.delete_subtree(path)
+    before = copy.deepcopy((store.state, store.wiring))
+    log = list(store.change_log)
+    def fail_move(*args, **kwargs):
+        # The initial container/leaf write has already happened.
+        assert store.get_value(BASE + '.port_id') == 4
+        raise ValueError('injected mid-stage failure')
+    monkeypatch.setattr(identity, 'move_port', fail_move)
+    with pytest.raises(ValueError, match='mid-stage'):
+        stage_write(mod, path, 4 if created else dict(store.get_value(BASE), port_id=4), create=created)
+    assert (store.state, store.wiring) == before
+    assert store.change_log == log
+
+
+def test_move_invariant_rejects_wrong_but_resolved_landing(env, monkeypatch):
+    from quam_state_manager.core.port_identity import pointer_landing
+    from quam_state_manager.web.port_identity import move_port
+    _, ctx = env
+    mod, store = ctx['modifier'], ctx['store']
+    mod.create_subtree('qubits.q1.other', 9)
+    mod.create_subtree('qubits.q1.link', '#/qubits/q1/note')
+    before = copy.deepcopy((store.state, store.wiring))
+    log = list(store.change_log)
+    original = mod.rename_subtree
+    def drift(*args, **kwargs):
+        entries = original(*args, **kwargs)
+        entries.append(mod.set_value('qubits.q1.link', '#/qubits/q1/other', group_id=kwargs['group_id']))
+        assert pointer_landing(store.merged, 'qubits.q1.link') is not None
+        return entries
+    monkeypatch.setattr(mod, 'rename_subtree', drift)
+    with pytest.raises(ValueError, match='pointer landings'):
+        move_port(mod, edit_offer(BASE + '.port_id', 4), 4)
+    assert (store.state, store.wiring) == before
+    assert store.change_log == log
+
+
+def test_move_preserves_unresolved_pointer_landing(env):
+    client, ctx = env
+    mod, store = ctx['modifier'], ctx['store']
+    mod.create_subtree('qubits.q1.future', '#/ports/analog_outputs/con1/2/4')
+    before = copy.deepcopy((store.state, store.wiring))
+    log = list(store.change_log)
+    response = client.post('/field/edit', data={
+        'dot_path': BASE + '.port_id', 'value': '4', 'port_ack': 'fix'})
+    assert response.status_code == 400
+    assert 'pointer landings' in response.get_json()['error']
+    assert (store.state, store.wiring) == before
+    assert store.change_log == log

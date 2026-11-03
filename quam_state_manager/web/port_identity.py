@@ -130,7 +130,8 @@ def move_port(modifier, offer, value, *, group_id=None):
     dest, leaf = parent(planned, new)
     dest[leaf] = copy.deepcopy(payload)
     candidates = {p: moved(t) for p, t in before.items()
-                  if t == old or t.startswith(old + '.')}
+                  if t == old or t.startswith(old + '.')
+                  or p == old or p.startswith(old + '.')}
     # Set all affected users first; then retain a relative spelling only when
     # it still resolves to the intended target in the complete post-move tree.
     for path, target in candidates.items():
@@ -163,10 +164,11 @@ def move_port(modifier, offer, value, *, group_id=None):
             entries.extend(modifier.rename_subtree(old, new, payload, group_id=gid))
             for path, pointer in retargets:
                 entries.append(modifier.set_value(path, pointer, group_id=gid))
-            dangling = [moved(p) for p in before
-                        if pointer_landing(store.merged, moved(p)) is None]
-            if dangling:
-                raise ValueError("Port move would leave dangling pointers: " + ", ".join(dangling))
+            changed = [moved(p) for p in pointers
+                       if pointer_landing(store.merged, moved(p)) != (
+                           moved(before[p]) if p in before else None)]
+            if changed:
+                raise ValueError("Port move would change pointer landings: " + ", ".join(changed))
             offer['retargets'] = [{'path': p, 'pointer': v} for p, v in retargets]
         except Exception:
             modifier._rollback(entries)

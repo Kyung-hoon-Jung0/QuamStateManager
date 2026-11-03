@@ -70,7 +70,8 @@ single-field door) moves the port entry and retargets pointers, including
 references to its subfields; missing destination parent dictionaries
 are created explicitly. Existing destination entries are never overwritten.
 The move and pointer edits form one undo group and roll back on failure.
-The page refreshes after a successful move so trees show the new key.
+The original request resolves with the resubmitted response so its caller
+repaints through the normal success handler; Fix does not reload the page.
 `port_ack=keep` stages only the typed field. The MCP state-edit bridge
 also exposes these answers. No choice silently rewrites the other side.
 
@@ -92,7 +93,8 @@ The shared browser transport shows every offer in one Fix/Keep/Cancel dialog.
 It covers TreeMulti (including Ctrl+H), bulk paste/fill-down and other fetch batch
 callers, type conversion, and legacy HTMX inspectors. Requests retain their rows,
 undo-group token and headers when resubmitted. Cancel never resubmits. Successful
-Fix reloads the displayed trees/grids after their response is processed.
+Fix returns the resubmitted response to the original caller. Concurrent offers
+queue one dialog at a time, preserving every unanswered choice.
 
 The route audit also found constrained writes to extras, frequencies, pulse IDs
 and links, and historical undo/redo/replay of already accepted changes. These do
@@ -107,10 +109,11 @@ field-target interpretation of `#./`; unresolved runtime aliases remain
 unresolved. Relative spellings are retained when they still reach the intended
 post-move target; otherwise the rewrite uses an absolute pointer. Move responses
 list rewritten holders and pointer values in `port_pointer_retargets` (batch
-rows also include this list). Before committing, every pointer that resolved
-before the move must still resolve at its relocated holder. A newly dangling
-pointer aborts the move and rolls back its new parents, structural changes and
-pointer edits. Already unresolved pointers do not independently block a move.
+rows also include this list). Before committing, every pointer must satisfy
+`post_landing(moved(holder)) == moved(pre_landing(holder))`, preserving `None`
+for unresolved pointers. This checks target identity, including pointers held
+inside the moved port that reach external targets. Any changed landing aborts
+the move and rolls back new parents, structural changes and pointer edits.
 
 ## Verification
 
@@ -136,7 +139,8 @@ The existing NumPy/SciPy version warning remained. Local npm test dependencies
 were installed without package-file changes so the DOM checks could execute.
 JavaScript syntax checks passed. A separate DOM interaction check exercised Fix,
 Keep and Cancel, verified no resend before a choice, preserved the chip header,
-and refreshed only after Fix. The DOM harness stubbed native dialog open/close,
+and originally refreshed only after Fix (superseded by the review fix below).
+The DOM harness stubbed native dialog open/close,
 which jsdom does not implement.
 
 Three mutations were applied individually and restored after each run. All
@@ -159,8 +163,8 @@ several identity fields on one port, one-step undo, failed-batch rollback,
 whole-object offers, legacy inspector and pulse-alias doors, created identity
 leaves, and type-conversion preflight. Pointer cases cover relative users at
 depths one and two, absolute/relative/self chains, retained relative spellings,
-subfield targets, and rollback when a relative reference to an external sibling
-would become dangling.
+subfield targets, and preserved external-sibling targets when moving the
+holder would otherwise make its relative reference dangling.
 
 The TreeMulti DOM selfcheck runs the shipped identity transport through Ctrl+H
 and Apply. It verifies that every row is listed, no resend occurs while the
@@ -191,3 +195,72 @@ The existing NumPy/SciPy compatibility warning remains. The standalone
 TreeMulti/HTMX DOM selfcheck, JavaScript syntax checks, and `git diff --check`
 also passed. The shared transport test additionally verifies that HTMX Keep
 retains request headers and values, and HTMX Cancel never resubmits.
+
+
+## Review fixes
+
+Pointers held inside the moved subtree join the rewrite candidates even when
+pointing outside it. The exact regression moves `con1.2.1` to `con1.3.1` with
+`delay = "#../2/delay"`, while sibling delays are 20 and 30. Its landing stays
+`con1.2.2.delay` and its value stays 20. A separate injected, still-resolving
+wrong landing proves the invariant checks equality for every pointer.
+
+Deleted entries record their dictionary position so rollback and undo restore
+sibling order. The failure regression compares `list(parent.items())` as well
+as the change log. Whole-object and created-leaf Fix tests inject a failure
+after the initial write and prove `stage_write` removes every partial change.
+
+Fetch retries support a `Request` without `init`; offers are recognized from
+the JSON body even with a text/plain response header. The jsdom selfcheck pins
+three queued offers, independent responses, Cancel, preserved headers, and no
+immediate or delayed reload. It also executes the real bundled HTMX 2 file,
+submits an actual form, observes its FormData-backed parameters proxy, and
+checks repeated values survive Fix and the successful response swaps normally.
+
+Node staging checks identity leaves after resolving aliases and recursively
+checks container writes. A disagreement holds the complete write group and
+puts the reason in its approval card. It requires review through the existing
+field editor's Fix/Keep choice; approval staging never silently creates the
+mismatch. Tests exercise a node's direct and alias updates, the approval card,
+unchanged live state, and an empty pending tray.
+
+The review verification command is:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+$diagTests = @(rg --files tests -g 'test_diagnostics*.py')
+conda run -n SNU_17Q python -m pytest tests/test_port_identity.py tests/test_tree_multi.py tests/test_agent_runs.py @diagTests -q -p no:cacheprovider
+node tests/port_identity_selfcheck.cjs
+node tests/tree_multi_selfcheck.cjs
+```
+
+
+Each review mutation was applied alone and restored before the next run. All
+were killed by assertion failures:
+
+| Mutation | Regression |
+| --- | --- |
+| Omit holders inside the moved subtree from candidates | Exact 20/30 delay repro |
+| Replace landing equality with a non-None check | Injected wrong but resolved landing |
+| Skip restoring the deleted key's position | Order-sensitive rollback comparison |
+| Remove `stage_write` rollback | Whole-object and created-leaf partial writes |
+| Open concurrent dialogs immediately | Three pending offers, exactly one dialog |
+| Restore delayed reload after Fix | jsdom reload error and no-reload assertion |
+| Bypass Request calls without init | Request JSON and multipart retry |
+| Require JSON Content-Type on the offer response | text/plain offer body |
+| Drop original HTMX form values | Change form while awaiting answer, preserve original values |
+| Disable the approval identity guard | Direct and alias node updates held with card reason |
+
+The HTMX mutation initially survived because its source form still contained
+the original values. The test now changes the form during the pending choice,
+so rereading the form cannot masquerade as preserving the original request.
+The strengthened test kills that mutation. Raw logs remain ignored local
+artifacts.
+
+
+Review results: the requested selection passed with **385 passed, 1 skipped**.
+The final port/modifier run, including the additional unresolved-pointer
+invariant regression, passed with **241 passed, 5 skipped**. Tray restart,
+recovery and undo-journal checks passed with **79 passed**. Both touched `.cjs`
+selfchecks, JavaScript syntax validation and `git diff --check` passed. The
+existing NumPy/SciPy version warning remains.

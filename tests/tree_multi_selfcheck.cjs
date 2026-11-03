@@ -237,6 +237,7 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
                 parameters: {dot_path: 'ports.analog_outputs.con1.2.1.port_id', value: '4'},
                 headers: {'X-Request-Token': 'preserved'}}, target: tree};
         d.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', {detail}));
+        await tick(0);
         ok(detail.shouldSwap === false && detail.isError === false, 'HTMX offer waits for a choice');
         const dialog = d.querySelector('dialog');
         [...dialog.querySelectorAll('button')].find(b => b.textContent === (mode === 'keep' ? 'Keep as typed' : 'Cancel')).click();
