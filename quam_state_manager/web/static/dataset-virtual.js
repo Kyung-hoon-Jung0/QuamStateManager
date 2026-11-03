@@ -307,6 +307,10 @@
     }
 
     function _paramCond(body) {
+        // The one parser lives in SearchQuery (shared with the Live-Edit grids).
+        if (typeof window !== 'undefined' && window.SearchQuery && window.SearchQuery.paramCond) {
+            return window.SearchQuery.paramCond(body, true);
+        }
         var m = String(body).match(/^([^=<>]+)(>=|<=|>|<|=)(.+)$/);
         if (!m) return null;
         var key = m[1].toLowerCase(), op = m[2], want = m[3];

@@ -34,6 +34,7 @@ try {
 
 const ROOT = path.join(__dirname, '..');
 const GRID_VIRT_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'grid-virt.js'), 'utf8');
+const SEARCH_QUERY_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'search-query.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'bulk-edit.js'), 'utf8');
 // docs/141 4ae B-7: the honest line for "grid-virt.js never arrived" lives in
 // app.js (a CORE script -- a helper inside the module that went missing would
@@ -199,6 +200,7 @@ function world(opts) {
   // Performance.getMetrics). That is not the mount, and this counter exists
   // to pin what the MOUNT reads, so bank it and start the mount from zero.
   win.__evalReads = win.__geomReads; win.__geomReads = 0;
+  if (opts.sq) new win.Function(SEARCH_QUERY_JS).call(win);   // the shared grammar + operators
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: {} }, [], { chip: 'chipA', qubits: [] });
   win.__mountReads = win.__geomReads;                    // what the MOUNT read (the later scroll pass may read geometry)
@@ -603,6 +605,35 @@ async function main() {
   //
   // Pinned behaviourally: the real mount pushes one entry per phase, so the
   // LAST entry naming the pin proves the ordering. A source-text check would
+  /* ── docs/175 operators in the qubit grid (one parser: SearchQuery) ── */
+  {
+    const WQ = world({ sq: true });
+    await tick(40);
+    const dq = WQ.doc, wq = WQ.win;
+    const sbq = dq.getElementById('bulk-search');
+    const shownQ = () => Array.prototype.filter.call(dq.querySelectorAll('tr[data-qubit]'),
+      (r) => !r.classList.contains('bulk-row-hidden')).map((r) => r.getAttribute('data-qubit')).join(',');
+    async function q(text) { sbq.value = text; sbq.dispatchEvent(new wq.Event('input', { bubbles: true })); await tick(250); }
+    await q('c1>=201');          // hot values (r+1)*100+1: 101 201 301 401
+    ok(shownQ() === 'q1,q2,q3', 'OP1 c1>=201 keeps exactly the rows whose numeric value satisfies it (' + shownQ() + ')');
+    ok(dq.querySelector('th[data-col-key="c1"]').classList.contains('bulk-search-hidden') === false
+       && dq.querySelector('th[data-col-key="c2"]').classList.contains('bulk-search-hidden') === true,
+       'OP1b the key narrows the columns like a column token');
+    await q('c1>201');
+    ok(shownQ() === 'q2,q3', 'OP2 a strict > excludes the bound (' + shownQ() + ')');
+    await q('c1=150..350');
+    ok(shownQ() === 'q1,q2', 'OP3 a range includes both ends and only them (' + shownQ() + ')');
+    await q('c1=350..150');
+    ok(shownQ() === 'q1,q2', 'OP3b a range in either order (' + shownQ() + ')');
+    await q('c5<9020');          // server-cold c5: 9005 9015 9025 9035
+    ok(shownQ() === 'q0,q1', 'OP4 a cold column compares through the cold value map (' + shownQ() + ')');
+    await q('c1>abc');
+    ok(shownQ() === '', 'OP5 a non-numeric right side stays free text (matches no cell) (' + shownQ() + ')');
+    ok((dq.getElementById('bulk-search-count').textContent || '').indexOf('sidebar') < 0,
+       'OP6 no "only in the sidebar" message');
+    global.window = win; global.document = doc;
+  }
+
   // pass with the call moved back (docs/148's lesson about vacuous pins).
   {
     const w = world({}).win;

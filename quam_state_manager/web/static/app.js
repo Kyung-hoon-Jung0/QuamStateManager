@@ -5850,7 +5850,9 @@ window.livePushExtrasLine = function (typedPaths) {
     function onEditSeq(d, trayAtIssue) {
         if (!d || !d.edit_seq || d.edit_seq === window._editSeqSeen) return false;
         if (ownWritePending(trayAtIssue)) return false;
-        var first = window._editSeqSeen === undefined;
+        var tray = document.getElementById("pending-tray");
+        var shown = tray && tray.getAttribute("data-edit-seq");
+        var first = window._editSeqSeen === undefined && (!shown || shown === d.edit_seq);
         window._editSeqSeen = d.edit_seq;
         if (first) return false;
         refreshAfterForeignEdit(d);
@@ -9349,6 +9351,10 @@ window.UndoQueue = (function () {
                           expect_sig: (function () {
                               var t = document.getElementById("pending-tray");
                               return (t && t.getAttribute("data-change-sig")) || "";
+                          })(),
+                          seen_edit_seq: (function () {
+                              var t = document.getElementById("pending-tray");
+                              return t ? t.getAttribute("data-edit-seq") || "" : "";
                           })(),
                           // T1-F2: the user's yes to undoing an earlier
                           // session's edit on the live chip (one press only)
@@ -26622,6 +26628,9 @@ window.FieldHistory = (function () {
 
     var openAnchor = null;
     function open(anchor, path, input) {
+        if (Array.prototype.some.call(document.querySelectorAll('.fsp-card'), function (c) {
+            return c.closest('.ch-overlay').style.display !== 'none';
+        })) return;
         if (!path) return;
         clearTimeout(refreshTimer);
         openAll = false;
@@ -27033,6 +27042,14 @@ window.FieldHistory = (function () {
        which the neighbouring comment already relies on ("the cell never resizes
        on plain focus"). So measure once when the button arrives at a cell and
        reuse it; only the text width, measured off-DOM on a canvas, is per-key. */
+    // The input's vertical middle in the BUTTON's containing block (the input's
+    // own offsetParent can be a different box, so offsetTop alone lands wrong).
+    function _cellBtnMid(b, input) {
+        var cb = b.offsetParent;
+        if (!cb) return 0;
+        var ir = input.getBoundingClientRect(), cr = cb.getBoundingClientRect();
+        return ir.top - cr.top - (cb.clientTop || 0) + ir.height / 2;
+    }
     function _cellBtnMeasure() {
         var b = cellBtn, input = b && b._input;
         if (!b || !input || !input.isConnected) { if (b) b._geom = null; return; }
@@ -27045,6 +27062,10 @@ window.FieldHistory = (function () {
         b._geom = {
             padL: padL,
             left: input.offsetLeft,
+            // the INPUT's middle, not the td's: a cell with a sub-line under
+            // the input (the dBm / volts line) put a top:50% icon below the
+            // value's baseline.
+            mid: _cellBtnMid(b, input),
             width: input.offsetWidth,
             font: cs ? ((cs.fontWeight || "500") + " "
                         + (parseFloat(cs.fontSize) > 0 ? parseFloat(cs.fontSize) : 14)
@@ -27060,10 +27081,28 @@ window.FieldHistory = (function () {
         var g = b._geom;
         if (!g) return;
         var padL = g.padL;
-        var want = g.left + padL + _cellTextWidth(input, g) + 4;
+        // 8 px clear of the text end: at 4 px a short value ("0", "-5") and
+        // the caret visibly touched the clock glyph.
+        var want = g.left + padL + _cellTextWidth(input, g) + 8;
         var max = g.left + g.width - 20;
         var clamped = want > max;
         b.style.left = Math.max(g.left + 2, Math.min(want, max)) + "px";
+        if (g.mid > 0) b.style.top = g.mid + "px";
+        // A keystroke can change the row's height (a value of 0 drops the
+        // dBm sub-line), which moves the input inside its cell. Re-read the
+        // middle once per frame, in the rAF -- the layout the frame needs
+        // anyway -- never synchronously inside the keystroke.
+        if (!b._midRaf && window.requestAnimationFrame) {
+            b._midRaf = window.requestAnimationFrame(function () {
+                b._midRaf = 0;
+                if (b._input !== input || !b._geom || !input.isConnected) return;
+                var m = _cellBtnMid(b, input);
+                if (m > 0 && Math.abs(m - b._geom.mid) > 0.5) {
+                    b._geom.mid = m;
+                    b.style.top = m + "px";
+                }
+            });
+        }
         // Only a FULL cell needs the text padded away from the icon — the
         // unclamped icon sits in the input's empty tail (and the cell never
         // resizes on plain focus, restoring the style.css invariant).
@@ -27090,6 +27129,7 @@ window.FieldHistory = (function () {
         _hideCellBtnTip();
         cellBtn.style.display = "none";
         cellBtn.style.left = "";
+        cellBtn.style.top = "";
         if (cellBtn._input) {
             cellBtn._input.classList.remove("fh-docked");
             cellBtn._input = null;

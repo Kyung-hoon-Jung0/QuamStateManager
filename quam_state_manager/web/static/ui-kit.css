@@ -438,6 +438,11 @@
 .ui-opxmon-table--stacked tbody, .ui-opxmon-table--stacked tr, .ui-opxmon-table--stacked td { display:block; width:var(--ui-opxmon-full-width); }
 .ui-opxmon-table--stacked tr { margin-bottom:var(--ui-opxmon-space-md); border-bottom:var(--ui-bw) solid var(--ui-border); }
 .ui-opxmon-table--stacked td::before { content:attr(data-label); display:block; font-weight:var(--ui-fw); color:var(--ui-text-2); }
+/* The mode switch stays before actions whose presence depends on edits. */
+.ui-live-tray > .auto-sync-wrap { order: -1; }
+/* Leave room for both the number and its history control, including -5 dBm. */
+.ui-live-cell { min-width: calc(var(--ui-icon-btn) * 3); }
+.ui-live-pin { overflow: hidden; }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
@@ -655,3 +660,4 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .sidebar-nav .nav-subitems li a:hover:not(.active) { color: var(--ui-text); background: var(--ui-surface-2); }
 /* K12: the search glyph is one neutral colour, not a colour emoji */
 .tree-search-icon { filter: grayscale(1); }
+

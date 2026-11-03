@@ -1244,6 +1244,13 @@
         el.hidden = false;
     }
 
+    // docs/175 operators in the grid: the shared helpers in SearchQuery.
+    function _cmpToken(tok, cols, hayOf) {
+        return window.SearchQuery && window.SearchQuery.gridCmp
+            ? window.SearchQuery.gridCmp(tok, cols, hayOf) : null;
+    }
+    function _cmpRowHit(ti, byKey) { return window.SearchQuery.gridCmpHit(ti, byKey); }
+
     function applySearch() {
         var t = table(); if (!t) return;
         var inp = document.getElementById('bulk-search');
@@ -1283,6 +1290,14 @@
         // INSIDE an id ("a1") keeps the column reading, so ordinary column
         // searching is untouched.
         var tokInfo = tokens.map(function (tok) {
+            // docs/175 operators (`f_01>=4e9`, `t1=10e-6..50e-6`): the KEY
+            // names columns by their search text, the row passes when that
+            // column's numeric value satisfies the condition. One parser,
+            // shared with the sidebar (SearchQuery.paramCond). A right side
+            // that is not a finite number keeps the token as free text.
+            var cmp = _cmpToken(tok, visCols, _colHay);
+            if (cmp) return { tok: tok, isCmp: true, cond: cmp.cond, cmpKeys: cmp.keys,
+                              isCol: false, isId: false, isVal: false };
             var named = ids.some(function (id) { return id.indexOf(tok) === 0; });
             var colHit = !named
                 && visCols.some(function (c) { return _colHay(c).indexOf(tok) >= 0; });
@@ -1313,7 +1328,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isCol && !ti.isId) {
+                    if (ti.isCmp) {
+                        any = !!ti.cmpKeys[key];
+                    } else if (ti.isCol && !ti.isId) {
                         any = !!c && _colHay(c).indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; });
@@ -1337,7 +1354,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isId && !ti.isCol) {
+                    if (ti.isCmp) {
+                        any = _cmpRowHit(ti, rowHaystacks.byKey);
+                    } else if (ti.isId && !ti.isCol) {
                         any = id.indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = valNeutral
@@ -1374,11 +1393,13 @@
             visCols.forEach(function (c) { colHay[c.key] = []; });
             rows.forEach(function (r) {
                 var hs = [];
+                hs.byKey = {};
                 _cells(r).forEach(function (cell) {
                     var k = cell.closest('[data-col-key]').getAttribute('data-col-key');
                     if (hide.has(k)) return;
                     var disp = cell.value.toLowerCase();
                     var bare = disp.replace(/,/g, '');
+                    hs.byKey[k] = bare;
                     var h = disp + ' ' + bare;
                     hs.push(h);
                     if (colHay[k]) colHay[k].push(h);
@@ -1392,7 +1413,9 @@
                         if (hide.has(ck)) return;
                         var cd = _virt.vals.get(td) || '';
                         if (!cd) return;
-                        var chh = cd + ' ' + cd.replace(/,/g, '');
+                        var cbare = cd.replace(/,/g, '');
+                        hs.byKey[ck] = cbare;
+                        var chh = cd + ' ' + cbare;
                         hs.push(chh);
                         if (colHay[ck]) colHay[ck].push(chh);
                     });
@@ -1403,7 +1426,7 @@
         }
         var rowHay = tokGroups.length
             ? rows.map(function (r) { return _hayCache.rowMap.get(r) || []; })
-            : rows.map(function () { return []; });
+            : rows.map(function () { var e = []; e.byKey = {}; return e; });
 
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
@@ -1758,7 +1781,7 @@
         var t = table(); if (!t) return;
         var n = _dirtyCount(t);
         var cnt = document.getElementById('bulk-dirty-count');
-        if (cnt) cnt.textContent = n ? (n + ' unapplied ' + (n === 1 ? 'edit' : 'edits')) : '';
+        if (cnt) cnt.textContent = n ? (n + ' typed, not staged') : '';
         var all = document.getElementById('bulk-apply-all'); if (all) all.disabled = n === 0;
         var aps = document.getElementById('bulk-apply-sync'); if (aps) aps.disabled = n === 0;
         var rst = document.getElementById('bulk-reset'); if (rst) rst.disabled = n === 0;
@@ -1835,7 +1858,7 @@
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
         var _postBatch = function (ups, fspAck, typeFix) {
-            var payload = { updates: ups, expect_chip: window.__chipToken || '' };
+            var payload = { updates: ups, expect_chip: window.__chipToken || '', freq_sync: _freqSyncOn() };
             if (fspAck) payload.fsp_ack = fspAck;
             if (typeFix) payload.type_fix = typeFix;
             if (grp) payload.group = grp.id || 'new';
@@ -1862,8 +1885,15 @@
                     return new Promise(function (resolve) {
                         window._openFspPopup(r.body.fsp_compensation, function (mode, plan) {
                             if (mode === 'cancel') {
+                                cells.forEach(function (c) {
+                                    c.value = c.getAttribute('data-orig');
+                                    _markCellDirty(c);
+                                    _mirrorLinked(c);
+                                });
+                                if (tr) _refreshRow(tr);
+                                _refreshGlobal();
                                 resolve({ ok: false, cancelled: true });
-                                return;    // nothing committed; cells stay dirty
+                                return;
                             }
                             var ups = mode === 'comp'
                                 ? updates.concat(window._fspCompUpdates(plan))
@@ -3211,6 +3241,14 @@
             return t.querySelector('th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"]');
         });
         if (!pins.length) return;
+        // Cold headers have estimated widths. Measure only after their real
+        // cells arrive, or adjacent pinned columns can occupy the same pixels.
+        var coldPins = _virt ? pins.filter(function (k) { return _virt.cold.has(k); }) : [];
+        if (coldPins.length) {
+            return _virtHydrateCols(coldPins, { reveal: false }).then(function () {
+                if (!_virt || coldPins.every(function (k) { return !_virt.cold.has(k); })) _applyColPins();
+            });
+        }
         // audit F12: sticky cannot reorder columns — cumulative insets must
         // follow DOM order or an out-of-order pin pair overlaps at rest.
         var _heads = Array.prototype.slice.call(
@@ -3252,7 +3290,7 @@
                 'th.bulk-col-head[data-col-key="' + _cssEsc(k) + '"], ' +
                 'td[data-col-key="' + _cssEsc(k) + '"]');
             Array.prototype.forEach.call(els, function (el) {
-                el.classList.add('bulk-col-pinned');
+                el.classList.add('bulk-col-pinned', 'ui-live-pin');
                 el.style.position = 'sticky';
                 el.style.left = left + 'px';
                 el.style.right = right + 'px';
@@ -3972,6 +4010,9 @@
         applyAll: function (syncAfter) {
             var t = table(); if (!t) return;
             var rows = _rows().filter(function (tr) { return _cells(tr).some(_isDirty); });
+            // Freeze the gesture before an earlier row's echo/search can park
+            // another row's inputs. A dirty input remains part of this press.
+            var batches = rows.map(function (tr) { return _cells(tr).filter(_isDirty); });
             if (!rows.length) {
                 // SB-02: the click-away of the typed cell already committed it to
                 // the tray (a row commit), so no cell is dirty when the click lands.
@@ -4036,7 +4077,7 @@
                 var tr = rows[i++];
                 // Per-row atomic batch, ALL silent: the tray is swapped exactly once at
                 // the end (above) with the final HTML, never N times mid-loop.
-                _applyCells(_cells(tr).filter(_isDirty), tr, true, seenGlobal, grp).then(function (res) {
+                _applyCells(batches[i - 1], tr, true, seenGlobal, grp).then(function (res) {
                     if (!res.ok) { failures++; if (!firstFailRow) firstFailRow = tr; }
                     else { succeeded++; if (res.tray_html) lastTray = res.tray_html; }
                     _refreshRow(tr); next();

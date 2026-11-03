@@ -125,6 +125,17 @@ const poll = async (p) => { payload = p; window._pollDrift(); await sleep(40); }
        'sync-ux: the poll never requests the retired banner endpoint (' + JSON.stringify(bannerGets()) + ')');
     ok(typeof window._onDriftDivergedBanner === 'undefined',
        'sync-ux: the retired banner hook is gone, not left as dead code a later merge could re-wire');
+    delete window._editSeqSeen;
+    tray().setAttribute('data-edit-seq', 'E1');
+    const before = trayGets().length;
+    window._onDriftEditSeq({edit_seq:'E2'});
+    await sleep(40);
+    ok(trayGets().length === before + 1,
+       'D-3: first poll compares the rendered tray when a peer already applied');
+    const overlay=doc.createElement('div'); overlay.className='ch-overlay';
+    overlay.innerHTML='<div class="fsp-card"></div>'; doc.body.appendChild(overlay);
+    window.FieldHistory.open(tray(),'qubits.q1.f_01');
+    ok(!doc.querySelector('#field-history-panel'), 'history cannot open over the FSP modal');
     console.log(fails ? 'FAILED ' + fails : 'drift_banner_follow_selfcheck: all checks passed');
     process.exit(fails ? 1 : 0);
 })();

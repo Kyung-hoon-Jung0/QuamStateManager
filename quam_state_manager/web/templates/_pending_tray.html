@@ -1,6 +1,6 @@
 {% from '_icons.html' import icon_bolt %}
 <div id="pending-tray"
-     class="pending-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
+     class="pending-tray ui-live-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
      {# docs/179: the change SET this screen is showing, not just how many.
         doStateSync and the tray's own Apply button both declare it, and the

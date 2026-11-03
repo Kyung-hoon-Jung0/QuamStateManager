@@ -309,7 +309,13 @@
         var tokens = q ? q.split(/\s+/) : [];
 
         var ids = _rows().map(function (r) { return (r.getAttribute('data-qubit') || '').toLowerCase(); });
+        function _pHay(c) { return (c.label + ' ' + c.key + ' ' + c.section).toLowerCase(); }
+        var SQ = window.SearchQuery;
         var tokInfo = tokens.map(function (tok) {
+            // docs/175 operators, the same shared helper as the qubit grid.
+            var cmp = SQ && SQ.gridCmp ? SQ.gridCmp(tok, visCols, _pHay) : null;
+            if (cmp) return { tok: tok, isCmp: true, cond: cmp.cond, cmpKeys: cmp.keys,
+                              isCol: false, isId: false, isVal: false };
             // Exclusive by precedence, and a row-naming token wins — see the
             // long note in bulk-edit.js applySearch(): a token hitting BOTH
             // axes was neutral on both, i.e. filtered nothing.
@@ -332,7 +338,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isCol && !ti.isId) {
+                    if (ti.isCmp) {
+                        any = !!ti.cmpKeys[key];
+                    } else if (ti.isCol && !ti.isId) {
                         any = !!c && (c.label + ' ' + c.key + ' ' + c.section).toLowerCase().indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; });
@@ -349,7 +357,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isId && !ti.isCol) {
+                    if (ti.isCmp) {
+                        any = SQ.gridCmpHit(ti, rowHaystacks.byKey);
+                    } else if (ti.isId && !ti.isCol) {
                         any = id.indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = rowHaystacks.some(function (h) { return h.indexOf(ti.tok) >= 0; });
@@ -367,10 +377,12 @@
         visCols.forEach(function (c) { colHay[c.key] = []; });
         var rowHay = rows.map(function (r) {
             var hs = [];
+            hs.byKey = {};
             _cells(r).forEach(function (cell) {
                 var k = cell.closest('[data-col-key]').getAttribute('data-col-key');
                 if (hide.has(k)) return;
                 var disp = cell.value.toLowerCase();
+                hs.byKey[k] = disp;
                 var h = disp + ' ' + disp.replace(/,/g, '');
                 hs.push(h);
                 if (colHay[k]) colHay[k].push(h);
@@ -385,6 +397,7 @@
                     if (hide.has(ck)) return;
                     var cd = _pgv ? _pgv.valOf(td) : '';
                     if (!cd) return;
+                    hs.byKey[ck] = cd;
                     var chh = cd + ' ' + cd.replace(/,/g, '');
                     hs.push(chh);
                     if (colHay[ck]) colHay[ck].push(chh);

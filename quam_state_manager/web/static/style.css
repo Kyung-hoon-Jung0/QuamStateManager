@@ -10561,6 +10561,10 @@ th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
 tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb, var(--pico-primary) 7%, var(--pico-card-background-color)); }
 .bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
 .bulk-table thead th.bulk-col-pinned { z-index: 4; }
+/* The corner must sit above every header cell that scrolls under it: plain
+   `.bulk-corner` (0,1,0) lost to `.bulk-table thead th` (0,1,2), so a header
+   scrolled sideways painted its label over the corner, beside a pinned column. */
+.bulk-table thead th.bulk-corner { z-index: 5; }
 /* docs/112 (#12): datasets keyboard nav + sort honesty */
 #datasets-tbody tr.ds-row-active > td { background: color-mix(in srgb, var(--pico-primary) 14%, var(--pico-card-background-color)); } #datasets-tbody tr.ds-row-active > td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary); }
 /* audit: `.ds-search-wrap` also hosts an absolutely-positioned help "?"
