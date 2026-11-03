@@ -1,0 +1,65 @@
+{
+  "scope": "D-13 through D-18",
+  "regression": {
+    "files": [
+      "tests/test_opx_monitor.py",
+      "tests/test_bundles.py",
+      "tests/test_web.py"
+    ],
+    "passed": 596,
+    "skipped": 20,
+    "warnings": [
+      "Existing SciPy/NumPy version mismatch warning"
+    ],
+    "pytest_options": [
+      "-q",
+      "-p",
+      "no:cacheprovider"
+    ],
+    "follow_up_monitor_tests_passed": 36,
+    "follow_up_scope": "Final monitor source, browser expiry, DOM fixtures and unknown-job-list regression"
+  },
+  "jsdom": {
+    "checks_with_rendered_page_fixtures": 29,
+    "coverage": [
+      "idle confirmation and skipped active QM",
+      "unknown and stale health",
+      "browser expiry without a server response",
+      "gapped sparkline and actual span",
+      "unique and ambiguous run candidates",
+      "alarm history values and thresholds",
+      "raw sensor mapping and no-sensor zero readings"
+    ]
+  },
+  "mutations": {
+    "D-13": "RED: focused test detected the regression",
+    "D-14": "RED: focused test detected the regression",
+    "D-15": "RED: focused test detected the regression",
+    "D-16": "RED: focused test detected the regression",
+    "D-17": "RED: focused test detected the regression",
+    "D-18": "RED: focused test detected the regression"
+  },
+  "saas": {
+    "result": "PASS",
+    "sdk_version": "1.4.1",
+    "client_version": "1.1.8",
+    "simulator_version": "3.7.3",
+    "interpreter_source": "The interpreter selected in the first-build study screenshot evidence/e2e_settings.png",
+    "connection": "New simulator connection fields, TLS enabled, gateway redirection disabled, headers sent through worker stdin",
+    "credentials": "Sourced by the caller using the required shell source command; never printed or committed",
+    "idle_close": "One owned QM closed through the Flask Clean up route after the idle interval",
+    "confirmed_close": "A second owned QM closed through the confirmed-id Clean up route",
+    "remaining_owned_qms": 0,
+    "history_actions": 2,
+    "loopback_closes": 0
+  },
+  "known_limits": [
+    "Polling cannot observe jobs that start and finish between polls.",
+    "The SDK has no atomic check-and-close operation; a job can start after the final recheck.",
+    "Run matching is an estimate within 90 seconds; incomplete indexes or missing timezone-aware creation times suppress links.",
+    "Temperature history covers only recorded polls within 24 hours, capped at 256 sensors; display is downsampled with extrema and gaps.",
+    "Sensor mapping was measured on one hardware/software combination and remains unverified when populated slots disagree.",
+    "Admin and hardware sensor behavior were validated with fake fixtures matching the measured response shapes; SaaS verified cleanup end to end.",
+    "The regression-test interpreter had a TLS root-certificate problem for SaaS; the first-build SDK interpreter successfully verified cleanup."
+  ]
+}

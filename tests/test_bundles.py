@@ -19,10 +19,10 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 CORE = {"sidebar-order.js", "htmx.min.js", "split.min.js", "search-query.js", "app.js",
         "sidebar-typeahead.js", "auto-apply.js",
-        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js"}
+        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js", "opx-health.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
-        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
+        "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js", "gcz-several.js",
         "cz-plan.js", "cz-map.js", "ui.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
@@ -102,7 +102,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
         "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
-        "scheduler", "autofit", "compare_hub", "diff", "journal", "agent_setup", "zline", "czplan",
+        "scheduler", "autofit", "compare_hub", "diff", "journal", "opx_monitor", "agent_setup", "zline", "czplan",
         "ui_kit",  # docs/308: the UI kit sample page (a full page load from /help)
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
@@ -113,7 +113,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     assert "window.Bundles = (function () {" in app_js
     for token in ('["grid"]', '["pulses"]', '["generate"]', '["wiring"]', '["chipstatus", "components"]',
                   '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]',
-                  '["journal"]', '["agent_setup"]', '["zline"]', '["czplan"]'):
+                  '["journal"]', '["opxmon"]', '["agent_setup"]', '["zline"]', '["czplan"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
     assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"

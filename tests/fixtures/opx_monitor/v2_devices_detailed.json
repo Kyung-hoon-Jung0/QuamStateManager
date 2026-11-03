@@ -1,0 +1,28 @@
+[
+  {
+    "clusterName": "sample-group",
+    "hostname": "sample-device",
+    "ip": "192.0.2.10",
+    "isClustered": true,
+    "packages": [
+      {
+        "type": "bsp",
+        "version": "BSP1.3.4"
+      },
+      {
+        "type": "qop",
+        "version": "QOP3.7.3"
+      },
+      {
+        "type": "qopa",
+        "version": "QOPA2.0.1"
+      },
+      {
+        "type": "qopf",
+        "version": "QOPF1.1.0"
+      }
+    ],
+    "status": "OPERATIONAL_DEVICE",
+    "type": "opx1000"
+  }
+]

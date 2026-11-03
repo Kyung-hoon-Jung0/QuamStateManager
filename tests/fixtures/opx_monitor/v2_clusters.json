@@ -1,0 +1,44 @@
+[
+  {
+    "clock": "Internal",
+    "deviceCounts": [
+      {
+        "quantity": 1,
+        "type": "opx1000"
+      }
+    ],
+    "devices": [
+      {
+        "hostname": "sample-device",
+        "ip": "192.0.2.10",
+        "type": "opx1000",
+        "unreachable": false
+      }
+    ],
+    "hasUnreachableDevices": false,
+    "health": {
+      "deviceMessages": [],
+      "messages": null,
+      "status": "OPERATIONAL_CLUSTER"
+    },
+    "isCurrentCluster": true,
+    "masterDeviceHostIP": "192.0.2.10",
+    "masterDeviceHostName": "sample-device",
+    "name": "sample-group",
+    "packages": [
+      {
+        "type": "qop",
+        "version": "QOP3.7.3"
+      },
+      {
+        "type": "qopa",
+        "version": "QOPA2.0.1"
+      },
+      {
+        "type": "qopf",
+        "version": "QOPF1.1.0"
+      }
+    ],
+    "type": "opx1000"
+  }
+]

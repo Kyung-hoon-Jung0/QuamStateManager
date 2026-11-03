@@ -1163,6 +1163,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.register_blueprint(chat_bp)
     # docs/173 S7: the agent setup (previews, backups, the one live test call)
     from quam_state_manager.web.setup_api import setup_bp, page_bp
+    # OPX monitor (devices, open QMs, jobs, history, clean-up, alarms)
+    from quam_state_manager.web.opx_monitor_routes import opxmon_bp, armed as _opx_armed
+    app.register_blueprint(opxmon_bp)
+    app.jinja_env.globals["opx_alarm_armed"] = _opx_armed
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
     # docs/252: who is calling -- a person's window (cookie), SM's hook (key);

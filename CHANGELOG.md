@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add an OPX monitor with live status, temperature trends, job history, and confirmed idle cleanup.
+- Show neutral startup status, measured occupancy, and the age of stale readings.
+
 ## v0.1.0 (2026-04-05)
 
 Initial release.
