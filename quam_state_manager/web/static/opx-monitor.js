@@ -58,7 +58,7 @@
         ids.forEach(function (id) {
             var row = Array.from(document.querySelectorAll('.opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
             var detail = document.createElement('p');
-            detail.textContent = id + ': ' + (row ? row.getAttribute('data-basis') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
+            detail.textContent = id + ': ' + (row ? row.getAttribute('data-basis') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
             panel.appendChild(detail);
         });
         var typed = null;
@@ -81,7 +81,8 @@
             panel.remove();
         };
         panel.appendChild(accept); panel.appendChild(cancel);
-        btn.insertAdjacentElement('afterend', panel);
+        var anchor = btn.closest('table') || btn.closest('p') || btn;
+        anchor.insertAdjacentElement('afterend', panel);
         accept.focus();
     }
 
@@ -104,7 +105,7 @@
                 if (j && j.ok) say("Closed: " + ((j.closed || []).join(", ") || "none") +
                     ((j.skipped && j.skipped.length) ? " (skipped: " + j.skipped.map(function (id) { return id + ": " + ((j.skip_reasons || {})[id] || "already gone"); }).join(", ") + ")" : "") +
                     ". Written to History.", false);
-                else say("Not closed: " + ((j && j.error) || "no reason given"), true);
+                else say(((j && j.closed && j.closed.length) ? "Closed: " + j.closed.join(", ") + ". " : "") + "Not closed: " + ((j && j.error) || "no reason given"), true);
                 refresh();
             }, function (err) {
                 say("Not closed: SM did not answer (" + err + ").", true);

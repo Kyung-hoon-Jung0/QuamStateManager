@@ -52,7 +52,7 @@ try:
                     qm2 = qmm.open_qm(config(2), close_other_machines=False)
                     own.append(str(qm2.id))
                     monitor.poll_once()
-                    response = c.post('/opx-monitor/close', data={'all': '1', 'qm_ids': own[1]}).get_json()
+                    response = c.post('/opx-monitor/close', data={'all': '1', 'qm_ids': own[1], 'confirm_count': '1'}).get_json()
                     assert response['ok'] and response['closed'] == [own[1]], response
                     assert not set(own) & set(map(str, qmm.list_open_qms()))
                     result['confirmed_close'] = 'one owned confirmed id closed through Clean up route'

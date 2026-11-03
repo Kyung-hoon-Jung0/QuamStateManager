@@ -5,7 +5,7 @@
      {% if st.age_s is not none %}data-age="{{ '%.1f'|format(st.age_s) }}"{% endif %}
      {% if polls %}hx-get="/opx-monitor/body?tab={{ tab }}&limit={{ job_limit }}" hx-trigger="every {{ st.interval_s|int }}s" hx-swap="outerHTML"{% endif %}>
 {%- if flash %}<p class="ui-state {{ 'ui-state--error' if flash_error else 'opxmon-flash' }}" role="status">{{ flash }}</p>{% endif %}
-<div class="opxmon-verdict" data-health="{{ st.health.color }}"><strong>{{ verdict.label }}</strong> {{ verdict.reason }}{% if verdict.since %} since <span class="ts-local" data-utc="{{ verdict.since }}">{{ local_time(verdict.since) }}</span>{% endif %}{% if hottest %}<small class="opxmon-hottest">Hottest: {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} ?C / {% set limit = temperature_limit(hottest.key, settings.thresholds) %}{{ 'limit ' ~ limit ~ ' ?C' if limit is not none else 'no limit set' }}</small>{% endif %}</div>
+<div class="opxmon-verdict opxmon-health" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><strong>{{ verdict.label }}</strong> {{ verdict.reason }}{% if verdict.since %} since <span class="ts-local" data-utc="{{ verdict.since }}">{{ local_time(verdict.since) }}</span>{% endif %}{% if hottest %}<small class="opxmon-hottest">Hottest: {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} degC / {% set limit = temperature_limit(hottest.key, settings.thresholds) %}{{ 'limit ' ~ limit ~ ' degC' if limit is not none else 'no limit set' }}</small>{% endif %}</div>
 <p class="opxmon-status opxmon-status--{{ st.state }}" role="status">
   {%- if st.target_label %}<span class="opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
   <span class="opxmon-sentence" title="{{ st.sentence }}" data-state="{{ st.state }}">{% if st.state == 'error' and not settings.settings_error %}Connection or data unavailable; check the SSH tunnel, port or power.{% else %}{{ st.sentence }}{% endif %}</span>
@@ -17,21 +17,23 @@
 
 {% for section, error in st.section_errors.items() %}<p class="ui-muted opxmon-section-age" title="{{ error }}">{{ section|replace('_', ' ') }} unavailable; as of {{ local_time(st.section_times.get(section)) }}</p>{% endfor %}
 {%- if tab == 'live' %}
+  {% if not (ans.controllers or [])|selectattr('temperatures')|list %}<p>No temperature readings.</p>{% endif %}
   <div class="opxmon-tiles" aria-label="Temperatures">
   {% for c in ans.controllers or [] %}{% for r in temperature_rows(c) %}{% set limit = temperature_limit(r.key, settings.thresholds) %}{% set trend = trends.get(c.name ~ '/' ~ r.key) %}
   <details class="opxmon-tile" title="{{ c.name }} / raw sensor {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}">
-    <summary><span>{{ r.label }} {{ r.type }}</span><strong class="{% if r.value is not none and limit is not none and r.value > limit %}opxmon-hot{% endif %}">{% if r.empty %}empty slot{% elif r.value is none %}not reported{% else %}{{ '%.1f'|format(r.value) }} ?C{% endif %}</strong>
-    <small>{% if limit is not none %}limit {{ limit }} ?C{% else %}no limit set{% endif %}</small>
+    <summary><span>{{ r.label }} {{ r.type }}</span><strong class="{% if r.value is not none and limit is not none and r.value > limit %}opxmon-hot{% endif %}">{% if r.empty %}empty slot{% elif r.value is none %}not reported{% else %}{{ '%.1f'|format(r.value) }} degC{% endif %}</strong>
+    {% if trend and trend.unchanged_min >= 1 %}<small>unchanged for {{ trend.unchanged_min }} min</small>{% endif %}
+    <small>{% if limit is not none %}limit {{ limit }} degC{% else %}no limit set{% endif %}</small>
     {% if trend %}<svg viewBox="0 0 240 40" width="90" height="20" aria-label="Temperature trend, shared 0 to 120 degC baseline">{% for path in trend.paths %}<polyline points="{{ path }}" fill="none" stroke="currentColor" stroke-width="2"/>{% endfor %}</svg>{% endif %}</summary>
-    {% if trend %}<p>min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} ?C; actual span {{ trend.span_s|int }} s</p><p>{{ local_time(trend.start) }} to {{ local_time(trend.end) }}; {{ trend.samples }} samples</p>{% if trend.unchanged_min >= 1 %}<p>unchanged for {{ trend.unchanged_min }} min</p>{% endif %}{% if trend.gap_min >= 1 %}<p>no data for {{ trend.gap_min }} min</p>{% endif %}{% endif %}
-    <p>Raw key {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}. Shared y baseline 0?120 ?C; gaps are not interpolated.</p>
-  </details>{% endfor %}{% else %}<p>No temperature readings.</p>{% endfor %}
+    {% if trend %}<p>min {{ '%.1f'|format(trend.min) }}, max {{ '%.1f'|format(trend.max) }} degC; actual span {{ trend.span_s|int }} s</p><p>{{ local_time(trend.start) }} to {{ local_time(trend.end) }}; {{ trend.samples }} samples</p>{% if trend.unchanged_min >= 1 %}<p>unchanged for {{ trend.unchanged_min }} min</p>{% endif %}{% if trend.gap_min >= 1 %}<p>Recorded gap: no data for {{ trend.gap_min }} min</p>{% endif %}{% endif %}
+    <p>Raw key {{ r.key }}{% if not r.mapping_verified %}; mapping unverified{% endif %}. Shared y baseline {{ trend.y_min if trend else 0 }} to {{ trend.y_max if trend else 120 }} degC; gaps are not interpolated.</p>
+  </details>{% endfor %}{% endfor %}
   </div>
   <details class="opxmon-details"><summary>Details</summary>
   {% if st.admin.cluster %}{% set ac = st.admin.cluster %}
   <h3>Admin status</h3><p>{{ ac.name }} ({{ st.admin.selection }})</p><p>Cluster health: <span title="{{ ac.health.status }}">{{ words(ac.health.status) }}</span>; messages: {{ words(ac.health.messages) }}; device messages: {{ words(ac.health.deviceMessages) }}; clock: {{ words(ac.clock) }}; unreachable: {{ words(ac.hasUnreachableDevices) }}</p>
   <p>{{ firmware_summary(st.admin) }}</p><p>Cluster packages: {% for p in ac.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>
-  {% for d in ac.devices or [] %}<p>{{ d.hostname }}; unreachable: {{ d.unreachable if d.unreachable is defined else 'unknown' }}</p>{% endfor %}
+  {% for d in ac.devices or [] %}<p>{{ d.hostname }}; unreachable: {{ words(d.unreachable) if d.unreachable is defined else 'unknown' }}</p>{% endfor %}
   {% for d in st.admin.devices or [] %}<p>{{ d.hostname }}; status: {{ words(d.status) }}; packages: {% for p in d.packages or [] %}{{ p.type }} {{ p.version }}; {% else %}unknown{% endfor %}</p>{% endfor %}
   {% else %}<p class="ui-muted">{{ st.admin.reason }}</p>{% endif %}
   {%- if not cap.live %}
@@ -113,7 +115,7 @@
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
   <table class="ui-table opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
     <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-muted">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
-      <td class="ui-table-cell"><button type="button" class="btn-sm outline opxmon-close" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+      <td class="ui-table-cell"><button type="button" class="btn-sm outline opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
   <p><button type="button" class="btn-sm outline opxmon-close-idle" data-qm-ids="{{ idle_ids | join(', ') }}" {% if not idle_ids or st.state != 'ok' %}disabled{% endif %}>Close idle QMs ({{ idle_ids|length }})</button></p>
   <details class="opxmon-danger"><summary>Danger</summary><p><button type="button" class="btn-sm outline opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}">Close all {{ ans.open_qms|length }}&hellip;</button></p></details>
   {%- endif %}

@@ -16122,3 +16122,14 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 #opxmon-alarm-slot {display:flex; align-items:center; gap:.5rem; min-width:0; max-width:38vw}
 #opxmon-alarm-slot .opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:22rem}
 #opxmon-alarm-slot .opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}
+
+.opxmon-tile summary {line-height:1.2; cursor:pointer}
+.opxmon-tile summary::after {display:none}
+.opxmon-tile strong {white-space:nowrap; font-size:1rem}
+
+.opxmon-settings label {font-size:.8rem; margin:0 0 .3rem}
+.opxmon-settings fieldset {padding:0; margin-bottom:.6rem}
+.opxmon-settings legend {font-size:.9rem; margin:0 0 .25rem}
+.opxmon-settings .ui-note {margin:.2rem 0; font-size:.75rem}
+.opxmon-settings input, .opxmon-settings select, .opxmon-settings textarea {font-size:.85rem; margin-bottom:0}
+.opxmon-table code {overflow-wrap:anywhere; white-space:normal}

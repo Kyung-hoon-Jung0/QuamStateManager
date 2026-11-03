@@ -127,7 +127,7 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     assert "The server refused list_open_qms: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "opxmon-close\"" not in html
-    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
     assert r.status_code == 409 and not any(c[0].startswith("close") for c in w.calls)
 
 
@@ -234,7 +234,7 @@ def test_close_all_closes_only_the_confirmed_qms(env):
     w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]), ("QM-new", [], ["con1/2"])))]
     c = app.test_client()
     assert c.post("/opx-monitor/close", data={"all": "1"}, headers=ORIGIN).status_code == 400
-    r = c.post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    r = c.post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
     assert r.status_code == 200 and r.get_json()["closed"] == ["QM-a"]
     sent = [kw for op, kw in w.calls if op.startswith("close")]
     assert sent == [{"qm_ids": ["QM-a"]}] and not any(op == "close_all" for op, _ in w.calls)
@@ -244,7 +244,7 @@ def test_close_all_reports_a_qm_already_gone(env):
     app, m, w, clock, _ = env
     m.poll_once()
     w.script[:] = [answer(qms=())]
-    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
     j = r.get_json()
     assert j["closed"] == [] and j["skipped"] == ["QM-a"]
 
@@ -263,7 +263,7 @@ class _FakeQmm:
         self.open_ids, self.closed, self.temps = list(open_ids), [], temps
 
     def list_open_qms(self):
-        return list(self.open_ids)
+        return [qid for qid in self.open_ids if qid not in self.closed]
 
     def get_qm(self, qid):
         return _FakeQM(self.closed, qid)
@@ -329,7 +329,7 @@ def test_an_alarm_never_fires_on_stale_data(env):
     om.save_settings(app.instance_path, s)
     w.script[:] = [answer(temps={"FEM 1": 61.0})]
     m.poll_once()
-    clock.t += 60  # the answer is now stale
+    clock.t += 181  # alarm-only polling uses a 60 s interval
     c = app.test_client()
     r = c.get("/opx-monitor/alarm-badge")
     assert "HX-Trigger" not in r.headers and "OPX alarm (" not in r.get_data(as_text=True)
@@ -468,7 +468,7 @@ def test_fem_sensor_k_is_slot_k_plus_1_and_zero_is_no_sensor(env):
     html = page(app, "live")
     # slot 5 (LF) carries sensor FEM 4's reading, its raw key in the tooltip
     assert "5 LF" in html and "title=\"sensor 'FEM 4'\">55.2 degC" in html
-    assert ">FEM slot 4</td>" in html and "no sensor" in html and "0.0</td>" not in html
+    assert 'empty slot' in html and '0.0</td>' not in html
     offered = [x["key"] for x in om.offered_metrics(a)]
     assert "temp:FEM 3" not in offered and "temp:CRPS 1" not in offered and "temp:FEM 4" in offered
 
@@ -479,7 +479,7 @@ def test_d13_idle_recheck_skips_new_activity(env):
     app, m, w, clock, _ = env
     w.script[:] = [answer(qms=(("QM-a", [], []),))]
     m.poll_once()
-    clock.t += 1900
+    clock.t += 7300
     m.poll_once()
     assert 'Close idle QMs (1)' in page(app, 'cleanup')
     assert 'since SM first saw it' in page(app, 'jobs')
@@ -514,17 +514,17 @@ def test_d14_admin_health_and_unknown(env, monkeypatch):
     a['controllers'][0]['fems'] = {}
     assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'green'
     assert om.health(a, admin, {'temp:Chassis': 50}, 'stale')['color'] == 'grey'
-    assert om.health(a, om.read_admin(None), {'temp:Chassis': 50}, 'ok')['color'] == 'grey'
-    assert om.health(a, admin, {}, 'ok')['color'] == 'grey'
+    assert om.health(a, om.read_admin(None), {'temp:Chassis': 50}, 'ok')['color'] == 'green'
+    assert om.health(a, admin, {}, 'ok')['color'] == 'green'
     assert om.health(a, admin, {'temp:Chassis': 50, 'temp:missing': 70}, 'ok')['color'] == 'grey'
     a['controllers'][0]['fems'] = {'1': 'LF'}
-    assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'grey'
+    assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'green'
     a['controllers'][0]['fems'] = {}
     admin['cluster']['hasUnreachableDevices'] = True
     assert om.health(a, admin, {'temp:Chassis': 50}, 'ok')['color'] == 'red'
     app, m, w, clock, _ = env
     m.poll_once()
-    assert 'Set Admin URL' in page(app, 'live')
+    assert 'Admin n/a' in page(app, 'live')
     p = om._dir(app.instance_path) / 'settings.json'
     p.write_text('{broken')
     assert 'corrupt' in page(app, 'settings')
@@ -608,7 +608,7 @@ def test_d18_mapping_mismatch_keeps_raw_keys(env):
     assert rows['FEM 4']['label'] == 'FEM 4'
     assert not om.slot_temperatures(a['controllers'][0])
     html = page(app, 'live')
-    assert 'mapping unverified' in html and '>FEM 4</td>' in html
+    assert 'mapping unverified' in html and 'Raw key FEM 4' in html
     assert 'title="sensor &#39;FEM 4&#39;"' not in html  # raw tooltip remains literal, not an inferred slot
 
 
@@ -626,7 +626,7 @@ def test_round2_dom_selfcheck(env, tmp_path, monkeypatch):
     m.poll_once()
     pages['trend'] = page(app, 'live')
     pages['mapping'] = pages['trend']
-    clock.t += 1900
+    clock.t += 7300
     pages['stale'] = page(app, 'live')
     m.poll_once()
     pages['idle'] = page(app, 'cleanup')
@@ -660,7 +660,7 @@ def test_d13_remembers_activity_after_job_disappears(env):
     app, m, w, clock, _ = env
     w.script[:] = [answer(qms=(("QM-a", [], []),))]
     m.poll_once()
-    clock.t += 1900
+    clock.t += 7300
     a = answer(qms=(("QM-a", [('j1', 'Done')], []),))
     recent = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
     a['open_qms'][0]['jobs'][0].update(created_at=recent, updated_at=recent)
@@ -797,9 +797,51 @@ def test_d28_cache_jobs_and_backoff(env):
     t.poll(include_jobs=True)
     assert calls == ['config', 'jobs']
     app, m, w, clock, _ = env
+    settings = m.settings()
+    settings['alarms_armed'] = True
+    om.save_settings(m.instance, settings)
     assert m.poll_interval() == 60
     m.want('jobs', 200)
     m.poll_once()
     assert w.calls[-1] == ('poll', {'include_jobs': True, 'job_limit': 200})
     m.want('live')
     assert m.jobs_until == 0 and m.poll_interval() == 5
+
+
+def test_round3_dom_selfcheck(env, tmp_path):
+    import shutil, subprocess
+    from pathlib import Path
+    app, m, w, clock, _ = env
+    pages = {}
+    m.poll_once()
+    original = w.request
+    w.request = lambda op, **kw: {'ok': True, 'result': False} if op == 'close_qm' else original(op, **kw)
+    m.close('QM-a')
+    pages['d22'] = page(app, 'history')
+    w.request = original
+    pages['d25'] = page(app, 'cleanup')
+    w.script[:] = [{'controllers': None, 'open_qms': None, 'jobs': None, 'refused': {'get_devices': 'refused', 'get_jobs': 'refused', 'list_open_qms': 'refused'}}]
+    m.poll_once()
+    pages['d21'] = page(app, 'live')
+    a = answer(qms=(), temps={'FEM 0': 40, 'FEM 1': 0})
+    a['controllers'][0]['fems'] = {'1': 'LF'}
+    w.script[:] = [a]
+    s = m.settings(); s['thresholds'] = {'temp:FEM 0': 50}; om.save_settings(m.instance, s)
+    m.poll_once()
+    pages['d23'] = page(app, 'live')
+    for _ in range(36):
+        clock.t += 5
+        m.poll_once()
+    pages['d27'] = page(app, 'live')
+    a['controllers'][0]['temperatures']['FEM 0'] = 67
+    m.poll_once()
+    pages['d24'] = page(app, 'live')
+    pages['d28'] = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
+    a['jobs'] = [{'id': 'job-fable-' + str(i), 'status': 'Done', 'created_at': '2026-01-01T00:00:00Z'} for i in range(313)]
+    m.poll_once()
+    pages['d26'] = page(app, 'jobs')
+    fixture = tmp_path / 'round3-pages.json'; fixture.write_text(json.dumps(pages), encoding='utf-8')
+    node = shutil.which('node')
+    assert node, 'jsdom checks require node'
+    result = subprocess.run([node, str(Path(__file__).with_name('opx_monitor_round3_selfcheck.cjs')), str(fixture)], capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr

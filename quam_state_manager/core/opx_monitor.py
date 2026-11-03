@@ -606,6 +606,9 @@ class TemperatureTrends:
         with self.lock:
             rows = [r for r in self.rows if now - 86400 <= r['t'] <= now]
         keys = sorted({k for r in rows for k in r['v']})[:self.MAX_SENSORS]
+        readings = [v for row in rows for v in row['v'].values()]
+        y_min = min(0, math.floor(min(readings, default=0) / 20) * 20)
+        y_max = max(120, math.ceil(max(readings, default=120) / 20) * 20)
         out = {}
         for key in keys:
             segments, segment, prev = [], [], None
@@ -636,13 +639,13 @@ class TemperatureTrends:
                 for bucket in buckets.values():
                     reduced.extend(sorted(set((bucket[0], min(bucket, key=lambda p: p[1]),
                                                max(bucket, key=lambda p: p[1]), bucket[-1]))))
-                paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-v/120*32:.2f}' for t, v in reduced))
+                paths.append(' '.join(f'{(t-start)/max(1,end-start)*240:.2f},{36-(v-y_min)/(y_max-y_min)*32:.2f}' for t, v in reduced))
             unchanged_start = segments[-1][-1][0]
             for t, v in reversed(segments[-1]):
                 if v != segments[-1][-1][1]:
                     break
                 unchanged_start = t
-            out[key] = {'unchanged_min': int((end - unchanged_start) // 60),
+            out[key] = {'y_min': y_min, 'y_max': y_max, 'unchanged_min': int((end - unchanged_start) // 60),
                         'gap_min': int(max([now - end] + [b[0][0] - a[-1][0] for a, b in zip(segments, segments[1:])]) // 60), 'min': lo, 'max': hi, 'start': datetime.fromtimestamp(start, timezone.utc).isoformat(),
                         'end': datetime.fromtimestamp(end, timezone.utc).isoformat(), 'span_s': end-start,
                         'paths': paths, 'samples': len(points)}
@@ -693,17 +696,19 @@ def read_admin(url, cluster_name=None):
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
                 'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
     except Exception as exc:
-        return {'known': False, 'reason': 'Admin input unknown: ' + type(exc).__name__}
+        return {'known': False, 'reason': 'Admin unavailable; check the admin URL, tunnel or power.', 'details': str(exc)[:400]}
 
 
 def local_time(value):
     t = timestamp(value)
-    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z (UTC%z)') if t is not None else 'not reported'
+    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S (UTC%z)') if t is not None else 'not reported'
 
 
 def words(value):
     if value is None:
         return 'not reported'
+    if isinstance(value, bool):
+        return 'yes' if value else 'no'
     if isinstance(value, dict):
         return '; '.join(str(k) + ': ' + words(v) for k, v in value.items()) or 'none reported'
     if isinstance(value, list):
@@ -801,6 +806,7 @@ class Monitor:
         self.last_error: Optional[str] = None
         self.last_try_at: Optional[float] = None
         self.wanted_until = 0.0
+        self.last_poll_interval = DEFAULT_INTERVAL_S
         self.jobs_until = 0.0
         self.job_limit = 100
         self._thread = None
@@ -898,6 +904,7 @@ class Monitor:
             if self._worker is None and self.clock() < self._retry_at:
                 return  # backing off after a failure
             self.last_try_at = self.clock()
+            self.last_poll_interval = self.poll_interval()
             try:
                 w = self._ensure_worker(s)
                 r = w.request("poll", include_jobs=self.clock() < self.jobs_until, job_limit=self.job_limit)
@@ -958,7 +965,7 @@ class Monitor:
 
     def poll_interval(self):
         s = self.settings()
-        return s['interval_s'] if self.clock() < self.wanted_until else max(60, s['interval_s'])
+        return max(60, s['interval_s']) if s.get('alarms_armed') and self.clock() >= self.wanted_until else s['interval_s']
 
     def should_poll(self) -> bool:
         s = self.settings()
@@ -1068,12 +1075,14 @@ class Monitor:
             out.update(close_reason="No answer from the server yet.")
         else:
             out["close"] = True
+        out['live_reason'] = ('The server refused get_devices: ' + refused['get_devices']) if 'get_devices' in refused else 'No device data has answered yet.'
+        out['jobs_reason'] = ('The server refused list_open_qms: ' + refused['list_open_qms']) if 'list_open_qms' in refused else 'No job data has answered yet.'
         out['live'] = ans.get('controllers') is not None
         out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
         return out
 
     def status_state_unfresh(self):
-        return self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.settings()['interval_s']
+        return self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.last_poll_interval
 
     def status(self) -> dict:
         s = self.settings()
@@ -1095,7 +1104,7 @@ class Monitor:
         elif age is None:
             state = "starting"
             sentence = "Connecting to the server..."
-        elif age > STALE_INTERVALS * self.poll_interval():
+        elif age > STALE_INTERVALS * self.last_poll_interval:
             state = "stale"
             sentence = f"No fresh answer for {age:.0f} s; the values below are from then."
         else:
@@ -1107,6 +1116,7 @@ class Monitor:
                 'health': health(self.last_answer, self.admin, s['thresholds'], state), 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
+                "valid_for_ms": max(0, int((STALE_INTERVALS * self.last_poll_interval - (age or 0)) * 1000)) if state == 'ok' else 0,
                 "interval_s": self.poll_interval(), "alarms": alarms,
                 "alarms_armed": s.get("alarms_armed"), "capabilities": self.capabilities()}
 

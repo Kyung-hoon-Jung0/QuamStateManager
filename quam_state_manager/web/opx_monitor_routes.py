@@ -81,6 +81,15 @@ def run_match(job, candidates, reason='', window=90):
     return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-90 s)'}
 
 
+def last_job(q):
+    if q.get('jobs') is None:
+        return 'unknown'
+    if not q['jobs']:
+        return 'none observed'
+    job = max(q['jobs'], key=lambda j: om.timestamp(j.get('updated_at')) or om.timestamp(j.get('created_at')) or 0)
+    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.local_time(job.get('created_at'))
+
+
 def _view(tab: str) -> dict:
     m = monitor()
     st = m.status()
@@ -97,7 +106,7 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
+    return {'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
