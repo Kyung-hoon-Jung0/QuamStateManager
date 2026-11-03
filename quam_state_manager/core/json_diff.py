@@ -284,3 +284,54 @@ def build(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP,
     if not with_rows:
         res["rows"] = []
     return res
+
+
+# -- Edit as JSON (D-23): the edit operations that turn one document into another
+
+def _same(a: Any, b: Any) -> bool:
+    """Exact equality for an edit: same JSON type and value (1 is not 1.0,
+    True is not 1). A float NaN equals a NaN (nothing to write)."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, float) and a != a and b != b:
+        return True
+    return a == b
+
+
+def edit_ops(old: Any, new: Any, prefix: str = "") -> list[dict]:
+    """The writes that turn *old* into *new*, in the tree's leaf grammar.
+
+    Each op is ``{"op": "set"|"create"|"delete", "path": dot_path, "value"?}``.
+    A dict key only in *new* is ONE create of its whole value; a key only in
+    *old* is one delete; common keys recurse. A list of the same length
+    recurses per index (``a.b.3``); a list whose length changed is ONE set of
+    the whole list (an index cannot be created or deleted without moving its
+    siblings). Anything else that differs is a set. Key ORDER is not a change.
+    """
+    ops: list[dict] = []
+
+    def walk(a: Any, b: Any, path: str) -> None:
+        if isinstance(a, dict) and isinstance(b, dict):
+            for k in a:
+                if k not in b:
+                    ops.append({"op": "delete", "path": f"{path}.{k}" if path else str(k)})
+            for k, v in b.items():
+                sub = f"{path}.{k}" if path else str(k)
+                if k not in a:
+                    ops.append({"op": "create", "path": sub, "value": v})
+                else:
+                    walk(a[k], v, sub)
+            return
+        if isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and path:
+            for i, (x, y) in enumerate(zip(a, b)):
+                walk(x, y, f"{path}.{i}")
+            return
+        if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
+            if a != b or type(a) is not type(b):
+                ops.append({"op": "set", "path": path, "value": b})
+            return
+        if not _same(a, b):
+            ops.append({"op": "set", "path": path, "value": b})
+
+    walk(old, new, prefix)
+    return ops

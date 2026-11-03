@@ -31,6 +31,9 @@
         <button class="btn-sm outline" onclick="jsonTreeExpandAllUi(_activeTreeId(), this)"
                 title="Expand every node &mdash; slow on a large chip (tens of thousands of rows)">All</button>
     </div>
+    <button class="btn-sm outline" id="explorer-json-whole" type="button"
+            onclick="window.TreeJsonEdit && window.TreeJsonEdit.openWhole()"
+            title="Edit the whole file of this tab as JSON (one undo step on Save)">{ } Whole file</button>
     <button class="btn-sm outline" id="explorer-livediff-toggle" type="button"
             onclick="explorerLiveDiff()"
             title="Compare the working state against Qualibrate's live state — show what changed (before &rarr; after) and accept per field">

@@ -31,7 +31,8 @@ def test_not_a_core_script():
 
 def test_only_the_json_tree_page_lists_it(client):  # noqa: F811
     man = _manifest(client.get("/explorer").get_data(as_text=True))
-    assert man["bundles"]["cm6"] == [_F]
+    # S5: the Edit-as-JSON panel (tree-json-edit.js) rides with the editor
+    assert man["bundles"]["cm6"] == [_F, "tree-json-edit.js"]
     assert "cm6" in man["pages"]["explorer"]
     assert [p for p, b in man["pages"].items() if "cm6" in b] == ["explorer"]
     _, lazy = _scripts(client.get("/explorer").get_data(as_text=True))

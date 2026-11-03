@@ -564,6 +564,31 @@
 .ui-fsp-notice-actions > button { width: auto; margin: 0; }
 .ui-fsp-notice .ui-fsp-notice-msg { font-weight: var(--ui-fw-normal); border-bottom: 0; }
 
+/* Json tree: Edit as JSON panel (D-22..D-28) over the CodeMirror 6 editor; the
+   editor's own search/replace panel is compacted here (Pico's global input and
+   button sizes made it several rows tall). */
+.ui-jedit { display: flex; flex-direction: column; gap: var(--ui-gap-1); margin-bottom: var(--ui-gap-2); padding: var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border); border-left: var(--ui-bw-strip) solid var(--ui-accent); border-radius: var(--ui-r-md); background: var(--ui-surface-1); color: var(--ui-text); font-size: var(--ui-fs-sm); }
+.ui-jedit-head, .ui-jedit-ask, .ui-jedit-warn { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); }
+.ui-jedit-head > button, .ui-jedit-ask > button, .ui-jedit-warn > button, .ui-jedit-refused-row > button { width: auto; margin: 0; }
+.ui-jedit-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-family: var(--ui-font-mono); font-weight: var(--ui-fw); }
+.ui-jedit-msg { min-height: 1.4em; color: var(--ui-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-jedit-msg-error { color: var(--ui-danger-text); }
+.ui-jedit-msg-warn { color: var(--ui-warn-text); }
+.ui-jedit-ask-text, .ui-jedit-warn-text { color: var(--ui-warn-text); }
+.ui-jedit-refused { max-height: 12rem; overflow-y: auto; margin: 0; padding: 0; list-style: none; border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-jedit-refused-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--ui-gap-2); padding: var(--ui-gap-1) 0; border-bottom: var(--ui-bw) solid var(--ui-border); overflow-wrap: anywhere; }
+.ui-jedit-path { font-family: var(--ui-font-mono); color: var(--ui-text); background: none; padding: 0; }
+.ui-jedit-reason { flex: 1 1 12rem; color: var(--ui-danger-text); }
+.ui-jedit-goto { font-size: var(--ui-fs-xs); }
+.ui-jedit-host { height: 24rem; min-height: 6rem; resize: vertical; overflow: hidden; border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-sm); }
+.ui-jedit-host .cm-editor { height: 100%; }
+.ui-jedit-host .cm-search { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); padding: var(--ui-gap-1) var(--ui-gap-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); }
+.ui-jedit-host .cm-search input, .ui-jedit-host .cm-search button { display: inline-block; width: auto; height: auto; min-height: 0; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); border-radius: var(--ui-r-sm); }
+.ui-jedit-host .cm-search input.cm-textfield { width: 12rem; }
+.ui-jedit-host .cm-search label { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-xs); }
+.ui-jedit-host .cm-search label input { padding: 0; }
+.ui-jedit-host .cm-search br { display: none; }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,

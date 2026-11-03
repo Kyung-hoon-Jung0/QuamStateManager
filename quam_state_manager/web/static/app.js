@@ -11130,7 +11130,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 jsonBtn.type = "button";
                 jsonBtn.className = "tree-json-edit-btn";
                 jsonBtn.textContent = "✎";   // ✎
-                jsonBtn.title = "Edit this " + (type === "array" ? "list" : "object") + " as JSON";
+                jsonBtn.title = "Edit as JSON (this " + (type === "array" ? "list" : "object") + ")";
                 jsonBtn.tabIndex = -1;   // QA JT-20 review: one Tab stop per tree -- F2 on the row is the way in
                 (function(nd, p, v) {
                     jsonBtn.onclick = function(e) { e.stopPropagation(); _makeContainerEditable(nd, p, v); };
@@ -13046,6 +13046,14 @@ window.clearDetailPanelSearch = function(btnEl) {
      *  `exponential_filter` list / a `{...}` object can be entered at once —
      *  something the per-leaf scalar editor cannot express. */
     function _makeContainerEditable(node, dotPath, value) {
+        // D-12: on the Json Tree page a container opens the Edit-as-JSON
+        // (CodeMirror) panel over that subtree; other trees keep this editor
+        var jtHost = node.closest && node.closest("#explorer-tree-state, #explorer-tree-wiring");
+        if (jtHost && window.TreeJsonEdit && window.SmCodeMirror) {
+            window.TreeJsonEdit.open({tab: jtHost.id === "explorer-tree-wiring" ? "wiring" : "state",
+                                      path: dotPath, back: node.querySelector(":scope > .tree-row")});
+            return;
+        }
         var row = node.querySelector(":scope > .tree-row");
         if (!row || node.querySelector(":scope > .tree-json-editor")) return;  // already editing
 

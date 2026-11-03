@@ -24,7 +24,7 @@ LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses
         "component-map.js", "chip-status.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",
         "notes.js", "agent-setup.js", "zline.js", "pulses-vt.js", "gcz-several.js",
-        "cz-plan.js", "cz-map.js", "ui.js", "vendor/cm6/cm6.min.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
+        "cz-plan.js", "cz-map.js", "ui.js", "vendor/cm6/cm6.min.js", "tree-json-edit.js"}   # cz-plan.js: Chip Status > CZ gate plan (2026-10-15); cz-map.js: its chip map (A14)   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 
 def _scripts(html: str):
@@ -70,7 +70,7 @@ def test_every_page_ships_the_core_and_only_its_own_bundles(client):
         ("/bulk", {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js"}, {"chip-status.js", "generate.js", "pulses.js"}),
         ("/pulses", {"pulses.js"}, {"bulk-edit.js", "chip-status.js", "generate.js", "zline.js"}),
         ("/zline", {"zline.js"}, {"bulk-edit.js", "chip-status.js", "generate.js", "pulses.js"}),
-        ("/explorer", {"vendor/cm6/cm6.min.js"}, LAZY - {"vendor/cm6/cm6.min.js"}),
+        ("/explorer", {"vendor/cm6/cm6.min.js", "tree-json-edit.js"}, LAZY - {"vendor/cm6/cm6.min.js", "tree-json-edit.js"}),
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),
         ("/generate", {"gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
         ("/datasets", {"dataset-virtual.js", "ndview.js"}, {"bulk-edit.js", "generate.js"}),

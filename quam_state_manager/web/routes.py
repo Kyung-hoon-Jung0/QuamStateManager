@@ -15566,6 +15566,220 @@ def field_fsp_compensation():
     return jsonify(ok=True, plans=plans)
 
 
+# -- Edit as JSON (D-22..D-28) -------------------------------------------
+
+_JSON_EDIT_LARGE_BYTES = 2 * 1024 * 1024    # D-22: a bigger whole file warns first
+
+
+def _json_edit_doc(store, tab: str, path: str):
+    """The RAW document an "Edit as JSON" panel shows (pointers as text, D-27).
+
+    ``path`` empty means the whole file of *tab* (state or wiring)."""
+    if not path:
+        return store.wiring if tab == "wiring" else store.state
+    return store.get_value(path)
+
+
+@bp.route("/tree/json-edit/source")
+def tree_json_edit_source():
+    """The text the editor opens with and the ``mutation_seq`` it is based on."""
+    modifier = _modifier()
+    if modifier is None:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    store = modifier.store
+    tab = "wiring" if request.args.get("tab") == "wiring" else "state"
+    path = _normalize_dot_path((request.args.get("path") or "").strip())
+    with store._lock:
+        try:
+            doc = _json_edit_doc(store, tab, path)
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            return jsonify(ok=False, error=str(exc)), 404
+        text = json.dumps(doc, indent=2, ensure_ascii=False)
+        seq = store.mutation_seq
+    return jsonify(ok=True, path=path, tab=tab, text=text, mutation_seq=seq,
+                   bytes=len(text.encode("utf-8")),
+                   large=len(text.encode("utf-8")) > _JSON_EDIT_LARGE_BYTES)
+
+
+def _json_edit_refusal(store, modifier, op: dict) -> str | None:
+    """Why one Edit-as-JSON write would be refused, or None (D-25 preflight).
+
+    The same checks the batch door makes, run for EVERY op first so the
+    panel can list every refused path; the batch stays the final judge."""
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    path = op["path"]
+    if not path:
+        return "the whole document cannot be replaced; edit its keys"
+    if op["op"] == "delete":
+        if len(path.split(".")) == 1:
+            return "top-level containers can't be deleted here"
+        return _crud_policy_reason(store, path, deleting=True)
+    if op["op"] == "create":
+        if len(path.split(".")) == 1:
+            return "a new top-level key cannot be added here"
+        return _crud_policy_reason(store, path)
+    value = op.get("value")
+    try:
+        old = store.get_value(path)
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        return str(exc)
+    if isinstance(old, str) and is_pointer(old):
+        if not (isinstance(value, str) and is_pointer(value.strip())):
+            return ("this field is a pointer (a link to another value); write "
+                    "another pointer here, or edit the value at its target")
+        target = path
+    else:
+        target = _resolve_edit_path(store, path)
+    reason = _editability_reason(store, target)
+    if reason:
+        return reason
+    reason = _pointer_cell_refusal(store, path, value)
+    if reason:
+        return reason
+    reason = _sibling_type_refusal(store, path, value)
+    if reason:
+        return reason
+    try:
+        parsed = (_parse_for_target(store, target, value)
+                  if isinstance(value, str) and not is_pointer(value.strip()) else value)
+        reason = _container_pointer_refusal(store, target, parsed)
+        if reason:
+            return reason
+        modifier._checked_value(target, store.get_value(target), parsed,
+                                coerce=True, enforce=True)
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        return str(exc)
+    return None
+
+
+_JSON_EDIT_ABSENT = object()
+
+
+def _json_edit_at(doc, rel: str):
+    """The value at *rel* (dot path) inside *doc*, or an absent marker."""
+    node = doc
+    for k in rel.split(".") if rel else ():
+        if isinstance(node, dict) and k in node:
+            node = node[k]
+        elif isinstance(node, list) and k.isdigit() and int(k) < len(node):
+            node = node[int(k)]
+        else:
+            return _JSON_EDIT_ABSENT
+    return node
+
+
+@bp.route("/tree/json-edit/save", methods=["POST"])
+def tree_json_edit_save():
+    """Edit as JSON, Save (D-23..D-28).
+
+    Body ``{tab, path, text, base_seq, expect_chip}``. The text is parsed, diffed
+    against the working copy with the tree's leaf grammar
+    (:func:`json_diff.edit_ops`) and written as ONE ``/field/edit-batch`` (one
+    undo group). All-or-nothing: any refusal writes nothing and every refused
+    path is named. A moved ``mutation_seq`` refuses (``moved``) so the panel can
+    offer a re-diff on the new base."""
+    from quam_state_manager.core import json_diff
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    modifier = _modifier()
+    if modifier is None:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    payload = json_object()
+    store = modifier.store
+    tab = "wiring" if payload.get("tab") == "wiring" else "state"
+    path = _normalize_dot_path(str(payload.get("path") or "").strip())
+    text = payload.get("text")
+    if not isinstance(text, str):
+        raise BadBody("'text' must be a string")
+    guard = _chip_mismatch_response(str(payload.get("expect_chip") or ""), False)
+    if guard is not None:
+        return guard
+    try:
+        new_doc = json.loads(text)
+    except ValueError as exc:
+        return jsonify(ok=False, parse_error=str(exc),
+                       line=getattr(exc, "lineno", None), col=getattr(exc, "colno", None),
+                       error=f"Invalid JSON: {exc}"), 400
+    base_seq = payload.get("base_seq")
+    rebase = payload.get("rebase") is True
+    base_doc = None
+    if rebase:
+        try:
+            base_doc = json.loads(str(payload.get("base_text") or ""))
+        except ValueError:
+            raise BadBody("'base_text' must be the JSON the editor opened with")
+    with store._lock:
+        seq = store.mutation_seq
+        if base_seq is not None and base_seq != seq and not rebase:
+            return jsonify(ok=False, moved=True, mutation_seq=seq,
+                           error="The working copy changed since this editor opened "
+                                 "(another edit or window). Nothing was written."), 409
+        try:
+            old_doc = _json_edit_doc(store, tab, path)
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            return jsonify(ok=False, error=str(exc)), 404
+        if path == "" and not isinstance(new_doc, dict):
+            return jsonify(ok=False, error="the whole file must stay a JSON object"), 400
+        refused = []
+        if rebase:
+            # D-28 re-diff: only the user's OWN changes (opened text -> edited
+            # text), applied on the new base; a leaf the other edit moved too
+            # is refused rather than overwritten
+            ops = json_diff.edit_ops(base_doc, new_doc, path)
+            for op in ops:
+                rel = op["path"][len(path) + 1:] if path else op["path"]
+                was = _json_edit_at(base_doc, rel)
+                now = _json_edit_at(old_doc, rel)
+                if not json_diff._same(was, now):
+                    refused.append({"path": op["path"], "op": op["op"],
+                                    "error": "changed by another edit since this editor "
+                                             "opened; reopen to see it"})
+        else:
+            ops = json_diff.edit_ops(copy.deepcopy(old_doc), new_doc, path)
+        for op in ops:
+            if any(r["path"] == op["path"] for r in refused):
+                continue
+            reason = _json_edit_refusal(store, modifier, op)
+            if reason:
+                refused.append({"path": op["path"], "op": op["op"], "error": reason})
+        # a pulse added / removed / renamed is the Pulses page's job (w9)
+        _ps = _pulse_structure_rows(store, [
+            (op["path"], _BATCH_DELETE if op["op"] == "delete" else op.get("value"),
+             op["op"] == "create") for op in ops], None) if ops else {}
+        _named = {r["path"] for r in refused}
+        for n, row in sorted(_ps.items()):
+            if ops[n]["path"] not in _named:
+                refused.append({"path": ops[n]["path"], "op": ops[n]["op"],
+                                "error": row.get("error") or "a pulse change",
+                                "pulses_page": row.get("pulses_page")})
+    if not ops:
+        return jsonify(ok=True, changed=0, results=[], mutation_seq=seq)
+    if refused:
+        return jsonify(ok=False, refused=refused, changed=0,
+                       error=f"{len(refused)} of {len(ops)} change(s) refused; nothing was written"), 409
+    updates = []
+    for op in ops:
+        u = {"dot_path": op["path"]}
+        if op["op"] == "delete":
+            u["delete"] = True
+        else:
+            u["value"] = op["value"]
+            if op["op"] == "create":
+                u["create"] = True
+            else:
+                try:
+                    cur = store.get_value(op["path"])
+                except (KeyError, TypeError, ValueError, IndexError):
+                    cur = None
+                if (isinstance(cur, str) and is_pointer(cur)
+                        and isinstance(op["value"], str) and is_pointer(op["value"].strip())):
+                    u["relink"] = True
+        updates.append(u)
+    batch = {"updates": updates, "expect_seq": seq, "group": "new",
+             "type_fix": "keep", "expect_chip": payload.get("expect_chip") or ""}
+    resp = _field_edit_batch_impl(batch)
+    return resp
+
+
 def _same_leaf_value(old, new) -> bool:
     """True when *new* is exactly the stored *old* (same type, same value)."""
     return type(old) is type(new) and old == new
@@ -15686,6 +15900,11 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
             for u in payload["updates"]
             if isinstance(u, dict)
         ]
+        # Edit as JSON (D-27): a pointer edited as text re-points THAT leaf
+        _relink_paths = {
+            _normalize_dot_path(str(u.get("dot_path", "")).strip())
+            for u in payload["updates"]
+            if isinstance(u, dict) and u.get("relink") is True}
     else:
         dot_paths = request.form.getlist("dot_path")
         raw_values = request.form.getlist("value")
@@ -15696,6 +15915,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
             ), 400
         pairs = [(_normalize_dot_path(p.strip()), v, False)
                  for (p, v) in zip(dot_paths, raw_values)]
+        _relink_paths = set()
 
     _origins = ([provenance(u) if "provenance" in u else _origin
                  for u in payload["updates"] if isinstance(u, dict)]
@@ -15984,6 +16204,13 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     if _write_path == _old or _write_path.startswith(_old + "."):
                         _write_path = _new + _write_path[len(_old):]
                 target_path = _resolve_edit_path(modifier.store, _write_path)
+                if dot_path in _relink_paths:
+                    from quam_state_manager.core.pointer_resolver import is_pointer
+                    _cur = modifier.store.get_value(dot_path)
+                    if not (is_pointer(_cur) and isinstance(raw_value, str)
+                            and is_pointer(raw_value.strip())):
+                        raise ValueError("Relink requires a pointer leaf and pointer value")
+                    target_path = dot_path
                 _ro = _editability_reason(modifier.store, target_path)
                 if _ro is not None:
                     # GATE-ID permits only filling a null/absent gate target ID
