@@ -435,3 +435,75 @@ class TestPinIsAnIdentity:
         _chip_answer(link, name="chip", chip_key="chip-bbbb", declared_name="lab-G")
         with pytest.raises(mcp.ToolError):
             mcp._chip_facts()
+
+
+# ------------------------------------------------------------------ D-44 offer
+
+class _ClientLink:
+    """The bridge's link, answered by the real Flask app (its real routes,
+    headers included) -- no plan computed by the test."""
+
+    def __init__(self, client):
+        self.c = client
+        self.h = {"X-SM-Agent": "claude"}
+
+    def alive(self):
+        return True
+
+    def get(self, path, params=None):
+        r = self.c.get(path, query_string={k: v for k, v in (params or {}).items() if v is not None},
+                       headers=self.h)
+        return r.status_code, (r.get_json(silent=True) if r.is_json else r.get_data(as_text=True))
+
+    def post_form_h(self, path, data):
+        r = self.c.post(path, data={k: v for k, v in data.items() if v is not None}, headers=self.h)
+        return (r.status_code, (r.get_json(silent=True) if r.is_json else r.get_data(as_text=True)),
+                dict(r.headers.items()))
+
+    def post_form(self, path, data):
+        return self.post_form_h(path, data)[:2]
+
+    def post_json(self, path, data):
+        r = self.c.post(path, json=data, headers=self.h)
+        return r.status_code, (r.get_json(silent=True) if r.is_json else r.get_data(as_text=True))
+
+
+class TestFspOfferReachesTheAgent:
+    def test_an_unacked_fsp_edit_hands_the_offer_back(self, tmp_path, monkeypatch):
+        app, c = _app(tmp_path, "d44")
+        c.post("/load", data={"folder": str(_chip_dir(tmp_path / "d"))})
+        link = _ClientLink(c)
+        for k, v in {"_link": link, "_seen": None, "_chip": None, "_seen_key": None, "_seen_token": None,
+                     "_seen_sig": None, "_seen_paths": [], "_pin_key": None, "_CHIP_PIN": None}.items():
+            monkeypatch.setattr(mcp, k, v)
+        r = mcp.t_state_edit({"path": _FSP, "value": "-6", "reason": "r"})
+        assert r["staged"] is True
+        off = r.get("fsp_changed")
+        assert off, r
+        assert [p["dot_path"] for p in off["ports"]] == [_FSP]
+        log = _log(_ctx(app))
+        assert [p for p, *_ in log] == [_FSP], "only the FSP is staged"
+        assert off["gid"] == log[0][2]
+        assert "/field/fsp-compensation" in off["how"] and "/field/edit-batch" in off["how"]
+        # the how works: the plan, then the amps into that gid -> ONE group
+        plans = link.post_json("/field/fsp-compensation", {"ports": off["ports"]})[1]["plans"]
+        ups = [{"dot_path": a["path"], "value": a["new"]} for pl in plans for a in pl["amps"]]
+        assert ups
+        b = link.post_json("/field/edit-batch", {"updates": ups, "group": off["gid"]})
+        assert b[0] == 200 and b[1]["ok"], b
+        assert len({g for _p, _v, g, _a in _log(_ctx(app))}) == 1
+
+    def test_a_plain_edit_carries_no_offer(self, tmp_path, monkeypatch):
+        app, c = _app(tmp_path, "d44b")
+        c.post("/load", data={"folder": str(_chip_dir(tmp_path / "d"))})
+        for k, v in {"_link": _ClientLink(c), "_seen": None, "_chip": None, "_seen_key": None,
+                     "_seen_token": None, "_seen_sig": None, "_seen_paths": [], "_pin_key": None,
+                     "_CHIP_PIN": None}.items():
+            monkeypatch.setattr(mcp, k, v)
+        r = mcp.t_state_edit({"path": _T1, "value": "123", "reason": "r"})
+        assert r["staged"] is True and "fsp_changed" not in r
+
+    def test_the_tool_text_no_longer_promises_a_409(self):
+        desc = json.dumps(mcp.TOOLS["state_edit"][0]) if hasattr(mcp, "TOOLS") else ""
+        src = Path(mcp.__file__).read_text(encoding="utf-8")
+        assert "fsp_changed" in src and "A 409 offer (type fix, FSP" not in src, desc[:0]

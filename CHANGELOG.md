@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.7.0 (2026-11-04)
+
+### Auto-Sync
+
+- Auto-Sync is on by default when a chip opens: it takes live changes and pushes your edits (replacing your unapplied values with live ones stays off).
+- Turning it off for a chip is remembered for that chip; a Settings toggle sets the default.
+- Edits an agent staged are never pushed by Auto-Sync; the tray says Auto-Sync is holding until you review them and press Apply yourself, or discard them.
+
+### Json Tree View: free editing
+
+- Typing on a focused value edits it; Enter commits and stays on the field; leaving the field, switching apps or switching tabs saves it; Esc reverts; the arrow keys and Tab move between fields.
+- Edit as JSON on a container row or the whole file: the change is one undo step; a parse error or a refused value writes nothing; files over 2 MB warn first.
+- Find and replace (Ctrl+H, Cmd+Option+F on a Mac): Replace all writes at once with a notice, and one Ctrl+Z takes it back. Numbers match only as a whole value; pointers are skipped; an FSP value is included and the amplitude compensation is offered afterwards.
+- Ctrl+D selects the next occurrence, Ctrl+Shift+L all occurrences, Ctrl+K D skips one; the old same-field-of-the-next-entity action moved to Ctrl+Alt+D (Cmd+Option+D).
+
+### FSP
+
+- An FSP edit commits first everywhere, then offers the amplitude compensation; Yes joins the same undo step.
+
+### Live State Edit
+
+- Grid searches accept comparisons, as the comparison search does.
+- f_01 and the RF frequency are kept coupled by the server.
+- Undo is safe with two windows open on one chip.
+
+### Trends
+
+- Hollow markers for held values, a "now" marker, units on the axes, clickable marks and live refresh.
+
+### OPX monitor
+
+- A failed call names its cause, and stale values are marked as stale.
+
+### Other
+
+- Esc in a search box closes the suggestions first, then clears the box.
+- Enter in the State Load folder box loads.
+
 ## v1.6.2 (2026-11-03)
 
 ### OPX monitor (new menu)

@@ -464,54 +464,62 @@ class Rig:
         return st
 
     def op_edit_fsp(self, path: str, value: float, ack: str):
+        """D-44: an FSP edit commits at once (one entry, the FSP alone) and its
+        response names the changed port + undo group in ``X-SM-Fsp-Changed``.
+        ``ack`` is the person's answer to the offer afterwards: "comp" = Yes
+        (the amplitudes join the FSP's group), anything else = No."""
         st = Step("", {})
         n0 = len(self.sm_log())
+        old_f = O.get(self.model.W, path)
         r = self.ca.post("/field/edit", data={"dot_path": path, "value": repr(value),
                                               "expect_chip": self.token})
-        body = r.get_json(silent=True) or {}
-        if r.status_code != 409 or "fsp_compensation" not in body:
-            st.notes.append(("I4", f"an FSP edit without an ack was not offered the plan: {r.status_code} {str(body)[:200]}"))
-            if r.status_code == 200:
-                self.model.stage_entries(self.sm_log()[n0:])
-            st.status = r.status_code
-            st.exp = O.Outcome("refused")
-            return st
-        if len(self.sm_log()) != n0:
-            st.notes.append(("I4", "the FSP plan offer staged something"))
-        if not ack:
-            st.status, st.obs, st.refusal = 409, "refused", True
-            st.exp = O.Outcome("refused")
-            return st
-        r = self.ca.post("/field/edit", data={"dot_path": path, "value": repr(value),
-                                              "expect_chip": self.token, "fsp_ack": ack})
         st.status = r.status_code
         body = r.get_json(silent=True) or {}
         new = self.sm_log()[n0:]
         if r.status_code != 200 or not new:
-            st.obs = "refused"
-            st.notes.append(("I7", f"an acknowledged FSP edit was refused: {r.status_code} {str(body)[:200]}"))
+            st.obs, st.refusal = "refused", True
+            st.notes.append(("I7", f"an FSP edit was refused: {r.status_code} {str(body)[:200]}"))
             self.model.stage_entries(new)
             st.exp = O.Outcome("staged")
             return st
         st.obs = "staged"
         self._saw("a", body.get("tray_html"))
-        old_f = O.get(self.model.W, path)
-        fsp = [e for e in new if e.path == path]
-        amps = [e for e in new if e.path != path]
-        if len(fsp) != 1 or not O._eq(fsp[0].new, value):
-            st.notes.append(("I7", f"FSP entry wrong: {[(e.path, e.new) for e in fsp]}"))
-        if ack == "solo" and amps:
-            st.notes.append(("I4", f"fsp_ack=solo also changed {[e.path for e in amps]}"))
-        if ack == "comp":
-            k = 10 ** ((float(old_f) - float(value)) / 20.0)
-            for e in amps:
-                if not isinstance(e.old, (int, float)) or not isinstance(e.new, (int, float)):
-                    continue
-                if not math.isclose(e.new, e.old * k, rel_tol=1e-9, abs_tol=1e-15):
-                    st.notes.append(("I7", f"FSP compensation {e.path}: {e.old}*{k:.6g} != {e.new}"))
-            if len(new) > 1 and (len({e.gid for e in new}) != 1 or new[0].gid is None):
-                st.notes.append(("I4", f"the FSP bundle is not one group: {[e.gid for e in new]}"))
+        if [e.path for e in new] != [path] or not O._eq(new[0].new, value):
+            st.notes.append(("I4", f"an FSP edit without an ack staged more than the FSP: "
+                                   f"{[(e.path, e.new) for e in new]}"))
+        try:
+            offer = json.loads(r.headers.get("X-SM-Fsp-Changed") or "null")
+        except ValueError:
+            offer = None
+        if (not isinstance(offer, dict)
+                or [p.get("dot_path") for p in offer.get("ports") or []] != [path]):
+            st.notes.append(("I4", f"an FSP edit was not offered the compensation: {offer!r}"))
+            offer = None
+        elif offer.get("gid") != new[-1].gid:
+            st.notes.append(("I4", f"the offer names gid {offer.get('gid')} != the FSP's {new[-1].gid}"))
         self.model.stage_entries(new)
+        if ack == "comp" and offer:
+            plans = (self.ca.post("/field/fsp-compensation", json={"ports": offer["ports"]})
+                     .get_json(silent=True) or {}).get("plans") or []
+            ups = [{"dot_path": a["path"], "value": a["new"]} for pl in plans for a in pl.get("amps") or []]
+            if ups:
+                n1 = len(self.sm_log())
+                rb = self.ca.post("/field/edit-batch", json={"updates": ups, "group": offer["gid"],
+                                                             "expect_chip": self.token})
+                amps = self.sm_log()[n1:]
+                if rb.status_code != 200 or not amps:
+                    st.notes.append(("I7", f"the compensation write was refused: {rb.status_code}"))
+                k = 10 ** ((float(old_f) - float(value)) / 20.0)
+                for e in amps:
+                    if not isinstance(e.old, (int, float)) or not isinstance(e.new, (int, float)):
+                        continue
+                    if not math.isclose(e.new, e.old * k, rel_tol=1e-9, abs_tol=1e-15):
+                        st.notes.append(("I7", f"FSP compensation {e.path}: {e.old}*{k:.6g} != {e.new}"))
+                bundle = new + amps
+                if len({e.gid for e in bundle}) != 1 or bundle[0].gid is None:
+                    st.notes.append(("I4", f"the FSP bundle is not one group: {[e.gid for e in bundle]}"))
+                self.model.stage_entries(amps)
+                self._saw("a", (rb.get_json(silent=True) or {}).get("tray_html"))
         self.typed.append((path, value))
         st.exp = O.Outcome("staged")
         self._after_stage(st)

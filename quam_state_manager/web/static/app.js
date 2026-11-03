@@ -14832,7 +14832,8 @@ window.TreeMulti = (function () {
  * a regex pass runs in a worker that is terminated past its budget.
  * D-37: with regex off the find text is one literal phrase and the
  * replacement is literal. D-38: a number, boolean or null matches only as a
- * whole value, and Replace All always stops at a review step first. */
+ * whole value. Replace All writes at once with a notice naming what changed;
+ * one Ctrl+Z takes the whole replacement back. */
 window.TreeFind = (function () {
     'use strict';
     var tree, bar, find, hits = [], plan = [], serial = 0, current = 0, token, planSeq, ready = false;
@@ -31469,6 +31470,12 @@ document.addEventListener('keydown', function (e) {
     var active = box && box.querySelector('.path-suggestion.active');
     if (active && active.getAttribute('data-path')) input.value = active.getAttribute('data-path');
     if (box) { box.style.display = 'none'; box.innerHTML = ''; }
-    if (form.requestSubmit) form.requestSubmit();
-    else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    // An htmx form is submitted by htmx's own 'submit' listener: one
+    // cancelable submit event is exactly one request (and never a native
+    // page navigation). Any other form takes the native requestSubmit.
+    if (form.hasAttribute('hx-post') || !form.requestSubmit) {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    } else {
+        form.requestSubmit();
+    }
 }, true);

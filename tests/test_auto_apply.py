@@ -471,3 +471,44 @@ def test_diag_refresh_waits_for_the_flush_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "all checks passed" in r.stdout, r.stdout[-3000:]
+
+
+class TestAgentRowsAreNeverAutoPushed:
+    """D-45: an Auto-Sync flush never pushes an agent's staged rows. The
+    working copy applies whole, so the flush refuses while one is pending."""
+
+    def _agent_edit(self, env, value="5.3e9"):
+        return env["client"].post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": value},
+                                  headers={"X-SM-Agent": "claude"})
+
+    def test_a_flush_with_an_agent_row_writes_nothing(self, env):
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        assert self._agent_edit(env).status_code == 200
+        _edit(env, "qubits.qA1.T1", "3e-05")           # and a person's row
+        before = (env["live"] / "state.json").read_bytes()
+        r = c.post("/state/apply-to-live", data={"auto_flush": "1"})
+        assert r.status_code == 409 and r.get_json()["conflict"] == "agent_rows_held"
+        assert (env["live"] / "state.json").read_bytes() == before, "live untouched"
+        assert len(_ctx(env)["store"].change_log) == 2, "both rows still staged"
+        tray = c.get("/state/tray").data.decode()
+        assert 'data-agent-held="1"' in tray and "data-agent-held-note" in tray
+
+    def test_the_persons_own_apply_still_pushes_them(self, env):
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        self._agent_edit(env)
+        assert c.post("/state/apply-to-live").status_code == 200
+        assert _live_f01(env) == 5.3e9
+
+    def test_a_flush_of_person_rows_alone_still_lands(self, env):
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        _edit(env)
+        r = c.post("/state/apply-to-live", data={"auto_flush": "1"})
+        assert r.status_code == 200 and _live_f01(env) == 5.1e9
+        assert "data-agent-held" not in c.get("/state/tray").data.decode()
+
+    def test_the_flusher_marks_its_press_and_holds(self):
+        js = (Path(routes_mod.__file__).parent / "static" / "auto-apply.js").read_text(encoding="utf-8")
+        assert "auto_flush: '1'" in js and "hasAttribute('data-agent-held')" in js

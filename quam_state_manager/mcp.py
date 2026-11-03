@@ -271,8 +271,10 @@ def t_state_search(a: dict) -> Any:
 
 def t_state_edit(a: dict) -> Any:
     """Stage one edit through /field/edit -- the same door as a cell edit.
-    A 409 is an OFFER (type fix, FSP compensation) that the agent answers
-    by calling again with the named ack; it is returned verbatim."""
+    A 409 is an OFFER (type fix, port identity) that the agent answers by
+    calling again with the named ack; it is returned verbatim. An FSP edit
+    commits first (D-44) and its amplitude-compensation offer arrives in the
+    ``X-SM-Fsp-Changed`` header; it is handed back as ``fsp_changed``."""
     sm = _sm()
     chip = _chip_facts()
     if not chip.get("loaded"):
@@ -283,7 +285,11 @@ def t_state_edit(a: dict) -> Any:
     form = {"dot_path": a["path"], "value": value, "expect_chip": chip.get("chip_token") or None,
             "type_fix": a.get("type_fix"), "fsp_ack": a.get("fsp_ack"),
             "port_identity_ack": a.get("port_identity_ack")}
-    code, body = sm.post_form("/field/edit", form)
+    if callable(getattr(type(sm), "post_form_h", None)):
+        code, body, headers = sm.post_form_h("/field/edit", form)
+    else:                       # a link without headers (an older client)
+        code, body = sm.post_form("/field/edit", form)
+        headers = {}
     if code == 409:
         if isinstance(body, dict) and (body.get("fsp_compensation") or body.get("type_fix") or body.get("port_identity")):
             return {"staged": False, "needs_answer": True, "offer": body,
@@ -313,7 +319,34 @@ def t_state_edit(a: dict) -> Any:
                   else "the FSP and its compensated amplitudes")
         out["note"] = (f"staged {len(entries)} edits as ONE group ({bundle}); "
                        "nothing reached the chip. Call apply_to_live to write.")
+    fsp = _fsp_changed_offer(headers)
+    if fsp is not None:
+        out["fsp_changed"] = fsp
     return out
+
+
+def _fsp_changed_offer(headers: dict | None) -> dict | None:
+    """D-44: the FSP edit is staged; the amplitudes it scales are not. Name
+    the changed ports, their undo group, and how to compensate."""
+    raw = None
+    for k, v in (headers or {}).items():
+        if str(k).lower() == "x-sm-fsp-changed":
+            raw = v
+    if not raw:
+        return None
+    try:
+        info = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(info, dict):
+        return None
+    return {"ports": info.get("ports") or [], "gid": info.get("gid"),
+            "how": ("the FSP changed but the pulse amplitudes on that port did not, so every pulse's "
+                    "output power moved. To keep the powers: POST /field/fsp-compensation with "
+                    "{\"ports\": <ports above>} (JSON) to get the plans; then POST /field/edit-batch with "
+                    "{\"updates\": [{\"dot_path\": a.path, \"value\": a.new} for every a in "
+                    "plans[*].amps], \"group\": <gid above>} so the FSP and its amplitudes stay ONE "
+                    "undo step. Or leave the amplitudes as they are if the power change is intended.")}
 
 
 def _tray_seen() -> Any:
@@ -609,9 +642,11 @@ TOOLS: dict[str, tuple[dict, Any]] = {
     "state_search": (_s("Search every leaf of the open state by key/value text (space = AND, | = OR).",
                         query={"type": "string", "required": True}, limit={"type": "integer"}), t_state_search),
     "state_edit": (_s("STAGE one edit into SM's Review tray (nothing reaches the chip until apply_to_live). "
-                      "Value may be a number, string, bool, null, list or dict. A 409 offer (type fix, FSP "
-                      "amplitude compensation, port identity) is returned for you to answer via "
-                      "type_fix / fsp_ack / port_identity_ack.",
+                      "Value may be a number, string, bool, null, list or dict. A 409 offer (type fix, "
+                      "port identity) is returned for you to answer via type_fix / port_identity_ack. "
+                      "An FSP (full_scale_power_dbm) edit is staged at once; the result's `fsp_changed` "
+                      "names the ports, the undo group and how to compensate the amplitudes "
+                      "(POST /field/fsp-compensation, then /field/edit-batch into that gid).",
                       path={"type": "string", "required": True}, value={"required": True},
                       reason={"type": "string", "description": "why this value -- goes into the human's journal"},
                       type_fix={"type": "string", "enum": ["convert", "keep"]},

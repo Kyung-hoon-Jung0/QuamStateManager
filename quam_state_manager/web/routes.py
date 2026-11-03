@@ -11600,6 +11600,16 @@ def _checkpoint_pending_tray_flags(response):
     return response
 
 
+_AGENT_HELD_MSG = ("Auto-Sync is holding: {n} staged edit(s) came from an agent. Auto-Sync never "
+                   "pushes an agent's edits -- review them and press Apply yourself, or discard them.")
+
+
+def _agent_held_paths(changes) -> list:
+    """D-45: the pending rows an agent staged (actor ``by_<agent>``)."""
+    return [c.dot_path for c in (changes or [])
+            if str(getattr(c, "actor", "human")).startswith("by_")]
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -34069,6 +34079,15 @@ def state_apply_to_live():
                                    "own rows — that agent applies them, or a person does in the SM window"), 409
         _lk = _agent_edit_lock_refusal(ctx)
     else:
+        # D-45: an Auto-Sync flush is not a person's press. The working copy
+        # applies WHOLE, so a flush cannot push the person's rows and leave an
+        # agent's behind; while any agent-staged row is pending the flush
+        # writes nothing (the agent's rows wait for the person's own Apply).
+        if request.values.get("auto_flush") == "1":
+            _held = _agent_held_paths(ctx["store"].change_log)
+            if _held:
+                return jsonify(ok=False, conflict="agent_rows_held", paths=_held[:50],
+                               message=_AGENT_HELD_MSG.format(n=len(_held))), 409
         _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk

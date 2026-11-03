@@ -1,4 +1,5 @@
 {% from '_icons.html' import icon_bolt %}
+{% set _agent_held = namespace(n=0) %}{% for _c in (changes if changes is defined and changes else []) %}{% if (_c.actor | default("human") | string).startswith("by_") %}{% set _agent_held.n = _agent_held.n + 1 %}{% endif %}{% endfor %}
 <div id="pending-tray"
      class="pending-tray ui-live-tray{% if not active_name and change_count == 0 and not working_dirty and not (qualibrate_tray is defined and qualibrate_tray) %} tray-empty{% endif %}"
      data-change-count="{{ change_count }}"
@@ -37,7 +38,8 @@
         the server stamps from the session. The pill below and the flusher
         therefore cannot disagree, and F5 keeps the truth. #}
      {% if auto_apply is defined and auto_apply %}data-auto-apply="1"
-     data-auto-since="{{ auto_apply.armed_at | default(0) }}"{% endif %}
+     data-auto-since="{{ auto_apply.armed_at | default(0) }}"{% if _agent_held.n %}
+     data-agent-held="{{ _agent_held.n }}"{% endif %}{% endif %}
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
 {% if auto_sync_open_toast is defined %}{% set _as_open_toast = auto_sync_open_toast() %}{% if _as_open_toast %}<div role="status" class="tray-recovery-notice ui-note" data-auto-sync-open data-toast="info" hidden>{{ _as_open_toast }}</div>{% endif %}{% endif %}{% if tray_recovery_notice is defined %}{% set _recovery_notice = tray_recovery_notice() %}{% if _recovery_notice is mapping %}<div role="status" class="tray-recovery-notice tray-recovery-{{ _recovery_notice.level }}" data-toast="{{ _recovery_notice.level }}" hidden>{{ _recovery_notice.text }}</div>{% elif _recovery_notice %}<div role="alert" class="tray-recovery-notice tray-recovery-error" data-toast="error" hidden>{{ _recovery_notice }}</div>{% endif %}{% endif %}
 {% if live_readonly %}<span class="tray-ro-lock" title="The LIVE folder does not appear writable (read-only share?). Edits save to the working copy, but Apply to live will fail until the folder is writable.">&#128274;&nbsp;<span class="tray-ro-text">read-only</span></span>{% endif %}
@@ -81,6 +83,9 @@
    just "ON", because pull and push are different promises and a user must be
    able to see which ones they granted. #}
 {% include '_auto_sync_pill.html' %}
+{# D-45: Auto-Sync never pushes an agent's staged rows; say so while it holds #}
+{% if auto_apply is defined and auto_apply and _agent_held.n %}<span class="tray-agent-held ui-note" role="status" data-agent-held-note
+      title="Auto-Sync never pushes an edit an agent staged. Review the agent's edits in the sync panel and press Apply yourself, or discard them; Auto-Sync resumes once none are pending.">Auto-Sync holding: {{ _agent_held.n }} agent edit{{ 's' if _agent_held.n != 1 else '' }} wait{{ '' if _agent_held.n != 1 else 's' }} for your Apply</span>{% endif %}
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
    list (staged undos swap this whole tray via /undo's response; un-staged
    fill undos leave it untouched — they were never in the change_log).

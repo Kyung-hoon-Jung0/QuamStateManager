@@ -184,10 +184,16 @@ class SMLink:
         return self._send(req, timeout)
 
     def post_form(self, path: str, data: dict) -> tuple[int, object]:
+        code, body, _headers = self.post_form_h(path, data)
+        return code, body
+
+    def post_form_h(self, path: str, data: dict) -> tuple[int, object, dict]:
+        """``post_form`` that also returns the response headers (D-44: an FSP
+        edit's compensation offer rides ``X-SM-Fsp-Changed``)."""
         body = urllib.parse.urlencode({k: v for k, v in data.items() if v is not None}).encode()
         req = urllib.request.Request(self.base + path, data=body, method="POST",
                                      headers=self._headers({"Content-Type": "application/x-www-form-urlencoded"}))
-        return self._send(req)
+        return self._send(req, with_headers=True)
 
     def post_json(self, path: str, data: dict, *, timeout: float | None = None) -> tuple[int, object]:
         body = json.dumps(data).encode("utf-8")
@@ -195,12 +201,13 @@ class SMLink:
                                      headers=self._headers({"Content-Type": "application/json"}))
         return self._send(req, timeout)
 
-    def _send(self, req, timeout: float | None = None) -> tuple[int, object]:
+    def _send(self, req, timeout: float | None = None, *, with_headers: bool = False):
         try:
             with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
-                return r.status, _decode(r.read(), r.headers.get("Content-Type", ""))
+                out = (r.status, _decode(r.read(), r.headers.get("Content-Type", "")), dict(r.headers.items()))
         except urllib.error.HTTPError as e:
-            return e.code, _decode(e.read(), e.headers.get("Content-Type", ""))
+            out = (e.code, _decode(e.read(), e.headers.get("Content-Type", "")), dict(e.headers.items()))
+        return out if with_headers else out[:2]
 
     def alive(self) -> bool:
         try:

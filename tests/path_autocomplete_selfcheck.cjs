@@ -38,7 +38,7 @@ function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } }
 
 // the sidebar load form, as base.html renders it
 const PAGE = '<!DOCTYPE html><html><body><aside id="sidebar"><div class="sidebar-load">'
-  + '<form id="load-form">'
+  + '<form id="load-form" hx-post="/load">'
   + '<div class="path-input-group">'
   + '<input type="text" name="folder" id="load-path-input" autocomplete="off">'
   + '<button type="button" class="btn-browse">B</button>'
@@ -133,9 +133,14 @@ async function main() {
     'A6: picking a subfolder drills into it (the chip folder offers itself)');
 
   // -- A5
+  // the State Load Enter handler submits the (htmx) form itself: one submit
+  let a5Submits = 0;
+  const a5Count = (e) => { e.preventDefault(); a5Submits++; };
+  doc.getElementById('load-form').addEventListener('submit', a5Count);
   const kd = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
   input.dispatchEvent(kd);
-  ok(!kd.defaultPrevented, 'A5: Enter with nothing highlighted is left to the form (it loads)');
+  ok(a5Submits === 1, 'A5: Enter with nothing highlighted still submits the form once (it loads) -- ' + a5Submits);
+  doc.getElementById('load-form').removeEventListener('submit', a5Count);
   doc.getElementById('load-form').dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
   ok(box.style.display === 'none', 'A5: submitting the form closes the list');
 
