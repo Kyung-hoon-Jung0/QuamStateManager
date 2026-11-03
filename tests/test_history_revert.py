@@ -137,10 +137,13 @@ class TestTheRevertButton:
         assert c.post("/state-history/snapshot").status_code == 200
 
         html = self._panel(env)
-        assert "fh-revert-delta" in html, "no current-vs-this delta rendered"
-        i = html.index("fh-revert")
-        j = html.index("fh-revert-delta")
-        assert j > i and j - i < 700, "the delta is not beside its button"
+        # fix/trends-stress (26c87f61, "one percentage per row"): the
+        # current-vs-this percentage moved from a chip beside Revert into the
+        # Revert button's own tooltip, so the row shows one percentage.
+        i = html.index('class="fh-revert"')
+        btn = html[i:html.index("</button>", i)]
+        assert "Against the value now:" in btn, "no current-vs-this delta on Revert"
+        assert "fh-revert-delta" not in html
 
     def test_revert_is_offered_on_every_non_current_row(self):
         """Source-level, because a chip with no snapshots renders no rows at
@@ -174,8 +177,11 @@ class TestTheRevertButton:
         (what this point introduced). The customer asked for the one beside the
         button: what reverting would do now."""
         t = (_TPL / "_field_history_ledger.html").read_text(encoding="utf-8")
-        assert "delta_pct(current_value, pt.value, 'fh-revert-delta')" in t,             "the revert delta must use the COMPACT variant — the full-precision "            "text buries the button in a 99px column (docs/186)"
-        assert "delta_chip(pt.prev_value, pt.value, 'fh-delta')" in t, \
+        # 26c87f61: the revert delta lives in the Revert button's tooltip
+        # (one percentage per row); it is still against the CURRENT value.
+        assert "current_value | value_delta(pt.value)" in t
+        assert "Against the value now:" in t
+        assert "pt.delta_new if pt.delta_unit else pt.value, 'fh-delta'" in t, \
             "the introduced-delta must survive — they are two different facts"
 
     def test_the_route_ships_the_current_value(self, env):

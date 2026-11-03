@@ -8366,7 +8366,7 @@ window.ChipTrends = (function () {
                         legendgroup: 'ent:' + s.entity, showlegend: false,
                         meta: 'now', cliponaxis: false,
                         marker: { symbol: 'star-diamond', size: 13, color: col,
-                                  line: { width: 1, color: 'rgba(0,0,0,0.45)' } },
+                                  line: { width: 1, color: (document.body && getComputedStyle(document.body).color) || undefined } },
                         hovertemplate: '%{fullData.name} \u00b7 now: %{text}'
                             + '<br>%{customdata[1]}<br><i style="opacity:.7">%{customdata[2]}</i><extra></extra>'
                     });

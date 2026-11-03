@@ -628,7 +628,12 @@ class TestSurfacesAfterAnEdit:
         entry = json.loads(get(sm, META))["q"]["T1"]["qA1"]
         assert entry["matches_current"] is False, "the meta compares with the value NOW"
         get(sm, TRENDS)
-        assert len(meta) == 1 and trends == [], "Trends draws recorded points, not the value now"
+        # fix/trends-stress (26c87f61): Trends now draws a "now" marker when the
+        # chip's value differs from the line's last value, so it reads the value
+        # now and recomputes once (still once, not per request).
+        assert len(meta) == 1 and len(trends) == 1,             "Trends shows the value now beside the recorded line"
+        get(sm, TRENDS)
+        assert len(trends) == 1, "a second read with no edit recomputes nothing"
         assert_served_is_scratch(sm)
 
     def test_an_alias_retargeted_by_an_edit_recomputes_what_read_through_it(self, sm, monkeypatch):

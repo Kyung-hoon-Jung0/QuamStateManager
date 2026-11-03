@@ -151,6 +151,9 @@ _NON_STAGING_POSTS = {
     'main.scheduler_settings_reset',   # v1.4.1: no reset -> non-staging reset; keeps damaged settings aside
     'main.scheduler_start',
     'main.settings_undo_live',
+    'main.settings_tree_edit',          # machine-wide tree auto-save setting file
+    'main.settings_auto_sync_on_open',  # machine-wide setting file; arming happens at chip open
+    'main.field_replace_preview',       # read-only plan under the store lock; writes nothing
     'main.state_archive',
     'main.state_history_label',
     'main.state_history_snapshot',

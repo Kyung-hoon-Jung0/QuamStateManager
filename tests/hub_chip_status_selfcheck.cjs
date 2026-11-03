@@ -82,10 +82,13 @@ ok(/^≤/.test(first.tag) && first.lines.join(' ').indexOf('writer unknown') >= 
 
 const edited = MI.describe({ ts: stamp, provenance: 'run_proven', run: 2, label: '#2 scan',
   sub: 'its own patch set it', matches_current: true, value: 3e-5 }, { cur: 4.5e-5 });
-ok(edited.edited && edited.tag === 'not in history',
-   '1h a value on screen that is not the newest recorded one is "not in history"');
-ok(edited.lines[0].indexOf('Not in this chip’s change ledger yet') === 0,
-   '1i ...and the hover says so first');
+// fix/trends-stress (26c87f61): a value that differs from the newest record is
+// not thereby absent from history -- the tag says "not newest record"
+ok(edited.edited && edited.tag === 'not newest record',
+   '1h a value on screen that is not the newest recorded one is "not newest record"');
+ok(edited.lines[0].indexOf('The value now is not the newest recorded one') === 0
+   && !/not in history/i.test(edited.lines.join(' ')),
+   '1i ...and the hover says so first, never "not in history"');
 
 const lab = MI.describe({ ts: stamp, provenance: 'sm', label: 'applied by user-a',
   sub: 'SM write (apply-to-live)', matches_current: true, load_id: 77, undone: 'undone',

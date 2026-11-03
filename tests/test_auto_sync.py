@@ -314,8 +314,14 @@ class TestTheTraySaysWhichModeIsOn:
         def checked(cid):
             i = body.index(f'id="{cid}"')
             return "checked" in body[i:body.index(">", i)]
-        assert checked("as-pull")
-        assert not checked("as-pull-replace") and not checked("as-push")
+        # User decision 2026-11-03 (routes.AUTO_SYNC_DEFAULT_MODES): pull and
+        # push start ticked, replace stays unticked (a pull never discards
+        # unapplied edits unless the user asks for that).
+        from quam_state_manager.web import routes
+        assert routes.AUTO_SYNC_DEFAULT_MODES == {
+            "pull": True, "pull_replace": False, "push": True}
+        assert checked("as-pull") and checked("as-push")
+        assert not checked("as-pull-replace")
 
     def test_the_switches_are_not_inside_the_swapped_tray(self, tmp_path):
         """Reducing permissions must not be able to fail silently."""
