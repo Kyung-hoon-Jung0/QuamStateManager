@@ -965,8 +965,6 @@ class Monitor:
         if tab == 'jobs':
             self.jobs_until = self.wanted_until
             self.job_limit = max(100, min(1000, job_limit))
-        elif tab is not None:
-            self.jobs_until = 0
         self._start_thread()
 
     def poll_interval(self):

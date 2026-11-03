@@ -820,7 +820,12 @@ def test_d28_cache_jobs_and_backoff(env):
     m.poll_once()
     assert w.calls[-1] == ('poll', {'include_jobs': True, 'job_limit': 200})
     m.want('live')
-    assert m.jobs_until == 0 and m.poll_interval() == 5
+    m.poll_once()
+    assert w.calls[-1][1]['include_jobs'] is True  # another open tab must not cancel Jobs
+    assert m.poll_interval() == 5
+    clock.t += 16
+    m.poll_once()
+    assert w.calls[-1][1]['include_jobs'] is False  # Jobs demand expires without renewal
 
 
 def test_round3_dom_selfcheck(env, tmp_path):
