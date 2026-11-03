@@ -7646,7 +7646,7 @@ window.ChipTrends = (function () {
             // a little room so an edge marker is not cut in half
             var span = allHi - allLo;
             // 4 %: the "now" mark stands on the right edge, clear of the
-            // line's last point (_placeNow)
+            // line's last point (_nowAtEdge)
             var pad2 = span > 0 ? span * 0.04 : HOUR_MS / 2;
             win = { lo: allLo - pad2, hi: allHi + pad2, focus: false };
         }
@@ -7844,7 +7844,7 @@ window.ChipTrends = (function () {
     /* The "now" mark stands at the window's right edge (cliponaxis false),
        apart from the line's own last point -- on the same spot the held
        point, the "now" mark and a hollow value hid one another's hover. */
-    function _placeNow(traces, win) {
+    function _nowAtEdge(traces, win) {
         if (!win || !win.range) return;
         traces.forEach(function (t) {
             if (t.meta === 'now') t.x = [win.range[1]];
@@ -8359,7 +8359,7 @@ window.ChipTrends = (function () {
                     }
                     extraTraces.push({
                         // placed at the window's right edge when the chart has
-                        // one (_placeNow), apart from the line's own last point
+                        // one (_nowAtEdge), apart from the line's own last point
                         x: [tr.x[tr.x.length - 1]], y: [_scaled(s.now, cScale)], text: [nowTxt],
                         customdata: [['', diffTxt + NOW_NOTE, NOW_TITLE]],
                         mode: 'markers', type: 'scatter', name: s.entity,
@@ -8459,7 +8459,7 @@ window.ChipTrends = (function () {
                 layout.annotations = _markNotes(marks).concat(layout.annotations || []);
             }
             _applyWindow(layout, c.series, cWin);
-            _placeNow(traces, cWin);
+            _nowAtEdge(traces, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
             }
