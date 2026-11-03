@@ -276,9 +276,17 @@ window.ChipStatus.metaInfo = (function () {
         var edited = e.matches_current === false
             || (!e.gone && typeof e.value === 'number' && !_same(e.value, ctx.cur));
         if (edited) {
-            lines.push('Not in this chip’s change ledger yet — edited, or changed after the newest recorded change.');
-            lines.push('The ledger’s newest change of it: ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
-            tag = 'not in history';
+            // T3: the value now is not the NEWEST recorded one -- which does
+            // not make it absent from the history (an older state loaded, a
+            // value put back): where the ledger has it, say so
+            var at = e.current_at;
+            lines.push('The value now is not the newest recorded one: an edit not applied to the chip yet, '
+                + 'or a change made outside SM since the last run.');
+            if (at && at.ts) {
+                lines.push('It was recorded earlier: ' + when(snapMs(at.ts)) + ' — ' + (at.label || ''));
+            }
+            lines.push('The newest recorded change: ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
+            tag = at && at.ts ? 'earlier record' : 'not newest record';
         } else if (e.gone) {
             lines.push('Removed at ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
             tag = 'removed';
@@ -769,6 +777,19 @@ if (!window.ChipStatus._sweepBound) {
     });
     document.addEventListener('htmx:historyRestore', function () { window.ChipStatus._sweep(false); });
 }
+
+/* fix/trends-stress T4: the age of a qubit / pair dated by the change ledger
+   names the run whose saved state it comes from (the ledger's own run-change
+   time, with the exclusions Trends applies: a value the next recorded state
+   or the chip now does not hold dates nothing). The run is never named as
+   the WRITER -- only its saved state is the record. */
+window.ChipStatus.calAgeRunTitle = function (n, age) {
+    var r = n && n.last_run_change_run;
+    var who = r && r.run != null
+        ? 'run #' + r.run + (r.experiment ? ' ' + r.experiment : '') + '\u2019s saved state'
+        : 'a run\u2019s saved state';
+    return 'last moved in ' + who + ' ' + age + ' (change ledger; the run is not named as its writer)';
+};
 
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
@@ -2789,8 +2810,7 @@ window.ChipStatus.mount = function (opts) {
                 if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
                 return { cls: 'hs-' + ac, text: _ageLabel(ms),
                          title: n.last_calibrated_from === 'run'
-                             ? 'last moved in a run\u2019s saved state ' + _ageLabel(ms)
-                               + ' (change ledger; the run is not named as its writer)'
+                             ? window.ChipStatus.calAgeRunTitle(n, _ageLabel(ms))
                              : 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {
@@ -4419,7 +4439,9 @@ window.ChipStatus.mount = function (opts) {
         if (recorded) cnt.push(recorded + (' recorded change' + (recorded === 1 ? '' : 's')));
         if (first) cnt.push(first + ' first recorded, writer unknown');
         if (none) cnt.push(none + ' not in history');
-        if (edited) cnt.push(edited + ' not in history yet');
+        // T3: a value that differs from its newest record may well be in the
+        // history (an earlier record) -- never "not in history yet"
+        if (edited) cnt.push(edited + ' differ' + (edited === 1 ? 's' : '') + ' from the newest record');
         if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
         // S10 walk: a count shown is grouped ("3,552 recorded events")
@@ -7662,13 +7684,41 @@ window.ChipTrends = (function () {
        The text rule for a value with a unit is PlotTheme.siFormat; a unit that
        already carries its scale (ns, dBm) takes no SI prefix ("mdBm" is no
        unit). */
+    // a unit that already carries its scale (the fixed display units the
+    // server picks: us for T1/T2, GHz for f_01, ns, dBm) takes no SI prefix
+    var _SCALED_UNIT = /^(ns|dBm|\u00b5s|ms|GHz|MHz|kHz|mV|\u00b5V)$/;
     function _hoverValue(v, unit) {
         if (typeof v !== 'number' || !isFinite(v)) return '';
         var PT = window.PlotTheme;
         if (!PT || !PT.siFormat) return String(v) + (unit ? ' ' + unit : '');
-        if (unit === 'ns' || unit === 'dBm') return PT.siFormat(v, '') + ' ' + unit;
+        if (unit && _SCALED_UNIT.test(unit)) return PT.siFormat(v, '') + ' ' + unit;
         return PT.siFormat(v, unit || '');
     }
+    /* T5: one unit per quantity. The server names the unit a chart is drawn
+       in and its scale from the stored value (core.units.display_spec: T1 in
+       us, f_01 in GHz -- the unit the tables, the inspector and the value
+       drawer use); every number drawn is the stored value times it. */
+    function _scaled(v, scale) {
+        return (typeof v === 'number' && isFinite(v) && scale && scale !== 1)
+            ? v * scale : v;           // never rounded: the hover formats it
+    }
+    /* T2: the words beside a run value the witness rule keeps off the line
+       (hub_witness.WORDS), and T1's beside the chip's value now. */
+    var _LEFT_WORDS = {
+        not_kept: 'not in the next recorded state',
+        excursion: 'not confirmed before the value came back'
+    };
+    function _leftOutLine(r, unit, scale) {
+        // r: [key, value, run, why, who, held value, held is the chip now]
+        var held = _hoverValue(_scaled(r[5], scale), unit) || (r[5] == null ? 'no value' : String(r[5]));
+        var saw = r[6] ? 'holds ' + held + ' now'
+            : (r[3] === 'excursion' ? 'came back to ' + held : 'still had ' + held);
+        return (r[2] != null ? 'saved by #' + r[2] : 'saved') + ' \u00b7 '
+            + (_LEFT_WORDS[r[3]] || r[3]) + ' (' + _esc(r[4]) + ' ' + saw + ')';
+    }
+    var NOW_NOTE = 'current value differs from the newest recorded run value';
+    var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
+        + 'chip yet, or a change made outside SM since the last run.';
     function _hintLine(info) {
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
         // docs/301 F9: the run whose saved state first carried the value --
@@ -7684,7 +7734,7 @@ window.ChipTrends = (function () {
         return '';
     }
 
-    function _openSnapDataset(evt) {
+    function _openSnapDataset(evt, host) {
         try {
             if (!evt || !evt.points || !evt.points.length) return;
             var cd = evt.points[0].customdata;
@@ -7702,6 +7752,9 @@ window.ChipTrends = (function () {
             // navigation to a 404, no error.
             if (!uid && !saved) return;
             var url = '/dataset/' + (uid || (saved + '?via=saved'));
+            // T7: the chart keeps its room and stays in view while the run
+            // opens in the inspector (base.html fitClickedChart)
+            if (host && window.__smKeepChartInView) window.__smKeepChartInView(host);
             if (window.htmx && window.htmx.ajax) {
                 // `source` is not optional: htmx reads the SOURCE element's
                 // hx-sync, and without one every dataset load shares body's
@@ -7740,7 +7793,7 @@ window.ChipTrends = (function () {
                 host.removeAllListeners('plotly_hover');
                 host.removeAllListeners('plotly_unhover');
             }
-            host.on('plotly_click', _openSnapDataset);
+            host.on('plotly_click', function (evt) { _openSnapDataset(evt, host); });
             host.on('plotly_hover', function (evt) {
                 try {
                     if (!evt || !evt.points || !evt.points.length) return;
@@ -7931,15 +7984,25 @@ window.ChipTrends = (function () {
             // Give a constant series a range around ITS OWN value instead.
             var _lo = Infinity, _hi = -Infinity;
             var _maxAbs = 0;          // largest magnitude, for the tick format
+            var _sc = (typeof c.scale === 'number' && isFinite(c.scale) && c.scale) ? c.scale : 1;
             c.series.forEach(function (s2) {
                 s2.points.forEach(function (p) {
-                    if (typeof p[1] === 'number' && isFinite(p[1])) {
-                        if (p[1] < _lo) _lo = p[1];
-                        if (p[1] > _hi) _hi = p[1];
-                        var a = Math.abs(p[1]);
+                    var y = _scaled(p[1], _sc);
+                    if (typeof y === 'number' && isFinite(y)) {
+                        if (y < _lo) _lo = y;
+                        if (y > _hi) _hi = y;
+                        var a = Math.abs(y);
                         if (a > _maxAbs) _maxAbs = a;
                     }
                 });
+                // the "now" mark and the left-out values sit on the same axis
+                [s2.now].concat((s2.left_out || []).map(function (r) { return r[1]; }))
+                    .forEach(function (v) {
+                        var y = _scaled(v, _sc);
+                        if (typeof y !== 'number' || !isFinite(y)) return;
+                        if (y < _lo) _lo = y;
+                        if (y > _hi) _hi = y;
+                    });
             });
             /* Numbers on the axis are PlotTheme's decision (axisNumberFormat
                there): Plotly's default writes 4.9e9 as "4.9B", and the earlier
@@ -7957,14 +8020,17 @@ window.ChipTrends = (function () {
                     _flat = [_lo - _pad, _hi + _pad];
                 }
             }
-            var traces = c.series.map(function (s) {
+            var cScale = (typeof c.scale === 'number' && isFinite(c.scale) && c.scale) ? c.scale : 1;
+            var extraTraces = [];
+            var colorway = (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || null;
+            var traces = c.series.map(function (s, si) {
                 var held = (s.held && Object.keys(s.held).length) ? s.held : null;
                 var tr = {
                     x: s.points.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
-                    y: s.points.map(function (p) { return p[1]; }),
+                    y: s.points.map(function (p) { return _scaled(p[1], cScale); }),
                     // docs/301 F10: the value as the hover says it, with its unit
-                    text: s.points.map(function (p) { return _hoverValue(p[1], c.unit); }),
+                    text: s.points.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit); }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
                     customdata: s.points.map(function (p) { return p[0]; }),
@@ -8018,8 +8084,65 @@ window.ChipTrends = (function () {
                     + '<br>%{customdata[1]}'
                     + '<br>%{customdata[2]}'
                     + '<extra></extra>';
+                // the line, its left-out values and its "now" mark are one
+                // entity: one legend entry toggles them together, one colour
+                tr.legendgroup = 'ent:' + s.entity;
+                var col = colorway ? colorway[si % colorway.length] : undefined;
+                if (col) {
+                    tr.line.color = col;
+                    tr.marker = tr.marker || { size: 5 };
+                    tr.marker.color = col;
+                }
+                // T2: a run's own result the witness rule keeps out of the
+                // line (the next recorded state still had the earlier value,
+                // or it came back before anything confirmed it) -- a HOLLOW
+                // marker off the line, so it is visible without reading as
+                // the chip's value. Clicking it opens the run that saved it.
+                var lo = (s.left_out || []).filter(function (r) {
+                    return typeof r[1] === 'number' && isFinite(r[1]);
+                });
+                if (lo.length && axisType === 'date') {
+                    extraTraces.push({
+                        x: lo.map(function (r) { return _iso(r[0]); }),
+                        y: lo.map(function (r) { return _scaled(r[1], cScale); }),
+                        text: lo.map(function (r) { return _hoverValue(_scaled(r[1], cScale), c.unit); }),
+                        customdata: lo.map(function (r) {
+                            var ov = s.attr && s.attr[String(r[0])];
+                            return [r[0], _leftOutLine(r, c.unit, cScale),
+                                    (ov && (ov.uid || ov.saved_uid)) ? _hintLine(ov) : '',
+                                    (ov && ov.uid) || null, (ov && !ov.uid && ov.saved_uid) || null];
+                        }),
+                        mode: 'markers', type: 'scatter', name: s.entity,
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'left_out',
+                        marker: { symbol: 'circle-open', size: 9, color: col,
+                                  line: { width: 1.5, color: col } },
+                        hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
+                            + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
+                    });
+                }
+                // T1: the chip's value now differs from the line's last
+                // value -- the held line must not read as current, so a "now"
+                // marker at the right end says what the chip holds.
+                if (typeof s.now === 'number' && isFinite(s.now) && s.points.length) {
+                    var nowTxt = _hoverValue(_scaled(s.now, cScale), c.unit);
+                    extraTraces.push({
+                        x: [tr.x[tr.x.length - 1]], y: [_scaled(s.now, cScale)], text: [nowTxt],
+                        customdata: [['', NOW_NOTE, NOW_TITLE]],
+                        mode: 'markers', type: 'scatter', name: s.entity,
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'now', cliponaxis: false,
+                        marker: { symbol: 'star-diamond', size: 13, color: col,
+                                  line: { width: 1, color: 'rgba(0,0,0,0.45)' } },
+                        hovertemplate: '%{fullData.name} \u00b7 now: %{text}'
+                            + '<br>%{customdata[1]}<br><i style="opacity:.7">%{customdata[2]}</i><extra></extra>'
+                    });
+                }
                 return tr;
             });
+            var nowSeries = extraTraces.filter(function (t) { return t.meta === 'now'; })
+                .map(function (t) { return t.name; });
+            traces = traces.concat(extraTraces);
             var layout = {
                 /* v1.5.1 (U P2-4): t clears Plotly's toolbar (~28 px, top
                    right), which sat on the newest points and caught their hover */
@@ -8050,7 +8173,20 @@ window.ChipTrends = (function () {
             // Zoom/pan matter MORE here than anywhere else in the app: the
             // question this page answers is "when did this drift", which needs
             // a closer look at a region.
+            if (nowSeries.length) {
+                // T1: said in words too, not only by the marker's shape
+                layout.annotations = (layout.annotations || []).concat([{
+                    x: 0, xref: 'paper', y: 1, yref: 'paper', xanchor: 'left', yanchor: 'bottom',
+                    showarrow: false, font: { size: 11 }, hovertext: NOW_TITLE,
+                    text: '★ now (' + nowSeries.map(_esc).join(', ') + '): ' + NOW_NOTE
+                }]);
+                layout.margin.t = Math.max(layout.margin.t, 40);
+            }
             var cfg = {
+                // T7: Plotly's "Double-click to zoom back out" tip is a toast
+                // pinned to the page's top right, over the Diagnosis control;
+                // the "held to" note already says how to see the whole span
+                showTips: false,
                 displayModeBar: 'hover', responsive: true,
                 modeBarButtonsToRemove: ['lasso2d', 'select2d'],
                 displaylogo: false };

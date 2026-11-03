@@ -46,7 +46,12 @@ function world() {
   const w = dom.window;
   const answers = [];           // queued fetch answers for /trends/series
   const fetches = [];
+  const box = { units: null };  // /trends/units answer, when a test sets it
   w.fetch = function (url) {
+    if (/\/trends\/units/.test(url) && box.units) {
+      return Promise.resolve({ ok: true, status: 200,
+                               json: function () { return Promise.resolve({ units: box.units }); } });
+    }
     if (!/\/trends\/series/.test(url)) return new Promise(function () {});
     fetches.push(url);
     const a = answers.shift();
@@ -63,7 +68,7 @@ function world() {
     el.__handlers = {};
     el.on = function (ev, fn) { (el.__handlers[ev] = el.__handlers[ev] || []).push(fn); };
     draws.push({ el: el, data: data, layout: layout, connected: el.isConnected,
-                 name: data[data.length - 1].name });
+                 name: data[data.length - 1].name, config: config });
     return Promise.resolve(el);
   };
   const ajax = [];
@@ -77,7 +82,7 @@ function world() {
   };
   w.PlotHost = { observe: function () {} };
   return {
-    w, dom, answers, fetches, draws, ajax, ios,
+    w, dom, answers, fetches, draws, ajax, ios, box,
     /* swap a shell into #trends-content and run its inline script, as htmx does */
     mount(id) {
       const s = shellHtml(id);

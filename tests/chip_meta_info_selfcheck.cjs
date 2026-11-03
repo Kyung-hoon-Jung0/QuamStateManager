@@ -142,8 +142,15 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   d = MI.describe(META.q.T1.q2, { cur: 3.0e-5, now: NOW });
   ok(/^Unchanged since/.test(d.lines[0]) && d.tag.charAt(0) === '\u2264', 'T4: a first ledger row stays unchanged, tile "\u2264date" -- ' + JSON.stringify(d));
   d = MI.describe(META.q.T1.q1, { cur: 2.5e-5, now: NOW });
-  ok(d.edited && d.tag === 'not in history' && /^Not in this chip/.test(d.lines[0]),
-     'T5: a value on screen that differs from history\u2019s says "not in history" -- ' + JSON.stringify(d));
+  // fix/trends-stress T3: a value that differs from the NEWEST record is
+  // not thereby absent from the history -- never "not in history"
+  ok(d.edited && d.tag === 'not newest record' && /^The value now is not the newest recorded one/.test(d.lines[0])
+     && !/not in history|Not in this chip/i.test(d.tag + d.lines.join(' ')),
+     'T5: a value on screen that differs from the newest record says so, never "not in history" -- ' + JSON.stringify(d));
+  d = MI.describe(Object.assign({}, META.q.T1.q1, { current_at: { ts: '20260101_090000_000', run: 12, label: 'saved in #12 T1' } }),
+                  { cur: 2.5e-5, now: NOW });
+  ok(d.edited && d.tag === 'earlier record' && d.lines.some(l => /^It was recorded earlier: .*saved in #12 T1/.test(l)),
+     'T5f (T3): a value now that an EARLIER event recorded names that record -- ' + JSON.stringify(d));
   d = MI.describe(META.q.T1.q1, { cur: 2.0e-5 * (1 + 1e-12), now: NOW });
   ok(!d.edited, 'T5b: a float-noise difference is not an edit');
   // S10 C7: old -> new, incomplete snapshot-index dating has no ledger subject.
@@ -152,8 +159,8 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   // what says the matrix on screen is one history never held
   d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, provenance: 'run_proven', label: 'run #31', leaves: 4,
                     matches_current: false }, { cur: 0.9225, now: NOW });
-  ok(d.edited && d.tag === 'not in history',
-     'T5c: a subtree whose leaves differ from history (matches_current=false) says "not in history" -- ' + JSON.stringify(d));
+  ok(d.edited && d.tag === 'not newest record',
+     'T5c: a subtree whose leaves differ from history (matches_current=false) says it is not the newest record -- ' + JSON.stringify(d));
   d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, provenance: 'run_proven', label: 'run #31', leaves: 4,
                     matches_current: true }, { cur: 0.9225, now: NOW });
   ok(!d.edited && /^Last changed: /.test(d.lines[0]), 'T5d: ...and a matching subtree keeps its date');

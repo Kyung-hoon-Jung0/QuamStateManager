@@ -422,6 +422,7 @@
          hx-swap="outerHTML" hx-sync="#param-history-root:replace">Reload</a></p>
   </div>
   {% endif %}
+  {% if window_note %}<p class="muted ph-window-note">{{ window_note }}</p>{% endif %}
   <div class="param-history-summary">
     {# S10 C5: the snapshot arm's "snapshots match" summary -> gone, the grid reads the ledger only. #}
     <strong>{{ '{:,}'.format(summary.window_count or 0) }}</strong> recorded change{{ '' if summary.window_count == 1 else 's' }} shown

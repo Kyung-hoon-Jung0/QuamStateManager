@@ -58,7 +58,7 @@
   {% for pt in points %}
     <tr class="vh-row vh-{{ pt.provenance }}{% if pt.is_current %} fh-current{% endif %}{% if pt.undone %} vh-undone{% endif %}"
         data-eid="{{ pt.eid }}" data-provenance="{{ pt.provenance }}">
-      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if pt.has_prev and pt.usable %}{{ delta_chip(pt.prev_value, pt.value, 'fh-delta') }}{% endif %}
+      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if pt.has_prev and pt.usable %}{{ delta_chip(pt.delta_old if pt.delta_unit else pt.prev_value, pt.delta_new if pt.delta_unit else pt.value, 'fh-delta', unit=pt.delta_unit) }}{% endif %}
         {% if pt.retarget %}<span class="vh-flag vh-flag-retarget" title="The pointer this value is read through moved here: from this event the value in force is {{ pt.recorded_as or tgt.holder }}">{{ via[0].alias if via else 'pointer' }} &rarr; {{ pt.recorded_as_short or (tgt.holder.split('.')[-2] if tgt.holder else '') }}</span>
         {% elif pt.via_holder %}<span class="vh-flag vh-flag-renamed" title="The value of {{ pt.recorded_as }}: the pointer named it then">via {{ pt.recorded_as_short }}</span>
         {% elif pt.recorded_as %}<span class="vh-flag vh-flag-renamed" title="Recorded as {{ pt.recorded_as }}, before a rename">as {{ pt.recorded_as_short }}</span>{% endif %}
@@ -71,7 +71,7 @@
         <button type="button" class="fh-revert" data-value="{{ pt.fill }}"
                 data-path="{{ dot_path }}"
                 onclick="FieldHistory.revertTo(this)"
-                title="Put this value back — staged as a pending edit; the live chip is untouched until you Apply.">&#8634; Revert</button>{% if current_value is not none %}{{ delta_pct(current_value, pt.value, 'fh-revert-delta') }}{% endif %}
+                title="Put this value back — staged as a pending edit; the live chip is untouched until you Apply.{% if current_value is not none %}{% set rd = current_value | value_delta(pt.value) %}{% if rd and rd.pct_text %} Against the value now: {{ rd.pct_text }}.{% endif %}{% endif %}">&#8634; Revert</button>
         <button type="button" class="fh-use" data-value="{{ pt.fill }}"
                 onclick="FieldHistory.useValue(this)"
                 title="Fill the edit field with this value, without staging it (press Enter there to stage)">Use</button>

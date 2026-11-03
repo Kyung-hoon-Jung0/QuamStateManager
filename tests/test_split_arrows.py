@@ -38,7 +38,7 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "programmatic", "retired", "defaults", "still_click", "focus",
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
-         "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first"]
+         "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:
