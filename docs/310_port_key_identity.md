@@ -229,7 +229,7 @@ The review verification command is:
 ```powershell
 $env:PYTHONUTF8 = '1'
 $diagTests = @(rg --files tests -g 'test_diagnostics*.py')
-conda run -n SNU_17Q python -m pytest tests/test_port_identity.py tests/test_tree_multi.py tests/test_agent_runs.py @diagTests -q -p no:cacheprovider
+conda run -n <test-environment> python -m pytest tests/test_port_identity.py tests/test_tree_multi.py tests/test_agent_runs.py @diagTests -q -p no:cacheprovider
 node tests/port_identity_selfcheck.cjs
 node tests/tree_multi_selfcheck.cjs
 ```
