@@ -8775,6 +8775,7 @@ window.Bundles = (function () {
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
         [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
+        [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],
         [/^\/topology(\/|$|\?)/, ["chipstatus", "components"]], [/^\/chip-status(\/|$|\?)/, ["chipstatus", "components"]],

@@ -149,6 +149,7 @@
         'opxmon': ['opx-monitor.js'],
         'agent_setup': ['agent-setup.js'],
         'uikit': ['ui.js'],
+        'cm6': ['vendor/cm6/cm6.min.js'],
     } %}
     {# docs/166: 'pulses' takes the components bundle too — its chip map
        (topo-graph + component-map) is the page's row filter. #}
@@ -170,6 +171,7 @@
         'opx_monitor': ['opxmon'],
         'agent_setup': ['agent_setup'],
         'ui_kit': ['uikit'],
+        'explorer': ['cm6'],
     } %}
     {% set manifest = {} %}
     {% for _b, _files in bundle_files.items() %}{% for _f in _files %}{% if _f not in manifest %}{% set _ = manifest.update({_f: asset_url(_f)}) %}{% endif %}{% endfor %}{% endfor %}
