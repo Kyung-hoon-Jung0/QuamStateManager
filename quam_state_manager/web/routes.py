@@ -15439,6 +15439,56 @@ def field_edit_batch():
     return _field_edit_batch_impl()
 
 
+@bp.route("/field/replace-preview", methods=["POST"])
+def field_replace_preview():
+    """Read-only replacement plan using the edit door's parser and policy."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if modifier is None:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    payload = json_object()
+    updates = payload.get("updates", [])
+    if not isinstance(updates, list) or any(not isinstance(row, dict) for row in updates):
+        raise BadBody("'updates' must be an array of objects")
+    guard = _chip_mismatch_response(str(payload.get("expect_chip") or ""), False)
+    if guard is not None:
+        return guard
+    results = []
+    with modifier.store._lock:
+        for row in updates:
+            path = _normalize_dot_path(str(row.get("dot_path", "")))
+            result = {"dot_path": path}
+            try:
+                old = modifier.store.get_value(path)
+                result["old_value"] = old
+                if row.get("key"):
+                    result["old_value"] = path.rsplit(".", 1)[-1]
+                    if _pulse_is_renamable(path):
+                        result["rename"] = {"path": path, "new_name": row.get("value", ""), "retarget": "1"}
+                    raise ValueError("key rename: use the structural rename editor")
+                if isinstance(old, str) and old.startswith(("#/", "#./", "#../")):
+                    raise ValueError("pointer: edit its target")
+                reason = _editability_reason(modifier.store, path)
+                if reason:
+                    raise ValueError(reason)
+                if path.endswith("full_scale_power_dbm"):
+                    raise ValueError("FSP: use its editor for the amplitude compensation offer")
+                raw = row.get("value", "")
+                if isinstance(raw, str) and _type_fix_offer(modifier.store, path, raw):
+                    raise ValueError("Stored as text: use the single-field editor to choose its type")
+                parsed = _parse_for_target(modifier.store, path, raw) if isinstance(raw, str) else raw
+                reason = _sibling_type_refusal(modifier.store, path, raw)
+                if reason:
+                    raise ValueError(reason)
+                result["new_value"] = modifier._checked_value(path, old, parsed, coerce=True, enforce=True)
+                result["value"] = raw
+            except (KeyError, TypeError, ValueError, IndexError) as exc:
+                result["skip"] = str(exc)
+            results.append(result)
+        seq = modifier.store.mutation_seq
+    return jsonify(ok=True, results=results, mutation_seq=seq)
+
+
 def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     """Apply many edits atomically; report per-path success/failure.
 
@@ -15725,6 +15775,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
 
     from quam_state_manager.core import pending_tray
     with _lab_released(_lab_rel), modifier.store._lock, pending_tray.batch(modifier.store):
+        if _pj.get("expect_seq") is not None and _pj["expect_seq"] != modifier.store.mutation_seq:
+            return jsonify(ok=False, error="The tree changed; preview replacements again"), 409
         for (_dp, _rv, _create), _row_origin in zip(pairs, _origins):
             map_apply.validate(ctx, _dp, _rv, _row_origin,
                                create=_create, delete=_rv is _BATCH_DELETE)
@@ -28843,11 +28895,9 @@ def undo():
             # RESPONSE is the authoritative what-was-undone signal (a peek-
             # then-undo design would race a concurrent commit), so the
             # navigate-to-owner decision rides these fields.
-            "entries": _stamp_pending([   # QA F8: still pending after it?
-                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
-                                      deleted=e.deleted, source_file=e.source_file)
-                for e in entries
-            ]),
+            **_bounded_revert_payload(entries, lambda e: _revert_entry_payload(
+                e.dot_path, e.old_value, created=e.created, deleted=e.deleted,
+                source_file=e.source_file)),
             # A burst that stopped early says so (review of eaa0f05): the
             # client re-queues `requested - consumed` presses at a journal
             # boundary (each walks the journal on its own, as a single press
@@ -29135,13 +29185,16 @@ def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
     outright, AFTER the chip was written. Past the cap the response carries no
     entries and `structural: True`, which the client answers with the
     wholesale grid resync it already has for structural undos."""
-    if len(uents) > _HEADER_PATCH_CAP:
-        return {"entries": [], "structural": True, "n_entries": len(uents)}
-    return {"entries": _stamp_pending([   # QA F8: staged => pending, live => not
-        _revert_entry_payload(u["path"], value_of(u), created=created(u), deleted=deleted(u),
-                              source_file=u.get("source_file", "state"))
-        for u in uents
-    ])}
+    return _bounded_revert_payload(uents, lambda u: _revert_entry_payload(
+        u["path"], value_of(u), created=created(u), deleted=deleted(u),
+        source_file=u.get("source_file", "state")))
+
+
+def _bounded_revert_payload(entries, payload_of=lambda entry: entry) -> dict:
+    """Keep grouped undo/redo headers within the shared repaint budget."""
+    if len(entries) > _HEADER_PATCH_CAP:
+        return {"entries": [], "structural": True, "n_entries": len(entries)}
+    return {"entries": _stamp_pending([payload_of(entry) for entry in entries])}
 
 
 def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
@@ -29789,7 +29842,7 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     ``live`` (docs/160): the press wrote the chip -- the drift banner and the
     Versions panel must follow, exactly as after an Apply (review m2)."""
     resp = make_response(_tray_html())
-    payload = {"message": message, "entries": _stamp_pending(entries_payload)}   # QA F8
+    payload = {"message": message, **_bounded_revert_payload(entries_payload)}
     if extra:
         payload.update(extra)
     _ctx_ = _active_ctx()

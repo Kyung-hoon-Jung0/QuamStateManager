@@ -55,7 +55,11 @@ async function reveal(path) {
 }
 async function shot(name) {await p.shot(path.join(dir,label+'-'+name+'.png'));}
 async function peek(paths) {
-    return p.ev(`fetch('/field/peek?'+${J(paths)}.map(p=>'dot_path='+encodeURIComponent(p)).join('&')).then(r=>r.json()).then(d=>d.values)`);
+    return p.ev(`(async()=>{const paths=${J(paths)}, values={};for(let i=0;i<paths.length;i+=100){
+        const response=await fetch('/field/peek?'+paths.slice(i,i+100).map(p=>'dot_path='+encodeURIComponent(p)).join('&'));
+        if(!response.ok)throw new Error('Peek failed: '+response.status);
+        const data=await response.json();Object.assign(values,data.values);
+    }return values})()`);
 }
 (async()=>{
     fs.mkdirSync(dir,{recursive:true});
@@ -168,6 +172,54 @@ async function peek(paths) {
         await key('Tab');
         await check("document.activeElement.getAttribute('aria-label')==='qubits.q2.resonator.opx_output'",'Tab skips the read-only id key');
     }
+    if (!baseline) {
+        // Real Cmd+Option+F, typed find/replace, then server-verified grouped undo.
+        await reveal('qubits.q1.extras.value_002');
+        await key('f', 5);
+        await wait("!document.querySelector('#tree-find').hidden");
+        await click('#tree-find [name="regex"]');
+        await click('#explorer-search'); await replace('^0\\.1$');
+        await click('#tree-find [name="replace"]'); await text('0.15');
+        const findPaths = await p.ev('TreeFind.hits().map(r=>r.path)');
+        assert(findPaths.length > 150, 'whole-model search includes lazy rows');
+        const original = await peek(findPaths);
+        await p.ev("[...document.querySelectorAll('#tree-find button')].find(b=>b.textContent==='Replace All').scrollIntoView()");
+        const findButton = async label => {
+            const selector=await p.ev(`(()=>{const a=[...document.querySelectorAll('#tree-find button')];return '#tree-find button:nth-of-type('+(a.findIndex(b=>b.textContent===${J(label)})+1)+')'})()`);
+            await click(selector);
+        };
+        await p.ev('TreeFind.preview(true)');
+        await wait("TreeFind.ready()");
+        await p.ev("document.querySelector('.tree-toolbar').scrollIntoView({block:'center'})");
+        await shot('find-preview');
+        await p.ev("document.documentElement.setAttribute('data-theme','light')");
+        await shot('find-preview-light');
+        await p.ev("document.documentElement.setAttribute('data-theme','dark')");
+        await click('#tree-find [name="replace"]'); await key('Enter',5);
+        await wait("document.querySelector('#tree-find output').textContent.startsWith('Replaced ')");
+        const replaced = await peek(findPaths);
+        assert(findPaths.every(p=>replaced[p]===0.15), 'replace-all stores real values on server');
+        await findButton('Close');
+        await reveal('qubits.q1.extras.value_002'); await key('z',2);
+        await wait('!window.UndoQueue.busy()');
+        assert.deepEqual(await peek(findPaths), original, 'one Ctrl+Z restores the whole replacement group on server');
+        await wait(`document.querySelector(${J(tree)})?._treeData?.qubits?.q1?.extras?.value_002===${J(original['qubits.q1.extras.value_002'])}`);
+        checks.push('find replace-all and one Ctrl+Z verified through server peek');
+        await reveal('qubits.q1.extras.value_002');
+        await key('d',4); await key('d',4);
+        await check('TreeMulti.state().sel.length===2','Cmd+D adds next equal occurrence from input');
+        const selected = await p.ev('TreeMulti.state().sel.slice()');
+        const beforeOccurrence = await peek(selected);
+        await text('0.19'); await key('Enter');
+        await wait('!TreeMulti.state()');
+        const afterOccurrence = await peek(selected);
+        assert(selected.every(p=>afterOccurrence[p]===0.19),'Cmd+D typing commits every selected leaf');
+        await reveal('qubits.q1.extras.value_002'); await key('z',2);
+        await wait('!window.UndoQueue.busy()');
+        assert.deepEqual(await peek(selected),beforeOccurrence,'one undo restores occurrence batch on server');
+        checks.push('Cmd+D batch and grouped undo verified through server peek');
+        await shot('find-occurrence');
+    }
     const allLongTasks=await p.ev('window.__keyTasks');
     for(let i=0;i<samples.length;i++) samples[i].longTasks=allLongTasks.filter(t=>t.start>=samples[i].start && (i===samples.length-1 || t.start<samples[i+1].start));
     const summary={label,baseline,checks:checks.length,keys:samples.length,allLongTasks,
@@ -176,6 +228,7 @@ async function peek(paths) {
         elapsedMedian:samples.map(s=>s.elapsed).sort((a,b)=>a-b)[Math.floor(samples.length/2)],samples,
         dom:await p.ev(`({rows:document.querySelector(${J(tree)}).querySelectorAll('.tree-row').length,nodes:document.querySelector(${J(tree)}).querySelectorAll('*').length})`),
         errors:p.errors()};
+    assert.deepEqual(summary.errors.filter(e=>!/409 \(CONFLICT\)/.test(e)),[], 'no unexpected browser errors');
     fs.writeFileSync(path.join(dir,label+'-metrics.json'),J(summary));
     console.log(J({label,keys:summary.keys,longTasks:summary.longTasks,errors:summary.errors}));
     await p.close();process.exit(0);

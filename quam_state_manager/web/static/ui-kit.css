@@ -13,6 +13,9 @@
  */
 
 :root {
+    --ui-find-results-height: 9rem;
+    --ui-find-slide: -.5rem;
+    --ui-find-duration: 150;
     --ui-tree-value-min: 10ch;
     --ui-tree-value-pad: .15em .35em;
     /* text */
@@ -475,6 +478,29 @@
 .ui-opxmon-close-idle { width: auto; }
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
 .ui-opxmon-flash, .ui-opxmon-alarms, .ui-opxmon-close-off, .ui-opxmon-no-metrics { overflow-wrap: anywhere; }
+
+/* Whole-tree find uses the shared input and button parts in both themes. */
+.ui-tree-find {
+    display: flex; flex-wrap: wrap; align-items: center;
+    padding: var(--ui-gap-2); gap: var(--ui-gap-2);
+    background: var(--ui-surface-1); color: var(--ui-text);
+    border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md);
+    margin-bottom: var(--ui-gap-2); font-size: var(--ui-fs-sm);
+}
+.ui-tree-find-closed { display: none; }
+.ui-tree-find > input { flex: 1; min-width: var(--ui-tree-value-min); width: auto; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); font-size: inherit; }
+.ui-tree-find-toggle { margin: 0; display: inline-flex; align-items: center; gap: var(--ui-gap-1); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); cursor: pointer; }
+.ui-tree-find-toggle-active { background: var(--ui-accent-bg); color: var(--ui-accent); }
+.ui-tree-find-toggle input { margin: 0; }
+.ui-tree-find-status { color: var(--ui-text-2); white-space: nowrap; }
+.ui-tree-find-details-open { flex-basis: 100%; }
+.ui-tree-find-details { margin: 0; font-size: var(--ui-fs-xs); }
+.ui-tree-find-summary { color: var(--ui-text-2); cursor: pointer; }
+.ui-tree-find-results { max-height: var(--ui-find-results-height); overflow: auto; border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-tree-find-results:empty { display: none; }
+.ui-tree-find-result { padding: var(--ui-gap-1); overflow-wrap: anywhere; font-family: var(--ui-font-mono); }
+.ui-tree-find-delta { margin-left: var(--ui-gap-2); }
+.ui-tree-find-inline { margin-left: var(--ui-gap-2); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); background: var(--ui-accent-bg); color: var(--ui-text); font-family: var(--ui-font-mono); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

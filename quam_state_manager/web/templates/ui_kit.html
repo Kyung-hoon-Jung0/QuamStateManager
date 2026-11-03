@@ -75,6 +75,15 @@
 <form class="ui-opxmon-settings"><fieldset><legend>Sample settings</legend><div class="ui-opxmon-grid"><label>Idle minutes <input class="ui-opxmon-input-number" type="number" value="10"></label><label class="ui-opxmon-wide">Note <textarea rows="2">Sample</textarea></label></div><p class="ui-note">Changes apply after saving.</p></fieldset></form>
 </div></div>
 </section>
+<input class="ui-search" aria-label="Find sample" value="sample">
+<section class="ui-tree-find" aria-label="Find and replace sample">
+  <input aria-label="Replace with" placeholder="Replace with" value="replacement">
+  <span class="ui-tree-find-closed"></span>
+  <span class="ui-tree-find-inline">sample &rarr; replacement</span>
+  <label class="ui-tree-find-toggle ui-tree-find-toggle-active"><input type="checkbox">Match case</label>
+  <output class="ui-tree-find-status">1 match</output>
+  <details class="ui-tree-find-details ui-tree-find-details-open" open><summary class="ui-tree-find-summary">Match paths and skipped items</summary><div class="ui-tree-find-results"><div class="ui-tree-find-result">sample.value: 1 &rarr; 2 <span class="ui-tree-find-delta">+1</span></div></div></details>
+</section>
 <p>Tree value: <span class="ui-tree-value" tabindex="-1">0.125</span>
 <span class="ui-tree-value ui-tree-mounted"><input class="ui-tree-editor" aria-label="sample.amplitude" value="0.125"></span>
 <span class="ui-tree-value ui-tree-dirty" tabindex="-1">0.25 (uncommitted)</span></p>
