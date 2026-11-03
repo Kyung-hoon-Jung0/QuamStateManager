@@ -42,6 +42,39 @@
 <ul class="ui-kit-side" aria-label="Reorder sample"><li class="ui-reorder-item ui-reorder-before">Drop line before</li><li class="ui-reorder-item ui-reorder-dragging">Being dragged</li><li class="ui-reorder-item ui-reorder-after">Drop line after</li></ul>
 <p class="ui-kit-label"><span class="ui-reorder-pending">ui-reorder-pending</span> is set on the page root while the saved order loads.</p>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">OPX monitor</h2>
+<div class="ui-opxmon-page"><div class="ui-opxmon-body">
+<div class="ui-opxmon-verdict ui-opxmon-health"><strong>FREE</strong> No open machines <small class="ui-opxmon-hottest">Hottest: Slot 1 42 °C</small></div>
+<div class="ui-opxmon-verdict ui-opxmon-verdict--red"><strong>ALARM</strong> Temperature above limit</div>
+{% for state, sentence in [('ok', 'Updated just now'), ('starting', 'Waiting for the first answer'), ('stale', 'No fresh answer'), ('error', 'Data unavailable'), ('unconfigured', 'Choose a connection')] %}
+<p class="ui-opxmon-status {{ 'ui-opxmon-status--' ~ state }}"><span class="ui-opxmon-target">Sample target</span> · <span class="ui-opxmon-sentence">{{ sentence }}</span></p>
+{% endfor %}
+<p class="ui-note ui-opxmon-health-note">Health is unknown until readings arrive.</p>
+<p class="ui-note ui-opxmon-section-age">Controller readings unavailable.</p>
+<p class="ui-opxmon-version">SDK / server version</p>
+<h3 class="ui-opxmon-h">Temperatures</h3>
+<div class="ui-opxmon-tiles">
+<details class="ui-opxmon-tile"><summary><span>Slot 1 LF</span><strong>42 °C</strong><small>limit 50 °C</small><svg viewBox="0 0 240 40" aria-label="Sample trend"><polyline points="0,30 120,20 240,22" fill="none" stroke="currentColor"/></svg></summary><p>Sensor details</p></details>
+<details class="ui-opxmon-tile ui-opxmon-tile--open" open><summary><span>Slot 2 MW</span><strong class="ui-opxmon-hot">55 °C</strong></summary><p>Above the limit.</p></details>
+</div>
+<details class="ui-opxmon-other-temperatures"><summary>Other temperatures</summary><p>No other sensors</p></details>
+<details class="ui-opxmon-details"><summary>Details</summary><p>Controller details</p></details>
+<p><span class="ui-opxmon-fem"><span class="ui-opxmon-light"></span>1 LF <span class="ui-opxmon-fem-temp">42 °C</span></span>
+<span class="ui-opxmon-fem ui-opxmon-fem--busy"><span class="ui-opxmon-light"></span>2 MW · running</span>
+<span class="ui-opxmon-fem ui-opxmon-fem--held"><span class="ui-opxmon-light"></span>3 LF · claimed</span></p>
+<ul><li class="ui-opxmon-alarm-slot"><a class="ui-opxmon-health" href="/ui-kit"><span class="ui-opxmon-health-dot ui-opxmon-health-dot--grey">●</span> Unknown</a><a class="ui-opxmon-alarm-badge" href="/ui-kit">Alarm</a><a class="ui-opxmon-alarm-badge ui-opxmon-alarm-badge--blind" href="/ui-kit">Readings unavailable</a></li></ul>
+<p><span class="ui-opxmon-health-dot ui-opxmon-health-dot--green">● Ready</span> <span class="ui-opxmon-health-dot ui-opxmon-health-dot--amber">● Warning</span> <span class="ui-opxmon-health-dot ui-opxmon-health-dot--red">● Alarm</span></p>
+<table class="ui-table ui-opxmon-table"><thead><tr><th class="ui-table-head">QM</th><th class="ui-table-head">Count</th></tr></thead><tbody><tr class="ui-opxmon-qm-row"><td class="ui-table-cell"><code>sample-id</code></td><td class="ui-table-cell ui-opxmon-num">1</td></tr></tbody></table>
+<ul class="ui-opxmon-actions"><li>Recorded clean-up action</li></ul>
+<p class="ui-state ui-opxmon-flash">Settings saved</p><p class="ui-state ui-state--error ui-opxmon-alarms">Temperature above limit</p>
+<p class="ui-state ui-state--empty ui-opxmon-close-off">Closing unavailable</p><p class="ui-state ui-state--empty ui-opxmon-no-metrics">No metrics yet</p>
+<p><button type="button" class="btn-sm outline ui-opxmon-close">Close…</button> <button type="button" class="btn-sm outline ui-opxmon-close-idle">Close idle QMs</button></p>
+<details class="ui-opxmon-danger"><summary>Danger</summary><button type="button" class="btn-sm outline ui-opxmon-close-all">Close all…</button></details>
+<section class="ui-state ui-opxmon-confirm" aria-label="Sample confirmation"><p>Close all listed QMs?</p><label>Type the count <input class="ui-opxmon-confirm-count" value="2"></label><button type="button" class="btn-sm ui-opxmon-confirm-accept">Confirm close</button> <button type="button" class="btn-sm outline ui-opxmon-confirm-cancel">Cancel</button></section>
+<p class="ui-opxmon-close-result" role="status">Closed: sample-id. Written to History.</p>
+<form class="ui-opxmon-settings"><fieldset><legend>Sample settings</legend><div class="ui-opxmon-grid"><label>Idle minutes <input class="ui-opxmon-input-number" type="number" value="10"></label><label class="ui-opxmon-wide">Note <textarea rows="2">Sample</textarea></label></div><p class="ui-note">Changes apply after saving.</p></fieldset></form>
+</div></div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

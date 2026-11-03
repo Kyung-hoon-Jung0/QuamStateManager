@@ -318,7 +318,7 @@
                           hx-swap="innerHTML"></span></li>
             </ul>
             <ul class="topbar-right">
-                <li class="opxmon-alarm-slot" id="opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
+                <li class="ui-opxmon-alarm-slot" id="ui-opxmon-alarm-slot" hx-get="/opx-monitor/alarm-badge"
                     hx-trigger="load, every 10s" hx-request='{"timeout":5000}' hx-swap="innerHTML"></li>
                 {# v1.5.3 (design A): the bar keeps the chip name, the Sync status control and
                    Review (the tray); every other control lives in this one overflow menu.
@@ -831,10 +831,10 @@
                                {% if page == 'opx_monitor' %}class="active"{% endif %}>OPX monitor</a>
                             <button type="button" class="nav-sub-toggle"
                                     aria-expanded="{{ 'true' if page == 'opx_monitor' else 'false' }}"
-                                    aria-controls="opxmon-subnav" aria-label="Toggle OPX monitor sections"
-                                    onclick="toggleNavSub(this, 'opxmon-subnav', 'quam_opxmon_nav_collapsed')">&#9662;</button>
+                                    aria-controls="ui-opxmon-subnav" aria-label="Toggle OPX monitor sections"
+                                    onclick="toggleNavSub(this, 'ui-opxmon-subnav', 'quam_opxmon_nav_collapsed')">&#9662;</button>
                         </div>
-                        <ul class="nav-subitems{% if page != 'opx_monitor' %} nav-subitems-collapsed{% endif %}" id="opxmon-subnav">
+                        <ul class="nav-subitems{% if page != 'opx_monitor' %} nav-subitems-collapsed{% endif %}" id="ui-opxmon-subnav">
                             {%- for _t, _l in [('live', 'Live'), ('jobs', 'Jobs'), ('history', 'History'), ('cleanup', 'Clean up'), ('settings', 'Monitor settings')] %}
                             <li><a href="/opx-monitor/{{ _t }}" hx-get="/opx-monitor/{{ _t }}" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'opx_monitor' and tab is defined and tab == _t %}class="active"{% endif %}>{{ _l }}</a></li>

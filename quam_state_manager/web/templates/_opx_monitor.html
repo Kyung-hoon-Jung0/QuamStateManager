@@ -1,7 +1,7 @@
 {% import "_ui.html" as ui %}
 {#- OPX monitor (docs: study plan D-1..D-12): one page, five tabs. The body
     re-fetches itself every interval on the read tabs; settings never poll. -#}
-<div class="opxmon-page" id="opxmon-page">
+<div class="ui-opxmon-page" id="ui-opxmon-page">
 {{ ui.ui_head('OPX monitor', 1, None, 'What the QM server reports right now: devices, open quantum machines, jobs, and alarms you set.', None, None, page=True) }}
 <div class="ui-tabs" role="tablist" aria-label="OPX monitor sections">
   {%- for t in tabs %}

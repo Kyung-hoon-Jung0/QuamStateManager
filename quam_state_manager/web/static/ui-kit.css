@@ -97,6 +97,43 @@
     --ui-fold-mark: 9px;        /* the drawn chevron's arm */
     --ui-fold-nudge: 4px;       /* optical centring of a rotated square */
     --ui-fold-stroke: 2px;
+    /* OPX monitor: preserve the reviewed geometry and theme aliases. */
+    --ui-opxmon-muted: var(--pico-muted-color);
+    --ui-opxmon-space-lg: 1rem;
+    --ui-opxmon-page-bottom: 2rem;
+    --ui-opxmon-page-width: 72rem;
+    --ui-opxmon-space-md: 0.6rem;
+    --ui-opxmon-space-sm: 0.35rem;
+    --ui-opxmon-heading-font: 1.05em;
+    --ui-opxmon-heading-space: 1.1rem;
+    --ui-opxmon-tile-padding: 0.4rem;
+    --ui-opxmon-table-width: 28rem;
+    --ui-opxmon-fem-gap: 0.3em;
+    --ui-opxmon-fem-space-x: 0.6em;
+    --ui-opxmon-fem-space-y: 0.2em;
+    --ui-opxmon-fem-padding-y: 0.05rem;
+    --ui-opxmon-fem-padding-x: 0.45rem;
+    --ui-opxmon-fem-font: 0.9em;
+    --ui-opxmon-light-size: 0.65em;
+    --ui-opxmon-field-width: 14rem;
+    --ui-opxmon-badge-padding-y: 0.1rem;
+    --ui-opxmon-health-font: 0.85em;
+    --ui-opxmon-verdict-font: 1.2rem;
+    --ui-opxmon-verdict-label-font: 1.8rem;
+    --ui-opxmon-compact-font: 0.8rem;
+    --ui-opxmon-space-xs: 0.3rem;
+    --ui-opxmon-tile-font: 0.75rem;
+    --ui-opxmon-space-xxs: 0.15rem;
+    --ui-opxmon-input-font: 0.85rem;
+    --ui-opxmon-confirm-padding: 0.7rem;
+    --ui-opxmon-alarm-max-width: 38vw;
+    --ui-opxmon-health-max-width: 22rem;
+    --ui-opxmon-legend-font: 0.9rem;
+    --ui-opxmon-note-space: 0.2rem;
+    --ui-opxmon-full-width: 100%;
+    --ui-opxmon-number-width: 7rem;
+    --ui-opxmon-lh-tile: 1.25;
+
 }
 
 /* K3 head ------------------------------------------------------------- */
@@ -304,6 +341,95 @@
 }
 .ui-reorder-before::before { top: -2px; }
 .ui-reorder-after::after { bottom: -2px; }
+
+/* OPX monitor (core/opx_monitor.py) -- ui-kit tokens only, so light and dark follow ---- */
+.ui-opxmon-page { padding: var(--ui-gap-2) var(--ui-opxmon-space-lg) var(--ui-opxmon-page-bottom); max-width: var(--ui-opxmon-page-width); }
+.ui-opxmon-status { margin: var(--ui-opxmon-space-md) 0; padding: var(--ui-opxmon-space-sm) var(--ui-opxmon-space-md); border-radius: var(--ui-r-md); border: var(--ui-bw) solid var(--ui-border); }
+.ui-opxmon-status--ok { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
+.ui-opxmon-status--stale, .ui-opxmon-status--starting { border-color: var(--ui-warn-border); color: var(--ui-warn-text); background: var(--ui-warn-bg); }
+.ui-opxmon-status--error { border-color: var(--ui-danger-border); color: var(--ui-danger-text); background: var(--ui-danger-bg); }
+.ui-opxmon-status--unconfigured { color: var(--ui-opxmon-muted); }
+.ui-opxmon-target { font-weight: var(--ui-fw); }
+.ui-opxmon-h { font-size: var(--ui-opxmon-heading-font); margin: var(--ui-opxmon-heading-space) 0 var(--ui-opxmon-tile-padding); }
+.ui-opxmon-table { width: auto; min-width: var(--ui-opxmon-table-width); }
+.ui-opxmon-num { text-align: right; font-variant-numeric: tabular-nums; }
+.ui-opxmon-fem { display: inline-flex; align-items: center; gap: var(--ui-opxmon-fem-gap); margin: 0 var(--ui-opxmon-fem-space-x) var(--ui-opxmon-fem-space-y) 0; padding: var(--ui-opxmon-fem-padding-y) var(--ui-opxmon-fem-padding-x);
+              border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-pill); font-size: var(--ui-opxmon-fem-font); }
+.ui-opxmon-light { width: var(--ui-opxmon-light-size); height: var(--ui-opxmon-light-size); border-radius: var(--ui-r-round); background: var(--ui-border); }
+.ui-opxmon-fem--busy { border-color: var(--ui-ok-border); color: var(--ui-ok-text); }
+.ui-opxmon-fem--busy .ui-opxmon-light { background: var(--ui-ok-text); }
+.ui-opxmon-fem--held { border-color: var(--ui-warn-border); color: var(--ui-warn-text); }
+.ui-opxmon-fem--held .ui-opxmon-light { background: var(--ui-warn-text); }
+.ui-opxmon-settings fieldset { margin-bottom: var(--ui-opxmon-space-lg); }
+.ui-opxmon-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--ui-opxmon-field-width), 1fr)); gap: var(--ui-opxmon-tile-padding) var(--ui-opxmon-space-lg); }
+.ui-opxmon-grid .ui-opxmon-wide { grid-column: 1 / -1; }
+.ui-opxmon-actions { margin: 0; padding-left: var(--ui-opxmon-heading-space); }
+.ui-opxmon-alarm-slot { list-style: none; }
+.ui-opxmon-alarm-badge { display: inline-block; padding: var(--ui-opxmon-badge-padding-y) var(--ui-gap-2); border-radius: var(--ui-r-md); font-size: var(--ui-opxmon-fem-font); text-decoration: none;
+                      color: var(--ui-danger-text); background: var(--ui-danger-bg); border: var(--ui-bw) solid var(--ui-danger-border); }
+.ui-opxmon-alarm-badge--blind { color: var(--ui-warn-text); background: var(--ui-warn-bg); border-color: var(--ui-warn-border); }
+.ui-opxmon-close.outline, .ui-opxmon-close-all.outline { color: var(--ui-danger-text); border-color: var(--ui-danger-border); background: transparent; }
+
+.ui-opxmon-health-dot--grey { color: var(--ui-text-2); }
+.ui-opxmon-health-dot--green { color: var(--ui-ok-text); }
+.ui-opxmon-health-dot--amber { color: var(--ui-warn-text); }
+.ui-opxmon-health-dot--red { color: var(--ui-danger-text); }
+.ui-opxmon-health { font-size: var(--ui-opxmon-health-font); }
+
+/* D-23: the verdict carries health; freshness is secondary. */
+.ui-opxmon-verdict {font-size:var(--ui-opxmon-verdict-font); margin:var(--ui-opxmon-space-md) 0; display:flex; gap:var(--ui-opxmon-space-md); align-items:baseline; flex-wrap:wrap}
+.ui-opxmon-verdict strong {font-size:var(--ui-opxmon-verdict-label-font)}
+.ui-opxmon-verdict--red {color:var(--ui-danger-text)}
+.ui-opxmon-status--ok {border:0; color:var(--ui-opxmon-muted); padding:0; font-size:var(--ui-opxmon-compact-font)}
+.ui-opxmon-details {margin:var(--ui-gap-2) 0}
+
+.ui-opxmon-tiles {display:flex; gap:var(--ui-opxmon-space-xs); padding:var(--ui-opxmon-tile-padding) 0; align-items:flex-start; min-width:0}
+.ui-opxmon-tile {flex:1 1 0; min-width:0; margin:0; padding:var(--ui-opxmon-tile-padding); border:var(--ui-bw) solid var(--ui-border); border-radius:var(--ui-r-btn); font-size:var(--ui-opxmon-tile-font)}
+.ui-opxmon-tile summary {list-style:none; display:flex; flex-direction:column; gap:var(--ui-opxmon-space-xxs); margin:0; font-size:var(--ui-opxmon-tile-font)}
+.ui-opxmon-tile strong {font-size:var(--ui-opxmon-heading-space); font-variant-numeric:tabular-nums}
+.ui-opxmon-tile--open {flex:2 1 0; overflow-wrap:anywhere}
+.ui-opxmon-hot {color:var(--ui-danger-text)}
+.ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
+.ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
+
+.ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
+.ui-opxmon-alarm-slot .ui-opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-health-max-width)}
+.ui-opxmon-alarm-slot .ui-opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}
+.ui-opxmon-alarm-slot > a {margin:0}
+
+.ui-opxmon-tile summary {line-height:var(--ui-lh-btn); cursor:pointer}
+.ui-opxmon-tile summary::after {display:none}
+.ui-opxmon-tile strong {white-space:normal; font-size:var(--ui-opxmon-compact-font); line-height:var(--ui-opxmon-lh-tile)}
+
+.ui-opxmon-settings label {font-size:var(--ui-opxmon-compact-font); margin:0 0 var(--ui-opxmon-space-xs)}
+.ui-opxmon-settings fieldset {padding:0; margin-bottom:var(--ui-opxmon-space-md)}
+.ui-opxmon-settings legend {font-size:var(--ui-opxmon-legend-font); margin:0 0 var(--ui-gap-1)}
+.ui-opxmon-settings .ui-note {margin:var(--ui-opxmon-note-space) 0; font-size:var(--ui-opxmon-tile-font)}
+.ui-opxmon-settings input, .ui-opxmon-settings select, .ui-opxmon-settings textarea {font-size:var(--ui-opxmon-input-font); margin-bottom:0}
+.ui-opxmon-table code {overflow-wrap:anywhere; white-space:normal}
+
+.ui-opxmon-tile svg {display:block; width:var(--ui-opxmon-full-width); height:var(--ui-icon-btn); color:var(--ui-accent)}
+.ui-opxmon-tile summary > span {overflow-wrap:anywhere}
+.ui-opxmon-health-note {font-size:var(--ui-opxmon-compact-font); margin:var(--ui-opxmon-space-xxs) 0}
+.ui-opxmon-settings .ui-opxmon-input-number {width:var(--ui-opxmon-number-width); display:inline-block; padding:var(--ui-opxmon-space-xs) var(--ui-gap-2); height:auto}
+
+.ui-opxmon-other-temperatures {margin:var(--ui-opxmon-space-sm) 0; font-size:var(--ui-opxmon-input-font)}
+.ui-opxmon-other-temperatures > summary {margin:0}
+
+.ui-opxmon-body { min-width: 0; }
+.ui-opxmon-close-result { overflow-wrap: anywhere; }
+.ui-opxmon-confirm-count { min-width: 0; }
+.ui-opxmon-danger { overflow-wrap: anywhere; }
+.ui-opxmon-fem-temp { white-space: nowrap; }
+.ui-opxmon-health-dot { display: inline; }
+.ui-opxmon-qm-row { overflow-wrap: anywhere; }
+.ui-opxmon-section-age { overflow-wrap: anywhere; }
+.ui-opxmon-sentence { overflow-wrap: anywhere; }
+.ui-opxmon-version { overflow-wrap: anywhere; }
+
+.ui-opxmon-close-idle { width: auto; }
+.ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
+.ui-opxmon-flash, .ui-opxmon-alarms, .ui-opxmon-close-off, .ui-opxmon-no-metrics { overflow-wrap: anywhere; }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

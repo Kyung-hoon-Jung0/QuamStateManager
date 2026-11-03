@@ -15,7 +15,7 @@
   "static/journal.js": 3,
   "static/plot-theme.js": 20,
   "static/pulses.js": 11,
-  "static/style.css": 666,
+  "static/style.css": 665,
   "static/zline.js": 5,
   "templates/_bulkedit.html": 2,
   "templates/_instrument_preview.html": 1,
@@ -498,7 +498,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16070,
-  "rules": 5910
+  "lines": 16064,
+  "rules": 5908
  }
 }

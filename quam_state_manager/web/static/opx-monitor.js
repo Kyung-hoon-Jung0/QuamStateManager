@@ -8,18 +8,18 @@
 
     var lastResult = null;
 
-    function body() { return document.getElementById("opxmon-body"); }
+    function body() { return document.getElementById("ui-opxmon-body"); }
 
     function confirmText(btn) {
-        return (btn.classList.contains("opxmon-close-all") ? "Close ALL listed QMs?" :
-            btn.classList.contains("opxmon-close-idle") ? "Close idle QMs (activity re-checked)?" : "Close this QM?") +
+        return (btn.classList.contains("ui-opxmon-close-all") ? "Close ALL listed QMs?" :
+            btn.classList.contains("ui-opxmon-close-idle") ? "Close idle QMs (activity re-checked)?" : "Close this QM?") +
             " Any running job will stop.";
     }
 
     function say(text, bad) {
         lastResult = {text: text, bad: bad};
         var b = body();
-        var el = b && b.querySelector(".opxmon-close-result");
+        var el = b && b.querySelector(".ui-opxmon-close-result");
         if (!el) return;
         el.hidden = false;
         el.textContent = text;
@@ -35,13 +35,13 @@
     }
 
     function onClick(e) {
-        var btn = e.target && e.target.closest && e.target.closest(".opxmon-close, .opxmon-close-all, .opxmon-close-idle");
+        var btn = e.target && e.target.closest && e.target.closest(".ui-opxmon-close, .ui-opxmon-close-all, .ui-opxmon-close-idle");
         if (!btn) return;
         e.preventDefault();
-        var existing = document.querySelector('.opxmon-confirm');
+        var existing = document.querySelector('.ui-opxmon-confirm');
         if (existing) existing.remove();
         var panel = document.createElement('section');
-        panel.className = 'opxmon-confirm ui-state';
+        panel.className = 'ui-opxmon-confirm ui-state';
         panel.setAttribute('role', 'region');
         panel.setAttribute('aria-label', 'Confirm close');
         var message = document.createElement('p');
@@ -49,23 +49,23 @@
         panel.appendChild(message);
         var ids = (btn.getAttribute('data-qm-ids') || btn.getAttribute('data-qm-id') || '').split(',').map(function (id) { return id.trim(); }).filter(Boolean);
         ids.forEach(function (id) {
-            var row = Array.from(document.querySelectorAll('.opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
+            var row = Array.from(document.querySelectorAll('.ui-opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
             var detail = document.createElement('p');
             detail.textContent = id + ': ' + (row ? (row.getAttribute('data-basis') || 'activity unknown') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
             panel.appendChild(detail);
         });
         var typed = null;
-        if (btn.classList.contains('opxmon-close-all')) {
+        if (btn.classList.contains('ui-opxmon-close-all')) {
             var label = document.createElement('label');
             label.textContent = 'Type the count (' + ids.length + ') to close all';
             typed = document.createElement('input');
-            typed.className = 'opxmon-confirm-count';
+            typed.className = 'ui-opxmon-confirm-count';
             label.appendChild(typed); panel.appendChild(label);
         }
         var accept = document.createElement('button');
-        accept.type = 'button'; accept.className = 'btn-sm opxmon-confirm-accept'; accept.textContent = 'Confirm close';
+        accept.type = 'button'; accept.className = 'btn-sm ui-opxmon-confirm-accept'; accept.textContent = 'Confirm close';
         var cancel = document.createElement('button');
-        cancel.type = 'button'; cancel.className = 'btn-sm outline opxmon-confirm-cancel'; cancel.textContent = 'Cancel';
+        cancel.type = 'button'; cancel.className = 'btn-sm outline ui-opxmon-confirm-cancel'; cancel.textContent = 'Cancel';
         cancel.onclick = function () { panel.remove(); };
         accept.onclick = function () {
             if (typed && typed.value !== String(ids.length)) { typed.focus(); return; }
@@ -81,8 +81,8 @@
 
     function submitClose(btn, count) {
         var fd = new FormData();
-        if (btn.classList.contains("opxmon-close-all") || btn.classList.contains("opxmon-close-idle")) {
-            fd.append(btn.classList.contains("opxmon-close-idle") ? "idle" : "all", "1");
+        if (btn.classList.contains("ui-opxmon-close-all") || btn.classList.contains("ui-opxmon-close-idle")) {
+            fd.append(btn.classList.contains("ui-opxmon-close-idle") ? "idle" : "all", "1");
             fd.append("qm_ids", btn.getAttribute("data-qm-ids") || "");
         }
         else fd.append("qm_id", btn.getAttribute("data-qm-id"));
@@ -108,18 +108,18 @@
 
     function markUnreachable(e) {
         var t = e && e.detail && e.detail.elt;
-        if (!t || t.id !== "opxmon-body") return;
-        var s = t.querySelector(".opxmon-sentence");
-        var line = t.querySelector(".opxmon-status");
+        if (!t || t.id !== "ui-opxmon-body") return;
+        var s = t.querySelector(".ui-opxmon-sentence");
+        var line = t.querySelector(".ui-opxmon-status");
         if (s) s.textContent = "SM did not answer the last refresh; the values below may be old.";
-        if (line) line.className = "opxmon-status opxmon-status--error";
+        if (line) line.className = "ui-opxmon-status ui-opxmon-status--error";
         t.setAttribute("data-state", "error");
     }
 
     /* the sidebar's sub-links follow the tab shown (a tab click swaps only the pane) */
     function syncNav() {
         var b = body();
-        var nav = document.getElementById("opxmon-subnav");
+        var nav = document.getElementById("ui-opxmon-subnav");
         if (!b || !nav) return;
         var tab = b.getAttribute("data-tab");
         nav.querySelectorAll("a").forEach(function (a) {
@@ -128,6 +128,13 @@
     }
 
     document.addEventListener("click", onClick);
+    // Stage 0 uses a modifier instead of an attribute selector for expanded tiles.
+    document.addEventListener("toggle", function (event) {
+        var tile = event.target;
+        if (tile.classList && tile.classList.contains("ui-opxmon-tile")) {
+            tile.classList.toggle("ui-opxmon-tile--open", tile.open);
+        }
+    }, true);
     document.addEventListener("htmx:afterSwap", syncNav);
     document.addEventListener("htmx:afterSwap", function () {
         if (lastResult) say(lastResult.text, lastResult.bad);

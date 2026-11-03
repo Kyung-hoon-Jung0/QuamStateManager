@@ -1,0 +1,43 @@
+OPX monitor UI contract migration
+
+Validation: 179 passed, 1 skipped. The skipped archive test requires a local
+fixture that is unavailable here. One pre-existing SciPy/NumPy version warning.
+PYTHONUTF8=1 conda run -n SNU_17Q python -m pytest tests/test_ui_contract.py
+tests/test_bundles.py tests/test_opx_monitor*.py tests/test_sidebar*.py -q
+-p no:cacheprovider (wildcards expanded by PowerShell).
+OPX jsdom selfchecks, including rendered round-two and round-three fixtures,
+passed in the suite. Standalone opx_monitor_selfcheck.cjs: 25 passed, 0 failed.
+
+style.css: 16064 lines, 5908 rules. Ratchets only lowered.
+All monitor selectors now live before the stage-1 marker in ui-kit.css.
+Dimensions retain reviewed values through kit tokens; existing exact-match
+kit tokens are reused. The obsolete below-40rem media rule was dropped.
+Red health and expanded tiles use modifier classes. Muted text uses ui-note.
+Every added kit class is demonstrated on /ui-kit.
+
+Visual review: real headless Chrome, project tests/browser/journeys/cdp.cjs,
+1440x900 and 1024x900, light and dark. Offline test FakeWorker, manual polling,
+no worker processes, no admin reads; outbound socket connects explicitly fail.
+Only loopback HTTP was used. No OPX, tunnel or QM was contacted.
+
+52 screenshots: all five tabs before/after in four viewport/theme combinations,
+expanded tiles, cleanup confirmations and lower settings panels. Generic fake
+data only. Compared with the supplied review4 Live and Settings images: same
+typography, colors, spacing, compact temperature strip and settings geometry;
+fixture readings, IDs, connection values and trend contents naturally differ.
+ui-note intentionally supplies the kit's muted styling for formerly unstyled
+annotations.
+
+comparison.json compares original CSS against migrated CSS with identical
+fixtures and markup. All 20 comparisons have equal measured geometry, fonts,
+colors and borders for page/verdict/status/tiles/settings inputs. All have
+zero browser errors and zero document horizontal overflow. The 20 before/after
+PNG pairs also have identical SHA-256 hashes. Expanded modifiers were checked
+after real CDP mouse clicks. Confirmation was opened and canceled;
+no close was submitted.
+
+Reproduce from the repository root:
+  conda run --no-capture-output -n SNU_17Q python evidence/review5_merge/offline_server.py
+  Start isolated headless Chrome with --remote-debugging-port=9335 and a fresh profile.
+  Set SM_CDP_PORT=9335, then node evidence/review5_merge/screens.cjs
+The offline driver pins the pre-migration CSS revision for its before views.

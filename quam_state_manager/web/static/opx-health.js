@@ -3,13 +3,14 @@
     "use strict";
     function unknown(node, reason) {
         node.setAttribute("data-health", "grey");
-        node.classList.add("opxmon-health-dot--grey");
+        node.classList.remove("ui-opxmon-verdict--red");
+        node.classList.add("ui-opxmon-health-dot--grey");
         node.textContent = "\u25cf OPX unknown: " + reason;
-        var scope = node.closest("#opxmon-body, #opxmon-alarm-slot");
-        if (scope) scope.querySelectorAll(".opxmon-alarms, .opxmon-alarm-badge").forEach(function (alarm) { alarm.hidden = true; });
+        var scope = node.closest("#ui-opxmon-body, #ui-opxmon-alarm-slot");
+        if (scope) scope.querySelectorAll(".ui-opxmon-alarms, .ui-opxmon-alarm-badge").forEach(function (alarm) { alarm.hidden = true; });
     }
     function watch() {
-        document.querySelectorAll(".opxmon-health[data-valid-ms]").forEach(function (node) {
+        document.querySelectorAll(".ui-opxmon-health[data-valid-ms]").forEach(function (node) {
             if (node.__opxWatching) return;
             node.__opxWatching = true;
             var ms = Number(node.getAttribute("data-valid-ms"));
@@ -24,8 +25,8 @@
     }
     function failed(event) {
         var elt = event.detail && event.detail.elt;
-        if (!elt || (elt.id !== "opxmon-body" && elt.id !== "opxmon-alarm-slot")) return;
-        document.querySelectorAll(".opxmon-health").forEach(function (node) { unknown(node, "SM did not answer the refresh"); });
+        if (!elt || (elt.id !== "ui-opxmon-body" && elt.id !== "ui-opxmon-alarm-slot")) return;
+        document.querySelectorAll(".ui-opxmon-health").forEach(function (node) { unknown(node, "SM did not answer the refresh"); });
     }
     document.addEventListener("DOMContentLoaded", watch);
     document.addEventListener("htmx:afterSwap", watch);

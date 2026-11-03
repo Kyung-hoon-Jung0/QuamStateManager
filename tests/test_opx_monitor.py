@@ -95,7 +95,7 @@ def test_live_page_shows_fems_and_occupancy(env):
     m.poll_once()
     html = page(app, "live")
     assert "Updated 0 s ago" in html
-    assert "opxmon-fem--busy" in html and "1 LF" in html and "running" in html
+    assert "ui-opxmon-fem--busy" in html and "1 LF" in html and "running" in html
     assert "No temperature readings." in html  # none returned -> said, never a field
 
 
@@ -126,7 +126,7 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     m.poll_once()
     assert "The server refused list_open_qms: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
-    assert "Closing is not available." in html and "opxmon-close\"" not in html
+    assert "Closing is not available." in html and "ui-opxmon-close\"" not in html
     r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
     assert r.status_code == 409 and not any(c[0].startswith("close") for c in w.calls)
 
@@ -138,7 +138,7 @@ def test_worker_death_is_a_sentence_never_green(env):
     w.script[:] = [om.WorkerError("The monitor worker exited while running 'poll' (exit code 1).")]
     m.poll_once()
     html = page(app, "live")
-    assert "opxmon-status--error" in html
+    assert "ui-opxmon-status--error" in html
     assert "exited while running" in html and "from 7 s ago" in html
     assert "Updated" not in html
 
@@ -148,8 +148,8 @@ def test_unreachable_server_first_poll(env):
     w.script[:] = [om.WorkerError("START The QM SDK could not connect: ConnectionError: refused")]
     m.poll_once()
     html = page(app, "live")
-    assert "could not connect" in html and "opxmon-status--error" in html
-    assert "opxmon-fem" not in html
+    assert "could not connect" in html and "ui-opxmon-status--error" in html
+    assert "ui-opxmon-fem" not in html
 
 
 def test_stale_answer_is_labelled_with_its_age(env):
@@ -157,7 +157,7 @@ def test_stale_answer_is_labelled_with_its_age(env):
     m.poll_once()
     clock.t += 40  # > 3 intervals with no new answer and no error
     html = page(app, "live")
-    assert "No fresh answer for 40 s" in html and "opxmon-status--stale" in html
+    assert "No fresh answer for 40 s" in html and "ui-opxmon-status--stale" in html
 
 
 def test_history_dedup_and_gone(env):
@@ -403,7 +403,7 @@ def test_no_settings_is_a_sentence(tmp_path):
 def test_sidebar_has_the_menu(env):
     app, *_ = env
     html = app.test_client().get("/opx-monitor/jobs").get_data(as_text=True)
-    assert 'id="opxmon-subnav"' in html and ">Monitor settings</a>" in html
+    assert 'id="ui-opxmon-subnav"' in html and ">Monitor settings</a>" in html
     assert 'data-bundle-file="opx-monitor.js"' in html
 
 
@@ -734,7 +734,7 @@ def test_d23_verdict_first(env):
     app, m, w, clock, _ = env
     m.poll_once()
     html = page(app, 'live')
-    assert html.index('opxmon-verdict') < html.index('opxmon-status')
+    assert html.index('ui-opxmon-verdict') < html.index('ui-opxmon-status')
     assert '<summary>Details</summary>' in html
     assert om.verdict({'open_qms': []}, {'color': 'green'}, {})['label'] == 'FREE'
     assert om.verdict(answer(), {'color': 'amber'}, {})['label'] == 'BUSY'
@@ -761,7 +761,7 @@ def test_d25_inline_safety(env):
     app, m, w, clock, _ = env
     m.poll_once()
     html = page(app, 'cleanup')
-    assert 'opxmon-danger' in html and 'close_other_machines' in html
+    assert 'ui-opxmon-danger' in html and 'close_other_machines' in html
     assert om.load_settings(m.instance)['idle_minutes'] == 120
     response = app.test_client().post('/opx-monitor/close', data={'all': '1', 'qm_ids': 'QM-a'}, headers=ORIGIN)
     assert response.status_code == 400 and not any(op.startswith('close') for op, _ in w.calls)
@@ -794,7 +794,7 @@ def test_d27_tiles_empty_slot_and_shared_baseline(env):
     w.script[:] = [a]
     m.poll_once()
     html = page(app, 'live')
-    assert 'empty slot' in html and 'opxmon-tile' in html and 'Shared y baseline' in html
+    assert 'empty slot' in html and 'ui-opxmon-tile' in html and 'Shared y baseline' in html
     assert om.temperature_rows(a['controllers'][0])[1]['empty']
     s = m.trends().series(clock.t)
     assert ',18.13' in s['con1/FEM 0']['paths'][0]
@@ -878,7 +878,7 @@ def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
     html = page(app, 'live')
     assert '<strong>' + label + '</strong>' in html
     assert 'health not assessed: no admin URL / no limits set' in html
-    assert 'opxmon-health-note' in html
+    assert 'ui-opxmon-health-note' in html
     assert '<strong>PROBLEM</strong>' not in html
 
 
@@ -1013,7 +1013,7 @@ def test_round5_display_formatting(env):
     html = page(app, 'live')
     assert 'limit 50 °C' in html and '50.0 °C' not in html
     assert '60 °C' in html and '60.0 °C' not in html
-    assert 'Idle minutes <input name="idle_minutes" value="120"' in page(app, 'settings')
+    assert re.search(r'Idle minutes <input\b[^>]*name="idle_minutes"[^>]*value="120"', page(app, 'settings'))
     assert re.search(r'\(UTC[+-]\d{1,2}(?::\d{2})?\)$', om.local_time('2026-11-02T20:25:40Z'))
     badge = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
     assert 'limit 50 °C' in badge and '50.0 °C' not in badge
