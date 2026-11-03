@@ -167,6 +167,14 @@
     color: var(--ui-warn-text);
     background: var(--ui-warn-bg);
     border-color: var(--ui-warn-border);
+    outline: var(--ui-bw) dashed var(--ui-warn-border);
+    outline-offset: var(--ui-bw);
+}
+.ui-tree-dirty::after {
+    content: "draft";
+    color: var(--ui-warn-text);
+    font-size: var(--ui-fs-xs);
+    margin-left: var(--ui-gap-1);
 }
 .ui-tree-resolved {
     color: var(--ui-text-2);

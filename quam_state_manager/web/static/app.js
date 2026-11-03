@@ -12084,6 +12084,37 @@ window.clearDetailPanelSearch = function(btnEl) {
        so a caller with nothing to wait for stays synchronous. */
     var _inflightEdits = new Set();
     var _treeEditMemory = new Map();
+    var _treeDraftStorage = 'quam_tree_drafts_v1';
+    function _treeSaveDrafts(tree) {
+        try {
+            var all = JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}');
+            var entries = [];
+            if (tree._editDrafts) tree._editDrafts.forEach(function (s, path) {
+                if (s.input.value !== s.input.defaultValue)
+                    entries.push([path, s.input.value]);
+            });
+            var key = _treeEditKey(tree);
+            if (entries.length) all[key] = entries;
+            else delete all[key];
+            sessionStorage.setItem(_treeDraftStorage, JSON.stringify(all));
+        } catch (e) { /* In-memory drafts remain available if storage is blocked. */ }
+    }
+    window.addEventListener('beforeunload', function (e) {
+        var dirty = false;
+        _treeEditMemory.forEach(function (memory) {
+            memory.drafts.forEach(function (s) {
+                if (s.input.value !== s.input.defaultValue) dirty = true;
+            });
+        });
+        try { dirty = dirty || Object.keys(JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}')).length > 0; } catch (_) {}
+        if (dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+    document.addEventListener('htmx:beforeSwap', function (e) {
+        if (e.defaultPrevented || e.detail && e.detail.shouldSwap === false) return;
+        var target = e.detail && e.detail.target;
+        if (target && target.id === 'table-pane' && window.__treeCommitOnLeave === false)
+            window.TreeInlineEdit.settle(target);
+    }, true);
     var _treeDataIds = new WeakMap(), _treeDataId = 0;
     function _treeEditSource(tree, data, options) {
         var marker = tree.closest('[data-tree-source], [data-source], [data-ref], [data-ts]');
@@ -12127,8 +12158,20 @@ window.clearDetailPanelSearch = function(btnEl) {
         return saved;
     }
     function _treeResume(tree, saved) {
+        var storedDrafts = [];
+        try { storedDrafts = JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}')[_treeEditKey(tree)] || []; } catch (_) {}
+        storedDrafts.forEach(function (entry) {
+            if (tree._editDrafts && tree._editDrafts.has(entry[0])) return;
+            _treeExpandDraft(tree, entry[0]);
+            var target = _treeFindValue(tree, entry[0]);
+            if (!target) return;
+            _makeValueEditable(target, entry[0]);
+            tree._editor.input.value = entry[1];
+            tree._editor.leave(true);
+        });
         var drafts = tree._editDrafts;
         if (drafts) drafts.forEach(function (s, path) {
+            _treeExpandDraft(tree, path);
             var el = _treeFindValue(tree, path);
             if (el && s.input.value !== s.input.defaultValue) {
                 el.textContent = s.input.value;
@@ -12136,11 +12179,20 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         });
         if (!saved || !saved.focused) return;
+        _treeExpandDraft(tree, saved.path);
         var el = _treeFindValue(tree, saved.path);
         if (!el) return;
         _makeValueEditable(el, saved.path);
         var input = tree._editor.input;
         input.setSelectionRange(saved.start, saved.end, saved.direction);
+    }
+    function _treeExpandDraft(tree, path) {
+        var parts = path.split('.');
+        for (var i = 1; i < parts.length; i++) {
+            var node = tree.querySelector('.tree-node[data-path="' + _cssAttrVal(parts.slice(0, i).join('.')) + '"]');
+            var toggle = node && node.querySelector(':scope > .tree-row > .tree-toggle');
+            if (toggle && toggle.classList.contains('collapsed')) _toggleNode(node);
+        }
     }
     // D-19: a short focus dwell avoids a request storm while arrowing.
     // Values already visited use the per-path cache until a mutation.
@@ -12221,6 +12273,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     focused: document.activeElement === input } : null;
                 _treeEditMemory.set(_treeEditKey(tree), { drafts: drafts, saved: saved });
             } else _treeEditMemory.delete(_treeEditKey(tree));
+            _treeSaveDrafts(tree);
             if (tree._editor !== state) el.textContent = changed ? input.value : el._treeDisplay;
         }
         function flush() {
@@ -12274,7 +12327,13 @@ window.clearDetailPanelSearch = function(btnEl) {
             dirty();
         };
         el._flushEdit = flush;
-        input.addEventListener("input", dirty);
+        function clearRefusal() {
+            var row = el.closest('.tree-row');
+            var reason = row && row.querySelector('.tree-edit-err');
+            if (reason) reason.remove();
+            el.classList.remove('tree-val-error');
+        }
+        input.addEventListener("input", function () { clearRefusal(); dirty(); });
         input.addEventListener("keydown", function (e) {
             if (e.key !== "Escape") state.escaped = false;
             if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); flush(); }
@@ -12285,6 +12344,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     return;
                 }
                 input.value = input.defaultValue;
+                clearRefusal();
                 dirty();
                 state.escaped = true;
             }
@@ -12444,6 +12504,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
             body.append("value", newVal);
+            if (valEl.classList.contains("tree-val-pointer") && _isPointer(newVal))
+                body.append("pointer_mode", "relink");
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
             // The unwrap above removed the quotes the server reads as "this
             // stays text" (routes.py _type_fix_offer). The value still goes
@@ -12545,6 +12607,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 // design, docs/190 F27) -- and is said here, not only by the
                 // global issues badge. Same idiom as delete's dangling toast.
                 if (data.warning && window.showToast) window.showToast(data.warning, "warning");
+                if (data.resolved_path && data.resolved_path !== dotPath) {
+                    _paintTreeLeaf(ownerTree, data.resolved_path, data.stored);
+                    data.stored = data.raw_value;
+                    data.stored_kind = typeof data.raw_value;
+                }
                 // r14 honesty: re-render from the COMMITTED value the server
                 // echoes (the coercer may have kept the old type) — the old
                 // raw-text write-back showed "0.13"-the-string as bare 0.13

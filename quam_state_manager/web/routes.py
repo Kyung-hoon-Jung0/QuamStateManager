@@ -12880,6 +12880,13 @@ def field_edit():
         # fires at the resolved write path, and cross-class pointer chains
         # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
+        # The tree displays pointer text. Relinking must address that leaf,
+        # while ordinary value edits retain the established follow behavior.
+        if request.form.get("pointer_mode") == "relink":
+            current = modifier.store.get_value(dot_path)
+            if not (is_pointer(current) and is_pointer(raw_value.strip())):
+                raise ValueError("Relink requires a pointer leaf and pointer value")
+            target_path = dot_path
         # Same server-side read-only policy as /field/edit-batch (audit P0):
         # membership arrays / identity keys must be rejected with the policy
         # reason, not incidentally via a coercion TypeError.
@@ -13036,8 +13043,16 @@ def field_edit():
         if isinstance(committed, float) and (
                 committed != committed or committed in (float("inf"), float("-inf"))):
             raise ValueError("non-finite echo would break JSON.parse")
+        try:
+            raw_committed = modifier.store.get_value(dot_path)
+        except (KeyError, TypeError, ValueError, IndexError):
+            # A grid path may traverse a container pointer. Preserve its
+            # resolved echo even when the original path cannot be read raw.
+            raw_committed = committed
         return jsonify(ok=True, tray_html=_tray_html(),
-                       stored=committed, stored_kind=_kind_of(committed), **_wkw)
+                       stored=committed, stored_kind=_kind_of(committed),
+                       resolved_path=target_path,
+                       raw_value=raw_committed, **_wkw)
     except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
         return jsonify(ok=True, tray_html=_tray_html(), **_wkw)
 

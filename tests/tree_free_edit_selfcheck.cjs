@@ -7,13 +7,20 @@ const {JSDOM} = require('jsdom');
 const staticDir = path.join(__dirname, '../quam_state_manager/web/static');
 let source = fs.readFileSync(path.join(staticDir, 'app.js'), 'utf8').replace(/\r\n/g, '\n');
 const mutations = {
+    relink: ['if (valEl.classList.contains("tree-val-pointer") && _isPointer(newVal))\n                body.append("pointer_mode", "relink");', '/* reverted relink transport */'],
+    echo_target: ['if (data.resolved_path && data.resolved_path !== dotPath)', 'if (false)'],
+    draft_storage: ['_treeSaveDrafts(tree);', '/* reverted persistence */'],
+    unload_drafts: ["if (dirty) { e.preventDefault(); e.returnValue = ''; }", '/* reverted unload guard */'],
+    refusal_clear: ["if (reason) reason.remove();", '/* reverted refusal clear */'],
+    lazy_resume: ["if (toggle && toggle.classList.contains('collapsed')) _toggleNode(node);", '/* reverted draft expansion */'],
+    nav_drafts: ["window.TreeInlineEdit.settle(target);", '; /* reverted navigation park */'],
     search: ['_treeResume(c, savedEditor);', '/* mutant: lost editor */'],
     off: ['if (!preserve && window.__treeCommitOnLeave !== false) flush();', 'if (!preserve) flush();'],
     render: ['_treeResume(container, savedEditor);', '/* mutant: lost drafts */'],
     pane: ['var editMemory = _treeEditMemory.get(_treeEditKey(container));', 'var editMemory = null;'],
     fsp: ['if (back) _makeValueEditable(back, dotPath);', '/* mutant: no focus return */'],
     one: ['if (tree._editor) tree._editor.leave();', '/* mutant: leave old input */'],
-    escape: ['input.value = input.defaultValue;\n                dirty();', '/* mutant: retain typing */'],
+    escape: ['input.value = input.defaultValue;\n                clearRefusal();\n                dirty();', '/* mutant: retain typing */'],
     caret: ['input.setSelectionRange(input.value.length, input.value.length);', 'input.select();'],
     flight: ['if (input.value === sent) input.value = input.defaultValue;', 'input.value = input.defaultValue;'],
     visible: ["var v = n.querySelector(':scope > .tree-row > .tree-val');", "var ch = n.querySelector(':scope > .tree-children'); if (ch && ch.style.display === \"none\") { _toggleNode(n); if (dir < 0) n = _kbDeepLast(n); } var v = n.querySelector(':scope > .tree-row > .tree-val');"],
@@ -35,7 +42,7 @@ const mutations = {
     cache: ['if (!cache.has(path)) cache.set', 'if (true) cache.set'],
 };
 if (process.env.TREE_MUTATION) {
-    if (process.env.TREE_MUTATION !== 'chip_context') {
+    if (!['chip_context','draft_style'].includes(process.env.TREE_MUTATION)) {
         const [before, after] = mutations[process.env.TREE_MUTATION];
         assert(source.includes(before), 'mutation target exists');
         source = source.replaceAll(before, after);
@@ -47,6 +54,7 @@ if (process.env.TREE_MUTATION) {
 }
 const dom = new JSDOM('<!doctype html><input id="search"><div id="tree"></div><button id="after">After</button>',
     {runScripts:'outside-only', pretendToBeVisual:true, url:'http://localhost/explorer'});
+const realms=[dom];
 const w = dom.window, d = w.document;
 const calls = [];
 let delay = 0;
@@ -69,6 +77,8 @@ w.fetch = (url, opts) => {
         let v = b.get('value');
         try { v = JSON.parse(v); } catch (_) {}
         data = refused ? {ok:false,error:"Refused value"} : fsp && !b.get('fsp_ack') ? {ok:false,fsp_compensation:{port:'test',fsp_old:1,fsp_new:2,factor:1,amps:[]}} : {ok:true, stored:v, stored_kind:typeof v};
+        if (b.get('dot_path') === 'pointer' && typeof v === 'number')
+            data = {ok:true,stored:v,stored_kind:'number',resolved_path:'other',raw_value:'#/other'};
     }
     return new Promise(resolve => setTimeout(() => resolve({ok:true, json:async()=>data}), delay));
 };
@@ -179,6 +189,10 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(refusedInput.value,'invalid text','refusal keeps typed text');
     assert(val('a').classList.contains('ui-tree-dirty'),'refusal stays amber');
     assert.equal(tree._treeData.a,1,'refusal leaves stored value');
+    key('Escape');assert(!node('a').querySelector('.tree-edit-err'),'Escape clears refusal reason');
+    type('invalid again');key('Enter');await tick();
+    assert(node('a').querySelector('.tree-edit-err'),'second refusal is visible');
+    type('next edit');assert(!node('a').querySelector('.tree-edit-err'),'next edit clears refusal reason');
     refused=false;key('Escape');
     for (const failure of ['network','http','body']) {
         const retry='retry_'+failure;
@@ -190,15 +204,25 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
         assert.equal(countRetry(),beforeRetry+1,'failed peek retries on next focus: '+failure);
         assert.equal(val(retry).querySelector('.tree-type-chip').title,'model.Settings.'+retry+' \u2014 Expected scalar','type tooltip includes field and detail');
     }
-    w.renderJsonTree('tree',{pointer:'#/target',target:42},{defaultDepth:1,crud:true});
+    w.renderJsonTree('tree',{pointer:'#/target',target:42,other:77},{defaultDepth:1,crud:true});
     focus('pointer');await tick(190);
     const preview=val('pointer').querySelector('.ui-tree-resolved');
     assert(preview,'pointer has resolved preview');
     assert.equal(d.activeElement.value,'"#/target"','pointer input stays literal');
     assert.equal(preview.textContent.trim(),'\u2192 42','pointer preview shows resolved value');
     assert(d.activeElement.compareDocumentPosition(preview)&4,'preview follows input');
-    const css=fs.readFileSync(path.join(staticDir,'ui-kit.css'),'utf8');
+    type('"#/other"');key('Enter');await tick();
+    assert.equal(new w.URLSearchParams(calls.filter(c=>c.url==='/field/edit').at(-1).body).get('pointer_mode'),'relink','pointer transport explicitly relinks');
+    assert.equal(tree._treeData.pointer,'#/other','relink model uses server echo');
+    type('9');key('Enter');await tick();
+    assert.equal(tree._treeData.other,9,'plain value updates the server write target');
+    assert.equal(tree._treeData.target,42,'plain value leaves the former target unchanged');
+    assert.equal(tree._treeData.pointer,'#/other','plain value preserves pointer model');
+    let css=fs.readFileSync(path.join(staticDir,'ui-kit.css'),'utf8');
+    if (process.env.TREE_MUTATION==='draft_style') css=css.replace('outline: var(--ui-bw) dashed var(--ui-warn-border);','');
     assert(/\.ui-tree-resolved\s*\{[^}]*color: var\(--ui-text-2\)/.test(css),'pointer preview is muted');
+    assert(/\.ui-tree-dirty[^}]*outline: var\(--ui-bw\) dashed var\(--ui-warn-border\)/.test(css),'draft has dashed token outline');
+    assert(/\.ui-tree-dirty::after[^}]*content: "draft"/.test(css),'draft has explicit marker');
     w.renderJsonTree('tree',{items:{first:{amplitude:1},second:{amplitude:2}}},{defaultDepth:99,crud:true});
     focus('items.first.amplitude'); key('d',{ctrlKey:true});
     assert(w.TreeMulti.state(),'Ctrl D creates selection');
@@ -317,6 +341,43 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(leaf.textContent,'53','clean detached draft shows current committed value');
     delete leaf.textContent;
     await tick(110);delay=0;
+    tray.remove();
+    // Real navigation parks a focused draft before the outgoing pane vanishes.
+    tree.dataset.treeSource='state.json';
+    w.renderJsonTree('tree',{branch:{deep:{value:1}}},{defaultDepth:99,crud:true});
+    pane.appendChild(tree);focus('branch.deep.value');type('123');
+    d.dispatchEvent(new w.CustomEvent('htmx:beforeSwap',{bubbles:true,cancelable:true,
+        detail:{target:pane,shouldSwap:true}}));
+    assert(!tree.querySelector('input'),'navigation parks the editor before the swap');
+    const storedDrafts=w.sessionStorage.getItem('quam_tree_drafts_v1');
+    assert(storedDrafts && storedDrafts.includes('123'),'draft text is persisted in sessionStorage');
+    const unload=new w.Event('beforeunload',{cancelable:true});w.dispatchEvent(unload);
+    assert(unload.defaultPrevented,'uncommitted drafts prompt on full unload');
+    const next=d.createElement('div');next.id='tree';next.dataset.treeSource='state.json';
+    tree.replaceWith(next);tree=next;
+    w.renderJsonTree('tree',{branch:{deep:{value:1}}},{defaultDepth:0,crud:true});
+    assert.equal(d.activeElement.value,'123','replacement expands lazy ancestors and restores focused draft');
+    // A new document has no closure memory: restore solely from tab storage.
+    const fresh=new JSDOM('<div id="tree" data-tree-source="state.json"></div>',
+        {runScripts:'outside-only',pretendToBeVisual:true,url:'http://localhost/explorer'});
+    realms.push(fresh);
+    const persisted=JSON.parse(storedDrafts);
+    const currentKey=Object.keys(persisted).find(k=>k.includes('folder-two|token-three') && k.includes('state.json'));
+    fresh.window.sessionStorage.setItem('quam_tree_drafts_v1',JSON.stringify({[currentKey]:persisted[currentKey]}));
+    fresh.window.htmx={ajax:async()=>{},trigger(){},process(){}};
+    fresh.window.fetch=w.fetch;
+    fresh.window.__chipKey=w.__chipKey;fresh.window.__chipToken=w.__chipToken;
+    fresh.window.eval(source);
+    fresh.window.renderJsonTree('tree',{branch:{deep:{value:1}}},{defaultDepth:0,crud:true});
+    const restored=fresh.window.document.querySelector('.tree-node[data-path="branch.deep.value"] > .tree-row > .tree-val');
+    assert(restored,'stored draft expands its lazy ancestors');
+    assert.equal(restored.textContent,'123','session draft restores after returning with fresh data');
+    restored.click();
+    fresh.window.document.activeElement.dispatchEvent(new fresh.window.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+    assert.equal(fresh.window.sessionStorage.getItem('quam_tree_drafts_v1'),'{}','Escape removes persisted draft');
+    const cleanUnload=new fresh.window.Event('beforeunload',{cancelable:true});fresh.window.dispatchEvent(cleanUnload);
+    assert(!cleanUnload.defaultPrevented,'clean tree does not prompt on unload');
+    fresh.window.close();
     console.log('ALL OK: Stage A pins');
     w.close();
-})().catch(e=>{console.error(e);process.exitCode=1;w.close();});
+})().catch(e=>{console.error(e);process.exitCode=1;realms.forEach(r=>r.window.close());});

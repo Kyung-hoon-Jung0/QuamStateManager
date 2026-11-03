@@ -54,6 +54,9 @@ async function reveal(path) {
     await wait('document.activeElement.matches("'+tree+' input.tree-edit-input")');
 }
 async function shot(name) {await p.shot(path.join(dir,label+'-'+name+'.png'));}
+async function peek(paths) {
+    return p.ev(`fetch('/field/peek?'+${J(paths)}.map(p=>'dot_path='+encodeURIComponent(p)).join('&')).then(r=>r.json()).then(d=>d.values)`);
+}
 (async()=>{
     fs.mkdirSync(dir,{recursive:true});
     p=await open('http://127.0.0.1:'+(process.env.SM_PORT||5631)+'/explorer');
@@ -116,8 +119,14 @@ async function shot(name) {await p.shot(path.join(dir,label+'-'+name+'.png'));}
     await shot('fsp-applied');
     await reveal('qubits.q1.resonator.operations.weird.amplitude');
     await check("document.activeElement.value.startsWith('\"#/')",'pointer edits its literal');
+    const pointerPath='qubits.q1.resonator.operations.weird.amplitude';
+    const targetPath='qubits.q1.resonator.operations.readout.amplitude';
+    const beforePointer=await peek([pointerPath,targetPath]);
     await replace('"#/qubits/q1/resonator/operations/const/amplitude"');await key('Enter');await sleep(200);
-    await check(`document.querySelector(${J(tree)})._treeData.qubits.q1.resonator.operations.weird.amplitude==='#/qubits/q1/resonator/operations/const/amplitude'`,'pointer stores literal text');
+    const afterPointer=await peek([pointerPath,targetPath]);
+    assert.equal(afterPointer[pointerPath],'#/qubits/q1/resonator/operations/const/amplitude','server stores pointer text at its own leaf');
+    assert.equal(afterPointer[targetPath],beforePointer[targetPath],'server leaves original pointer target untouched');
+    checks.push('pointer server check leaves target untouched');
     await shot('pointer');
     if(!baseline) {
         await p.ev("window.__treeCommitOnLeave=false");
@@ -127,13 +136,34 @@ async function shot(name) {await p.shot(path.join(dir,label+'-'+name+'.png'));}
         await p.ev("jsonTreeSetExpanded('explorer-tree-state',['qubits','qubits.q1','qubits.q1.extras'])");
         await check(`document.querySelector(${J(row('qubits.q1.extras.value_200')+' > .tree-val')}).classList.contains('ui-tree-dirty')`,'OFF dirty draft survives real rebuild');
         await click(row('qubits.q1.extras.value_200')+' > .tree-val');
-        await p.ev(`(()=>{let t=document.querySelector(${J(tree)});const data=t._treeData;TreeInlineEdit.settle(document.getElementById('table-pane'));const replacement=document.createElement('div');replacement.id=t.id;t.replaceWith(replacement);renderJsonTree(replacement.id,data,{defaultDepth:1,crud:true})})()`);
+        // A real response preserves the tree's source marker and supplies new
+        // data objects. The old hand-made replacement discarded that marker.
+        await p.ev(`htmx.ajax('GET','/explorer',{target:'#table-pane',swap:'innerHTML'})`);
+        await wait(`!!document.querySelector(${J(tree)})?._treeData`);
         await check("document.activeElement.value==='0.777'",'OFF draft survives full pane replacement');
-        await shot('off-dirty');await key('Escape');
+        await shot('off-dirty');
+        const outline=await p.ev(`getComputedStyle(document.activeElement.parentElement).outlineStyle`);
+        assert.equal(outline,'dashed','draft has a distinct dashed outline');
+        const dialogsBefore=p.events.filter(e=>e.method==='Page.javascriptDialogOpening').length;
+        // Trigger a genuine full unload with a user gesture, then cancel it.
+        const unloading=p.ev("location.href='about:blank'");
+        for(let i=0;i<100 && p.events.filter(e=>e.method==='Page.javascriptDialogOpening').length===dialogsBefore;i++) await sleep(50);
+        const dialog=p.events.filter(e=>e.method==='Page.javascriptDialogOpening').at(-1);
+        assert.equal(dialog?.params.type,'beforeunload','dirty full unload prompts in Chrome');
+        await p.send('Page.handleJavaScriptDialog',{accept:false});await unloading;
+        checks.push('dirty full unload prompts in Chrome');
+        // The same draft must survive leaving via the sidebar and returning.
+        await click('#sidebar a[hx-get="/bulk"]');
+        await wait("!document.querySelector('#explorer-tree-state')");
+        await click('#sidebar a[hx-get="/explorer"]');
+        await wait(`!!document.querySelector(${J(tree)})?._treeData`);
+        await reveal('qubits.q1.extras.value_200');
+        await check("document.activeElement.value==='0.777'",'OFF draft survives sidebar navigation and return');
+        await key('Escape');
         await p.ev("window.__treeCommitOnLeave=true");
         // The fixture's id is read-only, between this key's preceding field
         // and resonator's first editable leaf in insertion order.
-        await p.ev("jsonTreeSetExpanded('explorer-tree-state',['qubits','qubits.q2'])");
+        await p.ev("jsonTreeSetExpanded('explorer-tree-state',['qubits','qubits.q2','qubits.q2.resonator'])");
         await p.ev(`document.querySelector(${J(row('qubits.q2'))}).focus()`);
         await key('Tab');
         await check("document.activeElement.getAttribute('aria-label')==='qubits.q2.resonator.opx_output'",'Tab skips the read-only id key');
