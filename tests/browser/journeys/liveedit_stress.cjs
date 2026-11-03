@@ -104,7 +104,7 @@ async function shot(page, name) { await page.screenshot({path:path.join(out, nam
     await shot(a,'d3-followed');
     console.log('PASS D-3: visible A follows B within 8 seconds');
     for(const q of ['f_01>=4e9','amp>0.28','length=24..28']) {
-      await search(a,q); assert((await a.$eval('#bulk-search-count',e=>e.textContent)).includes('only in the sidebar'));
+      await search(a,q); const c=await a.$eval('#bulk-search-count',e=>e.textContent); assert(!c.includes('sidebar') && /^\d+ of \d+$/.test(c),c);
     }
     await search(a,'RF_frequncy');
     assert((await a.evaluate(()=>document.body.innerText)).includes('RF_frequency'));

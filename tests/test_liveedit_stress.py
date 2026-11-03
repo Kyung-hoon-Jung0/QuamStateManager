@@ -84,7 +84,14 @@ def test_readability_parts_and_labels(rig):
     root = Path(__file__).resolve().parents[1] / 'quam_state_manager/web'
     bulk = (root / 'static/bulk-edit.js').read_text(encoding='utf-8')
     assert 'typed, not staged' in bulk
-    assert 'Comparison and range operators work only in the sidebar search.' in bulk
+    assert 'only in the sidebar search' not in bulk
+    assert 'SearchQuery.gridCmp' in bulk
+    app = (root / 'static/app.js').read_text(encoding='utf-8')
+    assert '_cellTextWidth(input, g) + 8;' in app            # the clock keeps 8 px off a short value
+    assert 'if (g.mid > 0) b.style.top = g.mid + "px";' in app  # centred on the input, not the td
+    assert 'var m = _cellBtnMid(b, input);' in app               # re-read after a row-height change
+    style = (root / 'static/style.css').read_text(encoding='utf-8')
+    assert '.bulk-table thead th.bulk-corner { z-index: 5; }' in style  # corner above scrolled + pinned heads
     assert 'staged, not applied' in (root / 'templates/_sync_control.html').read_text(encoding='utf-8')
     assert '{{ _as.flushes }} landed' in (root / 'templates/_auto_sync_pill.html').read_text(encoding='utf-8')
     css = (root / 'static/ui-kit.css').read_text(encoding='utf-8')

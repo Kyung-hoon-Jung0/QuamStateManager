@@ -1244,6 +1244,13 @@
         el.hidden = false;
     }
 
+    // docs/175 operators in the grid: the shared helpers in SearchQuery.
+    function _cmpToken(tok, cols, hayOf) {
+        return window.SearchQuery && window.SearchQuery.gridCmp
+            ? window.SearchQuery.gridCmp(tok, cols, hayOf) : null;
+    }
+    function _cmpRowHit(ti, byKey) { return window.SearchQuery.gridCmpHit(ti, byKey); }
+
     function applySearch() {
         var t = table(); if (!t) return;
         var inp = document.getElementById('bulk-search');
@@ -1283,6 +1290,14 @@
         // INSIDE an id ("a1") keeps the column reading, so ordinary column
         // searching is untouched.
         var tokInfo = tokens.map(function (tok) {
+            // docs/175 operators (`f_01>=4e9`, `t1=10e-6..50e-6`): the KEY
+            // names columns by their search text, the row passes when that
+            // column's numeric value satisfies the condition. One parser,
+            // shared with the sidebar (SearchQuery.paramCond). A right side
+            // that is not a finite number keeps the token as free text.
+            var cmp = _cmpToken(tok, visCols, _colHay);
+            if (cmp) return { tok: tok, isCmp: true, cond: cmp.cond, cmpKeys: cmp.keys,
+                              isCol: false, isId: false, isVal: false };
             var named = ids.some(function (id) { return id.indexOf(tok) === 0; });
             var colHit = !named
                 && visCols.some(function (c) { return _colHay(c).indexOf(tok) >= 0; });
@@ -1313,7 +1328,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isCol && !ti.isId) {
+                    if (ti.isCmp) {
+                        any = !!ti.cmpKeys[key];
+                    } else if (ti.isCol && !ti.isId) {
                         any = !!c && _colHay(c).indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = colCells.some(function (h) { return h.indexOf(ti.tok) >= 0; });
@@ -1337,7 +1354,9 @@
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
                     var ti = tokGroups[g][i];
-                    if (ti.isId && !ti.isCol) {
+                    if (ti.isCmp) {
+                        any = _cmpRowHit(ti, rowHaystacks.byKey);
+                    } else if (ti.isId && !ti.isCol) {
                         any = id.indexOf(ti.tok) >= 0;
                     } else if (ti.isVal) {
                         any = valNeutral
@@ -1374,11 +1393,13 @@
             visCols.forEach(function (c) { colHay[c.key] = []; });
             rows.forEach(function (r) {
                 var hs = [];
+                hs.byKey = {};
                 _cells(r).forEach(function (cell) {
                     var k = cell.closest('[data-col-key]').getAttribute('data-col-key');
                     if (hide.has(k)) return;
                     var disp = cell.value.toLowerCase();
                     var bare = disp.replace(/,/g, '');
+                    hs.byKey[k] = bare;
                     var h = disp + ' ' + bare;
                     hs.push(h);
                     if (colHay[k]) colHay[k].push(h);
@@ -1392,7 +1413,9 @@
                         if (hide.has(ck)) return;
                         var cd = _virt.vals.get(td) || '';
                         if (!cd) return;
-                        var chh = cd + ' ' + cd.replace(/,/g, '');
+                        var cbare = cd.replace(/,/g, '');
+                        hs.byKey[ck] = cbare;
+                        var chh = cd + ' ' + cbare;
                         hs.push(chh);
                         if (colHay[ck]) colHay[ck].push(chh);
                     });
@@ -1403,7 +1426,7 @@
         }
         var rowHay = tokGroups.length
             ? rows.map(function (r) { return _hayCache.rowMap.get(r) || []; })
-            : rows.map(function () { return []; });
+            : rows.map(function () { var e = []; e.byKey = {}; return e; });
 
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
@@ -1506,10 +1529,7 @@
             if (!vis && _hasVal && rowVisible(id, rowHay[i], true)) strandedRows++;
         });
         var cnt = document.getElementById('bulk-search-count');
-        var sidebarOperators = /(?:>=|<=|>|<|=)/.test(q);
-        if (cnt) cnt.textContent = sidebarOperators
-            ? 'Comparison and range operators work only in the sidebar search.'
-            : (q ? (shown + ' of ' + rows.length) : '');
+        if (cnt) cnt.textContent = q ? (shown + ' of ' + rows.length) : '';
         _emptySearchNote(t, 'bulk-qubit-empty-search', shown, rows.length, q);
         // The offer only makes sense while a column is still on screen to type
         // into — with every column filtered away too there is nothing to reach.

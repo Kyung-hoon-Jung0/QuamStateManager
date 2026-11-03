@@ -33,6 +33,7 @@ const ROOT = path.join(__dirname, '..');
 const STATIC = path.join(ROOT, 'quam_state_manager', 'web', 'static');
 const GRID_VIRT_JS = fs.readFileSync(path.join(STATIC, 'grid-virt.js'), 'utf8');
 const BULK_JS = fs.readFileSync(path.join(STATIC, 'bulk-edit.js'), 'utf8');
+const SEARCH_QUERY_JS = fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8');
 const PAIR_JS = fs.readFileSync(path.join(STATIC, 'pair-edit.js'), 'utf8');
 
 let fails = 0;
@@ -264,6 +265,7 @@ function world(opts) {
   // Performance.getMetrics). That is not the mount, and this counter exists
   // to pin what the MOUNT reads, so bank it and start the mount from zero.
   win.__evalReads = win.__geomReads; win.__geomReads = 0;
+  if (opts.sq) new win.Function(SEARCH_QUERY_JS).call(win);   // the shared grammar + operators
   new win.Function(BULK_JS).call(win);
   new win.Function(PAIR_JS).call(win);
   win.BulkPairEdit.mount(COLS);
@@ -743,6 +745,26 @@ async function main() {
       d.querySelectorAll('#bulk-pair-table tbody tr[data-pair]'),
       function (r) { return !r.classList.contains('bulk-row-hidden'); }).length;
     ok(shown === N_ROWS, 'and every pair row is back (' + shown + ')');
+    global.window = win; global.document = doc;
+  }
+
+  /* ── docs/175 operators in the pair grid (one parser: SearchQuery) ── */
+  {
+    const WQ = world({ sq: true });
+    await tick(40);
+    const dq = WQ.doc, wq = WQ.win;
+    const sbq = dq.getElementById('bulk-search');
+    const shownQ = () => Array.prototype.filter.call(dq.querySelectorAll('#bulk-pair-table tbody tr[data-pair]'),
+      (r) => !r.classList.contains('bulk-row-hidden')).map((r) => r.getAttribute('data-pair')).join(',');
+    async function q(text) { sbq.value = text; sbq.dispatchEvent(new wq.Event('input', { bubbles: true })); await tick(300); }
+    await q('p1>=201');          // hot (r+1)*100+1
+    ok(shownQ() === PAIRS.slice(1).join(','), 'POP1 p1>=201 keeps exactly the pairs that satisfy it (' + shownQ() + ')');
+    await q('p1=150..350');
+    ok(shownQ() === PAIRS.slice(1, 3).join(','), 'POP2 a range (' + shownQ() + ')');
+    await q('p4>=7020');         // server-cold p4: 7004 7014 7024 7034
+    ok(shownQ() === PAIRS.slice(2).join(','), 'POP3 a cold pair column compares through the cold map (' + shownQ() + ')');
+    await q('p1>abc');
+    ok(shownQ() === '', 'POP4 a non-numeric right side stays free text (' + shownQ() + ')');
     global.window = win; global.document = doc;
   }
 

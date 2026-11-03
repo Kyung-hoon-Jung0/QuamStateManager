@@ -170,8 +170,85 @@ window.SearchQuery = (function () {
         return null;
     }
 
+    /* Comparison and range operators -- the ONE JS parser (docs/175). The
+       twin of routes._param_cond / _as_number / _param_hit; the Datasets box
+       (dataset-virtual.js) and both Live-Edit grids call it.
+       `>=` precedes `>` (and `<=` precedes `<`) or the value becomes "=1000".
+       A bare token must start with a letter; `scoped` (inside `p:`) takes any
+       key. A comparison is only a comparison when its right side is a finite
+       number, so `q1>q2` stays free text. */
+    var _OP_BARE = /^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$/;
+    var _OP_SCOPED = /^([^=<>]+)(>=|<=|>|<|=)(.+)$/;
+
+    /** A finite number, or null. A bool is never a magnitude. */
+    function num(v) {
+        if (typeof v === 'boolean' || v == null || v === '') return null;
+        var f = typeof v === 'number' ? v : Number(String(v).trim());
+        return (typeof f === 'number' && isFinite(f)) ? f : null;
+    }
+
+    function paramCond(body, scoped) {
+        var m = String(body).match(scoped ? _OP_SCOPED : _OP_BARE);
+        if (!m) return null;
+        var key = m[1].toLowerCase(), op = m[2], want = m[3];
+        if (op === '=') {
+            var dd = want.indexOf('..');
+            if (dd >= 0) {
+                var a = num(want.slice(0, dd)), b = num(want.slice(dd + 2));
+                if (a != null && b != null) {
+                    return { key: key, op: '..', want: want, wnum: null,
+                             lo: Math.min(a, b), hi: Math.max(a, b) };
+                }
+            }
+            return { key: key, op: '=', want: want, wnum: num(want), lo: null, hi: null };
+        }
+        var w = num(want);
+        if (w == null) return null;
+        return { key: key, op: op, want: want, wnum: w, lo: null, hi: null };
+    }
+
+    /** Does the magnitude n satisfy a parsed condition? (numeric part only) */
+    function cmpHit(cond, n) {
+        if (n == null) return false;
+        switch (cond.op) {
+            case '..': return cond.lo <= n && n <= cond.hi;
+            case '=': return cond.wnum != null && n === cond.wnum;
+            case '>=': return n >= cond.wnum;
+            case '>': return n > cond.wnum;
+            case '<=': return n <= cond.wnum;
+            case '<': return n < cond.wnum;
+        }
+        return false;
+    }
+
+    /* A comparison token for a Live-Edit grid: {cond, keys} when `tok` parses
+       as a NUMERIC condition and its key occurs in some column's search text
+       (`hayOf(col)`, lowercased); null otherwise, and the token keeps the
+       grid's column/id/value reading. A plain `key=text` is not numeric and
+       stays free text, as the grids always read it. */
+    function gridCmp(tok, cols, hayOf) {
+        var cond = paramCond(tok);
+        if (!cond || (cond.op === '=' && cond.wnum == null)) return null;
+        var keys = {}, n = 0;
+        cols.forEach(function (c) {
+            if (hayOf(c).indexOf(cond.key) >= 0) { keys[c.key] = 1; n++; }
+        });
+        return n ? { cond: cond, keys: keys } : null;
+    }
+    /** Does a row (its {colKey: displayed text}) satisfy a grid token? */
+    function gridCmpHit(ti, byKey) {
+        if (!byKey) return false;
+        for (var k in ti.cmpKeys) {
+            if (Object.prototype.hasOwnProperty.call(byKey, k)
+                && cmpHit(ti.cond, num(String(byKey[k]).replace(/,/g, '')))) return true;
+        }
+        return false;
+    }
+
     return { tokens: tokens, groupBy: groupBy, groups: groups,
              matchesHay: matchesHay,
              scopedSpans: scopedSpans, scopedTokens: scopedTokens,
-             caretSpan: caretSpan };
+             caretSpan: caretSpan,
+             num: num, paramCond: paramCond, cmpHit: cmpHit,
+             gridCmp: gridCmp, gridCmpHit: gridCmpHit };
 })();

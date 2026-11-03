@@ -25,7 +25,12 @@ cases = [
  ('d', WEB+'static/ui-kit.css', '.ui-live-tray > .auto-sync-wrap { order: -1; }', '.ui-live-tray > .auto-sync-wrap { order: 0; }', PY+['-k','readability']),
  ('e', WEB+'templates/_auto_sync_pill.html', '{{ _as.flushes }} landed', '{{ _as.flushes }}', PY+['-k','readability']),
  ('f', WEB+'static/ui-kit.css', 'min-width: calc(var(--ui-icon-btn) * 3)', 'min-width: 0', PY+['-k','readability']),
- ('g', WEB+'static/bulk-edit.js', 'Comparison and range operators work only in the sidebar search.', '0 rows', PY+['-k','readability']),
+ ('g', WEB+'static/bulk-edit.js', 'if (cmp) return { tok: tok, isCmp: true', 'if (false) return { tok: tok, isCmp: true', ['node','tests/bulk_virt_server_selfcheck.cjs']),
+ ('g-pair', WEB+'static/pair-edit.js', 'if (cmp) return { tok: tok, isCmp: true', 'if (false) return { tok: tok, isCmp: true', ['node','tests/pair_virt_server_selfcheck.cjs']),
+ ('c-corner', WEB+'static/style.css', '.bulk-table thead th.bulk-corner { z-index: 5; }', '', PY+['-k','readability']),
+ ('f-gap', WEB+'static/app.js', '_cellTextWidth(input, g) + 8;', '_cellTextWidth(input, g) + 4;', PY+['-k','readability']),
+ ('f-mid', WEB+'static/app.js', 'if (g.mid > 0) b.style.top = g.mid + "px";', '', PY+['-k','readability']),
+ ('f-raf', WEB+'static/app.js', 'var m = _cellBtnMid(b, input);', 'var m = 0;', PY+['-k','readability']),
  ('h', WEB+'static/sidebar-typeahead.js', 'text.split(/[^A-Za-z0-9_]+/).concat(text.split(/[^A-Za-z0-9]+/))', 'text.split(/[^A-Za-z0-9]+/)', ['node','tests/param_typeahead_selfcheck.cjs']),
 ]
 
