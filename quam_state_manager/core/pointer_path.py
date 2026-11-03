@@ -199,12 +199,11 @@ def find_shared_by(
     scope_qubit: str | None = None,
     input_op: str | None = None,
 ) -> list[str]:
-    """Operation *aliases* in the same qubit that resolve to *resolved_path*.
+    """Other operation references in the same qubit sharing *resolved_path*.
 
-    Scans the qubit's ``xy``/``z``/``resonator`` operations for alias entries
-    (operation keys whose value is a pointer string, e.g. ``"x180"``) whose
-    same-leaf field resolves to *resolved_path* — i.e. they share the literal.
-    Excludes the clicked alias (*input_op*). Returns sorted, de-duplicated names.
+    Scan operation aliases and pointer leaves through the same resolver.
+    Exclude the clicked operation and the literal target itself.
+    Return sorted, de-duplicated names.
     """
     segs = resolved_path.split(".")
     if len(segs) < 5 or segs[0] != "qubits":
@@ -220,12 +219,12 @@ def find_shared_by(
         if not isinstance(ops, dict):
             continue
         for op_key, op_val in ops.items():
-            if not is_pointer(op_val):  # only user-facing alias entries
+            if not is_pointer(op_val) and not isinstance(op_val, dict):
                 continue
             if op_key == input_op:
                 continue
             cand = f"qubits.{qubit}.{chan_name}.operations.{op_key}.{leaf}"
             ft = resolve_field_target(merged, cand)
-            if ft["resolvable"] and ft["resolved_path"] == resolved_path:
+            if ft["is_pointer"] and ft["resolvable"] and ft["resolved_path"] == resolved_path:
                 out.add(op_key)
     return sorted(out)

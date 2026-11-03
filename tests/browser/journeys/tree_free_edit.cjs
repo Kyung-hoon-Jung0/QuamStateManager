@@ -87,7 +87,17 @@ async function peek(paths) {
     if(!baseline) await check(`document.querySelector(${J(tree)}).querySelectorAll('input').length<=1`,'at most one tree input after 200 moves');
     await click('#explorer-search');await text('amplitude');await sleep(400);
     const hit=await p.ev(`document.querySelector(${J(tree+' .tree-highlight > .tree-row > .tree-val')})?.closest('.tree-node').dataset.path`);
-    assert(hit,'amplitude search hit');await click(row(hit)+' > .tree-val');
+    assert(hit,'amplitude search hit');
+    if (!baseline) {
+        await check("document.querySelector('#sm-typeahead').classList.contains('sm-typeahead-tree')",'tree typeahead participates in layout');
+        await check(`(()=>{const a=document.querySelector('#sm-typeahead').getBoundingClientRect(),b=document.querySelector(${J(tree)}).getBoundingClientRect();return a.bottom<=b.top+1})()`,'suggestions never cover tree rows');
+        const pos=await p.ev(`(()=>{const e=document.querySelector(${J(row(hit)+' > .tree-val')});e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return [r.x+r.width/2,r.y+r.height/2]})()`);
+        await p.send('Input.dispatchMouseEvent',{type:'mousePressed',x:pos[0],y:pos[1],button:'left',clickCount:1});
+        await check("document.querySelector('#sm-typeahead').hidden",'outside pointerdown dismisses typeahead');
+        await p.ev("jsonTreeSearch('explorer-tree-state','amplitude')");await sleep(250);
+        await p.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:pos[0],y:pos[1],button:'left',clickCount:1});
+        await check(`document.activeElement.getAttribute('aria-label')===${J(hit)}`,'one press remains typeable across pending search');
+    } else await click(row(hit)+' > .tree-val');
     await replace('0.21');await key('Enter');await sleep(150);
     await check(`document.querySelector(${J(tree)})._treeData.qubits.q1.resonator.operations.readout.amplitude===0.21`,'search hit edit stores the typed decimal');
     await shot('search-hit');
@@ -125,12 +135,15 @@ async function peek(paths) {
     await check("document.activeElement.value.startsWith('\"#/')",'pointer edits its literal');
     const pointerPath='qubits.q1.resonator.operations.weird.amplitude';
     const targetPath='qubits.q1.resonator.operations.readout.amplitude';
+    await sleep(200);
+    if (!baseline) await check(`document.activeElement.parentElement.querySelector('.ui-tree-target').textContent.includes('edits '+${J(targetPath)})`,'pointer editor names shared target');
     const beforePointer=await peek([pointerPath,targetPath]);
     await replace('"#/qubits/q1/resonator/operations/const/amplitude"');await key('Enter');await sleep(200);
     const afterPointer=await peek([pointerPath,targetPath]);
     assert.equal(afterPointer[pointerPath],'#/qubits/q1/resonator/operations/const/amplitude','server stores pointer text at its own leaf');
     assert.equal(afterPointer[targetPath],beforePointer[targetPath],'server leaves original pointer target untouched');
     checks.push('pointer server check leaves target untouched');
+    if (!baseline) await check(`(()=>{const e=document.activeElement.parentElement,h=e.querySelector('.ui-tree-target'),r=e.closest('.tree-row').querySelector('.tree-row-actions');return h.getBoundingClientRect().top>=document.activeElement.getBoundingClientRect().bottom && (!r || getComputedStyle(r).display==='none')})()`,'pointer target hint has its own unobstructed line');
     await shot('pointer');
     if(!baseline) {
         await p.ev("window.__treeCommitOnLeave=false");
@@ -145,6 +158,10 @@ async function peek(paths) {
         await p.ev(`htmx.ajax('GET','/explorer',{target:'#table-pane',swap:'innerHTML'})`);
         await wait(`!!document.querySelector(${J(tree)})?._treeData`);
         await check("document.activeElement.value==='0.777'",'OFF draft survives full pane replacement');
+        await check(`document.querySelector(${J(tree+' > .ui-tree-drafts')}).textContent==='1 draft'`,'draft header counts current draft');
+        await p.ev("jsonTreeCollapseAll('explorer-tree-state')");
+        await click(tree+' > .ui-tree-drafts');
+        await check("document.activeElement.value==='0.777'",'draft header jumps into collapsed branch');
         await shot('off-dirty');
         const outline=await p.ev(`getComputedStyle(document.activeElement.parentElement).outlineStyle`);
         assert.equal(outline,'dashed','draft has a distinct dashed outline');
@@ -219,6 +236,68 @@ async function peek(paths) {
         assert.deepEqual(await peek(selected),beforeOccurrence,'one undo restores occurrence batch on server');
         checks.push('Cmd+D batch and grouped undo verified through server peek');
         await shot('find-occurrence');
+        await reveal('qubits.q1.extras.value_001');
+        await replace('1234567890123');await key('Enter');await sleep(150);
+        await check("document.activeElement.value==='1234567890123'",'long number input stays ungrouped after commit');
+        await sleep(200);
+        await check("document.activeElement.clientWidth>=document.activeElement.scrollWidth",'long number fits beside type chip');
+        await p.ev(`document.querySelector(${J(row('qubits.q1.extras.value_001'))}).scrollIntoView({block:'center'})`);await sleep(100);
+        await p.ev("document.documentElement.setAttribute('data-theme','light')");await shot('long-light');
+        await p.ev("document.documentElement.setAttribute('data-theme','dark')");await shot('long-dark');
+    }
+    if (!baseline) {
+        // Auto-save: leaving the tab or the page commits the open editor.
+        await p.ev("window.__treeCommitOnLeave=true");
+        const stored=async v=>(await peek(['qubits.q1.extras.value_010']))['qubits.q1.extras.value_010']===v;
+        await reveal('qubits.q1.extras.value_010');
+        await replace('0.611');
+        const other=await open('about:blank');
+        await other.send('Page.bringToFront');           // this tab becomes hidden
+        for(let i=0;i<100 && !(await stored(0.611));i++) await sleep(50);
+        assert(await stored(0.611),'switching to another tab commits the typed value');
+        checks.push('tab hidden commits');console.log('ok - tab hidden commits');
+        await p.send('Page.bringToFront');await sleep(200);
+        await reveal('qubits.q1.extras.value_010');
+        await replace('0.622');
+        await p.send('Emulation.setFocusEmulationEnabled',{enabled:false});
+        await p.ev("window.dispatchEvent(new FocusEvent('blur'))");
+        for(let i=0;i<100 && !(await stored(0.622));i++) await sleep(50);
+        assert(await stored(0.622),'window blur commits the typed value');
+        checks.push('window blur commits');console.log('ok - window blur commits');
+        await other.close();
+        await reveal('qubits.q1.extras.value_010');
+        await replace('0.633');
+        await click('#sidebar a[hx-get="/bulk"]');
+        for(let i=0;i<100 && !(await stored(0.633));i++) await sleep(50);
+        assert(await stored(0.633),'navigating away commits the typed value');
+        checks.push('navigation commits');console.log('ok - navigation commits');
+        await click('#sidebar a[hx-get="/explorer"]');
+        await wait(`!!document.querySelector(${J(tree)})?._treeData`);
+    }
+    if (!baseline) {
+        // D2: two windows on one chip. B renders its tray, A commits another
+        // edit, B presses Apply: the live files must not receive A's edit.
+        const base='http://127.0.0.1:'+(process.env.SM_PORT||5631);
+        const b=await open(base+'/explorer');
+        await sleep(500);
+        for (let i=0;i<200 && !(await b.ev("!!document.getElementById('pending-tray')"));i++) await sleep(50);
+        await b.ev("window.__asked=[];window.confirm=m=>{window.__asked.push(m);return false};");
+        const seenB=await b.ev("document.getElementById('pending-tray').getAttribute('data-change-count')");
+        const marker=0.4242421;
+        const wrote=await p.ev(`fetch('/field/edit',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'dot_path=qubits.q1.extras.value_007&value=${marker}'}).then(r=>r.status)`);
+        assert.equal(wrote,200,'window A commits an edit');
+        const reply=await b.ev(`new Promise(res=>{const f=window.fetch;window.fetch=function(u,o){const pr=f.apply(this,arguments);if(String(u).indexOf('/state/sync')===0||String(u).indexOf('/state/apply-to-live')===0){window.__d2body=o&&o.body;pr.then(r=>r.clone().text().then(t=>res({status:r.status,body:String(o&&o.body),text:t.slice(0,300)})));}return pr;};window.doStateSync('apply');setTimeout(()=>res(null),15000);})`);
+        assert(reply,'window B posted its apply');
+        assert(new RegExp('seen_changes='+seenB+'(&|$)').test(reply.body),'B declares the count it rendered ('+seenB+'): '+reply.body);
+        assert.equal(reply.status,409,'B apply is refused: '+reply.text);
+        assert(/unseen_changes/.test(reply.text) && /value_007/.test(reply.text),'refusal names A edit: '+reply.text);
+        if (process.env.SM_RIG) {
+            const live=fs.readFileSync(path.join(process.env.SM_RIG,'copy','state.json'),'utf8');
+            assert(!live.includes(String(marker)),'live state.json on disk does not hold A edit');
+        }
+        checks.push('D2 second window apply refused, live untouched');
+        console.log('ok - D2 second window apply refused, live untouched');
+        await b.close();
     }
     const allLongTasks=await p.ev('window.__keyTasks');
     for(let i=0;i<samples.length;i++) samples[i].longTasks=allLongTasks.filter(t=>t.start>=samples[i].start && (i===samples.length-1 || t.start<samples[i+1].start));

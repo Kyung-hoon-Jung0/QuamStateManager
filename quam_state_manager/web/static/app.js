@@ -4600,12 +4600,9 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-/* QA liveedit-r2-06: a grid row commit that is still in flight. Pressing the
-   tray's Apply blurs the typed cell first, and that click-away commit adds a
-   change-log entry AFTER doStateSync has declared what the tray showed -- so
-   the docs/179 gate refused the user's own edit as "another window's" (or,
-   if the apply won the race, applied without it). The grids register the
-   commit here; doStateSync waits for it, then declares the tray as it is. */
+/* Wait for a click-away grid commit before applying. Capture the rendered
+   view at the press: a commit response may include another window's edits,
+   so reading its new tray must not silently expand this press's consent. */
 window._pendingGridCommits = window._pendingGridCommits || [];
 window._trackGridCommit = function (p) {
     if (!p || typeof p.then !== "function") return p;
@@ -4694,6 +4691,15 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // `opts` (QA liveedit-r2-05): {informed} -- the presser is looking at the
     // live values (the review modal), so no same-field collision check;
     // {ackCollision} -- the user answered THAT question (its own token).
+    // Freeze this press's rendered view before waiting for another writer.
+    if (!opts || !opts.seenView) {
+        opts = Object.assign({}, opts);
+        var viewTray = document.getElementById('pending-tray');
+        var v = viewTray && viewTray.getAttribute('data-change-count');
+        opts.seenView = { count: (v === null || v === undefined || v === "") ? "0" : v,
+            sig: viewTray && viewTray.getAttribute('data-change-sig') || '',
+            paths: window.trayPendingPaths ? window.trayPendingPaths(viewTray) : null };
+    }
     mode = mode || "discard";
     var _pendCommits = (window._pendingGridCommits || []).slice();
     if (_pendCommits.length) {
@@ -4721,6 +4727,26 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     + "and press Apply again.", "warning");
                 calls = calls.filter(function (a) { return a[0] !== "apply"; });
             }
+            // The view frozen at the press, plus exactly what THIS window's own
+            // click-away commits wrote -- never the tray those commits brought
+            // back, which may carry another window's edits (D2 / r2-06).
+            var own = [], ownN = 0;
+            rs.forEach(function (r) {
+                var res = r && Array.isArray(r.results) ? r.results : null;
+                if (!res) { ownN += 1; return; }
+                res.forEach(function (x) {
+                    if (x && x.applied !== false) { ownN += 1; if (x.dot_path) own.push(String(x.dot_path)); }
+                });
+            });
+            calls.forEach(function (a) {
+                var sv = a[4] && a[4].seenView;
+                if (!sv) return;
+                a[4] = Object.assign({}, a[4]);
+                if (sv.paths && sv.paths.length + own.length) {
+                    a[4].seenPaths = sv.paths.concat(own);
+                }
+                a[4].seenView = { count: String((parseInt(sv.count, 10) || 0) + ownN), sig: '', paths: sv.paths };
+            });
             _runSyncPressesInTurn(calls);
         });
         return;
@@ -4759,18 +4785,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // window that were never on this one. Sending the count the user actually
     // saw is what lets the server tell the difference between "apply my three
     // edits" and "apply three edits plus one you have never seen".
-    var _seen = (function () {
-        var t = document.getElementById("pending-tray");
-        var v = t && t.getAttribute("data-change-count");
-        return (v === null || v === undefined || v === "") ? null : v;
-    })();
-    // docs/179: the SET, not just how many. Two windows can hold the same
-    // NUMBER of pending edits while holding different ones, and the count gate
-    // waves that through.
-    var _seenSig = (function () {
-        var t = document.getElementById("pending-tray");
-        return (t && t.getAttribute("data-change-sig")) || "";
-    })();
+    var _seen = opts.seenView.count;
+    var _seenSig = opts.seenView.sig;
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
@@ -11154,6 +11170,12 @@ window.clearDetailPanelSearch = function(btnEl) {
                 valEl.classList.add("ui-tree-value");
                 valEl.tabIndex = -1;
                 (function(el, p) {
+                    el.addEventListener("pointerdown", function(e) {
+                        if (e.button !== 0 || e.target.closest('input')) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        _makeValueEditable(el, p);
+                    });
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
                 })(valEl, path);
             }
@@ -11162,6 +11184,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // hover carries the full text after the action hint.
             if (typeof shown === "string" && shown.length > 40) valEl.title += "\n" + shown;
             row.appendChild(valEl);
+            if (_isPointer(shown)) _treeQueuePointer(valEl, path);
 
             // A null leaf is the common "not yet set" field (e.g. exponential_filter):
             // offer the SAME multi-line JSON editor as containers so a list / matrix /
@@ -11489,7 +11512,16 @@ window.clearDetailPanelSearch = function(btnEl) {
      * from BEFORE the edit (real-Chrome check, 2026-08-28). Dot-form numeric
      * segments index lists, exactly as _buildFlatIndex walks them. */
     function _treeModelSet(container, dotPath, value) {
-        if (container) container._peekCache = null;
+        if (container) {
+            container._peekCache = null;
+            clearTimeout(container._pointerRefresh);
+            container._pointerRefresh = setTimeout(function () {
+                container.querySelectorAll('.tree-val-pointer').forEach(function (el) {
+                    var node = el.closest('.tree-node');
+                    if (node) _treeQueuePointer(el, node.dataset.path);
+                });
+            }, 40);
+        }
         if (!container || container._treeData == null || !dotPath) return false;
         var segs = String(dotPath).split(".");
         var cur = container._treeData;
@@ -11556,6 +11588,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             el.classList.toggle("ui-tree-dirty", dirty);
             el.classList.toggle("tree-val-editing", dirty);
             if (!el.contains(input)) el.textContent = dirty ? input.value : el._treeDisplay;
+            _treeSaveDrafts(tree);
         }
     }
 
@@ -12097,6 +12130,7 @@ window.clearDetailPanelSearch = function(btnEl) {
     var _treeEditMemory = new Map();
     var _treeDraftStorage = 'quam_tree_drafts_v1';
     function _treeSaveDrafts(tree) {
+        _treeDraftHeader(tree);
         try {
             var all = JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}');
             var entries = [];
@@ -12123,9 +12157,24 @@ window.clearDetailPanelSearch = function(btnEl) {
     document.addEventListener('htmx:beforeSwap', function (e) {
         if (e.defaultPrevented || e.detail && e.detail.shouldSwap === false) return;
         var target = e.detail && e.detail.target;
-        if (target && target.id === 'table-pane' && window.__treeCommitOnLeave === false)
-            window.TreeInlineEdit.settle(target);
+        // Auto-save: leaving the page commits (ON) or parks (OFF) every editor.
+        if (target && target.id === 'table-pane') window.TreeInlineEdit.settle(target);
     }, true);
+    /* Auto-save like an editor: leaving the field is not the only way to
+       leave. Switching to another app (window blur), hiding the tab and
+       leaving the page commit every open tree editor at once. A refused value
+       stays a draft with its reason (flush keeps it). OFF never commits. */
+    function _treeAutoCommitAll() {
+        if (window.__treeCommitOnLeave === false) return;
+        document.querySelectorAll('.json-tree .ui-tree-value.ui-tree-mounted').forEach(function (el) {
+            if (typeof el._flushEdit === 'function') el._flushEdit();
+        });
+    }
+    window.addEventListener('blur', _treeAutoCommitAll);
+    window.addEventListener('pagehide', _treeAutoCommitAll);
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') _treeAutoCommitAll();
+    });
     var _treeDataIds = new WeakMap(), _treeDataId = 0;
     function _treeEditSource(tree, data, options) {
         var marker = tree.closest('[data-tree-source], [data-source], [data-ref], [data-ts]');
@@ -12151,6 +12200,7 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
     function _treeLiteral(el) {
         var v = el.dataset.editVal;
+        if (el.classList.contains('tree-val-number')) v = window.NumberInput.strip(v);
         return el.classList.contains("tree-val-string") || el.classList.contains("tree-val-pointer")
             ? JSON.stringify(String(v)) : String(v);
     }
@@ -12233,15 +12283,86 @@ window.clearDetailPanelSearch = function(btnEl) {
                     chip.textContent = expected.type + " \u00b7 " + expected.source;
                     el.appendChild(chip);
                 }
-                var resolved = d.resolved && d.resolved[path];
-                if (resolved && resolved.is_pointer) {
-                    var preview = document.createElement("span");
-                    preview.className = "ui-tree-resolved";
-                    preview.textContent = " \u2192 " + (resolved.resolvable ? _formatValue(resolved.resolved_value) : "unresolved");
-                    el.appendChild(preview);
-                }
+                _treePointerPreview(el, d.resolved && d.resolved[path]);
             });
         }, 160);
+    }
+    function _treePointerPreview(el, resolved) {
+        el._treeResolved = resolved;
+        el.querySelectorAll('.ui-tree-resolved, .ui-tree-target').forEach(function (c) { c.remove(); });
+        if (resolved && resolved.is_pointer) {
+            var preview = document.createElement('span');
+            preview.className = 'ui-tree-resolved';
+            preview.textContent = ' \u2192 ' + (resolved.resolvable ? _formatValue(resolved.resolved_value) : 'unresolved');
+            el.appendChild(preview);
+            if (el.querySelector('.ui-tree-editor') && resolved.resolvable) {
+                var hint = document.createElement('span');
+                hint.className = 'ui-tree-target';
+                hint.textContent = ' edits ' + resolved.resolved_path + ' (shared by ' + (resolved.shared_by || []).length + ')';
+                el.appendChild(hint);
+            }
+        }
+    }
+    function _treeQueuePointer(el, path) {
+        // Batch only materialised pointer rows; use the server's pointer resolver.
+        setTimeout(function () {
+            var tree = el.closest('.json-tree');
+            if (!tree || !tree._crudEnabled || !el.isConnected) return;
+            var queue = tree._pointerQueue || (tree._pointerQueue = new Map());
+            queue.set(path, el);
+            clearTimeout(tree._pointerTimer);
+            tree._pointerTimer = setTimeout(function () {
+                var rows = Array.from(queue.entries()); queue.clear();
+                // Keep request URLs bounded even after expanding a large tree.
+                for (var i = 0; i < rows.length; i += 100) (function (batch) {
+                    var context = tree._editContext, source = tree._editSource;
+                    var raw = batch.map(function (r) { return r[1].dataset.editVal; });
+                    fetch('/field/peek?' + batch.map(function (r) { return 'dot_path=' + encodeURIComponent(r[0]); }).join('&'))
+                        .then(function (r) { return r.json(); }).then(function (d) {
+                            if (!d.ok || tree._editContext !== context || tree._editSource !== source) return;
+                            batch.forEach(function (r, index) {
+                                if (r[1].isConnected && r[1].dataset.editVal === raw[index])
+                                    _treePointerPreview(r[1], d.resolved && d.resolved[r[0]]);
+                            });
+                        }).catch(function () {});
+                })(rows.slice(i, i + 100));
+            }, 0);
+        }, 0);
+    }
+    function _treeDraftHeader(tree) {
+        if (!tree._crudEnabled) return;
+        var count = 0;
+        if (tree._editDrafts) tree._editDrafts.forEach(function (s) {
+            if (s.input.value !== s.input.defaultValue) count++;
+        });
+        var button = tree.querySelector(':scope > .ui-tree-drafts');
+        if (!button) {
+            button = document.createElement('button');
+            button.type = 'button'; button.className = 'btn-sm outline ui-tree-drafts';
+            button.dataset.draftsFor = tree.id;
+            button.onclick = function () {
+                var paths = [];
+                if (tree._editDrafts) tree._editDrafts.forEach(function (s, p) {
+                    if (s.input.value !== s.input.defaultValue) paths.push(p);
+                });
+                if (!paths.length) return;
+                var current = tree._editor && tree._editor.path;
+                var next = paths[(paths.indexOf(current) + 1) % paths.length];
+                _treeExpandDraft(tree, next);
+                var el = _treeFindValue(tree, next);
+                if (el) {
+                    for (var n = el.closest('.tree-node'); n && tree.contains(n); n = n.parentElement.closest('.tree-node')) n.classList.remove('tree-search-hidden');
+                    _makeValueEditable(el, next);
+                    if (el.scrollIntoView) el.scrollIntoView({block:'nearest'});
+                }
+            };
+            tree.prepend(button);
+        }
+        button.textContent = count + (count === 1 ? ' draft' : ' drafts');
+        button.disabled = count === 0;
+        button.hidden = count === 0;
+        button.title = count ? 'Jump to the next unsaved draft' : '';
+
     }
     function _makeValueEditable(el, path) {
         var tree = el.closest(".json-tree");
@@ -12276,6 +12397,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             el.classList.toggle("ui-tree-dirty", changed);
             el.classList.toggle("tree-val-editing", changed);
             input.size = Math.max(10, input.value.length + 2);
+            input.style.minWidth = input.size + "ch";
             if (changed || state.pending) drafts.set(path, state);
             else drafts.delete(path);
             if (drafts.size) {
@@ -12285,7 +12407,10 @@ window.clearDetailPanelSearch = function(btnEl) {
                 _treeEditMemory.set(_treeEditKey(tree), { drafts: drafts, saved: saved });
             } else _treeEditMemory.delete(_treeEditKey(tree));
             _treeSaveDrafts(tree);
-            if (tree._editor !== state) el.textContent = changed ? input.value : el._treeDisplay;
+            if (tree._editor !== state) {
+                el.textContent = changed ? input.value : el._treeDisplay;
+                if (!changed && el.classList.contains('tree-val-pointer')) _treeQueuePointer(el, path);
+            }
         }
         function flush() {
             if (tree._editContext !== state.context || tree._editSource !== state.source) return null;
@@ -12300,7 +12425,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 var current = _treeFindValue(tree, path);
                 if (current) el = state.el = current;
                 var stored = _treeModelGet(tree, path, el.dataset.editVal);
-                input.defaultValue = typeof stored === "string" ? JSON.stringify(stored) : _formatValue(stored);
+                input.defaultValue = typeof stored === "string" ? JSON.stringify(stored)
+                    : typeof stored === "number" ? String(stored) : _formatValue(stored);
                 if (input.value === sent) input.value = input.defaultValue;
                 if (tree._editor === state) _treePeek(tree, state);
                 dirty();
@@ -12324,6 +12450,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             el.appendChild(input);
             el.classList.add("ui-tree-mounted");
             el._flushEdit = flush;
+            _treePointerPreview(el, el._treeResolved);
             _treePeek(tree, state);
             dirty();
             input.focus();
@@ -12365,6 +12492,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (tree._editor === state && document.activeElement !== input && !state.pending) state.leave();
             }, 100);
         });
+        _treePointerPreview(el, el._treeResolved);
         _treePeek(tree, state);
         dirty();
         input.focus();
@@ -12533,6 +12661,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 return _smFetch("/field/edit", {
                     method: "POST",
                     headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                    // keepalive: an auto-commit sent from pagehide still lands
+                    keepalive: true,
                     body: b2.toString()
                 }).then(function(resp) { return resp.json(); });
             };
@@ -12620,6 +12750,12 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (data.warning && window.showToast) window.showToast(data.warning, "warning");
                 if (data.resolved_path && data.resolved_path !== dotPath) {
                     _paintTreeLeaf(ownerTree, data.resolved_path, data.stored);
+                    if (window.showToast) window.showToast('Edited ' + data.resolved_path, 'success');
+                    var target = _treeFindValue(ownerTree, data.resolved_path);
+                    if (target) {
+                        target.classList.add('leu-flash');
+                        setTimeout(function () { target.classList.remove('leu-flash'); }, 900);
+                    }
                     data.stored = data.raw_value;
                     data.stored_kind = typeof data.raw_value;
                 }
@@ -13967,6 +14103,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         }
         _treeResume(container, savedEditor);
+        _treeDraftHeader(container);
     };
 
     /* QA JT-17: the search memo (_lastSearchQuery) means "the tree shows q's
