@@ -99,6 +99,15 @@ function key(w, target, k, mods) {
         ok(eds[0].dark === false, 'theme change follows');
     }
 
+    // 1b the default QM theme is a dark theme: the editor must be dark on it
+    {
+        const { w, responses, eds } = world('qm');
+        responses.push({ status: 200, d: SOURCE });
+        await w.TreeJsonEdit.open({ tab: 'state', path: 'qubits.q1' });
+        await settle();
+        ok(eds[0].dark === true, 'default qm theme -> dark editor');
+    }
+
     // 2 parse error: marks + one line above, and Save writes nothing
     {
         const { w, calls, responses, eds } = world();

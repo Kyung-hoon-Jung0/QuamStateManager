@@ -12,7 +12,8 @@
     var S = null;                 // the open session
 
     function isDark() {
-        return document.documentElement.getAttribute("data-theme") === "dark";
+        // SM themes are light, dark and qm (the default, a dark theme): only "light" is light.
+        return (document.documentElement.getAttribute("data-theme") || "qm") !== "light";
     }
     function el(tag, cls, text) {
         var e = document.createElement(tag);
