@@ -15569,6 +15569,51 @@ def field_fsp_compensation():
 # -- Edit as JSON (D-22..D-28) -------------------------------------------
 
 _JSON_EDIT_LARGE_BYTES = 2 * 1024 * 1024    # D-22: a bigger whole file warns first
+_JSON_EDIT_OPENS_MAX = 32                   # opened texts remembered for a re-diff (D-28)
+
+
+def _json_edit_loads(text: str):
+    """``json.loads`` that refuses NaN / Infinity / -Infinity (not JSON, D-24).
+
+    The refusal is a ``json.JSONDecodeError`` so it carries line and column."""
+    def _const(name):
+        raise ValueError(name)
+    try:
+        return json.loads(text, parse_constant=_const)
+    except json.JSONDecodeError:
+        raise
+    except ValueError as exc:
+        name = str(exc)
+        pos = _json_edit_const_pos(text, name)
+        raise json.JSONDecodeError(f"{name} is not valid JSON", text, pos) from None
+
+
+def _json_edit_const_pos(text: str, name: str) -> int:
+    """Offset of the first bare *name* token (outside strings) in *text*."""
+    i, n, in_str = 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif text.startswith(name, i):
+            return i
+        i += 1
+    return 0
+
+
+def _json_edit_opens(store) -> dict:
+    """{token: sha256 of the served text} for this store's open editors."""
+    reg = getattr(store, "_json_edit_opens", None)
+    if reg is None:
+        reg = {}
+        store._json_edit_opens = reg
+    return reg
 
 
 def _json_edit_doc(store, tab: str, path: str):
@@ -15596,7 +15641,14 @@ def tree_json_edit_source():
             return jsonify(ok=False, error=str(exc)), 404
         text = json.dumps(doc, indent=2, ensure_ascii=False)
         seq = store.mutation_seq
-    return jsonify(ok=True, path=path, tab=tab, text=text, mutation_seq=seq,
+        # D-28: the re-diff base is what WE served, never what a client claims
+        import secrets
+        token = secrets.token_hex(12)
+        opens = _json_edit_opens(store)
+        opens[token] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        while len(opens) > _JSON_EDIT_OPENS_MAX:
+            opens.pop(next(iter(opens)))
+    return jsonify(ok=True, path=path, tab=tab, text=text, mutation_seq=seq, open_token=token,
                    bytes=len(text.encode("utf-8")),
                    large=len(text.encode("utf-8")) > _JSON_EDIT_LARGE_BYTES)
 
@@ -15694,7 +15746,7 @@ def tree_json_edit_save():
     if guard is not None:
         return guard
     try:
-        new_doc = json.loads(text)
+        new_doc = _json_edit_loads(text)
     except ValueError as exc:
         return jsonify(ok=False, parse_error=str(exc),
                        line=getattr(exc, "lineno", None), col=getattr(exc, "colno", None),
@@ -15703,8 +15755,14 @@ def tree_json_edit_save():
     rebase = payload.get("rebase") is True
     base_doc = None
     if rebase:
+        base_text = str(payload.get("base_text") or "")
+        served = _json_edit_opens(store).get(str(payload.get("open_token") or ""))
+        if served is None or served != hashlib.sha256(base_text.encode("utf-8")).hexdigest():
+            return jsonify(ok=False, error="The re-diff base is not the text this editor "
+                                           "was opened with; reopen the editor. "
+                                           "Nothing was written."), 409
         try:
-            base_doc = json.loads(str(payload.get("base_text") or ""))
+            base_doc = _json_edit_loads(base_text)
         except ValueError:
             raise BadBody("'base_text' must be the JSON the editor opened with")
     with store._lock:
@@ -15720,11 +15778,12 @@ def tree_json_edit_save():
         if path == "" and not isinstance(new_doc, dict):
             return jsonify(ok=False, error="the whole file must stay a JSON object"), 400
         refused = []
+        issues: list = []
         if rebase:
             # D-28 re-diff: only the user's OWN changes (opened text -> edited
             # text), applied on the new base; a leaf the other edit moved too
             # is refused rather than overwritten
-            ops = json_diff.edit_ops(base_doc, new_doc, path)
+            ops = json_diff.edit_ops(base_doc, new_doc, path, issues)
             for op in ops:
                 rel = op["path"][len(path) + 1:] if path else op["path"]
                 was = _json_edit_at(base_doc, rel)
@@ -15734,7 +15793,10 @@ def tree_json_edit_save():
                                     "error": "changed by another edit since this editor "
                                              "opened; reopen to see it"})
         else:
-            ops = json_diff.edit_ops(copy.deepcopy(old_doc), new_doc, path)
+            ops = json_diff.edit_ops(copy.deepcopy(old_doc), new_doc, path, issues)
+        for r in issues:                    # the dot grammar cannot spell these
+            if not any(x["path"] == r["path"] for x in refused):
+                refused.append(r)
         for op in ops:
             if any(r["path"] == op["path"] for r in refused):
                 continue
@@ -15777,7 +15839,40 @@ def tree_json_edit_save():
     batch = {"updates": updates, "expect_seq": seq, "group": "new",
              "type_fix": "keep", "expect_chip": payload.get("expect_chip") or ""}
     resp = _field_edit_batch_impl(batch)
+    relinked = [u["dot_path"] for u in updates if u.get("relink")]
+    if relinked and getattr(resp, "status_code", 200) == 200 and resp.is_json:
+        warnings = _json_edit_dangling(store, relinked)
+        if warnings:
+            body = resp.get_json()
+            body["warnings"] = warnings
+            resp.set_data(json.dumps(body))
     return resp
+
+
+def _json_edit_dangling(store, paths) -> list[dict]:
+    """A relinked pointer that resolves to nothing is saved (as the
+    tree saves it) but named, one warning per path."""
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+    out = []
+    with store._lock:
+        for p in paths:
+            try:
+                raw = store.get_value(p)
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            if not is_pointer(raw):
+                continue
+            try:
+                ok = resolve_field_target(store.merged, p)["resolvable"]
+            except Exception:  # noqa: BLE001 - a warning, never a failure
+                ok = False
+            if not ok:
+                msg = f"points to nothing: {raw}"
+                if is_self_ref(raw):
+                    msg += " (unless the component computes it at run time)"
+                out.append({"path": p, "warning": msg})
+    return out
 
 
 def _same_leaf_value(old, new) -> bool:

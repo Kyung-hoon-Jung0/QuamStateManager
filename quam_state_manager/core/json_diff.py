@@ -298,7 +298,7 @@ def _same(a: Any, b: Any) -> bool:
     return a == b
 
 
-def edit_ops(old: Any, new: Any, prefix: str = "") -> list[dict]:
+def edit_ops(old: Any, new: Any, prefix: str = "", issues: list | None = None) -> list[dict]:
     """The writes that turn *old* into *new*, in the tree's leaf grammar.
 
     Each op is ``{"op": "set"|"create"|"delete", "path": dot_path, "value"?}``.
@@ -307,31 +307,50 @@ def edit_ops(old: Any, new: Any, prefix: str = "") -> list[dict]:
     recurses per index (``a.b.3``); a list whose length changed is ONE set of
     the whole list (an index cannot be created or deleted without moving its
     siblings). Anything else that differs is a set. Key ORDER is not a change.
+
+    A dot path cannot spell a key that contains ``.``, and the edit door does
+    not add or remove keys inside a list element. When *issues* is a list,
+    every op the dot grammar cannot carry is appended to it as
+    ``{"path", "op", "error"}`` (the op is still returned).
     """
     ops: list[dict] = []
 
-    def walk(a: Any, b: Any, path: str) -> None:
+    def emit(op: dict, dotted: bool, in_list: bool) -> None:
+        ops.append(op)
+        if issues is None:
+            return
+        if dotted:
+            issues.append({"path": op["path"], "op": op["op"],
+                           "error": "keys containing '.' cannot be edited here; use the tree"})
+        elif in_list and op["op"] in ("create", "delete"):
+            issues.append({"path": op["path"], "op": op["op"],
+                           "error": "a key inside a list element cannot be added or removed "
+                                    "here; replace the whole list or use the tree"})
+
+    def walk(a: Any, b: Any, path: str, dotted: bool, in_list: bool) -> None:
         if isinstance(a, dict) and isinstance(b, dict):
             for k in a:
                 if k not in b:
-                    ops.append({"op": "delete", "path": f"{path}.{k}" if path else str(k)})
+                    emit({"op": "delete", "path": f"{path}.{k}" if path else str(k)},
+                         dotted or "." in str(k), in_list)
             for k, v in b.items():
                 sub = f"{path}.{k}" if path else str(k)
+                dk = dotted or "." in str(k)
                 if k not in a:
-                    ops.append({"op": "create", "path": sub, "value": v})
+                    emit({"op": "create", "path": sub, "value": v}, dk, in_list)
                 else:
-                    walk(a[k], v, sub)
+                    walk(a[k], v, sub, dk, in_list)
             return
         if isinstance(a, list) and isinstance(b, list) and len(a) == len(b) and path:
             for i, (x, y) in enumerate(zip(a, b)):
-                walk(x, y, f"{path}.{i}")
+                walk(x, y, f"{path}.{i}", dotted, True)
             return
         if isinstance(a, (dict, list)) or isinstance(b, (dict, list)):
             if a != b or type(a) is not type(b):
-                ops.append({"op": "set", "path": path, "value": b})
+                emit({"op": "set", "path": path, "value": b}, dotted, in_list)
             return
         if not _same(a, b):
-            ops.append({"op": "set", "path": path, "value": b})
+            emit({"op": "set", "path": path, "value": b}, dotted, in_list)
 
-    walk(old, new, prefix)
+    walk(old, new, prefix, False, False)
     return ops

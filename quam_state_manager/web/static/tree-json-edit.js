@@ -182,7 +182,7 @@
         say("Saving…");
         var body = {tab: S.tab, path: S.path, text: text, base_seq: S.seq,
                     expect_chip: window.__chipToken || ""};
-        if (rebase) { body.rebase = true; body.base_text = S.initial; }
+        if (rebase) { body.rebase = true; body.base_text = S.initial; body.open_token = S.token || ""; }
         return fetch("/tree/json-edit/save", {
             method: "POST", headers: {"Content-Type": "application/json"},
             body: JSON.stringify(body)
@@ -196,8 +196,10 @@
                 var n = (d.results || []).length;
                 afterWrite(d);
                 close(true);
-                if (window.showToast) window.showToast(n ? "Saved " + n + " change" + (n === 1 ? "" : "s")
-                    + " in one undo step" : "Nothing changed", "info");
+                var warn = (d.warnings || []).map(function (w) { return w.path + " " + w.warning; });
+                if (window.showToast) window.showToast((n ? "Saved " + n + " change" + (n === 1 ? "" : "s")
+                    + " in one undo step" : "Nothing changed")
+                    + (warn.length ? ". Warning: " + warn.join("; ") : ""), warn.length ? "warning" : "info");
                 return d;
             }
             if (d.moved) {
@@ -288,7 +290,7 @@
         if (tree && tree.parentNode) tree.parentNode.insertBefore(panel, tree);
         else document.body.appendChild(panel);
         S = {panel: panel, msg: msg, ask: ask, list: list, save: saveB, rebase: rebaseB,
-             tab: d.tab, path: d.path || "", seq: d.mutation_seq, initial: d.text,
+             tab: d.tab, path: d.path || "", seq: d.mutation_seq, initial: d.text, token: d.open_token || "",
              back: opts.back || null, busy: false, moved: false};
         S.ed = window.SmCodeMirror.create(host, {
             doc: d.text, dark: isDark(), lint: true,

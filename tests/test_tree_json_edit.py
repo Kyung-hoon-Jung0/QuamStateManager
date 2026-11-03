@@ -220,7 +220,8 @@ class TestRebase:
         doc["T1"] = 9.0e-5
         r = c.post("/tree/json-edit/save", json={
             "path": "qubits.q1", "text": json.dumps(doc), "rebase": True,
-            "base_text": o["text"], "base_seq": o["mutation_seq"]})
+            "base_text": o["text"], "base_seq": o["mutation_seq"],
+            "open_token": o["open_token"]})
         assert r.status_code == 200, r.get_json()
         assert _peek(c, "qubits.q1.T1")["value"] == 9.0e-5
         assert _peek(c, "qubits.q1.label")["value"] == "b"     # the other edit kept
@@ -234,10 +235,126 @@ class TestRebase:
         doc["T1"] = 9.0e-5
         r = c.post("/tree/json-edit/save", json={
             "path": "qubits.q1", "text": json.dumps(doc), "rebase": True,
-            "base_text": o["text"]})
+            "base_text": o["text"], "open_token": o["open_token"]})
         d = r.get_json()
         assert r.status_code == 409 and [x["path"] for x in d["refused"]] == ["qubits.q1.label"]
         assert _peek(c, "qubits.q1.T1")["value"] == 2.0e-5
+
+
+class TestReviewFixes:
+    """Review round over Stage B: each pin was seen RED with its fix reverted."""
+
+    def test_new_dotted_key_is_refused_with_a_reason(self, env):
+        c = env["client"]
+        o = _open(c)
+        doc = json.loads(o["text"])
+        doc["a.b"] = 1
+        doc["T1"] = 3.0e-5
+        r = _save(c, doc, o)
+        d = r.get_json()
+        assert r.status_code == 409, d
+        row = [x for x in d["refused"] if x["path"] == "qubits.q1.a.b"]
+        assert row and "'.'" in row[0]["error"] and "use the tree" in row[0]["error"]
+        assert not env["ctx"]["store"].change_log
+
+    def test_existing_dotted_key_edit_is_refused_plainly(self, env):
+        c = env["client"]
+        store = env["ctx"]["store"]
+        store.merged["qubits"]["q1"]["x.y"] = 1
+        store.state["qubits"]["q1"]["x.y"] = 1
+        o = _open(c)
+        doc = json.loads(o["text"])
+        doc["x.y"] = 2
+        d = _save(c, doc, o).get_json()
+        assert [x["path"] for x in d["refused"]] == ["qubits.q1.x.y"]
+        assert "'.'" in d["refused"][0]["error"]
+        assert "not found" not in d["refused"][0]["error"]
+
+    def test_new_key_inside_a_list_element_is_refused(self, env):
+        c = env["client"]
+        store = env["ctx"]["store"]
+        store.merged["qubits"]["q1"]["lst"] = [{"a": 1}]
+        store.state["qubits"]["q1"]["lst"] = [{"a": 1}]
+        o = _open(c)
+        doc = json.loads(o["text"])
+        doc["lst"][0]["b"] = 2
+        r = _save(c, doc, o)
+        d = r.get_json()
+        assert r.status_code == 409, d
+        assert [x["path"] for x in d["refused"]] == ["qubits.q1.lst.0.b"]
+        assert "list element" in d["refused"][0]["error"]
+
+    @pytest.mark.parametrize("tok", ["NaN", "Infinity", "-Infinity"])
+    def test_non_json_constants_are_a_parse_error(self, env, tok):
+        c = env["client"]
+        o = _open(c)
+        r = _save(c, None, o, text='{\n "label": ' + tok + '\n}')
+        d = r.get_json()
+        assert r.status_code == 400 and d["parse_error"], d
+        assert d["line"] == 2 and d["col"] == 11
+        assert _peek(c, "qubits.q1.label")["value"] == "a"
+        assert not env["ctx"]["store"].change_log
+
+    def test_batch_relink_on_a_literal_leaf_is_refused(self, env):
+        c = env["client"]
+        r = c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.q1.T1", "value": "#./f_01", "relink": True}]})
+        assert r.status_code == 400, r.get_json()
+        assert env["ctx"]["store"].merged["qubits"]["q1"]["T1"] == 2.0e-5
+        assert not env["ctx"]["store"].change_log
+
+    def test_rebase_refuses_a_base_text_that_was_not_served(self, env):
+        c = env["client"]
+        o = _open(c)
+        c.post("/field/edit", data={"dot_path": "qubits.q1.label", "value": "b"})
+        forged = json.loads(o["text"])
+        forged["T1"] = 9.0e-5                 # claims the base already had it
+        doc = json.loads(o["text"])
+        doc["T1"] = 9.0e-5
+        doc["f_01"] = 6.0e9
+        r = c.post("/tree/json-edit/save", json={
+            "path": "qubits.q1", "text": json.dumps(doc), "rebase": True,
+            "base_text": json.dumps(forged), "open_token": o["open_token"]})
+        assert r.status_code == 409, r.get_json()
+        assert _peek(c, "qubits.q1.f_01")["value"] == 5.0e9
+        r = c.post("/tree/json-edit/save", json={
+            "path": "qubits.q1", "text": json.dumps(doc), "rebase": True,
+            "base_text": o["text"], "open_token": "not-a-token"})
+        assert r.status_code == 409
+        assert _peek(c, "qubits.q1.f_01")["value"] == 5.0e9
+
+    def test_relink_to_nothing_saves_with_a_warning(self, env):
+        c = env["client"]
+        o = _open(c)
+        doc = json.loads(o["text"])
+        doc["alias"] = "#/qubits/q1/nowhere"
+        r = _save(c, doc, o)
+        d = r.get_json()
+        assert r.status_code == 200 and d["ok"], d
+        assert env["ctx"]["store"].merged["qubits"]["q1"]["alias"] == "#/qubits/q1/nowhere"
+        assert [w["path"] for w in d["warnings"]] == ["qubits.q1.alias"]
+        assert "points to nothing" in d["warnings"][0]["warning"]
+
+    def test_relink_that_resolves_has_no_warning(self, env):
+        c = env["client"]
+        o = _open(c)
+        doc = json.loads(o["text"])
+        doc["alias"] = "#./f_01"
+        d = _save(c, doc, o).get_json()
+        assert d["ok"] and not d.get("warnings")
+
+    def test_pulse_structure_change_is_refused_with_the_pulses_page(self, env):
+        c = env["client"]
+        o = _open(c, "qubits.q1.resonator.operations")
+        doc = json.loads(o["text"])
+        doc["new_pulse"] = {"__class__": "quam.components.pulses.SquarePulse",
+                            "amplitude": 0.1, "length": 100}
+        r = _save(c, doc, o, path="qubits.q1.resonator.operations")
+        d = r.get_json()
+        assert r.status_code == 409, d
+        row = [x for x in d["refused"] if x["path"] == "qubits.q1.resonator.operations.new_pulse"]
+        assert row and row[0].get("pulses_page"), d
+        assert not env["ctx"]["store"].change_log
 
 
 # -- the panel, driven against the shipped JS under jsdom --------------------
@@ -269,7 +386,7 @@ def test_panel_selfcheck():
 
 
 @pytest.mark.parametrize("mutation", ["parse", "no_save_on_error", "goto", "ctrls", "esc_dirty",
-                                      "rebase", "large", "one_warn", "dark", "seq", "all_or_nothing_msg"])
+                                      "rebase", "token", "warn", "large", "one_warn", "dark", "seq", "all_or_nothing_msg"])
 def test_panel_mutations(mutation):
     r = _run_panel(mutation)
     assert "mutation target exists" not in r.stderr, r.stderr

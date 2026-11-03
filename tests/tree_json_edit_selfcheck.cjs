@@ -15,7 +15,9 @@ const MUT = {
     goto: ['var line = lineOf(text, S.path, r.path);', 'var line = 1;'],
     ctrls: ['(e.key === "s" || e.key === "S")', '(e.key === "never")'],
     esc_dirty: ['close(false);\n        }\n    }', 'close(true);\n        }\n    }'],
-    rebase: ['if (rebase) { body.rebase = true; body.base_text = S.initial; }', ''],
+    rebase: ['if (rebase) { body.rebase = true; body.base_text = S.initial; body.open_token = S.token || ""; }', ''],
+    token: ['body.open_token = S.token || "";', ''],
+    warn: ['(warn.length ? ". Warning: " + warn.join("; ") : "")', '""'],
     large: ['if (!d.path && d.large) return warnLarge(opts, d);', ''],
     one_warn: ['document.querySelectorAll(".ui-jedit-warn").forEach(function (x) { x.remove(); });', ''],
     dark: ['doc: d.text, dark: isDark(), lint: true,', 'doc: d.text, dark: false, lint: true,'],
@@ -69,7 +71,7 @@ function world(theme) {
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
 async function settle() { for (let i = 0; i < 6; i++) await tick(); }
-const SOURCE = { ok: true, path: 'qubits.q1', tab: 'state', mutation_seq: 7, bytes: 40,
+const SOURCE = { ok: true, path: 'qubits.q1', tab: 'state', mutation_seq: 7, bytes: 40, open_token: 'open-1',
                  text: '{\n  "T1": 2e-05,\n  "f_01": 5000000000.0,\n  "id": "q1"\n}' };
 function key(w, target, k, mods) {
     const e = new w.KeyboardEvent('keydown', Object.assign({ key: k, bubbles: true, cancelable: true }, mods || {}));
@@ -171,6 +173,7 @@ function key(w, target, k, mods) {
         await settle();
         const last = calls[calls.length - 1].body;
         ok(last.rebase === true && last.base_text === SOURCE.text, 're-diff carries the opened text');
+        ok(last.open_token === 'open-1', 're-diff carries the token the source served');
         ok(!w.document.querySelector('.ui-jedit'), 'closed after the write');
     }
 
@@ -185,6 +188,24 @@ function key(w, target, k, mods) {
         ok(w.document.querySelector('.ui-jedit-warn') && eds.length === 0, 'warned, no editor yet');
         w.document.querySelector('.ui-jedit-open-anyway').click();
         ok(eds.length === 1 && !w.document.querySelector('.ui-jedit-warn'), 'Open anyway opens');
+    }
+
+    // 7 a relink to nothing saves and says so, path by path
+    {
+        const { w, responses, eds } = world();
+        const toasts = [];
+        w.showToast = (t, lvl) => toasts.push([t, lvl]);
+        responses.push({ status: 200, d: SOURCE });
+        await w.TreeJsonEdit.open({ tab: 'state', path: 'qubits.q1' });
+        await settle();
+        eds[0].set(SOURCE.text.replace('2e-05', '3e-05'));
+        responses.push({ status: 200, d: { ok: true, results: [{}], warnings: [
+            { path: 'qubits.q1.alias', warning: 'points to nothing: #/x' }] } });
+        w.TreeJsonEdit.save();
+        await settle();
+        const t = toasts[toasts.length - 1] || [];
+        ok(/qubits\.q1\.alias points to nothing/.test(t[0] || '') && t[1] === 'warning',
+           'the warning names the path');
     }
 
     console.log('ALL OK (' + n + ' assertions)');
