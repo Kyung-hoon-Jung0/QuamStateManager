@@ -222,6 +222,32 @@ class TestLiveWalk:
         r = c.post("/redo")                       # nothing above the tip
         assert _live_off(env) == 0.12
 
+    def test_another_windows_undo_makes_this_windows_undo_refuse(self, env):
+        """Window A applied two units; window B undid the newer one. A's next
+        Ctrl+Z still declares the cursor A last saw, and must refuse naming the
+        moved path instead of reverting A's earlier unit on the chip."""
+        import re
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12); _apply(c)
+        tray = c.get("/state/tray").get_data(as_text=True)
+        seen_a = re.search(r'data-undo-cursor="(\d+)"', tray).group(1)
+        assert seen_a == "2"
+        c.post("/undo", data={"seen_undo_cursor": seen_a})   # window B
+        assert _live_off(env) == 0.10
+        r = c.post("/undo", data={"seen_undo_cursor": seen_a})  # window A, stale
+        assert r.status_code == 409
+        body = r.get_data(as_text=True)
+        assert "qubits.qA1.z.joint_offset" in body and "Ctrl+Z again" in body
+        assert _live_off(env) == 0.10                       # disk untouched
+        assert _work_off(env) == 0.10
+        peek = c.get("/field/peek", query_string={"dot_path": "qubits.qA1.z.joint_offset"})
+        assert peek.get_json()["values"]["qubits.qA1.z.joint_offset"] == 0.10
+        tray = c.get("/state/tray").get_data(as_text=True)
+        seen_now = re.search(r'data-undo-cursor="(\d+)"', tray).group(1)
+        c.post("/undo", data={"seen_undo_cursor": seen_now})  # A, after the refusal
+        assert _live_off(env) == 0.08
+
     def test_a_new_action_after_an_undo_discards_the_redo_branch(self, env):
         """The editor rule: the journal is a straight line of what is in
         effect. Without it Ctrl+Z after the new apply would first re-apply
@@ -1610,3 +1636,17 @@ class TestTheButtonNamesTheLiveStep:
         t = _trig(c.post("/undo"))["cellsReverted"]
         assert t["live"] is False and t.get("live_undo_seq") is None
         assert "data-live-undo-seq" not in self._tray(c)
+
+
+def test_the_window_declares_the_undo_step_it_saw():
+    """Client half of the two-window guard: drives undo_cursor_seen_selfcheck.cjs."""
+    import shutil
+    import subprocess
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run(["node", "tests/undo_cursor_seen_selfcheck.cjs"], cwd=root,
+                       capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if "Cannot find module 'jsdom'" in r.stderr:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr

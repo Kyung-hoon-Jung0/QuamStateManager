@@ -699,6 +699,12 @@ def call_failure(name, error):
     return f'The server refused {name}: {error}'
 
 
+def call_timed_out(error):
+    """No reply arrived within the time limit (not a refusal)."""
+    text = str(error).lower()
+    return any(word in text for word in ('no answer within', 'timed out', 'timeout'))
+
+
 def call_unreadable(error):
     """The server answered, but the reply could not be read as data."""
     text = str(error).lower()
@@ -709,6 +715,9 @@ def call_unreadable(error):
 def failure_advice(errors, host):
     """Connection advice only when a failure looks like a connection failure."""
     texts = [str(e).lower() for e in (errors or {}).values()]
+    if texts and all(call_timed_out(e) for e in texts):
+        return ('The server did not answer in time; it may be slow or overloaded, '
+                'or the network may be dropping replies. Check the network and try again.')
     if any(call_failure('x', e).startswith('Server unreachable') for e in texts):
         return connection_hint(host)
     if texts and all(call_unreadable(e) for e in texts):

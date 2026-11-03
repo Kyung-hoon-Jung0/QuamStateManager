@@ -134,7 +134,8 @@ def test_burst_contract_ships():
     assert routes.count('"consumed":') >= 2 and routes.count('"stopped":') >= 2
     assert "with _burst_lock:" in routes and 'extra={"requested": n_req, "consumed": len(all_fents)' in routes
     # the auto-repeat guard sits AFTER the "not ours" bail-out (ordinary text fields keep the browser's held-key undo)
-    assert app.index('&& !inGridCell && !inChPanel && !inInline) return;') < app.index("if (evt.repeat) { evt.preventDefault(); return; }")
+    # the tree editor joined the bail-out list (roving Json tree editor, D-2): same rule, one more surface
+    assert app.index('&& !inGridCell && !inChPanel && !inInline') < app.index("if (evt.repeat) { evt.preventDefault(); return; }")
     assert 'if (d.stopped === "journal" && _remaining > 0 && window.UndoQueue) {' in app, "a journal-stopped burst re-queues the rest"
     pulses = (_STATIC / "pulses.js").read_text(encoding="utf-8")
     assert "var PLOT_CACHE_MAX = 200;" in pulses and "function refreshCommittedPlot(root, sec)" in pulses   # docs/141 4k: per section

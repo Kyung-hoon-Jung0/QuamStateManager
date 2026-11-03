@@ -79,7 +79,10 @@ setTimeout(function () {
         // ── 1b. undo (server tier) repaints the node AND the model ────────
         window._revertTreeNode('qubits.q1.amp_0', '0.1');
         setTimeout(function () {
-            ok(c.querySelector('.tree-node[data-path="qubits.q1.amp_0"] .tree-val').textContent === '0.1', 'undo repainted the node in place');
+            // D-1: the value may still hold the roving editor; it shows the reverted value either way
+            const _v = c.querySelector('.tree-node[data-path="qubits.q1.amp_0"] .tree-val');
+            const _ed = _v && _v.querySelector('.ui-tree-editor');
+            ok(_v && (_ed ? _ed.value === '0.1' : _v.textContent === '0.1'), 'undo repainted the node in place');
             ok(c._treeData.qubits.q1.amp_0 === 0.1, 'and the data model follows the undo');
             // a leaf inside a NEVER-expanded branch (q2 is collapsed): no node, the model must still follow
             ok(!c.querySelector('.tree-node[data-path="qubits.q3.zeta"]'), 'fixture: q3.zeta was never materialised');
@@ -198,7 +201,7 @@ setTimeout(function () {
                 d.dispatchEvent(new CustomEvent('pulses-rows-changed', { detail: { paths: ['qubits.q9.xy.operations.restored'] }, bubbles: true }));
                 ok(triggered.length === 1 && triggered[0] === 'pulses-changed', 'a row that does not exist triggers the structural re-fetch (' + triggered.join(',') + ')');
                 d.dispatchEvent(new CustomEvent('pulses-changed', { detail: true, bubbles: true }));
-                ok(fetched.length === 3, 'the structural pulses-changed patches nothing here (the whole-table htmx trigger owns it)');
+                ok(fetched.filter((u) => u.indexOf('/pulse/row') === 0).length === 3, 'the structural pulses-changed patches nothing here (the whole-table htmx trigger owns it) ' + JSON.stringify(fetched));
                 wrap2.remove();
             }, 30);
             setTimeout(function () { process.exit(fails ? 1 : 0); }, 200);   // after the never-expanded-leaf + row pins above

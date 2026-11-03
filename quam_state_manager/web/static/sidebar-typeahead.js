@@ -524,6 +524,21 @@ window.Typeahead = (function () {
             // Key first, no DOM query: this runs on every keystroke in the app.
             if (k !== 'ArrowDown' && k !== 'ArrowUp' && k !== 'Enter'
                 && k !== 'Tab' && k !== 'Escape') return;
+            if (k === 'Escape' && (!_open || _open.input.id !== inputId)) {
+                // Search-box Escape (browser / editor convention): the first
+                // Escape only closes the suggestions (below) and keeps the
+                // text; an Escape with no panel open clears the query. An
+                // empty box leaves Escape to whoever else wants it.
+                var box = e.target;
+                if (!box || box.id !== inputId || e.ctrlKey || e.metaKey || e.altKey) return;
+                if (!box.value) return;
+                box.value = '';
+                cfg.dismissed = null;
+                e.preventDefault();
+                e.stopPropagation();
+                box.dispatchEvent(new Event('input', { bubbles: true }));
+                return;
+            }
             if (!_open) return;
             if (!e.target || e.target.id !== inputId) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;   // Ctrl+K still opens the palette

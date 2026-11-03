@@ -11546,6 +11546,41 @@ def _pending_tray_request_ends(exc=None):  # noqa: ANN001 -- Flask's signature
         pending_tray.leave_request(scope)
 
 
+def _note_fsp_change(target_path: str, old) -> None:
+    """Record an FSP value this request is about to write (D-44)."""
+    if not has_request_context():
+        return
+    lst = getattr(g, "_fsp_changed", None)
+    if lst is None:
+        lst = g._fsp_changed = []
+    if not any(r["dot_path"] == target_path for r in lst):
+        lst.append({"dot_path": target_path, "old": old})
+
+
+@bp.after_app_request
+def _fsp_offer_header(response):
+    """D-44: an FSP edit that committed without an ack names the changed ports
+    and the edit's undo group, so ONE client helper can offer the amplitude
+    compensation (POST /field/fsp-compensation, then an edit-batch into gid)."""
+    rows = getattr(g, "_fsp_changed", None)
+    if not rows or response.status_code >= 300:
+        return response
+    try:
+        modifier = _modifier()
+        store = modifier.store if modifier is not None else None
+        if store is None:
+            return response
+        changed = [r for r in rows if store.get_value(r["dot_path"]) != r["old"]]
+        if not changed:
+            return response
+        log = store.change_log
+        gid = log[-1].group_id if log else None
+        response.headers["X-SM-Fsp-Changed"] = json.dumps({"ports": changed, "gid": gid})
+    except Exception:  # noqa: BLE001 -- the offer must never break the edit
+        logger.debug("fsp offer header failed", exc_info=True)
+    return response
+
+
 @bp.after_app_request
 def _checkpoint_pending_tray_flags(response):
     # Actor stamps and staged_base/dirty/stash flags may be set AFTER a log
@@ -11591,6 +11626,8 @@ def _render_tray(*, oob: bool) -> str:
         # QA liveedit-r2-09: where the chip was when THIS tray rendered -- the
         # drift poll's edit_seq equal to it means the move was this window's own
         edit_seq=_edit_seq(),
+        # the live undo walk's position, so a press declares the step it saw
+        undo_cursor=_undo_cursor_token(),
         working_dirty=_working_dirty(),
         # The badge's else-branch says "Working state matches the live chip" —
         # a claim about LIVE — while its verdict was built only from LOCAL edit
@@ -12921,14 +12958,23 @@ def field_edit():
         # never commits before the user saw the compensation offer. Without
         # an ack the plan comes back 409; the popup then applies FSP+amps in
         # ONE /field/edit-batch (fsp_ack=comp) or FSP alone (fsp_ack=solo).
+        # D-44: without an ack the FSP COMMITS now and the response carries
+        # the offer (X-SM-Fsp-Changed); the amplitudes change only on the
+        # user's Yes, into this edit's own undo group.
         _fsp_ack = request.form.get("fsp_ack")
         if _fsp_ack not in ("comp", "solo"):
             plan = _fsp_plan_for(modifier.store, target_path, raw_value)
             if plan is not None:
-                return jsonify(
-                    ok=False, fsp_compensation=plan,
-                    error=("This edit changes a port's full-scale power — "
-                           "confirm the amplitude compensation first")), 409
+                _note_fsp_change(target_path, modifier.store.get_value(target_path))
+                # through the batch door, so the FSP owns an undo group the
+                # Yes can join (a plain single edit records no group)
+                return _field_edit_batch_impl(
+                    {"updates": [{"dot_path": dot_path, "value": raw_value}],
+                     "fsp_ack": "solo", "group": "new",
+                     "type_fix": request.form.get("type_fix") or None,
+                     "expect_chip": request.form.get("expect_chip", ""),
+                     "force_chip": request.form.get("force_chip") in ("1", "true", "True"),
+                     **({"provenance": _origin} if _origin is not None else {})})
         elif _fsp_ack == "comp":
             # docs/246 A-03: "comp" here used to only skip the 409, so the FSP
             # landed ALONE (the MCP bridge and the history panel's revert both
@@ -15475,6 +15521,54 @@ def field_edit_batch():
     return _field_edit_batch_impl()
 
 
+@bp.route("/field/fsp-compensation", methods=["POST"])
+def field_fsp_compensation():
+    """The amplitude compensation for FSP values a Replace All ALREADY wrote.
+
+    Body: ``{"ports": [{"dot_path": ..., "old": <FSP before the write>}]}``.
+    Each plan is ``mw_fem.fsp_compensation_plan`` evaluated as if the FSP were
+    still at ``old`` and moving to the value it holds now -- the same plan a
+    single-field edit offers before its write. Read-only.
+    """
+    import copy
+    from quam_state_manager.core import mw_fem
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("ports"), list):
+        return jsonify(ok=False, error="ports must be a list"), 400
+    modifier = _modifier()
+    if modifier is None:
+        return jsonify(ok=False, error="No chip loaded"), 400
+    store = modifier.store
+    plans = []
+    with store._lock:
+        merged = store.merged
+        for row in payload["ports"]:
+            if not isinstance(row, dict):
+                continue
+            try:
+                target = _resolve_edit_path(store, str(row.get("dot_path") or ""))
+                now = store.get_value(target)
+                old = row.get("old")
+                if isinstance(old, bool) or not isinstance(old, (int, float))                         or isinstance(now, bool) or not isinstance(now, (int, float)):
+                    continue
+                before = copy.deepcopy(merged)
+                node = before
+                parts = target.split(".")
+                for k in parts[:-1]:
+                    node = node[int(k)] if isinstance(node, list) else node[k]
+                node[parts[-1]] = old
+                plan = mw_fem.fsp_compensation_plan(before, target, now)
+            except Exception:  # noqa: BLE001 -- one port's failure never hides the rest
+                logger.debug("fsp compensation after replace failed", exc_info=True)
+                continue
+            if plan is not None:
+                plan["fsp_path"] = target
+                plan["old_fsp"] = old
+                plan["new_fsp"] = now
+                plans.append(plan)
+    return jsonify(ok=True, plans=plans)
+
+
 @bp.route("/field/replace-preview", methods=["POST"])
 def field_replace_preview():
     """Read-only replacement plan using the edit door's parser and policy."""
@@ -15507,8 +15601,6 @@ def field_replace_preview():
                 reason = _editability_reason(modifier.store, path)
                 if reason:
                     raise ValueError(reason)
-                if path.endswith("full_scale_power_dbm"):
-                    raise ValueError("FSP: use its editor for the amplitude compensation offer")
                 raw = row.get("value", "")
                 if isinstance(raw, str) and _type_fix_offer(modifier.store, path, raw):
                     raise ValueError("Stored as text: use the single-field editor to choose its type")
@@ -15674,14 +15766,12 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 continue
             plan = _fsp_plan_for(modifier.store, _tgt, _rv)
             if plan is not None:
-                fsp_paths = sum(
-                    1 for (p2, _v2, _c2) in pairs
-                    if str(p2).endswith("full_scale_power_dbm"))
-                plan["more_fsp_in_batch"] = fsp_paths > 1
-                return jsonify(
-                    ok=False, fsp_compensation=plan, fsp_dot_path=_dp,
-                    error=("This batch changes a port's full-scale power — "
-                           "confirm the amplitude compensation first")), 409
+                # D-44: commit now, offer the compensation after (see
+                # _fsp_offer_header); amplitudes only on the user's Yes
+                _note_fsp_change(_tgt, modifier.store.get_value(_tgt))
+                # ...and in an undo group of its own, so the Yes can join it
+                if not _pj.get("group"):
+                    _pj["group"] = "new"
 
     # r14 ⑩ (same never-silent shape as the FSP gate): rows whose target is a
     # numeric-looking STRING get the conversion offer — 409 with the first
@@ -15821,8 +15911,17 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
         if isinstance(_grp, str) and _grp:
             _log = modifier.store.change_log
             _top = _log[-1].group_id if _log else None
+            _units = ctx.get("undo_units") or []
+            _cur = int(ctx.get("undo_cursor") or 0)
+            _tip_gid = (_units[_cur - 1].get("gid")
+                        if 0 < _cur <= len(_units) and _cur == len(_units) else None)
             if (_grp != "new" and _grp == _top
                     and not _grp.startswith(undo_journal.GID_PREFIX)):
+                _batch_gid = _grp
+            elif (_grp != "new" and not _log and _grp == _tip_gid
+                    and not _grp.startswith(undo_journal.GID_PREFIX)):
+                # D-44: the group already reached the chip (Auto-Sync pushed
+                # it); a write joining it lands in the same journal unit
                 _batch_gid = _grp
             elif _batch_gid is None:
                 _batch_gid = modifier.new_group_id()
@@ -29079,6 +29178,22 @@ def _undo_journal_step(ctx, n_req: int = 1):
     # nowhere -- its inverse would stage a change that is not there (and a
     # created subtree's inverse delete 409ed on every press). Walk past it,
     # RAM only like an empty unit, and say so.
+    # A step another window took (its own Ctrl+Z / redo) moved the shared
+    # cursor: this press would undo a unit the presser never saw as the next
+    # one. Refuse, name the paths that moved, and let the tray refresh.
+    seen_cursor = (request.values.get("seen_undo_cursor") or "").strip()
+    if seen_cursor.isdigit() and int(seen_cursor) != cursor:
+        lo, hi = sorted((int(seen_cursor), cursor))
+        moved = [str(e.get("path") or e.get("dot_path") or "?")
+                 for u in units[lo:hi] for e in (u.get("entries") or [])]
+        paths = ", ".join(moved) or "an earlier step"
+        resp = make_response(render_template(
+            "_status.html", level="warning",
+            message=f"Nothing undone — another window already moved the undo history "
+                    f"({paths}). Press Ctrl+Z again to undo the next step."), 409)
+        resp.headers["HX-Trigger"] = "undo-foreign"
+        return resp
+
     _skipped = 0
     while cursor > 0 and (units[cursor - 1].get("meta") or {}).get("discarded"):
         cursor -= 1
@@ -30325,6 +30440,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         # QA liveedit-r2-09 (review): the drift poll's own-move test reads it;
         # without it this window's own refused push always counted as foreign
         edit_seq=_edit_seq(),
+        undo_cursor=_undo_cursor_token(),
         auto_sync=_auto_sync_state(ctx),
         auto_apply_armable=_auto_apply_armable(ctx),
         auto_pull_armable=_auto_pull_armable(ctx),
@@ -31933,6 +32049,20 @@ def _change_log_sig(store) -> str:
     paths = "\n".join(str(getattr(c, "dot_path", None) or "?")
                        for c in (store.change_log or []))
     return hashlib.sha1(paths.encode("utf-8")).hexdigest()[:12]
+
+
+def _undo_cursor_token() -> str:
+    """The live undo journal's cursor for the active chip, as the tray stamps it.
+
+    Two windows share one journal: a Ctrl+Z (or redo) in one moves the cursor
+    for both. A window declares the cursor it last acted at; a mismatch means
+    another window walked the journal and this press is refused.
+    """
+    ctx = _active_ctx() or {}
+    try:
+        return str(int(ctx.get("undo_cursor") or 0))
+    except (TypeError, ValueError):
+        return ""
 
 
 def _edit_seq() -> str:

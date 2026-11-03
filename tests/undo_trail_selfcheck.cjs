@@ -83,4 +83,20 @@ for (let i = 0; i < 12; i++) {
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q' + i + '.T1', value: i, from: i + 1 }] } }));
 }
 ok(window.UndoTrail.steps().length === 8 && panel().querySelectorAll('.undo-trail-step').length === 8, 'the trail keeps the last 8 steps');
+// 6. the panel keeps clear of an action button under its corner
+{
+    const main = d.createElement('div'); main.id = 'main'; d.body.appendChild(main);
+    main.getBoundingClientRect = () => ({ left: 300, top: 0, right: 1600, bottom: 950, width: 1300, height: 950 });
+    const apply = d.createElement('button'); apply.textContent = 'Apply all'; main.appendChild(apply);
+    apply.getBoundingClientRect = () => ({ left: 1210, top: 815, right: 1270, bottom: 845, width: 60, height: 30 });
+    const p = panel();
+    p.getBoundingClientRect = () => p.style.left
+        ? { left: 313, top: 700, right: 653, bottom: 940, width: 340, height: 240 }
+        : { left: 1247, top: 700, right: 1587, bottom: 940, width: 340, height: 240 };
+    d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q4.T1', value: '1', from: '2' }] } }));
+    ok(p.style.left === '313px' && p.style.right === 'auto', 'a button under the right corner moves the panel to the left corner');
+    apply.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
+    d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q5.T1', value: '1', from: '2' }] } }));
+    ok(p.style.left === '' && p.style.right === '', 'with the corner clear the panel docks right again');
+}
 process.exit(fails ? 1 : 0);

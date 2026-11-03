@@ -231,6 +231,22 @@ function keydown(win, id, key) {
   type(win, 'sidebar-filter-input', 'multi');
   ok(rows(win).length === 1, 'E4 …but typing on is a new token, so it opens again');
 
+  /* ── E2. Two-step Escape on every box sharing the widget: the first
+     closes the panel and keeps the text, the second clears the query ── */
+  [['sidebar-filter-input', 'mult'], ['bulk-search', 'ampl'], ['explorer-search', 'ampl']].forEach(function (c) {
+    const id = c[0], el = type(win, id, c[1]);
+    ok(rows(win).length >= 1, 'E5 ' + id + ' panel open');
+    keydown(win, id, 'Escape');
+    ok(rows(win).length === 0 && el.value === c[1], 'E6 ' + id + ' first Escape closes and keeps the text: ' + JSON.stringify(el.value));
+    let heard = 0; const onIn = function () { heard++; };
+    el.addEventListener('input', onIn);
+    const ev = keydown(win, id, 'Escape');
+    el.removeEventListener('input', onIn);
+    ok(el.value === '' && ev.defaultPrevented && heard === 1, 'E7 ' + id + ' second Escape clears the query and says so ' + JSON.stringify([el.value, ev.defaultPrevented, heard]));
+    const ev2 = keydown(win, id, 'Escape');
+    ok(!ev2.defaultPrevented, 'E8 ' + id + ' Escape on an empty box is left to others');
+  });
+
   /* ── F. Live State Edit: WORDS, because this box splits on whitespace ─ */
   type(win, 'bulk-search', 'ampl');
   ok(rows(win).indexOf('amplitude') >= 0,

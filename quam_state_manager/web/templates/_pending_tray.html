@@ -12,6 +12,7 @@
         declares them (seen_paths). Absent (too many) = declare the sig. #}
      {% if change_paths is defined and change_paths is not none %}data-change-paths='{{ change_paths | tojson }}'{% else %}data-change-paths-over="1"{% endif %}
      data-edit-seq="{{ edit_seq | default('') }}"
+     data-undo-cursor="{{ undo_cursor | default('') }}"
      {# QA F1 (windows): the newest undo another window wrote to the LIVE
         chip. A window that did not press it toasts the message once. #}
      {% if last_live_undo is defined and last_live_undo %}data-live-undo-seq="{{ last_live_undo.seq }}"

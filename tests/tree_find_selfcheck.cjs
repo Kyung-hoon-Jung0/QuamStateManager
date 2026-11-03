@@ -49,7 +49,14 @@ const mutations = {
     find_phrase: ["var s = on('regex') ? query : escapeRe(query);", "var s = on('regex') ? query : query.split(' ').map(escapeRe).join('|');"],
     find_literal_rep: ["t.replace(re, function () { return rep; })", 't.replace(re, rep)'],
     find_whole_number: ["(on('case') ? t : t.toLowerCase()) === needle", "(on('case') ? t : t.toLowerCase()).indexOf(needle) >= 0"],
-    find_review: ['if (!all) await applyPlan();', 'await applyPlan();'],
+    find_review: ['await applyPlan(all, snap);', 'if (!all) await applyPlan(all, snap);'],
+    notice_list: ['changed.forEach(function (r) {', '[].forEach(function (r) {'],
+    notice_skip: ["var w = document.createElement('span'); w.textContent = 'skipped: ' + r.why; li.appendChild(w);", ''],
+    notice_timer: ['timer = setTimeout(hide, MS);', '/* stays */'],
+    notice_hover: ["el.addEventListener('mouseenter', function () { hover = true; clearTimeout(timer); });", ''],
+    notice_focus: ["el.addEventListener('focusin', function () { focus = true; clearTimeout(timer); });", ''],
+    notice_scroll: ['clearTimeout(timer); clearTimeout(scrollT);', 'clearTimeout(scrollT);'],
+    notice_leave: ["el.addEventListener('mouseleave', function () { hover = false; arm(); });", "el.addEventListener('mouseleave', function () { hover = false; });"],
     find_review_more: ["box.appendChild(more);", "/* no more */"],
     find_expect_seq: [", expect_chip:token, expect_seq:planSeq}", ", expect_chip:token}"],
     find_advance: ['current = at < 0 ? 0 : at;', 'current = 0;'],
@@ -63,7 +70,7 @@ const mutations = {
     mac_code: ["return m ? m[1].toLowerCase() : key;", 'return key;'],
     multi_label: ["st.key ? 'Key name' : 'Equal to'", "'Path'"],
     multi_full_old: ["oldEl.title = String(fmt(r.value));", ''],
-    find_rename: ["'/api/pulse/rename', {target:'#inspector-pane'", "'/field/edit-batch', {target:'#inspector-pane'"],
+    find_rename: ["'/api/pulse/rename', {source: '#inspector-pane'", "'/field/edit-batch', {source: '#inspector-pane'"],
 };
 if (process.env.FIND_MUTATION) {
     const [before, after] = mutations[process.env.FIND_MUTATION];
@@ -222,7 +229,8 @@ function button(label) { return [...d.querySelectorAll('#tree-find button')].fin
     }
     await set('regex',true);await set('find','.*');await set('replace','invalid');await w.TreeFind.preview(true);
     const reasons=d.querySelector('.ui-tree-find-results').textContent;
-    assert(/pointer/.test(reasons) && /FSP/.test(reasons) && /coerce/i.test(reasons),'all skip reasons listed including type refusal');
+    assert(/pointer/.test(reasons) && /coerce/i.test(reasons),'all skip reasons listed including type refusal');
+    if(server) assert(!/FSP/.test(reasons),'D-43: FSP is not skipped by Replace All');
     // A stale preview response must never arm Apply for a newer query.
     const liveFetch=w.fetch;let release;
     w.fetch=async(url,opts)=>url==='/field/replace-preview'?new Promise(r=>{release=r;}):liveFetch(url,opts);
@@ -267,11 +275,8 @@ function button(label) { return [...d.querySelectorAll('#tree-find button')].fin
         d.querySelector('#tree-find [name=replace]').focus();
         const before=posts.length;
         key('Enter',{...mod,altKey:true});await tick(100);
-        assert.equal(posts.length,before,'D-38: replace-all chord only opens the review');
-        assert(w.TreeFind.reviewing(),'review step shown');
-        assert(/Replace 1/.test(d.querySelector('#tree-find [name=confirm]').textContent),'review names the count');
-        key('Enter');await tick(100);
-        assert.equal(posts.at(-1).updates[0].dot_path,'value','replace-all confirmed commits');
+        assert.equal(posts.length,before+1,'D-38: one replace-all chord writes at once');
+        assert.equal(posts.at(-1).updates[0].dot_path,'value','replace-all commits');
         assert.equal(posts.at(-1).updates[0].value,'updated','replace text sent');
         w.renderJsonTree('wiring',{value:'wiring-only'},{defaultDepth:1,crud:true});
     }
@@ -307,19 +312,49 @@ function button(label) { return [...d.querySelectorAll('#tree-find button')].fin
     // D-38 a number matches only as a whole value
     await set('find','0.5');count(0);await set('find','0.50096');count(1);
     await set('find','false');count(1);
-    // D-38 review lists every replacement, not only the first 150
+    // D-38 the preview still lists every replacement, not only the first 150
     await set('find','needle');await set('replace','thread');
-    const before=posts.length;
-    d.querySelector('#tree-find [name=replace]').focus();key('Enter',{ctrlKey:true,altKey:true});await tick(120);
-    assert.equal(posts.length,before,'Replace All waits for review');
-    assert(/Review: 200 replacements/.test(d.querySelector('.ui-tree-find-review-sum').textContent),'review total');
+    await w.TreeFind.preview(true);
     assert.equal(d.querySelectorAll('.ui-tree-find-results .ui-tree-find-result').length,150,'first page');
     assert(d.querySelector('.ui-tree-find-more'),'show more offered');d.querySelector('.ui-tree-find-more').click();
     assert.equal(d.querySelectorAll('.ui-tree-find-results .ui-tree-find-result').length,200,'full list reachable');
-    key('Escape');assert(!w.TreeFind.reviewing(),'Escape cancels the review');assert.equal(posts.length,before,'nothing written');
-    // P2: the client sends the preview's mutation_seq
-    key('Enter',{ctrlKey:true,altKey:true});await tick(120);key('Enter');await tick(120);
+    // D-38 (rewritten): Replace All writes on the one press, no confirm step,
+    // then a notice lists every changed path and every skip
+    const before=posts.length;
+    w.ReplaceNotice.ms(200);
+    d.querySelector('#tree-find [name=replace]').focus();key('Enter',{ctrlKey:true,altKey:true});await tick(150);
+    assert.equal(posts.length,before+1,'one press writes');
+    assert.equal(posts.at(-1).updates.length,200,'every hit in one batch (one Ctrl+Z)');
     assert.equal(posts.at(-1).expect_seq,7,'expect_seq rides the batch');
+    let note=d.getElementById('ui-replace-notice');
+    assert(note,'notice shown after the write');
+    const items=[...note.querySelectorAll('.ui-replace-notice-list li')];
+    const listed=items.filter(li=>!li.classList.contains('ui-replace-notice-skip')).map(li=>li.querySelector('code').textContent);
+    const written=posts.at(-1).updates.map(u=>u.dot_path);
+    assert.deepEqual([...listed].sort(),[...written].sort(),'notice lists every changed path');
+    assert(/needle.*→.*thread/.test(items[0].textContent),'old -> new shown: '+items[0].textContent);
+    const list=note.querySelector('.ui-replace-notice-list');
+    const css=fs.readFileSync(path.join(path.dirname(require.resolve('../quam_state_manager/web/static/app.js')),'ui-kit.css'),'utf8');
+    assert(/\.ui-replace-notice\s*\{[^}]*max-height:/.test(css)&&/\.ui-replace-notice-list\s*\{[^}]*overflow-y: auto/.test(css),'long list scrolls inside a capped notice');
+    // stays while hovered, leaves after the pointer goes
+    note.dispatchEvent(new w.MouseEvent('mouseenter'));await tick(350);
+    assert(d.getElementById('ui-replace-notice'),'stays while hovered');
+    note.dispatchEvent(new w.MouseEvent('mouseleave'));await tick(350);
+    assert(!d.getElementById('ui-replace-notice'),'auto-dismisses after the pointer leaves');
+    // stays while focused
+    note=w.ReplaceNotice.show([{path:'a',old:1,next:2}],[{path:'b',why:'pointer'}]);
+    assert(/skipped: pointer/.test(note.textContent),'skips listed with the reason');
+    note.querySelector('button').focus();await tick(350);
+    assert(d.getElementById('ui-replace-notice'),'stays while focused');
+    d.getElementById('outside').focus();await tick(350);
+    assert(!d.getElementById('ui-replace-notice'),'leaves after focus goes');
+    // stays while scrolled
+    note=w.ReplaceNotice.show([{path:'a',old:1,next:2}],[]);
+    note.querySelector('.ui-replace-notice-list').dispatchEvent(new w.Event('scroll'));await tick(350);
+    assert(d.getElementById('ui-replace-notice'),'stays while being scrolled');
+    await tick(1200);
+    assert(!d.getElementById('ui-replace-notice'),'leaves once scrolling stopped');
+    w.ReplaceNotice.ms(6000);
     w.TreeFind.close();fresh();focus('items.first.amplitude');key('h',{ctrlKey:true});
     // D-40 Replace One advances past the field it replaced
     await set('find','same');await set('replace','same2');

@@ -61,4 +61,4 @@ def test_the_pinned_toolbar_rule_is_still_the_first_match():
     """test_single_scroll's `_rule('.bulk-panel .bulk-toolbar')` reads the FIRST
     match; a new rule spelled that way above it would make that pin read ours."""
     m = re.search(re.escape(".bulk-panel .bulk-toolbar") + r"\s*\{([^}]*)\}", CSS)
-    assert m and "z-index: 8" in m.group(1), m and m.group(1)
+    assert m and "z-index: 11" in m.group(1), m and m.group(1)

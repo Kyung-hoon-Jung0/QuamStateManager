@@ -5861,7 +5861,10 @@ window.livePushExtrasLine = function (typedPaths) {
         // one rendered at this edit_seq. Re-GETting it anyway swapped a
         // refused push's conflict tray for the plain one within seconds.
         if (!foreign) { _foreignRefreshing = false; return; }
-        var done = function () { _foreignRefreshing = false; };
+        // this tray re-render reports ANOTHER window's step: it must not count
+        // as the undo position this window saw (its next Ctrl+Z is refused)
+        window.__trayForeignSwap = true;
+        var done = function () { _foreignRefreshing = false; window.__trayForeignSwap = false; };
         var after = function () { done(); if (foreign) window._followValuesOnScreen(); };
         try {
             var p = _trayRefresh();
@@ -9409,6 +9412,9 @@ window.UndoQueue = (function () {
                               var t = document.getElementById("pending-tray");
                               return (t && t.getAttribute("data-change-sig")) || "";
                           })(),
+                          // the undo-journal step THIS window last acted at
+                          seen_undo_cursor: (item.path === "/undo" && window.__undoCursorSeen != null)
+                              ? String(window.__undoCursorSeen) : "",
                           seen_edit_seq: (function () {
                               var t = document.getElementById("pending-tray");
                               return t ? t.getAttribute("data-edit-seq") || "" : "";
@@ -12219,6 +12225,14 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
     // D-2/D-3: one mounted editor per tree. The write transport below retains
     // the existing parser and server offers; focus never creates a write door.
+    // The value's own text, without the decorations appended to it (a
+    // pointer's resolved preview, its target hint, the expected-type chip):
+    // capturing those as the display doubled the preview on the next render.
+    function _treeBareText(el) {
+        var copy = el.cloneNode(true);
+        copy.querySelectorAll(".ui-tree-resolved, .ui-tree-target, .tree-type-chip").forEach(function (c) { c.remove(); });
+        return copy.textContent;
+    }
     function _treeValueDisplay(el, text) {
         el._treeDisplay = text;
         if (!el.querySelector(".ui-tree-editor")) el.textContent = text;
@@ -12410,7 +12424,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         input.setAttribute("role", "textbox");
         input.setAttribute("aria-label", path);
         input.value = input.defaultValue = _treeLiteral(el);
-        el._treeDisplay = el.textContent;
+        el._treeDisplay = _treeBareText(el);
         el.textContent = "";
         el.appendChild(input);
         el.classList.add("ui-tree-mounted");
@@ -12581,7 +12595,7 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _writeTreeValue(valEl, dotPath, typed, ownerTree) {
         var ownerContext = ownerTree._editContext;
         var ownerSource = ownerTree._editSource;
-        var currentDisplay = valEl._treeDisplay === undefined ? valEl.textContent : valEl._treeDisplay;
+        var currentDisplay = valEl._treeDisplay === undefined ? _treeBareText(valEl) : valEl._treeDisplay;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
         // docs/145 (customer): a string edits AS ITS JSON LITERAL -- the file
@@ -14827,7 +14841,7 @@ window.TreeMulti = (function () {
 window.TreeFind = (function () {
     'use strict';
     var tree, bar, find, hits = [], plan = [], serial = 0, current = 0, token, planSeq, ready = false;
-    var reviewing = false, lastReplaced = null, timer = null, running = null, pserial = 0;
+    var lastReplaced = null, timer = null, running = null, pserial = 0;
     var DEBOUNCE_MS = 150, SLICE_MS = 8, BUDGET_MS = window.__treeFindBudgetMs || 2000;
     var TM = window.TreeMulti;
     var TOGGLES = [
@@ -14872,17 +14886,12 @@ window.TreeFind = (function () {
         row.appendChild(group);
         var one = button('Replace', function () { replaceNow(false); }); one.name = 'replace-one'; one.title = 'Replace this match (Enter)'; row.appendChild(one);
         var all = button('Replace all', function () { replaceNow(true); }); all.name = 'replace-all';
-        all.title = 'Review every replacement before anything is written (Ctrl+Alt+Enter)'; row.appendChild(all);
+        all.title = 'Replace every match now; Ctrl+Z undoes the whole batch (Ctrl+Alt+Enter)'; row.appendChild(all);
         var path = button('By path', function () { close(); tree.focus(); TM.openPattern(); }); path.name = 'by-path';
         path.title = 'Edit fields by path pattern (* = any one level)'; row.appendChild(path);
-        var status = part('output', 'ui-tree-find-status'); status.setAttribute('aria-live', 'polite'); row.appendChild(status);
+        var statusOut = part('output', 'ui-tree-find-status'); statusOut.setAttribute('aria-live', 'polite'); row.appendChild(statusOut);
         var x = button('\u00d7', close, 'btn-sm outline ui-tree-find-close'); x.name = 'close'; x.title = 'Close (Esc)';
         x.setAttribute('aria-label', 'Close'); row.appendChild(x);
-        var review = part('div', 'ui-tree-find-review'); review.hidden = true; review.classList.add('ui-tree-find-closed');
-        review.appendChild(part('div', 'ui-tree-find-review-sum'));
-        var go = button('Replace', function () { applyPlan(); }, 'btn-sm ui-tree-find-confirm'); go.name = 'confirm'; review.appendChild(go);
-        var back = button('Cancel', function () { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); }); back.name = 'cancel'; review.appendChild(back);
-        bar.appendChild(review);
         var details = part('details', 'ui-tree-find-details');
         details.appendChild(part('summary', 'ui-tree-find-summary', 'Match paths and skipped items'));
         var box = part('div', 'ui-tree-find-results');
@@ -14895,20 +14904,22 @@ window.TreeFind = (function () {
     function onKey(e) {
         if (e.key === 'Escape') {
             e.preventDefault();
-            if (reviewing) { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); } else close();
+            close();
             return;
         }
         if (e.key === 'Enter') {
             e.preventDefault();
-            if (reviewing) { applyPlan(); return; }
             replaceNow(!!((e.ctrlKey || e.metaKey) && e.altKey));
         }
     }
-    // Replace All never writes from the keystroke: it opens the review (D-38).
+    // D-38 (rewritten): one press writes, Replace All included; a notice
+    // then lists every change and every skip, and one Ctrl+Z undoes it.
     async function replaceNow(all) {
         await flush();
-        await preview(all);
-        if (!all) await applyPlan();
+        // the preview's own result: painting its inline hints can re-run the
+        // search (a tree mutation), which resets `plan` before the write
+        var snap = await preview(all);
+        await applyPlan(all, snap);
     }
     function status(text) { var o = bar.querySelector('output'); o.textContent = text; o.title = text; }
     function textOf(v) { return typeof v === 'string' ? v : JSON.stringify(v); }
@@ -14987,7 +14998,7 @@ window.TreeFind = (function () {
     }
     function refresh() {
         if (!bar) return;
-        serial++; pserial++; plan = []; ready = false; endReview(true);
+        serial++; pserial++; plan = []; ready = false;
         if (running) { running.cancel(); running = null; }
         clearTimeout(timer);
         var id = serial;
@@ -15074,7 +15085,7 @@ window.TreeFind = (function () {
         }, 'btn-xs outline ui-tree-find-path');
         el.appendChild(link);
         if (r.rename) el.appendChild(button('Rename key', function () {
-            window.htmx.ajax('POST', '/api/pulse/rename', {target:'#inspector-pane', swap:'innerHTML', values:Object.assign({expect_chip:token}, r.rename)});
+            window.htmx.ajax('POST', '/api/pulse/rename', {source: '#inspector-pane', target: '#inspector-pane', swap:'innerHTML', values:Object.assign({expect_chip:token}, r.rename)});
         }, 'btn-xs outline'));
         el.appendChild(document.createTextNode(' ' + textOf(r.old) + (r.skip ? ' - skipped: ' + r.skip : r.next !== undefined ? ' \u2192 ' + textOf(r.next) : '')));
         if (!r.skip && r.next !== undefined && window.ValueDelta) {
@@ -15093,28 +15104,6 @@ window.TreeFind = (function () {
             if (window.ValueDelta) window.ValueDelta.paint(hint.appendChild(part('span', 'ui-tree-find-delta')), hit.old, hit.next);
             node.querySelector(':scope > .tree-row').appendChild(hint);
         });
-    }
-    function endReview(silent) {
-        reviewing = false;
-        if (bar) { var rv = bar.querySelector('.ui-tree-find-review'); rv.hidden = true; rv.classList.add('ui-tree-find-closed'); }
-        if (!silent && bar) ready = false;
-    }
-    function showReview() {
-        var live = plan.filter(function (r) { return !r.skip; }), skipped = plan.filter(function (r) { return r.skip; });
-        var names = {s:'text', n:'number', b:'boolean', z:'null', o:'other'}, kinds = {}, why = {};
-        live.forEach(function (r) { var k = names[kindOf(r.old_value)]; kinds[k] = (kinds[k] || 0) + 1; });
-        skipped.forEach(function (r) { var k = String(r.skip).split(':')[0]; why[k] = (why[k] || 0) + 1; });
-        var fmt = function (o) { return Object.keys(o).map(function (k) { return k + ' ' + o[k].toLocaleString('en-US'); }).join(', '); };
-        var review = bar.querySelector('.ui-tree-find-review');
-        review.querySelector('.ui-tree-find-review-sum').textContent = 'Review: ' + live.length.toLocaleString('en-US') + ' replacement'
-            + (live.length === 1 ? '' : 's') + (live.length ? ' (' + fmt(kinds) + ')' : '')
-            + (skipped.length ? ' \u00b7 ' + skipped.length.toLocaleString('en-US') + ' skipped (' + fmt(why) + ')' : '')
-            + ' \u2014 nothing is written until you confirm';
-        var go = review.querySelector('[name="confirm"]');
-        go.textContent = 'Replace ' + live.length.toLocaleString('en-US'); go.disabled = !live.length;
-        review.hidden = false; review.classList.remove('ui-tree-find-closed'); reviewing = true;
-        bar.querySelector('details').open = true;
-        go.focus();
     }
     async function preview(all) {
         await flush();
@@ -15138,16 +15127,20 @@ window.TreeFind = (function () {
             list(plan.map(function (r) { return {path:r.dot_path, old:r.old_value, next:r.new_value, skip:r.skip, rename:r.rename}; }));
             ready = plan.some(function (r) { return !r.skip; });
             status(plan.filter(function (r) { return !r.skip; }).length + ' replacements; ' + plan.filter(function (r) { return r.skip; }).length + ' skipped');
-            if (all) showReview();
+            return {plan:plan, seq:planSeq, ready:ready};
         } catch (err) { if (id === pserial) status('Preview failed: ' + err.message); }
     }
-    async function applyPlan() {
+    async function applyPlan(all, snap) {
+        if (snap && snap.plan) { plan = snap.plan; planSeq = snap.seq; ready = snap.ready; }
         var updates = plan.filter(function (r) { return !r.skip; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });
         if (!updates.length || !ready) return;
-        ready = false; endReview(true);
+        ready = false;
+        var applied = plan.slice();   // a refresh below resets `plan`
         var lastOrd = plan.reduce(function (m, r) { return r.skip || r.ord === undefined ? m : Math.max(m, r.ord); }, -1);
         try {
             var response = await window.fetch('/field/edit-batch', {method:'POST', headers:{'Content-Type':'application/json'},
+                // D-43: an FSP replaced here is written at once (solo); the
+                // amplitude compensation is offered right after, in the same group
                 body:JSON.stringify({updates:updates, group:'new', expect_chip:token, expect_seq:planSeq})});
             var data = await response.json();
             if (!data.ok) { status('Nothing written: ' + (data.error || (data.results || []).map(function (r) { return r.dot_path + ': ' + r.error; }).join('; '))); return; }
@@ -15159,6 +15152,14 @@ window.TreeFind = (function () {
             if (skipped.length) bar.querySelector('details').open = true;
             if (skipped.length) list(skipped.map(function (r) { return {path:r.dot_path, old:r.old_value, skip:r.skip, rename:r.rename}; }));
             status('Replaced ' + updates.length + ' value' + (updates.length === 1 ? '' : 's') + '; Ctrl+Z undoes this group');
+            if (all) window.ReplaceNotice.show((data.results || []).filter(function (r) {
+                var p = applied.find(function (x) { return x.dot_path === r.dot_path; });
+                return r.applied && !(p && JSON.stringify(p.old_value) === JSON.stringify(r.new_value));   // a no-op is not a change
+            }).map(function (r) {
+                var p = applied.find(function (x) { return x.dot_path === r.dot_path; });
+                return {path:r.dot_path, old:p ? p.old_value : undefined, next:r.new_value};
+            }), skipped.map(function (r) { return {path:r.dot_path, why:String(r.skip)}; }));
+            // an FSP among them: the server's X-SM-Fsp-Changed header brings the offer (D-44)
         } catch (err) { status('Apply failed: ' + err.message); }
     }
     function open() {
@@ -15183,7 +15184,7 @@ window.TreeFind = (function () {
         refresh(); bar.querySelector('[name="replace"]').focus(); return true;
     }
     function close() {
-        ready = false; endReview(true);
+        ready = false;
         observer.disconnect();
         serial++; pserial++; clearTimeout(timer); timer = null; if (running) running.cancel(); settle();
         bar.hidden = true; bar.classList.add('ui-tree-find-closed'); plan = []; window.treeFindShowPaths(tree, null);
@@ -15204,7 +15205,7 @@ window.TreeFind = (function () {
             refresh(); return true;
         },
         open:open, close:close, refresh:refresh, flush:flush, preview:preview, apply:applyPlan,
-        reviewing:function () { return reviewing; }, ready:function () { return ready; }, hits:function () { return hits; },
+        ready:function () { return ready; }, hits:function () { return hits; },
         current:function () { return current; }};
 })();
 
@@ -28210,6 +28211,12 @@ window.FieldHistory = (function () {
             letterSpacing: cs ? parseFloat(cs.letterSpacing) : NaN,
         };
     }
+    function _ungrowCellInput(b) {
+        var g = b && b._grown;
+        if (!g) return;
+        g.style.minWidth = g._fhMinWidth || "";
+        b._grown = null;
+    }
     function _positionCellBtn() {
         var b = cellBtn, input = b && b._input;
         if (!b || !input || !input.isConnected) return;
@@ -28219,8 +28226,20 @@ window.FieldHistory = (function () {
         var padL = g.padL;
         // 8 px clear of the text end: at 4 px a short value ("0", "-5") and
         // the caret visibly touched the clock glyph.
-        var want = g.left + padL + _cellTextWidth(input, g) + 8;
+        var textW = _cellTextWidth(input, g);
+        var want = g.left + padL + textW + 8;
         var max = g.left + g.width - 20;
+        // A narrow cell whose SHORT value still leaves no 8 px before the
+        // clock (FSP "-8"): the input widens just enough for the rule to
+        // hold, instead of the clock sitting on the text. A long value that
+        // fills the cell keeps the clamped dock below.
+        var need = padL + textW + 8 + 20;
+        if (want > max && g.width > 0 && need <= 160 && input.tagName === "INPUT") {
+            if (b._grown !== input) { b._grown = input; input._fhMinWidth = input.style.minWidth; }
+            input.style.minWidth = Math.ceil(need) + "px";
+            g.width = Math.max(g.width, input.offsetWidth || need, need);
+            max = g.left + g.width - 20;
+        }
         var clamped = want > max;
         b.style.left = Math.max(g.left + 2, Math.min(want, max)) + "px";
         if (g.mid > 0) b.style.top = g.mid + "px";
@@ -28250,6 +28269,7 @@ window.FieldHistory = (function () {
         if (!td) return;
         if (b._input && b._input !== input) {
             b._input.classList.remove("fh-docked");   // cell-to-cell move
+            _ungrowCellInput(b);
             _hideCellBtnTip();
         }
         b._input = input;
@@ -28270,6 +28290,7 @@ window.FieldHistory = (function () {
             cellBtn._input.classList.remove("fh-docked");
             cellBtn._input = null;
         }
+        _ungrowCellInput(cellBtn);
         cellBtn._geom = null;            // stale geometry must never be reused
         // Park on <body> so a grid re-render can't destroy the shared button
         // (and the td's search/sort surface stays byte-clean while unfocused).
@@ -31295,3 +31316,217 @@ window.DsPick = (function () {
              _model: { covered: covered, partial: partial, select: select, unselect: unselect,
                        shallowest: shallowest, valueAt: valueAt } };
 })();
+
+
+/* The live undo position this window has seen: taken from every tray this
+   window's own actions render (and from the page load), never from a tray the
+   foreign-edit refresh re-rendered. /undo declares it as seen_undo_cursor. */
+(function () {
+    function take() {
+        var t = document.getElementById("pending-tray");
+        var c = t && t.getAttribute("data-undo-cursor");
+        if (c != null && c !== "") window.__undoCursorSeen = parseInt(c, 10);
+    }
+    // Every way a tray lands (htmx swaps, fetch callers' _swapPendingTray, the
+    // Auto-Sync flush) puts a NEW #pending-tray element in the page; adopt its
+    // cursor unless the foreign-edit refresh rendered it.
+    var _lastTray = null;
+    function onTray() {
+        var t = document.getElementById("pending-tray");
+        if (!t || t === _lastTray) return;
+        _lastTray = t;
+        if (window.__trayForeignSwap) return;
+        take();
+    }
+    if (window.MutationObserver) {
+        var _mo = new MutationObserver(onTray);
+        // only the tray's own parent, childList: a whole-body subtree observer
+        // would see every grid render
+        var _start = function () {
+            _lastTray = document.getElementById("pending-tray");
+            var host = _lastTray && _lastTray.parentNode;
+            if (host) _mo.observe(host, { childList: true });
+        };
+        if (document.body) _start(); else document.addEventListener("DOMContentLoaded", _start);
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", take);
+    else take();
+})();
+
+
+/* The Replace All notice (D-38): bottom-right, lists every changed path with
+   old -> new and every skipped one with its reason. It leaves by itself after
+   a few seconds, but never while it is hovered, scrolled or focused; the
+   timer starts again when the pointer or focus leaves. */
+window.ReplaceNotice = (function () {
+    var MS = 6000, el = null, timer = null, hover = false, focus = false, scrollT = null;
+    function arm() {
+        clearTimeout(timer);
+        if (!el || hover || focus || scrollT) return;
+        timer = setTimeout(hide, MS);
+    }
+    function hide() { clearTimeout(timer); timer = null; if (el) el.remove(); el = null; hover = focus = false; }
+    function text(v) { return v === undefined ? '' : typeof v === 'string' ? v : JSON.stringify(v); }
+    function show(changed, skipped) {
+        hide();
+        el = document.createElement('div');
+        el.className = 'ui-replace-notice'; el.id = 'ui-replace-notice';
+        el.setAttribute('role', 'status'); el.tabIndex = -1;
+        var head = document.createElement('div'); head.className = 'ui-replace-notice-head';
+        head.textContent = 'Replaced ' + changed.length.toLocaleString('en-US') + ' value' + (changed.length === 1 ? '' : 's')
+            + (skipped.length ? ', skipped ' + skipped.length.toLocaleString('en-US') : '') + ' · Ctrl+Z undoes all';
+        var x = document.createElement('button'); x.type = 'button'; x.className = 'ui-btn-icon ui-replace-notice-close';
+        x.textContent = '×'; x.setAttribute('aria-label', 'Close'); x.onclick = hide; head.appendChild(x);
+        el.appendChild(head);
+        var list = document.createElement('ul'); list.className = 'ui-replace-notice-list';
+        changed.forEach(function (r) {
+            var li = document.createElement('li');
+            var p = document.createElement('code'); p.textContent = r.path; li.appendChild(p);
+            var v = document.createElement('span'); v.className = 'ui-replace-notice-val';
+            v.textContent = text(r.old) + ' → ' + text(r.next); li.appendChild(v);
+            if (window.ValueDelta) { var dl = document.createElement('span'); dl.className = 'ui-replace-notice-delta'; li.appendChild(dl);
+                try { window.ValueDelta.paint(dl, r.old, r.next); } catch (e) {} }
+            list.appendChild(li);
+        });
+        skipped.forEach(function (r) {
+            var li = document.createElement('li'); li.className = 'ui-replace-notice-skip';
+            var p = document.createElement('code'); p.textContent = r.path; li.appendChild(p);
+            var w = document.createElement('span'); w.textContent = 'skipped: ' + r.why; li.appendChild(w);
+            list.appendChild(li);
+        });
+        el.appendChild(list);
+        el.addEventListener('mouseenter', function () { hover = true; clearTimeout(timer); });
+        el.addEventListener('mouseleave', function () { hover = false; arm(); });
+        el.addEventListener('focusin', function () { focus = true; clearTimeout(timer); });
+        el.addEventListener('focusout', function (e) { if (el && !el.contains(e.relatedTarget)) { focus = false; arm(); } });
+        list.addEventListener('scroll', function () {
+            clearTimeout(timer); clearTimeout(scrollT);
+            scrollT = setTimeout(function () { scrollT = null; arm(); }, 800);
+        });
+        document.body.appendChild(el);
+        arm();
+        return el;
+    }
+    return {show:show, hide:hide, el:function () { return el; }, ms:function (v) { if (v) MS = v; return MS; }};
+})();
+
+
+/* D-43: Replace All writes FSP values at once; this notice then offers the
+   amplitude compensation for exactly the changed ports. Yes writes the plan's
+   amplitudes into the SAME undo group (one Ctrl+Z undoes both); No, or
+   letting the notice go, keeps FSP alone and says how the power moved. */
+window.FspAfterReplace = (function () {
+    var MS = 8000, el = null, timer = null, held = false, answered = false;
+    function fmtDb(x) { return (x > 0 ? '+' : '') + (Math.round(x * 100) / 100) + ' dB'; }
+    function close() { clearTimeout(timer); if (el) el.remove(); el = null; }
+    function sayPower(plans) {
+        if (!el) return;
+        var lines = plans.map(function (p) { return 'output power changed by ' + fmtDb(Number(p.new_fsp) - Number(p.old_fsp)) + ' on ' + p.fsp_path.replace(/\.full_scale_power_dbm$/, ''); });
+        el.querySelector('.ui-fsp-notice-msg').textContent = 'Amplitudes left as they were: ' + lines.join('; ') + '.';
+        var act = el.querySelector('.ui-fsp-notice-actions'); if (act) act.remove();
+        clearTimeout(timer); timer = setTimeout(close, 4000);
+    }
+    function arm(plans) {
+        clearTimeout(timer);
+        if (held || answered) return;
+        timer = setTimeout(function () { if (!answered) { answered = true; sayPower(plans); } }, MS);
+    }
+    async function offer(ports, gid, token) {
+        close(); answered = false; held = false;
+        var resp = await window.fetch('/field/fsp-compensation', {method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({ports:ports})});
+        var data = await resp.json();
+        var plans = (data && data.plans) || [];
+        if (!plans.length) return null;
+        var amps = [];
+        plans.forEach(function (p) { (p.amps || []).forEach(function (a) { amps.push(a); }); });
+        el = document.createElement('div');
+        el.className = 'ui-replace-notice ui-fsp-notice'; el.id = 'ui-fsp-notice'; el.setAttribute('role', 'alertdialog');
+        el.setAttribute('aria-label', 'FSP compensation');
+        var msg = document.createElement('div'); msg.className = 'ui-replace-notice-head ui-fsp-notice-msg';
+        msg.textContent = 'You changed FSP on ' + plans.length + ' port' + (plans.length === 1 ? '' : 's')
+            + '. Also compensate the ' + amps.length + ' related amplitude' + (amps.length === 1 ? '' : 's')
+            + ' so the output power stays the same?';
+        el.appendChild(msg);
+        var act = document.createElement('div'); act.className = 'ui-fsp-notice-actions';
+        var yes = document.createElement('button'); yes.type = 'button'; yes.className = 'btn-sm'; yes.name = 'fsp-yes'; yes.textContent = 'Yes';
+        var no = document.createElement('button'); no.type = 'button'; no.className = 'btn-sm outline'; no.name = 'fsp-no'; no.textContent = 'No';
+        act.appendChild(yes); act.appendChild(no); el.appendChild(act);
+        yes.onclick = async function () {
+            if (answered) return; answered = true; clearTimeout(timer);
+            var r = await window.fetch('/field/edit-batch', {method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({updates:amps.map(function (a) { return {dot_path:a.path, value:a.new}; }),
+                    group:gid || 'new', expect_chip:token})});
+            var d = await r.json();
+            if (d && d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+            (d && d.results || []).forEach(function (x) {
+                if (x.applied) document.querySelectorAll('.json-tree').forEach(function (t) {
+                    try { window._paintTreeLeaf(t, x.dot_path, x.new_value); } catch (e) {} });
+            });
+            if (el) {
+                el.querySelector('.ui-fsp-notice-msg').textContent = d && d.ok
+                    ? 'Compensated ' + amps.length + ' amplitude' + (amps.length === 1 ? '' : 's') + '; one Ctrl+Z undoes FSP and amplitudes together.'
+                    : 'Compensation not written: ' + ((d && d.error) || 'refused');
+                act.remove(); clearTimeout(timer); timer = setTimeout(close, 4000);
+            }
+        };
+        no.onclick = function () { if (answered) return; answered = true; sayPower(plans); };
+        el.addEventListener('mouseenter', function () { held = true; clearTimeout(timer); });
+        el.addEventListener('mouseleave', function () { held = false; arm(plans); });
+        el.addEventListener('focusin', function () { held = true; clearTimeout(timer); });
+        el.addEventListener('focusout', function (e) { if (el && !el.contains(e.relatedTarget)) { held = false; arm(plans); } });
+        var other = document.getElementById('ui-replace-notice');
+        if (other) el.style.bottom = 'calc(' + Math.ceil(other.getBoundingClientRect().height || 0) + 'px + 2 * var(--ui-gap-4))';
+        document.body.appendChild(el);
+        arm(plans);
+        return el;
+    }
+    return {offer:offer, close:close, ms:function (v) { if (v) MS = v; return MS; }};
+})();
+
+
+/* D-44: every FSP edit door commits at once; the response's X-SM-Fsp-Changed
+   header names the changed ports and the undo group, and this ONE hook turns
+   it into the compensation notice -- for fetch() callers and htmx alike. */
+(function () {
+    function take(raw) {
+        if (!raw || !window.FspAfterReplace) return;
+        var d; try { d = JSON.parse(raw); } catch (e) { return; }
+        if (d && d.ports && d.ports.length) window.FspAfterReplace.offer(d.ports, d.gid, window.__chipToken || '');
+    }
+    var f = window.fetch;
+    if (typeof f === 'function' && !f.__fspHooked) {
+        var hooked = function () {
+            return f.apply(this, arguments).then(function (r) {
+                try { if (r && r.headers && r.headers.get) take(r.headers.get('X-SM-Fsp-Changed')); } catch (e) {}
+                return r;
+            });
+        };
+        hooked.__fspHooked = true;
+        window.fetch = hooked;
+    }
+    document.addEventListener('htmx:afterRequest', function (e) {
+        var x = e.detail && e.detail.xhr;
+        try { if (x && x.getResponseHeader) take(x.getResponseHeader('X-SM-Fsp-Changed')); } catch (err) {}
+    });
+})();
+
+
+/* State Load: Enter in the folder box loads, exactly like the State Load
+   button -- the same form submit, so the same request and validation. A
+   highlighted path suggestion is taken first. Capture phase, once per press,
+   so the suggestion list's own Enter never adds a second submit. */
+document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    var input = e.target;
+    if (!input || input.id !== 'load-path-input') return;
+    var form = input.form || document.getElementById('load-form');
+    if (!form) return;
+    e.preventDefault(); e.stopPropagation();
+    var box = input.parentNode && input.parentNode.querySelector('.path-suggestions');
+    var active = box && box.querySelector('.path-suggestion.active');
+    if (active && active.getAttribute('data-path')) input.value = active.getAttribute('data-path');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    if (form.requestSubmit) form.requestSubmit();
+    else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+}, true);

@@ -42,8 +42,46 @@ window.UndoTrail = (function () {
         if (on) {
             var h = Math.ceil(_panel.getBoundingClientRect().height || 0);
             document.body.style.setProperty('--undo-trail-h', h + 'px');
+            keepClearOfActions();
         }
     }
+    /* The panel must never cover an action button (a grid's Apply all sat
+       under it). When a visible enabled button intersects the right-corner
+       dock, the panel docks in the left corner of the main pane instead. */
+    function _hits(a, b) {
+        return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    }
+    function _blocked(rect) {
+        var btns = document.querySelectorAll('#main button, #main .btn, #main [role="button"]');
+        for (var i = 0; i < btns.length; i++) {
+            var b = btns[i];
+            if (b.disabled || (_panel && _panel.contains(b))) continue;
+            var r = b.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && _hits(rect, r)) return true;
+        }
+        return false;
+    }
+    function dock(p, left) {
+        p.style.left = left != null ? left + 'px' : '';
+        p.style.right = left != null ? 'auto' : '';
+    }
+    function keepClearOfActions() {
+        var p = _panel;
+        if (!p || p.hidden) return;
+        dock(p, null);
+        if (!_blocked(p.getBoundingClientRect())) return;
+        var main = document.getElementById('main');
+        dock(p, (main ? Math.max(0, main.getBoundingClientRect().left) : 0) + 13);
+        // both corners blocked: the right corner stays (the user can hide it)
+        if (_blocked(p.getBoundingClientRect())) dock(p, null);
+    }
+    var _clearTimer = null;
+    window.addEventListener('scroll', function () {
+        if (!_panel || _panel.hidden) return;
+        clearTimeout(_clearTimer);
+        _clearTimer = setTimeout(keepClearOfActions, 80);
+    }, true);
+    window.addEventListener('resize', function () { if (_panel && !_panel.hidden) keepClearOfActions(); });
     function panel() {
         if (_panel && document.body.contains(_panel)) return _panel;
         var p = document.createElement('div');

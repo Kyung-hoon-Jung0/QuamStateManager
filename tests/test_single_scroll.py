@@ -65,12 +65,12 @@ class TestOneScroller:
         ``_pinBarsToScroll()`` changed nothing in this file's output.
         """
         toolbar = _rule(".bulk-panel .bulk-toolbar")
-        assert "z-index: 8" in toolbar and "position: relative" in toolbar
+        assert "z-index: 11" in toolbar and "position: relative" in toolbar
         assert "position: sticky" not in toolbar
         for sel in (".bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note",
                     ".bulk-panel .bulk-pair-divider"):
             r = _rule(sel)
-            assert "z-index: 6" in r and "position: sticky" not in r
+            assert "z-index: 10" in r and "position: sticky" not in r
         # 4s: the toolbar owns the popovers, so it must outrank the bars below it
         assert CSS.index(".bulk-panel .bulk-toolbar {") >= 0
         i = CSS.index(".bulk-panel .bulk-toolbar {")

@@ -148,18 +148,43 @@ _FSP = "ports.mw_outputs.con1.1.1.full_scale_power_dbm"
 
 
 class TestNeverSilent:
-    def test_field_edit_gates_without_ack(self, env):
+    def test_field_edit_commits_fsp_and_offers_without_touching_amps(self, env):
+        """D-44: the FSP commits at once; the response names the change and
+        its undo group; no amplitude moves without the user's Yes."""
         c, ctx = env["client"], env["ctx"]
         r = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"})
-        assert r.status_code == 409
-        body = r.get_json()
-        assert body["fsp_compensation"]["clip_count"] >= 1
-        assert len(body["fsp_compensation"]["amps"]) == 3
-        assert len(ctx["store"].change_log) == 0, \
-            "NOTHING commits before the user saw the offer"
+        assert r.status_code == 200, r.data
+        offer = json.loads(r.headers["X-SM-Fsp-Changed"])
+        assert offer["ports"] == [{"dot_path": _FSP, "old": 0}]
+        assert offer["gid"] == ctx["store"].change_log[-1].group_id
+        assert len(ctx["store"].change_log) == 1, "only the FSP itself"
         with ctx["store"]._lock:
-            assert ctx["store"].state["ports"]["mw_outputs"]["con1"]["1"]["1"][
-                "full_scale_power_dbm"] == 0
+            st = ctx["store"].state
+            assert st["ports"]["mw_outputs"]["con1"]["1"]["1"]["full_scale_power_dbm"] == -6
+            assert st["qubits"]["qA2"]["resonator"]["operations"]["readout"]["amplitude"] == 0.6
+        # the offer: the same plan a pre-commit edit computed
+        p = c.post("/field/fsp-compensation", json={"ports": offer["ports"]}).get_json()
+        assert len(p["plans"]) == 1 and len(p["plans"][0]["amps"]) == 3
+        assert p["plans"][0]["clip_count"] >= 1
+
+    def test_yes_joins_the_fsp_group_and_one_undo_reverts_both(self, env):
+        c, ctx = env["client"], env["ctx"]
+        r = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"})
+        offer = json.loads(r.headers["X-SM-Fsp-Changed"])
+        plan = c.post("/field/fsp-compensation", json={"ports": offer["ports"]}).get_json()["plans"][0]
+        y = c.post("/field/edit-batch", json={"updates": [{"dot_path": a["path"], "value": a["new"]} for a in plan["amps"]],
+                                              "group": offer["gid"], "expect_chip": ""})
+        assert y.status_code == 200 and y.get_json()["ok"]
+        assert "X-SM-Fsp-Changed" not in y.headers
+        assert len({e.group_id for e in ctx["store"].change_log}) == 1
+        peek = c.get("/field/peek", query_string={"dot_path": "qubits.qA2.resonator.operations.readout.amplitude"}).get_json()
+        assert math.isclose(peek["values"]["qubits.qA2.resonator.operations.readout.amplitude"], 0.6 * 10 ** (6 / 20), rel_tol=1e-9)
+        c.post("/undo")
+        assert len(ctx["store"].change_log) == 0
+        with ctx["store"]._lock:
+            st = ctx["store"].state
+            assert st["ports"]["mw_outputs"]["con1"]["1"]["1"]["full_scale_power_dbm"] == 0
+            assert st["qubits"]["qA2"]["resonator"]["operations"]["readout"]["amplitude"] == 0.6
 
     def test_solo_ack_commits_fsp_only(self, env):
         c, ctx = env["client"], env["ctx"]
@@ -175,8 +200,7 @@ class TestNeverSilent:
 
     def test_comp_batch_is_one_undo_group(self, env):
         c, ctx = env["client"], env["ctx"]
-        r0 = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"})
-        plan = r0.get_json()["fsp_compensation"]
+        plan = _read_plan(ctx, _FSP, "-6")
         updates = ([{"dot_path": _FSP, "value": "-6"}]
                    + [{"dot_path": a["path"], "value": str(a["new"])}
                       for a in plan["amps"]])
@@ -203,16 +227,17 @@ class TestNeverSilent:
             assert st["qubits"]["qA2"]["resonator"]["operations"]["readout"][
                 "amplitude"] == 0.6
 
-    def test_batch_gates_without_ack(self, env):
+    def test_batch_commits_fsp_and_offers(self, env):
         c, ctx = env["client"], env["ctx"]
         r = c.post("/field/edit-batch", json={
             "updates": [{"dot_path": _FSP, "value": "-6"},
                         {"dot_path": "qubits.qA1.xy.operations.x180.amplitude",
                          "value": "0.4"}],
             "expect_chip": ""})
-        assert r.status_code == 409
-        assert r.get_json()["fsp_compensation"] is not None
-        assert len(ctx["store"].change_log) == 0, "the WHOLE batch waits"
+        assert r.status_code == 200 and r.get_json()["ok"]
+        offer = json.loads(r.headers["X-SM-Fsp-Changed"])
+        assert [p["dot_path"] for p in offer["ports"]] == [_FSP]
+        assert len(ctx["store"].change_log) == 2, "the batch as sent, no amplitude added"
 
     def test_non_fsp_edits_unaffected(self, env):
         c = env["client"]
@@ -228,10 +253,7 @@ class TestNeverSilent:
         base = [{"dot_path": _FSP, "value": "-6"},
                 {"dot_path": "qubits.qA1.xy.operations.x180.length",
                  "value": "48"}]
-        r0 = c.post("/field/edit-batch", json={"updates": base,
-                                               "expect_chip": ""})
-        assert r0.status_code == 409
-        plan = r0.get_json()["fsp_compensation"]
+        plan = _read_plan(ctx, _FSP, "-6")
         updates = base + [{"dot_path": a["path"], "value": str(a["new"])}
                           for a in plan["amps"]]
         r = c.post("/field/edit-batch", json={
@@ -360,8 +382,7 @@ def test_fsp_edit_selfcheck():
 def _commit_comp(env) -> list[str]:
     """FSP 0 -> -6 on con1/1/1 accepted WITH compensation: FSP + 3 amps, one gid."""
     c = env["client"]
-    plan = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"}
-                  ).get_json()["fsp_compensation"]
+    plan = _read_plan(env["ctx"], _FSP, "-6")
     updates = ([{"dot_path": _FSP, "value": "-6"}]
                + [{"dot_path": a["path"], "value": str(a["new"])} for a in plan["amps"]])
     r = c.post("/field/edit-batch", json={"updates": updates, "fsp_ack": "comp",
@@ -449,8 +470,7 @@ class TestTrayDiscardKeepsTheBundleWhole:
 
     def _commit_comp_with_len(self, env) -> list[str]:
         c = env["client"]
-        plan = c.post("/field/edit", data={"dot_path": _FSP, "value": "-6"}
-                      ).get_json()["fsp_compensation"]
+        plan = _read_plan(env["ctx"], _FSP, "-6")
         updates = ([{"dot_path": self._LEN, "value": "48"},
                     {"dot_path": _FSP, "value": "-6"}]
                    + [{"dot_path": a["path"], "value": str(a["new"])}
@@ -540,3 +560,24 @@ class TestPointerAmpsThatFollowACompensatedTarget:
     def test_nothing_written_changes(self):
         _, plan = self._plan({"-ro": {"amplitude": "#../readout/amplitude"}})
         assert not any(a["path"].endswith(".-ro.amplitude") for a in plan["amps"])
+
+
+def _read_plan(ctx_or_app, path, value):
+    """The compensation plan for an FSP edit, read-only (D-44: the door no
+    longer answers it as a 409 -- it commits and offers afterwards)."""
+    from quam_state_manager.web import routes
+    store = ctx_or_app["store"]
+    return routes._fsp_plan_for(store, path, value)
+
+
+def test_replace_all_preview_includes_fsp_and_still_skips_pointers(env):
+    """D-43: Replace All writes FSP like any other value (the offer follows the
+    write); a pointer stays skipped."""
+    c = env["client"]
+    r = c.post("/field/replace-preview", json={"updates": [{"dot_path": _FSP, "value": "-6"}]}).get_json()
+    assert r["ok"] and not r["results"][0].get("skip"), r
+    w = c.post("/field/edit-batch", json={"updates": [{"dot_path": _FSP, "value": "-6"}], "group": "new",
+                                          "expect_seq": r["mutation_seq"]})
+    assert w.status_code == 200 and "X-SM-Fsp-Changed" in w.headers
+    peek = c.get("/field/peek", query_string={"dot_path": _FSP}).get_json()
+    assert peek["values"][_FSP] == -6

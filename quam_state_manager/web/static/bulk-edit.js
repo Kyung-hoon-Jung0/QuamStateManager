@@ -1242,6 +1242,11 @@
         el.firstChild.textContent = '0 of ' + total + ' rows here match \u201c' + q
             + '\u201d \u2014 the search box above is filtering this grid. ';
         el.hidden = false;
+        // The pane scrolls sideways under the grid; this line sits beside the
+        // toolbar rows and follows the same scroll, or its start is clipped.
+        var _sc = el.closest('#table-pane');
+        var _x = _sc ? (_sc.scrollLeft || 0) : 0;
+        el.style.transform = _x ? 'translateX(' + _x + 'px)' : '';
     }
 
     // docs/175 operators in the grid: the shared helpers in SearchQuery.
@@ -2370,7 +2375,7 @@
     // them while the pane scrolls sideways (real Chrome: the toolbar left at
     // -2475 px). Move them by the pane's scrollLeft instead, one rAF per
     // scroll event, so the search box and Apply all stay where the user is.
-    var _BAR_SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note';
+    var _BAR_SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note, .bulk-empty-search-note';
     function _pinBars(scroller) {
         var x = scroller.scrollLeft || 0;
         var tf = x ? 'translateX(' + x + 'px)' : '';

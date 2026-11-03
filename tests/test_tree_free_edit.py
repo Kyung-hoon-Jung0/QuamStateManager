@@ -50,6 +50,7 @@ def test_tree_find():
     'find_literal_rep', 'find_whole_number', 'find_review', 'find_review_more', 'find_expect_seq',
     'find_advance', 'find_label', 'chord_palette', 'chord_stop', 'chord_expiry', 'chord_other_key',
     'empty_refuse', 'empty_confirm', 'mac_code', 'multi_label', 'multi_full_old',
+    'notice_list', 'notice_skip', 'notice_timer', 'notice_hover', 'notice_focus', 'notice_scroll', 'notice_leave',
 ])
 def test_tree_find_mutations(mutation):
     result = run_find(mutation)
@@ -91,7 +92,7 @@ def test_tree_find_server_undo(tmp_path):
         server.server_close()
 
 
-@pytest.mark.parametrize('mutation', [None, 'preview_pointer', 'preview_readonly', 'preview_fsp', 'preview_type', 'preview_key'])
+@pytest.mark.parametrize('mutation', [None, 'preview_pointer', 'preview_readonly', 'preview_type', 'preview_key'])
 def test_replace_preview_policy(tmp_path, mutation):
     """Refusal pins run against the real server and executable route mutations."""
     import inspect
@@ -116,7 +117,6 @@ def test_replace_preview_policy(tmp_path, mutation):
             'preview_pointer': ('if isinstance(old, str) and old.startswith', 'if False and isinstance(old, str) and old.startswith'),
             'preview_readonly': ('if reason:\n                    raise ValueError(reason)', 'if False:\n                    raise ValueError(reason)'),
             'preview_key': ('if _pulse_is_renamable(path):', 'if False:'),
-            'preview_fsp': ('if path.endswith("full_scale_power_dbm"):', 'if False:'),
             'preview_type': ('modifier._checked_value(path, old, parsed, coerce=True, enforce=True)', 'parsed'),
         }[mutation]
         assert before in source
@@ -136,8 +136,10 @@ def test_replace_preview_policy(tmp_path, mutation):
         assert rows['old'].get('rename') == {'path': 'qubits.item.xy.operations.old', 'new_name': 'new', 'retarget': '1'}
         assert rows['real']['new_value'] == 5.0e9
         assert isinstance(rows['real']['new_value'], float), 'real remains real'
-        for key, reason in [('other', 'coerce'), ('pointer', 'pointer'), ('id', 'read-only'), ('full_scale_power_dbm', 'FSP')]:
+        for key, reason in [('other', 'coerce'), ('pointer', 'pointer'), ('id', 'read-only')]:
             assert reason.lower() in rows[key].get('skip', '').lower(), (key, rows[key])
+        # D-43: FSP is replaced like any value; the amplitude offer follows the write
+        assert not rows['full_scale_power_dbm'].get('skip'), rows['full_scale_power_dbm']
         assert client.get('/field/peek?dot_path=settings.real').json['values']['settings.real'] == 1.0
         accepted = [r for r in response.json['results'] if not r.get('skip')]
         reply = client.post('/field/edit-batch', json={'group': 'new', 'expect_seq': response.json['mutation_seq'],

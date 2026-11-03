@@ -110,6 +110,27 @@ ok(/^\d+(\.\d+)?px$/.test(btn.style.left), 'reposition on typing keeps a valid l
 d.getElementById('outside').focus();
 ok(btn.style.left === '', 'hide clears the managed left');
 
+// 5b. a NARROW cell with a short value: the 8 px gap before the clock holds
+// (the input widens just enough) and the width is given back on leave
+{
+    Object.defineProperty(c2, 'offsetWidth', { configurable: true,
+        get() { return Math.max(40, parseFloat(this.style.minWidth) || 0); } });
+    c2.value = '-8';
+    c2.focus();
+    const b = d.getElementById('fh-cellbtn');
+    const padL = parseFloat(window.getComputedStyle(c2).paddingLeft) || 4;
+    const textEnd = c2.offsetLeft + padL + 2 * 9;   // generous: two glyphs
+    ok(parseFloat(b.style.left) > c2.offsetLeft + padL + 2 * 5 + 8,   // two glyphs of at least 5 px, then 8 px
+       'narrow cell: the clock sits clear of the value (left ' + b.style.left + ')');
+    ok(parseFloat(c2.style.minWidth) > 40, 'narrow cell: the input widened for the gap (' + c2.style.minWidth + ')');
+    ok(parseFloat(b.style.left) + 0 <= c2.offsetLeft + c2.offsetWidth - 20 + 0.01,
+       'narrow cell: the clock stays inside the input');
+    void textEnd;
+    d.getElementById('outside').focus();
+    ok(c2.style.minWidth === '', 'leaving the cell gives the width back');
+    delete c2.offsetWidth;
+}
+
 // the measurer itself grows with text length (canvas or fallback path)
 const mw = window.FieldHistory && window.FieldHistory._cellTextWidth;
 ok(typeof mw === 'function', 'measure seam exported');

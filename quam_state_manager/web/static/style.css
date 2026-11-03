@@ -10365,15 +10365,15 @@ html.topbar-hidden .chrome-reveal { display: block; }
    context while scrolled sideways, so the bars are ordered explicitly:
    the toolbar rows (which own the popovers) above the chip bar, both above
    the sticky table header (z-index 2 / 4). */
-.bulk-panel .bulk-toolbar { position: relative; z-index: 8; }
-.bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 6; }
-.bulk-panel .bulk-pair-divider { position: relative; z-index: 6; }
+.bulk-panel .bulk-toolbar { position: relative; z-index: 11; }
+.bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 10; }
+.bulk-panel .bulk-pair-divider { position: relative; z-index: 10; }
 .bulk-scroll-top { display: none; }
 /* max-content (NOT min-width:100%) so the table keeps its natural column widths
    and never stretches the cells to fill when only a few columns are visible. */
 .bulk-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; }
 .bulk-table th, .bulk-table td { padding: 1px 3px; border-bottom: 1px solid var(--pico-muted-border-color); white-space: nowrap; vertical-align: middle; }
-.bulk-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 2; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
+.bulk-table thead th { position: sticky; top: calc(-1 * var(--table-pane-pad-v, 0px)); z-index: 7; background: var(--pico-card-background-color); text-align: left; padding: 5px 7px; border-bottom: 2px solid var(--pico-muted-border-color); }
 /* Group-header band: one spanning cell per section, over its columns. The 2nd
    header row (the column heads) sticks BELOW the band — its sticky `top` is offset
    by the band's measured height (--bulk-grouphead-h, set by JS; varies with font). */
@@ -10388,8 +10388,8 @@ html.topbar-hidden .chrome-reveal { display: block; }
 /* Frozen first column (qubit id) + its sticky-header corner. */
 .bulk-corner, .bulk-rowhead { position: sticky; left: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); font-weight: 600; text-align: left; padding-right: 10px; border-right: 1px solid var(--pico-muted-border-color); }
 .bulk-rowhead { font-size: calc(0.92rem * var(--bulk-fs)); vertical-align: middle; }   /* match the cell text size */
-.bulk-table thead th.bulk-corner { z-index: 5; }
-.bulk-rowhead { z-index: 1; }
+.bulk-table thead th.bulk-corner { z-index: 9; }   /* stacking: pinned cell 3, focused input 4, clock 5, row head 6, header 7, pinned head 8, corner 9, chip bar 10, toolbar 11 */
+.bulk-rowhead { z-index: 6; }
 .bulk-table tbody tr:hover .bulk-rowhead { background: var(--pico-card-sectioning-background-color); }
 .bulk-cell {
     /* width comes from the input's `size` attribute (server-set to the value
@@ -10560,7 +10560,7 @@ th:hover > .bulk-pin, .bulk-pin.bulk-pin-on { opacity: 0.85; }
 .bulk-pin.bulk-pin-on { filter: none; }
 tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb, var(--pico-primary) 7%, var(--pico-card-background-color)); }
 .bulk-table .bulk-col-pinned { z-index: 3; background: var(--pico-card-background-color); }
-.bulk-table thead th.bulk-col-pinned { z-index: 4; }
+.bulk-table thead th.bulk-col-pinned { z-index: 8; }
 /* docs/112 (#12): datasets keyboard nav + sort honesty */
 #datasets-tbody tr.ds-row-active > td { background: color-mix(in srgb, var(--pico-primary) 14%, var(--pico-card-background-color)); } #datasets-tbody tr.ds-row-active > td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary); }
 /* audit: `.ds-search-wrap` also hosts an absolutely-positioned help "?"

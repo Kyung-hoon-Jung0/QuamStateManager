@@ -405,7 +405,18 @@ def append_units(path: str | Path, new_units: list[dict], *,
         units, cursor = load_state(p)
         if truncate_at_cursor and 0 <= cursor < len(units):
             units = units[:cursor]
-        units.extend(new_units)
+        for nu in new_units:
+            # A later write that JOINED the group of the unit at the tip (the
+            # FSP compensation's amplitudes, D-44, applied live after the FSP
+            # itself) is the same user action: it extends that unit, so one
+            # Ctrl+Z walks both back together.
+            last = units[-1] if units else None
+            gid = nu.get("gid")
+            if (last is not None and isinstance(gid, str) and gid
+                    and last.get("gid") == gid and not (last.get("meta") or {}).get("discarded")):
+                last["entries"] = list(last.get("entries") or []) + list(nu.get("entries") or [])
+                continue
+            units.append(nu)
         if len(units) > MAX_UNITS:
             units = units[-MAX_UNITS:]
         try:

@@ -7939,11 +7939,84 @@ window.ChipTrends = (function () {
                         || (cd && typeof cd !== 'string' && cd.length > 4 && cd[4]))) ? 'pointer' : '';
                 } catch (e) { /* cursor only */ }
             });
+            host.on('plotly_hover', function (evt) {
+                try { _coTip(host, evt); } catch (e) { /* tooltip only */ }
+            });
             host.on('plotly_unhover', function () {
                 try { host.style.cursor = ''; } catch (e) {}
+                _coTipHide(host);
             });
         } catch (e) { /* an un-bindable host still draws */ }
     }
+
+    /* Points from several series drawn on the same spot (two qubits holding
+       the same value at the same time): Plotly's hover names only one of them,
+       and it was often not the one under the pointer. Every mark within a few
+       pixels of the hovered one is listed in one tooltip instead. */
+    var _CO_PX = 5;
+    function _coincident(data, xa, ya, px, py) {
+        var out = [];
+        (data || []).forEach(function (tr, ti) {
+            if (!tr || tr.visible === false || tr.visible === 'legendonly') return;
+            var xs = tr.x || [], ys = tr.y || [];
+            for (var i = 0; i < xs.length; i++) {
+                if (ys[i] == null || xs[i] == null) continue;
+                var qx = xa.l2p(xa.d2c(xs[i])), qy = ya.l2p(ya.d2c(ys[i]));
+                if (Math.abs(qx - px) <= _CO_PX && Math.abs(qy - py) <= _CO_PX) {
+                    var t = Array.isArray(tr.text) ? tr.text[i] : tr.text;
+                    out.push({ trace: ti, index: i, name: tr.name || '', x: xs[i], y: ys[i],
+                               text: t == null ? String(ys[i]) : String(t) });
+                    break;
+                }
+            }
+        });
+        return out;
+    }
+    // Plotly's own single label hides while the combined tooltip is up
+    function _cotipPlotlyLabel(host, display) {
+        try { host.querySelectorAll('.hoverlayer').forEach(function (h) { h.style.display = display; }); } catch (e) {}
+    }
+    function _coTipHide(host) {
+        var tip = document.getElementById('trends-cotip');
+        if (tip) tip.hidden = true;
+        if (host && host.classList) { host.classList.remove('trends-cotip-on'); _cotipPlotlyLabel(host, ''); }
+    }
+    function _coTip(host, evt) {
+        var p = evt && evt.points && evt.points[0];
+        if (!p || !p.xaxis || !p.yaxis) return _coTipHide(host);
+        var xa = p.xaxis, ya = p.yaxis;
+        var px = xa.l2p(xa.d2c(p.x)), py = ya.l2p(ya.d2c(p.y));
+        var hits = _coincident(host.data, xa, ya, px, py);
+        var names = {};
+        hits = hits.filter(function (h) { if (names[h.name]) return false; names[h.name] = 1; return true; });
+        if (hits.length < 2) return _coTipHide(host);
+        var tip = document.getElementById('trends-cotip');
+        if (!tip) {
+            tip = document.createElement('div');
+            tip.id = 'trends-cotip';
+            tip.className = 'ui-trends-cotip';
+            tip.setAttribute('role', 'tooltip');
+            document.body.appendChild(tip);
+        }
+        tip.textContent = '';
+        var head = document.createElement('div');
+        head.className = 'ui-trends-cotip-head';
+        head.textContent = hits.length + ' series at this point';
+        tip.appendChild(head);
+        hits.forEach(function (h) {
+            var row = document.createElement('div');
+            row.textContent = h.name + ': ' + String(h.text).replace(/<br\s*\/?>/gi, ' · ').replace(/<[^>]*>/g, '');
+            tip.appendChild(row);
+        });
+        var r = host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
+        var off = (xa._offset || 0), offy = (ya._offset || 0);
+        tip.style.left = Math.round(r.left + off + px + 14) + 'px';
+        tip.style.top = Math.round(r.top + offy + py + 14) + 'px';
+        tip.hidden = false;
+        host.classList.add('trends-cotip-on'); _cotipPlotlyLabel(host, 'none');
+    }
+    window._trendsCoincident = _coincident;
+    window._trendsCoTip = _coTip;
 
     function _axisFor(series) {
         var allDated = true;

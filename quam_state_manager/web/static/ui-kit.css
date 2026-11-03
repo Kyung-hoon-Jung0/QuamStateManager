@@ -443,6 +443,8 @@
 .ui-opxmon-tile strong {font-size:var(--ui-opxmon-heading-space); font-variant-numeric:tabular-nums}
 .ui-opxmon-tile--open {flex:2 1 var(--ui-opxmon-tile-width); overflow-wrap:anywhere}
 .ui-opxmon-tile--unreadable small {overflow-wrap:anywhere}
+.ui-opxmon-tile--stale strong {color:var(--ui-opxmon-muted)}
+.ui-opxmon-tile--stale {border-style:dashed}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
 .ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
 .ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
@@ -525,9 +527,14 @@
 .ui-tree-find-word { text-decoration: underline; text-underline-offset: 2px; }
 .ui-tree-find-status { flex: 1 1 0; min-width: 0; color: var(--ui-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-tree-find-close { min-width: 1.9em; padding-left: var(--ui-gap-1); padding-right: var(--ui-gap-1); }
-.ui-tree-find-review { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) 0; border-top: var(--ui-bw) solid var(--ui-border); }
-.ui-tree-find-review-sum { flex: 1 1 20rem; min-width: 0; color: var(--ui-text); overflow-wrap: anywhere; }
-.ui-tree-find-review > button { width: auto; margin: 0; white-space: nowrap; }
+.ui-replace-notice { position: fixed; right: var(--ui-gap-4); bottom: var(--ui-gap-4); z-index: 140; display: flex; flex-direction: column; width: min(32rem, calc(100vw - 2 * var(--ui-gap-4))); max-height: min(40vh, 22rem); border: var(--ui-bw) solid var(--ui-border); border-left: var(--ui-bw-strip) solid var(--ui-accent); border-radius: var(--ui-r-md); background: var(--ui-surface-1); color: var(--ui-text); box-shadow: var(--ui-shadow); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-read); }
+.ui-replace-notice-head { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-gap-2); padding: var(--ui-gap-2) var(--ui-gap-3); border-bottom: var(--ui-bw) solid var(--ui-border); font-weight: var(--ui-fw); }
+.ui-replace-notice-close { width: auto; margin: 0; }
+.ui-replace-notice-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); list-style: none; }
+.ui-replace-notice-list li { display: flex; flex-wrap: wrap; gap: 0 var(--ui-gap-2); padding: var(--ui-gap-1) 0; border-bottom: var(--ui-bw) solid var(--ui-border); overflow-wrap: anywhere; }
+.ui-replace-notice-list code { font-family: var(--ui-font-mono); color: var(--ui-text); background: none; padding: 0; }
+.ui-replace-notice-val, .ui-replace-notice-skip span { color: var(--ui-text-2); font-family: var(--ui-font-mono); }
+.ui-replace-notice-delta { white-space: nowrap; }
 .ui-tree-find-details { margin: 0; font-size: var(--ui-fs-xs); }
 .ui-tree-find-summary { color: var(--ui-text-2); cursor: pointer; }
 .ui-tree-find-results { max-height: var(--ui-find-results-height); overflow: auto; border-top: var(--ui-bw) solid var(--ui-border); }
@@ -546,6 +553,16 @@
 .ui-typeahead-inflow.ui-typeahead-inflow { position: static; width: auto; max-height: 12rem; margin-block: var(--ui-gap-1); }
 .ui-tree-target { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--ui-warn-text); font-size: var(--ui-fs-xs); margin-left: var(--ui-gap-1); }
 .ui-tree-drafts { margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
+
+/* Chip Status Trends: one tooltip for marks drawn on the same spot */
+.ui-trends-cotip { position: fixed; z-index: 300; pointer-events: none; max-width: 28rem;
+    padding: var(--ui-opxmon-tile-padding) calc(2 * var(--ui-opxmon-tile-padding));
+    background: var(--ui-surface-1); color: var(--ui-text); border: var(--ui-bw) solid var(--ui-border);
+    border-radius: var(--ui-r-sm); box-shadow: var(--ui-shadow); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
+.ui-trends-cotip-head { font-weight: var(--ui-fw); }
+.ui-fsp-notice-actions { display: flex; gap: var(--ui-gap-2); padding: var(--ui-gap-2) var(--ui-gap-3); }
+.ui-fsp-notice-actions > button { width: auto; margin: 0; }
+.ui-fsp-notice .ui-fsp-notice-msg { font-weight: var(--ui-fw-normal); border-bottom: 0; }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

@@ -232,7 +232,10 @@ async function main() {
   window._jumpToTreePath('explorer-tree-state', TARGET);
   await sleep(300);
   const r6 = rowOf(TARGET);
-  ok(!!r6 && d.activeElement === r6,
+  // D-1 (roving editor): focusing a leaf row mounts its value editor, so the
+  // keyboard lands in the row's own editor
+  const inRow = (r) => !!r && (d.activeElement === r || (r.contains(d.activeElement) && d.activeElement.classList.contains('ui-tree-editor')));
+  ok(inRow(r6),
     'J6: a jump that found focus on <body> lands it on the target row (got '
     + (d.activeElement && (d.activeElement.className || d.activeElement.tagName)) + ')');
   ok(!!r6 && r6.getAttribute('tabindex') === '-1',
@@ -247,7 +250,7 @@ async function main() {
   window._jumpToTreePath('explorer-tree-state', TARGET);
   await sleep(700);
   const r6b = rowOf(TARGET);
-  ok(!!r6b && r6b.isConnected && d.activeElement === r6b,
+  ok(!!r6b && r6b.isConnected && inRow(r6b),
     'J6b: after a cleared search, focus is on the RE-RENDERED target row');
 
   render();

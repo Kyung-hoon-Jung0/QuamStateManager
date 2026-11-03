@@ -1326,3 +1326,25 @@ def test_every_sensor_unreadable_is_not_called_no_readings(env):
     m.poll_once()
     html = page(app, 'live')
     assert 'No temperature readings.' not in html and '<strong>unreadable</strong>' in html
+
+
+def test_a_timeout_gets_its_own_advice_not_a_permission_hint():
+    errors = {'controllers': 'No answer within 30 s while reading controllers; the worker was stopped.'}
+    advice = om.failure_advice(errors, 'host')
+    assert 'permission' not in advice
+    assert 'slow or overloaded' in advice and 'network' in advice
+
+
+def test_tiles_kept_after_a_failed_read_are_marked_stale(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={"FEM 1": 61.0})]
+    m.poll_once()
+    assert 'ui-opxmon-tile--stale' not in page(app, 'live')
+    clock.t += 5
+    w.script[:] = [om.WorkerError('No answer within 30 s while reading; the worker was stopped.')]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'Temperatures unavailable (as of' in html
+    assert 'the values below are stale' in html
+    assert 'ui-opxmon-tile--stale' in html and '>stale, as of ' in html
+    assert 'permission' not in html

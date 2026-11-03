@@ -280,9 +280,8 @@ def test_origin_on_fsp_compensation_uses_existing_batch(tmp_path):
     path = f"ports.mw_outputs.con1.{fem}.{port}.full_scale_power_dbm"
     value = str(outputs[fem][port]["full_scale_power_dbm"] + 2)
     data = {"dot_path": path, "value": value, "provenance": json.dumps(ORIGIN)}
-    offer = chip.c.post("/field/edit", data=data)
-    assert offer.status_code == 409 and offer.get_json().get("fsp_compensation"), offer.data
-    assert chip.log() == []
+    from quam_state_manager.web import routes
+    assert routes._fsp_plan_for(chip.ctx["store"], path, value), "a plan exists for this port"
     applied = chip.c.post("/field/edit", data={**data, "fsp_ack": "comp"})
     assert applied.status_code == 200 and applied.get_json()["ok"], applied.data
     log = chip.ctx["store"].change_log

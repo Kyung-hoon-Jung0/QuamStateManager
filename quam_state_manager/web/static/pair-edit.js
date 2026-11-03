@@ -298,6 +298,11 @@
         el.firstChild.textContent = '0 of ' + total + ' rows here match \u201c' + q
             + '\u201d \u2014 the search box above is filtering this grid. ';
         el.hidden = false;
+        // The pane scrolls sideways under the grid; this line sits beside the
+        // toolbar rows and follows the same scroll, or its start is clipped.
+        var _sc = el.closest('#table-pane');
+        var _x = _sc ? (_sc.scrollLeft || 0) : 0;
+        el.style.transform = _x ? 'translateX(' + _x + 'px)' : '';
     }
 
     function applySearch() {

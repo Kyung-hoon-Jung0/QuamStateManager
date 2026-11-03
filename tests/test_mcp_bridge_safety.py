@@ -76,7 +76,9 @@ class TestFspCompOnTheEditDoor:
         # the browser: 409 offer -> the popup's comp batch
         app_b, cb = _app(tmp_path, "browser")
         cb.post("/load", data={"folder": str(_chip_dir(tmp_path / "b"))})
-        plan = cb.post("/field/edit", data={"dot_path": _FSP, "value": "-6"}).get_json()["fsp_compensation"]
+        from quam_state_manager.web import routes as _r
+        _ctx_b = app_b.config["contexts"][app_b.config["active_context"]] if "active_context" in app_b.config else next(iter(app_b.config["contexts"].values()))
+        plan = _r._fsp_plan_for(_ctx_b["store"], _FSP, "-6")
         updates = ([{"dot_path": _FSP, "value": "-6"}]
                    + [{"dot_path": a["path"], "value": str(a["new"])} for a in plan["amps"]])
         assert cb.post("/field/edit-batch", json={"updates": updates, "fsp_ack": "comp"}).get_json()["ok"]

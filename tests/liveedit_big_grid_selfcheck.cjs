@@ -850,7 +850,7 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     const win = world({ tailMin: 100, coldFrom: HOT, pairColdFrom: HOT });
     await tick(10);
     const d = win.document, pane = d.getElementById('table-pane');
-    const SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note';
+    const SEL = '.bulk-toolbar, .bulk-chipbar, .bulk-pair-divider, .bulk-dyn-truncated, .bulk-virt-note, .bulk-empty-search-note';
     const E = win.Element.prototype, qsa0 = E.querySelectorAll, m0 = E.matches;
     let paneScans = 0, inTable = 0, tested = 0;
     E.querySelectorAll = function (sel) { if (this === pane && sel === SEL) paneScans++; return qsa0.apply(this, arguments); };
@@ -863,6 +863,25 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
        'every toolbar row follows the scroll (' + bars.length + ' bars: ' + bars.map((b) => b.style.transform || '-').join(' ') + ')');
     ok(paneScans === 0 && inTable === 0 && tested > 0 && tested < 40,
        'found without a pane-wide query and without looking inside a table (' + paneScans + ' scans, ' + tested + ' elements tested, ' + inTable + ' in a table)');
+  }
+
+  // ── the "0 of N rows match" line follows a sideways scroll like the bars ──
+  {
+    const win = world({ tailMin: 100, coldFrom: HOT, pairColdFrom: HOT });
+    await tick(10);
+    const d = win.document, pane = d.getElementById('table-pane');
+    pane.scrollLeft = 400;
+    pane.dispatchEvent(new win.Event('scroll')); await tick(40);
+    const sb = d.getElementById('bulk-search');
+    sb.value = 'zzz-no-such-value'; sb.dispatchEvent(new win.Event('input', { bubbles: true }));
+    await tick(60);
+    const notes = Array.from(d.querySelectorAll('.bulk-empty-search-note')).filter((n) => !n.hidden);
+    ok(notes.length >= 1 && notes.every((n) => n.style.transform === 'translateX(400px)'),
+       'a no-match note born while scrolled starts in view (' + notes.map((n) => n.style.transform || '-').join(' ') + ')');
+    pane.scrollLeft = 650;
+    pane.dispatchEvent(new win.Event('scroll')); await tick(40);
+    ok(notes.length >= 1 && notes.every((n) => n.style.transform === 'translateX(650px)'),
+       'the no-match note follows a later sideways scroll (' + notes.map((n) => n.style.transform || '-').join(' ') + ')');
   }
 
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts) : ('all checks passed (' + asserts + ' assertions)'));

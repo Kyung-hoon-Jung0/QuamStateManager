@@ -836,7 +836,12 @@ function nodeAt(container, p) {
     let chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
     ok(!!chip && /reach the app/.test(chip.textContent),
        'C18: a failed inline edit says the app could not be reached (' + (chip && chip.textContent) + ')');
-    ok(val.querySelector('input').value === before, 'C18: the display still reverts to the stored value');
+    // The roving editor keeps the refused text as a draft (D-7/D-11: a
+    // draft is never lost) instead of throwing it away; the stored value is
+    // untouched and the field says it differs.
+    ok(val.querySelector('input').value === '1.5e-05' && val.classList.contains('ui-tree-dirty')
+       && c._treeData.qubits.qA1.f_01 !== 1.5e-05,
+       'C18: the refused text stays as a marked draft; the stored value is unchanged (was: ' + before + ')');
     ok(!!chip && chip.title.indexOf("Couldn't reach the app") === 0,
        'C18: the chip ellipsizes, so its hover title carries the whole reason');
 

@@ -231,6 +231,12 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     w.renderJsonTree('tree',{pointer:'#/target',target:42,other:77},{defaultDepth:1,crud:true});
     await tick(100);
     assert(val('pointer').querySelector('.ui-tree-resolved'),'unfocused pointer has resolved preview');
+    // Opening and leaving the editor must not keep the preview as part of the
+    // value's text: the next render showed it twice ("-> 42-> 42").
+    focus('pointer');await tick(190);key('Escape');key('Escape');await tick(400);
+    assert(!val('pointer').querySelector('.ui-tree-editor'),'editor left');
+    assert.equal((val('pointer').textContent.match(/→/g)||[]).length,1,'resolved preview shown once after leaving the editor: '+val('pointer').textContent);
+    assert.equal(val('pointer').querySelectorAll('.ui-tree-resolved').length,1,'one preview element');
     focus('pointer');
     assert(val('pointer').querySelector('.ui-tree-target'),'cached target hint is visible immediately on focus');
     await tick(190);

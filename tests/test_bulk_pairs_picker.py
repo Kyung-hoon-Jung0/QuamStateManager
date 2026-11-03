@@ -49,9 +49,9 @@ class TestPopoversAreNotCovered:
         i = CSS.index("/* NO will-change here:")
         block = CSS[i:i + 900]
         assert "will-change" not in block.split("*/", 1)[1]
-        assert ".bulk-panel .bulk-toolbar { position: relative; z-index: 8; }" in block
-        assert ".bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 6; }" in block
-        # the popover itself sits above the sticky header (2 / 4) inside the toolbar's context
+        assert ".bulk-panel .bulk-toolbar { position: relative; z-index: 11; }" in block
+        assert ".bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 10; }" in block
+        # the popover itself sits above the sticky header (7 / 8) inside the toolbar's context
         # the rule itself, line-anchored: `.ds-colvis .bulk-colvis-menu {` (the
         # Datasets override, QA ds-table) also contains the substring and comes first
         m = re.search(r"(?m)^\.bulk-colvis-menu \{", CSS)
