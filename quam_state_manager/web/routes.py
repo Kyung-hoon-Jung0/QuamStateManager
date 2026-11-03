@@ -12158,7 +12158,7 @@ def _freq_twin_path(dot_path: str) -> str | None:
     return None
 
 
-def _maybe_mirror_freq(modifier, dot_path: str, entry, group_id: str | None = None) -> str | None:
+def _maybe_mirror_freq(modifier, dot_path: str, entry, group_id: str | None = None, *, strict: bool = False) -> str | None:
     """Soft-link an inspector edit: when the just-edited f_01/RF field had a twin that
     still held the SAME pre-edit value — i.e. they were coupled, as the calibration
     nodes write them — mirror the committed value into the twin too, so the user
@@ -12167,8 +12167,8 @@ def _maybe_mirror_freq(modifier, dot_path: str, entry, group_id: str | None = No
     skipped). Returns the twin dot_path if it mirrored, else None.
 
     Equality-keyed soft link, matching the bulk table's client-side mirror. Lives in
-    the inspector's per-field edit route only, so it never double-fires with the bulk
-    table (which posts BOTH cells in one /field/edit-batch when coupled)."""
+    the inspector and the grid batch route. A batch skips an explicitly posted
+    twin and uses strict mode so a refused mirror rolls the entire gesture back."""
     twin = _freq_twin_path(dot_path)
     if not twin:
         return None
@@ -12190,6 +12190,8 @@ def _maybe_mirror_freq(modifier, dot_path: str, entry, group_id: str | None = No
         modifier.set_value(twin, entry.new_value, group_id=group_id)
         return twin
     except (KeyError, TypeError, ValueError, IndexError):
+        if strict:
+            raise
         return None
 
 
@@ -15673,7 +15675,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # One group id when this batch commits MORE THAN ONE field (a grid row with
     # several edited cells, a plot Apply-All) so a single Ctrl+Z undoes the whole
     # batch atomically. A single-field batch stays ungrouped (undoes on its own).
-    _batch_gid = modifier.new_group_id() if len(pairs) > 1 or _port_offers else None
+    _freq_sync = _pj.get("freq_sync") is True
+    _batch_paths = {p for p, _, _ in pairs}
+    _batch_gid = modifier.new_group_id() if len(pairs) > 1 or _port_offers or _freq_sync else None
     # QA diagnostics-r2-15: a multi-request gesture (the grids' Apply all posts
     # one atomic batch per row) asks for ONE group: "new" mints one even for a
     # single field; a gid is JOINED only while it is still the top of the log
@@ -15840,6 +15844,17 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     entry.origin = copy.deepcopy(_origins[_row_n])
                 applied_entries.append(entry)
                 _ps_moved = _ps_moved or _ps_moved_structure(entry)
+                # The grid may not have loaded the twin column. Decide coupling
+                # under the batch lock from server values, using the inspector's
+                # equality/pointer policy. Explicit twin edits retain precedence.
+                if _freq_sync and _freq_twin_path(target_path) not in _batch_paths:
+                    mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=_batch_gid, strict=True)
+                    if mirrored:
+                        twin_entry = modifier.store.change_log[-1]
+                        applied_entries.append(twin_entry)
+                        results.append({"dot_path": mirrored, "resolved_path": mirrored,
+                                        "applied": True, "new_value": twin_entry.new_value,
+                                        "display": _bulk_display(twin_entry.new_value)})
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
                 # + the resolved write path, so the client re-renders the cell from
                 # the server's truth (never the typed string) and can match the
@@ -28870,6 +28885,20 @@ def _undo_journal_step(ctx, n_req: int = 1):
             return resp
 
     unit = units[cursor - 1]
+    # The journal unit is a LIVE write another window may have made: a press
+    # means what the presser could see (docs/120 rule, applied to undo). The
+    # client declares the edit_seq its tray was rendered at; an empty value
+    # (an older page, no tray) keeps the previous behaviour.
+    seen_edit_seq = (request.values.get("seen_edit_seq") or "").strip()
+    if seen_edit_seq and seen_edit_seq != _edit_seq():
+        paths = ", ".join(str(e.get("path") or e.get("dot_path") or "?")
+                          for e in unit.get("entries", []))
+        resp = make_response(render_template(
+            "_status.html", level="warning",
+            message=f"Nothing undone — this window had not seen the newest change ({paths}). "
+                    "The tray now shows it; press Ctrl+Z again to undo it."), 409)
+        resp.headers["HX-Trigger"] = "undo-foreign"
+        return resp
     if (unit.get("meta") or {}).get("no_previous_state"):
         return render_template(
             "_status.html", level="warning",

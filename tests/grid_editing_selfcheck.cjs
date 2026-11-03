@@ -332,5 +332,30 @@ function world(nRows, opts) {
        + hp('amp', 'left') + ',' + hp('len', 'left') + ' right ' + hp('len', 'right') + ',' + hp('amp', 'right') + ')');
   }
 
+  {
+    const w = world(3), inputs = [...w.document.querySelectorAll('td[data-col-key="amp"] input')];
+    inputs.forEach(c => { c.value = '0.71'; c.dispatchEvent(new w.Event('input', {bubbles:true})); });
+    const posted = [];
+    w.confirm = () => true;
+    w.fetch = async (url, opts) => {
+      const body = JSON.parse(opts.body); posted.push(...body.updates);
+      // A preceding echo may park an offscreen row before its turn.
+      if (posted.length === 1) inputs[1].remove();
+      return {status:200, json:async () => ({ok:true, group_id:'one', results:body.updates.map(u => ({...u, applied:true, display:u.value}))})};
+    };
+    w.BulkEdit.applyAll();
+    await new Promise(r=>setTimeout(r,100));
+    ok(posted.length === 3 && posted.some(u=>u.dot_path==='qubits.q1.amp'),
+       'D-2: Apply all retains every dirty input when another row becomes cold');
+  }
+  {
+    const w=world(1), c=w.document.querySelector('input');
+    c.value='0.9'; c.dispatchEvent(new w.Event('input',{bubbles:true}));
+    w.fetch=async()=>({status:409,json:async()=>({fsp_compensation:{}})});
+    w._openFspPopup=(plan,done)=>done('cancel',plan);
+    const b=w.document.createElement('button'); b.className='bulk-row-apply'; c.closest('tr').appendChild(b);
+    await w.BulkEdit.applyRow(b);
+    ok(c.value===c.getAttribute('data-orig') && !c.classList.contains('dirty'), 'FSP Cancel restores the input baseline');
+  }
   process.exit(fails ? 1 : 0);
 })();

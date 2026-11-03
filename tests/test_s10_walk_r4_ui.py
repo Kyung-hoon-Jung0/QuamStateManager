@@ -133,7 +133,7 @@ def test_two_commits_to_one_field_are_one_edit_everywhere(chip):  # noqa: F811
     assert s["state"] == "mine" and s["unapplied"] == 1, s
     tray = _tray(client)
     # S10 walk r4: old "2 unapplied edits" / "Apply 2" -> one field, one edit
-    assert "1 unapplied edit<" in tray and "Apply 1<" in tray, re.findall(r"unapplied[^<]*|Apply \d", tray)
+    assert "1 staged, not applied<" in tray and "Apply 1<" in tray, re.findall(r"staged[^<]*|Apply \d", tray)
     assert "2 unapplied" not in tray and "Apply 2" not in tray
     # the consent count stays the change log's (two commits)
     assert 'data-change-count="2"' in tray
@@ -154,7 +154,7 @@ def test_one_edit_per_field_is_counted_once_per_field(chip):  # noqa: F811
     _edit(client, "qubits.q2.T1", "6.5e-05")
     _edit(client, "qubits.q1.T1", "7.5e-05")
     assert _drift(client)["sync"]["unapplied"] == 2
-    assert "2 unapplied edits<" in _tray(client)
+    assert "2 staged, not applied<" in _tray(client)
     review = client.get("/state/review").get_data(as_text=True)
     assert "Your unapplied edits (2 fields, 3 changes)" in review
 
@@ -171,7 +171,7 @@ def test_the_staged_apply_declares_the_change_log_it_showed(chip):  # noqa: F811
     tray = _tray(client)
     # a saved working state plus edits: the control's Apply pushes it whole (sync-arm)
     assert 'data-working-dirty="1"' in tray and "sync-control-act btn-apply-live sync-arm" in tray
-    assert "1 unapplied edit<" in tray, re.findall(r"unapplied[^<]*", tray)
+    assert "1 staged, not applied<" in tray, re.findall(r"staged[^<]*", tray)
     vals = re.search(r'hx-post="/state/apply-to-live"[^>]*hx-vals=\'([^\']*)\'', tray, re.S)
     assert vals, tray[:2000]
     assert json.loads(vals.group(1))["seen_changes"] == "2", vals.group(1)

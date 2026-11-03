@@ -5850,7 +5850,9 @@ window.livePushExtrasLine = function (typedPaths) {
     function onEditSeq(d, trayAtIssue) {
         if (!d || !d.edit_seq || d.edit_seq === window._editSeqSeen) return false;
         if (ownWritePending(trayAtIssue)) return false;
-        var first = window._editSeqSeen === undefined;
+        var tray = document.getElementById("pending-tray");
+        var shown = tray && tray.getAttribute("data-edit-seq");
+        var first = window._editSeqSeen === undefined && (!shown || shown === d.edit_seq);
         window._editSeqSeen = d.edit_seq;
         if (first) return false;
         refreshAfterForeignEdit(d);
@@ -9349,6 +9351,10 @@ window.UndoQueue = (function () {
                           expect_sig: (function () {
                               var t = document.getElementById("pending-tray");
                               return (t && t.getAttribute("data-change-sig")) || "";
+                          })(),
+                          seen_edit_seq: (function () {
+                              var t = document.getElementById("pending-tray");
+                              return t ? t.getAttribute("data-edit-seq") || "" : "";
                           })(),
                           // T1-F2: the user's yes to undoing an earlier
                           // session's edit on the live chip (one press only)
@@ -26622,6 +26628,9 @@ window.FieldHistory = (function () {
 
     var openAnchor = null;
     function open(anchor, path, input) {
+        if (Array.prototype.some.call(document.querySelectorAll('.fsp-card'), function (c) {
+            return c.closest('.ch-overlay').style.display !== 'none';
+        })) return;
         if (!path) return;
         clearTimeout(refreshTimer);
         openAll = false;

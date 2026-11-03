@@ -990,7 +990,7 @@ window.BulkTypeahead = (function () {
             var lab = heads[i].querySelector('.bulk-col-label');
             var text = (lab ? lab.textContent : '') + ' '
                      + (heads[i].getAttribute('data-col-key') || '');
-            var words = text.split(/[^A-Za-z0-9]+/);
+            var words = text.split(/[^A-Za-z0-9_]+/).concat(text.split(/[^A-Za-z0-9]+/));
             var seen = {};
             for (var w = 0; w < words.length; w++) {
                 var word = words[w];

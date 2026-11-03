@@ -431,6 +431,12 @@
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
 .ui-opxmon-flash, .ui-opxmon-alarms, .ui-opxmon-close-off, .ui-opxmon-no-metrics { overflow-wrap: anywhere; }
 
+/* The mode switch stays before actions whose presence depends on edits. */
+.ui-live-tray > .auto-sync-wrap { order: -1; }
+/* Leave room for both the number and its history control, including -5 dBm. */
+.ui-live-cell { min-width: calc(var(--ui-icon-btn) * 3); }
+.ui-live-pin { overflow: hidden; }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,
@@ -647,3 +653,4 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .sidebar-nav .nav-subitems li a:hover:not(.active) { color: var(--ui-text); background: var(--ui-surface-2); }
 /* K12: the search glyph is one neutral colour, not a colour emoji */
 .tree-search-icon { filter: grayscale(1); }
+

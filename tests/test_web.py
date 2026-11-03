@@ -2517,7 +2517,7 @@ class TestPendingChangesTray:
         resp = synth_client.post("/qubit/qA1/edit",
                                   data={"dot_path": "qubits.qA1.T1", "value": "9000"},
                                   headers={"HX-Request": "true"})
-        assert b"1 unapplied edit" in resp.data     # sync-ux 2026-09-25 (user decision: one status control + one sync panel): (was "1 unsaved change")
+        assert b"1 staged, not applied" in resp.data     # sync-ux 2026-09-25 (user decision: one status control + one sync panel): (was "1 unsaved change")
 
     def test_save_returns_oob_tray(self, synth_client, synth_qubit):
         synth_client.post("/qubit/qA1/edit",
@@ -2624,7 +2624,7 @@ class TestFieldEdit:
         )
         data = json.loads(resp.data)
         # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the tray is one row: it counts the edit, the panel names it
-        assert "1 unapplied edit" in data["tray_html"]
+        assert "1 staged, not applied" in data["tray_html"]
         assert dot_path in synth_client.get("/state/review").data.decode()
 
     def test_field_edit_missing_dot_path(self, synth_client):

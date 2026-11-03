@@ -5,6 +5,8 @@
     macro (left) and by static/ui.js (right, filled at load from the spec
     list below); tests/ui_kit_selfcheck.cjs compares the two trees. -#}
 <div class="ui-kit-page">
+<div class="ui-live-tray"><span class="auto-sync-wrap">Auto-Sync off</span><span>Staged actions</span></div>
+<div class="ui-live-pin"><input class="ui-live-cell" value="-5" aria-label="Power example"></div>
 {{ ui.ui_head('UI kit', 1, None, 'Every part of the kit in each state, rendered by the template macro and by ui.js side by side.', None,
               [{'label': 'Light', 'cls': 'btn-sm outline', 'theme': 'light'}, {'label': 'Dark', 'cls': 'btn-sm outline', 'theme': 'dark'}, {'label': 'QM', 'cls': 'btn-sm outline', 'theme': 'qm'}]) }}
 {%- set ns = namespace(section=None) %}

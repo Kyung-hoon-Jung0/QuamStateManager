@@ -365,6 +365,15 @@ function keydown(win, id, key) {
      'K16 …and Live State Edit: ' + marked(win));
 
   /* ── L. the two per-keystroke defects (A) put weight on ─────────────── */
+  {
+    const head=win.document.createElement('th');
+    head.className='bulk-col-head'; head.dataset.colKey='xy_RF_frequency';
+    head.innerHTML='<span class="bulk-col-label">RF_frequency</span>';
+    win.document.querySelector('#table-pane').appendChild(head);
+    type(win,'bulk-search','RF_frequncy');
+    ok(marked(win).includes('RF_frequency (fuzzy)'), 'RF_frequncy suggests the complete underscore key');
+    head.remove();
+  }
   const b1 = win.BulkTypeahead.vocab();
   const b2 = win.BulkTypeahead.vocab();
   ok(b1 === b2,
