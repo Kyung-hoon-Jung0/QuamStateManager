@@ -13,6 +13,12 @@
  */
 
 :root {
+    --ui-find-results-height: 9rem;
+    --ui-find-replace-width: 24ch;
+    --ui-find-slide: -.5rem;
+    --ui-find-duration: 150;
+    --ui-tree-value-min: 10ch;
+    --ui-tree-value-pad: .15em .35em;
     /* text */
     --ui-text: var(--pico-color);
     --ui-text-2: var(--color-text-muted);
@@ -135,6 +141,53 @@
     --ui-opxmon-number-width: 7rem;
     --ui-opxmon-lh-tile: 1.25;
 
+}
+
+/* Stage 0 parts: roving scalar editor (D-1/D-2/D-7). */
+.ui-tree-value.ui-tree-value {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    padding: var(--ui-tree-value-pad);
+    border: var(--ui-bw) solid var(--ui-border);
+    border-radius: var(--ui-r-sm);
+    background: var(--ui-surface-0);
+    cursor: text;
+}
+.ui-tree-value.ui-tree-mounted {
+    flex-wrap: wrap;
+    max-width: none;
+    overflow: visible;
+    text-overflow: clip;
+}
+.ui-tree-editor.ui-tree-editor {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: none;
+    margin: 0;
+    padding: 0;
+    min-width: var(--ui-tree-value-min);
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+}
+.ui-tree-dirty {
+    color: var(--ui-warn-text);
+    background: var(--ui-warn-bg);
+    border-color: var(--ui-warn-border);
+    outline: var(--ui-bw) dashed var(--ui-warn-border);
+    outline-offset: var(--ui-bw);
+}
+.ui-tree-dirty::after {
+    content: "draft";
+    color: var(--ui-warn-text);
+    font-size: var(--ui-fs-xs);
+    margin-left: var(--ui-gap-1);
+}
+.ui-tree-resolved {
+    color: var(--ui-text-2);
+    font-size: var(--ui-fs-xs);
 }
 
 /* K3 head ------------------------------------------------------------- */
@@ -443,6 +496,56 @@
 /* Leave room for both the number and its history control, including -5 dBm. */
 .ui-live-cell { min-width: calc(var(--ui-icon-btn) * 3); }
 .ui-live-pin { overflow: hidden; }
+/* Whole-tree find uses the shared input and button parts in both themes.
+ * One row that never wraps: a fixed-width replace input, icon toggles in the
+ * VS Code find-widget manner, and a status that absorbs the free width so its
+ * changing text never moves the controls. */
+.ui-tree-find {
+    display: flex; flex-direction: column; gap: var(--ui-gap-1);
+    padding: var(--ui-gap-1) var(--ui-gap-2);
+    background: var(--ui-surface-1); color: var(--ui-text);
+    border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md);
+    margin-bottom: var(--ui-gap-2); font-size: var(--ui-fs-sm);
+}
+.ui-tree-find-closed { display: none; }
+.ui-tree-find-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-width: 0; }
+.ui-tree-find-row > * { flex: 0 0 auto; }
+.ui-tree-find-row > button { white-space: nowrap; width: auto; margin: 0; }
+.ui-tree-find-replace { flex: 0 0 var(--ui-find-replace-width); min-width: 0; width: var(--ui-find-replace-width); margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); font-size: inherit; height: auto; }
+.ui-tree-find-toggles { display: inline-flex; gap: var(--ui-gap-1); width: auto; margin: 0; }
+.ui-tree-find-toggle {
+    width: auto; min-width: 1.9em; height: 1.9em; margin: 0; padding: 0 var(--ui-gap-1);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--ui-font-mono); font-size: var(--ui-fs-xs); white-space: nowrap;
+    background: transparent; color: var(--ui-text-2);
+    border: var(--ui-bw) solid transparent; border-radius: var(--ui-r-sm); cursor: pointer;
+}
+.ui-tree-find-toggle:hover { background: var(--ui-surface-2); color: var(--ui-text); }
+.ui-tree-find-toggle-on { background: var(--ui-accent-bg); color: var(--ui-accent); border-color: var(--ui-accent); }
+.ui-tree-find-word { text-decoration: underline; text-underline-offset: 2px; }
+.ui-tree-find-status { flex: 1 1 0; min-width: 0; color: var(--ui-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-tree-find-close { min-width: 1.9em; padding-left: var(--ui-gap-1); padding-right: var(--ui-gap-1); }
+.ui-tree-find-review { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) 0; border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-tree-find-review-sum { flex: 1 1 20rem; min-width: 0; color: var(--ui-text); overflow-wrap: anywhere; }
+.ui-tree-find-review > button { width: auto; margin: 0; white-space: nowrap; }
+.ui-tree-find-details { margin: 0; font-size: var(--ui-fs-xs); }
+.ui-tree-find-summary { color: var(--ui-text-2); cursor: pointer; }
+.ui-tree-find-results { max-height: var(--ui-find-results-height); overflow: auto; border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-tree-find-results:empty { display: none; }
+.ui-tree-find-result { padding: var(--ui-gap-1); overflow-wrap: anywhere; font-family: var(--ui-font-mono); }
+.ui-tree-find-result > button { width: auto; margin: 0 var(--ui-gap-1) 0 0; }
+.ui-tree-find-skip { color: var(--ui-text-2); }
+.ui-tree-find-more { width: auto; margin: var(--ui-gap-1); }
+.ui-tree-find-delta { margin-left: var(--ui-gap-2); }
+/* a multi-edit value is read in full: wrapped, never cut */
+.ui-wrap-value { white-space: pre-wrap; overflow-wrap: break-word; text-overflow: clip; }
+.ui-wrap-value-rest { grid-column: 2 / -1; }
+.ui-tree-find-inline { margin-left: var(--ui-gap-2); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); background: var(--ui-accent-bg); color: var(--ui-text); font-family: var(--ui-font-mono); }
+
+/* Json tree: pointer target hint, draft counter, suggestions in the page flow (never over rows). */
+.ui-typeahead-inflow.ui-typeahead-inflow { position: static; width: auto; max-height: 12rem; margin-block: var(--ui-gap-1); }
+.ui-tree-target { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--ui-warn-text); font-size: var(--ui-fs-xs); margin-left: var(--ui-gap-1); }
+.ui-tree-drafts { margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
@@ -661,3 +764,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* K12: the search glyph is one neutral colour, not a colour emoji */
 .tree-search-icon { filter: grayscale(1); }
 
+
+
+.tree-row:has(.ui-tree-mounted) .tree-row-actions,
+.tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help { display: none; }

@@ -3,7 +3,7 @@
  *  1. the entity segment is found from the DATA (outermost level with >= 2
  *     siblings carrying the rest of the path as a leaf) and patterns expand in
  *     natural order (qA2 before qA10);
- *  2. Ctrl+D on a leaf row selects it, each further Ctrl+D adds the next
+ *  2. Ctrl+Alt+D on a leaf row selects it, each further Ctrl+Alt+D adds the next
  *     entity's same field, Ctrl+Shift+L selects all; Ctrl+D OUTSIDE a tree is
  *     left to the browser (not prevented);
  *  3. arithmetic (*1.1 /2 +5e6 -1e6 +10%) previews per row; pointers,
@@ -21,7 +21,7 @@ let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 
-const dom = new JSDOM('<!doctype html><html><body><input id="outside"><div id="t"></div>'
+const dom = new JSDOM('<!doctype html><html><body><input id="outside"><div class="tree-toolbar"><input id="explorer-search" class="tree-search"></div><div id="t"></div>'
     + '<div id="pending-tray" data-change-count="0"></div></body></html>',
     { url: 'http://localhost/explorer', pretendToBeVisual: true });
 const { window } = dom;
@@ -113,10 +113,10 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
     row.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
     (row.querySelector('.tree-row') || row).setAttribute('tabindex', '0');
     (row.querySelector('.tree-row') || row).focus();
-    e = kd(d.activeElement, 'd', { ctrlKey: true });
-    ok(e.defaultPrevented && TM.state() && TM.state().sel.length === 1, 'Ctrl+D on a leaf selects it');
-    kd(d.activeElement, 'd', { ctrlKey: true });
-    ok(TM.state().sel.map((p) => p.split('.')[1]).join() === 'qA1,qA2', 'the next Ctrl+D adds the next entity');
+    e = kd(d.activeElement, 'd', { ctrlKey: true, altKey: true });
+    ok(e.defaultPrevented && TM.state() && TM.state().sel.length === 1, 'Ctrl+Alt+D on a leaf selects it');
+    kd(d.activeElement, 'd', { ctrlKey: true, altKey: true });
+    ok(TM.state().sel.map((p) => p.split('.')[1]).join() === 'qA1,qA2', 'the next Ctrl+Alt+D adds the next entity');
     kd(d.activeElement, 'L', { ctrlKey: true, shiftKey: true });
     ok(TM.state().sel.length === 4, 'Ctrl+Shift+L selects every entity');
 
@@ -179,6 +179,7 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
     window.FormData = global.FormData;
     const identityPosts = [];
     window.fetch = function (url, options) {
+        if (String(url).startsWith("/field/peek")) return Promise.resolve({json: async () => ({expected:{}})});
         const body = JSON.parse(options.body);
         identityPosts.push(body);
         const result = body.port_ack ? {ok: true, results: body.updates.map(u => ({
@@ -193,10 +194,11 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
     tree._treeData.ports = {analog_outputs: {con1: {'2': {
         '1': {port_id: 1}, '2': {port_id: 2}}}}};
     for (const mode of ['keep', 'cancel', 'fix']) {
-        // Enter via Ctrl+H then select the identity leaves in the panel.
+        // Enter through Find / By path, then select the identity leaves in the panel.
         row.dispatchEvent(new window.MouseEvent('mousedown', {bubbles: true}));
         (row.querySelector('.tree-row') || row).focus();
         kd(d.activeElement, 'h', {ctrlKey: true});
+        [...d.querySelectorAll('#tree-find button')].find(b=>b.textContent==='By path').click();
         TM.setPattern('ports.analog_outputs.con1.2.*.port_id');
         vin.value = '4'; vin.dispatchEvent(new window.Event('input', {bubbles: true}));
         const start = identityPosts.length;

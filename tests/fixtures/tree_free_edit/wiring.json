@@ -1,0 +1,26 @@
+{
+  "network": {
+    "host": "3.3.3.3",
+    "cluster_name": "F1"
+  },
+  "wiring": {
+    "qubits": {
+      "q1": {
+        "rr": {
+          "opx_output": "#/ports/mw_outputs/con1/1/1"
+        },
+        "xy": {
+          "opx_output": "#/ports/mw_outputs/con1/1/2"
+        },
+        "z": {
+          "opx_output": "#/ports/analog_outputs/con1/2/1"
+        }
+      },
+      "q2": {
+        "rr": {
+          "opx_output": "#/ports/mw_outputs/con1/1/1"
+        }
+      }
+    }
+  }
+}

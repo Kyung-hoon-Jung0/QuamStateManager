@@ -10,8 +10,8 @@
  * the server's write doors refuse a key that is not the open chip's, naming
  * both chips.
  *
- * A chip switch is always a full page load, so the key a page holds is the
- * chip its screen shows. Loaded before app.js; no other code needs to know.
+ * Explicit in-place switches refresh the globals via _chip_context.html.
+ * Loaded before app.js; the key follows the chip this tab explicitly opened.
  */
 (function () {
     'use strict';

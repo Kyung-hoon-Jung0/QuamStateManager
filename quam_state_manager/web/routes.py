@@ -3514,6 +3514,43 @@ _REDO_MAX_FRAMES = 100
 _UNDO_LIVE_FILE = "undo_live.json"
 
 
+_TREE_EDIT_SETTING_VERSION = 2
+
+
+def _tree_commit_on_leave() -> bool:
+    """D-7: one machine setting, default ON (auto-save). Versioned: a file
+    written before the auto-save default (no version) does not hold an
+    explicit choice against it, so it reads as the default; an OFF saved at
+    the current version is respected."""
+    try:
+        doc = safe_io.read_json(Path(current_app.instance_path) / "tree_edit.json", attempts=1)
+        if not isinstance(doc, dict) or doc.get("version") != _TREE_EDIT_SETTING_VERSION:
+            return True
+        return doc.get("commit_on_leave", True) is not False
+    except Exception:  # A viewer setting must never prevent a page opening.
+        return True
+
+
+@bp.route("/settings/tree-edit", methods=["GET", "POST"])
+def settings_tree_edit():
+    if request.method == "GET":
+        return jsonify({"ok": True, "commit_on_leave": _tree_commit_on_leave()})
+    raw = request.values.get("commit_on_leave")
+    if raw not in ("0", "1"):
+        return jsonify({"ok": False, "error": "commit_on_leave must be 0 or 1"}), 400
+    enabled = raw == "1"
+    try:
+        path = Path(current_app.instance_path) / "tree_edit.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Versioned: only a file carrying the current version is a choice made
+        # against the current default (auto-save ON). An older file is reset.
+        safe_io.atomic_write_json(path, {"commit_on_leave": enabled,
+                                         "version": _TREE_EDIT_SETTING_VERSION})
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "commit_on_leave": enabled})
+
+
 def _undo_live_path() -> Path:
     return Path(current_app.instance_path) / _UNDO_LIVE_FILE
 
@@ -6634,6 +6671,7 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # docs/160: the Settings toggle reflects the machine-wide setting
         "undo_live": _undo_live_enabled(),
         "auto_sync_on_open": _auto_sync_on_open_enabled(),
+        "tree_commit_on_leave": _tree_commit_on_leave(),
         # THE SAME TRAP, THIRD FIELD. base.html includes _pending_tray.html
         # directly, so on a FULL page render the tray's context comes from
         # HERE, not from _render_tray — and the Review drawer loops over
@@ -12857,6 +12895,13 @@ def field_edit():
         # fires at the resolved write path, and cross-class pointer chains
         # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
+        # The tree displays pointer text. Relinking must address that leaf,
+        # while ordinary value edits retain the established follow behavior.
+        if request.form.get("pointer_mode") == "relink":
+            current = modifier.store.get_value(dot_path)
+            if not (is_pointer(current) and is_pointer(raw_value.strip())):
+                raise ValueError("Relink requires a pointer leaf and pointer value")
+            target_path = dot_path
         # Same server-side read-only policy as /field/edit-batch (audit P0):
         # membership arrays / identity keys must be rejected with the policy
         # reason, not incidentally via a coercion TypeError.
@@ -13013,8 +13058,16 @@ def field_edit():
         if isinstance(committed, float) and (
                 committed != committed or committed in (float("inf"), float("-inf"))):
             raise ValueError("non-finite echo would break JSON.parse")
+        try:
+            raw_committed = modifier.store.get_value(dot_path)
+        except (KeyError, TypeError, ValueError, IndexError):
+            # A grid path may traverse a container pointer. Preserve its
+            # resolved echo even when the original path cannot be read raw.
+            raw_committed = committed
         return jsonify(ok=True, tray_html=_tray_html(),
-                       stored=committed, stored_kind=_kind_of(committed), **_wkw)
+                       stored=committed, stored_kind=_kind_of(committed),
+                       resolved_path=target_path,
+                       raw_value=raw_committed, **_wkw)
     except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
         return jsonify(ok=True, tray_html=_tray_html(), **_wkw)
 
@@ -15422,6 +15475,56 @@ def field_edit_batch():
     return _field_edit_batch_impl()
 
 
+@bp.route("/field/replace-preview", methods=["POST"])
+def field_replace_preview():
+    """Read-only replacement plan using the edit door's parser and policy."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if modifier is None:
+        return jsonify(ok=False, error=_no_chip_msg()), 400
+    payload = json_object()
+    updates = payload.get("updates", [])
+    if not isinstance(updates, list) or any(not isinstance(row, dict) for row in updates):
+        raise BadBody("'updates' must be an array of objects")
+    guard = _chip_mismatch_response(str(payload.get("expect_chip") or ""), False)
+    if guard is not None:
+        return guard
+    results = []
+    with modifier.store._lock:
+        for row in updates:
+            path = _normalize_dot_path(str(row.get("dot_path", "")))
+            result = {"dot_path": path}
+            try:
+                old = modifier.store.get_value(path)
+                result["old_value"] = old
+                if row.get("key"):
+                    result["old_value"] = path.rsplit(".", 1)[-1]
+                    if _pulse_is_renamable(path):
+                        result["rename"] = {"path": path, "new_name": row.get("value", ""), "retarget": "1"}
+                    raise ValueError("key rename: use the structural rename editor")
+                if isinstance(old, str) and old.startswith(("#/", "#./", "#../")):
+                    raise ValueError("pointer: edit its target")
+                reason = _editability_reason(modifier.store, path)
+                if reason:
+                    raise ValueError(reason)
+                if path.endswith("full_scale_power_dbm"):
+                    raise ValueError("FSP: use its editor for the amplitude compensation offer")
+                raw = row.get("value", "")
+                if isinstance(raw, str) and _type_fix_offer(modifier.store, path, raw):
+                    raise ValueError("Stored as text: use the single-field editor to choose its type")
+                parsed = _parse_for_target(modifier.store, path, raw) if isinstance(raw, str) else raw
+                reason = _sibling_type_refusal(modifier.store, path, raw)
+                if reason:
+                    raise ValueError(reason)
+                result["new_value"] = modifier._checked_value(path, old, parsed, coerce=True, enforce=True)
+                result["value"] = raw
+            except (KeyError, TypeError, ValueError, IndexError) as exc:
+                result["skip"] = str(exc)
+            results.append(result)
+        seq = modifier.store.mutation_seq
+    return jsonify(ok=True, results=results, mutation_seq=seq)
+
+
 def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     """Apply many edits atomically; report per-path success/failure.
 
@@ -15710,6 +15813,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
 
     from quam_state_manager.core import pending_tray
     with _lab_released(_lab_rel), modifier.store._lock, pending_tray.batch(modifier.store):
+        if _pj.get("expect_seq") is not None and _pj["expect_seq"] != modifier.store.mutation_seq:
+            return jsonify(ok=False, error="The tree changed; preview replacements again"), 409
         for (_dp, _rv, _create), _row_origin in zip(pairs, _origins):
             map_apply.validate(ctx, _dp, _rv, _row_origin,
                                create=_create, delete=_rv is _BATCH_DELETE)
@@ -28924,11 +29029,9 @@ def undo():
             # RESPONSE is the authoritative what-was-undone signal (a peek-
             # then-undo design would race a concurrent commit), so the
             # navigate-to-owner decision rides these fields.
-            "entries": _stamp_pending([   # QA F8: still pending after it?
-                _revert_entry_payload(e.dot_path, e.old_value, created=e.created,
-                                      deleted=e.deleted, source_file=e.source_file)
-                for e in entries
-            ]),
+            **_bounded_revert_payload(entries, lambda e: _revert_entry_payload(
+                e.dot_path, e.old_value, created=e.created, deleted=e.deleted,
+                source_file=e.source_file)),
             # A burst that stopped early says so (review of eaa0f05): the
             # client re-queues `requested - consumed` presses at a journal
             # boundary (each walks the journal on its own, as a single press
@@ -29230,13 +29333,16 @@ def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
     outright, AFTER the chip was written. Past the cap the response carries no
     entries and `structural: True`, which the client answers with the
     wholesale grid resync it already has for structural undos."""
-    if len(uents) > _HEADER_PATCH_CAP:
-        return {"entries": [], "structural": True, "n_entries": len(uents)}
-    return {"entries": _stamp_pending([   # QA F8: staged => pending, live => not
-        _revert_entry_payload(u["path"], value_of(u), created=created(u), deleted=deleted(u),
-                              source_file=u.get("source_file", "state"))
-        for u in uents
-    ])}
+    return _bounded_revert_payload(uents, lambda u: _revert_entry_payload(
+        u["path"], value_of(u), created=created(u), deleted=deleted(u),
+        source_file=u.get("source_file", "state")))
+
+
+def _bounded_revert_payload(entries, payload_of=lambda entry: entry) -> dict:
+    """Keep grouped undo/redo headers within the shared repaint budget."""
+    if len(entries) > _HEADER_PATCH_CAP:
+        return {"entries": [], "structural": True, "n_entries": len(entries)}
+    return {"entries": _stamp_pending([payload_of(entry) for entry in entries])}
 
 
 def _working_at_sync_point(ctx, store, *, log_was_empty: bool) -> str | None:
@@ -29884,7 +29990,7 @@ def _redo_response(message: str, entries_payload: list[dict], extra: dict | None
     ``live`` (docs/160): the press wrote the chip -- the drift banner and the
     Versions panel must follow, exactly as after an Apply (review m2)."""
     resp = make_response(_tray_html())
-    payload = {"message": message, "entries": _stamp_pending(entries_payload)}   # QA F8
+    payload = {"message": message, **_bounded_revert_payload(entries_payload)}
     if extra:
         payload.update(extra)
     _ctx_ = _active_ctx()
@@ -31913,8 +32019,11 @@ def _unseen_edit_refusal(ctx) -> dict | None:
     Deliberately count-based rather than seq-based. A seq can run ahead for
     reasons that harm nobody (a save, another tab merely reloading), and a
     refusal that fires when the change set is identical would be noise on the
-    one button that must stay trustworthy. Absent parameter ⇒ None ⇒ byte-
+    one button that must stay trustworthy. Absent parameter => None => byte-
     identical to before, so no caller that has not opted in can be refused.
+    Every SM window's own Apply always declares (doStateSync sends "0" when
+    its tray published no count). A matching signature never overrides a
+    LOWER declared count: the count is what the presser saw.
     """
     seen_raw = request.values.get("seen_changes")
     seen_sig = (request.values.get("seen_sig") or "").strip()
@@ -31998,7 +32107,7 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                     "chip is about to be written with — another State Manager "
                     "window changed them. Applying now would write ITS edits "
                     "to the live chip.")}
-    if seen_sig:
+    if seen_sig and (seen is None or have <= seen):
         return None                      # the set matches: nothing unseen
 
     if have <= seen:
@@ -36637,7 +36746,10 @@ def workspace_select():
         if request.form.get("inplace") == "1":
             body = qubits()
             if isinstance(body, str):
-                resp = make_response(body + "\n" + _tray_oob() + _diverged_oob())
+                identity = render_template("_chip_context.html",
+                                           chip_key=_ctx_chip_key(_active_ctx()) or "",
+                                           chip_token=_active_chip_token() or "")
+                resp = make_response(identity + "\n" + body + "\n" + _tray_oob() + _diverged_oob())
                 resp.headers["HX-Trigger"] = "diagnostics-changed"
                 return resp
             # qubits() returned a Response/tuple (unexpected) — fall through to

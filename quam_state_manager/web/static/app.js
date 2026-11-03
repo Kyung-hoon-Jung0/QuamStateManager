@@ -2746,6 +2746,22 @@ window.toggleUndoLive = function() {
         .catch(function () { if (window.showToast) window.showToast("Could not change the setting.", "error"); });
 };
 
+window.toggleTreeCommitOnLeave = function () {
+    var box = document.getElementById("tree-edit-toggle");
+    var previous = window.__treeCommitOnLeave !== false;
+    box.disabled = true;
+    fetch("/settings/tree-edit", { method: "POST",
+        body: new URLSearchParams({ commit_on_leave: box.checked ? "1" : "0" }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) throw new Error(d.error);
+            window.__treeCommitOnLeave = box.checked = d.commit_on_leave;
+        }).catch(function () {
+            box.checked = previous;
+            if (window.showToast) window.showToast("Could not change the tree setting.", "error");
+        }).finally(function () { box.disabled = false; });
+};
+
 /**
  * Per-page header collapse (Item 4): hide the current page's .table-header-row
  * heading to give the list/content more vertical room. The class lives on <body>
@@ -3049,6 +3065,8 @@ document.addEventListener('keydown', function(evt) {
     if (evt.key !== '[' && evt.key !== ']') return;
     if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
     var a = document.activeElement;
+    // D-4: even a clean roving value editor owns printable brackets.
+    if (a && a.matches && a.matches('.ui-tree-editor')) return;
     if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return;
     // Only when a dataset detail is open (so [ ] stays free elsewhere).
     if (!document.getElementById('ds-detail-root')) return;
@@ -4601,12 +4619,9 @@ function _failedPathsSummary(failed) {
     return " Affected: " + shown + ".";
 }
 
-/* QA liveedit-r2-06: a grid row commit that is still in flight. Pressing the
-   tray's Apply blurs the typed cell first, and that click-away commit adds a
-   change-log entry AFTER doStateSync has declared what the tray showed -- so
-   the docs/179 gate refused the user's own edit as "another window's" (or,
-   if the apply won the race, applied without it). The grids register the
-   commit here; doStateSync waits for it, then declares the tray as it is. */
+/* Wait for a click-away grid commit before applying. Capture the rendered
+   view at the press: a commit response may include another window's edits,
+   so reading its new tray must not silently expand this press's consent. */
 window._pendingGridCommits = window._pendingGridCommits || [];
 window._trackGridCommit = function (p) {
     if (!p || typeof p.then !== "function") return p;
@@ -4695,6 +4710,15 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // `opts` (QA liveedit-r2-05): {informed} -- the presser is looking at the
     // live values (the review modal), so no same-field collision check;
     // {ackCollision} -- the user answered THAT question (its own token).
+    // Freeze this press's rendered view before waiting for another writer.
+    if (!opts || !opts.seenView) {
+        opts = Object.assign({}, opts);
+        var viewTray = document.getElementById('pending-tray');
+        var v = viewTray && viewTray.getAttribute('data-change-count');
+        opts.seenView = { count: (v === null || v === undefined || v === "") ? "0" : v,
+            sig: viewTray && viewTray.getAttribute('data-change-sig') || '',
+            paths: window.trayPendingPaths ? window.trayPendingPaths(viewTray) : null };
+    }
     mode = mode || "discard";
     var _pendCommits = (window._pendingGridCommits || []).slice();
     if (_pendCommits.length) {
@@ -4722,6 +4746,26 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     + "and press Apply again.", "warning");
                 calls = calls.filter(function (a) { return a[0] !== "apply"; });
             }
+            // The view frozen at the press, plus exactly what THIS window's own
+            // click-away commits wrote -- never the tray those commits brought
+            // back, which may carry another window's edits (D2 / r2-06).
+            var own = [], ownN = 0;
+            rs.forEach(function (r) {
+                var res = r && Array.isArray(r.results) ? r.results : null;
+                if (!res) { ownN += 1; return; }
+                res.forEach(function (x) {
+                    if (x && x.applied !== false) { ownN += 1; if (x.dot_path) own.push(String(x.dot_path)); }
+                });
+            });
+            calls.forEach(function (a) {
+                var sv = a[4] && a[4].seenView;
+                if (!sv) return;
+                a[4] = Object.assign({}, a[4]);
+                if (sv.paths && sv.paths.length + own.length) {
+                    a[4].seenPaths = sv.paths.concat(own);
+                }
+                a[4].seenView = { count: String((parseInt(sv.count, 10) || 0) + ownN), sig: '', paths: sv.paths };
+            });
             _runSyncPressesInTurn(calls);
         });
         return;
@@ -4760,18 +4804,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // window that were never on this one. Sending the count the user actually
     // saw is what lets the server tell the difference between "apply my three
     // edits" and "apply three edits plus one you have never seen".
-    var _seen = (function () {
-        var t = document.getElementById("pending-tray");
-        var v = t && t.getAttribute("data-change-count");
-        return (v === null || v === undefined || v === "") ? null : v;
-    })();
-    // docs/179: the SET, not just how many. Two windows can hold the same
-    // NUMBER of pending edits while holding different ones, and the count gate
-    // waves that through.
-    var _seenSig = (function () {
-        var t = document.getElementById("pending-tray");
-        return (t && t.getAttribute("data-change-sig")) || "";
-    })();
+    var _seen = opts.seenView.count;
+    var _seenSig = opts.seenView.sig;
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
@@ -5692,7 +5726,9 @@ window.livePushExtrasLine = function (typedPaths) {
         var bar = document.getElementById("explorer-livediff-bar");
         if (bar && !bar.hidden) return null;   // the diff overlay owns the tree
         if ((Date.now() - (window.__lastUserAct || 0)) < 2000
-                || document.querySelector(".json-tree .tree-val-editing")) {
+                || document.querySelector(".json-tree .ui-tree-dirty")
+                || (document.activeElement && document.activeElement.matches('.ui-tree-editor')
+                    && window.TreeInlineEdit.busy(document.activeElement))) {
             _treeFollowTimer = setTimeout(followOnExplorer, 2000);
             return null;
         }
@@ -7568,6 +7604,7 @@ window.PhysAmp = (function () {
 (function () {
     function _typing() {
         var a = document.activeElement;
+        if (a && a.matches && a.matches(".ui-tree-editor")) return true;
         return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                      || a.isContentEditable);
     }
@@ -7657,9 +7694,10 @@ window.PhysAmp = (function () {
             ['Ctrl+Enter', 'Apply: the grid\'s un-applied cells, else the top-bar Apply'],
             ['/ then Enter or \u2193', 'from the grid search to the first matching cell'],
             ['Json tree (Live edit)', ''],
-            ['Ctrl+D', 'select this field, then the same field of the next entity'],
-            ['Ctrl+Shift+L', 'select that field in every entity'],
-            ['Ctrl+H', 'multi-edit by path pattern (* = any one level)'],
+            ['Ctrl+D / Cmd+D', 'add the next equal value occurrence'],
+            ['Ctrl+Shift+L', 'select all equal occurrences'],
+            ['Ctrl+H', 'find and replace in the whole tree (Mac: Cmd+Option+F)'],
+            ['Ctrl+Alt+D / Cmd+Option+D', 'same field of the next entity; By path in Find edits patterns'],
             ['Datasets', ''],
             ['j / k', 'move through runs'],
             ['Enter / Space', 'open / select the active run'],
@@ -9496,9 +9534,11 @@ document.addEventListener("keydown", function(evt) {
     // ignored here (real Chrome: no request, no trail, nothing). Same rule
     // as a grid cell: a DIRTY field undoes the typing (back to the committed
     // value); a CLEAN one falls through to the server tier.
+    var inTreeEditor = !!(a && a.matches && a.matches(".ui-tree-editor"));
+    if (inTreeEditor && a.value !== a.defaultValue) return; // D-15: native text history
     var inInline = !!(a && a.matches && a.matches('form.inline-edit input[name="value"]'));
     if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)
-        && !inGridCell && !inChPanel && !inInline) return;
+        && !inGridCell && !inChPanel && !inInline && !inTreeEditor) return;
     // docs/141 4e: one press = one step. A HELD key auto-repeats at ~30/s
     // and used to fill the queue in under a second, then keep undoing for
     // seconds after the key was released. The repeats are ignored; the user
@@ -11151,9 +11191,16 @@ window.clearDetailPanelSearch = function(btnEl) {
                     };
                 })(valEl);
             } else {
-                valEl.title = _isPointer(shown) ? "Pointer \u2014 click to edit" : "Click to edit";
-                valEl.style.cursor = "pointer";
+                valEl.title = "Type to edit; Enter commits; Escape reverts";
+                valEl.classList.add("ui-tree-value");
+                valEl.tabIndex = -1;
                 (function(el, p) {
+                    el.addEventListener("pointerdown", function(e) {
+                        if (e.button !== 0 || e.target.closest('input')) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        _makeValueEditable(el, p);
+                    });
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
                 })(valEl, path);
             }
@@ -11162,6 +11209,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // hover carries the full text after the action hint.
             if (typeof shown === "string" && shown.length > 40) valEl.title += "\n" + shown;
             row.appendChild(valEl);
+            if (_isPointer(shown)) _treeQueuePointer(valEl, path);
 
             // A null leaf is the common "not yet set" field (e.g. exponential_filter):
             // offer the SAME multi-line JSON editor as containers so a list / matrix /
@@ -11355,6 +11403,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
 
         delete nodeEl._lazyData; // free memory, prevent double-build
+        if (_kc) _treeResume(_kc, null);
         // JT-07: a row built on first expand carries its pending tint too.
         if (_kc && _PENDING_TREES.indexOf(_kc.id) >= 0) _treeApplyPending(children, true);
     }
@@ -11488,6 +11537,16 @@ window.clearDetailPanelSearch = function(btnEl) {
      * from BEFORE the edit (real-Chrome check, 2026-08-28). Dot-form numeric
      * segments index lists, exactly as _buildFlatIndex walks them. */
     function _treeModelSet(container, dotPath, value) {
+        if (container) {
+            container._peekCache = null;
+            clearTimeout(container._pointerRefresh);
+            container._pointerRefresh = setTimeout(function () {
+                container.querySelectorAll('.tree-val-pointer').forEach(function (el) {
+                    var node = el.closest('.tree-node');
+                    if (node) _treeQueuePointer(el, node.dataset.path);
+                });
+            }, 40);
+        }
         if (!container || container._treeData == null || !dotPath) return false;
         var segs = String(dotPath).split(".");
         var cur = container._treeData;
@@ -11502,6 +11561,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         else if (cur && typeof cur === "object") cur[last] = value;
         else return false;
         container._flatIndex = null;
+        container._modelRev = (container._modelRev || 0) + 1;   // TreeFind corpus key
         return true;
     }
     window._treeModelSet = _treeModelSet;
@@ -11530,13 +11590,31 @@ window.clearDetailPanelSearch = function(btnEl) {
      * value and the type colour class. An inline commit's echo, a revert and
      * a batch's other rows all paint through it, so the three cannot drift. */
     function _paintLeafEl(el, v) {
-        el.textContent = _formatValue(v);
+        // Update the display baseline before an unmounted clean draft uses it.
+        _treeValueDisplay(el, _formatValue(v));
         el.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
         el.className = el.className
             .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
             .trim();
         el.classList.add("tree-val-" + _typeOf(v));
         if (_isPointer(v)) el.classList.add("tree-val-pointer");
+        // Server undo/redo and live patches also repaint through here. A
+        // clean focused editor follows the committed value; a dirty draft
+        // keeps its typing and gets the new Escape baseline.
+        var tree = el.closest(".json-tree"), node = el.closest(".tree-node");
+        var path = node && node.dataset.path;
+        var state = tree && ((tree._editor && tree._editor.path === path && tree._editor)
+            || (tree._editDrafts && tree._editDrafts.get(path)));
+        if (state) {
+            var input = state.input, clean = input.value === input.defaultValue;
+            input.defaultValue = _treeLiteral(el);
+            if (clean) input.value = input.defaultValue;
+            var dirty = input.value !== input.defaultValue;
+            el.classList.toggle("ui-tree-dirty", dirty);
+            el.classList.toggle("tree-val-editing", dirty);
+            if (!el.contains(input)) el.textContent = dirty ? input.value : el._treeDisplay;
+            _treeSaveDrafts(tree);
+        }
     }
 
     /* The model's container holding dotPath's final key, walked exactly as
@@ -11648,7 +11726,8 @@ window.clearDetailPanelSearch = function(btnEl) {
      * flat index (no DOM walk), then materialises + expands ONLY the branches
      * that contain matches \u2014 never the whole tree, and with zero contains() calls.
      */
-    var _TREE_SEARCH_MATERIALIZE_MAX = (window.__treeSearchMaterializeMax || 150);   // matches: above this, list instead of expand
+    var _TREE_SEARCH_MATERIALIZE_MAX = (window.__treeSearchMaterializeMax || 150);
+    window.treeFindLimit = _TREE_SEARCH_MATERIALIZE_MAX;   // matches: above this, list instead of expand
     // Key-help (?) rows are for the LIVE state trees only (crud renders) --
     // never a compare view's other chip or an inspector's relative subtree.
     var _keyHelpOn = false;
@@ -11724,6 +11803,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         return n ? { id: id, label: container.getAttribute("data-search-peer-label") || id, n: n } : null;
     }
 
+    window.treeFindShowPaths = function (container, paths, label) {
+        if (paths === null || !paths.length) container._findShownKey = null;
+        container._findPaths = paths === null ? null : new Set(paths);
+        var saved = _treePark(container);
+        _searchTreeData(container, paths === null ? '' : (label || ' '));
+        _treeResume(container, saved);
+        delete container._findPaths;
+    };
     function _searchTreeData(container, q) {
         // Clear stale search classes on whatever is currently materialised.
         var rendered = container.querySelectorAll(".tree-node");   // the result list is not a .tree-node
@@ -11757,7 +11844,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         var keepPaths = new Set();
         for (var j = 0; j < flat.length; j++) {
             var e = flat[j];
-            if (_flatHit(e, grps, q)) {
+            if (container._findPaths ? container._findPaths.has(e.path) : _flatHit(e, grps, q)) {
                 matchPaths.add(e.path);
                 var p = e.path;
                 while (!keepPaths.has(p)) {       // stop once an ancestor chain is known
@@ -12065,16 +12152,398 @@ window.clearDetailPanelSearch = function(btnEl) {
        promise for every write still in flight -- or null when there is none,
        so a caller with nothing to wait for stays synchronous. */
     var _inflightEdits = new Set();
+    var _treeEditMemory = new Map();
+    var _treeDraftStorage = 'quam_tree_drafts_v1';
+    function _treeSaveDrafts(tree) {
+        _treeDraftHeader(tree);
+        try {
+            var all = JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}');
+            var entries = [];
+            if (tree._editDrafts) tree._editDrafts.forEach(function (s, path) {
+                if (s.input.value !== s.input.defaultValue)
+                    entries.push([path, s.input.value]);
+            });
+            var key = _treeEditKey(tree);
+            if (entries.length) all[key] = entries;
+            else delete all[key];
+            sessionStorage.setItem(_treeDraftStorage, JSON.stringify(all));
+        } catch (e) { /* In-memory drafts remain available if storage is blocked. */ }
+    }
+    window.addEventListener('beforeunload', function (e) {
+        var dirty = false;
+        _treeEditMemory.forEach(function (memory) {
+            memory.drafts.forEach(function (s) {
+                if (s.input.value !== s.input.defaultValue) dirty = true;
+            });
+        });
+        try { dirty = dirty || Object.keys(JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}')).length > 0; } catch (_) {}
+        if (dirty) { e.preventDefault(); e.returnValue = ''; }
+    });
+    document.addEventListener('htmx:beforeSwap', function (e) {
+        if (e.defaultPrevented || e.detail && e.detail.shouldSwap === false) return;
+        var target = e.detail && e.detail.target;
+        // Auto-save: leaving the page commits (ON) or parks (OFF) every editor.
+        if (target && target.id === 'table-pane') window.TreeInlineEdit.settle(target);
+    }, true);
+    /* Auto-save like an editor: leaving the field is not the only way to
+       leave. Switching to another app (window blur), hiding the tab and
+       leaving the page commit every open tree editor at once. A refused value
+       stays a draft with its reason (flush keeps it). OFF never commits. */
+    function _treeAutoCommitAll() {
+        if (window.__treeCommitOnLeave === false) return;
+        document.querySelectorAll('.json-tree .ui-tree-value.ui-tree-mounted').forEach(function (el) {
+            if (typeof el._flushEdit === 'function') el._flushEdit();
+        });
+    }
+    window.addEventListener('blur', _treeAutoCommitAll);
+    window.addEventListener('pagehide', _treeAutoCommitAll);
+    document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') _treeAutoCommitAll();
+    });
+    var _treeDataIds = new WeakMap(), _treeDataId = 0;
+    function _treeEditSource(tree, data, options) {
+        var marker = tree.closest('[data-tree-source], [data-source], [data-ref], [data-ts]');
+        var source = options ? options.source : undefined;
+        if (source === undefined && marker) source = [marker.getAttribute('data-tree-source'),
+            marker.getAttribute('data-source'), marker.getAttribute('data-ref'), marker.getAttribute('data-ts')];
+        if (source !== undefined) return JSON.stringify(source);
+        // Unmarked callers get object identity, never just a reused element id.
+        if (data && typeof data === 'object') {
+            if (!_treeDataIds.has(data)) _treeDataIds.set(data, ++_treeDataId);
+            return 'object:' + _treeDataIds.get(data);
+        }
+        return JSON.stringify([typeof data, data]);
+    }
+    function _treeEditKey(tree) {
+        return JSON.stringify([tree._editContext, tree.id, tree._editSource]);
+    }
+    // D-2/D-3: one mounted editor per tree. The write transport below retains
+    // the existing parser and server offers; focus never creates a write door.
+    function _treeValueDisplay(el, text) {
+        el._treeDisplay = text;
+        if (!el.querySelector(".ui-tree-editor")) el.textContent = text;
+    }
+    function _treeLiteral(el) {
+        var v = el.dataset.editVal;
+        if (el.classList.contains('tree-val-number')) v = window.NumberInput.strip(v);
+        return el.classList.contains("tree-val-string") || el.classList.contains("tree-val-pointer")
+            ? JSON.stringify(String(v)) : String(v);
+    }
+    function _treeFindValue(tree, path) {
+        if (!tree) return null;
+        var node = tree.querySelector('.tree-node[data-path="' + _cssAttrVal(path) + '"]');
+        return node && node.querySelector(':scope > .tree-row > .ui-tree-value');
+    }
+    function _treePark(tree) {
+        var s = tree._editor;
+        if (!s) return null;
+        var saved = { path: s.path, start: s.input.selectionStart, end: s.input.selectionEnd,
+                      direction: s.input.selectionDirection, focused: document.activeElement === s.input };
+        s.leave(true);
+        _treeEditMemory.set(_treeEditKey(tree), { drafts: tree._editDrafts, saved: saved });
+        return saved;
+    }
+    function _treeResume(tree, saved) {
+        var storedDrafts = [];
+        try { storedDrafts = JSON.parse(sessionStorage.getItem(_treeDraftStorage) || '{}')[_treeEditKey(tree)] || []; } catch (_) {}
+        storedDrafts.forEach(function (entry) {
+            if (tree._editDrafts && tree._editDrafts.has(entry[0])) return;
+            _treeExpandDraft(tree, entry[0]);
+            var target = _treeFindValue(tree, entry[0]);
+            if (!target) return;
+            _makeValueEditable(target, entry[0]);
+            tree._editor.input.value = entry[1];
+            tree._editor.leave(true);
+        });
+        var drafts = tree._editDrafts;
+        if (drafts) drafts.forEach(function (s, path) {
+            _treeExpandDraft(tree, path);
+            var el = _treeFindValue(tree, path);
+            if (el && s.input.value !== s.input.defaultValue) {
+                el.textContent = s.input.value;
+                el.classList.add("ui-tree-dirty");
+            }
+        });
+        if (!saved || !saved.focused) return;
+        _treeExpandDraft(tree, saved.path);
+        var el = _treeFindValue(tree, saved.path);
+        if (!el) return;
+        _makeValueEditable(el, saved.path);
+        var input = tree._editor.input;
+        input.setSelectionRange(saved.start, saved.end, saved.direction);
+    }
+    function _treeExpandDraft(tree, path) {
+        var parts = path.split('.');
+        for (var i = 1; i < parts.length; i++) {
+            var node = tree.querySelector('.tree-node[data-path="' + _cssAttrVal(parts.slice(0, i).join('.')) + '"]');
+            var toggle = node && node.querySelector(':scope > .tree-row > .tree-toggle');
+            if (toggle && toggle.classList.contains('collapsed')) _toggleNode(node);
+        }
+    }
+    // D-19: a short focus dwell avoids a request storm while arrowing.
+    // Values already visited use the per-path cache until a mutation.
+    function _treePeek(tree, state) {
+        clearTimeout(tree._peekTimer);
+        tree._peekTimer = setTimeout(function () {
+            if (tree._editor !== state) return;
+            var path = state.path, el = state.el;
+            var cache = tree._peekCache || (tree._peekCache = new Map());
+            if (!cache.has(path)) cache.set(path, fetch("/field/peek?dot_path=" + encodeURIComponent(path))
+                .then(function (r) {
+                    if (!r.ok) throw new Error("peek failed");
+                    return r.json();
+                }).then(function (d) {
+                    if (!d.ok || (d.errors && d.errors[path])) throw new Error("peek failed");
+                    return d;
+                }).catch(function () { cache.delete(path); return {}; }));
+            cache.get(path).then(function (d) {
+                if (tree._editor !== state || state.el !== el) return;
+                el.querySelectorAll(".tree-type-chip, .ui-tree-resolved").forEach(function (c) { c.remove(); });
+                var expected = d.expected && d.expected[path];
+                if (expected) {
+                    var chip = document.createElement("span");
+                    chip.className = "tree-type-chip";
+                    chip.title = (expected.class_path ? expected.class_path + "." + expected.field : "") +
+                        (expected.detail ? " \u2014 " + expected.detail : "");
+                    chip.textContent = expected.type + " \u00b7 " + expected.source;
+                    el.appendChild(chip);
+                }
+                _treePointerPreview(el, d.resolved && d.resolved[path]);
+            });
+        }, 160);
+    }
+    function _treePointerPreview(el, resolved) {
+        el._treeResolved = resolved;
+        el.querySelectorAll('.ui-tree-resolved, .ui-tree-target').forEach(function (c) { c.remove(); });
+        if (resolved && resolved.is_pointer) {
+            var preview = document.createElement('span');
+            preview.className = 'ui-tree-resolved';
+            preview.textContent = ' \u2192 ' + (resolved.resolvable ? _formatValue(resolved.resolved_value) : 'unresolved');
+            el.appendChild(preview);
+            if (el.querySelector('.ui-tree-editor') && resolved.resolvable) {
+                var hint = document.createElement('span');
+                hint.className = 'ui-tree-target';
+                hint.textContent = ' edits ' + resolved.resolved_path + ' (shared by ' + (resolved.shared_by || []).length + ')';
+                el.appendChild(hint);
+            }
+        }
+    }
+    function _treeQueuePointer(el, path) {
+        // Batch only materialised pointer rows; use the server's pointer resolver.
+        setTimeout(function () {
+            var tree = el.closest('.json-tree');
+            if (!tree || !tree._crudEnabled || !el.isConnected) return;
+            var queue = tree._pointerQueue || (tree._pointerQueue = new Map());
+            queue.set(path, el);
+            clearTimeout(tree._pointerTimer);
+            tree._pointerTimer = setTimeout(function () {
+                var rows = Array.from(queue.entries()); queue.clear();
+                // Keep request URLs bounded even after expanding a large tree.
+                for (var i = 0; i < rows.length; i += 100) (function (batch) {
+                    var context = tree._editContext, source = tree._editSource;
+                    var raw = batch.map(function (r) { return r[1].dataset.editVal; });
+                    fetch('/field/peek?' + batch.map(function (r) { return 'dot_path=' + encodeURIComponent(r[0]); }).join('&'))
+                        .then(function (r) { return r.json(); }).then(function (d) {
+                            if (!d.ok || tree._editContext !== context || tree._editSource !== source) return;
+                            batch.forEach(function (r, index) {
+                                if (r[1].isConnected && r[1].dataset.editVal === raw[index])
+                                    _treePointerPreview(r[1], d.resolved && d.resolved[r[0]]);
+                            });
+                        }).catch(function () {});
+                })(rows.slice(i, i + 100));
+            }, 0);
+        }, 0);
+    }
+    function _treeDraftHeader(tree) {
+        if (!tree._crudEnabled) return;
+        var count = 0;
+        if (tree._editDrafts) tree._editDrafts.forEach(function (s) {
+            if (s.input.value !== s.input.defaultValue) count++;
+        });
+        var button = tree.querySelector(':scope > .ui-tree-drafts');
+        if (!button) {
+            button = document.createElement('button');
+            button.type = 'button'; button.className = 'btn-sm outline ui-tree-drafts';
+            button.dataset.draftsFor = tree.id;
+            button.onclick = function () {
+                var paths = [];
+                if (tree._editDrafts) tree._editDrafts.forEach(function (s, p) {
+                    if (s.input.value !== s.input.defaultValue) paths.push(p);
+                });
+                if (!paths.length) return;
+                var current = tree._editor && tree._editor.path;
+                var next = paths[(paths.indexOf(current) + 1) % paths.length];
+                _treeExpandDraft(tree, next);
+                var el = _treeFindValue(tree, next);
+                if (el) {
+                    for (var n = el.closest('.tree-node'); n && tree.contains(n); n = n.parentElement.closest('.tree-node')) n.classList.remove('tree-search-hidden');
+                    _makeValueEditable(el, next);
+                    if (el.scrollIntoView) el.scrollIntoView({block:'nearest'});
+                }
+            };
+            tree.prepend(button);
+        }
+        button.textContent = count + (count === 1 ? ' draft' : ' drafts');
+        button.disabled = count === 0;
+        button.hidden = count === 0;
+        button.title = count ? 'Jump to the next unsaved draft' : '';
+
+    }
+    function _makeValueEditable(el, path) {
+        var tree = el.closest(".json-tree");
+        if (!tree) return;
+        if (tree._editor && tree._editor.el === el) {
+            tree._editor.input.focus();
+            return;
+        }
+        if (tree._editor) tree._editor.leave();
+        var drafts = tree._editDrafts || (tree._editDrafts = new Map());
+        if (drafts.has(path)) {
+            drafts.get(path).mount(el);
+            return;
+        }
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "tree-edit-input ui-tree-editor";
+        input.autocomplete = "off";
+        input.tabIndex = -1;
+        input.setAttribute("role", "textbox");
+        input.setAttribute("aria-label", path);
+        input.value = input.defaultValue = _treeLiteral(el);
+        el._treeDisplay = el.textContent;
+        el.textContent = "";
+        el.appendChild(input);
+        el.classList.add("ui-tree-mounted");
+        var state = { el: el, input: input, path: path, pending: null,
+            context: tree._editContext, source: tree._editSource };
+        tree._editor = state;
+        function dirty() {
+            var changed = input.value !== input.defaultValue;
+            el.classList.toggle("ui-tree-dirty", changed);
+            el.classList.toggle("tree-val-editing", changed);
+            input.size = Math.max(10, input.value.length + 2);
+            input.style.minWidth = input.size + "ch";
+            if (changed || state.pending) drafts.set(path, state);
+            else drafts.delete(path);
+            if (drafts.size) {
+                var saved = tree._editor === state ? { path: path, start: input.selectionStart,
+                    end: input.selectionEnd, direction: input.selectionDirection,
+                    focused: document.activeElement === input } : null;
+                _treeEditMemory.set(_treeEditKey(tree), { drafts: drafts, saved: saved });
+            } else _treeEditMemory.delete(_treeEditKey(tree));
+            _treeSaveDrafts(tree);
+            if (tree._editor !== state) {
+                el.textContent = changed ? input.value : el._treeDisplay;
+                if (!changed && el.classList.contains('tree-val-pointer')) _treeQueuePointer(el, path);
+            }
+        }
+        function flush() {
+            if (tree._editContext !== state.context || tree._editSource !== state.source) return null;
+            if (state.pending) return state.pending.then(flush);
+            if (input.value === input.defaultValue) return null;
+            var sent = input.value;
+            var p = _writeTreeValue(el, path, sent, tree).then(function (result) {
+                if (tree._editContext !== state.context || tree._editSource !== state.source) return;
+                if (result === false) { dirty(); return false; }
+                // D-8: keys typed while the request was in flight belong to
+                // the next edit; never replace them with the server echo.
+                var current = _treeFindValue(tree, path);
+                if (current) el = state.el = current;
+                var stored = _treeModelGet(tree, path, el.dataset.editVal);
+                input.defaultValue = typeof stored === "string" ? JSON.stringify(stored)
+                    : typeof stored === "number" ? String(stored) : _formatValue(stored);
+                if (input.value === sent) input.value = input.defaultValue;
+                if (tree._editor === state) _treePeek(tree, state);
+                dirty();
+            });
+            state.pending = p;
+            _inflightEdits.add(p);
+            return p.then(function (result) {
+                state.pending = null;
+                _inflightEdits.delete(p);
+                if (result !== false && window.__treeCommitOnLeave !== false && tree._editor !== state
+                        && input.value !== input.defaultValue) return flush();
+            });
+        }
+        state.mount = function (target) {
+            el = state.el = target;
+            tree = target.closest(".json-tree");
+            drafts = tree._editDrafts;
+            tree._editor = state;
+            el._treeDisplay = _formatValue(_treeModelGet(tree, path, el.dataset.editVal));
+            el.textContent = "";
+            el.appendChild(input);
+            el.classList.add("ui-tree-mounted");
+            el._flushEdit = flush;
+            _treePointerPreview(el, el._treeResolved);
+            _treePeek(tree, state);
+            dirty();
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        };
+        state.leave = function (preserve) {
+            if (!preserve && window.__treeCommitOnLeave !== false) flush();
+            if (preserve || input.value !== input.defaultValue || state.pending) drafts.set(path, state);
+            input.remove();
+            el.classList.remove("ui-tree-mounted");
+            if (tree._editor === state) tree._editor = null;
+            dirty();
+        };
+        el._flushEdit = flush;
+        function clearRefusal() {
+            var row = el.closest('.tree-row');
+            var reason = row && row.querySelector('.tree-edit-err');
+            if (reason) reason.remove();
+            el.classList.remove('tree-val-error');
+        }
+        input.addEventListener("input", function () { clearRefusal(); dirty(); });
+        input.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape") state.escaped = false;
+            if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); flush(); }
+            if (e.key === "Escape") {
+                e.preventDefault(); e.stopPropagation();
+                if (state.escaped && input.value === input.defaultValue) {
+                    _treeExit(tree);
+                    return;
+                }
+                input.value = input.defaultValue;
+                clearRefusal();
+                dirty();
+                state.escaped = true;
+            }
+        });
+        input.addEventListener("blur", function () {
+            setTimeout(function () {
+                if (tree._editor === state && document.activeElement !== input && !state.pending) state.leave();
+            }, 100);
+        });
+        _treePointerPreview(el, el._treeResolved);
+        _treePeek(tree, state);
+        dirty();
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+    }
     window.TreeInlineEdit = {
+        busy: function (input) {
+            return input.value !== input.defaultValue || input.selectionStart !== input.selectionEnd;
+        },
         settle: function (root) {
-            var eds = (root || document).querySelectorAll(".tree-val-editing");
+            if (window.__treeCommitOnLeave === false) {
+                (root || document).querySelectorAll(".json-tree").forEach(_treePark);
+                if (root && root.matches && root.matches(".json-tree")) _treePark(root);
+            }
+            var eds = (root || document).querySelectorAll(".ui-tree-value:has(input)");
             for (var i = 0; i < eds.length; i++) {
-                if (typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
+                if (window.__treeCommitOnLeave !== false && typeof eds[i]._flushEdit === "function") eds[i]._flushEdit();
             }
             if (!_inflightEdits.size) return null;
-            return Promise.all(Array.from(_inflightEdits).map(function (p) {
-                return p.catch(function () {});
-            }));
+            function wait() {
+                if (!_inflightEdits.size) return null;
+                return Promise.all(Array.from(_inflightEdits).map(function (p) {
+                    return p.catch(function () {});
+                })).then(wait);
+            }
+            return wait();
         }
     };
 
@@ -12109,9 +12578,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             : "Unexpected reply from the app — reload the page to see the stored value.";
     }
 
-    function _makeValueEditable(valEl, dotPath) {
-        if (valEl.querySelector("input")) return; // already editing
-        var currentDisplay = valEl.textContent;
+    function _writeTreeValue(valEl, dotPath, typed, ownerTree) {
+        var ownerContext = ownerTree._editContext;
+        var ownerSource = ownerTree._editSource;
+        var currentDisplay = valEl._treeDisplay === undefined ? valEl.textContent : valEl._treeDisplay;
         var editVal = valEl.dataset.editVal !== undefined ? valEl.dataset.editVal : currentDisplay;
 
         // docs/145 (customer): a string edits AS ITS JSON LITERAL -- the file
@@ -12124,35 +12594,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                         || valEl.classList.contains("tree-val-pointer");
         var shownVal = isStringKind ? JSON.stringify(String(editVal)) : editVal;
 
-        var input = document.createElement("input");
-        input.type = "text";
-        input.autocomplete = "off";     // never a target of Back's form restore
-        input.className = "tree-edit-input";
-        input.defaultValue = shownVal;  // R3 MINOR 5: what "typed, not committed" compares to
-        input.value = shownVal;
-        input.size = Math.max(10, shownVal.length + 2);
-
-        valEl.textContent = "";
-        valEl.appendChild(input);
-        valEl.classList.add("tree-val-editing");
-        input.focus();
-        input.select();
-
-        // expected-type chip (env schema / user assignment / inference) —
-        // fetched on editor open only, never per keystroke
-        fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                var e = d.expected && d.expected[dotPath];
-                if (!e || !valEl.contains(input)) return;
-                var chip = document.createElement("span");
-                chip.className = "tree-type-chip";
-                chip.textContent = e.type + " · " + e.source;
-                chip.title = (e.class_path ? e.class_path + "." + e.field + " — " : "") +
-                             (e.detail || "");
-                valEl.appendChild(chip);
-            }).catch(function () {});
-
+        var input = { value: typed };
+        function cancel() {}
         var committed = false;
         var _myP = null;   // jsontree-r2-17: this editor's in-flight write
 
@@ -12220,14 +12663,13 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             }
             committed = true;
-            var refocus = document.activeElement === input;   // QA JT-20
-            valEl.textContent = currentDisplay;
-            valEl.classList.remove("tree-val-editing");
-            if (refocus) _kbRefocusRow(valEl);
+
 
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
             body.append("value", newVal);
+            if (valEl.classList.contains("tree-val-pointer") && _isPointer(newVal))
+                body.append("pointer_mode", "relink");
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
             // The unwrap above removed the quotes the server reads as "this
             // stays text" (routes.py _type_fix_offer). The value still goes
@@ -12244,17 +12686,24 @@ window.clearDetailPanelSearch = function(btnEl) {
                 return _smFetch("/field/edit", {
                     method: "POST",
                     headers: {"Content-Type": "application/x-www-form-urlencoded"},
+                    // keepalive: an auto-commit sent from pagehide still lands
+                    keepalive: true,
                     body: b2.toString()
                 }).then(function(resp) { return resp.json(); });
             };
             _myP = _post(null)
             .then(function handleData(data) {
+                if (ownerTree._editContext !== ownerContext || ownerTree._editSource !== ownerSource) return;
+                valEl = _treeFindValue(ownerTree, dotPath) || valEl;
                 if (!data.ok && data.fsp_compensation) {
                     // r12-B: never silent — the compensation offer first.
+                    return new Promise(function (resolve, reject) {
                     window._openFspPopup(data.fsp_compensation, function(mode, plan) {
-                        if (mode === "cancel") return;   // nothing committed
+                        var back = _treeFindValue(ownerTree, dotPath);
+                        if (back) _makeValueEditable(back, dotPath); // D-11: every popup exit
+                        if (mode === "cancel") { resolve(); return; }   // nothing committed
                         if (mode === "solo") {
-                            _post({fsp_ack: "solo"}).then(handleData);
+                            _post({fsp_ack: "solo"}).then(handleData).then(resolve, reject);
                             return;
                         }
                         fetch("/field/edit-batch", {
@@ -12293,9 +12742,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                                 if (bad) bd.error = bad.dot_path + ": " + bad.error;
                             }
                             return handleData(bd);
-                          });
+                          }).then(resolve, reject);
                     });
-                    return;
+                    });
                 }
                 if (!data.ok && data.type_fix) {
                     // r14 ⑩: the field is stored as TEXT ("0.13") — the legacy
@@ -12307,7 +12756,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     valEl.classList.add("tree-val-error");
                     setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                     _showEditError(valEl, data.error);
-                    return;
+                    return false;
                 }
                 // docs/120 item 25: the rejection chip has an 8-second life and
                 // was only ever cleared by a NEWER rejection, so after a fix it
@@ -12324,6 +12773,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                 // design, docs/190 F27) -- and is said here, not only by the
                 // global issues badge. Same idiom as delete's dangling toast.
                 if (data.warning && window.showToast) window.showToast(data.warning, "warning");
+                if (data.resolved_path && data.resolved_path !== dotPath) {
+                    _paintTreeLeaf(ownerTree, data.resolved_path, data.stored);
+                    if (window.showToast) window.showToast('Edited ' + data.resolved_path, 'success');
+                    var target = _treeFindValue(ownerTree, data.resolved_path);
+                    if (target) {
+                        target.classList.add('leu-flash');
+                        setTimeout(function () { target.classList.remove('leu-flash'); }, 900);
+                    }
+                    data.stored = data.raw_value;
+                    data.stored_kind = typeof data.raw_value;
+                }
                 // r14 honesty: re-render from the COMMITTED value the server
                 // echoes (the coercer may have kept the old type) — the old
                 // raw-text write-back showed "0.13"-the-string as bare 0.13
@@ -12331,10 +12791,10 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (data.stored_kind !== undefined) {
                     _paintLeafEl(valEl, data.stored);
                 } else {
-                    valEl.textContent = newVal;
+                    _treeValueDisplay(valEl, newVal);
                     valEl.dataset.editVal = newVal;
                 }
-                _treeModelSet(valEl.closest ? valEl.closest(".json-tree") : null, dotPath,
+                _treeModelSet(ownerTree, dotPath,
                               data.stored_kind !== undefined ? data.stored : newVal);
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
@@ -12370,38 +12830,21 @@ window.clearDetailPanelSearch = function(btnEl) {
                 }
             })
             .catch(function(e) {
-                valEl.textContent = currentDisplay;
-                valEl.classList.remove("tree-val-editing");
+                _treeValueDisplay(valEl, currentDisplay);
+
                 valEl.classList.add("tree-val-error");   // jsontree-r2-18: never silent
                 setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
                 _showEditError(valEl, _netFail(e));
+                return false;
             });
             var _p = _myP;
             _inflightEdits.add(_p);
             _p.then(function () { _inflightEdits.delete(_p); });
             return _p;
         }
-        valEl._flushEdit = commit;
-
-        function cancel() {
-            if (committed) return;
-            committed = true;
-            var refocus = document.activeElement === input;   // QA JT-20
-            valEl.textContent = currentDisplay;
-            valEl.classList.remove("tree-val-editing");
-            if (refocus) _kbRefocusRow(valEl);
-        }
-
-        input.addEventListener("keydown", function(e) {
-            if (e.key === "Enter")  { e.preventDefault(); commit(); }
-            if (e.key === "Escape") { cancel(); }
-        });
-        // Tab / click-away / focus-loss COMMITS (like Enter), instead of the old
-        // discard-on-blur. Escape still cancels (it sets `committed` first, so this
-        // blur→commit is a no-op after it), and an unchanged value is a no-op via
-        // the guard in commit(). The 100ms defer lets an Escape keydown win the race.
-        input.addEventListener("blur", function() { setTimeout(commit, 100); });
+        return commit();
     }
+
 
     // ── Copy a key's value → paste into an EMPTY same-key field elsewhere ──────
     // Double-clicking a key copies its value here; every empty field with the same
@@ -12893,6 +13336,29 @@ window.clearDetailPanelSearch = function(btnEl) {
         var r = node && node.querySelector(":scope > .tree-row");
         if (r) r.focus();
     }
+    function _treeExit(tree, backwards) {
+        var controls = document.querySelectorAll('a[href],button,input,select,textarea,[tabindex="0"]');
+        var layout = document.body.getClientRects().length > 0;
+        for (var i = backwards ? controls.length - 1 : 0; i >= 0 && i < controls.length; i += backwards ? -1 : 1) {
+            var c = controls[i];
+            if (!tree.contains(c) && !c.disabled && !c.closest('[hidden]') && c.tabIndex >= 0
+                    && (!layout || c.getClientRects().length > 0)
+                    && (tree.compareDocumentPosition(c) & (backwards ? 2 : 4))) {
+                c.focus();
+                return;
+            }
+        }
+        if (document.activeElement && tree.contains(document.activeElement)) document.activeElement.blur();
+    }
+    // D-5: walk visible rows only; folding is an explicit action.
+    function _kbValueMove(node, dir, editableOnly) {
+        for (var n = dir > 0 ? _kbNext(node) : _kbPrev(node); n;
+                n = dir > 0 ? _kbNext(n) : _kbPrev(n)) {
+            var v = n.querySelector(':scope > .tree-row > .tree-val');
+            if (v && (!editableOnly || v.classList.contains("ui-tree-value"))) return n;
+        }
+        return null;
+    }
     function _kbCollapse(node) {
         var ch = node.querySelector(":scope > .tree-children");
         var tg = node.querySelector(":scope > .tree-row > .tree-toggle");
@@ -12909,6 +13375,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (r && r.hasAttribute("tabindex") && r.isConnected) r.focus({ preventScroll: true });
     }
     function _attachTreeKeys(container) {
+        container.setAttribute("role", "tree");
         container.tabIndex = 0;          // a re-render starts with focus outside
         if (container._treeKeys) return;
         container._treeKeys = true;
@@ -12925,6 +13392,14 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (e.target !== container) container.tabIndex = -1;
             if (e.target && e.target.classList && e.target.classList.contains("tree-row")) {
                 container._kbRow = e.target;
+                var v = e.target.querySelector(":scope > .ui-tree-value");
+                if (v) _makeValueEditable(v, e.target.parentElement.dataset.path);
+            } else if (e.target && e.target.closest) {
+                var row = e.target.closest(".tree-row");
+                if (row) container._kbRow = row;
+                if (e.target.classList.contains("ui-tree-value")) {
+                    _makeValueEditable(e.target, row.parentElement.dataset.path);
+                }
             }
         });
         container.addEventListener("focusout", function (e) {
@@ -12939,14 +13414,24 @@ window.clearDetailPanelSearch = function(btnEl) {
             _kbFocus(node && _kbReachable(node) ? node : _kbEnds(container, false));
         });
         container.addEventListener("keydown", function (e) {
-            if (e.ctrlKey || e.altKey || e.metaKey) return;
+            if (e.ctrlKey || e.metaKey) return;
             var t = e.target;
+            var inValue = t && t.classList && t.classList.contains("ui-tree-editor");
+            if (inValue && !e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight"
+                    || e.key === "Home" || e.key === "End")) return;
+            if (e.altKey && e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+            if (inValue) t = t.closest(".tree-row");
             var onRow = !!(t && t.classList && t.classList.contains("tree-row")
                            && t.parentElement && t.parentElement.classList.contains("tree-node"));
             if (!onRow && t !== container) return;       // an editor, a button, ...
             var node = onRow ? t.parentElement : null;
             var k = e.key, to = null;
-            if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
+            var valueRow = node && t.querySelector(':scope > .tree-val');
+            if (node && (k === "Tab" || (valueRow && (k === "ArrowDown" || k === "ArrowUp")))) {
+                to = _kbValueMove(node, k === "ArrowUp" || (k === "Tab" && e.shiftKey) ? -1 : 1, k === "Tab");
+                if (!to && k === "Tab") { e.preventDefault(); _treeExit(container, e.shiftKey); return; }
+            }
+            else if (k === "Home" || (!node && k === "ArrowDown")) to = _kbEnds(container, false);
             else if (k === "End" || (!node && k === "ArrowUp")) to = _kbEnds(container, true);
             else if (!node) return;
             else if (k === "ArrowDown") to = _kbNext(node);
@@ -12964,7 +13449,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                 } else if (k === "ArrowLeft") {
                     if (open) _kbCollapse(node); else to = _kbParent(node);
                 } else if (ch && k === "Enter") {
-                    _toggleNode(node);
+                    var editor = t.querySelector(':scope > .tree-json-edit-btn');
+                    if (editor) editor.click(); else _toggleNode(node);
                 } else {
                     var act = ch ? t.querySelector(":scope > .tree-json-edit-btn")
                                  : t.querySelector(":scope > .tree-val");
@@ -13554,6 +14040,22 @@ window.clearDetailPanelSearch = function(btnEl) {
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
+        var editContext = (window.__chipKey || "") + "|" + (window.__chipToken || "");
+        var editSource = _treeEditSource(container, data, options);
+        var savedEditor = _treePark(container);
+        if (container._editContext !== undefined && (container._editContext !== editContext
+                || container._editSource !== editSource)) {
+            savedEditor = null;
+            container._editDrafts = null;
+            container._peekCache = null;
+        }
+        container._editContext = editContext;
+        container._editSource = editSource;
+        var editMemory = _treeEditMemory.get(_treeEditKey(container));
+        if (!container._editDrafts && editMemory) {
+            container._editDrafts = editMemory.drafts;
+            savedEditor = editMemory.saved;
+        }
         // A full (re)render is a new context (chip load / switch) — drop any stale
         // key-copy so its paste buttons don't linger against a different chip.
         _clearTreeCopy();
@@ -13614,6 +14116,19 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         // JT-07: a fresh render (reload, soft refresh, live-diff) reads the tray.
         if (_PENDING_TREES.indexOf(containerId) >= 0) _treeApplyPending(container, false);
+        if (savedEditor) {
+            var segs = savedEditor.path.split(".");
+            for (var depth = 1; depth < segs.length; depth++) {
+                var ancestor = container.querySelector('.tree-node[data-path="' + _cssAttrVal(segs.slice(0, depth).join(".")) + '"]');
+                if (ancestor) {
+                    _materializeChildren(ancestor);
+                    var children = ancestor.querySelector(':scope > .tree-children');
+                    if (children && children.style.display === "none") _toggleNode(ancestor);
+                }
+            }
+        }
+        _treeResume(container, savedEditor);
+        _treeDraftHeader(container);
     };
 
     /* QA JT-17: the search memo (_lastSearchQuery) means "the tree shows q's
@@ -13740,38 +14255,24 @@ window.clearDetailPanelSearch = function(btnEl) {
     };
 
     window.jsonTreeSearch = function(containerId, query) {
+        if (window.TreeFind && window.TreeFind.search(containerId, query)) return;
         _debounce('tree-search-' + containerId, function() {
             var c = document.getElementById(containerId);
-            if (c) _searchTree(c, query);
+            if (c) {
+                if (window.TreeFind && window.TreeFind.search(containerId, query)) return;
+                var savedEditor = _treePark(c);
+                _searchTree(c, query);
+                _treeResume(c, savedEditor);
+            }
         }, 200);
     };
 })();
 
-/* ── Json tree multi-edit: Ctrl+D · Ctrl+Shift+L · Ctrl+H (docs/235) ─────
- *
- * Customer 2026-09-30: "multi-select + apply to all, like VS Code" on the Json tree.
- * Not a text editor's feature copied letter for letter -- the tree is data:
- *
- *  - Ctrl+D on a leaf selects it; each further Ctrl+D adds the SAME field of
- *    the next entity (qA1 ... amplitude -> qA2 ... amplitude), in natural
- *    order. Ctrl+Shift+L selects every one. The entity segment is found from
- *    the data: the outermost level whose siblings (at least two) all carry
- *    the rest of the path.
- *  - Ctrl+H opens the same panel on a PATH PATTERN (`*` = one segment), e.g.
- *    qubits.*.xy.operations.x180_DragCosine.amplitude. No text find/replace:
- *    rewriting digits inside values is how a number becomes a string or a
- *    pointer stops pointing.
- *
- * One panel applies one input to every selected field: an absolute value, or
- * arithmetic on numbers (*1.1 /2 +5e6 -1e6 +10%), previewed per row BEFORE
- * anything is written, then ONE atomic /field/edit-batch -- one Review group,
- * one Ctrl+Z. Rows the single editor would treat specially are left out, each
- * with its reason: pointers (edit the target), read-only fields, the FSP
- * field (its amplitude-compensation offer is per field), and -- for
- * arithmetic -- anything that is not a number.
- *
- * Data-driven (container._treeData), so fields in collapsed branches are
- * selected too; rows on screen carry a tint.
+/* Json tree selection and shared batch preview (docs/235, D-29..D-35).
+ * Ctrl/Cmd+D adds equal values; Ctrl/Cmd+K then D skips an occurrence.
+ * Ctrl+Alt+D / Cmd+Option+D retains the entity-field walk, and TreeFind's
+ * By path mode retains one-level wildcards and arithmetic. Every write uses
+ * one atomic edit-batch group. Special fields carry explicit skip reasons.
  */
 window.TreeMulti = (function () {
     'use strict';
@@ -13900,7 +14401,7 @@ window.TreeMulti = (function () {
         head.appendChild(x);
         p.appendChild(head);
         var pr = el('label', 'tree-multi-pat');
-        pr.appendChild(el('span', 'muted', 'Path'));
+        pr.appendChild(el('span', 'muted tree-multi-pat-label', 'Path'));
         var pat = el('input', 'tree-multi-pattern');
         pat.type = 'text'; pat.spellcheck = false; pat.autocomplete = 'off';
         pat.placeholder = 'qubits.*.xy.operations.x180_DragCosine.amplitude   (* = any one level)';
@@ -13912,9 +14413,17 @@ window.TreeMulti = (function () {
         var inp = el('input', 'tree-multi-value');
         inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
         inp.placeholder = 'new value, or *1.1  /2  +5e6  -1e6  +10%';
-        inp.addEventListener('input', preview);
+        inp.addEventListener('input', function () { if (st) { st.editing = true; st.emptyArmed = false; } preview(); });
         inp.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); apply(); }
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (st && st.occurrence && inp.value === '' && !st.emptyArmed) {   // D-40: confirm an empty text value
+                st.emptyArmed = true;
+                q('.tree-multi-msg').textContent = 'Press Enter again to set ' + st.sel.length + ' field'
+                    + (st.sel.length === 1 ? '' : 's') + ' to empty text';
+                return;
+            }
+            if (st && st.occurrence && !st.checked) st.applyWhenReady = true; else apply();
         });
         foot.appendChild(inp);
         var go = el('button', 'btn-sm tree-multi-apply', 'Apply');
@@ -13932,27 +14441,28 @@ window.TreeMulti = (function () {
         watch();
         document.querySelectorAll('.tree-row.tree-row-multi').forEach(function (r) { r.classList.remove('tree-row-multi'); });
         if (!st) return;
-        st.sel.forEach(function (p) {
-            var nd = null;
-            try { nd = st.tree.querySelector('.tree-node[data-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]'); } catch (e) {}
-            var row = nd && nd.querySelector(':scope > .tree-row');
+        var selected = new Set(st.sel);
+        st.tree.querySelectorAll('.tree-node').forEach(function (node) {
+            if (!selected.has(node.dataset.path)) return;
+            var row = node.querySelector(':scope > .tree-row');
             if (row) row.classList.add('tree-row-multi');
         });
     }
 
     function rows() {
         var txt = q('.tree-multi-value').value;
-        var fn = arithOf(txt);
+        var fn = st.occurrence ? null : arithOf(txt);
         return st.sel.map(function (p) {
             var v = valueAt(st.tree, p);
-            var why = skipReason(st.tree, p, v, !!fn);
+            var checked = st.checkedMap && st.checkedMap.get(p);
+            var why = (checked && checked.skip) || (st.key ? 'key rename: use the structural rename editor' : skipReason(st.tree, p, v, !!fn));
             var nv = null;
-            if (!why && txt.trim() !== '') {
+            if (!why && (txt.trim() !== '' || (st.occurrence && st.editing))) {
                 if (fn) {
                     nv = numText(fn(v), Number.isInteger(v));
                     if (nv === null) why = 'result is not a number';
                 } else {
-                    nv = txt.trim();
+                    nv = st.occurrence ? txt : txt.trim();
                 }
             }
             return { path: p, value: v, next: nv, skip: why };
@@ -13962,19 +14472,31 @@ window.TreeMulti = (function () {
     function render() {
         var p = panel();
         var list = q('.tree-multi-list');
+        var patIn = q('.tree-multi-pattern');
+        if (st.occurrence) {   // the anchor is a value (or key), not a path pattern
+            q('.tree-multi-pat-label').textContent = st.key ? 'Key name' : 'Equal to';
+            patIn.readOnly = true;
+            patIn.value = st.key ? segsOf(st.pattern).pop() : String(valueAt(st.tree, st.pattern));
+        } else {
+            q('.tree-multi-pat-label').textContent = 'Path';
+            patIn.readOnly = false;
+        }
         list.innerHTML = '';
         var fmt = window._treeFormatValue || String;
         var rs = rows();
         var star = segsOf(st.pattern).indexOf('*');
-        rs.forEach(function (r) {
+        var offset = st.page || 0, limit = window.treeFindLimit;
+        rs.slice(offset, offset + limit).forEach(function (r) {
             var li = el('div', 'tree-multi-row' + (r.skip ? ' tree-multi-skip' : ''));
             var name = segsOf(r.path);
             li.appendChild(el('span', 'tree-multi-ent', star >= 0 ? name[star] : r.path));
-            li.appendChild(el('span', 'tree-multi-old', fmt(r.value)));
+            var oldEl = li.appendChild(el('span', 'tree-multi-old ui-wrap-value', fmt(r.value)));
+            oldEl.title = String(fmt(r.value));
             if (r.skip) li.appendChild(el('span', 'tree-multi-why muted', r.skip));
+            else if (r.next === null) oldEl.classList.add('ui-wrap-value-rest');
             else if (r.next !== null) {
                 li.appendChild(el('span', 'tree-multi-arrow', '→'));
-                li.appendChild(el('span', 'tree-multi-new', fmt(isNaN(Number(r.next)) ? r.next : Number(r.next))));
+                li.appendChild(el('span', 'tree-multi-new ui-wrap-value', fmt(isNaN(Number(r.next)) ? r.next : Number(r.next))));
                 if (window.ValueDelta && typeof r.value === 'number') {
                     var d = el('span', 'tree-multi-delta');
                     try { window.ValueDelta.paint(d, String(r.value), r.next); } catch (e) {}
@@ -13984,6 +14506,14 @@ window.TreeMulti = (function () {
             li.title = r.path;
             list.appendChild(li);
         });
+        if (offset) {
+            var previous = el('button', 'btn-sm outline', 'Previous results');
+            previous.addEventListener('click', function () { st.page = Math.max(0, offset - limit); render(); }); list.appendChild(previous);
+        }
+        if (offset + limit < rs.length) {
+            var next = el('button', 'btn-sm outline', 'Next results');
+            next.addEventListener('click', function () { st.page = offset + limit; render(); }); list.appendChild(next);
+        }
         var live = rs.filter(function (r) { return !r.skip; }).length;
         q('.tree-multi-count').textContent = st.sel.length + ' field' + (st.sel.length === 1 ? '' : 's')
             + (st.sel.length < st.occ.length ? ' of ' + st.occ.length + ' (Ctrl+D adds the next, Ctrl+Shift+L all)' : '')
@@ -13995,7 +14525,24 @@ window.TreeMulti = (function () {
         p.hidden = false;
         paintMarks();
     }
-    function preview() { if (st) render(); }
+    var occurrencePreview = 0;
+    function preview() {
+        if (!st) return;
+        if (!st.occurrence) { render(); return; }
+        var state = st, id = ++occurrencePreview;
+        state.checked = null; state.checkedMap = null;
+        render();
+        var candidates = rows();
+        q('.tree-multi-apply').disabled = true;
+        window.fetch('/field/replace-preview', {method:'POST', headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({expect_chip:window.__chipToken || '', updates:candidates.map(function (r) {
+                return {dot_path:r.path, value:r.next, key:!!state.key};
+            })})}).then(function (r) { return r.json(); }).then(function (data) {
+                if (st !== state || id !== occurrencePreview) return;
+                if (!data.ok) { q('.tree-multi-msg').textContent = data.error || 'Preview refused'; return; }
+                state.checked = data.results; state.checkedMap = new Map(data.results.map(function (r) { return [r.dot_path, r]; })); render(); if (state.applyWhenReady) { state.applyWhenReady = false; apply(); }
+            }).catch(function () { if (st === state) q('.tree-multi-msg').textContent = 'Could not prepare preview'; });
+    }
 
     function setPattern(pattern, fromInput) {
         var tree = (st && st.tree) || activeTree();
@@ -14034,10 +14581,48 @@ window.TreeMulti = (function () {
         return (p && v !== undefined && isLeaf(v)) ? { tree: tree, path: p } : null;
     }
 
-    // Ctrl+D: this leaf, then the same field of the next entity
+    // D-39: Ctrl/Cmd+K is a chord only while an occurrence selection is
+    // active, and it expires after 1.5 s or on any other key.
+    var skipChord = 0, CHORD_MS = window.__treeChordMs || 1500;
+    function leaves(root, includeContainers) {
+        var out = [];
+        (function walk(v, path) {
+            if (path && (isLeaf(v) || includeContainers)) out.push(path);
+            if (isLeaf(v)) return;
+            childKeys(v).forEach(function (k) { walk(child(v, k), path ? path + '.' + k : k); });
+        })(root, '');
+        return out;
+    }
+    function occurrenceNext(skip) {
+        var f = focusedLeaf();
+        if (!f && !(st && st.occurrence)) return false;
+        if (!st || !st.occurrence || (f && (f.tree !== st.tree || st.occ.indexOf(f.path) < 0))) {
+            var a = document.activeElement;
+            var selection = window.getSelection && window.getSelection();
+            var selectedElement = selection && selection.anchorNode && (selection.anchorNode.nodeType === 1 ? selection.anchorNode : selection.anchorNode.parentElement);
+            var selectedKey = selectedElement && selectedElement.closest('.tree-key');
+            var key = !!((a && a.classList.contains('tree-key')) || selectedKey);
+            var text = key ? segsOf(f.path).pop() : String(valueAt(f.tree, f.path));
+            var occ = leaves(f.tree._treeData).filter(function (p) {
+                return (key ? segsOf(p).pop() : String(valueAt(f.tree, p))) === text;
+            });
+            st = {tree:f.tree, pattern:f.path, occ:occ, sel:[f.path], last:occ.indexOf(f.path), occurrence:true, key:key};
+            render();
+            return true;
+        }
+        if (skip && st.sel.length) st.sel.pop();
+        for (var i = 1; i <= st.occ.length; i++) {
+            var p = st.occ[(st.last + i) % st.occ.length];
+            if (st.sel.indexOf(p) < 0) {
+                st.sel.push(p); st.last = st.occ.indexOf(p); if (st.editing) preview(); else render(); break;
+            }
+        }
+        return true;
+    }
+    // Ctrl+Alt+D: this leaf, then the same field of the next entity
     function addNext() {
         var f = focusedLeaf();
-        if (!st || !f || st.tree !== f.tree || st.occ.indexOf(f.path) < 0 || st.pattern === f.path) {
+        if (!st || st.occurrence || !f || st.tree !== f.tree || st.occ.indexOf(f.path) < 0 || st.pattern === f.path) {
             if (!f) return false;
             var pat = generalize(f.tree._treeData, f.path);
             var occ = expand(f.tree._treeData, pat);
@@ -14064,14 +14649,14 @@ window.TreeMulti = (function () {
         if (!st && f) addNext();
         if (!st) return false;
         st.sel = st.occ.slice();
-        render();
+        if (st.occurrence && st.editing) preview(); else render();
         return true;
     }
     function openPattern() {
         var f = focusedLeaf();
         var tree = (f && f.tree) || (st && st.tree) || activeTree();
         if (!tree) return false;
-        if (!st) {
+        if (!st || st.occurrence) {
             var pat = f ? generalize(tree._treeData, f.path) : '';
             st = { tree: tree, pattern: pat, occ: [], sel: [], last: -1 };
             setPattern(pat);
@@ -14095,7 +14680,11 @@ window.TreeMulti = (function () {
     }
 
     function apply() {
-        if (!st) return;
+        if (!st || (st.occurrence && !st.checked)) return;
+        if (window.TreeInlineEdit) {
+            var settling = window.TreeInlineEdit.settle(st.tree);
+            if (settling) { settling.then(apply); return; }
+        }
         var rs = rows().filter(function (r) { return !r.skip && r.next !== null; });
         if (!rs.length) return;
         var go = q('.tree-multi-apply');
@@ -14143,19 +14732,63 @@ window.TreeMulti = (function () {
 
     // keys: only inside an editable tree (or this panel), never elsewhere --
     // Ctrl+D / Ctrl+H stay the browser's on every other surface
+    // D-41: Option on a Mac changes e.key (Option+D is a symbol), so a
+    // non-letter key falls back to the physical e.code.
+    function chordKey(e) {
+        var key = (e.key || '').toLowerCase();
+        if (/^[a-z]$/.test(key)) return key;
+        var m = /^Key([A-Z])$/.exec(e.code || '');
+        return m ? m[1].toLowerCase() : key;
+    }
     document.addEventListener('keydown', function (e) {
         var inPanel = e.target && e.target.closest && e.target.closest('#tree-multi');
+        if (e.key === 'Escape') skipChord = 0;
         if (e.key === 'Escape' && st && (inPanel || focusedLeaf())) { clear(); return; }
-        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-        var k = (e.key || '').toLowerCase();
-        if (k !== 'd' && k !== 'h' && k !== 'l') return;
+        if (skipChord && !/^(Control|Meta|Shift|Alt)$/.test(e.key || '')) {
+            // the chord survives only into Ctrl/Cmd+D, in time, with a selection
+            var keep = (e.ctrlKey || e.metaKey) && !e.altKey && chordKey(e) === 'd'
+                && !(Date.now() - skipChord > CHORD_MS) && st && st.occurrence;
+            if (!keep) skipChord = 0;
+        }
+        if (!(e.ctrlKey || e.metaKey)) return;
+        var k = chordKey(e);
+        if (k !== 'd' && k !== 'h' && k !== 'l' && k !== 'k' && k !== 'f') { skipChord = 0; return; }
         var inTree = !!focusedLeaf() || !!(e.target && e.target.closest && e.target.closest('.json-tree'));
-        if (!inTree && !inPanel) return;
+        var inSearch = e.target && e.target.classList.contains('tree-search');
+        if (!inTree && !inPanel && !(inSearch && (k === 'h' || k === 'f'))) return;
         var done = false;
-        if (k === 'd' && !e.shiftKey) done = addNext();
-        else if (k === 'l' && e.shiftKey) done = selectAll();
-        else if (k === 'h' && !e.shiftKey) done = openPattern();
+        if (k === 'k' && !e.altKey) {
+            if (!st || !st.occurrence) { skipChord = 0; return; }   // the command palette's key
+            skipChord = Date.now(); e.preventDefault(); e.stopPropagation(); return;
+        }
+        if (k === 'd' && skipChord && !e.altKey) { skipChord = 0; done = occurrenceNext(true); }
+        else if (k === 'f' && e.metaKey && e.altKey) done = window.TreeFind.open();
+        else if (k === 'l' && e.shiftKey && (!st || st.occurrence)) { occurrenceNext(false); done = selectAll(); }
+        else if (k === 'd' && e.altKey && !e.shiftKey) done = addNext();
+        else if (k === 'l' && e.shiftKey && st && !st.occurrence) done = selectAll();
+        else if (k === 'h' && !e.metaKey && !e.shiftKey && !e.altKey) done = window.TreeFind.open();
+        else if (k === 'd' && !e.altKey && !e.shiftKey) done = occurrenceNext(false);
         if (done) e.preventDefault();
+    }, true);
+
+    document.addEventListener('beforeinput', function (e) {
+        if (!st || !st.occurrence || !e.target.matches('.ui-tree-editor') || (!e.inputType.startsWith('insert') && !e.inputType.startsWith('delete'))) return;
+        e.preventDefault();
+        var text = e.data;
+        if (text == null && e.dataTransfer) text = e.dataTransfer.getData('text/plain');
+        if (e.inputType.startsWith('delete')) text = '';
+        text = text || '';
+        var input = q('.tree-multi-value');
+        if (text === '') {
+            var notText = st.sel.filter(function (p) { return typeof valueAt(st.tree, p) !== 'string'; }).length;
+            if (notText) {   // D-40: an empty value is refused for non-string fields
+                q('.tree-multi-msg').textContent = 'An empty value is refused: ' + notText + ' of the selected fields '
+                    + (notText === 1 ? 'is' : 'are') + ' not text';
+                return;
+            }
+        }
+        st.editing = true; st.emptyArmed = false;
+        input.value = text; input.focus(); preview();
     }, true);
 
     // rows built later (a branch expanded) carry the tint too -- watched on
@@ -14180,8 +14813,399 @@ window.TreeMulti = (function () {
 
     return { generalize: generalize, expand: expand, arithOf: arithOf, numText: numText,
              addNext: addNext, selectAll: selectAll, openPattern: openPattern,
+             leaves: leaves, valueAt: valueAt, skipReason: skipReason, focusedLeaf: focusedLeaf, activeTree: activeTree,
              setPattern: setPattern, clear: clear, apply: apply,
              state: function () { return st; } };
+})();
+
+/* Whole-model find and replacement; TreeMulti owns occurrence selection.
+ * D-36: a pass is debounced, time-sliced and cancelled by the next keystroke;
+ * a regex pass runs in a worker that is terminated past its budget.
+ * D-37: with regex off the find text is one literal phrase and the
+ * replacement is literal. D-38: a number, boolean or null matches only as a
+ * whole value, and Replace All always stops at a review step first. */
+window.TreeFind = (function () {
+    'use strict';
+    var tree, bar, find, hits = [], plan = [], serial = 0, current = 0, token, planSeq, ready = false;
+    var reviewing = false, lastReplaced = null, timer = null, running = null, pserial = 0;
+    var DEBOUNCE_MS = 150, SLICE_MS = 8, BUDGET_MS = window.__treeFindBudgetMs || 2000;
+    var TM = window.TreeMulti;
+    var TOGGLES = [
+        ['case', 'Aa', 'Match case'], ['word', 'ab', 'Match whole word'],
+        ['regex', '.*', 'Use regular expression'], ['keys', '{k}', 'Match keys too']];
+    var observer = new MutationObserver(function (records) {
+        if (!bar || bar.hidden) return;
+        if (records.some(function (record) { return Array.from(record.addedNodes).some(function (node) {
+            return node.nodeType === 1 && (node.matches('.tree-node') || node.querySelector('.tree-node'));
+        }); })) paintInline();
+    });
+    function watchTree() { observer.disconnect(); observer.observe(tree, {childList:true, subtree:true}); }
+    function part(tag, cls, text) {
+        var e = document.createElement(tag); e.className = cls;
+        if (text) e.textContent = text;
+        return e;
+    }
+    function button(label, fn, cls) {
+        var e = part('button', cls || 'btn-sm outline', label); e.type = 'button'; e.addEventListener('click', fn); return e;
+    }
+    function on(name) { var e = bar && bar.querySelector('[name="' + name + '"]'); return !!(e && e.getAttribute('aria-pressed') === 'true'); }
+    function findText() { return find ? find.value : ''; }
+    function replText() { return bar.querySelector('[name="replace"]').value; }
+    function mount() {
+        if (bar) return;
+        bar = part('section', 'ui-tree-find ui-tree-find-closed'); bar.id = 'tree-find'; bar.hidden = true;
+        bar.setAttribute('role', 'region'); bar.setAttribute('aria-label', 'Find and replace in this tree');
+        var row = part('div', 'ui-tree-find-row'); bar.appendChild(row);
+        var rep = part('input', 'ui-tree-find-replace'); rep.name = 'replace'; rep.placeholder = 'Replace with';
+        rep.setAttribute('aria-label', 'Replace with'); rep.spellcheck = false; rep.autocomplete = 'off';
+        rep.addEventListener('input', function () { refresh(); });
+        row.appendChild(rep);
+        var group = part('div', 'ui-tree-find-toggles'); group.setAttribute('role', 'toolbar'); group.setAttribute('aria-label', 'Find options');
+        TOGGLES.forEach(function (t) {
+            var b = button(t[1], function () {
+                var pressed = b.getAttribute('aria-pressed') !== 'true';
+                b.setAttribute('aria-pressed', String(pressed)); b.classList.toggle('ui-tree-find-toggle-on', pressed); refresh();
+            }, 'ui-tree-find-toggle' + (t[0] === 'word' ? ' ui-tree-find-word' : ''));
+            b.name = t[0]; b.title = t[2]; b.setAttribute('aria-label', t[2]); b.setAttribute('aria-pressed', 'false');
+            group.appendChild(b);
+        });
+        row.appendChild(group);
+        var one = button('Replace', function () { replaceNow(false); }); one.name = 'replace-one'; one.title = 'Replace this match (Enter)'; row.appendChild(one);
+        var all = button('Replace all', function () { replaceNow(true); }); all.name = 'replace-all';
+        all.title = 'Review every replacement before anything is written (Ctrl+Alt+Enter)'; row.appendChild(all);
+        var path = button('By path', function () { close(); tree.focus(); TM.openPattern(); }); path.name = 'by-path';
+        path.title = 'Edit fields by path pattern (* = any one level)'; row.appendChild(path);
+        var status = part('output', 'ui-tree-find-status'); status.setAttribute('aria-live', 'polite'); row.appendChild(status);
+        var x = button('\u00d7', close, 'btn-sm outline ui-tree-find-close'); x.name = 'close'; x.title = 'Close (Esc)';
+        x.setAttribute('aria-label', 'Close'); row.appendChild(x);
+        var review = part('div', 'ui-tree-find-review'); review.hidden = true; review.classList.add('ui-tree-find-closed');
+        review.appendChild(part('div', 'ui-tree-find-review-sum'));
+        var go = button('Replace', function () { applyPlan(); }, 'btn-sm ui-tree-find-confirm'); go.name = 'confirm'; review.appendChild(go);
+        var back = button('Cancel', function () { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); }); back.name = 'cancel'; review.appendChild(back);
+        bar.appendChild(review);
+        var details = part('details', 'ui-tree-find-details');
+        details.appendChild(part('summary', 'ui-tree-find-summary', 'Match paths and skipped items'));
+        var box = part('div', 'ui-tree-find-results');
+        box.addEventListener('scroll', function () {
+            if (box.scrollTop + box.clientHeight >= box.scrollHeight - 40 && box._more) box._more();
+        });
+        details.appendChild(box); bar.appendChild(details);
+        bar.addEventListener('keydown', onKey);
+    }
+    function onKey(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (reviewing) { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); } else close();
+            return;
+        }
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (reviewing) { applyPlan(); return; }
+            replaceNow(!!((e.ctrlKey || e.metaKey) && e.altKey));
+        }
+    }
+    // Replace All never writes from the keystroke: it opens the review (D-38).
+    async function replaceNow(all) {
+        await flush();
+        await preview(all);
+        if (!all) await applyPlan();
+    }
+    function status(text) { var o = bar.querySelector('output'); o.textContent = text; o.title = text; }
+    function textOf(v) { return typeof v === 'string' ? v : JSON.stringify(v); }
+    function kindOf(v) { return typeof v === 'string' ? 's' : v === null ? 'z' : typeof v === 'number' ? 'n' : typeof v === 'boolean' ? 'b' : 'o'; }
+    function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function sourceOf(query) {
+        var s = on('regex') ? query : escapeRe(query);
+        return on('word') ? '\\b(?:' + s + ')\\b' : '(?:' + s + ')';
+    }
+    // One corpus per model revision: every leaf value and, separately, every key.
+    function corpus(t) {
+        var c = t._findCorpus;
+        if (c && c.data === t._treeData && c.rev === (t._modelRev || 0)) return c;
+        c = {data:t._treeData, rev:t._modelRev || 0, paths:[], texts:[], kinds:[], keyAt:[], id:Math.random()};
+        TM.leaves(t._treeData, true).forEach(function (p) {
+            var v = TM.valueAt(t, p);
+            if (v === null || typeof v !== 'object') { c.paths.push(p); c.texts.push(textOf(v)); c.kinds.push(kindOf(v)); c.keyAt.push(false); }
+            c.paths.push(p); c.texts.push(p.split('.').pop()); c.kinds.push('k'); c.keyAt.push(true);
+        });
+        t._findCorpus = c;
+        return c;
+    }
+    function yieldTask() { return new Promise(function (r) { setTimeout(r, 0); }); }
+    // Literal and non-regex matching on the main thread, time-sliced.
+    async function matchMain(id, c, query, keys, rep) {
+        var regex = on('regex'), flags = on('case') ? 'g' : 'gi';
+        var re = new RegExp(sourceOf(query), flags);
+        var whole = regex ? new RegExp('^(?:' + query + ')$', on('case') ? '' : 'i') : null;
+        var needle = on('case') ? query : query.toLowerCase();
+        var out = [], start = performance.now(), slice = start;
+        for (var i = 0; i < c.texts.length; i++) {
+            if ((i & 511) === 0 && performance.now() - slice > SLICE_MS) {
+                await yieldTask();
+                if (id !== serial) return null;
+                if (performance.now() - start > BUDGET_MS * 4) return 'slow';
+                slice = performance.now();
+            }
+            var k = c.kinds[i];
+            if (k === 'k' && !keys) continue;
+            var t = c.texts[i], hit, next;
+            if (k === 's' || k === 'k') {
+                re.lastIndex = 0; hit = re.test(t);
+                if (hit && rep !== null) { re.lastIndex = 0; next = regex ? t.replace(re, rep) : t.replace(re, function () { return rep; }); }
+            } else {
+                hit = regex ? whole.test(t) : (on('case') ? t : t.toLowerCase()) === needle;
+                if (hit && rep !== null) next = regex ? t.replace(whole, rep) : rep;
+            }
+            if (hit) out.push({i:i, next:next});
+        }
+        return out;
+    }
+    // A regex runs in a worker so a catastrophic pattern can be terminated.
+    var worker = null, workerCorpus = null;
+    function matchWorker(id, c, query, keys, rep) {
+        return new Promise(function (resolve) {
+            if (!worker) { worker = new Worker('/static/tree-find-worker.js'); workerCorpus = null; }
+            var w = worker, done = false;
+            var kill = setTimeout(function () {
+                if (done) return; done = true;
+                w.terminate(); if (worker === w) { worker = null; workerCorpus = null; }
+                resolve('slow');
+            }, BUDGET_MS);
+            w.onmessage = function (ev) {
+                if (done || ev.data.serial !== id) return;
+                done = true; clearTimeout(kill);
+                resolve(ev.data.error ? {error:ev.data.error} : ev.data.hits);
+            };
+            if (workerCorpus !== c.id) { w.postMessage({corpus:c.id, texts:c.texts, kinds:c.kinds}); workerCorpus = c.id; }
+            w.postMessage({serial:id, source:sourceOf(query), whole:'^(?:' + query + ')$', cs:on('case'), keys:keys, rep:rep});
+            running = {cancel:function () {
+                if (done) return; done = true; clearTimeout(kill);
+                w.terminate(); if (worker === w) { worker = null; workerCorpus = null; }
+                resolve(null);
+            }};
+        });
+    }
+    function refresh() {
+        if (!bar) return;
+        serial++; pserial++; plan = []; ready = false; endReview(true);
+        if (running) { running.cancel(); running = null; }
+        clearTimeout(timer);
+        var id = serial;
+        timer = setTimeout(function () { timer = null; pass(id); }, DEBOUNCE_MS);
+    }
+    var settledResolve = [];
+    function flush() {
+        if (timer) { clearTimeout(timer); timer = null; pass(serial); }
+        if (!running && !pending) return Promise.resolve();
+        return new Promise(function (r) { settledResolve.push(r); });
+    }
+    var pending = false;
+    function settle() { pending = false; running = null; var rs = settledResolve; settledResolve = []; rs.forEach(function (r) { r(); }); }
+    async function pass(id) {
+        if (id !== serial || !bar || bar.hidden) return;
+        pending = true;
+        var query = findText(), rep = replText() === '' ? null : replText();
+        hits = []; current = 0;
+        if (!query) { status('0 matches'); list([]); window.treeFindShowPaths(tree, null); paintInline(); settle(); return; }
+        var c = corpus(tree), keys = on('keys'), result;
+        try {
+            new RegExp(sourceOf(query));
+            if (on('regex')) new RegExp('^(?:' + query + ')$');
+        } catch (err) {
+            status('Invalid regex: ' + err.message); list([]); window.treeFindShowPaths(tree, [], query); paintInline(); settle(); return;
+        }
+        if (on('regex') && typeof Worker === 'function' && !window.__treeFindNoWorker) result = await matchWorker(id, c, query, keys, rep);
+        else { running = {cancel:function () {}}; result = await matchMain(id, c, query, keys, rep); }
+        if (id !== serial) return;   // the newer pass, or close(), settles
+        if (result === 'slow' || result === null) {
+            hits = []; status('Pattern too slow \u2014 refine it'); list([]); window.treeFindShowPaths(tree, [], query); paintInline(); settle(); return;
+        }
+        if (result.error) { status('Invalid regex: ' + result.error); list([]); settle(); return; }
+        hits = result.map(function (h) {
+            var key = c.keyAt[h.i], p = c.paths[h.i];
+            var r = {path:p, old:key ? c.texts[h.i] : TM.valueAt(tree, p), ord:h.i};
+            if (key) r.key = true;
+            if (rep !== null) r.next = h.next;
+            return r;
+        });
+        if (lastReplaced !== null) {
+            var at = hits.findIndex(function (h) { return h.ord > lastReplaced; });
+            current = at < 0 ? 0 : at; lastReplaced = null;
+        }
+        status(hits.length.toLocaleString('en-US') + ' match' + (hits.length === 1 ? '' : 'es'));
+        list(hits);
+        // Materialising the hit branches is the costly DOM step: a change of
+        // the replacement text alone keeps the same set, so it is not redone.
+        var shownPaths = hits.map(function (r) { return r.path; });
+        var shownKey = query + '\u0000' + shownPaths.join('\u0000');
+        if (shownKey !== tree._findShownKey || tree._findShownData !== tree._treeData) {
+            tree._findShownData = tree._treeData;
+            tree._findShownKey = shownKey;
+            window.treeFindShowPaths(tree, shownPaths, query);
+        }
+        paintInline();
+        settle();
+    }
+    // The full list, appended a page at a time as it scrolls (D-38).
+    function list(rows) {
+        var limit = window.treeFindLimit, shown = 0;
+        var box = bar.querySelector('.ui-tree-find-results'); box.replaceChildren(); box.scrollTop = 0;
+        var more = null;
+        function page() {
+            if (more) { more.remove(); more = null; }
+            rows.slice(shown, shown + limit).forEach(function (r) { box.appendChild(line(r)); });
+            shown = Math.min(rows.length, shown + limit);
+            if (shown < rows.length) {
+                more = button('Show more (' + (rows.length - shown).toLocaleString('en-US') + ' left)', page, 'btn-xs outline ui-tree-find-more');
+                box.appendChild(more);
+            }
+            box._more = shown < rows.length ? page : null;
+        }
+        page();
+    }
+    function line(r) {
+        var el = part('div', 'ui-tree-find-result' + (r.skip ? ' ui-tree-find-skip' : ''));
+        var link = button(r.path + (r.key ? ' (key)' : ''), function () {
+            current = hits.findIndex(function (hit) { return hit.path === r.path && !!hit.key === !!r.key; });
+            if (current < 0) current = 0;
+            window.treeFindShowPaths(tree, [r.path], findText());
+            var node = Array.from(tree.querySelectorAll('.tree-node')).find(function (n) { return n.dataset.path === r.path; });
+            var value = node && node.querySelector(':scope > .tree-row > .tree-val'); if (value) value.click();
+        }, 'btn-xs outline ui-tree-find-path');
+        el.appendChild(link);
+        if (r.rename) el.appendChild(button('Rename key', function () {
+            window.htmx.ajax('POST', '/api/pulse/rename', {target:'#inspector-pane', swap:'innerHTML', values:Object.assign({expect_chip:token}, r.rename)});
+        }, 'btn-xs outline'));
+        el.appendChild(document.createTextNode(' ' + textOf(r.old) + (r.skip ? ' - skipped: ' + r.skip : r.next !== undefined ? ' \u2192 ' + textOf(r.next) : '')));
+        if (!r.skip && r.next !== undefined && window.ValueDelta) {
+            var delta = part('span', 'ui-tree-find-delta'); window.ValueDelta.paint(delta, r.old, r.next); el.appendChild(delta);
+        }
+        return el;
+    }
+    function paintInline() {
+        tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
+        if (!bar || replText() === '') return;
+        var byPath = new Map(hits.filter(function (r) { return !r.key; }).map(function (r) { return [r.path, r]; }));
+        tree.querySelectorAll('.tree-node[data-path]').forEach(function (node) {
+            var hit = byPath.get(node.dataset.path);
+            if (!hit) return;
+            var hint = part('span', 'ui-tree-find-inline', textOf(hit.old) + ' \u2192 ' + textOf(hit.next));
+            if (window.ValueDelta) window.ValueDelta.paint(hint.appendChild(part('span', 'ui-tree-find-delta')), hit.old, hit.next);
+            node.querySelector(':scope > .tree-row').appendChild(hint);
+        });
+    }
+    function endReview(silent) {
+        reviewing = false;
+        if (bar) { var rv = bar.querySelector('.ui-tree-find-review'); rv.hidden = true; rv.classList.add('ui-tree-find-closed'); }
+        if (!silent && bar) ready = false;
+    }
+    function showReview() {
+        var live = plan.filter(function (r) { return !r.skip; }), skipped = plan.filter(function (r) { return r.skip; });
+        var names = {s:'text', n:'number', b:'boolean', z:'null', o:'other'}, kinds = {}, why = {};
+        live.forEach(function (r) { var k = names[kindOf(r.old_value)]; kinds[k] = (kinds[k] || 0) + 1; });
+        skipped.forEach(function (r) { var k = String(r.skip).split(':')[0]; why[k] = (why[k] || 0) + 1; });
+        var fmt = function (o) { return Object.keys(o).map(function (k) { return k + ' ' + o[k].toLocaleString('en-US'); }).join(', '); };
+        var review = bar.querySelector('.ui-tree-find-review');
+        review.querySelector('.ui-tree-find-review-sum').textContent = 'Review: ' + live.length.toLocaleString('en-US') + ' replacement'
+            + (live.length === 1 ? '' : 's') + (live.length ? ' (' + fmt(kinds) + ')' : '')
+            + (skipped.length ? ' \u00b7 ' + skipped.length.toLocaleString('en-US') + ' skipped (' + fmt(why) + ')' : '')
+            + ' \u2014 nothing is written until you confirm';
+        var go = review.querySelector('[name="confirm"]');
+        go.textContent = 'Replace ' + live.length.toLocaleString('en-US'); go.disabled = !live.length;
+        review.hidden = false; review.classList.remove('ui-tree-find-closed'); reviewing = true;
+        bar.querySelector('details').open = true;
+        go.focus();
+    }
+    async function preview(all) {
+        await flush();
+        var id = ++pserial, query = findText(), rep = replText();
+        var settling = window.TreeInlineEdit && window.TreeInlineEdit.settle(tree);
+        if (settling) await settling;
+        ready = false; plan = [];
+        try {
+            if (!query || !hits.length) return;
+            var selected = all ? hits : [hits[Math.min(current, hits.length - 1)]];
+            var response = await window.fetch('/field/replace-preview', {method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({expect_chip:token, updates:selected.map(function (r) {
+                    return {dot_path:r.path, value:r.next === undefined ? rep : r.next, key:!!r.key};
+                })})});
+            var data = await response.json();
+            if (id !== pserial || bar.hidden) return;
+            if (!data.ok) { status(data.error || 'Preview refused'); return; }
+            plan = data.results; planSeq = data.mutation_seq;
+            plan.forEach(function (r) { var h = selected.find(function (s) { return s.path === r.dot_path; }); if (h) r.ord = h.ord; });
+            if (plan.some(function (r) { return r.skip; })) bar.querySelector('details').open = true;
+            list(plan.map(function (r) { return {path:r.dot_path, old:r.old_value, next:r.new_value, skip:r.skip, rename:r.rename}; }));
+            ready = plan.some(function (r) { return !r.skip; });
+            status(plan.filter(function (r) { return !r.skip; }).length + ' replacements; ' + plan.filter(function (r) { return r.skip; }).length + ' skipped');
+            if (all) showReview();
+        } catch (err) { if (id === pserial) status('Preview failed: ' + err.message); }
+    }
+    async function applyPlan() {
+        var updates = plan.filter(function (r) { return !r.skip; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });
+        if (!updates.length || !ready) return;
+        ready = false; endReview(true);
+        var lastOrd = plan.reduce(function (m, r) { return r.skip || r.ord === undefined ? m : Math.max(m, r.ord); }, -1);
+        try {
+            var response = await window.fetch('/field/edit-batch', {method:'POST', headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({updates:updates, group:'new', expect_chip:token, expect_seq:planSeq})});
+            var data = await response.json();
+            if (!data.ok) { status('Nothing written: ' + (data.error || (data.results || []).map(function (r) { return r.dot_path + ': ' + r.error; }).join('; '))); return; }
+            (data.results || []).forEach(function (r) { if (r.applied) window._paintTreeLeaf(tree, r.dot_path, r.new_value); });
+            if (data.tray_html && window._swapPendingTray) window._swapPendingTray(data.tray_html);
+            var skipped = plan.filter(function (r) { return r.skip; });
+            if (updates.length === 1 && lastOrd >= 0) lastReplaced = lastOrd;
+            refresh(); await flush();
+            if (skipped.length) bar.querySelector('details').open = true;
+            if (skipped.length) list(skipped.map(function (r) { return {path:r.dot_path, old:r.old_value, skip:r.skip, rename:r.rename}; }));
+            status('Replaced ' + updates.length + ' value' + (updates.length === 1 ? '' : 's') + '; Ctrl+Z undoes this group');
+        } catch (err) { status('Apply failed: ' + err.message); }
+    }
+    function open() {
+        var f = TM.focusedLeaf(); var active = (f && f.tree) || TM.activeTree()
+            || (window._activeTreeId && document.getElementById(window._activeTreeId()));
+        if (!active) return false;
+        if (bar && !bar.hidden && tree === active) { bar.querySelector('[name="replace"]').focus(); return true; }
+        if (bar && !bar.hidden) close();
+        tree = active; token = window.__chipToken || ''; mount(); TM.clear();
+        find = document.getElementById('explorer-search') || tree.parentElement.querySelector('.tree-search');
+        if (!find) return false;
+        var toolbar = find.closest('.tree-toolbar') || find;
+        toolbar.insertAdjacentElement('afterend', bar);
+        find.addEventListener('keydown', onKey);
+        watchTree();
+        bar.hidden = false; bar.classList.remove('ui-tree-find-closed');
+        if (bar.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            var style = window.getComputedStyle(bar);
+            bar.animate([{opacity:0, transform:'translateY(' + style.getPropertyValue('--ui-find-slide').trim() + ')'},
+                {opacity:1, transform:'translateY(0)'}], {duration:Number(style.getPropertyValue('--ui-find-duration'))});
+        }
+        refresh(); bar.querySelector('[name="replace"]').focus(); return true;
+    }
+    function close() {
+        ready = false; endReview(true);
+        observer.disconnect();
+        serial++; pserial++; clearTimeout(timer); timer = null; if (running) running.cancel(); settle();
+        bar.hidden = true; bar.classList.add('ui-tree-find-closed'); plan = []; window.treeFindShowPaths(tree, null);
+        find.removeEventListener('keydown', onKey);
+        find.value = ''; find.dispatchEvent(new Event('input', {bubbles:true}));
+        tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
+        var editor = tree.querySelector('.ui-tree-editor');
+        if (editor) editor.focus(); else tree.focus();
+    }
+    return {search:function (id) {
+            if (!bar || bar.hidden) return false;
+            var next = document.getElementById(id);
+            if (!next || !next._crudEnabled) return false;
+            if (next !== tree) {
+                tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
+                tree = next; watchTree();
+            }
+            refresh(); return true;
+        },
+        open:open, close:close, refresh:refresh, flush:flush, preview:preview, apply:applyPlan,
+        reviewing:function () { return reviewing; }, ready:function () { return ready; }, hits:function () { return hits; },
+        current:function () { return current; }};
 })();
 
 /* ------------------------------------------------------------------ */

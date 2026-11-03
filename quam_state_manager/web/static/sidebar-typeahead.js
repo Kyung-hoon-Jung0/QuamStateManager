@@ -333,6 +333,13 @@ window.Typeahead = (function () {
     function _render(st) {
         var p = _panel();
         p.textContent = '';
+        var treeSearch = st.input.id === 'explorer-search';
+        p.classList.toggle('sm-typeahead-tree', treeSearch);
+        p.classList.toggle('ui-typeahead-inflow', treeSearch);
+        if (treeSearch) {
+            var toolbar = st.input.closest('.tree-toolbar');
+            if (toolbar) toolbar.after(p);
+        } else if (p.parentElement !== document.body) document.body.appendChild(p);
         var items = st.items;
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
@@ -359,7 +366,7 @@ window.Typeahead = (function () {
         }
         _keysRow(p, st);
         p.hidden = items.length === 0;
-        if (!p.hidden && window._anchorPopover) {
+        if (!p.hidden && !p.classList.contains('sm-typeahead-tree') && window._anchorPopover) {
             try { window._anchorPopover(p, st.input); } catch (e) {}
         }
         _paintActive(st);
@@ -545,7 +552,7 @@ window.Typeahead = (function () {
             _close();
         });
         document.addEventListener('pointerdown', function (e) {
-            if (!_open) return;
+            if (!_open || _open.input.id !== inputId) return;
             var t = e.target;
             if (t && t.closest && (t.closest('#' + PANEL_ID) || t.id === inputId)) return;
             _close();
@@ -568,7 +575,7 @@ window.Typeahead = (function () {
             var el = document.getElementById(inputId);
             if (!el || el !== _open.input) { _close(); return; }
             var p = _panel();
-            if (!p.hidden && window._anchorPopover) {
+            if (!p.hidden && !p.classList.contains('sm-typeahead-tree') && window._anchorPopover) {
                 try { window._anchorPopover(p, el); } catch (e) {}
             }
         });
