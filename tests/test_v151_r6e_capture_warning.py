@@ -30,7 +30,7 @@ def test_measured_node_reports_capture_failure(rex, tmp_path, monkeypatch, failu
 def test_capture_warning_is_visible_on_the_item():
     r = subprocess.run(["node", str(Path(__file__).with_name("v151_r6e_capture_warning_selfcheck.cjs"))],
                        capture_output=True, text=True, encoding="utf-8", timeout=60,
-                       env=dict(os.environ, NODE_PATH="D:/work/statemanager/node_modules"))
+                       env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(__import__("pathlib").Path(__file__).resolve().parents[1] / "node_modules")))
     assert r.returncode == 0, r.stdout + r.stderr
 
 

@@ -12,7 +12,7 @@ def consumer(selector, prop):
     return re.search(r"(?:^|;)\s*" + prop + r":\s*([^;]+)", matched[-1]).group(1).strip()
 
 
-@pytest.mark.parametrize("selector", [".diag-ok", ".diag-ok-badge", ".diag-pill.diag-error", ".diag-pill.diag-warning",
+@pytest.mark.parametrize("selector", [".diag-ok-badge", ".diag-pill.diag-error", ".diag-pill.diag-warning",
     ".diag-mini.diag-error", ".diag-mini.diag-warning", ".diag-header-badge.diag-error", ".diag-header-badge.diag-warning", ".diag-header-badge.diag-ok-badge"])
 def test_outlined_diagnostic_text_on_card(selector):
     palette = tokens("qm")

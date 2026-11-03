@@ -1,4 +1,5 @@
 """R6e: an unreadable or newly changed live pair never licenses replay."""
+import os
 import json
 import subprocess
 from pathlib import Path
@@ -82,7 +83,7 @@ def test_busy_refusal_clients(tmp_path):
     import os
     r = subprocess.run(["node", str(Path(__file__).with_name("v151_r6e_merge_busy_selfcheck.cjs"))],
                        capture_output=True, text=True, encoding="utf-8", timeout=90,
-                       env=dict(os.environ, NODE_PATH="D:/work/statemanager/node_modules"))
+                       env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(__import__("pathlib").Path(__file__).resolve().parents[1] / "node_modules")))
     assert r.returncode == 0, r.stdout + r.stderr
 
 

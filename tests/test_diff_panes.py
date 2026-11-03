@@ -8,6 +8,7 @@ that lets the client switch baselines without a second equality.
 """
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -201,7 +202,7 @@ def test_the_search_box_is_one_partial_for_both_views():
     copies would drift the way the five search boxes docs/96 unified did."""
     root = _ROOT / "quam_state_manager/web/templates"
     part = (root / "_diff_search.html").read_text(encoding="utf-8")
-    assert 'type="search"' in part and 'class="dp-search"' in part
+    assert 'type="search"' in part and re.search(r'class="(?:[^"]*\s)?dp-search(?:\s[^"]*)?"', part)
     assert 'value="{{ q }}"' in part
     for name in ("_diff_panes.html", "_diff_workbench.html"):
         assert "_diff_search.html" in (root / name).read_text(encoding="utf-8"), name

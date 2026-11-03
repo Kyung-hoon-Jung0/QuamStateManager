@@ -431,7 +431,7 @@ class TestSearchBox:
 
     def test_the_pane_view_carries_the_box_and_what_it_needs(self, env):
         html = _get(env, _url(env, view="panes"))
-        assert 'class="dp-search"' in html and 'class="dp-search-count' in html
+        assert re.search(r'class="(?:[^"]*\s)?dp-search(?:\s[^"]*)?"', html) and 'class="dp-search-count' in html
         # the client needs the page's own paging truth to be honest about it
         assert 'data-more="0"' in html
         # and each container's full count, to restore it when the box clears
@@ -439,14 +439,14 @@ class TestSearchBox:
 
     def test_the_list_view_carries_it_too(self, env):
         html = _get(env, _url(env, view="list", three=False))
-        assert 'id="diff-list"' in html and 'class="dp-search"' in html
+        assert 'id="diff-list"' in html and re.search(r'class="(?:[^"]*\s)?dp-search(?:\s[^"]*)?"', html)
 
     def test_the_query_comes_back_in_the_box_escaped(self, env):
         html = _get(env, _url(env, view="panes") + "&q=" + quote('T1 <b>&"x"'))
         assert 'value="T1 &lt;b&gt;&amp;&#34;x&#34;"' in html or \
                'value="T1 &lt;b&gt;&amp;&quot;x&quot;"' in html, \
             "the echoed query must be escaped, not reflected"
-        assert "<b>&" not in html.split('class="dp-search"')[1][:200]
+        assert "<b>&" not in re.split(r'class="(?:[^"]*\s)?dp-search(?:\s[^"]*)?"', html)[1][:200]
 
     def test_the_server_does_not_filter_by_it(self, env):
         """A query that matches nothing must not change a single row: the

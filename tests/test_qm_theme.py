@@ -76,7 +76,7 @@ def test_qm_semantic_colours():
 
 
 def test_qm_controls_plots_and_maps():
-    env = dict(os.environ, NODE_PATH="D:/work/statemanager/node_modules")
+    env = dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(__import__("pathlib").Path(__file__).resolve().parents[1] / "node_modules"))
     result = subprocess.run(["node", str(ROOT / "tests/qm_theme_selfcheck.cjs"), str(ROOT)],
                             capture_output=True, text=True, encoding="utf-8", env=env, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr

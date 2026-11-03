@@ -127,13 +127,15 @@ def test_settings_link_reaches_a_picker(configuration, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("last, digest", [
-    (None, "25666df66ab52f99d7159a76f4eff5292fcdf25c1f141f8ed873ad589016c65b"),
-    ("alpha", "82d34546b8e090ed21957629a9983f893f25d2e4616f59335bd5bf58869e5f55"),
-    ("beta", "9e6c553e31fe92568d7b8b412ddb67b00a4314125e2d6f735c47a3cd55334c88"),
-    ("unknown", "25666df66ab52f99d7159a76f4eff5292fcdf25c1f141f8ed873ad589016c65b"),
+    (None, "62044ea2ecc02dc404257b0ebcd71e6dc86ca27905503df740dfdb9dee7aea8e"),
+    ("alpha", "e48629aac6dddba9fc7660ecd07b0440a31bcf246c717277c19911a043419832"),
+    ("beta", "986f54fa2a1f4fcd3ff82d7ae47713a082c7f07b240678e0e916764ac3c26029"),
+    ("unknown", "62044ea2ecc02dc404257b0ebcd71e6dc86ca27905503df740dfdb9dee7aea8e"),
 ])
 def test_with_projects_fragment_is_byte_identical(last, digest, tmp_path):
-    # SHA256 of the pre-fix rendered fragment, captured before any edits.
+    # SHA256 of the rendered fragment. Re-captured after e05a0f2ef (stage 1b),
+    # whose only change to this template is `btn-sm` -> `btn-sm outline` on the
+    # config button; the fragment must otherwise stay byte-identical.
     app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
     def project(name, active):
         return dict(name=name, active=active, state_path=dict(raw="scratch/state", exists=True),

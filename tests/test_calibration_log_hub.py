@@ -1130,7 +1130,7 @@ def test_plain_words_on_cards_one_who_and_values_vs_writes(world):
     assert "Kept mine, overwrote live: 3 values</span>" in card
     assert "jr-author-human" not in _row(card, "a") and 'jr-author-by_agent">by_agent</span>' in _row(card, "c")
     # P1-4 (UX round): the count names whose writes it counts
-    assert "<b>2</b> SM writes (5 values)</span>" in html
+    assert re.search(r"<b(?:\s[^>]*)?>2</b> SM writes \(5 values\)</span>", html)
     for jargon in ("sm_apply", "keep_mine", "UNDONE", "node_error", " -- "):
         assert jargon not in html, jargon
 

@@ -33,8 +33,8 @@ def test_the_day_pills_name_sm_writes_and_run_changes(world):  # noqa: F811
     body = world["client"].get(f"/journal/day?day={DAY}").get_data(as_text=True)
     counts = body[body.index('class="jr-counts"'):]
     counts = counts[:counts.index("</div>")]
-    assert re.search(r'class="jr-stat jr-stat-sm"[^>]*><b>\d+</b> SM writes?', counts), counts
-    m = re.search(r'class="jr-stat jr-stat-runvals"[^>]*><b>(\d+)</b> values? changed by runs '
+    assert re.search(r'class="jr-stat jr-stat-sm"[^>]*><b(?:\s[^>]*)?>\d+</b> SM writes?', counts), counts
+    m = re.search(r'class="jr-stat jr-stat-runvals"[^>]*><b(?:\s[^>]*)?>(\d+)</b> values? changed by runs '
                   r'<span class="muted">\(writer not proven\)</span>', counts)
     assert m, counts
-    assert not re.search(r"<b>\d+</b> writes?</span>", counts), "a bare 'writes' count is gone"
+    assert not re.search(r"<b(?:\s[^>]*)?>\d+</b> writes?</span>", counts), "a bare 'writes' count is gone"

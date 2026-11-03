@@ -56,7 +56,7 @@ def _actions_block(head: str) -> str:
 
 
 def _search_input(html: str) -> str:
-    m = re.search(r"<input type=\"search\" id=\"dataset-search\".*?>", html, re.S)
+    m = re.search(r'<input\b(?=[^>]*\btype="search")[^>]*\bid="dataset-search"[^>]*>', html, re.S)
     assert m, "the datasets search input"
     return m.group(0)
 

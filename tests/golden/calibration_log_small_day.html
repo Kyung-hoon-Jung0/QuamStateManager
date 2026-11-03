@@ -14,11 +14,11 @@
 <div class="jr-counts" data-day="2026-10-03" data-chip="chipX">
     <span class="muted">As last recorded</span>
     <span class="jr-stat jr-stat-day">2026-10-03</span>
-    <span class="jr-stat"><b>5</b> runs</span>
+    <span class="jr-stat"><b class="ui-count">5</b> runs</span>
     
     
-    <span class="jr-stat jr-stat-sm" title="Writes SM made to the chip on this day (Apply, Undo, Auto-Sync)"><b>1</b> SM write (2 values)</span>
-    <span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b>8</b> values changed by runs <span class="muted">(writer not proven)</span><details class="jargon"><summary class="jargon-q" aria-label="What does this mean?" title="What does this mean?">?</summary><span class="jargon-explain" role="note">Values the day&#39;s runs changed in the chip state, run by run. A run&#39;s saved state carries the new value, but nothing proves which program wrote it (the run, or an edit made outside SM before it).</span></details></span>
+    <span class="jr-stat jr-stat-sm" title="Writes SM made to the chip on this day (Apply, Undo, Auto-Sync)"><b class="ui-count">1</b> SM write (2 values)</span>
+    <span class="jr-stat jr-stat-runvals" title="Values the day's runs changed in the chip state, run by run. Which program wrote them is not proven."><b class="ui-count">8</b> values changed by runs <span class="muted">(writer not proven)</span><details class="jargon"><summary class="jargon-q" aria-label="What does this mean?" title="What does this mean?">?</summary><span class="jargon-explain" role="note">Values the day&#39;s runs changed in the chip state, run by run. A run&#39;s saved state carries the new value, but nothing proves which program wrote it (the run, or an edit made outside SM before it).</span></details></span>
     
     
     <span id="jr-since" class="jr-since" hidden></span>
@@ -367,8 +367,7 @@
     <button type="button" class="btn-sm outline" onclick="JournalPage.day('2026-10-02')" title="previous day">‹</button>
     <input type="date" name="day_pick" id="jr-day-pick" value="2026-10-03" onchange="JournalPage.day(this.value)">
     <button type="button" class="btn-sm outline" onclick="JournalPage.day('2026-10-04')"
-             title="next day">›</button>
-    <button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>
+             title="next day">›</button><button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>
 </span>
 <select name="author" id="jr-author" title="who" hx-swap-oob="true">
     <option value="">everyone</option>

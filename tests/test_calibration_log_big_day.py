@@ -87,7 +87,7 @@ def test_a_big_day_renders_only_its_newest_page(paged):
     # its rows carry no search text: the server answers the search
     assert "data-jr-search" not in _card_html(html, 'id="card-7"')
     # every count, the strip and the instants are the WHOLE day's
-    assert 'Runs <span class="jr-sec-count">8</span>' in html and "<b>8</b> runs" in html
+    assert 'Runs <span class="jr-sec-count">8</span>' in html and re.search(r"<b(?:\s[^>]*)?>8</b> runs", html)
     # the strip of more runs than a page arrives after the rows, folded
     assert 'hx-get="/journal/strip?day=2026-10-03&amp;q=&amp;author=" hx-trigger="load"' in html
     assert 'class="jr-pill ' not in html and "loading the strip of 8 runs..." in html
@@ -408,4 +408,4 @@ def test_counts_read_with_thousands_separators(paged, monkeypatch):
     monkeypatch.setitem(globals(), "_clock", lambda i: f"10:{i // 60:02d}:{i % 60:02d}")
     _day(paged, 1001)
     html = _get(paged, f"/journal/day?day={DAY}")
-    assert 'Runs <span class="jr-sec-count">1,001</span>' in html and "<b>1,001</b> runs" in html
+    assert 'Runs <span class="jr-sec-count">1,001</span>' in html and re.search(r"<b(?:\s[^>]*)?>1,001</b> runs", html)

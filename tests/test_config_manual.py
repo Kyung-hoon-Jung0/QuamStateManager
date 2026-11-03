@@ -28,7 +28,7 @@ def test_sidebar_item_sits_right_below_settings_and_calculator():
 def test_the_window_and_script_ship_in_the_shell(tmp_path):
     base = (_TPL / "base.html").read_text(encoding="utf-8")
     assert 'id="manual-popover"' in base and 'class="manual-header"' in base
-    assert 'class="manual-search"' in base, "the house search box lives in the window"
+    assert re.search(r'class="(?:[^"]*\s)?manual-search(?:\s[^"]*)?"', base), "the house search box lives in the window"
     assert "manual.js" in base and base.index("search-query.js") < base.index("manual.js"), \
         "manual.js needs SearchQuery loaded first"
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
