@@ -230,7 +230,10 @@ class Modifier:
                 raise ValueError(f"Invalid dot_path: {dot_path!r}")
             source_file = self.store.source_file_for(dot_path)
 
+            parent, leaf = _navigate_to_parent(self.store.merged, dot_path)
+            key_order = list(parent)
             removed = self._remove_at(dot_path, source_file)
+            key_index = key_order.index(leaf)
             old_value = copy.deepcopy(removed)
 
             entry = ChangeEntry(
@@ -239,6 +242,7 @@ class Modifier:
                 new_value=None,
                 source_file=source_file,
                 deleted=True,
+                key_index=key_index,
                 group_id=group_id,
             )
             self.store.change_log.append(entry)
@@ -617,6 +621,11 @@ class Modifier:
             # can't alias the log entry to the live tree.
             restored = copy.deepcopy(entry.old_value)
             parent_merged[leaf_key] = restored
+            if entry.key_index is not None:
+                items = list(parent_merged.items())
+                items.insert(entry.key_index, items.pop())
+                parent_merged.clear()
+                parent_merged.update(items)
             if len(keys) == 1:
                 source_dict = (self.store.wiring if entry.source_file == "wiring"
                                else self.store.state)

@@ -1816,6 +1816,12 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 # review R2-2: a pointer alias (x180 -> #./x180_DragCosine) is edited at its target,
                 # the way /field/edit does it
                 target = r._resolve_edit_path(store, w["path"]) or w["path"]
+                from quam_state_manager.web.port_identity import edit_offers
+                conflicts = edit_offers(target, w["new"])
+                if conflicts:
+                    raise ValueError("port identity disagrees with dictionary key: "
+                                     + conflicts[0]["path"]
+                                     + "; review with Fix or Keep in the field editor")
                 e = mod.set_value(target, w["new"], _defer_hooks=True, group_id=gid)
                 e.actor = actor
                 staged.append(e)

@@ -5231,6 +5231,9 @@ function _keepMineLines(d) {
         // QA diagnostics-r2-04: one clause in the confirm that exists
         lines.push("", "⚠ After this, " + d.crash_values.sentence);
     }
+    if (d.port_identity && d.port_identity.length) {
+        lines.push("", "Port identity warnings (apply is allowed):", d.port_identity.join("\n"));
+    }
     if (d.run_active) {
         lines.push("", "⚠ A run is in progress"
             + (d.run_label ? " (" + d.run_label + ")" : "")

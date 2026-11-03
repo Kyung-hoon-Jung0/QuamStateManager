@@ -72,11 +72,16 @@ def app(inst):
 
 
 @pytest.fixture
-def synth_folder(tmp_path):
+def synth_folder(tmp_path, request):
     from tests.test_web import _make_state, _make_wiring
     d = tmp_path / "chip"
     d.mkdir()
-    (d / "state.json").write_text(json.dumps(_make_state(), indent=2), encoding="utf-8")
+    state = _make_state()
+    if getattr(request, "param", None) == "port_identity":
+        state["ports"] = {"analog_outputs": {"con1": {"2": {"1": {
+            "controller_id": "con1", "fem_id": 2, "port_id": 1}}}}}
+        state["qubits"]["qA1"]["port_link"] = "#/ports/analog_outputs/con1/2/1/port_id"
+    (d / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
     (d / "wiring.json").write_text(json.dumps(_make_wiring(), indent=2), encoding="utf-8")
     return d
 
@@ -878,3 +883,34 @@ def test_run_meta_goes_through_safe_io(tmp_path, monkeypatch):
     reg._write_meta({"key": "k1", "status": "finished", "path": tmp_path})   # a Path: default=str
     assert seen["write"] == 1
     assert reg.get("k1")["status"] == "finished" and seen["read"] >= 1
+
+
+@pytest.mark.parametrize('synth_folder', ['port_identity'], indirect=True)
+@pytest.mark.parametrize('alias', [False, True])
+def test_node_identity_write_is_held_with_approval_reason(c, inst, synth_folder, monkeypatch, alias):
+    state_path = synth_folder / 'state.json'
+    state = json.loads(state_path.read_text(encoding='utf-8'))
+    runner = FakeRun()
+    def update_identity(*args, **kwargs):
+        result = runner(*args, **kwargs)
+        scratch = Path(runner.calls[-1]['state_path']) / 'state.json'
+        data = json.loads(scratch.read_text(encoding='utf-8'))
+        if alias:
+            data['qubits']['qA1']['port_link'] = 4
+        else:
+            data['ports']['analog_outputs']['con1']['2']['1']['port_id'] = 4
+        scratch.write_text(json.dumps(data), encoding='utf-8')
+        return result
+    monkeypatch.setattr(scheduler, '_run_item', update_identity)
+    limits.save(str(inst), _chip(c), {'mode': 'auto'})
+    _arm(c)
+    response = _run(c).get_json()
+    assert 'result' in response, response
+    res = response['result']
+    assert not res['applied'] and res['approval'], res
+    assert 'port identity' in res['why_held']
+    assert 'port identity' in res['unstaged'][0]['why']
+    cards = c.get('/api/agent/chat/cards?after=0').get_json()['live']['approvals']
+    assert 'port identity' in json.dumps(cards)
+    assert json.loads(state_path.read_text(encoding='utf-8')) == state
+    assert c.get('/api/agent/chip').get_json()['pending'] == 0

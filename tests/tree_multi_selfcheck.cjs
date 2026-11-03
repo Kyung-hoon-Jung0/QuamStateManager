@@ -172,6 +172,81 @@ Object.defineProperty(tree, 'offsetParent', { get: () => d.body });
 
     kd(d.querySelector('#tree-multi .tree-multi-value'), 'Escape');
     ok(!TM.state(), 'Esc clears');
+    // Exercise the shipped shared dialog through TreeMulti's actual apply.
+    window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+    window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+    window.Headers = global.Headers;
+    window.FormData = global.FormData;
+    const identityPosts = [];
+    window.fetch = function (url, options) {
+        const body = JSON.parse(options.body);
+        identityPosts.push(body);
+        const result = body.port_ack ? {ok: true, results: body.updates.map(u => ({
+            dot_path: u.dot_path, applied: true, new_value: 4}))} : {
+            ok: false, port_identity: body.updates.map(u => ({message: u.dot_path + ': key disagrees'}))};
+        return Promise.resolve({status: body.port_ack ? 200 : 409, ok: !!body.port_ack,
+            json: () => Promise.resolve(result),
+            clone: function () { return this; }});
+    };
+    window.eval(fs.readFileSync(path.join(STATIC, 'port-identity.js'), 'utf8'));
+    global.fetch = window.fetch;
+    tree._treeData.ports = {analog_outputs: {con1: {'2': {
+        '1': {port_id: 1}, '2': {port_id: 2}}}}};
+    for (const mode of ['keep', 'cancel', 'fix']) {
+        // Enter via Ctrl+H then select the identity leaves in the panel.
+        row.dispatchEvent(new window.MouseEvent('mousedown', {bubbles: true}));
+        (row.querySelector('.tree-row') || row).focus();
+        kd(d.activeElement, 'h', {ctrlKey: true});
+        TM.setPattern('ports.analog_outputs.con1.2.*.port_id');
+        vin.value = '4'; vin.dispatchEvent(new window.Event('input', {bubbles: true}));
+        const start = identityPosts.length;
+        TM.apply();
+        await tick(20);
+        ok(identityPosts.length === start + 1 && !identityPosts[start].port_ack,
+           'TreeMulti waits for explicit identity ack: ' + mode);
+        const dialog = d.querySelector('dialog');
+        ok(dialog && dialog.textContent.includes('ports.analog_outputs.con1.2.1.port_id')
+           && dialog.textContent.includes('ports.analog_outputs.con1.2.2.port_id'),
+           'the batch offer lists every identity row');
+        const label = mode === 'fix' ? 'Fix other side too' : mode === 'keep' ? 'Keep as typed' : 'Cancel';
+        [...dialog.querySelectorAll('button')].find(b => b.textContent === label).click();
+        await tick(20);
+        ok(identityPosts.length === start + (mode === 'cancel' ? 1 : 2),
+           'only an explicit Fix/Keep resends the batch: ' + mode);
+        if (mode !== 'cancel') {
+            ok(identityPosts[start + 1].port_ack === mode
+               && identityPosts[start + 1].group === identityPosts[start].group
+               && JSON.stringify(identityPosts[start + 1].updates) === JSON.stringify(identityPosts[start].updates),
+               'the ack preserves the whole batch and undo group: ' + mode);
+        }
+        tree._treeData.ports.analog_outputs.con1['2']['1'].port_id = 1;
+        tree._treeData.ports.analog_outputs.con1['2']['2'].port_id = 2;
+        kd(vin, 'Escape');
+    }
+
+    // Legacy inspectors deliver the same offer through HTMX's XHR transport.
+    const xhrPosts = [];
+    window.htmx.ajax = function (verb, url, options) {
+        xhrPosts.push({verb, url, options});
+        return Promise.resolve();
+    };
+    for (const mode of ['keep', 'cancel']) {
+        const detail = {xhr: {status: 409, responseText: JSON.stringify({
+            port_identity: [{message: 'ports.analog_outputs.con1.2.1.port_id: key disagrees'}]})},
+            requestConfig: {path: '/qubit/q1/edit', elt: row,
+                parameters: {dot_path: 'ports.analog_outputs.con1.2.1.port_id', value: '4'},
+                headers: {'X-Request-Token': 'preserved'}}, target: tree};
+        d.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', {detail}));
+        await tick(0);
+        ok(detail.shouldSwap === false && detail.isError === false, 'HTMX offer waits for a choice');
+        const dialog = d.querySelector('dialog');
+        [...dialog.querySelectorAll('button')].find(b => b.textContent === (mode === 'keep' ? 'Keep as typed' : 'Cancel')).click();
+        await tick(10);
+    }
+    ok(xhrPosts.length === 1 && xhrPosts[0].options.values.port_ack === 'keep'
+       && xhrPosts[0].options.headers['X-Request-Token'] === 'preserved',
+       'HTMX Keep preserves headers and values; Cancel never resends');
+
     if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
     console.log('tree_multi_selfcheck: all ok');
     process.exit(0);
