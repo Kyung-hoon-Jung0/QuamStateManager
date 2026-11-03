@@ -45,6 +45,11 @@ def test_tree_find():
     'find_occurrence', 'find_skip', 'find_entity', 'find_typing', 'find_all',
     'find_meta', 'find_path', 'find_reset', 'find_key_selection', 'find_paging',
     'find_race', 'find_correct', 'find_rename', 'find_existing', 'find_inline', 'find_enter', 'find_close_query', 'find_tab', 'find_late_inline', 'find_current', 'find_search_chord', 'find_reopen', 'find_skipped_open',
+    # review findings D-36..D-41 and the client half of expect_seq
+    'find_debounce', 'find_worker', 'find_budget', 'find_slow_msg', 'find_cancel', 'find_phrase',
+    'find_literal_rep', 'find_whole_number', 'find_review', 'find_review_more', 'find_expect_seq',
+    'find_advance', 'find_label', 'chord_palette', 'chord_stop', 'chord_expiry', 'chord_other_key',
+    'empty_refuse', 'empty_confirm', 'mac_code', 'multi_label', 'multi_full_old',
 ])
 def test_tree_find_mutations(mutation):
     result = run_find(mutation)

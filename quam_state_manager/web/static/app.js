@@ -11504,6 +11504,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         else if (cur && typeof cur === "object") cur[last] = value;
         else return false;
         container._flatIndex = null;
+        container._modelRev = (container._modelRev || 0) + 1;   // TreeFind corpus key
         return true;
     }
     window._treeModelSet = _treeModelSet;
@@ -11744,10 +11745,11 @@ window.clearDetailPanelSearch = function(btnEl) {
         return n ? { id: id, label: container.getAttribute("data-search-peer-label") || id, n: n } : null;
     }
 
-    window.treeFindShowPaths = function (container, paths) {
+    window.treeFindShowPaths = function (container, paths, label) {
+        if (paths === null || !paths.length) container._findShownKey = null;
         container._findPaths = paths === null ? null : new Set(paths);
         var saved = _treePark(container);
-        _searchTreeData(container, paths === null ? '' : 'Find');
+        _searchTreeData(container, paths === null ? '' : (label || ' '));
         _treeResume(container, saved);
         delete container._findPaths;
     };
@@ -14237,7 +14239,7 @@ window.TreeMulti = (function () {
         head.appendChild(x);
         p.appendChild(head);
         var pr = el('label', 'tree-multi-pat');
-        pr.appendChild(el('span', 'muted', 'Path'));
+        pr.appendChild(el('span', 'muted tree-multi-pat-label', 'Path'));
         var pat = el('input', 'tree-multi-pattern');
         pat.type = 'text'; pat.spellcheck = false; pat.autocomplete = 'off';
         pat.placeholder = 'qubits.*.xy.operations.x180_DragCosine.amplitude   (* = any one level)';
@@ -14249,9 +14251,17 @@ window.TreeMulti = (function () {
         var inp = el('input', 'tree-multi-value');
         inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
         inp.placeholder = 'new value, or *1.1  /2  +5e6  -1e6  +10%';
-        inp.addEventListener('input', function () { if (st) st.editing = true; preview(); });
+        inp.addEventListener('input', function () { if (st) { st.editing = true; st.emptyArmed = false; } preview(); });
         inp.addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') { e.preventDefault(); if (st && st.occurrence && !st.checked) st.applyWhenReady = true; else apply(); }
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (st && st.occurrence && inp.value === '' && !st.emptyArmed) {   // D-40: confirm an empty text value
+                st.emptyArmed = true;
+                q('.tree-multi-msg').textContent = 'Press Enter again to set ' + st.sel.length + ' field'
+                    + (st.sel.length === 1 ? '' : 's') + ' to empty text';
+                return;
+            }
+            if (st && st.occurrence && !st.checked) st.applyWhenReady = true; else apply();
         });
         foot.appendChild(inp);
         var go = el('button', 'btn-sm tree-multi-apply', 'Apply');
@@ -14300,6 +14310,15 @@ window.TreeMulti = (function () {
     function render() {
         var p = panel();
         var list = q('.tree-multi-list');
+        var patIn = q('.tree-multi-pattern');
+        if (st.occurrence) {   // the anchor is a value (or key), not a path pattern
+            q('.tree-multi-pat-label').textContent = st.key ? 'Key name' : 'Equal to';
+            patIn.readOnly = true;
+            patIn.value = st.key ? segsOf(st.pattern).pop() : String(valueAt(st.tree, st.pattern));
+        } else {
+            q('.tree-multi-pat-label').textContent = 'Path';
+            patIn.readOnly = false;
+        }
         list.innerHTML = '';
         var fmt = window._treeFormatValue || String;
         var rs = rows();
@@ -14309,11 +14328,13 @@ window.TreeMulti = (function () {
             var li = el('div', 'tree-multi-row' + (r.skip ? ' tree-multi-skip' : ''));
             var name = segsOf(r.path);
             li.appendChild(el('span', 'tree-multi-ent', star >= 0 ? name[star] : r.path));
-            li.appendChild(el('span', 'tree-multi-old', fmt(r.value)));
+            var oldEl = li.appendChild(el('span', 'tree-multi-old ui-wrap-value', fmt(r.value)));
+            oldEl.title = String(fmt(r.value));
             if (r.skip) li.appendChild(el('span', 'tree-multi-why muted', r.skip));
+            else if (r.next === null) oldEl.classList.add('ui-wrap-value-rest');
             else if (r.next !== null) {
                 li.appendChild(el('span', 'tree-multi-arrow', '→'));
-                li.appendChild(el('span', 'tree-multi-new', fmt(isNaN(Number(r.next)) ? r.next : Number(r.next))));
+                li.appendChild(el('span', 'tree-multi-new ui-wrap-value', fmt(isNaN(Number(r.next)) ? r.next : Number(r.next))));
                 if (window.ValueDelta && typeof r.value === 'number') {
                     var d = el('span', 'tree-multi-delta');
                     try { window.ValueDelta.paint(d, String(r.value), r.next); } catch (e) {}
@@ -14398,7 +14419,9 @@ window.TreeMulti = (function () {
         return (p && v !== undefined && isLeaf(v)) ? { tree: tree, path: p } : null;
     }
 
-    var skipChord = false;
+    // D-39: Ctrl/Cmd+K is a chord only while an occurrence selection is
+    // active, and it expires after 1.5 s or on any other key.
+    var skipChord = 0, CHORD_MS = window.__treeChordMs || 1500;
     function leaves(root, includeContainers) {
         var out = [];
         (function walk(v, path) {
@@ -14422,7 +14445,6 @@ window.TreeMulti = (function () {
                 return (key ? segsOf(p).pop() : String(valueAt(f.tree, p))) === text;
             });
             st = {tree:f.tree, pattern:f.path, occ:occ, sel:[f.path], last:occ.indexOf(f.path), occurrence:true, key:key};
-            q('.tree-multi-pattern').value = f.path;
             render();
             return true;
         }
@@ -14548,18 +14570,36 @@ window.TreeMulti = (function () {
 
     // keys: only inside an editable tree (or this panel), never elsewhere --
     // Ctrl+D / Ctrl+H stay the browser's on every other surface
+    // D-41: Option on a Mac changes e.key (Option+D is a symbol), so a
+    // non-letter key falls back to the physical e.code.
+    function chordKey(e) {
+        var key = (e.key || '').toLowerCase();
+        if (/^[a-z]$/.test(key)) return key;
+        var m = /^Key([A-Z])$/.exec(e.code || '');
+        return m ? m[1].toLowerCase() : key;
+    }
     document.addEventListener('keydown', function (e) {
         var inPanel = e.target && e.target.closest && e.target.closest('#tree-multi');
+        if (e.key === 'Escape') skipChord = 0;
         if (e.key === 'Escape' && st && (inPanel || focusedLeaf())) { clear(); return; }
+        if (skipChord && !/^(Control|Meta|Shift|Alt)$/.test(e.key || '')) {
+            // the chord survives only into Ctrl/Cmd+D, in time, with a selection
+            var keep = (e.ctrlKey || e.metaKey) && !e.altKey && chordKey(e) === 'd'
+                && !(Date.now() - skipChord > CHORD_MS) && st && st.occurrence;
+            if (!keep) skipChord = 0;
+        }
         if (!(e.ctrlKey || e.metaKey)) return;
-        var k = (e.key || '').toLowerCase();
-        if (k !== 'd' && k !== 'h' && k !== 'l' && k !== 'k' && k !== 'f') return;
+        var k = chordKey(e);
+        if (k !== 'd' && k !== 'h' && k !== 'l' && k !== 'k' && k !== 'f') { skipChord = 0; return; }
         var inTree = !!focusedLeaf() || !!(e.target && e.target.closest && e.target.closest('.json-tree'));
         var inSearch = e.target && e.target.classList.contains('tree-search');
         if (!inTree && !inPanel && !(inSearch && (k === 'h' || k === 'f'))) return;
         var done = false;
-        if (k === 'k' && !e.altKey) { skipChord = true; e.preventDefault(); return; }
-        if (k === 'd' && skipChord && !e.altKey) { skipChord = false; done = occurrenceNext(true); }
+        if (k === 'k' && !e.altKey) {
+            if (!st || !st.occurrence) { skipChord = 0; return; }   // the command palette's key
+            skipChord = Date.now(); e.preventDefault(); e.stopPropagation(); return;
+        }
+        if (k === 'd' && skipChord && !e.altKey) { skipChord = 0; done = occurrenceNext(true); }
         else if (k === 'f' && e.metaKey && e.altKey) done = window.TreeFind.open();
         else if (k === 'l' && e.shiftKey && (!st || st.occurrence)) { occurrenceNext(false); done = selectAll(); }
         else if (k === 'd' && e.altKey && !e.shiftKey) done = addNext();
@@ -14572,8 +14612,21 @@ window.TreeMulti = (function () {
     document.addEventListener('beforeinput', function (e) {
         if (!st || !st.occurrence || !e.target.matches('.ui-tree-editor') || (!e.inputType.startsWith('insert') && !e.inputType.startsWith('delete'))) return;
         e.preventDefault();
-        st.editing = true;
-        var input = q('.tree-multi-value'); input.value = e.data || ''; input.focus(); preview();
+        var text = e.data;
+        if (text == null && e.dataTransfer) text = e.dataTransfer.getData('text/plain');
+        if (e.inputType.startsWith('delete')) text = '';
+        text = text || '';
+        var input = q('.tree-multi-value');
+        if (text === '') {
+            var notText = st.sel.filter(function (p) { return typeof valueAt(st.tree, p) !== 'string'; }).length;
+            if (notText) {   // D-40: an empty value is refused for non-string fields
+                q('.tree-multi-msg').textContent = 'An empty value is refused: ' + notText + ' of the selected fields '
+                    + (notText === 1 ? 'is' : 'are') + ' not text';
+                return;
+            }
+        }
+        st.editing = true; st.emptyArmed = false;
+        input.value = text; input.focus(); preview();
     }, true);
 
     // rows built later (a branch expanded) carry the tint too -- watched on
@@ -14603,11 +14656,21 @@ window.TreeMulti = (function () {
              state: function () { return st; } };
 })();
 
-/* Whole-model find and replacement; TreeMulti owns occurrence selection. */
+/* Whole-model find and replacement; TreeMulti owns occurrence selection.
+ * D-36: a pass is debounced, time-sliced and cancelled by the next keystroke;
+ * a regex pass runs in a worker that is terminated past its budget.
+ * D-37: with regex off the find text is one literal phrase and the
+ * replacement is literal. D-38: a number, boolean or null matches only as a
+ * whole value, and Replace All always stops at a review step first. */
 window.TreeFind = (function () {
     'use strict';
     var tree, bar, find, hits = [], plan = [], serial = 0, current = 0, token, planSeq, ready = false;
+    var reviewing = false, lastReplaced = null, timer = null, running = null, pserial = 0;
+    var DEBOUNCE_MS = 150, SLICE_MS = 8, BUDGET_MS = window.__treeFindBudgetMs || 2000;
     var TM = window.TreeMulti;
+    var TOGGLES = [
+        ['case', 'Aa', 'Match case'], ['word', 'ab', 'Match whole word'],
+        ['regex', '.*', 'Use regular expression'], ['keys', '{k}', 'Match keys too']];
     var observer = new MutationObserver(function (records) {
         if (!bar || bar.hidden) return;
         if (records.some(function (record) { return Array.from(record.addedNodes).some(function (node) {
@@ -14620,112 +14683,247 @@ window.TreeFind = (function () {
         if (text) e.textContent = text;
         return e;
     }
-    function input(name, placeholder) {
-        var e = part('input', ''); e.name = name; e.placeholder = placeholder;
-        e.setAttribute('aria-label', placeholder); e.addEventListener('input', refresh);
-        return e;
+    function button(label, fn, cls) {
+        var e = part('button', cls || 'btn-sm outline', label); e.type = 'button'; e.addEventListener('click', fn); return e;
     }
-    function button(label, fn) {
-        var e = part('button', 'btn-sm outline', label); e.type = 'button'; e.addEventListener('click', fn); return e;
-    }
-    function control(name) { return name === 'find' ? find : bar.querySelector('[name="' + name + '"]'); }
+    function on(name) { var e = bar && bar.querySelector('[name="' + name + '"]'); return !!(e && e.getAttribute('aria-pressed') === 'true'); }
+    function findText() { return find ? find.value : ''; }
+    function replText() { return bar.querySelector('[name="replace"]').value; }
     function mount() {
         if (bar) return;
         bar = part('section', 'ui-tree-find ui-tree-find-closed'); bar.id = 'tree-find'; bar.hidden = true;
         bar.setAttribute('role', 'region'); bar.setAttribute('aria-label', 'Find and replace in this tree');
-        bar.appendChild(input('replace', 'Replace with'));
-        var status = part('output', 'ui-tree-find-status'); status.setAttribute('aria-live', 'polite'); bar.appendChild(status);
-        ['case', 'word', 'regex', 'keys'].forEach(function (name, i) {
-            var label = part('label', 'ui-check ui-tree-find-toggle');
-            var e = input(name, ['Match case', 'Whole word', 'Regex', 'Keys too'][i]); e.type = 'checkbox';
-            label.title = e.placeholder;
-            label.appendChild(e); label.appendChild(document.createTextNode(['Aa', 'ab', '.*', 'Keys'][i])); bar.appendChild(label);
+        var row = part('div', 'ui-tree-find-row'); bar.appendChild(row);
+        var rep = part('input', 'ui-tree-find-replace'); rep.name = 'replace'; rep.placeholder = 'Replace with';
+        rep.setAttribute('aria-label', 'Replace with'); rep.spellcheck = false; rep.autocomplete = 'off';
+        rep.addEventListener('input', function () { refresh(); });
+        row.appendChild(rep);
+        var group = part('div', 'ui-tree-find-toggles'); group.setAttribute('role', 'toolbar'); group.setAttribute('aria-label', 'Find options');
+        TOGGLES.forEach(function (t) {
+            var b = button(t[1], function () {
+                var pressed = b.getAttribute('aria-pressed') !== 'true';
+                b.setAttribute('aria-pressed', String(pressed)); b.classList.toggle('ui-tree-find-toggle-on', pressed); refresh();
+            }, 'ui-tree-find-toggle' + (t[0] === 'word' ? ' ui-tree-find-word' : ''));
+            b.name = t[0]; b.title = t[2]; b.setAttribute('aria-label', t[2]); b.setAttribute('aria-pressed', 'false');
+            group.appendChild(b);
         });
-        bar.appendChild(button('Replace One', function () { replaceNow(false); }));
-        bar.appendChild(button('Replace All', function () { replaceNow(true); }));
-        bar.appendChild(button('By path', function () { close(); tree.focus(); TM.openPattern(); }));
-        bar.appendChild(button('Close', close));
+        row.appendChild(group);
+        var one = button('Replace', function () { replaceNow(false); }); one.name = 'replace-one'; one.title = 'Replace this match (Enter)'; row.appendChild(one);
+        var all = button('Replace all', function () { replaceNow(true); }); all.name = 'replace-all';
+        all.title = 'Review every replacement before anything is written (Ctrl+Alt+Enter)'; row.appendChild(all);
+        var path = button('By path', function () { close(); tree.focus(); TM.openPattern(); }); path.name = 'by-path';
+        path.title = 'Edit fields by path pattern (* = any one level)'; row.appendChild(path);
+        var status = part('output', 'ui-tree-find-status'); status.setAttribute('aria-live', 'polite'); row.appendChild(status);
+        var x = button('\u00d7', close, 'btn-sm outline ui-tree-find-close'); x.name = 'close'; x.title = 'Close (Esc)';
+        x.setAttribute('aria-label', 'Close'); row.appendChild(x);
+        var review = part('div', 'ui-tree-find-review'); review.hidden = true; review.classList.add('ui-tree-find-closed');
+        review.appendChild(part('div', 'ui-tree-find-review-sum'));
+        var go = button('Replace', function () { applyPlan(); }, 'btn-sm ui-tree-find-confirm'); go.name = 'confirm'; review.appendChild(go);
+        var back = button('Cancel', function () { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); }); back.name = 'cancel'; review.appendChild(back);
+        bar.appendChild(review);
         var details = part('details', 'ui-tree-find-details');
-        details.addEventListener('toggle', function () { details.classList.toggle('ui-tree-find-details-open', details.open); });
         details.appendChild(part('summary', 'ui-tree-find-summary', 'Match paths and skipped items'));
-        details.appendChild(part('div', 'ui-tree-find-results')); bar.appendChild(details);
+        var box = part('div', 'ui-tree-find-results');
+        box.addEventListener('scroll', function () {
+            if (box.scrollTop + box.clientHeight >= box.scrollHeight - 40 && box._more) box._more();
+        });
+        details.appendChild(box); bar.appendChild(details);
         bar.addEventListener('keydown', onKey);
     }
     function onKey(e) {
-        if (e.key === 'Escape') { e.preventDefault(); close(); }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            if (reviewing) { endReview(); status('Nothing written'); bar.querySelector('[name="replace"]').focus(); } else close();
+            return;
+        }
         if (e.key === 'Enter') {
             e.preventDefault();
+            if (reviewing) { applyPlan(); return; }
             replaceNow(!!((e.ctrlKey || e.metaKey) && e.altKey));
         }
     }
+    // Replace All never writes from the keystroke: it opens the review (D-38).
     async function replaceNow(all) {
+        await flush();
         await preview(all);
-        await applyPlan();
+        if (!all) await applyPlan();
     }
-    function status(text) { bar.querySelector('output').textContent = text; }
+    function status(text) { var o = bar.querySelector('output'); o.textContent = text; o.title = text; }
     function textOf(v) { return typeof v === 'string' ? v : JSON.stringify(v); }
-    function matcher() {
-        var query = control('find').value;
-        if (!query) return null;
-        var flags = control('case').checked ? 'g' : 'gi';
-        function escape(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-        var groups = control('regex').checked ? [[query]] : window.SearchQuery.groupBy(query.trim().split(/\s+/));
-        var sources = groups.map(function (g) { return g.map(function (s) {
-            s = control('regex').checked ? s : escape(s);
-            return control('word').checked ? '\\b(?:' + s + ')\\b' : '(?:' + s + ')';
-        }).join('|'); });
-        var tests = sources.map(function (s) { return new RegExp(s, flags); });
-        var replace = new RegExp(sources.join('|'), flags);
-        return {hit:function (s) { return tests.every(function (r) { r.lastIndex = 0; return r.test(s); }); },
-            replace:function (s) { replace.lastIndex = 0; return s.replace(replace, control('replace').value); }};
+    function kindOf(v) { return typeof v === 'string' ? 's' : v === null ? 'z' : typeof v === 'number' ? 'n' : typeof v === 'boolean' ? 'b' : 'o'; }
+    function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+    function sourceOf(query) {
+        var s = on('regex') ? query : escapeRe(query);
+        return on('word') ? '\\b(?:' + s + ')\\b' : '(?:' + s + ')';
     }
-    function list(rows, offset) {
-        offset = offset || 0;
-        var limit = window.treeFindLimit;
-        var box = bar.querySelector('.ui-tree-find-results'); box.replaceChildren();
-        rows.slice(offset, offset + limit).forEach(function (r) {
-            var line = part('div', 'ui-tree-find-result');
-            var link = button(r.path + (r.key ? ' (key)' : ''), function () {
-                current = hits.findIndex(function (hit) { return hit.path === r.path && !!hit.key === !!r.key; });
-                if (current < 0) current = 0;
-                window.treeFindShowPaths(tree, [r.path]);
-                var node = Array.from(tree.querySelectorAll('.tree-node')).find(function (n) { return n.dataset.path === r.path; });
-                var value = node && node.querySelector(':scope > .tree-row > .tree-val'); if (value) value.click();
-            });
-            line.appendChild(link);
-            if (r.rename) line.appendChild(button('Rename key', function () {
-                window.htmx.ajax('POST', '/api/pulse/rename', {target:'#inspector-pane', swap:'innerHTML', values:Object.assign({expect_chip:token}, r.rename)});
-            }));
-            line.appendChild(document.createTextNode(' ' + textOf(r.old) + (r.skip ? ' - skipped: ' + r.skip : r.next !== undefined ? ' \u2192 ' + textOf(r.next) : '')));
-            if (!r.skip && r.next !== undefined && window.ValueDelta) {
-                var delta = part('span', 'ui-tree-find-delta'); window.ValueDelta.paint(delta, r.old, r.next); line.appendChild(delta);
-            }
-            box.appendChild(line);
+    // One corpus per model revision: every leaf value and, separately, every key.
+    function corpus(t) {
+        var c = t._findCorpus;
+        if (c && c.data === t._treeData && c.rev === (t._modelRev || 0)) return c;
+        c = {data:t._treeData, rev:t._modelRev || 0, paths:[], texts:[], kinds:[], keyAt:[], id:Math.random()};
+        TM.leaves(t._treeData, true).forEach(function (p) {
+            var v = TM.valueAt(t, p);
+            if (v === null || typeof v !== 'object') { c.paths.push(p); c.texts.push(textOf(v)); c.kinds.push(kindOf(v)); c.keyAt.push(false); }
+            c.paths.push(p); c.texts.push(p.split('.').pop()); c.kinds.push('k'); c.keyAt.push(true);
         });
-        if (offset) box.appendChild(button('Previous results', function () { list(rows, Math.max(0, offset - limit)); }));
-        if (offset + limit < rows.length) box.appendChild(button('Next results', function () { list(rows, offset + limit); }));
+        t._findCorpus = c;
+        return c;
+    }
+    function yieldTask() { return new Promise(function (r) { setTimeout(r, 0); }); }
+    // Literal and non-regex matching on the main thread, time-sliced.
+    async function matchMain(id, c, query, keys, rep) {
+        var regex = on('regex'), flags = on('case') ? 'g' : 'gi';
+        var re = new RegExp(sourceOf(query), flags);
+        var whole = regex ? new RegExp('^(?:' + query + ')$', on('case') ? '' : 'i') : null;
+        var needle = on('case') ? query : query.toLowerCase();
+        var out = [], start = performance.now(), slice = start;
+        for (var i = 0; i < c.texts.length; i++) {
+            if ((i & 511) === 0 && performance.now() - slice > SLICE_MS) {
+                await yieldTask();
+                if (id !== serial) return null;
+                if (performance.now() - start > BUDGET_MS * 4) return 'slow';
+                slice = performance.now();
+            }
+            var k = c.kinds[i];
+            if (k === 'k' && !keys) continue;
+            var t = c.texts[i], hit, next;
+            if (k === 's' || k === 'k') {
+                re.lastIndex = 0; hit = re.test(t);
+                if (hit && rep !== null) { re.lastIndex = 0; next = regex ? t.replace(re, rep) : t.replace(re, function () { return rep; }); }
+            } else {
+                hit = regex ? whole.test(t) : (on('case') ? t : t.toLowerCase()) === needle;
+                if (hit && rep !== null) next = regex ? t.replace(whole, rep) : rep;
+            }
+            if (hit) out.push({i:i, next:next});
+        }
+        return out;
+    }
+    // A regex runs in a worker so a catastrophic pattern can be terminated.
+    var worker = null, workerCorpus = null;
+    function matchWorker(id, c, query, keys, rep) {
+        return new Promise(function (resolve) {
+            if (!worker) { worker = new Worker('/static/tree-find-worker.js'); workerCorpus = null; }
+            var w = worker, done = false;
+            var kill = setTimeout(function () {
+                if (done) return; done = true;
+                w.terminate(); if (worker === w) { worker = null; workerCorpus = null; }
+                resolve('slow');
+            }, BUDGET_MS);
+            w.onmessage = function (ev) {
+                if (done || ev.data.serial !== id) return;
+                done = true; clearTimeout(kill);
+                resolve(ev.data.error ? {error:ev.data.error} : ev.data.hits);
+            };
+            if (workerCorpus !== c.id) { w.postMessage({corpus:c.id, texts:c.texts, kinds:c.kinds}); workerCorpus = c.id; }
+            w.postMessage({serial:id, source:sourceOf(query), whole:'^(?:' + query + ')$', cs:on('case'), keys:keys, rep:rep});
+            running = {cancel:function () {
+                if (done) return; done = true; clearTimeout(kill);
+                w.terminate(); if (worker === w) { worker = null; workerCorpus = null; }
+                resolve(null);
+            }};
+        });
     }
     function refresh() {
-        bar.querySelectorAll('.ui-tree-find-toggle').forEach(function (label) { label.classList.toggle('ui-tree-find-toggle-active', label.querySelector('input').checked); });
-        serial++; plan = []; ready = false; current = 0; hits = [];
+        if (!bar) return;
+        serial++; pserial++; plan = []; ready = false; endReview(true);
+        if (running) { running.cancel(); running = null; }
+        clearTimeout(timer);
+        var id = serial;
+        timer = setTimeout(function () { timer = null; pass(id); }, DEBOUNCE_MS);
+    }
+    var settledResolve = [];
+    function flush() {
+        if (timer) { clearTimeout(timer); timer = null; pass(serial); }
+        if (!running && !pending) return Promise.resolve();
+        return new Promise(function (r) { settledResolve.push(r); });
+    }
+    var pending = false;
+    function settle() { pending = false; running = null; var rs = settledResolve; settledResolve = []; rs.forEach(function (r) { r(); }); }
+    async function pass(id) {
+        if (id !== serial || !bar || bar.hidden) return;
+        pending = true;
+        var query = findText(), rep = replText() === '' ? null : replText();
+        hits = []; current = 0;
+        if (!query) { status('0 matches'); list([]); window.treeFindShowPaths(tree, null); paintInline(); settle(); return; }
+        var c = corpus(tree), keys = on('keys'), result;
         try {
-            var m = matcher();
-            if (m) TM.leaves(tree._treeData, control('keys').checked).forEach(function (p) {
-                var v = TM.valueAt(tree, p);
-                if ((v === null || typeof v !== 'object') && m.hit(textOf(v))) hits.push({path:p, old:v});
-                if (control('keys').checked && m.hit(p.split('.').pop())) hits.push({path:p, old:p.split('.').pop(), key:true});
-            });
-            status(hits.length + ' matches');
-            hits.forEach(function (r) { if (control('replace').value) r.next = m.replace(textOf(r.old)); });
-            list(hits);
-            window.treeFindShowPaths(tree, hits.map(function (r) { return r.path; }));
-            paintInline();
-        } catch (err) { status('Invalid regex: ' + err.message); list([]); window.treeFindShowPaths(tree, []); paintInline(); }
+            new RegExp(sourceOf(query));
+            if (on('regex')) new RegExp('^(?:' + query + ')$');
+        } catch (err) {
+            status('Invalid regex: ' + err.message); list([]); window.treeFindShowPaths(tree, [], query); paintInline(); settle(); return;
+        }
+        if (on('regex') && typeof Worker === 'function' && !window.__treeFindNoWorker) result = await matchWorker(id, c, query, keys, rep);
+        else { running = {cancel:function () {}}; result = await matchMain(id, c, query, keys, rep); }
+        if (id !== serial) return;   // the newer pass, or close(), settles
+        if (result === 'slow' || result === null) {
+            hits = []; status('Pattern too slow \u2014 refine it'); list([]); window.treeFindShowPaths(tree, [], query); paintInline(); settle(); return;
+        }
+        if (result.error) { status('Invalid regex: ' + result.error); list([]); settle(); return; }
+        hits = result.map(function (h) {
+            var key = c.keyAt[h.i], p = c.paths[h.i];
+            var r = {path:p, old:key ? c.texts[h.i] : TM.valueAt(tree, p), ord:h.i};
+            if (key) r.key = true;
+            if (rep !== null) r.next = h.next;
+            return r;
+        });
+        if (lastReplaced !== null) {
+            var at = hits.findIndex(function (h) { return h.ord > lastReplaced; });
+            current = at < 0 ? 0 : at; lastReplaced = null;
+        }
+        status(hits.length.toLocaleString('en-US') + ' match' + (hits.length === 1 ? '' : 'es'));
+        list(hits);
+        // Materialising the hit branches is the costly DOM step: a change of
+        // the replacement text alone keeps the same set, so it is not redone.
+        var shownPaths = hits.map(function (r) { return r.path; });
+        var shownKey = query + '\u0000' + shownPaths.join('\u0000');
+        if (shownKey !== tree._findShownKey || tree._findShownData !== tree._treeData) {
+            tree._findShownData = tree._treeData;
+            tree._findShownKey = shownKey;
+            window.treeFindShowPaths(tree, shownPaths, query);
+        }
+        paintInline();
+        settle();
+    }
+    // The full list, appended a page at a time as it scrolls (D-38).
+    function list(rows) {
+        var limit = window.treeFindLimit, shown = 0;
+        var box = bar.querySelector('.ui-tree-find-results'); box.replaceChildren(); box.scrollTop = 0;
+        var more = null;
+        function page() {
+            if (more) { more.remove(); more = null; }
+            rows.slice(shown, shown + limit).forEach(function (r) { box.appendChild(line(r)); });
+            shown = Math.min(rows.length, shown + limit);
+            if (shown < rows.length) {
+                more = button('Show more (' + (rows.length - shown).toLocaleString('en-US') + ' left)', page, 'btn-xs outline ui-tree-find-more');
+                box.appendChild(more);
+            }
+            box._more = shown < rows.length ? page : null;
+        }
+        page();
+    }
+    function line(r) {
+        var el = part('div', 'ui-tree-find-result' + (r.skip ? ' ui-tree-find-skip' : ''));
+        var link = button(r.path + (r.key ? ' (key)' : ''), function () {
+            current = hits.findIndex(function (hit) { return hit.path === r.path && !!hit.key === !!r.key; });
+            if (current < 0) current = 0;
+            window.treeFindShowPaths(tree, [r.path], findText());
+            var node = Array.from(tree.querySelectorAll('.tree-node')).find(function (n) { return n.dataset.path === r.path; });
+            var value = node && node.querySelector(':scope > .tree-row > .tree-val'); if (value) value.click();
+        }, 'btn-xs outline ui-tree-find-path');
+        el.appendChild(link);
+        if (r.rename) el.appendChild(button('Rename key', function () {
+            window.htmx.ajax('POST', '/api/pulse/rename', {target:'#inspector-pane', swap:'innerHTML', values:Object.assign({expect_chip:token}, r.rename)});
+        }, 'btn-xs outline'));
+        el.appendChild(document.createTextNode(' ' + textOf(r.old) + (r.skip ? ' - skipped: ' + r.skip : r.next !== undefined ? ' \u2192 ' + textOf(r.next) : '')));
+        if (!r.skip && r.next !== undefined && window.ValueDelta) {
+            var delta = part('span', 'ui-tree-find-delta'); window.ValueDelta.paint(delta, r.old, r.next); el.appendChild(delta);
+        }
+        return el;
     }
     function paintInline() {
         tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
-        if (!control('replace').value) return;
-        var byPath = new Map(hits.map(function (r) { return [r.path, r]; }));
+        if (!bar || replText() === '') return;
+        var byPath = new Map(hits.filter(function (r) { return !r.key; }).map(function (r) { return [r.path, r]; }));
         tree.querySelectorAll('.tree-node[data-path]').forEach(function (node) {
             var hit = byPath.get(node.dataset.path);
             if (!hit) return;
@@ -14734,32 +14932,58 @@ window.TreeFind = (function () {
             node.querySelector(':scope > .tree-row').appendChild(hint);
         });
     }
+    function endReview(silent) {
+        reviewing = false;
+        if (bar) { var rv = bar.querySelector('.ui-tree-find-review'); rv.hidden = true; rv.classList.add('ui-tree-find-closed'); }
+        if (!silent && bar) ready = false;
+    }
+    function showReview() {
+        var live = plan.filter(function (r) { return !r.skip; }), skipped = plan.filter(function (r) { return r.skip; });
+        var names = {s:'text', n:'number', b:'boolean', z:'null', o:'other'}, kinds = {}, why = {};
+        live.forEach(function (r) { var k = names[kindOf(r.old_value)]; kinds[k] = (kinds[k] || 0) + 1; });
+        skipped.forEach(function (r) { var k = String(r.skip).split(':')[0]; why[k] = (why[k] || 0) + 1; });
+        var fmt = function (o) { return Object.keys(o).map(function (k) { return k + ' ' + o[k].toLocaleString('en-US'); }).join(', '); };
+        var review = bar.querySelector('.ui-tree-find-review');
+        review.querySelector('.ui-tree-find-review-sum').textContent = 'Review: ' + live.length.toLocaleString('en-US') + ' replacement'
+            + (live.length === 1 ? '' : 's') + (live.length ? ' (' + fmt(kinds) + ')' : '')
+            + (skipped.length ? ' \u00b7 ' + skipped.length.toLocaleString('en-US') + ' skipped (' + fmt(why) + ')' : '')
+            + ' \u2014 nothing is written until you confirm';
+        var go = review.querySelector('[name="confirm"]');
+        go.textContent = 'Replace ' + live.length.toLocaleString('en-US'); go.disabled = !live.length;
+        review.hidden = false; review.classList.remove('ui-tree-find-closed'); reviewing = true;
+        bar.querySelector('details').open = true;
+        go.focus();
+    }
     async function preview(all) {
-        var id = ++serial, m;
+        await flush();
+        var id = ++pserial, query = findText(), rep = replText();
         var settling = window.TreeInlineEdit && window.TreeInlineEdit.settle(tree);
         if (settling) await settling;
         ready = false; plan = [];
         try {
-            m = matcher(); if (!m || !hits.length) return;
-            var selected = all ? hits : [hits[current]];
+            if (!query || !hits.length) return;
+            var selected = all ? hits : [hits[Math.min(current, hits.length - 1)]];
             var response = await window.fetch('/field/replace-preview', {method:'POST', headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({expect_chip:token, updates:selected.map(function (r) {
-                    return {dot_path:r.path, value:m.replace(r.key ? r.old : textOf(r.old)), key:!!r.key};
+                    return {dot_path:r.path, value:r.next === undefined ? rep : r.next, key:!!r.key};
                 })})});
             var data = await response.json();
-            if (id !== serial || bar.hidden) return;
+            if (id !== pserial || bar.hidden) return;
             if (!data.ok) { status(data.error || 'Preview refused'); return; }
             plan = data.results; planSeq = data.mutation_seq;
+            plan.forEach(function (r) { var h = selected.find(function (s) { return s.path === r.dot_path; }); if (h) r.ord = h.ord; });
             if (plan.some(function (r) { return r.skip; })) bar.querySelector('details').open = true;
             list(plan.map(function (r) { return {path:r.dot_path, old:r.old_value, next:r.new_value, skip:r.skip, rename:r.rename}; }));
             ready = plan.some(function (r) { return !r.skip; });
             status(plan.filter(function (r) { return !r.skip; }).length + ' replacements; ' + plan.filter(function (r) { return r.skip; }).length + ' skipped');
-        } catch (err) { if (id === serial) status('Preview failed: ' + err.message); }
+            if (all) showReview();
+        } catch (err) { if (id === pserial) status('Preview failed: ' + err.message); }
     }
     async function applyPlan() {
         var updates = plan.filter(function (r) { return !r.skip; }).map(function (r) { return {dot_path:r.dot_path, value:r.value}; });
         if (!updates.length || !ready) return;
-        ready = false;
+        ready = false; endReview(true);
+        var lastOrd = plan.reduce(function (m, r) { return r.skip || r.ord === undefined ? m : Math.max(m, r.ord); }, -1);
         try {
             var response = await window.fetch('/field/edit-batch', {method:'POST', headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({updates:updates, group:'new', expect_chip:token, expect_seq:planSeq})});
@@ -14768,17 +14992,18 @@ window.TreeFind = (function () {
             (data.results || []).forEach(function (r) { if (r.applied) window._paintTreeLeaf(tree, r.dot_path, r.new_value); });
             if (data.tray_html && window._swapPendingTray) window._swapPendingTray(data.tray_html);
             var skipped = plan.filter(function (r) { return r.skip; });
-            refresh();
+            if (updates.length === 1 && lastOrd >= 0) lastReplaced = lastOrd;
+            refresh(); await flush();
             if (skipped.length) bar.querySelector('details').open = true;
             if (skipped.length) list(skipped.map(function (r) { return {path:r.dot_path, old:r.old_value, skip:r.skip, rename:r.rename}; }));
-            status('Replaced ' + updates.length + ' values; Ctrl+Z undoes this group');
+            status('Replaced ' + updates.length + ' value' + (updates.length === 1 ? '' : 's') + '; Ctrl+Z undoes this group');
         } catch (err) { status('Apply failed: ' + err.message); }
     }
     function open() {
         var f = TM.focusedLeaf(); var active = (f && f.tree) || TM.activeTree()
             || (window._activeTreeId && document.getElementById(window._activeTreeId()));
         if (!active) return false;
-        if (bar && !bar.hidden && tree === active) { control('replace').focus(); return true; }
+        if (bar && !bar.hidden && tree === active) { bar.querySelector('[name="replace"]').focus(); return true; }
         if (bar && !bar.hidden) close();
         tree = active; token = window.__chipToken || ''; mount(); TM.clear();
         find = document.getElementById('explorer-search') || tree.parentElement.querySelector('.tree-search');
@@ -14793,12 +15018,13 @@ window.TreeFind = (function () {
             bar.animate([{opacity:0, transform:'translateY(' + style.getPropertyValue('--ui-find-slide').trim() + ')'},
                 {opacity:1, transform:'translateY(0)'}], {duration:Number(style.getPropertyValue('--ui-find-duration'))});
         }
-        refresh(); control('replace').focus(); return true;
+        refresh(); bar.querySelector('[name="replace"]').focus(); return true;
     }
     function close() {
-        ready = false;
+        ready = false; endReview(true);
         observer.disconnect();
-        serial++; bar.hidden = true; bar.classList.add('ui-tree-find-closed'); plan = []; window.treeFindShowPaths(tree, null);
+        serial++; pserial++; clearTimeout(timer); timer = null; if (running) running.cancel(); settle();
+        bar.hidden = true; bar.classList.add('ui-tree-find-closed'); plan = []; window.treeFindShowPaths(tree, null);
         find.removeEventListener('keydown', onKey);
         find.value = ''; find.dispatchEvent(new Event('input', {bubbles:true}));
         tree.querySelectorAll('.ui-tree-find-inline').forEach(function (e) { e.remove(); });
@@ -14815,7 +15041,9 @@ window.TreeFind = (function () {
             }
             refresh(); return true;
         },
-        open:open, close:close, refresh:refresh, preview:preview, apply:applyPlan, ready:function () { return ready; }, hits:function () { return hits; }};
+        open:open, close:close, refresh:refresh, flush:flush, preview:preview, apply:applyPlan,
+        reviewing:function () { return reviewing; }, ready:function () { return ready; }, hits:function () { return hits; },
+        current:function () { return current; }};
 })();
 
 /* ------------------------------------------------------------------ */

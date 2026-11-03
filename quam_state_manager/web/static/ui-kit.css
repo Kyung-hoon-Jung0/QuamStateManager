@@ -14,6 +14,7 @@
 
 :root {
     --ui-find-results-height: 9rem;
+    --ui-find-replace-width: 24ch;
     --ui-find-slide: -.5rem;
     --ui-find-duration: 150;
     --ui-tree-value-min: 10ch;
@@ -479,27 +480,50 @@
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }
 .ui-opxmon-flash, .ui-opxmon-alarms, .ui-opxmon-close-off, .ui-opxmon-no-metrics { overflow-wrap: anywhere; }
 
-/* Whole-tree find uses the shared input and button parts in both themes. */
+/* Whole-tree find uses the shared input and button parts in both themes.
+ * One row that never wraps: a fixed-width replace input, icon toggles in the
+ * VS Code find-widget manner, and a status that absorbs the free width so its
+ * changing text never moves the controls. */
 .ui-tree-find {
-    display: flex; flex-wrap: wrap; align-items: center;
-    padding: var(--ui-gap-2); gap: var(--ui-gap-2);
+    display: flex; flex-direction: column; gap: var(--ui-gap-1);
+    padding: var(--ui-gap-1) var(--ui-gap-2);
     background: var(--ui-surface-1); color: var(--ui-text);
     border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md);
     margin-bottom: var(--ui-gap-2); font-size: var(--ui-fs-sm);
 }
 .ui-tree-find-closed { display: none; }
-.ui-tree-find > input { flex: 1; min-width: var(--ui-tree-value-min); width: auto; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); font-size: inherit; }
-.ui-tree-find-toggle { margin: 0; display: inline-flex; align-items: center; gap: var(--ui-gap-1); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); cursor: pointer; }
-.ui-tree-find-toggle-active { background: var(--ui-accent-bg); color: var(--ui-accent); }
-.ui-tree-find-toggle input { margin: 0; }
-.ui-tree-find-status { color: var(--ui-text-2); white-space: nowrap; }
-.ui-tree-find-details-open { flex-basis: 100%; }
+.ui-tree-find-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-width: 0; }
+.ui-tree-find-row > * { flex: 0 0 auto; }
+.ui-tree-find-row > button { white-space: nowrap; width: auto; margin: 0; }
+.ui-tree-find-replace { flex: 0 0 var(--ui-find-replace-width); min-width: 0; width: var(--ui-find-replace-width); margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); font-size: inherit; height: auto; }
+.ui-tree-find-toggles { display: inline-flex; gap: var(--ui-gap-1); width: auto; margin: 0; }
+.ui-tree-find-toggle {
+    width: auto; min-width: 1.9em; height: 1.9em; margin: 0; padding: 0 var(--ui-gap-1);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-family: var(--ui-font-mono); font-size: var(--ui-fs-xs); white-space: nowrap;
+    background: transparent; color: var(--ui-text-2);
+    border: var(--ui-bw) solid transparent; border-radius: var(--ui-r-sm); cursor: pointer;
+}
+.ui-tree-find-toggle:hover { background: var(--ui-surface-2); color: var(--ui-text); }
+.ui-tree-find-toggle-on { background: var(--ui-accent-bg); color: var(--ui-accent); border-color: var(--ui-accent); }
+.ui-tree-find-word { text-decoration: underline; text-underline-offset: 2px; }
+.ui-tree-find-status { flex: 1 1 0; min-width: 0; color: var(--ui-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-tree-find-close { min-width: 1.9em; padding-left: var(--ui-gap-1); padding-right: var(--ui-gap-1); }
+.ui-tree-find-review { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) 0; border-top: var(--ui-bw) solid var(--ui-border); }
+.ui-tree-find-review-sum { flex: 1 1 20rem; min-width: 0; color: var(--ui-text); overflow-wrap: anywhere; }
+.ui-tree-find-review > button { width: auto; margin: 0; white-space: nowrap; }
 .ui-tree-find-details { margin: 0; font-size: var(--ui-fs-xs); }
 .ui-tree-find-summary { color: var(--ui-text-2); cursor: pointer; }
 .ui-tree-find-results { max-height: var(--ui-find-results-height); overflow: auto; border-top: var(--ui-bw) solid var(--ui-border); }
 .ui-tree-find-results:empty { display: none; }
 .ui-tree-find-result { padding: var(--ui-gap-1); overflow-wrap: anywhere; font-family: var(--ui-font-mono); }
+.ui-tree-find-result > button { width: auto; margin: 0 var(--ui-gap-1) 0 0; }
+.ui-tree-find-skip { color: var(--ui-text-2); }
+.ui-tree-find-more { width: auto; margin: var(--ui-gap-1); }
 .ui-tree-find-delta { margin-left: var(--ui-gap-2); }
+/* a multi-edit value is read in full: wrapped, never cut */
+.ui-wrap-value { white-space: pre-wrap; overflow-wrap: break-word; text-overflow: clip; }
+.ui-wrap-value-rest { grid-column: 2 / -1; }
 .ui-tree-find-inline { margin-left: var(--ui-gap-2); padding: var(--ui-gap-1); border-radius: var(--ui-r-sm); background: var(--ui-accent-bg); color: var(--ui-text); font-family: var(--ui-font-mono); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====

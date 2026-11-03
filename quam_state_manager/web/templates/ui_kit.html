@@ -77,12 +77,15 @@
 </section>
 <input class="ui-search" aria-label="Find sample" value="sample">
 <section class="ui-tree-find" aria-label="Find and replace sample">
-  <input aria-label="Replace with" placeholder="Replace with" value="replacement">
+  <div class="ui-tree-find-row"><input class="ui-tree-find-replace" aria-label="Replace with" placeholder="Replace with" value="replacement">
+  <div class="ui-tree-find-toggles" role="toolbar" aria-label="Find options"><button type="button" class="ui-tree-find-toggle ui-tree-find-toggle-on" name="case" aria-pressed="true" title="Match case">Aa</button><button type="button" class="ui-tree-find-toggle ui-tree-find-word" name="word" aria-pressed="false" title="Match whole word">ab</button><button type="button" class="ui-tree-find-toggle" name="regex" aria-pressed="false" title="Use regular expression">.*</button><button type="button" class="ui-tree-find-toggle" name="keys" aria-pressed="false" title="Match keys too">{k}</button></div>
+  <button type="button" class="btn-sm outline">Replace</button><button type="button" class="btn-sm outline">Replace all</button>
+  <output class="ui-tree-find-status">1 match</output><button type="button" class="btn-sm outline ui-tree-find-close" aria-label="Close">&times;</button></div>
   <span class="ui-tree-find-closed"></span>
+  <span class="ui-wrap-value">a long value</span><span class="ui-wrap-value ui-wrap-value-rest">rest</span>
   <span class="ui-tree-find-inline">sample &rarr; replacement</span>
-  <label class="ui-tree-find-toggle ui-tree-find-toggle-active"><input type="checkbox">Match case</label>
-  <output class="ui-tree-find-status">1 match</output>
-  <details class="ui-tree-find-details ui-tree-find-details-open" open><summary class="ui-tree-find-summary">Match paths and skipped items</summary><div class="ui-tree-find-results"><div class="ui-tree-find-result">sample.value: 1 &rarr; 2 <span class="ui-tree-find-delta">+1</span></div></div></details>
+  <div class="ui-tree-find-review"><div class="ui-tree-find-review-sum">Review: 1 replacement (text 1)</div><button type="button" class="btn-sm ui-tree-find-confirm">Replace 1</button></div>
+  <details class="ui-tree-find-details" open><summary class="ui-tree-find-summary">Match paths and skipped items</summary><div class="ui-tree-find-results"><div class="ui-tree-find-result">sample.value: 1 &rarr; 2 <span class="ui-tree-find-delta">+1</span></div><div class="ui-tree-find-result ui-tree-find-skip">sample.pointer - skipped: pointer</div><button type="button" class="btn-xs outline ui-tree-find-more">Show more (1 left)</button></div></details>
 </section>
 <p>Tree value: <span class="ui-tree-value" tabindex="-1">0.125</span>
 <span class="ui-tree-value ui-tree-mounted"><input class="ui-tree-editor" aria-label="sample.amplitude" value="0.125"></span>
