@@ -277,6 +277,30 @@ await settle();
     for (let i = 0; i < 8; i++) await settle();
 }
 
+// ── 1f. an answered write whose source element left the page holds nothing ──
+// htmx raises afterRequest on the request's source; an apply sourced from a
+// tray that a later swap replaced never reaches document. The press must not
+// wait out the 20 s TTL (real Chrome: Ctrl+Z after the FSP Yes did nothing).
+{
+    const host = window.document.createElement('div');
+    window.document.body.appendChild(host);
+    const listeners = {};
+    const xhr = { readyState: 1, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); } };
+    host.dispatchEvent(new window.CustomEvent('htmx:beforeRequest',
+        { detail: { xhr: xhr, requestConfig: { verb: 'post', path: '/state/apply-to-live' } }, bubbles: true }));
+    const n = calls.length;
+    pressCtrlZ();
+    await settle();
+    ok(calls.length === n, '1f: held while the apply is really in flight');
+    host.remove();                      // the tray was swapped away
+    xhr.readyState = 4;                 // ...and the answer arrived
+    (listeners.loadend || []).forEach((f) => f());
+    await new Promise((r) => setTimeout(r, 350));
+    ok(calls.length === n + 1 && calls[calls.length - 1].url === '/undo',
+       '1f: the press issues once the request ended, even with no afterRequest on document');
+    for (let i = 0; i < 8; i++) await settle();
+}
+
 // ── 2. focus inside an input → native undo untouched ───────────────────────
 const inp = window.document.createElement('input');
 window.document.body.appendChild(inp);

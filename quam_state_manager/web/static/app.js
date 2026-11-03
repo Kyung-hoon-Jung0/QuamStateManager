@@ -9363,7 +9363,17 @@ window.UndoQueue = (function () {
         var verb = String(cfg.verb || "").toLowerCase();
         var path = String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || "");
         if (!verb || verb === "get" || /^\/(undo|redo)(?![A-Za-z0-9_])/.test(path)) return;
-        _mut.push({ xhr: d.xhr, t: Date.now() });
+        var tok = { xhr: d.xhr, t: Date.now() };
+        _mut.push(tok);
+        /* htmx raises afterRequest on the request's SOURCE element. When that
+           element left the page before the answer (an apply-to-live sourced
+           from #pending-tray whose tray a later swap replaced), the event never
+           reaches document and the press waited out the 20 s TTL -- a Ctrl+Z
+           pressed after the FSP notice's Yes did nothing for seconds. The
+           request's own end releases it instead. */
+        if (d.xhr && d.xhr.addEventListener) d.xhr.addEventListener("loadend", function () {
+            _mut = _mut.filter(function (m) { return m !== tok; });
+        });
     });
     document.addEventListener("htmx:afterRequest", function (e) {
         var x = e.detail && e.detail.xhr;
@@ -9371,7 +9381,11 @@ window.UndoQueue = (function () {
     });
     function mutationsInFlight() {
         var now = Date.now();
-        _mut = _mut.filter(function (m) { return now - m.t < (m.ttl || 20000); });
+        _mut = _mut.filter(function (m) {
+            // an answered request holds nothing, whether or not its event arrived
+            if (m.xhr && m.xhr.readyState === 4) return false;
+            return now - m.t < (m.ttl || 20000);
+        });
         return _mut.length > 0;
     }
     function pump() {
