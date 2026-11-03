@@ -776,36 +776,25 @@
     // A5: Enter in a scalar input applies THAT one field to the working copy (matches
     // Live Grid's Enter-applies-row). Same /field/edit-batch + reconcile + tray-swap
     // path as Apply-all, isolated to one dot-path; no full rebuild so focus survives.
-    function applyOne(path, inputEl, fspAck, extraUpdates, typeFix) {
+    function applyOne(path, inputEl, extraUpdates, typeFix) {
         var d = state.dirty.get(path);
-        if (!d || (state.applying && !fspAck && !typeFix)) return;
+        if (!d || (state.applying && !typeFix)) return;
         state.applying = true;   // in-flight guard: an Enter + quick blur can fire two
         var payload = { updates: [{ dot_path: path, value: d.value }]
                             .concat(extraUpdates || []),
                         expect_chip: window.__chipToken || '' };
-        if (fspAck) payload.fsp_ack = fspAck;
         if (typeFix) payload.type_fix = typeFix;
         return fetch('/field/edit-batch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         }).then(function (r) { return r.json(); }).then(function (jb) {
-            // r12-B: FSP edits get the compensation offer first — never silent.
-            if (!jb.ok && jb.fsp_compensation && window._openFspPopup) {
-                state.applying = false;
-                window._openFspPopup(jb.fsp_compensation, function (mode, plan) {
-                    if (mode === 'cancel') return;
-                    applyOne(path, inputEl, mode,
-                             mode === 'comp' ? window._fspCompUpdates(plan) : []);
-                });
-                return;
-            }
             // r14 ⑩: stored-as-TEXT repair offer — never silent, user chooses.
             if (!jb.ok && jb.type_fix) {
                 state.applying = false;
                 var conv = window._confirmTypeFix
                     ? window._confirmTypeFix(jb.type_fix)
                     : window.confirm(jb.error || 'Convert stored text to a number?');
-                applyOne(path, inputEl, fspAck, extraUpdates,
+                applyOne(path, inputEl, extraUpdates,
                          conv ? 'convert' : 'keep');
                 return;
             }

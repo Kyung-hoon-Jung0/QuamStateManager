@@ -12954,10 +12954,7 @@ def field_edit():
         _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
         if _sr is not None:
             raise ValueError(_sr)
-        # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes — and
-        # never commits before the user saw the compensation offer. Without
-        # an ack the plan comes back 409; the popup then applies FSP+amps in
-        # ONE /field/edit-batch (fsp_ack=comp) or FSP alone (fsp_ack=solo).
+        # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes.
         # D-44: without an ack the FSP COMMITS now and the response carries
         # the offer (X-SM-Fsp-Changed); the amplitudes change only on the
         # user's Yes, into this edit's own undo group.
@@ -15758,12 +15755,10 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                          if n in _ps_skip else {})}
                      for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
-    # docs/20 r12-B: an FSP edit never silently changes amplitudes — and
-    # never commits before the compensation offer was seen. Batches without
-    # the ack get the FIRST FSP entry's plan back as a 409; the popup then
-    # resends the whole batch with the compensated amps included and
-    # fsp_ack=comp (one gid = one Review bundle = one Ctrl+Z) or
-    # fsp_ack=solo (FSP alone).
+    # docs/20 r12-B: an FSP edit never silently changes amplitudes. D-44: an
+    # unacked batch commits now and the offer follows (X-SM-Fsp-Changed);
+    # fsp_ack=comp still sends FSP + compensated amps in ONE group (one
+    # Ctrl+Z), fsp_ack=solo FSP alone -- for callers that answered up front.
     _fsp_ack = str(_pj.get("fsp_ack") or request.form.get("fsp_ack") or "")
     if _fsp_ack not in ("comp", "solo"):
         for _dp, _rv, _c in pairs:

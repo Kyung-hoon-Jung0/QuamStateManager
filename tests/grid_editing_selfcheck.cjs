@@ -352,10 +352,10 @@ function world(nRows, opts) {
     const w=world(1), c=w.document.querySelector('input');
     c.value='0.9'; c.dispatchEvent(new w.Event('input',{bubbles:true}));
     w.fetch=async()=>({status:409,json:async()=>({fsp_compensation:{}})});
-    w._openFspPopup=(plan,done)=>done('cancel',plan);
+    let opened=0; w._openFspPopup=()=>{opened++;};
     const b=w.document.createElement('button'); b.className='bulk-row-apply'; c.closest('tr').appendChild(b);
-    await w.BulkEdit.applyRow(b);
-    ok(c.value===c.getAttribute('data-orig') && !c.classList.contains('dirty'), 'FSP Cancel restores the input baseline');
+    await Promise.race([w.BulkEdit.applyRow(b), new Promise(r=>setTimeout(r,300))]);
+    ok(opened===0, 'D-44: the grid never opens the old FSP pre-commit popup (the server commits, the notice offers)');
   }
   process.exit(fails ? 1 : 0);
 })();

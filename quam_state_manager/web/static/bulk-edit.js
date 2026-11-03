@@ -1862,9 +1862,8 @@
             updates.push(up);
         });
         if (!updates.length) return Promise.resolve({ ok: true, tray_html: null });
-        var _postBatch = function (ups, fspAck, typeFix) {
+        var _postBatch = function (ups, typeFix) {
             var payload = { updates: ups, expect_chip: window.__chipToken || '', freq_sync: _freqSyncOn() };
-            if (fspAck) payload.fsp_ack = fspAck;
             if (typeFix) payload.type_fix = typeFix;
             if (grp) payload.group = grp.id || 'new';
             return fetch('/field/edit-batch', {
@@ -1872,7 +1871,7 @@
                 body: JSON.stringify(payload)
             }).then(function (resp) { return resp.json().then(function (j) { return { status: resp.status, body: j }; }); });
         };
-        return _postBatch(updates, null)
+        return _postBatch(updates)
             .then(function handleR(r) {
                 // r14 ⑩: stored-as-TEXT cell(s) in the batch → the conversion
                 // offer first; nothing was committed. Shared confirm wording.
@@ -1880,32 +1879,7 @@
                     var conv = window._confirmTypeFix
                         ? window._confirmTypeFix(r.body.type_fix)
                         : window.confirm(r.body.error || 'Convert stored text to a number?');
-                    return _postBatch(updates, null, conv ? 'convert' : 'keep').then(handleR);
-                }
-                // r12-B: an FSP cell in this batch → the compensation offer
-                // first; nothing was committed. comp = resend everything plus
-                // the compensated amps in ONE batch (one gid, one Ctrl+Z).
-                if (r.status === 409 && r.body && r.body.fsp_compensation
-                    && window._openFspPopup) {
-                    return new Promise(function (resolve) {
-                        window._openFspPopup(r.body.fsp_compensation, function (mode, plan) {
-                            if (mode === 'cancel') {
-                                cells.forEach(function (c) {
-                                    c.value = c.getAttribute('data-orig');
-                                    _markCellDirty(c);
-                                    _mirrorLinked(c);
-                                });
-                                if (tr) _refreshRow(tr);
-                                _refreshGlobal();
-                                resolve({ ok: false, cancelled: true });
-                                return;
-                            }
-                            var ups = mode === 'comp'
-                                ? updates.concat(window._fspCompUpdates(plan))
-                                : updates;
-                            _postBatch(ups, mode).then(handleR).then(resolve);
-                        });
-                    });
+                    return _postBatch(updates, conv ? 'convert' : 'keep').then(handleR);
                 }
                 var byPath = {};
                 (r.body && r.body.results || []).forEach(function (res) { byPath[res.dot_path] = res; });

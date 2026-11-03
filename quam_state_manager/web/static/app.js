@@ -12723,56 +12723,28 @@ window.clearDetailPanelSearch = function(btnEl) {
             .then(function handleData(data) {
                 if (ownerTree._editContext !== ownerContext || ownerTree._editSource !== ownerSource) return;
                 valEl = _treeFindValue(ownerTree, dotPath) || valEl;
-                if (!data.ok && data.fsp_compensation) {
-                    // r12-B: never silent — the compensation offer first.
-                    return new Promise(function (resolve, reject) {
-                    window._openFspPopup(data.fsp_compensation, function(mode, plan) {
-                        var back = _treeFindValue(ownerTree, dotPath);
-                        if (back) _makeValueEditable(back, dotPath); // D-11: every popup exit
-                        if (mode === "cancel") { resolve(); return; }   // nothing committed
-                        if (mode === "solo") {
-                            _post({fsp_ack: "solo"}).then(handleData).then(resolve, reject);
-                            return;
-                        }
-                        fetch("/field/edit-batch", {
-                            method: "POST",
-                            headers: {"Content-Type": "application/json"},
-                            body: JSON.stringify({
-                                updates: [{dot_path: dotPath, value: newVal}]
-                                    .concat(window._fspCompUpdates(plan)),
-                                fsp_ack: "comp",
-                                expect_chip: window.__chipToken || "",
-                            })
-                        }).then(function(r) { return r.json(); })
-                          .then(function (bd) {
-                            // jsontree-r2-10: the batch reply is {results:[...]},
-                            // not the single-edit echo -- the compensated
-                            // amplitude rows were never repainted, and the FSP
-                            // row painted the TYPED text. Paint every other
-                            // applied row from its committed value, lift the
-                            // FSP row into the echo shape, surface a row error.
-                            var res = (bd && Array.isArray(bd.results)) ? bd.results : [];
-                            var tree = valEl.closest ? valEl.closest(".json-tree") : null;
-                            if (bd && bd.ok) {
-                                res.forEach(function (r) {
-                                    if (!r || !r.applied) return;
-                                    if (r.dot_path === dotPath) {
-                                        bd.stored = r.new_value;
-                                        bd.stored_kind = typeof r.new_value;
-                                    } else {
-                                        _paintTreeLeaf(tree, r.resolved_path || r.dot_path, r.new_value);
-                                    }
-                                });
-                            } else if (bd && !bd.error) {
-                                // the row that FAILED, not one rolled back for it
-                                var errs = res.filter(function (r) { return r && r.error; });
-                                var bad = errs.filter(function (r) { return !/^rolled back/.test(r.error); })[0] || errs[0];
-                                if (bad) bd.error = bad.dot_path + ": " + bad.error;
+                // D-44: an FSP edit commits through the batch door, so the
+                // reply is {results:[...]}, not the single-edit echo. Lift the
+                // edited row into the echo shape (the committed NUMBER, never
+                // the typed text), paint every other applied row, and name the
+                // failing row's reason (jsontree-r2-10).
+                if (data && Array.isArray(data.results) && data.stored_kind === undefined) {
+                    var _tree = valEl.closest ? valEl.closest(".json-tree") : ownerTree;
+                    if (data.ok) {
+                        data.results.forEach(function (r) {
+                            if (!r || !r.applied) return;
+                            if (r.dot_path === dotPath) {
+                                data.stored = r.new_value;
+                                data.stored_kind = typeof r.new_value;
+                            } else {
+                                _paintTreeLeaf(_tree, r.resolved_path || r.dot_path, r.new_value);
                             }
-                            return handleData(bd);
-                          }).then(resolve, reject);
-                    });
-                    });
+                        });
+                    } else if (!data.error) {
+                        var _errs = data.results.filter(function (r) { return r && r.error; });
+                        var _bad = _errs.filter(function (r) { return !/^rolled back/.test(r.error); })[0] || _errs[0];
+                        if (_bad) data.error = _bad.dot_path + ": " + _bad.error;
+                    }
                 }
                 if (!data.ok && data.type_fix) {
                     // r14 ⑩: the field is stored as TEXT ("0.13") — the legacy
@@ -19715,40 +19687,17 @@ function applyPlotRow(row) {
     btn.textContent = '…';
 
     var _pp = document.getElementById('plot-apply-popup');
-    // Acks ACCUMULATE across the 409 chain (fsp then type_fix): a resend that
-    // dropped an earlier ack would re-trigger that gate — popup ping-pong.
-    var _fspAck = null, _plan = null, _typeFix = null;
+    // D-44: an FSP row commits at once; the compensation offer follows the
+    // write (X-SM-Fsp-Changed), so the only resend left is the type-fix ack.
+    var _typeFix = null;
 
     function _restore() { btn.disabled = false; btn.textContent = prevLabel; }
 
     function _send() {
         if (row._mapValid && !row._mapValid()) return Promise.reject(new Error('Map settings changed; analyze again.'));
-        if (_fspAck === 'comp') {
-            // comp = this row + the compensated amps in ONE /field/edit-batch
-            // (one gid = one Review bundle = one Ctrl+Z).
-            var b = {
-                updates: [{dot_path: dotPath, value: input.value}]
-                    .concat(window._fspCompUpdates(_plan)),
-                fsp_ack: 'comp'
-            };
-            if (row._plotOrigin) b.provenance = row._plotOrigin;
-            if (_typeFix) b.type_fix = _typeFix;
-            if (_pp && _pp.dataset.expectChip) {
-                b.expect_chip = _pp.dataset.expectChip;
-                if (_pp.dataset.forceChip) b.force_chip = true;
-            }
-            return fetch('/field/edit-batch', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(b)
-            }).then(function(resp) {
-                return resp.json().then(function(j) { return {status: resp.status, body: j}; });
-            });
-        }
         var body = 'dot_path=' + encodeURIComponent(dotPath)
                  + '&value=' + encodeURIComponent(input.value);
         if (row._plotOrigin) body += '&provenance=' + encodeURIComponent(JSON.stringify(row._plotOrigin));
-        if (_fspAck) body += '&fsp_ack=' + _fspAck;
         if (_typeFix) body += '&type_fix=' + _typeFix;
         if (_pp && _pp.dataset.expectChip) {
             body += '&expect_chip=' + encodeURIComponent(_pp.dataset.expectChip)
@@ -19774,11 +19723,6 @@ function applyPlotRow(row) {
             // and the comp batch {results}: only ok/tray_html are consumed.
             _markPlotRowApplied(row, r.body.tray_html);
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
-            if (_fspAck === 'comp' && window.showToast) {
-                var nAmp = ((_plan && _plan.amps) || []).length;
-                window.showToast('Also updated ' + nAmp + ' compensated amplitude'
-                    + (nAmp === 1 ? '' : 's') + ' — one undo reverts both.', 'success');
-            }
             _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             _restore();
@@ -19787,13 +19731,6 @@ function applyPlotRow(row) {
         } else if (r.status === 409 && r.body && r.body.type_fix && window._confirmTypeFix) {
             _typeFix = window._confirmTypeFix(r.body.type_fix) ? 'convert' : 'keep';
             _send().then(handleR).catch(_fail);
-        } else if (r.status === 409 && r.body && r.body.fsp_compensation && window._openFspPopup) {
-            // r12-B never silent: nothing committed yet — the offer first.
-            window._openFspPopup(r.body.fsp_compensation, function(mode, plan) {
-                if (mode === 'cancel') { _restore(); return; }  // user choice, not a failure
-                _fspAck = mode; _plan = plan;
-                _send().then(handleR).catch(_fail);
-            });
         } else {
             _restore();
             if (errEl) {
@@ -19831,8 +19768,8 @@ function applyAllPlotRows() {
     });
 
     var _pp = document.getElementById('plot-apply-popup');
-    // Acks ACCUMULATE across the 409 chain (fsp then type_fix) — see applyPlotRow.
-    var _ups = updates, _fspAck = null, _plan = null, _typeFix = null;
+    // D-44: FSP rows commit at once (the offer follows); only the type-fix ack resends.
+    var _ups = updates, _typeFix = null;
 
     // Re-enable only at terminal exits (ok / chip-confirm / cancel / error /
     // catch), so Apply All can't be re-clicked while the FSP popup is open
@@ -19848,7 +19785,6 @@ function applyAllPlotRows() {
         if (origin && pending.every(function(r) {
             return JSON.stringify(r._plotOrigin) === JSON.stringify(origin);
         })) b.provenance = origin;
-        if (_fspAck) b.fsp_ack = _fspAck;
         if (_typeFix) b.type_fix = _typeFix;
         if (_pp && _pp.dataset.expectChip) {
             b.expect_chip = _pp.dataset.expectChip;
@@ -19877,11 +19813,6 @@ function applyAllPlotRows() {
             _restore();
             pending.forEach(function(row) { _markPlotRowApplied(row, r.body.tray_html); });
             if (r.body.tray_html) _swapPendingTray(r.body.tray_html);
-            if (_fspAck === 'comp' && window.showToast) {
-                var nAmp = ((_plan && _plan.amps) || []).length;
-                window.showToast('Also updated ' + nAmp + ' compensated amplitude'
-                    + (nAmp === 1 ? '' : 's') + ' — one undo reverts both.', 'success');
-            }
             _closePlotPopupIfDone();
         } else if (r.status === 409 && r.body && r.body.chip_mismatch) {
             _restore();
@@ -19890,14 +19821,6 @@ function applyAllPlotRows() {
         } else if (r.status === 409 && r.body && r.body.type_fix && window._confirmTypeFix) {
             _typeFix = window._confirmTypeFix(r.body.type_fix) ? 'convert' : 'keep';
             _post().then(handleR).catch(_fail);
-        } else if (r.status === 409 && r.body && r.body.fsp_compensation && window._openFspPopup) {
-            // r12-B never silent: the batch is untouched — the offer first.
-            window._openFspPopup(r.body.fsp_compensation, function(mode, plan) {
-                if (mode === 'cancel') { _restore(); return; }  // rows stay pending, no error
-                _fspAck = mode; _plan = plan;
-                if (mode === 'comp') _ups = updates.concat(window._fspCompUpdates(plan));
-                _post().then(handleR).catch(_fail);
-            });
         } else {
             _restore();
             var byPath = {};
@@ -19978,15 +19901,11 @@ function _markPlotRowApplied(row, trayHtml) {
 }
 
 /* ── FSP → amplitude compensation popup (docs/20 r12-B) ──
-   NEVER silent: any /field/edit(-batch) that would change a port's
-   full_scale_power_dbm without an ack gets a 409 carrying the compensation
-   plan; this popup lists EVERY amplitude old→new ("SM will update these
-   amplitudes WITH the port change") plus DAC-clip warnings, and only an
-   explicit choice commits:
-     [Apply FSP + compensate N] → resend('comp')  (one batch: FSP + amps
-                                  = one Review bundle = one Ctrl+Z)
-     [Apply FSP only]           → resend('solo')
-     [Cancel]                   → nothing written. */
+   Since D-44 every /field/edit(-batch) commits an FSP change at once and the
+   offer follows as a non-blocking notice (FspAfterReplace), so no edit door
+   opens this popup any more. Its one remaining caller is the Re-generate
+   wizard (generate.js), which asks before a rebuild: resend('comp') /
+   resend('solo') / resend('cancel'). */
 window._openFspPopup = (function () {
     var overlay = null;
     function _el(tag, cls, text) {
@@ -28034,15 +27953,6 @@ window.FieldHistory = (function () {
         post(null).then(function handle(data) {
             // The same two offers the tree editor answers, answered the same
             // way — a revert must not be a side door around either.
-            if (!data.ok && data.fsp_compensation && window._openFspPopup) {
-                done();
-                window._openFspPopup(data.fsp_compensation, function (mode) {
-                    if (mode === "cancel") return;
-                    btn.disabled = true; btn.textContent = "…";
-                    post({ fsp_ack: mode === "solo" ? "solo" : "comp" }).then(handle);
-                });
-                return;
-            }
             if (!data.ok && data.type_fix && window._confirmTypeFix) {
                 var conv = window._confirmTypeFix(data.type_fix);
                 post({ type_fix: conv ? "convert" : "keep" }).then(handle);

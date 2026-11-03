@@ -35,7 +35,6 @@ const mutations = {
     off: ['if (!preserve && window.__treeCommitOnLeave !== false) flush();', 'if (!preserve) flush();'],
     render: ['_treeResume(container, savedEditor);', '/* mutant: lost drafts */'],
     pane: ['var editMemory = _treeEditMemory.get(_treeEditKey(container));', 'var editMemory = null;'],
-    fsp: ['if (back) _makeValueEditable(back, dotPath);', '/* mutant: no focus return */'],
     one: ['if (tree._editor) tree._editor.leave();', '/* mutant: leave old input */'],
     escape: ['input.value = input.defaultValue;\n                clearRefusal();\n                dirty();', '/* mutant: retain typing */'],
     caret: ['input.setSelectionRange(input.value.length, input.value.length);', 'input.select();'],
@@ -45,7 +44,6 @@ const mutations = {
     undo: ['&& !inInline && !inTreeEditor) return;', '&& !inInline) return;'],
     text_undo: ['if (inTreeEditor && a.value !== a.defaultValue) return;', '/* mutant: let server undo dirty text */'],
     global: ['if (a && a.matches && a.matches(".ui-tree-editor")) return true;', 'if (a && a.matches && a.matches(".ui-tree-editor")) return window.TreeInlineEdit.busy(a);'],
-    fsp_cancel: ['if (mode === "cancel") { resolve(); return; }', 'if (mode === "cancel") { return; }'],
     refusal: ['if (result === false) { dirty(); return false; }', '/* mutant: discard refused typing */'],
     peek_retry: ['cache.delete(path); return {};', 'return {};'],
     tooltip: ['chip.title = (expected.class_path', 'chip.unusedTitle = (expected.class_path'],
@@ -94,7 +92,7 @@ w.fetch = (url, opts) => {
         const b = new w.URLSearchParams(opts.body);
         let v = b.get('value');
         try { v = JSON.parse(v); } catch (_) {}
-        data = refused ? {ok:false,error:"Refused value"} : fsp && !b.get('fsp_ack') ? {ok:false,fsp_compensation:{port:'test',fsp_old:1,fsp_new:2,factor:1,amps:[]}} : {ok:true, stored:v, stored_kind:typeof v};
+        data = refused ? {ok:false,error:"Refused value"} : fsp ? {ok:true,results:[{dot_path:b.get('dot_path'),applied:true,new_value:v}]} : {ok:true, stored:v, stored_kind:typeof v};
         if (b.get('dot_path') === 'pointer' && typeof v === 'number')
             data = {ok:true,stored:v,stored_kind:'number',resolved_path:'other',raw_value:'#/other'};
     }
@@ -301,21 +299,13 @@ const type = text => {d.activeElement.value=text; d.activeElement.dispatchEvent(
     assert.equal(d.activeElement.selectionEnd,5,'pane replacement restores selection');
     key('Escape'); assert.equal(d.activeElement.value,JSON.stringify('line\ntext'),'OFF Escape reverts');
     w.__treeCommitOnLeave=true;
-    fsp=true;focus('b');type('3');key('Enter');await tick();
-    const popup=d.querySelector('.fsp-card');
-    assert(popup,'FSP commit opens existing offer');
-    const close=popup.querySelector('.ch-close');close.focus();
-    await tick(130);
-    w.renderJsonTree("tree",tree._treeData,{defaultDepth:1,crud:true});
-    close.click();await tick();
-    assert.equal(d.activeElement.getAttribute('aria-label'),'b','FSP close restores field focus');
-    assert.equal(d.activeElement.value,'2','FSP close without choice reverts');
-    assert.equal(tree._treeData.b,2,'FSP never writes before a choice');
-    // Use the same roving state: a pending Cancel must settle before Enter can write again.
-    type('3');key('Enter');await tick();
-    d.querySelector('.fsp-card .ch-close').click();await tick();
+    // D-44: an FSP edit commits at once through the batch door (its reply is
+    // batch-shaped); no pre-commit card, and the committed NUMBER is painted
+    fsp=true;focus('b');type('3');key('Enter');await tick(80);
+    assert(!d.querySelector('.fsp-card'),'no FSP pre-commit offer');
+    assert.strictEqual(tree._treeData.b,3,'FSP committed at once as a number');
     fsp=false;type('4');key('Enter');await tick(80);
-    assert.equal(tree._treeData.b,4,'FSP Cancel resolves so a later edit on the same field commits');
+    assert.equal(tree._treeData.b,4,'a later edit on the same field commits');
     assert.equal(d.activeElement.value,'4','later edit remains in the roving input');
 
     w.__treeCommitOnLeave=false;

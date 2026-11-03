@@ -17,7 +17,7 @@ def test_tree_free_edit():
     r = run()
     assert r.returncode == 0 and "ALL OK" in r.stdout, r.stdout + r.stderr
 
-@pytest.mark.parametrize("mutation", ["auto_blur", "auto_hidden", "auto_pagehide", "auto_nav", "pointer_layout", "pointer_cached", "draft_jump", "sync_snapshot", "suggestion_flow", "suggestion_outside", "press_mount", "pointer_hint", "pointer_toast", "pointer_flash", "idle_pointer", "draft_count", "input_width", "input_literal", "input_echo", "sync_count", "draft_style", "relink", "echo_target", "draft_storage", "unload_drafts", "refusal_clear", "lazy_resume", "nav_drafts", "one", "escape", "caret", "flight", "cache", "visible", "tab", "undo", "text_undo", "global", "brackets", "multi", "search", "off", "render", "pane", "fsp", "fsp_cancel", "refusal", "peek_retry", "tooltip", "pointer", "chip_context", "stale_token", "source", "source_key", "display_order"])
+@pytest.mark.parametrize("mutation", ["auto_blur", "auto_hidden", "auto_pagehide", "auto_nav", "pointer_layout", "pointer_cached", "draft_jump", "sync_snapshot", "suggestion_flow", "suggestion_outside", "press_mount", "pointer_hint", "pointer_toast", "pointer_flash", "idle_pointer", "draft_count", "input_width", "input_literal", "input_echo", "sync_count", "draft_style", "relink", "echo_target", "draft_storage", "unload_drafts", "refusal_clear", "lazy_resume", "nav_drafts", "one", "escape", "caret", "flight", "cache", "visible", "tab", "undo", "text_undo", "global", "brackets", "multi", "search", "off", "render", "pane",  "refusal", "peek_retry", "tooltip", "pointer", "chip_context", "stale_token", "source", "source_key", "display_order"])
 def test_tree_free_edit_mutations(mutation):
     r = run(mutation)
     assert "mutation target exists" not in r.stderr, r.stderr

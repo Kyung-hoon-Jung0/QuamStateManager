@@ -121,13 +121,12 @@ const map = {request_hash: 'abc123', request: {
     check(form(posts[1]).get('provenance') === form(posts[0]).get('provenance'), 'single type-fix retry preserves origin');
 
     await open([{dot_path: p1, value: 3, provenance: map}]);
-    replies = [{status: 409, body: {ok: false, fsp_compensation: {amps: [{}]}}},
-               {status: 409, body: {ok: false, type_fix: {}}}, {status: 200, body: {ok: true}}];
+    // D-44: the server commits an FSP at once; a 409 carrying the old offer
+    // shape is just a refusal now -- no popup, no fsp_ack resend
+    replies = [{status: 409, body: {ok: false, fsp_compensation: {amps: [{}]}}}];
     w.applyPlotRow(row());
     await delay(); await delay();
-    check(posts.length === 3 && posts[1].url === '/field/edit-batch', 'FSP retry uses the existing batch door');
-    check(json(posts[2]).fsp_ack === 'comp' && json(posts[2]).type_fix === 'convert', 'FSP and type-fix acks accumulate');
-    check(JSON.stringify(json(posts[2]).provenance) === JSON.stringify(JSON.parse(form(posts[0]).get('provenance'))), 'origin survives FSP and type-fix retries');
+    check(posts.length === 1 && !form(posts[0]).get('fsp_ack'), 'no FSP pre-commit resend from the plot popup');
 
     await open([{dot_path: p1, value: 3, provenance: {src: 'map_fit', text: '<script>x</script>' + 'x'.repeat(400)}}]);
     check(!row().querySelector('script'), 'provenance is escaped in the popup');

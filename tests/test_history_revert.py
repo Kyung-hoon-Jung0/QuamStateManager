@@ -206,13 +206,11 @@ class TestRevertGoesThroughTheOneDoor:
     def test_it_declares_the_chip_token(self):
         assert 'body.append("expect_chip"' in self._blk()
 
-    def test_it_answers_the_fsp_offer(self):
-        """The GUARD together with what it feeds. `if (false) {` leaves every
-        one of these words inside a block that can no longer run, so a
-        presence check alone reads as green."""
+    def test_it_has_no_fsp_pre_commit_answer(self):
+        """D-44: the server commits an FSP revert at once and the compensation
+        offer follows the write (X-SM-Fsp-Changed); the old 409 answer is gone."""
         blk = self._blk()
-        assert "data.fsp_compensation && window._openFspPopup" in blk
-        assert "fsp_ack" in blk
+        assert "fsp_compensation" not in blk and "_openFspPopup" not in blk
 
     def test_it_answers_the_type_fix_offer_by_its_guard_too(self):
         blk = self._blk()

@@ -209,15 +209,13 @@ function typeInto(win, p, text, how) {
       qubits: { q1: { xy: { operations: {
         x180_DragCosine: { amplitude: 0.30458920811564044 },
         x90_DragCosine: { amplitude: 0.15229460405782022 } } } } } };
-    const plan = { amps: [{ path: A1, old: 0.30458920811564044, new: 0.271465 },
-                          { path: A2, old: 0.15229460405782022, new: 0.1357325 }] };
     const win = makeWorld(DATA);
-    win._openFspPopup = function (p, cb) { cb('comp', p); };
+    // D-44: an FSP edit commits through the batch door at once, so /field/edit
+    // answers in the batch shape; any row it also wrote is repainted
     let batchReply = null;
-    win._handlers['/field/edit-batch'] = function () { return jsonResp(batchReply); };
     win._handlers['/field/edit'] = function (url, body) {
       const b = new win.URLSearchParams(body);
-      if (b.get('dot_path') === FSP) return jsonResp({ ok: false, fsp_compensation: plan });
+      if (b.get('dot_path') === FSP) return jsonResp(batchReply);
       return jsonResp({ ok: true, stored: 0, stored_kind: 'number' });
     };
     openAll(win, 'ports.mw_outputs.con1.3.2');
@@ -228,7 +226,6 @@ function typeInto(win, p, text, how) {
       { dot_path: A2, resolved_path: A2, applied: true, new_value: 0.1357325, display: '0.1357325' }] };
     typeInto(win, FSP, '3');
     await tick(40);
-    ok(win._calls.some(function (c) { return c.url === '/field/edit-batch'; }), 'fixture: comp posted the bundle');
     ok(valText(win, A1) === win._treeFormatValue(0.271465),
       'r2-10: the built amplitude row shows the compensated value (got ' + valText(win, A1) + ')');
     ok(model(win, A1) === 0.271465, 'r2-10: the model holds the compensated amplitude');
