@@ -1174,4 +1174,12 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.web import callers
     callers.init_app(app)
 
+    # F12 (final walk): writes SM applied for a run it ran (approved on an
+    # agent card) are that run's writes for click-to-apply.
+    from quam_state_manager.core import approvals as _approvals
+    from quam_state_manager.core.interactive_plots import learn_click as _learn_click
+    _inst = app.instance_path
+    _learn_click.set_sm_writes_provider(
+        lambda folder: _approvals.approved_writes_for_folder(_inst, folder))
+
     return app

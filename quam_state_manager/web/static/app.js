@@ -5983,6 +5983,22 @@ window.livePushExtrasLine = function (typedPaths) {
         return true;
     }
     window._onDriftEditSeq = onEditSeq;
+    /* F23 (final walk): an Auto-Sync pull another window ran changed the
+       chip's values; its patch reached only that window. The edit_seq follow
+       above waits while this window's tray is being re-rendered, and the pull
+       re-renders trays, so a window could keep SHOWING a value the chip no
+       longer held. Every window repaints once per pull, and is told which of
+       the values it applied that pull took away. */
+    function onPullSeq(d) {
+        if (!d || !d.pull_seq || d.pull_seq === window._pullSeqSeen) return false;
+        var first = window._pullSeqSeen === undefined;
+        window._pullSeqSeen = d.pull_seq;
+        if (first) return false;
+        try { window._followValuesOnScreen(); } catch (e) {}
+        try { if (window._smSayLost) window._smSayLost(d.pull_lost); } catch (e) {}
+        return true;
+    }
+    window._onDriftPullSeq = onPullSeq;
     window._refreshAfterForeignEdit = refreshAfterForeignEdit;
     ["pointerdown", "keydown", "wheel"].forEach(function (n) {
         document.addEventListener(n, function () { window.__lastUserAct = Date.now(); },
@@ -6066,6 +6082,7 @@ window.livePushExtrasLine = function (typedPaths) {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d, _trayAtIssue);
+                onPullSeq(d);
                 // R3 MINOR 6: a run started (or ended) on this chip since the
                 // scheduler poll last asked -- that poll stops when nothing
                 // runs (no runner UI), so this every-page poll wakes it

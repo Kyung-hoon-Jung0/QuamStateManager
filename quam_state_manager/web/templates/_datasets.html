@@ -12,10 +12,23 @@
 {% if no_workspace %}
 {% import "_ui.html" as ui %}
 {{ ui.ui_head(page_title, page=True, gist=('Runs you tagged, grouped by tag.' if is_collections else 'Experiment runs in the loaded data folders.')) }}
-<div class="welcome" style="max-width:600px;margin:2rem auto">
+{# F3: the empty page re-renders itself when Dataset Load (or any other
+   /workspace/add|remove) changes the roots -- it used to keep this message
+   until a full navigation. With a project whose data folder is known, the
+   folder is offered right here. #}
+<div class="welcome" id="ds-empty" style="max-width:600px;margin:2rem auto"
+     hx-get="/{{ 'collections' if is_collections else 'datasets' }}" hx-trigger="workspaceRootsChanged from:body"
+     hx-target="#table-pane" hx-swap="innerHTML">
     {% set _ro = resume_offer() if resume_offer is defined else None %}
     {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its runs:</p>
     {% include "_resume_offer.html" %}{% endif %}
+    {% if active_dataset_path is defined and active_dataset_path %}
+    <form hx-post="/workspace/add" hx-target="#sidebar-tree">
+        <input type="hidden" name="folder" value="{{ active_dataset_path }}">
+        <p>This project's data folder is <code>{{ active_dataset_path }}</code>.</p>
+        <button type="submit" class="btn-sm">Load this data folder</button>
+    </form>
+    {% endif %}
     <p>{% if _ro %}Or add{% else %}Add{% endif %} a data folder with <strong>Dataset Load</strong> in the left sidebar to browse experiment runs.</p>
     <p class="muted">The data folder should contain date-formatted subfolders (e.g. 2026-03-03/) with experiment run folders inside.</p>
 </div>

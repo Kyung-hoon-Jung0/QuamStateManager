@@ -343,6 +343,39 @@
               'warning');
     });
 
+    function sayLost(list) {
+        var lost = Array.isArray(list) ? list : [];
+        if (!lost.length) return false;
+        var names = lost.slice(0, 4).map(function (x) { return x && x.path; })
+            .filter(Boolean).join(', ');
+        toast('An outside save rewrote the live chip and removed '
+              + lost.length + ' value' + (lost.length === 1 ? '' : 's')
+              + ' you had applied: ' + names + (lost.length > 4 ? ' and more' : '')
+              + '. The chip now holds the outside values; apply yours again if they should stay.',
+              'warning');
+        return true;
+    }
+    /* F23: another window ran the pull; the drift poll hands its result here */
+    window._smSayLost = sayLost;
+
+    document.addEventListener('autoSyncPulled', function (e) {
+        var d = (e && e.detail) || {};
+        /* F2 (final walk): an outside writer (a node's save of its in-memory
+           copy) rewrote the live chip and took away values SM had applied.
+           The pull adopts the chip as it is, and says which of the user's
+           applied values are gone, so "In sync" never hides that loss. */
+        if (d.pull_seq) window._pullSeqSeen = d.pull_seq;
+        /* F23: when the pull took away a value SM applied, re-read the
+           values on screen once more after the in-place patch: a grid
+           follow issued before the pull (another window's edit) can land
+           after the patch and paint the lost value back. */
+        if (sayLost(d.lost) && window._followValuesOnScreen) {
+            setTimeout(function () {
+                try { window._followValuesOnScreen(); } catch (err) {}
+            }, 1500);
+        }
+    });
+
     document.addEventListener('autoSyncMerge', function (e) {
         /* docs/187 R2: the chip the server says conflicted, carried on the
            signal. Handing THIS back (rather than whatever the page holds when

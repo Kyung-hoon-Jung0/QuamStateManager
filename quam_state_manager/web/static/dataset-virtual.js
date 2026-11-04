@@ -594,6 +594,15 @@
         else if (/(error|fail|abort|crash)/.test(s)) cls = 'ds-status-err';
         return '<span class="ds-status ' + cls + '" title="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>';
     }
+    // F9: a run whose node marked EVERY target failed still reports status
+    // "finished" (the process ended normally). Say the fits failed beside it,
+    // and mark the key metric as coming from a failed fit.
+    function allTargetsFailed(row) {
+        var oc = row && row.oc, n = 0;
+        if (!oc) return false;
+        for (var q in oc) { n++; if (oc[q] === 'successful') return false; }
+        return n > 0;
+    }
     function tagsCell(row) {
         var h = '';
         if (row.tags && row.tags.length) {
@@ -654,11 +663,18 @@
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
         {key: 'status', label: 'Status', on: true, w: 104, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
-         render: function (r) { return statusChip(r.status); }},
+         render: function (r) {
+             return allTargetsFailed(r)
+                 ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
+                   + '; the node marked every target of this run as failed">all failed</span>'
+                 : statusChip(r.status);
+         }},
         {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
          render: function (r) { return (r.metric == null || r.metric === '')
              ? '<span class="muted" title="No key metric: this run saved no finite fit number (no fit results, or the fit did not converge). Open the run for its fit details.">-</span>'
-             : escapeHtml(r.metric); }},
+             : (allTargetsFailed(r)
+                 ? '<span class="muted ds-metric-failed" title="From a fit the node marked failed for every target; not a calibrated value">' + escapeHtml(r.metric) + ' ✗</span>'
+                 : escapeHtml(r.metric)); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
         {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',

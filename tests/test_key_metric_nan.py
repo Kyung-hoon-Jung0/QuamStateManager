@@ -200,3 +200,19 @@ class TestCoherenceKeyMetricHasAUnit:
     def test_a_non_coherence_key_stays_unitless(self):
         r = _run("99_other", {"qA1": {"tau_ratio": 12.5}})
         assert DatasetStore._extract_key_metric(r) == "12.5000"
+
+
+class TestRamseyHeadlineIsT2Star:
+    """F13: the ramsey node subtracts ``freq_offset`` from f_01, so a headline
+    of the raw offset read with the opposite sign of the frequency change. The
+    node stores T2* as ``decay``; that is the headline."""
+
+    def test_the_node_shape_headlines_decay(self):
+        fit = {"q1": {"freq_offset": -923.67, "decay": 4.5797e-05,
+                      "decay_error": 6.9e-06, "success": True}}
+        m = DatasetStore._extract_key_metric(_run("12_ramsey", fit))
+        assert "923" not in m and m.endswith("s") and "45.8" in m, m
+
+    def test_a_T2_star_key_still_wins(self):
+        fit = {"q1": {"T2_star": 2e-05, "decay": 4e-05}}
+        assert "20" in DatasetStore._extract_key_metric(_run("ramsey", fit))

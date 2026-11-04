@@ -4286,7 +4286,7 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
         try:
             st = qualibrate_config.project_storage(scope)
             shared = st.get("native") if st.get("exists") else None
-            storage = hub_sync.project_run_root(shared, scope)
+            storage = hub_sync.storage_root_for_open(shared, scope)
         except Exception:  # noqa: BLE001
             storage = shared = None
         try:
@@ -11882,6 +11882,85 @@ def _state_restored_trigger(ctx, pre_leaves, extra: dict | None = None) -> str:
     if extra:
         trig.update(extra)
     return json.dumps(trig)
+
+
+_LOST_APPLIED_WINDOW_S = 6 * 3600
+_LOST_APPLIED_MAX = 20
+
+
+def _dot_get(doc, path: str):
+    """The value at a dot path of a merged chip document, or ``_DOT_MISSING``."""
+    cur = doc
+    for part in str(path).split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit() and int(part) < len(cur):
+            cur = cur[int(part)]
+        else:
+            return _DOT_MISSING
+    return cur
+
+
+_DOT_MISSING = object()
+
+
+def _applied_values_held(ctx) -> dict:
+    """F2 (final walk): the values SM applied recently (the undo journal's
+    units, newest value per path) that the working copy still holds, as
+    ``{path: value}``. Taken BEFORE a pull so that, after it, a value an
+    outside writer removed (a node's ``machine.save`` from its in-memory copy
+    rewrites the whole file) can be named instead of vanishing in silence."""
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        units, cursor = undo_journal.load_state(path)
+    except Exception:  # noqa: BLE001 -- no journal readable: nothing to name
+        return {}
+    store = ctx.get("store")
+    if store is None:
+        return {}
+    now = time.time()
+    newest: dict = {}
+    for unit in list(units)[:cursor] if isinstance(cursor, int) and cursor >= 0 else list(units):
+        if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
+            continue
+        for e in unit.get("entries") or ():
+            if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
+                # a created subtree (Set name creates ``extras``) is named by
+                # its leaves, so the notice says extras.chip_name
+                stack = [(e["path"], e.get("new"))]
+                while stack:
+                    p0, v0 = stack.pop()
+                    if isinstance(v0, dict) and v0:
+                        stack.extend((f"{p0}.{k}", v) for k, v in v0.items())
+                    else:
+                        newest[p0] = v0
+    if not newest:
+        return {}
+    held = {}
+    with store._lock:
+        doc = store.merged
+        for p, v in newest.items():
+            got = _dot_get(doc, p)
+            if got is not _DOT_MISSING and got == v:
+                held[p] = copy.deepcopy(v)
+    return held
+
+
+def _applied_values_lost(ctx, held: dict) -> list[dict]:
+    """Which of ``held`` the chip no longer has after a pull."""
+    store = ctx.get("store")
+    if not held or store is None:
+        return []
+    out = []
+    with store._lock:
+        doc = store.merged
+        for p, v in held.items():
+            got = _dot_get(doc, p)
+            if got is _DOT_MISSING or got != v:
+                out.append({"path": p, "applied": v,
+                            "now": None if got is _DOT_MISSING else got,
+                            "removed": got is _DOT_MISSING})
+    return out[:_LOST_APPLIED_MAX]
 
 
 def _leaf_snapshot(ctx, *, lazy: bool = False):
@@ -31335,6 +31414,7 @@ def auto_sync_pull():
             # OPEN: making a replace-pull preserve the discarded edits is a
             # decision about what "replace" means, deliberately not taken here.
             _pre_leaves = _leaf_snapshot(ctx)   # docs/144
+            _held_applied = _applied_values_held(ctx)   # F2: name what the pull removes
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
             # docs/187 (2), corrected by review R7: WHAT this pull is about to
             # drop, by kind. Counted BEFORE the pull, because afterwards there
@@ -31462,6 +31542,9 @@ def auto_sync_pull():
             logger.debug("post-failure eviction failed", exc_info=True)
         return _auto_disarm_response(ctx, "", "error", status=204)
 
+    # F2/F23: the applied values this pull took away, and one step of the
+    # pull counter every window follows (_pull_note)
+    _lost = _applied_values_lost(ctx, _held_applied)
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
@@ -31478,7 +31561,23 @@ def auto_sync_pull():
                                   "count": _discarded_n,
                                   "saved": _discarded_saved,
                                   "stash": _discarded_stash,
-                                  "dom": bool(dom_dirty)}})
+                                  "dom": bool(dom_dirty),
+                                  # F2: values SM applied that this outside
+                                  # write took away (never silently)
+                                  "lost": _lost}})
+    # a pull that changed nothing on screen is not a step other windows follow
+    # (a second window's empty pull must not hide the first one's from it)
+    try:
+        _t = json.loads(resp.headers["HX-Trigger"])
+        _moved = bool(_t["stateRestored"].get("changes") or _t["stateRestored"].get("structural"))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        _t, _moved = None, True
+    if _moved:
+        ctx["_pull_seq"] = int(ctx.get("_pull_seq") or 0) + 1
+        ctx["_pull_lost"] = _lost
+        if _t is not None:
+            _t["autoSyncPulled"]["pull_seq"] = f"{ctx.get('path', '')}#{ctx['_pull_seq']}"
+            resp.headers["HX-Trigger"] = json.dumps(_t)
     return resp
 
 
@@ -32238,6 +32337,23 @@ def _runner_sig() -> str:
         return ""
 
 
+def _pull_note() -> dict:
+    """F23 (final walk): the last Auto-Sync pull of the open chip, for every
+    window. The pull's patch reaches only the window whose poll ran it;
+    another window kept SHOWING a value the chip no longer held (its grid
+    follow waits on the tray, which the pull re-rendered). ``pull_seq`` moves
+    once per adopted pull and ``pull_lost`` names the applied values it took
+    away, so each window repaints and says so."""
+    ctx = _active_ctx() or {}
+    if not ctx.get("path"):
+        return {}
+    # "#0" too: a window opened before the first pull must count that pull
+    # as a step, not as where the chip already was
+    seq = int(ctx.get("_pull_seq") or 0)
+    return {"pull_seq": f"{ctx.get('path', '')}#{seq}",
+            "pull_lost": list(ctx.get("_pull_lost") or [])}
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -32315,7 +32431,7 @@ def state_drift():
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
@@ -32323,12 +32439,12 @@ def state_drift():
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -32338,7 +32454,7 @@ def state_drift():
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
                     "sync": sync, "tray_durable": _dur, "tray_chip": _dchip,
-                    "runner_sig": _rsig})
+                    "runner_sig": _rsig, **_pull_note()})
 
 
 @bp.route("/state/drift/view")
