@@ -798,7 +798,11 @@ class TestExtractPairGateFidelities:
             }
         }
         entry = self._by_metric(macros)["StandardRB"]
-        assert entry["value"] == 0.9871
+        # F20 (final walk): a Standard RB row is per-Clifford, so its headline is
+        # 1 - EPC (here from alpha: EPC = 3/4 * (1 - alpha)); the dict's
+        # average_gate_fidelity is the per-gate number and lands in its own slot
+        assert entry["value"] == pytest.approx(1.0 - 0.75 * (1.0 - 0.91))
+        assert entry["derived_gate_fidelity"] == 0.9871
         # the other numerics are still carried through
         assert entry["error_per_gate"] == 0.0128
 

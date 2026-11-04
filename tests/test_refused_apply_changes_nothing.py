@@ -137,6 +137,11 @@ def _edit(env, path="qubits.qA1.f_01", value="5.1e9", headers=None):
 def _apply(env, *, agent=False, **form):
     headers = {}
     if agent:
+        # F29 (final walk): an agent's apply writes the chip only in auto mode;
+        # elsewhere it is held as an approval card (tests/test_agent_apply_hold.py).
+        # These pins are about the apply door's refusals, so the chip is in auto.
+        from quam_state_manager.core import limits, working_copy
+        limits.save(env["app"].instance_path, working_copy.key_for(str(env["live"])), {"mode": "auto"})
         headers.update(AGENT)
         headers.update(JSON)
         form.setdefault("seen_changes", str(len(_ctx(env)["store"].change_log)))

@@ -216,7 +216,9 @@ class TestApplyNamesItsChip:
                          "expect_chip": seen["chip_token"], "expect_chip_key": seen["chip_key"]})
         assert r.status_code == 409 and r.get_json()["conflict"] == "chip_mismatch", r.get_data(as_text=True)
         assert _h(db) == hb and len(_ctx(app)["store"].change_log) == 1, "nothing written"
-        # the tray read ON this chip applies
+        # the tray read ON this chip applies (F29: an agent's apply lands only in auto mode)
+        from quam_state_manager.core import limits, working_copy
+        limits.save(app.instance_path, working_copy.key_for(str(db)), {"mode": "auto"})
         now = c.get("/api/agent/tray").get_json()
         r = c.post("/state/apply-to-live", headers={**_AGENT, "Accept": "application/json"},
                    data={"seen_changes": now["seen_changes"], "seen_sig": now["seen_sig"],

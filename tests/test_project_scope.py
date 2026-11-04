@@ -444,6 +444,10 @@ class TestHistoryLens:
         the persisted URL/JS contract (docs/63 decision 7)."""
         import re
         c = scoped["client"]
+        # F8 (final walk): a project opened before its first run now syncs its
+        # existing storage location; a TESTING app catches a chip with data
+        # roots up only when asked, so ask (the page is then the finished one)
+        scoped["app"].config["HUB_SYNC_ON_OPEN"] = True
         c.post("/qualibrate/open", data={"project": "alpha"})
         body = c.get("/param-history",
                      headers={"HX-Request": "true"}).get_data(as_text=True)

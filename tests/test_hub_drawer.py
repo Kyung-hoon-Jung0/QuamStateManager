@@ -280,6 +280,9 @@ class TestSmWrites:
 
     def test_an_agent_write_and_an_approved_plan_say_who(self, sm):
         c = sm["client"]
+        # F29 (final walk): an agent's apply writes directly only in auto mode
+        from quam_state_manager.core import limits, working_copy
+        limits.save(sm["app"].instance_path, working_copy.key_for(str(sm["live"])), {"mode": "auto"})
         assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "5.5e-5"},
                       headers={"X-SM-Agent": "helper"}).status_code == 200
         assert c.post("/state/apply-to-live", headers={"X-SM-Agent": "helper"}).status_code == 200

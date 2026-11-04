@@ -63,13 +63,14 @@ def test_the_table_has_lo_and_if_columns(client):
     html = client.get("/resonators", headers={"HX-Request": "true"}).get_data(as_text=True)
     heads = re.findall(r'<th class="sortable" data-col="(\d+)"[^>]*>([^<]*)', html)
     names = [h[1].strip() for h in heads]
-    assert names[3] == "LO" and names[4] == "IF", names
+    # the walk's resonator-RF fix put "Readout RF" (what the hardware plays) at 3
+    assert names[3] == "Readout RF" and names[4] == "LO" and names[5] == "IF", names
     assert [int(h[0]) for h in heads] == list(range(len(heads))), "data-col must stay contiguous"
     c1 = _row_cells(html, "q1")
     assert len(c1) == len(heads)
-    assert c1[3] == "7.0000" and c1[4] == "250.00", c1          # LO 7 GHz, IF = 7.25 - 7.0 GHz
+    assert c1[4] == "7.0000" and c1[5] == "250.00", c1          # LO 7 GHz, IF = 7.25 - 7.0 GHz
     c2 = _row_cells(html, "q2")
-    assert c2[3] == "-" and c2[4] == "-", c2                      # unresolvable: a dash, never a guess
+    assert c2[4] == "-" and c2[5] == "-", c2                      # unresolvable: a dash, never a guess
 
 
 def test_the_inspector_shows_lo_if_and_fills_the_calculator(client):

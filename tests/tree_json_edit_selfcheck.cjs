@@ -8,7 +8,8 @@ const assert = require('assert');
 const { JSDOM } = require('jsdom');
 
 const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'tree-json-edit.js');
-let src = fs.readFileSync(SRC, 'utf8');
+// a Windows checkout may carry CRLF; the mutation targets are written with LF
+let src = fs.readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
 const MUT = {
     parse: ['var t = getText(), pe = parseError(t);', 'var t = getText(), pe = null;'],
     no_save_on_error: ['if (lint()) return;                 // D-24', 'lint();                 // D-24'],

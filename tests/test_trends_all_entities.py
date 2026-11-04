@@ -1294,7 +1294,10 @@ class TestReviewRound31:
             "StandardRB_load_id": 529}}})
         assert len(rows) == 1, rows
         assert "run_id" not in rows[0] and "dataset_id" not in rows[0], rows[0]
-        assert rows[0]["value"] == 0.97, rows[0]
+        # F20 (final walk): with neither EPC nor alpha a per-Clifford row has no
+        # headline; the per-gate fidelity stays, in its per-gate slot
+        assert "value" not in rows[0], rows[0]
+        assert rows[0]["derived_gate_fidelity"] == 0.97, rows[0]
 
     # ④ The narrowing dropped a real class of 2Q number out of the row.
 
