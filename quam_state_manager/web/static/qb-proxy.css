@@ -19,3 +19,15 @@
   color: #0d1117;
   outline: none;
 }
+/* inside a table row (QUAlibrate 2.x) and beside the open run's title */
+[data-qsm-open][data-qsm-where="row"] {
+  margin: 0 0 0 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+[data-qsm-open][data-qsm-where="header"] {
+  margin: 0 0 0 12px;
+  vertical-align: middle;
+  white-space: nowrap;
+}

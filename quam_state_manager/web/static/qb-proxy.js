@@ -103,20 +103,89 @@
     }
   } catch (e) { /* leave the native WebSocket alone */ }
 
-  // 2. The links.
+  // 2. The links. Two QUAlibrate generations, two places each (D-9, D-22):
+  //    1.5.x  readable CSS-module classes ("ListCard-module__listCard"):
+  //           a History card (its "#25" span) and the title bar of the open
+  //           run ("25 name"), the latter only when it names the SELECTED card.
+  //    2.x    hashed CSS-module classes ("_idCell_1qftv_52"): a row of the
+  //           runs table (its id cell reads "25") and the header of the open
+  //           run (one "#25" id span).
+  //    Anything else adds nothing.
   var CARD = '[class*="SnapshotsTimeline-module__wrapper"] [class*="ListCard-module__listCard"]';
   var META = '[class*="ExecutionCard-module__executionMetaItem"] span';
+  var SELECTED = '[class*="ListCard-module__selected"]';
+  var TITLE_H2 = '[class*="TitleBarMenu-module__wrapper"] > h2';
+
+  // a 2.x CSS-module class: "_<local>_<hash>_<line>"
+  function mod(el, local) {
+    var c = el && el.getAttribute && el.getAttribute('class');
+    if (!c) return false;
+    var re = new RegExp('^_' + local + '_[A-Za-z0-9-]{3,12}_[0-9]+$');
+    var parts = c.split(/\s+/);
+    for (var i = 0; i < parts.length; i++) if (re.test(parts[i])) return true;
+    return false;
+  }
+  function byMod(root, tag, local) {
+    var out = [], els = root.getElementsByTagName(tag);
+    for (var i = 0; i < els.length; i++) if (mod(els[i], local)) out.push(els[i]);
+    return out;
+  }
+  function ownText(el) { return (el.textContent || '').trim(); }
 
   function runIdOf(card) {
     var ids = [];
     var spans = card.querySelectorAll(META);
     for (var i = 0; i < spans.length; i++) {
       if (spans[i].closest(CARD) !== card) continue;          // a nested card's id is not ours
-      var t = (spans[i].textContent || '').trim();
-      var m = /^#(\d{1,9})$/.exec(t);
+      var m = /^#(\d{1,9})$/.exec(ownText(spans[i]));
       if (m) ids.push(m[1]);
     }
     return ids.length === 1 ? ids[0] : null;
+  }
+
+  // 2.x: a table row's run id = its one id cell, digits only
+  function rowIdOf(tr) {
+    var cells = [];
+    for (var c = tr.firstElementChild; c; c = c.nextElementSibling) if (mod(c, 'idCell')) cells.push(c);
+    if (cells.length !== 1) return null;
+    var td = cells[0], t = '';
+    for (var k = td.firstChild; k; k = k.nextSibling) {        // our own link is not part of the id
+      if (k.nodeType === 1 && k.hasAttribute('data-qsm-open')) continue;
+      t += k.textContent || '';
+    }
+    var m = /^(\d{1,9})$/.exec(t.trim());
+    return m ? { id: m[1], host: td } : null;
+  }
+
+  // 1.5.x: the title bar names the open run; trust it only when it agrees
+  // with the selected History card (exact match or nothing)
+  function titleTarget() {
+    var h2s = document.querySelectorAll(TITLE_H2);
+    if (h2s.length !== 1) return null;
+    var sel = document.querySelectorAll(CARD + SELECTED);
+    if (sel.length !== 1) return null;
+    var id = runIdOf(sel[0]);
+    if (!id) return null;
+    var m = /^(\d{1,9})\s/.exec(ownText(h2s[0]) + ' ');
+    // beside the title, not inside it: the title keeps its own layout
+    return (m && m[1] === id) ? { id: id, host: h2s[0].parentElement, after: h2s[0] } : null;
+  }
+
+  // 2.x: the open run's header has exactly one "#<n>" id span
+  function headerTargets() {
+    var out = [];
+    var spans = byMod(document, 'span', 'id');
+    for (var i = 0; i < spans.length; i++) {
+      var sp = spans[i];
+      var m = /^#(\d{1,9})$/.exec(ownText(sp));
+      var head = sp.parentElement && sp.parentElement.closest('div');
+      var h = head;
+      while (h && !mod(h, 'header')) h = h.parentElement;
+      if (!m || !h) continue;
+      if (byMod(h, 'span', 'id').length !== 1) continue;
+      out.push({ id: m[1], host: sp.parentElement });
+    }
+    return out;
   }
 
   function openRun(href) {
@@ -129,12 +198,17 @@
     window.open(href, 'qsm-run');
   }
 
-  function linkFor(id) {
+  function linkFor(id, where) {
     var a = document.createElement('a');
     a.setAttribute('data-qsm-open', id);
+    if (where) a.setAttribute('data-qsm-where', where);
     a.setAttribute('href', '/qualibrate-run/' + id);
     a.setAttribute('title', 'Open run #' + id + ' in QUAM State Manager');
     a.textContent = 'Open in QSM';
+    var stop = function (ev) { ev.stopPropagation(); };
+    // a 2.x row navigates on press; the link must not
+    a.addEventListener('mousedown', stop);
+    a.addEventListener('pointerdown', stop);
     a.addEventListener('click', function (ev) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -143,22 +217,47 @@
     return a;
   }
 
+  // keep exactly one link of ours as a direct child of `host`, for `id`
+  function place(host, id, where, wanted, after) {
+    var mine = null;
+    for (var c = host.firstElementChild; c; c = c.nextElementSibling) {
+      if (c.hasAttribute('data-qsm-open')) { mine = c; break; }
+    }
+    if (!id) { if (mine) mine.remove(); return; }
+    if (mine && mine.getAttribute('data-qsm-open') === id
+        && (!after || mine.previousElementSibling === after)) { wanted.push(mine); return; }
+    if (mine) mine.remove();
+    var a = linkFor(id, where);
+    if (after && after.parentElement === host) host.insertBefore(a, after.nextSibling);
+    else host.appendChild(a);
+    wanted.push(a);
+  }
+
   function pass() {
+    var wanted = [];
     try {
       var cards = document.querySelectorAll(CARD);
-      for (var i = 0; i < cards.length; i++) {
-        var card = cards[i];
-        var id = runIdOf(card);
-        var mine = null;
-        for (var c = card.firstElementChild; c; c = c.nextElementSibling) {
-          if (c.hasAttribute('data-qsm-open')) { mine = c; break; }
-        }
-        if (!id) { if (mine) mine.remove(); continue; }
-        if (mine && mine.getAttribute('data-qsm-open') === id) continue;
-        if (mine) mine.remove();
-        card.appendChild(linkFor(id));
+      for (var i = 0; i < cards.length; i++) place(cards[i], runIdOf(cards[i]), 'card', wanted);
+    } catch (e) { /* add nothing */ }
+    try {
+      var rows = document.getElementsByTagName('tr');
+      for (var r = 0; r < rows.length; r++) {
+        var hit = rowIdOf(rows[r]);
+        if (hit) place(hit.host, hit.id, 'row', wanted);
       }
     } catch (e) { /* add nothing */ }
+    try {
+      var t = titleTarget();
+      if (t) place(t.host, t.id, 'header', wanted, t.after);
+    } catch (e) { /* add nothing */ }
+    try {
+      var hs = headerTargets();
+      for (var j = 0; j < hs.length; j++) place(hs[j].host, hs[j].id, 'header', wanted);
+    } catch (e) { /* add nothing */ }
+    try {                                                    // a link whose place is gone goes too
+      var all = document.querySelectorAll('[data-qsm-open]');
+      for (var q = 0; q < all.length; q++) if (wanted.indexOf(all[q]) < 0) all[q].remove();
+    } catch (e) { /* leave it */ }
   }
 
   var queued = false;
@@ -177,5 +276,5 @@
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 
   // test hook (jsdom selfcheck)
-  window.__qsmProxy = { pass: pass, runIdOf: runIdOf };
+  window.__qsmProxy = { pass: pass, runIdOf: runIdOf, rowIdOf: rowIdOf };
 })();
