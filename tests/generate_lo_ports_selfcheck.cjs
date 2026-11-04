@@ -151,6 +151,39 @@ function panelText(win) {
     'L3: the chip LO is kept (fill-only-empty)');
 })();
 
+// ---- L8: a resonator added to a shared feedline keeps the source LO -------
+(function () {
+  const w = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.10e9, LO_frequency: 7.46e9 },
+      q2: { RF_freq: 7.15e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.80e9 } } }, ['q1', 'q2', 'q3']);
+  // q3 is the new row: the source chip never had it
+  delete w.st.regenBaselinePopulate.resonator.q3;
+  w.st.allocation = { q1: { rr: RR }, q2: { rr: RR }, q3: { rr: RR } };
+  const calc = w.T.computeLoAssignments();
+  ok(calc.assignments['resonator/q3'] === 7.46e9,
+    'L8: the shared feedline keeps the source LO 7.46 GHz (got ' +
+    calc.assignments['resonator/q3'] + ')');
+  ok(calc.groups.length === 1 && calc.groups[0].loFreq === 7.46e9,
+    'L8: the LO map shows the source LO (got ' + JSON.stringify(calc.groups) + ')');
+  // an explicit Re-solve still re-derives
+  const forced = w.T.computeLoAssignments({ force: true });
+  ok(forced.assignments['resonator/q3'] !== 7.46e9,
+    'L8: Re-solve LOs re-derives (got ' + forced.assignments['resonator/q3'] + ')');
+  // an LO that no longer covers every member is not kept
+  const w2 = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.10e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.465e9 } } }, ['q1', 'q3']);
+  delete w2.st.regenBaselinePopulate.resonator.q3;
+  w2.st.allocation = { q1: { rr: RR }, q3: { rr: RR } };
+  const c2 = w2.T.computeLoAssignments();
+  ok(c2.assignments['resonator/q3'] !== 7.46e9,
+    'L8: a source LO inside a new resonator demod floor is re-derived (got ' +
+    c2.assignments['resonator/q3'] + ')');
+})();
+
 // ---- L4: Re-solve never writes an infeasible pick ------------------------
 (function () {
   // q1 + q3 share Out2 and sit 1.49 GHz apart: no single upconverter covers
