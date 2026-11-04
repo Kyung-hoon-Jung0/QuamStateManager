@@ -29,6 +29,8 @@ window.AgentPanel = (function () {
     plans: {}, runs: {}, approvals: {}, mounts: [], timer: null, inflight: false, observer: false,
     seenCards: {}, lastPoll: 0, unreachable: false,
     intentTouched: false,                          // docs/247: the person chose Ask / Task by hand
+    startErr: {},                                  // plan id -> why its Start was refused, said ON the card
+    rejecting: {},                                 // approval id -> the note being typed in its in-page Reject sheet
     deciding: {},                                  // approval id -> "approve" | "reject" while its press is in flight
     envelope: {}                                   // docs/261: plan id -> the envelope its Start would approve (shown first)
   };
@@ -588,6 +590,13 @@ window.AgentPanel = (function () {
     if (s.status === "skipped" && s.halted) out += ' <span class="muted ag-step-gate" title="' + esc(s.error || "") + '">' + esc(s.halted) + " halted</span>";
     return out;
   }
+  var REFUSAL_TEXT = { no_env: "no Python environment is chosen for this chip", no_calibrations_folder: "no calibrations folder is set",
+                       human_active: "a person ran a node on this chip a moment ago", node_not_found: "no such node in the calibrations folder",
+                       awaiting_approval: "waiting for a person's approval", stale_live: "the live files moved outside SM",
+                       run_active: "another run is in progress", queue_not_empty: "the run queue holds other rows",
+                       orphan_running: "a node is still running on this chip", past_stop_by: "the stop time has passed",
+                       not_a_node: "that file is not a node SM can run", stopped_by_human: "a person pressed Stop",
+                       simulate_on_in_auto: "Dry run is on in auto mode" };
   var PLAN_STATUS_TEXT = { draft: "draft", running: "running", stopping: "stopping — finishes the current run", done: "done", failed: "failed",
                            stopped: "stopped", cancelled: "cancelled", skipped: "skipped — nothing ran" };
   function renderPlan(m, p, force) {
@@ -651,7 +660,18 @@ window.AgentPanel = (function () {
     if (p.pre_ts) {
       acts += ' <a class="btn-sm outline ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
-    var html = head + '<div class="ag-steps">' + rows + "</div>" +
+    var said = "";
+    var se = S.startErr[p.id];
+    if (se && p.status === "draft") {
+      said = '<p class="ag-err ag-plan-said" role="alert">Not started: ' + esc(se.text) +
+        (se.other && !S.observer ? ' <button type="button" class="btn-sm secondary ag-stop-other" onclick="AgentPanel.cancelPlan(\'' + esc(se.other.id) + '\')">Stop ' + esc(se.other.title || "that plan") + "</button>" : "") + "</p>";
+    } else if (p.refusal && (p.status === "running" || p.status === "stopping" || p.end_code === p.refusal.code)) {
+      // what run_node answered for this plan, on the card itself -- never only in the agent's prose
+      said = '<p class="ag-err ag-plan-said">run refused' + (p.refusal.step !== undefined && p.refusal.step !== null ? " (step " + esc(p.refusal.step) + ")" : "") +
+        ": " + esc(REFUSAL_TEXT[p.refusal.code] || p.refusal.code) + (p.refusal.how ? ' <span class="muted">' + esc(p.refusal.how) + "</span>" : "") +
+        (p.refusal.code === "human_active" && !S.observer ? ' <button type="button" class="btn-sm secondary ag-release" onclick="AgentPanel.releaseHuman()">The OPX is free: let the agent run</button>' : "") + "</p>";
+    }
+    var html = head + '<div class="ag-steps">' + rows + "</div>" + said +
       '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
       prog + (envHtml || '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>");
     setHtml(el, row(p.created, html), force);
@@ -755,6 +775,14 @@ window.AgentPanel = (function () {
     var moved = tr.querySelector(".ag-ap-moved");
     if (moved) moved.title = movedTitle(t);
   }
+  function failedHead(a) {
+    var f = (a.writes || []).filter(function (w) { return w.failed_target; });
+    if (!f.length) return "";
+    var who = [];
+    f.forEach(function (w) { if (who.indexOf(w.failed_target) < 0) who.push(w.failed_target); });
+    return '<p class="ag-ap-failed-head">✗ ' + f.length + " of " + (a.writes || []).length + " value(s) come from " + esc(who.join(" ")) +
+      ", which the node itself marked failed. They are not ticked and are not written unless you tick them.</p>";
+  }
   function renderApproval(m, a, force) {
     var el = cardFor(m, "approval", a.id, a.created);
     if (!el) return;
@@ -770,7 +798,12 @@ window.AgentPanel = (function () {
       else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
         esc(t.cell) + '</span> <span class="ag-ap-from">⚠ proposed from <span class="ag-ap-oldv">' + esc(t.old) + "</span></span></td>";
       var stored = (w.display && w.display.stored) || "";
-      return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td>" + nowTd + "<td>" +
+      // a value from a target the node itself marked failed: shown apart, not written unless ticked
+      var failed = !!w.failed_target;
+      var tick = S.observer ? "" : '<td class="ag-ap-pick"><input type="checkbox" class="ag-ap-on" data-i="' + i + '"' + (failed ? "" : " checked") +
+        ' aria-label="' + esc("write " + w.path) + '"></td>';
+      var failNote = failed ? ' <span class="ag-ap-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
+      return "<tr" + (failed ? ' class="ag-ap-failed"' : "") + ">" + tick + "<td title=\"" + esc(w.path) + "\">" + esc(w.path) + failNote + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
           ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
@@ -779,12 +812,21 @@ window.AgentPanel = (function () {
     var acts = S.observer ? '<span class="muted">observing</span>' :
       '<button type="button" class="btn-sm ag-approve" onclick="AgentPanel.approve(\'' + esc(a.id) + '\', this)">' + (isRun ? "Allow run" : "Write to chip") + "</button> " +
       '<button type="button" class="btn-sm secondary ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
+    if (!S.observer && S.rejecting[a.id] !== undefined) {
+      // an in-page sheet, never a native prompt(): a blocking dialog stops every script of the window
+      var rid = esc(a.id);
+      acts = '<div class="ag-reject-sheet" aria-label="reject this card">' +
+        '<label>Reject: a note for the journal (optional) <input type="text" class="ag-reject-note" value="' + esc(S.rejecting[a.id]) +
+        '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' + rid + '\')"></label> ' +
+        '<button type="button" class="btn-sm danger ag-reject-ok" onclick="AgentPanel.rejectConfirm(\'' + rid + '\')">Reject</button> ' +
+        '<button type="button" class="btn-sm outline ag-reject-back" onclick="AgentPanel.rejectCancel(\'' + rid + '\')">Back</button></div>';
+    }
     var pl = a.plan_id && S.plans[a.plan_id];
     var where = a.plan_id ? ' <span class="muted ag-ap-plan">plan ' + esc(pl ? pl.title : a.plan_id) + (a.step !== undefined && a.step !== null ? " · step " + esc(a.step) : "") + "</span>" : "";
     var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
       paramsHtml(a.params) + (a.run_id ? " " + runLink(a.run_id) : "") + where + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
       (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets with these params (mode ask-all); nothing runs before Allow, and Allow covers exactly this run</p>' :
-        '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr><th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
+        failedHead(a) + '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr>' + (S.observer ? "" : '<th title="ticked values are written">write</th>') + '<th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
     markBusy(el, a);
@@ -1512,14 +1554,36 @@ window.AgentPanel = (function () {
       }
       delete S.envelope[id];
       // docs/253: say WHO runs it -- a terminal agent's plan is not run by SM's in-app agent
-      if (r.status !== 200) toast(errText(r, "could not start"), "error");
+      if (r.status !== 200) {
+        // said on the card that was pressed, with the way out -- never only in a line below the composer
+        S.startErr[id] = { text: errText(r, "could not start"), other: (r.body && r.body.running_plan) || null };
+        repaintPlan(id);
+        toast(errText(r, "could not start"), "error");
+      } else delete S.startErr[id];
+      if (r.status !== 200) { poll(true); return; }
       else toast("started — " + (r.body && r.body.driver ? driverText(r.body.driver).replace(/^driven by /, "") + " runs it" : "the agent is running the plan"));
       poll(true);
     });
   }
   function cancelPlan(id) {
     if (S.observer) return;
-    api("POST", "/api/agent/plans/" + id + "/cancel", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "not cancelled"), "error"); poll(true); });
+    api("POST", "/api/agent/plans/" + id + "/cancel", {}).then(function (r) {
+      if (r.status !== 200) toast(errText(r, "not cancelled"), "error");
+      else Object.keys(S.startErr).forEach(function (k) {     // the plan in the way is gone: its note goes too
+        var se = S.startErr[k];
+        if (se && se.other && se.other.id === id) { delete S.startErr[k]; repaintPlan(k); }
+      });
+      poll(true);
+    });
+  }
+  /* F6: the human_active wait is the person's to lift: "that run was mine and I am done". */
+  function releaseHuman() {
+    if (S.observer) return;
+    api("POST", "/api/agent/session/release-human", {}).then(function (r) {
+      if (r.status !== 200) toast(errText(r, "not released"), "error");
+      else toast("released: the agent may run again; it was told", "success");
+      poll(true);
+    });
   }
   function setPlanMode(id, mode) {
     if (S.observer) return;
@@ -1542,12 +1606,16 @@ window.AgentPanel = (function () {
     var a = S.approvals[id] || {};
     var writes = null;
     if (card && a.kind !== "run" && a.writes) {          // a run request has no values to send (docs/254)
-      writes = a.writes.map(function (w, i) {
+      writes = [];
+      a.writes.forEach(function (w, i) {
+        var on = card.querySelector('.ag-ap-on[data-i="' + i + '"]');
+        if (on ? !on.checked : !!w.failed_target) return;   // an unticked value is not written
         var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
         var v = w.new;
         if (inp) v = parseEdit(inp.value);                // the one parse the preview beside it shows (docs/272)
-        return { path: w.path, old: w.old, new: v };
+        writes.push({ path: w.path, old: w.old, new: v });
       });
+      if (!writes.length) { toast("no value is ticked: tick the values to write, or Reject the card", "warning"); return; }
     }
     S.deciding[id] = "approve";
     repaintApproval(id);
@@ -1566,8 +1634,25 @@ window.AgentPanel = (function () {
   }
   function reject(id) {
     if (S.observer || S.deciding[id]) return;
-    var note = window.prompt ? window.prompt("Reject — a note for the journal (optional):") : "";
-    if (note === null) return;                   // Cancel on the prompt is "not now", not "reject"
+    if (S.rejecting[id] === undefined) S.rejecting[id] = "";
+    redrawApproval(id);
+    var inp = document.querySelector('[data-card="approval:' + id + '"] .ag-reject-note');
+    if (inp) inp.focus();
+  }
+  function rejectNote(id, v) { if (S.rejecting[id] !== undefined) S.rejecting[id] = String(v || ""); }
+  function rejectCancel(id) { delete S.rejecting[id]; redrawApproval(id); }
+  function redrawApproval(id) {
+    var a = S.approvals[id];
+    if (a) S.mounts.forEach(function (m) { renderApproval(m, a, true); });
+  }   // Back is "not now", not "reject"
+  function rejectKey(ev, id) {
+    if (ev.key === "Enter") { ev.preventDefault(); rejectConfirm(id); }
+    else if (ev.key === "Escape") { ev.preventDefault(); rejectCancel(id); }
+  }
+  function rejectConfirm(id) {
+    if (S.observer || S.deciding[id] || S.rejecting[id] === undefined) return;
+    var note = S.rejecting[id];
+    delete S.rejecting[id];
     S.deciding[id] = "reject";
     repaintApproval(id);
     api("POST", "/api/agent/approvals/" + id + "/reject", { note: note || "" }).then(function (r) {
@@ -2006,10 +2091,12 @@ window.AgentPanel = (function () {
       // never re-derived here.
       var link = el.querySelector(".ag-wire-setup");
       if (link && su && su.todo) {
-        link.textContent = su.todo.length
-          ? ("Finish setup (" + su.todo.length + " left) \u2192")
+        // the optional terminal steps are not "left": the agent in this window works without them
+        var left = su.todo_required || su.todo;
+        link.textContent = left.length
+          ? ("Finish setup (" + left.length + " left) \u2192")
           : "Setup \u2192";
-        link.classList.toggle("ag-wire-todo", su.todo.length > 0);
+        link.classList.toggle("ag-wire-todo", left.length > 0);
       }
     });
   }
@@ -2017,8 +2104,12 @@ window.AgentPanel = (function () {
   /* One request per session for the setup record, shared by every mount and
      re-used across htmx swaps: a re-mount repaints from WIRE, and only an
      explicit refresh probes again. */
+  var WIRE_FRESH_MS = 15000;
   function wireLoad(force) {
-    if (WIRE.inflight && !force) return WIRE.inflight;
+    // a mount re-reads a record older than WIRE_FRESH_MS: the setup page changes it (measured: the
+    // door kept "Finish setup (4 left)" for the whole session after the steps were done)
+    if (WIRE.inflight && !force && Date.now() - (WIRE.loadedAt || 0) < WIRE_FRESH_MS) return WIRE.inflight;
+    WIRE.loadedAt = Date.now();
     // No `?refresh=1` here: only /api/agent/chat/backends honours it, and a
     // query parameter this route ignores would read as a refresh that is not
     // happening. Both routes serve the same _detect_all cache, so they cannot
@@ -2210,7 +2301,7 @@ window.AgentPanel = (function () {
   document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); lateSync(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
-  return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
+  return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan, releaseHuman: releaseHuman, rejectNote: rejectNote, rejectCancel: rejectCancel, rejectConfirm: rejectConfirm, rejectKey: rejectKey,
            confirmStart: confirmStart, closeEnvelope: closeEnvelope,
            setIntent: setIntent, sessionOpen: sessionOpen,
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,

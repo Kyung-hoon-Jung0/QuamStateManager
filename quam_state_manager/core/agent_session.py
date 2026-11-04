@@ -24,7 +24,8 @@ from quam_state_manager.core import journal as journal_mod
 FIELDS = ("chip", "backend", "session_id", "mode", "owner", "started", "until", "pid", "worker_pid",
           "agent_stop", "stop_by", "plan_id", "limited_until", "claimed_by_tool", "window",
           "start_token", "armed_by", "armed_at", "run_key",
-          "grant", "last_grant", "app_session")          # docs/253: the arming's scope, its end, the in-app session's id
+          "grant", "last_grant", "app_session",
+          "human_released")                              # a person's "that run was mine, the OPX is free"          # docs/253: the arming's scope, its end, the in-app session's id
 
 
 def _dir(instance_path) -> Path:

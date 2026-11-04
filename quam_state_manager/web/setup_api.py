@@ -105,6 +105,9 @@ def _detect() -> dict:
         return {}
 
 
+# Setup steps only a TERMINAL claude/codex needs (step 1 of the setup page, marked optional there).
+TERMINAL_STEPS = ("connect_claude", "connect_codex", "allow")
+
 page_bp = Blueprint("agent_setup_page", __name__)
 
 
@@ -148,6 +151,9 @@ def setup_status():
         # B-02: a block only in AGENTS.local.md is one Codex never reads -- still to do
         todo.append("context")
     s["todo"] = todo
+    # the terminal steps are optional (the agent inside SM works without them): "N left" counts the rest
+    s["todo_optional"] = [t for t in todo if t in TERMINAL_STEPS]
+    s["todo_required"] = [t for t in todo if t not in TERMINAL_STEPS]
     return jsonify(ok=True, **s)
 
 

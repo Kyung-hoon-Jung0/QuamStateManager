@@ -861,3 +861,17 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 
 .tree-row:has(.ui-tree-mounted) .tree-row-actions,
 .tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help { display: none; }
+
+/* Agent cards: a value from a target the node marked failed (not written unless ticked), the
+   in-page Reject sheet, and a refusal said on the plan card itself. */
+.ag-ap-rows tr.ag-ap-failed td { background: var(--ui-danger-bg); }
+.ag-ap-failed-why { display: block; color: var(--ui-danger-text); font-size: var(--ui-fs-xs); }
+.ag-ap-failed-head { margin: var(--ui-gap-1) 0; padding: var(--ui-gap-1) var(--ui-gap-2); color: var(--ui-danger-text);
+  background: var(--ui-danger-bg); border: var(--ui-bw) solid var(--ui-danger-border); font-size: var(--ui-fs-sm); }
+.ag-ap-pick { width: 2.2em; text-align: center; }
+.ag-ap-pick input { margin: 0; }
+.ag-reject-sheet { display: flex; flex-wrap: wrap; align-items: end; gap: var(--ui-gap-2); }
+.ag-reject-sheet label { flex: 1 1 16em; margin: 0; font-size: var(--ui-fs-sm); }
+.ag-reject-sheet input { margin: var(--ui-gap-1) 0 0; }
+.ag-plan-said { margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-sm); }
+.ag-plan-said .btn-sm { margin-left: var(--ui-gap-2); }

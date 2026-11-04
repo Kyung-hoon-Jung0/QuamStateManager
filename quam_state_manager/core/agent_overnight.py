@@ -83,6 +83,22 @@ def fit_hold(run: dict | None, writes: list[dict]) -> str | None:
     return None
 
 
+def mark_failed_writes(run: dict | None, writes: list[dict]) -> list[dict]:
+    """Copies of *writes*, each one that belongs to a target the node itself marked failed carrying
+    ``failed_target`` + ``failed_outcome``. An approval card shows those apart and does not write
+    them unless a person ticks them; the rest are returned unchanged."""
+    oc = (run or {}).get("outcomes")
+    failed = [(str(t), v) for t, v in oc.items() if _failed_outcome(v)] if isinstance(oc, dict) else []
+    out = []
+    for w in writes or []:
+        w = dict(w)
+        hit = next(((t, v) for t, v in failed if touches(w.get("path"), t)), None)
+        if hit is not None:
+            w["failed_target"], w["failed_outcome"] = hit[0], str(hit[1])
+        out.append(w)
+    return out
+
+
 def gate_verdicts(result: dict, targets: list) -> dict | None:
     """``{target: {"v": "pass" | "fail" | "held", "why": ...}}`` for one finished run, or None
     when the run says nothing about its targets (a person's Stop, a skipped item)."""
