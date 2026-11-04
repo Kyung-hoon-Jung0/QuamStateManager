@@ -35655,13 +35655,22 @@ def _diff_default_refs() -> tuple[str, str]:
     return "", b
 
 
+def _working_source_label(ctx) -> str:
+    """The loaded chip's name in the diff pickers AND its pane header: it says
+    "with unsaved edits" only when the working copy holds edits the chip file
+    does not (the one dirtiness rule, ``_quam_ctx_dirty``)."""
+    if _quam_ctx_dirty(ctx):
+        return "Loaded chip (with unsaved edits)"
+    return "Loaded chip"
+
+
 def _diff_source_options() -> list[dict]:
     """What the two pickers offer: the loaded chip, then its snapshots."""
     out: list[dict] = []
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         out.append({"ref": f"working:{ctx['path']}",
-                    "label": "Loaded chip (with unsaved edits)"})
+                    "label": _working_source_label(ctx)})
     try:
         hm = _history()
         path = ctx.get("path") if ctx else None
@@ -38634,6 +38643,12 @@ def _hub_resolve_one(ref: str):
                 _HUB_SRC_MEMO.move_to_end(ref)
                 return hit[1]
     label_hint = None
+    if scheme == "working":
+        # the pane header says what the picker says (one label rule)
+        for _ctx in (current_app.config.get("contexts") or {}).values():
+            if isinstance(_ctx, dict) and _ctx.get("type") == "quam" and _ctx.get("path") == rest:
+                label_hint = _working_source_label(_ctx)
+                break
     if scheme == "drop" and folder is not None:
         # the stash dir name is a content hash — the human label lives in
         # the meta.json sidecar written by /compare-hub/stash

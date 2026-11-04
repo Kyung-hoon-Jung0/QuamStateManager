@@ -545,7 +545,52 @@ document.addEventListener('htmx:sendError', function(evt) {
     if (t && t.classList && t.classList.contains('config-status-host')) return;
     if (t && t.id === 'state-history-detail') return;
     if (window.showToast) window.showToast("Couldn't reach the app — is it still running? Please retry.", "error");
+    window.diffSendFailed(evt);
 });
+
+// DS-5: a comparison request (sidebar Compare, a /diff tab or source change)
+// that never reached the server used to leave only a toast, with the pane
+// showing whatever was there before. Say so where the user is looking, and
+// offer the same request again.
+window.diffSendFailed = function (evt) {
+    var d = (evt && evt.detail) || {};
+    var cfg = d.requestConfig || {};
+    var path = cfg.path || (d.pathInfo && d.pathInfo.requestPath) || '';
+    if (!/^\/(diff|compare)(\?|\/|$)/.test(path)) return false;
+    var t = d.target;
+    if (!t || !t.id || (t.id !== 'table-pane' && t.id !== 'diff-root')) return false;
+    var host = t;
+    var old = host.querySelector(':scope > .diff-send-failed');
+    if (old) old.remove();
+    var box = document.createElement('div');
+    box.className = 'diff-send-failed diff-wb-msg warn';
+    box.setAttribute('role', 'alert');
+    var msg = document.createElement('span');
+    msg.textContent = 'The comparison request did not reach the app. Nothing was changed. ';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-xs';
+    btn.textContent = 'Retry';
+    var elt = d.elt, verb = (cfg.verb || 'get').toLowerCase();
+    // Retry re-issues THROUGH the source element, so a form's parameters
+    // (the picker's five refs, a sidebar tick list) ride along again; a bare
+    // path would replace the comparison with the default pair.
+    var swap = (elt && elt.getAttribute && elt.getAttribute('hx-swap')) || 'innerHTML';
+    var finalPath = (d.pathInfo && d.pathInfo.finalRequestPath) || path;
+    btn.addEventListener('click', function () {
+        box.remove();
+        if (!window.htmx) return;
+        if (elt && elt.isConnected) {
+            window.htmx.ajax(verb.toUpperCase(), path, { source: elt, target: t, swap: swap });
+        } else {
+            window.htmx.ajax('GET', finalPath, { target: t, swap: swap });
+        }
+    });
+    box.appendChild(msg);
+    box.appendChild(btn);
+    host.insertBefore(box, host.firstChild);
+    return true;
+};
 
 // Global unsaved-edits guard: the pending tray's change_log ("N unsaved") lives
 // only in server memory — nothing writes it to disk until Save — so closing the

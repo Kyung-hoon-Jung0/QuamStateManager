@@ -48,14 +48,15 @@
     <button type="button" class="btn-xs outline dp-depth" data-depth="3">3</button>
     <button type="button" class="btn-xs outline dp-depth" data-depth="99" title="Expand everything">All</button>
   </div>
-  <div class="diff-panes-scroll">
+  <div class="diff-xscroll-hint" hidden></div>
+  <div class="diff-panes-scroll" data-xscroll>
     <table class="diff-panes-table" id="diff-panes-table">
       <thead>
         <tr>
           <th class="dp-key-col">Keys</th>
           {% for src in srcs %}
           {% set i = loop.index0 %}
-          <th class="dp-pane-head{% if i == base %} dp-base{% endif %}" data-i="{{ i }}">
+          <th class="dp-pane-head{% if i == base %} dp-base{% endif %}" data-i="{{ i }}" data-xcol="{{ slots[i] | upper }}">
             <button type="button" class="dp-pane-title" data-i="{{ i }}"
                     title="{{ src.ref }} — click to make this pane the baseline">
               <span class="dp-slot">{{ slots[i] | upper }}</span>
