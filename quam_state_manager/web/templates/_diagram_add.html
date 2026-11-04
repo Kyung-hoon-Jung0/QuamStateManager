@@ -49,6 +49,7 @@
     <p class="ui-note">New pair <span class="ui-chip">{{ plan.summary.name }}</span>: control {{ plan.summary.control }}, target {{ plan.summary.target }}, shaped like {{ plan.summary.template }}.</p>
     {% endif %}
   {% endif %}
+    {% if auto_push %}<p class="ui-note" data-cm-add-autosync>Auto-Sync is on: staging this writes it to the chip at once.</p>{% endif %}
     <div class="ui-actions">
       {% if kind == 'pair' and not plan.error %}<button type="button" class="btn-sm outline secondary" data-cm-add-swap data-a="{{ b }}" data-b="{{ a }}">Swap control and target</button>{% endif %}
       {% if kind == 'qubit' or not plan.error %}<button type="submit" class="btn-sm">Review the change</button>{% endif %}

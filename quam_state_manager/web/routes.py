@@ -1017,6 +1017,70 @@ def _live_write_critical(view):
     return wrapped
 
 
+#: Live-write presses in flight, per working-copy context: a press saves the
+#: working copy (clearing the change log) and journals the outgoing edits only
+#: once the live write is decided. An undo/redo arriving in that window saw an
+#: empty log and walked the journal, undoing an OLDER action while the newest
+#: one stayed in effect. Undo and redo wait here for the press to finish.
+_PRESS_CV = threading.Condition()
+_PRESS_INFLIGHT: dict[int, dict[int, int]] = {}   # id(ctx) -> {thread id: depth}
+_PRESS_WAIT_S = 60.0
+
+
+def _press_ctx_key():
+    try:
+        ctx = _active_ctx()
+    except Exception:  # noqa: BLE001 -- no context: nothing to serialise with
+        return None
+    return id(ctx) if ctx else None
+
+
+def _press_busy_refusal(ctx, verb: str = "undone"):
+    """Undo/redo wait for an in-flight push to the chip; a push that never ends
+    is answered 409 rather than undoing the wrong action."""
+    if _wait_for_presses(ctx):
+        return None
+    return render_template(
+        "_status.html", level="warning",
+        message=f"Nothing {verb}: the chip is still being written. Press again in a moment."), 409
+
+
+def _journal_press(view):
+    """Mark the view as a live-write press on the active context while it runs."""
+    @functools.wraps(view)
+    def wrapped(*a, **k):
+        key = _press_ctx_key()
+        if key is None:
+            return view(*a, **k)
+        tid = threading.get_ident()
+        with _PRESS_CV:
+            per = _PRESS_INFLIGHT.setdefault(key, {})
+            per[tid] = per.get(tid, 0) + 1
+        try:
+            return view(*a, **k)
+        finally:
+            with _PRESS_CV:
+                per = _PRESS_INFLIGHT.get(key, {})
+                per[tid] = per.get(tid, 1) - 1
+                if per[tid] <= 0:
+                    per.pop(tid, None)
+                if not per:
+                    _PRESS_INFLIGHT.pop(key, None)
+                _PRESS_CV.notify_all()
+    return wrapped
+
+
+def _wait_for_presses(ctx, timeout: float = _PRESS_WAIT_S) -> bool:
+    """Block until no OTHER thread is pushing *ctx* to the chip. False on timeout."""
+    if not ctx:
+        return True
+    key, tid = id(ctx), threading.get_ident()
+    with _PRESS_CV:
+        return _PRESS_CV.wait_for(
+            lambda: not any(t != tid for t in _PRESS_INFLIGHT.get(key, {})),
+            timeout=timeout)
+
+
 def _store_uid(store) -> int:
     """A process-unique id for one QuamStore object (``id()`` can be reused
     by a later store after this one is collected; this never is)."""
@@ -29424,6 +29488,7 @@ def _search_pointer_targets(results) -> dict[str, dict]:
 
 
 @bp.route("/save", methods=["POST"])
+@_journal_press
 def save():
     # Capture the context up front so the build lock below pins to THIS folder
     # even if a concurrent /load flips the active context mid-request.
@@ -29610,6 +29675,9 @@ def undo():
     guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
     if guard is not None:
         return guard
+    busy = _press_busy_refusal(ctx)
+    if busy is not None:
+        return busy
     _journal_sync(ctx)      # docs/160 C: another window may have written the journal
 
     # docs/190 F06/F07 (stress 2026-09-16): two windows share ONE change log,
@@ -30501,6 +30569,9 @@ def redo():
     guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
     if guard is not None:
         return guard
+    busy = _press_busy_refusal(ctx, "redone")
+    if busy is not None:
+        return busy
     if request.headers.get("X-SM-Agent"):
         # docs/246: redo un-stages a person's journal step or walks the
         # applied history FORWARD onto the live chip -- a person's key. An
@@ -33222,6 +33293,7 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
 
 @bp.route("/state/sync", methods=["POST"])
 @_live_write_critical
+@_journal_press
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
 
@@ -34443,6 +34515,7 @@ def _apply_stale_refusal(ctx, store, _auto):
 
 @bp.route("/state/apply-to-live", methods=["POST"])
 @_live_write_critical
+@_journal_press
 def state_apply_to_live():
     """Push the working copy's state + wiring to the live chip.
 

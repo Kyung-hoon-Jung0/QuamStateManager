@@ -246,3 +246,24 @@ class TestRoutes:
         c.get("/diagram-add/panel?kind=qubit")
         c.get("/api/diagram-add/ports?feedline=con2/6/1&drive_rf=5.2e9")
         assert time.perf_counter() - t < 2.0
+
+
+class TestAutoSyncNote:
+    """With Auto-Sync pushing, a stage reaches the chip at once; the panel says so."""
+
+    def _ctx(self, env):
+        return next(iter(env["app"].config["contexts"].values()))
+
+    @pytest.mark.parametrize("kind", ["qubit", "pair&a=q1&b=q2"])
+    def test_the_note_shows_only_while_auto_sync_pushes(self, env, kind):
+        from quam_state_manager.web import routes as R
+        ctx = self._ctx(env)
+        ctx.pop("auto_apply", None)
+        html = env["c"].get(f"/diagram-add/panel?kind={kind}").get_data(as_text=True)
+        assert "data-cm-add-autosync" not in html
+        ctx["auto_apply"] = R._new_auto_session(pull=True, pull_replace=False, push=False)
+        html = env["c"].get(f"/diagram-add/panel?kind={kind}").get_data(as_text=True)
+        assert "data-cm-add-autosync" not in html
+        ctx["auto_apply"] = R._new_auto_session(pull=True, pull_replace=False, push=True)
+        html = env["c"].get(f"/diagram-add/panel?kind={kind}").get_data(as_text=True)
+        assert "data-cm-add-autosync" in html and "writes it to the chip at once" in html

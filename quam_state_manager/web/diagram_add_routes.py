@@ -81,7 +81,8 @@ def diagram_add_panel():
             plan = da.plan_pair(m, a, b)
             return render_template("_diagram_add.html", kind="pair", a=a, b=b, plan=plan,
                                    rows=da.review_rows(plan) if not plan.get("error") else [],
-                                   expect_chip=R._active_chip_token() or "")
+                                   expect_chip=R._active_chip_token() or "",
+                                   auto_push=bool(R._auto_apply_state()))
         feedline = request.args.get("feedline") or None
         of = request.args.get("feedline_of")
         if of:
@@ -94,7 +95,8 @@ def diagram_add_panel():
                                      prefer_band=d["band"])
         flux = da.flux_candidates(inv) if d["has_flux"] else []
     return render_template("_diagram_add.html", kind="qubit", d=d, drive=drive, flux=flux,
-                           expect_chip=R._active_chip_token() or "")
+                           expect_chip=R._active_chip_token() or "",
+                           auto_push=bool(R._auto_apply_state()))
 
 
 @bp.route("/api/diagram-add/ports")
