@@ -128,3 +128,19 @@ def test_values_are_copied_and_shown_whole_selfcheck():
         pytest.skip("jsdom not installed")
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert proc.stdout.count("ok - ") >= 12, proc.stdout
+
+
+class TestCoherenceKeyMetricHasAUnit:
+    """A T1 node storing ``t1`` in ns printed a bare 32535.7335."""
+
+    def test_lowercase_t1_in_ns_reads_microseconds(self):
+        r = _run("25_T1", {"qA1": {"t1": 32535.733543954386, "t1_error": 1694.0, "success": True}})
+        assert DatasetStore._extract_key_metric(r) == "32.54 µs"
+
+    def test_t2_echo_in_seconds_reads_microseconds(self):
+        r = _run("26_echo", {"qA1": {"T2_echo": 3.486326329943691e-05, "success": True}})
+        assert DatasetStore._extract_key_metric(r) == "34.86 µs"
+
+    def test_a_non_coherence_key_stays_unitless(self):
+        r = _run("99_other", {"qA1": {"tau_ratio": 12.5}})
+        assert DatasetStore._extract_key_metric(r) == "12.5000"

@@ -123,12 +123,28 @@ class QueryEngine:
         self._qubit_cache: dict[str, dict[str, Any]] = {}
         self._pair_cache: dict[str, dict[str, Any]] = {}
         self._topology_cache: dict[str, Any] | None = None
+        # The caches are valid for ONE store generation. Every write door bumps
+        # ``store.mutation_seq`` (and a reload replaces ``store.merged``), so a
+        # door that forgets ``invalidate_cache`` can no longer serve old values.
+        self._cache_gen: tuple[int, int] | None = None
+
+    def _store_gen(self) -> tuple[int, int]:
+        return (self.store.mutation_seq, id(self.store.merged))
+
+    def _check_gen(self) -> None:
+        gen = self._store_gen()
+        if gen != self._cache_gen:
+            self._qubit_cache.clear()
+            self._pair_cache.clear()
+            self._topology_cache = None
+            self._cache_gen = gen
 
     def invalidate_cache(self) -> None:
         """Clear cached qubit/pair/topology resolutions (call after store mutation)."""
         self._qubit_cache.clear()
         self._pair_cache.clear()
         self._topology_cache = None
+        self._cache_gen = None
 
     # ------------------------------------------------------------------
     # Single qubit
@@ -142,6 +158,7 @@ class QueryEngine:
 
         Raises ``KeyError`` if the qubit doesn't exist.
         """
+        self._check_gen()
         cached = self._qubit_cache.get(name)
         if cached is not None:
             return cached
@@ -282,6 +299,7 @@ class QueryEngine:
 
         Raises ``KeyError`` if the pair doesn't exist.
         """
+        self._check_gen()
         cached = self._pair_cache.get(name)
         if cached is not None:
             return cached
@@ -677,6 +695,7 @@ class QueryEngine:
         recomputes. ``_parts=False`` is the cold path the randomized pin
         compares against.
         """
+        self._check_gen()
         if self._topology_cache is not None:
             return self._topology_cache
         seq = self.store.mutation_seq   # see get_qubit: guard the fill against races
@@ -1745,6 +1764,16 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                 # below), newer lab-A data nests e.g. StandardRB.average_gate_fidelity
                 # or Bell_State.Fidelity. Without this, downstream readers of
                 # ``gf.value`` (2Q RB panels, Overview tiles) skip every pair.
+                level = _rb_level(metric_name)
+                epc = metric_val.get("error_per_clifford")
+                if "value" not in entry and level == "clifford"                         and isinstance(epc, (int, float)) and not isinstance(epc, bool):
+                    # docs/138: a per-Clifford row reads 1 - EPC. The dict's
+                    # average_gate_fidelity is the PER-GATE number; it goes in
+                    # the per-gate slot, never under the per-Clifford label.
+                    entry["value"] = 1.0 - epc
+                    agf = metric_val.get("average_gate_fidelity")
+                    if isinstance(agf, (int, float)) and not isinstance(agf, bool):
+                        entry["derived_gate_fidelity"] = agf
                 if "value" not in entry:
                     for vk in ("average_gate_fidelity", "Fidelity", "fidelity"):
                         if isinstance(metric_val.get(vk), (int, float)):
@@ -1752,7 +1781,7 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                             break
                 if len(entry) > 2:  # has at least one numeric value
                     entry["load_id"] = gate_load_id
-                    entry["level"] = _rb_level(metric_name)
+                    entry["level"] = level
                     entry["family"] = fidelity_family(metric_name)
                     results.append(_gate_fidelity_row(entry))
             elif isinstance(metric_val, (int, float)):

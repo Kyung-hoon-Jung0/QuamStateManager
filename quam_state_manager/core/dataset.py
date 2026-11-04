@@ -60,7 +60,9 @@ _COLD_SCAN_BUDGET_S = 3.0
 # v4 (UX round, P1-2): every run carries ``writes`` -- how many state patches
 # its node.json lists -- for the run list's "wrote state" mark; a v3 row has
 # none and would mark nothing.
-_STORE_CACHE_V = 4
+# v5: a coherence-time key metric carries its unit; a v4 row re-served the
+# bare number.
+_STORE_CACHE_V = 5
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -3246,7 +3248,15 @@ class DatasetStore:
                 # by _format_metric); any other key stays unit-less
                 lk = key.lower()
                 unit = "Hz" if ("freq" in lk or lk.endswith("_hz")) else ""
-                return _format_metric(val, unit) if math.isfinite(val) else ""
+                if not math.isfinite(val):
+                    return ""
+                if _COHERENCE_KEY.match(lk):
+                    # a coherence time carries its unit too. Nodes store it in
+                    # seconds (T2_echo 3.5e-05) or in ns (t1 32535.7); a
+                    # coherence of one second or more is not a real value in
+                    # seconds, so a magnitude >= 1 reads as ns. [derived]
+                    return _format_metric(val * 1e-9 if abs(val) >= 1 else val, "s")
+                return _format_metric(val, unit)
 
         return ""
 
@@ -3390,6 +3400,10 @@ class DatasetStore:
         if categorized["Other"]:
             result.append({"label": "Other", "experiments": categorized["Other"]})
         return result
+
+
+#: Fit keys that carry a coherence time (T1, T2, T2*, T2_echo, t1, t2_ramsey ...).
+_COHERENCE_KEY = re.compile(r"^t(1|2)(_?(star|echo|ramsey|\*))?$")
 
 
 def _format_metric(val: float, unit: str) -> str:

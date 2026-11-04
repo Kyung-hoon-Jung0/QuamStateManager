@@ -482,3 +482,28 @@ def test_rb_clifford_bridge_selfcheck_passes():
         pytest.skip("jsdom not installed (run `npm install jsdom`)")
     assert r.returncode == 0, (r.stdout + r.stderr)
     assert "rb_clifford_bridge_selfcheck ok" in r.stdout, (r.stdout + r.stderr)
+
+
+class TestStandardRbDictReadsOneMinusEpc:
+    """A StandardRB stored as {error_per_clifford, average_gate_fidelity, alpha}:
+    the per-Clifford row is 1 - EPC, the stored per-gate value rides beside it."""
+
+    def test_dict_srb_value_is_one_minus_epc(self):
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz_unipolar": {"fidelity": {"StandardRB": {
+            "error_per_clifford": 0.04232, "average_gate_fidelity": 0.99173, "alpha": 0.94357}}}})
+        srb = [r for r in rows if r["level"] == "clifford"]
+        assert len(srb) == 1
+        assert srb[0]["value"] == pytest.approx(1 - 0.04232)
+        assert srb[0]["derived_gate_fidelity"] == pytest.approx(0.99173)
+
+    def test_bare_float_srb_unchanged(self):
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {"StandardRB": 0.2949}}})
+        assert rows[0]["value"] == pytest.approx(0.2949)
+
+    def test_interleaved_dict_keeps_its_gate_fidelity(self):
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {"InterleavedRB": {
+            "average_gate_fidelity": 0.991}}}})
+        assert rows[0]["value"] == pytest.approx(0.991)
