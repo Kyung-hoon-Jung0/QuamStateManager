@@ -124,3 +124,16 @@ def test_a_folded_root_says_so_and_how_many_runs_it_holds(client):
     assert ("#sidebar details.tree-root:not([open]) > summary.tree-root-label::before "
             "{ content: var(--ui-disclosure-marker); }") in kit
     c.post("/workspace/remove", data={"folder": str(root)}, headers={"HX-Request": "true"})
+
+
+@pytest.mark.parametrize("url", ["/datasets", "/collections", "/trends"])
+def test_an_empty_runs_page_refills_when_a_data_folder_is_added(client, url):
+    """walk F31: after Dataset Load the sidebar listed the runs while this page
+    kept saying "Add a data folder"; the add route's workspaceRootsChanged now
+    re-reads it."""
+    c, _ = client
+    html = c.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "Dataset Load" in html
+    tag = html.split('class="welcome"', 1)[1].split(">", 1)[0]
+    assert 'hx-trigger="workspaceRootsChanged from:body"' in tag
+    assert f'hx-get="{url}"' in tag and 'hx-target="#table-pane"' in tag
