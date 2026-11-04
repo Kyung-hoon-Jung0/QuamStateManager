@@ -27,23 +27,24 @@
     </ul>
 </nav>
 
-<table id="resonators-table" data-refresh-rows data-refresh-url="{{ refresh_url('/resonators') }}" class="data-table ui-num-3 ui-num-4 ui-num-5 ui-num-6 ui-num-7 ui-num-8 ui-num-9 ui-num-10" role="grid">
+<table id="resonators-table" data-refresh-rows data-refresh-url="{{ refresh_url('/resonators') }}" class="data-table ui-num-3 ui-num-4 ui-num-5 ui-num-6 ui-num-7 ui-num-8 ui-num-9 ui-num-10 ui-num-11" role="grid">
     <thead>
         <tr>
             <th class="sortable" data-col="0" data-type="str">ID</th>
             <th class="sortable" data-col="1" data-type="str">Active</th>
-            <th class="sortable" data-col="2" data-type="num">Readout Freq <span class="unit">(GHz)</span></th>
+            <th class="sortable" data-col="2" data-type="num" title="resonator.f_01: the resonator frequency the calibration stored. The hardware plays the RF column, not this one.">Resonator f<sub>01</sub> <span class="unit">(GHz)</span></th>
+            <th class="sortable" data-col="3" data-type="num" title="resonator.RF_frequency: what the hardware plays, RF = LO + IF">Readout RF <span class="unit">(GHz)</span></th>
             {# P1-13 (UX round): the readout LO and IF, through the port chain #}
-            <th class="sortable" data-col="3" data-type="num" title="Readout LO: the channel's LO_frequency or its output port's upconverter">LO <span class="unit">(GHz)</span></th>
-            <th class="sortable" data-col="4" data-type="num" title="Readout IF = RF - LO">IF <span class="unit">(MHz)</span></th>
-            <th class="sortable" data-col="5" data-type="num">Amplitude</th>
+            <th class="sortable" data-col="4" data-type="num" title="Readout LO: the channel's LO_frequency or its output port's upconverter">LO <span class="unit">(GHz)</span></th>
+            <th class="sortable" data-col="5" data-type="num" title="Readout IF = RF - LO (the Readout RF column, not f_01)">IF <span class="unit">(MHz)</span></th>
+            <th class="sortable" data-col="6" data-type="num">Amplitude</th>
             {# docs/109: the TRUE readout output power — unit follows the global
                MW-power setting (Settings), sort key stays dBm via data-sort. #}
-            <th class="sortable" data-col="6" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
-            <th class="sortable" data-col="7" data-type="num">Length <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="8" data-type="num">Threshold</th>
-            <th class="sortable" data-col="9" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
-            <th class="sortable" data-col="10" data-type="str">Grid</th>
+            <th class="sortable" data-col="7" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="8" data-type="num">Length <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="9" data-type="num">Threshold</th>
+            <th class="sortable" data-col="10" data-type="num">Time of Flight <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="11" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
@@ -54,6 +55,7 @@
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
             {% set _rf = (ro_freq or {}).get(q.id) or {} %}
+            {% if _rf.rf_hz is defined and _rf.rf_hz is not none %}<td>{{ _rf.rf_hz | qty('readout_frequency') }}</td>{% else %}<td data-sort="-"><span class="muted" title="The readout channel's RF_frequency does not resolve to a number">-</span></td>{% endif %}
             {% if _rf.lo_hz is defined and _rf.lo_hz is not none %}<td>{{ _rf.lo_hz | qty('LO_frequency') }}</td>{% else %}<td data-sort="-"><span class="muted" title="The readout channel's LO does not resolve (no LO_frequency and no output-port upconverter)">-</span></td>{% endif %}
             {% if _rf.if_hz is defined and _rf.if_hz is not none %}<td>{{ _rf.if_hz | qty('intermediate_frequency') }}</td>{% else %}<td data-sort="-"><span class="muted" title="The readout IF cannot be read: RF or LO is not a number">-</span></td>{% endif %}
             <td>{% if q.readout_amplitude is none %}-{% elif q.readout_amplitude is number %}{{ "%.4f" | format(q.readout_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.readout_amplitude }}&quot;</span>{% endif %}</td>
@@ -66,7 +68,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="11" class="ui-state ui-state--empty">No resonators found in this state file.</td></tr>
+        <tr><td colspan="12" class="ui-state ui-state--empty">No resonators found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>

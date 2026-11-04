@@ -519,7 +519,7 @@ class TestResonators:
         resp = loaded_client.get("/resonators")
         assert resp.status_code == 200
         assert b"qA1" in resp.data
-        assert b"Readout Freq" in resp.data
+        assert b"Readout RF" in resp.data
 
     def test_resonators_row_opens_qubit_inspector(self, loaded_client):
         html = loaded_client.get("/resonators").data.decode()

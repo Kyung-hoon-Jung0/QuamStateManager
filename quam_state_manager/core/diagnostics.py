@@ -1689,6 +1689,30 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
     return None, payload.get("error")
 
 
+def _reaches_config(root: dict, path: str) -> bool:
+    """True when the pulse at *path* is built by ``generate_config()``: it
+    sits in a channel's ``operations`` dict, or some ``operations`` entry is
+    an absolute pointer to it (an alias op plays the whole object). A gate
+    macro's own pulse object reached only by field pointers is not built."""
+    segs = path.split(".")
+    if len(segs) >= 2 and segs[-2] == "operations":
+        return True
+    target = "#/" + "/".join(segs)
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            ops = node.get("operations")
+            if isinstance(ops, dict) and any(
+                    isinstance(v, str) and v.rstrip("/") == target
+                    for v in ops.values()):
+                return True
+            stack.extend(v for v in node.values() if isinstance(v, (dict, list)))
+        elif isinstance(node, list):
+            stack.extend(v for v in node if isinstance(v, (dict, list)))
+    return False
+
+
 def _waveform_findings(store, only: tuple[str, str] | None = None) -> list[Finding]:
     """Out-of-DAC-range (and invalid-parameter) waveform samples — see the
     section comment above. Pure + in-process (numpy/scipy synth, no QM stack).
@@ -1719,12 +1743,27 @@ def _waveform_findings_ex(store, only: tuple[str, str] | None = None
 
         peak, hard_error = _pulse_peak(store, row)
         if hard_error:
-            findings.append(Finding(
-                "error", "waveform_invalid", path,
-                "pulse parameters produce an invalid waveform — "
-                "machine.generate_config() would raise",
-                detail=str(hard_error), jump_path=path,
-            ))
+            if _reaches_config(root, path):
+                findings.append(Finding(
+                    "error", "waveform_invalid", path,
+                    "pulse parameters produce an invalid waveform — "
+                    "machine.generate_config() would raise",
+                    detail=str(hard_error), jump_path=path,
+                ))
+            else:
+                # Only pulses in a channel's ``operations`` (or an operation
+                # that points at the whole object) are built by
+                # generate_config(); a gate macro's own pulse object is not.
+                # Its waveform raises only if code computes it directly, so a
+                # node run is not blocked by it.
+                findings.append(Finding(
+                    "warning", "waveform_invalid", path,
+                    "pulse parameters are inconsistent — computing this "
+                    "object's waveform would raise; it is not a channel "
+                    "operation, so machine.generate_config() does not build "
+                    "it and a node run is not blocked",
+                    detail=str(hard_error), jump_path=path,
+                ))
             continue
         if peak is None:
             continue
