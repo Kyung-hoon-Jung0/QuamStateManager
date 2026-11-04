@@ -3220,7 +3220,7 @@ def _agent_running_text(lock: dict) -> str:
     """The refusal a person reads while the agent's node runs: what holds the chip, until when,
     and the way out (the screen shows ``error``; the code rides ``code``)."""
     return (f"The agent is running {lock.get('node') or 'a node'} on this chip, so edits wait until its run ends "
-            "(the new values it measures land on this working copy). Your typed value is kept: commit it "
+            "(the new values it measures land on this working copy). Nothing was changed: do it "
             "again after the run, or press Stop on the Agent page to end the run now.")
 
 

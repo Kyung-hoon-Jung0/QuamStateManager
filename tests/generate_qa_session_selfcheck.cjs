@@ -1947,6 +1947,19 @@ function toStep4(win, G, n) {
       'rv: … and the draft written after it keeps the outcome, not the stale pending record');
   })();
 
+  (function w2_10RegenDoesNotOfferTheLastGenerateFolder() {
+    // W2-10: the last Generate's output folder holds THAT chip; a
+    // re-generate of another chip must not be pre-filled with it
+    const local = { quam_gen_output_path: 'D:/x/newchip/quam_state' };
+    const r = makeWorld({ regen: true, local: local });
+    ok($(r.win, 'gen-output-path').value === '',
+      'W2-10: Re-generate does not pre-fill the last Generate folder (got "' +
+      $(r.win, 'gen-output-path').value + '")');
+    const g = makeWorld({ local: local });
+    ok($(g.win, 'gen-output-path').value === 'D:/x/newchip/quam_state',
+      'W2-10: plain Generate still recalls its own last folder');
+  })();
+
   if (fails) {
     console.error('generate_qa_session_selfcheck: ' + fails + ' FAILURES');
     process.exit(1);

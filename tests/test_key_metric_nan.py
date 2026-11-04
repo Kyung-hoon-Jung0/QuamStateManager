@@ -198,8 +198,9 @@ class TestCoherenceKeyMetricHasAUnit:
         assert DatasetStore._extract_key_metric(r) == "34.86 µs"
 
     def test_a_non_coherence_key_stays_unitless(self):
+        # no unit is invented; W2-11: the number names its field instead
         r = _run("99_other", {"qA1": {"tau_ratio": 12.5}})
-        assert DatasetStore._extract_key_metric(r) == "12.5000"
+        assert DatasetStore._extract_key_metric(r) == "tau_ratio 12.5000"
 
 
 class TestRamseyHeadlineIsT2Star:

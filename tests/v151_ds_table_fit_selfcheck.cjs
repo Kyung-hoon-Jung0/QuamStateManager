@@ -52,7 +52,7 @@ const widths = (w) => Array.from(w.document.querySelectorAll('#datasets-colgroup
     ok(sum <= PANE, 'the columns fit the ' + PANE + ' px pane: ' + sum + ' px ' + JSON.stringify(cols));
     const get = (k) => (cols.find((c) => c[0] === k) || [])[1];
     ok(get('exp') >= 150 && get('tags') >= 96, 'Experiment and Tags keep a readable width: ' + get('exp') + ' / ' + get('tags'));
-    ok(get('id') === 58 && get('status') === 104, 'the fixed columns are untouched');
+    ok(get('id') === 58 && get('status') === 124, 'the fixed columns are untouched (status 124: W2-11, "all failed" fits)');
 
     const u = boot({ quam_ds_col_widths: JSON.stringify({ exp: 300 }) });
     await tick();
