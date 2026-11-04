@@ -171,14 +171,22 @@ class SimWriter:
         self.log.append(out)
         return out
 
+    def state_leaves(self) -> dict:
+        from quam_state_manager.core.autofit.writer import flat_leaves
+        return flat_leaves(self.chip.state)
+
     def restore_values(self, rows, *, label: str) -> dict:
-        paths = []
+        paths, conflicts = [], []
         for r in rows:
             old = self._safe_get(r["path"])
+            if "expect" in r and not _eq(old, r["expect"]):
+                conflicts.append({"path": r["path"],
+                                  "reason": f"CAS: current={old!r}"})
+                continue
             self.chip.set(r["path"], r["value"])
             paths.append({"path": r["path"], "old": old, "new": r["value"]})
         out = {"ok": True, "action": "restored", "group_id": f"sim:{label}",
-               "paths": paths, "error": None, "conflicts": []}
+               "paths": paths, "error": None, "conflicts": conflicts}
         self.log.append(out)
         return out
 

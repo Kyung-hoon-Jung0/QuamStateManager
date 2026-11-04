@@ -164,7 +164,11 @@ class PlanEngine:
         self.plan = plan
         self.targets = list(targets)
         self.backend = backend
-        self.writer = writer
+        # every value the plan itself puts on the chip is remembered as the
+        # LAST value it wrote there, so the review-mode restore is a CAS: a
+        # path whose value moved since (an outside save) is never clobbered
+        self._plan_last: dict[str, Any] = {}
+        self.writer = _TrackingWriter(writer, self._note_written)
         self.auditor = auditor
         self.autonomy = autonomy or plan.autonomy
         self.snapshot_fn = snapshot_fn or (lambda label: None)
@@ -302,6 +306,78 @@ class PlanEngine:
         if dotted not in self._preplan_values:
             self._preplan_values[dotted] = old_value
 
+    def _note_written(self, dotted: str, new_value) -> None:
+        if dotted:
+            self._plan_last[dotted] = new_value
+
+    def _leaves(self) -> dict | None:
+        """The chip's state leaves right now, or None when the writer cannot
+        list them (then only the run's own patches are known)."""
+        fn = getattr(self.writer, "state_leaves", None)
+        if not callable(fn):
+            return None
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 -- unknown, never a crash
+            logger.exception("autofit: reading the chip's leaves failed")
+            return None
+
+    def _step_delta(self, pre: dict | None) -> list[dict]:
+        """What the step changed on the chip, as replace-patches. A node of
+        the current generation records no ``patches`` in its node.json, so the
+        chip before and after the run is the only record of what it wrote."""
+        if pre is None:
+            return []
+        refresh = getattr(self.writer, "refresh", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:  # noqa: BLE001
+                logger.exception("autofit: refresh after the run failed")
+        post = self._leaves()
+        if post is None:
+            return []
+        out = []
+        for path in sorted(set(pre) | set(post)):
+            a = pre.get(path, _MISSING)
+            b = post.get(path, _MISSING)
+            if b is _MISSING:
+                continue          # a removed key: nothing a CAS can guard
+            if a is not _MISSING and _same(a, b):
+                continue
+            out.append({"op": "replace" if a is not _MISSING else "add",
+                        "path": "/" + "/".join(path.split(".")),
+                        "old": None if a is _MISSING else a, "value": b})
+        for p in out:
+            dotted = patch_path_to_dotted(p["path"])
+            self._record_preplan(dotted, p["old"])
+            self._note_written(dotted, p["value"])
+        return out
+
+    def _revert_unjudged(self, step: Step, delta: list[dict], why: str) -> None:
+        """A run that ended without a verdict (node failed, item failed,
+        aborted) may still have saved values. Nothing judged them, so they
+        go back in every autonomy (CAS: a newer outside value stays)."""
+        patches = [p for p in delta if p.get("op") == "replace"]
+        if not patches:
+            return
+        out = self.writer.revert_patches(patches, label=f"{step.id}:{why}")
+        self._ledger("unjudged_reverted", step=step.id, why=why, **out)
+        conflicts = out.get("conflicts") or []
+        put_back = len(out.get("paths") or [])
+        with self._lock:
+            self.state["review_queue"].append({
+                "step_id": step.id, "target": "(run)",
+                "reason": (f"the run ended {why} and had saved "
+                           f"{len(patches)} value(s): {put_back} put back"
+                           + (f", {len(conflicts)} left because they changed "
+                              "since" if conflicts else "")),
+                "failure_mode": None, "reverted": put_back > 0,
+                "verdict": {"paths": [patch_path_to_dotted(p["path"])
+                                      for p in patches]},
+            })
+        self._persist()
+
     # ---- the plan loop ---------------------------------------------------
 
     def _run(self) -> None:
@@ -361,7 +437,7 @@ class PlanEngine:
                                  contradictions=len(rep.findings))
             except Exception:  # noqa: BLE001 — a review must not lose a night
                 logger.exception("consistency review failed")
-            if self.autonomy == "review" and not self.abort_event.is_set():
+            if self.autonomy == "review":
                 self._end_restore()
             with self._lock:
                 self.state["status"] = ("aborted" if self.abort_event.is_set()
@@ -377,6 +453,11 @@ class PlanEngine:
                          stopped_reason=self.state.get("stopped_reason"))
         except Exception as exc:  # noqa: BLE001 — the engine must never die silently
             logger.exception("autofit plan crashed")
+            if self.autonomy == "review":
+                try:
+                    self._end_restore()
+                except Exception:  # noqa: BLE001
+                    logger.exception("review restore after a crash failed")
             with self._lock:
                 self.state["status"] = "failed"
                 self.state["error"] = str(exc)
@@ -424,12 +505,22 @@ class PlanEngine:
             self._ledger("step_started", step=step.id, attempt=attempt,
                          targets=pending, params=params)
 
+            pre = self._leaves()
             res = self.backend.run_step(step, pending, params, attempt,
                                         self.abort_event)
+            delta = self._step_delta(pre)
             if res.status == "aborted" or self.abort_event.is_set():
                 for t in pending:
                     self._cell(step.id, t, "aborted")
+                self._revert_unjudged(step, delta, "aborted")
                 return
+            if res.run is not None and not res.run.get("patches") and delta:
+                # the node wrote but recorded no patches: the chip's own
+                # before/after is the record (the gates' pre-update anchor,
+                # the reject revert and the review restore all read it)
+                res.run = dict(res.run, patches=delta)
+            elif res.run is None and res.status != "skipped" and delta:
+                self._revert_unjudged(step, delta, f"with status {res.status}")
             if res.status == "skipped":
                 # benign non-run (dry-run refusal / no sim generator): record
                 # and move on — never a defer, never a halt
@@ -1176,10 +1267,67 @@ class PlanEngine:
                     "verdict": {"paths": unrestorable},
                 })
             self._persist()
+        for r in rows:
+            if r["path"] in self._plan_last:
+                r["expect"] = self._plan_last[r["path"]]
         if not rows:
+            with self._lock:
+                self.state["restore"] = {
+                    "status": "nothing", "restored": 0, "kept": [],
+                    "unrestorable": unrestorable, "error": None}
+            self._persist()
             return
         out = self.writer.restore_values(rows, label="plan-end restore")
         self._ledger("plan_restored", **out)
+        kept = [c.get("path") for c in (out.get("conflicts") or [])]
+        restored = len(out.get("paths") or [])
+        if not out.get("ok"):
+            status = "failed"
+        elif kept or unrestorable:
+            status = "partial"
+        else:
+            status = "restored"
+        with self._lock:
+            self.state["restore"] = {
+                "status": status, "restored": restored, "kept": kept,
+                "unrestorable": unrestorable, "error": out.get("error")}
+        self._persist()
+
+
+_MISSING = object()
+
+
+def _same(a, b) -> bool:
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
+            and not isinstance(a, bool) and not isinstance(b, bool):
+        return a == b or (a != a and b != b)
+    return a == b
+
+
+class _TrackingWriter:
+    """The engine's writer, telling the engine every value it wrote."""
+
+    def __init__(self, inner, note):
+        self._inner = inner
+        self._note = note
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def _seen(self, out):
+        for p in (out or {}).get("paths") or []:
+            self._note(patch_path_to_dotted(str(p.get("path", ""))),
+                       p.get("new"))
+        return out
+
+    def apply_rows(self, rows, *, label):
+        return self._seen(self._inner.apply_rows(rows, label=label))
+
+    def revert_patches(self, patches, *, label):
+        return self._seen(self._inner.revert_patches(patches, label=label))
+
+    def restore_values(self, rows, *, label):
+        return self._seen(self._inner.restore_values(rows, label=label))
 
 
 def _patch_target(p: dict) -> str | None:
