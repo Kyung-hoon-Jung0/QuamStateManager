@@ -1093,7 +1093,7 @@ window.TopoGraph = (function () {
       var y = (i + 0.5) * SP;
       out += '<g class="cm-dir-ghost" data-cm="' + rows[i][0] + '" role="button" tabindex="0" aria-label="' +
              esc(rows[i][2]) + '"><circle class="cm-dir-ghost-stone" cx="' + x + '" cy="' + y + '" r="' + R + '"/>' +
-             '<text class="cm-dir-ghost-text" font-size="' + font + '" x="' + x + '" y="' + y +
+             '<text class="cm-dir-ghost-text" font-size="' + (i ? font : Math.round(font * 2)) + '" x="' + x + '" y="' + y +
              '" text-anchor="middle" dominant-baseline="central">' + esc(rows[i][1]) + "</text>" +
              "<title>" + esc(rows[i][2]) + "</title></g>";
     }

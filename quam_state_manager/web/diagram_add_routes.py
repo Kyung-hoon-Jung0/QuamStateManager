@@ -182,5 +182,7 @@ def diagram_add_stage():
         message=(f"Added {what} to the working copy ({len(plan['creates'])} new "
                  "subtrees). Review, then Apply to live; Ctrl+Z takes it all back."))
     resp = make_response(msg + "\n" + R._tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed, diagram-added"
+    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    # after the swap: the page refresh carries this result line over
+    resp.headers["HX-Trigger-After-Settle"] = "diagram-added"
     return R._lab_toast(resp)
