@@ -15,7 +15,7 @@ const ROOT = path.join(__dirname, '..', 'quam_state_manager', 'web');
 let fails = 0, passes = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { passes++; console.log('ok - ' + m); } }
 
-const ready = { qubits: ['qA1', 'qA2', 'qB1'], qubit_pairs: ['qA2-qA1'] };
+const ready = { qubits: ['q1', 'q2', 'q3'], qubit_pairs: ['q2-q1'] };
 const dom = new JSDOM('<!doctype html><html><body>'
   + "<div id='autofit-readiness' data-readiness='" + JSON.stringify(ready) + "'></div>"
   + '<select id="autofit-preset"><option value="1q">1q</option></select>'
@@ -49,11 +49,11 @@ const picked = () => Array.from($('autofit-targets').selectedOptions).map(o => o
 (async () => {
   window.autofitInit();
   await tick();
-  $('autofit-targets').options[2].selected = true;      // qB1
+  $('autofit-targets').options[2].selected = true;      // q3
   $('autofit-backend').value = 'real';
   $('autofit-backend').onchange();
   await tick();
-  ok(picked() === 'qB1', 'a Backend change keeps the picked target, got ' + picked());
+  ok(picked() === 'q3', 'a Backend change keeps the picked target, got ' + picked());
 
   // empty selection on hardware: asks, sends nothing
   $('autofit-targets').options[2].selected = false;
@@ -72,11 +72,11 @@ const picked = () => Array.from($('autofit-targets').selectedOptions).map(o => o
   window.autofitRun();
   await tick();
   const s2 = calls.find(c => c.url === '/autofit/start');
-  ok(s2 && JSON.parse(s2.opts.body).targets.join() === 'qA1' && !('all_targets' in JSON.parse(s2.opts.body)),
+  ok(s2 && JSON.parse(s2.opts.body).targets.join() === 'q1' && !('all_targets' in JSON.parse(s2.opts.body)),
      'a picked target starts directly');
 
   // board restore line
-  const base = { plan: { steps: [{ id: 's1' }] }, targets: ['qA1'], board: {}, current: null, review_queue: [], autonomy: 'review' };
+  const base = { plan: { steps: [{ id: 's1' }] }, targets: ['q1'], board: {}, current: null, review_queue: [], autonomy: 'review' };
   async function board(st) {
     status = { active: false, state: Object.assign({}, base, st) };
     window.autofitInit();
@@ -85,10 +85,12 @@ const picked = () => Array.from($('autofit-targets').selectedOptions).map(o => o
   }
   let t = await board({ status: 'aborted', restore: { status: 'restored', restored: 42, kept: [], unrestorable: [] } });
   ok(/restored to its pre-plan values \(42 values put back\)/.test(t), 'restored: ' + t);
-  t = await board({ status: 'done', restore: { status: 'partial', restored: 3, kept: ['qubits.qA1.f_01'], unrestorable: [] } });
-  ok(/partly restored/.test(t) && /qubits\.qA1\.f_01/.test(t), 'partial names the kept path: ' + t);
+  t = await board({ status: 'done', restore: { status: 'partial', restored: 3, kept: ['qubits.q1.f_01'], unrestorable: [] } });
+  ok(/partly restored/.test(t) && /qubits\.q1\.f_01/.test(t), 'partial names the kept path: ' + t);
   t = await board({ status: 'failed' });
   ok(/not restored/i.test(t), 'no restore record says so: ' + t);
+  t = await board({ status: 'failed', restore: { status: 'pending', restored: 0, kept: [], unrestorable: [] } });
+  ok(/did not finish/.test(t) && /State History/.test(t), 'a restore that died says so: ' + t);
   t = await board({ status: 'done', autonomy: 'full' });
   ok(!/restored/i.test(t), 'full autonomy has no restore line');
 

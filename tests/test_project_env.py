@@ -435,3 +435,22 @@ def test_every_page_loads_the_picker():
     root = Path(__file__).resolve().parent.parent
     base = (root / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
     assert "asset_url('landing-env.js')" in base
+
+
+def test_run_env_source_names_where_the_env_came_from(tmp_path, monkeypatch):
+    """Review of W2-7: "project" only when the project named it; the app's
+    selected env is a fall-back and is reported as "selected"."""
+    from quam_state_manager.core import config_generator
+    inst = tmp_path / "inst"
+    inst.mkdir()
+    sel = tmp_path / "selected.exe"
+    sel.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda i: str(sel))
+    assert project_env.run_env_source(str(inst), "nobody") == (str(sel), "selected")
+    assert project_env.run_env(str(inst), "nobody") == str(sel)
+    proj = tmp_path / "project.exe"
+    proj.write_text("", encoding="utf-8")
+    project_env.remember(str(inst), "p", str(proj))
+    assert project_env.run_env_source(str(inst), "p") == (str(proj), "project")
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda i: None)
+    assert project_env.run_env_source(str(inst), "nobody") == (None, "")

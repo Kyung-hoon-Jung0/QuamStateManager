@@ -91,6 +91,7 @@ def choose(folders, state: dict, selected: str | None,
                {k: sel_v.get(k) for k in _KEYS if sel_v.get(k)},
            "selected_matches": sel_match, "message": None, "level": None}
     from quam_state_manager.core.config_generator import interpreter_key
+    gone = None                 # a recorded env this machine no longer has
     for f in folders:
         if not f:
             continue
@@ -98,6 +99,9 @@ def choose(folders, state: dict, selected: str | None,
         if py and is_known(py):
             out["python"], out["source"] = py, "recorded"
             break
+        if py and gone is None:
+            gone = py
+    out["recorded_missing"] = gone
     if out["python"] is None and chip and sel_match is not True:
         for py, res in cached_probes.items():
             if (isinstance(res, dict) and res.get("usable")
@@ -128,4 +132,10 @@ def choose(folders, state: dict, selected: str | None,
     elif use:
         out["message"] = f"This chip was built with {stamp}. The rebuild uses {use}."
         out["level"] = "info"
+    if gone:
+        # the fall-back is said out loud: the page used to read as if the
+        # selected env were a free choice when the recorded one had vanished
+        out["message"] = (f"The env this chip was built in ({gone}) is no longer on "
+                          "this machine. " + (out["message"] or ""))
+        out["level"] = "warn"
     return out

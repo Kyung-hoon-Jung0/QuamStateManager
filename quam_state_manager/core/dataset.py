@@ -3304,6 +3304,10 @@ class DatasetStore:
                                 return _format_metric(val * scale, "s"), False
                             return _format_metric(val, "s"), not evidence
                         return _format_metric(val, unit), False
+                # the FIRST matching experiment decides; a later, broader
+                # pattern never stands in for its missing field (a
+                # ramsey-vs-flux run with no flux offset is not a T2* run)
+                break
 
         # Fallback: the FIRST numeric value that isn't "success" decides --
         # blank when it is non-finite (skipping on to the next field would

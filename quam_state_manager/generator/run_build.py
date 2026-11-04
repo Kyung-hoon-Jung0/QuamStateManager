@@ -455,6 +455,47 @@ def _band_for(freq):
     return None
 
 
+# The coupled MW-FEM port pairs and the band combinations the QOP accepts on
+# them. QM docs, Guides/opx1000_fems.md#bands: "Coupled ports must be in the
+# same band, or in bands `1` and `3`. ... Other band combinations are not
+# supported." Mirrors core/spec_constraints.COUPLED_PORT_PAIRS / BAND_COMPAT
+# (this script imports nothing from quam_state_manager); a test pins the two
+# copies equal.
+_COUPLED_PORT_PAIRS = [("1", "out", "1", "in"), ("2", "out", "3", "out"),
+                       ("4", "out", "5", "out"), ("6", "out", "7", "out"),
+                       ("8", "out", "2", "in")]
+_BAND_COMPAT = {(1, 1), (2, 2), (3, 3), (1, 3), (3, 1)}
+
+
+def _coupled_band_errors(state):
+    """G1: the coupled MW-FEM port pairs of a saved *state* whose bands the
+    QOP refuses when a program opens ("The bands set for output port 1 &
+    input port 1 ... are not a valid combination") although
+    ``generate_config()`` builds them. One line per bad pair; the build must
+    not write such a chip (the wizard blocks it client-side; a direct POST
+    or a stale tab reaches this)."""
+    ports = (state or {}).get("ports") or {}
+    outs = ports.get("mw_outputs") or {}
+    ins = ports.get("mw_inputs") or {}
+    bad = []
+    for con in sorted(set(outs) | set(ins), key=str):
+        o_fems = outs.get(con) or {}
+        i_fems = ins.get(con) or {}
+        for fem in sorted(set(o_fems) | set(i_fems), key=str):
+            o_ports = o_fems.get(fem) or {}
+            i_ports = i_fems.get(fem) or {}
+            for pa, sa, pb, sb in _COUPLED_PORT_PAIRS:
+                a = (o_ports if sa == "out" else i_ports).get(pa)
+                b = (o_ports if sb == "out" else i_ports).get(pb)
+                if not isinstance(a, dict) or not isinstance(b, dict):
+                    continue
+                ba, bb = a.get("band"), b.get("band")
+                if ba in (1, 2, 3) and bb in (1, 2, 3) and (ba, bb) not in _BAND_COMPAT:
+                    bad.append(f"{con}/FEM {fem}: {sa} {pa} is band {ba} and "
+                               f"{sb} {pb} is band {bb}")
+    return bad
+
+
 # OPX1000 LF-FEM analog outputs need a delay to align with MW-FEM outputs
 # (the MW-FEM stage adds 141 ns of processing for bands 1 + 3, and 161 ns
 # for band 2). We assign per-port at build time from the paired qubit's xy
@@ -2999,6 +3040,19 @@ def run_build(spec: dict, out_dir: Path) -> dict:
                 "pair gate, which creates it with no coupler and seeds the CZ "
                 "macros on the moving qubit's own flux.")
         machine.save()
+
+        # G1: a chip the QOP would refuse is not written to the destination.
+        # Judged on the saved state (every port's band is a literal there).
+        _saved = build_dir / "state.json"
+        if _saved.exists():
+            _bad_bands = _coupled_band_errors(
+                json.loads(_saved.read_text(encoding="utf-8")))
+            if _bad_bands:
+                raise RuntimeError(
+                    "coupled MW ports are on an invalid band combination; the QOP "
+                    "refuses this config when a program opens (coupled ports must "
+                    "share a band, or be bands 1 and 3): " + "; ".join(_bad_bands)
+                    + ". Set the band of those elements on the Populate step.")
 
         # 4. Copy ONLY the two artefacts into the user's destination. Anything
         #    else quam wrote stays in the throwaway build dir.

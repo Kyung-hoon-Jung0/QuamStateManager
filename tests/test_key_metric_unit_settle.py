@@ -15,8 +15,8 @@ from pathlib import Path
 
 from quam_state_manager.core.dataset import DatasetStore
 
-_FIT = {"qD1": {"t1": 24609.503507556543, "t1_error": 307.3, "success": True},
-        "qD2": {"t1": 32247.635761789985, "t1_error": 479.5, "success": True}}
+_FIT = {"q1": {"t1": 24609.503507556543, "t1_error": 307.3, "success": True},
+        "q2": {"t1": 32247.635761789985, "t1_error": 479.5, "success": True}}
 
 
 def _run(root: Path) -> Path:
@@ -27,8 +27,8 @@ def _run(root: Path) -> Path:
         "metadata": {"name": "25_T1", "status": "finished",
                      "run_start": "2026-11-04T20:15:28+09:00",
                      "run_end": "2026-11-04T20:16:30+09:00"},
-        "data": {"parameters": {"model": {"qubits": ["qD1", "qD2"]}},
-                 "outcomes": {"qD1": "successful", "qD2": "successful"},
+        "data": {"parameters": {"model": {"qubits": ["q1", "q2"]}},
+                 "outcomes": {"q1": "successful", "q2": "successful"},
                  "quam": "./quam_state"},
         "id": 11, "parents": []}), encoding="utf-8")
     (run / "data.json").write_text(json.dumps({"fit_results": _FIT}),
@@ -38,8 +38,8 @@ def _run(root: Path) -> Path:
 
 def _save_state(run: Path):
     (run / "quam_state" / "state.json").write_text(json.dumps({"qubits": {
-        "qD1": {"T1": 2.4609503507556545e-05},
-        "qD2": {"T1": 3.2247635761789986e-05}}}), encoding="utf-8")
+        "q1": {"T1": 2.4609503507556545e-05},
+        "q2": {"T1": 3.2247635761789986e-05}}}), encoding="utf-8")
     (run / "quam_state" / "wiring.json").write_text("{}", encoding="utf-8")
 
 
@@ -67,7 +67,7 @@ def _info(name, fit):
 
 
 def test_ramsey_vs_flux_headlines_its_flux_offset():
-    fit = {"qD1": {"success": True, "quad_term": -8726166.17,
+    fit = {"q1": {"success": True, "quad_term": -8726166.17,
                    "flux_offset": 5.590352034601208e-05, "freq_offset": 998.8}}
     m = DatasetStore._key_metric(_info("17a_ramsey_vs_flux_calibration", fit),
                                  evidence=False)[0]
@@ -75,6 +75,16 @@ def test_ramsey_vs_flux_headlines_its_flux_offset():
 
 
 def test_a_unitless_fallback_names_its_field():
-    fit = {"qD1": {"success": True, "quad_term": -8534000.0}}
+    fit = {"q1": {"success": True, "quad_term": -8534000.0}}
     m = DatasetStore._key_metric(_info("99_custom_node", fit), evidence=False)[0]
     assert m.startswith("quad_term ") and "e+06" in m, m
+
+
+def test_a_ramsey_vs_flux_run_without_its_offset_is_not_a_t2_star_run():
+    """The FIRST matching experiment decides; the broader "ramsey" pattern
+    never stands in for a missing flux offset with T2* (review of W2-11)."""
+    fit = {"q1": {"success": True, "quad_term": -8.5e6, "decay": 2.2e-05}}
+    m = DatasetStore._key_metric(_info("17a_ramsey_vs_flux_calibration", fit),
+                                 evidence=False)[0]
+    assert m.startswith("quad_term "), m
+    assert "µs" not in m

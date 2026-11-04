@@ -13,7 +13,7 @@
         Chip: {{ ((active_chip_label() if readiness.chip.name else none) or readiness.chip.name) or 'none loaded' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.env.ok else 'bad' }}"
           title="{{ readiness.env.value }}">
-        Env {{ ('✓ (project)' if readiness.env.source == 'project' else '✓') if readiness.env.ok else '— pick on Experiment Runner' }}</span>
+        Env {{ ('✓ (project)' if readiness.env.source == 'project' else ('✓ (selected env)' if readiness.env.source == 'selected' else '✓')) if readiness.env.ok else '— pick on Experiment Runner' }}</span>
     <span class="autofit-ready-chip {{ 'ok' if readiness.calibrations_folder.ok else 'bad' }}"
           title="{{ readiness.calibrations_folder.value }}">
         Calibrations {{ '✓' if readiness.calibrations_folder.ok else '— set on Experiment Runner' }}</span>

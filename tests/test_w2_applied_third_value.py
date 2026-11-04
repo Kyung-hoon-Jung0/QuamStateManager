@@ -22,14 +22,14 @@ def test_stale_value_is_a_loss(env):  # noqa: F811
     _apply_t1(env)
     _outside(env, _st(t1=2.0e-5, f01=5.2e9))      # back to the pre-apply value
     html = env["client"].get("/state/review").get_data(as_text=True)
-    assert "you applied" in _row(html, "qubits.qA1.T1")
+    assert "you applied" in _row(html, "qubits.q1.T1")
 
 
 def test_third_value_is_newer_not_lost(env):  # noqa: F811
     _apply_t1(env)
     _outside(env, _st(t1=4.4e-5, f01=5.2e9))      # a new measurement
     html = env["client"].get("/state/review").get_data(as_text=True)
-    assert "you applied" not in _row(html, "qubits.qA1.T1"), _row(html, "qubits.qA1.T1")
+    assert "you applied" not in _row(html, "qubits.q1.T1"), _row(html, "qubits.q1.T1")
 
 
 def test_the_default_merge_keeps_the_third_value(env):  # noqa: F811
@@ -53,4 +53,4 @@ def test_stale_value_is_in_the_loss_toast(env):  # noqa: F811
     _apply_t1(env)
     r = _outside_save_and_pull(env, _st(t1=2.0e-5, f01=5.2e9))
     lost = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["lost"]
-    assert [x["path"] for x in lost] == ["qubits.qA1.T1"], lost
+    assert [x["path"] for x in lost] == ["qubits.q1.T1"], lost

@@ -30,8 +30,8 @@ ROOT = Path(__file__).resolve().parent.parent
 def _chip(folder: Path):
     folder.mkdir(parents=True)
     (folder / "state.json").write_text(json.dumps({
-        "qubits": {q: {"id": q, "T1": 1e-5} for q in ("qA1", "qA2", "qB1")},
-        "qubit_pairs": {}, "active_qubit_names": ["qA1", "qA2", "qB1"]}),
+        "qubits": {q: {"id": q, "T1": 1e-5} for q in ("q1", "q2", "q3")},
+        "qubit_pairs": {}, "active_qubit_names": ["q1", "q2", "q3"]}),
         encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps(
         {"network": {"host": "127.0.0.1", "cluster_name": "C1"}}),
@@ -107,7 +107,7 @@ def test_a_real_item_carries_the_env(monkeypatch, tmp_path):
     from quam_state_manager.core.autofit.plan import Step
     import threading
     with pytest.raises(RuntimeError):
-        be.run_step(Step(id="s", family="ramsey"), ["qA1"], {}, 0,
+        be.run_step(Step(id="s", family="ramsey"), ["q1"], {}, 0,
                     threading.Event())
     assert seen["env_python"] == "X:/lab/python.exe"
 
@@ -119,3 +119,37 @@ def test_the_board_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_unapplied_edits_refuse_a_real_plan(env):
+    """Review of W2-8: with edits pending in the working copy SM never pulls
+    a node's save in over them (docs/87), so a plan's before/after would read
+    as unchanged and a rejected value could stay on the chip unseen. The
+    start refuses and says why."""
+    c = env["client"]
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1",
+                                       "value": "2e-05"}).status_code == 200
+    r = c.post("/autofit/start", json={
+        "preset": "1q_bringup", "backend": "real", "force": True, "all_targets": True})
+    assert r.status_code == 409, r.get_data(as_text=True)[:300]
+    d = r.get_json()
+    assert d["reason"] == "pending_edits" and d["count"] == 1 and "apply or discard" in d["error"]
+
+
+def test_the_env_source_names_a_fall_back(env, monkeypatch):
+    """"project" only when the project named the env; the app's selected env
+    is reported as "selected" (review of W2-7: a fall-back used to be called
+    the project's choice)."""
+    from quam_state_manager.core import config_generator
+    app = env["app"]
+    ctx = app.config["contexts"][app.config["active_context"]]
+    ctx["qualibrate_project"] = "nobody"
+    other = Path(env["py"]).parent / "selected.exe"
+    other.write_text("", encoding="utf-8")
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda i: str(other))
+    with app.test_request_context("/"):
+        assert routes._autofit_env() == (str(other), "selected")
+        rd = routes._autofit_readiness()
+    assert rd["env"]["source"] == "selected"
+    page = env["client"].get("/autofit").get_data(as_text=True)
+    assert "(selected env)" in page and "(project)" not in page

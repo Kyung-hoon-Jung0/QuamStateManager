@@ -1208,6 +1208,10 @@ def _sync_view(ctx=None) -> dict | None:
     # path). The change log keeps every commit (undo, the consent count).
     paths = sync_status.edit_fields([getattr(c, "dot_path", None) for c in log],
                                     ctx.get("pending_reapply") or {})
+    # W2-2: a field taken from the live chip is settled, not unapplied
+    _taken = _taken_live_paths(log)
+    if _taken:
+        paths = [p for p in paths if p not in _taken]
     _v = sync_status.view(
         facts=facts,
         flag_moved=bool(ctx.get("live_diverged")),
@@ -11695,6 +11699,19 @@ def _agent_held_paths(changes) -> list:
             if str(getattr(c, "actor", "human")).startswith("by_")]
 
 
+def _taken_live_paths(changes) -> set:
+    """W2-2: the fields whose NEWEST change-log row was taken from the live
+    chip (a per-row take in the sync panel, ``source: "live"``). SM agrees
+    with live there, so the field is not an unapplied edit and nothing it
+    could lose -- but the row stays in the log: Ctrl+Z undoes a take like any
+    other commit, and the consent count compares log rows. A later commit to
+    the field is a newer row without the mark, so the field counts again."""
+    last: dict = {}
+    for c in changes or ():
+        last[getattr(c, "dot_path", None)] = c
+    return {p for p, c in last.items() if p and getattr(c, "_taken_live", False)}
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -16698,6 +16715,10 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
             # with live there, so its change-log rows for that path are done
             # (otherwise the panel calls SM's old value "live chip" and Take
             # live counts the taken value as an edit it would lose)
+            # The row STAYS in the change log: Ctrl+Z undoes a take like any
+            # other commit, a grouped gesture must not be split, and the
+            # consent gate (seen_changes) compares log rows. It is MARKED,
+            # and the counters / the panel read the mark (_taken_live_paths).
             if _ps_live is not None:
                 _adopted = set()
                 for _e in applied_entries:
@@ -16707,9 +16728,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     if _now is not _DOT_MISSING and _ps_live.holds(_e.dot_path, _now):
                         _adopted.add(_e.dot_path)
                 _adopted -= set((ctx.get("pending_reapply") or {}).keys())
-                if _adopted:
-                    modifier.store.change_log[:] = [
-                        _c for _c in modifier.store.change_log if _c.dot_path not in _adopted]
+                for _e in applied_entries:
+                    if _e.dot_path in _adopted:
+                        object.__setattr__(_e, "_taken_live", True)
 
     if applied_entries:
         _invalidate_engine_cache(ctx)
@@ -32026,16 +32047,24 @@ def state_review():
                      for p in external[:300]]
     mine_rows = []
     cset = set(conflicts)
+    # W2-2: a field whose newest row was taken from live is settled: SM and
+    # the chip agree there, so it is not one of "your unapplied edits"
+    _taken = _taken_live_paths(log)
     for i, c in enumerate(log):
-        if c.dot_path in cset:
+        if c.dot_path in cset or c.dot_path in _taken:
             continue
+        # a field with no working-vs-live difference holds on the chip what
+        # the working copy holds NOW (its newest commit), never the value the
+        # row replaced -- that read as "live chip = SM's old value" (W2-2)
+        _cur = _dot_get(store.merged, c.dot_path)
         mine_rows.append({
             "index": i, "path": c.dot_path, "old": c.old_value, "new": c.new_value,
             **({"origin": c.origin} if getattr(c, "origin", None) is not None else {}),
             "gid": getattr(c, "group_id", None) or "",
             "created": bool(getattr(c, "created", False)),
             "deleted": bool(getattr(c, "deleted", False)),
-            "live": live_by_path.get(c.dot_path, c.old_value) if not read_error else None,
+            "live": (live_by_path.get(c.dot_path, None if _cur is _DOT_MISSING else _cur)
+                     if not read_error else None),
         })
     # a staged / saved version: every difference that is neither a live change
     # nor one of the change-log edits. With a live move over a saved version
@@ -42512,8 +42541,18 @@ def _auto_seen_begin():
     if not _auto_apply_state(ctx) or ctx.get("store") is None:
         return None
     sess = ctx["auto_apply"]
-    g._auto_seen_off = (ctx, sess, ctx["store"].mutation_seq, bool(sess.get("hold")))
-    sess["hold"] = True     # set first, so the tray this request renders says so
+    store = ctx["store"]
+    # The hold is anchored on the store's mutation sequence at the moment it
+    # was set (shared by every judged request) and released only when
+    # NOTHING was staged since: two off-window requests overlapping (one a
+    # no-op, one staging) used to let the no-op's end release the hold the
+    # staging one relied on (review of W2-1).
+    with store._lock:
+        had = bool(sess.get("hold"))
+        if not had:
+            sess["hold"] = True     # set first, so the tray this request renders says so
+            sess["hold_seq0"] = store.mutation_seq
+    g._auto_seen_off = (ctx, sess, had)
     return None
 
 
@@ -42522,10 +42561,14 @@ def _auto_seen_end(resp):
     rec = getattr(g, "_auto_seen_off", None)
     if rec is None:
         return resp
-    ctx, sess, seq0, had = rec
+    ctx, sess, had = rec
     try:
-        if not had and (ctx["store"].mutation_seq == seq0 or resp.status_code >= 400):
-            sess.pop("hold", None)          # nothing was staged: no hold
+        store = ctx["store"]
+        with store._lock:
+            if (not had and sess.get("hold")
+                    and store.mutation_seq == sess.get("hold_seq0")):
+                sess.pop("hold", None)          # nothing was staged: no hold
+                sess.pop("hold_seq0", None)
     except Exception:  # noqa: BLE001 -- bookkeeping, never fatal
         logger.debug("auto-seen hold failed", exc_info=True)
     return resp
@@ -42541,8 +42584,10 @@ def _auto_hold_active(ctx) -> bool:
     if not sess or not sess.get("hold"):
         return False
     store = ctx.get("store")
-    if store is not None and not store.change_log and not ctx.get("working_dirty")             and not ctx.get("pending_reapply"):
+    if (store is not None and not store.change_log and not ctx.get("working_dirty")
+            and not ctx.get("pending_reapply")):
         sess.pop("hold", None)
+        sess.pop("hold_seq0", None)
         return False
     return True
 
@@ -42731,7 +42776,10 @@ def _dataset_store(*, light: bool = False) -> DatasetStore | None:
         _proj = ""
     if not ws:
         if _proj and Path(_proj).is_dir():
-            pds = _get_or_create_store(Path(_proj))
+            # bounded like every request-path build (docs/170): a cold big
+            # project continues on the next call, never on this thread alone
+            pds = _get_or_create_store(Path(_proj),
+                                       deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
             if pds is not None and pds.run_count:
                 current_app.config["dataset_store"] = pds
                 return pds
@@ -47851,7 +47899,10 @@ def generate_build():
             "so that chip would load this new design instead of its own. "
             "Choose a folder outside it.")}), 400
 
-    python_path = _build_python(data)
+    try:
+        python_path = _build_python(data)
+    except _UnknownInterpreter as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
 
@@ -48060,14 +48111,24 @@ def _regen_built_env(folder, sidecar_dirs, selected, state=None) -> dict:
         return {}
 
 
+class _UnknownInterpreter(ValueError):
+    """A posted ``python`` State Manager does not know (docs/303 contract 2)."""
+
+
 def _build_python(data) -> str | None:
     """The interpreter a build runs in: the wizard's own env when SM knows it
     (G3: Re-generate starts in the env the chip was built in), else the
-    machine-wide selected env."""
+    machine-wide selected env. A posted env SM does NOT know is refused
+    (:class:`_UnknownInterpreter`), never silently swapped for the selected
+    one: the page told the person which env the rebuild uses."""
     inst = current_app.instance_path
     posted = data.get("python") if isinstance(data, dict) else None
-    if isinstance(posted, str) and posted and config_generator.known_interpreter(posted, inst):
-        return posted
+    if isinstance(posted, str) and posted:
+        if config_generator.known_interpreter(posted, inst):
+            return posted
+        raise _UnknownInterpreter(
+            f"Environment not known to State Manager: {posted}. Pick one of the "
+            "discovered environments on step 1 (or add it there).")
     return config_generator.get_selected_env(inst)
 
 
@@ -48302,7 +48363,10 @@ def regenerate_build():
             "so that chip would load the rebuilt design instead of its own. "
             "Choose a folder outside it.")}), 400
 
-    python_path = _build_python(data)
+    try:
+        python_path = _build_python(data)
+    except _UnknownInterpreter as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
 
@@ -51027,22 +51091,30 @@ def _autofit_start_lock(inst: str) -> threading.Lock:
 def _project_run_env() -> str | None:
     """The open project's chosen env, else the app's selected env (None when
     no chip is open or neither is a file)."""
+    return _project_run_env_source()[0]
+
+
+def _project_run_env_source() -> tuple[str | None, str]:
+    """``(env, source)``: ``"project"`` = the env the person chose for the open
+    project, ``"selected"`` = the app's selected env (the project has none);
+    ``(None, "")`` when no chip is open or neither is a file."""
     from quam_state_manager.core import project_env
     ctx = _active_ctx()
     if not ctx:
-        return None
-    return project_env.run_env(current_app.instance_path,
-                               ctx.get("qualibrate_project"))
+        return None, ""
+    return project_env.run_env_source(current_app.instance_path,
+                                      ctx.get("qualibrate_project"))
 
 
 def _autofit_env() -> tuple[str, str]:
     """(env, source) a real-backend plan runs its nodes with: the runner
-    settings' env, else the project's chosen env."""
+    settings' env, else the project's chosen env, else the app's selected
+    env -- the source says which, never "project" for a fall-back."""
     env = scheduler.load_settings(_sched_inst()).get("env_python") or ""
     if env:
         return env, "runner"
-    py = _project_run_env()
-    return (py, "project") if py else ("", "")
+    py, source = _project_run_env_source()
+    return (py, source) if py else ("", "")
 
 
 def _autofit_readiness() -> dict:
@@ -51357,6 +51429,20 @@ def _autofit_start_real(inst, p, data, auditor):
     _arch = _archive_run_reason(ctx.get("live_path") or ctx.get("path"))
     if _arch:
         return None, {"error": ARCHIVE_TARGET, "reason": "archive", "message": _arch}, 409
+    # Unapplied edits in the working copy: the plan's nodes save the LIVE
+    # chip, and SM never pulls a live change in over a person's edits
+    # (docs/87), so every step's before/after would read as unchanged -- a
+    # rejected or unjudged value would then stay on the chip unseen
+    # (review of W2-8). The person applies or discards first.
+    _st0 = ctx.get("store")
+    _pending_n = (len(getattr(_st0, "change_log", None) or [])
+                  + len(ctx.get("pending_reapply") or {}))
+    if _pending_n or ctx.get("working_dirty"):
+        return None, {"reason": "pending_edits", "count": _pending_n,
+                      "error": ((f"{_pending_n} unapplied edit(s) in the working copy"
+                                 if _pending_n else "a staged version in the working copy")
+                                + ": apply or discard them first, so the plan's nodes "
+                                "write a chip State Manager can read back")}, 409
     # An empty target selection means every qubit (pair) of the chip. On
     # hardware that is never a default: the request says so out loud.
     if not p.targets and data.get("all_targets") is not True:

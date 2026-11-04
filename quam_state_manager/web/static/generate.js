@@ -8033,6 +8033,9 @@
           had != null && had !== "") return;
       if (o.force && had !== assignments[key]) {
         markPopulateTouched(group, rid, "LO_frequency");
+        // an explicit Re-solve replaced the typed value: the cell no longer
+        // holds what the person typed, so it is not tagged as typed any more
+        if (state.loTyped) delete state.loTyped[key];
       }
       pop[group][rid].LO_frequency = assignments[key];
     });
@@ -8275,7 +8278,8 @@
               : pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
                 b.p.desc + " (" + who(b.p.members) + ") are coupled: the build uses " +
                 "band " + a.band + " (" + bandSpan(a.band) + ") and band " + b.band +
-                " (" + bandSpan(b.band) + "), the allowed 1 + 3 combination." });
+                " (" + bandSpan(b.band) + "), the allowed 1 + 3 combination (QOP 3.5 or " +
+                "newer; QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)." });
       });
     } else {
       Object.keys(info).forEach(function (k) { info[k].band = info[k].originalBand; });

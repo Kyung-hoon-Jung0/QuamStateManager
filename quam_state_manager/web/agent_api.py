@@ -1950,9 +1950,11 @@ def _run_settings(settings: dict, ctx: dict, inst) -> dict:
     if settings.get("env_python"):
         return settings
     from quam_state_manager.core import project_env
-    py = project_env.run_env(inst, ctx.get("qualibrate_project"))
+    py, source = project_env.run_env_source(inst, ctx.get("qualibrate_project"))
     if py:
-        return {**settings, "env_python": py, "env_source": "project"}
+        # "project" only when the project named it; the app's selected env
+        # is reported as what it is
+        return {**settings, "env_python": py, "env_source": source}
     return settings
 
 

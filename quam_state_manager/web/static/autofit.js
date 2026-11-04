@@ -341,6 +341,12 @@
         " value" + (r.restored === 1 ? "" : "s") + " put back).";
     } else if (r.status === "nothing") {
       msg = "Chip unchanged: the plan wrote nothing that needed restoring.";
+    } else if (r.status === "pending") {
+      // written before the restore's write began; still here = the process
+      // ended during it (State History keeps the pre-plan snapshot)
+      msg = "Chip not restored: the restore did not finish (the process ended " +
+        "during it). State History holds the pre-plan snapshot.";
+      cls = "autofit-bad";
     } else {
       cls = "autofit-bad";
       var kept = r.kept || [], add = r.unrestorable || [];

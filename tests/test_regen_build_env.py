@@ -93,7 +93,10 @@ class TestReconstructRoute:
                             lambda py, i, also=(): py == "py6")
         with app.test_request_context():
             assert routes._build_python({"python": "py6"}) == "py6"
-            assert routes._build_python({"python": "other"}) == "py4"
+            # a posted env SM does not know is refused, never swapped for
+            # the selected one (review of G3)
+            with pytest.raises(routes._UnknownInterpreter):
+                routes._build_python({"python": "other"})
             assert routes._build_python({}) == "py4"
 
 
@@ -105,3 +108,41 @@ def test_the_regen_page_shows_the_build_env_first():
     js = (root / "static" / "generate.js").read_text(encoding="utf-8")
     assert "state.regenBuiltEnv = (o.builtEnv && o.builtEnv.python) || null;" in js
     assert "python: state.env || null,   // G3" in js
+
+
+def test_a_vanished_recorded_env_is_named(tmp_path):
+    """The recorded build env is gone from this machine: the page says so
+    instead of reading as if the selected env were a free choice (review of
+    G3)."""
+    build_env.record(tmp_path, "GONE", V6)
+    out = build_env.choose([tmp_path], {}, "A", {}, lambda py: py != "GONE")
+    assert out["python"] is None and out["recorded_missing"] == "GONE"
+    assert "GONE" in out["message"] and "no longer on this machine" in out["message"]
+    assert out["level"] == "warn"
+    out = build_env.choose([tmp_path], {}, "A", {}, lambda py: True)
+    assert out["recorded_missing"] is None
+
+
+def test_a_posted_unknown_env_is_refused_by_the_build_routes(app, monkeypatch, tmp_path):
+    """A direct POST naming an interpreter SM does not know is a 400, never
+    a silent build in the selected env (review of G3; docs/303 contract 2)."""
+    from quam_state_manager.web import routes
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda i: "py4")
+    monkeypatch.setattr(config_generator, "known_interpreter",
+                        lambda py, i, also=(): py == "py6")
+    with app.test_request_context():
+        with pytest.raises(routes._UnknownInterpreter):
+            routes._build_python({"python": "other"})
+    chip = _chip(tmp_path / "chip", V6)
+    out = tmp_path / "out" / "quam_state"
+    c = app.test_client()
+    from tests.test_config_generator import _valid_spec
+    for url, body in (("/generate/build", {"spec": _valid_spec(),
+                                           "output_path": str(out),
+                                           "python": "Z:/nowhere/python.exe"}),
+                      ("/regenerate/build", {"spec": _valid_spec(), "source_folder": str(chip),
+                                             "output_path": str(out),
+                                             "python": "Z:/nowhere/python.exe"})):
+        r = c.post(url, json=body)
+        assert r.status_code == 400, (url, r.status_code, r.get_data(as_text=True)[:300])
+        assert "not known" in (r.get_json() or {}).get("error", ""), (url, r.get_json())

@@ -141,10 +141,16 @@ class TestLintStateCache:
         store = _store()
         calls = {"n": 0}
         real = diagnostics._lint_state_uncached
+        # the counter is for THIS store: the module global is shared with
+        # every other app's chip prewarm thread (a lint of some earlier
+        # test's store landing here read as a cache miss), and a verify
+        # shadow run (SM_RAM_VERIFY) would lint twice by design
+        monkeypatch.delenv("SM_RAM_VERIFY", raising=False)
 
-        def counting(s):
-            calls["n"] += 1
-            return real(s)
+        def counting(s, *a, **k):
+            if s is store:
+                calls["n"] += 1
+            return real(s, *a, **k)
 
         monkeypatch.setattr(diagnostics, "_lint_state_uncached", counting)
 

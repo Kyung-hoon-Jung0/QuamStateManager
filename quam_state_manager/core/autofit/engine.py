@@ -322,10 +322,21 @@ class PlanEngine:
             logger.exception("autofit: reading the chip's leaves failed")
             return None
 
-    def _step_delta(self, pre: dict | None) -> list[dict]:
+    def _step_delta(self, pre: dict | None, targets=None, step=None) -> list[dict]:
         """What the step changed on the chip, as replace-patches. A node of
         the current generation records no ``patches`` in its node.json, so the
-        chip before and after the run is the only record of what it wrote."""
+        chip before and after the run is the only record of what it wrote.
+
+        The record is the CHIP's, not the node's. A leaf under an entity the
+        step did not run on (another qubit, another pair) cannot be the
+        node's write: it is reported (``outside_change_during_step``, and a
+        review-queue line) and left alone -- never judged, reverted or
+        restored. A leaf under one of the step's own targets, or a shared
+        path (ports, extras), counts as the node's; an outside save landing
+        THERE during the step is indistinguishable from the node's own save
+        and is treated as its write (the reject revert and the plan-end
+        restore put the pre-step value back) -- the ledger names every path,
+        so that is never silent."""
         if pre is None:
             return []
         refresh = getattr(self.writer, "refresh", None)
@@ -337,7 +348,10 @@ class PlanEngine:
         post = self._leaves()
         if post is None:
             return []
-        out = []
+        scope = {str(t) for t in (targets or ())}
+        for t in list(scope):                  # a pair's two qubits are in scope
+            scope.update(x for x in t.split("-") if x)
+        out, foreign = [], []
         for path in sorted(set(pre) | set(post)):
             a = pre.get(path, _MISSING)
             b = post.get(path, _MISSING)
@@ -345,24 +359,50 @@ class PlanEngine:
                 continue          # a removed key: nothing a CAS can guard
             if a is not _MISSING and _same(a, b):
                 continue
+            ent = _dotted_entity(path)
+            if scope and ent is not None and ent not in scope:
+                foreign.append(path)
+                continue
             out.append({"op": "replace" if a is not _MISSING else "add",
                         "path": "/" + "/".join(path.split(".")),
                         "old": None if a is _MISSING else a, "value": b})
+        if foreign:
+            sid = getattr(step, "id", None)
+            self._ledger("outside_change_during_step", step=sid,
+                         count=len(foreign), paths=foreign[:200])
+            with self._lock:
+                self.state["review_queue"].append({
+                    "step_id": sid or "(step)", "target": "(outside)",
+                    "reason": (f"{len(foreign)} value(s) outside this step's targets "
+                               "changed on the chip during the run (another writer "
+                               "saved the chip?): left as they are, never reverted: "
+                               + ", ".join(foreign[:4])),
+                    "failure_mode": None, "reverted": False,
+                    "verdict": {"paths": foreign[:200]},
+                })
+            self._persist()
         for p in out:
             dotted = patch_path_to_dotted(p["path"])
-            self._record_preplan(dotted, p["old"])
+            # an ADDED key has no pre-plan value (the sentinel); a key that
+            # really was null is restored to null
+            self._record_preplan(dotted, _MISSING if p["op"] == "add" else p["old"])
             self._note_written(dotted, p["value"])
         return out
 
     def _revert_unjudged(self, step: Step, delta: list[dict], why: str) -> None:
         """A run that ended without a verdict (node failed, item failed,
         aborted) may still have saved values. Nothing judged them, so they
-        go back in every autonomy (CAS: a newer outside value stays)."""
+        go back in every autonomy (CAS: a newer outside value stays). A key
+        the run ADDED has nothing to go back to: it is named, never dropped
+        in silence."""
         patches = [p for p in delta if p.get("op") == "replace"]
-        if not patches:
+        added = [patch_path_to_dotted(p["path"]) for p in delta if p.get("op") == "add"]
+        if not patches and not added:
             return
-        out = self.writer.revert_patches(patches, label=f"{step.id}:{why}")
-        self._ledger("unjudged_reverted", step=step.id, why=why, **out)
+        out = (self.writer.revert_patches(patches, label=f"{step.id}:{why}")
+               if patches else {"paths": [], "conflicts": []})
+        if patches:
+            self._ledger("unjudged_reverted", step=step.id, why=why, **out)
         conflicts = out.get("conflicts") or []
         put_back = len(out.get("paths") or [])
         with self._lock:
@@ -371,10 +411,12 @@ class PlanEngine:
                 "reason": (f"the run ended {why} and had saved "
                            f"{len(patches)} value(s): {put_back} put back"
                            + (f", {len(conflicts)} left because they changed "
-                              "since" if conflicts else "")),
+                              "since" if conflicts else "")
+                           + (f", {len(added)} added key(s) left: "
+                              + ", ".join(added[:4]) if added else "")),
                 "failure_mode": None, "reverted": put_back > 0,
                 "verdict": {"paths": [patch_path_to_dotted(p["path"])
-                                      for p in patches]},
+                                      for p in patches], "added": added},
             })
         self._persist()
 
@@ -508,7 +550,7 @@ class PlanEngine:
             pre = self._leaves()
             res = self.backend.run_step(step, pending, params, attempt,
                                         self.abort_event)
-            delta = self._step_delta(pre)
+            delta = self._step_delta(pre, pending, step)
             if res.status == "aborted" or self.abort_event.is_set():
                 for t in pending:
                     self._cell(step.id, t, "aborted")
@@ -543,7 +585,7 @@ class PlanEngine:
                               if _patch_target(p) not in pending]
             for p in orphan_patches:
                 self._record_preplan(patch_path_to_dotted(p.get("path", "")),
-                                     p.get("old"))
+                                     _MISSING if p.get("op") == "add" else p.get("old"))
 
             verdicts = self._evaluate(step, res, pending)
             retry_targets: list[str] = []
@@ -1027,7 +1069,7 @@ class PlanEngine:
                           if _patch_target(p) == target]
         for p in target_patches:
             self._record_preplan(patch_path_to_dotted(p.get("path", "")),
-                                 p.get("old"))
+                                 _MISSING if p.get("op") == "add" else p.get("old"))
 
         # Only an ACCEPTED fit enters the cross-experiment review: comparing a
         # value the plan itself rejected against a good one would report a
@@ -1250,12 +1292,14 @@ class PlanEngine:
     def _end_restore(self) -> None:
         """review autonomy: put every first-touched path back to its pre-plan
         value — 'the chip ends where it started' (docs/56 §7b-A)."""
+        # a pre-plan value that really was null IS a value and goes back;
+        # only an ADDED key (the _MISSING sentinel) has nothing to go back to
         rows = [{"path": p, "value": old} for p, old in
-                self._preplan_values.items() if old is not None]
+                self._preplan_values.items() if old is not _MISSING]
         # add-op patches carry no pre-plan value — they can't be restored;
         # surface them instead of silently leaving the key behind (audit E8)
         unrestorable = [p for p, old in self._preplan_values.items()
-                        if old is None]
+                        if old is _MISSING]
         if unrestorable:
             with self._lock:
                 self.state["review_queue"].append({
@@ -1272,11 +1316,20 @@ class PlanEngine:
                 r["expect"] = self._plan_last[r["path"]]
         if not rows:
             with self._lock:
+                # an added key the restore could not undo is not "nothing"
                 self.state["restore"] = {
-                    "status": "nothing", "restored": 0, "kept": [],
+                    "status": "partial" if unrestorable else "nothing",
+                    "restored": 0, "kept": [],
                     "unrestorable": unrestorable, "error": None}
             self._persist()
             return
+        # written BEFORE the write: a process that dies inside the restore
+        # leaves "pending" on the board, never a blank that reads as done
+        with self._lock:
+            self.state["restore"] = {
+                "status": "pending", "restored": 0, "kept": [],
+                "unrestorable": unrestorable, "error": None}
+        self._persist()
         out = self.writer.restore_values(rows, label="plan-end restore")
         self._ledger("plan_restored", **out)
         kept = [c.get("path") for c in (out.get("conflicts") or [])]
@@ -1335,6 +1388,17 @@ def _patch_target(p: dict) -> str | None:
     if parts and parts[0] == "quam":
         parts = parts[1:]
     return parts[1] if len(parts) > 1 else None
+
+
+def _dotted_entity(path: str) -> str | None:
+    """The qubit / pair a dotted state path belongs to (``qubits.<q>.…`` /
+    ``qubit_pairs.<p>.…``), None for a shared path (ports, extras, …)."""
+    parts = path.split(".")
+    if parts and parts[0] == "quam":
+        parts = parts[1:]
+    if len(parts) > 1 and parts[0] in ("qubits", "qubit_pairs"):
+        return parts[1]
+    return None
 
 
 # `figures.<name>.png` is the SHEET; `figures.<name>.<target>.png` is one

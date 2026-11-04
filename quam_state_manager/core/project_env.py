@@ -115,15 +115,23 @@ def run_env(inst, project: str | None) -> str | None:
     none: the env the person chose for the project, else the app's selected
     env (the env the window opened the chip with). None when neither is a
     file. One rule for the agent, Auto Calibrate and the Experiment Runner."""
+    return run_env_source(inst, project)[0]
+
+
+def run_env_source(inst, project: str | None) -> tuple[str | None, str]:
+    """:func:`run_env` plus WHERE the env came from: ``"project"`` (the env the
+    person chose for the project) or ``"selected"`` (the app's selected env,
+    because the project has none) -- a fall-back is never called the
+    project's choice. ``(None, "")`` when neither is a file."""
     from quam_state_manager.core import config_generator
-    py = None
     try:
         py = remembered(inst, project)
-        if not (py and os.path.isfile(py)):
-            py = config_generator.get_selected_env(inst)
+        if py and os.path.isfile(py):
+            return py, "project"
+        py = config_generator.get_selected_env(inst)
     except Exception:  # noqa: BLE001 -- unknown is "none", never a guess
-        return None
-    return py if py and os.path.isfile(py) else None
+        return None, ""
+    return (py, "selected") if py and os.path.isfile(py) else (None, "")
 
 
 def remember(inst, project: str, python: str, how: str = "confirmed") -> None:

@@ -20,8 +20,8 @@ _HERE = Path(__file__).parent
 
 
 def _st(t1=2.0e-5, f01=5.0e9, t2=1.0e-5):
-    return {"qubits": {"qA1": {"id": "qA1", "f_01": f01, "T1": t1, "T2ramsey": t2}},
-            "qubit_pairs": {}, "active_qubit_names": ["qA1"]}
+    return {"qubits": {"q1": {"id": "q1", "f_01": f01, "T1": t1, "T2ramsey": t2}},
+            "qubit_pairs": {}, "active_qubit_names": ["q1"]}
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def env(tmp_path):
 
 
 def _live(env):
-    return json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]
+    return json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))["qubits"]["q1"]
 
 
 def _outside(env, state):
@@ -48,7 +48,7 @@ def _outside(env, state):
 
 def _apply_t1(env):
     c = env["client"]
-    assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "3.3e-05"}).status_code == 200
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "3.3e-05"}).status_code == 200
     r = c.post("/state/apply-to-live")
     assert r.status_code == 200, r.get_data(as_text=True)[:300]
     assert _live(env)["T1"] == 3.3e-05
@@ -71,7 +71,7 @@ class TestTheReviewCountsAnAppliedValue:
         _apply_t1(env)
         _run_rewrite(env)
         html = env["client"].get("/state/review").get_data(as_text=True)
-        row = re.search(r'<tr[^>]*data-path="qubits.qA1.T1".*?</tr>', html, re.S)
+        row = re.search(r'<tr[^>]*data-path="qubits.q1.T1".*?</tr>', html, re.S)
         assert row and "you applied" in row.group(0), html[:2000]
         take = _button(html, "sp-take")
         assert "sync-arm" in take.split(">", 1)[0]
@@ -116,7 +116,7 @@ class TestEveryWindowAgrees:
 
 def test_an_unapplied_edit_and_a_live_change_read_both(env):
     c = env["client"]
-    assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "3.3e-05"}).status_code == 200
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "3.3e-05"}).status_code == 200
     _outside(env, _st(f01=5.2e9))
     d = c.get("/state/drift").get_json()
     assert d["sync"]["state"] == "both", d["sync"]

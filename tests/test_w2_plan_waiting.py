@@ -10,8 +10,8 @@ from quam_state_manager.core import agent_plans
 def test_a_decided_approval_leaves_the_plan_count(tmp_path):
     inst = str(tmp_path)
     rec = agent_plans.add(inst, "c", title="t", mode="ask-writes", created_by="p",
-                          steps=[{"node": "12_ramsey", "targets": ["qA1"]},
-                                 {"node": "12_ramsey", "targets": ["qA2"]}])
+                          steps=[{"node": "12_ramsey", "targets": ["q1"]},
+                                 {"node": "12_ramsey", "targets": ["q2"]}])
     pid = rec["id"]
     agent_plans.step_update(inst, "c", pid, 0, status="done", n_writes=3, approval="ap-1")
     agent_plans.step_update(inst, "c", pid, 1, status="done", n_writes=2, approval="ap-2")
