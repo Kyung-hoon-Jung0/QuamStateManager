@@ -180,6 +180,7 @@ function world(opts) {
   // would be in the app.
   if (opts.search) {
     const store = { quam_bulk_search: opts.search };
+    if (opts.searchChip !== undefined) store.quam_bulk_search_chip = opts.searchChip;
     Object.defineProperty(win, 'localStorage', {
       configurable: true,
       value: {
@@ -201,6 +202,7 @@ function world(opts) {
   // to pin what the MOUNT reads, so bank it and start the mount from zero.
   win.__evalReads = win.__geomReads; win.__geomReads = 0;
   if (opts.sq) new win.Function(SEARCH_QUERY_JS).call(win);   // the shared grammar + operators
+  if (opts.chipKey) win.__bulkChipKey = opts.chipKey;
   new win.Function(BULK_JS).call(win);
   win.BulkEdit.mount(COLS, { bands: {} }, [], { chip: 'chipA', qubits: [] });
   win.__mountReads = win.__geomReads;                    // what the MOUNT read (the later scroll pass may read geometry)
@@ -648,6 +650,16 @@ async function main() {
       if (j < 0) return;
       ok(j < iPin, 'S9: "' + ph + '" (a writing phase) runs BEFORE the read');
     });
+  }
+
+  // Walk G15: a search remembered on another chip does not filter this one.
+  {
+    const other = world({ search: '9026', searchChip: 'chipB', chipKey: 'chipA' });
+    ok(other.doc.getElementById('bulk-search').value === '',
+       'G15: a search typed on another chip opens empty (got "' + other.doc.getElementById('bulk-search').value + '")');
+    const same = world({ search: '9026', searchChip: 'chipA', chipKey: 'chipA' });
+    ok(same.doc.getElementById('bulk-search').value === '9026',
+       'G15: the same chip keeps its remembered search');
   }
 
   console.log(fails ? ('FAILED ' + fails) : 'bulk_virt_server_selfcheck: all ok');

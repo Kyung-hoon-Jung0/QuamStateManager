@@ -46,7 +46,7 @@ function mount(findings, topoOver) {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body><div id="table-pane"><div class="topo-dashboard">'
     + '<div id="topo-hero"></div><div id="topo-verdict-banner"></div>'
-    + '<div id="topo-health-tiles"></div>'
+    + '<div id="topo-health-tiles"></div><div id="topo-health-worst"></div>'
     + '</div></div></body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/topology' });
   const win = dom.window;
@@ -109,6 +109,17 @@ const acked = { severity: 'error', category: 'env_unknown_field', location: 'qub
   const t = banner ? banner.textContent : '';
   ok(!/2 of 2 qubits in spec/.test(t) && /no qubit measured yet/.test(t),
     'G8: the banner says nothing is measured, not "2 of 2 in spec" — ' + t);
+  // Walk G17: nothing measured -> no bare "Needs attention:" label.
+  const worst = win.document.getElementById('topo-health-worst');
+  ok(worst && !/Needs attention/.test(worst.textContent),
+    'G17: no empty "Needs attention:" label over nothing — ' + (worst && worst.innerHTML));
+}
+{
+  // ...while a measured chip still gets it.
+  const win = mount([]);
+  const worst = win.document.getElementById('topo-health-worst');
+  ok(worst && /Needs attention/.test(worst.textContent),
+    'G17: a measured chip keeps its "Needs attention:" list');
 }
 
 console.log(fails ? ('FAILED (' + fails + ')')
