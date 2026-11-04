@@ -207,13 +207,32 @@ def _fix_coupled_bands(machine, spec, warnings):
     a band typed on the Populate step (``populate.<group>.<id>.band``) never
     moves. A pair with no legal combination is left for the refusal after
     save(). A moved xy band re-derives its qubit's flux-port LF delay. Runs
-    over the chip's xy and resonator ports (a TWPA pump keeps its band)."""
+    over the chip's xy, resonator and TWPA pump ports (G13: a pump on out 5
+    beside a band-1 drive on out 4 is the same refusal -- the docs' coupled
+    pairs are Out 1 & In 1, Out 2 & Out 3, Out 4 & Out 5, Out 6 & Out 7,
+    Out 8 & In 2)."""
     pop = (spec or {}).get("populate") or {}
 
     def typed(group, rid):
-        return ((pop.get(group) or {}).get(str(rid)) or {}).get("band") in (1, 2, 3)
+        rows = pop.get(group) or {}
+        if group == "twpa":
+            # populate keys a TWPA by its spec id; the machine by "twpa<id>"
+            def _n(s):
+                s = str(s)
+                return (s[4:] if s.lower().startswith("twpa") and len(s) > 4 else s).lower()
+            return any(_n(k) == _n(rid) and (v or {}).get("band") in (1, 2, 3)
+                       for k, v in rows.items())
+        return (rows.get(str(rid)) or {}).get("band") in (1, 2, 3)
 
     seen: dict = {}          # id(port) -> [port, lo, explicit, z_port]
+    for tid, tw in (getattr(machine, "twpas", None) or {}).items():
+        for ch in (getattr(tw, "pump", None), getattr(tw, "pump_", None)):
+            p = getattr(ch, "opx_output", None) if ch is not None else None
+            if p is None or not hasattr(p, "band"):
+                continue
+            e = seen.setdefault(id(p), [p, getattr(p, "upconverter_frequency", None),
+                                         False, None])
+            e[2] = e[2] or typed("twpa", tid)
     for qid, q in (getattr(machine, "qubits", None) or {}).items():
         xy = getattr(q, "xy", None)
         out = getattr(xy, "opx_output", None) if xy is not None else None
@@ -271,6 +290,41 @@ def _fix_coupled_bands(machine, spec, warnings):
                     f"so its coupled pair is one the QOP accepts (its LO "
                     f"{lo / 1e9:.4g} GHz lies in both bands).")
     return warnings
+
+def _default_flux_upsampling(machine, spec):
+    """G12: a flux or coupler line plays baseband pulses with no intermediate
+    frequency, and the QM docs (Guides/opx1000_fems.md, ``upsampling_mode``)
+    say of ``pulse``: "This is the recommended mode whenever the output is
+    **not** expected to have an intermediate frequency." quam's LF port
+    default is ``mw``, which a build left in place while the Z-line page
+    recommended ``pulse`` for the same port. Every qubit z and pair coupler
+    LF port the build made gets ``pulse`` unless the Populate step typed an
+    ``upsampling_mode`` for that line. Returns the ports it set."""
+    pop = (spec or {}).get("populate") or {}
+    done = []
+
+    def _set(port, typed):
+        if port is None or typed or not hasattr(port, "upsampling_mode"):
+            return
+        try:
+            port.upsampling_mode = "pulse"
+        except ValueError:
+            return
+        done.append(port)
+
+    qrows = pop.get("qubit") or {}
+    for qid, q in (getattr(machine, "qubits", None) or {}).items():
+        z = getattr(q, "z", None)
+        if z is None or not hasattr(z, "independent_offset"):
+            continue            # a QDAC bias line has no LF port
+        _set(getattr(z, "opx_output", None),
+             "upsampling_mode" in (qrows.get(str(qid)) or {}))
+    prows = pop.get("pairs") or {}
+    for pid, pair in (getattr(machine, "qubit_pairs", None) or {}).items():
+        cpl = getattr(pair, "coupler", None)
+        _set(getattr(cpl, "opx_output", None) if cpl is not None else None,
+             "upsampling_mode" in (prows.get(str(pid)) or {}))
+    return done
 
 def _set_port_lo(port, lo, band):
     if port is None:
@@ -1722,6 +1776,7 @@ if (POPULATE.get("options") or {}).get("pin_cores"):
     _pin_cores(machine)
 for _w in _fix_coupled_bands(machine, _spec, []):
     print(f"WARNING: {_w}", file=sys.stderr)
+_default_flux_upsampling(machine, _spec)
 machine.save()
 
 # Readout-LO constraint lock (the wizard's post-save fix-up): each MW

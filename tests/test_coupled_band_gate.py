@@ -153,3 +153,46 @@ def test_the_emitted_script_applies_the_same_pass():
     src = Path(se.__file__).read_text(encoding="utf-8")
     call = src.index('w("for _w in _fix_coupled_bands(machine, _spec, []):")')
     assert call < src.index('w("machine.save()")')
+
+
+def test_a_twpa_pump_on_out5_beside_a_band1_drive_on_out4_is_solved():
+    """G13: the QOP also refuses "output ports 4 & 5" -- an xy drive at
+    5.04 GHz (first match band 1, band 2 covers it too) on out 4 beside a
+    6.5 GHz TWPA pump (band 2) on out 5. The pass sees the pump port and the
+    same band wins (the drive moves to band 2); a typed pair is refused."""
+    rb = _rb()
+    xy = _NS(opx_output=_Port("con1", 1, "4", "out", 5.04e9, rb._band_for(5.04e9)))
+    pump = _NS(opx_output=_Port("con1", 1, "5", "out", 6.5e9, rb._band_for(6.5e9)))
+    m = _NS(qubits={"q4": _NS(xy=xy, resonator=None, z=None)},
+            twpas={"twpaA": _NS(pump=pump, pump_=_NS(opx_output=pump.opx_output))})
+    assert (xy.opx_output.band, pump.opx_output.band) == (1, 2)
+    warnings = rb._fix_coupled_bands(m, {"populate": {"twpa": {"twpaA": {}}}}, [])
+    assert (xy.opx_output.band, pump.opx_output.band) == (2, 2), warnings
+    assert warnings and "out 4 moved from band 1 to band 2" in warnings[0], warnings
+    # typed on both sides (the walk's chip): nothing moves, the gate refuses
+    xy.opx_output.band, pump.opx_output.band = 1, 2
+    spec = {"populate": {"qubit": {"q4": {"band": 1}}, "twpa": {"A": {"band": 2}}}}
+    assert rb._fix_coupled_bands(m, spec, []) == []
+    st = {"ports": {"mw_outputs": {"con1": {"1": {"4": {"band": 1}, "5": {"band": 2}}}}}}
+    bad = rb._coupled_band_errors(st)
+    assert len(bad) == 1 and "out 4 is band 1" in bad[0] and "out 5 is band 2" in bad[0]
+
+
+def test_the_docs_list_every_coupled_pair_the_code_judges():
+    docs = Path(r"D:\work_laptop\documentation-website\docs\docs\docs\Guides\opx1000_fems.md")
+    if not docs.is_file():
+        import pytest
+        pytest.skip("QM docs checkout absent")
+    text = docs.read_text(encoding="utf-8")
+    for line in ("* Out 1 & In 1", "* Out 2 & Out 3", "* Out 4 & Out 5", "* Out 6 & Out 7", "* Out 8 & In 2",
+                 "Coupled ports must be in the same band, or in bands `1` and `3`."):
+        assert line in text, line
+    rb = _rb()
+    assert sorted(rb._COUPLED_PORT_PAIRS) == sorted([
+        ("1", "out", "1", "in"), ("2", "out", "3", "out"), ("4", "out", "5", "out"),
+        ("6", "out", "7", "out"), ("8", "out", "2", "in")])
+    js = (_ROOT / "quam_state_manager" / "web" / "static" / "generate.js").read_text(encoding="utf-8")
+    for pair in ('[[1, "output"], [1, "input"]]', '[[2, "output"], [3, "output"]]',
+                 '[[4, "output"], [5, "output"]]', '[[6, "output"], [7, "output"]]',
+                 '[[8, "output"], [2, "input"]]'):
+        assert pair in js, pair

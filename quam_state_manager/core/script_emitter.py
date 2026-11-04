@@ -79,7 +79,7 @@ _RUNTIME_FUNCS = (
     "_match_populate_pairs",
     "_num", "_target_lo",
     "_band_for", "_delay_for_band", "_apply_lf_delay",
-    "_bands_covering", "_port_key", "_fix_coupled_bands",
+    "_bands_covering", "_port_key", "_fix_coupled_bands", "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_twpa_of", "_apply_twpa", "_apply_twpa_qubits",
@@ -594,6 +594,8 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     # script writes the chip the wizard wrote
     w("for _w in _fix_coupled_bands(machine, _spec, []):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
+    # G12: flux / coupler LF ports upsample in `pulse` mode, as the wizard's build does
+    w("_default_flux_upsampling(machine, _spec)")
     w("machine.save()")
     w("")
     if qdac_qubits:
