@@ -6634,6 +6634,11 @@ def _scope_storage_path(ctx: dict | None) -> str:
         st = qualibrate_config.project_storage(scope)
         if st.get("exists") and st.get("native"):
             native = st["native"]
+            # the folder this project's runs land in (docs/301's naming rule,
+            # F8's before-the-first-run case): a storage location shared by
+            # several projects is never offered whole
+            from quam_state_manager.core import hub_sync
+            native = hub_sync.storage_root_for_open(native, scope) or native
     except Exception:  # noqa: BLE001 -- a hint, never a render failure
         native = ""
     ctx["_scope_storage"] = (scope, native)
@@ -11611,6 +11616,65 @@ def _checkpoint_pending_tray_flags(response):
 _AGENT_HELD_MSG = ("Auto-Sync is holding: {n} staged edit(s) came from an agent. Auto-Sync never "
                    "pushes an agent's edits. Review them and press Apply yourself, or discard them.")
 
+
+
+def _agent_apply_mode(ctx: dict) -> str:
+    """The mode an agent's Apply obeys: the RUNNING plan the press names (``X-SM-Plan``), else the
+    session's, else the chip's default -- the same order run_node uses (agent_runs.run_mode)."""
+    from quam_state_manager.core import agent_plans, agent_runs, agent_session, limits
+    from quam_state_manager.core import working_copy as wc_mod
+    inst = current_app.instance_path
+    chip = wc_mod.key_for(ctx["path"])
+    pid = (request.headers.get("X-SM-Plan") or "").strip()
+    plan = agent_plans.get(inst, chip, pid) if pid else None
+    if plan is not None and plan.get("status") not in ("running", "stopping"):
+        plan = None
+    return agent_runs.run_mode(plan, agent_session.load(inst, chip), limits.load(inst, chip))
+
+
+def _agent_apply_hold(ctx: dict):
+    """F29: an agent's Apply in a mode other than ``auto`` turns its staged rows into an approval
+    card and takes them out of the tray. None = the press goes on (auto mode, or nothing staged).
+    The caller has already refused a tray holding a person's or another agent's rows."""
+    if _agent_apply_mode(ctx) == "auto":
+        return None
+    from quam_state_manager.core import approvals
+    from quam_state_manager.core import working_copy as wc_mod
+    store, mod = ctx["store"], ctx["modifier"]
+    actor = _request_actor()
+    with store._lock:
+        rows = list(store.change_log)
+        if not rows:
+            return None
+        if any(getattr(e, "created", False) or getattr(e, "deleted", False) for e in rows):
+            return jsonify(ok=False, conflict="agent_structural_rows",
+                           paths=[e.dot_path for e in rows if e.created or e.deleted][:50],
+                           message="an approval holds value changes only; this tray adds or removes keys. "
+                                   "Nothing was written. Undo those rows, or ask the person to apply them"), 409
+        merged: dict = {}
+        for e in rows:                          # first old, last new per path (one card row per field)
+            w = merged.setdefault(e.dot_path, {"path": e.dot_path, "old": e.old_value})
+            w["new"] = e.new_value
+        writes = [w for w in merged.values() if not _differ_mod.compare_equal(w["old"], w["new"])]
+        while store.change_log:
+            mod.undo_group()
+        store._clear_pointer_cache()
+    if not writes:
+        return jsonify(ok=True, held=False, applied=False, message="the staged rows changed nothing"), 200
+    chip = wc_mod.key_for(ctx["path"])
+    pid = (request.headers.get("X-SM-Plan") or "").strip() or None
+    ap = approvals.add(current_app.instance_path, chip, kind="writes", node=None, targets=None, writes=writes,
+                       reason=(request.values.get("reason") or None), actor=actor, plan_id=pid,
+                       why_held=f"mode {_agent_apply_mode(ctx)}: an agent's apply waits for a person")
+    try:
+        from quam_state_manager.web import agent_api
+        agent_api._bump()
+        agent_api._wake()
+    except Exception:  # noqa: BLE001
+        logger.debug("approval wake failed", exc_info=True)
+    return jsonify(ok=False, held=True, applied=False, approval=approvals.summary(ap),
+                   message=f"held for approval: card {ap['id']} ({len(writes)} value(s)); "
+                           "nothing was written to the chip"), 202
 
 def _agent_held_paths(changes) -> list:
     """D-45: the pending rows an agent staged (actor ``by_<agent>``)."""
@@ -31573,12 +31637,25 @@ def auto_sync_pull():
     except (ValueError, KeyError, TypeError, AttributeError):
         _t, _moved = None, True
     if _moved:
-        ctx["_pull_seq"] = int(ctx.get("_pull_seq") or 0) + 1
-        ctx["_pull_lost"] = _lost
+        with ctx["store"]._lock:
+            seq = int(ctx.get("_pull_seq") or 0) + 1
+            ctx["_pull_seq"] = seq
+            ctx["_pull_lost"] = _lost
+            # every window polls on its own clock: two pulls between two of its
+            # polls must both be said, so each step keeps what it took away
+            hist = [h for h in (ctx.get("_pull_lost_hist") or ())
+                    if isinstance(h, (list, tuple)) and len(h) == 2
+                    and int(h[0]) > seq - _PULL_LOST_HIST]
+            hist.append((seq, _lost))
+            ctx["_pull_lost_hist"] = hist
         if _t is not None:
-            _t["autoSyncPulled"]["pull_seq"] = f"{ctx.get('path', '')}#{ctx['_pull_seq']}"
+            _t["autoSyncPulled"]["pull_seq"] = f"{ctx.get('path', '')}#{seq}"
             resp.headers["HX-Trigger"] = json.dumps(_t)
     return resp
+
+
+#: pull steps whose lost-value lists ride the drift poll (``_pull_note``)
+_PULL_LOST_HIST = 8
 
 
 @bp.route("/auto-apply/arm", methods=["POST"])
@@ -31858,8 +31935,13 @@ def state_review():
     conflict_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
                       "orig": originals.get(p)} for p in conflicts]
     kind_by_path = {e.dot_path: e.change_type for e in entries}
+    # R-f (final walk): a value SM applied (an approval, an Apply) that the
+    # live chip no longer holds is NEWER than live, not an older value to put
+    # back -- the choices must count it as a loss and offer to keep it
+    _held = _applied_values_held(ctx) if not archive else {}
+    applied_newer = [p for p in external if p in _held]
     external_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
-                      "kind": kind_by_path.get(p, "modified")}
+                      "kind": kind_by_path.get(p, "modified"), "applied": p in _held}
                      for p in external[:300]]
     mine_rows = []
     cset = set(conflicts)
@@ -31901,6 +31983,7 @@ def state_review():
         conflict_rows=conflict_rows,
         external_rows=external_rows,
         external_total=len(external),
+        applied_newer=applied_newer,
         # every value the live chip changed, colliding ones included
         live_total=len(external) + len(conflicts),
         mine_rows=mine_rows,
@@ -32351,7 +32434,13 @@ def _pull_note() -> dict:
     # as a step, not as where the chip already was
     seq = int(ctx.get("_pull_seq") or 0)
     return {"pull_seq": f"{ctx.get('path', '')}#{seq}",
-            "pull_lost": list(ctx.get("_pull_lost") or [])}
+            "pull_lost": list(ctx.get("_pull_lost") or []),
+            # the last few steps, each with what it took away: a window that
+            # missed a step (its poll came after two pulls) still names every
+            # lost value, not only the latest pull's
+            "pull_lost_hist": [[int(h[0]), list(h[1] or [])]
+                               for h in (ctx.get("_pull_lost_hist") or ())
+                               if isinstance(h, (list, tuple)) and len(h) == 2]}
 
 
 @bp.route("/state/drift")
@@ -33228,6 +33317,13 @@ def state_sync():
             # edits themselves, which "↶ Bring back" replays on top of the new
             # live. Only when there is something to lose.
             backup = None
+            # R-f (final walk): "keep my applied values" -- the values SM
+            # applied (an approval, an Apply) that an outside save then
+            # removed are re-applied over the pulled chip like edits, so the
+            # merge keeps BOTH the run's values and the person's
+            _keep_applied = (mode == "apply"
+                             and request.values.get("keep_applied") == "1")
+            _held_applied = _applied_values_held(ctx) if _keep_applied else {}
             _sync_point_before = working_copy.sync_point(wc)
             _pulled = working_copy.sync_from_live(wc)
             # v1.5.1 (SB-F1): `pending` was captured before the pull, and
@@ -33243,6 +33339,14 @@ def state_sync():
                 # content (with apply, on the live chip too).
                 pending = _merge_reapply(_pending_reapply(ctx),
                                          _capture_change_log_as_updates(store))
+                for _p, _v in _held_applied.items():
+                    if _p in pending:
+                        continue            # an explicit edit wins
+                    _got = _dot_get(_pulled[0], _p)
+                    if _got is _DOT_MISSING:
+                        _got = _dot_get(_pulled[1], _p)
+                    if _got is _DOT_MISSING or _got != _v:
+                        pending[_p] = _tagged("set", _v, "keep-applied")
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
                                if not any(k == p or k.startswith(p + ".") for p in _use_live)}
@@ -34221,6 +34325,12 @@ def state_apply_to_live():
             return jsonify(ok=False, conflict="agent_groups", paths=[c.dot_path for c in _oth][:50], actors=_who,
                            message=f"the tray holds rows staged by {_named}; an agent applies only its "
                                    "own rows — that agent applies them, or a person does in the SM window"), 409
+        # F29: outside a plan or session in auto mode an agent's press never writes the chip.
+        # Its rows leave the tray and become ONE approval card; a person's Approve writes them
+        # through this same door as that person's press (one group, one undo unit).
+        _hold = _agent_apply_hold(ctx)
+        if _hold is not None:
+            return _hold
         _lk = _agent_edit_lock_refusal(ctx)
     else:
         # D-45: an Auto-Sync flush is not a person's press. The working copy

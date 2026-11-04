@@ -435,6 +435,8 @@ class TestEachAgentPressesForItsOwnRows:
         assert live["qubits"]["qA1"]["T1"] == 3e-6 and live["qubits"]["qA1"]["T2ramsey"] == 4e-6
 
     def test_its_own_rows_alone_still_apply(self, c, inst, synth_folder):
+        from quam_state_manager.core import limits
+        limits.save(str(inst), _chip(c), {"mode": "auto"})   # F29: only auto mode lets an agent's press write
         self._stage(c, "qubits.qA1.T1", "3e-6", AGENT)
         r = c.post("/state/apply-to-live", data={"seen_changes": "1"}, headers={**AGENT, "Accept": "application/json"})
         assert r.status_code == 200

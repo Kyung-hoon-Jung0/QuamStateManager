@@ -99,7 +99,7 @@ def evidence(run, node=None):
         value = _number(w.get("new"))
         if value is None:
             continue
-        e = _entry(w["path"].split("."), value, w.get("old"), "applied")
+        e = _entry(w["path"].split("."), value, w.get("old"), "approved")
         if e is not None:
             output.append(e)
     return output
@@ -334,7 +334,9 @@ def learn(run, figure_payload):
         if parent is None or not _agrees(parent * scale + offset, entry["value"]):
             continue
         tier = entry["tier"]
-        tier_label = "proposed, not applied" if tier == "proposed" else "applied"
+        tier_label = ("proposed, not applied" if tier == "proposed"
+                      else "approved by a person and applied by SM" if tier == "approved"
+                      else "applied")
         target = {"path": entry["path"], "path_template": entry["template"], "axis": marker["axis"],
                   "plotly_axis": marker["plotly_axis"], "entity": entry["entity"],
                   "scale": scale, "offset": offset, "transform_kind": kind,
@@ -370,7 +372,9 @@ def learn(run, figure_payload):
         return None
     tier = entries[0]["tier"]
     label = f"Learned from this run's {len({t['path'] for t in targets})} state writes; the fit marker reproduces them exactly"
-    label += " (proposed, not applied)" if tier == "proposed" else " (applied)"
+    label += (" (proposed, not applied)" if tier == "proposed"
+              else " (approved by a person and applied by SM)" if tier == "approved"
+              else " (applied)")
     for target in targets:
         target["provenance"]["formula"] += "; " + label
         names = target["provenance"]["result_names"]
@@ -378,7 +382,8 @@ def learn(run, figure_payload):
             target["provenance"]["formula"] += "; marker matches " + ", ".join(names)
     return {"axis": targets[0]["axis"], "qubit": next(iter(entities)) if len(entities) == 1 else None,
             "label": label,
-            "targets": targets, "learned": True, "verified_against": "patches" if tier == "applied" else "proposals",
+            "targets": targets, "learned": True,
+            "verified_against": {"applied": "patches", "approved": "approvals"}.get(tier, "proposals"),
             "evidence_tier": tier, "n_verified": len({t["path"] for t in targets})}
 
 

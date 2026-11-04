@@ -187,3 +187,41 @@ class TestSurfaces:
         assert not set(s["todo_required"]) & {"connect_claude", "connect_codex", "allow"}
         src = (STATIC / "agent.js").read_text(encoding="utf-8")
         assert "su.todo_required || su.todo" in src and "WIRE_FRESH_MS" in src
+
+
+class TestOnlyThePlansDriverEndsIt:
+    """One plan, one driver (docs/253): another agent neither ends the plan by its
+    door nor by a refusal of its own run_node."""
+    OTHER = {"X-SM-Agent": "codex"}
+
+    def _pid(self, c, inst):
+        _arm(c, steps=2)
+        return agent_plans.load(str(inst), _chip(c))[-1]["id"]
+
+    def test_another_agent_cannot_end_the_plan(self, c, inst):
+        pid = self._pid(c, inst)
+        r = c.post(f"/api/agent/plans/{pid}/end", json={"why": "not mine"}, headers=self.OTHER)
+        assert r.status_code == 403, r.get_json()
+        assert agent_plans.get(str(inst), _chip(c), pid)["status"] == "running"
+        r = c.post(f"/api/agent/plans/{pid}/end", json={"why": "the fit failed"}, headers=AGENT)
+        assert r.status_code == 200 and r.get_json()["plan"]["status"] == "stopped"
+
+    def _refuse(self, app, inst, chip, plan, driver, sess):
+        class Req:
+            step = 0
+        with app.test_request_context("/"):
+            aa._plan_refused(str(inst), chip, "chip", plan, Req(), {"refused": "not_a_node", "how": "x"},
+                             driver=driver, sess=sess)
+
+    def test_another_agents_refusal_does_not_end_the_plan(self, app, c, inst):
+        assert "not_a_node" in aa._PLAN_ENDING_REFUSALS
+        pid = self._pid(c, inst)
+        chip = _chip(c)
+        sess = agent_session.load(str(inst), chip)
+        own = dict(sess["grant"]["driver"])
+        other = dict(own, id="someone-else", actor="by_codex")
+        assert not aa._drives_plan(sess, pid, other)
+        self._refuse(app, inst, chip, agent_plans.get(str(inst), chip, pid), other, sess)
+        assert agent_plans.get(str(inst), chip, pid)["status"] == "running"
+        self._refuse(app, inst, chip, agent_plans.get(str(inst), chip, pid), own, sess)
+        assert agent_plans.get(str(inst), chip, pid)["status"] == "stopped"

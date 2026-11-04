@@ -46,3 +46,24 @@ def test_dataset_load_fires_the_event_the_page_listens_for(app, tmp_path):
     with app.test_client() as c:
         r = c.post("/workspace/add", data={"folder": str(tmp_path / "data")}, headers=H)
         assert "workspaceRootsChanged" in (r.headers.get("HX-Trigger") or "")
+
+
+def test_a_shared_storage_location_offers_the_projects_folder_not_the_whole(tmp_path):
+    """A storage location several projects share is never offered whole: before the
+    project's first run (no ``L/p`` yet) the hint is the project's own folder."""
+    import os
+
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.web import routes
+
+    loc = tmp_path / "L"
+    run = loc / "other" / "2026-01-01" / "#1_x_000000"
+    run.mkdir(parents=True)
+    (run / "node.json").write_text('{"id": 1}', encoding="utf-8")
+    assert not (loc / "p").exists()
+    want = hub_sync.storage_root_for_open(str(loc), "p")
+    assert want and os.path.normcase(os.path.normpath(want)) == os.path.normcase(str(loc / "p"))
+    with patch("quam_state_manager.core.qualibrate_config.project_storage",
+               return_value={"exists": True, "native": str(loc)}):
+        got = routes._scope_storage_path({"qualibrate_project": "p"})
+    assert got == want and got != str(loc)

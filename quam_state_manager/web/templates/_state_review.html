@@ -154,7 +154,7 @@
           or tweaked, into what you see -- no full pull. -#}
       <tr class="sp-row sp-row-live diff-row-{{ r.kind }}" data-path="{{ r.path }}">
         <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
-        <td class="sp-val{{ sp_text(r.here) }}">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
+        <td class="sp-val{{ sp_text(r.here) }}">{{ r.here | groupdigits if r.here is not none else '—' }}{% if r.applied %} <small class="muted sp-applied-mark" title="SM applied this value (an Apply or an approval); the live chip was then rewritten from outside">you applied</small>{% endif %}</td>
         {% if r.live is not none %}
         <td class="sp-val sp-val-live"><span class="review-live-edit"><input type="text" class="review-live-input sp-live-input"
                value="{{ r.live | groupdigits }}" size="{{ [(r.live | groupdigits | string) | length, 6] | max }}" data-dot-path="{{ r.path }}" data-old-raw="{{ r.here | tojson }}"
@@ -221,7 +221,10 @@
   {% if not _archive and _st != 'unreadable' and _st != 'synced' %}
   <div class="sp-choices" id="state-review-actions">
     <div class="sp-choices-head">Choose <small class="muted">each choice says what it loses</small></div>
-    {% set _can_merge = (_nm > 0 and not mixed and _nl > 0) %}
+    {#- R-f: values SM applied that the live chip dropped are newer than live;
+        the merge keeps them, Take live loses them, Keep mine is not "older" -#}
+    {% set _na = (applied_newer | default([])) | length %}
+    {% set _can_merge = ((_nm > 0 or _na > 0) and not mixed and _nl > 0) %}
     {% if _st == 'mine' and not working_dirty %}
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary"
             {#- R3 M4: the same-field check and the live chip this panel read -#}
@@ -242,9 +245,10 @@
             {#- R4 a1: the live values at the fields the merge writes: a lab write
                 anywhere else no longer refuses it -#}
             {% if live_values is defined and live_values is not none %}data-live-values='{{ live_values | tojson }}'{% endif %}
+            {% if _na %}data-keep-applied="{{ _na }}"{% endif %}
             onclick="SyncPanel.merge(this)">
       <span class="sp-choice-label">&#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></span>
-      <span class="sp-choice-what">{% if _nl - _nc > 0 %}Takes the live chip's {{ _nl - _nc }} other change{{ 's' if (_nl - _nc) != 1 }}, then writes your edits on top{% if _nc %}, with the side you picked for each field above{% endif %}.{% else %}Writes your edits to the live chip, with the side you picked for each field above.{% endif %}</span>
+      <span class="sp-choice-what">{% if _na and not _nm %}Takes the live chip's {{ _nl - _na }} other change{{ 's' if (_nl - _na) != 1 }}, then writes the {{ _na }} value{{ 's' if _na != 1 }} you applied back on top ({{ applied_newer[:3] | join(', ') }}{% if _na > 3 %} and more{% endif %}).{% elif _nl - _nc > 0 %}Takes the live chip's {{ _nl - _nc }} other change{{ 's' if (_nl - _nc) != 1 }}, then writes your edits{% if _na %} and the {{ _na }} value{{ 's' if _na != 1 }} you applied{% endif %} on top{% if _nc %}, with the side you picked for each field above{% endif %}.{% else %}Writes your edits to the live chip, with the side you picked for each field above.{% endif %}</span>
       <span class="sp-lost" data-lost-default="{% if _nc %}Pick a side for {{ _nc }} field{{ 's' if _nc != 1 }} above first.{% else %}Lost: nothing.{% endif %}">{% if _nc %}Pick a side for {{ _nc }} field{{ 's' if _nc != 1 }} above first.{% else %}Lost: nothing.{% endif %}</span></button>
     <button type="button" class="sp-choice btn-sync sp-reapply" {% if _nc %}disabled title="Pick a side for the fields above first"{% endif %}
             onclick="SyncPanel.reapply()">
@@ -264,13 +268,13 @@
       <span class="sp-lost">Lost: the live chip's current values at {{ staged_rows | length }} field{{ 's' if staged_rows | length != 1 }} (backed up first; ↺ Revert last apply restores them).</span></button>
     {% endif %}
     {% if _nl > 0 or _nm > 0 or working_dirty %}
-    {% set _loses = (_nm > 0 or working_dirty) %}
+    {% set _loses = (_nm > 0 or working_dirty or _na > 0) %}
     <button type="button" class="sp-choice btn-sync outline sp-take{% if _loses %} sync-arm{% endif %}"
-            {% if _loses %}data-arm-label="Press again to discard {% if _nm %}{{ _nf }} edit{{ 's' if _nf != 1 }}{% else %}the staged version{% endif %} and take live"{% endif %}
+            {% if _loses %}data-arm-label="Press again to discard {% if _nm %}{{ _nf }} edit{{ 's' if _nf != 1 }}{% elif working_dirty %}the staged version{% else %}{{ _na }} value{{ 's' if _na != 1 }} you applied{% endif %} and take live"{% endif %}
             onclick="{% if _loses %}SyncPanel.arm(this, event, function(){ doStateSync('discard', true); }){% else %}doStateSync('discard'){% endif %}">
       <span class="sp-choice-label">&#8595; Take live</span>
       <span class="sp-choice-what">Replaces what you see with the live chip. The live chip is not written.</span>
-      <span class="sp-lost">{% if _nm %}Lost: your {{ _nf }} unapplied edit{{ 's' if _nf != 1 }} &mdash; a backup is kept first; ↶ Bring back (History) restores {{ 'them' if _nf != 1 else 'it' }}.{% elif working_dirty %}Lost: the staged version &mdash; a backup is kept first (History, State History).{% else %}Lost: nothing.{% endif %}</span></button>
+      <span class="sp-lost">{% if _nm %}Lost: your {{ _nf }} unapplied edit{{ 's' if _nf != 1 }}{% if _na %} and {{ _na }} value{{ 's' if _na != 1 }} you applied ({{ applied_newer[:3] | join(', ') }}{% if _na > 3 %} and more{% endif %}){% endif %} &mdash; a backup is kept first; ↶ Bring back (History) restores {{ 'them' if (_nf + _na) != 1 else 'it' }}.{% elif working_dirty %}Lost: the staged version &mdash; a backup is kept first (History, State History).{% elif _na %}Lost: {{ _na }} value{{ 's' if _na != 1 }} you applied that the live chip no longer holds ({{ applied_newer[:3] | join(', ') }}{% if _na > 3 %} and more{% endif %}) &mdash; a backup is kept first; ⇄ Pull &amp; apply keeps {{ 'them' if _na != 1 else 'it' }}.{% else %}Lost: nothing.{% endif %}</span></button>
     {% endif %}
     {% if _nm > 0 %}
     <button type="button" class="sp-choice btn-sync outline sync-arm sp-discard-all"
@@ -292,7 +296,7 @@
     <button type="button" class="sp-choice btn-sync outline sp-keep state-review-overwrite-btn"
             onclick="overwriteLiveWithWorking(this)">
       <span class="sp-choice-label">&#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></span>
-      <span class="sp-choice-what">{% if _nm == 0 and not working_dirty %}Puts the {{ _nl }} older value{{ 's' if _nl != 1 }} shown here back on the live chip &mdash; the way to undo a bad run's write.{% else %}Writes everything shown here over the live chip.{% endif %}</span>
+      <span class="sp-choice-what">{% if _nm == 0 and not working_dirty and not _na %}Puts the {{ _nl }} older value{{ 's' if _nl != 1 }} shown here back on the live chip &mdash; the way to undo a bad run's write.{% elif _nm == 0 and not working_dirty %}Writes everything shown here over the live chip: the {{ _na }} value{{ 's' if _na != 1 }} you applied and {{ _nl - _na }} older value{{ 's' if (_nl - _na) != 1 }}.{% else %}Writes everything shown here over the live chip.{% endif %}</span>
       <span class="sp-lost">{% if _nl %}Lost: the live chip's {{ _nl }} new value{{ 's' if _nl != 1 }} (backed up first; ↺ Revert last apply restores them).{% else %}Lost: nothing on the live chip has changed since you synced.{% endif %}</span></button>
     {% endif %}
   </div>

@@ -39,3 +39,17 @@ def test_a_rejected_card_wrote_nothing(tmp_path):
     inst, run = _setup(tmp_path, status="rejected")
     create_app(testing=True, instance_path=str(inst))
     assert learn_click.evidence(run) == []
+
+
+def test_approved_writes_are_labelled_as_approved(tmp_path):
+    """The evidence tier of an approval-sourced write is its own: a person approved
+    it and SM applied it -- not a node's own patch, not a proposal."""
+    inst, run = _setup(tmp_path)
+    create_app(testing=True, instance_path=str(inst))
+    assert [e["tier"] for e in learn_click.evidence(run)] == ["approved"]
+    fig = {"markers": [{"entity": "q1", "axis": "x", "coordinate": 5.0000015e9}]}
+    res = learn_click.learn(run, fig)
+    assert res is not None, fig.get("display_only_reason")
+    assert res["evidence_tier"] == "approved" and res["verified_against"] == "approvals"
+    assert "approved by a person and applied by SM" in res["label"]
+    assert all("approved by a person and applied by SM" in t["provenance"]["formula"] for t in res["targets"])

@@ -418,6 +418,11 @@ def t_apply_to_live(_a: dict) -> Any:
     if _seen_sig:
         form["seen_sig"] = _seen_sig
     code, body = sm.post_form("/state/apply-to-live", form)
+    if code == 202 and isinstance(body, dict) and body.get("held"):
+        # F29: the chip's mode is not auto -- the rows became an approval card a person decides
+        _seen, _seen_paths = 0, []
+        return {"applied": False, "held_for_approval": body.get("approval"),
+                "how": body.get("message") + ". Tell the human the card is waiting; do not re-stage it."}
     if code == 409:
         _seen = None                        # the picture changed; look again before pressing
         if isinstance(body, dict) and body.get("conflict") == "stale_live":
@@ -687,7 +692,7 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                     "The card closes as stopped with your reason; a step still running finishes first. "
                     "Say it to the human as well.",
                     plan_id={"type": "string", "required": True},
-                    why={"type": "string", "required": True, "description": "why it ends -- goes into the journal"}),
+                    why={"type": "string", "required": True, "description": "why it ends (it goes into the journal)"}),
                  t_plan_end),
     "plan_status": (_s("A plan's card as SM records it (steps, runs, writes, approvals); no id = recent plans.",
                        plan_id={"type": "string"}), t_plan_status),

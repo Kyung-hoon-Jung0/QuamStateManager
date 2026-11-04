@@ -96,7 +96,8 @@ def test_a_window_repaints_once_per_foreign_pull():
     import subprocess
     from pathlib import Path
     src = (Path(routes_mod.__file__).parent / "static" / "app.js").read_text(encoding="utf-8")
-    fn = re.search(r"    function onPullSeq\(d\) \{.*?\n    \}\n", src, re.S).group(0)
+    fn = (re.search(r"    function _pullSeqParts\(s\) \{.*?\n    \}\n", src, re.S).group(0)
+          + re.search(r"    function onPullSeq\(d\) \{.*?\n    \}\n", src, re.S).group(0))
     js = ("var window={_followValuesOnScreen:function(){window.f++},_smSayLost:function(l){window.s.push(l)},f:0,s:[]};\n"
           + fn + "\nvar out=[];"
           "out.push(onPullSeq({pull_seq:'c#0',pull_lost:[]}));"
@@ -106,3 +107,43 @@ def test_a_window_repaints_once_per_foreign_pull():
           "console.log(JSON.stringify([out,window.f,window.s.length]));")
     r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=60)
     assert r.stdout.strip() == "[[false,false,true,false],1,1]", r.stdout + r.stderr
+
+
+def test_two_pulls_between_two_polls_are_both_named(env):  # noqa: F811
+    """A second window that polls after TWO pulls still learns of the first
+    pull's loss: the drift answer carries each step's lost list."""
+    c = env["client"]
+    _arm(env, pull=True, push=False)
+    _apply_name(env)
+    r1 = _outside_save_and_pull(env, _state(f01=5.2e9))         # drops T1
+    assert r1.status_code == 200
+    r2 = _outside_save_and_pull(env, _state(f01=5.3e9))         # moves f_01 only
+    assert r2.status_code == 200
+    d = c.get("/state/drift").get_json()
+    assert d["pull_seq"].endswith("#2"), d["pull_seq"]
+    assert d["pull_lost"] == [], "the latest step alone names nothing"
+    hist = d["pull_lost_hist"]
+    assert [h[0] for h in hist] == [1, 2], hist
+    assert [x["path"] for x in hist[0][1]] == ["qubits.qA1.T1"], hist
+
+
+def test_the_pull_history_is_bounded(env):  # noqa: F811
+    _arm(env, pull=True, push=False)
+    for i in range(9):
+        r = _outside_save_and_pull(env, _state(f01=5.1e9 + i * 1e6))
+        assert r.status_code == 200
+    d = env["client"].get("/state/drift").get_json()
+    assert d["pull_seq"].endswith("#9"), d["pull_seq"]
+    assert len(d["pull_lost_hist"]) == routes_mod._PULL_LOST_HIST == 8
+    assert [h[0] for h in d["pull_lost_hist"]] == list(range(2, 10))
+
+
+def test_a_pull_that_changed_nothing_is_not_a_step(env):  # noqa: F811
+    _arm(env, pull=True, push=False)
+    r = _outside_save_and_pull(env, _state(f01=5.2e9))
+    assert r.status_code == 200
+    d1 = env["client"].get("/state/drift").get_json()
+    r = _outside_save_and_pull(env, _state(f01=5.2e9))           # the same content
+    d2 = env["client"].get("/state/drift").get_json()
+    assert d2["pull_seq"] == d1["pull_seq"]
+    assert d2["pull_lost_hist"] == d1["pull_lost_hist"]

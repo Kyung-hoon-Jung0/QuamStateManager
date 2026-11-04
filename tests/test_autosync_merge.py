@@ -322,7 +322,9 @@ class TestTheClientPressesTheDoorItIsGiven:
         assert "doStateSync('apply')" in ctl, (
             "the control no longer offers the merge the automatic path presses")
         m = app.index("function merge(btn)")
-        assert 'window.doStateSync("apply"' in app[m:m + 600]
+        # the window is the function body, not a character budget (R-f added
+        # the keep-applied flag and its comment above the press)
+        assert 'window.doStateSync("apply"' in app[m:app.index("function reapply()", m)]
         i = js.index("addEventListener('autoSyncMerge'")
         assert "doStateSync('apply'" in js[i:i + 900], js[i:i + 400]
 

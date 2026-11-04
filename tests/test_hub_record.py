@@ -774,7 +774,11 @@ class TestDoors:
         assert _flags(_chip_dir(env), e["id"]) & UNDONE
 
     def test_agent_apply_is_an_agent_event_with_its_plan(self, env):
+        from quam_state_manager.core import limits
         _edit(env, "qubits.qA1.T1", "4e-5", headers={"X-SM-Agent": "claude"})
+        # F29 (final walk): an agent's apply writes directly only in auto mode;
+        # elsewhere it is held as an approval card (tests/test_agent_apply_hold.py)
+        limits.save(env["app"].instance_path, working_copy.key_for(_ctx(env)["path"]), {"mode": "auto"})
         r = env["client"].post("/state/apply-to-live",
                                headers={"X-SM-Agent": "claude", "X-SM-Plan": "plan-7",
                                         "Accept": "application/json"})

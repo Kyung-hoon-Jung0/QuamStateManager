@@ -78,6 +78,10 @@ class TestTheActorLandsEverywhere:
         assert r.status_code == 200, r.get_data(as_text=True)
         tray = c.get("/api/agent/tray").get_json()
         assert tray["entries"][0]["actor"] == "by_codex"
+        # F29 (final walk): outside auto mode an agent's apply is HELD as an
+        # approval card; this pin is about who the actor is on a write that lands
+        from quam_state_manager.core import limits, working_copy
+        limits.save(c.application.instance_path, working_copy.key_for(str(synth_folder)), {"mode": "auto"})
         r = c.post("/state/apply-to-live", data={"seen_changes": "1"}, headers={**_H, "X-SM-Agent": "codex",
                                                                              "X-SM-Plan": "plan-7"})
         assert r.status_code == 200, r.get_data(as_text=True)[:200]

@@ -2237,7 +2237,7 @@ def run_node():
         if refusal is not None and refusal.get("refused") == "target_halted":
             _journal_halted_refusal(inst, name, node_info.name if node_info is not None else node, req, refusal)
         if refusal is not None:
-            _plan_refused(inst, chip, name, plan, req, refusal)
+            _plan_refused(inst, chip, name, plan, req, refusal, driver=driver, sess=session)
             if refusal.pop("file_request", False) and node_info is not None:
                 # review R1-M2: the same ask twice is one request -- "the same" is run_terms (docs/254)
                 ap = _file_run_request(inst, chip, name, node_info.name, req, plan)
@@ -2278,11 +2278,32 @@ def run_node():
 _PLAN_ENDING_REFUSALS = ("no_env", "no_calibrations_folder", "not_a_node", "past_stop_by")
 
 
-def _plan_refused(inst, chip, name, plan, req, refusal: dict) -> None:
+def _card_source(rec: dict) -> str:
+    """Where an approval card's writes came from, for a journal line: the node
+    that proposed them, else the agent's own apply (F29 holds that as a card
+    with no node)."""
+    node = rec.get("node")
+    return f"`{node}`" if node else f"{rec.get('actor') or 'an agent'}'s own apply"
+
+
+def _drives_plan(sess: dict | None, pid: str, driver: dict | None) -> bool:
+    """Is ``driver`` the agent the person armed for plan ``pid``? A grant for
+    another plan, or none, says no: a plan is ended only by its own driver
+    (docs/253, one plan one driver)."""
+    from quam_state_manager.core import agent_grant
+    g = (sess or {}).get("grant") or {}
+    return bool(g) and g.get("plan_id") == pid and agent_grant.same(g.get("driver"), driver)
+
+
+def _plan_refused(inst, chip, name, plan, req, refusal: dict, *, driver: dict | None = None,
+                  sess: dict | None = None) -> None:
     """A refused run_node for a running plan is said ON the plan card (``refusal``: code, how,
-    step, at); a refusal no retry can clear also ends the plan, with that reason."""
+    step, at); a refusal no retry can clear also ends the plan, with that reason -- only when the
+    refused request came from the plan's own driver (another agent's refusal is its own)."""
     from quam_state_manager.core import agent_grant, agent_plans
     if not plan or plan.get("status") not in ("running", "stopping"):
+        return
+    if driver is not None and not _drives_plan(sess, plan.get("id"), driver):
         return
     code = str(refusal.get("refused") or "")
     note = {"code": code, "how": str(refusal.get("how") or "")[:400], "step": req.step, "at": time.time()}
@@ -2294,7 +2315,7 @@ def _plan_refused(inst, chip, name, plan, req, refusal: dict) -> None:
             agent_grant.end(inst, chip, why=f"plan `{(rec or plan).get('title')}` ended: {code}",
                             plan_id=plan["id"], journal=False)
             journal_mod.append(inst, name, f"plan `{(rec or plan).get('title')}` ended by SM: run_node refused "
-                                           f"({code}) -- {note['how'][:200]}", kind="sm")
+                                           f"({code}): {note['how'][:200]}", kind="sm")
         _bump()
         _wake()
     except Exception:  # noqa: BLE001
@@ -2325,7 +2346,7 @@ def session_release_human():
         return _err("only a person says the OPX is free", 403)
     inst, chip = current_app.instance_path, _chip_key()
     agent_session.save(inst, chip, human_released={"at": time.time(), "who": actor})
-    journal_mod.append(inst, _chip_name(), f"{actor}: the OPX is free -- the agent may run again", kind="sm")
+    journal_mod.append(inst, _chip_name(), f"{actor}: the OPX is free, the agent may run again", kind="sm")
     told = _tell_agent(chip, f"The human ({actor}) says the earlier run on this chip was theirs and the OPX is "
                              "free now. You may call run_node again.")
     _bump()
@@ -2542,7 +2563,7 @@ def approvals_decide(aid: str, verb: str):
         res = out["stage"]
         rid = rec.get("run_id")
         # C-30 (docs/254): the line names who approved, and every value the person changed before writing
-        journal_mod.append(inst, _chip_name(), f"{actor} approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
+        journal_mod.append(inst, _chip_name(), f"{actor} approved {res.get('staged', 0)} write(s) from {_card_source(rec)}"
                                        + (f" #{rid}" if rid else "") + f" -- {'applied' if res.get('applied') else 'NOT applied: ' + str(res.get('error'))}"
                                        + _edited_text(rec),
                            kind="sm", run_id=rid, paths=[w.get("path") for w in (rec.get("writes") or [])[:20]])
@@ -2555,7 +2576,7 @@ def approvals_decide(aid: str, verb: str):
         if not out["agent_told"]:
             out["told_note"] = _not_told_note(rec)
     else:
-        journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from `{rec.get('node')}`"
+        journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from {_card_source(rec)}"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
     _bump()
     _wake()
@@ -3388,7 +3409,7 @@ def plan_end(pid: str):
     """The agent ends ITS plan (it decided to stop: a failed step, a question for the person).
     The card closes as stopped with the agent's reason; a step still running finishes and reports
     first. A person ends a plan with Cancel / Stop on the card."""
-    from quam_state_manager.core import agent_grant, agent_plans
+    from quam_state_manager.core import agent_grant, agent_plans, agent_session
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
@@ -3405,11 +3426,17 @@ def plan_end(pid: str):
             return _err("unknown plan", 404)
         if was.get("status") not in ("running", "stopping"):
             return _err(f"plan is {was.get('status')}; only a running plan can be ended", 409, plan=_plan_view(was))
+        # one plan, one driver (docs/253): only the agent the person armed
+        # for this plan ends it -- another agent's door is its own plan
+        sess = agent_session.load(inst, chip) or {}
+        if not _drives_plan(sess, pid, _request_driver(sess)):
+            return _err("only the agent that drives this plan can end it; a person uses Cancel or Stop",
+                        403, plan=_plan_view(was))
         rec = agent_plans.stop(inst, chip, pid, who=actor, how=f"ended by the agent: {why}"[:300],
                                after_run=True, code="agent_ended")
     g = agent_grant.end(inst, chip, why=f"plan `{rec.get('title')}` was ended by {actor}", plan_id=pid, journal=False)
     journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` ended by {actor}: {why[:200]}"
-                       + (" -- disarmed" if g is not None else ""), kind="sm")
+                       + (" (disarmed)" if g is not None else ""), kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, plan=_plan_view(rec))
