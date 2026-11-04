@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import math
 import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -750,17 +751,24 @@ def _reduce_dims(data: np.ndarray, dims: list[dict],
 # DS-3: the most distinct levels an integer variable may have and still be
 # read as a per-shot label (a state index) rather than a count or a sweep.
 _LEVELS_MAX = 8
+# ndview.js draws at most this many overlay combinations (``MAX_COMBOS``).
+_OVERLAY_COMBOS_MAX = 8
 
 
 def _state_levels(data: np.ndarray, dtype) -> list[int] | None:
-    """The sorted distinct values of an INTEGER variable when it looks like a
-    per-shot label: 3 to ``_LEVELS_MAX`` distinct non-negative integers.
-    ``None`` otherwise -- a float, a bool, or a 0/1 variable keep the plain
-    mean (the mean of a 0/1 outcome IS the fraction of 1s)."""
-    if np.dtype(dtype).kind not in ("i", "u"):
+    """The sorted distinct values of a variable that reads as a per-shot
+    LABEL: every finite value integral and non-negative, 3 to
+    ``_LEVELS_MAX`` distinct. Judged on the VALUES, so a float file holding
+    a NaN-padded state index qualifies too. ``None`` otherwise -- a bool, a
+    0/1 outcome (its mean IS the fraction of 1s), or a real signal."""
+    if np.dtype(dtype).kind == "b":
         return None
     vals = np.asarray(data)
-    vals = vals[np.isfinite(vals)] if vals.dtype.kind == "f" else vals.reshape(-1)
+    if vals.dtype.kind not in ("i", "u", "f"):
+        return None
+    vals = vals.reshape(-1)
+    if vals.dtype.kind == "f":
+        vals = vals[np.isfinite(vals)]
     if vals.size == 0:
         return None
     uniq = np.unique(vals)
@@ -769,6 +777,28 @@ def _state_levels(data: np.ndarray, dtype) -> list[int] | None:
     if not np.all(uniq == np.round(uniq)):
         return None
     return [int(u) for u in uniq]
+
+
+def value_long_name(var: str, levels, long_name):
+    """The cube's value label: a level-fraction cube plots a fraction."""
+    return f"fraction at this {var} level" if levels is not None else long_name
+
+
+def reduce_for_view(data: np.ndarray, dims: list[dict], view: dict, var: str,
+                    dtype) -> tuple[np.ndarray, list[dict], list[int] | None]:
+    """The ONE reduction of repetition dims, shared by the Raw-data cube and
+    Map tools' server-side plane (``map_analysis.raw_figure``): a per-shot
+    label is counted per level (``_level_fractions``), anything else is
+    averaged (``_reduce_dims``). Returns ``(data, dims, levels)``."""
+    names = [r["name"] for r in view.get("reduced", [])]
+    if not names:
+        return data, dims, None
+    levels = _state_levels(data, dtype)
+    if levels is not None:
+        data, dims = _level_fractions(data, dims, names, levels, var, view)
+        return data, dims, levels
+    data, dims = _reduce_dims(data, dims, names)
+    return data, dims, None
 
 
 def _level_fractions(data: np.ndarray, dims: list[dict], names: list[str],
@@ -792,8 +822,19 @@ def _level_fractions(data: np.ndarray, dims: list[dict], names: list[str],
                  "coord": [str(k) for k in levels], "units": None,
                  "long_name": f"fraction of repeats with {var} = level",
                  "decimated": False, "derived": "level_fraction"}
-    if len(levels) <= _OVERLAY_MAX and len(view["overlay"]) < 2:
-        view["overlay"].append(level_name)
+    # The level dim is what the plot is ABOUT: it takes the first overlay
+    # slot, and another overlay that would push the curve count past the
+    # client's combination cap moves to a selector instead of silently
+    # dropping levels.
+    if len(levels) <= _OVERLAY_MAX:
+        keep = []
+        sizes = {d["name"]: d["size"] for d in dims}
+        for o in view["overlay"]:
+            if len(keep) < 1 and len(levels) * sizes.get(o, 1) <= _OVERLAY_COMBOS_MAX:
+                keep.append(o)
+            else:
+                view["sliders"][o] = 0
+        view["overlay"] = [level_name] + keep
     else:
         view["sliders"][level_name] = 0
     for r in view["reduced"]:
@@ -1122,23 +1163,11 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
             # a 2,000-shot axis is 2,000× the payload of the view it produces.
             view = _default_view(dims)
             reduce_names = [r["name"] for r in view["reduced"]]
-            levels = (_state_levels(data, ds.dtype)
-                      if reduce_names else None)
+            reduce_axes = tuple(i for i, d in enumerate(dims)
+                                if d["name"] in reduce_names)
+            data, dims, levels = reduce_for_view(data, dims, view, var, ds.dtype)
             if levels is not None:
-                # DS-3: an integer variable with 3+ distinct levels (a
-                # two-qubit state index 0..3) is a LABEL per shot; its mean is
-                # not a quantity. Count instead: one curve per level, the
-                # fraction of the repeats that landed on it.
-                reduce_axes = tuple(i for i, d in enumerate(dims)
-                                    if d["name"] in reduce_names)
-                data, dims = _level_fractions(data, dims, reduce_names, levels,
-                                              var, view)
-            elif reduce_names:
-                reduce_axes = tuple(i for i, d in enumerate(dims)
-                                    if d["name"] in reduce_names)
-                data, dims = _reduce_dims(data, dims, reduce_names)
-            else:
-                reduce_axes = ()
+                partner = None      # a label has no I/Q sibling to pair with
 
             # Decimation to budget — sweep dims only, largest first.
             total = int(np.prod(data.shape)) if data.ndim else 1
@@ -1187,6 +1216,11 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                         continue
                     is_heat_axis = d["name"] in (view["x"], view["y"]) and view["y"]
                     budget = _HEATMAP_AXIS_BUDGET if is_heat_axis else _LINE_POINT_BUDGET
+                    if is_heat_axis and levels is not None:
+                        # DS-3: the level dim multiplies the cube by L; shrink
+                        # each heat axis by ceil(sqrt(L)) so L planes fit the
+                        # same element budget one plane did
+                        budget = max(16, budget // math.ceil(math.sqrt(len(levels))))
                     if dim_budgets and d["name"] in dim_budgets:
                         budget = min(budget, int(dim_budgets[d["name"]]))
                     if d["size"] <= budget:
@@ -1236,8 +1270,7 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                 "dtype": str(ds.dtype),
                 # DS-3: a level-fraction cube plots a fraction, not the label
                 "units": None if levels is not None else r.var_attr(ds, "units"),
-                "long_name": (f"fraction at this {var} level" if levels is not None
-                              else r.var_attr(ds, "long_name")),
+                "long_name": value_long_name(var, levels, r.var_attr(ds, "long_name")),
                 "dims": dims,
                 "data": _nan_to_none_list(data),
                 "kept": kept or None,

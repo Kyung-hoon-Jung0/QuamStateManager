@@ -42,6 +42,7 @@ function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 const F = 'qubits.q2.resonator.f_01';
 const A = 'qubits.q0.xy.operations.x180_DragGaussian.amplitude';
+const V = 'qubits.q0.z.joint_offset';
 const posts = [];
 window.fetch = function (url, opts) {
     url = String(url);
@@ -54,10 +55,11 @@ window.fetch = function (url, opts) {
     let body = {};
     if (url.indexOf('/chip/active-token') === 0) body = { loaded: true, token: 't', name: 'c', path: '/c' };
     else if (url.indexOf('/field/peek') === 0) body = {
-        ok: true, values: { [F]: 7457600000, [A]: 0.31 }, errors: {},
+        ok: true, values: { [F]: 7457600000, [A]: 0.310091286919996, [V]: 0.1 }, errors: {},
         resolved: { [F]: { is_pointer: false, resolvable: true, resolved_value: 7457600000, candidates: [] },
-                    [A]: { is_pointer: false, resolvable: true, resolved_value: 0.31, candidates: [] } },
-        units: { [F]: 'Hz' } };
+                    [A]: { is_pointer: false, resolvable: true, resolved_value: 0.310091286919996, candidates: [] },
+                    [V]: { is_pointer: false, resolvable: true, resolved_value: 0.1, candidates: [] } },
+        units: { [F]: 'Hz', [V]: 'mV' } };
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(body); } });
 };
 window.htmx = { ajax: function () { return Promise.resolve(); }, on: function () {}, trigger: function () {}, process: function () {} };
@@ -69,7 +71,8 @@ function row(p) { return document.querySelector('#plot-apply-rows .plot-apply-ro
 
 (async function main() {
     window._openPlotApplyPopup([{ dot_path: F, value: '7456659950.842465' },
-                                { dot_path: A, value: '0.2007' }], 'exp', 'q2', [], null);
+                                { dot_path: A, value: '0.2007' },
+                                { dot_path: V, value: '0.2' }], 'exp', 'q2', [], null);
     await sleep(80);
     const rf = row(F), ra = row(A);
     ok(rf && ra, 'both rows rendered');
@@ -83,7 +86,9 @@ function row(p) { return document.querySelector('#plot-apply-rows .plot-apply-ro
 
     const oldU = rf.querySelector('.plot-apply-old-unit'), newU = rf.querySelector('.plot-apply-new-unit');
     ok(oldU && !oldU.hidden && oldU.textContent === 'Hz', 'previous value states its stored unit');
-    ok(newU && !newU.hidden && newU.textContent === 'Hz', 'new value states its stored unit');
+    ok(!newU, 'the input row carries no unit (it would cut the value)');
+    const inF = rf.querySelector('.plot-apply-new-input');
+    ok(inF.title === inF.value, 'the input mirrors its whole value in its title');
     const dl = rf.querySelector('.plot-apply-delta');
     ok(dl && !dl.hidden && /^-940,049 Hz \(/.test(dl.textContent), 'delta is in the stored unit: ' + (dl && dl.textContent));
     const nf = rf.querySelector('.plot-apply-row-unitnote');
@@ -97,6 +102,14 @@ function row(p) { return document.querySelector('#plot-apply-rows .plot-apply-ro
     ok(da && !/[A-Za-z]/.test(da.textContent.replace(/\(.*\)/, '')), 'its delta carries no unit: ' + (da && da.textContent));
     const na = ra.querySelector('.plot-apply-row-unitnote');
     ok(na && !na.hidden && /no unit SM knows/.test(na.textContent), 'and it says so: ' + (na && na.textContent));
+
+    const oa = ra.querySelector('.plot-apply-old-val');
+    ok(oa.innerHTML === '0.<wbr>310091286919996', 'a long previous value breaks after its decimal point: ' + oa.innerHTML);
+    const nv = row(V).querySelector('.plot-apply-row-unitnote');
+    ok(nv && nv.hidden && !nv.textContent, 'a stored unit equal to a plot axis unit needs no note');
+    ok(window.PointCopy.unitOf('I (rotated)') === '' && window.PointCopy.unitOf('Amplitude [mV]') === 'mV'
+       && window.PointCopy.unitOf('Frequency (GHz)') === 'GHz',
+       'only a unit-shaped trailing token is read as an axis unit');
 
     window.applyPlotRow(rf);
     await sleep(80);

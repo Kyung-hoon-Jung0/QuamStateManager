@@ -29,8 +29,11 @@ _ROOT = Path(__file__).resolve().parent.parent
 def _chip(folder: Path) -> Path:
     folder.mkdir(parents=True)
     state = {"qubits": {"q1": {"id": "q1", "resonator": {"f_01": 7.1e9},
-                               "xy": {"operations": {"x180": {"amplitude": 0.3}}}}},
-             "qubit_pairs": {}, "active_qubit_names": ["q1"]}
+                               "xy": {"operations": {"x180": {"amplitude": 0.3, "length": 40},
+                                                     "x90": {"length": "#../x180/length"}}},
+                               "z": {"joint_offset": 0.1, "min_offset": 250.0}}},
+             "qubit_pairs": {"p1": {"detuning": 0.05}, "p2": {"detuning": 3.0e8}},
+             "active_qubit_names": ["q1"]}
     wiring = {"wiring": {}, "network": {"host": "10.0.0.1"}}
     (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
@@ -47,6 +50,18 @@ def test_peek_reports_the_stored_unit_only_where_known(tmp_path):
     assert j["units"].get(f) == "Hz"
     assert a not in j["units"], "an amplitude has no unit SM knows -- never guessed"
     assert j["values"][f] == 7.1e9
+
+
+def test_peek_follows_a_pointer_and_doubts_an_implausible_volt(tmp_path):
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    c.post("/load", data={"folder": str(_chip(tmp_path / "chip" / "c1"))})
+    ln = "qubits.q1.xy.operations.x90.length"
+    ok_v = "qubit_pairs.p1.detuning"
+    bad_v = "qubit_pairs.p2.detuning"
+    j = c.get(f"/field/peek?dot_path={ln}&dot_path={ok_v}&dot_path={bad_v}").get_json()
+    assert j["units"].get(ln) == "ns", "the unit of the pointer's target"
+    assert j["units"].get(ok_v) == "V"
+    assert bad_v not in j["units"], "250 is not volts (units.PLAUSIBLE_VOLT_MAX)"
 
 
 def _write(path, dims, arrays):
@@ -70,6 +85,66 @@ def _rb(tmp_path, data):
 
 
 class TestAStateIndexIsCountedNotAveraged:
+    def test_the_level_cap_is_eight(self):
+        assert ndview._LEVELS_MAX == 8
+
+    @pytest.mark.parametrize("data", [
+        np.arange(150).reshape(3, 10, 5) % 9,           # nine levels: too many
+        (np.arange(150).reshape(3, 10, 5) % 4) - 1,     # a negative value
+    ])
+    def test_not_a_label_keeps_the_mean(self, tmp_path, data):
+        v = ndview.build_cube(_rb(tmp_path, data.astype(np.int64)), "state")["default_view"]
+        assert all(r["op"] == "mean" for r in v["reduced"])
+
+    def test_a_nan_padded_float_label_is_counted(self, tmp_path):
+        data = (np.arange(150).reshape(3, 10, 5) % 4).astype(float)
+        data[0, 0, 0] = np.nan
+        cube = ndview.build_cube(_rb(tmp_path, data), "state")
+        assert all(r["op"] == "fraction" for r in cube["default_view"]["reduced"])
+
+    def test_a_units_attr_does_not_survive_on_a_fraction(self, tmp_path):
+        p = _rb(tmp_path, (np.arange(150).reshape(3, 10, 5) % 4).astype(np.int64))
+        with h5py.File(p, "a") as f:
+            f["state"].attrs["units"] = "V"
+        cube = ndview.build_cube(p, "state")
+        assert cube["units"] is None
+
+    def test_a_big_map_still_fits_the_budget(self, tmp_path):
+        rng = np.random.default_rng(1)
+        data = rng.integers(0, 4, size=(20, 600, 600)).astype(np.int64)
+        p = _write(tmp_path / "big.h5", [("n_runs", np.arange(20)),
+                                         ("flux_bias", np.linspace(-0.3, 0.3, 600)),
+                                         ("detuning", np.linspace(-5e7, 5e7, 600))],
+                   {"state": data})
+        cube = ndview.build_cube(p, "state")
+        assert cube["ok"] is True, cube.get("error")
+        assert cube["dims"][0]["name"] == "state level"
+
+    def test_map_tools_reads_the_same_level_plane(self, tmp_path):
+        import types
+        from quam_state_manager.web import map_analysis
+        data = np.random.default_rng(2).integers(0, 4, size=(6, 10, 5)).astype(np.int64)
+        p = _write(tmp_path / "ds_raw.h5",
+                   [("circuit_depth", [1, 2, 3, 4, 5, 6]), ("shots", np.arange(10)),
+                    ("sequence", np.arange(5))], {"state": data})
+        cube = ndview._build_cube_uncached(p, "state")
+        v = cube["default_view"]
+        arr = np.asarray(cube["data"], dtype=float)
+        run = types.SimpleNamespace(folder_path=p.parent, experiment_name="x")
+        for lv in range(4):
+            body = {"which": p.name, "var": "state", "component": "base",
+                    "x_dim": v["x"], "y_dim": v["y"], "selection": {"state level": lv}}
+            fig, _ = map_analysis.raw_figure(run, body, [])
+            tr = fig["axes"][0]["traces"][0]
+            names = [d["name"] for d in cube["dims"]]
+            plane = arr[lv]
+            if names.index(v["x"]) < names.index(v["y"]):
+                plane = plane.T
+            assert np.allclose(np.asarray(tr["z"], float), plane[...] if plane.ndim == 2 else plane)
+            assert "fraction" in tr["colorbar"]["label"]
+        mean = data.mean(axis=1)
+        assert not np.allclose(np.asarray(tr["z"], float).ravel(), mean.ravel()[: np.asarray(tr["z"]).size])
+
     def test_levels_become_a_fraction_dim(self, tmp_path):
         rng = np.random.default_rng(0)
         data = rng.integers(0, 4, size=(3, 10, 5)).astype(np.int64)
@@ -91,7 +166,7 @@ class TestAStateIndexIsCountedNotAveraged:
         assert all(r["op"] == "mean" for r in v["reduced"])
 
     def test_a_float_signal_keeps_the_mean(self, tmp_path):
-        data = np.arange(150, dtype=float).reshape(3, 10, 5) % 4
+        data = np.arange(150, dtype=float).reshape(3, 10, 5) % 4 + 0.25
         v = ndview.build_cube(_rb(tmp_path, data), "state")["default_view"]
         assert all(r["op"] == "mean" for r in v["reduced"])
 

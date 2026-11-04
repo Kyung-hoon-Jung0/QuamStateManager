@@ -7313,8 +7313,14 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     font-size: 0.9em;
 }
 .plot-apply-old-wrap { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; }
-.plot-apply-new-wrap { display: flex; align-items: center; gap: 0.3rem; }
-.plot-apply-new-wrap .plot-apply-new-input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.plot-apply-new-input, .plot-apply-old-val, .plot-apply-delta { font-variant-numeric: tabular-nums; }
+/* DS-1 m1: a narrow popup puts the path on its own line and previous / new /
+   Apply on the next, so the new value is never cut */
+#plot-apply-rows { container-type: inline-size; }
+@container (max-width: 44rem) {
+    .plot-apply-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto; }
+    .plot-apply-row-path { grid-column: 1 / -1; }
+}
 .plot-apply-unit { margin-left: 0.25rem; white-space: nowrap; font-size: 0.85em; color: var(--pico-muted-color, #888); }
 .plot-apply-row-unitnote { grid-column: 1 / -1; font-size: 0.78rem; }
 .plot-apply-row-path { min-width: 0; }

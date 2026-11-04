@@ -193,7 +193,11 @@
             var lvl = (cube.default_view || {}).level_of;
             var frac = red.some(function (r) { return r.op === 'fraction'; });
             html += '<span class="ndv-note muted">' +
-                (frac ? 'fraction of entries at each ' + esc(lvl || cube.var) +
+                (frac ? 'fraction of entries at ' +
+                        // one curve per level only when the level dim is an
+                        // overlay; as a selector one level is shown at a time
+                        (!(cube.default_view || {}).y && ((cube.default_view || {}).overlay || []).indexOf((lvl || cube.var) + ' level') !== -1
+                            ? 'each ' : 'the selected ') + esc(lvl || cube.var) +
                         ' level (an index, so not averaged), over '
                       : 'averaged over ') +
                 red.map(function (r) {

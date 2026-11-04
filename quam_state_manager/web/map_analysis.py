@@ -449,9 +449,8 @@ def raw_figure(run, body, candidates):
             if xd == yd or xd not in names or yd not in names:
                 raise ValueError("Map axes do not match the raw variable")
             selection = body.get("selection", {})
-            if set(selection) - set(names):
-                raise ValueError("Unknown selected dimension")
             data = reader.read(ds)
+            raw_dtype = data.dtype
             component = body.get("component", "base")
             if component not in {"base", "mag", "phase"}:
                 raise ValueError("Unknown map component")
@@ -466,10 +465,19 @@ def raw_figure(run, body, candidates):
             # Match the viewer: repetition dimensions are averaged before slicing.
             descriptor = [{"name": name, "size": ds.shape[i], "kind": ndview._classify_dim(
                 name, ds.shape[i], reader.read_coord(name) if dims[i]["has_coord"] else None, dims[i]["has_coord"])} for i, name in enumerate(names)]
-            reductions = [item["name"] for item in ndview._default_view(descriptor)["reduced"]]
-            if reductions:
-                data, descriptor = ndview._reduce_dims(data, descriptor, reductions)
-                names = [item["name"] for item in descriptor]
+            # The SAME reduction the viewer's cube used (DS-3): a per-shot
+            # label is counted per level, anything else averaged.
+            levels = None
+            if component == "base":
+                data, descriptor, levels = ndview.reduce_for_view(
+                    data, descriptor, ndview._default_view(descriptor), var, raw_dtype)
+            else:
+                reductions = [item["name"] for item in ndview._default_view(descriptor)["reduced"]]
+                if reductions:
+                    data, descriptor = ndview._reduce_dims(data, descriptor, reductions)
+            names = [item["name"] for item in descriptor]
+            if set(selection) - set(names):
+                raise ValueError("Unknown selected dimension")
             shape = data.shape
             fixed = []
             for index, name in enumerate(names):
@@ -491,7 +499,8 @@ def raw_figure(run, body, candidates):
                 coord = reader.read_coord(name)
                 coords[name] = np.asarray(coord if coord is not None else np.arange(shape[names.index(name)]), float).tolist()
             trace = {"type": "heatmap", "full_resolution": True, "x": coords[xd], "y": coords[yd],
-                     "z": api._json_value(plane), "colorbar": {"label": "phase rad" if component == "phase" else str(var)}}
+                     "z": api._json_value(plane), "colorbar": {"label": "phase rad" if component == "phase"
+                                                               else (ndview.value_long_name(var, levels, None) or str(var))}}
             axis = {"xlabel": xd, "ylabel": yd, "title": entity or "", "traces": [trace]}
             figure = {"axes": [axis]}
             targets = []

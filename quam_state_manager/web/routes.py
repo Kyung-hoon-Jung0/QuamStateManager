@@ -13473,6 +13473,12 @@ def field_peek():
             u = _units_mod.stored_unit_label(_units_mod.path_units_key(target))
         except Exception:  # noqa: BLE001 -- a unit lookup must not 500 the popup
             u = ""
+        # a volt-keyed value no instrument output reaches is not in volts
+        # (units.PLAUSIBLE_VOLT_MAX, the pair-detuning doubt rule)
+        rv = (resolved.get(p) or {}).get("resolved_value", values.get(p))
+        if (u == "V" and isinstance(rv, (int, float)) and not isinstance(rv, bool)
+                and abs(rv) > _units_mod.PLAUSIBLE_VOLT_MAX):
+            u = ""
         if u:
             units_by_path[p] = u
     since_run = {}

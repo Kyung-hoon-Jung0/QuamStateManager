@@ -19116,6 +19116,7 @@ window.applyAllFitValues = applyAllFitValues;
  * with its unit when the axis title names one, a Copy button per value and a
  * Copy-all. Nothing is written. Esc or a click outside closes it. A figure
  * with a click contract keeps its apply popup; the same row sits inside it. */
+var _UNIT_TOKEN = /^(?:%|deg|°|rad|a\.?u\.?|arb\.?|dB[m]?|(?:[pnuµmkMGT]?(?:Hz|V|A|W|s|Ohm|Ω)))(?:\s*\/\s*(?:[pnuµmkMGT]?(?:Hz|V|A|s)))?$/;
 window.PointCopy = (function () {
     var pending = null;
     function unitOf(title) {
@@ -19123,7 +19124,11 @@ window.PointCopy = (function () {
         if (!t) return '';
         t = String(t).replace(/<[^>]*>/g, '');
         var m = /\[([^\[\]]+)\]\s*$/.exec(t) || /\(([^()]+)\)\s*$/.exec(t);
-        return m ? m[1].trim() : '';
+        if (!m) return '';
+        var u = m[1].trim();
+        // only a unit-shaped token ("mV", "GHz", "rad", "a.u.", "V/s", "%"),
+        // never a parenthesised word such as "(rotated)"
+        return _UNIT_TOKEN.test(u) ? u : '';
     }
     function num(v) {
         if (v === undefined || v === null) return null;
@@ -19497,9 +19502,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + '<span class="plot-apply-old-wrap"><span class="plot-apply-old-val muted">…</span>'
           + '<span class="plot-apply-unit plot-apply-old-unit" hidden></span></span></div>'
           + '<div class="plot-apply-row-new"><span class="muted">new</span> '
-          + '<span class="plot-apply-new-wrap">'
-          + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value)) + '">'
-          + '<span class="plot-apply-unit plot-apply-new-unit" hidden></span></span>'
+          + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value))
+          + '" title="' + _ppEscape(String(u.value)) + '">'
           + '<span class="plot-apply-delta val-delta" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
           + '<button type="button" class="outline btn-sm plot-apply-row-btn">Apply</button></div>'
@@ -19528,6 +19532,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
         });
         // Value-domain heads-up (non-blocking) — re-evaluated on every edit.
         input.addEventListener('input', function() {
+            input.title = input.value;     // the whole value, whatever the width
             _updatePlotRowDomainWarning(row);
             _updatePlotRowDelta(row);       // docs/76: how far this click moves the value
         });
@@ -19594,6 +19599,16 @@ function _setPlotRowUnit(row, unit) {
     _updatePlotRowDelta(row);
 }
 
+/* DS-1: a long number breaks after its decimal point, never mid-digits */
+function _setNumberText(el, text) {
+    el.textContent = '';
+    var i = text.indexOf('.');
+    if (i < 0 || !/^[-+]?\d+\.\d/.test(text)) { el.textContent = text; return; }
+    el.appendChild(document.createTextNode(text.slice(0, i + 1)));
+    el.appendChild(document.createElement('wbr'));
+    el.appendChild(document.createTextNode(text.slice(i + 1)));
+}
+
 function _setOldVal(slot, v, err) {
     if (!slot) return;
     if (v === null || v === undefined) {
@@ -19602,7 +19617,7 @@ function _setOldVal(slot, v, err) {
         slot._rawValue = null;
         slot.removeAttribute('title');
     } else {
-        slot.textContent = String(v);
+        _setNumberText(slot, String(v));
         slot.classList.remove('muted');
         slot._rawValue = v;         // keep the RAW value for the Δ (docs/76)
         slot.title = String(v);     // F21: the whole value, whatever the width
