@@ -662,11 +662,12 @@
              var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
-        {key: 'status', label: 'Status', on: true, w: 168, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
+        {key: 'status', label: 'Status', on: true, w: 104, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
          render: function (r) {
-             return statusChip(r.status) + (allTargetsFailed(r)
-                 ? ' <span class="ds-status ds-status-err ds-all-failed" title="The node marked every target of this run as failed">all failed</span>'
-                 : '');
+             return allTargetsFailed(r)
+                 ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
+                   + '; the node marked every target of this run as failed">all failed</span>'
+                 : statusChip(r.status);
          }},
         {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
          render: function (r) { return (r.metric == null || r.metric === '')

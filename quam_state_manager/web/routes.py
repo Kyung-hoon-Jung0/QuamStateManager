@@ -11917,7 +11917,15 @@ def _applied_values_held(ctx) -> dict:
             continue
         for e in unit.get("entries") or ():
             if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
-                newest[e["path"]] = e.get("new")
+                # a created subtree (Set name creates ``extras``) is named by
+                # its leaves, so the notice says extras.chip_name
+                stack = [(e["path"], e.get("new"))]
+                while stack:
+                    p0, v0 = stack.pop()
+                    if isinstance(v0, dict) and v0:
+                        stack.extend((f"{p0}.{k}", v) for k, v in v0.items())
+                    else:
+                        newest[p0] = v0
     if not newest:
         return {}
     held = {}
@@ -31526,6 +31534,9 @@ def auto_sync_pull():
             logger.debug("post-failure eviction failed", exc_info=True)
         return _auto_disarm_response(ctx, "", "error", status=204)
 
+    # F2/F23: the applied values this pull took away, and one step of the
+    # pull counter every window follows (_pull_note)
+    _lost = _applied_values_lost(ctx, _held_applied)
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
@@ -31545,7 +31556,20 @@ def auto_sync_pull():
                                   "dom": bool(dom_dirty),
                                   # F2: values SM applied that this outside
                                   # write took away (never silently)
-                                  "lost": _applied_values_lost(ctx, _held_applied)}})
+                                  "lost": _lost}})
+    # a pull that changed nothing on screen is not a step other windows follow
+    # (a second window's empty pull must not hide the first one's from it)
+    try:
+        _t = json.loads(resp.headers["HX-Trigger"])
+        _moved = bool(_t["stateRestored"].get("changes") or _t["stateRestored"].get("structural"))
+    except (ValueError, KeyError, TypeError, AttributeError):
+        _t, _moved = None, True
+    if _moved:
+        ctx["_pull_seq"] = int(ctx.get("_pull_seq") or 0) + 1
+        ctx["_pull_lost"] = _lost
+        if _t is not None:
+            _t["autoSyncPulled"]["pull_seq"] = f"{ctx.get('path', '')}#{ctx['_pull_seq']}"
+            resp.headers["HX-Trigger"] = json.dumps(_t)
     return resp
 
 
@@ -32305,6 +32329,23 @@ def _runner_sig() -> str:
         return ""
 
 
+def _pull_note() -> dict:
+    """F23 (final walk): the last Auto-Sync pull of the open chip, for every
+    window. The pull's patch reaches only the window whose poll ran it;
+    another window kept SHOWING a value the chip no longer held (its grid
+    follow waits on the tray, which the pull re-rendered). ``pull_seq`` moves
+    once per adopted pull and ``pull_lost`` names the applied values it took
+    away, so each window repaints and says so."""
+    ctx = _active_ctx() or {}
+    if not ctx.get("path"):
+        return {}
+    # "#0" too: a window opened before the first pull must count that pull
+    # as a step, not as where the chip already was
+    seq = int(ctx.get("_pull_seq") or 0)
+    return {"pull_seq": f"{ctx.get('path', '')}#{seq}",
+            "pull_lost": list(ctx.get("_pull_lost") or [])}
+
+
 @bp.route("/state/drift")
 def state_drift():
     """Cheap poll: how many params the live chip changed since the baseline.
@@ -32382,7 +32423,7 @@ def state_drift():
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
@@ -32390,12 +32431,12 @@ def state_drift():
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
                        live_diverged=ld, sync=sync, tray_durable=_dur, tray_chip=_dchip,
-                       runner_sig=_rsig)
+                       runner_sig=_rsig, **_pull_note())
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -32405,7 +32446,7 @@ def state_drift():
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
                     "edit_seq": _edit_seq(), "live_diverged": ld,
                     "sync": sync, "tray_durable": _dur, "tray_chip": _dchip,
-                    "runner_sig": _rsig})
+                    "runner_sig": _rsig, **_pull_note()})
 
 
 @bp.route("/state/drift/view")
