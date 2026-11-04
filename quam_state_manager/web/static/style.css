@@ -5172,7 +5172,7 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
    The kebab appears on hover; the ghost tile adds a panel; the stat tag marks
    a big number that is not the default median. */
 /* R4-CS-1: "21 qubits, 32 pairs" stays one line -- the long tile scales to the card width */
-.topo-card[data-tile-id="chip_size"] .topo-card-value { font-size: min(var(--topo-card-value-size), 11.5cqi); }
+.topo-card[data-tile-id="chip_size"] .topo-card-value { font-size: min(var(--topo-card-value-size), 8cqi); overflow: hidden; text-overflow: ellipsis; } /* F26: 19 bold chars at ~0.6em each fit under 92% of the card at 8cqi; 11.5cqi overflowed at 1024 px */
 .ov-tile-menu {
     position: absolute; top: 2px; right: 4px; padding: 0 5px; margin: 0;
     background: none; border: none; cursor: pointer; line-height: 1.3;

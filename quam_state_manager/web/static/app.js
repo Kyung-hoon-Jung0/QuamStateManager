@@ -4478,10 +4478,13 @@ window.SyncPanel = (function () {
         // same-field check: a lab write since is never replaced unnamed
         var lh = btn.getAttribute("data-live-hash") || "";
         var lv = btn.getAttribute("data-live-values") || "";
+        // R-f: the panel counted values SM applied that live dropped; the
+        // merge writes them back on top of the pulled chip
+        var ka = !!btn.getAttribute("data-keep-applied");
         var run = function () {
             window.doStateSync("apply", false, false, null,
-                               n0 ? { picks: p, expectLiveHash: lh, expectLiveValues: lv }
-                                  : { expectLiveHash: lh, expectLiveValues: lv });
+                               n0 ? { picks: p, expectLiveHash: lh, expectLiveValues: lv, keepApplied: ka }
+                                  : { expectLiveHash: lh, expectLiveValues: lv, keepApplied: ka });
         };
         if (!n0) { run(); return; }
         if (!btn.getAttribute("data-arm-label"))
@@ -4887,6 +4890,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (opts && opts.expectLiveHash ? "&expect_live_hash=" + encodeURIComponent(opts.expectLiveHash) : "")
               + (opts && opts.expectLiveHash && opts.expectLiveValues
                  ? "&expect_live_values=" + encodeURIComponent(opts.expectLiveValues) : "")
+              + (opts && opts.keepApplied ? "&keep_applied=1" : "")
               // v1.5.1 (SB-F4): the grid push confirm's own set, when it showed one
               + (opts && opts.seenPaths && opts.seenPaths.length
                  ? "&seen_paths=" + encodeURIComponent(JSON.stringify(opts.seenPaths)) : "")
@@ -5721,6 +5725,8 @@ window.livePushExtrasLine = function (typedPaths) {
     var _lastCount = null;        // last polled count (change detection → event dispatch)
 
     var _driftPolling = false;
+    var _driftPollingAt = 0;
+    var _DRIFT_FETCH_MS = 15000;
     var _foreignRefreshing = false;
     /* QA liveedit-r2-09: the Live-Edit grid had no refresher on this path --
        the tray moved to the lab-mate's change set while the cells kept values
@@ -5989,13 +5995,40 @@ window.livePushExtrasLine = function (typedPaths) {
        re-renders trays, so a window could keep SHOWING a value the chip no
        longer held. Every window repaints once per pull, and is told which of
        the values it applied that pull took away. */
+    function _pullSeqParts(s) {
+        var i = String(s || "").lastIndexOf("#");
+        return i < 0 ? [String(s || ""), 0]
+                     : [String(s).slice(0, i), parseInt(String(s).slice(i + 1), 10) || 0];
+    }
     function onPullSeq(d) {
         if (!d || !d.pull_seq || d.pull_seq === window._pullSeqSeen) return false;
         var first = window._pullSeqSeen === undefined;
+        var seen = _pullSeqParts(window._pullSeqSeen);
+        var now = _pullSeqParts(d.pull_seq);
         window._pullSeqSeen = d.pull_seq;
         if (first) return false;
+        // another window opened a different chip (the poll answers for the
+        // active one): where that chip's pulls stand is not a step of ours
+        if (seen[0] !== now[0] || now[1] <= seen[1]) return false;
         try { window._followValuesOnScreen(); } catch (e) {}
-        try { if (window._smSayLost) window._smSayLost(d.pull_lost); } catch (e) {}
+        // every step since the one this window saw: a second pull must not
+        // hide the first one's loss from a window that polled after both
+        var lost = [], seenPaths = {};
+        var hist = Array.isArray(d.pull_lost_hist) ? d.pull_lost_hist : [];
+        var covered = false;
+        hist.forEach(function (h) {
+            if (!Array.isArray(h) || h.length !== 2) return;
+            var sq = parseInt(h[0], 10) || 0;
+            if (sq <= seen[1] || sq > now[1]) return;
+            covered = true;
+            (Array.isArray(h[1]) ? h[1] : []).forEach(function (x) {
+                var p = x && x.path;
+                if (!p || seenPaths[p]) return;
+                seenPaths[p] = 1; lost.push(x);
+            });
+        });
+        if (!covered) lost = Array.isArray(d.pull_lost) ? d.pull_lost : [];
+        try { if (window._smSayLost) window._smSayLost(lost); } catch (e) {}
         return true;
     }
     window._onDriftPullSeq = onPullSeq;
@@ -6013,11 +6046,17 @@ window.livePushExtrasLine = function (typedPaths) {
        an Auto-Sync pull or an apply in flight repaints the tray itself (two
        swaps racing into #pending-tray could land the stale one last). */
     var _pillRefreshing = false;
+    /* a refresh that never settles (an htmx request replaced by another on the
+       same lane, a dropped connection) must not hold the flag for ever: past
+       this many ms the next poll judges again */
+    var _REFRESH_STUCK_MS = 6000;
+    var _pillRefreshingAt = 0;
     function onLiveDiverged(d) {
+        if (_pillRefreshing && Date.now() - _pillRefreshingAt > _REFRESH_STUCK_MS) _pillRefreshing = false;
         if (!d || d.live_diverged !== true || _pillRefreshing || !window.htmx) return false;
         if (d.auto_pull || window._applyInFlight) return false;
         if (!document.querySelector("#pending-tray .state-status-badge.state-status-synced")) return false;
-        _pillRefreshing = true;
+        _pillRefreshing = true; _pillRefreshingAt = Date.now();
         var done = function () { _pillRefreshing = false; };
         try {
             var p = _trayRefresh();
@@ -6035,16 +6074,30 @@ window.livePushExtrasLine = function (typedPaths) {
        unmarked) are all this one comparison. Never while this window is mid-
        write: its own request repaints the tray when it lands. */
     var _syncRefreshing = false;
+    var _syncRefreshingAt = 0;
+    /* R-d (final walk): a window whose own write never settled (a latch left
+       held, a tray stuck in .htmx-request) skipped every verdict change for
+       ever and disagreed with its neighbours. A pending own write holds the
+       verdict off for at most this long; then the server's truth wins. */
+    var _OWN_WRITE_STUCK_MS = 20000;
+    var _ownWriteSince = 0;
+    function ownWriteStillPending(trayAtIssue) {
+        if (!ownWritePending(trayAtIssue)) { _ownWriteSince = 0; return false; }
+        if (!_ownWriteSince) _ownWriteSince = Date.now();
+        return Date.now() - _ownWriteSince < _OWN_WRITE_STUCK_MS;
+    }
+    window._ownWriteStillPending = ownWriteStillPending;
     function onSyncSig(d, trayAtIssue) {
         if (!d || !d.sync) return false;
         if (window.SyncStale) window.SyncStale.apply(d.sync.stale || {});
         var t = document.getElementById("pending-tray");
+        if (_syncRefreshing && Date.now() - _syncRefreshingAt > _REFRESH_STUCK_MS) _syncRefreshing = false;
         if (!t || !window.htmx || _syncRefreshing) return false;
         var shown = t.getAttribute("data-sync-sig");
         if (shown === d.sync.sig) return false;
-        if (ownWritePending(trayAtIssue)) return false;
+        if (ownWriteStillPending(trayAtIssue)) return false;
         if (d.auto_pull) return false;       // the pull repaints the tray itself
-        _syncRefreshing = true;
+        _syncRefreshing = true; _syncRefreshingAt = Date.now();
         var done = function () {
             _syncRefreshing = false;
             // the open panel follows the same verdict (F7: "resolved in
@@ -6063,11 +6116,20 @@ window.livePushExtrasLine = function (typedPaths) {
     function poll() {
         // In-flight guard + visibility gating (audit B24): never overlap a slow
         // request, and don't poll while the window is hidden/backgrounded.
+        /* R-d/R-g (final walk): a poll whose fetch never settles (a server
+           restarting, a saturated server, a half-open socket) held the guard
+           for ever, and that window never asked again -- it kept "In sync"
+           while a freshly opened window said the live chip had changed. The
+           request is aborted after _DRIFT_FETCH_MS, and a guard older than
+           that is not believed. */
+        if (_driftPolling && Date.now() - _driftPollingAt > _DRIFT_FETCH_MS + 1000) _driftPolling = false;
         if (_driftPolling || document.hidden) return;
-        _driftPolling = true;
+        _driftPolling = true; _driftPollingAt = Date.now();
         var _trayAtIssue = document.getElementById("pending-tray");
-        fetch("/state/drift", { cache: "no-store" })
-            .then(function (r) { return r.ok ? r.json() : null; })
+        var _ac = (typeof AbortController === "function") ? new AbortController() : null;
+        var _acTimer = _ac ? setTimeout(function () { try { _ac.abort(); } catch (e) {} }, _DRIFT_FETCH_MS) : null;
+        fetch("/state/drift", _ac ? { cache: "no-store", signal: _ac.signal } : { cache: "no-store" })
+            .then(function (r) { if (_acTimer) clearTimeout(_acTimer); return r.ok ? r.json() : null; })
             .then(function (d) {
                 // docs/132 — hist_seq rides this every-page poll: when the
                 // chip's snapshot store moved (a capture in another window,
@@ -20910,7 +20972,13 @@ window.reviewAccept = function (btn) {
             var err = (d && d.results && d.results[0] && d.results[0].error) || (d && d.error) || 'edit failed';
             if (window.showToast) window.showToast('Could not accept ' + dotPath + ': ' + err, 'error');
         }
-    }).catch(function () { btn.disabled = false; btn.textContent = '✓'; });
+    }).catch(function (e) {
+        btn.disabled = false; btn.textContent = '✓';
+        // R-f (final walk): eight presses that "did nothing" -- a request that
+        // fails or answers no JSON is said, never swallowed
+        if (window.showToast) window.showToast('Could not accept ' + dotPath + ': '
+            + ((e && e.message) || 'the request failed'), 'error');
+    });
 };
 
 window.applyPlotRow = applyPlotRow;
@@ -20992,18 +21060,24 @@ function _navigateToExplorerPath(dotPath) {
         var req = (src || onExplorer)
             ? htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'})
             : _navigateTablePane('/explorer');
+        // F25 (final walk): htmx resolves the ajax promise BEFORE any swap when
+        // Bundles' htmx:confirm holds the request (the page the jump starts
+        // from has not loaded the cm6 bundle /explorer needs) and on a 4xx --
+        // so the tree may simply not be here yet. The first cut toasted
+        // "Failed to load state" at once and never revealed the field; the
+        // held request then landed a tree collapsed at the root. Wait for the
+        // held request, then poll for the pane; the toast is the LAST resort.
         req.then(function() {
+            return (window.Bundles && window.Bundles.pending) ? window.Bundles.pending() : null;
+        }).then(function() {
             var attempts = 0;
-            var maxAttempts = 15;
+            var maxAttempts = 60;            // ~6 s: a bundle load + the /explorer render
             function tryExpand() {
                 attempts++;
                 var container = document.getElementById('explorer-tree-state');
-                if (!container) {
-                    _showPlotClickToast('Failed to load state \u2014 check the folder path', null, null);
-                    return;
-                }
-                if (container.children.length === 0 && attempts < maxAttempts) {
-                    setTimeout(tryExpand, 100);
+                if (!container || container.children.length === 0) {
+                    if (attempts < maxAttempts) { setTimeout(tryExpand, 100); return; }
+                    _showPlotClickToast('Json Tree View did not open — the field could not be shown', null, null);
                     return;
                 }
                 // The jump draws in the STATE tree, so that tree must be the one
