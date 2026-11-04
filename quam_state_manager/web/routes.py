@@ -11984,6 +11984,7 @@ def _applied_values_held(ctx) -> dict:
         return {}
     now = time.time()
     newest: dict = {}
+    olds: dict = {}
     for unit in list(units)[:cursor] if isinstance(cursor, int) and cursor >= 0 else list(units):
         if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
             continue
@@ -11991,23 +11992,55 @@ def _applied_values_held(ctx) -> dict:
             if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
                 # a created subtree (Set name creates ``extras``) is named by
                 # its leaves, so the notice says extras.chip_name
-                stack = [(e["path"], e.get("new"))]
+                o_root = _DOT_MISSING if e.get("created") else e.get("old", _DOT_MISSING)
+                stack = [(e["path"], e.get("new"), o_root)]
                 while stack:
-                    p0, v0 = stack.pop()
+                    p0, v0, o0 = stack.pop()
                     if isinstance(v0, dict) and v0:
-                        stack.extend((f"{p0}.{k}", v) for k, v in v0.items())
+                        stack.extend((f"{p0}.{k}", v,
+                                      o0.get(k, _DOT_MISSING) if isinstance(o0, dict) else _DOT_MISSING)
+                                     for k, v in v0.items())
                     else:
                         newest[p0] = v0
+                        olds.setdefault(p0, []).append(o0)
     if not newest:
         return {}
-    held = {}
+    held = _HeldApplied()
     with store._lock:
         doc = store.merged
         for p, v in newest.items():
             got = _dot_get(doc, p)
             if got is not _DOT_MISSING and got == v:
                 held[p] = copy.deepcopy(v)
+                held.old[p] = [copy.deepcopy(o) if o is not _DOT_MISSING else o
+                               for o in olds.get(p, ())]
     return held
+
+
+class _HeldApplied(dict):
+    """``{path: value SM applied}`` plus ``.old`` = ``{path: [the values SM's
+    applies replaced]}`` (``_DOT_MISSING`` for a created key)."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.old = {}
+
+
+def _applied_value_lost(held, path: str, got) -> bool:
+    """W2-6 [derived]: did the live value ``got`` take away the value SM
+    applied at ``path``? Only when it went BACK to a value SM's apply had
+    replaced (a stale in-memory copy saved over the chip), or the key is gone.
+    A THIRD value -- neither the applied one nor one SM replaced -- is an
+    outside writer's new measurement: newer than SM's, not a loss."""
+    v = held.get(path, _DOT_MISSING)
+    if got is not _DOT_MISSING and got == v:
+        return False
+    if got is _DOT_MISSING:
+        return True
+    olds = getattr(held, "old", {}).get(path)
+    if olds is None:
+        return True                     # no record of what was replaced: as before
+    return any(o is not _DOT_MISSING and o == got for o in olds)
 
 
 def _applied_values_lost(ctx, held: dict) -> list[dict]:
@@ -12020,7 +12053,7 @@ def _applied_values_lost(ctx, held: dict) -> list[dict]:
         doc = store.merged
         for p, v in held.items():
             got = _dot_get(doc, p)
-            if got is _DOT_MISSING or got != v:
+            if _applied_value_lost(held, p, got):
                 out.append({"path": p, "applied": v,
                             "now": None if got is _DOT_MISSING else got,
                             "removed": got is _DOT_MISSING})
@@ -31939,9 +31972,11 @@ def state_review():
     # live chip no longer holds is NEWER than live, not an older value to put
     # back -- the choices must count it as a loss and offer to keep it
     _held = _applied_values_held(ctx) if not archive else {}
-    applied_newer = [p for p in external if p in _held]
+    applied_newer = [p for p in external if p in _held and _applied_value_lost(
+        _held, p, live_by_path.get(p, _DOT_MISSING)
+        if kind_by_path.get(p) != "removed" else _DOT_MISSING)]
     external_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
-                      "kind": kind_by_path.get(p, "modified"), "applied": p in _held}
+                      "kind": kind_by_path.get(p, "modified"), "applied": p in applied_newer}
                      for p in external[:300]]
     mine_rows = []
     cset = set(conflicts)
@@ -33345,7 +33380,7 @@ def state_sync():
                     _got = _dot_get(_pulled[0], _p)
                     if _got is _DOT_MISSING:
                         _got = _dot_get(_pulled[1], _p)
-                    if _got is _DOT_MISSING or _got != _v:
+                    if _applied_value_lost(_held_applied, _p, _got):
                         pending[_p] = _tagged("set", _v, "keep-applied")
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
