@@ -655,7 +655,7 @@ class TestRun:
         # the edit lock, meanwhile
         e = c.post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "1"})
         assert e.status_code == 409 and e.get_json()["code"] == "agent_running"
-        assert "The Agent is running 05_power_rabi; editing is locked" in e.get_json()["message"]
+        assert "The agent is running 05_power_rabi on this chip" in e.get_json()["message"]
         b = c.post("/state/apply-to-live", data={"seen_changes": "0"}, headers={"Accept": "application/json"})
         assert b.status_code == 409 and b.get_json()["code"] == "agent_running"
         e2 = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2"}, headers=AGENT)

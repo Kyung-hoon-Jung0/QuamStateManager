@@ -663,11 +663,11 @@ window.AgentPanel = (function () {
     var said = "";
     var se = S.startErr[p.id];
     if (se && p.status === "draft") {
-      said = '<p class="ag-err ag-plan-said" role="alert">Not started: ' + esc(se.text) +
+      said = '<p class="ag-err ui-agent-said" role="alert">Not started: ' + esc(se.text) +
         (se.other && !S.observer ? ' <button type="button" class="btn-sm secondary ag-stop-other" onclick="AgentPanel.cancelPlan(\'' + esc(se.other.id) + '\')">Stop ' + esc(se.other.title || "that plan") + "</button>" : "") + "</p>";
     } else if (p.refusal && (p.status === "running" || p.status === "stopping" || p.end_code === p.refusal.code)) {
       // what run_node answered for this plan, on the card itself -- never only in the agent's prose
-      said = '<p class="ag-err ag-plan-said">run refused' + (p.refusal.step !== undefined && p.refusal.step !== null ? " (step " + esc(p.refusal.step) + ")" : "") +
+      said = '<p class="ag-err ui-agent-said">run refused' + (p.refusal.step !== undefined && p.refusal.step !== null ? " (step " + esc(p.refusal.step) + ")" : "") +
         ": " + esc(REFUSAL_TEXT[p.refusal.code] || p.refusal.code) + (p.refusal.how ? ' <span class="muted">' + esc(p.refusal.how) + "</span>" : "") +
         (p.refusal.code === "human_active" && !S.observer ? ' <button type="button" class="btn-sm secondary ag-release" onclick="AgentPanel.releaseHuman()">The OPX is free: let the agent run</button>' : "") + "</p>";
     }
@@ -780,7 +780,7 @@ window.AgentPanel = (function () {
     if (!f.length) return "";
     var who = [];
     f.forEach(function (w) { if (who.indexOf(w.failed_target) < 0) who.push(w.failed_target); });
-    return '<p class="ag-ap-failed-head">✗ ' + f.length + " of " + (a.writes || []).length + " value(s) come from " + esc(who.join(" ")) +
+    return '<p class="ui-agent-failed-head">✗ ' + f.length + " of " + (a.writes || []).length + " value(s) come from " + esc(who.join(" ")) +
       ", which the node itself marked failed. They are not ticked and are not written unless you tick them.</p>";
   }
   function renderApproval(m, a, force) {
@@ -800,10 +800,10 @@ window.AgentPanel = (function () {
       var stored = (w.display && w.display.stored) || "";
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;
-      var tick = S.observer ? "" : '<td class="ag-ap-pick"><input type="checkbox" class="ag-ap-on" data-i="' + i + '"' + (failed ? "" : " checked") +
-        ' aria-label="' + esc("write " + w.path) + '"></td>';
-      var failNote = failed ? ' <span class="ag-ap-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
-      return "<tr" + (failed ? ' class="ag-ap-failed"' : "") + ">" + tick + "<td title=\"" + esc(w.path) + "\">" + esc(w.path) + failNote + "</td>" + nowTd + "<td>" +
+      var tick = S.observer ? "" : '<input type="checkbox" class="ui-agent-tick" data-i="' + i + '"' + (failed ? "" : " checked") +
+        ' title="ticked values are written" aria-label="' + esc("write " + w.path) + '"> ';
+      var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
+      return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
           ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
@@ -815,8 +815,8 @@ window.AgentPanel = (function () {
     if (!S.observer && S.rejecting[a.id] !== undefined) {
       // an in-page sheet, never a native prompt(): a blocking dialog stops every script of the window
       var rid = esc(a.id);
-      acts = '<div class="ag-reject-sheet" aria-label="reject this card">' +
-        '<label>Reject: a note for the journal (optional) <input type="text" class="ag-reject-note" value="' + esc(S.rejecting[a.id]) +
+      acts = '<div class="ui-agent-reject" aria-label="reject this card">' +
+        '<label>Reject: a note for the journal (optional) <input type="text" class="ui-agent-reject-note" value="' + esc(S.rejecting[a.id]) +
         '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' + rid + '\')"></label> ' +
         '<button type="button" class="btn-sm danger ag-reject-ok" onclick="AgentPanel.rejectConfirm(\'' + rid + '\')">Reject</button> ' +
         '<button type="button" class="btn-sm outline ag-reject-back" onclick="AgentPanel.rejectCancel(\'' + rid + '\')">Back</button></div>';
@@ -826,7 +826,7 @@ window.AgentPanel = (function () {
     var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
       paramsHtml(a.params) + (a.run_id ? " " + runLink(a.run_id) : "") + where + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
       (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets with these params (mode ask-all); nothing runs before Allow, and Allow covers exactly this run</p>' :
-        failedHead(a) + '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr>' + (S.observer ? "" : '<th title="ticked values are written">write</th>') + '<th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
+        failedHead(a) + '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr>' + '<th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
     markBusy(el, a);
@@ -1608,7 +1608,7 @@ window.AgentPanel = (function () {
     if (card && a.kind !== "run" && a.writes) {          // a run request has no values to send (docs/254)
       writes = [];
       a.writes.forEach(function (w, i) {
-        var on = card.querySelector('.ag-ap-on[data-i="' + i + '"]');
+        var on = card.querySelector('.ui-agent-tick[data-i="' + i + '"]');
         if (on ? !on.checked : !!w.failed_target) return;   // an unticked value is not written
         var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
         var v = w.new;
@@ -1636,7 +1636,7 @@ window.AgentPanel = (function () {
     if (S.observer || S.deciding[id]) return;
     if (S.rejecting[id] === undefined) S.rejecting[id] = "";
     redrawApproval(id);
-    var inp = document.querySelector('[data-card="approval:' + id + '"] .ag-reject-note');
+    var inp = document.querySelector('[data-card="approval:' + id + '"] .ui-agent-reject-note');
     if (inp) inp.focus();
   }
   function rejectNote(id, v) { if (S.rejecting[id] !== undefined) S.rejecting[id] = String(v || ""); }

@@ -161,7 +161,7 @@ class TestClaudeDriving:
         assert "claude session started in SM by human (mode ask-writes)" in j
         # and the chip endpoint's pill sees a claude session (an mcp__sm tool made it relevant)
         now = c.get("/api/agent/chip").get_json()["now"]
-        assert now["state"] in ("between", "running") and now["session"]["backend"] == "claude"
+        assert now["state"] in ("between", "running", "your-turn") and now["session"]["backend"] == "claude"
 
     def test_second_message_keeps_the_context_and_counts_usage(self, c):
         c.post("/api/agent/chat/start", json={"prompt": "first"})

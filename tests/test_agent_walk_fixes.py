@@ -164,14 +164,14 @@ class TestPlanEnd:
 
     def test_the_card_shows_the_refused_start(self):
         src = (STATIC / "agent.js").read_text(encoding="utf-8")
-        assert "S.startErr[id] = {" in src and "ag-plan-said" in src
+        assert "S.startErr[id] = {" in src and "ui-agent-said" in src
 
 
 class TestSurfaces:
     def test_reject_is_not_a_native_prompt(self):
         src = (STATIC / "agent.js").read_text(encoding="utf-8")
         body = src[src.index("  function reject(id)"):src.index("  function stop(mode)")]
-        assert "prompt(" not in body and "ag-reject-note" in src
+        assert "prompt(" not in body and "ui-agent-reject-note" in src
 
     def test_the_pill_says_your_turn(self):
         src = (STATIC / "agent-pill.js").read_text(encoding="utf-8")
