@@ -89,3 +89,38 @@ def test_a_no_op_request_never_releases_a_hold_another_request_set(env):  # noqa
         R._auto_seen_begin()
         R._auto_seen_end(app.response_class(status=400))
     assert not ctx["auto_apply"].get("hold")
+
+
+def test_the_controls_apply_releases_the_hold(env):  # noqa: F811
+    """Real-Chrome check of W2-1: the tray's "Apply N" is doStateSync('apply')
+    (/state/sync?mode=apply), not /state/apply-to-live -- the hold used to
+    outlive the person's Apply there, and the next edit was then never
+    flushed."""
+    c = env["client"]
+    _arm(env, pull=True, push=True)
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "3.3e-05"},
+                  headers=_OFF).status_code == 200
+    assert 'data-auto-hold="1"' in c.get("/state/tray").get_data(as_text=True)
+    r = c.post("/state/sync?mode=apply")
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    assert _live(env)["T1"] == 3.3e-05
+    tray = c.get("/state/tray").get_data(as_text=True)
+    assert 'data-auto-hold' not in tray and "holding" not in tray
+    # and the next edit from a window that shows ON is flushed again
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "3.4e-05"},
+                  headers={"X-SM-Auto-Seen": "1"}).status_code == 200
+    assert c.post("/state/apply-to-live", data={"auto_flush": "1"}).status_code == 200
+    assert _live(env)["T1"] == 3.4e-05
+
+
+def test_a_hold_with_nothing_pending_is_over(env):  # noqa: F811
+    """Whichever door emptied the log (here an undo): the tray's note never
+    outlives what it held."""
+    c = env["client"]
+    _arm(env, pull=True, push=True)
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "3.3e-05"},
+                  headers=_OFF).status_code == 200
+    assert 'data-auto-hold="1"' in c.get("/state/tray").get_data(as_text=True)
+    assert c.post("/undo").status_code == 200
+    tray = c.get("/state/tray").get_data(as_text=True)
+    assert 'data-auto-hold' not in tray and "holding" not in tray, tray[:400]

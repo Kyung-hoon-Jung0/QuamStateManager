@@ -1230,6 +1230,12 @@ def _sync_view(ctx=None) -> dict | None:
     # W2-1: the Auto-Sync session is part of what every window shows, so its
     # arming, its modes and its hold move the signature the drift poll follows
     _a = ctx.get("auto_apply") or None
+    if _a and _a.get("hold"):
+        # a hold with nothing left pending is over, whichever door emptied
+        # the log (the control's Apply, a discard, an undo): the note must
+        # not outlive what it holds (real-Chrome check of W2-1)
+        _auto_hold_active(ctx)
+        _a = ctx.get("auto_apply") or None
     _lu = list(ctx.get("_lost_unacked") or [])
     if _v is not None:
         _v["lost"] = _lu
@@ -33201,6 +33207,13 @@ def state_sync():
     if not ctx or ctx.get("type") != "quam":
         return jsonify({"status": "error", "message": "No state loaded"}), 400
     mode = request.values.get("mode", "discard")
+    if mode in ("apply", "reapply") and _auto_apply_state(ctx):
+        # W2-1: the control's "Apply N" presses THIS door (doStateSync), not
+        # /state/apply-to-live -- a person's Apply releases the hold here too
+        # (a held session never signals the automatic merge that also lands
+        # here, so this is always a person's press)
+        _auto_apply_state(ctx).pop("hold", None)
+        _auto_apply_state(ctx).pop("hold_seq0", None)
     # sync-ux 2026-09-25 (user decision 2): a same-field collision is decided PER FIELD in
     # the sync panel -- {path: "mine" | "live"}. "live" drops the user's edit at
     # that path before the replay, so the pulled live value stands; "mine"
