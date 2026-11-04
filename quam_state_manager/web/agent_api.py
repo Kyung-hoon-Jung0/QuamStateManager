@@ -2559,6 +2559,14 @@ def approvals_decide(aid: str, verb: str):
         rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
                                note=data.get("note"), writes=writes)
     out["approval"] = approvals.summary(rec)
+    if rec.get("kind") == "writes":
+        try:
+            from quam_state_manager.core import agent_plans
+            agent_plans.approval_settled(inst, chip, rec.get("plan_id"), rec.get("id"),
+                                         applied=bool(verb == "approve"
+                                                      and (out.get("stage") or {}).get("applied")))
+        except Exception:  # noqa: BLE001 -- the card's display, never the decision
+            logger.debug("plan step update failed", exc_info=True)
     if verb == "approve" and rec.get("kind") == "writes":
         res = out["stage"]
         rid = rec.get("run_id")
