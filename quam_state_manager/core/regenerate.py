@@ -808,6 +808,8 @@ def run_regenerate(
         "calibration_changed_total": len(calibration_changed),
         "calibration_restored": s.calibration_restored[:80],
         "calibration_restored_total": len(s.calibration_restored),
+        # a Populate edit written where a restored source form reads it (edited leaf, location)
+        "populate_written_through": [list(t) for t in s.populate_written_through[:80]],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     outcome["script_in_output"] = script_in_output
@@ -839,6 +841,7 @@ def _calibration_check(result, old_wiring, new_wiring, protect, fsp_compensated,
     skip |= {p for p, _ in s.rebuild_removed}
     skip |= {p for p in s.residual_lost if " " not in p}
     skip |= set(s.pruned_ops)          # "cleaned N redundant legacy ops", its own line
+    skip |= {loc for _, loc in s.populate_written_through}   # the user's edit, written through
     skip |= {f"{p}.__class__" for p, _, _ in s.class_changed}
     skip |= {c.get("path") for c in (fsp_compensated or ()) if isinstance(c, dict)}
     skip |= {r.get("path") for r in s.crosstalk_dropped if isinstance(r, dict)}
