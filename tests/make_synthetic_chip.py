@@ -7,7 +7,7 @@ horizontal and vertical neighbour (100 qubits -> 180 pairs). Each pair's
 moving qubit carries a z operation that reads the pair's macro (the shape a
 lab's CZ setup has), so a copy of a pair has member operations to carry.
 
-    python tests/make_synthetic_chip.py OUT_DIR [N_QUBITS]
+    python tests/make_synthetic_chip.py OUT_DIR [N_QUBITS] [--couplers]
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _qubit(qid, col, row, f01, frr):
                       "opx_output": f"#/wiring/qubits/{qid}/rr/opx_output",
                       "opx_input": f"#/wiring/qubits/{qid}/rr/opx_input",
                       "__class__": _B + "components.readout_resonator.ReadoutResonatorMW"},
-        "z": {"operations": {"const": _pulse("SquarePulse", amplitude=0.1)},
+        "z": {"operations": {"const": _pulse("SquarePulse", amplitude=0.1, axis_angle=None)},
               "joint_offset": 0.01, "independent_offset": 0, "min_offset": 0,
               "opx_output": f"#/wiring/qubits/{qid}/z/opx_output",
               "__class__": _B + "components.flux_line.FluxLine"},
@@ -62,7 +62,7 @@ def _qubit(qid, col, row, f01, frr):
     }
 
 
-def make_chip(n: int = 100) -> tuple[dict, dict]:
+def make_chip(n: int = 100, *, couplers: bool = False) -> tuple[dict, dict]:
     rows = (n + WIDTH - 1) // WIDTH
     ports = {"mw_outputs": {}, "mw_inputs": {}, "analog_outputs": {}, "__class__": "quam.components.ports.FEMPortsContainer"}
     wq: dict = {}
@@ -112,7 +112,7 @@ def make_chip(n: int = 100) -> tuple[dict, dict]:
                               "opx_input": f"#/ports/mw_inputs/{con}/{fem}/1"},
                        "xy": {"opx_output": f"#/ports/mw_outputs/{d[0]}/{d[1]}/{d[2]}"}}
     lf = []
-    for qid in ids:
+    def lf_output():
         if not lf:
             c, f = next_fem()
             lf.extend((c, f, p) for p in range(1, 9))
@@ -122,7 +122,10 @@ def make_chip(n: int = 100) -> tuple[dict, dict]:
             "crosstalk": {}, "feedforward_filter": None, "shareable": False,
             "sampling_rate": 1e9, "upsampling_mode": "pulse", "output_mode": "direct",
             "__class__": "quam.components.ports.analog_outputs.LFFEMAnalogOutputPort"}
-        wq[qid]["z"] = {"opx_output": f"#/ports/analog_outputs/{c}/{f}/{p}"}
+        return f"#/ports/analog_outputs/{c}/{f}/{p}"
+
+    for qid in ids:
+        wq[qid]["z"] = {"opx_output": lf_output()}
 
     pairs: dict = {}
     for k, qid in enumerate(ids):
@@ -149,22 +152,50 @@ def make_chip(n: int = 100) -> tuple[dict, dict]:
                 "amplitude": f"#/qubit_pairs/{pid}/macros/cz_flattop/flux_pulse_qubit/amplitude",
                 "id": None, "digital_marker": None, "axis_angle": None,
                 "__class__": _P + "SquarePulse"}
+    wp = {}
+    if couplers:
+        for pid, pair in pairs.items():
+            a, b = pid.split("-")
+            op = f"cz_coupler_pulse_{a}_{b}"
+            pair["coupler"] = {
+                "id": f"coupler_{a}_{b}",
+                "opx_output": f"#/wiring/qubit_pairs/{pid}/c/opx_output",
+                "decouple_offset": 0.12, "interaction_offset": -0.2,
+                "arbitrary_offset": 0.3, "opx_output_offset": None,
+                "operations": {"const": _pulse("SquarePulse", amplitude=0.1, axis_angle=None),
+                               op: _pulse("FlatTopGaussianPulse", amplitude=0.12,
+                                          flat_length=24, axis_angle=None)},
+                "__class__": _B + "components.tunable_coupler.TunableCoupler"}
+            pair["macros"] = {"cz": "#./cz_coupler", "cz_coupler": {
+                "id": "#./inferred_id", "fidelity": {"test": 0.9},
+                "coupler_flux_pulse": f"#/qubit_pairs/{pid}/coupler/operations/{op}",
+                "phase_shift_control": 0.1, "phase_shift_target": 0.2,
+                "__class__": "qsm_quam_ext.CouplerCZGate"}}
+            qubits[a]["z"]["operations"].pop(f"cz_flattop_pulse_{b}")
+            wp[pid] = {"c": {"control_qubit": f"#/qubits/{a}",
+                             "target_qubit": f"#/qubits/{b}", "opx_output": lf_output()}}
+    if couplers:
+        lf_output()  # Declare a spare LF-FEM even when the last used FEM is full.
     state = {"qubits": qubits, "qubit_pairs": pairs,
              "active_qubit_names": list(ids), "active_qubit_pair_names": list(pairs),
              "ports": ports, "extras": {},
              "__class__": "quam_builder.architecture.superconducting.qpu.FluxTunableQuam"}
     wiring = {"wiring": {"qubits": wq}, "network": {"host": "127.0.0.1", "cluster_name": "synthetic"}}
+    if couplers:
+        wiring["wiring"]["qubit_pairs"] = wp
     return state, wiring
 
 
-def write_chip(out: str | Path, n: int = 100) -> Path:
+def write_chip(out: str | Path, n: int = 100, *, couplers: bool = False) -> Path:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    s, w = make_chip(n)
+    s, w = make_chip(n, couplers=couplers)
     (out / "state.json").write_text(json.dumps(s, indent=1), encoding="utf-8")
     (out / "wiring.json").write_text(json.dumps(w, indent=1), encoding="utf-8")
     return out
 
 
 if __name__ == "__main__":
-    write_chip(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 100)
+    args = [a for a in sys.argv[1:] if a != "--couplers"]
+    write_chip(args[0], int(args[1]) if len(args) > 1 else 100,
+               couplers="--couplers" in sys.argv)
