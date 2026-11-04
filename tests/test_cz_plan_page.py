@@ -444,3 +444,11 @@ def test_a_lab_two_flux_pulse_is_drawn_from_the_transcription_with_a_note(tmp_pa
     # v1.5.0: how a figure was drawn is a note (info), not a warning
     assert sum("transcription of the lab's own pulse class" in n for n in d["info"]) == 2
     assert not any("transcription" in n for n in d["notes"])
+
+
+def test_the_count_names_aliases_apart_and_snz_only_when_played(client):
+    """Walk G7: an alias (`cz` -> `cz_unipolar`) is not a second operation, and
+    the lede mentions a third SNZ level only on a chip that plays one."""
+    html = client.get("/cz-plan", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "(3 operations on 2 pairs, plus 1 alias)" in html
+    assert "third SNZ level" not in html

@@ -255,3 +255,12 @@ class TestTwpaQubits:
         machine = NS(twpas={"twpaA": tw})
         rb._apply_twpa_qubits(machine, {"twpas": [{"id": "twpaA", "qubits": ["q1"]}]})
         assert not hasattr(tw, "qubits")
+
+
+def test_a_repeated_build_warning_is_listed_once():
+    """G9: one missing pulse class used to print one warning per pair."""
+    rb = _rb()
+    w = "CZ variant 'flattop_erf' needs a pulse class missing"
+    assert rb._dedupe_warnings([w, "other", w, w]) == [w, "other"]
+    src = (_ROOT / "quam_state_manager" / "generator" / "run_build.py").read_text(encoding="utf-8")
+    assert '"warnings": _dedupe_warnings(warnings),' in src

@@ -9917,6 +9917,7 @@
       }
       else if (pairGate === "cz_fixed" && lf) lineTypes.push("CZ — fixed coupler");
       else if (pairGate === "cz_tunable" && lf) lineTypes.push("CZ — tunable coupler (coupler flux)");
+      else if (pairGate === "cz_coupler" && lf) lineTypes.push("Coupler-only CZ (coupler flux)");
     }
     var linesSummary = lineTypes.length ? lineTypes.join(", ") : "(none)";
 

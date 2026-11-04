@@ -970,6 +970,19 @@ def _apply_twpa(twpa, vals):
             setattr(twpa, attr, vals[attr])
 
 
+def _dedupe_warnings(warnings):
+    """One line per distinct warning, in first-seen order: a chip-wide cause
+    (a missing pulse class) used to repeat once per pair."""
+    seen, out = set(), []
+    for w in warnings or []:
+        key = w if isinstance(w, str) else repr(w)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(w)
+    return out
+
+
 def _apply_twpa_qubits(machine, spec):
     """Record which qubits each TWPA amplifies (the wizard's step-4 list) on
     the TWPA's own ``qubits`` field, when the class has one."""
@@ -3049,7 +3062,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "qdac_qubits": sorted(qdac_pins.keys()),
         "qdac_requested": sorted((spec.get("qdac") or {}).get("qubits") or {}),
         "allocation": _with_qdac_pins(read_allocation(connectivity), qdac_pins),
-        "warnings": warnings,
+        "warnings": _dedupe_warnings(warnings),
         "class_schemas": _collect_class_schemas(state_path, wiring_path),
     }
 

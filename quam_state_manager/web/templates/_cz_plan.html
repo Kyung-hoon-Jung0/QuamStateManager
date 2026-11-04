@@ -11,11 +11,12 @@
 <p class="czp-unknown-pair" role="status">Unknown pair: <code>{{ unknown_pair }}</code>. No operation selected.</p>
 {% endif %}
 <div class="table-header-row ui-head ui-head--data ui-head--page">
-    <h2 class="ui-head-title">CZ gate plan <small class="muted ui-count">({{ rows | length }} operation{{ '' if rows|length == 1 else 's' }})</small></h2>
+    <h2 class="ui-head-title">CZ gate plan {% set n_alias = rows | selectattr('alias_of') | list | length %}{% set n_pairs = rows | map(attribute='pair') | unique | list | length %}<small class="muted ui-count">({{ rows | length - n_alias }} operation{{ '' if (rows|length - n_alias) == 1 else 's' }} on {{ n_pairs }} pair{{ '' if n_pairs == 1 else 's' }}{% if n_alias %}, plus {{ n_alias }} alias{{ '' if n_alias == 1 else 'es' }}{% endif %})</small></h2>
 </div>
 <div class="muted czp-lede">
     Where each CZ operation moves its qubits on the chip, and how lossy those frequencies were when measured.
-    <small class="muted czp-lede-caveat">Operating values describe the first lobe. Nearest resonance is the closest across all played lobes, including a third SNZ level.</small>
+    {% set has_snz = namespace(v=false) %}{% for r in rows %}{% for ln in (r.lines or []) %}{% if 'SNZ' in (ln.pulse_class or '') %}{% set has_snz.v = true %}{% endif %}{% endfor %}{% endfor %}
+    <small class="muted czp-lede-caveat">Operating values describe the first lobe. Nearest resonance is the closest across all played lobes{% if has_snz.v %}, including a third SNZ level{% endif %}.</small>
     <details class="czp-help">
         <summary aria-label="How to read this page">?</summary>
         <div class="czp-help-body">
