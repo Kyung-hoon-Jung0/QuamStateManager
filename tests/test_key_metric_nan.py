@@ -130,15 +130,71 @@ def test_values_are_copied_and_shown_whole_selfcheck():
     assert proc.stdout.count("ok - ") >= 12, proc.stdout
 
 
-class TestCoherenceKeyMetricHasAUnit:
-    """A T1 node storing ``t1`` in ns printed a bare 32535.7335."""
 
-    def test_lowercase_t1_in_ns_reads_microseconds(self):
-        r = _run("25_T1", {"qA1": {"t1": 32535.733543954386, "t1_error": 1694.0, "success": True}})
+class TestCoherenceKeyMetricHasAUnit:
+    """A T1 node writes ``t1`` in ns to its fit results (it fits on its
+    ``idle_time`` axis in ns) while the state stores seconds; the unit is
+    decided from the run's own evidence, never from the magnitude."""
+
+    # the shape of a real T1 run: fit t1 in ns, the saved T1 in s,
+    # and an idle_time axis declared in ns
+    T1_NS = 32535.733543954386
+    T1_S = 3.2535733543954385e-05
+
+    def _t1_run(self, tmp_path, *, saved=True, h5=False):
+        d = tmp_path / "#9_25_T1"
+        (d / "quam_state").mkdir(parents=True)
+        if saved:
+            (d / "quam_state" / "state.json").write_text(
+                json.dumps({"qubits": {"qA1": {"T1": self.T1_S}}}), encoding="utf-8")
+        if h5:
+            h5py = pytest.importorskip("h5py")
+            with h5py.File(d / "ds_fit.h5", "w") as f:
+                f.create_dataset("qubit", data=[0])
+                ds = f.create_dataset("idle_time", data=[16.0, 32.0])
+                ds.attrs["units"] = "ns"
+                ds.attrs["long_name"] = "idle time"
+                tau = f.create_dataset("tau", data=[self.T1_NS])
+                tau.attrs["units"] = "ns"
+        r = _run("25_T1", {"qA1": {"t1": self.T1_NS, "t1_error": 1694.05, "success": True}})
+        r.folder_path = d
+        return r
+
+    def test_saved_seconds_value_proves_the_fit_is_ns(self, tmp_path):
+        assert DatasetStore._extract_key_metric(self._t1_run(tmp_path)) == "32.54 µs"
+
+    def test_fit_axis_units_decide_when_nothing_was_saved(self, tmp_path):
+        r = self._t1_run(tmp_path, saved=False, h5=True)
         assert DatasetStore._extract_key_metric(r) == "32.54 µs"
 
-    def test_t2_echo_in_seconds_reads_microseconds(self):
+    def test_a_units_attribute_alone_is_not_evidence(self, tmp_path):
+        """An echo fit file declares ``ns`` on T2_echo and stores 34863 ns,
+        while data.json holds the same fit as 3.486e-05 s: only the value
+        match decides, and it says seconds."""
+        h5py = pytest.importorskip("h5py")
+        d = tmp_path / "#10_26_echo"
+        d.mkdir()
+        with h5py.File(d / "ds_fit.h5", "w") as f:
+            ax = f.create_dataset("idle_time", data=[16.0, 32.0])
+            ax.attrs["units"] = "ns"
+            v = f.create_dataset("T2_echo", data=[34863.26329943691])
+            v.attrs["units"] = "ns"
         r = _run("26_echo", {"qA1": {"T2_echo": 3.486326329943691e-05, "success": True}})
+        r.folder_path = d
+        assert DatasetStore._extract_key_metric(r) == "34.86 µs"
+
+    def test_no_evidence_shows_the_bare_number(self, tmp_path):
+        r = self._t1_run(tmp_path, saved=False)
+        assert DatasetStore._extract_key_metric(r) == "32535.7335"
+
+    def test_seconds_stored_echo_reads_microseconds(self, tmp_path):
+        d = tmp_path / "#10_26_echo"
+        (d / "quam_state").mkdir(parents=True)
+        (d / "quam_state" / "state.json").write_text(
+            json.dumps({"qubits": {"qA1": {"T2echo": 3.486326329943691e-05}}}),
+            encoding="utf-8")
+        r = _run("26_echo", {"qA1": {"T2_echo": 3.486326329943691e-05, "success": True}})
+        r.folder_path = d
         assert DatasetStore._extract_key_metric(r) == "34.86 µs"
 
     def test_a_non_coherence_key_stays_unitless(self):

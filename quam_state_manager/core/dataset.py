@@ -3201,10 +3201,12 @@ class DatasetStore:
         # of {q2, q10} a string sort calls q10 "first", so the browser table
         # showed q10's number where the reader assumes the lowest qubit.
         first_qubit_results = None
+        first_qubit = ""
         for qname in sorted(run.fit_results.keys(), key=natural_key):
             val = run.fit_results[qname]
             if isinstance(val, dict):
                 first_qubit_results = val
+                first_qubit = qname
                 break
 
         if not first_qubit_results:
@@ -3251,11 +3253,11 @@ class DatasetStore:
                 if not math.isfinite(val):
                     return ""
                 if _COHERENCE_KEY.match(lk):
-                    # a coherence time carries its unit too. Nodes store it in
-                    # seconds (T2_echo 3.5e-05) or in ns (t1 32535.7); a
-                    # coherence of one second or more is not a real value in
-                    # seconds, so a magnitude >= 1 reads as ns. [derived]
-                    return _format_metric(val * 1e-9 if abs(val) >= 1 else val, "s")
+                    # a coherence time carries its unit only when the run
+                    # itself says which unit the fit used; never a guess
+                    scale = _coherence_scale(run, first_qubit, key, val)
+                    if scale is not None:
+                        return _format_metric(val * scale, "s")
                 return _format_metric(val, unit)
 
         return ""
@@ -3404,6 +3406,69 @@ class DatasetStore:
 
 #: Fit keys that carry a coherence time (T1, T2, T2*, T2_echo, t1, t2_ramsey ...).
 _COHERENCE_KEY = re.compile(r"^t(1|2)(_?(star|echo|ramsey|\*))?$")
+
+
+def _snap_scale(ratio: float) -> float | None:
+    for scale in (1e-9, 1e-6, 1.0):
+        if abs(ratio / scale - 1) < 0.01:
+            return scale
+    return None
+
+
+def _coherence_scale(run, qname: str, key: str, val: float) -> float | None:
+    """Seconds per unit of a coherence fit value, from the run's own evidence.
+
+    1. The value the run SAVED for that qubit (``quam_state/state.json``,
+       which stores seconds; ``T2_echo`` matches ``T2echo``): the ratio
+       saved / fit snaps to 1e-9 (ns), 1e-6 (us) or 1 (s).
+    2. Else the fit file (``ds_fit.h5``): a variable declaring a time
+       ``units`` whose value for some entity converts to the same instant
+       (seconds = h5 value * its unit) as the fit value times one scale.
+       The attribute alone is not evidence: a fit file may declare ``ns``
+       for a variable while data.json holds the same fit in seconds.
+    3. Else ``None``: the caller shows the bare number.
+    """
+    folder = getattr(run, "folder_path", None)
+    if folder is None or not val:
+        return None
+    folder = Path(folder)
+
+    def _norm(k):
+        return str(k).lower().replace("_", "")
+
+    st = safe_io.scan_json(folder / "quam_state" / "state.json")
+    q = ((st or {}).get("qubits") or {}).get(qname)
+    if isinstance(q, dict):
+        want = _norm(key)
+        for k, saved in q.items():
+            if _norm(k) == want and type(saved) is not bool                     and isinstance(saved, (int, float)) and saved and math.isfinite(saved):
+                return _snap_scale(saved / val)
+    fit = folder / "ds_fit.h5"
+    if fit.exists():
+        try:
+            import h5py
+            import numpy as np
+            scales = set()
+            with h5py.File(fit, "r") as f:
+                for name in f.keys():
+                    u = f[name].attrs.get("units")
+                    if isinstance(u, bytes):
+                        u = u.decode("utf-8", "replace")
+                    if u not in _TIME_UNIT_SCALE or name.lower().endswith("_error"):
+                        continue
+                    arr = np.asarray(f[name][()], dtype=float).ravel()
+                    for v in arr[np.isfinite(arr)]:
+                        sc = _snap_scale(v * _TIME_UNIT_SCALE[u] / val) if v else None
+                        if sc is not None:
+                            scales.add(sc)
+            if len(scales) == 1:
+                return scales.pop()
+        except Exception:  # noqa: BLE001 -- unreadable file: no evidence
+            logger.debug("ds_fit units read failed", exc_info=True)
+    return None
+
+
+_TIME_UNIT_SCALE = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "s": 1.0}
 
 
 def _format_metric(val: float, unit: str) -> str:
