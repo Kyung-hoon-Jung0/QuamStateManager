@@ -96,3 +96,9 @@
         title="Read the live chip again">Retry</button>
 {%- endif %}
 </span>
+{%- if _sv and _sv.lost %}
+<span class="sync-lost-note ui-note" role="status" data-sync-lost="{{ _sv.lost | length }}"
+      title="{% for x in _sv.lost %}{{ x.path }}: you applied {{ x.applied }}, live now {{ 'removed' if x.removed else x.now }}&#10;{% endfor %}">An outside save removed {{ _sv.lost | length }} value{{ 's' if (_sv.lost | length) != 1 }} you had applied ({{ (_sv.lost | map(attribute='path') | list)[:2] | join(', ') }}{% if (_sv.lost | length) > 2 %} and more{% endif %})
+  <button type="button" class="btn-sync sync-lost-ack" hx-post="/sync/lost-ack" hx-target="#pending-tray" hx-swap="outerHTML"
+          title="I have seen this; State History keeps the version before the save">Dismiss</button></span>
+{%- endif %}

@@ -1226,7 +1226,11 @@ def _sync_view(ctx=None) -> dict | None:
     # W2-1: the Auto-Sync session is part of what every window shows, so its
     # arming, its modes and its hold move the signature the drift poll follows
     _a = ctx.get("auto_apply") or None
+    _lu = list(ctx.get("_lost_unacked") or [])
     if _v is not None:
+        _v["lost"] = _lu
+        if _lu:
+            _v["sig"] = str(_v.get("sig") or "") + "|lost:%d:%s" % (len(_lu), _lu[-1].get("at"))
         _v["sig"] = str(_v.get("sig") or "") + (
             "|auto:off" if not _a else "|auto:%s:%d%d%d%d" % (
                 _a.get("armed_at"), bool(_a.get("pull")), bool(_a.get("pull_replace")),
@@ -31669,6 +31673,11 @@ def auto_sync_pull():
     # F2/F23: the applied values this pull took away, and one step of the
     # pull counter every window follows (_pull_note)
     _lost = _applied_values_lost(ctx, _held_applied)
+    if _lost:
+        # W2-3: kept in the status control until a person acknowledges it
+        _keep = [x for x in (ctx.get("_lost_unacked") or [])
+                 if x.get("path") not in {y["path"] for y in _lost}]
+        ctx["_lost_unacked"] = (_keep + [dict(x, at=time.time()) for x in _lost])[-_LOST_APPLIED_MAX:]
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
@@ -31716,6 +31725,16 @@ def auto_sync_pull():
 
 #: pull steps whose lost-value lists ride the drift poll (``_pull_note``)
 _PULL_LOST_HIST = 8
+
+
+@bp.route("/sync/lost-ack", methods=["POST"])
+def sync_lost_ack():
+    """W2-3: the person read the record of applied values an outside save
+    took away; it leaves the status control (State History keeps the rest)."""
+    ctx = _active_ctx()
+    if ctx:
+        ctx.pop("_lost_unacked", None)
+    return make_response(_tray_html())
 
 
 @bp.route("/auto-apply/arm", methods=["POST"])

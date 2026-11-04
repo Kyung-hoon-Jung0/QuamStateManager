@@ -18,3 +18,18 @@ def test_a_taken_row_is_not_an_unapplied_edit(env):  # noqa: F811
     html = c.get("/state/review").get_data(as_text=True)
     m = re.search(r'<tr[^>]*data-path="qubits.qA1.T2ramsey".*?</tr>', html, re.S)
     assert not m or "1e-05" not in m.group(0), m.group(0)
+
+
+def test_a_lost_applied_value_stays_in_the_control_until_dismissed(env):  # noqa: F811
+    from tests.test_autosync_lost_applied import _outside_save_and_pull
+    from tests.test_autosync_merge import _arm
+    from tests.test_sync_review_applied import _apply_t1
+    _arm(env, pull=True, push=False)
+    _apply_t1(env)
+    assert _outside_save_and_pull(env, _st(f01=5.2e9)).status_code == 200
+    c = env["client"]
+    for _ in range(2):          # survives later renders, other windows too
+        tray = env["app"].test_client().get("/state/tray").get_data(as_text=True)
+        assert 'data-sync-lost="1"' in tray and "qubits.qA1.T1" in tray
+    assert c.post("/sync/lost-ack").status_code == 200
+    assert "data-sync-lost" not in c.get("/state/tray").get_data(as_text=True)
