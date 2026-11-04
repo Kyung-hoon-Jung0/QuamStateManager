@@ -391,7 +391,11 @@
             if (seen[name]) return;
             seen[name] = 1;
             var r = el.getBoundingClientRect();
-            if (r.left < left - 2 || r.right > bx.right + 2) hidden.push(name);
+            // out of view = less than half of it shows (a sliver at the edge
+            // is still a column the reader can see is there)
+            var w = r.right - r.left;
+            var shown = Math.min(r.right, bx.right) - Math.max(r.left, left);
+            if (w > 0 && shown < w / 2) hidden.push(name);
         });
         if (!hidden.length) { hint.hidden = true; return; }
         hint.hidden = false;
@@ -415,7 +419,10 @@
     }
 
     function armXScroll(box) {
-        if (box._dxhArmed) { xHint(box); return; }
+        // armAll runs on every htmx swap (the page polls); an armed box is
+        // kept current by its own scroll/resize listeners, so it is skipped
+        // rather than forcing a layout read each time
+        if (box._dxhArmed) return;
         box._dxhArmed = true;
         box.addEventListener('scroll', function () { xHint(box); }, { passive: true });
         if (window.ResizeObserver) {

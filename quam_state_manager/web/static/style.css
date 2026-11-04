@@ -16069,12 +16069,17 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
    out of view (with buttons), since the native scrollbar sits at the
    bottom of a table that is usually taller than the screen. */
 .diff-panes-table .dp-key-col { min-width: 9rem; max-width: 15rem; position: sticky; left: 0; z-index: 1;
-    background: var(--pico-background-color); }
-.diff-panes-table thead th.dp-key-col { z-index: 2; }
+    background: var(--pico-background-color);
+    white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
+.diff-panes-table thead th.dp-key-col { z-index: 3; }
+.diff-panes-table thead th { z-index: 2; }
+/* one scroller for both axes, so the pane titles stay on screen while a
+   long diff scrolls down (sticky top needs a scrolling ancestor) */
+.diff-panes-scroll { max-height: max(18rem, calc(100vh - var(--topbar-height, 56px) - 5rem)); overflow: auto; }
 .diff-panes-table tr.dp-dir > td.dp-key-col {
     background: color-mix(in srgb, var(--pico-muted-border-color) 28%, var(--pico-background-color)); }
 .diff-panes-table .dp-pane-head, .diff-panes-table .dp-cell { min-width: 8rem; max-width: 13rem;
-    white-space: normal; overflow-wrap: anywhere; }
+    white-space: normal; overflow-wrap: break-word; }
 .diff-panes-table .dp-label { white-space: normal; }
 .diff-xscroll { overflow-x: auto; max-width: 100%; }
 .diff-xscroll-hint { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0 0.3rem;
@@ -16088,3 +16093,8 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .diff-wb-figs .diff-fig-name { grid-column: 1 / -1; padding-top: 0.5rem; white-space: normal; overflow-wrap: anywhere; }
 .diff-wb-figs .compare-figure-run-label { white-space: normal; }
 .diff-fig-hint { margin: 0.3rem 0 0.1rem; font-size: 0.8em; }
+
+@media print {
+    .diff-xscroll, .diff-panes-scroll { overflow: visible !important; max-height: none !important; }
+    .diff-xscroll-hint { display: none !important; }
+}

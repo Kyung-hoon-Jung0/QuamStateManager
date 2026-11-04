@@ -68,6 +68,25 @@ class TestWorkingLabel:
         ctx = next(iter(app.config["contexts"].values()))
         ctx["working_dirty"] = True
         assert "Loaded chip (with unsaved edits)" in _label(c)
+        ctx["working_dirty"] = False
+        assert "with unsaved edits" not in _label(c)
+
+    def test_a_pending_reapply_stash_counts(self, client):
+        app, c = client
+        ctx = next(iter(app.config["contexts"].values()))
+        ctx["pending_reapply"] = {"qubits.qA1.T1": 2e-05}
+        assert "Loaded chip (with unsaved edits)" in _label(c)
+
+    def test_the_pane_header_says_what_the_picker_says(self, client):
+        app, c = client
+        live = next(iter(app.config["contexts"].values()))["path"]
+        from urllib.parse import quote
+        r = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2e-05"})
+        assert r.status_code == 200
+        html = c.get("/diff?a=" + quote("working:" + live) + "&b=" + quote("working:" + live)
+                     + "&tab=state&view=panes").get_data(as_text=True)
+        assert "· working" not in html
+        assert html.count("Loaded chip (with unsaved edits)") >= 2
 
 
 class TestReadableLayout:
@@ -86,7 +105,13 @@ class TestReadableLayout:
         assert '<div class="diff-panes-scroll" data-xscroll>' in tpl
         assert '<div class="diff-xscroll-hint" hidden></div>' in tpl
         assert ".diff-panes-table .dp-key-col { min-width: 9rem; max-width: 15rem; position: sticky; left: 0;" in css
-        assert "white-space: normal; overflow-wrap: anywhere; }" in css
+        assert "white-space: normal; overflow-wrap: break-word; }" in css
+        # F2: a deep key wraps instead of being cut with an ellipsis
+        assert "white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }" in css
+        # F11: the pane scroller scrolls both axes, so sticky titles hold
+        assert ".diff-panes-scroll { max-height: max(18rem," in css
+        assert ".diff-xscroll, .diff-panes-scroll { overflow: visible !important;" in css
+        assert "@media print {" in css
 
 
 def test_diff_xscroll_selfcheck():
@@ -98,3 +123,4 @@ def test_diff_xscroll_selfcheck():
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - the hint names the panes out of view" in res.stdout
     assert "ok - a failed compare request leaves a message and a Retry" in res.stdout
+    assert "ok - a picker GET retries through the form, so its sources ride along" in res.stdout

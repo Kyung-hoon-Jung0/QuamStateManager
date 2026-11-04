@@ -566,20 +566,24 @@ window.diffSendFailed = function (evt) {
     box.className = 'diff-send-failed diff-wb-msg warn';
     box.setAttribute('role', 'alert');
     var msg = document.createElement('span');
-    var why = d.error ? String(d.error) : '';
-    msg.textContent = 'The comparison request did not reach the app'
-        + (why && why.indexOf('htmx:') !== 0 ? ' (' + why + ')' : '') + '. Nothing was changed. ';
+    msg.textContent = 'The comparison request did not reach the app. Nothing was changed. ';
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn-xs';
     btn.textContent = 'Retry';
     var elt = d.elt, verb = (cfg.verb || 'get').toLowerCase();
+    // Retry re-issues THROUGH the source element, so a form's parameters
+    // (the picker's five refs, a sidebar tick list) ride along again; a bare
+    // path would replace the comparison with the default pair.
+    var swap = (elt && elt.getAttribute && elt.getAttribute('hx-swap')) || 'innerHTML';
+    var finalPath = (d.pathInfo && d.pathInfo.finalRequestPath) || path;
     btn.addEventListener('click', function () {
         box.remove();
-        if (verb === 'get' && window.htmx) {
-            window.htmx.ajax('GET', path, { target: t, swap: (elt && elt.getAttribute && elt.getAttribute('hx-swap')) || 'innerHTML' });
-        } else if (elt && elt.isConnected && typeof elt.click === 'function') {
-            elt.click();
+        if (!window.htmx) return;
+        if (elt && elt.isConnected) {
+            window.htmx.ajax(verb.toUpperCase(), path, { source: elt, target: t, swap: swap });
+        } else {
+            window.htmx.ajax('GET', finalPath, { target: t, swap: swap });
         }
     });
     box.appendChild(msg);

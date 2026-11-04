@@ -35655,20 +35655,11 @@ def _diff_default_refs() -> tuple[str, str]:
     return "", b
 
 
-def _working_has_unapplied(ctx) -> bool:
-    """True when the open chip's working copy holds something the chip file
-    does not: a tray entry, a staged snapshot, or saved-but-unapplied
-    content. The ONE answer the diff pickers use for "with unsaved edits"
-    (the label used to say so unconditionally, even with an empty tray)."""
-    store = ctx.get("store")
-    if store is not None and (getattr(store, "change_log", None) or []):
-        return True
-    return bool(ctx.get("staged_base") or ctx.get("working_dirty")
-                or ctx.get("pending_reapply"))
-
-
 def _working_source_label(ctx) -> str:
-    if _working_has_unapplied(ctx):
+    """The loaded chip's name in the diff pickers AND its pane header: it says
+    "with unsaved edits" only when the working copy holds edits the chip file
+    does not (the one dirtiness rule, ``_quam_ctx_dirty``)."""
+    if _quam_ctx_dirty(ctx):
         return "Loaded chip (with unsaved edits)"
     return "Loaded chip"
 
@@ -38652,6 +38643,12 @@ def _hub_resolve_one(ref: str):
                 _HUB_SRC_MEMO.move_to_end(ref)
                 return hit[1]
     label_hint = None
+    if scheme == "working":
+        # the pane header says what the picker says (one label rule)
+        for _ctx in (current_app.config.get("contexts") or {}).values():
+            if isinstance(_ctx, dict) and _ctx.get("type") == "quam" and _ctx.get("path") == rest:
+                label_hint = _working_source_label(_ctx)
+                break
     if scheme == "drop" and folder is not None:
         # the stash dir name is a content hash — the human label lives in
         # the meta.json sidecar written by /compare-hub/stash
