@@ -214,6 +214,12 @@ class RunInfo:
     # and ``list_runs_compact`` / ``changes_since`` read it as a
     # plain attribute instead of re-running the extraction per row.
     key_metric: str = ""
+    # True while ``key_metric`` is a coherence time whose UNIT still has to be
+    # read from the run's own files (quam_state/state.json, ds_fit.h5). The
+    # parse pass never pays that I/O (measured: +130 % on a 2,000-run cold
+    # scan); ``DatasetStore._resolve_pending_units`` settles it afterwards,
+    # inside the scan/poll budget, and re-stamps the row so polls ship it.
+    unit_pending: bool = False
 
     # Per-fit-key sortable scalar(s) for the run-list Sort banner, precomputed at
     # parse time (see DatasetStore._extract_sort_scalars). Sparse: only the keys
@@ -613,6 +619,9 @@ class DatasetStore:
         self._root_away = False
         self._reindex_total = 0
         self._reindex_pending: set[int] = set()
+        # Runs whose coherence key metric still waits for its unit evidence
+        # (``RunInfo.unit_pending``); settled by _resolve_pending_units.
+        self._unit_pending: set[int] = set()
         self._load_store_cache()
         for path, fp in self._folder_fp.items():
             self._watch_settling(path, fp[0])
@@ -911,7 +920,11 @@ class DatasetStore:
         # changes_since don't repeat the same work per row at request time
         # (Phase 3 §4.1). fit_results + experiment_name are set above and
         # never mutated, so this is correct for the lifetime of RunInfo.
-        info.key_metric = self._extract_key_metric(info)
+        # The unit of a coherence time is read from the node's own patches
+        # (already in memory); the file evidence waits for
+        # _resolve_pending_units -- never inside the parse pass.
+        info.key_metric, info.unit_pending = self._key_metric(
+            info, evidence=False, patches=patches)
         info.sort_scalars = self._extract_sort_scalars(info)
         info.filter_params = self._extract_filter_params(info)
         info.incomplete = incomplete
@@ -1197,6 +1210,10 @@ class DatasetStore:
                     run_info.last_parsed = now
                 self.runs[run_id] = run_info
                 self._reindex_pending.discard(run_id)
+                if run_info.unit_pending:
+                    self._unit_pending.add(run_id)
+                else:
+                    self._unit_pending.discard(run_id)
                 self._note_run_change(run_id, _old, run_info)
                 real_fp = (folder_fp, node_fp, data_fp)
                 if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
@@ -1269,6 +1286,8 @@ class DatasetStore:
         # Sorted run-id index for O(log n) previous/next-run lookups (the
         # prev-state diff). Rebuilt here whenever self.runs changes.
         self._run_ids_sorted = sorted(self.runs.keys())
+        if self._unit_pending and not truncated:
+            self._resolve_pending_units(deadline)
         if not truncated:
             self._last_mtime = pre_walk_mtime
             self.index_complete = True
@@ -1455,6 +1474,7 @@ class DatasetStore:
         self._folder_fp = folder_fp
         self._date_fp = date_fp
         self._run_ids_sorted = sorted(runs)
+        self._unit_pending = {rid for rid, r in runs.items() if r.unit_pending}
         self.dates = sorted({r.date for r in runs.values()}, reverse=True)
         self.experiment_types = sorted({r.experiment_name for r in runs.values()},
                                        key=natural_key)
@@ -1685,10 +1705,15 @@ class DatasetStore:
         # forever.
         self._refresh_settling(deadline)
         if not self._incomplete_paths and self._current_mtime() == self._last_mtime:
+            if self._unit_pending:
+                with self._scan_lock:
+                    self._resolve_pending_units(deadline)
             return False
         with self._scan_lock:
             inner = self._current_mtime()
             if not self._incomplete_paths and inner == self._last_mtime:
+                if self._unit_pending:
+                    self._resolve_pending_units(deadline)
                 return False
             old_max = max(self.runs.keys()) if self.runs else -1
             # docs/105 #8: hand the inside-lock sample to _scan as its scan
@@ -3193,9 +3218,23 @@ class DatasetStore:
 
     @staticmethod
     def _extract_key_metric(run: RunInfo) -> str:
-        """Pick the most relevant fit_result value for the browser table."""
+        """Pick the most relevant fit_result value for the browser table.
+
+        Reads the run's own files for a coherence time's unit (see
+        ``_coherence_scale``); the parse pass calls ``_key_metric`` with
+        ``evidence=False`` instead and settles the unit afterwards.
+        """
+        return DatasetStore._key_metric(run, evidence=True)[0]
+
+    @staticmethod
+    def _key_metric(run: RunInfo, *, evidence: bool,
+                    patches: list | None = None) -> tuple[str, bool]:
+        """``(metric, unit_pending)``: the key metric and whether a coherence
+        time still waits for the unit evidence that only the run's FILES hold
+        (``evidence=False`` reads nothing but ``patches``, the node.json state
+        patches already parsed)."""
         if not run.fit_results:
-            return ""
+            return "", False
 
         # Get first qubit's results. natural_key (customer rule 2026-09-09):
         # of {q2, q10} a string sort calls q10 "first", so the browser table
@@ -3210,7 +3249,7 @@ class DatasetStore:
                 break
 
         if not first_qubit_results:
-            return ""
+            return "", False
 
         exp = run.experiment_name.lower()
 
@@ -3243,7 +3282,19 @@ class DatasetStore:
                     if _num(val):
                         # a failed headline fit reads blank ("-"), never some
                         # unrelated field standing in for it
-                        return _format_metric(val, unit) if math.isfinite(val) else ""
+                        if not math.isfinite(val):
+                            return "", False
+                        if unit == "s":
+                            # a coherence time: the node's own evidence says
+                            # which unit the fit used (a T1 node fits in ns
+                            # on its idle-time axis while the state holds
+                            # seconds); the map's "s" stands until it does
+                            scale = _coherence_scale(run, first_qubit, name, val,
+                                                     patches=patches, io=evidence)
+                            if scale is not None:
+                                return _format_metric(val * scale, "s"), False
+                            return _format_metric(val, "s"), not evidence
+                        return _format_metric(val, unit), False
 
         # Fallback: the FIRST numeric value that isn't "success" decides --
         # blank when it is non-finite (skipping on to the next field would
@@ -3257,16 +3308,44 @@ class DatasetStore:
                 lk = key.lower()
                 unit = "Hz" if ("freq" in lk or lk.endswith("_hz")) else ""
                 if not math.isfinite(val):
-                    return ""
+                    return "", False
                 if _COHERENCE_KEY.match(lk):
                     # a coherence time carries its unit only when the run
                     # itself says which unit the fit used; never a guess
-                    scale = _coherence_scale(run, first_qubit, key, val)
+                    scale = _coherence_scale(run, first_qubit, key, val,
+                                             patches=patches, io=evidence)
                     if scale is not None:
-                        return _format_metric(val * scale, "s")
-                return _format_metric(val, unit)
+                        return _format_metric(val * scale, "s"), False
+                    return _format_metric(val, unit), not evidence
+                return _format_metric(val, unit), False
 
-        return ""
+        return "", False
+
+    def _resolve_pending_units(self, deadline: float | None = None) -> bool:
+        """Settle the unit of every pending coherence key metric from the
+        run's files, newest run first, until ``deadline``. Called under
+        ``_scan_lock``. A row whose text changed is re-stamped so the delta
+        poll ships it, and the persisted store is marked dirty. Returns
+        True when runs are still pending (the next scan/poll continues)."""
+        yld = getattr(_SCAN_YIELD, "v", None)
+        for n, rid in enumerate(sorted(self._unit_pending, reverse=True)):
+            if deadline is not None and _time.monotonic() >= deadline:
+                return True
+            if yld is not None and n and n % yld[1] == 0 and yld[0]():
+                return True                 # a user is waiting (docs/303 (5))
+            run = self.runs.get(rid)
+            if run is None or not run.unit_pending:
+                self._unit_pending.discard(rid)
+                continue
+            metric, _pending = self._key_metric(run, evidence=True)
+            run.unit_pending = False
+            self._unit_pending.discard(rid)
+            if metric != run.key_metric:
+                run.key_metric = metric
+                run.last_parsed = self._stamp()
+                self._note_run_change(rid, run, run)
+            self._mark_store_cache_dirty()
+        return False
 
     @staticmethod
     def _extract_sort_scalars(run: "RunInfo") -> dict:
@@ -3421,21 +3500,70 @@ def _snap_scale(ratio: float) -> float | None:
     return None
 
 
-def _coherence_scale(run, qname: str, key: str, val: float) -> float | None:
+def _saved_keys_for(key: str) -> frozenset[str]:
+    """The state keys (lower-cased, ``_`` dropped) that hold the SAVED value
+    of a coherence fit key: the ramsey node stores its ``decay`` / ``T2_star``
+    as ``T2ramsey``, an echo fit as ``T2echo``."""
+    n = str(key).lower().replace("_", "")
+    if n in ("decay", "t2star", "t2*", "t2ramsey"):
+        return frozenset({n, "t2ramsey", "t2star", "t2*"})
+    return frozenset({n})
+
+
+def _patch_saved_value(patches, qname: str, keys: frozenset[str]):
+    """The value a node.json state patch wrote to ``qubits/<qname>/<key>``,
+    or None. Paths are JSON-pointer-like (``/quam/qubits/q1/T1`` or
+    ``#/qubits/q1/T1``)."""
+    if not isinstance(patches, list):
+        return None
+    for p in patches:
+        if not isinstance(p, dict):
+            continue
+        path = str(p.get("path") or "")
+        parts = [x for x in path.replace("#", "").split("/") if x]
+        if len(parts) >= 3 and parts[-3] == "qubits" and parts[-2] == qname \
+                and parts[-1].lower().replace("_", "") in keys:
+            v = p.get("value")
+            if type(v) is not bool and isinstance(v, (int, float)) and v \
+                    and math.isfinite(v):
+                return v
+    return None
+
+
+def _coherence_scale(run, qname: str, key: str, val: float, *,
+                     patches=None, io: bool = True) -> float | None:
     """Seconds per unit of a coherence fit value, from the run's own evidence.
 
+    0. The value the node's own state patch (node.json ``patches``, already
+       parsed) wrote for that qubit -- no I/O.
     1. The value the run SAVED for that qubit (``quam_state/state.json``,
-       which stores seconds; ``T2_echo`` matches ``T2echo``): the ratio
-       saved / fit snaps to 1e-9 (ns), 1e-6 (us) or 1 (s).
+       which stores seconds; ``T2_echo`` matches ``T2echo``, a ramsey
+       ``decay`` matches ``T2ramsey``): the ratio saved / fit snaps to
+       1e-9 (ns), 1e-6 (us) or 1 (s). A saved value that does not snap
+       (a stale value after a rejected fit) is no evidence either way.
     2. Else the fit file (``ds_fit.h5``): a variable declaring a time
        ``units`` whose value for some entity converts to the same instant
        (seconds = h5 value * its unit) as the fit value times one scale.
        The attribute alone is not evidence: a fit file may declare ``ns``
-       for a variable while data.json holds the same fit in seconds.
+       for a variable while data.json holds the same fit in seconds; and a
+       sweep axis (a dimension scale) is a set of instants that can match
+       anything, so coordinates are left out.
     3. Else ``None``: the caller shows the bare number.
+
+    ``io=False`` stops after step 0 (the parse pass, docs/142's budget).
     """
+    if not val:
+        return None
+    keys = _saved_keys_for(key)
+    saved = _patch_saved_value(patches, qname, keys)
+    if saved is not None:
+        sc = _snap_scale(saved / val)
+        if sc is not None:
+            return sc
+    if not io:
+        return None
     folder = getattr(run, "folder_path", None)
-    if folder is None or not val:
+    if folder is None:
         return None
     folder = Path(folder)
 
@@ -3445,10 +3573,12 @@ def _coherence_scale(run, qname: str, key: str, val: float) -> float | None:
     st = safe_io.scan_json(folder / "quam_state" / "state.json")
     q = ((st or {}).get("qubits") or {}).get(qname)
     if isinstance(q, dict):
-        want = _norm(key)
         for k, saved in q.items():
-            if _norm(k) == want and type(saved) is not bool                     and isinstance(saved, (int, float)) and saved and math.isfinite(saved):
-                return _snap_scale(saved / val)
+            if _norm(k) in keys and type(saved) is not bool \
+                    and isinstance(saved, (int, float)) and saved and math.isfinite(saved):
+                sc = _snap_scale(saved / val)
+                if sc is not None:
+                    return sc
     fit = folder / "ds_fit.h5"
     if fit.exists():
         try:
@@ -3457,7 +3587,13 @@ def _coherence_scale(run, qname: str, key: str, val: float) -> float | None:
             scales = set()
             with h5py.File(fit, "r") as f:
                 for name in f.keys():
-                    u = f[name].attrs.get("units")
+                    attrs = f[name].attrs
+                    cls = attrs.get("CLASS")
+                    if isinstance(cls, bytes):
+                        cls = cls.decode("utf-8", "replace")
+                    if cls == "DIMENSION_SCALE":
+                        continue        # a sweep axis, not a fitted value
+                    u = attrs.get("units")
                     if isinstance(u, bytes):
                         u = u.decode("utf-8", "replace")
                     if u not in _TIME_UNIT_SCALE or name.lower().endswith("_error"):

@@ -1631,6 +1631,11 @@ def fidelity_field_kind(name: Any) -> str | None:
     return None
 
 
+def _is_num(v) -> bool:
+    """A real number: not a bool, not None, not a string."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _gate_fidelity_row(entry: dict) -> dict:
     """Apply the (0,1] physical bound to one pair-fidelity row.
 
@@ -1656,7 +1661,9 @@ def _gate_fidelity_row(entry: dict) -> dict:
     level = entry.get("level")
     if level not in ("gate", "clifford", "state", "decay"):
         return entry
-    bad = [k for k in _FIDELITY_FIELDS
+    # F20: the per-gate slot of a per-Clifford row is a fidelity too -- an
+    # unphysical per-gate number must not be shown as one either
+    bad = [k for k in (*_FIDELITY_FIELDS, "derived_gate_fidelity")
            if isinstance(entry.get(k), (int, float))
            and not isinstance(entry[k], bool)
            and not chip_health.physical_fidelity(entry[k])]
@@ -1766,16 +1773,24 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                 # ``gf.value`` (2Q RB panels, Overview tiles) skip every pair.
                 level = _rb_level(metric_name)
                 epc = metric_val.get("error_per_clifford")
-                if "value" not in entry and level == "clifford"                         and isinstance(epc, (int, float)) and not isinstance(epc, bool):
+                if level == "clifford" and not _is_num(epc) and _is_num(metric_val.get("alpha")):
+                    # the dict may carry only the decay base: docs/138's
+                    # identity EPC = (d-1)/d * (1 - alpha), d = 4 for two qubits
+                    epc = 0.75 * (1.0 - metric_val["alpha"])
+                if "value" not in entry and level == "clifford" and _is_num(epc):
                     # docs/138: a per-Clifford row reads 1 - EPC. The dict's
                     # average_gate_fidelity is the PER-GATE number; it goes in
                     # the per-gate slot, never under the per-Clifford label.
                     entry["value"] = 1.0 - epc
-                    agf = metric_val.get("average_gate_fidelity")
-                    if isinstance(agf, (int, float)) and not isinstance(agf, bool):
-                        entry["derived_gate_fidelity"] = agf
+                if level == "clifford" and _is_num(metric_val.get("average_gate_fidelity")):
+                    entry["derived_gate_fidelity"] = metric_val["average_gate_fidelity"]
                 if "value" not in entry:
                     for vk in ("average_gate_fidelity", "Fidelity", "fidelity"):
+                        if level == "clifford" and vk == "average_gate_fidelity":
+                            # F20: never the per-gate number under the
+                            # per-Clifford label -- with neither EPC nor alpha
+                            # the row keeps its per-gate slot and no headline
+                            continue
                         if isinstance(metric_val.get(vk), (int, float)):
                             entry["value"] = metric_val[vk]
                             break

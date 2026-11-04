@@ -436,14 +436,18 @@ class TestOneVocabularyRegardlessOfCase:
     def test_a_lowercase_rb_row_still_gets_the_physical_bound(self):
         """The end-to-end consequence: an unphysical fidelity under a
         lowercase RB name must lose its `value`, exactly as the exact-case
-        spelling does."""
+        spelling does. Since F20 (final walk) a Standard-RB dict's
+        ``average_gate_fidelity`` is the PER-GATE slot of the per-Clifford
+        row, never its headline -- the bound applies to that slot."""
         from quam_state_manager.core.query import _extract_pair_gate_fidelities
         rows = _extract_pair_gate_fidelities(
             {"cz": {"fidelity": {"standardrb": {"average_gate_fidelity": 1.5345}}}})
         assert len(rows) == 1
         assert rows[0]["level"] == "clifford"
-        assert "value" not in rows[0], "an unphysical fidelity keeps no value"
-        assert rows[0]["raw_value"] == 1.5345
+        assert "value" not in rows[0], "a per-gate number is never the per-Clifford value"
+        assert "derived_gate_fidelity" not in rows[0], "an unphysical fidelity keeps no value"
+        assert rows[0]["raw_derived_gate_fidelity"] == 1.5345
+        assert rows[0]["physical"] is False
 
 
 # ── docs/184 — a fidelity of MINUS twenty percent ────────────────────────────
@@ -507,3 +511,28 @@ class TestStandardRbDictReadsOneMinusEpc:
         rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {"InterleavedRB": {
             "average_gate_fidelity": 0.991}}}})
         assert rows[0]["value"] == pytest.approx(0.991)
+
+
+class TestCliffordRowWithoutEpc:
+    """F20: a StandardRB dict without error_per_clifford reads 1 - EPC from
+    alpha (EPC = 3/4 * (1 - alpha)); with neither, the per-gate number never
+    becomes the per-Clifford headline."""
+
+    def test_alpha_gives_the_clifford_value(self):
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {"StandardRB": {
+            "average_gate_fidelity": 0.994, "alpha": 0.96}}}})
+        srb = [r for r in rows if r["level"] == "clifford"]
+        assert len(srb) == 1
+        assert srb[0]["value"] == pytest.approx(1 - 0.75 * (1 - 0.96), abs=1e-9)
+        assert srb[0]["derived_gate_fidelity"] == pytest.approx(0.994)
+
+    def test_gate_fidelity_alone_is_not_the_clifford_value(self):
+        from quam_state_manager.core.query import _extract_pair_gate_fidelities
+        rows = _extract_pair_gate_fidelities({"cz": {"fidelity": {"StandardRB": {
+            "average_gate_fidelity": 0.994}}}})
+        srb = [r for r in rows if r["level"] == "clifford"]
+        assert srb, rows
+        for r in srb:
+            assert r.get("value") is None
+            assert r["derived_gate_fidelity"] == pytest.approx(0.994)

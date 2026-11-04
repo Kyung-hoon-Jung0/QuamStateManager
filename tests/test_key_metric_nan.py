@@ -216,3 +216,183 @@ class TestRamseyHeadlineIsT2Star:
     def test_a_T2_star_key_still_wins(self):
         fit = {"q1": {"T2_star": 2e-05, "decay": 4e-05}}
         assert "20" in DatasetStore._extract_key_metric(_run("ramsey", fit))
+
+
+# ---------------------------------------------------------------------------
+# The coherence unit is read from patches first; file evidence is deferred
+# out of the parse pass and settled by _resolve_pending_units.
+# ---------------------------------------------------------------------------
+
+def _bare(folder=None, exp="25_T1", fit=None):
+    return RunInfo(run_id=1, experiment_name=exp, date="2026-10-01", time="01:00:00",
+                   folder_path=folder if folder is not None else Path("Z:/no/such/run"),
+                   fit_results=fit or {"q1": {"t1": 32535.7, "success": True}})
+
+
+class TestPatchesAreEvidence:
+    def test_slash_quam_path(self):
+        patches = [{"op": "replace", "path": "/quam/qubits/q1/T1", "value": 3.25e-05}]
+        assert DatasetStore._key_metric(_bare(), evidence=False, patches=patches) \
+            == ("32.54 µs", False)
+
+    def test_hash_pointer_path(self):
+        patches = [{"op": "replace", "path": "#/qubits/q1/T1", "value": 3.25e-05}]
+        assert DatasetStore._key_metric(_bare(), evidence=False, patches=patches) \
+            == ("32.54 µs", False)
+
+    def test_ramsey_decay_matches_t2ramsey(self):
+        patches = [{"op": "replace", "path": "/quam/qubits/q1/T2ramsey", "value": 4.58e-05}]
+        r = _bare(exp="12_ramsey", fit={"q1": {"freq_offset": -9.0, "decay": 45797.0,
+                                               "success": True}})
+        assert DatasetStore._key_metric(r, evidence=False, patches=patches) \
+            == ("45.80 µs", False)
+
+    def test_no_io_with_patches(self, monkeypatch):
+        def boom(*a, **k):
+            raise AssertionError("file read in the parse pass")
+        monkeypatch.setattr(D.safe_io, "scan_json", boom)
+        patches = [{"op": "replace", "path": "/quam/qubits/q1/T1", "value": 3.25e-05}]
+        assert DatasetStore._key_metric(_bare(), evidence=False, patches=patches)[0] \
+            == "32.54 µs"
+
+
+class TestDeferral:
+    def _no_read(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(D.safe_io, "scan_json", lambda *a, **k: calls.append(a))
+        return calls
+
+    def test_fallback_path_is_pending_and_reads_nothing(self, monkeypatch, tmp_path):
+        calls = self._no_read(monkeypatch)
+        m, pending = DatasetStore._key_metric(_bare(tmp_path, exp="x_t1"), evidence=False)
+        assert pending is True and m == "32535.7000"
+        assert calls == []
+
+    def test_map_path_uppercase_T1_is_pending(self, monkeypatch, tmp_path):
+        calls = self._no_read(monkeypatch)
+        r = _bare(tmp_path, fit={"q1": {"T1": 32535.7, "success": True}})
+        m, pending = DatasetStore._key_metric(r, evidence=False)
+        assert pending is True and m.endswith("s")
+        assert calls == []
+
+    def test_map_path_ramsey_decay_is_pending(self, monkeypatch, tmp_path):
+        calls = self._no_read(monkeypatch)
+        r = _bare(tmp_path, exp="12_ramsey", fit={"q1": {"decay": 45797.0}})
+        m, pending = DatasetStore._key_metric(r, evidence=False)
+        assert pending is True and m.endswith("s")
+        assert calls == []
+
+    def test_evidence_true_is_never_pending(self, tmp_path):
+        assert DatasetStore._key_metric(_bare(tmp_path), evidence=True)[1] is False
+
+
+def _t1_folder(root: Path, *, patches=None):
+    run = root / "2026-10-01" / "#1_25_T1_100001"
+    (run / "quam_state").mkdir(parents=True)
+    node = {"metadata": {"name": "25_T1", "status": "successful"},
+            "data": {"parameters": {"model": {"qubits": ["q1"]}}, "outcomes": {}},
+            "id": 1, "parents": [], "created_at": "2026-10-01T10:00:01"}
+    if patches is not None:
+        node["patches"] = patches
+    (run / "node.json").write_text(json.dumps(node), encoding="utf-8")
+    (run / "data.json").write_text(json.dumps(
+        {"fit_results": {"q1": {"t1": 32535.7, "success": True}}}), encoding="utf-8")
+    (run / "quam_state" / "state.json").write_text(
+        json.dumps({"qubits": {"q1": {"T1": 3.25357e-05}}}), encoding="utf-8")
+    return run
+
+
+def _noop_resolver(monkeypatch):
+    calls = []
+    monkeypatch.setattr(DatasetStore, "_resolve_pending_units",
+                        lambda self, deadline=None: calls.append(deadline) or False)
+    return calls
+
+
+def _row_ids(delta):
+    return {r.get("id", r.get("run_id")) for r in delta["updated"]}
+
+
+class TestPendingThroughTheStore:
+    def test_scan_defers_then_resolve_settles_and_ships(self, monkeypatch, tmp_path):
+        _t1_folder(tmp_path)
+        real = DatasetStore._resolve_pending_units
+        _noop_resolver(monkeypatch)
+        ds = DatasetStore(tmp_path)
+        (rid, run), = ds.runs.items()
+        assert run.unit_pending is True and run.key_metric == "32535.7000"
+        assert rid in ds._unit_pending
+        cursor = ds.changes_since(0)["now"]
+        assert rid not in _row_ids(ds.changes_since(cursor))
+        with ds._scan_lock:
+            real(ds, None)
+        assert run.key_metric == "32.54 µs" and run.unit_pending is False
+        assert rid not in ds._unit_pending
+        assert rid in _row_ids(ds.changes_since(cursor))
+
+    def test_rescan_if_stale_resolves_with_nothing_changed(self, monkeypatch, tmp_path):
+        _t1_folder(tmp_path)
+        real = DatasetStore._resolve_pending_units
+        _noop_resolver(monkeypatch)
+        ds = DatasetStore(tmp_path)
+        run = next(iter(ds.runs.values()))
+        assert run.unit_pending
+        monkeypatch.setattr(DatasetStore, "_resolve_pending_units", real)
+        ds.rescan_if_stale()
+        assert run.key_metric == "32.54 µs" and not run.unit_pending
+        assert not ds._unit_pending
+
+    def test_constructor_resolves_within_budget(self, tmp_path):
+        _t1_folder(tmp_path)
+        ds = DatasetStore(tmp_path)
+        run = next(iter(ds.runs.values()))
+        assert run.key_metric == "32.54 µs" and not run.unit_pending
+
+    def test_patched_run_is_never_pending(self, monkeypatch, tmp_path):
+        _t1_folder(tmp_path, patches=[{"op": "replace", "path": "/quam/qubits/q1/T1",
+                                       "value": 3.25357e-05}])
+        _noop_resolver(monkeypatch)
+        ds = DatasetStore(tmp_path)
+        run = next(iter(ds.runs.values()))
+        assert run.key_metric == "32.54 µs" and not run.unit_pending
+        assert not ds._unit_pending
+
+
+class TestPendingSurvivesThePersistedStore:
+    def test_round_trip(self, monkeypatch, tmp_path):
+        root, cache = tmp_path / "data", tmp_path / "cache"
+        cache.mkdir()
+        _t1_folder(root)
+        _noop_resolver(monkeypatch)
+        ds = DatasetStore(root, cache_dir=cache)
+        assert next(iter(ds.runs.values())).unit_pending
+        ds.flush_store_cache()
+        ds2 = DatasetStore(root, cache_dir=cache)
+        (rid, run), = ds2.runs.items()
+        assert run.unit_pending is True
+        assert rid in ds2._unit_pending
+
+
+class TestCoherenceScaleEvidence:
+    def test_unsnapped_saved_value_falls_through_to_h5(self, tmp_path):
+        h5py = pytest.importorskip("h5py")
+        (tmp_path / "quam_state").mkdir()
+        (tmp_path / "quam_state" / "state.json").write_text(
+            json.dumps({"qubits": {"q1": {"T1": 1.0e-05}}}), encoding="utf-8")
+        with h5py.File(tmp_path / "ds_fit.h5", "w") as f:
+            t = f.create_dataset("tau", data=[32535.0])
+            t.attrs["units"] = "ns"
+        assert D._coherence_scale(_bare(tmp_path), "q1", "t1", 32535.0) \
+            == pytest.approx(1e-9)
+
+    def test_dimension_scale_is_ignored(self, tmp_path):
+        h5py = pytest.importorskip("h5py")
+        with h5py.File(tmp_path / "ds_fit.h5", "w") as f:
+            ax = f.create_dataset("idle_time", data=[16.0, 32535.7, 64.0])
+            ax.attrs["units"] = "ns"
+            ax.attrs["CLASS"] = b"DIMENSION_SCALE"
+        assert D._coherence_scale(_bare(tmp_path), "q1", "t1", 32535.7) is None
+
+    def test_saved_keys(self):
+        assert "t2ramsey" in D._saved_keys_for("decay")
+        assert D._saved_keys_for("T2_echo") == {"t2echo"}
