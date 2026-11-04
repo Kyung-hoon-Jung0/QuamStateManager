@@ -3233,7 +3233,7 @@ def _agent_running_text(lock: dict) -> str:
     """The refusal a person reads while the agent's node runs: what holds the chip, until when,
     and the way out (the screen shows ``error``; the code rides ``code``)."""
     return (f"The agent is running {lock.get('node') or 'a node'} on this chip, so edits wait until its run ends "
-            "(the new values it measures land on this working copy). Your typed value is kept: commit it "
+            "(the new values it measures land on this working copy). Nothing was changed: do it "
             "again after the run, or press Stop on the Agent page to end the run now.")
 
 
@@ -50264,6 +50264,13 @@ def scheduler_page():
     """Top-level Scheduler page — setup, pre-flight, queue + runner."""
     settings = scheduler.load_settings(_sched_inst())
     open_folder = _active_path() if _context_type() == "quam" else None
+    # Prefill the env from the open project's chosen env when unset (the
+    # agent's rule, project_env.run_env); Start persists what the field shows.
+    if not settings.get("env_python"):
+        py = _project_run_env()
+        if py:
+            settings = dict(settings)
+            settings["env_python"] = py
     # Prefill the quam_state target from the open chip when unset (Strict policy
     # wants them equal anyway).
     if not settings.get("quam_state_path") and open_folder:
@@ -51017,6 +51024,27 @@ def _autofit_start_lock(inst: str) -> threading.Lock:
         return lock
 
 
+def _project_run_env() -> str | None:
+    """The open project's chosen env, else the app's selected env (None when
+    no chip is open or neither is a file)."""
+    from quam_state_manager.core import project_env
+    ctx = _active_ctx()
+    if not ctx:
+        return None
+    return project_env.run_env(current_app.instance_path,
+                               ctx.get("qualibrate_project"))
+
+
+def _autofit_env() -> tuple[str, str]:
+    """(env, source) a real-backend plan runs its nodes with: the runner
+    settings' env, else the project's chosen env."""
+    env = scheduler.load_settings(_sched_inst()).get("env_python") or ""
+    if env:
+        return env, "runner"
+    py = _project_run_env()
+    return (py, "project") if py else ("", "")
+
+
 def _autofit_readiness() -> dict:
     """The plan bar's readiness strip (docs/56 §7b — preflight on page open,
     never first at ▶): chip, scheduler env, calibrations folder, LLM."""
@@ -51026,7 +51054,7 @@ def _autofit_readiness() -> dict:
     settings = scheduler.load_settings(inst)
     ctx = _active_ctx()
     chip_ok = bool(ctx and ctx.get("type") == "quam")
-    env = settings.get("env_python") or ""
+    env, env_source = _autofit_env()
     folder = settings.get("calibrations_folder") or ""
     # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
     # provider, model and API KEY are a user credential, not a fact about a
@@ -51038,7 +51066,7 @@ def _autofit_readiness() -> dict:
     return {
         "chip": {"ok": chip_ok,
                  "name": (_active_chip_identity() or {}).get("name") if chip_ok else None},
-        "env": {"ok": bool(env), "value": env},
+        "env": {"ok": bool(env), "value": env, "source": env_source},
         "calibrations_folder": {"ok": bool(folder), "value": folder},
         "llm": {"provider": ai.get("provider", "off"),
                 "enabled": ai.get("provider", "off") not in ("off", "")},
@@ -51329,6 +51357,16 @@ def _autofit_start_real(inst, p, data, auditor):
     _arch = _archive_run_reason(ctx.get("live_path") or ctx.get("path"))
     if _arch:
         return None, {"error": ARCHIVE_TARGET, "reason": "archive", "message": _arch}, 409
+    # An empty target selection means every qubit (pair) of the chip. On
+    # hardware that is never a default: the request says so out loud.
+    if not p.targets and data.get("all_targets") is not True:
+        st = ctx.get("store")
+        names = ((st.qubit_pair_names if p.targets_kind == "qubit_pairs"
+                  else st.qubit_names) if st is not None else [])
+        n = len(names)
+        return None, {"reason": "confirm_all_targets", "count": n,
+                      "error": f"No targets picked: confirm that the plan "
+                               f"runs on all {n} on the real chip"}, 409
     # a foreign queue would run BEFORE our items on the hardware — refuse
     qstate = scheduler.load_queue(inst)
     foreign = [i for i in qstate.get("queue", [])
@@ -51339,7 +51377,7 @@ def _autofit_start_real(inst, p, data, auditor):
                       "(they would run before the plan's steps)"}, 409
     if not data.get("force"):
         try:
-            pre = _gather_preflight(inst, {})
+            pre = _gather_preflight(inst, {"env_python": _autofit_env()[0]})
         except Exception:  # noqa: BLE001
             logger.warning("autofit preflight failed", exc_info=True)
             pre = None
@@ -51412,7 +51450,8 @@ def _autofit_start_real(inst, p, data, auditor):
                         origin=ctx.get("origin") or "live",
                         on_live_landed=lambda: _live_write_landed(ctx))   # v1.5.1 (M3)
     adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
-                          rescan_and_list_runs=rescan_and_list_runs)
+                          rescan_and_list_runs=rescan_and_list_runs,
+                          env_python=_autofit_env()[0] or None)
     backend = RealBackend(adapter, resolved)
     hm = _history()
 

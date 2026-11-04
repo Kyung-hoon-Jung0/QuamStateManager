@@ -110,6 +110,22 @@ def remembered(inst, project: str | None) -> str | None:
     return rec["python"] if rec else None
 
 
+def run_env(inst, project: str | None) -> str | None:
+    """The env a run started for *project* uses when the runner settings name
+    none: the env the person chose for the project, else the app's selected
+    env (the env the window opened the chip with). None when neither is a
+    file. One rule for the agent, Auto Calibrate and the Experiment Runner."""
+    from quam_state_manager.core import config_generator
+    py = None
+    try:
+        py = remembered(inst, project)
+        if not (py and os.path.isfile(py)):
+            py = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001 -- unknown is "none", never a guess
+        return None
+    return py if py and os.path.isfile(py) else None
+
+
 def remember(inst, project: str, python: str, how: str = "confirmed") -> None:
     """The user confirmed (``how="confirmed"``) or changed (``"changed"``)
     *project*'s env: remember it, and as the most recently used one."""

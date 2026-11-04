@@ -12504,8 +12504,13 @@
       // Fresh session: recall the last output folder (durable mirror) — a
       // new browser session used to start with the path blank every time.
       state.outputPath = "";
-      try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
-      catch (e) { /* private mode */ }
+      // W2-10: a re-generate rebuilds a DIFFERENT chip than the last
+      // Generate; that build's folder holds that chip, so it is not offered
+      // here (the person picks the folder; the overwrite check still asks)
+      if (!onRegenPage()) {
+        try { state.outputPath = localStorage.getItem("quam_gen_output_path") || ""; }
+        catch (e) { /* private mode */ }
+      }
       var outEl = document.getElementById("gen-output-path");
       if (outEl && state.outputPath) outEl.value = state.outputPath;
       state.lastBuild = null;      // QA r2-13: no draft, no build record

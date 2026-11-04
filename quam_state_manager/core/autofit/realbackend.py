@@ -52,6 +52,9 @@ class RealAdapter:
     rescan_and_list_runs: Callable[[], list[Any]]
     # per-step timeout fallback (scheduler settings own the real watchdog)
     step_timeout_s: float = 3600.0
+    # the env each item runs with (the project's chosen env when the runner
+    # settings name none); None = the runner settings' env
+    env_python: str | None = None
 
 
 class RealBackend:
@@ -116,6 +119,7 @@ class RealBackend:
             "targets_name": info_scan.targets_name,
             "param_overrides": safe_params,
             "label": f"{_AUTOFIT_LABEL}: {step.id} (attempt {attempt + 1})",
+            "env_python": self.adapter.env_python,
         }, targets=list(targets))
         item_id = item["id"]
         scheduler.start(inst)

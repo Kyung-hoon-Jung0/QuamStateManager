@@ -1949,15 +1949,9 @@ def _run_settings(settings: dict, ctx: dict, inst) -> dict:
     the same env the window opened the chip with, never a guess."""
     if settings.get("env_python"):
         return settings
-    from quam_state_manager.core import config_generator, project_env
-    py = None
-    try:
-        py = project_env.remembered(inst, ctx.get("qualibrate_project"))
-        if not (py and os.path.isfile(py)):
-            py = config_generator.get_selected_env(inst)
-    except Exception:  # noqa: BLE001
-        logger.debug("project env lookup failed", exc_info=True)
-    if py and os.path.isfile(py):
+    from quam_state_manager.core import project_env
+    py = project_env.run_env(inst, ctx.get("qualibrate_project"))
+    if py:
         return {**settings, "env_python": py, "env_source": "project"}
     return settings
 

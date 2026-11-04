@@ -389,20 +389,43 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
 
 def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                    label: str) -> WriteOutcome:
-    """review-autonomy plan-end restore: force-write pre-plan values back
-    (docs/56 §7b-A). No CAS — values legitimately evolved through multiple
-    steps and the engine is the sole master while the mutator lock holds;
-    exact-typed (coerce=False) like reverts. Every write is logged old→new."""
+    """review-autonomy plan-end restore: write pre-plan values back
+    (docs/56 §7b-A), exact-typed (coerce=False) like reverts. A row carrying
+    ``expect`` (the last value the plan itself wrote there) is a CAS: when
+    the chip holds something else now, someone else saved it after the plan
+    and it is kept and reported in ``conflicts``, never clobbered."""
     if not rows:
         return WriteOutcome(ok=True, action="noop")
     refused = _archive_refusal(chip)
     if refused:
         return WriteOutcome(ok=False, action="restored", error=refused)
+    conflicts: list[dict] = []
+
+    def _cas_split(rs):
+        keep, out = [], []
+        for r in rs:
+            if "expect" in r:
+                try:
+                    cur = _current_value(chip, r["path"])
+                except KeyError:
+                    out.append({"path": r["path"], "reason": "path vanished"})
+                    continue
+                if not _values_equal(cur, r["expect"]):
+                    out.append({"path": r["path"], "reason":
+                                f"changed after the plan wrote it "
+                                f"(current={cur!r})"})
+                    continue
+                if _values_equal(cur, r["value"]):
+                    continue          # already the pre-plan value
+            keep.append(r)
+        return keep, out
+
     with chip.build_lock:
         entries = []
         gid = f"afrestore{chip.store.mutation_seq}"
         try:
             with chip.store._lock:
+                rows, conflicts = _cas_split(rows)
                 for r in rows:
                     e = chip.modifier.set_value(r["path"], r["value"],
                                                 coerce=False,
@@ -422,19 +445,29 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             except Exception:  # noqa: BLE001
                 logger.exception("restore rollback failed")
             return WriteOutcome(ok=False, action="restored",
-                                error=f"restore failed: {exc}")
+                                error=f"restore failed: {exc}",
+                                conflicts=conflicts)
+        if not entries:
+            return WriteOutcome(ok=True, action="restored",
+                                conflicts=conflicts)
         paths = [{"path": e.dot_path, "old": e.old_value, "new": e.new_value}
                  for e in entries]
         try:
             _save(chip)
         except Exception as exc:  # noqa: BLE001
             return WriteOutcome(ok=False, action="restored", group_id=gid,
-                                paths=paths, error=f"save failed: {exc}")
+                                paths=paths, error=f"save failed: {exc}",
+                                conflicts=conflicts)
         if apply_live:
             restaged: list = []
 
             def _restage() -> str | None:
+                nonlocal rows
                 with chip.store._lock:
+                    # after a pull the store holds the freshest live content:
+                    # the CAS is judged again there
+                    rows, late = _cas_split(rows)
+                    conflicts.extend(late)
                     for r in rows:
                         restaged.append(chip.modifier.set_value(
                             r["path"], r["value"], coerce=False, _defer_hooks=True,
@@ -446,10 +479,11 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                                              mine=lambda: restaged or entries)
             if err:
                 return WriteOutcome(ok=False, action="restored", group_id=gid,
-                                    paths=paths, error=err)
+                                    paths=paths, error=err,
+                                    conflicts=conflicts)
             paths = _written_paths(paths, restaged)
         return WriteOutcome(ok=True, action="restored", group_id=gid,
-                            paths=paths)
+                            paths=paths, conflicts=conflicts)
 
 
 class RealWriter:
@@ -461,6 +495,15 @@ class RealWriter:
 
     def current_value_of(self, dotted: str):
         return _current_value(self.chip, dotted)
+
+    def state_leaves(self) -> dict:
+        """Every leaf of the chip's state (a list is one leaf)."""
+        with self.chip.store._lock:
+            return flat_leaves(self.chip.store.state)
+
+    def refresh(self) -> None:
+        """Pull what a node just saved on the live files into the store."""
+        self.chip.reconcile()
 
     def merged_view(self) -> dict | None:
         """State + wiring in one root — power coupling resolves the feedline
@@ -478,6 +521,24 @@ class RealWriter:
     def restore_values(self, rows, *, label: str) -> dict:
         return restore_values(self.chip, rows, apply_live=self.apply_live,
                               label=label).as_dict()
+
+
+def flat_leaves(tree, prefix: str = "") -> dict:
+    """``{dotted: value}`` of every non-dict leaf; keys holding a dot are not
+    addressable in the dotted dialect and are left out."""
+    out: dict = {}
+    if not isinstance(tree, dict):
+        return out
+    for k, v in tree.items():
+        k = str(k)
+        if "." in k:
+            continue
+        path = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict):
+            out.update(flat_leaves(v, path))
+        else:
+            out[path] = v
+    return out
 
 
 class _CasConflict(Exception):

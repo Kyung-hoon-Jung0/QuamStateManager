@@ -123,8 +123,15 @@
     var preset = ($("autofit-preset") || {}).value || "";
     var isPairs = preset.indexOf("cz") === 0;
     var names = isPairs ? (r.qubit_pairs || []) : (r.qubits || []);
+    // a rebuild keeps what the person picked (a Backend change used to drop
+    // it, and an empty selection runs every qubit)
+    var kept = {};
+    Array.prototype.forEach.call(sel.selectedOptions || [], function (o) {
+      kept[o.value] = true;
+    });
     sel.innerHTML = names.map(function (n) {
-      return '<option value="' + esc(n) + '">' + esc(n) + "</option>";
+      return '<option value="' + esc(n) + '"' + (kept[n] ? " selected" : "") +
+        ">" + esc(n) + "</option>";
     }).join("");
   }
 
@@ -202,6 +209,20 @@
       step_files: pickedFiles(),
     };
     if (payload.targets === null) delete payload.targets;
+    if (!targets.length && payload.backend === "real" && !window._autofitAllOk) {
+      var r0 = readiness();
+      var pairs = (payload.preset || "").indexOf("cz") === 0;
+      var n = (pairs ? (r0.qubit_pairs || []) : (r0.qubits || [])).length;
+      // nothing to confirm on a chip with none: the server answers why
+      if (n) msg.innerHTML = '<span class="autofit-bad">No targets picked: this ' +
+        "runs on all " + n + " " + (pairs ? "pairs" : "qubits") +
+        " of the real chip.</span> " +
+        '<button class="btn-sm outline" onclick="autofitRunAll()">Run on all ' +
+        n + " " + (pairs ? "pairs" : "qubits") + "</button>";
+      if (n) return;
+    }
+    if (!targets.length && payload.backend === "real") payload.all_targets = true;
+    window._autofitAllOk = false;
     msg.textContent = "starting…";
     fetchJSON("/autofit/start", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -221,6 +242,11 @@
       }
       poll();
     });
+  };
+
+  window.autofitRunAll = function () {
+    window._autofitAllOk = true;
+    window.autofitRun();
   };
 
   window.autofitForce = function () {
@@ -297,8 +323,37 @@
       (st.llm_calls ? " · LLM calls: " + st.llm_calls : "");
     board.innerHTML = '<p class="autofit-runline autofit-run-' +
       esc(st.status) + '">' + esc(st.autonomy || "") + " · " + status +
-      "</p><table class='data-table autofit-board-table'>" +
+      "</p>" + restoreLine(st) + "<table class='data-table autofit-board-table'>" +
       "<thead>" + head + "</thead><tbody>" + rows + "</tbody></table>";
+  }
+
+  // What the review-mode restore did to the chip (the mode's promise is
+  // "the chip ends where it started", so the board says whether it did).
+  function restoreLine(st) {
+    if (st.autonomy !== "review" || st.status === "running") return "";
+    var r = st.restore;
+    var msg, cls = "muted";
+    if (!r) {
+      msg = "Chip not restored: the plan ended before the restore ran.";
+      cls = "autofit-bad";
+    } else if (r.status === "restored") {
+      msg = "Chip restored to its pre-plan values (" + r.restored +
+        " value" + (r.restored === 1 ? "" : "s") + " put back).";
+    } else if (r.status === "nothing") {
+      msg = "Chip unchanged: the plan wrote nothing that needed restoring.";
+    } else {
+      cls = "autofit-bad";
+      var kept = r.kept || [], add = r.unrestorable || [];
+      msg = (r.status === "failed" ? "Chip NOT restored: " +
+          (r.error || "the write was refused") + "."
+        : "Chip partly restored: " + r.restored + " value(s) put back.") +
+        (kept.length ? " Kept " + kept.length + " value(s) changed by " +
+          "someone else after the plan: " + kept.slice(0, 4).join(", ") +
+          "." : "") +
+        (add.length ? " Could not remove " + add.length + " added key(s): " +
+          add.slice(0, 4).join(", ") + "." : "");
+    }
+    return '<p class="' + cls + '">' + esc(msg) + "</p>";
   }
 
   function renderReview(st) {

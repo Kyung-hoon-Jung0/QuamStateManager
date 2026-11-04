@@ -662,7 +662,7 @@
              var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
              return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
          }},
-        {key: 'status', label: 'Status', on: true, w: 104, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"
+        {key: 'status', label: 'Status', on: true, w: 124, sortKey: 'status', type: 'str',   // L9: 96 clipped "finished"; W2-11: 104 fit "all failed" by 2 px at the default size and clipped it at a larger one
          render: function (r) {
              return allTargetsFailed(r)
                  ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
@@ -1323,7 +1323,7 @@
                 return sv[ai];
             }
             if (k === 'qubits') return (r.q && r.q[0]) || '';
-            if (k === 'metric') { var m = parseFloat(r.metric); return isNaN(m) ? null : m; }
+            if (k === 'metric') { var mm = /[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?/i.exec(String(r.metric || '')); var m = mm ? parseFloat(mm[0]) : NaN; return isNaN(m) ? null : m; }   // W2-11: a named number ("quad_term -8.5e+06") sorts by its number
             if (k === 'when') { var d = _runDate(r); return d ? d.getTime() : null; }
             if (k === 'dur') { var s = parseFloat(r.dur); return isNaN(s) ? null : s; }
             if (k === 'parent') { var p = parseFloat(r.parent); return isNaN(p) ? null : p; }

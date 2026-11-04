@@ -62,7 +62,9 @@ _COLD_SCAN_BUDGET_S = 3.0
 # none and would mark nothing.
 # v5: a coherence-time key metric carries its unit (a v4 row re-served the
 # bare number) and a ramsey run headlines T2* (``decay``), not the detuning.
-_STORE_CACHE_V = 5
+# v6 (W2-11): a ramsey-vs-flux run headlines its flux offset, and a fallback
+# number with no unit names the field it is (a v5 row re-served it bare).
+_STORE_CACHE_V = 6
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -1675,6 +1677,10 @@ class DatasetStore:
                                               tags=list(old.tags), note=old.note)
                             new.last_parsed = self._stamp()
                             self.runs[old.run_id] = new
+                            if new.unit_pending:
+                                self._unit_pending.add(old.run_id)
+                            else:
+                                self._unit_pending.discard(old.run_id)
                             self._note_run_change(old.run_id, old, new)
                         self._folder_fp[path] = (*fps, old.run_id)
                         self._mark_store_cache_dirty()
@@ -3255,6 +3261,9 @@ class DatasetStore:
 
         # Map experiment types to key metric fields
         metric_map = {
+            # W2-11: before "ramsey" -- this node also matches it, and its
+            # calibrated number is the flux offset it moves the qubit to
+            "ramsey_vs_flux": ("flux_offset", "V"),
             "spectroscopy": ("frequency", "Hz"),
             "power_rabi": ("pi_amp", "V"),
             # F13: the ramsey node stores T2* as ``decay`` (seconds); its
@@ -3317,6 +3326,10 @@ class DatasetStore:
                     if scale is not None:
                         return _format_metric(val * scale, "s"), False
                     return _format_metric(val, unit), not evidence
+                if not unit:
+                    # W2-11: a bare number with no unit says nothing; it
+                    # carries the name of the field it is
+                    return f"{key} {_format_metric(val, unit)}", False
                 return _format_metric(val, unit), False
 
         return "", False
@@ -3338,6 +3351,13 @@ class DatasetStore:
                 self._unit_pending.discard(rid)
                 continue
             metric, _pending = self._key_metric(run, evidence=True)
+            bare, _ = self._key_metric(run, evidence=False)
+            if metric == bare and run.folder_path in self._settling_paths:
+                # F21: no evidence YET. A node saves its quam_state after
+                # data.json, so a run read while it is still being written
+                # has no saved value to compare; deciding now would freeze
+                # the bare number for good. Asked again while it settles.
+                continue
             run.unit_pending = False
             self._unit_pending.discard(rid)
             if metric != run.key_metric:

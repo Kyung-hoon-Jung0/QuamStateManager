@@ -137,6 +137,9 @@ class TestEditRefusalIsASentence:
         from quam_state_manager.web import routes as r
         txt = r._agent_running_text({"node": "05_power_rabi"})
         assert "agent_running" not in txt and "Stop" in txt and "05_power_rabi" in txt
+        # F16: the same sentence answers every refused door (a Re-generate, a
+        # Pulses commit, a cell edit), so it never assumes a typed value
+        assert "typed value" not in txt and "Nothing was changed" in txt
 
 
 class TestPlanEnd:
