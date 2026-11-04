@@ -874,3 +874,10 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .tree-row:has(.ui-tree-mounted) .tree-row-actions,
 .tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help { display: none; }
 
+/* walk F31: the workspace root row says when it is folded -- a marker for its
+   state and, folded, how many runs it holds (folded, it used to read as an empty
+   folder with nothing to click) */
+#sidebar details.tree-root > summary.tree-root-label::before { content: var(--ui-disclosure-marker-open); color: var(--ui-text-2); flex: 0 0 auto; }
+#sidebar details.tree-root:not([open]) > summary.tree-root-label::before { content: var(--ui-disclosure-marker); }
+.tree-root-folded { display: none; }
+#sidebar details.tree-root:not([open]) > summary .tree-root-folded { display: inline; flex: 0 0 auto; font-size: var(--ui-fs-sm); }

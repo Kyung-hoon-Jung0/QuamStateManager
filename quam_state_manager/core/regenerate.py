@@ -801,4 +801,46 @@ def run_regenerate(
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     outcome["script_in_output"] = script_in_output
+    # The rebuilt chip must load AND build a QM config in the env it was built
+    # for -- a merge can write a state that loads but fails generate_config()
+    # (a pulse length that no longer resolves), and a node run would then crash
+    # at config time. Checked in the same env, read-only (no save), and a
+    # failure is reported as one: the outcome is no longer "ok".
+    check = check_rebuilt_config(python_path, out_dir)
+    outcome["config_check"] = check
+    if check.get("ran") and not check.get("ok"):
+        outcome["ok"] = False
+        outcome["status"] = "error"
+        outcome["error"] = ("The rebuilt chip was written to " + str(out_dir)
+                            + " but it does not build a QM config in this "
+                            "environment: " + (check.get("error") or "unknown error"))
     return outcome
+
+
+def check_rebuilt_config(python_path: str, out_dir: Path | str,
+                         timeout: int = 300) -> dict:
+    """Load the rebuilt chip and run ``generate_config()`` on it in ``python_path``.
+
+    Read-only: the previewer never saves. Returns ``{"ran", "ok", "error",
+    "elements"}``; ``ran`` is False when the check could not start at all."""
+    try:
+        res = config_generator.run_config_preview(python_path, Path(out_dir),
+                                                  timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 -- reported, never raised
+        return {"ran": False, "ok": False, "error": str(exc), "elements": None}
+    envelope = res.get("result") if isinstance(res, dict) else None
+    cfg = envelope.get("config") if isinstance(envelope, dict) else None
+    elements = len(cfg.get("elements") or {}) if isinstance(cfg, dict) else None
+    ran = isinstance(res, dict) and (res.get("returncode") is not None
+                                     or envelope is not None)
+    err = None if res.get("ok") else (res.get("error") or "the config check failed")
+    if err:
+        err = " ".join(str(err).split())[:400]
+        tb = envelope.get("traceback") if isinstance(envelope, dict) else None
+        frames = [ln.strip() for ln in str(tb or "").splitlines()
+                  if ln.strip().startswith('File "')]
+        if frames:
+            # where it failed: an AssertionError carries no message of its own
+            err += " (at " + frames[-1][:200] + ")"
+    return {"ran": bool(ran), "ok": bool(res.get("ok")), "error": err,
+            "elements": elements}

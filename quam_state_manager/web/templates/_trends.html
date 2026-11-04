@@ -1,7 +1,9 @@
 {% if no_workspace %}
 {% import "_ui.html" as ui %}
 {{ ui.ui_head('Trends', page=True, gist='Metric trends across experiment runs.') }}
-<div class="welcome">
+{# walk F31: a data folder added in the sidebar fills this page at once #}
+<div class="welcome"
+     hx-get="/trends" hx-trigger="workspaceRootsChanged from:body" hx-target="#table-pane" hx-swap="innerHTML">
     {% set _ro = resume_offer() if resume_offer is defined else None %}
     {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its trends:</p>
     {% include "_resume_offer.html" %}{% endif %}

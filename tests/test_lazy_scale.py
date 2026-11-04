@@ -122,6 +122,26 @@ class TestListingCache:
         assert entries[0].status == "finished" and entries[0].qubits == ["q1"]
         assert not ws2.hydrating_roots()
 
+    def test_an_empty_cached_listing_is_not_served(self, tmp_path):
+        # walk F31: a folder first added before its first run cached an EMPTY
+        # listing; adding it again later showed "No runs found under this
+        # folder yet" while the Datasets table listed its runs.
+        root = tmp_path / "data"
+        (root / "2026-03-01").mkdir(parents=True)
+        cache = tmp_path / "cache"
+        ws1 = Workspace(); ws1.cache_dir = cache
+        ws1.add_root(root, defer_parse=True)
+        _wait_hydrated(ws1)
+        deadline = time.time() + 10
+        while not list(cache.glob("ws_*.json")):
+            assert time.time() < deadline, "listing cache never written"
+            time.sleep(0.05)
+        _mk_run(root, "2026-03-01", 7)
+
+        ws2 = Workspace(); ws2.cache_dir = cache
+        entries = ws2.add_root(root, defer_parse=True)
+        assert [e.run_id for e in entries] == [7]
+
     def test_background_verify_catches_disk_drift(self, tmp_path):
         root = tmp_path / "data"
         _mk_run(root, "2026-03-01", 7)

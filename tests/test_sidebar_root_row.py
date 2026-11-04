@@ -102,3 +102,38 @@ def test_a_drive_root_has_a_name_and_no_parent(client):
         html = render_template("_sidebar_tree.html", tree={"D:\\": []}, nested={}, tree_truncated={}, name_filter="")
     assert 'class="tree-root-name">D:</span>' in html
     assert "tree-root-dir" not in html
+
+
+def test_a_folded_root_says_so_and_how_many_runs_it_holds(client):
+    """walk F31: a folded root used to read as an empty folder -- no marker, no
+    count -- while its runs sat hidden inside it."""
+    c, tmp = client
+    root = tmp / "data"
+    for i in (1, 2):
+        run = root / "2026-08-01" / f"#{i}_foo_12000{i}" / "quam_state"
+        run.mkdir(parents=True)
+        (run / "state.json").write_text(json.dumps({"qubits": {}}), encoding="utf-8")
+        (run / "wiring.json").write_text(json.dumps({}), encoding="utf-8")
+    html = _tree_html(c, root)
+    assert 'class="tree-root-folded ui-count"' in html
+    assert ">2 runs</span>" in html.split('class="tree-root-folded', 1)[1].split("</summary>", 1)[0]
+    kit = (_ROOT / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    assert ".tree-root-folded { display: none; }" in kit
+    assert ("#sidebar details.tree-root:not([open]) > summary .tree-root-folded "
+            "{ display: inline;") in kit
+    assert ("#sidebar details.tree-root:not([open]) > summary.tree-root-label::before "
+            "{ content: var(--ui-disclosure-marker); }") in kit
+    c.post("/workspace/remove", data={"folder": str(root)}, headers={"HX-Request": "true"})
+
+
+@pytest.mark.parametrize("url", ["/datasets", "/collections", "/trends"])
+def test_an_empty_runs_page_refills_when_a_data_folder_is_added(client, url):
+    """walk F31: after Dataset Load the sidebar listed the runs while this page
+    kept saying "Add a data folder"; the add route's workspaceRootsChanged now
+    re-reads it."""
+    c, _ = client
+    html = c.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "Dataset Load" in html
+    tag = html.split('class="welcome"', 1)[1].split(">", 1)[0]
+    assert 'hx-trigger="workspaceRootsChanged from:body"' in tag
+    assert f'hx-get="{url}"' in tag and 'hx-target="#table-pane"' in tag
