@@ -7715,13 +7715,25 @@
   // only), when it still serves every member: the LO itself in a band (the port
   // frequency is what the band rule judges, as Diagnostics does), every RF inside
   // its IF window, and every resonator clear of the demod floor. Else null.
+  // A member the source chip already ran at this RF under this LO is the lab's
+  // own calibration and is not judged (review: one such member 4 MHz from the LO
+  // used to move the whole feedline's LO); only a member the wizard added, or
+  // whose RF the user changed, must fit. A renamed qubit's source row is found
+  // through the wizard's {current id: source id} record (docs/295).
   function sourceLoKept(withRf, pop) {
     if (state.mode !== "regenerate") return null;
     var base = state.regenBaselinePopulate || null;
+    var src = state.regenQubitSource || {};
+    function baseRow(m) {
+      var grp = base && base[m.group];
+      if (!grp) return null;
+      if (Object.prototype.hasOwnProperty.call(grp, m.rid)) return grp[m.rid];
+      var sid = src[m.rid];
+      return (sid != null && Object.prototype.hasOwnProperty.call(grp, sid)) ? grp[sid] : null;
+    }
     var lo = null;
     for (var i = 0; i < withRf.length; i++) {
-      var m = withRf[i].m;
-      var b = base && base[m.group] && base[m.group][m.rid];
+      var b = baseRow(withRf[i].m);
       var v = b ? parseFloat(b.LO_frequency) : NaN;
       if (isNaN(v)) continue;
       if (lo != null && lo !== v) return null;     // the source split this port
@@ -7729,9 +7741,13 @@
     }
     if (lo == null) return null;
     var band = bandOf(lo);
+    if (band == null) return null;
     var r = LO_IF_HOLE_HZ + LO_IF_HOLE_MARGIN_HZ;
     var fits = withRf.every(function (x) {
-      return Math.abs(x.rf - lo) <= LO_IF_HALF_WINDOW && band != null &&
+      var b = baseRow(x.m);
+      var was = b ? parseFloat(b.RF_freq) : NaN;
+      if (!isNaN(was) && Math.abs(was - x.rf) <= 1) return true;   // the source ran it so
+      return Math.abs(x.rf - lo) <= LO_IF_HALF_WINDOW &&
         !(x.m.group === "resonator" && Math.abs(x.rf - lo) < r);
     });
     return fits ? lo : null;
@@ -10953,8 +10969,9 @@
             " redundant legacy op" + (prunedN === 1 ? "" : "s") +
             " the rebuild re-expressed (nothing referenced " +
             (prunedN === 1 ? "it" : "them") + ", and " +
-            (prunedN === 1 ? "its" : "their") + " links resolved nowhere, " +
-            "in the source chip either)" +
+            (prunedN === 1 ? "its" : "their") + " links resolved nowhere: " +
+            "broken in the source chip too, or into a qubit, pair or TWPA " +
+            "this rebuild removed)" +
             (prunedP.length ? ": " + prunedP.slice(0, 6).join(", ") +
               (prunedN > 6 ? ", …" : "") : "");
           el.appendChild(pn);

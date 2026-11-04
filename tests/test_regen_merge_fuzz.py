@@ -315,7 +315,7 @@ def test_source_forms_equal_old_algorithm(seed, monkeypatch):
     # second phase (calibration back) is pinned in test_regen_calibration_contract
     first = regen_merge._restore_source_forms
     monkeypatch.setattr(regen_merge, "_restore_source_forms",
-                        lambda m, o, w, p, c=None, ow=None: first(m, o, w, p))
+                        lambda m, o, w, p, *rest: first(m, o, w, p))
     actual = merge(old, new)
     monkeypatch.setattr(regen_merge, "_restore_source_forms", _old_restore_source_forms)
     expected = merge(old, new)

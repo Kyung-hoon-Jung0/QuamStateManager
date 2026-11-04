@@ -125,10 +125,15 @@ class TestANoEditRebuildReadsTheSource:
 
 class TestTheUsersEditsAndCablingStand:
     def test_a_populate_edit_on_the_macro_keeps_the_rebuilds_value(self):
+        # the edited amplitude reads the rebuild's value through whichever form the
+        # macro ends up in; the pulse's other calibrated fields are the source's
         p = "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit.amplitude"
         r = merge_states(_source(), _rebuild(), protect_paths={p})
-        assert not isinstance(_get(r.merged, "qubit_pairs.q2-q1.macros.cz_bipolar."
-                                   "flux_pulse_qubit"), dict)
+        doc = regen_merge._merged_doc(r.merged, None)
+        assert regen_merge._read_at(doc, tuple(p.split(".")))[0] == 0.2094
+        fp = _get(r.merged, "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit")
+        assert isinstance(fp, dict) and fp["amplitude"] == 0.2094
+        assert fp["smoothing_length"] == 4 and fp["post_zero_padding_length"] == 0
 
     def test_a_moved_port_is_never_put_back(self):
         ports = {"mw_outputs": {"con1": {"1": {"2": {"delay": 5}, "9": {"delay": 0}}}}}
@@ -138,6 +143,90 @@ class TestTheUsersEditsAndCablingStand:
                "qubits": {"q1": {"xy": {"opx_output": "#/ports/mw_outputs/con1/1/9"}}}}
         r = merge_states(old, new)
         assert r.merged["qubits"]["q1"]["xy"]["opx_output"] == "#/ports/mw_outputs/con1/1/9"
+
+
+class TestAPopulateEditRidesTheRestoredForm:
+    """Review: a Populate edit on ONE leaf of an aliased or inlined object (the
+    readout length, a CZ amplitude) used to keep the rebuild's whole default object
+    for that entity, so the object's other calibrated fields were lost on exactly
+    the entity the user touched. The source form comes back and the edit is written
+    where the form reads it from; a literal another unedited reader shares refuses."""
+
+    RO = "qubits.q1.resonator.operations"
+
+    def test_a_readout_length_edit_lands_on_the_calibrated_pulse(self):
+        old, new = _source(), _rebuild()
+        new["qubits"]["q1"]["resonator"]["operations"]["readout"]["length"] = 1000
+        p = f"{self.RO}.readout.length"
+        r = merge_states(copy.deepcopy(old), new, protect_paths={p})
+        ops = _get(r.merged, self.RO)
+        assert ops["readout"] == "#./readout_square"
+        assert ops["readout_square"]["length"] == 1000
+        assert ops["readout_square"]["amplitude"] == 0.0154
+        assert ops["readout_square"]["threshold"] == 3.9e-4
+        assert r.stats.populate_written_through == [(p, f"{self.RO}.readout_square.length")]
+        assert f"{self.RO}.readout_square.length" in r.stats.populate_protected
+        from quam_state_manager.core import regenerate
+        assert regenerate._calibration_check(r, None, None, {p}, [], None) == []
+
+    def test_a_cz_amplitude_edit_on_the_z_op_lands_inside_the_macro_pulse(self):
+        old, new = _source(), _rebuild()
+        new["qubits"]["q2"]["z"]["operations"]["cz_bipolar_flux_pulse_q2_q1"]["amplitude"] = 0.25
+        p = "qubits.q2.z.operations.cz_bipolar_flux_pulse_q2_q1.amplitude"
+        r = merge_states(copy.deepcopy(old), new, protect_paths={p})
+        fp = _get(r.merged, "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit")
+        assert isinstance(fp, dict)
+        assert fp["amplitude"] == 0.25 and fp["smoothing_length"] == 4
+        assert fp["post_zero_padding_length"] == 0
+        m = "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit.amplitude"
+        assert r.stats.populate_written_through == [(m, m)]
+        # the rebuild's own z op keeps the edit too, as an addition
+        assert _get(r.merged, p) == 0.25
+        from quam_state_manager.core import regenerate
+        assert regenerate._calibration_check(r, None, None, {p}, [], None) == []
+
+    def test_an_unedited_alias_of_the_same_pulse_follows_the_edit(self):
+        # the source chip holds ONE pulse under two names: editing it through either
+        # name is what Live Edit does on that chip, so the other name reads it too
+        old, new = _source(), _rebuild()
+        for st in (old, new):
+            st["qubits"]["q1"]["resonator"]["operations"]["readout_GEF"] = "#./readout_square"
+        new["qubits"]["q1"]["resonator"]["operations"]["readout"]["length"] = 1000
+        p = f"{self.RO}.readout.length"
+        r = merge_states(copy.deepcopy(old), new, protect_paths={p})
+        ops = _get(r.merged, self.RO)
+        assert ops["readout"] == "#./readout_square" and ops["readout_GEF"] == "#./readout_square"
+        assert ops["readout_square"]["length"] == 1000
+        assert r.stats.populate_written_through == [(p, f"{self.RO}.readout_square.length")]
+        from quam_state_manager.core import regenerate
+        assert regenerate._calibration_check(r, None, None, {p}, [], None) == []
+
+    def test_a_write_another_edit_holds_is_taken_back_with_the_form(self):
+        from quam_state_manager.core.regen_merge import _restore_source_forms
+        old = {"v": {"x": "#/t", "e": 1}, "t": {"a": 5, "b": 2}}
+        # the rebuild inlined the object and the user edited v.x.a: the link comes
+        # back and the edit lands on t.a, the place it now reads from
+        merged = {"v": {"x": {"a": 7, "b": 0}, "e": 1}, "t": {"a": 5, "b": 2}}
+        restored: list = []
+        written: list = []
+        _restore_source_forms(merged, old, None, {"v.x.a"}, restored, None, written)
+        assert merged["v"]["x"] == "#/t" and merged["t"] == {"a": 7, "b": 2}
+        assert written == [("v.x.a", "t.a")]
+        # ...but when t.a is ALSO a protected edit holding another value, the form
+        # cannot carry both: nothing moves, the literal is exactly as it was
+        merged = {"v": {"x": {"a": 7, "b": 0}, "e": 1}, "t": {"a": 9, "b": 2}}
+        restored, written = [], []
+        _restore_source_forms(merged, old, None, {"v.x.a", "t.a"}, restored, None, written)
+        assert merged["v"]["x"] == {"a": 7, "b": 0} and merged["t"]["a"] == 9
+        assert written == []
+
+    def test_an_edit_on_the_form_itself_keeps_the_rebuilds_literal(self):
+        # the candidate IS the protected leaf: the rebuild's literal stands (unchanged)
+        old = {"t": {"pump_frequency": 8.0e9, "pump": {"RF_frequency": "#../pump_frequency"}}}
+        new = {"t": {"pump_frequency": 8.0e9, "pump": {"RF_frequency": 8.2e9}}}
+        r = merge_states(copy.deepcopy(old), new, protect_paths={"t.pump.RF_frequency"})
+        assert r.merged["t"]["pump"]["RF_frequency"] == 8.2e9
+        assert r.stats.populate_written_through == []
 
 
 class TestAFormComesBackOnlyWhereNothingGetsWorse:
@@ -179,7 +268,7 @@ class TestTheCheckNamesEveryDifference:
         # with the second phase off, the check sees exactly the three losses
         orig = regen_merge._restore_source_forms
         monkeypatch.setattr(regen_merge, "_restore_source_forms",
-                            lambda m, o, w, p, c=None, ow=None: orig(m, o, w, p))
+                            lambda m, o, w, p, *rest: orig(m, o, w, p))
         old = _source()
         r = merge_states(copy.deepcopy(old), _rebuild())
         paths = {d["path"] for d in calibration_check(old, None, r.merged, None)}
@@ -230,3 +319,126 @@ def test_the_real_chip_rebuild_reads_the_source(tmp_path):
     skip |= set(r.stats.schema_dropped)
     assert calibration_check(os_, ow, r.merged, nw, skip=skip) == []
     assert r.stats.pruned_ops == []
+
+
+@pytest.mark.skipif(not ((_STUDY / "chip" / "state.json").is_file()
+                         and (_FRESH / "state.json").is_file()),
+                    reason="real chip copy / its fresh rebuild not on this machine")
+def test_the_real_chip_with_one_pair_removed_loads(tmp_path):
+    """Review: with one pair taken off the wizard, the legacy z op whose links
+    pointed into that pair's macro was KEPT (its links resolved in the source) and
+    ``generate_config()`` asserted on its dangling ``length``; the check listed the
+    removed pair's own links as "values you did not change"."""
+    from quam_state_manager.core import regenerate
+    src = tmp_path / "src"
+    shutil.copytree(_STUDY / "chip", src)
+    read = lambda d, f: json.loads((d / f).read_text(encoding="utf-8"))  # noqa: E731
+    os_, ow = read(src, "state.json"), read(src, "wiring.json")
+    ns, nw = read(_FRESH, "state.json"), read(_FRESH, "wiring.json")
+    pid = next(k for k in ns["qubit_pairs"])
+    members = regen_merge._pair_membership(ns["qubit_pairs"][pid], regen_merge._merged_doc(ns, nw))
+    del ns["qubit_pairs"][pid]
+    (nw.get("wiring", nw).get("qubit_pairs") or {}).pop(pid, None)
+    r = merge_states(copy.deepcopy(os_), ns, old_wiring=ow, new_wiring=nw)
+    # every op left on the chip reads its length as a number
+    for p, v in regen_merge._iter_leaves(r.merged):
+        if p.endswith(".length") and isinstance(v, str) and v.startswith("#/"):
+            assert regen_merge._resolves(r.merged, v), p
+    assert any(members[1] in op for op in r.stats.pruned_ops), r.stats.pruned_ops
+    d = regenerate._calibration_check(r, ow, nw, None, [], None)
+    assert [x for x in d if not x["path"].startswith("qubit_pairs.")] == []
+    assert d == []
+
+
+class TestAnOpOfRemovedStructureGoesWithIt:
+    """(4) the prune guard: a link that resolved in the source but points into an
+    entity the user took off the wizard is broken by that edit, not by the merge."""
+
+    def test_a_legacy_op_of_a_removed_pair_is_pruned(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        r = merge_states(copy.deepcopy(old), new)
+        assert "cz_cosine_bipolar_pulse_q1" not in _get(r.merged, "qubits.q2.z.operations")
+        assert r.stats.pruned_ops == ["qubits.q2.z.operations.cz_cosine_bipolar_pulse_q1"]
+        assert r.stats.dangling_grafts == []
+
+    def test_an_op_on_a_survivor_linking_into_a_removed_qubit_is_pruned(self):
+        old = {"qubits": {
+            "q1": {"xy": {"operations": {
+                "cr_q1_q2": {"__class__": "quam.SquarePulse", "amplitude": 0.1,
+                             "length": "#/qubits/q2/xy/operations/x180/length"},
+                "x180": {"length": 40}}}},
+            "q2": {"xy": {"operations": {"x180": {"length": 48}}}}}}
+        new = {"qubits": {"q1": {"xy": {"operations": {"x180": {"length": 40}}}}}}
+        r = merge_states(copy.deepcopy(old), new)
+        assert list(_get(r.merged, "qubits.q1.xy.operations")) == ["x180"]
+        assert r.stats.pruned_ops == ["qubits.q1.xy.operations.cr_q1_q2"]
+
+    def test_an_op_whose_links_worked_into_structure_that_stays_is_kept(self):
+        # the macro is held by a wizard edit, so the inline form cannot come back and
+        # the legacy op's links dangle: the pair is still there, so it is reported
+        p = "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit"
+        r = merge_states(_source(), _rebuild(), protect_paths={p})
+        assert r.stats.pruned_ops == []
+        assert "cz_cosine_bipolar_pulse_q1" in _get(r.merged, "qubits.q2.z.operations")
+
+    def test_into_removed_entity_names_only_a_missing_entry(self):
+        from quam_state_manager.core.regen_merge import _into_removed_entity
+        merged = {"qubits": {"q1": {}}, "qubit_pairs": {}, "twpas": {"t1": {}}}
+        assert _into_removed_entity(merged, "#/qubits/q2/xy")
+        assert _into_removed_entity(merged, "#/qubit_pairs/q1-q2/macros/cz")
+        assert not _into_removed_entity(merged, "#/qubits/q1/xy/operations/x180")
+        assert not _into_removed_entity(merged, "#/twpas/t1/pump")
+        assert not _into_removed_entity(merged, "#/ports/mw_outputs/con1/1/1")
+        assert not _into_removed_entity(merged, "#/qubits")
+
+
+class TestTheCheckSkipsWhatTheUserRemoved:
+    """(2) false positives: a removed entity's links and classes, and the rename
+    record, are not calibration the rebuild failed to reproduce."""
+
+    def _check(self, r, protect=None):
+        from quam_state_manager.core import regenerate
+        return regenerate._calibration_check(r, None, None, protect, [], None)
+
+    def test_a_removed_qubits_links_are_not_reported(self):
+        old = _source()
+        old["qubits"]["q3"] = {
+            "id": "q3",
+            "xy": {"opx_output": "#/ports/mw_outputs/con1/1/3",
+                   "operations": {"x180": "#./x180_DragCosine",
+                                  "x180_DragCosine": {"amplitude": 0.1, "length": 40}}}}
+        old["ports"] = {"mw_outputs": {"con1": {"1": {"3": {"band": 2}}}}}
+        new = _rebuild()
+        new["ports"] = {"mw_outputs": {"con1": {"1": {}}}}
+        r = merge_states(copy.deepcopy(old), new)
+        assert "qubits.q3.id" in r.stats.residual_lost          # reported on its own line
+        assert self._check(r) == []
+
+    def test_a_removed_pairs_links_and_classes_are_not_reported(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        r = merge_states(copy.deepcopy(old), new)
+        assert self._check(r) == []
+
+    def test_a_value_the_rebuild_lost_elsewhere_is_still_reported(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        new["qubits"]["q1"]["xy"]["operations"]["x180_DragCosine"]["length"] = 48
+        r = merge_states(copy.deepcopy(old), new)
+        r.merged["qubits"]["q1"]["xy"]["operations"]["x180_DragCosine"]["length"] = 48
+        assert [d["path"] for d in self._check(r)] == \
+            ["qubits.q1.xy.operations.x180_DragCosine.length"]
+
+    def test_a_second_rename_is_not_a_lost_value(self):
+        from quam_state_manager.core import rename_lineage
+        old = _source()
+        old["extras"] = {rename_lineage.EXTRAS_KEY: [{"id": "r1"}], "chip_name": "c"}
+        new = _rebuild()
+        new["extras"] = {rename_lineage.EXTRAS_KEY: [{"id": "r1"}, {"id": "r2"}], "chip_name": "c"}
+        r = merge_states(copy.deepcopy(old), new)
+        r.merged["extras"][rename_lineage.EXTRAS_KEY] = [{"id": "r1"}, {"id": "r2"}]
+        assert self._check(r) == []
+        # ...while another extras value that moved still is
+        r.merged["extras"]["chip_name"] = "d"
+        assert [d["path"] for d in self._check(r)] == ["extras.chip_name"]

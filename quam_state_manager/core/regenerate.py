@@ -808,6 +808,8 @@ def run_regenerate(
         "calibration_changed_total": len(calibration_changed),
         "calibration_restored": s.calibration_restored[:80],
         "calibration_restored_total": len(s.calibration_restored),
+        # a Populate edit written where a restored source form reads it (edited leaf, location)
+        "populate_written_through": [list(t) for t in s.populate_written_through[:80]],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     outcome["script_in_output"] = script_in_output
@@ -838,12 +840,26 @@ def _calibration_check(result, old_wiring, new_wiring, protect, fsp_compensated,
     skip |= set(s.schema_dropped)
     skip |= {p for p, _ in s.rebuild_removed}
     skip |= {p for p in s.residual_lost if " " not in p}
+    skip |= set(s.pruned_ops)          # "cleaned N redundant legacy ops", its own line
+    skip |= {loc for _, loc in s.populate_written_through}   # the user's edit, written through
     skip |= {f"{p}.__class__" for p, _, _ in s.class_changed}
     skip |= {c.get("path") for c in (fsp_compensated or ()) if isinstance(c, dict)}
     skip |= {r.get("path") for r in s.crosstalk_dropped if isinstance(r, dict)}
     if add_report and add_report.get("added"):
         skip |= {e.get("path") for e in add_report["added"] if isinstance(e, dict)}
     source = result.source_view if result.source_view is not None else {}
+    # An entity the rebuild no longer has (a qubit, pair or TWPA the user took off
+    # the wizard) is reported as removed, its literals under "not carried"; its
+    # links and classes are not values the rebuild failed to reproduce (review:
+    # one removed pair read as 25 "calibrated values you did not change").
+    for coll in regen_merge._REMOVABLE_ENTITY_COLLECTIONS:
+        have = result.merged.get(coll) if isinstance(result.merged, dict) else None
+        for eid in (source.get(coll) or {}) if isinstance(source.get(coll), dict) else ():
+            if not (isinstance(have, dict) and eid in have):
+                skip.add(f"{coll}.{eid}")
+    # the rename record is the rebuild's own bookkeeping (docs/296), named by
+    # ``rename_record``; a second rename appends to it, which is not a lost value
+    skip.add(f"extras.{rename_lineage.EXTRAS_KEY}")
     # a moved port lives at another address in the source view than the source
     # wiring names, so the source is read through the rebuilt wiring then
     wiring = new_wiring if (s.ports_moved or s.ports_fresh) else old_wiring

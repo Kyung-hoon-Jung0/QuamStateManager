@@ -210,6 +210,7 @@ class MergeStats:
     links_not_taken: list[str] = field(default_factory=list)  # a source literal kept where the rebuild linked the field to another holding a different value (x90's own DRAG alpha)
     wiring_values_carried: list[str] = field(default_factory=list)  # a lab's plain wiring values under a line the rebuild also made (a QDAC dc_channel)
     calibration_restored: list[str] = field(default_factory=list)  # a source form put back because the rebuild's form read builder defaults (a CZ macro's inline pulse, a readout alias)
+    populate_written_through: list[tuple[str, str]] = field(default_factory=list)  # (edited leaf, where it was written): a Populate edit on a leaf a restored source form reads elsewhere (readout.length -> readout_square.length)
     source_forms_restored: list[str] = field(default_factory=list)  # a lab's own pointer/object form put back where every value reads the same
     pointers_inlined: list[str] = field(default_factory=list)  # v1.6.0 review: a grafted source pointer whose direct target is no literal in the rebuilt state, written as the value it resolved to in the source
 
@@ -902,10 +903,16 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str],
                       if isinstance(v, str) and v.startswith("#/")]
         # (b) has broken pointers AND none that still resolve -- and (d) they were
         # broken in the SOURCE too: an op whose links worked there is calibration the
-        # merge failed to land, never a redundant copy (deleting it hid the loss)
+        # merge failed to land, never a redundant copy (deleting it hid the loss).
+        # A link into an entity the rebuild no longer has (a pair or qubit the user
+        # took off the wizard) is broken by that edit, not by the merge: the op
+        # belonged to the removed structure and goes with it -- kept, its dangling
+        # ``length`` made ``generate_config()`` assert on a real chip (review).
         if (ptr_leaves and all(not _resolves(merged, v) for v in ptr_leaves)
                 and (source is None
-                     or not any(_resolves(source, v) for v in ptr_leaves))):
+                     or not any(_resolves(source, v)
+                                and not _into_removed_entity(merged, v)
+                                for v in ptr_leaves))):
             prunable.append(op)
 
     for op in prunable:
@@ -913,6 +920,20 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str],
     pruned = set(prunable)
     remaining = [p for p in dangling if _enclosing_op(p) not in pruned]
     return sorted(prunable, key=natural_key), remaining
+
+
+# the collections whose entries the wizard adds and removes one by one
+_REMOVABLE_ENTITY_COLLECTIONS = ("qubits", "qubit_pairs", "twpas")
+
+
+def _into_removed_entity(merged: dict, pointer: str) -> bool:
+    """Does an absolute pointer name an entity (``#/qubits/<id>/...``,
+    ``#/qubit_pairs/<id>/...``, ``#/twpas/<id>/...``) that ``merged`` no longer has?"""
+    segs = [s for s in pointer[2:].split("/") if s]
+    if len(segs) < 2 or segs[0] not in _REMOVABLE_ENTITY_COLLECTIONS:
+        return False
+    coll = merged.get(segs[0])
+    return isinstance(coll, dict) and segs[1] not in coll
 
 
 def _norm_twpa_id(tid: str) -> str:
@@ -2408,7 +2429,8 @@ def _resolved_leaves(doc: dict, top: str, path: tuple | None = None,
 def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
                           protect: set[str] | None,
                           calibration: list[str] | None = None,
-                          old_wiring: dict | None = None) -> list[str]:
+                          old_wiring: dict | None = None,
+                          written: list | None = None) -> list[str]:
     """Put back the SOURCE's own form (a lab's pointer direction, an inline object
     the rebuild replaced with a link, a pointer to a different but equal field)
     wherever doing so changes no value QUAM reads and closes no cycle.
@@ -2418,8 +2440,15 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     pointers, so a link can land on an object put back before it); each attempt is
     kept only if every affected leaf resolves exactly as before (a ``__class__``
     is a leaf too) and no pointer chain loops. Independent subtrees need no
-    revalidation; the trial order and accepted set remain unchanged."""
+    revalidation; the trial order and accepted set remain unchanged.
+
+    ``written`` (the second phase, see below) collects ``(edited leaf, location)``
+    for every Populate edit written through a restored form."""
     cands: list[tuple[str, tuple, Any]] = []
+    # a form with a Populate edit UNDER it (``readout`` when the user edited
+    # ``readout.length``): never a value-preserving restore, but the second phase
+    # may put it back and write the edit where the form reads it from
+    shadowed: list[tuple[str, tuple, Any]] = []
 
     def walk(o: Any, m: Any, path: tuple) -> None:
         if isinstance(o, dict) and isinstance(m, dict):
@@ -2432,23 +2461,26 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         if not (is_pointer(o) or is_pointer(m)):
             return
         dot = ".".join(path)
-        if protect and any(dot == p or dot.startswith(p + ".") or p.startswith(dot + ".")
-                           for p in protect):
+        if protect and any(dot == p or dot.startswith(p + ".") for p in protect):
+            return
+        if protect and any(p.startswith(dot + ".") for p in protect):
+            shadowed.append((dot, path, o))
             return
         cands.append((dot, path, o))
 
     walk(old, merged, ())
-    if not cands:
+    if not cands and not (shadowed and calibration is not None):
         return []
     done: list[str] = []
     cands.sort(key=lambda c: (is_pointer(c[2]), c[0]))
+    shadowed.sort(key=lambda c: (is_pointer(c[2]), c[0]))
 
     # Partition the document into small, stable subtrees. A candidate is always
     # wholly inside one partition (stop early at a candidate that changes shape).
     # Connect partitions using pointers from BOTH possible forms. This conservative
     # graph includes chains, object references, missing targets and new cycles;
     # no attempted substitution can affect a disconnected partition.
-    boundaries = {path for _, path, _ in cands}
+    boundaries = {path for _, path, _ in cands + shadowed}
     doc = _merged_doc(merged, wiring)
     units: dict[tuple, int] = {}
 
@@ -2537,7 +2569,7 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     def doc_of(state: dict) -> dict:
         return _merged_doc(state, wiring)
 
-    candidate_components = {path: find(overlaps(path)[0]) for _, path, _ in cands}
+    candidate_components = {path: find(overlaps(path)[0]) for _, path, _ in cands + shadowed}
 
     def setp(root: dict, path: tuple, v: Any) -> None:
         node = root
@@ -2583,13 +2615,15 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     saved = copy.deepcopy(merged)
     for _, path, v in cands:
         setp(merged, path, v)
-    if ok(merged, cands):
+    if cands and ok(merged, cands):
         done.extend(c[0] for c in cands)
-        return done
-    merged.clear()
-    merged.update(saved)
-    attempt([c for c in cands if not is_pointer(c[2])])
-    attempt([c for c in cands if is_pointer(c[2])])
+        if calibration is None or not shadowed:
+            return done
+    else:
+        merged.clear()
+        merged.update(saved)
+        attempt([c for c in cands if not is_pointer(c[2])])
+        attempt([c for c in cands if is_pointer(c[2])])
     if calibration is None:
         return done
 
@@ -2609,7 +2643,9 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         return (c[1][0] in ("ports", "wiring")
                 or (is_pointer(v) and v.startswith(("#/wiring", "#/ports"))))
 
-    left = [c for c in cands if c[0] not in set(done) and not cabling(c)]
+    restored = set(done)
+    left = ([c for c in cands if c[0] not in restored and not cabling(c)]
+            + [c for c in shadowed if not cabling(c)])
     if not left:
         return done
     # the SOURCE as it read on its own wiring (the rebuilt wiring may rename a line)
@@ -2636,27 +2672,41 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         d = doc_of(merged)
         return {path: read_unit(d, path) for c in affected for path in components.get(c, [])}
 
-    def better(group: list, before: dict, held: set[str] = frozenset()) -> bool:
+    def better(group: list, before: dict, held: dict | None = None,
+               wloc: dict | None = None) -> bool:
         try:
             after = now_units(group)
         except _Cycle:
             return False
+        held = held or {}
         gained = False
+        dnow = doc_of(merged)
+
+        def reads_written(k: str) -> bool:
+            # a label reading, through a link, a place the user's edit was written
+            # to (a pair's view of its qubit's readout) carries the user's value too
+            if not wloc:
+                return False
+            loc = _read_at(dnow, tuple(k.split(".")))[1]
+            return ".".join(loc) in wloc
         for path, now in after.items():
             base = before.get(path, {})
             src = source_reading.setdefault(path, src_unit(path))
             for k, v in base.items():
-                if k in held and not (k in now and eq(now[k], v)):
-                    return False                           # a wizard edit would revert
+                if k in held:
+                    if not (k in now and eq(now[k], held[k])):
+                        return False                       # a wizard edit would revert
+                    continue                               # (it is the user's value,
+                    # not the source's: judged by nothing else)
                 if k in src:
                     if k not in now:
                         return False                       # a source leaf vanished
-                    if eq(v, src[k]) and not eq(now[k], src[k]):
+                    if eq(v, src[k]) and not eq(now[k], src[k]) and not reads_written(k):
                         return False                       # a carried value lost
                     if not eq(v, src[k]) and eq(now[k], src[k]) and not unread(src[k]):
                         gained = True
                 elif (k in now and not eq(now[k], v) and v != _CYCLIC
-                        and not _has_pointer_ancestor(merged, k)):
+                        and not _has_pointer_ancestor(merged, k) and not reads_written(k)):
                     return False                           # a rebuild-only value moved
                     # (one read THROUGH a link -- a new pair's view of its qubit --
                     # is that object's own value, judged where it lives)
@@ -2687,22 +2737,63 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         except _Cycle:
             return
         # a value read from a place the user changed in the wizard is theirs
-        held: set[str] = set()
+        held: dict[str, Any] = {}
         if protect:
             d = doc_of(merged)
             for unit in before.values():
-                for k in unit:
+                for k, v in unit.items():
                     loc = _read_at(d, tuple(k.split(".")))[1]
                     dot = ".".join(loc)
                     if any(dot == p or dot.startswith(p + ".") or k == p
                            or k.startswith(p + ".") for p in protect):
-                        held.add(k)
+                        held[k] = v
         saved = [(path, copy.deepcopy(get(merged, path))) for _, path, _ in group]
         for _, path, v in group:
             setp(merged, path, v)
-        if better(group, before, held):
+        # The user's edit, written where the restored form reads it from: an edited
+        # ``readout.length`` lands on ``readout_square.length`` once ``readout`` is
+        # the alias again; an edited CZ amplitude the builder put on its own z op
+        # lands inside the inline macro pulse. Only onto a literal the restored form
+        # reaches (never cabling, never a link, never a place another edit holds with
+        # a different value); a label reading that literal through a link (a pair's
+        # view of its qubit, an alias of the same pulse) follows it, as it would after
+        # the same edit on the source chip. A refused form takes its write back.
+        extra: list[tuple[tuple, Any]] = []
+        wrote: list[tuple[str, str]] = []
+        wloc: dict[str, Any] = {}
+        if held:
+            d = doc_of(merged)
+            affected = {candidate_components[path] for _, path, _ in group}
+            for k, uv in list(held.items()):
+                val, loc = _read_at(d, tuple(k.split(".")))
+                if not loc or unread(val) or val is _MISSING or eq(val, uv):
+                    continue
+                dot = ".".join(loc)
+                if loc[0] in ("ports", "wiring"):
+                    continue
+                if dot != k and dot in held and not eq(held[dot], uv):
+                    continue                               # another edit holds that place
+                try:
+                    cur = get(merged, loc)
+                except (KeyError, TypeError):
+                    continue
+                if isinstance(cur, (dict, list)) or is_pointer(cur) or isinstance(uv, (dict, list)):
+                    continue
+                hit = overlaps(loc)
+                if not hit or find(hit[0]) not in affected:
+                    continue                               # judged by nobody: not written
+                extra.append((loc, copy.deepcopy(cur)))
+                setp(merged, loc, uv)
+                held[dot] = uv
+                wloc[dot] = uv
+                wrote.append((k, dot))
+        if better(group, before, held, wloc):
             calibration.extend(dot for dot, _, _ in group)
+            if written is not None:
+                written.extend(wrote)
             return
+        for path, v in reversed(extra):
+            setp(merged, path, v)
         for path, v in reversed(saved):
             setp(merged, path, v)
         if len(group) == 1:
@@ -2822,8 +2913,13 @@ def merge_states(old_state: dict, new_state: dict,
     # A lab's own pointer forms come back where they change no value (see the helper)
     stats.source_forms_restored = sorted(
         _restore_source_forms(merged, old_view, new_wiring, protect_paths,
-                              stats.calibration_restored, old_wiring), key=natural_key)
+                              stats.calibration_restored, old_wiring,
+                              stats.populate_written_through), key=natural_key)
     stats.calibration_restored.sort(key=natural_key)
+    stats.populate_written_through.sort(key=lambda t: natural_key(t[0]))
+    # ...and the place an edit was written through to is a populate edit applied
+    stats.populate_protected.extend(
+        loc for _, loc in stats.populate_written_through if loc not in stats.populate_protected)
     _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
     _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
                         sources, stats, protect_paths)
