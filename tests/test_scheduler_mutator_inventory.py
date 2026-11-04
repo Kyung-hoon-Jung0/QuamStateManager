@@ -7,6 +7,9 @@ from tests.state_model.repros._rig import Chip
 # history, queues or generated output; none stages an edit into the chip store.
 # A new POST requires classification here or inclusion in the mutator lock.
 _NON_STAGING_POSTS = {
+    # v1.7.0 walk: the agent ends its own plan / a person lifts the human_active wait; neither stages state.
+    'agent.plan_end',
+    'agent.session_release_human',
     # v1.3.0: old POST inventory -> classify map analysis/local dismissal, neither stages state.
     'main.dataset_map_analyze',
     'main.qualibrate_dismiss_running',

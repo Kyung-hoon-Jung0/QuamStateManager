@@ -43,13 +43,15 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   const card = (id) => document.querySelector('[data-card="approval:' + id + '"]');
   ok(card('ap-1') && card('ap-2'), 'both approval cards render');
 
-  // Cancel on the note prompt is not a rejection
-  promptAnswer = null;
+  // Reject opens an in-page sheet (never a native prompt); Back is not a rejection
+  let prompted = 0; window.prompt = () => { prompted++; return ''; };
   P.reject('ap-2'); await tick();
-  ok(!calls.some(c => /ap-2\/reject/.test(c.url)), 'Cancel on the prompt posts nothing');
-  promptAnswer = '';
+  ok(card('ap-2').querySelector('.ui-agent-reject-note') && !prompted, 'Reject opens the in-page sheet, no prompt()');
+  P.rejectCancel('ap-2'); await tick();
+  ok(!calls.some(c => /ap-2\/reject/.test(c.url)) && !card('ap-2').querySelector('.ui-agent-reject-note'), 'Back on the sheet posts nothing');
   P.reject('ap-2'); await tick();
-  ok(calls.some(c => /ap-2\/reject/.test(c.url) && c.body.note === ''), 'OK with an empty note still rejects');
+  P.rejectConfirm('ap-2'); await tick();
+  ok(calls.some(c => /ap-2\/reject/.test(c.url) && c.body.note === ''), 'Reject with an empty note still rejects');
 
   // a person edits a value, presses Write to chip; the door is slow
   const c1 = card('ap-1');
@@ -60,7 +62,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   ok(apBtn.disabled && /writing to the chip/.test(apBtn.textContent), 'in flight: the button says it is writing: ' + apBtn.textContent);
   ok(card('ap-1').querySelector('.ag-reject').hidden, 'in flight: Reject is not offered');
   const n = calls.filter(c => /ap-1\/approve/.test(c.url)).length;
-  P.approve('ap-1', apBtn); promptAnswer = 'x'; P.reject('ap-1'); await tick();
+  P.approve('ap-1', apBtn); P.reject('ap-1'); P.rejectConfirm('ap-1'); await tick();
   ok(calls.filter(c => /ap-1\/approve/.test(c.url)).length === n && !calls.some(c => /ap-1\/reject/.test(c.url)), 'a second press while in flight posts nothing');
   // a poll repaints the feed while the door is still busy
   feed = Object.assign({}, feed, { agent_seq: 2 });

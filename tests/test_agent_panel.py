@@ -117,7 +117,7 @@ class TestFeed:
         assert ans["text"] == "answer 1: hello there agent" and "<p>answer 1: hello there agent</p>" in ans["html"]
         assert "tool" in kinds and [k for k in d["cards"] if k["kind"] == "tool"][0]["tool"] == "mcp__sm__sm_status"
         assert d["session"]["alive"] and d["file"]["backend"] == "claude" and d["qubits"] >= 1
-        assert d["now"]["state"] in ("between", "running")
+        assert d["now"]["state"] in ("between", "running", "your-turn")
         # the cursor
         assert _feed(c, after=d["last"])["cards"] == []
         # on disk (a restart replays it)

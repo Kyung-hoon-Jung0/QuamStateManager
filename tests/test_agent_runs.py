@@ -654,12 +654,12 @@ class TestRun:
         assert c.get("/api/agent/chip").get_json()["run_active"]["node"] == "05_power_rabi"
         # the edit lock, meanwhile
         e = c.post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "1"})
-        assert e.status_code == 409 and e.get_json()["error"] == "agent_running"
-        assert "The Agent is running 05_power_rabi; editing is locked" in e.get_json()["message"]
+        assert e.status_code == 409 and e.get_json()["code"] == "agent_running"
+        assert "The agent is running 05_power_rabi on this chip" in e.get_json()["message"]
         b = c.post("/state/apply-to-live", data={"seen_changes": "0"}, headers={"Accept": "application/json"})
-        assert b.status_code == 409 and b.get_json()["error"] == "agent_running"
+        assert b.status_code == 409 and b.get_json()["code"] == "agent_running"
         e2 = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2"}, headers=AGENT)
-        assert e2.status_code == 409 and e2.get_json()["error"] == "agent_running", "the agent waits too"
+        assert e2.status_code == 409 and e2.get_json()["code"] == "agent_running", "the agent waits too"
         assert c.post("/api/agent/session/stop", json={"mode": "now"}).get_json()["ok"]
         m = c.get(f"/api/agent/run/{key}?wait_s=15").get_json()
         assert m["status"] == "ended" and m["result"]["status"] == "cancelled" and "stopped now" in m["result"]["error"]

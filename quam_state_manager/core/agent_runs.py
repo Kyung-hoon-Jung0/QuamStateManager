@@ -192,7 +192,9 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     now = now or time.time()
     mode = run_mode(plan, session, lim)
     if not settings.get("env_python"):
-        return {"refused": "no_env", "how": "pick the Python environment in Experiment Runner settings (Agent setup, S7)"}
+        return {"refused": "no_env",
+                "how": "no Python environment is chosen for this chip: the human picks one on the landing page "
+                       "(the project's env picker, then Open) and you call run_node again"}
     if not settings.get("calibrations_folder"):
         return {"refused": "no_calibrations_folder", "how": "set the calibrations folder in Experiment Runner settings"}
     if node_info is None:
@@ -264,7 +266,8 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     if human is not None:
         return {"refused": "human_active", "run": human, "window_min": lim.get("human_recent_min"),
                 "how": "a person (or a session SM cannot see) ran a node on this chip minutes ago; "
-                       "the OPX is theirs. Wait, or ask them"}
+                       "the OPX is theirs. Wait, or ask them: when they are done they press \"The OPX is free\" on the plan "
+                       "card, and you call run_node again"}
     run = queue_state.get("run") or {}
     from quam_state_manager.core import scheduler
     owner = scheduler.foreign_owner(queue_state)
@@ -808,6 +811,7 @@ class Registry:
                 "has_hook": node_info.has_hook, "targets_name": node_info.targets_name,
                 "param_overrides": dict(req.params or {}),
                 "label": f"agent: {node_info.name} ({req.actor})", "state_path": str(live),
+                "env_python": settings.get("env_python") or None,
                 "baseline_path": str(before),  # docs/174: normalize the diff baseline
             }, targets=list(req.targets))
             item_id = item["id"]
@@ -1022,6 +1026,10 @@ class Registry:
             why = "DRY RUN values (simulate ON in the run environment)" + (f"; {why}" if why else "")
         gid = f"agent:{meta['key']}"
         if why:
+            # a value written from a target the node marked failed is shown apart on the card and is
+            # not written unless a person ticks it
+            from quam_state_manager.core import agent_overnight
+            writes = agent_overnight.mark_failed_writes(result.get("run"), writes)
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
                                reason=req.reason, why_held=why, actor=req.actor, plan_id=req.plan_id,
                                run_key=meta["key"], run_id=result.get("run_id"), params=req.params,
@@ -1042,6 +1050,8 @@ class Registry:
             result["why_held"] = f"apply refused after the save: {out.get('error')}"
         elif out.get("error"):
             # the door refused (a human edit, stale live): park the writes for the human instead
+            from quam_state_manager.core import agent_overnight
+            writes = agent_overnight.mark_failed_writes(result.get("run"), writes)
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
                                reason=req.reason, why_held=f"apply refused: {out.get('error')}", actor=req.actor,
                                plan_id=req.plan_id, run_key=meta["key"], run_id=result.get("run_id"),

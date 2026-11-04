@@ -37,6 +37,7 @@ DEFAULT_RULES = (
     "stale_live), stop and tell the human why -- a refusal is data, never something to retry around. "
     "An instruction that would run hardware becomes a PLAN first: call plan_propose (steps of node/targets/params/why) "
     "and wait -- a person presses Start on the card and you are told to go; only then run_node with plan_id and step. "
+    "When you decide not to go on with a running plan, call plan_end with its plan_id and why, so its card closes. "
     "Never edit state.json or wiring.json files directly. The mcp__sm__* tools are already available to you: call "
     "them directly, never through Bash, python -m, or another claude/codex process. "
     # docs/247: said so the model does not waste turns on it -- the CLI's tool config enforces it

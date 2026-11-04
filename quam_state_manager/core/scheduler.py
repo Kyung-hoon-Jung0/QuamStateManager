@@ -1119,6 +1119,9 @@ def _new_item(info: dict, targets: list | None) -> dict:
         # docs/173 S5: an agent run reads/writes a SCRATCH copy of the working copy,
         # never the chip; None = the settings' quam_state_path (a human's item)
         "state_path": info.get("state_path") or None,
+        # an agent run carries the env the run's gate resolved (the project's chosen env when the
+        # runner settings name none); None = the settings' env_python (a human's item)
+        "env_python": info.get("env_python") or None,
         # docs/174: an agent run also carries a baseline dir; run_experiment writes
         # a serializer-normalized pre-node snapshot there so SM's diff cancels
         # class-default phantom writes. None for human items (no scratch/diff).
@@ -1659,6 +1662,8 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
     if not source.exists():
         return {"status": "failed", "error": f"source file missing: {source}",
                 "returncode": None, "log_file": log_str}
+    if item.get("env_python"):
+        settings = {**settings, "env_python": item["env_python"]}
     if not settings.get("env_python"):
         return {"status": "failed", "error": "no env selected",
                 "returncode": None, "log_file": log_str}

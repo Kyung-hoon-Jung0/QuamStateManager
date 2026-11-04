@@ -113,6 +113,12 @@
   <div class="ui-pp-narrow"><span class="ui-pp-wrap"><span class="ui-tnum">5.1</span><span class="ui-pp-unit">GHz</span></span><div class="ui-pp-unitnote">stored in Hz</div></div>
   <div class="ui-printing"><span class="ui-xhint">printing hides the hint</span></div>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Agent cards</h2>
+  <p class="ui-agent-failed-head">1 of 2 value(s) come from q1, which the node itself marked failed. They are not ticked and are not written unless you tick them.</p>
+  <table><tbody><tr class="ui-agent-failed-row"><td><input type="checkbox" class="ui-agent-tick" aria-label="write q1.f_01"> qubits.q1.f_01<span class="ui-agent-failed-why">the node marked q1 failed: not written unless ticked</span></td></tr></tbody></table>
+  <div class="ui-agent-reject"><label>Reject: a note for the journal (optional) <input type="text" class="ui-agent-reject-note"></label><button type="button" class="btn-sm">Reject</button></div>
+  <p class="ui-agent-said">Not started: another plan is running on this chip.</p>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

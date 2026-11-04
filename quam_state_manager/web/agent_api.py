@@ -1477,6 +1477,10 @@ def _now_state_read() -> dict:
         state = "stalled"
     elif recent_failure:
         state = "failed"
+    elif alive and _turn_ended(es) and not _chat_busy():
+        # the agent finished its turn and waits for the person: never "thinking" (the process
+        # living on between turns is not the agent working)
+        state = "your-turn"
     elif alive:
         state = "between"
     elif human:
@@ -1492,6 +1496,21 @@ def _now_state_read() -> dict:
             "last_message": (last_stop or {}).get("summary") if last_stop else None,
             "events_today": sum(1 for e in es if float(e.get("ts") or 0) >= day_start),
             "human_ran": human, "chip": _chip_for_event(last)}
+
+
+def _turn_ended(es: list) -> bool:
+    """The session's newest event closes a turn (Stop) and nothing came after it."""
+    return bool(es) and es[-1].get("hook_event_name") == "Stop"
+
+
+def _chat_busy() -> bool:
+    """SM's in-app session for the open chip is inside a turn (a message sent, no answer yet)."""
+    try:
+        mgr = current_app.config.get("agent_chat")
+        cur = mgr.get(_chip_key()) if mgr is not None else None
+        return bool(cur is not None and cur.busy())
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _limit_until(v):
@@ -1924,10 +1943,29 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     return out
 
 
+def _run_settings(settings: dict, ctx: dict, inst) -> dict:
+    """The runner settings an agent run obeys. With no env_python of its own, the run uses the
+    env the person chose for this chip's project (project_env), else the app's selected env --
+    the same env the window opened the chip with, never a guess."""
+    if settings.get("env_python"):
+        return settings
+    from quam_state_manager.core import config_generator, project_env
+    py = None
+    try:
+        py = project_env.remembered(inst, ctx.get("qualibrate_project"))
+        if not (py and os.path.isfile(py)):
+            py = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        logger.debug("project env lookup failed", exc_info=True)
+    if py and os.path.isfile(py):
+        return {**settings, "env_python": py, "env_source": "project"}
+    return settings
+
+
 def _run_adapter():
     """The engine's view of this app for the chip open NOW, captured on the
     request thread; every callable re-enters an app context on the driver."""
-    from quam_state_manager.core import agent_runs, limits, scheduler, story
+    from quam_state_manager.core import agent_runs, agent_session, limits, scheduler, story
     app = current_app._get_current_object()
     r = _r()
     ctx = r._active_ctx()
@@ -1939,7 +1977,7 @@ def _run_adapter():
     inst = app.instance_path
 
     def settings():
-        return scheduler.load_settings(scope)
+        return _run_settings(scheduler.load_settings(scope), ctx, inst)
 
     def human_recent(window_min: float):
         with app.app_context():
@@ -1948,6 +1986,9 @@ def _run_adapter():
                     ev = list(_events())
                 h = _human_ran_recently(time.time(), story.load_agent_runs(inst, chip), ev)
                 if h and time.time() - float(h.get("ts") or 0) <= float(window_min) * 60:
+                    rel = (agent_session.load(inst, chip) or {}).get("human_released") or {}
+                    if float(rel.get("at") or 0) >= float(h.get("ts") or 0):
+                        return None             # a person said that run was theirs and the OPX is free
                     return h
             except Exception:  # noqa: BLE001
                 logger.debug("human_recent failed", exc_info=True)
@@ -2176,7 +2217,7 @@ def run_node():
                                 step=int(data["step"]) if str("" if data.get("step") is None else data["step"])
                                 .lstrip("-").isdigit() else None)
     pend = approvals.pending(inst, chip)
-    human = adapter.human_recent(float(lim.get("human_recent_min") or 30))
+    human = adapter.human_recent(_human_window_min(lim))
     plan = agent_plans.get(inst, chip, req.plan_id) if req.plan_id else None
     # docs/253 (D-06, D-09): the arming covers ONE plan's pending steps, exactly as the card shows them,
     # for the ONE agent that drives it. Anything else meets no start token at the gate, and the refusal
@@ -2196,6 +2237,7 @@ def run_node():
         if refusal is not None and refusal.get("refused") == "target_halted":
             _journal_halted_refusal(inst, name, node_info.name if node_info is not None else node, req, refusal)
         if refusal is not None:
+            _plan_refused(inst, chip, name, plan, req, refusal)
             if refusal.pop("file_request", False) and node_info is not None:
                 # review R1-M2: the same ask twice is one request -- "the same" is run_terms (docs/254)
                 ap = _file_run_request(inst, chip, name, node_info.name, req, plan)
@@ -2229,6 +2271,66 @@ def run_node():
         wait_s = agent_runs.DEFAULT_WAIT_S
     m = reg.wait(meta["key"], max(0.0, min(wait_s, 3600.0)))
     return jsonify(ok=True, **_run_view(m or meta))
+
+
+# A refusal no retry of the agent can clear: the plan it was asked for cannot run until a person
+# changes a setting, so the card ends instead of reading RUNNING 0/N for ever.
+_PLAN_ENDING_REFUSALS = ("no_env", "no_calibrations_folder", "not_a_node", "past_stop_by")
+
+
+def _plan_refused(inst, chip, name, plan, req, refusal: dict) -> None:
+    """A refused run_node for a running plan is said ON the plan card (``refusal``: code, how,
+    step, at); a refusal no retry can clear also ends the plan, with that reason."""
+    from quam_state_manager.core import agent_grant, agent_plans
+    if not plan or plan.get("status") not in ("running", "stopping"):
+        return
+    code = str(refusal.get("refused") or "")
+    note = {"code": code, "how": str(refusal.get("how") or "")[:400], "step": req.step, "at": time.time()}
+    try:
+        agent_plans.update(inst, chip, plan["id"], refusal=note)
+        if code in _PLAN_ENDING_REFUSALS:
+            why = f"run_node refused ({code}): {note['how']}"
+            rec = agent_plans.stop(inst, chip, plan["id"], who="SM", how=why[:300], after_run=False, code=code)
+            agent_grant.end(inst, chip, why=f"plan `{(rec or plan).get('title')}` ended: {code}",
+                            plan_id=plan["id"], journal=False)
+            journal_mod.append(inst, name, f"plan `{(rec or plan).get('title')}` ended by SM: run_node refused "
+                                           f"({code}) -- {note['how'][:200]}", kind="sm")
+        _bump()
+        _wake()
+    except Exception:  # noqa: BLE001
+        logger.debug("plan refusal note failed", exc_info=True)
+
+
+def _human_window_min(lim: dict) -> float:
+    """``human_recent_min`` as saved: 0 means "never wait for a person's run" (``or 30`` turned a
+    saved 0 into 30); only a missing or unreadable value takes the default."""
+    from quam_state_manager.core import limits
+    v = lim.get("human_recent_min")
+    try:
+        return max(0.0, float(v)) if v is not None and v != "" else float(limits.DEFAULTS["human_recent_min"])
+    except (TypeError, ValueError):
+        return float(limits.DEFAULTS["human_recent_min"])
+
+
+@agent_bp.route("/session/release-human", methods=["POST"])
+def session_release_human():
+    """A person lifts the human_active wait: "that run was mine and I am done". Runs a person made
+    before this press no longer refuse run_node; a later one does again."""
+    from quam_state_manager.core import agent_session
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    actor = r._request_actor()
+    if actor.startswith("by_"):
+        return _err("only a person says the OPX is free", 403)
+    inst, chip = current_app.instance_path, _chip_key()
+    agent_session.save(inst, chip, human_released={"at": time.time(), "who": actor})
+    journal_mod.append(inst, _chip_name(), f"{actor}: the OPX is free -- the agent may run again", kind="sm")
+    told = _tell_agent(chip, f"The human ({actor}) says the earlier run on this chip was theirs and the OPX is "
+                             "free now. You may call run_node again.")
+    _bump()
+    _wake()
+    return jsonify(ok=True, agent_told=told)
 
 
 _SCAN_LOCK = threading.Lock()
@@ -2409,6 +2511,16 @@ def approvals_decide(aid: str, verb: str):
             # change, the anchor it is compared against is not
             writes = [dict(w, old=proposed[str(w.get("path"))].get("old"))
                       for w in writes]
+        if verb == "approve" and cur.get("kind") == "writes" and writes is None:
+            # a press that names no values writes what the card ticks by default: never a value
+            # the node itself marked failed (those are written only when a person ticks them)
+            writes = [dict(w) for w in (cur.get("writes") or []) if not w.get("failed_target")]
+            if not writes:
+                return _err("every value on this card comes from a target the node marked failed; "
+                            "tick the ones to write on the card, or Reject it", 409,
+                            approval=approvals.summary(cur))
+        if verb == "approve" and cur.get("kind") == "writes" and writes is not None and not writes:
+            return _err("no value is ticked: tick the values to write, or Reject the card", 400)
         out = {"ok": True}
         if verb == "approve" and cur.get("kind") == "writes":
             # the writes go through the door FIRST; a refusal keeps the approval pending
@@ -3074,8 +3186,11 @@ def _plan_start_locked(pid, actor, inst, chip, name):
         return _err("unknown plan", 404)
     if rec.get("status") != "draft":
         return _err(f"plan is {rec.get('status')}", 409)
-    if agent_plans.running(inst, chip):
-        return _err("another plan is running on this chip", 409)
+    other = agent_plans.running(inst, chip)
+    if other:
+        return _err(f"another plan is running on this chip: `{other.get('title')}`. Stop it on its card "
+                    "(or from this card), then press Start again", 409, refused="plan_running",
+                    running_plan={"id": other.get("id"), "title": other.get("title")})
     data = json_object()
     lim = limits.load(inst, chip)
     mode = rec.get("mode") or lim.get("mode")
@@ -3266,6 +3381,38 @@ def summary_data(plan_id: str | None) -> dict:
     _reconcile_grant()                              # never summarize a grant that ended as still running
     return agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
                                    live_folder=ctx.get("path"), current=current if store is not None else None)
+
+
+@agent_bp.route("/plans/<pid>/end", methods=["POST"])
+def plan_end(pid: str):
+    """The agent ends ITS plan (it decided to stop: a failed step, a question for the person).
+    The card closes as stopped with the agent's reason; a step still running finishes and reports
+    first. A person ends a plan with Cancel / Stop on the card."""
+    from quam_state_manager.core import agent_grant, agent_plans
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    actor = r._request_actor()
+    if not actor.startswith("by_"):
+        return _err("plan_end is the agent's door; a person uses Cancel or Stop on the card", 403)
+    why = str(json_object().get("why") or "").strip()
+    if not why:
+        return _err("why required: say why the plan ends (it goes into the human's journal)")
+    inst, chip = current_app.instance_path, _chip_key()
+    with _lock_for("plan"):
+        was = agent_plans.get(inst, chip, pid)
+        if was is None:
+            return _err("unknown plan", 404)
+        if was.get("status") not in ("running", "stopping"):
+            return _err(f"plan is {was.get('status')}; only a running plan can be ended", 409, plan=_plan_view(was))
+        rec = agent_plans.stop(inst, chip, pid, who=actor, how=f"ended by the agent: {why}"[:300],
+                               after_run=True, code="agent_ended")
+    g = agent_grant.end(inst, chip, why=f"plan `{rec.get('title')}` was ended by {actor}", plan_id=pid, journal=False)
+    journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` ended by {actor}: {why[:200]}"
+                       + (" -- disarmed" if g is not None else ""), kind="sm")
+    _bump()
+    _wake()
+    return jsonify(ok=True, plan=_plan_view(rec))
 
 
 @agent_bp.route("/plans/<pid>/cancel", methods=["POST"])

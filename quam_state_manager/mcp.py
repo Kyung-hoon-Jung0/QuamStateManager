@@ -26,7 +26,7 @@ the paths -- when a human edited something in the window the agent never
 saw (docs/120's gate), instead of forcing.
 
 Protocol surface: initialize, notifications/initialized, ping, tools/list,
-tools/call. 29 tools. Newline-delimited JSON on stdio.
+tools/call. 30 tools. Newline-delimited JSON on stdio.
 """
 
 from __future__ import annotations
@@ -549,6 +549,11 @@ def t_plan_propose(a: dict) -> Any:
     return _ok(code, res)
 
 
+def t_plan_end(a: dict) -> Any:
+    code, res = _sm().post_json(f"/api/agent/plans/{a.get('plan_id')}/end", {"why": a.get("why")})
+    return _ok(code, res)
+
+
 def t_plan_status(a: dict) -> Any:
     pid = a.get("plan_id")
     if pid:
@@ -598,7 +603,7 @@ def _s(desc: str, **props) -> dict:
 # lists and allows only the read tools -- mechanical, the same for every CLI.
 READ_ONLY = os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly"
 WRITE_TOOLS = frozenset({"state_edit", "apply_to_live", "undo", "take_live", "note_set", "journal_append", "run_node",
-                         "run_wait", "undo_mine", "plan_propose"})
+                         "run_wait", "undo_mine", "plan_propose", "plan_end"})
 # propose_additions / propose_card are NOT write tools: they write nothing a
 # chip reads, only a holding area a person accepts from in the wizard.
 
@@ -678,6 +683,12 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                         title={"type": "string", "required": True},
                         steps={"type": "array", "required": True, "items": {"type": "object"}},
                         why={"type": "string"}), t_plan_propose),
+    "plan_end": (_s("End YOUR running plan when you decide not to go on (a step failed, you need the person). "
+                    "The card closes as stopped with your reason; a step still running finishes first. "
+                    "Say it to the human as well.",
+                    plan_id={"type": "string", "required": True},
+                    why={"type": "string", "required": True, "description": "why it ends -- goes into the journal"}),
+                 t_plan_end),
     "plan_status": (_s("A plan's card as SM records it (steps, runs, writes, approvals); no id = recent plans.",
                        plan_id={"type": "string"}), t_plan_status),
     "run_wait": (_s("Wait (up to wait_s) for a run_node key to finish and return its result.",

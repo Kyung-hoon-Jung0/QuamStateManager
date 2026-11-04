@@ -126,7 +126,7 @@ class TestPill:
 
     def test_after_a_clear_the_agent_is_not_thinking(self, c):
         _talk(c, "hi")
-        assert _cards(c)["now"]["state"] == "between", "precondition: an open session between turns"
+        assert _cards(c)["now"]["state"] in ("between", "your-turn"), "precondition: an open session between turns"
         c.post("/api/agent/chat/clear", json={"keep": 1})
         assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])
         assert _cards(c)["now"]["state"] == "idle"

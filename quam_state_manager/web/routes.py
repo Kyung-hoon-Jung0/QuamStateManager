@@ -3212,8 +3212,16 @@ def _agent_edit_lock_refusal(ctx: dict | None):
         return None
     if request.headers.get("X-SM-Agent"):
         return None
-    return jsonify(ok=False, agent_lock=lock, error="agent_running",
-                   message=f"The Agent is running {lock.get('node')}; editing is locked. Press Stop to edit."), 409
+    msg = _agent_running_text(lock)
+    return jsonify(ok=False, agent_lock=lock, code="agent_running", error=msg, message=msg), 409
+
+
+def _agent_running_text(lock: dict) -> str:
+    """The refusal a person reads while the agent's node runs: what holds the chip, until when,
+    and the way out (the screen shows ``error``; the code rides ``code``)."""
+    return (f"The agent is running {lock.get('node') or 'a node'} on this chip, so edits wait until its run ends "
+            "(the new values it measures land on this working copy). Your typed value is kept: commit it "
+            "again after the run, or press Stop on the Agent page to end the run now.")
 
 
 def _archive_write_blocked(ctx: dict | None = None):
@@ -49746,8 +49754,8 @@ def _scheduler_lock_guard():
     if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS \
             and request.endpoint not in _AGENT_RUN_DOORS:
         resp = make_response(jsonify({
-            "error": "agent_running", "agent_lock": _alk,
-            "message": f"The Agent is running {_alk.get('node')}; editing is locked. Press Stop to edit.",
+            "error": _agent_running_text(_alk), "code": "agent_running", "agent_lock": _alk,
+            "message": _agent_running_text(_alk),
         }), 409)
         resp.headers["HX-Reswap"] = "none"
         resp.headers["HX-Trigger"] = "schedulerLocked"

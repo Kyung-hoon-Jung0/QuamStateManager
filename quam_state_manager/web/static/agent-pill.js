@@ -1,6 +1,6 @@
 /* The Agent pill (docs/173 §3.1). Core script: on every page, in the topbar.
  * Renders GET /api/agent/now -- one state in the precedence order
- *   waiting > limited > stalled > failed > running > between > human-ran > idle
+ *   waiting > limited > stalled > failed > running > your-turn > between > human-ran > idle
  * -- plus the reservation line (who, until, mode). Refreshes when live-wake
  * wakes (the server bumps its tick on every agent event), on load, and on
  * a slow safety timer. Click -> the Agent page (v1.5.5; it was the Calibration
@@ -46,6 +46,7 @@ window.AgentPill = (function () {
       text = "Agent: " + (r.node || r.tool || "running") + (r.targets ? " · " + r.targets : "") + " · " + fmtSince(r.since) + who;
       if (r.typical_s) title = "usually ~" + Math.round(r.typical_s / 60) + " min";
     }
+    else if (st === "your-turn") { text = "Agent: waiting for you" + who; title = "its last turn ended; it acts again when you send a message or press a card"; }
     else if (st === "between") { text = "Agent: thinking" + who; }
     else if (st === "human-ran") { text = "human ran " + (d.human_ran && d.human_ran.node || "a node") + " · " + fmtSince(d.human_ran && d.human_ran.ts) + " ago"; }
     else { text = "Agent"; }
@@ -69,6 +70,7 @@ window.AgentPill = (function () {
     if (st === "stalled") { return "no sign " + fmtSince(d.last && d.last.ts); }
     if (st === "failed") { return "✗ " + (d.failures_today || 0) + " today"; }
     if (st === "running") { return (r.node || r.tool || "running") + (r.targets ? " " + r.targets : "") + " · " + fmtSince(r.since); }
+    if (st === "your-turn") { return "your turn" + (who || ""); }
     if (st === "between") { return "thinking" + (who || ""); }
     if (st === "human-ran") { return "human ran " + (d.human_ran && d.human_ran.node || "a node"); }
     return "Agent";
