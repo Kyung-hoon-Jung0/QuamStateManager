@@ -65,7 +65,8 @@ _RUN_BUILD_PATH = Path(__file__).resolve().parent.parent / "generator" / "run_bu
 # rendered by repr; functions by inspect.getsource. A missing name raises at
 # emit time (and fails the golden test) — the moment run_build refactors,
 # this list is the single thing to update.
-_RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES")
+_RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES",
+                   "_COUPLED_PORT_PAIRS", "_BAND_COMPAT", "_BAND_RANGES")
 # docs/136 — emitted ONLY for a chip that declares a QDAC. On every other chip
 # this is ~200 lines of dead weight, and a recipe nobody wants to read is not
 # an editable recipe.
@@ -78,6 +79,7 @@ _RUNTIME_FUNCS = (
     "_match_populate_pairs",
     "_num", "_target_lo",
     "_band_for", "_delay_for_band", "_apply_lf_delay",
+    "_bands_covering", "_port_key", "_fix_coupled_bands",
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_twpa_of", "_apply_twpa", "_apply_twpa_qubits",
@@ -588,6 +590,10 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('if (POPULATE.get("options") or {}).get("pin_cores"):')
     w("    _pin_cores(machine)")
+    # G1: the same coupled-band rule the wizard's build applies, so the
+    # script writes the chip the wizard wrote
+    w("for _w in _fix_coupled_bands(machine, _spec, []):")
+    w('    print(f"WARNING: {_w}", file=sys.stderr)')
     w("machine.save()")
     w("")
     if qdac_qubits:

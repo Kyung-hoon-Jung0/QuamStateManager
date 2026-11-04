@@ -49,6 +49,9 @@ PAIR_LINES = []
 _BAND_TO_DELAY_NS = {1: 141, 2: 161, 3: 141}
 _CZ_VARIANTS = ('unipolar', 'flattop', 'bipolar', 'SNZ', 'flattop_erf')
 _PULSE_HOMES = ('quam.components.pulses', 'quam_builder.architecture.superconducting.components.pulses', 'quam_builder.common.pulses')
+_COUPLED_PORT_PAIRS = [('1', 'out', '1', 'in'), ('2', 'out', '3', 'out'), ('4', 'out', '5', 'out'), ('6', 'out', '7', 'out'), ('8', 'out', '2', 'in')]
+_BAND_COMPAT = {(3, 3), (2, 2), (3, 1), (1, 1), (1, 3)}
+_BAND_RANGES = {1: (50000000.0, 5500000000.0), 2: (4500000000.0, 7500000000.0), 3: (6500000000.0, 10500000000.0)}
 
 def _norm_index(qubit_id):
     """Normalise a spec qubit id to the index QubitReference expects.
@@ -183,6 +186,91 @@ def _apply_lf_delay(lf_port, band):
     except (ValueError, TypeError):
         # QUAM may raise on reference-assignment paths; silently skip.
         pass
+
+def _bands_covering(lo):
+    return [b for b, (lo_, hi) in _BAND_RANGES.items()
+            if isinstance(lo, (int, float)) and lo_ <= lo <= hi]
+
+def _port_key(port):
+    io = "out" if hasattr(port, "upconverter_frequency") else "in"
+    return (str(getattr(port, "controller_id", "")), str(getattr(port, "fem_id", "")),
+            str(getattr(port, "port_id", "")), io)
+
+def _fix_coupled_bands(machine, spec, warnings):
+    """G1: the Nyquist bands overlap, so a band derived by first match can put
+    a coupled pair on a combination the QOP refuses (an xy drive at band 1
+    beside a 7 GHz readout read as band 2, although band 3 covers that
+    readout too). The wizard's client solves this before it posts (coBands);
+    this is the same rule for a build that arrives without it (a script, a
+    direct POST): a DERIVED band may move to another band covering its LO --
+    the same band first, then the 1 + 3 combination, the fewest moves -- and
+    a band typed on the Populate step (``populate.<group>.<id>.band``) never
+    moves. A pair with no legal combination is left for the refusal after
+    save(). A moved xy band re-derives its qubit's flux-port LF delay. Runs
+    over the chip's xy and resonator ports (a TWPA pump keeps its band)."""
+    pop = (spec or {}).get("populate") or {}
+
+    def typed(group, rid):
+        return ((pop.get(group) or {}).get(str(rid)) or {}).get("band") in (1, 2, 3)
+
+    seen: dict = {}          # id(port) -> [port, lo, explicit, z_port]
+    for qid, q in (getattr(machine, "qubits", None) or {}).items():
+        xy = getattr(q, "xy", None)
+        out = getattr(xy, "opx_output", None) if xy is not None else None
+        if out is not None and hasattr(out, "band"):
+            z = getattr(getattr(q, "z", None), "opx_output", None)
+            e = seen.setdefault(id(out), [out, getattr(out, "upconverter_frequency", None),
+                                           False, z])
+            e[2] = e[2] or typed("qubit", qid)
+        rr = getattr(q, "resonator", None)
+        for attr in ("opx_output", "opx_input"):
+            p = getattr(rr, attr, None) if rr is not None else None
+            if p is None or not hasattr(p, "band"):
+                continue
+            lo = getattr(p, "upconverter_frequency", None) if attr == "opx_output" \
+                else getattr(p, "downconverter_frequency", None)
+            e = seen.setdefault(id(p), [p, lo, False, None])
+            e[2] = e[2] or typed("resonator", qid)
+    byfem: dict = {}
+    for port, lo, explicit, z in seen.values():
+        con, fem, pid, io = _port_key(port)
+        byfem.setdefault((con, fem), {})[(pid, io)] = (port, lo, explicit, z)
+    for (con, fem), ports in sorted(byfem.items()):
+        for pa, sa, pb, sb in _COUPLED_PORT_PAIRS:
+            a = ports.get((pa, sa))
+            b = ports.get((pb, sb))
+            if a is None or b is None:
+                continue
+            ba, bb = getattr(a[0], "band", None), getattr(b[0], "band", None)
+            if ba not in (1, 2, 3) or bb not in (1, 2, 3) or (ba, bb) in _BAND_COMPAT:
+                continue
+            opts_a = [ba] if a[2] else _bands_covering(a[1])
+            opts_b = [bb] if b[2] else _bands_covering(b[1])
+            best = None
+            for x in opts_a:
+                for y in opts_b:
+                    if (x, y) not in _BAND_COMPAT:
+                        continue
+                    cost = (x != ba) + (y != bb) + (0 if x == y else 0.5)
+                    if best is None or cost < best[0]:
+                        best = (cost, x, y)
+            if best is None:
+                continue
+            for (port, lo, _explicit, z), new, old, label in (
+                    (a, best[1], ba, f"{sa} {pa}"), (b, best[2], bb, f"{sb} {pb}")):
+                if new == old:
+                    continue
+                try:
+                    port.band = new
+                except ValueError:
+                    continue
+                if z is not None:
+                    _apply_lf_delay(z, new)       # the flux delay follows the xy band
+                warnings.append(
+                    f"con{con}/FEM {fem}: {label} moved from band {old} to band {new} "
+                    f"so its coupled pair is one the QOP accepts (its LO "
+                    f"{lo / 1e9:.4g} GHz lies in both bands).")
+    return warnings
 
 def _set_port_lo(port, lo, band):
     if port is None:
@@ -1632,6 +1720,8 @@ if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
         print(f"WARNING: {_w}", file=sys.stderr)
 if (POPULATE.get("options") or {}).get("pin_cores"):
     _pin_cores(machine)
+for _w in _fix_coupled_bands(machine, _spec, []):
+    print(f"WARNING: {_w}", file=sys.stderr)
 machine.save()
 
 # Readout-LO constraint lock (the wizard's post-save fix-up): each MW
