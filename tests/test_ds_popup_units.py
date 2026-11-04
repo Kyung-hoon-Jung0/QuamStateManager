@@ -179,3 +179,17 @@ def test_popup_wraps_at_dots_and_states_units():
     if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
         pytest.skip("jsdom not installed")
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+
+def test_popup_context_click_toast_and_repeated_notices():
+    """2026-11-04 polish (REAL app.js under jsdom, ds_polish_selfcheck.cjs):
+    no dangling separator in the popup's context line, no "Copied" toast over
+    an opening popup, and repeated identical notices collapse into one."""
+    node = shutil.which("node")
+    if node is None or subprocess.run([node, "-e", "require('jsdom')"], capture_output=True, cwd=str(_ROOT)).returncode != 0:
+        pytest.skip("jsdom not installed for node")
+    res = subprocess.run([node, str(_ROOT / "tests" / "ds_polish_selfcheck.cjs")],
+                         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "ALL OK" in res.stdout
+    assert res.stdout.count("ok - ") == 9

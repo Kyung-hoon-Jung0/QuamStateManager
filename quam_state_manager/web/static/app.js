@@ -3729,9 +3729,30 @@ document.addEventListener("showToast", function (e) {
 window.showToast = function(message, level, ms, detail) {
     var bar = document.getElementById("status-bar");
     if (!bar) return;
+    // the same notice again while it is still up (e.g. "Couldn't reach the
+    // app" from every request a down server refuses) refreshes that one
+    // notice and counts the repeats instead of stacking copies over the page.
+    // Errors and warnings only: an info notice may be owned by its caller
+    // (one "Not done" notice per two-press button, each kept beside the other)
+    var same = (level === "error" || level === "warning") && Array.prototype.find.call(bar.querySelectorAll(":scope > .toast"), function (t) {
+        return t._toastKey === [level || "info", message, detail || ""].join(" ");
+    });
+    if (same) {
+        same._toastRepeat = (same._toastRepeat || 1) + 1;
+        var rc = same.querySelector(".toast-repeat");
+        if (!rc) { rc = document.createElement("span"); rc.className = "toast-repeat"; same.firstChild.appendChild(rc); }
+        rc.textContent = " (×" + same._toastRepeat + ")";
+        same.style.opacity = "";
+        if (!same.classList.contains("toast-sticky")) {
+            var again = ms > 0 ? ms : ((level === "error" || level === "warning") ? 6000 : 3500);
+            window.ToastHold.schedule(same, again);
+        }
+        return same;
+    }
     var div = document.createElement("div");
     div.className = "toast toast-" + (level || "info");
     if (level === "error" || level === "warning") div.setAttribute("role", "alert");
+    div._toastKey = [level || "info", message, detail || ""].join(" ");
     var p = document.createElement("p");
     p.textContent = message;
     div.appendChild(p);
@@ -18865,8 +18886,10 @@ function _attachPlotClickHandler(plotDiv) {
         var mappings = _resolveExperimentPath(expName, qubitName);
         var dotPath = mappings ? mappings[0].path : null;
 
-        // Show clipboard toast
-        _showPlotClickToast(text, qubitName, dotPath);
+        // Show clipboard toast -- only when no popup opens: the popup names the
+        // point itself (with its own Copy buttons), and a toast would sit over
+        // its controls on a narrow window
+        if (!(mappings && mappings.length)) _showPlotClickToast(text, qubitName, dotPath);
 
         // Open the confirmation popup (replaces the old auto-apply flow);
         // Explorer-tree navigation still happens in the background as a
@@ -19418,8 +19441,8 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         });
 
         var expName = root ? root.getAttribute('data-experiment') : '';
-        var toastVal = (clickable.axis === 'y') ? pt.y : pt.x;
-        _showPlotClickToast((clickable.axis === 'y' ? 'y=' : 'x=') + toastVal, q, updates[0].dot_path);
+        // no "Copied" toast here: the popup opening below names the point and
+        // carries its own Copy row, and a toast would cover its controls
         if (window.PointCopy) window.PointCopy.stash(ev);   // v1.5.5: the popup carries the point's x/y(/z) copy row
         // Carry the run's own chip identity so the server 409s a cross-chip
         // write (same gate as the Results-tab apply path) — without it a run's
@@ -19492,7 +19515,9 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
         var _chip = window.__activePath
             || (_loadInput ? _loadInput.value.trim() : '');
         if (_chip) bits.push('<small>Target chip: <code>' + _ppEscape(_chip) + '</code></small>');
-        ctxBox.innerHTML = bits.join(' &middot; ');
+        // the context box is a wrapping flex row whose gap separates the items;
+        // a text separator between them was left dangling at a line end
+        ctxBox.innerHTML = bits.join('');
     }
 
     // Async, non-blocking fit-audit verdict for this run + qubit (advisory badge).

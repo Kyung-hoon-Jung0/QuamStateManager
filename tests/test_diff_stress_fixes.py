@@ -113,6 +113,18 @@ class TestReadableLayout:
         assert ".diff-xscroll, .diff-panes-scroll { overflow: visible !important;" in css
         assert "@media print {" in css
 
+    def test_the_sticky_key_column_is_opaque_and_pane_letters_stay(self):
+        """2026-11-04: a folder row's key cell mixed a TRANSLUCENT border colour
+        into the background, so panes scrolling under it showed through; and a
+        pane partly under the key column lost its letter."""
+        css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+        start = css.index(".diff-panes-table tr.dp-dir > td.dp-key-col {")
+        rule = css[start:css.index("}", start)]
+        assert "background-color: var(--pico-background-color);" in rule
+        assert "var(--pico-muted-border-color) 28%, var(--pico-background-color)" not in rule
+        assert (".diff-panes-table .dp-pane-head .dp-slot { position: sticky; "
+                "left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }") in css
+
 
 def test_diff_xscroll_selfcheck():
     node = shutil.which("node")
@@ -122,5 +134,7 @@ def test_diff_xscroll_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - the hint names the panes out of view" in res.stdout
+    assert "ok - but a pane whose header is cut is named as partly out of view" in res.stdout
+    assert "ok - a single column cut at the right edge (its header cut) gets a hint" in res.stdout
     assert "ok - a failed compare request leaves a message and a Retry" in res.stdout
     assert "ok - a picker GET retries through the form, so its sources ride along" in res.stdout

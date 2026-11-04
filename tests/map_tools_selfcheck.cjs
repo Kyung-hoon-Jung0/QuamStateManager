@@ -212,5 +212,18 @@ function check(value, message) { checks++; assert.ok(value, message); }
     // v1.4.1: unsupported maps printed null comparisons -> show only the honest reason.
     check(c('status').textContent === authoritative.classification.reason, 'no comparison noise for an unsupported model');
     tile._mapTools.destroy();
+    // 2026-11-04 polish: a default exactly AT the bias limit (0.75) snapped up to the slider's 0.1
+    // step (0.8), so ticking Smooth warned "above the bias limit" on the first click
+    authoritative.caps_applied = {cap_x: 0.75, cap_y: 0.75, sigma_x: 0, sigma_y: 0, default_x: 0.75, default_y: 0.75};
+    w.localStorage.removeItem('quam_map_tools_v1');
+    w.MapTools.mount(tile, plot, payload, {uid: 'run:atcap', fig: 'map'});
+    tile.querySelector('.map-tools-button').click(); await wait(20);
+    // (a browser snaps an off-step value to the NEAREST step, 0.75 -> 0.8; jsdom does not, so the
+    // value itself must already sit on the step below the limit)
+    check(c('sigma_x').value === '0.7' && c('sigma_y').value === '0.7',
+        'a default at the bias limit lands on the step at or below it: ' + c('sigma_x').value + '/' + c('sigma_y').value);
+    input('smooth', true); await wait(20);
+    check(c('warning').textContent === '', 'ticking Smooth with the default strength raises no bias-limit warning');
+    tile._mapTools.destroy();
     console.log(checks + ' assertions passed'); dom.window.close();
 })().catch(error => { console.error(error); dom.window.close(); process.exitCode = 1; });

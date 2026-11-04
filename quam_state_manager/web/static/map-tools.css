@@ -1,7 +1,9 @@
 .map-tools-strip { padding: .65rem; border-top: 1px solid var(--pico-muted-border-color); font-size: .8rem; }
 .map-tools-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; }
 .map-tools-controls label { margin: 0; font-size: .8rem; }
-.map-tools-controls select, .map-tools-controls input[type=number] { width: auto; max-width: 10rem; margin: 0; padding: .2rem .4rem; font-size: .8rem; }
+.map-tools-controls input[type=number] { width: auto; max-width: 10rem; margin: 0; padding: .2rem .4rem; font-size: .8rem; }
+/* a select shows its whole label: no width cap, and room on the right for its arrow */
+.map-tools-controls select { width: auto; max-width: none; margin: 0; padding: .2rem 1.9rem .2rem .4rem; background-position: center right .45rem; font-size: .8rem; }
 .map-tools-controls input[type=range] { display: block; width: 9rem; margin: .2rem 0; }
 .map-tools-axis { position: relative; }
 .map-tools-cap { display: block; color: var(--pico-muted-color); font-size: .7rem; }
