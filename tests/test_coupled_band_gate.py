@@ -196,3 +196,87 @@ def test_the_docs_list_every_coupled_pair_the_code_judges():
                  '[[4, "output"], [5, "output"]]', '[[6, "output"], [7, "output"]]',
                  '[[8, "output"], [2, "input"]]'):
         assert pair in js, pair
+
+
+# ---- the rule is QOP-version-aware ----------------------------------------
+_DOCS = Path(r"D:\work_laptop\documentation-website\docs\docs")
+
+
+def _doc_line(rel, n):
+    f = _DOCS / rel
+    if not f.is_file():
+        import pytest
+        pytest.skip("QM docs checkout absent")
+    return f.read_text(encoding="utf-8").splitlines()[n - 1].strip()
+
+
+def test_the_quoted_docs_lines_are_verbatim_at_the_cited_lines():
+    both = "* **Bands 1 & 3 cannot be used in coupled ports**."
+    assert _doc_line("hidden_pages/QOP33x.md", 111) == both
+    assert _doc_line("hidden_pages/QOP34x.md", 59) == both
+    share = "* **Port sharing (same or coupled ports)** may cause upconverters to stop playing."
+    assert _doc_line("hidden_pages/QOP33x.md", 112) == share
+    assert _doc_line("hidden_pages/QOP34x.md", 91) == share
+    assert _doc_line("hidden_pages/QOP35x.md", 75) == (
+        "* Port sharing on same or coupled ports should not cause upconverters to stop playing anymore.")
+    assert _doc_line("hidden_pages/QOP36x.md", 78).startswith(
+        "* **MW-FEM port sharing on the same or coupled ports can cause ports or upconverters to stop playing.**")
+    assert _doc_line("hidden_pages/QOP37x.md", 97).startswith(
+        "* Fixed an issue where MW-FEM port sharing on the same or coupled ports could cause ports or "
+        "upconverters to stop playing.")
+    assert _doc_line("docs/Guides/opx1000_fems.md", 106) == (
+        "Coupled ports must be in the same band, or in bands `1` and `3`.")
+
+
+def test_qop_parsing_and_the_version_aware_set_agree_between_core_and_script():
+    from quam_state_manager.core import spec_constraints as sc
+    rb = _rb()
+    for v, mm in (("3.4.2", (3, 4)), ("QOP 3.5", (3, 5)), ("v3_8_1", (3, 8)), ("3.10", (3, 10)),
+                  (None, None), ("", None), ("qop", None)):
+        assert sc.qop_minor(v) == mm and rb._qop_minor(v) == mm, v
+    for v, ok in (("3.4.2", False), ("3.3", False), ("3.5", True), ("v3_8_1", True), ("4.0", True),
+                  (None, None), ("x", None)):
+        assert sc.qop_allows_bands_13(v) is ok and rb._qop_allows_13(v) is ok, v
+    assert sc.band_compat("3.4") == sc.BAND_COMPAT_SAME == rb._band_compat("3.4")
+    assert sc.band_compat(None) == sc.BAND_COMPAT == rb._band_compat(None) == rb._band_compat("3.8.1")
+    for v, aff in (("3.3", True), ("3.4", True), ("3.5", False), ("3.6", True), ("3.7", False),
+                   ("3.8.1", False), (None, None)):
+        assert sc.qop_port_sharing_affected(v) is aff and rb._qop_port_sharing_affected(v) is aff, v
+    assert sc.qop_version_of({"extras": {"qop_version": "3.4"}}) == "3.4"
+    assert sc.qop_version_of({"extras": {"versions": {"qop": "3.5.1"}}}) == "3.5.1"
+    assert sc.qop_version_of({"extras": {"versions": {"qua": "1.4.1"}}}) is None
+    assert sc.PORT_SHARING_NOTE == rb._PORT_SHARING_NOTE and sc.BANDS_13_NOTE == rb._BANDS_13_NOTE
+
+
+def test_on_qop_3_4_bands_1_and_3_are_refused_and_never_chosen():
+    rb = _rb()
+    bad = rb._coupled_band_errors(_state(1, 3), "3.4.2")
+    assert bad and "refuses bands 1 and 3" in bad[0], bad
+    assert rb._coupled_band_errors(_state(1, 3), "3.5") == []
+    assert rb._coupled_band_errors(_state(1, 3)) == []
+    assert rb._coupled_band_errors(_state(2, 2), "3.4") == []
+    # xy 3.9 GHz (band 1 only) on out 1, a 7.1 GHz readout read on in 1:
+    # 1 + 3 is the only legal answer, and QOP 3.4 has none
+    m = _chip(rb, 3.9e9, 7.1e9)
+    q = m.qubits["q1"]
+    assert rb._fix_coupled_bands(m, {"qop_version": "3.4.2"}, []) == []
+    assert (q.xy.opx_output.band, q.resonator.opx_input.band) == (1, 2)     # left for the refusal
+    m = _chip(rb, 3.9e9, 7.1e9)
+    q = m.qubits["q1"]
+    w = rb._fix_coupled_bands(m, {"qop_version": "v3_8_1"}, [])
+    assert (q.xy.opx_output.band, q.resonator.opx_input.band) == (1, 3)
+    assert "QOP 3.5 or later" not in w[0], w
+    m = _chip(rb, 3.9e9, 7.1e9)
+    q = m.qubits["q1"]
+    w = rb._fix_coupled_bands(m, {}, [])
+    assert (q.xy.opx_output.band, q.resonator.opx_input.band) == (1, 3)
+    assert "QOP 3.5 or later only" in w[0], w
+
+
+def test_the_emitted_script_carries_the_version_rule():
+    from quam_state_manager.core import script_emitter as se
+    for n in ("_qop_minor", "_qop_allows_13", "_band_compat", "_qop_port_sharing_affected"):
+        assert n in se._RUNTIME_FUNCS, n
+    for c in ("_BAND_COMPAT_SAME", "_BAND_COMPAT_13", "_BANDS_13_NOTE", "_PORT_SHARING_NOTE"):
+        assert c in se._RUNTIME_CONSTS, c
+    assert '"qop_version": %r' in Path(se.__file__).read_text(encoding="utf-8")

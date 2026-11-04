@@ -739,3 +739,49 @@ class TestFrequencyConsistency:
         fs = diagnostics._frequency_consistency_findings(store)
         drive = [f for f in fs if f.jump_path == "qubits.q1.f_01"]
         assert drive and drive[0].fix is None
+
+
+
+class TestCouplingIsQopVersionAware:
+    """QOP 3.3 / 3.4 refuse bands 1 & 3 on coupled ports (hidden_pages/QOP33x.md:111,
+    QOP34x.md:59: "**Bands 1 & 3 cannot be used in coupled ports**."); the current
+    rule allows them (Guides/opx1000_fems.md:106). The pair shares the band only."""
+
+    @staticmethod
+    def _st(qop=None, ba=1, bb=3):
+        s = TestCoupling._coupled(ba, bb)
+        s["ports"]["mw_outputs"]["con1"]["1"]["2"]["upconverter_frequency"] = 5.0e9 if ba != 3 else 7.0e9
+        s["ports"]["mw_outputs"]["con1"]["1"]["3"]["upconverter_frequency"] = 7.0e9 if bb != 1 else 5.0e9
+        if qop:
+            s.setdefault("extras", {})["qop_version"] = qop
+        return s
+
+    def test_a_chip_on_qop_3_4_gets_an_error_for_1_and_3(self):
+        cats = _cats(diagnostics.lint_state(_store(state=self._st("3.4.2"))))
+        f = cats.get("connectivity_band", [])
+        assert len(f) == 2 and f[0].severity == "error"
+        assert "QOP 3.4.2 refuses" in f[0].message and "same band" in f[0].message
+        assert "connectivity_band_qop" not in cats
+
+    def test_an_undeclared_qop_notes_the_1_and_3_pair(self):
+        cats = _cats(diagnostics.lint_state(_store(state=self._st())))
+        assert "connectivity_band" not in cats
+        n = cats["connectivity_band_qop"]
+        assert len(n) == 1 and n[0].severity == "recommendation"
+        assert "QOP 3.5 or later only" in n[0].message and n[0].port_key is not None
+
+    def test_a_declared_recent_qop_is_quiet(self):
+        cats = _cats(diagnostics.lint_state(_store(state=self._st("v3_8_1"))))
+        assert "connectivity_band" not in cats and "connectivity_band_qop" not in cats
+
+    def test_the_port_sharing_note_follows_the_declared_qop(self):
+        for qop, expect in ((None, True), ("3.4", True), ("3.6", True), ("3.5", False), ("3.7.2", False)):
+            cats = _cats(diagnostics.lint_state(_store(state=self._st(qop, 2, 2))))
+            assert ("connectivity_port_sharing" in cats) is expect, qop
+        f = _cats(diagnostics.lint_state(_store(state=self._st(None, 2, 2))))["connectivity_port_sharing"]
+        assert len(f) == 1 and f[0].severity == "recommendation"
+        assert "stop playing" in f[0].message and "declares no QOP version" in f[0].message
+
+    def test_the_catalog_names_both_notes(self):
+        names = {n for _d, rows in diagnostics._CHECK_CATALOG for _s, n, _t in rows}
+        assert {"Bands 1 & 3 need QOP 3.5", "Coupled-port sharing (QOP known issue)"} <= names

@@ -201,7 +201,9 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("error", "CR/ZZ effective IF within ±500 MHz", "A pair drive's emulated intermediate frequency (effective target RF − LO, the runtime-only #./inferred_* arithmetic) stays inside the Nyquist limit."),
         ("warning", "CR/ZZ effective IF within ±400 MHz", "The same emulated pair-drive IF stays inside the 400 MHz bound the QM populate scripts assert for cross-resonance / ZZ tones."),
         ("warning", "LO within its band", "Each MW port's upconverter / downconverter frequency lies in its configured band (1: 50 MHz–5.5 GHz, 2: 4.5–7.5, 3: 6.5–10.5 GHz)."),
-        ("error", "Coupled ports share a band", "MW port pairs that are hardware-coupled use the same band (or the allowed 1 & 3 combination); the QOP refuses any other combination when a program opens."),
+        ("error", "Coupled ports share a band", "MW port pairs that are hardware-coupled (Out 1 & In 1, Out 2 & Out 3, Out 4 & Out 5, Out 6 & Out 7, Out 8 & In 2) use the same band, or the 1 & 3 combination on QOP 3.5 or later; the QOP refuses any other combination when a program opens. Only the band is shared: the pair has no LO-frequency rule."),
+        ("recommendation", "Bands 1 & 3 need QOP 3.5", "A coupled pair on bands 1 and 3 is noted when the chip declares no QOP version (QOP 3.3 and 3.4 refuse that combination)."),
+        ("recommendation", "Coupled-port sharing (QOP known issue)", "On QOP 3.3, 3.4 and 3.6, MW-FEM port sharing on the same or coupled ports can cause ports or upconverters to stop playing (fixed in QOP 3.5 and 3.7); noted once when coupled pairs are in use and the chip declares no fixed QOP."),
         ("warning", "LF-FEM output bandwidth", "A flux/coupler intermediate frequency stays inside the LF-FEM passband (direct 750 MHz, amplified 330 MHz, 500 MHz on a 1 GSa/s port)."),
         ("warning", "Readout LO spacing", "Two MW-FEM input downconverter LOs on one FEM differ by at least 10 MHz when both read simultaneously."),
         ("recommendation", "Band-edge headroom", "Flags an LO sitting near a band edge when an overlapping band would seat it more centrally (optional, the LO still works)."),
@@ -548,7 +550,15 @@ def _coupling_findings(root: dict) -> list[Finding]:
                             port_key=_port_key(parsed),
                         ))
 
-    # 2) Coupled-pair band share.
+    # 2) Coupled-pair band share. Version-aware (spec_constraints.band_compat):
+    # QOP <= 3.4 refuses the 1 + 3 combination (hidden_pages/QOP33x.md:111,
+    # QOP34x.md:59: "**Bands 1 & 3 cannot be used in coupled ports**."); the
+    # current rule (Guides/opx1000_fems.md:106-107) allows it. The pair shares
+    # the BAND only -- there is no LO-frequency rule between coupled ports.
+    qop = spec_constraints.qop_version_of(root)
+    compat = spec_constraints.band_compat(qop)
+    allows_13 = spec_constraints.qop_allows_bands_13(qop)
+    pairs_in_use = 0
     for (ctrl, fem), portmap in index.items():
         for a_port, a_side, b_port, b_side in spec_constraints.COUPLED_PORT_PAIRS:
             a = portmap.get((a_side, a_port))
@@ -559,17 +569,26 @@ def _coupling_findings(root: dict) -> list[Finding]:
             bb = spec_constraints.as_int(b["band"])
             if ba is None or bb is None:
                 continue
-            if (ba, bb) not in spec_constraints.BAND_COMPAT:
+            pairs_in_use += 1
+            if (ba, bb) not in compat:
                 # QM docs, Guides/opx1000_fems.md#bands: "Coupled ports must
                 # be in the same band, or in bands `1` and `3`. ... Other band
                 # combinations are not supported." The QOP refuses such a
                 # config when a program opens, although generate_config()
                 # builds it, so this is an error.
-                msg = (f"coupled MW ports {a_side}{a_port} (band {ba}) and "
-                       f"{b_side}{b_port} (band {bb}) on {ctrl}/FEM {fem} are on "
-                       f"an invalid band combination: the QOP will refuse this "
-                       f"config (coupled ports must share a band, or be bands 1 "
-                       f"and 3; generate_config passing is not proof)")
+                if (ba, bb) in spec_constraints.BAND_COMPAT_13:
+                    msg = (f"coupled MW ports {a_side}{a_port} (band {ba}) and "
+                           f"{b_side}{b_port} (band {bb}) on {ctrl}/FEM {fem} use bands "
+                           f"1 and 3, which QOP {qop} refuses (QOP 3.3 and 3.4: "
+                           f"\"Bands 1 & 3 cannot be used in coupled ports\"; allowed "
+                           f"from QOP 3.5): give both ports the same band")
+                else:
+                    msg = (f"coupled MW ports {a_side}{a_port} (band {ba}) and "
+                           f"{b_side}{b_port} (band {bb}) on {ctrl}/FEM {fem} are on "
+                           f"an invalid band combination: the QOP will refuse this "
+                           f"config (coupled ports must share a band, or be bands 1 "
+                           f"and 3 on QOP 3.5 or later; generate_config passing is "
+                           f"not proof)")
                 for info, port in ((a, a_port), (b, b_port)):
                     parsed = (info["section"], ctrl, fem, port)
                     findings.append(Finding(
@@ -578,6 +597,24 @@ def _coupling_findings(root: dict) -> list[Finding]:
                         jump_path=f"ports.{info['section']}.{ctrl}.{fem}.{port}.band",
                         port_key=_port_key(parsed),
                     ))
+            elif (ba, bb) in spec_constraints.BAND_COMPAT_13 and allows_13 is None:
+                parsed = (a["section"], ctrl, fem, a_port)
+                findings.append(Finding(
+                    "recommendation", "connectivity_band_qop", _port_label(parsed),
+                    f"coupled MW ports {a_side}{a_port} (band {ba}) and {b_side}{b_port} "
+                    f"(band {bb}) on {ctrl}/FEM {fem} use bands 1 and 3: "
+                    f"{spec_constraints.BANDS_13_NOTE}; the chip declares no QOP version",
+                    detail=f"bands {ba},{bb}",
+                    jump_path=f"ports.{a['section']}.{ctrl}.{fem}.{a_port}.band",
+                    port_key=_port_key(parsed),
+                ))
+    if pairs_in_use and spec_constraints.qop_port_sharing_affected(qop) is not False:
+        findings.append(Finding(
+            "recommendation", "connectivity_port_sharing", "MW-FEM coupled ports",
+            f"{pairs_in_use} coupled MW port pair(s) in use: {spec_constraints.PORT_SHARING_NOTE}"
+            + ("" if qop else "; the chip declares no QOP version"),
+            detail=f"qop {qop or 'unknown'}",
+        ))
 
     return findings
 

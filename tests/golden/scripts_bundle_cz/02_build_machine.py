@@ -52,6 +52,10 @@ _PULSE_HOMES = ('quam.components.pulses', 'quam_builder.architecture.superconduc
 _COUPLED_PORT_PAIRS = [('1', 'out', '1', 'in'), ('2', 'out', '3', 'out'), ('4', 'out', '5', 'out'), ('6', 'out', '7', 'out'), ('8', 'out', '2', 'in')]
 _BAND_COMPAT = {(3, 3), (2, 2), (3, 1), (1, 1), (1, 3)}
 _BAND_RANGES = {1: (50000000.0, 5500000000.0), 2: (4500000000.0, 7500000000.0), 3: (6500000000.0, 10500000000.0)}
+_BAND_COMPAT_SAME = {(1, 1), (3, 3), (2, 2)}
+_BAND_COMPAT_13 = {(3, 1), (1, 3)}
+_BANDS_13_NOTE = 'QOP 3.5 or later only (QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)'
+_PORT_SHARING_NOTE = 'QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or coupled ports can cause ports or upconverters to stop playing (fixed in QOP 3.5 and 3.7)'
 
 def _norm_index(qubit_id):
     """Normalise a spec qubit id to the index QubitReference expects.
@@ -187,6 +191,28 @@ def _apply_lf_delay(lf_port, band):
         # QUAM may raise on reference-assignment paths; silently skip.
         pass
 
+def _qop_minor(version):
+    """(major, minor) of a QOP version spelt "3.4.2", "QOP 3.5" or "v3_8_1";
+    None when nothing parses (unknown)."""
+    import re as _re
+    if version in (None, ""):
+        return None
+    m = _re.search(r"(\d+)\.(\d+)", str(version).replace("_", "."))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+def _qop_allows_13(version):
+    """True / False by the docs; None = version unknown (allowed, noted)."""
+    mm = _qop_minor(version)
+    return None if mm is None else mm >= (3, 5)
+
+def _band_compat(version=None):
+    return set(_BAND_COMPAT_SAME) if _qop_allows_13(version) is False else set(_BAND_COMPAT)
+
+def _qop_port_sharing_affected(version):
+    """QOP 3.3, 3.4 and 3.6 (fixed in 3.5 and 3.7); None = unknown (noted)."""
+    mm = _qop_minor(version)
+    return None if mm is None else mm in ((3, 3), (3, 4), (3, 6))
+
 def _bands_covering(lo):
     return [b for b, (lo_, hi) in _BAND_RANGES.items()
             if isinstance(lo, (int, float)) and lo_ <= lo <= hi]
@@ -254,6 +280,8 @@ def _fix_coupled_bands(machine, spec, warnings):
     for port, lo, explicit, z in seen.values():
         con, fem, pid, io = _port_key(port)
         byfem.setdefault((con, fem), {})[(pid, io)] = (port, lo, explicit, z)
+    qop = (spec or {}).get("qop_version")
+    compat = _band_compat(qop)
     for (con, fem), ports in sorted(byfem.items()):
         for pa, sa, pb, sb in _COUPLED_PORT_PAIRS:
             a = ports.get((pa, sa))
@@ -261,14 +289,14 @@ def _fix_coupled_bands(machine, spec, warnings):
             if a is None or b is None:
                 continue
             ba, bb = getattr(a[0], "band", None), getattr(b[0], "band", None)
-            if ba not in (1, 2, 3) or bb not in (1, 2, 3) or (ba, bb) in _BAND_COMPAT:
+            if ba not in (1, 2, 3) or bb not in (1, 2, 3) or (ba, bb) in compat:
                 continue
             opts_a = [ba] if a[2] else _bands_covering(a[1])
             opts_b = [bb] if b[2] else _bands_covering(b[1])
             best = None
             for x in opts_a:
                 for y in opts_b:
-                    if (x, y) not in _BAND_COMPAT:
+                    if (x, y) not in compat:
                         continue
                     cost = (x != ba) + (y != bb) + (0 if x == y else 0.5)
                     if best is None or cost < best[0]:
@@ -288,7 +316,9 @@ def _fix_coupled_bands(machine, spec, warnings):
                 warnings.append(
                     f"con{con}/FEM {fem}: {label} moved from band {old} to band {new} "
                     f"so its coupled pair is one the QOP accepts (its LO "
-                    f"{lo / 1e9:.4g} GHz lies in both bands).")
+                    f"{lo / 1e9:.4g} GHz lies in both bands)."
+                    + (f" {_BANDS_13_NOTE}." if (best[1], best[2]) in _BAND_COMPAT_13
+                       and _qop_allows_13(qop) is None else ""))
     return warnings
 
 def _default_flux_upsampling(machine, spec):
@@ -1764,7 +1794,8 @@ def _link_input_downconverters_to_outputs(state_path, wiring_path):
 machine = QuamCls.load()
 _spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,
          "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES,
-         "twpas": []}
+         "twpas": [],
+         "qop_version": None}
 apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))
 _apply_twpa_qubits(machine, _spec)
 for _w in _apply_dual_upconverters(machine, _spec):

@@ -64,8 +64,72 @@ COUPLED_PORT_PAIRS = [
     ("6", "out", "7", "out"),
     ("8", "out", "2", "in"),
 ]
-# Band compatibility for coupled ports: 1&3 ok; 1&2 and 2&3 NOT.
+# Band compatibility for coupled ports: 1&3 ok; 1&2 and 2&3 NOT. The pairs
+# share only the BAND rule -- there is no LO-frequency rule between them.
 BAND_COMPAT = {(1, 1), (2, 2), (3, 3), (1, 3), (3, 1)}
+# The rule is QOP-version-aware. Current docs, Guides/opx1000_fems.md:106-107:
+# "Coupled ports must be in the same band, or in bands `1` and `3`." /
+# "... Other band combinations are not supported." Older QOPs refuse the 1 + 3
+# combination -- hidden_pages/QOP33x.md:111 and hidden_pages/QOP34x.md:59, both:
+# "**Bands 1 & 3 cannot be used in coupled ports**." So a QOP <= 3.4 allows
+# the same band only; an unknown version keeps the current rule, and a 1 + 3
+# choice is labelled "QOP 3.5 or later only".
+BAND_COMPAT_SAME = {(1, 1), (2, 2), (3, 3)}
+BAND_COMPAT_13 = {(1, 3), (3, 1)}
+BANDS_13_NOTE = "QOP 3.5 or later only (QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)"
+# A non-blocking note from the QOP release pages: QOP33x.md:112 and QOP34x.md:91
+# "**Port sharing (same or coupled ports)** may cause upconverters to stop
+# playing."; QOP36x.md:78 "**MW-FEM port sharing on the same or coupled ports
+# can cause ports or upconverters to stop playing.**"; fixed by QOP35x.md:75
+# ("Port sharing on same or coupled ports should not cause upconverters to stop
+# playing anymore.") and QOP37x.md:97 ("Fixed an issue where MW-FEM port
+# sharing on the same or coupled ports could cause ports or upconverters to
+# stop playing.").
+PORT_SHARING_NOTE = ("QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or "
+                     "coupled ports can cause ports or upconverters to stop playing "
+                     "(fixed in QOP 3.5 and 3.7)")
+_QOP_VER_RE = re.compile(r"(\d+)\.(\d+)")
+
+
+def qop_minor(version) -> tuple[int, int] | None:
+    """``(major, minor)`` of a QOP version spelt ``"3.4.2"``, ``"QOP 3.5"`` or
+    ``"v3_8_1"``; None when nothing parses (unknown)."""
+    if version in (None, ""):
+        return None
+    m = _QOP_VER_RE.search(str(version).replace("_", "."))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def qop_allows_bands_13(version) -> bool | None:
+    """True / False by the docs above; None = version unknown (allowed, noted)."""
+    mm = qop_minor(version)
+    return None if mm is None else mm >= (3, 5)
+
+
+def band_compat(qop_version=None) -> set:
+    """The legal (band a, band b) set for a coupled pair on this QOP."""
+    return set(BAND_COMPAT_SAME) if qop_allows_bands_13(qop_version) is False else set(BAND_COMPAT)
+
+
+def qop_port_sharing_affected(version) -> bool | None:
+    """Whether the port-sharing known issue applies: QOP 3.3, 3.4 and 3.6 (fixed in
+    3.5 and 3.7); None = version unknown (the note is shown)."""
+    mm = qop_minor(version)
+    return None if mm is None else mm in ((3, 3), (3, 4), (3, 6))
+
+
+def qop_version_of(state) -> str | None:
+    """A chip's declared QOP version when it carries one (``extras.qop_version``,
+    or ``extras.versions.qop`` / ``.qop_version``); None otherwise. Nothing SM
+    generates stamps one today, so the usual answer is "unknown"."""
+    ex = (state or {}).get("extras") if isinstance(state, dict) else None
+    if not isinstance(ex, dict):
+        return None
+    v = ex.get("qop_version")
+    if not v:
+        vs = ex.get("versions")
+        v = (vs.get("qop") or vs.get("qop_version")) if isinstance(vs, dict) else None
+    return str(v) if v else None
 
 _OPS_LEN_RE = re.compile(r"(^|\.)operations\.[^.]+\.length$")
 

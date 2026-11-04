@@ -466,6 +466,51 @@ _COUPLED_PORT_PAIRS = [("1", "out", "1", "in"), ("2", "out", "3", "out"),
                        ("8", "out", "2", "in")]
 _BAND_COMPAT = {(1, 1), (2, 2), (3, 3), (1, 3), (3, 1)}
 _BAND_RANGES = {1: (50e6, 5.5e9), 2: (4.5e9, 7.5e9), 3: (6.5e9, 10.5e9)}   # Hz
+# The rule is QOP-version-aware (mirrors core/spec_constraints.band_compat).
+# Current docs, Guides/opx1000_fems.md:106-107: "Coupled ports must be in the
+# same band, or in bands `1` and `3`." / "... Other band combinations are not
+# supported." Older QOPs refuse the 1 + 3 combination -- hidden_pages/
+# QOP33x.md:111 and hidden_pages/QOP34x.md:59, both: "**Bands 1 & 3 cannot be
+# used in coupled ports**." A QOP <= 3.4 allows the same band only; an unknown
+# version keeps the current rule and a 1 + 3 choice is labelled. The pairs
+# share the BAND only: there is no LO-frequency rule between them.
+_BAND_COMPAT_SAME = {(1, 1), (2, 2), (3, 3)}
+_BAND_COMPAT_13 = {(1, 3), (3, 1)}
+_BANDS_13_NOTE = "QOP 3.5 or later only (QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)"
+# Non-blocking, from the QOP release pages: QOP33x.md:112 / QOP34x.md:91 "**Port
+# sharing (same or coupled ports)** may cause upconverters to stop playing.";
+# QOP36x.md:78 "**MW-FEM port sharing on the same or coupled ports can cause
+# ports or upconverters to stop playing.**"; fixed by QOP35x.md:75 and
+# QOP37x.md:97.
+_PORT_SHARING_NOTE = ("QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or "
+                      "coupled ports can cause ports or upconverters to stop playing "
+                      "(fixed in QOP 3.5 and 3.7)")
+
+
+def _qop_minor(version):
+    """(major, minor) of a QOP version spelt "3.4.2", "QOP 3.5" or "v3_8_1";
+    None when nothing parses (unknown)."""
+    import re as _re
+    if version in (None, ""):
+        return None
+    m = _re.search(r"(\d+)\.(\d+)", str(version).replace("_", "."))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _qop_allows_13(version):
+    """True / False by the docs; None = version unknown (allowed, noted)."""
+    mm = _qop_minor(version)
+    return None if mm is None else mm >= (3, 5)
+
+
+def _band_compat(version=None):
+    return set(_BAND_COMPAT_SAME) if _qop_allows_13(version) is False else set(_BAND_COMPAT)
+
+
+def _qop_port_sharing_affected(version):
+    """QOP 3.3, 3.4 and 3.6 (fixed in 3.5 and 3.7); None = unknown (noted)."""
+    mm = _qop_minor(version)
+    return None if mm is None else mm in ((3, 3), (3, 4), (3, 6))
 
 
 def _bands_covering(lo):
@@ -537,6 +582,8 @@ def _fix_coupled_bands(machine, spec, warnings):
     for port, lo, explicit, z in seen.values():
         con, fem, pid, io = _port_key(port)
         byfem.setdefault((con, fem), {})[(pid, io)] = (port, lo, explicit, z)
+    qop = (spec or {}).get("qop_version")
+    compat = _band_compat(qop)
     for (con, fem), ports in sorted(byfem.items()):
         for pa, sa, pb, sb in _COUPLED_PORT_PAIRS:
             a = ports.get((pa, sa))
@@ -544,14 +591,14 @@ def _fix_coupled_bands(machine, spec, warnings):
             if a is None or b is None:
                 continue
             ba, bb = getattr(a[0], "band", None), getattr(b[0], "band", None)
-            if ba not in (1, 2, 3) or bb not in (1, 2, 3) or (ba, bb) in _BAND_COMPAT:
+            if ba not in (1, 2, 3) or bb not in (1, 2, 3) or (ba, bb) in compat:
                 continue
             opts_a = [ba] if a[2] else _bands_covering(a[1])
             opts_b = [bb] if b[2] else _bands_covering(b[1])
             best = None
             for x in opts_a:
                 for y in opts_b:
-                    if (x, y) not in _BAND_COMPAT:
+                    if (x, y) not in compat:
                         continue
                     cost = (x != ba) + (y != bb) + (0 if x == y else 0.5)
                     if best is None or cost < best[0]:
@@ -571,7 +618,9 @@ def _fix_coupled_bands(machine, spec, warnings):
                 warnings.append(
                     f"con{con}/FEM {fem}: {label} moved from band {old} to band {new} "
                     f"so its coupled pair is one the QOP accepts (its LO "
-                    f"{lo / 1e9:.4g} GHz lies in both bands).")
+                    f"{lo / 1e9:.4g} GHz lies in both bands)."
+                    + (f" {_BANDS_13_NOTE}." if (best[1], best[2]) in _BAND_COMPAT_13
+                       and _qop_allows_13(qop) is None else ""))
     return warnings
 
 
@@ -611,17 +660,13 @@ def _default_flux_upsampling(machine, spec):
     return done
 
 
-def _coupled_band_errors(state):
-    """G1: the coupled MW-FEM port pairs of a saved *state* whose bands the
-    QOP refuses when a program opens ("The bands set for output port 1 &
-    input port 1 ... are not a valid combination") although
-    ``generate_config()`` builds them. One line per bad pair; the build must
-    not write such a chip (the wizard blocks it client-side; a direct POST
-    or a stale tab reaches this)."""
+def _coupled_pairs(state):
+    """Every coupled MW-FEM pair of a saved *state* with both ports present:
+    ``(con, fem, sa, pa, ba, sb, pb, bb)``."""
     ports = (state or {}).get("ports") or {}
     outs = ports.get("mw_outputs") or {}
     ins = ports.get("mw_inputs") or {}
-    bad = []
+    out = []
     for con in sorted(set(outs) | set(ins), key=str):
         o_fems = outs.get(con) or {}
         i_fems = ins.get(con) or {}
@@ -633,10 +678,25 @@ def _coupled_band_errors(state):
                 b = (o_ports if sb == "out" else i_ports).get(pb)
                 if not isinstance(a, dict) or not isinstance(b, dict):
                     continue
-                ba, bb = a.get("band"), b.get("band")
-                if ba in (1, 2, 3) and bb in (1, 2, 3) and (ba, bb) not in _BAND_COMPAT:
-                    bad.append(f"{con}/FEM {fem}: {sa} {pa} is band {ba} and "
-                               f"{sb} {pb} is band {bb}")
+                out.append((con, fem, sa, pa, a.get("band"), sb, pb, b.get("band")))
+    return out
+
+
+def _coupled_band_errors(state, qop_version=None):
+    """G1: the coupled MW-FEM port pairs of a saved *state* whose bands the
+    QOP refuses when a program opens ("The bands set for output port 1 &
+    input port 1 ... are not a valid combination") although
+    ``generate_config()`` builds them. One line per bad pair; the build must
+    not write such a chip (the wizard blocks it client-side; a direct POST
+    or a stale tab reaches this). Version-aware: a QOP <= 3.4 also refuses
+    the 1 + 3 combination (``_band_compat``)."""
+    compat = _band_compat(qop_version)
+    bad = []
+    for con, fem, sa, pa, ba, sb, pb, bb in _coupled_pairs(state):
+        if ba in (1, 2, 3) and bb in (1, 2, 3) and (ba, bb) not in compat:
+            bad.append(f"{con}/FEM {fem}: {sa} {pa} is band {ba} and {sb} {pb} is band {bb}"
+                       + (f" (QOP {qop_version} refuses bands 1 and 3 on coupled ports)"
+                          if (ba, bb) in _BAND_COMPAT_13 else ""))
     return bad
 
 
@@ -3196,8 +3256,16 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         # Judged on the saved state (every port's band is a literal there).
         _saved = build_dir / "state.json"
         if _saved.exists():
-            _bad_bands = _coupled_band_errors(
-                json.loads(_saved.read_text(encoding="utf-8")))
+            _saved_state = json.loads(_saved.read_text(encoding="utf-8"))
+            _qop = spec.get("qop_version")
+            _bad_bands = _coupled_band_errors(_saved_state, _qop)
+            # non-blocking: the port-sharing known issue of QOP 3.3/3.4/3.6
+            _n_pairs = len([p for p in _coupled_pairs(_saved_state)
+                            if p[4] in (1, 2, 3) and p[7] in (1, 2, 3)])
+            if _n_pairs and _qop_port_sharing_affected(_qop) is not False:
+                warnings.append(f"{_n_pairs} coupled MW port pair(s) in use: "
+                                f"{_PORT_SHARING_NOTE}"
+                                + ("" if _qop else "; the spec declares no QOP version"))
             if _bad_bands:
                 raise RuntimeError(
                     "coupled MW ports are on an invalid band combination; the QOP "

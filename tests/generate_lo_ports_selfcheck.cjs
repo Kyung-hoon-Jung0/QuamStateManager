@@ -313,6 +313,41 @@ function panelText(win) {
     'L8d: the build path refuses while a coupled-band blocker stands');
 })();
 
+// ---- L8e: on QOP <= 3.4 bands 1 + 3 are not a legal pair -----------------
+// hidden_pages/QOP33x.md:111 and QOP34x.md:59: "**Bands 1 & 3 cannot be used
+// in coupled ports**." The L8d world with the spec declaring its QOP; and the
+// port-sharing known issue (QOP33x.md:112, QOP34x.md:91, QOP36x.md:78; fixed
+// QOP35x.md:75, QOP37x.md:97) is a non-blocking note.
+(function () {
+  const RR8 = [{ con: 1, slot: 3, port: 8, io_type: 'output' },
+               { con: 1, slot: 3, port: 1, io_type: 'input' }];
+  const w = world('generate', {
+    qubit: { q1: { RF_freq: 4.0e9 } },
+    resonator: { q1: { RF_freq: 7.0e9 } } }, ['q1']);
+  w.st.allocation = { q1: { xy: xy(1), rr: RR8 } };
+  w.st.spec.qop_version = '3.4.2';
+  const calc = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(calc.warnings.some(function (x) { return x.kind === 'coupled_band'; }),
+    'L8e: on QOP 3.4 the 1 + 3 answer is not offered, the pair stays a warning (got ' +
+    JSON.stringify(calc.warnings.map(function (x) { return x.message; })) + ')');
+  ok(calc.coBands['resonator/q1'] !== 3,
+    'L8e: band 3 is never proposed on QOP 3.4 (got ' + JSON.stringify(calc.coBands) + ')');
+  ok(w.T.coupledBandBlockers().length === 1, 'L8e: the build is blocked on QOP 3.4');
+  ok(calc.qopNotes.some(function (n) { return n.kind === 'port_sharing' && /stop playing/.test(n.message); }),
+    'L8e: the port-sharing known issue is noted on QOP 3.4');
+  w.st.spec.qop_version = 'v3_8_1';
+  const calc2 = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(calc2.coBands['resonator/q1'] === 3 && w.T.coupledBandBlockers().length === 0,
+    'L8e: on QOP 3.8.1 the 1 + 3 answer is back (got ' + JSON.stringify(calc2.coBands) + ')');
+  ok(!calc2.qopNotes.some(function (n) { return n.kind === 'port_sharing'; }),
+    'L8e: no port-sharing note on QOP 3.8.1');
+  delete w.st.spec.qop_version;
+  const calc3 = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(calc3.coBands['resonator/q1'] === 3, 'L8e: an undeclared QOP keeps the current rule');
+  ok(calc3.qopNotes.some(function (n) { return n.kind === 'port_sharing' && /declares no QOP/.test(n.message); }),
+    'L8e: an undeclared QOP keeps the note and says the version is undeclared');
+})();
+
 // ---- L8a: a row rewrite also reaches its other coupled port ---------------
 (function () {
   function port(n, io) { return { con: 1, slot: 3, port: n, io_type: io }; }

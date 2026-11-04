@@ -8160,6 +8160,7 @@
     // Explicit bands stay fixed; an unresolved assignment keeps its warnings.
     calc.coBands = {};
     calc.notes = [];
+    calc.qopNotes = [];       // non-blocking QOP known-issue notes (not band notes)
     var fems = {};
     calc.ports.forEach(function (p) { fems[p.con + "/" + p.slot] = p.femName; });
     var pairs = [];
@@ -8171,10 +8172,47 @@
         pairs.push({ a: a, b: b, femName: fems[fk] });
       });
     });
-    function compatible(a, b) {
-      return a.band === b.band || (a.band === 1 && b.band === 3) ||
-        (a.band === 3 && b.band === 1);
+    // Non-blocking, from the QOP release pages: QOP33x.md:112 / QOP34x.md:91
+    // "**Port sharing (same or coupled ports)** may cause upconverters to stop
+    // playing."; QOP36x.md:78 "**MW-FEM port sharing on the same or coupled
+    // ports can cause ports or upconverters to stop playing.**"; fixed by
+    // QOP35x.md:75 and QOP37x.md:97. Said once while coupled pairs are in use
+    // and the spec declares no QOP outside 3.3 / 3.4 / 3.6.
+    (function () {
+      var v = state.spec && state.spec.qop_version;
+      var m = v == null || v === "" ? null : String(v).replace(/_/g, ".").match(/(\d+)\.(\d+)/);
+      var affected = m ? ((+m[1] === 3) && [3, 4, 6].indexOf(+m[2]) >= 0) : null;
+      if (!pairs.length || affected === false) return;
+      var members = [];
+      pairs.forEach(function (pair) { members = members.concat(pair.a.p.members, pair.b.p.members); });
+      calc.qopNotes.push({ members: members, kind: "port_sharing", message:
+        pairs.length + " coupled MW port pair" + (pairs.length === 1 ? "" : "s") + " in use. " +
+        "QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or coupled ports " +
+        "can cause ports or upconverters to stop playing (fixed in QOP 3.5 and 3.7)" +
+        (m ? "." : "; the spec declares no QOP version.") });
+    })();
+    // The band rule is QOP-version-aware (mirrors spec_constraints.band_compat).
+    // Current docs, Guides/opx1000_fems.md:106-107: "Coupled ports must be in
+    // the same band, or in bands `1` and `3`." / "... Other band combinations
+    // are not supported." Older QOPs refuse the 1 + 3 combination --
+    // hidden_pages/QOP33x.md:111 and QOP34x.md:59, both: "**Bands 1 & 3
+    // cannot be used in coupled ports**." A spec may declare `qop_version`
+    // ("3.4.2", "v3_8_1"); unknown keeps the current rule and labels a 1 + 3
+    // choice "QOP 3.5 or later only". The pair shares the BAND only: there is
+    // no LO-frequency rule between coupled ports.
+    function qopAllows13() {
+      var v = state.spec && state.spec.qop_version;
+      if (v == null || v === "") return null;
+      var m = String(v).replace(/_/g, ".").match(/(\d+)\.(\d+)/);
+      if (!m) return null;
+      return (+m[1] > 3) || (+m[1] === 3 && +m[2] >= 5);
     }
+    function legalPair(ba, bb) {
+      if (ba === bb) return true;
+      if (qopAllows13() === false) return false;
+      return (ba === 1 && bb === 3) || (ba === 3 && bb === 1);
+    }
+    function compatible(a, b) { return legalPair(a.band, b.band); }
     // Every legal (band a, band b) for a coupled pair whose LOs they cover:
     // the fewest changed sides first (keep a side's current band when it can
     // stay), then a shared band before the 1 + 3 combination.
@@ -8184,7 +8222,7 @@
         [1, 2, 3].forEach(function (bb) {
           if (a.lo == null || b.lo == null) return;
           if (!covers(ba, a.lo) || !covers(bb, b.lo)) return;
-          if (!(ba === bb || (ba === 1 && bb === 3) || (ba === 3 && bb === 1))) return;
+          if (!legalPair(ba, bb)) return;
           out.push([ba, bb]);
         });
       });
@@ -10024,6 +10062,12 @@
     recomputeAllPowerFindings();
     if (loCalc.notes && loCalc.notes.length) {
       rows.push(["Coupled ports", loCalc.notes.map(function (n) {
+        return n.message; }).join(" ")]);
+    }
+    // the QOP known-issue note (port sharing on the same or coupled ports):
+    // informational, never a blocker
+    if (loCalc.qopNotes && loCalc.qopNotes.length) {
+      rows.push(["QOP note", loCalc.qopNotes.map(function (n) {
         return n.message; }).join(" ")]);
     }
     var bandBlock = loCalc.warnings.filter(function (w) { return w.kind === "coupled_band"; });

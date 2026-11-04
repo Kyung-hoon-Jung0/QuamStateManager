@@ -66,7 +66,8 @@ _RUN_BUILD_PATH = Path(__file__).resolve().parent.parent / "generator" / "run_bu
 # emit time (and fails the golden test) — the moment run_build refactors,
 # this list is the single thing to update.
 _RUNTIME_CONSTS = ("_BAND_TO_DELAY_NS", "_CZ_VARIANTS", "_PULSE_HOMES",
-                   "_COUPLED_PORT_PAIRS", "_BAND_COMPAT", "_BAND_RANGES")
+                   "_COUPLED_PORT_PAIRS", "_BAND_COMPAT", "_BAND_RANGES",
+                   "_BAND_COMPAT_SAME", "_BAND_COMPAT_13", "_BANDS_13_NOTE", "_PORT_SHARING_NOTE")
 # docs/136 — emitted ONLY for a chip that declares a QDAC. On every other chip
 # this is ~200 lines of dead weight, and a recipe nobody wants to read is not
 # an editable recipe.
@@ -79,6 +80,7 @@ _RUNTIME_FUNCS = (
     "_match_populate_pairs",
     "_num", "_target_lo",
     "_band_for", "_delay_for_band", "_apply_lf_delay",
+    "_qop_minor", "_qop_allows_13", "_band_compat", "_qop_port_sharing_affected",
     "_bands_covering", "_port_key", "_fix_coupled_bands", "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
@@ -569,8 +571,11 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w("machine = QuamCls.load()")
     w('_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,')
     w('         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES,')
-    w('         "twpas": %r}' % ([{"id": t.get("id"), "qubits": list(t.get("qubits") or [])}
-                               for t in (spec.get("twpas") or []) if isinstance(t, dict)],))
+    w('         "twpas": %r,' % ([{"id": t.get("id"), "qubits": list(t.get("qubits") or [])}
+                                for t in (spec.get("twpas") or []) if isinstance(t, dict)],))
+    # the QOP version the spec declares (None = unknown): the coupled-band
+    # pass allows bands 1 + 3 only from QOP 3.5
+    w('         "qop_version": %r}' % (spec.get("qop_version"),))
     if qdac_qubits:
         # BEFORE apply_populate: its z.operations guards, and _finalize_pair_
         # gates', both branch on the qubit's final class.
