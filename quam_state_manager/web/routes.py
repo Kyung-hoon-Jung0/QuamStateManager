@@ -16689,6 +16689,24 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 if hasattr(_e, "actor"):
                     _e.actor = _actor
 
+            # W2-2: a row TAKEN from the live chip is not an unapplied edit --
+            # once the field holds exactly what the live chip holds, SM agrees
+            # with live there, so its change-log rows for that path are done
+            # (otherwise the panel calls SM's old value "live chip" and Take
+            # live counts the taken value as an edit it would lose)
+            if _ps_live is not None:
+                _adopted = set()
+                for _e in applied_entries:
+                    if getattr(_e, "created", False) or getattr(_e, "deleted", False):
+                        continue
+                    _now = _dot_get(modifier.store.merged, _e.dot_path)
+                    if _now is not _DOT_MISSING and _ps_live.holds(_e.dot_path, _now):
+                        _adopted.add(_e.dot_path)
+                _adopted -= set((ctx.get("pending_reapply") or {}).keys())
+                if _adopted:
+                    modifier.store.change_log[:] = [
+                        _c for _c in modifier.store.change_log if _c.dot_path not in _adopted]
+
     if applied_entries:
         _invalidate_engine_cache(ctx)
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
