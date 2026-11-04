@@ -457,7 +457,7 @@
     </header>
     {# v1.5.1 (U P2-28): data-poll-visible -- no request while the tab is
        hidden; one on return (smVisible, app.js) #}
-    <div id="qualibrate-running-slot" hx-get="/qualibrate/running-banner"
+    <div id="qualibrate-running-slot" class="ui-running-overlay" hx-get="/qualibrate/running-banner"
          hx-trigger="load, every 3s, smVisible" data-poll-visible hx-swap="innerHTML">
         {% include '_qualibrate_running_banner.html' %}
     </div>

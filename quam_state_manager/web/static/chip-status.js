@@ -5907,7 +5907,7 @@ window.ChipStatus.mount = function (opts) {
         html += _hTile('oldest calibration', _ageLabel(oc), _ageClass(oc),
                        summ.newest_calibration ? 'newest ' + _ageLabel(summ.newest_calibration)
                            : (topo.calibration_pending ? 'reading history' : 'no timestamps'));
-        html += _hTile('qubits below spec', belowCount,
+        html += _hTile('qubits below spec', measuredCount ? belowCount : '\u2014',
                        belowCount ? (failCount ? 'fail' : 'warn')
                                   : (measuredCount ? 'pass' : 'neutral'),
                        failCount ? (failCount + ' failing &middot; ' + (belowCount - failCount) + ' warn'
@@ -5924,7 +5924,7 @@ window.ChipStatus.mount = function (opts) {
             var v = _mval(e, 'cz_fidelity');
             return typeof v === 'number' && isFinite(v);
         }).length;
-        html += _hTile('CZ below spec', czBelow,
+        html += _hTile('CZ below spec', czMeasured ? czBelow : '\u2014',
                        czBelow ? (czFailCount ? 'fail' : 'warn')
                                : (czMeasured ? 'pass' : 'neutral'),
                        czBelow ? 'of ' + edges.length + ' pairs'

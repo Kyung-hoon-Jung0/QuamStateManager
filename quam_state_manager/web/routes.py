@@ -12056,7 +12056,7 @@ def _applied_values_held(ctx) -> dict:
                                      for k, v in v0.items())
                     else:
                         newest[p0] = v0
-                        olds.setdefault(p0, []).append(o0)
+                        olds[p0] = [o0]
     if not newest:
         return {}
     held = _HeldApplied()
@@ -12072,8 +12072,8 @@ def _applied_values_held(ctx) -> dict:
 
 
 class _HeldApplied(dict):
-    """``{path: value SM applied}`` plus ``.old`` = ``{path: [the values SM's
-    applies replaced]}`` (``_DOT_MISSING`` for a created key)."""
+    """``{path: value SM applied}`` plus ``.old`` = ``{path: [the value the latest
+    apply replaced]}`` (``_DOT_MISSING`` for a created key)."""
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -12081,11 +12081,9 @@ class _HeldApplied(dict):
 
 
 def _applied_value_lost(held, path: str, got) -> bool:
-    """W2-6 [derived]: did the live value ``got`` take away the value SM
-    applied at ``path``? Only when it went BACK to a value SM's apply had
-    replaced (a stale in-memory copy saved over the chip), or the key is gone.
-    A THIRD value -- neither the applied one nor one SM replaced -- is an
-    outside writer's new measurement: newer than SM's, not a loss."""
+    """An applied value is lost only if live is missing or equals the value
+    replaced by this chip's latest apply of that path; older replaced values
+    are outside values, not losses."""
     v = held.get(path, _DOT_MISSING)
     if got is not _DOT_MISSING and got == v:
         return False
@@ -30424,7 +30422,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     ctx["undo_cursor"] = index + 1
     _journal_persist_cursor(ctx)
     _redo_mark(ctx, store)
-    return staged, None
+    return staged, ("already on the chip" if body.get("already_live") else None)
 
 
 def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int = 0):
@@ -30447,7 +30445,8 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
     anchor = fw[0]
     n = len(fw)
     # v1.5.1 (SB-F2, U P1-5): a live step names the chip it wrote
-    _head = _undo_head("Redone", True)
+    wrote_live = why != "already on the chip"
+    _head = _undo_head("Redone", True) if wrote_live else "Redone: already on the chip"
     if n > 1:
         message = f"{_head}: {n:,} changes ({anchor.dot_path} …)"
     elif anchor.deleted:
@@ -30461,17 +30460,17 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
     _burst = _walk_burst_extra(n_req)
     if len(fw) > _HEADER_PATCH_CAP:          # sweep F4: see _walk_entries_payload
         return _redo_response(message, [],
-                              extra={**_burst, "level": "success", "live": True,
+                              extra={**_burst, "level": "success", "live": wrote_live,
                                      "structural": True, "n_entries": len(fw)},
-                              live=True)
+                              live=wrote_live)
     return _redo_response(
         message,
         [_revert_entry_payload(e.dot_path, e.new_value, created=bool(e.deleted),
                                deleted=bool(e.created), source_file=e.source_file,
                                from_value=None if e.created else e.old_value)
          for e in fw],
-        extra={**_burst, "level": "success", "live": True},
-        live=True)
+        extra={**_burst, "level": "success", "live": wrote_live},
+        live=wrote_live)
 
 
 @bp.route("/redo", methods=["POST"])
@@ -34052,6 +34051,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     return jsonify({
         "status": "ok",
         "mode": "apply",
+        "already_live": bool(_pend.skipped and _pend.skipped.startswith("no-op:")),
         "tray_html": _tray_html(),
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,

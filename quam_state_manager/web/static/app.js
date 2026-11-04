@@ -31732,3 +31732,16 @@ document.addEventListener('keydown', function (e) {
         form.requestSubmit();
     }
 }, true);
+
+// Keep discovery jitter from moving or flashing the running-config notice.
+document.addEventListener('htmx:beforeSwap', function (evt) {
+    var d = evt.detail, slot = d && d.target;
+    if (!slot || slot.id !== 'qualibrate-running-slot') return;
+    if (!d.xhr || d.xhr.status !== 200) return;
+    if ((d.serverResponse || '').trim()) {
+        slot._runningMisses = 0;
+    } else {
+        slot._runningMisses = (slot._runningMisses || 0) + 1;
+        if (slot._runningMisses < 3) d.shouldSwap = false;
+    }
+});
