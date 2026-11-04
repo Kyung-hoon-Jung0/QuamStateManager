@@ -1066,6 +1066,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
     }
     if qdac_spec:
         spec["qdac"] = qdac_spec
+    # The chip's declared QOP version, when it records one: the wizard's
+    # Review step judges the coupled-port rules against it. Absent = no key,
+    # so an unversioned chip reconstructs exactly as before.
+    from quam_state_manager.core import spec_constraints
+    _qop = spec_constraints.qop_version_of(state)
+    if _qop:
+        spec["qop_version"] = str(_qop)
     # Shared-port detection (docs/54): when EVERY CR line rides its control's
     # xy port, the chip is the customer's dual-upconverter layout — record the
     # mode so a rebuild keeps the port plan (mixed layouts stay unset: the

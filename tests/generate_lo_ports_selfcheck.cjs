@@ -446,8 +446,35 @@ function panelText(win) {
   delete w.st.spec.qop_version;
   const calc3 = w.T.loBandFindings(w.T.computeLoAssignments());
   ok(calc3.coBands['resonator/q1'] === 3, 'L8e: an undeclared QOP keeps the current rule');
-  ok(calc3.qopNotes.some(function (n) { return n.kind === 'port_sharing' && /declares no QOP/.test(n.message); }),
+  ok(calc3.qopNotes.some(function (n) { return n.kind === 'port_sharing' && /QOP version not set/.test(n.message); }),
     'L8e: an undeclared QOP keeps the note and says the version is undeclared');
+  // Q1: the QOP caveats are short lines, version-aware, and only on Review
+  let lines = w.T.qopReviewLines(calc3);
+  ok(lines.some(function (t) { return /Bands 1 \+ 3 on a coupled pair need QOP 3\.5/.test(t); }) &&
+     lines.some(function (t) { return /Set the QOP version/.test(t); }),
+    'Q1: unset QOP names the 1 + 3 caveat and asks for the version (got ' + JSON.stringify(lines) + ')');
+  ok(lines.every(function (t) { return t.length <= 170 && !/ -- /.test(t); }),
+    'Q1: every caveat is one short line (got ' + JSON.stringify(lines) + ')');
+  w.G.goToStep(8);
+  let doc = w.win.document;
+  const qsel = doc.getElementById('gen-qop-version');
+  ok(!!qsel && qsel.value === '' && doc.querySelector('#gen-review #gen-qop-version') === qsel,
+    'Q1: the Review step carries the QOP version select, unset by default');
+  ok(!/QOP note/.test(doc.querySelector('.gen-review-table').textContent),
+    'Q1: the review table no longer carries a QOP note wall');
+  qsel.value = '3.4';
+  qsel.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+  ok(w.st.spec.qop_version === '3.4', 'Q1: picking 3.4 writes spec.qop_version');
+  const cav = doc.getElementById('gen-qop-caveats').textContent;
+  ok(/QOP 3\.4: coupled MW ports must share one band/.test(cav) && /QOP 3\.4 known issue/.test(cav),
+    'Q1: on 3.4 the same-band rule and the known issue are listed (got ' + cav + ')');
+  ok(w.T.coupledBandBlockers().length === 1, 'Q1: the 3.4 pick reaches the band gate');
+  ok(!/bands 1 and 3\./.test(w.T.coupledBandBlockers()[0].message),
+    'Q1: on 3.4 the blocker does not offer bands 1 and 3 (got ' + w.T.coupledBandBlockers()[0].message + ')');
+  const q2 = doc.getElementById('gen-qop-version');
+  q2.value = '';
+  q2.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+  ok(!('qop_version' in w.st.spec), 'Q1: back to Not set removes the key (unset = as before)');
 })();
 
 // ---- L8a: a row rewrite also reaches its other coupled port ---------------

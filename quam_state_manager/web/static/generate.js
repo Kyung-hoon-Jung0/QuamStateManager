@@ -8233,11 +8233,12 @@
       if (!pairs.length || affected === false) return;
       var members = [];
       pairs.forEach(function (pair) { members = members.concat(pair.a.p.members, pair.b.p.members); });
-      calc.qopNotes.push({ members: members, kind: "port_sharing", message:
-        pairs.length + " coupled MW port pair" + (pairs.length === 1 ? "" : "s") + " in use. " +
-        "QOP 3.3, 3.4 and 3.6 known issue: MW-FEM port sharing on the same or coupled ports " +
-        "can cause ports or upconverters to stop playing (fixed in QOP 3.5 and 3.7)" +
-        (m ? "." : "; the spec declares no QOP version.") });
+      // Short, one line: the Review step shows it under the QOP version.
+      calc.qopNotes.push({ members: members, kind: "port_sharing", pairs: pairs.length,
+        message: (m ? "QOP " + m[1] + "." + m[2] + " known issue" : "QOP 3.3, 3.4, 3.6 known issue") +
+          ": port sharing on coupled MW ports can make upconverters stop playing (fixed in 3.5, 3.7). " +
+          pairs.length + " pair" + (pairs.length === 1 ? "" : "s") + " in use" +
+          (m ? "." : "; QOP version not set.") });
     })();
     // The band rule is QOP-version-aware (mirrors spec_constraints.band_compat).
     // Current docs, Guides/opx1000_fems.md:106-107: "Coupled ports must be in
@@ -8364,8 +8365,8 @@
               : pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
                 b.p.desc + " (" + who(b.p.members) + ") are coupled: the build uses " +
                 "band " + a.band + " (" + bandSpan(a.band) + ") and band " + b.band +
-                " (" + bandSpan(b.band) + "), the allowed 1 + 3 combination (QOP 3.5 or " +
-                "newer; QOP 3.3 and 3.4 refuse bands 1 and 3 on coupled ports)." });
+                " (" + bandSpan(b.band) + "), the allowed 1 + 3 combination.",
+          combo13: a.band !== b.band });
       });
     } else {
       Object.keys(info).forEach(function (k) { info[k].band = info[k].originalBand; });
@@ -8378,7 +8379,7 @@
         warn(pair.femName + " " + a.p.desc + " (band " + a.band + ": " +
           who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
           who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
-          "a band or be bands 1 and 3." + (fix.length
+          (qopAllows13() === false ? "one band on this QOP." : "a band or be bands 1 and 3.") + (fix.length
             ? " Band " + fix[0] + " (" + bandSpan(fix[0]) + ") covers both " +
               "LOs — set it on both."
             : mixed
@@ -10112,12 +10113,11 @@
       rows.push(["Coupled ports", loCalc.notes.map(function (n) {
         return n.message; }).join(" ")]);
     }
-    // the QOP known-issue note (port sharing on the same or coupled ports):
-    // informational, never a blocker
-    if (loCalc.qopNotes && loCalc.qopNotes.length) {
-      rows.push(["QOP note", loCalc.qopNotes.map(function (n) {
-        return n.message; }).join(" ")]);
-    }
+    // The QOP-version caveats live here and nowhere else in the wizard
+    // (rendered by renderQopBlock below the table: a version select + short lines).
+    var qopLines = qopReviewLines(loCalc);
+    var qopRow = rows.length;
+    rows.push(["QOP version", ""]);
     var bandBlock = loCalc.warnings.filter(function (w) { return w.kind === "coupled_band"; });
     if (bandBlock.length) {
       rows.push(["✗ Blocks Generate", "The QOP refuses this band combination " +
@@ -10142,6 +10142,7 @@
       rows.map(function (r) {
         return "<tr><th>" + r[0] + "</th><td></td></tr>";
       }).join("") + "</tbody></table>" +
+      '<div id="gen-qop-block"></div>' +
       '<div id="gen-capability-report" class="gen-cap-report"></div>';
     // Fill values via textContent so user-entered strings can't inject HTML.
     var cells = el.querySelectorAll("td");
@@ -10150,11 +10151,97 @@
       // QA F21: the flagged path cells wear the warning colour
       if (String(r[1]).indexOf(REL_FLAG) >= 0) cells[i].classList.add("gen-cap-degrade");
     });
+    renderQopBlock(cells[qopRow], document.getElementById("gen-qop-block"), qopLines);
 
     state._buildForce = false; state._buildAck = false;   // fresh review → fresh gates
     state._buildAckSource = false;   // QA regenerate-r2-35
     state._buildAckScripts = false;  // QA regenerate-r2-18
     renderCapabilityReport(document.getElementById("gen-capability-report"));
+  }
+
+  // -- QOP version (Review step only) ----------------------------------
+  // Versions with a QM release page (hidden_pages/QOP33x.md .. QOP37x.md).
+  // Unset = the current rule (docs/Guides/opx1000_fems.md:106, "Coupled ports
+  // must be in the same band, or in bands `1` and `3`.") with the caveats
+  // that depend on the version listed as unchecked.
+  var QOP_VERSIONS = ["3.3", "3.4", "3.5", "3.6", "3.7"];
+
+  function qopMinorOf(v) {
+    if (v == null || v === "") return null;
+    var m = String(v).replace(/_/g, ".").match(/(\d+)\.(\d+)/);
+    return m ? [+m[1], +m[2]] : null;
+  }
+
+  // Short caveat lines for the Review step, from the LO/band findings and the
+  // spec's qop_version. Each line is one sentence.
+  function qopReviewLines(loCalc) {
+    var v = state.spec && state.spec.qop_version;
+    var mm = qopMinorOf(v);
+    var lines = [];
+    var sharing = (loCalc.qopNotes || []).filter(function (n) { return n.kind === "port_sharing"; });
+    var nPairs = sharing.length ? sharing[0].pairs : 0;
+    var combo13 = (loCalc.notes || []).some(function (n) { return n.combo13; });
+    var blocked = (loCalc.warnings || []).some(function (w) { return w.kind === "coupled_band"; });
+    if (mm) {
+      // QOP33x.md:111 / QOP34x.md:59: "**Bands 1 & 3 cannot be used in coupled ports**."
+      var old = mm[0] === 3 && mm[1] <= 4;
+      if (nPairs || combo13 || blocked) {
+        lines.push(old
+          ? "QOP " + mm[0] + "." + mm[1] + ": coupled MW ports must share one band (bands 1 + 3 are refused)."
+          : "QOP " + mm[0] + "." + mm[1] + ": coupled MW ports share a band, or use bands 1 + 3.");
+      }
+    } else if (combo13) {
+      lines.push("Bands 1 + 3 on a coupled pair need QOP 3.5 or newer (3.3 and 3.4 refuse them).");
+    }
+    sharing.forEach(function (n) { lines.push(n.message); });
+    if (!mm && lines.length) lines.push("Set the QOP version above to check these for your system.");
+    return lines;
+  }
+
+  // The select sits in the Review table's "QOP version" row; the caveats
+  // are one short line each, in a callout under the table.
+  function renderQopBlock(cell, box, lines) {
+    if (!cell || !box) return;
+    var v = (state.spec && state.spec.qop_version) || "";
+    var opts = [["", "Not set (current rules)"]].concat(QOP_VERSIONS.map(function (x) {
+      return [x, "QOP " + x]; }));
+    if (v && QOP_VERSIONS.indexOf(String(v)) < 0) opts.push([String(v), "QOP " + v + " (from the chip)"]);
+    cell.textContent = "";
+    var sel = document.createElement("select");
+    sel.id = "gen-qop-version";
+    sel.setAttribute("aria-label", "QOP version");
+    opts.forEach(function (o) {
+      var op = document.createElement("option");
+      op.value = o[0]; op.textContent = o[1];
+      if (o[0] === String(v)) op.selected = true;
+      sel.appendChild(op);
+    });
+    sel.addEventListener("change", function () {
+      if (sel.value) state.spec.qop_version = sel.value;
+      else delete state.spec.qop_version;   // unset = no key, as before
+      saveDraft();
+      enterReviewStep();
+      var again = document.getElementById("gen-qop-version");
+      if (again) again.focus();
+    });
+    cell.appendChild(sel);
+    box.innerHTML = "";
+    if (!lines.length) return;
+    box.className = "ui-callout ui-callout--note";
+    box.setAttribute("role", "note");
+    var t = document.createElement("div");
+    t.className = "ui-callout-title";
+    t.textContent = "QOP caveats";
+    box.appendChild(t);
+    var ul = document.createElement("ul");
+    ul.id = "gen-qop-caveats";
+    ul.className = "ui-callout-text";
+    lines.forEach(function (x) {
+      var li = document.createElement("li");
+      li.textContent = x;
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
   }
 
   // Ask the selected env what it can actually build for THIS spec, and render
@@ -13167,6 +13254,8 @@
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
+      qopReviewLines: qopReviewLines,
+      enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,

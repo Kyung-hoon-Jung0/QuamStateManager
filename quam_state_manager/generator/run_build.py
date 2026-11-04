@@ -3259,13 +3259,8 @@ def run_build(spec: dict, out_dir: Path) -> dict:
             _saved_state = json.loads(_saved.read_text(encoding="utf-8"))
             _qop = spec.get("qop_version")
             _bad_bands = _coupled_band_errors(_saved_state, _qop)
-            # non-blocking: the port-sharing known issue of QOP 3.3/3.4/3.6
-            _n_pairs = len([p for p in _coupled_pairs(_saved_state)
-                            if p[4] in (1, 2, 3) and p[7] in (1, 2, 3)])
-            if _n_pairs and _qop_port_sharing_affected(_qop) is not False:
-                warnings.append(f"{_n_pairs} coupled MW port pair(s) in use: "
-                                f"{_PORT_SHARING_NOTE}"
-                                + ("" if _qop else "; the spec declares no QOP version"))
+            # The non-blocking QOP port-sharing caveat is shown on the wizard's
+            # Review step only (it is not a build result).
             if _bad_bands:
                 raise RuntimeError(
                     "coupled MW ports are on an invalid band combination; the QOP "
