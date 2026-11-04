@@ -34,8 +34,43 @@ def _read(run, filename):
         return {}
 
 
+# F12 (final walk): a run SM ran itself whose writes a person approved never
+# carries node patches (the node wrote a scratch copy; SM wrote the chip). The
+# web app registers a provider that returns those approved writes for a run
+# folder as ``[{"path": "qubits.q1.f_01", "old": .., "new": ..}]``.
+_SM_WRITES_PROVIDER = None
+
+
+def set_sm_writes_provider(fn) -> None:
+    global _SM_WRITES_PROVIDER
+    _SM_WRITES_PROVIDER = fn
+
+
+def _sm_writes(run) -> list:
+    if _SM_WRITES_PROVIDER is None:
+        return []
+    try:
+        got = _SM_WRITES_PROVIDER(Path(getattr(run, "folder_path", run)))
+    except Exception:  # noqa: BLE001 -- no record readable: no evidence
+        return []
+    return list(got or [])
+
+
+def _entry(parts, value, old, tier):
+    if len(parts) < 3 or parts[0] not in {"qubits", "qubit_pairs"}:
+        return None
+    # Dot-path targets cannot represent literal dots in pointer components.
+    if any("." in p or not p for p in parts):
+        return None
+    template = ".".join([parts[0], "{q}" if parts[0] == "qubits" else "{pair}", *parts[2:]])
+    return {"path": ".".join(parts), "template": template,
+            "entity": parts[1], "value": value, "old": _number(old), "tier": tier}
+
+
 def evidence(run, node=None):
-    """Patches win as a whole tier, including an unusable patch list."""
+    """Patches win as a whole tier, including an unusable patch list; then the
+    node's proposed updates; then the writes SM itself applied for this run
+    after a person approved them."""
     node = _read(run, "node.json") if node is None else node
     patches = node.get("patches") if isinstance(node, dict) else None
     if patches:
@@ -53,16 +88,20 @@ def evidence(run, node=None):
         if not isinstance(path, str) or not path.startswith("/quam/") or value is None:
             continue
         parts = [p.replace("~1", "/").replace("~0", "~") for p in path[6:].split("/")]
-        if len(parts) < 3 or parts[0] not in {"qubits", "qubit_pairs"}:
+        e = _entry(parts, value, entry.get("old"), tier)
+        if e is not None:
+            output.append(e)
+    if patches or entries:
+        return output
+    for w in _sm_writes(run):
+        if not isinstance(w, dict) or not isinstance(w.get("path"), str):
             continue
-        # Dot-path targets cannot represent literal dots in pointer components.
-        if any("." in p or not p for p in parts):
+        value = _number(w.get("new"))
+        if value is None:
             continue
-        entity = parts[1]
-        template = ".".join([parts[0], "{q}" if parts[0] == "qubits" else "{pair}", *parts[2:]])
-        output.append({"path": ".".join(parts), "template": template,
-                       "entity": entity, "value": value, "old": _number(entry.get("old")),
-                       "tier": tier})
+        e = _entry(w["path"].split("."), value, w.get("old"), "applied")
+        if e is not None:
+            output.append(e)
     return output
 
 

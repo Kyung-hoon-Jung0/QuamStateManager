@@ -210,3 +210,31 @@ def summary(rec: dict) -> dict:
             "actor": rec.get("actor"), "created": rec.get("created"), "run_id": rec.get("run_id"),
             "plan_id": rec.get("plan_id"), "step": rec.get("step"), "status": rec.get("status"),
             "decided_by": rec.get("decided_by"), "used_by_run": rec.get("used_by_run")}
+
+
+def approved_writes_for_folder(instance_path, folder) -> list[dict]:
+    """F12 (final walk): the writes a person approved for the run SM ran into
+    ``folder`` (the agent's run_node), as ``[{"path", "old", "new"}]`` --
+    SM wrote them to the chip, so they are what the run wrote. Empty when SM
+    did not run it or nothing of it was approved."""
+    from quam_state_manager.core import story
+    target = os.path.normcase(os.path.abspath(str(folder)))
+    rec = None
+    try:
+        lines = story.agent_runs_index_path(instance_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        f = r.get("folder") if isinstance(r, dict) else None
+        if f and os.path.normcase(os.path.abspath(str(f))) == target:
+            rec = r
+    if not rec or not rec.get("approval") or not rec.get("chip"):
+        return []
+    ap = get(instance_path, rec["chip"], rec["approval"])
+    if not ap or ap.get("status") != "approved":
+        return []
+    return [w for w in (ap.get("writes") or []) if isinstance(w, dict)]
