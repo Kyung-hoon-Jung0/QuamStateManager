@@ -902,10 +902,16 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str],
                       if isinstance(v, str) and v.startswith("#/")]
         # (b) has broken pointers AND none that still resolve -- and (d) they were
         # broken in the SOURCE too: an op whose links worked there is calibration the
-        # merge failed to land, never a redundant copy (deleting it hid the loss)
+        # merge failed to land, never a redundant copy (deleting it hid the loss).
+        # A link into an entity the rebuild no longer has (a pair or qubit the user
+        # took off the wizard) is broken by that edit, not by the merge: the op
+        # belonged to the removed structure and goes with it -- kept, its dangling
+        # ``length`` made ``generate_config()`` assert on a real chip (review).
         if (ptr_leaves and all(not _resolves(merged, v) for v in ptr_leaves)
                 and (source is None
-                     or not any(_resolves(source, v) for v in ptr_leaves))):
+                     or not any(_resolves(source, v)
+                                and not _into_removed_entity(merged, v)
+                                for v in ptr_leaves))):
             prunable.append(op)
 
     for op in prunable:
@@ -913,6 +919,20 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str],
     pruned = set(prunable)
     remaining = [p for p in dangling if _enclosing_op(p) not in pruned]
     return sorted(prunable, key=natural_key), remaining
+
+
+# the collections whose entries the wizard adds and removes one by one
+_REMOVABLE_ENTITY_COLLECTIONS = ("qubits", "qubit_pairs", "twpas")
+
+
+def _into_removed_entity(merged: dict, pointer: str) -> bool:
+    """Does an absolute pointer name an entity (``#/qubits/<id>/...``,
+    ``#/qubit_pairs/<id>/...``, ``#/twpas/<id>/...``) that ``merged`` no longer has?"""
+    segs = [s for s in pointer[2:].split("/") if s]
+    if len(segs) < 2 or segs[0] not in _REMOVABLE_ENTITY_COLLECTIONS:
+        return False
+    coll = merged.get(segs[0])
+    return isinstance(coll, dict) and segs[1] not in coll
 
 
 def _norm_twpa_id(tid: str) -> str:

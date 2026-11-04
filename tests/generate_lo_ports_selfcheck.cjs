@@ -182,6 +182,75 @@ function panelText(win) {
   ok(c2.assignments['resonator/q3'] !== 7.46e9,
     'L8: a source LO inside a new resonator demod floor is re-derived (got ' +
     c2.assignments['resonator/q3'] + ')');
+  // a new member beyond the ±0.4 GHz window is not covered: re-derived
+  const w3 = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.10e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.95e9 } } }, ['q1', 'q3']);
+  delete w3.st.regenBaselinePopulate.resonator.q3;
+  w3.st.allocation = { q1: { rr: RR }, q3: { rr: RR } };
+  ok(w3.T.computeLoAssignments().assignments['resonator/q3'] !== 7.46e9,
+    'L8: a new member beyond the window re-derives');
+  // the source split this port (two LOs among its members): re-derived
+  const w4 = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.10e9, LO_frequency: 7.46e9 },
+      q2: { RF_freq: 7.15e9, LO_frequency: 7.30e9 },
+      q3: { RF_freq: 7.2e9 } } }, ['q1', 'q2', 'q3']);
+  delete w4.st.regenBaselinePopulate.resonator.q3;
+  w4.st.allocation = { q1: { rr: RR }, q2: { rr: RR }, q3: { rr: RR } };
+  const a4 = w4.T.computeLoAssignments().assignments['resonator/q3'];
+  ok(a4 !== 7.46e9 && a4 !== 7.30e9,
+    'L8: two source LOs on one port re-derive (got ' + a4 + ')');
+})();
+
+// ---- L9: a member the source chip already ran is not judged; a rename follows
+(function () {
+  // q1 sits 4 MHz from the source LO (the lab's own chip): keeping the LO keeps the
+  // chip as it was, and the new q3 fits, so the LO stays
+  const w = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.464e9, LO_frequency: 7.46e9 },
+      q2: { RF_freq: 7.15e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.2e9 } } }, ['q1', 'q2', 'q3']);
+  delete w.st.regenBaselinePopulate.resonator.q3;
+  w.st.allocation = { q1: { rr: RR }, q2: { rr: RR }, q3: { rr: RR } };
+  const c = w.T.computeLoAssignments();
+  ok(c.assignments['resonator/q3'] === 7.46e9,
+    'L9: an unchanged source member inside the demod floor does not move the LO (got ' +
+    c.assignments['resonator/q3'] + ')');
+  // ...nor one the source ran outside the ±0.4 GHz window
+  const w2 = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.90e9, LO_frequency: 7.46e9 },
+      q2: { RF_freq: 7.15e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.2e9 } } }, ['q1', 'q2', 'q3']);
+  delete w2.st.regenBaselinePopulate.resonator.q3;
+  w2.st.allocation = { q1: { rr: RR }, q2: { rr: RR }, q3: { rr: RR } };
+  ok(w2.T.computeLoAssignments().assignments['resonator/q3'] === 7.46e9,
+    'L9: an unchanged source member outside the window does not move the LO');
+  // ...but the same member with its RF EDITED beyond the window re-derives
+  w2.st.spec.populate.resonator.q1.RF_freq = 7.95e9;
+  ok(w2.T.computeLoAssignments().assignments['resonator/q3'] !== 7.46e9,
+    'L9: a source member whose RF the user moved beyond the window re-derives');
+  // a qubit renamed on the wizard keeps its source row through the id record
+  const w3 = world('regenerate', {
+    resonator: {
+      q1: { RF_freq: 7.10e9, LO_frequency: 7.46e9 },
+      q2: { RF_freq: 7.15e9, LO_frequency: 7.46e9 },
+      q3: { RF_freq: 7.4e9 } } }, ['q1', 'q2', 'q3']);
+  delete w3.st.regenBaselinePopulate.resonator.q3;
+  w3.st.spec.populate.resonator.qA1 = w3.st.spec.populate.resonator.q1;
+  delete w3.st.spec.populate.resonator.q1;
+  w3.st.spec.populate.resonator.qA2 = w3.st.spec.populate.resonator.q2;
+  delete w3.st.spec.populate.resonator.q2;
+  w3.st.spec.qubits = ['qA1', 'qA2', 'q3'];
+  w3.st.regenQubitSource = { qA1: 'q1', qA2: 'q2', q3: 'q3' };
+  w3.st.allocation = { qA1: { rr: RR }, qA2: { rr: RR }, q3: { rr: RR } };
+  const c3 = w3.T.computeLoAssignments();
+  ok(c3.assignments['resonator/q3'] === 7.46e9,
+    'L9: renamed source members still keep the feedline LO (got ' +
+    c3.assignments['resonator/q3'] + ')');
 })();
 
 // ---- L4: Re-solve never writes an infeasible pick ------------------------

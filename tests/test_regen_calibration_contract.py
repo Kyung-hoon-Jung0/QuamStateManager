@@ -230,3 +230,126 @@ def test_the_real_chip_rebuild_reads_the_source(tmp_path):
     skip |= set(r.stats.schema_dropped)
     assert calibration_check(os_, ow, r.merged, nw, skip=skip) == []
     assert r.stats.pruned_ops == []
+
+
+@pytest.mark.skipif(not ((_STUDY / "chip" / "state.json").is_file()
+                         and (_FRESH / "state.json").is_file()),
+                    reason="real chip copy / its fresh rebuild not on this machine")
+def test_the_real_chip_with_one_pair_removed_loads(tmp_path):
+    """Review: with one pair taken off the wizard, the legacy z op whose links
+    pointed into that pair's macro was KEPT (its links resolved in the source) and
+    ``generate_config()`` asserted on its dangling ``length``; the check listed the
+    removed pair's own links as "values you did not change"."""
+    from quam_state_manager.core import regenerate
+    src = tmp_path / "src"
+    shutil.copytree(_STUDY / "chip", src)
+    read = lambda d, f: json.loads((d / f).read_text(encoding="utf-8"))  # noqa: E731
+    os_, ow = read(src, "state.json"), read(src, "wiring.json")
+    ns, nw = read(_FRESH, "state.json"), read(_FRESH, "wiring.json")
+    pid = next(k for k in ns["qubit_pairs"])
+    members = regen_merge._pair_membership(ns["qubit_pairs"][pid], regen_merge._merged_doc(ns, nw))
+    del ns["qubit_pairs"][pid]
+    (nw.get("wiring", nw).get("qubit_pairs") or {}).pop(pid, None)
+    r = merge_states(copy.deepcopy(os_), ns, old_wiring=ow, new_wiring=nw)
+    # every op left on the chip reads its length as a number
+    for p, v in regen_merge._iter_leaves(r.merged):
+        if p.endswith(".length") and isinstance(v, str) and v.startswith("#/"):
+            assert regen_merge._resolves(r.merged, v), p
+    assert any(members[1] in op for op in r.stats.pruned_ops), r.stats.pruned_ops
+    d = regenerate._calibration_check(r, ow, nw, None, [], None)
+    assert [x for x in d if not x["path"].startswith("qubit_pairs.")] == []
+    assert d == []
+
+
+class TestAnOpOfRemovedStructureGoesWithIt:
+    """(4) the prune guard: a link that resolved in the source but points into an
+    entity the user took off the wizard is broken by that edit, not by the merge."""
+
+    def test_a_legacy_op_of_a_removed_pair_is_pruned(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        r = merge_states(copy.deepcopy(old), new)
+        assert "cz_cosine_bipolar_pulse_q1" not in _get(r.merged, "qubits.q2.z.operations")
+        assert r.stats.pruned_ops == ["qubits.q2.z.operations.cz_cosine_bipolar_pulse_q1"]
+        assert r.stats.dangling_grafts == []
+
+    def test_an_op_on_a_survivor_linking_into_a_removed_qubit_is_pruned(self):
+        old = {"qubits": {
+            "q1": {"xy": {"operations": {
+                "cr_q1_q2": {"__class__": "quam.SquarePulse", "amplitude": 0.1,
+                             "length": "#/qubits/q2/xy/operations/x180/length"},
+                "x180": {"length": 40}}}},
+            "q2": {"xy": {"operations": {"x180": {"length": 48}}}}}}
+        new = {"qubits": {"q1": {"xy": {"operations": {"x180": {"length": 40}}}}}}
+        r = merge_states(copy.deepcopy(old), new)
+        assert list(_get(r.merged, "qubits.q1.xy.operations")) == ["x180"]
+        assert r.stats.pruned_ops == ["qubits.q1.xy.operations.cr_q1_q2"]
+
+    def test_an_op_whose_links_worked_into_structure_that_stays_is_kept(self):
+        # the macro is held by a wizard edit, so the inline form cannot come back and
+        # the legacy op's links dangle: the pair is still there, so it is reported
+        p = "qubit_pairs.q2-q1.macros.cz_bipolar.flux_pulse_qubit"
+        r = merge_states(_source(), _rebuild(), protect_paths={p})
+        assert r.stats.pruned_ops == []
+        assert "cz_cosine_bipolar_pulse_q1" in _get(r.merged, "qubits.q2.z.operations")
+
+    def test_into_removed_entity_names_only_a_missing_entry(self):
+        from quam_state_manager.core.regen_merge import _into_removed_entity
+        merged = {"qubits": {"q1": {}}, "qubit_pairs": {}, "twpas": {"t1": {}}}
+        assert _into_removed_entity(merged, "#/qubits/q2/xy")
+        assert _into_removed_entity(merged, "#/qubit_pairs/q1-q2/macros/cz")
+        assert not _into_removed_entity(merged, "#/qubits/q1/xy/operations/x180")
+        assert not _into_removed_entity(merged, "#/twpas/t1/pump")
+        assert not _into_removed_entity(merged, "#/ports/mw_outputs/con1/1/1")
+        assert not _into_removed_entity(merged, "#/qubits")
+
+
+class TestTheCheckSkipsWhatTheUserRemoved:
+    """(2) false positives: a removed entity's links and classes, and the rename
+    record, are not calibration the rebuild failed to reproduce."""
+
+    def _check(self, r, protect=None):
+        from quam_state_manager.core import regenerate
+        return regenerate._calibration_check(r, None, None, protect, [], None)
+
+    def test_a_removed_qubits_links_are_not_reported(self):
+        old = _source()
+        old["qubits"]["q3"] = {
+            "id": "q3",
+            "xy": {"opx_output": "#/ports/mw_outputs/con1/1/3",
+                   "operations": {"x180": "#./x180_DragCosine",
+                                  "x180_DragCosine": {"amplitude": 0.1, "length": 40}}}}
+        old["ports"] = {"mw_outputs": {"con1": {"1": {"3": {"band": 2}}}}}
+        new = _rebuild()
+        new["ports"] = {"mw_outputs": {"con1": {"1": {}}}}
+        r = merge_states(copy.deepcopy(old), new)
+        assert "qubits.q3.id" in r.stats.residual_lost          # reported on its own line
+        assert self._check(r) == []
+
+    def test_a_removed_pairs_links_and_classes_are_not_reported(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        r = merge_states(copy.deepcopy(old), new)
+        assert self._check(r) == []
+
+    def test_a_value_the_rebuild_lost_elsewhere_is_still_reported(self):
+        old, new = _source(), _rebuild()
+        del new["qubit_pairs"]["q2-q1"]
+        new["qubits"]["q1"]["xy"]["operations"]["x180_DragCosine"]["length"] = 48
+        r = merge_states(copy.deepcopy(old), new)
+        r.merged["qubits"]["q1"]["xy"]["operations"]["x180_DragCosine"]["length"] = 48
+        assert [d["path"] for d in self._check(r)] == \
+            ["qubits.q1.xy.operations.x180_DragCosine.length"]
+
+    def test_a_second_rename_is_not_a_lost_value(self):
+        from quam_state_manager.core import rename_lineage
+        old = _source()
+        old["extras"] = {rename_lineage.EXTRAS_KEY: [{"id": "r1"}], "chip_name": "c"}
+        new = _rebuild()
+        new["extras"] = {rename_lineage.EXTRAS_KEY: [{"id": "r1"}, {"id": "r2"}], "chip_name": "c"}
+        r = merge_states(copy.deepcopy(old), new)
+        r.merged["extras"][rename_lineage.EXTRAS_KEY] = [{"id": "r1"}, {"id": "r2"}]
+        assert self._check(r) == []
+        # ...while another extras value that moved still is
+        r.merged["extras"]["chip_name"] = "d"
+        assert [d["path"] for d in self._check(r)] == ["extras.chip_name"]
