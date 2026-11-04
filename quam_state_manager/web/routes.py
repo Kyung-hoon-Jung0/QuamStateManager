@@ -42722,7 +42722,19 @@ def _dataset_store(*, light: bool = False) -> DatasetStore | None:
         return ds
 
     ws = current_app.config.get("workspace")
+    # W2-4: an opened project's data folder counts as open (the agent's
+    # check_fit / run_figure and the run attribution read this store) even
+    # before anyone pressed Dataset Load
+    try:
+        _proj = _scope_storage_path(_active_ctx())
+    except Exception:  # noqa: BLE001 -- a hint only
+        _proj = ""
     if not ws:
+        if _proj and Path(_proj).is_dir():
+            pds = _get_or_create_store(Path(_proj))
+            if pds is not None and pds.run_count:
+                current_app.config["dataset_store"] = pds
+                return pds
         return None
 
     # Build candidates: workspace root_folders + entries' grandparent folder.
@@ -42737,6 +42749,8 @@ def _dataset_store(*, light: bool = False) -> DatasetStore | None:
         candidate = entry.folder_path.parent.parent
         if candidate.is_dir():
             candidates.add(candidate)
+    if _proj and Path(_proj).is_dir():
+        candidates.add(Path(_proj))
 
     if not candidates:
         return None
