@@ -60,16 +60,23 @@ _RESP_HEADERS = ("Content-Type", "Cache-Control", "ETag", "Last-Modified",
 #: and cannot carry a header).
 TOKEN_HEADER = "X-QSM-Proxy-Token"
 _TOKEN = secrets.token_urlsafe(32)
-_STATIC_EXT = re.compile(r"\.(?:js|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|ico|webp|map)$", re.I)
+_STATIC_EXT = re.compile(r"\.(?:js|mjs|json|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|ico|webp|map)$", re.I)
+# Root files loaded by the recorded shells, including the 1.x hashed bundles.
+_STATIC_ROOT = re.compile(r"(?:(?:main|runtime)(?:\.[a-zA-Z0-9_-]+)?\.(?:js|css)|favicon\.svg)$")
 
 
 def null_origin_allowed(req) -> bool:
     """May a request with ``Origin: null`` reach the proxy? (D-19)"""
     if not req.path.startswith(PREFIX):
         return False
-    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, ""), _TOKEN):
+    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, "").encode("utf-8"), _TOKEN.encode("utf-8")):
         return True
-    return (req.method in ("GET", "HEAD") and _STATIC_EXT.search(req.path) is not None
+    sub = req.path[len(PREFIX):]
+    if "\\" in sub or any(p in (".", "..") for p in sub.split("/")):
+        return False
+    asset = (_STATIC_ROOT.fullmatch(sub) is not None or
+             (sub.startswith(("assets/", "static/")) and _STATIC_EXT.search(sub) is not None))
+    return (req.method in ("GET", "HEAD") and asset
             and "/api/" not in req.path and "/execution/" not in req.path)
 
 
@@ -126,7 +133,10 @@ def target_url() -> tuple[str, str]:
 
 
 def parse_target(raw: str, name: str = TARGET_ENV) -> tuple[str, int]:
-    """(host, port) of an http:// loopback address; TargetError otherwise."""
+    """HTTP target: loopback only unless SM_QUALIBRATE_PROXY_REMOTE=1.
+
+    Link-local / metadata addresses are always refused.
+    """
     raw = (raw or "").strip()
     parts = urlsplit(raw)
     if parts.scheme != "http":
@@ -138,6 +148,14 @@ def parse_target(raw: str, name: str = TARGET_ENV) -> tuple[str, int]:
         port = parts.port or 80
     except ValueError:
         raise TargetError(f"{name} has a bad port: {raw!r}.") from None
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    if addr is not None:
+        addr = getattr(addr, "ipv4_mapped", None) or addr
+        if addr.is_link_local:
+            raise TargetError(f"{name} must not use a link-local / metadata address.")
     if not _is_loopback(host) and os.environ.get(REMOTE_ENV) != "1":
         raise TargetError(f"{name} points at {host}, which is not this computer. "
                           f"Set {REMOTE_ENV}=1 to allow a QUAlibrate on another host.")
@@ -438,19 +456,19 @@ def probe(host: str, port: int) -> tuple[str | None, str | None]:
             body = resp.read(64 * 1024)
         finally:
             conn.close()
-    except (ConnectionRefusedError, TimeoutError):
-        return None, f"nothing answered at http://{_netloc(host, port)}"
-    except (OSError, http.client.HTTPException) as e:
-        return None, f"nothing answered at http://{_netloc(host, port)} ({e})"
+    except TimeoutError:
+        return None, "timed out"
+    except (OSError, http.client.HTTPException):
+        return None, "nothing answered"
     if resp.status != 200:
-        return None, f"http://{_netloc(host, port)}/execution/meta answered {resp.status}; is it QUAlibrate?"
+        return None, "not a QUAlibrate server"
     try:
         data = json.loads(body.decode("utf-8"))
     except ValueError:
         data = None
     v = data.get("version") if isinstance(data, dict) else None
     if not isinstance(v, str) or not v:
-        return None, f"http://{_netloc(host, port)} answered, but not as QUAlibrate does"
+        return None, "not a QUAlibrate server"
     return v[:40], None
 
 
@@ -482,8 +500,9 @@ def proxy_target_get():
 def proxy_target_set():
     """Save the QUAlibrate address chosen in SM's UI (D-20).
 
-    Origin-checked like every SM write; the address must be loopback (D-3) and
-    must answer as QUAlibrate before it is saved. ``{"url": ""}`` forgets it."""
+    Origin-checked like every SM write; loopback only unless
+    SM_QUALIBRATE_PROXY_REMOTE=1 (D-3), always refusing link-local / metadata.
+    It must answer as QUAlibrate before saving. ``{"url": ""}`` forgets it."""
     from flask import jsonify
     from quam_state_manager.web.request_body import json_object, json_text
     data = json_object()

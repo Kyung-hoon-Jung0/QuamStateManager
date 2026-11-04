@@ -129,6 +129,25 @@ const DOWN = Object.assign({}, OK, { ok: false, version: null, reason: 'nothing 
     ok(t.posts.length === 0, 'nothing posted when SM already has it');
     t.close();
   }
+  // K. server-supplied addresses must be HTTP(S), even after an unsuccessful check.
+  for (const url of ['javascript:alert(1)', 'data:text/html,unsafe', 'file:///unsafe']) {
+    const t = await world(Object.assign({}, DOWN, { source: 'saved', url }));
+    ok(t.src() === OK.url, 'unsafe server URL falls back to the default: ' + url);
+    t.close();
+  }
+  // L. compare the same host/port forms the server saves (it discards path/query).
+  for (const [server, browser] of [
+    ['http://127.0.0.1:8001', 'http://127.0.0.1:8001/'],
+    ['http://localhost:80', 'http://LOCALHOST/old?query=1#page'],
+    ['http://[::1]:80', 'http://[::1]/'],
+  ]) {
+    const t = await world(Object.assign({}, OK, { source: 'saved', url: server }), { quam_workbench_qb_url: browser });
+    ok(t.posts.length === 0, 'canonical match does not POST on boot: ' + browser);
+    t.$('wb-go').click();
+    await tick();
+    ok(t.posts.length === 0, 'canonical match does not POST on reload: ' + browser);
+    t.close();
+  }
   console.log(fails ? `FAILED ${fails} of ${n} assertions` : `ok (${n} assertions)`);
   process.exit(fails ? 1 : 0);
 })();

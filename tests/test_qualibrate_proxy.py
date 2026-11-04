@@ -529,6 +529,85 @@ class TestBothVersions:
 _SAME = {"Origin": "http://localhost"}
 
 
+@pytest.mark.parametrize("path", [
+    "private/trace.js", "runs/plot.svg", "config.json", "other/font.woff2",
+    "assets/../private/trace.js", "static/../../private/trace.js", "assets/api/data.json",
+])
+def test_asset_exception_does_not_expose_other_files(client, up, path):
+    up.routes["/" + path] = (200, {}, b"private")
+    r = client.get(qp.PREFIX + path, headers={"Origin": "null"})
+    assert r.status_code == 403
+    assert not up.seen
+
+
+@pytest.mark.parametrize("path", [
+    "runtime.js", "main.js", "main.css", "favicon.svg",
+    "assets/index-abc.js", "static/js/main.abc.js", "assets/chunk.mjs",
+    "static/data.json", "assets/data.json",
+])
+def test_shell_assets_still_load_without_token(client, up, path):
+    up.routes["/" + path] = (200, {}, b"asset")
+    r = client.get(qp.PREFIX + path, headers={"Origin": "null"})
+    assert r.status_code == 200
+    assert r.headers["Access-Control-Allow-Origin"] == "null"
+
+
+def test_non_ascii_token_is_forbidden(client, up):
+    r = client.post(qp.PREFIX + "execution/submit/node", headers={
+        "Origin": "null", qp.TOKEN_HEADER: "\u00e9-invalid"})
+    assert r.status_code == 403
+    assert not up.seen
+
+
+@pytest.mark.parametrize("host", ["169.254.0.1", "169.254.169.254", "169.254.255.255",
+                                  "[fe80::1]", "[febf::1]", "[::ffff:169.254.169.254]"])
+def test_remote_opt_in_still_refuses_link_local(app, client, noenv, monkeypatch, host):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    probes = []
+    monkeypatch.setattr(qp, "probe", lambda *args: (probes.append(args) or ("2.0.0", None)))
+    url = f"http://{host}:8001"
+    r = client.post("/qualibrate-ui-target", json={"url": url}, headers=_SAME)
+    assert r.status_code == 400
+    assert not probes
+    assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+    with pytest.raises(qp.TargetError):
+        qp.parse_target(url)
+
+
+def test_remote_opt_in_can_save_a_remote_server(client, noenv, monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp, "probe", lambda *args: ("2.0.0", None))
+    r = client.post("/qualibrate-ui-target", json={"url": "http://10.0.0.5:8001"}, headers=_SAME)
+    assert r.status_code == 200 and r.get_json()["source"] == "saved"
+
+
+@pytest.mark.parametrize("error,reason", [
+    (OSError("private socket details"), "nothing answered"),
+    (ConnectionRefusedError("private socket details"), "nothing answered"),
+    (TimeoutError("private socket details"), "timed out"),
+    (qp.http.client.HTTPException("private socket details"), "nothing answered"),
+])
+def test_post_probe_errors_use_fixed_reasons(client, noenv, monkeypatch, error, reason):
+    def fail(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(qp.http.client, "HTTPConnection", fail)
+    r = client.post("/qualibrate-ui-target", json={"url": "http://127.0.0.1:8001"}, headers=_SAME)
+    assert r.status_code == 502
+    assert r.get_json()["reason"] == f"Not saved: {reason}."
+
+
+@pytest.mark.parametrize("status,body", [(404, b"missing"), (200, b"{}"), (200, b"not json")])
+def test_post_non_qualibrate_uses_fixed_reason(client, noenv, status, body):
+    u = Upstream()
+    try:
+        u.routes["/execution/meta"] = (status, {}, body)
+        r = client.post("/qualibrate-ui-target", json={"url": f"http://127.0.0.1:{u.port}"}, headers=_SAME)
+        assert r.status_code == 502
+        assert r.get_json()["reason"] == "Not saved: not a QUAlibrate server."
+    finally:
+        u.close()
+
+
 @pytest.fixture
 def noenv(monkeypatch):
     monkeypatch.delenv(qp.TARGET_ENV, raising=False)
