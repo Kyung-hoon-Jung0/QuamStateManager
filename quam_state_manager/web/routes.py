@@ -11876,6 +11876,77 @@ def _state_restored_trigger(ctx, pre_leaves, extra: dict | None = None) -> str:
     return json.dumps(trig)
 
 
+_LOST_APPLIED_WINDOW_S = 6 * 3600
+_LOST_APPLIED_MAX = 20
+
+
+def _dot_get(doc, path: str):
+    """The value at a dot path of a merged chip document, or ``_DOT_MISSING``."""
+    cur = doc
+    for part in str(path).split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, list) and part.isdigit() and int(part) < len(cur):
+            cur = cur[int(part)]
+        else:
+            return _DOT_MISSING
+    return cur
+
+
+_DOT_MISSING = object()
+
+
+def _applied_values_held(ctx) -> dict:
+    """F2 (final walk): the values SM applied recently (the undo journal's
+    units, newest value per path) that the working copy still holds, as
+    ``{path: value}``. Taken BEFORE a pull so that, after it, a value an
+    outside writer removed (a node's ``machine.save`` from its in-memory copy
+    rewrites the whole file) can be named instead of vanishing in silence."""
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        units, cursor = undo_journal.load_state(path)
+    except Exception:  # noqa: BLE001 -- no journal readable: nothing to name
+        return {}
+    store = ctx.get("store")
+    if store is None:
+        return {}
+    now = time.time()
+    newest: dict = {}
+    for unit in list(units)[:cursor] if isinstance(cursor, int) and cursor >= 0 else list(units):
+        if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
+            continue
+        for e in unit.get("entries") or ():
+            if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
+                newest[e["path"]] = e.get("new")
+    if not newest:
+        return {}
+    held = {}
+    with store._lock:
+        doc = store.merged
+        for p, v in newest.items():
+            got = _dot_get(doc, p)
+            if got is not _DOT_MISSING and got == v:
+                held[p] = copy.deepcopy(v)
+    return held
+
+
+def _applied_values_lost(ctx, held: dict) -> list[dict]:
+    """Which of ``held`` the chip no longer has after a pull."""
+    store = ctx.get("store")
+    if not held or store is None:
+        return []
+    out = []
+    with store._lock:
+        doc = store.merged
+        for p, v in held.items():
+            got = _dot_get(doc, p)
+            if got is _DOT_MISSING or got != v:
+                out.append({"path": p, "applied": v,
+                            "now": None if got is _DOT_MISSING else got,
+                            "removed": got is _DOT_MISSING})
+    return out[:_LOST_APPLIED_MAX]
+
+
 def _leaf_snapshot(ctx, *, lazy: bool = False):
     """Every leaf of the working state BEFORE a pull, so the pull can report
     exactly which values it changed (customer 2026-08-27: the page must stay
@@ -31327,6 +31398,7 @@ def auto_sync_pull():
             # OPEN: making a replace-pull preserve the discarded edits is a
             # decision about what "replace" means, deliberately not taken here.
             _pre_leaves = _leaf_snapshot(ctx)   # docs/144
+            _held_applied = _applied_values_held(ctx)   # F2: name what the pull removes
             discarding = _quam_ctx_dirty(ctx) or dom_dirty
             # docs/187 (2), corrected by review R7: WHAT this pull is about to
             # drop, by kind. Counted BEFORE the pull, because afterwards there
@@ -31470,7 +31542,10 @@ def auto_sync_pull():
                                   "count": _discarded_n,
                                   "saved": _discarded_saved,
                                   "stash": _discarded_stash,
-                                  "dom": bool(dom_dirty)}})
+                                  "dom": bool(dom_dirty),
+                                  # F2: values SM applied that this outside
+                                  # write took away (never silently)
+                                  "lost": _applied_values_lost(ctx, _held_applied)}})
     return resp
 
 

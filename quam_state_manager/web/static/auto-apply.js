@@ -343,6 +343,24 @@
               'warning');
     });
 
+    document.addEventListener('autoSyncPulled', function (e) {
+        var d = (e && e.detail) || {};
+        /* F2 (final walk): an outside writer (a node's save of its in-memory
+           copy) rewrote the live chip and took away values SM had applied.
+           The pull adopts the chip as it is, and says which of the user's
+           applied values are gone, so "In sync" never hides that loss. */
+        var lost = Array.isArray(d.lost) ? d.lost : [];
+        if (lost.length) {
+            var names = lost.slice(0, 4).map(function (x) { return x && x.path; })
+                .filter(Boolean).join(', ');
+            toast('An outside save rewrote the live chip and removed '
+                  + lost.length + ' value' + (lost.length === 1 ? '' : 's')
+                  + ' you had applied: ' + names + (lost.length > 4 ? ' and more' : '')
+                  + '. The chip now holds the outside values; apply yours again if they should stay.',
+                  'warning');
+        }
+    });
+
     document.addEventListener('autoSyncMerge', function (e) {
         /* docs/187 R2: the chip the server says conflicted, carried on the
            signal. Handing THIS back (rather than whatever the page holds when

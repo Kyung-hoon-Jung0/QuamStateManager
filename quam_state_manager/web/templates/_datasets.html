@@ -23,7 +23,7 @@
     {% if _ro %}<p>No chip is open (SM was restarted or the chip was closed). Re-open it to see its runs:</p>
     {% include "_resume_offer.html" %}{% endif %}
     {% if active_dataset_path is defined and active_dataset_path %}
-    <form hx-post="/workspace/add" hx-target="#sidebar-tree" class="ds-empty-load">
+    <form hx-post="/workspace/add" hx-target="#sidebar-tree">
         <input type="hidden" name="folder" value="{{ active_dataset_path }}">
         <p>This project's data folder is <code>{{ active_dataset_path }}</code>.</p>
         <button type="submit" class="btn-sm">Load this data folder</button>

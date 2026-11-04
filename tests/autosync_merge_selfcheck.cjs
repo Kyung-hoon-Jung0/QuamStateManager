@@ -215,6 +215,22 @@ function fire(w, name, detail) {
           JSON.stringify(state.toasts[0]));
   }
 
+  /* ── F2 (final walk): an applied value an outside save removed ────── */
+  {
+    const { w, state, clock } = world();
+    fire(w, 'autoSyncPulled', { replaced: false, count: 0,
+      lost: [{ path: 'extras.chip_name', applied: 'chip-a', now: null, removed: true }] });
+    await clock.advance(20);
+    check('L1 a pull that removed an applied value says so', state.toasts.length === 1,
+          JSON.stringify(state.toasts));
+    const m = (state.toasts[0] || {}).m || '';
+    check('L2 …naming the value', /extras\.chip_name/.test(m) && /removed 1 value you had applied/.test(m), m);
+    check('L3 …at warning level', (state.toasts[0] || {}).l === 'warning', JSON.stringify(state.toasts[0]));
+    fire(w, 'autoSyncPulled', { replaced: false, count: 0, lost: [] });
+    await clock.advance(20);
+    check('L4 nothing lost, nothing said', state.toasts.length === 1, JSON.stringify(state.toasts));
+  }
+
   /* ── F. singular/plural, because a count of 1 is the common case ────── */
   {
     const { w, state, clock } = world();
