@@ -556,7 +556,8 @@ class TestNaturalOrderedStats:
         new = {"qubits": {f"q{n}": {"z": {"operations": {
             "cz": "#/shared/cz"}}} for n in qs},
             "shared": {"cz": {"amplitude": 0.0}}}
-        r = merge_states(old, new)
+        # held by a wizard edit, so the inline calibration is not put back
+        r = merge_states(old, new, protect_paths={"shared.cz.amplitude"})
         assert r.stats.superseded == [
             f"qubits.q{n}.z.operations.cz.amplitude" for n in qs]
         assert r.stats.residual_lost == []

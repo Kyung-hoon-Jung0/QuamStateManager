@@ -7711,6 +7711,32 @@
   //   "no_band"  no single Nyquist band covers every RF
   //   "band_window"  a band covers every RF but its LO range misses the window
   //   "hole"     every window position collides with a resonator's demod floor
+  // The one LO the source chip's members on a port already hold (Re-generate
+  // only), when it still serves every member: the LO itself in a band (the port
+  // frequency is what the band rule judges, as Diagnostics does), every RF inside
+  // its IF window, and every resonator clear of the demod floor. Else null.
+  function sourceLoKept(withRf, pop) {
+    if (state.mode !== "regenerate") return null;
+    var base = state.regenBaselinePopulate || null;
+    var lo = null;
+    for (var i = 0; i < withRf.length; i++) {
+      var m = withRf[i].m;
+      var b = base && base[m.group] && base[m.group][m.rid];
+      var v = b ? parseFloat(b.LO_frequency) : NaN;
+      if (isNaN(v)) continue;
+      if (lo != null && lo !== v) return null;     // the source split this port
+      lo = v;
+    }
+    if (lo == null) return null;
+    var band = bandOf(lo);
+    var r = LO_IF_HOLE_HZ + LO_IF_HOLE_MARGIN_HZ;
+    var fits = withRf.every(function (x) {
+      return Math.abs(x.rf - lo) <= LO_IF_HALF_WINDOW && band != null &&
+        !(x.m.group === "resonator" && Math.abs(x.rf - lo) < r);
+    });
+    return fits ? lo : null;
+  }
+
   function solveLoWindow(entries) {
     var rfs = entries.map(function (e) { return e.rf; });
     var hi = Math.max.apply(null, rfs);
@@ -7864,7 +7890,8 @@
   //                 band into what the build writes
   //   elementGroup  {"group/rid": groupId} — output-side, for cell colouring
   //   ports         every occupied port, input side too (the band checks)
-  function computeLoAssignments() {
+  function computeLoAssignments(opts) {
+    var resolve = !!(opts && opts.force);   // an explicit Re-solve re-derives
     var result = { assignments: {}, warnings: [], groups: [], elementGroup: {},
                    unsolved: {}, ports: [] };
     if (!state.allocation) return result;
@@ -7903,6 +7930,11 @@
           var solved = solveLoWindow(withRf.map(function (x) {
             return { rf: x.rf, needHole: x.m.group === "resonator" };
           }));
+          // Re-generate: the source chip's LO on this port is calibration. A
+          // member added to the port (a new resonator on a shared feedline) must
+          // not re-derive it while it still covers every member.
+          var kept = (isOut && !resolve) ? sourceLoKept(withRf, pop) : null;
+          if (kept != null && solved.ok) solved = { lo: kept, ok: true, code: null };
           var rfs = withRf.map(function (x) { return x.rf; });
           var hi = Math.max.apply(null, rfs);
           var lo = Math.min.apply(null, rfs);
@@ -8572,7 +8604,7 @@
   }
 
   function recomputeLOs(opts) {
-    var calc = computeLoAssignments();
+    var calc = computeLoAssignments(opts);
     if (!(opts && opts.force)) typedPortLos(calc);
     if (!(opts && opts.noApply)) {
       applyLoAssignments(calc.assignments,
@@ -10860,6 +10892,41 @@
             'because it looks hand-tuned, or a port power change">' +
             popConf.length + ' to verify</span>' : '');
         el.appendChild(mp);
+        // The contract check: a source value that reads differently in the
+        // rebuild (not one you changed, not one listed elsewhere) is never a
+        // plain success. Each one is named, old -> new.
+        var calCh = m.calibration_changed || [];
+        var calChN = (m.calibration_changed_total != null)
+            ? m.calibration_changed_total : calCh.length;
+        if (calChN) {
+          el.className = "gen-build-result gen-build-confirm gen-build-cal-changed";
+          msg.textContent += " — " + calChN + " calibrated value" +
+            (calChN === 1 ? "" : "s") + " read differently from the source chip " +
+            "(listed below)";
+          msg.className = "gen-build-warn-line";
+          var cw = document.createElement("details");
+          cw.className = "gen-build-warn-line gen-merge-cal-changed";
+          cw.open = true;
+          var cs = document.createElement("summary");
+          cs.textContent = "⚠ " + calChN + " value" + (calChN === 1 ? "" : "s") +
+            " the rebuild does not reproduce (you did not change " +
+            (calChN === 1 ? "it" : "them") + "): check before using this chip";
+          cw.appendChild(cs);
+          calCh.slice(0, 40).forEach(function (c) {
+            var li = document.createElement("div");
+            li.className = "gen-merge-detail";
+            li.textContent = c.path + ": " + JSON.stringify(c.old) + " → " +
+              (c.new == null ? "(gone)" : JSON.stringify(c.new));
+            cw.appendChild(li);
+          });
+          if (calChN > Math.min(calCh.length, 40)) {
+            var more = document.createElement("div");
+            more.className = "gen-merge-muted gen-merge-detail";
+            more.textContent = "… and " + (calChN - Math.min(calCh.length, 40)) + " more";
+            cw.appendChild(more);
+          }
+          el.appendChild(cw);
+        }
         var fspChip = mp.querySelector(".gen-merge-fsp");
         if (fspChip) {   // the rescaled amplitudes, old → new (text, never HTML)
           fspChip.title = (m.fsp_compensated || []).map(function (c) {
@@ -10885,8 +10952,9 @@
           pn.textContent = "cleaned " + prunedN +
             " redundant legacy op" + (prunedN === 1 ? "" : "s") +
             " the rebuild re-expressed (nothing referenced " +
-            (prunedN === 1 ? "it" : "them") + "; " +
-            (prunedN === 1 ? "its" : "their") + " pointers were broken)" +
+            (prunedN === 1 ? "it" : "them") + ", and " +
+            (prunedN === 1 ? "its" : "their") + " links resolved nowhere, " +
+            "in the source chip either)" +
             (prunedP.length ? ": " + prunedP.slice(0, 6).join(", ") +
               (prunedN > 6 ? ", …" : "") : "");
           el.appendChild(pn);

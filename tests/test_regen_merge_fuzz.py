@@ -204,7 +204,7 @@ def test_self_alias_preserves_source():
 
 # Frozen pre-optimization algorithm: compare both state and restoration order.
 def _old_restore_source_forms(merged: dict, old: dict, wiring: dict | None,
-                          protect: set[str] | None) -> list[str]:
+                          protect: set[str] | None, *_extra) -> list[str]:
     """Put back the SOURCE's own form (a lab's pointer direction, an inline object
     the rebuild replaced with a link, a pointer to a different but equal field)
     wherever doing so changes no value QUAM reads and closes no cycle.
@@ -311,6 +311,11 @@ def _old_restore_source_forms(merged: dict, old: dict, wiring: dict | None,
 def test_source_forms_equal_old_algorithm(seed, monkeypatch):
     from quam_state_manager.core import regen_merge
     old, new = chip(seed)
+    # the first (value-preserving) phase must equal the original algorithm; the
+    # second phase (calibration back) is pinned in test_regen_calibration_contract
+    first = regen_merge._restore_source_forms
+    monkeypatch.setattr(regen_merge, "_restore_source_forms",
+                        lambda m, o, w, p, c=None, ow=None: first(m, o, w, p))
     actual = merge(old, new)
     monkeypatch.setattr(regen_merge, "_restore_source_forms", _old_restore_source_forms)
     expected = merge(old, new)
@@ -358,8 +363,11 @@ def test_source_form_refusal_performance(monkeypatch):
     start = time.perf_counter()
     result = merge_states(old, new)
     elapsed = time.perf_counter() - start
-    assert result.merged == new
+    # every refused form reads another value than the source: the second phase puts
+    # the source's link back (its calibration), the first restores nothing
+    assert result.merged == old
     assert not result.stats.source_forms_restored
+    assert len(result.stats.calibration_restored) == 200
     assert elapsed < 3.0, elapsed
     # Also pin the work bound so a fast host cannot hide whole-state rescans.
     assert hops < 20_000, hops

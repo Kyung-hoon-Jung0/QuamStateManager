@@ -103,7 +103,8 @@ def test_the_lab_pointer_is_kept_only_where_the_rebuild_wrote_the_literal_it_res
     # the literal differs from what the pointer resolves to: the populate value wins
     new2 = _state(pulsed=False)
     new2["twpas"]["twpa1"]["pump_"]["RF_frequency"] = 8.2e9
-    r2 = merge_states(old, new2, class_schemas=SCHEMAS)
+    r2 = merge_states(old, new2, class_schemas=SCHEMAS,
+                      protect_paths={"twpas.twpa1.pump_.RF_frequency"})
     assert r2.merged["twpas"]["twpa1"]["pump_"]["RF_frequency"] == 8.2e9
     assert r2.merged["twpas"]["twpa1"]["pump"]["RF_frequency"] == "#../pump_frequency"
     assert r2.stats.old_pointers_kept == ["twpas.twpa1.pump.RF_frequency"]

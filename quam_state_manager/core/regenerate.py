@@ -610,6 +610,11 @@ def run_regenerate(
             p for p in result.stats.dangling_grafts
             if not (isinstance(regen_merge._path_value(result.merged, p), str)
                     and regen_merge._resolves(doc, regen_merge._path_value(result.merged, p)))]
+    # The rebuild's contract, checked before anything says success: every value the
+    # source chip reads must read the same in the rebuilt one, except where the user
+    # changed it in the wizard or the report already names the change.
+    calibration_changed = _calibration_check(result, old_wiring, new_wiring, protect,
+                                             fsp_compensated, add_report)
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
     # QA F12: the merged chip, not the build spec, decides -- a merge can
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
@@ -798,6 +803,11 @@ def run_regenerate(
         # QA regenerate-r2-04 / r2-06: amplitudes rescaled to keep power
         "fsp_compensated": fsp_compensated[:80],
         "fsp_compensated_total": len(fsp_compensated),
+        # the contract check: source values that read differently in the rebuild
+        "calibration_changed": calibration_changed[:200],
+        "calibration_changed_total": len(calibration_changed),
+        "calibration_restored": s.calibration_restored[:80],
+        "calibration_restored_total": len(s.calibration_restored),
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     outcome["script_in_output"] = script_in_output
@@ -815,6 +825,33 @@ def run_regenerate(
                             + " but it does not build a QM config in this "
                             "environment: " + (check.get("error") or "unknown error"))
     return outcome
+
+
+def _calibration_check(result, old_wiring, new_wiring, protect, fsp_compensated,
+                       add_report) -> list[dict]:
+    """Every source value that reads differently in the merged chip, minus what the
+    user changed (Populate edits, rescaled amplitudes, lab additions) and what the
+    report already lists on its own line (removed structure, cross-generation
+    drops, a class substitution). Never raises: a failed check is one entry."""
+    s = result.stats
+    skip: set[str] = set(protect or ())
+    skip |= set(s.schema_dropped)
+    skip |= {p for p, _ in s.rebuild_removed}
+    skip |= {p for p in s.residual_lost if " " not in p}
+    skip |= {f"{p}.__class__" for p, _, _ in s.class_changed}
+    skip |= {c.get("path") for c in (fsp_compensated or ()) if isinstance(c, dict)}
+    skip |= {r.get("path") for r in s.crosstalk_dropped if isinstance(r, dict)}
+    if add_report and add_report.get("added"):
+        skip |= {e.get("path") for e in add_report["added"] if isinstance(e, dict)}
+    source = result.source_view if result.source_view is not None else {}
+    # a moved port lives at another address in the source view than the source
+    # wiring names, so the source is read through the rebuilt wiring then
+    wiring = new_wiring if (s.ports_moved or s.ports_fresh) else old_wiring
+    try:
+        return regen_merge.calibration_check(source, wiring, result.merged, new_wiring,
+                                             skip={x for x in skip if x})
+    except Exception as exc:  # noqa: BLE001 -- the check itself must never hide a build
+        return [{"path": "(check)", "old": None, "new": f"the check could not run: {exc}"}]
 
 
 def check_rebuilt_config(python_path: str, out_dir: Path | str,

@@ -350,6 +350,27 @@ ok(chipText() === null && classLines().length === 0,
     'F17: the flat fallback names its cap');
   ok2(/Generated 1 qubit and 0 pairs/.test(fel2.textContent),
     'F15: the headline is singular for one qubit');
+  // The rebuild's own contract check: a value it does not reproduce is never a
+  // plain success, and each one is named old -> new.
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: merge({ calibration_changed: [
+      { path: 'qubits.q1.resonator.operations.readout.length', old: 1120, new: 2000 },
+      { path: 'qubits.q1.xy.operations.-x90.detuning', old: 0, new: null }],
+      calibration_changed_total: 2 }) }, 'D:\out');
+  const cel = doc.getElementById('gen-build-result');
+  ok2(/gen-build-confirm/.test(cel.className) && !/gen-build-ok/.test(cel.className),
+    'CAL: a changed calibration value turns the panel from success to confirm');
+  ok2(/2 calibrated values read differently/.test(cel.textContent),
+    'CAL: the headline counts the changed values');
+  ok2(/readout\.length: 1120 → 2000/.test(cel.textContent) &&
+      /-x90\.detuning: 0 → \(gone\)/.test(cel.textContent),
+    'CAL: each changed value is named old -> new');
+  T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [] },
+    merge: merge({ calibration_changed: [], calibration_changed_total: 0 }) }, 'D:\out');
+  const cel2 = doc.getElementById('gen-build-result');
+  ok2(/gen-build-ok/.test(cel2.className) &&
+      !cel2.querySelector('.gen-merge-cal-changed'),
+    'CAL: a rebuild that reproduces every value stays a success');
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts)
                     : ('ok (' + asserts + ' assertions)'));
   process.exitCode = fails ? 1 : 0;

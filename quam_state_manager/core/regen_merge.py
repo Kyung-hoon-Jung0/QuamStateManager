@@ -209,6 +209,7 @@ class MergeStats:
     old_pointers_kept: list[str] = field(default_factory=list)  # v1.6.0 review: the source's pointer kept where the rebuild wrote the very literal it resolves to
     links_not_taken: list[str] = field(default_factory=list)  # a source literal kept where the rebuild linked the field to another holding a different value (x90's own DRAG alpha)
     wiring_values_carried: list[str] = field(default_factory=list)  # a lab's plain wiring values under a line the rebuild also made (a QDAC dc_channel)
+    calibration_restored: list[str] = field(default_factory=list)  # a source form put back because the rebuild's form read builder defaults (a CZ macro's inline pulse, a readout alias)
     source_forms_restored: list[str] = field(default_factory=list)  # a lab's own pointer/object form put back where every value reads the same
     pointers_inlined: list[str] = field(default_factory=list)  # v1.6.0 review: a grafted source pointer whose direct target is no literal in the rebuilt state, written as the value it resolved to in the source
 
@@ -217,6 +218,9 @@ class MergeStats:
 class MergeResult:
     merged: dict
     stats: MergeStats
+    # the source as the merge read it: renamed qubits, moved ports and removed TWPAs
+    # already re-expressed in the rebuild's structure (what calibration_check compares)
+    source_view: dict | None = None
 
 
 def _kept_class(old: dict, new: dict, keep: dict | None, path: str = "") -> str | None:
@@ -853,7 +857,8 @@ def _del_path(root: dict, dot_path: str) -> bool:
     return False
 
 
-def _prune_redundant_graft_ops(merged: dict, dangling: list[str]) -> tuple[list[str], list[str]]:
+def _prune_redundant_graft_ops(merged: dict, dangling: list[str],
+                               source: dict | None = None) -> tuple[list[str], list[str]]:
     """Remove OLD operation subtrees that the rebuild superseded and left broken.
 
     A merged chip can carry an OLD-representation pulse operation (e.g. the old
@@ -895,8 +900,12 @@ def _prune_redundant_graft_ops(merged: dict, dangling: list[str]) -> tuple[list[
             continue
         ptr_leaves = [v for _, v in _iter_leaves(node)
                       if isinstance(v, str) and v.startswith("#/")]
-        # (b) has broken pointers AND none that still resolve
-        if ptr_leaves and all(not _resolves(merged, v) for v in ptr_leaves):
+        # (b) has broken pointers AND none that still resolve -- and (d) they were
+        # broken in the SOURCE too: an op whose links worked there is calibration the
+        # merge failed to land, never a redundant copy (deleting it hid the loss)
+        if (ptr_leaves and all(not _resolves(merged, v) for v in ptr_leaves)
+                and (source is None
+                     or not any(_resolves(source, v) for v in ptr_leaves))):
             prunable.append(op)
 
     for op in prunable:
@@ -2397,7 +2406,9 @@ def _resolved_leaves(doc: dict, top: str, path: tuple | None = None,
 
 
 def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
-                          protect: set[str] | None) -> list[str]:
+                          protect: set[str] | None,
+                          calibration: list[str] | None = None,
+                          old_wiring: dict | None = None) -> list[str]:
     """Put back the SOURCE's own form (a lab's pointer direction, an inline object
     the rebuild replaced with a link, a pointer to a different but equal field)
     wherever doing so changes no value QUAM reads and closes no cycle.
@@ -2429,6 +2440,7 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     walk(old, merged, ())
     if not cands:
         return []
+    done: list[str] = []
     cands.sort(key=lambda c: (is_pointer(c[2]), c[0]))
 
     # Partition the document into small, stable subtrees. A candidate is always
@@ -2548,8 +2560,6 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
             node = node[k]
         return node
 
-    done: list[str] = []
-
     def attempt(group: list) -> None:
         """Put a group back; keep it if the state reads the same, else halve it."""
         if not group:
@@ -2574,11 +2584,135 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
     for _, path, v in cands:
         setp(merged, path, v)
     if ok(merged, cands):
-        return [c[0] for c in cands]
+        done.extend(c[0] for c in cands)
+        return done
     merged.clear()
     merged.update(saved)
     attempt([c for c in cands if not is_pointer(c[2])])
     attempt([c for c in cands if is_pointer(c[2])])
+    if calibration is None:
+        return done
+
+    # Second phase: put back a source form whose value the merge LOST. The merge's
+    # leaf rule hands every pointer/object mismatch to the rebuild, so a calibrated
+    # inline object the builder replaced with a link to its own freshly seeded op
+    # (a CZ macro's flux pulse), a link the builder replaced with a default object
+    # (a readout alias to the calibrated pulse) or a link the builder aimed at another
+    # field (a -x90 detuning following x180) read the builder's defaults afterwards.
+    # Phase one refuses these because the value moves; here it moves back to the
+    # SOURCE's reading. A form is kept only when no leaf that already read as in the
+    # source changes, at least one leaf comes back, and no new loop appears.
+    # cabling is the rebuild's: a link into the wiring or a port is never put back
+    # (the user may have moved the line), and nothing under ports is a calibration form
+    def cabling(c: tuple) -> bool:
+        v = c[2]
+        return (c[1][0] in ("ports", "wiring")
+                or (is_pointer(v) and v.startswith(("#/wiring", "#/ports"))))
+
+    left = [c for c in cands if c[0] not in set(done) and not cabling(c)]
+    if not left:
+        return done
+    # the SOURCE as it read on its own wiring (the rebuilt wiring may rename a line)
+    old_doc = _merged_doc(old, old_wiring if old_wiring is not None else wiring)
+
+    def src_unit(path: tuple) -> dict:
+        try:
+            return read_unit(old_doc, path)
+        except (KeyError, TypeError, IndexError, _Cycle):
+            return {}
+
+    from quam_state_manager.core.differ import compare_equal
+
+    def eq(a: Any, b: Any) -> bool:
+        if a == b:
+            return True
+        try:
+            return compare_equal(a, b)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def now_units(group: list) -> dict:
+        affected = {candidate_components[path] for _, path, _ in group}
+        d = doc_of(merged)
+        return {path: read_unit(d, path) for c in affected for path in components.get(c, [])}
+
+    def better(group: list, before: dict, held: set[str] = frozenset()) -> bool:
+        try:
+            after = now_units(group)
+        except _Cycle:
+            return False
+        gained = False
+        for path, now in after.items():
+            base = before.get(path, {})
+            src = source_reading.setdefault(path, src_unit(path))
+            for k, v in base.items():
+                if k in held and not (k in now and eq(now[k], v)):
+                    return False                           # a wizard edit would revert
+                if k in src:
+                    if k not in now:
+                        return False                       # a source leaf vanished
+                    if eq(v, src[k]) and not eq(now[k], src[k]):
+                        return False                       # a carried value lost
+                    if not eq(v, src[k]) and eq(now[k], src[k]) and not unread(src[k]):
+                        gained = True
+                elif (k in now and not eq(now[k], v) and v != _CYCLIC
+                        and not _has_pointer_ancestor(merged, k)):
+                    return False                           # a rebuild-only value moved
+                    # (one read THROUGH a link -- a new pair's view of its qubit --
+                    # is that object's own value, judged where it lives)
+            for k, v in now.items():
+                if v == _CYCLIC and base.get(k) != _CYCLIC:
+                    return False
+                if (isinstance(v, tuple) and len(v) == 2 and v[0] == "<unresolved>"
+                        and not eq(base.get(k, _MISSING), v)
+                        and not eq(src.get(k, _MISSING), v)):
+                    return False                           # a new dangling link (one the
+                    # source reads the same way -- a QUAM property such as
+                    # ``#./inferred_total_length`` -- is the source's own form)
+                if k not in base and k in src and eq(v, src[k]) and not unread(src[k]):
+                    gained = True
+        return gained
+
+    source_reading: dict[tuple, dict] = {}
+
+    def unread(v: Any) -> bool:
+        return v == _CYCLIC or (isinstance(v, tuple) and len(v) == 2
+                                and v[0] == "<unresolved>")
+
+    def attempt_back(group: list) -> None:
+        if not group:
+            return
+        try:
+            before = now_units(group)
+        except _Cycle:
+            return
+        # a value read from a place the user changed in the wizard is theirs
+        held: set[str] = set()
+        if protect:
+            d = doc_of(merged)
+            for unit in before.values():
+                for k in unit:
+                    loc = _read_at(d, tuple(k.split(".")))[1]
+                    dot = ".".join(loc)
+                    if any(dot == p or dot.startswith(p + ".") or k == p
+                           or k.startswith(p + ".") for p in protect):
+                        held.add(k)
+        saved = [(path, copy.deepcopy(get(merged, path))) for _, path, _ in group]
+        for _, path, v in group:
+            setp(merged, path, v)
+        if better(group, before, held):
+            calibration.extend(dot for dot, _, _ in group)
+            return
+        for path, v in reversed(saved):
+            setp(merged, path, v)
+        if len(group) == 1:
+            return
+        mid = len(group) // 2
+        attempt_back(group[:mid])
+        attempt_back(group[mid:])
+
+    attempt_back([c for c in left if not is_pointer(c[2])])
+    attempt_back([c for c in left if is_pointer(c[2])])
     return done
 
 def merge_states(old_state: dict, new_state: dict,
@@ -2687,7 +2821,9 @@ def merge_states(old_state: dict, new_state: dict,
     ref_drops = _prune_removed_entity_refs(merged, old_state)
     # A lab's own pointer forms come back where they change no value (see the helper)
     stats.source_forms_restored = sorted(
-        _restore_source_forms(merged, old_view, new_wiring, protect_paths), key=natural_key)
+        _restore_source_forms(merged, old_view, new_wiring, protect_paths,
+                              stats.calibration_restored, old_wiring), key=natural_key)
+    stats.calibration_restored.sort(key=natural_key)
     _carry_crosstalk(old_state, merged, moves, fresh, stats, old_wiring, new_wiring, new_state)
     _finish_port_values(old_state, new_state, merged, old_wiring, new_wiring,
                         sources, stats, protect_paths)
@@ -2768,9 +2904,123 @@ def merge_states(old_state: dict, new_state: dict,
     # Prune redundant OLD-representation operations the rebuild superseded (their
     # pointers are broken and nothing references them). What remains dangling is
     # inherent — e.g. a preserved TWPA's wiring pointer the builder can't rebuild.
-    stats.pruned_ops, stats.dangling_grafts = _prune_redundant_graft_ops(merged, dangling)
+    stats.pruned_ops, stats.dangling_grafts = _prune_redundant_graft_ops(merged, dangling,
+                                                                         old_view)
 
-    return MergeResult(merged=merged, stats=stats)
+    return MergeResult(merged=merged, stats=stats, source_view=old_view)
+
+
+def _read_at(doc: dict, parts: tuple) -> tuple[Any, tuple]:
+    """The value QUAM reads at ``parts``: every pointer met on the way, and at the end,
+    is followed. ``(_MISSING, ())`` when the path does not land; an unresolvable final
+    pointer reads as ``("<unresolved>", pointer)``."""
+    node: Any = doc
+    loc: tuple = ()
+    hops = 0
+
+    def follow(v: Any, where: tuple) -> tuple[Any, tuple]:
+        nonlocal hops
+        while is_pointer(v):
+            hops += 1
+            if hops > 60:
+                return _CYCLIC, where
+            tgt, nxt = _hop(doc, v, where)
+            if tgt is _MISSING:
+                return ("<unresolved>", v), where
+            v, where = tgt, nxt
+        return v, where
+
+    for p in parts:
+        node, loc = follow(node, loc)
+        if isinstance(node, dict) and p in node:
+            node, loc = node[p], loc + (p,)
+        elif isinstance(node, list) and p.isdigit() and int(p) < len(node):
+            node, loc = node[int(p)], loc + (p,)
+        else:
+            return _MISSING, ()
+    return follow(node, loc)
+
+
+def _raw_leaf_paths(obj: Any, path: tuple = ()):
+    if isinstance(obj, dict):
+        if not obj and path:
+            yield path, obj
+        for k, v in obj.items():
+            yield from _raw_leaf_paths(v, path + (str(k),))
+    else:
+        yield path, obj
+
+
+def calibration_check(source: dict, source_wiring: dict | None,
+                      merged: dict, merged_wiring: dict | None,
+                      skip: list[str] | set[str] | None = None,
+                      limit: int = 100000) -> list[dict]:
+    """The rebuild's own contract, checked: every leaf of the SOURCE state that QUAM
+    can read (pointers followed, ``__class__`` included) reads the same in the merged
+    state. Returns one ``{"path", "old", "new"}`` per difference (``new`` is ``None``
+    when the path no longer lands). ``skip`` holds dot paths -- and their subtrees --
+    the user changed in the wizard or the report already lists (a removed entity, a
+    schema drop); a leaf is skipped when its own path or the place it reads from
+    in the merged state is under one. A source leaf that does not resolve in the
+    source either (a QUAM property such as ``#./inferred_RF_frequency``) is not a
+    stored value and is not compared."""
+    from quam_state_manager.core.differ import compare_equal
+    sd = _merged_doc(source, source_wiring)
+    md = _merged_doc(merged, merged_wiring)
+    skips = sorted({s for s in (skip or ()) if s})
+
+    def skipped(dot: str) -> bool:
+        return any(dot == s or dot.startswith(s + ".") for s in skips)
+
+    def eq(a: Any, b: Any) -> bool:
+        if a == b and type(a) is type(b) or (a == b and not isinstance(a, bool)
+                                             and not isinstance(b, bool)):
+            return True
+        try:
+            return bool(compare_equal(a, b)) and isinstance(a, bool) == isinstance(b, bool)
+        except Exception:  # noqa: BLE001
+            return False
+
+    def unread(v: Any) -> bool:
+        return v is _MISSING or v == _CYCLIC or (
+            isinstance(v, tuple) and len(v) == 2 and v[0] == "<unresolved>")
+
+    out: list[dict] = []
+    seen: set[tuple] = set()
+
+    def compare(label: tuple, ov: Any, oloc: tuple, depth: int = 0) -> None:
+        dot = ".".join(label)
+        if skipped(dot) or len(out) >= limit:
+            return
+        nv, nloc = _read_at(md, label)
+        if nloc and skipped(".".join(nloc)):
+            return
+        if isinstance(ov, dict):
+            if isinstance(nv, dict) and (nloc == oloc or depth > 8 or (oloc, nloc) in seen):
+                return                              # the same object, checked where it lives
+            seen.add((oloc, nloc))
+            if not isinstance(nv, dict):
+                out.append({"path": dot, "old": "(object)", "new": None if nv is _MISSING else nv})
+                return
+            for sub, v in _raw_leaf_paths(ov):
+                rv, rloc = _read_at(sd, oloc + sub)
+                if not unread(rv) and not isinstance(rv, dict):
+                    compare(label + sub, rv, rloc, depth + 1)
+                elif isinstance(rv, dict) and sub:
+                    compare(label + sub, rv, rloc, depth + 1)
+            return
+        if nv is _MISSING or not eq(ov, nv):
+            out.append({"path": dot, "old": ov, "new": None if nv is _MISSING else nv})
+
+    for top, node in source.items():
+        if top == "__package_versions__" or not isinstance(node, dict):
+            continue
+        for path, _ in _raw_leaf_paths(node, (top,)):
+            ov, oloc = _read_at(sd, path)
+            if unread(ov):
+                continue
+            compare(path, ov, oloc)
+    return out
 
 
 # ---------------------------------------------------------------------------
