@@ -77,7 +77,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="{{ 11 if qdac_rows else 7 }}" class="ui-state ui-state--empty">No flux channels found in this state file.</td></tr>
+        <tr><td colspan="{{ 11 if qdac_rows else 7 }}" class="ui-state ui-state--empty">No qubit flux channels in this state file.{% if coupler_flux_count %} {{ coupler_flux_count }} coupler{{ '' if coupler_flux_count == 1 else 's' }} carr{{ 'ies a' if coupler_flux_count == 1 else 'y' }} flux line{{ '' if coupler_flux_count == 1 else 's' }}: see <a href="/couplers" hx-get="/couplers" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Couplers</a>.{% endif %}</td></tr>
     {% endif %}
     </tbody>
 </table>

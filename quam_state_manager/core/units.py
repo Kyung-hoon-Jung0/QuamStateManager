@@ -71,6 +71,7 @@ _FIXED: dict[str, tuple[float, int]] = {
     "GHz": (1e-9, 4), "MHz": (1e-6, 2), "kHz": (1e-3, 1), "Hz": (1.0, 1),
     "s": (1.0, 2), "ms": (1e3, 2), MICRO + "s": (1e6, 2), "ns": (1e9, 1),
     "V": (1.0, 4), "mV": (1e3, 2), MICRO + "V": (1e6, 1),
+    "V/" + MICRO + "s": (1e-6, 3),
 }
 
 # ASCII tokens for machine-readable export headers (micro -> 'u', so a CSV
@@ -132,10 +133,15 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     # not the same field, and a later change to one must not silently move
     # the other.
     "qdac_dc_offset": ("volt", "V"),
+    # The QDAC-II channel's dwell (seconds) and slew rate (V/s): raw they read
+    # "2e-06" and "20000000" in a table, so each gets a fixed display unit.
+    "qdac_dwell": ("time", MICRO + "s"),
+    "qdac_slew_rate": ("slew", "V/" + MICRO + "s"),
 }
 
 # SI base-unit label per dimension, for "you are editing raw X" hints.
-_STORED_LABEL = {"freq": "Hz", "time": "s", "volt": "V", "duration_ns": "ns"}
+_STORED_LABEL = {"freq": "Hz", "time": "s", "volt": "V", "duration_ns": "ns",
+                 "slew": "V/s"}
 
 # A key that NAMES its unit (``gaussian_filter_frequency_mhz``) is stored in
 # that unit, not in the SI base the generic patterns assume: reading it as a

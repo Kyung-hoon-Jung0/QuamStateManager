@@ -209,7 +209,9 @@ window.UndoTrail = (function () {
             var val = e.deleted ? '(deleted)'
                 : (e.old_kind === 'list' && e.old_value_json != null) ? e.old_value_json
                 : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
-            return { dot_path: e.dot_path, value: val, from: undefined };
+            // walk G19: a server step names the value it left, when it knows it
+            return { dot_path: e.dot_path, value: val,
+                     from: (e.from_value_disp != null && !e.deleted) ? e.from_value_disp : undefined };
         });
         // docs/160: the server says where the step landed -- on the live chip
         // (Ctrl+Z writes live) or only in the tray ("staged"). Before, every

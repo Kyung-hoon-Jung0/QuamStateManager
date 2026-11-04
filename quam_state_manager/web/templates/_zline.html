@@ -11,6 +11,16 @@
     <strong>FIR</strong> filters applied together, at 2&nbsp;GSa/s, before the DC offset.
     A model of the documented filter, not a replay of the firmware.
 </p>
+{% if qdac_only or bias_tee %}
+<p class="muted zline-qdac-note" role="note">
+    {%- if qdac_only %}
+    Not drawn here: {{ qdac_only | join(', ') }} {{ 'is' if qdac_only|length == 1 else 'are' }} DC-biased by the QDAC-II and {{ 'has' if qdac_only|length == 1 else 'have' }} no OPX flux port (see <a href="/qdac" hx-get="/qdac" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">QDAC-II</a>).
+    {%- endif %}
+    {%- if bias_tee %}
+    {{ bias_tee | join(', ') }} {{ 'is' if bias_tee|length == 1 else 'are' }} on a bias tee: the QDAC-II holds the DC operating point, so the port's DC offset is not {{ 'its' if bias_tee|length == 1 else 'their' }} bias; only the pulses pass these filters.
+    {%- endif %}
+</p>
+{% endif %}
 
 {% if missing %}
 <p class="zline-missing ui-state ui-state--empty" role="status">{{ missing }}</p>

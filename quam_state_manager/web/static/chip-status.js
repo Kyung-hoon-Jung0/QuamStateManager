@@ -6062,7 +6062,9 @@ window.ChipStatus.mount = function (opts) {
                 items.push({ id: o.id, v: _ageLabel(o.at), t: 'oldest calibration',
                              vr: _ageClass(o.at), kind: o.kind });
             }
-            var wh = '<span class="worst-label muted">Needs attention:</span>';
+            // Walk G17: with nothing measured there is nothing to rank, and a
+            // bare "Needs attention:" label over no chips reads as a broken list.
+            var wh = items.length ? '<span class="worst-label muted">Needs attention:</span>' : '';
             items.forEach(function(it) {
                 wh += '<button type="button" class="worst-chip ' + (it.vr || '') + '" ' +
                       'data-inspect-id="' + _esc(it.id) + '" data-inspect-kind="' + (it.kind === 'p' ? 'p' : 'q') + '" ' +

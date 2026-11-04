@@ -9476,8 +9476,17 @@ def resonators():
 
 @bp.route("/flux")
 def flux():
+    # A chip whose qubits are fixed-frequency can still carry flux lines on
+    # its COUPLERS; those live on /couplers, so an empty /flux says where.
+    store = _store()
+    pairs = (store.merged.get("qubit_pairs") if store else None) or {}
+    coupler_flux = sum(
+        1 for p in pairs.values()
+        if isinstance(p, dict) and isinstance(p.get("coupler"), dict)
+        and p["coupler"].get("opx_output"))
     return _channel_scoped_qubits_page(
-        has_key="has_z", page_name="flux", template_stub="flux")
+        has_key="has_z", page_name="flux", template_stub="flux",
+        coupler_flux_count=coupler_flux)
 
 
 @bp.route("/qdac")
@@ -11862,8 +11871,11 @@ def _fmt_msg_val(v) -> str:
     return "not set" if v is None else _fmt_val(v)
 
 
+_NO_FROM = object()
+
+
 def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
-                          source_file="state") -> dict:
+                          source_file="state", from_value=_NO_FROM) -> dict:
     """ONE shape for every cellsReverted/cellDiscarded entry (docs/124 M-9/M-10).
 
     Five emit sites (undo, journal-staged undo, both redo branches, discard-all,
@@ -11922,6 +11934,12 @@ def _revert_entry_payload(dot_path, value, *, created=False, deleted=False,
             out["old_value_json"] = json.dumps(value, separators=(",", ":"))
         except (TypeError, ValueError):
             out["old_value_json"] = None
+    if from_value is not _NO_FROM and not created:
+        # Walk G19: the value the step moved AWAY from, so the Undo trail can
+        # say "from -> to" for a server step, not only where it landed.
+        out["from_value_disp"] = (_list_preview(from_value)
+                                  if isinstance(from_value, list)
+                                  else _bulk_display(from_value))
     return out
 
 
@@ -23373,7 +23391,21 @@ def zline_page():
     paths = [r["channel_path"] for r in rows]
     selected = want if want in paths else next(
         (r["channel_path"] for r in rows if r["ok"]), paths[0] if paths else "")
-    return render_template(template, **_ctx(page="zline", rows=rows, selected=selected))
+    # Walk G14: a QDAC-biased qubit has no OPX flux port to draw, and a
+    # bias-tee qubit's DC point is the QDAC's, not this port's offset; say so
+    # rather than leave those qubits unexplained.
+    qdac_only, bias_tee = [], []
+    with store._lock:
+        for qid, q in ((store.merged or {}).get("qubits") or {}).items():
+            mode = qdac_mod.bias_mode(q)
+            if mode == "qdac":
+                qdac_only.append(qid)
+            elif mode == "bias_tee":
+                bias_tee.append(qid)
+    qdac_only.sort(key=natural_key)
+    bias_tee.sort(key=natural_key)
+    return render_template(template, **_ctx(page="zline", rows=rows, selected=selected,
+                                             qdac_only=qdac_only, bias_tee=bias_tee))
 
 
 @bp.route("/zline/data")
@@ -29728,7 +29760,8 @@ def undo():
             # navigate-to-owner decision rides these fields.
             **_bounded_revert_payload(entries, lambda e: _revert_entry_payload(
                 e.dot_path, e.old_value, created=e.created, deleted=e.deleted,
-                source_file=e.source_file)),
+                source_file=e.source_file,
+                from_value=None if e.deleted else e.new_value)),
             # A burst that stopped early says so (review of eaa0f05): the
             # client re-queues `requested - consumed` presses at a journal
             # boundary (each walks the journal on its own, as a single press
@@ -30029,7 +30062,8 @@ def _undo_journal_step(ctx, n_req: int = 1):
             **_walk_burst_extra(n_req),
             **_walk_entries_payload(uents, lambda u: u.get("old"),
                                     created=lambda u: bool(u.get("created")),
-                                    deleted=lambda u: bool(u.get("deleted"))),
+                                    deleted=lambda u: bool(u.get("deleted")),
+                                    from_of=lambda u: u.get("new")),
         },
         "pulses-changed": True,
         "diagnostics-changed": True,
@@ -30038,7 +30072,8 @@ def _undo_journal_step(ctx, n_req: int = 1):
     return resp
 
 
-def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
+def _walk_entries_payload(uents: list, value_of, *, created, deleted,
+                          from_of=None) -> dict:
     """The `entries` of a walk-step response, CAPPED (code-review sweep, F4):
     the payload rides the HX-Trigger response HEADER, and a wholesale unit
     (docs/160 B) can carry thousands of entries -- past the project's own
@@ -30048,7 +30083,8 @@ def _walk_entries_payload(uents: list, value_of, *, created, deleted) -> dict:
     wholesale grid resync it already has for structural undos."""
     return _bounded_revert_payload(uents, lambda u: _revert_entry_payload(
         u["path"], value_of(u), created=created(u), deleted=deleted(u),
-        source_file=u.get("source_file", "state")))
+        source_file=u.get("source_file", "state"),
+        **({} if from_of is None or deleted(u) else {"from_value": from_of(u)})))
 
 
 def _bounded_revert_payload(entries, payload_of=lambda entry: entry) -> dict:
@@ -30431,7 +30467,8 @@ def _live_redo_response(fw: list, why: str | None, n_req: int, *, consumed: int 
     return _redo_response(
         message,
         [_revert_entry_payload(e.dot_path, e.new_value, created=bool(e.deleted),
-                               deleted=bool(e.created), source_file=e.source_file)
+                               deleted=bool(e.created), source_file=e.source_file,
+                               from_value=None if e.created else e.old_value)
          for e in fw],
         extra={**_burst, "level": "success", "live": True},
         live=True)

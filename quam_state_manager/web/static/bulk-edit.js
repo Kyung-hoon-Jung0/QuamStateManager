@@ -26,6 +26,25 @@
     var HIDE_KEY = 'quam_bulk_hidden_cols_v2';
     try { localStorage.removeItem('quam_bulk_hidden_cols'); } catch (e) {}
     var SEARCH_KEY = 'quam_bulk_search';   // persist the search/filter box across visits
+    // Walk G15: the remembered search belongs to the chip it was typed on; a
+    // different chip opens with an empty box instead of a foreign filter.
+    var SEARCH_CHIP_KEY = 'quam_bulk_search_chip';
+    function _searchChip() { return String(window.__bulkChipKey || ''); }
+    function _saveSearch(v) {
+        try {
+            localStorage.setItem(SEARCH_KEY, v);
+            localStorage.setItem(SEARCH_CHIP_KEY, _searchChip());
+        } catch (e) {}
+    }
+    function _loadSearch() {
+        try {
+            var v = localStorage.getItem(SEARCH_KEY) || '';
+            var was = localStorage.getItem(SEARCH_CHIP_KEY);
+            var now = _searchChip();
+            if (v && now && was !== null && was !== now) return '';
+            return v;
+        } catch (e) { return ''; }
+    }
     var FREQSYNC_KEY = 'quam_bulk_freqsync';   // 🔗 mirror f_01↔RF on edit (default on)
     // r7: dynamic columns default to ALL VISIBLE (the r6 opt-in model buried
     // fields the search couldn't find) — so this persists the HIDDEN set, not
@@ -401,7 +420,7 @@
             var seg = active.join(mode === 'or' ? ' | ' : ' ');
             var free = _freeTokens().join(' ');
             el.value = (free ? free + ' ' : '') + seg;
-            try { localStorage.setItem(SEARCH_KEY, el.value); } catch (e) {}
+            _saveSearch(el.value);
             _paint();
             offerDismissed = false;
             applySearch();
@@ -3638,7 +3657,7 @@
             window._bulkDynReconciled = false;
             // Restore the persisted search/filter before applySearch runs below.
             var sb0 = document.getElementById('bulk-search');
-            if (sb0) { try { sb0.value = localStorage.getItem(SEARCH_KEY) || ''; } catch (e) {} }
+            if (sb0) sb0.value = _loadSearch();
             window.__bulkMountTimings = [];
             _ph('start');
             _loadColWidths();
@@ -3878,7 +3897,7 @@
 
             var search = document.getElementById('bulk-search');
             if (search) search.addEventListener('input', function () {
-                try { localStorage.setItem(SEARCH_KEY, search.value); } catch (e) {}
+                _saveSearch(search.value);
                 ChipBar.syncFromQuery();   // typing a chip's word lights the chip
                 // A chip press already ran applySearch SYNCHRONOUSLY and only
                 // dispatches this event to reach the pair grid, which listens

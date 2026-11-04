@@ -603,7 +603,7 @@ class TestChannelScopedNavHiding:
         # renders the "no rows" empty state.
         resp = fixed_freq_client.get("/flux")
         assert resp.status_code == 200
-        assert b"No flux channels found" in resp.data
+        assert b"No qubit flux channels" in resp.data
 
     def test_couplers_route_still_reachable_but_empty(self, fixed_freq_client):
         resp = fixed_freq_client.get("/couplers")

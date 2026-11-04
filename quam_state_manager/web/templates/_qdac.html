@@ -83,8 +83,8 @@
             <th class="sortable" data-col="3" data-type="num">Channel</th>
             <th class="sortable" data-col="4" data-type="num">DC offset <span class="unit">(V)</span></th>
             <th class="sortable" data-col="5" data-type="str">Trigger</th>
-            <th class="sortable" data-col="6" data-type="num">Dwell <span class="unit">(s)</span></th>
-            <th class="sortable" data-col="7" data-type="num">Slew rate <span class="unit">(V/s)</span></th>
+            <th class="sortable" data-col="6" data-type="num">Dwell <span class="unit">(&micro;s)</span></th>
+            <th class="sortable" data-col="7" data-type="num">Slew rate <span class="unit">(V/&micro;s)</span></th>
             <th class="sortable" data-col="8" data-type="str">Range</th>
             <th class="sortable" data-col="9" data-type="str">Filter</th>
             <th class="sortable" data-col="10" data-type="num">Settle <span class="unit">(ns)</span></th>
@@ -106,8 +106,8 @@
             <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
             <td>{{ q.qdac_dc_offset | qty('qdac_dc_offset') }}</td>
             <td>{% if q.qdac_trigger_port %}{{ q.qdac_trigger_port }}{% if q.qdac_trigger_port_label %} <small class="muted" title="the OPX digital output cabled to that QDAC ext input">{{ q.qdac_trigger_port_label }}</small>{% endif %}{% else %}<span class="muted" title="No trigger marker — this channel only ever holds a static DC bias">static</span>{% endif %}</td>
-            <td>{{ q.qdac_dwell if q.qdac_dwell is not none else '-' }}</td>
-            <td>{{ q.qdac_slew_rate if q.qdac_slew_rate is not none else '-' }}</td>
+            <td>{{ q.qdac_dwell | qty('qdac_dwell') }}</td>
+            <td>{{ q.qdac_slew_rate | qty('qdac_slew_rate') }}</td>
             <td>{{ q.qdac_output_range or '-' }}</td>
             <td>{{ q.qdac_output_filter or '-' }}</td>
             <td>{{ q.qdac_settle_time if q.qdac_settle_time is not none else '-' }}</td>

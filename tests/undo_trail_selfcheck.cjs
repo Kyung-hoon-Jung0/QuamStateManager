@@ -53,6 +53,13 @@ ok(/qubits\.q1\.T1/.test(t) && /0\.00001/.test(t), 'the step names the path and 
 ok(panel().querySelector('.undo-trail-goto'), 'and carries a go-to-field button');
 ok(handled.length === 0, 'nothing navigated by itself');
 ok(/↶ undo/.test(t) && /staged/.test(t), 'labelled as an undo of a staged value');
+// walk G19: a server step that names the value it left shows from -> to
+d.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: { message: 'Undone: qubits.q1.flat_length',
+    entries: [{ dot_path: 'qubits.q1.flat_length', old_value_str: '40', old_value_disp: '40', old_kind: 'num',
+                from_value_disp: '80' }] } }));
+{ const lt = panel().querySelector('.undo-trail-latest');
+  ok(lt && /80\s*→\s*40/.test(lt.textContent.replace(/\s+/g, ' ')),
+     'G19: a server undo shows from -> to (' + (lt && lt.textContent.replace(/\s+/g, ' ').slice(0, 60)) + ')'); }
 // 2. in-memory step + redo label
 d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'redo', tier: 'memory', label: 'type 2 cells',
     entries: [{ dot_path: 'qubits.q2.T1', value: '3', from: '2' }] } }));
