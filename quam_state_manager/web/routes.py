@@ -35655,13 +35655,31 @@ def _diff_default_refs() -> tuple[str, str]:
     return "", b
 
 
+def _working_has_unapplied(ctx) -> bool:
+    """True when the open chip's working copy holds something the chip file
+    does not: a tray entry, a staged snapshot, or saved-but-unapplied
+    content. The ONE answer the diff pickers use for "with unsaved edits"
+    (the label used to say so unconditionally, even with an empty tray)."""
+    store = ctx.get("store")
+    if store is not None and (getattr(store, "change_log", None) or []):
+        return True
+    return bool(ctx.get("staged_base") or ctx.get("working_dirty")
+                or ctx.get("pending_reapply"))
+
+
+def _working_source_label(ctx) -> str:
+    if _working_has_unapplied(ctx):
+        return "Loaded chip (with unsaved edits)"
+    return "Loaded chip"
+
+
 def _diff_source_options() -> list[dict]:
     """What the two pickers offer: the loaded chip, then its snapshots."""
     out: list[dict] = []
     ctx = _active_ctx()
     if ctx and ctx.get("type") == "quam" and ctx.get("path"):
         out.append({"ref": f"working:{ctx['path']}",
-                    "label": "Loaded chip (with unsaved edits)"})
+                    "label": _working_source_label(ctx)})
     try:
         hm = _history()
         path = ctx.get("path") if ctx else None

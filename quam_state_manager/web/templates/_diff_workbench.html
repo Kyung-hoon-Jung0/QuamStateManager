@@ -140,11 +140,17 @@
        own images through /diff/fig; a run that lacks a figure shows a blank,
        never a substitute. Wrapped as a figure grid so the viewer's arrows
        walk A -> B -> C of the same figure, then the next one. #}
+    {# DS-2: the figure name is a full-width row heading (it used to be a
+       left column that ate the width the figures needed), each source column
+       keeps a readable minimum, and past that the grid scrolls sideways
+       under a hint naming the sources out of view (diff-panes.js). #}
+    <p class="muted diff-fig-hint">Click a figure to enlarge it; the arrow keys then step through the sources.</p>
+    <div class="diff-xscroll-hint" hidden></div>
+    <div class="diff-xscroll" data-xscroll>
     <div class="diff-wb-figs compare-figure-grid"
-         style="grid-template-columns: max-content repeat({{ payload.cols | length }}, 1fr)">
-      <div class="compare-figure-run-label diff-fig-corner"></div>
+         style="grid-template-columns: repeat({{ payload.cols | length }}, minmax(var(--diff-fig-min), 1fr))">
       {% for col in payload.cols %}
-      <div class="compare-figure-run-label" title="{{ col.ref }}">{{ col.slot | upper }} · {{ col.label }}{% if col.why %} <span class="muted">({{ col.why }})</span>{% endif %}</div>
+      <div class="compare-figure-run-label" data-xcol="{{ col.slot | upper }}" title="{{ col.ref }}">{{ col.slot | upper }} · {{ col.label }}{% if col.why %} <span class="muted">({{ col.why }})</span>{% endif %}</div>
       {% endfor %}
       {% for row in payload.rows %}
       <div class="diff-fig-name">{% if row.label %}<code>{{ row.label }}</code>{% endif %}</div>
@@ -163,6 +169,7 @@
       </div>
       {% endfor %}
       {% endfor %}
+    </div>
     </div>
   {% elif payload %}
     {% set c = payload.counts %}

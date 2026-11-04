@@ -545,7 +545,48 @@ document.addEventListener('htmx:sendError', function(evt) {
     if (t && t.classList && t.classList.contains('config-status-host')) return;
     if (t && t.id === 'state-history-detail') return;
     if (window.showToast) window.showToast("Couldn't reach the app — is it still running? Please retry.", "error");
+    window.diffSendFailed(evt);
 });
+
+// DS-5: a comparison request (sidebar Compare, a /diff tab or source change)
+// that never reached the server used to leave only a toast, with the pane
+// showing whatever was there before. Say so where the user is looking, and
+// offer the same request again.
+window.diffSendFailed = function (evt) {
+    var d = (evt && evt.detail) || {};
+    var cfg = d.requestConfig || {};
+    var path = cfg.path || (d.pathInfo && d.pathInfo.requestPath) || '';
+    if (!/^\/(diff|compare)(\?|\/|$)/.test(path)) return false;
+    var t = d.target;
+    if (!t || !t.id || (t.id !== 'table-pane' && t.id !== 'diff-root')) return false;
+    var host = t;
+    var old = host.querySelector(':scope > .diff-send-failed');
+    if (old) old.remove();
+    var box = document.createElement('div');
+    box.className = 'diff-send-failed diff-wb-msg warn';
+    box.setAttribute('role', 'alert');
+    var msg = document.createElement('span');
+    var why = d.error ? String(d.error) : '';
+    msg.textContent = 'The comparison request did not reach the app'
+        + (why && why.indexOf('htmx:') !== 0 ? ' (' + why + ')' : '') + '. Nothing was changed. ';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-xs';
+    btn.textContent = 'Retry';
+    var elt = d.elt, verb = (cfg.verb || 'get').toLowerCase();
+    btn.addEventListener('click', function () {
+        box.remove();
+        if (verb === 'get' && window.htmx) {
+            window.htmx.ajax('GET', path, { target: t, swap: (elt && elt.getAttribute && elt.getAttribute('hx-swap')) || 'innerHTML' });
+        } else if (elt && elt.isConnected && typeof elt.click === 'function') {
+            elt.click();
+        }
+    });
+    box.appendChild(msg);
+    box.appendChild(btn);
+    host.insertBefore(box, host.firstChild);
+    return true;
+};
 
 // Global unsaved-edits guard: the pending tray's change_log ("N unsaved") lives
 // only in server memory — nothing writes it to disk until Save — so closing the

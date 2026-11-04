@@ -372,13 +372,70 @@
         armSearch(root, filterList);
     }
 
+    // DS-2: a sideways-scrolling block (the pane table, the figure grid)
+    // says which sources are out of view. The native scrollbar is at the
+    // bottom of a block usually taller than the screen, so without this a
+    // fourth or fifth source simply was not there for the reader.
+    function xHint(box) {
+        var hint = box.previousElementSibling;
+        if (!hint || !hint.classList.contains('diff-xscroll-hint')) return;
+        var over = box.scrollWidth - box.clientWidth > 2;
+        if (!over) { hint.hidden = true; return; }
+        var bx = box.getBoundingClientRect();
+        // the sticky key column covers the left edge of the scroller
+        var key = box.querySelector('thead .dp-key-col');
+        var left = bx.left + (key ? key.getBoundingClientRect().width : 0);
+        var hidden = [], seen = {};
+        each(box.querySelectorAll('[data-xcol]'), function (el) {
+            var name = el.getAttribute('data-xcol');
+            if (seen[name]) return;
+            seen[name] = 1;
+            var r = el.getBoundingClientRect();
+            if (r.left < left - 2 || r.right > bx.right + 2) hidden.push(name);
+        });
+        if (!hidden.length) { hint.hidden = true; return; }
+        hint.hidden = false;
+        if (!hint.firstChild) {
+            hint.innerHTML = '<button type="button" class="btn-xs outline dxh-left" aria-label="Scroll left">&#9664;</button>'
+                + '<span class="dxh-text"></span>'
+                + '<button type="button" class="btn-xs outline dxh-right" aria-label="Scroll right">&#9654;</button>';
+            hint.querySelector('.dxh-left').addEventListener('click', function () {
+                box.scrollBy({ left: -box.clientWidth * 0.8, behavior: 'smooth' });
+            });
+            hint.querySelector('.dxh-right').addEventListener('click', function () {
+                box.scrollBy({ left: box.clientWidth * 0.8, behavior: 'smooth' });
+            });
+        }
+        hint.querySelector('.dxh-text').textContent = 'Not all sources fit: ' + hidden.join(', ')
+            + (hidden.length === 1 ? ' is' : ' are')
+            + ' out of view. Scroll sideways (or use the arrows) to see '
+            + (hidden.length === 1 ? 'it.' : 'them.');
+        hint.querySelector('.dxh-left').disabled = box.scrollLeft <= 0;
+        hint.querySelector('.dxh-right').disabled = box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
+    }
+
+    function armXScroll(box) {
+        if (box._dxhArmed) { xHint(box); return; }
+        box._dxhArmed = true;
+        box.addEventListener('scroll', function () { xHint(box); }, { passive: true });
+        if (window.ResizeObserver) {
+            try { new ResizeObserver(function () { xHint(box); }).observe(box); } catch (e) { /* ignore */ }
+        }
+        each(box.querySelectorAll('img'), function (img) {
+            if (!img.complete) img.addEventListener('load', function () { xHint(box); }, { once: true });
+        });
+        xHint(box);
+    }
+
     function armAll() {
         each(document.querySelectorAll('#diff-panes'), arm);
         each(document.querySelectorAll('#diff-list'), armList);
+        each(document.querySelectorAll('[data-xscroll]'), armXScroll);
     }
 
     window.DiffPanes = { arm: arm, armAll: armAll, paint: paint, applyVisibility: applyVisibility,
-                         setDepth: setDepth, filter: filterPanes, filterList: filterList };
+                         setDepth: setDepth, filter: filterPanes, filterList: filterList,
+                         xHint: xHint };
 
     // Every /diff request issued from inside the workbench (tab strip, view
     // toggle, show-more) carries the CURRENT baseline and search, whatever
