@@ -755,6 +755,12 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
 .cmap[data-cm-pick="1"] .cm-dir-m,
 .cmap[data-cm-pick="1"] .cm-dir-label,
 .cmap[data-cm-pick="1"] .cm-dir-legend { display: none; }
+/* the add door (core/diagram_add.py): two dashed ghost stones and the pair pick */
+.cm-dir-ghost { cursor: pointer; }
+.cm-dir-ghost .cm-dir-ghost-stone { fill: var(--ui-surface-1); stroke: var(--ui-accent); stroke-width: 2px; stroke-dasharray: 5 4; }
+.cm-dir-ghost .cm-dir-ghost-text { fill: var(--ui-accent); font-weight: var(--ui-fw); }
+.cm-dir-ghost:hover .cm-dir-ghost-stone, .cm-dir-ghost:focus-visible .cm-dir-ghost-stone { fill: var(--ui-accent-bg); stroke-dasharray: none; }
+.cm-node.cm-dir-addsel .cm-stone { stroke: var(--ui-accent); stroke-width: 4px; opacity: 1; }
 
 /* Chip Status metric panels as the chip map (D-96) */
 .tmap {

@@ -1,0 +1,58 @@
+{# The add panel under the chip map (core/diagram_add.py). Staging writes the
+   working copy only; the pending tray, Review / Apply and one Ctrl+Z hold it. #}
+<div class="ui-item" id="cm-add-box" data-kind="{{ kind }}">
+  <div class="ui-item-head">
+    <span class="ui-badge ui-badge--accent">Add {{ kind }}</span>
+    <span class="ui-item-title">{% if kind == 'qubit' %}copied from {{ d.template }} on feedline {{ d.feedline }}{% else %}{{ a }} and {{ b }}{% endif %}</span>
+    <span class="ui-actions"><button type="button" class="btn-sm outline secondary" data-cm-add-cancel>Cancel</button></span>
+  </div>
+  <form id="cm-add-form" hx-post="/diagram-add/stage" hx-target="#cm-add-review" hx-swap="innerHTML">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="expect_chip" value="{{ expect_chip }}">
+    <input type="hidden" name="dry" value="1">
+  {% if kind == 'qubit' %}
+    <input type="hidden" name="feedline" value="{{ d.feedline }}">
+    <table class="ui-table">
+      <tr><th class="ui-table-head" scope="row">Name</th>
+          <td class="ui-table-cell"><input name="name" value="{{ d.name }}" required aria-label="Qubit name"></td>
+          <td class="ui-table-cell ui-table-muted">follows the feedline's naming</td></tr>
+      <tr><th class="ui-table-head" scope="row">Feedline</th>
+          <td class="ui-table-cell"><select name="feedline_pick" aria-label="Feedline" data-cm-add-feedline>
+            {% for f in d.feedlines %}<option value="{{ f }}"{% if f == d.feedline %} selected{% endif %}>{{ f }}</option>{% endfor %}
+          </select></td>
+          <td class="ui-table-cell ui-table-muted">or click a qubit on the map to join its feedline</td></tr>
+      <tr><th class="ui-table-head" scope="row">Drive frequency (Hz)</th>
+          <td class="ui-table-cell"><input name="drive_rf" inputmode="decimal" value="{{ '%.0f' | format(d.drive_rf) if d.drive_rf is not none else '' }}" aria-label="Drive frequency in Hz" data-cm-add-rf></td>
+          <td class="ui-table-cell ui-table-muted">starts at {{ d.template }}'s value</td></tr>
+      <tr><th class="ui-table-head" scope="row">Readout frequency (Hz)</th>
+          <td class="ui-table-cell"><input name="readout_rf" inputmode="decimal" value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}" aria-label="Readout frequency in Hz"></td>
+          <td class="ui-table-cell ui-table-muted">within the feedline LO's IF window</td></tr>
+      <tr><th class="ui-table-head" scope="row">Drive output</th>
+          <td class="ui-table-cell"><select name="drive" aria-label="Drive output" data-cm-add-drive>
+            {% for c in drive %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free MW-FEM output fits</option>{% endfor %}
+          </select></td>
+          <td class="ui-table-cell ui-table-muted">free MW-FEM outputs; coupled-port band rule and IF window applied</td></tr>
+      {% if d.has_flux %}
+      <tr><th class="ui-table-head" scope="row">Flux output</th>
+          <td class="ui-table-cell"><select name="flux" aria-label="Flux output">
+            {% for c in flux %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free LF-FEM output</option>{% endfor %}
+          </select></td>
+          <td class="ui-table-cell ui-table-muted">free LF-FEM outputs</td></tr>
+      {% endif %}
+    </table>
+  {% else %}
+    {% if plan.error %}
+    <p class="ui-callout ui-callout--warn">{{ plan.error }}</p>
+    {% else %}
+    <input type="hidden" name="control" value="{{ plan.summary.control }}">
+    <input type="hidden" name="target" value="{{ plan.summary.target }}">
+    <p class="ui-note">New pair <span class="ui-chip">{{ plan.summary.name }}</span>: control {{ plan.summary.control }}, target {{ plan.summary.target }}, shaped like {{ plan.summary.template }}.</p>
+    {% endif %}
+  {% endif %}
+    <div class="ui-actions">
+      {% if kind == 'pair' and not plan.error %}<button type="button" class="btn-sm outline secondary" data-cm-add-swap data-a="{{ b }}" data-b="{{ a }}">Swap control and target</button>{% endif %}
+      {% if kind == 'qubit' or not plan.error %}<button type="submit" class="btn-sm">Review the change</button>{% endif %}
+    </div>
+  </form>
+  <div id="cm-add-review"></div>
+</div>

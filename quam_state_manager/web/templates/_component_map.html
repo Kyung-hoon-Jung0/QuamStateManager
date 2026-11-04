@@ -9,7 +9,7 @@
    passes a smaller cell and turns the drawing into a row filter. #}
 <details class="cmap" id="component-map" data-highlight="{{ cmap_highlight }}"
          data-cell="{{ cmap_cell | default(120) }}" data-cm-pick="{{ cmap_pick | default('') }}"
-         data-open-key="{{ cmap_open_key | default('') }}"
+         data-open-key="{{ cmap_open_key | default('') }}"{% if cmap_add %} data-cm-add="1"{% endif %}
          {# `or ''`, not `| default('')` — default() covers only UNDEFINED
             (pairs/couplers pass no active_chain), while qubits unfiltered
             passes None, which default() would print as "None" #}
@@ -19,4 +19,5 @@
     </summary>
     <div class="cmap-body"><p class="muted" style="margin:0">Loading chip layout&hellip;</p></div>
 </details>
+{% if cmap_add %}<div id="cm-add-panel" aria-live="polite"></div>{% endif %}
 <script>if (window.ComponentMap) ComponentMap.mount(document.getElementById('component-map'));</script>

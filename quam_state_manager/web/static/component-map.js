@@ -205,6 +205,8 @@ window.ComponentMap = (function () {
       if (_isPick()) return;    // the page owns this click (docs/166)
       var el = ev.target.closest && ev.target.closest("[data-cm]");
       if (!el) return;
+      // the add door owns its ghost stones and, while it is open, the stones
+      if (window.DiagramAdd && window.DiagramAdd.onMapClick(el)) return;
       var e = _parseCm(el);
       if (!e || !window.htmx) return;
       htmx.ajax("GET", (e.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(e.id),
@@ -381,6 +383,7 @@ window.ComponentMap = (function () {
             cell: parseInt(root.getAttribute("data-cell"), 10) || undefined,
             // docs/93 F3: the page's active chain filter lights its qubits
             emphasisChain: root.getAttribute("data-chain") || "",
+            ghost: root.getAttribute("data-cm-add") === "1",
           });
           _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);

@@ -51899,3 +51899,7 @@ def autofit_diagnose_rows():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True, "rows": rows, "power": power})
+
+
+# Add a qubit or a pair from the chip diagram: routes registered on bp.
+from quam_state_manager.web import diagram_add_routes  # noqa: E402,F401

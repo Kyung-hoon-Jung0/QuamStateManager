@@ -872,6 +872,11 @@ window.TopoGraph = (function () {
     var SP = Math.round(CELL * DIR_SPACING);
     var W = Math.max(SP, Math.round(lay.cols * SP));
     var H = Math.max(SP, Math.round(lay.rows * SP));
+    // The add door (core/diagram_add.py): one extra column on the right holds
+    // a "+" stone (add a qubit) and a "+ pair" stone (pick two qubits). It
+    // claims no grid position; the server proposes the new qubit's cell.
+    var ghostX = opts.ghost ? W + SP / 2 : null;
+    if (opts.ghost) { W += SP; H = Math.max(H, 2 * SP); }
     var offC = spreadCoincident(lay.positions, 0.22);
     function px(id) {
       var p = lay.positions[id], o = offC[id];
@@ -1045,6 +1050,7 @@ window.TopoGraph = (function () {
       svg += "<title>" + esc(n.id) + "</title></g>";
     }
     svg += glyphSvg;
+    if (opts.ghost) svg += ghostStones(ghostX, SP, R, idFont);
 
     var hl = opts.highlight ? " cm-hl-" + esc(String(opts.highlight)) : "";
     mount.innerHTML =
@@ -1077,6 +1083,21 @@ window.TopoGraph = (function () {
         for (var i = 0; i < els.length; i++) els[i].classList.toggle("cm-hot", !!on);
       },
     };
+  }
+
+  // The add door's two ghost stones: dashed, a "+" and a "+ pair" label.
+  function ghostStones(x, SP, R, font) {
+    var out = "";
+    var rows = [["add:qubit", "+", "Add a qubit"], ["add:pair", "+ pair", "Add a pair: then click two qubits"]];
+    for (var i = 0; i < rows.length; i++) {
+      var y = (i + 0.5) * SP;
+      out += '<g class="cm-dir-ghost" data-cm="' + rows[i][0] + '" role="button" tabindex="0" aria-label="' +
+             esc(rows[i][2]) + '"><circle class="cm-dir-ghost-stone" cx="' + x + '" cy="' + y + '" r="' + R + '"/>' +
+             '<text class="cm-dir-ghost-text" font-size="' + font + '" x="' + x + '" y="' + y +
+             '" text-anchor="middle" dominant-baseline="central">' + esc(rows[i][1]) + "</text>" +
+             "<title>" + esc(rows[i][2]) + "</title></g>";
+    }
+    return out;
   }
 
   // --- gate -> edge style + legend (the SHARED convention) -------------------
