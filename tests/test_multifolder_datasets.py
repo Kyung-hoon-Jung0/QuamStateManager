@@ -467,3 +467,35 @@ class TestPhase2Compare:
         for live in ("dsNavRun(", "dsComparePrev(", "dsOpenFullPage(", "togglePinDataset("):
             assert live in one, live
         assert "inspector-header-compare" not in one
+
+
+# --------------------------------------------------------------------------
+# /dataset/by-path?path=<run folder> -- an outside link names the run FOLDER,
+# because a bare run id is ambiguous once two data folders are loaded.
+# --------------------------------------------------------------------------
+
+class TestDatasetByPath:
+    def test_same_run_id_in_two_folders_opens_the_named_one(self, tmp_path):
+        fa, fb = tmp_path / "proj_a", tmp_path / "proj_b"
+        _seed_run(fa, 52, name="power_rabi")
+        run_b = _seed_run(fb, 52, name="power_rabi", date="2026-06-01")
+        app, c = _app_with_folders(tmp_path, [fa, fb])
+        r = c.get("/dataset/by-path", query_string={"path": str(run_b)})
+        assert r.status_code == 302
+        assert r.headers["Location"].endswith(f"/dataset/{routes._folder_key(fb)}:52")
+        assert c.get("/dataset/by-path", query_string={"path": str(run_b)},
+                     follow_redirects=True).status_code == 200
+
+    def test_folder_not_in_any_loaded_data_folder_is_clear_404(self, tmp_path):
+        fa = tmp_path / "proj_a"
+        _seed_run(fa, 52)
+        other = _seed_run(tmp_path / "elsewhere", 52)
+        app, c = _app_with_folders(tmp_path, [fa])
+        r = c.get("/dataset/by-path", query_string={"path": str(other)})
+        assert r.status_code == 404
+        assert "in any loaded data folder" in r.get_data(as_text=True)
+
+    def test_a_path_that_is_not_a_run_folder_is_400(self, tmp_path):
+        app, c = _app_with_folders(tmp_path, [])
+        assert c.get("/dataset/by-path", query_string={"path": str(tmp_path)}).status_code == 400
+        assert c.get("/dataset/by-path").status_code == 400
