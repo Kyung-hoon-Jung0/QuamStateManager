@@ -11601,7 +11601,7 @@ def _checkpoint_pending_tray_flags(response):
 
 
 _AGENT_HELD_MSG = ("Auto-Sync is holding: {n} staged edit(s) came from an agent. Auto-Sync never "
-                   "pushes an agent's edits -- review them and press Apply yourself, or discard them.")
+                   "pushes an agent's edits. Review them and press Apply yourself, or discard them.")
 
 
 def _agent_held_paths(changes) -> list:

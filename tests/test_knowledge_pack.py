@@ -240,7 +240,7 @@ class TestNoCustomerNamesShipped:
         """Scan code, comments, templates, and styles; exclude vendor bundles."""
         from tests.name_guard import assert_clean
         root = _ROOT / "quam_state_manager"
-        vendor = ("plotly", "htmx", "split", "pico")
+        vendor = ("plotly", "htmx", "split", "pico", "cm6")
         files = list(root.rglob("*.py")) + list(
             (root / "web" / "templates").rglob("*.html")) + [
             file for file in (root / "web" / "static").rglob("*")
