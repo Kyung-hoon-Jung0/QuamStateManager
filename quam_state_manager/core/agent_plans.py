@@ -241,6 +241,32 @@ def step_update(instance_path, chip: str, plan_id: str, step_i: int, **fields) -
     return rec
 
 
+def approval_settled(instance_path, chip: str, plan_id: str | None, approval_id: str, *,
+                     applied: bool) -> dict | None:
+    """W2-5: a step's held writes were decided on their card. The step stops
+    reading "waiting"; an approval that wrote the chip marks it applied."""
+    if not plan_id or not approval_id:
+        return None
+    with _lock_for(instance_path, chip):
+        rows = _load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None:
+            return None
+        hit = False
+        for st in rec.get("steps") or []:
+            if st.get("approval") == approval_id:
+                st["approval"] = None
+                if applied:
+                    st["applied"] = True
+                hit = True
+        if not hit:
+            return None
+        if rec.get("summary") is not None:
+            rec["summary"] = counts(rec)
+        _save(instance_path, chip, rows)
+    return rec
+
+
 def halt_targets(instance_path, chip: str, plan_id: str, halts: dict, *, at: float | None = None
                  ) -> tuple[dict | None, bool]:
     """docs/261: stop-loss halted these targets (``{target: why}``) of a RUNNING plan. Each is

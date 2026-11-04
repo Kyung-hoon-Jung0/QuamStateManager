@@ -1208,7 +1208,7 @@ def _sync_view(ctx=None) -> dict | None:
     # path). The change log keeps every commit (undo, the consent count).
     paths = sync_status.edit_fields([getattr(c, "dot_path", None) for c in log],
                                     ctx.get("pending_reapply") or {})
-    return sync_status.view(
+    _v = sync_status.view(
         facts=facts,
         flag_moved=bool(ctx.get("live_diverged")),
         flag_count=ctx.get("live_drift_count"),
@@ -1223,6 +1223,19 @@ def _sync_view(ctx=None) -> dict | None:
         unapplied=len(paths),
         working_dirty=bool(ctx.get("working_dirty")),
     )
+    # W2-1: the Auto-Sync session is part of what every window shows, so its
+    # arming, its modes and its hold move the signature the drift poll follows
+    _a = ctx.get("auto_apply") or None
+    _lu = list(ctx.get("_lost_unacked") or [])
+    if _v is not None:
+        _v["lost"] = _lu
+        if _lu:
+            _v["sig"] = str(_v.get("sig") or "") + "|lost:%d:%s" % (len(_lu), _lu[-1].get("at"))
+        _v["sig"] = str(_v.get("sig") or "") + (
+            "|auto:off" if not _a else "|auto:%s:%d%d%d%d" % (
+                _a.get("armed_at"), bool(_a.get("pull")), bool(_a.get("pull_replace")),
+                bool(_a.get("push")), bool(_a.get("hold"))))
+    return _v
 
 
 def _evict_oldest_quam() -> None:
@@ -11984,6 +11997,7 @@ def _applied_values_held(ctx) -> dict:
         return {}
     now = time.time()
     newest: dict = {}
+    olds: dict = {}
     for unit in list(units)[:cursor] if isinstance(cursor, int) and cursor >= 0 else list(units):
         if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
             continue
@@ -11991,23 +12005,55 @@ def _applied_values_held(ctx) -> dict:
             if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
                 # a created subtree (Set name creates ``extras``) is named by
                 # its leaves, so the notice says extras.chip_name
-                stack = [(e["path"], e.get("new"))]
+                o_root = _DOT_MISSING if e.get("created") else e.get("old", _DOT_MISSING)
+                stack = [(e["path"], e.get("new"), o_root)]
                 while stack:
-                    p0, v0 = stack.pop()
+                    p0, v0, o0 = stack.pop()
                     if isinstance(v0, dict) and v0:
-                        stack.extend((f"{p0}.{k}", v) for k, v in v0.items())
+                        stack.extend((f"{p0}.{k}", v,
+                                      o0.get(k, _DOT_MISSING) if isinstance(o0, dict) else _DOT_MISSING)
+                                     for k, v in v0.items())
                     else:
                         newest[p0] = v0
+                        olds.setdefault(p0, []).append(o0)
     if not newest:
         return {}
-    held = {}
+    held = _HeldApplied()
     with store._lock:
         doc = store.merged
         for p, v in newest.items():
             got = _dot_get(doc, p)
             if got is not _DOT_MISSING and got == v:
                 held[p] = copy.deepcopy(v)
+                held.old[p] = [copy.deepcopy(o) if o is not _DOT_MISSING else o
+                               for o in olds.get(p, ())]
     return held
+
+
+class _HeldApplied(dict):
+    """``{path: value SM applied}`` plus ``.old`` = ``{path: [the values SM's
+    applies replaced]}`` (``_DOT_MISSING`` for a created key)."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.old = {}
+
+
+def _applied_value_lost(held, path: str, got) -> bool:
+    """W2-6 [derived]: did the live value ``got`` take away the value SM
+    applied at ``path``? Only when it went BACK to a value SM's apply had
+    replaced (a stale in-memory copy saved over the chip), or the key is gone.
+    A THIRD value -- neither the applied one nor one SM replaced -- is an
+    outside writer's new measurement: newer than SM's, not a loss."""
+    v = held.get(path, _DOT_MISSING)
+    if got is not _DOT_MISSING and got == v:
+        return False
+    if got is _DOT_MISSING:
+        return True
+    olds = getattr(held, "old", {}).get(path)
+    if olds is None:
+        return True                     # no record of what was replaced: as before
+    return any(o is not _DOT_MISSING and o == got for o in olds)
 
 
 def _applied_values_lost(ctx, held: dict) -> list[dict]:
@@ -12020,7 +12066,7 @@ def _applied_values_lost(ctx, held: dict) -> list[dict]:
         doc = store.merged
         for p, v in held.items():
             got = _dot_get(doc, p)
-            if got is _DOT_MISSING or got != v:
+            if _applied_value_lost(held, p, got):
                 out.append({"path": p, "applied": v,
                             "now": None if got is _DOT_MISSING else got,
                             "removed": got is _DOT_MISSING})
@@ -16646,6 +16692,24 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
             for _e in applied_entries:
                 if hasattr(_e, "actor"):
                     _e.actor = _actor
+
+            # W2-2: a row TAKEN from the live chip is not an unapplied edit --
+            # once the field holds exactly what the live chip holds, SM agrees
+            # with live there, so its change-log rows for that path are done
+            # (otherwise the panel calls SM's old value "live chip" and Take
+            # live counts the taken value as an edit it would lose)
+            if _ps_live is not None:
+                _adopted = set()
+                for _e in applied_entries:
+                    if getattr(_e, "created", False) or getattr(_e, "deleted", False):
+                        continue
+                    _now = _dot_get(modifier.store.merged, _e.dot_path)
+                    if _now is not _DOT_MISSING and _ps_live.holds(_e.dot_path, _now):
+                        _adopted.add(_e.dot_path)
+                _adopted -= set((ctx.get("pending_reapply") or {}).keys())
+                if _adopted:
+                    modifier.store.change_log[:] = [
+                        _c for _c in modifier.store.change_log if _c.dot_path not in _adopted]
 
     if applied_entries:
         _invalidate_engine_cache(ctx)
@@ -31609,6 +31673,11 @@ def auto_sync_pull():
     # F2/F23: the applied values this pull took away, and one step of the
     # pull counter every window follows (_pull_note)
     _lost = _applied_values_lost(ctx, _held_applied)
+    if _lost:
+        # W2-3: kept in the status control until a person acknowledges it
+        _keep = [x for x in (ctx.get("_lost_unacked") or [])
+                 if x.get("path") not in {y["path"] for y in _lost}]
+        ctx["_lost_unacked"] = (_keep + [dict(x, at=time.time()) for x in _lost])[-_LOST_APPLIED_MAX:]
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
@@ -31656,6 +31725,16 @@ def auto_sync_pull():
 
 #: pull steps whose lost-value lists ride the drift poll (``_pull_note``)
 _PULL_LOST_HIST = 8
+
+
+@bp.route("/sync/lost-ack", methods=["POST"])
+def sync_lost_ack():
+    """W2-3: the person read the record of applied values an outside save
+    took away; it leaves the status control (State History keeps the rest)."""
+    ctx = _active_ctx()
+    if ctx:
+        ctx.pop("_lost_unacked", None)
+    return make_response(_tray_html())
 
 
 @bp.route("/auto-apply/arm", methods=["POST"])
@@ -31939,9 +32018,11 @@ def state_review():
     # live chip no longer holds is NEWER than live, not an older value to put
     # back -- the choices must count it as a loss and offer to keep it
     _held = _applied_values_held(ctx) if not archive else {}
-    applied_newer = [p for p in external if p in _held]
+    applied_newer = [p for p in external if p in _held and _applied_value_lost(
+        _held, p, live_by_path.get(p, _DOT_MISSING)
+        if kind_by_path.get(p) != "removed" else _DOT_MISSING)]
     external_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
-                      "kind": kind_by_path.get(p, "modified"), "applied": p in _held}
+                      "kind": kind_by_path.get(p, "modified"), "applied": p in applied_newer}
                      for p in external[:300]]
     mine_rows = []
     cset = set(conflicts)
@@ -33345,7 +33426,7 @@ def state_sync():
                     _got = _dot_get(_pulled[0], _p)
                     if _got is _DOT_MISSING:
                         _got = _dot_get(_pulled[1], _p)
-                    if _got is _DOT_MISSING or _got != _v:
+                    if _applied_value_lost(_held_applied, _p, _got):
                         pending[_p] = _tagged("set", _v, "keep-applied")
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
@@ -34337,6 +34418,10 @@ def state_apply_to_live():
         # applies WHOLE, so a flush cannot push the person's rows and leave an
         # agent's behind; while any agent-staged row is pending the flush
         # writes nothing (the agent's rows wait for the person's own Apply).
+        if request.values.get("auto_flush") == "1" and _auto_hold_active(ctx):
+            return jsonify(ok=False, conflict="auto_seen_off", message=_AUTO_HOLD_MSG), 409
+        if request.values.get("auto_flush") != "1" and _auto_apply_state(ctx):
+            _auto_apply_state(ctx).pop("hold", None)   # W2-1: a person's Apply releases it
         if request.values.get("auto_flush") == "1":
             _held = _agent_held_paths(ctx["store"].change_log)
             if _held:
@@ -42407,6 +42492,61 @@ def _ensure_workspace_loaded() -> None:
                 logger.warning("Workspace rehydration failed", exc_info=True)
 
 
+AUTO_SEEN_HEADER = "X-SM-Auto-Seen"
+_AUTO_SEEN_EXEMPT = frozenset({"main.auto_sync_set", "main.auto_apply_arm", "main.auto_apply_disarm",
+                               "main.state_apply_to_live", "main.state_sync", "main.auto_sync_pull"})
+
+
+@bp.before_request
+def _auto_seen_begin():
+    """W2-1: a write pressed in a window whose tray still showed Auto-Sync
+    OFF while another window had armed push. The edit itself stages as
+    usual; the session HOLDS (no flush from any window) until a person
+    presses Apply, so a window that read "Auto off" never writes the chip
+    by surprise. Only a page that declares what it saw is judged."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or request.endpoint in _AUTO_SEEN_EXEMPT:
+        return None
+    if (request.headers.get(AUTO_SEEN_HEADER) or "") != "0":
+        return None
+    ctx = _active_ctx()
+    if not _auto_apply_state(ctx) or ctx.get("store") is None:
+        return None
+    sess = ctx["auto_apply"]
+    g._auto_seen_off = (ctx, sess, ctx["store"].mutation_seq, bool(sess.get("hold")))
+    sess["hold"] = True     # set first, so the tray this request renders says so
+    return None
+
+
+@bp.after_request
+def _auto_seen_end(resp):
+    rec = getattr(g, "_auto_seen_off", None)
+    if rec is None:
+        return resp
+    ctx, sess, seq0, had = rec
+    try:
+        if not had and (ctx["store"].mutation_seq == seq0 or resp.status_code >= 400):
+            sess.pop("hold", None)          # nothing was staged: no hold
+    except Exception:  # noqa: BLE001 -- bookkeeping, never fatal
+        logger.debug("auto-seen hold failed", exc_info=True)
+    return resp
+
+
+_AUTO_HOLD_MSG = ("Auto-Sync is holding: an edit was made in a window that still showed "
+                  "Auto-Sync off. Nothing was written to the live chip; press Apply to write it.")
+
+
+def _auto_hold_active(ctx) -> bool:
+    """The W2-1 hold, released once nothing is pending any more."""
+    sess = _auto_apply_state(ctx)
+    if not sess or not sess.get("hold"):
+        return False
+    store = ctx.get("store")
+    if store is not None and not store.change_log and not ctx.get("working_dirty")             and not ctx.get("pending_reapply"):
+        sess.pop("hold", None)
+        return False
+    return True
+
+
 @bp.before_request
 def _tab_chip_gate():
     """v1.5.1 (SB-F2/F5): a write press from a page rendered on another chip
@@ -42582,7 +42722,19 @@ def _dataset_store(*, light: bool = False) -> DatasetStore | None:
         return ds
 
     ws = current_app.config.get("workspace")
+    # W2-4: an opened project's data folder counts as open (the agent's
+    # check_fit / run_figure and the run attribution read this store) even
+    # before anyone pressed Dataset Load
+    try:
+        _proj = _scope_storage_path(_active_ctx())
+    except Exception:  # noqa: BLE001 -- a hint only
+        _proj = ""
     if not ws:
+        if _proj and Path(_proj).is_dir():
+            pds = _get_or_create_store(Path(_proj))
+            if pds is not None and pds.run_count:
+                current_app.config["dataset_store"] = pds
+                return pds
         return None
 
     # Build candidates: workspace root_folders + entries' grandparent folder.
@@ -42597,6 +42749,8 @@ def _dataset_store(*, light: bool = False) -> DatasetStore | None:
         candidate = entry.folder_path.parent.parent
         if candidate.is_dir():
             candidates.add(candidate)
+    if _proj and Path(_proj).is_dir():
+        candidates.add(Path(_proj))
 
     if not candidates:
         return None
