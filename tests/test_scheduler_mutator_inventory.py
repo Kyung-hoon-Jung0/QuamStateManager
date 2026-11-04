@@ -161,6 +161,7 @@ _NON_STAGING_POSTS = {
     'main.state_archive',
     'main.state_history_label',
     'main.state_history_snapshot',
+    'main.sync_lost_ack',               # W2-3: drops the acknowledged loss note (a ctx key); stages nothing
     'main.trend',
     'main.trend_chart',
     'main.type_alarm_dismiss',
