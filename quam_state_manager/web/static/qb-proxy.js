@@ -39,6 +39,46 @@
     } catch (e2) { /* nothing more to do */ }
   }
 
+  // 0b. QUAlibrate's own calls carry the page's proxy token (D-19); SM refuses
+  //     an opaque-origin request without it, so no other page can drive the
+  //     proxy. Only urls under this page's own prefix on this host get it.
+  var TOKEN = me && me.getAttribute('data-token');
+  var TOKEN_HEADER = 'X-QSM-Proxy-Token';
+  function ours(url) {
+    try {
+      var u = new URL(String(url), document.baseURI);
+      return u.host === location.host && u.pathname.indexOf(PREFIX) === 0;
+    } catch (e) { return false; }
+  }
+  if (TOKEN) {
+    try {
+      var nativeFetch = window.fetch;
+      if (nativeFetch) {
+        window.fetch = function (input, init) {
+          try {
+            var isReq = input && typeof input === 'object' && 'url' in input;
+            if (ours(isReq ? input.url : input)) {
+              init = init ? Object.assign({}, init) : {};
+              var h = new Headers(init.headers || (isReq ? input.headers : undefined));
+              h.set(TOKEN_HEADER, TOKEN);
+              init.headers = h;
+            }
+          } catch (e) { /* send it as it was */ }
+          return nativeFetch.call(this, input, init);
+        };
+      }
+      var XO = window.XMLHttpRequest && window.XMLHttpRequest.prototype;
+      if (XO) {
+        var nOpen = XO.open, nSend = XO.send;
+        XO.open = function (m, url) { this.__qsmOurs = ours(url); return nOpen.apply(this, arguments); };
+        XO.send = function () {
+          try { if (this.__qsmOurs) this.setRequestHeader(TOKEN_HEADER, TOKEN); } catch (e) { /* as it was */ }
+          return nSend.apply(this, arguments);
+        };
+      }
+    } catch (e) { /* leave fetch/XHR alone */ }
+  }
+
   // 1. WebSockets go straight to QUAlibrate (SM's server cannot upgrade one).
   //    Only urls under this page's own prefix are rewritten; on any doubt the
   //    original url is used unchanged.

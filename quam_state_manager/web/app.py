@@ -206,7 +206,10 @@ def _csrf_origin_check():
     # QUAlibrate's page through SM runs sandboxed with the opaque origin "null"
     # (qualibrate_proxy D-16); it may write to the proxy and to nothing else.
     if origin == "null" and request.path.startswith("/qualibrate-ui/"):
-        return None
+        from quam_state_manager.web.qualibrate_proxy import null_origin_allowed
+        if null_origin_allowed(request):
+            return None
+        return ("CSRF: opaque-origin request without the proxy token rejected", 403)
     if origin:
         if origin not in (expected, expected_https):
             return ("CSRF: cross-origin mutation rejected", 403)

@@ -25,9 +25,14 @@ function world(body, opts) {
   w.WebSocket = function (url, p) { made.push([url, p]); this.url = url; };
   w.WebSocket.OPEN = 1;
   w.open = function (u, name) { made.push(['open', u, name]); };
+  w.Headers = Headers;
+  w.fetch = function (input, init) { made.push(['fetch', String(input && input.url || input), init]); return Promise.resolve(); };
+  w.XMLHttpRequest.prototype.send = function () { made.push(['xhr', this.__hdr || {}]); };
+  w.XMLHttpRequest.prototype.setRequestHeader = function (k, v) { (this.__hdr = this.__hdr || {})[k] = v; };
   const s = w.document.createElement('script');
   s.setAttribute('data-ws', opts.ws === undefined ? 'ws://127.0.0.1:8101/' : opts.ws);
   s.setAttribute('data-prefix', '/qualibrate-ui/');
+  if (opts.token !== null) s.setAttribute('data-token', opts.token || 'T0K');
   w.document.head.appendChild(s);
   Object.defineProperty(w.document, 'currentScript', { configurable: true, get: () => s });
   w.eval(SRC);
@@ -116,6 +121,28 @@ const links = (w) => [...w.document.querySelectorAll('[data-qsm-open]')];
   const { w, made } = world('', { ws: 'javascript:alert(1)' });
   new w.WebSocket('ws://127.0.0.1:5491/qualibrate-ui/x');
   ok(made[0][0] === 'ws://127.0.0.1:5491/qualibrate-ui/x', 'no rewrite without a valid target');
+}
+// J. QUAlibrate's own calls carry the token; nothing else does
+{
+  const { w, made } = world('');
+  const tokOf = (i) => { const init = made[i][2]; return init && init.headers ? new Headers(init.headers).get('X-QSM-Proxy-Token') : null; };
+  w.fetch('api/snapshot/1');
+  w.fetch('http://127.0.0.1:5491/qualibrate-ui/execution/submit/node', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+  w.fetch('http://evil.example/qualibrate-ui/x');
+  w.fetch('/field/edit', { method: 'POST' });
+  ok(tokOf(0) === 'T0K', 'relative call carries the token');
+  ok(tokOf(1) === 'T0K' && new Headers(made[1][2].headers).get('Content-Type') === 'application/json', 'absolute call keeps its headers and gains the token');
+  ok(tokOf(2) === null, 'another host never gets the token');
+  ok(tokOf(3) === null, 'an SM route outside the prefix never gets the token');
+  const x = new w.XMLHttpRequest(); x.open('GET', 'execution/meta'); x.send();
+  const y = new w.XMLHttpRequest(); y.open('GET', 'http://evil.example/qualibrate-ui/x'); y.send();
+  const xs = made.filter(m => m[0] === 'xhr');
+  ok(xs[0][1]['X-QSM-Proxy-Token'] === 'T0K' && !xs[1][1]['X-QSM-Proxy-Token'], 'XHR: ours carries it, foreign does not');
+}
+{
+  const { w, made } = world('', { token: null });
+  w.fetch('api/x');
+  ok(!made[0][2], 'no token attribute: fetch untouched');
 }
 // I. the observer runs without being called
 {

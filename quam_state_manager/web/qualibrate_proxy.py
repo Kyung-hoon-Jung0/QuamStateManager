@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import threading
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, urlsplit
@@ -47,6 +48,27 @@ _REQ_HEADERS = ("Accept", "Accept-Language", "Content-Type", "Authorization",
                 "Cache-Control", "If-None-Match", "If-Modified-Since", "Range")
 _RESP_HEADERS = ("Content-Type", "Cache-Control", "ETag", "Last-Modified",
                  "Content-Disposition", "Content-Range", "Accept-Ranges")
+#: D-19: the secret only the proxied page knows. It is written into the root
+#: document (which no other origin can read: that answer never carries CORS)
+#: and the page's own fetch/XHR calls send it back. A request with the opaque
+#: origin "null" -- which ANY sandboxed or data: page on the web also sends --
+#: is served only with it, except a GET of a static asset (fonts load with CORS
+#: and cannot carry a header).
+TOKEN_HEADER = "X-QSM-Proxy-Token"
+_TOKEN = secrets.token_urlsafe(32)
+_STATIC_EXT = re.compile(r"\.(?:js|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|ico|webp|map)$", re.I)
+
+
+def null_origin_allowed(req) -> bool:
+    """May a request with ``Origin: null`` reach the proxy? (D-19)"""
+    if not req.path.startswith(PREFIX):
+        return False
+    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, ""), _TOKEN):
+        return True
+    return (req.method in ("GET", "HEAD") and _STATIC_EXT.search(req.path) is not None
+            and "/api/" not in req.path and "/execution/" not in req.path)
+
+
 #: D-17: QUAlibrate answers must never hold every SM worker thread.
 MAX_INFLIGHT = 6
 _SLOTS = threading.BoundedSemaphore(MAX_INFLIGHT)
@@ -112,7 +134,7 @@ def _inject(html: bytes, host: str, port: int) -> bytes:
     if not m:
         return html
     ws = _html.escape(f"ws://{_netloc(host, port)}/", quote=True)
-    tag = (f'<script src="/static/qb-proxy.js" data-ws="{ws}" '
+    tag = (f'<script src="/static/qb-proxy.js" data-ws="{ws}" data-token="{_TOKEN}" '
            f'data-prefix="{PREFIX}"></script>'
            '<link rel="stylesheet" href="/static/qb-proxy.css">').encode()
     return html[:m.end()] + tag + html[m.end():]
@@ -174,6 +196,8 @@ def proxy(sub: str):
         r.headers["Access-Control-Allow-Headers"] = ", ".join(names[:20])
         r.headers["Access-Control-Max-Age"] = "600"
         return _cors(r)
+    if request.headers.get("Origin") == "null" and not null_origin_allowed(request):
+        return _status("Refused: this request did not come from QUAlibrate's page in SM.", 403)
     try:
         host, port = target()
         path = _upstream_path(sub)
@@ -224,7 +248,7 @@ def proxy(sub: str):
         r = Response(_inject(data, host, port), status=resp.status, headers=out)
         r.headers["Content-Security-Policy"] = page_csp(host, port)
         r.headers["Cache-Control"] = "no-store"
-        return _cors(r)
+        return r                                  # never CORS: it carries the token
 
     done = []
 

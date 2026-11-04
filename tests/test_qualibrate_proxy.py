@@ -132,7 +132,8 @@ class TestProxy:
         assert r.status_code == 200
         head = html.index("<head>") + len("<head>")
         assert html[head:].startswith('<script src="/static/qb-proxy.js" '
-                                      f'data-ws="ws://127.0.0.1:{up.port}/" data-prefix="/qualibrate-ui/">')
+                                      f'data-ws="ws://127.0.0.1:{up.port}/" data-token="{qp._TOKEN}" '
+                                      'data-prefix="/qualibrate-ui/">')
         assert html.count("qb-proxy.js") == 1
         assert "ETag" not in r.headers
         assert not any("qb=1" in c for c in r.headers.getlist("Set-Cookie"))
@@ -159,10 +160,12 @@ class TestProxy:
     def test_sm_cookies_and_origin_never_leave(self, client, up):
         client.set_cookie("sm_person_1", "secret")
         client.get("/qualibrate-ui/api/x", headers={
-            "Origin": "null", "Referer": "http://127.0.0.1/x", "X-Forwarded-For": "1.2.3.4",
+            "Origin": "null", qp.TOKEN_HEADER: qp._TOKEN,
+            "Referer": "http://127.0.0.1/x", "X-Forwarded-For": "1.2.3.4",
             "Authorization": "Basic abc", "Accept": "application/json"})
         h = up.seen[-1]["headers"]
         assert "Cookie" not in h and "Origin" not in h and "Referer" not in h
+        assert qp.TOKEN_HEADER not in h
         assert "X-Forwarded-For" not in h
         assert h["Authorization"] == "Basic abc" and h["Accept"] == "application/json"
         assert h["Accept-Encoding"] == "identity"
@@ -237,7 +240,7 @@ class TestProxy:
 
     def test_cors_only_for_the_sandboxed_page_and_only_here(self, client, up):
         up.json("/api/x", {})
-        assert client.get("/qualibrate-ui/api/x", headers={"Origin": "null"}).headers[
+        assert client.get("/qualibrate-ui/api/x", headers={"Origin": "null", qp.TOKEN_HEADER: qp._TOKEN}).headers[
             "Access-Control-Allow-Origin"] == "null"
         r = client.options("/qualibrate-ui/api/x", headers={
             "Origin": "null", "Access-Control-Request-Method": "POST",
@@ -245,6 +248,62 @@ class TestProxy:
         assert r.status_code == 204 and r.headers["Access-Control-Allow-Origin"] == "null"
         assert r.headers["Access-Control-Allow-Headers"] == "content-type, access-control-allow-origin"
         assert "Access-Control-Allow-Origin" not in client.get("/workbench", headers={"Origin": "null"}).headers
+
+
+class TestOnlyTheProxiedPage:
+    """D-19: Origin "null" is what ANY sandboxed or data: page on the web sends.
+    Only the page SM served (which holds the token) may use the proxy."""
+
+    def test_a_foreign_null_origin_post_is_refused_and_never_sent(self, client, up):
+        up.json("/execution/submit/node", True)
+        for h in ({"Origin": "null"}, {"Origin": "null", qp.TOKEN_HEADER: "guess"},
+                  {"Origin": "null", qp.TOKEN_HEADER: ""}):
+            r = client.post("/qualibrate-ui/execution/submit/node", data=b"{}",
+                            headers={**h, "Content-Type": "application/json"})
+            assert r.status_code == 403
+        assert not up.seen
+
+    def test_the_proxied_page_post_still_works(self, client, up):
+        up.json("/execution/submit/node", True)
+        r = client.post("/qualibrate-ui/execution/submit/node", data=b"{}", headers={
+            "Origin": "null", qp.TOKEN_HEADER: qp._TOKEN, "Content-Type": "application/json"})
+        assert r.status_code == 200 and up.seen
+
+    @pytest.mark.parametrize("path", ["/qualibrate-ui/api/x", "/qualibrate-ui/execution/get_nodes",
+                                      "/qualibrate-ui/api/x.js", "/qualibrate-ui/execution/a.png"])
+    def test_a_foreign_page_cannot_read_qualibrate_data(self, client, up, path):
+        up.json(path.replace("/qualibrate-ui", ""), {"secret": 1})
+        r = client.get(path, headers={"Origin": "null"})
+        assert r.status_code == 403 and "Access-Control-Allow-Origin" not in r.headers
+
+    def test_static_assets_load_without_the_token(self, client, up):
+        up.routes["/assets/f.woff2"] = (200, {"Content-Type": "font/woff2"}, b"F")
+        r = client.get("/qualibrate-ui/assets/f.woff2", headers={"Origin": "null"})
+        assert r.status_code == 200 and r.headers["Access-Control-Allow-Origin"] == "null"
+        assert client.post("/qualibrate-ui/assets/f.woff2", headers={"Origin": "null"}).status_code == 403
+
+    def test_the_page_carrying_the_token_is_never_readable_cross_origin(self, client, up):
+        for h in ({}, {"Origin": "null"}, {"Origin": "null", qp.TOKEN_HEADER: qp._TOKEN}):
+            r = client.get("/qualibrate-ui/", headers=h)
+            if r.status_code == 200:
+                assert "Access-Control-Allow-Origin" not in r.headers
+        assert f'data-token="{qp._TOKEN}"' in client.get("/qualibrate-ui/").data.decode()
+
+    def test_the_preflight_names_nothing_but_header_names(self, client):
+        r = client.options("/qualibrate-ui/execution/submit/node", headers={
+            "Origin": "null", "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-qsm-proxy-token, content-type"})
+        assert r.status_code == 204 and qp._TOKEN not in str(r.headers)
+
+    def test_the_token_opens_nothing_outside_the_proxy(self, app):
+        for p in ("/field/edit", "/state/apply-to-live", "/qualibrate-uiX/a.js"):
+            with app.test_request_context(p, method="POST", headers={qp.TOKEN_HEADER: qp._TOKEN}):
+                from flask import request
+                assert not qp.null_origin_allowed(request)
+
+    def test_run_link_is_a_read_only_redirect(self, client):
+        for m in ("post", "put", "delete"):
+            assert getattr(client, m)("/qualibrate-run/1").status_code == 405
 
 
 class TestCsrf:
@@ -255,8 +314,18 @@ class TestCsrf:
         with app.test_request_context(path, method="POST", headers={"Origin": origin, "Host": "127.0.0.1:5000"}):
             return app_mod._csrf_origin_check()
 
-    def test_null_origin_may_post_to_the_proxy(self, app):
-        assert self._check(app, "/qualibrate-ui/execution/submit/node", "null") is None
+    def _check_tok(self, app, path, token):
+        app.config["TESTING"] = False
+        with app.test_request_context(path, method="POST", headers={
+                "Origin": "null", "Host": "127.0.0.1:5000", qp.TOKEN_HEADER: token}):
+            return app_mod._csrf_origin_check()
+
+    def test_null_origin_may_post_to_the_proxy_with_the_token(self, app):
+        assert self._check_tok(app, "/qualibrate-ui/execution/submit/node", qp._TOKEN) is None
+
+    def test_null_origin_without_the_token_is_refused_even_on_the_proxy(self, app):
+        assert self._check(app, "/qualibrate-ui/execution/submit/node", "null") is not None
+        assert self._check_tok(app, "/qualibrate-ui/execution/submit/node", "nope") is not None
 
     @pytest.mark.parametrize("path", ["/field/edit", "/state/apply-to-live", "/qualibrate-uiX/x",
                                       "/qualibrate-run/1", "/workbench"])
