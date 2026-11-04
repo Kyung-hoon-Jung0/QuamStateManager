@@ -95,6 +95,19 @@ def _isolate_running_qualibrate(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_rebuilt_config_check(monkeypatch, request):
+    # Re-generate checks its output in the env (a subprocess); the suite's fake
+    # builds have no env. Pins of that check opt out with this marker name.
+    if "real_regen_config_check" in request.keywords:
+        return
+    from quam_state_manager.core import regenerate
+
+    monkeypatch.setattr(regenerate, "check_rebuilt_config",
+                        lambda *a, **k: {"ran": False, "ok": False,
+                                         "error": None, "elements": None})
+
+
+@pytest.fixture(autouse=True)
 def _isolate_qualibrate_config(tmp_path_factory, monkeypatch):
     missing = tmp_path_factory.getbasetemp() / "_no_qualibrate_config"
     monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(missing))
@@ -196,6 +209,8 @@ def _isolate_runner_shared_settings(tmp_path_factory):
 
 
 def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "real_regen_config_check: keep Re-generate's in-env config check")
     config.addinivalue_line(
         "markers", "mid_save_guard: run with SA-F7's mid-save guard ON (see _no_mid_save_window)")
 

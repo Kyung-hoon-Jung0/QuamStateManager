@@ -2334,10 +2334,15 @@ def _hop(doc: dict, pointer: str, field_path: tuple) -> tuple[Any, tuple]:
     return node, tuple(parts)
 
 
-def _resolved_leaves(doc: dict, top: str, path: tuple | None = None) -> dict[str, Any]:
+_CYCLIC = ("<cycle>",)
+
+
+def _resolved_leaves(doc: dict, top: str, path: tuple | None = None,
+                     cycles_as_leaves: bool = False) -> dict[str, Any]:
     """Every leaf under ``doc[top]`` as the value QUAM would read: pointers followed
     (a pointer to an object expands to its leaves), an unresolvable one kept as its
-    text. Raises ``_Cycle`` when a chain loops."""
+    text. Raises ``_Cycle`` when a chain loops -- unless ``cycles_as_leaves``, where a
+    leaf whose pointer chain loops reads as ``_CYCLIC`` (QUAM cannot read it either)."""
     out: dict[str, Any] = {}
 
     def value(v: Any, path: tuple, seen: frozenset) -> Any:
@@ -2363,7 +2368,13 @@ def _resolved_leaves(doc: dict, top: str, path: tuple | None = None) -> dict[str
                 walk(v, path + (str(k),), f"{label}.{k}", seen, depth + 1)
             return
         if is_pointer(node):
-            r = value(node, path, seen | {path})
+            try:
+                r = value(node, path, seen | {path})
+            except _Cycle:
+                if not cycles_as_leaves:
+                    raise
+                out[label] = _CYCLIC
+                return
             if isinstance(r, tuple) and len(r) == 2:
                 out[label] = r
                 return
@@ -2479,7 +2490,31 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         # Root scalars were never resolved by the original whole-state reader.
         if len(path) == 1 and not isinstance(merged[path[0]], dict):
             return {path[0]: merged[path[0]]}
-        return _resolved_leaves(d, path[0], path)
+        return _resolved_leaves(d, path[0], path, cycles_as_leaves=True)
+
+    def same(base: dict, now: dict) -> bool:
+        # A leaf the merged state cannot read -- a pointer loop, or a link that lands
+        # nowhere (typically a source link the rebuild inverted, which then points
+        # back through the rebuilt link at itself) -- may read as anything once a
+        # source form is put back (a loop) or simply be gone (a dangling link, so
+        # the field takes its class default as it did in the source). Every other
+        # leaf must read exactly as before, and no new loop may appear.
+        def unread(v: Any) -> bool:
+            return v == _CYCLIC or (isinstance(v, tuple) and len(v) == 2
+                                    and v[0] == "<unresolved>")
+
+        loops = [k for k, v in base.items() if v == _CYCLIC]
+
+        def under_loop(k: str) -> bool:
+            return any(k == c or k.startswith(c + ".") for c in loops)
+
+        for k, v in now.items():
+            if k in base:
+                if base[k] != v and base[k] != _CYCLIC:
+                    return False
+            elif not under_loop(k):
+                return False
+        return all(k in now or unread(base[k]) for k in base)
 
     try:
         baseline = {path: read_unit(doc, path)
@@ -2502,7 +2537,7 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         try:
             affected = {candidate_components[path] for _, path, _ in group}
             d = doc_of(state)
-            return all(read_unit(d, path) == baseline[path]
+            return all(same(baseline[path], read_unit(d, path))
                        for component in affected for path in components.get(component, []))
         except _Cycle:
             return False
