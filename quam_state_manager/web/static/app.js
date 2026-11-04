@@ -3740,7 +3740,7 @@ window.showToast = function(message, level, ms, detail) {
     if (same) {
         same._toastRepeat = (same._toastRepeat || 1) + 1;
         var rc = same.querySelector(".toast-repeat");
-        if (!rc) { rc = document.createElement("span"); rc.className = "toast-repeat"; same.firstChild.appendChild(rc); }
+        if (!rc) { rc = document.createElement("span"); rc.className = "toast-repeat ui-tnum"; same.firstChild.appendChild(rc); }
         rc.textContent = " (×" + same._toastRepeat + ")";
         same.style.opacity = "";
         if (!same.classList.contains("toast-sticky")) {
@@ -19489,6 +19489,7 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     var ctxBox = document.getElementById('plot-apply-context');
     var popup = document.getElementById('plot-apply-popup');
     if (!rowsBox || !popup) return;
+    _plotApplyWatchWidth(rowsBox);
     if (window.PointCopy) window.PointCopy.fill(document.getElementById('plot-apply-point'));
     // QA r2-07: the run the verdict badge audits (a pinned column's own run)
     if (runUid) popup.dataset.runUid = runUid; else delete popup.dataset.runUid;
@@ -19569,15 +19570,15 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
           + _plotApplyPathHtml(u.dot_path) + '</code>'
           + '<div class="plot-apply-row-ptr" hidden></div></div>'
           + '<div class="plot-apply-row-old"><span class="muted">previous</span> '
-          + '<span class="plot-apply-old-wrap"><span class="plot-apply-old-val muted">…</span>'
-          + '<span class="plot-apply-unit plot-apply-old-unit" hidden></span></span></div>'
+          + '<span class="plot-apply-old-wrap ui-pp-wrap"><span class="plot-apply-old-val ui-tnum muted">…</span>'
+          + '<span class="plot-apply-unit plot-apply-old-unit ui-pp-unit" hidden></span></span></div>'
           + '<div class="plot-apply-row-new"><span class="muted">new</span> '
-          + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value))
+          + '<input type="text" class="plot-apply-new-input ui-tnum" value="' + _ppEscape(String(u.value))
           + '" title="' + _ppEscape(String(u.value)) + '">'
-          + '<span class="plot-apply-delta val-delta" hidden></span></div>'
+          + '<span class="plot-apply-delta val-delta ui-tnum" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
           + '<button type="button" class="outline btn-sm plot-apply-row-btn">Apply</button></div>'
-          + '<div class="plot-apply-row-unitnote muted" hidden></div>'
+          + '<div class="plot-apply-row-unitnote ui-pp-unitnote muted" hidden></div>'
           + provHtml
           + '<div class="plot-apply-row-history muted" hidden></div>'
           + '<div class="plot-apply-row-domainwarn" hidden'
@@ -19624,6 +19625,24 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
 
 /* DS-1: a dot path breaks only at its dot joints (a <wbr> after each dot);
    one segment longer than the column is the only place it may break inside. */
+// DS-1 m1: below 44rem the rows box carries ui-pp-narrow (ui-kit.css), so the
+// path takes its own line and previous / new / Apply the next.
+function _plotApplyWatchWidth(box) {
+    if (box._ppWidthWatch) return;
+    var apply = function (w) {
+        var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        box.classList.toggle('ui-pp-narrow', w <= 44 * rem);
+    };
+    if (typeof ResizeObserver === 'function') {
+        box._ppWidthWatch = new ResizeObserver(function (es) { apply(es[0].contentRect.width); });
+        box._ppWidthWatch.observe(box);
+    } else {
+        box._ppWidthWatch = true;
+    }
+    var cs = getComputedStyle(box);
+    apply(box.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0));
+}
+
 function _plotApplyPathHtml(path) {
     return String(path == null ? '' : path).split('.').map(_ppEscape).join('.<wbr>');
 }
@@ -19738,7 +19757,7 @@ function _renderPointerRow(row, info, rawValue) {
         });
         html += '</select></label>';
     } else if (cands.length === 1) {
-        html += ' <span class="plot-apply-chain">&rarr; <code>' + _plotApplyPathHtml(cands[0].label) + '</code></span>';
+        html += ' <span class="plot-apply-chain">&rarr; <code class="ui-break-joints">' + _plotApplyPathHtml(cands[0].label) + '</code></span>';
     }
     if (!info.resolvable) {
         html += ' <span class="muted">(runtime alias — not separately stored)</span>';

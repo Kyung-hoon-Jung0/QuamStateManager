@@ -186,7 +186,7 @@ class TestFiguresTab:
         own file name -- never a column of A's figures followed by B's."""
         html = _get(env, _url(env, tab="figures"))
         assert "diff-wb-figs" in html
-        assert "repeat(3, minmax(var(--diff-fig-min), 1fr))" in html
+        assert "repeat(3, minmax(var(--ui-diff-fig-min), 1fr))" in html
         # every image still renders exactly once
         assert html.count('src="/diff/fig?') == 2 + 1 + 2
         # 2 rows: the name-matched fig_a + ONE mixed positional row
@@ -199,7 +199,7 @@ class TestFiguresTab:
 
     def test_two_way_figures(self, env):
         html = _get(env, _url(env, tab="figures", three=False))
-        assert "repeat(2, minmax(var(--diff-fig-min), 1fr))" in html and html.count('src="/diff/fig?') == 3
+        assert "repeat(2, minmax(var(--ui-diff-fig-min), 1fr))" in html and html.count('src="/diff/fig?') == 3
 
     def test_disjoint_experiments_still_sit_side_by_side(self, env, tmp_path):
         """The customer's exact case: two DIFFERENT experiments -- zero shared

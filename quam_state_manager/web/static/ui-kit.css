@@ -140,6 +140,17 @@
     --ui-opxmon-full-width: 100%;
     --ui-opxmon-number-width: 7rem;
     --ui-opxmon-lh-tile: 1.25;
+    /* Datasets diff + plot-click popup (DS-1/DS-2): the reviewed geometry, kept exact */
+    --ui-ds-muted: var(--pico-muted-color);
+    --ui-ds-fs-unit: .85em;
+    --ui-ds-fs-note: .78rem;
+    --ui-ds-fs-hint: .8em;
+    --ui-ds-fs-btn: .9em;
+    --ui-ds-gap-hint: .4rem;
+    --ui-ds-hint-border: color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    --ui-ds-hint-bg: color-mix(in srgb, var(--pico-primary) 10%, transparent);
+    --ui-ds-dir-tint: color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent);
+    --ui-diff-fig-min: 240px;
 
 }
 
@@ -588,6 +599,46 @@
 .ui-jedit-host .cm-search label { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-xs); }
 .ui-jedit-host .cm-search label input { padding: 0; }
 .ui-jedit-host .cm-search br { display: none; }
+
+/* Datasets (DS-1/DS-2, stress walk 2026-11-03). Plot-click popup: a path breaks at
+   its dot joints, a value keeps tabular digits and its unit, and a narrow popup
+   (ui-pp-narrow, set by app.js below 44rem) puts the path on its own line. */
+.ui-pp-wrap { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; }
+.ui-tnum { font-variant-numeric: tabular-nums; }
+.ui-break-joints { word-break: normal; overflow-wrap: anywhere; }
+.ui-pp-narrow .plot-apply-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) auto; }
+.ui-pp-narrow .plot-apply-row-path { grid-column: 1 / -1; }
+.ui-pp-unit { margin-left: var(--ui-gap-1); white-space: nowrap; font-size: var(--ui-ds-fs-unit); color: var(--ui-ds-muted); }
+.ui-pp-unitnote { grid-column: 1 / -1; font-size: var(--ui-ds-fs-note); }
+/* Diff panes: 2-5 sources readable at common widths. Titles and values wrap in a
+   bounded column, the key tree stays pinned on the left while the panes scroll
+   sideways, one scroller holds both axes (sticky titles), and a hint above names
+   the sources out of view. ui-printing (diff-panes.js, beforeprint) prints all. */
+.ui-dpanes .dp-key-col { min-width: 9rem; max-width: 15rem; position: sticky; left: 0; z-index: 1;
+    background: var(--ui-surface-0);
+    white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }
+.ui-dpanes thead th.dp-key-col { z-index: 3; }
+.ui-dpanes thead th { z-index: 2; }
+/* opaque: the border colour is translucent, so a plain tint would let the panes
+   scrolling under this sticky cell show through it */
+.ui-dpanes tr.dp-dir > td.dp-key-col { background-color: var(--ui-surface-0);
+    background-image: linear-gradient(var(--ui-ds-dir-tint), var(--ui-ds-dir-tint)); }
+.ui-dpanes .dp-pane-head, .ui-dpanes .dp-cell { min-width: 8rem; max-width: 13rem; white-space: normal; overflow-wrap: break-word; }
+.ui-dpanes .dp-label { white-space: normal; }
+/* a pane partly under the key column keeps its letter (width set by diff-panes.js) */
+.ui-dpanes .dp-pane-head .dp-slot { position: sticky; left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }
+.ui-xscroll-both { max-height: max(18rem, calc(100vh - var(--topbar-height, 56px) - 5rem)); overflow: auto; }
+.ui-xscroll { overflow-x: auto; max-width: 100%; }
+.ui-xhint { display: flex; align-items: center; gap: var(--ui-ds-gap-hint); margin: 0.2rem 0 0.3rem;
+    padding: 0.25rem 0.5rem; font-size: var(--ui-ds-fs-unit); border-radius: var(--ui-r-sm);
+    border: var(--ui-bw) solid var(--ui-ds-hint-border); background: var(--ui-ds-hint-bg); }
+.ui-xhint .dxh-text { flex: 1; }
+.ui-xhint button { padding: 0.05rem 0.5rem; font-size: var(--ui-ds-fs-btn); width: auto; margin: 0; }
+.ui-figs .diff-fig-name { grid-column: 1 / -1; padding-top: 0.5rem; white-space: normal; overflow-wrap: anywhere; }
+.ui-figs .compare-figure-run-label { white-space: normal; }
+.ui-fig-hint { margin: 0.3rem 0 0.1rem; font-size: var(--ui-ds-fs-hint); }
+.ui-printing .ui-xscroll, .ui-printing .ui-xscroll-both { overflow: visible; max-height: none; }
+.ui-printing .ui-xhint { display: none; }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

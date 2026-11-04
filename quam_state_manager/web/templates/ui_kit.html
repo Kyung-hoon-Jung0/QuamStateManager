@@ -104,6 +104,15 @@
 <span class="ui-tree-value ui-tree-mounted"><input class="ui-tree-editor" aria-label="sample.amplitude" value="0.125"></span>
 <span class="ui-tree-value ui-tree-dirty" tabindex="-1">0.25 (uncommitted)</span></p>
 <p><span class="ui-tree-resolved">→ 0.125</span></p>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Datasets diff and plot-click popup</h2>
+  <p class="ui-fig-hint">Click a figure to enlarge it.</p>
+  <div class="ui-xhint"><span class="dxh-text">Not all sources fit: D is out of view.</span><button type="button" class="btn-xs outline">&#9654;</button></div>
+  <div class="ui-xscroll"><div class="ui-figs"><div class="compare-figure-run-label">A &middot; run 12</div></div></div>
+  <div class="ui-xscroll-both"><table class="ui-dpanes"><thead><tr><th class="dp-key-col">Keys</th><th class="dp-pane-head"><span class="dp-slot">A</span> <span class="dp-label">run 12</span></th></tr></thead>
+  <tbody><tr><td class="dp-key-col"><code class="ui-break-joints">qubits.q1.T1</code></td><td class="dp-cell">1e-05</td></tr></tbody></table></div>
+  <div class="ui-pp-narrow"><span class="ui-pp-wrap"><span class="ui-tnum">5.1</span><span class="ui-pp-unit">GHz</span></span><div class="ui-pp-unitnote">stored in Hz</div></div>
+  <div class="ui-printing"><span class="ui-xhint">printing hides the hint</span></div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

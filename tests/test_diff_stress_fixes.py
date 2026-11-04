@@ -92,37 +92,42 @@ class TestWorkingLabel:
 class TestReadableLayout:
     def test_figure_columns_keep_a_minimum_and_the_name_spans_the_row(self):
         tpl = (_ROOT / "quam_state_manager/web/templates/_diff_workbench.html").read_text(encoding="utf-8")
-        css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
-        assert "minmax(var(--diff-fig-min), 1fr)" in tpl
+        css = (_ROOT / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+        assert "minmax(var(--ui-diff-fig-min), 1fr)" in tpl
+        assert "--ui-diff-fig-min: 240px;" in css
         assert "max-content repeat(" not in tpl          # the old name column
-        assert ".diff-wb-figs .diff-fig-name { grid-column: 1 / -1;" in css
-        assert 'class="diff-xscroll" data-xscroll' in tpl
+        assert ".ui-figs .diff-fig-name { grid-column: 1 / -1;" in css
+        assert 'class="diff-wb-figs compare-figure-grid ui-figs"' in tpl
+        assert 'class="diff-xscroll ui-xscroll" data-xscroll' in tpl
         assert 'data-xcol="{{ col.slot | upper }}"' in tpl
 
     def test_pane_titles_and_values_wrap_and_keys_stay_pinned(self):
         tpl = (_ROOT / "quam_state_manager/web/templates/_diff_panes.html").read_text(encoding="utf-8")
-        css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
-        assert '<div class="diff-panes-scroll" data-xscroll>' in tpl
-        assert '<div class="diff-xscroll-hint" hidden></div>' in tpl
-        assert ".diff-panes-table .dp-key-col { min-width: 9rem; max-width: 15rem; position: sticky; left: 0;" in css
+        css = (_ROOT / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+        assert '<div class="diff-panes-scroll ui-xscroll-both" data-xscroll>' in tpl
+        assert '<table class="diff-panes-table ui-dpanes" id="diff-panes-table">' in tpl
+        assert '<div class="diff-xscroll-hint ui-xhint" hidden></div>' in tpl
+        assert ".ui-dpanes .dp-key-col { min-width: 9rem; max-width: 15rem; position: sticky; left: 0;" in css
         assert "white-space: normal; overflow-wrap: break-word; }" in css
         # F2: a deep key wraps instead of being cut with an ellipsis
         assert "white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: break-word; }" in css
         # F11: the pane scroller scrolls both axes, so sticky titles hold
-        assert ".diff-panes-scroll { max-height: max(18rem," in css
-        assert ".diff-xscroll, .diff-panes-scroll { overflow: visible !important;" in css
-        assert "@media print {" in css
+        assert ".ui-xscroll-both { max-height: max(18rem," in css
+        assert ".ui-printing .ui-xscroll, .ui-printing .ui-xscroll-both { overflow: visible; max-height: none; }" in css
+        js = (_ROOT / "quam_state_manager/web/static/diff-panes.js").read_text(encoding="utf-8")
+        assert "'beforeprint'" in js and "'afterprint'" in js and "ui-printing" in js
 
     def test_the_sticky_key_column_is_opaque_and_pane_letters_stay(self):
         """2026-11-04: a folder row's key cell mixed a TRANSLUCENT border colour
         into the background, so panes scrolling under it showed through; and a
         pane partly under the key column lost its letter."""
-        css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
-        start = css.index(".diff-panes-table tr.dp-dir > td.dp-key-col {")
+        css = (_ROOT / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+        start = css.index(".ui-dpanes tr.dp-dir > td.dp-key-col {")
         rule = css[start:css.index("}", start)]
-        assert "background-color: var(--pico-background-color);" in rule
-        assert "var(--pico-muted-border-color) 28%, var(--pico-background-color)" not in rule
-        assert (".diff-panes-table .dp-pane-head .dp-slot { position: sticky; "
+        assert "background-color: var(--ui-surface-0);" in rule
+        assert "linear-gradient(var(--ui-ds-dir-tint), var(--ui-ds-dir-tint))" in rule
+        assert "--ui-ds-dir-tint: color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent);" in css
+        assert (".ui-dpanes .dp-pane-head .dp-slot { position: sticky; "
                 "left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }") in css
 
 

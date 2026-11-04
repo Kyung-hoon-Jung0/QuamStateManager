@@ -144,11 +144,11 @@
        left column that ate the width the figures needed), each source column
        keeps a readable minimum, and past that the grid scrolls sideways
        under a hint naming the sources out of view (diff-panes.js). #}
-    <p class="muted diff-fig-hint">Click a figure to enlarge it; the arrow keys then step through the sources.</p>
-    <div class="diff-xscroll-hint" hidden></div>
-    <div class="diff-xscroll" data-xscroll>
-    <div class="diff-wb-figs compare-figure-grid"
-         style="grid-template-columns: repeat({{ payload.cols | length }}, minmax(var(--diff-fig-min), 1fr))">
+    <p class="muted diff-fig-hint ui-fig-hint">Click a figure to enlarge it; the arrow keys then step through the sources.</p>
+    <div class="diff-xscroll-hint ui-xhint" hidden></div>
+    <div class="diff-xscroll ui-xscroll" data-xscroll>
+    <div class="diff-wb-figs compare-figure-grid ui-figs"
+         style="grid-template-columns: repeat({{ payload.cols | length }}, minmax(var(--ui-diff-fig-min), 1fr))">
       {% for col in payload.cols %}
       <div class="compare-figure-run-label" data-xcol="{{ col.slot | upper }}" title="{{ col.ref }}">{{ col.slot | upper }} · {{ col.label }}{% if col.why %} <span class="muted">({{ col.why }})</span>{% endif %}</div>
       {% endfor %}

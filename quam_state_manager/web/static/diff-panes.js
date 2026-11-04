@@ -427,6 +427,14 @@
         hint.querySelector('.dxh-right').disabled = box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
     }
 
+    // print shows every source: html.ui-printing lifts the scrollers' caps and
+    // hides the hint (ui-kit.css), for exactly as long as the print runs.
+    if (!window.__dpPrintArmed && window.addEventListener) {
+        window.__dpPrintArmed = true;
+        window.addEventListener('beforeprint', function () { document.documentElement.classList.add('ui-printing'); });
+        window.addEventListener('afterprint', function () { document.documentElement.classList.remove('ui-printing'); });
+    }
+
     function armXScroll(box) {
         // armAll runs on every htmx swap (the page polls); an armed box is
         // kept current by its own scroll/resize listeners, so it is skipped
