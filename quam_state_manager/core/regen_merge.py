@@ -2754,9 +2754,10 @@ def _restore_source_forms(merged: dict, old: dict, wiring: dict | None,
         # ``readout.length`` lands on ``readout_square.length`` once ``readout`` is
         # the alias again; an edited CZ amplitude the builder put on its own z op
         # lands inside the inline macro pulse. Only onto a literal the restored form
-        # reaches (never cabling, never a link); every other reader of that literal
-        # is judged by ``better`` as before, so a value shared with an unedited
-        # reader refuses the form, and the edit stays where the rebuild put it.
+        # reaches (never cabling, never a link, never a place another edit holds with
+        # a different value); a label reading that literal through a link (a pair's
+        # view of its qubit, an alias of the same pulse) follows it, as it would after
+        # the same edit on the source chip. A refused form takes its write back.
         extra: list[tuple[tuple, Any]] = []
         wrote: list[tuple[str, str]] = []
         wloc: dict[str, Any] = {}
