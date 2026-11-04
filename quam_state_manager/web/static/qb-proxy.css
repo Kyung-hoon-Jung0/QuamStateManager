@@ -1,0 +1,21 @@
+/* The "Open in QSM" link inside QUAlibrate's own page (decisions D-13):
+   SM's kit tokens do not exist in that document, so the look matches
+   QUAlibrate's dark cards here, scoped to the one attribute. */
+[data-qsm-open] {
+  display: inline-block;
+  margin: 6px 0 0 16px;
+  padding: 2px 8px;
+  border: 1px solid #2ccbe5;
+  border-radius: 4px;
+  color: #2ccbe5;
+  font-size: 12px;
+  line-height: 18px;
+  text-decoration: none;
+  cursor: pointer;
+}
+[data-qsm-open]:hover,
+[data-qsm-open]:focus-visible {
+  background: #2ccbe5;
+  color: #0d1117;
+  outline: none;
+}

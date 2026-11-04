@@ -203,6 +203,13 @@ def _csrf_origin_check():
     expected = f"http://{request.host}"
     expected_https = f"https://{request.host}"
     origin = request.headers.get("Origin")
+    # QUAlibrate's page through SM runs sandboxed with the opaque origin "null"
+    # (qualibrate_proxy D-16); it may write to the proxy and to nothing else.
+    if origin == "null" and request.path.startswith("/qualibrate-ui/"):
+        from quam_state_manager.web.qualibrate_proxy import null_origin_allowed
+        if null_origin_allowed(request):
+            return None
+        return ("CSRF: opaque-origin request without the proxy token rejected", 403)
     if origin:
         if origin not in (expected, expected_https):
             return ("CSRF: cross-origin mutation rejected", 403)
@@ -1169,6 +1176,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.globals["opx_alarm_armed"] = _opx_armed
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
+    # QUAlibrate's web UI through SM, with an Open-in-QSM link per run
+    from quam_state_manager.web.qualibrate_proxy import qbproxy_bp
+    app.register_blueprint(qbproxy_bp)
     # docs/252: who is calling -- a person's window (cookie), SM's hook (key);
     # registered after the CSRF guard, so a cross-origin POST is refused as that
     from quam_state_manager.web import callers
