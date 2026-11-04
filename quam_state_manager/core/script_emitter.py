@@ -80,7 +80,7 @@ _RUNTIME_FUNCS = (
     "_band_for", "_delay_for_band", "_apply_lf_delay",
     "_set_port_lo", "_set_channel_lo", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
-    "_twpa_of", "_apply_twpa",
+    "_twpa_of", "_apply_twpa", "_apply_twpa_qubits",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
     "_apply_dual_upconverters", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
@@ -566,7 +566,9 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w("# =============================== run ==================================")
     w("machine = QuamCls.load()")
     w('_spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,')
-    w('         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES}')
+    w('         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES,')
+    w('         "twpas": %r}' % ([{"id": t.get("id"), "qubits": list(t.get("qubits") or [])}
+                               for t in (spec.get("twpas") or []) if isinstance(t, dict)],))
     if qdac_qubits:
         # BEFORE apply_populate: its z.operations guards, and _finalize_pair_
         # gates', both branch on the qubit's final class.
@@ -578,6 +580,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w('    print(f"WARNING: {_w}", file=sys.stderr)')
         w("")
     w('apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))')
+    w("_apply_twpa_qubits(machine, _spec)")
     w("for _w in _apply_dual_upconverters(machine, _spec):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
     w('if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):')

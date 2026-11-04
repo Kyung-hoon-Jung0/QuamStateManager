@@ -660,7 +660,13 @@
       });
     });
 
-    if (data.selected) {
+    if (state.mode === "regenerate" && state.regenBuiltEnv) {
+      // G3: Re-generate starts in the env the chip was built in; the build
+      // press persists it like any other client-side pick.
+      _envAutoPicked = true;
+      _envPersisted = !!(data.selected && data.selected === state.regenBuiltEnv);
+      applySelection(state.regenBuiltEnv);
+    } else if (data.selected) {
       _envPersisted = true;   // the server already knows this selection
       applySelection(data.selected);
     } else if (state.env) {
@@ -6289,11 +6295,11 @@
       options: ["", "1", "2", "3"],
       noBulk: "Band follows the pump port's LO unless overridden" },
     { field: "full_scale_power_dbm", label: "FSP", unit: "dBm" },
-    { field: "pump_amplitude", label: "pump amp (scale)" },
+    { field: "pump_amplitude", label: "pump amp scale (× pump pulse amp)" },
     { field: "pump_length", label: "pump len", dim: "time" },
     { field: "settling_time", label: "settling", unit: "ns" },
     { field: "isolation_frequency", label: "isolation RF", dim: "freq" },
-    { field: "isolation_amplitude", label: "isolation amp (scale)" },
+    { field: "isolation_amplitude", label: "isolation amp scale (× pulse amp)" },
     { field: "pumpline_attenuation", label: "pump-line att.", unit: "dB" },
     { field: "signalline_attenuation", label: "signal-line att.", unit: "dB" }
   ];
@@ -11703,6 +11709,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         spec: specWithCoBands(), output_path: outPath,
+        python: state.env || null,   // G3: the env this wizard builds in
         force: !!state._buildForce, ack_degrades: !!state._buildAck,
         source_folder: state.sourcePath || null,  // regenerate: merge from here
         // optional editable-scripts export (step 7 checkbox)
@@ -12885,6 +12892,13 @@
     // when the chip changed under the values this wizard shows.
     state.regenSourceHash = o.sourceHash || null;
     state.regenSourceName = o.sourceName || null;   // QA r2-37: the Source bar's name
+    // G3: the env this chip was built in, when SM knows it.
+    state.regenBuiltEnv = (o.builtEnv && o.builtEnv.python) || null;
+    if (state.regenBuiltEnv && state.mode === "regenerate") {
+      _envAutoPicked = true;
+      if (state.env !== state.regenBuiltEnv) _envPersisted = false;
+      applySelection(state.regenBuiltEnv);
+    }
     // The source's 2Q gate — an in-wizard architecture switch away from it is
     // an explicit act the inventory gate must not veto (review [2]).
     state.regenSourcePairGate = pg;

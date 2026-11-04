@@ -231,3 +231,27 @@ class TestProtectPaths:
             {"twpa": {"twpa9": {"settling_time": 1}}},
             state, wiring, state, wiring)
         assert not any("twpa9" in p for p in protect)
+
+
+class TestTwpaQubits:
+    """G5: the wizard's TWPA -> qubits list reaches the built TWPA."""
+
+    def test_the_qubit_list_lands_on_the_twpa(self):
+        rb = _rb()
+        tw = _fake_twpa(qubits=None)
+        machine = NS(twpas={"twpaA": tw})
+        rb._apply_twpa_qubits(machine, {"twpas": [
+            {"id": "twpaA", "qubits": ["q1", "q2", "q3", "q4"]}]})
+        assert tw.qubits == ["q1", "q2", "q3", "q4"]
+
+    def test_the_build_calls_it(self):
+        src = (_ROOT / "quam_state_manager" / "generator" / "run_build.py").read_text(
+            encoding="utf-8")
+        assert "_apply_twpa_qubits(machine, spec)" in src
+
+    def test_a_class_without_the_field_is_left_alone(self):
+        rb = _rb()
+        tw = _fake_twpa()
+        machine = NS(twpas={"twpaA": tw})
+        rb._apply_twpa_qubits(machine, {"twpas": [{"id": "twpaA", "qubits": ["q1"]}]})
+        assert not hasattr(tw, "qubits")

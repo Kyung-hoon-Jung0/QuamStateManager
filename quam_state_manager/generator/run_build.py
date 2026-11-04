@@ -970,6 +970,18 @@ def _apply_twpa(twpa, vals):
             setattr(twpa, attr, vals[attr])
 
 
+def _apply_twpa_qubits(machine, spec):
+    """Record which qubits each TWPA amplifies (the wizard's step-4 list) on
+    the TWPA's own ``qubits`` field, when the class has one."""
+    for t in spec.get("twpas") or []:
+        if not isinstance(t, dict) or not t.get("id"):
+            continue
+        qs = [q for q in (t.get("qubits") or []) if isinstance(q, str)]
+        tw = _twpa_of(machine, t["id"])
+        if tw is not None and qs and hasattr(tw, "qubits"):
+            tw.qubits = list(qs)
+
+
 def apply_populate(machine, populate, handle_pairs=True):
     """Apply spec['populate'] physics values onto a built QUAM machine.
 
@@ -2954,6 +2966,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         pair_gate = (spec.get("pair_gate") or "").lower()
         apply_populate(machine, spec.get("populate") or {},
                        handle_pairs=(pair_gate == ""))
+        _apply_twpa_qubits(machine, spec)
         warnings.extend(_apply_dual_upconverters(machine, spec))
         if pair_gate in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))

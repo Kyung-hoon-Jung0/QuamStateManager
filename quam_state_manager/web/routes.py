@@ -47697,7 +47697,7 @@ def generate_build():
             "so that chip would load this new design instead of its own. "
             "Choose a folder outside it.")}), 400
 
-    python_path = config_generator.get_selected_env(current_app.instance_path)
+    python_path = _build_python(data)
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
 
@@ -47761,6 +47761,9 @@ def generate_build():
         )
         # Lab additions (phase 2): a JSON pass over the saved state, then the
         # env's own load / generate_config / class code. Degrade-only.
+        if outcome.get("ok"):
+            from quam_state_manager.core import build_env
+            build_env.record(output_path, python_path, probe.get("versions"))
         if outcome.get("ok") and spec.get("additions"):
             outcome["additions"] = _apply_build_additions(
                 python_path, Path(output_path), spec)
@@ -47845,9 +47848,14 @@ def regenerate_reconstruct():
                 folder, {"capabilities": probe.get("capabilities"),
                          "versions": probe.get("versions")})
             notes.extend(f"[env {f['level']}] {f['message']}" for f in flavor)
+    built_env = _regen_built_env(folder, sidecar_dirs, python_path,
+                                 unsaved[0] if unsaved else None)
     return jsonify({
         "ok": True,
         "spec": rec.spec,
+        # G3: the env this chip was built in (recorded, else by its version
+        # stamp), shown at the start and used by the rebuild.
+        "built_env": built_env,
         "mixed_gates": rec.mixed_gates,
         "notes": notes,
         # Statements of fact about the reconstruction (docs/135) — rendered
@@ -47871,6 +47879,42 @@ def regenerate_reconstruct():
                         else ((_active_chip_label() or ident["name"]) if ident
                               else Path(folder).name)),
     })
+
+
+def _regen_built_env(folder, sidecar_dirs, selected, state=None) -> dict:
+    """G3: which env a Re-generate of *folder* should start in (core/build_env)."""
+    from quam_state_manager.core import build_env
+    inst = current_app.instance_path
+    if state is None:
+        try:
+            state, _w = safe_io.read_state_wiring(Path(folder))
+        except (OSError, ValueError):
+            state = {}
+    cache = config_generator._load_probe_cache(inst)
+    probes = {py: (e or {}).get("result") or {} for py, e in cache.items()
+              if isinstance(e, dict)}
+    if selected and selected not in probes:
+        try:
+            probes.update(config_generator.probe_envs([selected], instance_path=inst))
+        except Exception:  # noqa: BLE001 -- an unknown version only narrows the answer
+            pass
+    try:
+        return build_env.choose(list(sidecar_dirs) + [folder], state, selected, probes,
+                                lambda py: config_generator.known_interpreter(py, inst))
+    except Exception:  # noqa: BLE001 -- never break the reconstruct over this
+        logger.warning("build env choice failed", exc_info=True)
+        return {}
+
+
+def _build_python(data) -> str | None:
+    """The interpreter a build runs in: the wizard's own env when SM knows it
+    (G3: Re-generate starts in the env the chip was built in), else the
+    machine-wide selected env."""
+    inst = current_app.instance_path
+    posted = data.get("python") if isinstance(data, dict) else None
+    if isinstance(posted, str) and posted and config_generator.known_interpreter(posted, inst):
+        return posted
+    return config_generator.get_selected_env(inst)
 
 
 def _regen_protected_folders(src_p: Path) -> list[tuple[Path, str]]:
@@ -48104,7 +48148,7 @@ def regenerate_build():
             "so that chip would load the rebuilt design instead of its own. "
             "Choose a folder outside it.")}), 400
 
-    python_path = config_generator.get_selected_env(current_app.instance_path)
+    python_path = _build_python(data)
     if not python_path:
         return jsonify({"ok": False, "error": "No environment selected."}), 400
 
@@ -48247,6 +48291,9 @@ def regenerate_build():
     src_label = next((str(f) for f, role in _regen_protected_folders(src_p)
                       if role == "source_live"), source_folder)
     regenerate.record_build_report(output_path, outcome, src_label)
+    if isinstance(outcome, dict) and outcome.get("ok"):
+        from quam_state_manager.core import build_env
+        build_env.record(output_path, python_path, (outcome.get("result") or {}).get("versions"))
     return jsonify(outcome)
 
 
