@@ -415,6 +415,17 @@ def _apply_twpa(twpa, vals):
         if attr in vals and hasattr(twpa, attr):
             setattr(twpa, attr, vals[attr])
 
+def _apply_twpa_qubits(machine, spec):
+    """Record which qubits each TWPA amplifies (the wizard's step-4 list) on
+    the TWPA's own ``qubits`` field, when the class has one."""
+    for t in spec.get("twpas") or []:
+        if not isinstance(t, dict) or not t.get("id"):
+            continue
+        qs = [q for q in (t.get("qubits") or []) if isinstance(q, str)]
+        tw = _twpa_of(machine, t["id"])
+        if tw is not None and qs and hasattr(tw, "qubits"):
+            tw.qubits = list(qs)
+
 def _make_cz_gate(cz_gate_cls, pulse_id, moving):
     """Construct a CZGate with ``moving_qubit`` only when the class accepts it.
 
@@ -1610,8 +1621,10 @@ def _link_input_downconverters_to_outputs(state_path, wiring_path):
 # =============================== run ==================================
 machine = QuamCls.load()
 _spec = {"populate": POPULATE, "qubit_pairs": QUBIT_PAIRS,
-         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES}
+         "cr_port_mode": CR_PORT_MODE, "lines": PAIR_LINES,
+         "twpas": []}
 apply_populate(machine, POPULATE, handle_pairs=(PAIR_GATE == ""))
+_apply_twpa_qubits(machine, _spec)
 for _w in _apply_dual_upconverters(machine, _spec):
     print(f"WARNING: {_w}", file=sys.stderr)
 if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):

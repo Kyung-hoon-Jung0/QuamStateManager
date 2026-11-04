@@ -42,7 +42,7 @@ const topo = {
   edges: [], summary: {},
 };
 
-function mount(findings) {
+function mount(findings, topoOver) {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body><div id="table-pane"><div class="topo-dashboard">'
     + '<div id="topo-hero"></div><div id="topo-verdict-banner"></div>'
@@ -54,7 +54,7 @@ function mount(findings) {
   win.htmx = { process: function () {}, ajax: function () {} };
   win.fetch = function () { return new win.Promise(function () {}); };
   new win.Function(SRC).call(win);
-  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(topo)), rawWiring: {},
+  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(topoOver || topo)), rawWiring: {},
                          diagFindings: findings, metricMeta: {},
                          defaultThresholds: { T1: { direction: 'higher', warn: 3e-5, fail: 1e-5, label: 'T1' } } });
   return win;
@@ -95,6 +95,20 @@ const acked = { severity: 'error', category: 'env_unknown_field', location: 'qub
   const t = structural(win);
   ok(t && t.val === '✓' && /none found/.test(t.sub),
     'D3: only settled findings → none found — ' + (t && (t.val + ' | ' + t.sub)));
+}
+
+{
+  // Walk G8: an unmeasured chip with a structural error never reads
+  // "N of N qubits in spec" (the Overview tile says no data).
+  const bare = { nodes: [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '1,0' }],
+                 edges: [], summary: {} };
+  const err = { severity: 'error', category: 'connectivity_band', location: 'ports.x',
+                message: 'invalid band', jump_path: '', advisory: false, acknowledged: null };
+  const win = mount([err], bare);
+  const banner = win.document.getElementById('topo-verdict-banner');
+  const t = banner ? banner.textContent : '';
+  ok(!/2 of 2 qubits in spec/.test(t) && /no qubit measured yet/.test(t),
+    'G8: the banner says nothing is measured, not "2 of 2 in spec" — ' + t);
 }
 
 console.log(fails ? ('FAILED (' + fails + ')')

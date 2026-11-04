@@ -5966,7 +5966,14 @@ window.ChipStatus.mount = function (opts) {
                 headline = 'Chip looks healthy — all ' + nodes.length + ' qubits in spec'
                          + (diagTotal ? '' : ', no structural issues') + '.';
             } else {
-                var parts = [(nodes.length - belowCount) + ' of ' + nodes.length + ' qubits in spec'];
+                // G8: an unmeasured qubit is unjudged here too, as on the
+                // Overview's "Qubits In Spec" tile; never counted in spec.
+                var parts = [measuredCount === 0
+                    ? 'no qubit measured yet'
+                    : (measuredCount - belowCount) + ' of ' + measuredCount + ' measured qubit'
+                      + (measuredCount === 1 ? '' : 's') + ' in spec'
+                      + (measuredCount < nodes.length
+                         ? ' (' + (nodes.length - measuredCount) + ' not measured)' : '')];
                 if (czBelow) parts.push(czBelow + ' of ' + edges.length + ' CZ pairs below spec');
                 if (diagTotal) parts.push(diagTotal + ' structural issue' + (diagTotal === 1 ? '' : 's'));
                 if (oc) parts.push('oldest calibration ' + _ageLabel(oc));

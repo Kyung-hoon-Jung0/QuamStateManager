@@ -201,7 +201,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("error", "CR/ZZ effective IF within ±500 MHz", "A pair drive's emulated intermediate frequency (effective target RF − LO, the runtime-only #./inferred_* arithmetic) stays inside the Nyquist limit."),
         ("warning", "CR/ZZ effective IF within ±400 MHz", "The same emulated pair-drive IF stays inside the 400 MHz bound the QM populate scripts assert for cross-resonance / ZZ tones."),
         ("warning", "LO within its band", "Each MW port's upconverter / downconverter frequency lies in its configured band (1: 50 MHz–5.5 GHz, 2: 4.5–7.5, 3: 6.5–10.5 GHz)."),
-        ("warning", "Coupled ports share a band", "MW port pairs that are hardware-coupled use the same band (or the allowed 1 & 3 combination)."),
+        ("error", "Coupled ports share a band", "MW port pairs that are hardware-coupled use the same band (or the allowed 1 & 3 combination); the QOP refuses any other combination when a program opens."),
         ("warning", "LF-FEM output bandwidth", "A flux/coupler intermediate frequency stays inside the LF-FEM passband (direct 750 MHz, amplified 330 MHz, 500 MHz on a 1 GSa/s port)."),
         ("warning", "Readout LO spacing", "Two MW-FEM input downconverter LOs on one FEM differ by at least 10 MHz when both read simultaneously."),
         ("recommendation", "Band-edge headroom", "Flags an LO sitting near a band edge when an overlapping band would seat it more centrally (optional, the LO still works)."),
@@ -560,13 +560,20 @@ def _coupling_findings(root: dict) -> list[Finding]:
             if ba is None or bb is None:
                 continue
             if (ba, bb) not in spec_constraints.BAND_COMPAT:
+                # QM docs, Guides/opx1000_fems.md#bands: "Coupled ports must
+                # be in the same band, or in bands `1` and `3`. ... Other band
+                # combinations are not supported." The QOP refuses such a
+                # config when a program opens, although generate_config()
+                # builds it, so this is an error.
                 msg = (f"coupled MW ports {a_side}{a_port} (band {ba}) and "
                        f"{b_side}{b_port} (band {bb}) on {ctrl}/FEM {fem} are on "
-                       f"incompatible bands (coupled ports must share a band)")
+                       f"an invalid band combination: the QOP will refuse this "
+                       f"config (coupled ports must share a band, or be bands 1 "
+                       f"and 3; generate_config passing is not proof)")
                 for info, port in ((a, a_port), (b, b_port)):
                     parsed = (info["section"], ctrl, fem, port)
                     findings.append(Finding(
-                        "warning", "connectivity_band", _port_label(parsed), msg,
+                        "error", "connectivity_band", _port_label(parsed), msg,
                         detail=f"bands {ba},{bb}",
                         jump_path=f"ports.{info['section']}.{ctrl}.{fem}.{port}.band",
                         port_key=_port_key(parsed),

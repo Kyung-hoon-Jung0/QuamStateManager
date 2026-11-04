@@ -56,6 +56,7 @@
           sourcePath: res.source_folder,
           sourceHash: res.source_hash,   // QA regenerate-r2-35
           sourceName: res.source_name,   // QA regenerate-r2-37
+          builtEnv: res.built_env || null,   // G3
           // r15 CG1 (docs/70): /regenerate?step=5 = the /instrument "Modify
           // wiring…" deep link; hydrateFromSpec has honored opts.step all
           // along (null → step 1). A reload from the build's "source
@@ -76,8 +77,11 @@
         // bite (⚠, warn styling); `info_notes` state what was carried and
         // are not problems — a QDAC carry dressed as a warning is what sent
         // a user hunting for a driver that was installed all along.
-        var notes = res.notes || [];
-        var infos = res.info_notes || [];
+        var notes = (res.notes || []).slice();
+        var infos = (res.info_notes || []).slice();
+        // G3: which env the rebuild uses, said before anything else.
+        var be = res.built_env || {};
+        if (be.message) (be.level === "warn" ? notes : infos).unshift(be.message);
         say(notes.length
               ? "⚠ " + notes.join("  ")
               : "Pre-filled from the source chip — edit ports · bands · qubits/pairs, then pick a NEW output folder (step 7) and Generate. Calibrated values are carried over.",

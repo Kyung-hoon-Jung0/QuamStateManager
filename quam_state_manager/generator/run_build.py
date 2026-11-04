@@ -970,6 +970,31 @@ def _apply_twpa(twpa, vals):
             setattr(twpa, attr, vals[attr])
 
 
+def _dedupe_warnings(warnings):
+    """One line per distinct warning, in first-seen order: a chip-wide cause
+    (a missing pulse class) used to repeat once per pair."""
+    seen, out = set(), []
+    for w in warnings or []:
+        key = w if isinstance(w, str) else repr(w)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(w)
+    return out
+
+
+def _apply_twpa_qubits(machine, spec):
+    """Record which qubits each TWPA amplifies (the wizard's step-4 list) on
+    the TWPA's own ``qubits`` field, when the class has one."""
+    for t in spec.get("twpas") or []:
+        if not isinstance(t, dict) or not t.get("id"):
+            continue
+        qs = [q for q in (t.get("qubits") or []) if isinstance(q, str)]
+        tw = _twpa_of(machine, t["id"])
+        if tw is not None and qs and hasattr(tw, "qubits"):
+            tw.qubits = list(qs)
+
+
 def apply_populate(machine, populate, handle_pairs=True):
     """Apply spec['populate'] physics values onto a built QUAM machine.
 
@@ -2954,6 +2979,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         pair_gate = (spec.get("pair_gate") or "").lower()
         apply_populate(machine, spec.get("populate") or {},
                        handle_pairs=(pair_gate == ""))
+        _apply_twpa_qubits(machine, spec)
         warnings.extend(_apply_dual_upconverters(machine, spec))
         if pair_gate in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))
@@ -3036,7 +3062,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         "qdac_qubits": sorted(qdac_pins.keys()),
         "qdac_requested": sorted((spec.get("qdac") or {}).get("qubits") or {}),
         "allocation": _with_qdac_pins(read_allocation(connectivity), qdac_pins),
-        "warnings": warnings,
+        "warnings": _dedupe_warnings(warnings),
         "class_schemas": _collect_class_schemas(state_path, wiring_path),
     }
 
