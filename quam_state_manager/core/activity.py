@@ -37,7 +37,9 @@ LONG_POLL_PATHS = frozenset({"/datasets/wait", "/datasets/poll", "/workspace/tre
 #: worker's status is a poll (the "Preparing your lab code..." text asks it
 #: every 600 ms while a check waits) -- counted, it would keep the server
 #: "busy" and hold back the very pre-warm it is reporting on.
-EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/", "/api/lab/worker-status")
+EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/", "/api/lab/worker-status",
+                   # QUAlibrate's own UI through SM polls on its own schedule
+                   "/qualibrate-ui/")
 
 
 def is_foreground(path: str | None) -> bool:

@@ -139,6 +139,7 @@
     <label for="wb-url">Qualibrate&nbsp;URL</label>
     <input id="wb-url" type="text" spellcheck="false" />
     <button id="wb-go" title="Reload the left pane with this URL">Reload</button>
+    <button id="wb-viasm" type="button" class="ghost" title="Load Qualibrate through the State Manager: each run in History gets an Open in QSM link that opens it on the right">Through SM</button>
     <a id="wb-newtab" href="#" target="_blank" rel="noopener">open ↗</a>
     <button id="wb-detach" class="ghost" title="Open Qualibrate in its own window (great on a second monitor)">⧉ detach</button>
     <button id="wb-help" class="ghost" title="Alt+1/2/3 = views · Alt+[ / ] = nudge divider · Esc = back to split">?</button>
@@ -291,6 +292,17 @@
                     function () { /* the probe above already says what is wrong */ });
           }
         }, 0);
+      });
+      document.getElementById("wb-viasm").addEventListener("click", function () { setUrl("/qualibrate-ui/"); });
+      /* Qualibrate through SM (qualibrate_proxy D-11): its Open in QSM link asks
+         this shell to show the run on the right. Only our own left frame may
+         ask, and only for an SM run link. */
+      window.addEventListener("message", function (e) {
+        var d = e.data;
+        if (e.source !== qb.contentWindow || !d || d.type !== "qsm-open-run") return;
+        if (typeof d.href !== "string" || !/^\/qualibrate-run\/\d{1,9}$/.test(d.href)) return;
+        sm.src = d.href;
+        if (view === "qb") setView("split");
       });
       function setUrl(url) { url = (url || "").trim(); if (!url) return; lsSet(URL_KEY, url); loadQb(url); }
       document.getElementById("wb-go").addEventListener("click", function () { setUrl(input.value); });
