@@ -4278,7 +4278,7 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
         try:
             st = qualibrate_config.project_storage(scope)
             shared = st.get("native") if st.get("exists") else None
-            storage = hub_sync.project_run_root(shared, scope)
+            storage = hub_sync.storage_root_for_open(shared, scope)
         except Exception:  # noqa: BLE001
             storage = shared = None
         try:

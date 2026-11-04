@@ -172,6 +172,31 @@ def project_run_root(location: str | None, project: str | None) -> str | None:
     return str(sub)
 
 
+def storage_root_for_open(location: str | None, project: str | None) -> str | None:
+    """The folder to sync for a project when the chip is opened: the
+    :func:`project_run_root` answer, except when that answer is a project
+    subfolder that does not exist yet while the storage location does and
+    holds no other project's runs (F8, final walk). The project was opened
+    before its first run, so neither folder held a day folder; the naming rule
+    then pointed at a folder qualibrate never created, nothing was synced, and
+    runs that later landed in the location's own day folders were never read
+    into the history. A folder that does not exist cannot be where the runs
+    are; the location that does exist, and is no sibling project's, is."""
+    root = project_run_root(location, project)
+    if not root or not location or root == location:
+        return root
+    try:
+        if Path(root).is_dir() or not Path(location).is_dir():
+            return root
+        with os.scandir(location) as it:
+            for e in it:
+                if e.is_dir() and _holds_runs(Path(e.path)):
+                    return root         # a shared location: another project's runs
+    except OSError:
+        return root
+    return location
+
+
 def _inside(child: str, parent: str, key: Callable[[str], str]) -> bool:
     try:
         c, p = key(child), key(parent)
