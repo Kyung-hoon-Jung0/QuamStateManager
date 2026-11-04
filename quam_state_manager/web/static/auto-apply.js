@@ -45,6 +45,8 @@
         // D-45: an agent's staged rows wait for the person's own Apply; the
         // working copy applies whole, so nothing is flushed while they wait
         if (t.hasAttribute('data-agent-held')) return false;
+        // W2-1: an edit from a window that showed Auto-Sync off holds the session
+        if (t.hasAttribute('data-auto-hold')) return false;
         var n = parseInt(t.getAttribute('data-change-count') || '0', 10);
         return (n > 0) || t.getAttribute('data-working-dirty') === '1';
     }
@@ -201,7 +203,7 @@
         _observer.observe(host, {
             childList: true, subtree: true, attributes: true,
             attributeFilter: ['data-change-count', 'data-working-dirty',
-                              'data-auto-apply', 'data-seq', 'data-agent-held'],
+                              'data-auto-apply', 'data-seq', 'data-agent-held', 'data-auto-hold'],
         });
     }
 

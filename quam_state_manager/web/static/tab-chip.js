@@ -16,6 +16,14 @@
 (function () {
     'use strict';
     var HEADER = 'X-SM-Chip-Key';
+    // W2-1: what this window's tray showed of Auto-Sync push when it wrote
+    var AUTO = 'X-SM-Auto-Seen';
+    function autoSeen() {
+        try {
+            var t = document.getElementById('pending-tray');
+            return t ? (t.getAttribute('data-auto-apply') === '1' ? '1' : '0') : '';
+        } catch (e) { return ''; }
+    }
 
     function key() {
         try { return String(window.__chipKey || ''); } catch (e) { return ''; }
@@ -36,6 +44,8 @@
         if (!d || !k || !writes(d.verb)) return;
         d.headers = d.headers || {};
         if (!d.headers[HEADER]) d.headers[HEADER] = k;
+        var a = autoSeen();
+        if (a && !d.headers[AUTO]) d.headers[AUTO] = a;
     });
 
     // fetch (the JSON doors: doStateSync, the grids, the inspectors)
@@ -50,6 +60,8 @@
                 if (k && writes(method) && sameOrigin(url)) {
                     var h = new Headers((init && init.headers) || (isReq ? input.headers : undefined));
                     if (!h.has(HEADER)) h.set(HEADER, k);
+                    var a = autoSeen();
+                    if (a && !h.has(AUTO)) h.set(AUTO, a);
                     init = Object.assign({}, init || {}, { headers: h });
                 }
             } catch (e) { /* never break a request over a header */ }

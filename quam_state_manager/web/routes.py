@@ -1208,7 +1208,7 @@ def _sync_view(ctx=None) -> dict | None:
     # path). The change log keeps every commit (undo, the consent count).
     paths = sync_status.edit_fields([getattr(c, "dot_path", None) for c in log],
                                     ctx.get("pending_reapply") or {})
-    return sync_status.view(
+    _v = sync_status.view(
         facts=facts,
         flag_moved=bool(ctx.get("live_diverged")),
         flag_count=ctx.get("live_drift_count"),
@@ -1223,6 +1223,15 @@ def _sync_view(ctx=None) -> dict | None:
         unapplied=len(paths),
         working_dirty=bool(ctx.get("working_dirty")),
     )
+    # W2-1: the Auto-Sync session is part of what every window shows, so its
+    # arming, its modes and its hold move the signature the drift poll follows
+    _a = ctx.get("auto_apply") or None
+    if _v is not None:
+        _v["sig"] = str(_v.get("sig") or "") + (
+            "|auto:off" if not _a else "|auto:%s:%d%d%d%d" % (
+                _a.get("armed_at"), bool(_a.get("pull")), bool(_a.get("pull_replace")),
+                bool(_a.get("push")), bool(_a.get("hold"))))
+    return _v
 
 
 def _evict_oldest_quam() -> None:
@@ -34372,6 +34381,10 @@ def state_apply_to_live():
         # applies WHOLE, so a flush cannot push the person's rows and leave an
         # agent's behind; while any agent-staged row is pending the flush
         # writes nothing (the agent's rows wait for the person's own Apply).
+        if request.values.get("auto_flush") == "1" and _auto_hold_active(ctx):
+            return jsonify(ok=False, conflict="auto_seen_off", message=_AUTO_HOLD_MSG), 409
+        if request.values.get("auto_flush") != "1" and _auto_apply_state(ctx):
+            _auto_apply_state(ctx).pop("hold", None)   # W2-1: a person's Apply releases it
         if request.values.get("auto_flush") == "1":
             _held = _agent_held_paths(ctx["store"].change_log)
             if _held:
@@ -42440,6 +42453,61 @@ def _ensure_workspace_loaded() -> None:
                 _rehydrate_workspace_from_recents()
             except Exception:
                 logger.warning("Workspace rehydration failed", exc_info=True)
+
+
+AUTO_SEEN_HEADER = "X-SM-Auto-Seen"
+_AUTO_SEEN_EXEMPT = frozenset({"main.auto_sync_set", "main.auto_apply_arm", "main.auto_apply_disarm",
+                               "main.state_apply_to_live", "main.state_sync", "main.auto_sync_pull"})
+
+
+@bp.before_request
+def _auto_seen_begin():
+    """W2-1: a write pressed in a window whose tray still showed Auto-Sync
+    OFF while another window had armed push. The edit itself stages as
+    usual; the session HOLDS (no flush from any window) until a person
+    presses Apply, so a window that read "Auto off" never writes the chip
+    by surprise. Only a page that declares what it saw is judged."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or request.endpoint in _AUTO_SEEN_EXEMPT:
+        return None
+    if (request.headers.get(AUTO_SEEN_HEADER) or "") != "0":
+        return None
+    ctx = _active_ctx()
+    if not _auto_apply_state(ctx) or ctx.get("store") is None:
+        return None
+    sess = ctx["auto_apply"]
+    g._auto_seen_off = (ctx, sess, ctx["store"].mutation_seq, bool(sess.get("hold")))
+    sess["hold"] = True     # set first, so the tray this request renders says so
+    return None
+
+
+@bp.after_request
+def _auto_seen_end(resp):
+    rec = getattr(g, "_auto_seen_off", None)
+    if rec is None:
+        return resp
+    ctx, sess, seq0, had = rec
+    try:
+        if not had and (ctx["store"].mutation_seq == seq0 or resp.status_code >= 400):
+            sess.pop("hold", None)          # nothing was staged: no hold
+    except Exception:  # noqa: BLE001 -- bookkeeping, never fatal
+        logger.debug("auto-seen hold failed", exc_info=True)
+    return resp
+
+
+_AUTO_HOLD_MSG = ("Auto-Sync is holding: an edit was made in a window that still showed "
+                  "Auto-Sync off. Nothing was written to the live chip; press Apply to write it.")
+
+
+def _auto_hold_active(ctx) -> bool:
+    """The W2-1 hold, released once nothing is pending any more."""
+    sess = _auto_apply_state(ctx)
+    if not sess or not sess.get("hold"):
+        return False
+    store = ctx.get("store")
+    if store is not None and not store.change_log and not ctx.get("working_dirty")             and not ctx.get("pending_reapply"):
+        sess.pop("hold", None)
+        return False
+    return True
 
 
 @bp.before_request
