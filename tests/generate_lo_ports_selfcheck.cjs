@@ -283,6 +283,36 @@ function panelText(win) {
     'L8: the build request carries specWithCoBands(), not the raw spec');
 })();
 
+
+// ---- L8d: a coupled pair no single band covers takes bands 1 + 3 ---------
+// QM docs (Guides/opx1000_fems.md#bands): "Coupled ports must be in the same
+// band, or in bands `1` and `3`." A 4.0 GHz drive on Out1 (band 1 only) and a
+// 7.0 GHz readout read on In1: band 3 on the readout row is the legal answer.
+(function () {
+  const RR8 = [{ con: 1, slot: 3, port: 8, io_type: 'output' },
+               { con: 1, slot: 3, port: 1, io_type: 'input' }];
+  const w = world('generate', {
+    qubit: { q1: { RF_freq: 4.0e9 } },
+    resonator: { q1: { RF_freq: 7.0e9 } } }, ['q1']);
+  w.st.allocation = { q1: { xy: xy(1), rr: RR8 } };
+  const calc = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(!calc.warnings.some(function (x) { return x.kind === 'coupled_band'; }),
+    'L8d: auto bands find the 1 + 3 combination (got ' +
+    JSON.stringify(calc.warnings.map(function (x) { return x.message; })) + ')');
+  ok(calc.coBands['resonator/q1'] === 3 && (calc.coBands['qubit/q1'] == null || calc.coBands['qubit/q1'] === 1),
+    'L8d: the readout row gets band 3, the drive stays band 1 (got ' + JSON.stringify(calc.coBands) + ')');
+  ok(w.T.coupledBandBlockers().length === 0, 'L8d: nothing blocks the build');
+  // the walk's typed bands: drive band 1, readout band 2 on coupled Out1/In1
+  w.st.spec.populate.qubit.q1 = { RF_freq: 5.26e9, LO_frequency: 5.26e9, band: 1 };
+  w.st.spec.populate.resonator.q1 = { RF_freq: 7.0e9, LO_frequency: 7.0e9, band: 2 };
+  const bl = w.T.coupledBandBlockers();
+  ok(bl.length === 1 && /Band 2/.test(bl[0].message),
+    'L8d: typed bands 1 + 2 on coupled ports block the build, naming the fix (got ' +
+    JSON.stringify(bl.map(function (x) { return x.message; })) + ')');
+  ok(/var bandErrs = coupledBandBlockers\(\);\s*if \(bandErrs\.length\)[\s\S]{0,1400}revealResult\(bEl\);\s*return;/.test(GEN_JS),
+    'L8d: the build path refuses while a coupled-band blocker stands');
+})();
+
 // ---- L8a: a row rewrite also reaches its other coupled port ---------------
 (function () {
   function port(n, io) { return { con: 1, slot: 3, port: n, io_type: io }; }
@@ -331,6 +361,46 @@ function panelText(win) {
      explicit.warnings.some(function (x) { return /coupled/.test(x.message); }) &&
      locked.T.specWithCoBands().populate.resonator.q2.band === 1,
     'L8c: an explicit band on the third port is preserved and blocks an incompatible rewrite');
+})();
+
+
+// ---- L9 (G2): a typed LO is never re-derived by a later RF edit ----------
+(function () {
+  const RR = [{ con: 1, slot: 3, port: 8, io_type: 'output' },
+              { con: 1, slot: 3, port: 2, io_type: 'input' }];
+  const w = world('generate', { resonator: {
+    q1: { RF_freq: 6.95e9 }, q2: {} } }, ['q1', 'q2']);
+  w.st.allocation = { q1: { rr: RR }, q2: { rr: RR } };
+  w.T.renderPopulateTables();
+  w.T.recomputeLOs();
+  function cell(rid, f) {
+    return w.win.document.querySelector(
+      '.gen-pop-in[data-group="resonator"][data-rid="' + rid + '"][data-field="' + f + '"]');
+  }
+  function commit(el, v) {
+    el.value = v;
+    el.dispatchEvent(new w.win.Event('input', { bubbles: true }));
+    el.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+  }
+  const lo1 = cell('q1', 'LO_frequency');
+  ok(!!lo1, 'L9: the q1 resonator LO cell renders');
+  commit(lo1, '7');
+  const typed = w.st.spec.populate.resonator.q1.LO_frequency;
+  ok(Math.abs(typed - 7e9) < 1, 'L9: the typed 7 GHz LO is stored (got ' + typed + ')');
+  commit(cell('q2', 'RF_freq'), '7.25');
+  w.T.recomputeLOs();
+  const a = w.st.spec.populate.resonator.q1.LO_frequency;
+  const b = w.st.spec.populate.resonator.q2.LO_frequency;
+  ok(Math.abs(a - 7e9) < 1, 'L9: the next RF edit leaves the typed LO alone (got ' + a + ')');
+  ok(Math.abs(b - 7e9) < 1, 'L9: the other element on the port takes the typed LO (got ' + b + ')');
+  const tag = lo1.parentNode.querySelector('.gen-lo-tag');
+  ok(tag && /typed/.test(tag.textContent) && /no longer derived/.test(tag.title),
+    'L9: the cell says the LO is typed and not derived (got ' + (tag && tag.textContent) + ')');
+  commit(lo1, '');
+  w.T.recomputeLOs();
+  ok(w.st.spec.populate.resonator.q1.LO_frequency !== '' &&
+     Math.abs(w.st.spec.populate.resonator.q1.LO_frequency - 7e9) > 1,
+    'L9: an emptied cell is derived again (got ' + w.st.spec.populate.resonator.q1.LO_frequency + ')');
 })();
 
 // ---- L7: step-6 deep link with no allocation -----------------------------

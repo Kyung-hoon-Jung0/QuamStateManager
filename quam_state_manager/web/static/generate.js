@@ -6800,6 +6800,17 @@
       if (bucket) {
         setPopValue(bucket, col, input.value, group, rid);
         markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
+        // G2: a typed LO is the user's; the solver never re-derives it again
+        // (an emptied cell hands it back to the solver).
+        if (col.field === "LO_frequency") {
+          if (!state.loTyped) state.loTyped = {};
+          var typedKey = group + "/" + rid;
+          if (bucket.LO_frequency == null || bucket.LO_frequency === "") {
+            delete state.loTyped[typedKey];
+          } else {
+            state.loTyped[typedKey] = 1;
+          }
+        }
         popBucketPrune(group, rid);
       }
       // A qubit frequency edit may re-orient CZ pairs (higher f = control).
@@ -8009,6 +8020,9 @@
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
       var had = pop[group][rid].LO_frequency;
+      // G2: a typed LO is never re-derived (only an explicit Re-solve may).
+      if (!o.force && state.loTyped && state.loTyped[key] &&
+          had != null && had !== "") return;
       if ((fillOnly || (o.force && unsolved[key])) &&
           had != null && had !== "") return;
       if (o.force && had !== assignments[key]) {
@@ -8087,8 +8101,8 @@
           : m.group === "twpa" ? ".pump" : "");
       }).join(", ");
     }
-    function warn(message, members) {
-      calc.warnings.push({ message: message, members: members });
+    function warn(message, members, kind) {
+      calc.warnings.push({ message: message, members: members, kind: kind || null });
     }
     var byId = {};
     calc.groups.forEach(function (g) { byId[g.id] = g; });
@@ -8152,10 +8166,26 @@
       return a.band === b.band || (a.band === 1 && b.band === 3) ||
         (a.band === 3 && b.band === 1);
     }
-    function fixes(a, b) {
-      return [1, 2, 3].filter(function (bb) {
-        return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
+    // Every legal (band a, band b) for a coupled pair whose LOs they cover:
+    // the fewest changed sides first (keep a side's current band when it can
+    // stay), then a shared band before the 1 + 3 combination.
+    function pairFixes(a, b) {
+      var out = [];
+      [1, 2, 3].forEach(function (ba) {
+        [1, 2, 3].forEach(function (bb) {
+          if (a.lo == null || b.lo == null) return;
+          if (!covers(ba, a.lo) || !covers(bb, b.lo)) return;
+          if (!(ba === bb || (ba === 1 && bb === 3) || (ba === 3 && bb === 1))) return;
+          out.push([ba, bb]);
+        });
       });
+      function cost(c) {
+        return (c[0] !== a.originalBand ? 1 : 0) + (c[1] !== b.originalBand ? 1 : 0);
+      }
+      out.sort(function (x, y) {
+        return (cost(x) - cost(y)) || ((x[0] === x[1] ? 0 : 1) - (y[0] === y[1] ? 0 : 1));
+      });
+      return out;
     }
     var proposed = {}, changedPairs = [], seen = {};
     Object.keys(info).forEach(function (k) { info[k].originalBand = info[k].band; });
@@ -8186,14 +8216,23 @@
         var both = a.p.members.concat(b.p.members);
         var affected = {};
         both.forEach(function (m) { affected[m.group + "/" + m.rid] = true; });
-        var fix = fixes(a, b).filter(function (bb) {
-          if (!both.every(function (m) {
+        // One side keeps or changes its band independently of the other:
+        // the legal combinations are the same band OR bands 1 and 3 (QM docs,
+        // Guides/opx1000_fems.md#bands: "Coupled ports must be in the same
+        // band, or in bands `1` and `3`."). A readout input at 7 GHz coupled
+        // to an xy output in band 1 is fixed by band 3 on the input.
+        function sideOk(side, bb) {
+          if (!side.p.members.every(function (m) {
             var prev = proposed[m.group + "/" + m.rid];
             return prev == null || prev === bb;
           })) return false;
           return Object.keys(info).every(function (k) {
             var x = info[k];
-            if (!x.p.members.some(function (m) { return affected[m.group + "/" + m.rid]; })) return true;
+            if (!x.p.members.some(function (m) {
+              return side.p.members.some(function (sm) {
+                return sm.group === m.group && sm.rid === m.rid;
+              });
+            })) return true;
             return covers(bb, x.lo) && x.p.members.every(function (m) {
               var eb = explicitBand(m);
               if (eb == null && !affected[m.group + "/" + m.rid]) {
@@ -8202,9 +8241,14 @@
               return eb == null || eb === bb;
             });
           });
+        }
+        var cands = pairFixes(a, b).filter(function (c) {
+          return sideOk(a, c[0]) && sideOk(b, c[1]);
         });
-        if (!fix.length) return;
-        both.forEach(function (m) { proposed[m.group + "/" + m.rid] = fix[0]; });
+        if (!cands.length) return;
+        var pick = cands[0];
+        a.p.members.forEach(function (m) { proposed[m.group + "/" + m.rid] = pick[0]; });
+        b.p.members.forEach(function (m) { proposed[m.group + "/" + m.rid] = pick[1]; });
         if (changedPairs.indexOf(pair) < 0) changedPairs.push(pair);
         refreshBands();
       });
@@ -8218,24 +8262,34 @@
       changedPairs.forEach(function (pair) {
         var a = pair.a, b = pair.b, cb = a.band;
         calc.notes.push({ members: a.p.members.concat(b.p.members), message:
-            pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
-            b.p.desc + " (" + who(b.p.members) + ") are coupled, so they share a " +
-            "band: the build uses band " + cb + " (" + bandSpan(cb) + ") on both." });
+            a.band === b.band
+              ? pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
+                b.p.desc + " (" + who(b.p.members) + ") are coupled, so they share a " +
+                "band: the build uses band " + cb + " (" + bandSpan(cb) + ") on both."
+              : pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
+                b.p.desc + " (" + who(b.p.members) + ") are coupled: the build uses " +
+                "band " + a.band + " (" + bandSpan(a.band) + ") and band " + b.band +
+                " (" + bandSpan(b.band) + "), the allowed 1 + 3 combination." });
       });
     } else {
       Object.keys(info).forEach(function (k) { info[k].band = info[k].originalBand; });
       pairs.forEach(function (pair) {
         var a = pair.a, b = pair.b;
         if (compatible(a, b)) return;
-        var fix = fixes(a, b);
+        var fix = pairFixes(a, b).map(function (c) { return c[0] === c[1] ? c[0] : null; })
+          .filter(function (x) { return x != null; });
+        var mixed = pairFixes(a, b).filter(function (c) { return c[0] !== c[1]; })[0];
         warn(pair.femName + " " + a.p.desc + " (band " + a.band + ": " +
           who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
           who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
           "a band or be bands 1 and 3." + (fix.length
             ? " Band " + fix[0] + " (" + bandSpan(fix[0]) + ") covers both " +
               "LOs — set it on both."
-            : " Move an element to another port."),
-          a.p.members.concat(b.p.members));
+            : mixed
+              ? " Set band " + mixed[0] + " on " + a.p.desc + " and band " + mixed[1] +
+                " on " + b.p.desc + "."
+              : " Move an element to another port."),
+          a.p.members.concat(b.p.members), "coupled_band");
       });
     }
     return calc;
@@ -8244,6 +8298,15 @@
   // docs/301 F33: the spec the build receives -- the shared band of every
   // auto-banded coupled pair written onto the rows whose band is automatic.
   // state.spec itself is not touched: the step-6 cells keep reading "auto".
+  // The coupled-port band findings the build must refuse (G1).
+  function coupledBandBlockers() {
+    try {
+      return loBandFindings(computeLoAssignments()).warnings.filter(function (w) {
+        return w.kind === "coupled_band";
+      });
+    } catch (e) { return []; }
+  }
+
   function specWithCoBands() {
     var cb = (loBandFindings(computeLoAssignments()).coBands) || {};
     var keys = Object.keys(cb);
@@ -8289,8 +8352,15 @@
           tag.className = "gen-lo-tag";
           td.appendChild(tag);
         }
-        tag.textContent = qualify
-          ? ("c" + g.con + "s" + g.slot + "·" + g.loLabel) : g.loLabel;
+        var isTyped = !!(state.loTyped &&
+          state.loTyped[input.dataset.group + "/" + input.dataset.rid]);
+        tag.textContent = (qualify
+          ? ("c" + g.con + "s" + g.slot + "·" + g.loLabel) : g.loLabel) +
+          (isTyped ? " · typed" : "");
+        tag.title = isTyped
+          ? "You typed this LO: it is kept as typed and no longer derived " +
+            "from the RF frequencies. Empty the cell to derive it again."
+          : "Derived from the RF frequencies on this port until you type an LO.";
         tag.style.background = color;
       } else {
         td.classList.remove("gen-lo-cell");
@@ -8431,8 +8501,31 @@
   // computeLoAssignments() returns an empty result with no allocation yet.
   // opts.noApply: re-derive the findings WITHOUT writing solver LOs — a band
   // or LO edit (QA r2-07), where a hand-typed LO must stick.
+  // G2: one port has one LO, so a typed LO on any element of a port is the
+  // LO of every other (solver-derived) element on that port.
+  function typedPortLos(calc) {
+    var typed = state.loTyped || {};
+    var pop = state.spec.populate || {};
+    (calc.ports || []).forEach(function (p) {
+      var pinned = null;
+      p.members.forEach(function (m) {
+        var k = m.group + "/" + m.rid;
+        var v = ((pop[m.group] || {})[m.rid] || {}).LO_frequency;
+        if (typed[k] && v != null && v !== "") pinned = v;
+      });
+      if (pinned == null) return;
+      p.members.forEach(function (m) {
+        var k = m.group + "/" + m.rid;
+        if (!typed[k] && Object.prototype.hasOwnProperty.call(calc.assignments, k)) {
+          calc.assignments[k] = pinned;
+        }
+      });
+    });
+  }
+
   function recomputeLOs(opts) {
     var calc = computeLoAssignments();
+    if (!(opts && opts.force)) typedPortLos(calc);
     if (!(opts && opts.noApply)) {
       applyLoAssignments(calc.assignments,
         { force: !!(opts && opts.force), unsolved: calc.unsolved });
@@ -9921,6 +10014,12 @@
     if (loCalc.notes && loCalc.notes.length) {
       rows.push(["Coupled ports", loCalc.notes.map(function (n) {
         return n.message; }).join(" ")]);
+    }
+    var bandBlock = loCalc.warnings.filter(function (w) { return w.kind === "coupled_band"; });
+    if (bandBlock.length) {
+      rows.push(["✗ Blocks Generate", "The QOP refuses this band combination " +
+        "on coupled ports (generate_config passing is not proof) — " +
+        bandBlock[0].message + (bandBlock.length > 1 ? " …" : "")]);
     }
     var reviewFindings = loCalc.warnings.concat(powerWarningList());
     if (reviewFindings.length) {
@@ -11553,6 +11652,32 @@
       return;
     }
 
+    // An invalid coupled-port band combination is refused by the QOP when the
+    // program opens (QM docs, Guides/opx1000_fems.md#bands: "Other band
+    // combinations are not supported."), although generate_config() passes.
+    var bandErrs = coupledBandBlockers();
+    if (bandErrs.length) {
+      var bEl = document.getElementById("gen-build-result");
+      if (bEl) {
+        bEl.hidden = false;
+        bEl.className = "gen-build-result gen-build-error";
+        bEl.innerHTML = "";
+        var bh = document.createElement("p");
+        bh.textContent = "✗ The QOP would refuse this chip: " + bandErrs.length +
+          " coupled MW-FEM port pair(s) are on an invalid band combination. " +
+          "Fix the band in step 6 (Populate) before generating:";
+        bEl.appendChild(bh);
+        bandErrs.forEach(function (it) {
+          var bp = document.createElement("p");
+          bp.className = "gen-build-err-line";
+          bp.textContent = "• " + it.message;
+          bEl.appendChild(bp);
+        });
+      }
+      revealResult(bEl);
+      return;
+    }
+
     var resultEl = document.getElementById("gen-build-result");
     setBuildBusy(true);
     // QA r2-13: the draft knows a build was started, so a reload before its
@@ -11801,6 +11926,7 @@
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
         autoPresetRows: state.autoPresetRows,
+        loTyped: state.loTyped || {},
         // QA r2-13: what became of the last build (trimmed) / one started
         // whose answer has not landed yet.
         lastBuild: state.lastBuild || null,
@@ -11934,6 +12060,7 @@
     // A draft from before the per-row record whose one-shot flag was spent:
     // every row it has now counts as prefilled (cleared cells stay cleared),
     // and only rows added from here on prefill. No flag: nothing recorded yet.
+    state.loTyped = (d.loTyped && typeof d.loTyped === "object") ? d.loTyped : {};
     var dr = d.autoPresetRows;
     state.autoPresetRows = (dr && typeof dr === "object")
       ? { q: dr.q || {}, pairs: dr.pairs || {} }
@@ -12032,6 +12159,7 @@
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
+    state.loTyped = {};             // G2
     state.regenSourceHash = null;   // QA regenerate-r2-35
     state.lastBuild = null;      // QA r2-13: a Reset forgets the build record
     state.buildPending = null;
@@ -12887,6 +13015,7 @@
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
       specWithCoBands: specWithCoBands,   // docs/301 F33
+      coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
       askFspCompensation: askFspCompensation,

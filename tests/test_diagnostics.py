@@ -548,7 +548,8 @@ class TestCoupling:
         cats = _cats(diagnostics.lint_state(_store(state=self._coupled(1, 2))))  # 1&2 NOT compatible
         assert "connectivity_band" in cats
         f = cats["connectivity_band"][0]
-        assert f.severity == "warning" and f.port_key is not None
+        assert f.severity == "error" and f.port_key is not None
+        assert "QOP will refuse" in f.message
         # both ports of the pair should be flagged so the diagram rings both
         assert len(cats["connectivity_band"]) == 2
 
