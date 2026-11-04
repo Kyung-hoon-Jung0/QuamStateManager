@@ -44557,6 +44557,60 @@ def _run_chip_identity(run_qs: Path) -> tuple[str, str]:
     return token, name
 
 
+@bp.route("/dataset/by-path")
+def dataset_by_path():
+    """Open a run by its FOLDER path (``?path=<run folder>``).
+
+    A bare run id is ambiguous once two data folders are loaded (each numbers
+    its runs from 1), so an outside link -- a report page that knows exactly
+    which run folder it shows -- names the folder instead. The run id comes
+    from the folder name (``#<id>_<name>_<hhmmss>``); the owning store is the
+    loaded data folder that contains it AND lists that id at that same folder.
+    Nothing is guessed: a folder no loaded data folder holds gets a clear 404
+    that says which folder to add."""
+    raw = (request.args.get("path") or "").strip()
+    m = re.match(r"#(\d+)_", Path(raw).name) if raw else None
+    if not m:
+        return render_template(
+            "_status.html",
+            message="Give the run folder as ?path=<folder named #<id>_<name>_<time>>.",
+            level="warning"), 400
+    run_id = int(m.group(1))
+    try:
+        target = Path(raw).resolve()
+    except OSError:
+        target = Path(raw)
+
+    def _same(a, b) -> bool:
+        try:
+            return Path(a).resolve() == b
+        except OSError:
+            return False
+
+    def _find():
+        for entry in _active_dataset_stores():
+            run = entry["store"].get_run(run_id)
+            if run is not None and _same(run.get("folder_path") or "", target):
+                return entry["key"]
+        return None
+
+    key = _find()
+    if key is None:
+        for entry in _active_dataset_stores():
+            try:
+                entry["store"].rescan_if_stale()
+            except Exception:
+                logger.exception("rescan_if_stale during by-path resolve failed")
+        key = _find()
+    if key is not None:
+        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}"))
+    return render_template(
+        "_status.html",
+        message=(f"Run #{run_id} at {raw} isn't in any loaded data folder. Add the "
+                 f"data folder that holds it as a Datasets workspace root, then retry."),
+        level="warning"), 404
+
+
 @bp.route("/dataset/by-run/<int:run_id>")
 def dataset_by_run(run_id):
     """Resolve a BARE run id to its composite ``<folder_key>:<run_id>`` uid and open it.
