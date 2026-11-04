@@ -31,6 +31,7 @@
 </div>
 
 {% set cmap_highlight = 'qubits' %}
+{% set cmap_add = (chip_origin | default('live')) == 'live' %}
 {% set cmap_label = '— qubit positions highlighted' %}
 {% include '_component_map.html' %}
 

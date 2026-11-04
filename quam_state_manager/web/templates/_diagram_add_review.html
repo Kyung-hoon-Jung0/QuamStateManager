@@ -1,0 +1,22 @@
+{# Only the change: every leaf the plan creates, nothing that already exists. #}
+<div class="ui-callout ui-callout--note">
+  <p class="ui-callout-title">{{ plan.creates | length }} new subtrees, {{ rows | length }} new values{% if plan.sets %}, and {{ plan.sets | length }} name list{{ 's' if plan.sets | length != 1 }} extended{% endif %}. No existing value changes.</p>
+  {% set s = plan.summary %}
+  {% if s.kind == 'qubit' %}
+  <p class="ui-callout-text">{{ s.name }}: drive {{ s.drive }}{% if s.drive_lo %} (LO {{ '%.4g' | format(s.drive_lo / 1e9) }} GHz, band {{ s.drive_band }}){% endif %}{% if s.flux %}, flux {{ s.flux }}{% endif %}{% if s.grid %}, grid {{ s.grid }}{% endif %}. Values not typed here start as {{ s.template }}'s; measured ones (T1, T2, fidelities, confusion) start empty.</p>
+  {% if s.dropped %}<p class="ui-callout-text">Left out {{ s.dropped | length }} operation{{ 's' if s.dropped | length != 1 }} of {{ s.template }} that belong to its pairs or other qubits.</p>{% endif %}
+  {% else %}
+  <p class="ui-callout-text">{{ s.name }} copies {{ s.template }}'s gates{% if s.member_ops %} and adds {{ s.member_ops | length }} member operations they play{% endif %}; measured fidelities start empty.</p>
+  {% endif %}
+</div>
+<details class="ui-disclosure">
+  <summary class="ui-disclosure-summary">Every new value <span class="ui-count">{{ rows | length }}</span></summary>
+  <div class="ui-disclosure-body">
+    <table class="ui-table">
+      {% for r in rows %}<tr><td class="ui-table-cell"><span class="ui-path">{{ r.path }}</span></td><td class="ui-table-cell">{{ r.value | tojson }}</td></tr>{% endfor %}
+    </table>
+  </div>
+</details>
+<div class="ui-actions">
+  <button type="button" class="btn-sm" data-cm-add-stage>Add to the working copy</button>
+</div>
