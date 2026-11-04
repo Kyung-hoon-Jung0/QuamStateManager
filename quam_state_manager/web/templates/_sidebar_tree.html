@@ -20,12 +20,14 @@
 {# v1.5.1 (SB-P2-6): a folder that is gone is marked, with Re-point / Remove,
    instead of listing the runs it held when last scanned #}
 {% set _gone = root_path in (tree_missing or ()) %}
+{# walk F31: a folded root shows its run count, or it reads as an empty folder #}
+{% set _n_runs = date_groups | sum(attribute='count') %}
 {# R4 B3/b6: a folder whose drive or share does not answer keeps its runs as
    last read, stated the way the Datasets page states it #}
 {% set _away = not _gone and root_path in (tree_unreachable or ()) %}
 <details class="tree-root{% if _gone %} tree-root-missing{% endif %}{% if _away %} tree-root-unreachable{% endif %}" open>
     <summary class="tree-root-label" title="{{ root_path }}">
-        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% elif _away %}<span class="tree-root-missing-tag">unreachable</span>{% endif %}
+        <span class="tree-root-path"><span class="tree-root-name">{{ _name }}</span>{% if _dir %}<span class="tree-root-dir">{{ _dir }}</span>{% endif %}</span><span class="tree-root-folded ui-count" title="Folded: click to show its runs">{{ _n_runs }} run{{ '' if _n_runs == 1 else 's' }}</span>{% if _gone %}<span class="tree-root-missing-tag">not found</span>{% elif _away %}<span class="tree-root-missing-tag">unreachable</span>{% endif %}
     </summary>
     {# Button kept out of <summary> (not a valid summary descendant) — CSS
        pins it to the summary row. #}

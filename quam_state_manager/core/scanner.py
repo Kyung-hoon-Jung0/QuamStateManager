@@ -395,6 +395,11 @@ class Workspace:
             cached = None
             if defer_parse and not _is_quam_state_folder(path):
                 cached = self._load_listing_cache(path)
+                if cached is not None and not cached[0]:
+                    # walk F31: an EMPTY listing (a folder added before its
+                    # first run) is never served -- it said "No runs found"
+                    # beside a table listing them. Walk instead (cheap here).
+                    cached = None
                 if cached is not None:
                     entries, cached_spine, cached_probe = cached
                 else:

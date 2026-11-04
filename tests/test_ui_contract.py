@@ -556,6 +556,11 @@ _STAGE4_SELECTORS = {
     # mounted (docs/145 rule, re-keyed from .tree-val-editing to the kit marker).
     ".tree-row:has(.ui-tree-mounted) .tree-row-actions",
     ".tree-row:has(.ui-tree-mounted) .key-help-btn.tree-help",
+    # walk F31: a folded workspace root shows its marker and its run count
+    "#sidebar details.tree-root > summary.tree-root-label::before",
+    "#sidebar details.tree-root:not([open]) > summary.tree-root-label::before",
+    ".tree-root-folded",
+    "#sidebar details.tree-root:not([open]) > summary .tree-root-folded",
 }
 
 

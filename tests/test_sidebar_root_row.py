@@ -102,3 +102,25 @@ def test_a_drive_root_has_a_name_and_no_parent(client):
         html = render_template("_sidebar_tree.html", tree={"D:\\": []}, nested={}, tree_truncated={}, name_filter="")
     assert 'class="tree-root-name">D:</span>' in html
     assert "tree-root-dir" not in html
+
+
+def test_a_folded_root_says_so_and_how_many_runs_it_holds(client):
+    """walk F31: a folded root used to read as an empty folder -- no marker, no
+    count -- while its runs sat hidden inside it."""
+    c, tmp = client
+    root = tmp / "data"
+    for i in (1, 2):
+        run = root / "2026-08-01" / f"#{i}_foo_12000{i}" / "quam_state"
+        run.mkdir(parents=True)
+        (run / "state.json").write_text(json.dumps({"qubits": {}}), encoding="utf-8")
+        (run / "wiring.json").write_text(json.dumps({}), encoding="utf-8")
+    html = _tree_html(c, root)
+    assert 'class="tree-root-folded ui-count"' in html
+    assert ">2 runs</span>" in html.split('class="tree-root-folded', 1)[1].split("</summary>", 1)[0]
+    kit = (_ROOT / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    assert ".tree-root-folded { display: none; }" in kit
+    assert ("#sidebar details.tree-root:not([open]) > summary .tree-root-folded "
+            "{ display: inline;") in kit
+    assert ("#sidebar details.tree-root:not([open]) > summary.tree-root-label::before "
+            "{ content: var(--ui-disclosure-marker); }") in kit
+    c.post("/workspace/remove", data={"folder": str(root)}, headers={"HX-Request": "true"})
