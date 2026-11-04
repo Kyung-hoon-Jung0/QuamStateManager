@@ -13462,12 +13462,26 @@ def field_peek():
                     expected[p] = ann
             except Exception:  # noqa: BLE001 — annotation must not 500 the popup
                 continue
+    # DS-1: the unit each value is STORED in, so the plot-click popup can say
+    # it beside previous / new / delta. Only a unit SM knows from the field
+    # (units.stored_unit_label); an unknown one is absent, never guessed.
+    from quam_state_manager.core import units as _units_mod
+    units_by_path: dict[str, str] = {}
+    for p in clean_paths:
+        try:
+            target = (resolved.get(p) or {}).get("resolved_path") or p
+            u = _units_mod.stored_unit_label(_units_mod.path_units_key(target))
+        except Exception:  # noqa: BLE001 -- a unit lookup must not 500 the popup
+            u = ""
+        if u:
+            units_by_path[p] = u
     since_run = {}
     if uid := request.args.get("run_uid"):
         from .plot_apply_history import notes
         since_run = notes(_active_ctx(), uid, clean_paths, _resolve_run, _value_history)
     return jsonify(ok=True, values=values, errors=errors, resolved=resolved,
-                   expected=expected, **({"since_run": since_run} if uid else {}))
+                   expected=expected, units=units_by_path,
+                   **({"since_run": since_run} if uid else {}))
 
 
 def _fh_fill_string(value: Any) -> str:

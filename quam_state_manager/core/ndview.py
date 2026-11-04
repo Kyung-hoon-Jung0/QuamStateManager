@@ -747,6 +747,61 @@ def _reduce_dims(data: np.ndarray, dims: list[dict],
                                     if i not in axes]
 
 
+# DS-3: the most distinct levels an integer variable may have and still be
+# read as a per-shot label (a state index) rather than a count or a sweep.
+_LEVELS_MAX = 8
+
+
+def _state_levels(data: np.ndarray, dtype) -> list[int] | None:
+    """The sorted distinct values of an INTEGER variable when it looks like a
+    per-shot label: 3 to ``_LEVELS_MAX`` distinct non-negative integers.
+    ``None`` otherwise -- a float, a bool, or a 0/1 variable keep the plain
+    mean (the mean of a 0/1 outcome IS the fraction of 1s)."""
+    if np.dtype(dtype).kind not in ("i", "u"):
+        return None
+    vals = np.asarray(data)
+    vals = vals[np.isfinite(vals)] if vals.dtype.kind == "f" else vals.reshape(-1)
+    if vals.size == 0:
+        return None
+    uniq = np.unique(vals)
+    if not (3 <= uniq.size <= _LEVELS_MAX) or uniq.min() < 0:
+        return None
+    if not np.all(uniq == np.round(uniq)):
+        return None
+    return [int(u) for u in uniq]
+
+
+def _level_fractions(data: np.ndarray, dims: list[dict], names: list[str],
+                     levels: list[int], var: str, view: dict):
+    """Replace the repetition dims by ONE new leading dim ``<var> level``: the
+    fraction of repeats equal to each level. Updates ``view`` in place (the
+    level dim becomes an overlay, or a selector when overlays are taken, and
+    each ``reduced`` entry is marked ``op: "fraction"``)."""
+    axes = tuple(i for i, d in enumerate(dims) if d["name"] in names)
+    finite = np.isfinite(data)
+    n = finite.sum(axis=axes)
+    stack = []
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for k in levels:
+            hit = ((data == k) & finite).sum(axis=axes)
+            stack.append(np.where(n > 0, hit / np.maximum(n, 1), np.nan))
+    out = np.stack(stack, axis=0)
+    level_name = f"{var} level"
+    rest = [d for i, d in enumerate(dims) if i not in axes]
+    level_dim = {"name": level_name, "size": len(levels), "kind": "cat",
+                 "coord": [str(k) for k in levels], "units": None,
+                 "long_name": f"fraction of repeats with {var} = level",
+                 "decimated": False, "derived": "level_fraction"}
+    if len(levels) <= _OVERLAY_MAX and len(view["overlay"]) < 2:
+        view["overlay"].append(level_name)
+    else:
+        view["sliders"][level_name] = 0
+    for r in view["reduced"]:
+        r["op"] = "fraction"
+    view["level_of"] = var
+    return out, [level_dim] + rest
+
+
 def _mean_over(arr: np.ndarray, axes: tuple[int, ...]) -> np.ndarray:
     """``nanmean`` over ``axes``, quietly. An all-NaN repeat set is a real (if
     unhappy) run: the mean is NaN, which ``_nan_to_none_list`` already ships as
@@ -1067,7 +1122,18 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
             # a 2,000-shot axis is 2,000× the payload of the view it produces.
             view = _default_view(dims)
             reduce_names = [r["name"] for r in view["reduced"]]
-            if reduce_names:
+            levels = (_state_levels(data, ds.dtype)
+                      if reduce_names else None)
+            if levels is not None:
+                # DS-3: an integer variable with 3+ distinct levels (a
+                # two-qubit state index 0..3) is a LABEL per shot; its mean is
+                # not a quantity. Count instead: one curve per level, the
+                # fraction of the repeats that landed on it.
+                reduce_axes = tuple(i for i, d in enumerate(dims)
+                                    if d["name"] in reduce_names)
+                data, dims = _level_fractions(data, dims, reduce_names, levels,
+                                              var, view)
+            elif reduce_names:
                 reduce_axes = tuple(i for i, d in enumerate(dims)
                                     if d["name"] in reduce_names)
                 data, dims = _reduce_dims(data, dims, reduce_names)
@@ -1168,8 +1234,10 @@ def _build_cube_uncached(h5_path: Path, var: str, *,
                 "ok": True,
                 "var": var,
                 "dtype": str(ds.dtype),
-                "units": r.var_attr(ds, "units"),
-                "long_name": r.var_attr(ds, "long_name"),
+                # DS-3: a level-fraction cube plots a fraction, not the label
+                "units": None if levels is not None else r.var_attr(ds, "units"),
+                "long_name": (f"fraction at this {var} level" if levels is not None
+                              else r.var_attr(ds, "long_name")),
                 "dims": dims,
                 "data": _nan_to_none_list(data),
                 "kept": kept or None,

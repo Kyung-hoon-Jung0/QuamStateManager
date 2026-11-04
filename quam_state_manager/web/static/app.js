@@ -19490,15 +19490,20 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
                      + _ppEscape(row._plotOrigin.text) + '</div>';
         }
         row.innerHTML =
-            '<div class="plot-apply-row-path"><code>' + _ppEscape(u.dot_path) + '</code>'
+            '<div class="plot-apply-row-path"><code title="' + _ppEscape(u.dot_path) + '">'
+          + _plotApplyPathHtml(u.dot_path) + '</code>'
           + '<div class="plot-apply-row-ptr" hidden></div></div>'
           + '<div class="plot-apply-row-old"><span class="muted">previous</span> '
-          + '<span class="plot-apply-old-val muted">…</span></div>'
+          + '<span class="plot-apply-old-wrap"><span class="plot-apply-old-val muted">…</span>'
+          + '<span class="plot-apply-unit plot-apply-old-unit" hidden></span></span></div>'
           + '<div class="plot-apply-row-new"><span class="muted">new</span> '
+          + '<span class="plot-apply-new-wrap">'
           + '<input type="text" class="plot-apply-new-input" value="' + _ppEscape(String(u.value)) + '">'
+          + '<span class="plot-apply-unit plot-apply-new-unit" hidden></span></span>'
           + '<span class="plot-apply-delta val-delta" hidden></span></div>'
           + '<div class="plot-apply-row-action">'
           + '<button type="button" class="outline btn-sm plot-apply-row-btn">Apply</button></div>'
+          + '<div class="plot-apply-row-unitnote muted" hidden></div>'
           + provHtml
           + '<div class="plot-apply-row-history muted" hidden></div>'
           + '<div class="plot-apply-row-domainwarn" hidden'
@@ -19542,6 +19547,53 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     if (first) { try { first.focus(); first.select(); } catch (e) {} }
 }
 
+/* DS-1: a dot path breaks only at its dot joints (a <wbr> after each dot);
+   one segment longer than the column is the only place it may break inside. */
+function _plotApplyPathHtml(path) {
+    return String(path == null ? '' : path).split('.').map(_ppEscape).join('.<wbr>');
+}
+
+/* DS-1: state the unit the value is STORED in beside previous / new / delta,
+   and say so when the plot's axes are in a different unit. `unit` comes from
+   /field/peek (the field's known unit); '' means SM does not know one, and
+   then no unit is shown -- never a guessed one. */
+function _plotAxisUnits() {
+    var out = [];
+    document.querySelectorAll('#plot-apply-point .pt-copy-row').forEach(function (r) {
+        var u = r.querySelector('.pt-copy-u');
+        var t = u ? (u.textContent || '').trim() : '';
+        if (t) out.push({axis: r.getAttribute('data-axis') || '', unit: t});
+    });
+    return out;
+}
+function _plotApplyUnitNote(unit, axisUnits) {
+    if (!axisUnits || !axisUnits.length) return '';
+    if (unit && axisUnits.some(function (a) { return a.unit === unit; })) return '';
+    var shown = axisUnits.map(function (a) {
+        return (a.axis ? a.axis + ' in ' : '') + a.unit;
+    }).join(', ');
+    if (!unit) {
+        return 'Plot axes: ' + shown + '. This field has no unit SM knows; '
+             + 'its value is shown as stored.';
+    }
+    return 'Stored in ' + unit + '; plot axes: ' + shown + '.';
+}
+function _setPlotRowUnit(row, unit) {
+    if (!row) return;
+    row._storedUnit = unit || '';
+    row.querySelectorAll('.plot-apply-unit').forEach(function (el) {
+        el.textContent = unit || '';
+        el.hidden = !unit;
+    });
+    var note = row.querySelector('.plot-apply-row-unitnote');
+    if (note) {
+        var t = _plotApplyUnitNote(unit, _plotAxisUnits());
+        note.textContent = t;
+        note.hidden = !t;
+    }
+    _updatePlotRowDelta(row);
+}
+
 function _setOldVal(slot, v, err) {
     if (!slot) return;
     if (v === null || v === undefined) {
@@ -19570,7 +19622,12 @@ function _updatePlotRowDelta(row) {
     var input = row.querySelector('.plot-apply-new-input');
     if (!chip || !slot || !input) return;
     var oldRaw = (slot._rawValue === undefined) ? null : slot._rawValue;
-    window.ValueDelta.paint(chip, oldRaw, input.value);
+    var d = window.ValueDelta.paint(chip, oldRaw, input.value);
+    // DS-1: the delta is in the stored unit too ("+1.2 V (+3%)")
+    if (d && row._storedUnit) {
+        chip.textContent = d.text + ' ' + row._storedUnit
+            + (d.pct_text ? ' (' + d.pct_text + ')' : '');
+    }
 }
 
 // Render the pointer chain + write-target selector + shared warning for a
@@ -19596,7 +19653,7 @@ function _renderPointerRow(row, info, rawValue) {
         });
         html += '</select></label>';
     } else if (cands.length === 1) {
-        html += ' <span class="plot-apply-chain">&rarr; <code>' + _ppEscape(cands[0].label) + '</code></span>';
+        html += ' <span class="plot-apply-chain">&rarr; <code>' + _plotApplyPathHtml(cands[0].label) + '</code></span>';
     }
     if (!info.resolvable) {
         html += ' <span class="muted">(runtime alias — not separately stored)</span>';
@@ -19645,6 +19702,7 @@ function _fetchPlotApplyOldValues(updates, runUid) {
             if (historySlot && since) { historySlot.textContent = since.text; historySlot.hidden = false; }
             var info = resolved[input];
             var oldSlot = row.querySelector('.plot-apply-old-val');
+            _setPlotRowUnit(row, (payload.units || {})[input] || '');
             if (info && info.is_pointer) {
                 _renderPointerRow(row, info, values[input]);
             } else {

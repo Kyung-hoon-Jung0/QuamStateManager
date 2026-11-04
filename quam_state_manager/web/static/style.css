@@ -7306,15 +7306,24 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     border-radius: 6px;
 }
 .plot-apply-row-path code {
-    word-break: break-all;
+    /* DS-1: break at the dot joints (<wbr>), never mid-word; only a single
+       segment wider than the column may still break inside */
+    word-break: normal;
+    overflow-wrap: anywhere;
     font-size: 0.9em;
 }
+.plot-apply-old-wrap { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; }
+.plot-apply-new-wrap { display: flex; align-items: center; gap: 0.3rem; }
+.plot-apply-new-wrap .plot-apply-new-input { flex: 1 1 auto; min-width: 0; margin: 0; }
+.plot-apply-unit { margin-left: 0.25rem; white-space: nowrap; font-size: 0.85em; color: var(--pico-muted-color, #888); }
+.plot-apply-row-unitnote { grid-column: 1 / -1; font-size: 0.78rem; }
 .plot-apply-row-path { min-width: 0; }
 .plot-apply-row-ptr {
     display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.5rem;
     margin-top: 0.3rem; font-size: 0.82em;
 }
 .plot-apply-chain { color: var(--pico-muted-color, #888); }
+.plot-apply-chain code { word-break: normal; overflow-wrap: anywhere; }
 .plot-apply-target {
     font-family: var(--font-mono, monospace); font-size: 0.95em;
     padding: 0.1rem 0.3rem; margin: 0; width: auto; height: auto;

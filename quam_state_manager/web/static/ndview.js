@@ -184,16 +184,23 @@
                 ' title="Put ' + esc(_ev.y) + ' on x and ' + esc(_ev.x) + ' on y">' +
                 '&#8646; ' + esc(_ev.x) + ' / ' + esc(_ev.y) + '</button></div>';
         }
-        // Repetition axes were averaged server-side (see ndview._default_view).
-        // Say so: the plot is a mean over N identical shots, not one of them.
+        // Repetition axes were reduced server-side (see ndview._default_view).
+        // Say so by the dim's OWN name (a `repeat` or `sequence`-like axis is
+        // not necessarily shots -- DS-3), and say HOW: a mean, or (for an
+        // integer label such as a state index) the fraction per level.
         var red = (cube.default_view || {}).reduced || [];
         if (red.length) {
-            html += '<span class="ndv-note muted">averaged over ' +
+            var lvl = (cube.default_view || {}).level_of;
+            var frac = red.some(function (r) { return r.op === 'fraction'; });
+            html += '<span class="ndv-note muted">' +
+                (frac ? 'fraction of entries at each ' + esc(lvl || cube.var) +
+                        ' level (an index, so not averaged), over '
+                      : 'averaged over ') +
                 red.map(function (r) {
                     // Never crash the panel over a count: name it, and say how
                     // many only when we actually have a number.
                     var n = (typeof r.size === 'number' && isFinite(r.size))
-                        ? ' (' + r.size.toLocaleString() + ' shots)' : '';
+                        ? ' (' + r.size.toLocaleString() + ' entries)' : '';
                     return esc(r.name) + n;
                 }).join(', ') + '</span>';
         }

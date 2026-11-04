@@ -238,8 +238,32 @@ async function main() {
     const redCtl = document.getElementById('ndv-controls');
     ok(!redCtl.hidden && redCtl.textContent.indexOf('averaged over n_runs') !== -1,
        'reduced repeat axis is disclosed: ' + JSON.stringify(redCtl.textContent.trim()));
-    ok(redCtl.textContent.indexOf('2,000 shots') !== -1,
-       'the note names how many shots went into the mean');
+    ok(redCtl.textContent.indexOf('n_runs (2,000 entries)') !== -1,
+       'the note names how many entries went into the mean');
+    // DS-3: the reduced axis is named by its OWN name; the word "shots" is
+    // never put on an axis that is not called that (a `repeat` axis).
+    feedCube({
+        ok: true, var: 'state', dtype: 'int64', units: null, long_name: 'fraction at this state level',
+        dims: [{ name: 'state level', size: 4, kind: 'cat', coord: ['0', '1', '2', '3'],
+                 units: null, decimated: false },
+               { name: 'circuit_depth', size: 3, kind: 'sweep', coord: [1, 2, 3],
+                 units: null, decimated: false }],
+        data: [[1, 0.5, 0.3], [0, 0.2, 0.3], [0, 0.2, 0.2], [0, 0.1, 0.2]],
+        kept: null, aux_axes: [], iq_partner: null,
+        default_view: { x: 'circuit_depth', y: null, entity: null, overlay: ['state level'],
+                        sliders: {}, level_of: 'state',
+                        reduced: [{ name: 'repeat', size: 5, op: 'fraction' }] },
+    });
+    plots.length = 0;
+    card.setAttribute('data-var', 'state');
+    card.click();
+    await sleep(30);
+    const lvCtl = document.getElementById('ndv-controls').textContent;
+    ok(lvCtl.indexOf('repeat (5 entries)') !== -1 && lvCtl.indexOf('shots') === -1,
+       'a repeat axis is called repeat, never shots: ' + JSON.stringify(lvCtl.trim()));
+    ok(lvCtl.indexOf('fraction of entries at each state level') !== -1
+       && lvCtl.indexOf('averaged over') === -1,
+       'a state-index variable says it is counted per level, not averaged');
     ok(redCtl.querySelectorAll('.ndv-chip[data-dim]').length === 0,
        'an averaged axis leaves NO selector chips (2,000 chips would gut the DOM)');
 
