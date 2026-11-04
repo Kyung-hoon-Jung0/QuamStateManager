@@ -60,7 +60,7 @@ _COLD_SCAN_BUDGET_S = 3.0
 # v4 (UX round, P1-2): every run carries ``writes`` -- how many state patches
 # its node.json lists -- for the run list's "wrote state" mark; a v3 row has
 # none and would mark nothing.
-_STORE_CACHE_V = 4
+_STORE_CACHE_V = 5  # v5: F13 ramsey key metric is T2*
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -3214,7 +3214,11 @@ class DatasetStore:
         metric_map = {
             "spectroscopy": ("frequency", "Hz"),
             "power_rabi": ("pi_amp", "V"),
-            "ramsey": ("T2_star", "s"),
+            # F13: the ramsey node stores T2* as ``decay`` (seconds); its
+            # ``freq_offset`` is the fit's detuning, which the node SUBTRACTS
+            # from f_01 (``q.f_01 -= freq_offset``), so headlining it read as
+            # the opposite of the frequency change. T2* is the headline.
+            "ramsey": (("T2_star", "decay"), "s"),
             "t1": ("T1", "s"),
             "iq_blob": ("readout_fidelity", "%"),
             "readout_frequency": ("frequency", "Hz"),
@@ -3229,11 +3233,13 @@ class DatasetStore:
 
         for pattern, (field_name, unit) in metric_map.items():
             if pattern in exp:
-                val = first_qubit_results.get(field_name)
-                if _num(val):
-                    # a failed headline fit reads blank ("-"), never some
-                    # unrelated field standing in for it
-                    return _format_metric(val, unit) if math.isfinite(val) else ""
+                names = field_name if isinstance(field_name, tuple) else (field_name,)
+                for name in names:
+                    val = first_qubit_results.get(name)
+                    if _num(val):
+                        # a failed headline fit reads blank ("-"), never some
+                        # unrelated field standing in for it
+                        return _format_metric(val, unit) if math.isfinite(val) else ""
 
         # Fallback: the FIRST numeric value that isn't "success" decides --
         # blank when it is non-finite (skipping on to the next field would
