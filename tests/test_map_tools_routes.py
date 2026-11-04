@@ -390,3 +390,15 @@ def test_every_panel_in_one_request_resolves_the_figure_once(rig, monkeypatch):
 def test_bad_panel_lists_are_400(rig, panels):
     client, _ = rig
     assert client.post("/dataset/run/map/analyze", json={"fig": "map", "panels": panels}).status_code == 400
+
+
+def test_provenance_names_the_figure_or_what_the_map_was_read_from():
+    """2026-11-04 polish: a raw-data map has no figure name and the line read
+    "figure , panel 0"."""
+    from pathlib import Path
+    from quam_state_manager.web import map_analysis
+    assert map_analysis._figure_label({"fig": "phase map", "source": "replot"}) == "figure phase map"
+    assert map_analysis._figure_label({"fig": "", "source": "ndview"}) == "raw data"
+    assert map_analysis._figure_label({"source": "replot"}) == "unnamed figure"
+    src = Path(map_analysis.__file__).read_text(encoding="utf-8")
+    assert "{_figure_label(body)}, panel {index}" in src and "figure {body.get('fig'" not in src

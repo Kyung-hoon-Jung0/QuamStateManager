@@ -45,7 +45,17 @@ ok(/A, B, C are out of view/.test(hint.textContent), 'a scroll event updates the
 ok(hint.querySelector('.dxh-right').disabled && !hint.querySelector('.dxh-left').disabled, 'the right arrow is disabled at the far right');
 scrollLeft = 60; window.DiffPanes.xHint(box);
 ok(/C, D are out of view/.test(hint.textContent) && !/A,/.test(hint.textContent),
-   'a pane less than half hidden is not announced (A is 70% visible, D is 30%)');
+   'a pane less than half hidden is not announced as out of view (A is 70% visible, D is 30%)');
+ok(/A is partly out of view/.test(hint.textContent),
+   'but a pane whose header is cut is named as partly out of view: ' + hint.textContent);
+ok(box.style.getPropertyValue('--dp-keys-w') === '200px', 'the key column width is published for the sticky pane letters');
+scrollLeft = 0; scrollW = 1000;
+box.querySelectorAll('[data-xcol]').forEach((el, i) => {
+  el.getBoundingClientRect = () => ({ left: 200 + i * 90, right: 290 + i * 90 + (i === 3 ? 60 : 0), width: 90 + (i === 3 ? 60 : 0) });
+});
+window.DiffPanes.xHint(box);
+ok(!hint.hidden && /^Not all sources fit: D is partly out of view\./.test(hint.querySelector('.dxh-text').textContent),
+   'a single column cut at the right edge (its header cut) gets a hint: ' + hint.querySelector('.dxh-text').textContent);
 scrollLeft = 0; scrollW = 1000;
 box.querySelectorAll('[data-xcol]').forEach((el, i) => {
   el.getBoundingClientRect = () => ({ left: 200 + i * 90, right: 290 + i * 90, width: 90 });

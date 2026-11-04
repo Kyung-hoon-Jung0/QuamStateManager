@@ -16092,10 +16092,17 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
    long diff scrolls down (sticky top needs a scrolling ancestor) */
 .diff-panes-scroll { max-height: max(18rem, calc(100vh - var(--topbar-height, 56px) - 5rem)); overflow: auto; }
 .diff-panes-table tr.dp-dir > td.dp-key-col {
-    background: color-mix(in srgb, var(--pico-muted-border-color) 28%, var(--pico-background-color)); }
+    /* opaque: the muted border colour is translucent, so a plain mix let the
+       panes scrolling under this sticky cell show through it */
+    background-color: var(--pico-background-color);
+    background-image: linear-gradient(color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent),
+                                      color-mix(in srgb, var(--pico-muted-border-color) 28%, transparent)); }
 .diff-panes-table .dp-pane-head, .diff-panes-table .dp-cell { min-width: 8rem; max-width: 13rem;
     white-space: normal; overflow-wrap: break-word; }
 .diff-panes-table .dp-label { white-space: normal; }
+/* a pane scrolled partly under the sticky key column keeps its letter: the
+   letter sticks just right of that column (the width is set by diff-panes.js) */
+.diff-panes-table .dp-pane-head .dp-slot { position: sticky; left: calc(var(--dp-keys-w, 0px) + 0.3rem); align-self: flex-start; }
 .diff-xscroll { overflow-x: auto; max-width: 100%; }
 .diff-xscroll-hint { display: flex; align-items: center; gap: 0.4rem; margin: 0.2rem 0 0.3rem;
     padding: 0.25rem 0.5rem; font-size: 0.85em; border-radius: 4px;

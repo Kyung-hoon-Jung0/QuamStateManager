@@ -20,6 +20,14 @@ _LOCK = threading.Lock()
 _BYTES = 64 * 1024 * 1024
 
 
+def _figure_label(body):
+    """The provenance's figure name: the figure's own name, else what the map was read from."""
+    name = str(body.get("fig") or "").strip()[:32]
+    if name:
+        return "figure " + name
+    return "raw data" if body.get("source") == "ndview" else "unnamed figure"
+
+
 def _frequency_scale(run, values, label):
     """Resolve plotted frequency units, verifying a mislabeled scale against source coordinates."""
     import numpy as np
@@ -335,7 +343,7 @@ def analyze(run, uid, figure, converted, body, amplitude_kind=None):
     def compact(value):
         return "n/a" if value is None else f"{value:.6g}"
     text = (f"derived from run #{run_id}: {model} on smoothed map; code {code}; "
-            f"figure {body.get('fig', '')[:32]}, panel {index} "
+            f"{_figure_label(body)}, panel {index} "
             f"({body.get('smooth', {}).get('kernel', 'gaussian')}, sigma x={display_caps['sigma_x']:.1f} pt, "
             f"y={display_caps['sigma_y']:.1f}; cap x={display_caps['cap_x']:.3g}, y={display_caps['cap_y']:.3g} pt"
             + ("; cap overridden" if applied["override"] else "") + f"){contour_note}; "

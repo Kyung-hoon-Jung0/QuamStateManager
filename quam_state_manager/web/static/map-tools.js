@@ -100,6 +100,10 @@
         ['x', 'y'].forEach(function (axis) {
             var ticks = control(axis + '_ticks'); ticks.id = id + '-' + axis; control('sigma_' + axis).setAttribute('list', ticks.id);
         });
+        function sliderFloor(slider, value) {
+            var step = Number(slider.step) || 0.1;
+            return Number(Math.max(0, Math.floor(value / step + 1e-9) * step).toFixed(1));
+        }
         function readout() { return Number(control('panel').value) || 0; }
         function locked(axis) { return kind === 'erroramp' && classification && classification.feature_axis === axis; }
         function capOf(i, axis) { return caps[i] ? caps[i]['cap_' + axis] : null; }
@@ -262,7 +266,12 @@
                     classification = mine.classification; kind = classification.type;
                     if (initial) {
                         var sent = JSON.stringify(settings('auto'));
-                        ['x', 'y'].forEach(function (axis) { control('sigma_' + axis).value = mine.caps_applied['default_' + (mine.caps_applied.transposed ? (axis === 'x' ? 'y' : 'x') : axis)]; });
+                        ['x', 'y'].forEach(function (axis) {
+                            // the slider snaps to its 0.1 step (0.75 would round UP to 0.8, past
+                            // the bias limit), so the default is floored onto the step
+                            var def = Number(mine.caps_applied['default_' + (mine.caps_applied.transposed ? (axis === 'x' ? 'y' : 'x') : axis)]) || 0;
+                            control('sigma_' + axis).value = sliderFloor(control('sigma_' + axis), def);
+                        });
                         setModels(classification);
                         control('band').value = classification.circular ? 5 * classification.circular / 360 : 0;
                         try {

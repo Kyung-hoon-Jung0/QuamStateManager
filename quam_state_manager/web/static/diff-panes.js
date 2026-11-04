@@ -384,8 +384,12 @@
         var bx = box.getBoundingClientRect();
         // the sticky key column covers the left edge of the scroller
         var key = box.querySelector('thead .dp-key-col');
-        var left = bx.left + (key ? key.getBoundingClientRect().width : 0);
-        var hidden = [], seen = {};
+        var keyW = key ? key.getBoundingClientRect().width : 0;
+        var left = bx.left + keyW;
+        // a pane title sticks just right of the key column, so a pane that is
+        // partly under it still shows its letter
+        box.style.setProperty('--dp-keys-w', Math.round(keyW) + 'px');
+        var hidden = [], partly = [], seen = {};
         each(box.querySelectorAll('[data-xcol]'), function (el) {
             var name = el.getAttribute('data-xcol');
             if (seen[name]) return;
@@ -395,9 +399,12 @@
             // is still a column the reader can see is there)
             var w = r.right - r.left;
             var shown = Math.min(r.right, bx.right) - Math.max(r.left, left);
+            // a sliver at the edge is still a column the reader can see is
+            // there, but its header is cut: it is named as partly out of view
             if (w > 0 && shown < w / 2) hidden.push(name);
+            else if (w > 0 && shown < w - 2) partly.push(name);
         });
-        if (!hidden.length) { hint.hidden = true; return; }
+        if (!hidden.length && !partly.length) { hint.hidden = true; return; }
         hint.hidden = false;
         if (!hint.firstChild) {
             hint.innerHTML = '<button type="button" class="btn-xs outline dxh-left" aria-label="Scroll left">&#9664;</button>'
@@ -410,10 +417,12 @@
                 box.scrollBy({ left: box.clientWidth * 0.8, behavior: 'smooth' });
             });
         }
-        hint.querySelector('.dxh-text').textContent = 'Not all sources fit: ' + hidden.join(', ')
-            + (hidden.length === 1 ? ' is' : ' are')
-            + ' out of view. Scroll sideways (or use the arrows) to see '
-            + (hidden.length === 1 ? 'it.' : 'them.');
+        var said = [];
+        if (hidden.length) said.push(hidden.join(', ') + (hidden.length === 1 ? ' is' : ' are') + ' out of view');
+        if (partly.length) said.push(partly.join(', ') + (partly.length === 1 ? ' is' : ' are') + ' partly out of view');
+        hint.querySelector('.dxh-text').textContent = 'Not all sources fit: ' + said.join('; ')
+            + '. Scroll sideways (or use the arrows) to see '
+            + (hidden.length + partly.length === 1 ? 'it.' : 'them.');
         hint.querySelector('.dxh-left').disabled = box.scrollLeft <= 0;
         hint.querySelector('.dxh-right').disabled = box.scrollLeft + box.clientWidth >= box.scrollWidth - 1;
     }
