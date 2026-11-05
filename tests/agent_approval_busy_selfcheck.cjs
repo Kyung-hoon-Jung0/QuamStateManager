@@ -43,15 +43,16 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   const card = (id) => document.querySelector('[data-card="approval:' + id + '"]');
   ok(card('ap-1') && card('ap-2'), 'both approval cards render');
 
-  // Reject opens an in-page sheet (never a native prompt); Back is not a rejection
+  // W3-7: Reject rejects on the FIRST press (never a native prompt); the
+  // optional journal note is typed beside it beforehand
   let prompted = 0; window.prompt = () => { prompted++; return ''; };
+  ok(card('ap-2').querySelector('.ui-agent-reject-note'), 'the note box is there before any press');
+  const noteBox = card('ap-2').querySelector('.ui-agent-reject-note');
+  noteBox.value = 'wrong peak';
+  P.rejectNote('ap-2', noteBox.value);   // the box's oninput (inline handlers do not run in this harness)
   P.reject('ap-2'); await tick();
-  ok(card('ap-2').querySelector('.ui-agent-reject-note') && !prompted, 'Reject opens the in-page sheet, no prompt()');
-  P.rejectCancel('ap-2'); await tick();
-  ok(!calls.some(c => /ap-2\/reject/.test(c.url)) && !card('ap-2').querySelector('.ui-agent-reject-note'), 'Back on the sheet posts nothing');
-  P.reject('ap-2'); await tick();
-  P.rejectConfirm('ap-2'); await tick();
-  ok(calls.some(c => /ap-2\/reject/.test(c.url) && c.body.note === ''), 'Reject with an empty note still rejects');
+  ok(!prompted && calls.filter(c => /ap-2\/reject/.test(c.url)).length === 1
+     && calls.some(c => /ap-2\/reject/.test(c.url) && c.body.note === 'wrong peak'), 'one press rejects, with the typed note');
 
   // a person edits a value, presses Write to chip; the door is slow
   const c1 = card('ap-1');
