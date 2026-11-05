@@ -9102,6 +9102,7 @@
   // Apply class `cls` to the diagram port circles of a set of conflict
   // members, clearing it from every other circle first (idempotent).
   function markConflictPorts(members, cls) {
+    cls = cls || "iw-port-conflict";
     var host = document.getElementById("gen-pop-wiring-diagram");
     if (!host) return;
     host.querySelectorAll(".iw-port-circle." + cls).forEach(function (g) {
@@ -9112,6 +9113,11 @@
         g.classList.add(cls);
       });
     });
+    var legend = host.querySelector(".iw-key-conflict");
+    if (legend) {
+      legend.hidden = !host.querySelector(".iw-port-conflict");
+      legend.classList.toggle("ui-iw-conflict-hidden", legend.hidden);
+    }
   }
 
   // Highlight the populate-table row for a hovered diagram port.
@@ -13283,6 +13289,7 @@
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
+      markConflictPorts: markConflictPorts,
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
