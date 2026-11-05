@@ -106,3 +106,12 @@ def test_a_pending_edit_back_to_the_value_is_not_the_end(env):  # noqa: F811
 def test_the_note_stays_while_live_still_lacks_it(env):  # noqa: F811
     _seed_lost(env)
     assert 'data-sync-lost="1"' in env["app"].test_client().get("/state/tray").get_data(as_text=True)
+
+
+def test_the_note_stays_when_live_changed_again(env):  # noqa: F811
+    """W3-1 review: a clean working copy holding the applied value is not
+    the end when the live chip changed again since."""
+    from tests.test_sync_review_applied import _outside
+    _outside(env, _st(t1=4.4e-05))
+    _seed_lost(env, applied=2.0e-05)          # the working copy holds this
+    assert 'data-sync-lost="1"' in env["app"].test_client().get("/state/tray").get_data(as_text=True)

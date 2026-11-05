@@ -1238,21 +1238,32 @@ def _lost_still_lost(ctx, pending_paths) -> list[dict]:
     with nothing pending on it and no saved-but-unapplied state (so the
     working copy IS the live chip at that field), is over: the user applied
     it again, or the live chip came back to it. Pruned from the context so
-    every window stops showing it."""
+    every window stops showing it. The live chip is checked as well."""
     lu = list(ctx.get("_lost_unacked") or [])
     store = ctx.get("store")
     if not lu or store is None or ctx.get("working_dirty"):
         return lu
     pending = set(pending_paths or ())
-    keep = []
+    keep, over = [], []
     with store._lock:
         doc = store.merged
         for x in lu:
             p = x.get("path")
             got = _dot_get(doc, p) if p else _DOT_MISSING
             if p and p not in pending and got is not _DOT_MISSING and got == x.get("applied"):
+                over.append(x)
                 continue
             keep.append(x)
+    if over:
+        # the working copy agreeing is not enough: the LIVE chip must hold
+        # the applied value too (it may have changed again since the sync)
+        wc = ctx.get("working_copy")
+        live = _live_merged_tree(wc) if wc is not None else None
+        for x in over:
+            got = _dot_get(live, x["path"]) if live is not None else _DOT_MISSING
+            if got is _DOT_MISSING or got != x.get("applied"):
+                keep.append(x)
+        keep.sort(key=lu.index)
     if len(keep) != len(lu):
         if keep:
             ctx["_lost_unacked"] = keep

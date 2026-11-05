@@ -64,3 +64,24 @@ def test_the_worker_records_each_finished_item(tmp_path, monkeypatch):
     src = inspect.getsource(scheduler)
     i = src.index('it["ended_at"] = _now()\n                    it["returncode"]')
     assert "record_sm_run(instance_path, it)" in src[i:i + 900]
+
+
+def test_a_human_run_100_s_after_the_item_is_a_persons():
+    items = [{"name": "08_qubit_spectroscopy", "start": 9_000.0, "end": 9_060.0}]
+    row = {"experiment_name": "08_qubit_spectroscopy"}
+    assert agent_api._sm_made(row, 9_030.0, items)
+    assert not agent_api._sm_made(row, 9_160.0, items)
+
+
+def test_a_node_name_must_match_exactly():
+    items = [{"name": "ramsey", "start": 9_000.0, "end": 9_060.0}]
+    assert not agent_api._sm_made({"experiment_name": "ramsey_flux"}, 9_030.0, items)
+    assert agent_api._sm_made({"experiment_name": "ramsey"}, 9_030.0, items)
+
+
+def test_a_running_item_owns_only_its_first_folder():
+    items = [{"name": "ramsey", "start": 9_000.0, "end": None}]
+    others = [("ramsey", 9_010.0), ("ramsey", 9_400.0)]
+    row = {"experiment_name": "ramsey"}
+    assert agent_api._sm_made(row, 9_010.0, items, others)
+    assert not agent_api._sm_made(row, 9_400.0, items, others)

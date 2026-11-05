@@ -625,3 +625,28 @@ class TestReadoutSlot:
         _d, p = TestQubitPlan()._plan(m, readout_rf=same)
         assert not p.get("error"), p
         assert any("same feedline" in n for n in p["summary"]["notes"])
+
+
+class TestReadoutBand:
+    """W3-3: a readout proposal stays inside the readout port's band."""
+
+    INFO = {"lo": 7.4e9, "band": 2, "peer_band": 2, "qop": None}
+
+    def test_an_lo_near_the_band_edge_proposes_an_in_band_slot(self):
+        fs = [7.25e9, 7.35e9, 7.45e9]
+        rf, note = da.propose_readout(fs, 7.4e9, 7.25e9, self.INFO)
+        assert note is None and rf == 7.15e9
+
+    def test_no_in_band_slot_says_so(self):
+        fs = [7.0e9 + i * 20e6 for i in range(26)]           # 7.0 .. 7.5 GHz
+        rf, note = da.propose_readout(fs, 7.4e9, 7.0e9, self.INFO)
+        assert rf == 7.0e9 and note and "No free readout slot" in note
+
+    def test_a_typed_readout_outside_the_band_is_warned(self):
+        m, _s, _w = _doc(20)
+        d = da.qubit_defaults(m)
+        rp = da._wire_port(m, d["template"], "rr")
+        da._port(m["ports"], *rp)["band"] = 1
+        _d, p = TestQubitPlan()._plan(m, readout_rf=d["readout_rf"])
+        assert not p.get("error"), p
+        assert any("band" in n for n in p["summary"]["notes"])

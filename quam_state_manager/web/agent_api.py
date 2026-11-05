@@ -1239,20 +1239,32 @@ def _end_grant(why: str, *, driver_kind: str | None = None, after_run: bool = Tr
     return g
 
 
-def _sm_made(row: dict, when: float, sm_items: list[dict]) -> bool:
-    """The run folder appeared while SM's own runner ran a node of that name
-    (from 60 s before its start to 120 s after its end; an open end is a
-    still-running item)."""
+_SM_RUN_SLACK_S = 5.0
+
+
+def _sm_made(row: dict, when: float, sm_items: list[dict],
+             others: list[tuple[str, float]] = ()) -> bool:
+    """The run folder is SM's own runner item's: the same node name (exactly,
+    after normalising) and the run's own recorded start inside the item's
+    [start, end] with a few seconds of slack. A still-running item (open end)
+    owns only the FIRST folder of that node created after its start;
+    ``others`` is every candidate run as (normalised name, start)."""
     from quam_state_manager.core import story
     want = story._norm(row.get("experiment_name") or "")
     if not want:
         return False
+    slack = _SM_RUN_SLACK_S
     for it in sm_items:
-        name = story._norm(it.get("name") or "")
-        if not name or not want.startswith(name):
+        if story._norm(it.get("name") or "") != want:
             continue
-        end = it.get("end")
-        if it["start"] - 60 <= when and (end is None or when <= end + 120):
+        lo, end = it["start"] - slack, it.get("end")
+        if when < lo:
+            continue
+        if end is not None:
+            if when <= end + slack:
+                return True
+            continue
+        if not any(n == want and lo <= w < when for n, w in others):
             return True
     return False
 
@@ -1280,6 +1292,14 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
         sm_items = scheduler.load_sm_runs(_r._sched_inst(), since=now - 6 * 3600)
     except Exception:  # noqa: BLE001
         sm_items = []
+    others = []
+    for r0 in rows:
+        try:
+            w0 = story.run_epoch(r0, ds)
+        except Exception:  # noqa: BLE001
+            w0 = None
+        if w0 is not None:
+            others.append((story._norm(r0.get("experiment_name") or ""), w0))
     for row in rows:
         # docs/262: the run's instant vs ``now`` and the hook stamps; the returned
         # ``ts`` is that instant too (the run adapter compares it with time.time())
@@ -1298,7 +1318,7 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
             continue
         # W3-4: a run SM's own runner made (Experiment Runner, Auto
         # Calibrate) is SM's, not a person's
-        if _sm_made(row, when, sm_items):
+        if _sm_made(row, when, sm_items, others):
             continue
         want = story._norm(row.get("experiment_name") or "")
         hooked = any((e.get("tool_name") or "").rsplit(".", 1)[-1] in _SHELL_TOOLS

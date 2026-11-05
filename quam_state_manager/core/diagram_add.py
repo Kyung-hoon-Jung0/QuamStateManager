@@ -462,7 +462,39 @@ READOUT_MIN_SEP_HZ = 20e6
 READOUT_DEFAULT_STEP_HZ = 50e6
 
 
-def propose_readout(existing, lo, template_rf):
+def readout_port_info(merged: dict, ports: dict, qid: str) -> dict:
+    """The feedline readout output's LO, band, and its LO-coupled peer's band,
+    as declared on the chip (``None`` where unknown)."""
+    rp = _wire_port(merged, qid, "rr")
+    decl = (_port(ports, rp[0], rp[1], rp[2], rp[3]) or {}) if rp else {}
+    pband = None
+    if rp:
+        peer = mw_fem.lo_peer(rp[0], rp[3])
+        if peer:
+            pband = (_port(ports, peer[0], rp[1], rp[2], peer[1]) or {}).get("band")
+    return {"lo": _num(decl.get("upconverter_frequency")), "band": decl.get("band"),
+            "peer_band": pband, "qop": _qop(merged)}
+
+
+def readout_band_problem(rf, info: dict | None) -> str | None:
+    """Why a readout tone at ``rf`` cannot sit on this readout port (its band,
+    or the coupled-port band rule against its peer), else ``None``."""
+    if not info:
+        return None
+    band, pband = info.get("band"), info.get("peer_band")
+    if not mw_fem.in_band(rf, band):
+        return (f"The readout frequency {rf / 1e9:.4g} GHz is outside the readout "
+                f"port's band {band}.")
+    if not mw_fem.in_band(rf, pband):
+        return (f"The readout frequency {rf / 1e9:.4g} GHz is outside band {pband} of "
+                "the port that shares the readout LO.")
+    if not _band_ok(band, pband, info.get("qop")):
+        return (f"The readout port's band {band} and its LO-coupled peer's band {pband} "
+                "break the coupled-port band rule.")
+    return None
+
+
+def propose_readout(existing, lo, template_rf, port_info: dict | None = None):
     """``(rf, note)``: a readout frequency for a new resonator on a feedline
     whose resonators sit at ``existing`` (Hz), inside the feedline LO's IF
     window when ``lo`` is known. The next free slot above the highest
@@ -479,6 +511,8 @@ def propose_readout(existing, lo, template_rf):
     def fits(f):
         if lo is not None and abs(f - lo) > win:
             return False
+        if readout_band_problem(f, port_info):
+            return False
         return all(abs(f - g) >= READOUT_MIN_SEP_HZ for g in fs)
 
     for cand in (fs[-1] + step, fs[0] - step):
@@ -489,7 +523,7 @@ def propose_readout(existing, lo, template_rf):
         mid = (a + b) / 2
         if b - a >= 2 * READOUT_MIN_SEP_HZ and fits(mid):
             return round(mid), None
-    return template_rf, ("No free readout slot fits this feedline's IF window; the value "
+    return template_rf, ("No free readout slot fits this feedline's IF window and band; the value "
                          "starts at the template's resonator, so change it before staging.")
 
 
@@ -523,10 +557,8 @@ def qubit_defaults(merged: dict, feedline: str | None = None) -> dict:
                                              .get("RF_frequency"),
                                              ("qubits", m, "resonator", "RF_frequency")))
                                for m in fl["members"]) if v is not None]
-        rp = _wire_port(merged, tpl, "rr")
-        flo = _num((_port(merged.get("ports") or {}, rp[0], rp[1], rp[2], rp[3]) or {})
-                   .get("upconverter_frequency")) if rp else None
-        read, read_note = propose_readout(others, flo, read)
+        info = readout_port_info(merged, merged.get("ports") or {}, tpl)
+        read, read_note = propose_readout(others, info["lo"], read, info)
     return {
         "feedline": fl["key"], "feedlines": [f["key"] for f in fls],
         "members": fl["members"], "template": tpl,
@@ -644,6 +676,9 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
                 notes.append(f"The readout frequency is {abs(readout_rf - f) / 1e6:.1f} MHz from "
                              f"{m}'s resonator on the same feedline; the two tones may not be "
                              "told apart.")
+        why = readout_band_problem(readout_rf, readout_port_info(merged, inv["ports"], tpl))
+        if why:
+            notes.append(why)
         if flo is not None and abs(readout_rf - flo) > mw_fem.MW_MAX_ABS_IF_HZ:
             return {"error": f"The readout frequency is {abs(readout_rf - flo) / 1e6:.0f} MHz "
                              f"from the feedline LO ({flo / 1e9:.4g} GHz); the IF window "
