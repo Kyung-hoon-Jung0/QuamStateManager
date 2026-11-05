@@ -29515,6 +29515,30 @@ def _search_pointer_targets(results) -> dict[str, dict]:
 # ======================================================================
 
 
+def _settle_if_at_sync_point(ctx, store, wc) -> bool:
+    """Clear ``working_dirty`` and the re-apply stash when the saved working
+    content equals the content of the last sync point (W3-2). True when it
+    did. Never raises: a hash failure keeps the flags as they are."""
+    if wc is None or store is None or ctx.get("staged_base"):
+        return False
+    synced = getattr(wc, "synced_live_hash", None)
+    if not synced:
+        return False
+    try:
+        with store._lock:
+            if store.change_log:
+                return False
+            h = working_copy.content_hash(store.state, store.wiring)
+    except Exception:  # noqa: BLE001
+        logger.debug("sync-point settle check failed", exc_info=True)
+        return False
+    if h != synced:
+        return False
+    _set_working_dirty(False, ctx)
+    _clear_reapply(ctx)
+    return True
+
+
 @bp.route("/save", methods=["POST"])
 @_journal_press
 def save():
@@ -29567,6 +29591,11 @@ def save():
     # Flag THIS captured chip dirty, not whatever a concurrent /load may have
     # made active mid-request.
     _set_working_dirty(True, ctx)
+    # W3-2: a save that brought the working copy back to the sync point (an
+    # edit saved, undone and saved again) leaves nothing staged: the content
+    # IS the live chip's as last synced, so neither the flag nor the re-apply
+    # stash may keep saying "staged, not applied".
+    _settle_if_at_sync_point(ctx, store, wc)
 
     toast = render_template(
         "_status.html",
