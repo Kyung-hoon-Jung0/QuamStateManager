@@ -12103,24 +12103,43 @@ def _applied_values_held(ctx) -> dict:
     now = time.time()
     newest: dict = {}
     olds: dict = {}
-    for unit in list(units)[:cursor] if isinstance(cursor, int) and cursor >= 0 else list(units):
+    units = list(units)
+    has_cursor = isinstance(cursor, int) and 0 <= cursor <= len(units)
+    applied = units[:cursor] if has_cursor else units
+    # W3-5: a unit past the cursor was walked back by a Ctrl+Z that reached
+    # the chip (a staged-only undo never moves the cursor), so the undo is an
+    # apply of the OLD value, replacing the new one. Newest undo last: the
+    # unit just above the cursor holds what the chip should have now.
+    undone = units[cursor:][::-1] if has_cursor else []
+    walk = [(u, False) for u in applied] + [(u, True) for u in undone]
+    for unit, was_undone in walk:
         if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
             continue
         for e in unit.get("entries") or ():
-            if isinstance(e, dict) and isinstance(e.get("path"), str) and not e.get("deleted"):
+            if not (isinstance(e, dict) and isinstance(e.get("path"), str)):
+                continue
+            if was_undone:
+                if e.get("created"):
+                    continue        # the undo removed it: no value to hold
+                v_root = e.get("old")
+                o_root = _DOT_MISSING if e.get("deleted") else e.get("new", _DOT_MISSING)
+            elif e.get("deleted"):
+                continue
+            else:
+                v_root = e.get("new")
                 # a created subtree (Set name creates ``extras``) is named by
                 # its leaves, so the notice says extras.chip_name
                 o_root = _DOT_MISSING if e.get("created") else e.get("old", _DOT_MISSING)
-                stack = [(e["path"], e.get("new"), o_root)]
-                while stack:
-                    p0, v0, o0 = stack.pop()
-                    if isinstance(v0, dict) and v0:
-                        stack.extend((f"{p0}.{k}", v,
-                                      o0.get(k, _DOT_MISSING) if isinstance(o0, dict) else _DOT_MISSING)
-                                     for k, v in v0.items())
-                    else:
-                        newest[p0] = v0
-                        olds.setdefault(p0, []).append(o0)
+            stack = [(e["path"], v_root, o_root)]
+            while stack:
+                p0, v0, o0 = stack.pop()
+                if isinstance(v0, dict) and v0:
+                    stack.extend((f"{p0}.{k}", v,
+                                  o0.get(k, _DOT_MISSING) if isinstance(o0, dict) else _DOT_MISSING)
+                                 for k, v in v0.items())
+                else:
+                    newest[p0] = v0
+                    olds.setdefault(p0, []).append(o0)
     if not newest:
         return {}
     held = _HeldApplied()
