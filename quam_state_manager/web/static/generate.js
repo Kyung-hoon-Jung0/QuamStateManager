@@ -8197,7 +8197,7 @@
       }).join(", ");
     }
     function warn(message, members, kind) {
-      calc.warnings.push({ message: message, members: members, kind: kind || null });
+      addConflictWarning(calc.warnings, { message: message, members: members, kind: kind || null });
     }
     var byId = {};
     calc.groups.forEach(function (g) { byId[g.id] = g; });
@@ -8600,7 +8600,23 @@
   // Render the LO/band-conflict panel and ring the offending ports amber in
   // the step-6 wiring diagram. Hovering a warning line emphasises just that
   // warning's ports; an empty list clears every ring (idempotent).
+  function addConflictWarning(warnings, warning) {
+    var existing = warnings.filter(function (w) { return w.message === warning.message; })[0];
+    if (!existing) {
+      existing = { message: warning.message, kind: warning.kind, members: [] };
+      warnings.push(existing);
+    }
+    (warning.members || []).forEach(function (member) {
+      if (!existing.members.some(function (m) { return m.group === member.group && m.rid === member.rid; })) {
+        existing.members.push(member);
+      }
+    });
+  }
+
   function renderConflicts(warnings, hasPower) {
+    var unique = [];
+    (warnings || []).forEach(function (w) { addConflictWarning(unique, w); });
+    warnings = unique;
     var host = document.getElementById("gen-band-warnings");
     if (!host) return;
     host.innerHTML = "";
@@ -13314,6 +13330,7 @@
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
       markConflictPorts: markConflictPorts,
+      renderConflicts: renderConflicts,
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
