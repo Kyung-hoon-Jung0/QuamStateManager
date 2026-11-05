@@ -213,6 +213,85 @@ def _read_doc(p: Path) -> dict:
         return {}
 
 
+# ----------------------------------------------------------------------
+# The undone tail (user decision 2026-11-05)
+# ----------------------------------------------------------------------
+# A Ctrl+Z that reached the chip stays protected like an applied value for
+# UNDONE_WINDOW_S from the undo, even after a later action truncates the redo
+# branch.  Truncation drops the past-cursor units; before it does, each one
+# undone LIVE (``meta.undone_ts`` set -- only a live walk stamps it) leaves a
+# small record here: its entries (path, old = the value the undo holds, new =
+# the value it replaced) and the undo time.  Bounded by time and by entry
+# count; stage-only undos never move the persisted cursor, so they never
+# appear.  Readers treat a record like an undone unit.
+
+UNDONE_WINDOW_S = 6 * 3600
+UNDONE_TAIL_MAX = 200     # entries kept, newest undos first
+
+
+def _clean_tail(tail, now: float | None = None) -> list[dict]:
+    now = time.time() if now is None else now
+    out = []
+    for r in tail if isinstance(tail, list) else ():
+        if not isinstance(r, dict):
+            continue
+        t = r.get("undone_ts")
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
+            continue
+        if now - float(t) > UNDONE_WINDOW_S:
+            continue
+        ents = [e for e in (r.get("entries") or ()) if isinstance(e, dict)
+                and isinstance(e.get("path"), str)]
+        if ents:
+            out.append({"undone_ts": float(t), "entries": ents})
+    out.sort(key=lambda r: r["undone_ts"])
+    n = 0
+    keep = []
+    for r in reversed(out):          # newest undos survive the cap
+        if n + len(r["entries"]) > UNDONE_TAIL_MAX:
+            break
+        n += len(r["entries"])
+        keep.append(r)
+    return keep[::-1]
+
+
+_TAIL_PENDING: dict = {}          # path -> tail to write (set inside _lock)
+
+
+def _tail_of(p: Path) -> list[dict]:
+    """The tail a writer under ``_lock`` writes: the pending one when the
+    caller just truncated, else the one already in the file."""
+    key = str(p)
+    if key in _TAIL_PENDING:
+        return _TAIL_PENDING.pop(key)
+    return _clean_tail(_read_doc(p).get("undone_tail"))
+
+
+def _record_truncated(p: Path, dropped: list) -> None:
+    """Called under ``_lock`` right before a truncation drops ``dropped``."""
+    tail = _clean_tail(_read_doc(p).get("undone_tail"))
+    for u in dropped:
+        if not isinstance(u, dict):
+            continue
+        meta = u.get("meta") if isinstance(u.get("meta"), dict) else {}
+        t = meta.get("undone_ts")
+        if not isinstance(t, (int, float)) or isinstance(t, bool):
+            continue                  # never undone live: nothing held
+        ents = []
+        for e in u.get("entries") or ():
+            if isinstance(e, dict) and isinstance(e.get("path"), str):
+                ents.append({k: e[k] for k in ("path", "old", "new", "created", "deleted")
+                             if k in e})
+        if ents:
+            tail.append({"undone_ts": float(t), "entries": ents})
+    _TAIL_PENDING[str(p)] = _clean_tail(tail)
+
+
+def load_tail(path: str | Path) -> list[dict]:
+    """The live-undone records still inside the window (oldest first)."""
+    return _clean_tail(_read_doc(Path(path)).get("undone_tail"))
+
+
 def load(path: str | Path) -> list[dict]:
     """Load the units list (oldest first).  Missing/corrupt -> ``[]`` --
     the journal is advisory history and must never block activation."""
@@ -262,7 +341,7 @@ def save_cursor(path: str | Path, cursor: int) -> None:
                 u["meta"].pop("undone_ts", None)
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p),
                                           "units": units,
                                           "cursor": new})
         except Exception:
@@ -288,7 +367,7 @@ def drop_units(path: str | Path, unit_ids) -> list[dict]:
         if len(kept) == len(units):
             return units
         try:
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "units": kept,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p), "units": kept,
                                           "cursor": max(0, min(cursor - below, len(kept)))})
         except Exception:
             logger.warning("undo journal drop failed: %s", p, exc_info=True)
@@ -328,7 +407,7 @@ def mark_unit(path: str | Path, unit_id: str, patch: dict) -> list[dict]:
         if not hit:
             return units
         try:
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p),
                                           "units": units, "cursor": cursor})
         except Exception:
             logger.warning("undo journal mark failed: %s", p, exc_info=True)
@@ -357,7 +436,7 @@ def mark_units(path: str | Path, unit_ids, patch: dict) -> list[dict]:
         if not hit:
             return units
         try:
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p),
                                           "units": units, "cursor": cursor})
         except Exception:
             logger.warning("undo journal mark failed: %s", p, exc_info=True)
@@ -379,6 +458,7 @@ def insert_units(path: str | Path, new_units: list[dict], *, before_tail: int) -
     with _lock:
         units, cursor = load_state(p)
         if 0 <= cursor < len(units):
+            _record_truncated(p, units[cursor:])
             units = units[:cursor]
             before_tail = min(int(before_tail), len(units))
         cut = max(0, len(units) - max(0, int(before_tail)))
@@ -387,10 +467,11 @@ def insert_units(path: str | Path, new_units: list[dict], *, before_tail: int) -
             units = units[-MAX_UNITS:]
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p),
                                           "units": units, "cursor": len(units)})
         except Exception:
             logger.warning("undo journal insert failed: %s", p, exc_info=True)
+            _TAIL_PENDING.pop(str(p), None)
         return units
 
 
@@ -422,6 +503,7 @@ def append_units(path: str | Path, new_units: list[dict], *,
     with _lock:
         units, cursor = load_state(p)
         if truncate_at_cursor and 0 <= cursor < len(units):
+            _record_truncated(p, units[cursor:])
             units = units[:cursor]
         for nu in new_units:
             # A later write that JOINED the group of the unit at the tip (the
@@ -439,9 +521,10 @@ def append_units(path: str | Path, new_units: list[dict], *,
             units = units[-MAX_UNITS:]
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "undone_tail": _tail_of(p),
                                           "units": units, "cursor": len(units)})
         except Exception:
             # Advisory: never let journal persistence break the save path.
             logger.warning("undo journal write failed: %s", p, exc_info=True)
+            _TAIL_PENDING.pop(str(p), None)
         return units

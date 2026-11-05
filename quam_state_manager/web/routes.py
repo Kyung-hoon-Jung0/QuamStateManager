@@ -12145,6 +12145,7 @@ def _applied_values_held(ctx) -> dict:
     try:
         path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
         units, cursor = undo_journal.load_state(path)
+        tail = undo_journal.load_tail(path)
     except Exception:  # noqa: BLE001 -- no journal readable: nothing to name
         return {}
     store = ctx.get("store")
@@ -12162,6 +12163,20 @@ def _applied_values_held(ctx) -> dict:
     # unit just above the cursor holds what the chip should have now.
     undone = units[cursor:][::-1] if has_cursor else []
     walk = [(u, False) for u in applied] + [(u, True) for u in undone]
+    if tail:
+        # A live undo whose unit a later action truncated away (user decision
+        # 2026-11-05): still held for its window, ordered by time with the
+        # journal's own actions so the newest action on a path wins.
+        def _t(item):
+            u, was_undone = item
+            m = u.get("meta") if isinstance(u, dict) and isinstance(u.get("meta"), dict) else {}
+            t = m.get("undone_ts") if was_undone else None
+            if not isinstance(t, (int, float)) or isinstance(t, bool):
+                t = (u.get("ts") if isinstance(u, dict) else 0) or 0
+            return float(t)
+        walk = sorted(walk + [({"ts": r["undone_ts"], "entries": r["entries"],
+                                "meta": {"undone_ts": r["undone_ts"]}}, True)
+                               for r in tail], key=_t)
     for unit, was_undone in walk:
         if not isinstance(unit, dict):
             continue
