@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import threading
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, urlsplit
@@ -69,7 +70,8 @@ def null_origin_allowed(req) -> bool:
     """May a request with ``Origin: null`` reach the proxy? (D-19)"""
     if not req.path.startswith(PREFIX):
         return False
-    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, "").encode("utf-8"), _TOKEN.encode("utf-8")):
+    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, "").encode("utf-8", "surrogatepass"),
+                              _TOKEN.encode("utf-8")):
         return True
     sub = req.path[len(PREFIX):]
     if "\\" in sub or any(p in (".", "..") for p in sub.split("/")):
@@ -148,18 +150,45 @@ def parse_target(raw: str, name: str = TARGET_ENV) -> tuple[str, int]:
         port = parts.port or 80
     except ValueError:
         raise TargetError(f"{name} has a bad port: {raw!r}.") from None
-    try:
-        addr = ipaddress.ip_address(host)
-    except ValueError:
-        addr = None
-    if addr is not None:
-        addr = getattr(addr, "ipv4_mapped", None) or addr
-        if addr.is_link_local:
-            raise TargetError(f"{name} must not use a link-local / metadata address.")
-    if not _is_loopback(host) and os.environ.get(REMOTE_ENV) != "1":
-        raise TargetError(f"{name} points at {host}, which is not this computer. "
-                          f"Set {REMOTE_ENV}=1 to allow a QUAlibrate on another host.")
+    refused = f"{name} must not use a link-local / metadata address."
+    if _link_local_text(host):
+        raise TargetError(refused)
+    if not _is_loopback(host):
+        if os.environ.get(REMOTE_ENV) != "1":
+            raise TargetError(f"{name} points at {host}, which is not this computer. "
+                              f"Set {REMOTE_ENV}=1 to allow a QUAlibrate on another host.")
+        # The host text alone is not the address: decimal/octal IPv4 and DNS
+        # names reach link-local too. Judge every address the name resolves to.
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError):
+            raise TargetError(f"{name} names a host that cannot be resolved: {host}.") from None
+        if not infos or any(_link_local_text(str(i[4][0])) for i in infos):
+            raise TargetError(refused)
     return host, port
+
+
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _link_local_text(text: str) -> bool:
+    """Is this address text link-local, directly or through an IPv4 embedding
+    (IPv4-mapped, IPv4-compatible, NAT64)? Non-address text is False."""
+    try:
+        addr = ipaddress.ip_address(text.split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.is_link_local:
+        return True
+    if addr.version == 6:
+        n = int(addr)
+        embedded = []
+        if addr.ipv4_mapped is not None:
+            embedded.append(addr.ipv4_mapped)
+        if n >> 32 == 0 or addr in _NAT64:
+            embedded.append(ipaddress.IPv4Address(n & 0xFFFFFFFF))
+        return any(e.is_link_local for e in embedded)
+    return False
 
 
 def target() -> tuple[str, int]:

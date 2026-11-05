@@ -108,6 +108,7 @@ class TestTarget:
     def test_remote_only_when_the_operator_says_so(self, monkeypatch):
         monkeypatch.setenv(qp.TARGET_ENV, "http://10.0.0.5:8001")
         monkeypatch.setenv(qp.REMOTE_ENV, "1")
+        monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"10.0.0.5": ["10.0.0.5"]}))
         assert qp.target() == ("10.0.0.5", 8001)
 
     def test_a_request_cannot_choose_the_target(self, client, up):
@@ -577,6 +578,7 @@ def test_remote_opt_in_still_refuses_link_local(app, client, noenv, monkeypatch,
 def test_remote_opt_in_can_save_a_remote_server(client, noenv, monkeypatch):
     monkeypatch.setenv(qp.REMOTE_ENV, "1")
     monkeypatch.setattr(qp, "probe", lambda *args: ("2.0.0", None))
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"10.0.0.5": ["10.0.0.5"]}))
     r = client.post("/qualibrate-ui-target", json={"url": "http://10.0.0.5:8001"}, headers=_SAME)
     assert r.status_code == 200 and r.get_json()["source"] == "saved"
 
@@ -739,3 +741,70 @@ def test_live_qualibrate_2(app, client, monkeypatch):
     run_id = hist["items"][0]["id"]
     r = client.get(f"/qualibrate-run/{run_id}")
     assert r.status_code == 302 and "/dataset/by-path" in r.headers["Location"], r.data[:300]
+
+
+def test_surrogate_token_is_forbidden_not_a_crash(client, up):
+    r = client.post(qp.PREFIX + "execution/submit/node", headers={
+        "Origin": "null", qp.TOKEN_HEADER: "x"})
+    assert r.status_code == 403
+
+    class _Req:
+        path = qp.PREFIX + "execution/submit/node"
+        method = "POST"
+        headers = {qp.TOKEN_HEADER: "\udcff-lone-surrogate"}
+    assert qp.null_origin_allowed(_Req()) is False
+
+
+def _fake_resolver(answers):
+    def fake(host, port, *args, **kwargs):
+        if host not in answers:
+            raise OSError("no such host")
+        out = []
+        for a in answers[host]:
+            fam = qp.socket.AF_INET6 if ":" in a else qp.socket.AF_INET
+            sa = (a, port, 0, 0) if fam == qp.socket.AF_INET6 else (a, port)
+            out.append((fam, qp.socket.SOCK_STREAM, 6, "", sa))
+        return out
+    return fake
+
+
+@pytest.mark.parametrize("host,answers", [
+    ("2852039166", ["169.254.169.254"]),
+    ("0251.0376.0251.0376", ["169.254.169.254"]),
+    ("[64:ff9b::a9fe:a9fe]", ["64:ff9b::a9fe:a9fe"]),
+    ("[::169.254.169.254]", ["::a9fe:a9fe"]),
+    ("[::ffff:a9fe:a9fe]", ["::ffff:169.254.169.254"]),
+    ("metadata.example", ["169.254.169.254"]),
+    ("mixed.example", ["10.0.0.5", "fe80::1%3"]),
+    ("v6.example", ["fe80::1"]),
+])
+def test_remote_opt_in_refuses_names_resolving_to_link_local(app, client, noenv, monkeypatch, host, answers):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    bare = host.strip("[]")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({bare: answers}))
+    probes = []
+    monkeypatch.setattr(qp, "probe", lambda *args: (probes.append(args) or ("2.0.0", None)))
+    url = f"http://{host}:8001"
+    r = client.post("/qualibrate-ui-target", json={"url": url}, headers=_SAME)
+    assert r.status_code == 400
+    assert not probes
+    assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+    with pytest.raises(qp.TargetError):
+        qp.parse_target(url)
+    # also refused when the address is USED (environment target)
+    monkeypatch.setenv(qp.TARGET_ENV, url)
+    with pytest.raises(qp.TargetError):
+        qp.target()
+
+
+def test_remote_opt_in_accepts_a_name_resolving_to_a_routable_address(monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"lab.example": ["10.0.0.5"]}))
+    assert qp.parse_target("http://lab.example:8001") == ("lab.example", 8001)
+
+
+def test_remote_opt_in_refuses_an_unresolvable_name(monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({}))
+    with pytest.raises(qp.TargetError):
+        qp.parse_target("http://nowhere.example:8001")
