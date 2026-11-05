@@ -1200,6 +1200,10 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
             reapply_originals=ctx.get("pending_reapply_orig"),
         )
     facts = sync_status.live_facts(entries=entries, moved=moved, verdict=verdict)
+    held = _applied_values_held(ctx) if moved else {}
+    facts["lost_applied"] = [e.dot_path for e in entries
+        if e.dot_path in held and _applied_value_lost(
+            held, e.dot_path, _DOT_MISSING if e.change_type == "removed" else e.new_value)]
     facts["_key"], facts["_sig"] = key, sig
     facts["checked_at"] = time.time()
     ctx["sync_live"] = facts
@@ -1344,6 +1348,9 @@ def _sync_view(ctx=None) -> dict | None:
     _lu = _lost_still_lost(ctx, paths)
     if _v is not None:
         _v["lost"] = _lu
+        lost_applied = (facts or {}).get("lost_applied") or []
+        _v["action"] = "merge" if (_lu or lost_applied) else None
+        _v["sig"] += "|applied:" + ",".join(sorted(lost_applied))
         if _lu:
             _v["sig"] = str(_v.get("sig") or "") + "|lost:%d:%s" % (len(_lu), _lu[-1].get("at"))
         _v["sig"] = str(_v.get("sig") or "") + (

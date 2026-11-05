@@ -78,6 +78,10 @@
         data-after-request="clearUndo"
         onclick="SyncPanel.arm(this, event)"
         title="Writes this staged version over the live chip (unchanged since you synced, backed up first). Press twice: the second press (Confirm) writes it">&#8593; Apply</button>
+{%- elif _sv and _sv.action == 'merge' and _st not in ('archive', 'unreadable') %}
+<button type="button" class="sync-control-act btn-apply-live"
+        onclick="doStateSync('apply', false, false, null, {keepApplied: true})"
+        title="Keeps your applied values while taking the live changes">&#8644; Pull &amp; apply</button>
 {%- elif _st == 'live' %}
 <button type="button" class="sync-control-act sync-act-take"
         onclick="doStateSync('discard')"
