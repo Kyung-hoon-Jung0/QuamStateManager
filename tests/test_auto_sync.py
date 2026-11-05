@@ -87,15 +87,19 @@ class TestThePolicyTable:
         assert c.post("/auto-sync/pull").status_code == 200
         assert _f01(app) == 6.2e9, "live wins"
 
-    def test_replace_unticked_refuses_when_there_are_local_edits(self, tmp_path):
-        """docs/87 intact: SM does not choose between your work and the chip."""
+    def test_replace_unticked_keeps_mine_and_saves_the_node(self, tmp_path):
+        """User decision 2026-11-05 (docs/187): an armed pull+push session
+        settles a collision itself -- the user's value wins, live's is backed
+        up first, nothing asks and nothing disarms."""
         app, c, live = _mk(tmp_path)
         c.post("/auto-sync/set", data={"pull": "1", "push": "1"})
         c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5.5e9"})
         _diverge(app, live, 6.3e9)
         assert c.post("/auto-sync/pull").status_code == 200
         assert _f01(app) == 5.5e9, "the user's edit survived"
-        assert _ctx(app)["live_diverged"] is True, "and the banner is still asking"
+        assert not _ctx(app).get("live_diverged"), "and nothing is left asking"
+        assert _ctx(app)["auto_apply"], "the session stays armed"
+        assert _ctx(app)["take_live_backup"]["updates"]["qubits.q1.f_01"][1] == 6.3e9
 
     def test_a_clean_copy_pulls_without_asking(self, tmp_path):
         """Nothing of the user's is at stake, so there is nothing to ask about

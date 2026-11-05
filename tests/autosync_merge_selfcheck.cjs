@@ -411,6 +411,37 @@ function fire(w, name, detail) {
     check('D pull retry carries captured authorization and chip', /auto_sync=1/.test(url) && /expect_chip=CHIP-D/.test(url));
   }
 
+  {
+    const { w, state, clock } = world();
+    w._applyInFlight = false;
+    const requests = [];
+    let finishRefresh;
+    w.htmx.ajax = function(method, url) {
+      requests.push({method, url});
+      return new Promise(resolve => { finishRefresh = () => {
+        w.document.getElementById('pending-tray').setAttribute('data-change-count', '2');
+        resolve();
+      }; });
+    };
+    w.doStateSync = function() {
+      state.sync.push(w.document.getElementById('pending-tray').getAttribute('data-change-count'));
+    };
+    fire(w, 'autoSyncRetry', {class: 'transient', tries: 1, delay: 2,
+      chip: 'CHIP-U', mode: 'apply', refresh_tray: true});
+    await clock.advance(1999);
+    check('U retry respects schedule before refreshing', requests.length === 0);
+    await clock.advance(1);
+    check('U unseen edits fetch a current tray', requests.length === 1 && requests[0].url === '/state/tray');
+    check('U waits for tray before pushing', state.sync.length === 0);
+    if (finishRefresh) finishRefresh();
+    await clock.advance(40);
+    // After the re-read, the push goes out: the tray observer's flush (which
+    // now sees the edits) or the scheduled merge press with the new count.
+    const pushed = requests.slice(1).some(r => r.url === '/state/apply-to-live')
+      || (state.sync.length === 1 && state.sync[0] === '2');
+    check('U retry pushes only after reading the refreshed change count', pushed);
+  }
+
   if (failures) {
     console.error(failures + ' FAILED of ' + asserts);
     process.exitCode = 1;

@@ -128,6 +128,26 @@ pill turns it back on. Unknown failures may retry ten times, then disarm with
 "kept failing: <reason>". A landed merge clears all retry state. Automatic
 merges never open a prompt or modal and retain the existing permission gates.
 
+**A collision under an armed pull+push session: mine wins, the node value is
+saved in History** (user decision, 2026-11-05). When a pending edit and a live
+write touched the same field, Auto-Sync takes a `kind="backup"` snapshot of live
+first, pulls, re-applies the pending edits on top (the user's value wins on the
+overlapping fields) and pushes. One notice names each overwritten field and the
+node's value ("kept your value for qA1.f_01; the node had written 7.7000 GHz (in
+History)"), and the overwritten values are recorded for the version panel's
+one-press Bring back. No prompt, no disarm; it counts as a landed merge, and a
+node writing again while the backup is taken is a transient retry. A push-only
+session keeps docs/117's permanent `no_pull` disarm, a ticked "replace" keeps
+its live-wins rule, and with Auto-Sync off the
+person chooses as before.
+
+**`unseen_changes` is transient.** Another window's edit on the shared context
+makes this window's declared change count stale; the client re-fetches its tray
+(re-reading `data-change-count`) and retries on the schedule instead of
+disarming. A positive write-denial verdict found during the request classifies
+as `readonly` (permanent); a bare WinError 5 without that verdict is unknown,
+not transient, and "archive" counts only as the structured refusal code.
+
 ## After
 
 Same driver, same outside writer, same chip copy:

@@ -31201,6 +31201,7 @@ def _auto_merge_policy(view):
                 return "", 204
             return jsonify(status="retrying", merge_failure=sess.get("merge_retry"))
         g._merge_policy_active = True
+        g._merge_policy_automatic = automatic
         g._merge_failure = None
         g._merge_refusal = None
         try:
@@ -31265,6 +31266,9 @@ def _auto_merge_policy(view):
             reason = "live changes overlap your edits; choose values in the sync panel"
         if signal is not None:
             code, reason = "stale_live", "the live chip moved during the merge"
+        readonly_after = bool(ctx and ctx.get("live_readonly_hint"))
+        if readonly_after:
+            code, reason = "readonly", "the live chip folder is read-only or unwritable"
         staged = bool(ctx and ctx.get("working_dirty") and
                       (ctx.get("staged_base") or not ctx.get("pending_reapply")))
         if staged and (signal is not None or code in {"conflict", "needs_confirm"}
@@ -31278,6 +31282,8 @@ def _auto_merge_policy(view):
                 resp.set_data(json.dumps(body))
             return resp
         verdict = merge_policy.failed(sess, reason, code=code)
+        if code == "unseen_changes":
+            verdict["refresh_tray"] = True
         if signal:
             verdict = {**signal, **verdict}
         verdict.update(chip=_active_chip_token() or "",
@@ -31292,7 +31298,6 @@ def _auto_merge_policy(view):
             events = {"autoApplyDisarm": verdict}
         else:
             ctx["auto_apply"] = sess
-            ctx["live_readonly_hint"] = readonly_before
             sess["merge_due"] = time.monotonic() + verdict["delay"]
             events.pop("autoApplyDisarm", None)
             if "autoSyncMerge" in events:
@@ -31778,6 +31783,16 @@ def _live_conflict_204(paths):
     return resp
 
 
+def _auto_mine_wins(ctx):
+    """The armed pull+push decision ("mine wins, the node value is saved")
+    applies only to automatic requests. A ticked replace is the opposite
+    consent (live wins), so it keeps its own rule."""
+    sess = _auto_sync_state(ctx) or {}
+    return bool(getattr(g, "_merge_policy_automatic", False)
+                and sess.get("pull") and sess.get("push")
+                and not sess.get("pull_replace"))
+
+
 @bp.route("/auto-sync/retry", methods=["POST"])
 @_auto_merge_policy
 def auto_sync_retry():
@@ -31893,6 +31908,14 @@ def auto_sync_pull():
                            conflict="live_busy" if verdict is None else "verdict_failed",
                            message="the live pair could not be compared just now"), 409
         if verdict.must_ask:
+            if _auto_mine_wins(ctx) and not dom_dirty and not verdict.unaccounted:
+                merged = make_response(state_sync(_auto_mode="apply"))
+                body = merged.get_json(silent=True) or {}
+                g._merge_refusal = body if body.get("status") != "ok" else None
+                resp = make_response(body.get("tray_html") or _tray_html(), merged.status_code)
+                if merged.headers.get("HX-Trigger"):
+                    resp.headers["HX-Trigger"] = merged.headers["HX-Trigger"]
+                return resp
             # THE line docs/87 draws, kept: SM does not choose between the
             # user's work and the live chip. The banner is already showing,
             # and now it can name the fields that actually collide.
@@ -33574,6 +33597,8 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
     _coll = [c for c in verdict.conflicts if c not in picks]
     if not _coll:
         return None
+    if _auto_mine_wins(ctx):
+        return None
     ctx["live_diverged"] = True
     ctx["live_conflicts"] = _coll
     ctx.pop("live_drift_count", None)
@@ -33617,6 +33642,8 @@ def state_sync(*, _auto_mode=None):
     mode = _auto_mode or request.values.get("mode", "discard")
     _auto_restore = bool((_auto_sync_state(ctx) or {}).get("pull"))
     _restored_applied = []
+    _auto_overwritten = {}
+    _auto_backup = None
     if mode in ("apply", "reapply") and _auto_apply_state(ctx):
         # W2-1: the control's "Apply N" presses THIS door (doStateSync), not
         # /state/apply-to-live -- a person's Apply releases the hold here too
@@ -33866,6 +33893,15 @@ def state_sync(*, _auto_mode=None):
             _held_applied = _applied_values_held(ctx) if _keep_applied else {}
             _restored_creates: dict = {}
             _sync_point_before = working_copy.sync_point(wc)
+            # Save live BEFORE pulling. Compare this version with the adopted
+            # pair below: a node racing the backup gets a transient retry.
+            if _auto_mine_wins(ctx) and pending:
+                _auto_backup = _history().check_and_snapshot(
+                    ctx["path"], "manual", force=True, kind="backup",
+                    project=_scope_for(ctx["path"], ctx))
+                if _auto_backup is None:
+                    return jsonify(status="error", conflict="live_unbacked",
+                                   message="live could not be backed up just now"), 409
             _pulled = working_copy.sync_from_live(wc)
             # v1.5.1 (SB-F1): `pending` was captured before the pull, and
             # /field/edit takes only the store lock -- an edit committed
@@ -33949,6 +33985,21 @@ def state_sync(*, _auto_mode=None):
                     if request.values.get("ack_collision") != "1":
                         _verdict = _auto_pull_verdict(ctx, (), _pulled)
                         _refusal = _sync_replay_refusal(ctx, _verdict, picks, mode)
+                        if _auto_mine_wins(ctx) and _verdict not in (None, _VERDICT_FAILED):
+                            if _verdict.conflicts:
+                                from quam_state_manager.core.history import _canonical_hash_of
+                                if (_auto_backup is None or _auto_backup.state_hash !=
+                                        _canonical_hash_of(*_pulled)):
+                                    _refusal = (jsonify(status="error", conflict="live_moved",
+                                        message="live moved while saving its backup"), 409)
+                                else:
+                                    for _p in _verdict.conflicts:
+                                        _wire = _p.startswith("wiring.")
+                                        _value = _dot_get(_pulled[1] if _wire else _pulled[0],
+                                                         _p.removeprefix("wiring.") if _wire else _p)
+                                        _auto_overwritten[_p] = (_tagged("delete", None, "auto-sync-backup")
+                                            if _value is _DOT_MISSING else
+                                            _tagged("set", copy.deepcopy(_value), "auto-sync-backup"))
                     if _refusal is None and _moved_since_panel:
                         _refusal = (jsonify({**_live_moved_since_panel_body(_moved_paths),
                                              "tray_html": _tray_html()}), 409)
@@ -34009,6 +34060,24 @@ def state_sync(*, _auto_mode=None):
         resp = make_response(_sync_pull_apply_to_live(
             ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
             pulled_other_changes=pulled_other_changes))
+        if _auto_overwritten and (resp.get_json(silent=True) or {}).get("status") == "ok":
+            ctx["take_live_backup"] = {"updates": _auto_overwritten,
+                "snapshot": _auto_backup.timestamp, "n": len(_auto_overwritten)}
+            ctx.pop("live_conflicts", None)
+            ctx.pop("live_auto_at", None)
+            from quam_state_manager.core.units import format_quantity
+            messages = []
+            for _p, _entry in _auto_overwritten.items():
+                _op, _v, _group = _untag(_entry)
+                _qty = format_quantity(_v, _p.rsplit(".", 1)[-1])
+                _shown = " ".join(_qty) if _qty else _fmt_msg_val(_v)
+                if _op == "delete":
+                    _shown = "no value"
+                messages.append(f"kept your value for {_p.removeprefix('qubits.')}; "
+                                f"the node had written {_shown} (in History)")
+            triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))
+            triggers["syncToast"] = {"message": "; ".join(messages), "level": "info"}
+            resp.headers["HX-Trigger"] = json.dumps(triggers)
         if (_auto_restore and _restored_applied
                 and (resp.get_json(silent=True) or {}).get("status") == "ok"):
             triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))

@@ -1268,7 +1268,7 @@ class TestFailureKinds:
 @pytest.mark.parametrize("reason,code,expected", [
     ("[WinError 32] replace", "", "transient"),
     ("[WinError 33] replace", "", "transient"),
-    ("[WinError 5] replace", "", "transient"),
+    ("[WinError 5] replace", "", "unknown"),
     (routes_mod.safe_io.LiveFileError("retries exhausted"), "", "transient"),
     ("mid-save", "torn_live", "transient"),
     ("moved again", "stale_live", "transient"),
@@ -1287,16 +1287,99 @@ def test_failure_classification(reason, code, expected):
     assert classify_failure(reason, code=code) == expected
 
 
-def test_automatic_collision_disarms_without_asking(env):
+@pytest.mark.parametrize("door", ["sync", "pull"])
+def test_automatic_collision_keeps_mine_and_saves_node(env, door):
     _arm(env)
     _edit(env)
     _write_chip(env["live"], _state(f01=7.7e9))
+    _ctx(env)["live_diverged"] = True
+    r = env["client"].post("/state/sync" if door == "sync" else "/auto-sync/pull",
+                           data={"mode": "apply", "auto_sync": "1"})
+    assert _sess(env) is not None
+    assert _live_f01(env) == 5.1e9
+    assert _sess(env)["merge_tries"] == 0
+    assert "pending-tray-conflict" not in r.get_data(as_text=True)
+    events = json.loads(r.headers["HX-Trigger"])
+    assert "liveConflict" not in events and "autoApplyDisarm" not in events
+    notice = events["syncToast"]["message"]
+    assert "kept your value for qA1.f_01" in notice
+    assert "7.7" in notice and "GHz" in notice and "in History" in notice
+    bk = _ctx(env)["take_live_backup"]
+    assert bk["updates"]["qubits.qA1.f_01"][1] == 7.7e9
+    with env["app"].app_context():
+        hm = routes_mod._history()
+        snaps = hm.list_snapshots(str(env["live"]))
+        snap = next(s for s in snaps if s.timestamp == bk["snapshot"])
+        assert snap.kind == "backup"
+    held = [json.loads(p.read_text(encoding="utf-8")) for p in
+            (Path(env["app"].instance_path) / "history").rglob("state.json")]
+    assert any(d.get("qubits", {}).get("qA1", {}).get("f_01") == 7.7e9 for d in held)
+    # The existing version-panel Bring back door restores the node in one press.
+    env["client"].post("/state/take-live/restore")
+    assert _ctx(env)["store"].state["qubits"]["qA1"]["f_01"] == 7.7e9
+
+
+def test_push_only_collision_still_disarms_no_pull(env):
+    """Without pull permission the collision is not ours to settle (docs/117)."""
+    _arm(env, pull=False, push=True)
+    _edit(env)
+    _write_chip(env["live"], _state(f01=7.7e9))
+    _ctx(env)["live_diverged"] = True
     r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
     assert _sess(env) is None
-    body = r.get_json()
-    assert body["merge_failure"]["class"] == "permanent"
-    assert "choose which values" in body["merge_failure"]["reason"]
     assert _live_f01(env) == 7.7e9
+    assert "take_live_backup" not in _ctx(env)
+    assert "kept your value" not in r.headers.get("HX-Trigger", "")
+
+
+def test_mid_session_readonly_disarms_first_attempt(env, monkeypatch):
+    _arm(env)
+    _edit(env)
+    assert not _ctx(env).get("live_readonly_hint")
+    def denied(*a, **kw):
+        exc = PermissionError("synthetic ACL denial")
+        exc.winerror = 5
+        raise exc
+    monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", denied)
+    monkeypatch.setattr(routes_mod, "_write_denial", lambda *a: "denied")
+    r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
+    assert _sess(env) is None
+    assert _ctx(env)["live_readonly_hint"] is True
+    verdict = r.get_json()["merge_failure"]
+    assert verdict["class"] == "permanent" and verdict["tries"] == 1
+    assert "read-only" in verdict["reason"]
+
+
+def test_unseen_window_rereads_then_flushes(env):
+    _arm(env)
+    a, b = env["client"], env["app"].test_client()
+    _edit(env)  # A edits the ctx shared with B, whose tray still says zero.
+    r = b.post("/state/sync", data={"mode": "apply", "auto_sync": "1", "seen_changes": "0"})
+    assert _sess(env) is not None
+    verdict = r.get_json()["merge_failure"]
+    assert verdict["class"] == "transient"
+    assert verdict["refresh_tray"] is True
+    assert _live_f01(env) == 5.0e9
+    import re
+    tray = b.get("/state/tray").get_data(as_text=True)
+    count = re.search(r'data-change-count="(\d+)"', tray).group(1)
+    assert count == "1"
+    _sess(env)["merge_due"] = 0
+    r = b.post("/state/sync", data={"mode": "apply", "auto_sync": "1", "seen_changes": count})
+    assert r.get_json()["status"] == "ok"
+    assert _live_f01(env) == 5.1e9 and _sess(env) is not None
+
+
+@pytest.mark.parametrize("reason,code,expected", [
+    ("failed in D:/archive/chip", "", "unknown"),
+    ("[WinError 5] replace", "", "unknown"),
+    ("archive", "archive", "permanent"),
+    ("read-only comparison", "verdict_failed", "unknown"),
+    ("another window has edits", "unseen_changes", "transient"),
+])
+def test_structured_failure_precedes_text(reason, code, expected):
+    from quam_state_manager.core.merge_policy import classify_failure
+    assert classify_failure(reason, code=code) == expected
 
 
 def test_automatic_retry_after_disarm_cannot_write(env, monkeypatch):

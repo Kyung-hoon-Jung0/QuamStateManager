@@ -440,6 +440,16 @@
         var generation = _mergeGeneration;
         _whenLatchFree(function () {
             if (_stopped || generation !== _mergeGeneration) return;
+            if (d.refresh_tray) {
+                if (!window.htmx) return;
+                Promise.resolve(window.htmx.ajax('GET', '/state/tray', {
+                    target: '#pending-tray', swap: 'outerHTML'
+                })).then(function () {
+                    if (_stopped || generation !== _mergeGeneration) return;
+                    pressMerge(Object.assign({}, d, {refresh_tray: false}));
+                }, function () { latchFailed(d); });
+                return;
+            }
             if (d.mode === 'pull') {
                 if (!window._autoSyncPullRequest) return;
                 window._applyInFlight = true;
