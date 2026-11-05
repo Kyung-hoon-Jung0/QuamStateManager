@@ -116,11 +116,17 @@ Two details the code carries comments for:
   the latch — and `doStateSync` bails on a held latch **silently**. Without the
   wait the merge would simply never happen. Bounded at ~2 s, because a latch
   that never clears must not leave a timer running for ever.
-- **A merge budget of 3 consecutive failures**, then it disarms after all. A
-  node between two edits is ordinary; a merge that keeps conflicting is not,
-  and a background writer must never retry for ever. An apply that **lands**
-  refills it — the budget counts consecutive failures, or a long healthy
-  session would eventually disarm on its Nth unlucky node write.
+Auto-Sync merge failures are classified by the server (user decision,
+2026-11-05): transient sharing/replace locks, exhausted safe-I/O reads, torn
+pairs, live moving during a merge, and press-wait timeouts keep the session
+armed and retry after 2, 5, 15, 30, then 60 seconds, repeating at 60 seconds.
+The pill says "retrying (n)" and its tooltip names the reason. Staged or
+wholesale content, unwritable folders, identity mismatches, archives, foreign
+window owners and refusals requiring a person's choice turn Auto-Sync off
+on the first occurrence; the conflict tray names the blocker and the existing
+pill turns it back on. Unknown failures may retry ten times, then disarm with
+"kept failing: <reason>". A landed merge clears all retry state. Automatic
+merges never open a prompt or modal and retain the existing permission gates.
 
 ## After
 

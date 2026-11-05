@@ -4771,6 +4771,20 @@ function _runSyncPressesInTurn(calls) {
     })();
 }
 
+// Initial pulls and retries report the same current DOM edits and chip.
+window._autoSyncPullRequest = function(chip) {
+    var cells = document.querySelectorAll('.bulk-cell.dirty');
+    var query = ['auto_sync=1', 'expect_chip=' + encodeURIComponent(chip || '')];
+    if (cells.length) query.push('dom_dirty=1');
+    Array.prototype.forEach.call(cells, function(cell) {
+        var path = cell.getAttribute('data-dot-path');
+        if (path) query.push('dom_path=' + encodeURIComponent(path));
+    });
+    return window.htmx.ajax('POST', '/auto-sync/pull?' + query.join('&'), {
+        target: '#pending-tray', swap: 'outerHTML'
+    });
+};
+
 window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // docs/187 R2: `expectChip` is optional and only the automatic
     // merge passes it -- the chip the server said conflicted, carried on
@@ -4878,7 +4892,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     fetch("/state/sync", {
         method: "POST",
         headers: {"Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
-        body: "mode=" + encodeURIComponent(mode) + (forced ? "&force=1" : "")
+        body: "mode=" + encodeURIComponent(mode) + (opts && opts.automatic ? "&auto_sync=1" : "") + (forced ? "&force=1" : "")
               + (ackUnseen ? "&ack_unseen=1" : "")
               + (_seen !== null ? "&seen_changes=" + encodeURIComponent(_seen) : "")
               + (_seenSig ? "&seen_sig=" + encodeURIComponent(_seenSig) : "")
@@ -4897,6 +4911,18 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
+            if (opts && opts.automatic && data && data.merge_failure) {
+                if (data.tray_html) {
+                    var retryTray = document.getElementById('pending-tray');
+                    if (retryTray) retryTray.outerHTML = data.tray_html;
+                }
+                document.dispatchEvent(new CustomEvent('autoSyncRetry', {detail: data.merge_failure}));
+                return;
+            }
+            if (opts && opts.automatic && data && data.status === 'stopped') return;
+            if (opts && opts.automatic && data && data.status === 'ok') {
+                document.dispatchEvent(new CustomEvent('autoSyncLanded'));
+            }
             if (data && data.chip_mismatch) {
                 // v1.5.1 (SB-F2/F5): this tab shows another chip than the
                 // server has open -- nothing was pulled or written. The
@@ -6241,18 +6267,7 @@ window.livePushExtrasLine = function (typedPaths) {
                         // A cell with no dot-path still counts as unnamed dirt
                         // through the flag, so the honest answer never gets
                         // weaker than it was.
-                        var _dirtyCells = document.querySelectorAll('.bulk-cell.dirty');
-                        var _domDirty = _dirtyCells.length > 0;
-                        var _q = [];
-                        if (_domDirty) _q.push('dom_dirty=1');
-                        Array.prototype.forEach.call(_dirtyCells, function (c) {
-                            var dp = c.getAttribute('data-dot-path');
-                            if (dp) _q.push('dom_path=' + encodeURIComponent(dp));
-                        });
-                        var pp = window.htmx.ajax('POST',
-                            '/auto-sync/pull' + (_q.length ? '?' + _q.join('&') : ''), {
-                            target: '#pending-tray', swap: 'outerHTML',
-                        });
+                        var pp = window._autoSyncPullRequest(window.__chipToken || '');
                         if (pp && typeof pp.then === 'function') pp.then(_rel, _rel);
                         else _rel();
                     } catch (e) { _rel(); }

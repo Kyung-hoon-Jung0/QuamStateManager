@@ -35,7 +35,7 @@
    DECISION this refusal carried, never an inference from the session. #}
 {% if auto_disarmed %}
 <span class="sync-marker tray-conflict-autosync"
-      title="Auto-Sync is off: no more live writes until you turn it on again (Auto pill)">&#9889; turned off</span>
+      title="Auto-Sync is off: no more live writes until you turn it on again (Auto pill)">&#9889; turned off{% if auto_blocker %}: {{ auto_blocker }}{% endif %}</span>
 {% elif auto_merging %}
 <span class="sync-marker tray-conflict-autosync"
       title="Auto-Sync is resolving this itself (pull, re-apply your edits, push). Open the panel only to decide yourself">&#9889; still on &middot; merging</span>

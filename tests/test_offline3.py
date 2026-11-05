@@ -266,5 +266,28 @@ def test_a_refused_restore_hands_the_tray_back_never_json(env, monkeypatch):
     monkeypatch.setattr(routes, "_sync_pull_apply_to_live", refused)
     r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
     assert r.status_code == 200
-    assert not r.is_json and 'data-probe="conflict"' in r.get_data(as_text=True)
+    assert not r.is_json and 'pending-tray-conflict' in r.get_data(as_text=True)
+    assert 'retrying (1)' in r.get_data(as_text=True)
     assert "autoSyncMerge" in json.loads(r.headers["HX-Trigger"])
+
+
+@pytest.mark.parametrize("kind", ["stale", "lock"])
+def test_refused_restoration_uses_the_retry_policy(env, monkeypatch, kind):
+    from tests.test_autosync_merge import _arm
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _arm(env, pull=True, push=True)
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    _outside(env, _st(f01=5.2e9))
+    def refuse(*args, **kwargs):
+        if kind == "stale":
+            raise routes.working_copy.StaleLiveError("live moved again")
+        raise OSError("[WinError 32] sharing violation on replace")
+    monkeypatch.setattr(routes.working_copy, "apply_to_live", refuse)
+    r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+    assert r.status_code == 200 and not r.is_json
+    event = json.loads(r.headers["HX-Trigger"])["autoSyncRetry"]
+    assert event["class"] == "transient" and event["tries"] == 1
+    assert "retrying (1)" in r.get_data(as_text=True)

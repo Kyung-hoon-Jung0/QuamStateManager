@@ -93,7 +93,7 @@ class TestThePolicyTable:
         c.post("/auto-sync/set", data={"pull": "1", "push": "1"})
         c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5.5e9"})
         _diverge(app, live, 6.3e9)
-        assert c.post("/auto-sync/pull").status_code == 204
+        assert c.post("/auto-sync/pull").status_code == 200
         assert _f01(app) == 5.5e9, "the user's edit survived"
         assert _ctx(app)["live_diverged"] is True, "and the banner is still asking"
 
@@ -202,7 +202,7 @@ class TestTheSignalRidesTheExistingPoll:
         """A pull must never interleave with a push or a manual Apply."""
         src = (Path(__file__).resolve().parent.parent / "quam_state_manager"
                / "web" / "static" / "app.js").read_text(encoding="utf-8")
-        i = src.index("/auto-sync/pull")
+        i = src.index("var pp = window._autoSyncPullRequest")
         # Anchored on the GUARD that opens the block, not a byte distance: a
         # 2,600-char window expired when docs/195 put the per-cell dom_path
         # collection between the guard and the call, and read as "the latch
@@ -230,7 +230,7 @@ class TestTheSignalRidesTheExistingPoll:
         # window expired because app.js grew (docs/155 F8'), which says nothing
         # about whether a second poller appeared. What must stay true is that
         # nothing between the drift fetch and the pull opens a request of its own.
-        i = src.index("/auto-sync/pull")
+        i = src.index("var pp = window._autoSyncPullRequest")
         j = src.rindex("/state/drift", 0, i)          # the poll it rides
         between = src[j:i]
         for tok in ("setInterval(", "fetch(", "XMLHttpRequest", "function poll"):
@@ -478,7 +478,7 @@ class TestTheRedTeamFindings:
         for _ in range(6):
             if c.get("/state/drift").get_json().get("auto_pull"):
                 presses += 1
-                assert c.post("/auto-sync/pull").status_code == 204, (
+                assert c.post("/auto-sync/pull").status_code == 200, (
                     "a conflict must decline, never pull over the edit")
         assert presses == 1, f"advertised {presses} times over six polls"
         assert _f01(app) == 5.5e9, "the user's value survived"

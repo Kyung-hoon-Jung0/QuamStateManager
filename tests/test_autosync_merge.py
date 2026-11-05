@@ -170,91 +170,46 @@ class TestTheBudget:
     """A node between two edits is ordinary. A merge that keeps conflicting is
     not, and a background writer must never retry for ever."""
 
-    def test_it_gives_up_and_disarms_after_the_budget(self, env):
+    def test_repeated_live_movement_never_disarms(self, env):
         c = env["client"]
-        _arm(env, pull=True, push=True)
-        seen = []
-        for i in range(routes_mod._AUTO_MERGE_TRIES + 1):
+        _arm(env)
+        for i in range(12):
             _edit(env, value=f"5.{i}e9")
             _write_chip(env["live"], _state(f01=7.0e9 + i))
             r = c.post("/state/apply-to-live")
-            seen.append(r.headers.get("HX-Trigger", ""))
-            if _sess(env) is None:
-                break
-        assert _sess(env) is None, (
-            "a merge that never succeeds must not keep the session armed")
-        assert "autoApplyDisarm" in seen[-1]
-        assert sum("autoSyncMerge" in h for h in seen) == \
-            routes_mod._AUTO_MERGE_TRIES, seen
+            assert _sess(env) is not None
+            event = json.loads(r.headers["HX-Trigger"])["autoSyncMerge"]
+            assert event["class"] == "transient"
+            assert event["delay"] == (2, 5, 15, 30, 60)[min(i, 4)]
 
     def test_an_apply_that_lands_refills_the_budget(self, env):
-        # v1.5.1 (r6e): implicit overwrite -> refusal then consent before a landed merge.
-        """The budget counts CONSECUTIVE failures — otherwise a long, healthy
-        session would eventually disarm on its Nth unlucky node write."""
         c = env["client"]
-        _arm(env, pull=True, push=True)
+        _arm(env)
         _edit(env)
-        _write_chip(env["live"], _state(f01=7.7e9))
+        _write_chip(env["live"], _state(t1=9.9e-5))
         c.post("/state/apply-to-live")
         assert _sess(env)["merge_tries"] == 1
-
-        # Resolve the named collision, then a clean flush.
-        refused = c.post("/state/sync", data={"mode": "apply"}).get_json()
-        assert refused["status"] == "collision", refused
-        assert _live_f01(env) == 7.7e9
-        merged = c.post("/state/sync", data={"mode": "apply", "ack_collision": "1"}).get_json()
-        assert merged["status"] == "ok", merged
+        assert c.post("/state/sync", data={"mode": "apply"}).get_json()["status"] == "ok"
         _edit(env, value="5.5e9")
         c.post("/state/apply-to-live")
-        assert _sess(env)["merge_tries"] == 0, (
-            "a landed apply proves the chip is reachable again")
+        assert _sess(env)["merge_tries"] == 0
 
     def test_the_MERGE_itself_refills_the_budget(self, env):
-        """R1, from the review round: this is the one that matters, and the pin
-        above could not see it.
-
-        The budget was cleared only in /state/apply-to-live's tail, while the
-        merge the autoSyncMerge signal asks for goes through the OTHER door
-        (/state/sync?mode=apply). The pin above resolves the conflict and then
-        does an EXTRA clean apply-to-live -- the one path that resets -- so it
-        was satisfied by a door the bench never takes.
-
-        This is the bench loop: edit, a node writes, flush, merge. Nothing
-        else. On the customer's chip that is every 30-60 seconds, and with the
-        budget counting conflicts instead of failures the session disarmed on
-        the fourth node write with all three merges having LANDED.
-        """
         c = env["client"]
-        _arm(env, pull=True, push=True)
-        landed = []
-        for i in range(routes_mod._AUTO_MERGE_TRIES + 2):
-            _edit(env, path="qubits.qA1.T1", value=f"1.{i}e-5")
-            _write_chip(env["live"], _state(f01=7.0e9 + i))   # the node
+        _arm(env)
+        for i in range(6):
+            before = _live_f01(env)
+            value = float(f"6.{i}e9")
+            _edit(env, value=str(value))
+            _write_chip(env["live"], _state(f01=before, t1=(i + 3) * 1e-5))
             r = c.post("/state/apply-to-live")
-            if _sess(env) is None:
-                break
-            assert "autoSyncMerge" in r.headers.get("HX-Trigger", ""), i
-            # what the client does with that signal, and nothing more
+            assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
             m = c.post("/state/sync", data={"mode": "apply"})
-            # v1.5.1 (r6e): node resets edited T1 -> ask before replacing it after the first merge.
-            if i:
-                assert m.get_json()["status"] == "collision", (i, m.get_json())
-                assert json.loads((env["live"] / "state.json").read_text())["qubits"]["qA1"]["T1"] == 2e-5
-                m = c.post("/state/sync", data={"mode": "apply", "ack_collision": "1"})
-            assert m.status_code == 200, (i, m.data[:200])
-            assert (m.get_json() or {}).get("status") == "ok", (i, m.get_json())
-            doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
-            landed.append(doc["qubits"]["qA1"]["T1"])
+            assert m.get_json()["status"] == "ok"
+            assert _live_f01(env) == value
+            assert _sess(env)["merge_tries"] == 0
+            assert not _sess(env).get("merge_retry")
 
-        assert _sess(env) is not None, (
-            "Auto-Sync disarmed after %d merges that all LANDED — the budget is "
-            "counting conflicts, not failures, so the reported bug returns a "
-            "few edits later (values on the chip: %r)" % (len(landed), landed)
-        )
-        assert len(landed) == routes_mod._AUTO_MERGE_TRIES + 2, landed
-        assert _sess(env)["merge_tries"] == 0, _sess(env)
-        # and every one of them really reached the chip
-        assert landed == [float(f"1.{i}e-5") for i in range(len(landed))], landed
 
 
 class TestTheClientPressesTheDoorItIsGiven:
@@ -295,7 +250,7 @@ class TestTheClientPressesTheDoorItIsGiven:
         root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
         py = (root / "routes.py").read_text(encoding="utf-8")
         js = (root / "static" / "auto-apply.js").read_text(encoding="utf-8")
-        for name in ("autoSyncMerge", "autoSyncPulled", "autoSyncRestored"):
+        for name in ("autoSyncMerge", "autoSyncPulled", "autoSyncRestored", "autoSyncRetry"):
             assert '"%s"' % name in py, (
                 "the server no longer emits %s" % name)
             assert "'%s'" % name in js, (
@@ -325,8 +280,8 @@ class TestTheClientPressesTheDoorItIsGiven:
         # the window is the function body, not a character budget (R-f added
         # the keep-applied flag and its comment above the press)
         assert 'window.doStateSync("apply"' in app[m:app.index("function reapply()", m)]
-        i = js.index("addEventListener('autoSyncMerge'")
-        assert "doStateSync('apply'" in js[i:i + 900], js[i:i + 400]
+        assert "window.doStateSync(d.mode || 'apply'" in js
+        assert "d.mode = 'apply'" in js[js.index("addEventListener('autoSyncMerge'"):]
 
 
 class TestItIsOneSessionFlag:
@@ -730,12 +685,8 @@ class TestTheMergeIsPinnedToItsChip:
         at press time is exactly the race this closes."""
         js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
               / "static" / "auto-apply.js").read_text(encoding="utf-8")
-        i = js.index("document.addEventListener('autoSyncMerge'")
-        blk = js[i:i + 700]
-        assert "e.detail && e.detail.chip" in blk, blk[:300]
-        assert "__chipToken" not in blk, (
-            "it reads the page's current chip, which defeats the gate")
-        assert "doStateSync('apply', false, false, chip)" in blk, blk[:400]
+        assert "var d = e.detail || {}; d.mode = 'apply'" in js
+        assert "d.chip || '', { automatic: true }" in js
 
     def test_doStateSync_forwards_the_token(self):
         js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
@@ -844,9 +795,13 @@ class TestAStagedPayloadIsNotMerged:
     def test_it_disarms_honestly_instead(self, env):
         r = self._staged_conflict(env)
         assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
+        event = json.loads(r.headers["HX-Trigger"])["autoApplyDisarm"]
+        assert event["class"] == "permanent" and event["tries"] == 1
         assert _sess(env) is None
         html = r.data.decode()
         assert "Auto-Sync is off" in html, "it did not say the session was off"
+        assert "staged snapshot or wholesale working state" in html
+        assert "auto-apply-off" in html
 
     def test_and_never_claims_to_be_resolving_it(self, env):
         html = self._staged_conflict(env).data.decode()
@@ -974,17 +929,20 @@ class TestAPullAsksOnlyAboutTheFieldTheUserTouched:
             "a non-colliding live change must resolve itself"
         assert not _ctx(env).get("live_conflicts")
 
-    def test_the_same_field_still_asks(self, env):
+    def test_the_same_field_disarms_with_a_named_blocker(self, env):
         # The user edited f_01; a node writes f_01 too. A real collision.
         self._armed_and_edited(env)
         _write_chip(env["live"], _state(f01=7.7e9))
         _ctx(env)["live_diverged"] = True
 
         r = env["client"].post("/auto-sync/pull")
-        assert r.status_code == 204, "a collision must not resolve itself"
+        assert r.status_code == 200, "a collision must not resolve itself"
         assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
         assert _ctx(env)["live_conflicts"] == ["qubits.qA1.f_01"], \
             "and the refusal must NAME what collided"
+
+        assert _sess(env) is None
+        assert "overlap your edits" in r.get_data(as_text=True)
 
     def test_the_signal_names_the_chip(self, env):
         # Same reason docs/187 R2 put a chip on the push-side signal: the
@@ -1015,7 +973,7 @@ class TestAPullAsksOnlyAboutTheFieldTheUserTouched:
 
         r = env["client"].post("/auto-sync/pull", data={
             "dom_dirty": "1", "dom_path": "qubits.qA1.f_01"})
-        assert r.status_code == 204
+        assert r.status_code == 200
         assert _ctx(env)["live_conflicts"] == ["qubits.qA1.f_01"]
 
     def test_unnamed_dom_dirt_is_still_dirt(self, env):
@@ -1056,7 +1014,10 @@ class TestAPullAsksOnlyAboutTheFieldTheUserTouched:
             r = env["client"].post("/auto-sync/pull")
         finally:
             rt._auto_pull_verdict = real
-        assert r.status_code == 204, "an uncomputable verdict must not pull"
+        assert r.status_code == 200
+        event = json.loads(r.headers["HX-Trigger"])["autoSyncRetry"]
+        assert event["class"] == "transient"
+        assert _sess(env) is not None
         assert "autoSyncMergePull" not in (r.headers.get("HX-Trigger") or "")
 
     def test_replace_still_means_replace(self, env):
@@ -1102,35 +1063,35 @@ class TestTheSignalDoesNotWithholdAMergeableePull:
         ctx = _ctx(env)
         with env["app"].app_context():
             assert routes_mod._auto_pull_due(ctx) is True, "the first look is allowed"
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
         assert ctx["live_conflicts"] == ["qubits.qA1.f_01"]
         with env["app"].app_context():
             assert routes_mod._auto_pull_due(ctx) is False,                 "a known, unchanged collision must stop being advertised"
 
-    def test_a_new_live_write_re_arms_the_signal(self, env):
+    def test_a_new_live_write_does_not_rearm_the_signal(self, env):
         # The remembered refusal is only valid while nothing moved. Another
         # write is a new question, and must be asked again.
         self._armed_edited_and_moved(env, same_field=True)
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
         ctx = _ctx(env)
         with env["app"].app_context():
             assert routes_mod._auto_pull_due(ctx) is False
         time.sleep(0.02)
         _write_chip(env["live"], _state(f01=8.8e9))     # they write again
         with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is True
+            assert routes_mod._auto_pull_due(ctx) is False
 
-    def test_a_new_edit_re_arms_it_too(self, env):
+    def test_a_new_edit_does_not_rearm_it_too(self, env):
         self._armed_edited_and_moved(env, same_field=True)
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
         ctx = _ctx(env)
         with env["app"].app_context():
             assert routes_mod._auto_pull_due(ctx) is False
         assert _edit(env, path="qubits.qA1.T1", value="3e-05").status_code == 200
         with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is True
+            assert routes_mod._auto_pull_due(ctx) is False
 
-    def test_undoing_the_colliding_edit_re_arms_the_signal(self, env):
+    def test_undoing_the_colliding_edit_does_not_rearm_the_signal(self, env):
         """Ctrl+Z on the colliding edit leaves nothing to decide.
 
         (I first kept `len(change_log)` in the fingerprint believing undo did
@@ -1140,25 +1101,26 @@ class TestTheSignalDoesNotWithholdAMergeableePull:
         collided.)
         """
         self._armed_edited_and_moved(env, same_field=True)
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
         ctx = _ctx(env)
         with env["app"].app_context():
             assert routes_mod._auto_pull_due(ctx) is False
         assert env["client"].post("/undo").status_code in (200, 204)
         assert not ctx["store"].change_log, "the edit is gone"
         with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is True
+            assert routes_mod._auto_pull_due(ctx) is False
 
     def test_a_resolved_verdict_is_forgotten(self, env):
         # The merge path clears the record. Leaving it behind would let a
         # later, unrelated state be judged by a verdict about an older one.
         self._armed_edited_and_moved(env, same_field=True)
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
         ctx = _ctx(env)
         assert (ctx.get("live_auto_at") or {}).get("conflicts"),             "the refusal was remembered"
 
         time.sleep(0.02)
         _write_chip(env["live"], _state(f01=5.1e9, t1=9.9e-5))  # now agrees with the edit
+        _arm(env, pull=True, push=False)  # explicit one-click way back on
         r = env["client"].post("/auto-sync/pull")
         assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
         # The record SURVIVES now — it carries the merge budget — but it must
@@ -1206,7 +1168,7 @@ class TestTheBannerNamesTheCollision:
         assert _edit(env, path="qubits.qA1.f_01").status_code == 200
         _write_chip(env["live"], _state(f01=7.7e9))
         _ctx(env)["live_diverged"] = True
-        assert env["client"].post("/auto-sync/pull").status_code == 204
+        assert env["client"].post("/auto-sync/pull").status_code == 200
 
         html = env["client"].get("/bulk").get_data(as_text=True)
         # sync-ux 2026-09-25 (user decision: one control + one panel): the status control names it (the banner is gone)
@@ -1225,124 +1187,134 @@ class TestTheBannerNamesTheCollision:
         assert "changed on both sides" not in html
 
 class TestTheMergeSignalHasABudget:
-    """Self-review of docs/195: the pull-side merge signal could loop.
-
-    The push side has carried a budget since docs/187 (`merge_tries`, 3) for
-    exactly this shape. The pull side shipped without one:
-
-      poll -> _auto_pull_due sees dirt and no remembered verdict -> advertise
-      pull -> no collision -> POPS the record, signals autoSyncMergePull, 204
-      client -> presses /state/sync?mode=reapply
-
-    When that press resolves, live_diverged clears and it ends. When it does
-    NOT -- the client's ~2 s latch give-up, a docs/65 staged carve-out, a write
-    error -- nothing was recorded, so the next poll advertises again. Every
-    5 s, for ever, each one taking the shared apply latch. That is the loop the
-    original _auto_pull_due comment was written to prevent.
-    """
-
-    def _armed_non_colliding(self, env):
-        _arm(env, pull=True, push=False, replace=False)
-        assert _edit(env, path="qubits.qA1.f_01").status_code == 200
-        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))   # a DIFFERENT field
-        _ctx(env)["live_diverged"] = True
-
-    def test_an_unresolved_merge_stops_signalling(self, env):
-        self._armed_non_colliding(env)
+    def test_pull_signal_is_backed_off_without_disarming(self, env, monkeypatch):
+        _arm(env, pull=True, push=False)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
         ctx = _ctx(env)
-        signals = 0
-        for _ in range(8):
-            with env["app"].app_context():
-                if not routes_mod._auto_pull_due(ctx):
-                    break
+        ctx["live_diverged"] = True
+        now = [1000.0]
+        original_time = routes_mod.time
+        class Clock:
+            def monotonic(self):
+                return now[0]
+            def __getattr__(self, key):
+                return getattr(original_time, key)
+        monkeypatch.setattr(routes_mod, "time", Clock())
+        for n, delay in enumerate((2, 5, 15, 30, 60, 60), 1):
             r = env["client"].post("/auto-sync/pull")
-            if "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""):
-                signals += 1
-            # the client never resolves it: live stays diverged, edits stay
-            ctx["live_diverged"] = True
-        assert signals <= 3, (
-            f"the same unresolved state signalled a merge {signals} times; "
-            "the push side stops at 3 (docs/187) and this must too")
-
-    def test_the_poll_stops_ADVERTISING_once_exhausted(self, env):
-        """The gate and the door guard different harms, so both are pinned.
-
-        The door stops the SIGNAL. The poll gate stops the client POSTing at
-        all — and that is the one the original `_auto_pull_due` comment was
-        written for: every pull takes `window._applyInFlight`, which also gates
-        the manual Apply buttons, so a pull firing every 5 s for ever makes
-        those buttons read as dead clicks.
-        """
-        self._armed_non_colliding(env)
-        ctx = _ctx(env)
-        for _ in range(routes_mod._AUTO_MERGE_TRIES + 1):
-            env["client"].post("/auto-sync/pull")
-            ctx["live_diverged"] = True               # never resolves
-        with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is False, (
-                "once the budget is spent the poll must stop asking the client "
-                "to press at all, not merely stop signalling")
-
-    def test_the_door_holds_the_budget_on_its_own(self, env):
-        """The poll and the pull are SEPARATE requests.
-
-        Every other test here consults `_auto_pull_due` first, which shadows
-        the route's own budget — the sweep showed both of its branches passing
-        under mutation for exactly that reason. A page that keeps posting the
-        pull without re-asking (a stale tab, a retry) reaches the door alone,
-        so the door has to hold the line by itself.
-        """
-        self._armed_non_colliding(env)
-        ctx = _ctx(env)
-        signals = 0
-        for _ in range(8):
-            r = env["client"].post("/auto-sync/pull")      # no due-check
-            if "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""):
-                signals += 1
-            ctx["live_diverged"] = True                    # never resolves
-        assert signals <= 3, (
-            f"the door signalled {signals} times for one unresolved state "
-            "without the poll gate in front of it")
-
-    def test_the_door_gives_a_new_situation_its_own_allowance(self, env):
-        # Same path, but the situation genuinely changes half way: the budget
-        # is per-situation, so the second one must get its own attempts.
-        self._armed_non_colliding(env)
-        ctx = _ctx(env)
-        for _ in range(5):
-            env["client"].post("/auto-sync/pull")
-            ctx["live_diverged"] = True
-        time.sleep(0.02)
-        _write_chip(env["live"], _state(f01=5.0e9, t1=7.7e-5))   # a NEW write
-        ctx["live_diverged"] = True
-        r = env["client"].post("/auto-sync/pull")
-        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or ""),             "a new divergence starts its own count, even at the door"
-
-    def test_a_resolved_merge_leaves_the_budget_alone(self, env):
-        # The ordinary case must not be rationed: once it resolves, the next
-        # genuine divergence gets its own full allowance.
-        self._armed_non_colliding(env)
-        ctx = _ctx(env)
-        r = env["client"].post("/auto-sync/pull")
-        assert "autoSyncMergePull" in (r.headers.get("HX-Trigger") or "")
-        ctx["live_diverged"] = False          # the client resolved it
-        with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is False
-
-    def test_a_new_live_write_earns_a_fresh_allowance(self, env):
-        # A budget must be per-situation, not per-session: a NEW divergence is
-        # a new question and deserves its own attempts.
-        self._armed_non_colliding(env)
-        ctx = _ctx(env)
-        for _ in range(6):
+            event = json.loads(r.headers["HX-Trigger"])["autoSyncMergePull"]
+            assert event["class"] == "transient"
+            assert event["delay"] == delay
+            assert event["mode"] == "reapply"
+            assert _sess(env) is not None
             with env["app"].app_context():
-                if not routes_mod._auto_pull_due(ctx):
-                    break
-            env["client"].post("/auto-sync/pull")
-            ctx["live_diverged"] = True
-        time.sleep(0.02)
-        _write_chip(env["live"], _state(f01=5.0e9, t1=8.8e-5))   # they write again
-        ctx["live_diverged"] = True
-        with env["app"].app_context():
-            assert routes_mod._auto_pull_due(ctx) is True,                 "a new divergence must be allowed to try again"
+                assert not routes_mod._auto_pull_due(ctx)
+            blocked = env["client"].post("/auto-sync/pull")
+            assert "autoSyncMergePull" not in blocked.headers.get("HX-Trigger", "")
+            now[0] += delay
+            with env["app"].app_context():
+                assert routes_mod._auto_pull_due(ctx)
 
+    def test_new_live_write_does_not_shorten_backoff(self, env):
+        _arm(env, pull=True, push=False)
+        _edit(env)
+        _write_chip(env["live"], _state(f01=5.0e9, t1=9.9e-5))
+        ctx = _ctx(env)
+        ctx["live_diverged"] = True
+        env["client"].post("/auto-sync/pull")
+        _write_chip(env["live"], _state(f01=5.0e9, t1=7.7e-5))
+        with env["app"].app_context():
+            assert not routes_mod._auto_pull_due(ctx)
+        assert _sess(env) is not None
+
+
+class TestFailureKinds:
+    def test_five_locks_then_landing(self, env, monkeypatch):
+        _arm(env)
+        _edit(env)
+        original = routes_mod.working_copy.apply_to_live
+        def locked(*a, **kw):
+            raise OSError("[WinError 32] sharing violation on replace")
+        monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", locked)
+        for n in range(1, 6):
+            r = env["client"].post("/state/sync", data={"mode": "apply"})
+            assert _sess(env) is not None
+            assert _sess(env)["merge_tries"] == n
+            event = json.loads(r.headers["HX-Trigger"])["autoSyncRetry"]
+            assert event["class"] == "transient"
+            assert f"retrying ({n})" in r.get_json()["tray_html"]
+        monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", original)
+        _sess(env)["unknown_tries"] = 3
+        r = env["client"].post("/state/sync", data={"mode": "apply"})
+        assert r.get_json()["status"] == "ok"
+        assert _sess(env)["merge_tries"] == 0
+        assert not _sess(env).get("merge_retry")
+        assert not _sess(env).get("unknown_tries")
+
+    def test_unknown_cap(self, env, monkeypatch):
+        _arm(env)
+        _edit(env)
+        def broken(*a, **kw):
+            raise RuntimeError("unexpected synthetic failure")
+        monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", broken)
+        for n in range(1, 11):
+            r = env["client"].post("/state/sync", data={"mode": "apply"})
+            assert (_sess(env) is None) == (n == 10)
+        assert "kept failing:" in r.get_json()["tray_html"]
+        assert "unexpected synthetic failure" in r.get_json()["tray_html"]
+
+
+@pytest.mark.parametrize("reason,code,expected", [
+    ("[WinError 32] replace", "", "transient"),
+    ("[WinError 33] replace", "", "transient"),
+    ("[WinError 5] replace", "", "transient"),
+    (routes_mod.safe_io.LiveFileError("retries exhausted"), "", "transient"),
+    ("mid-save", "torn_live", "transient"),
+    ("moved again", "stale_live", "transient"),
+    ("still writing", "live_press", "transient"),
+    ("staged snapshot", "staged", "permanent"),
+    (PermissionError("denied"), "", "permanent"),
+    ("read-only folder", "readonly", "permanent"),
+    ("wrong chip", "chip_mismatch", "permanent"),
+    ("archive", "archive", "permanent"),
+    ("another live window", "foreign_owner", "permanent"),
+    ("choose values", "collision", "permanent"),
+    ("synthetic error", "", "unknown"),
+])
+def test_failure_classification(reason, code, expected):
+    from quam_state_manager.core.merge_policy import classify_failure
+    assert classify_failure(reason, code=code) == expected
+
+
+def test_automatic_collision_disarms_without_asking(env):
+    _arm(env)
+    _edit(env)
+    _write_chip(env["live"], _state(f01=7.7e9))
+    r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
+    assert _sess(env) is None
+    body = r.get_json()
+    assert body["merge_failure"]["class"] == "permanent"
+    assert "choose which values" in body["merge_failure"]["reason"]
+    assert _live_f01(env) == 7.7e9
+
+
+def test_automatic_retry_after_disarm_cannot_write(env, monkeypatch):
+    _edit(env)
+    called = []
+    monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", lambda *a, **kw: called.append(True))
+    r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
+    assert r.status_code == 409
+    assert r.get_json()["status"] == "stopped"
+    assert not called
+
+
+@pytest.mark.parametrize("winerror,expected", [(None, "permanent"), (5, "transient"), (32, "transient")])
+def test_safe_io_preserves_the_os_denial(winerror, expected):
+    from quam_state_manager.core.merge_policy import classify_failure
+    cause = PermissionError("synthetic folder denial")
+    if winerror is not None:
+        cause.winerror = winerror
+    wrapped = routes_mod.safe_io.LiveFileError("replace retries exhausted")
+    wrapped.__cause__ = cause
+    assert classify_failure(wrapped) == expected
