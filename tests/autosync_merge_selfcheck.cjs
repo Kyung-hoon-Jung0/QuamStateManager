@@ -295,6 +295,18 @@ function fire(w, name, detail) {
           /4 unapplied edits/.test(m) && !/other unapplied work/.test(m), m);
   }
 
+  {
+    const { w, state, clock } = world();
+    w.confirm = () => { throw new Error('automatic restoration must never confirm'); };
+    w.prompt = () => { throw new Error('automatic restoration must never prompt'); };
+    fire(w, 'autoSyncRestored', { count: 1 });
+    await clock.advance(20);
+    check('I1 restoration sends exactly one non-blocking notice', state.toasts.length === 1);
+    const m = (state.toasts[0] || {}).m || '';
+    check('I2 notice states the reverted count and automatic restoration',
+          /1 value you applied/.test(m) && /Auto-Sync restored it/.test(m), m);
+  }
+
   if (failures) {
     console.error(failures + ' FAILED of ' + asserts);
     process.exitCode = 1;

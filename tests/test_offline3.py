@@ -9,8 +9,9 @@ from tests.test_sync_review_applied import env, _apply_t1, _outside, _st, _live
 from quam_state_manager.core import agent_plans, approvals
 
 
-@pytest.mark.parametrize("outside,lost", [(2e-5, False), (3.3e-5, True)])
-def test_latest_apply_replaced_value(env, outside, lost):
+@pytest.mark.parametrize("outside,lost", [(2e-5, True), (3.3e-5, True),
+                                         (4.4e-5, False), (5.5e-5, False)])
+def test_applied_predecessor_chain(env, outside, lost):
     c = env["client"]
     _apply_t1(env)
     c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
@@ -20,6 +21,80 @@ def test_latest_apply_replaced_value(env, outside, lost):
     assert ("1 value you applied" in html) == lost
     c.post("/state/sync?mode=apply&keep_applied=1")
     assert _live(env)["T1"] == (4.4e-5 if lost else outside)
+
+
+def test_undo_limits_applied_predecessor_chain(env):
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    assert c.post("/undo").status_code == 200
+    with env["app"].test_request_context():
+        held = routes._applied_values_held(routes._active_ctx())
+        assert held["qubits.q1.T1"] == 3.3e-5
+        assert held.old["qubits.q1.T1"] == [2e-5]
+    _outside(env, _st())
+    assert "1 value you applied" in c.get("/state/review").get_data(as_text=True)
+    c.post("/state/sync?mode=apply&keep_applied=1")
+    assert _live(env)["T1"] == 3.3e-5
+
+
+@pytest.mark.parametrize("door", ["pull", "push"])
+def test_autosync_restores_applied_chain_without_asking(env, door):
+    from tests.test_autosync_merge import _arm
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _arm(env, pull=True, push=True)
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    if door == "push":
+        c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey", "value": "2.2e-5"})
+    _outside(env, _st(f01=5.2e9))
+    if door == "push":
+        r = c.post("/state/apply-to-live")
+        assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
+        r = c.post("/state/sync?mode=apply")
+        assert r.get_json()["status"] == "ok", r.get_json()
+    else:
+        r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+    assert r.status_code == 200
+    assert _live(env)["T1"] == 4.4e-5
+    assert _live(env)["f_01"] == 5.2e9
+    if door == "push":
+        assert _live(env)["T2ramsey"] == 2.2e-5
+    with env["app"].test_request_context():
+        ctx = routes._active_ctx()
+        assert ctx["auto_apply"]["pull"]
+        assert not ctx["auto_apply"].get("hold")
+        assert ctx["auto_apply"].get("merge_tries", 0) == 0
+    assert json.loads(r.headers["HX-Trigger"])["autoSyncRestored"]["count"] == 1
+    if door == "push":
+        assert r.get_json()["auto_restored_count"] == 1
+    tray = c.get("/state/tray").get_data(as_text=True)
+    assert "conflict-tray" not in tray
+    assert c.get("/state/drift").get_json()["sync"]["state"] == "synced"
+
+
+def test_push_only_disarms_on_applied_loss_without_prompt(env):
+    from tests.test_autosync_merge import _arm
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _arm(env, pull=False, push=True)
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey", "value": "2.2e-5"})
+    _outside(env, _st(f01=5.2e9))
+    assert c.post("/auto-sync/pull").status_code == 204
+    r = c.post("/state/apply-to-live")
+    triggers = json.loads(r.headers["HX-Trigger"])
+    assert "autoApplyDisarm" in triggers and "autoSyncMerge" not in triggers
+    with env["app"].test_request_context():
+        assert routes._active_ctx().get("auto_apply") is None
+    assert _live(env)["T1"] == 2e-5 and _live(env)["f_01"] == 5.2e9
+    assert "1 value you applied" in c.get("/state/review").get_data(as_text=True)
 
 
 @pytest.mark.parametrize("status,waiting,applied", [("approved", 0, 2), ("rejected", 0, 0), ("pending", 1, 0)])
@@ -53,11 +128,11 @@ def test_take_live_omits_zero_edits(env):
 
 def test_loss_note_keeps_paths_in_tooltip(env):
     import re
-    from tests.test_autosync_merge import _arm
-    from tests.test_autosync_lost_applied import _outside_save_and_pull
-    _arm(env, pull=True, push=False)
-    _apply_t1(env)
-    assert _outside_save_and_pull(env, _st(f01=5.2e9)).status_code == 200
+    from quam_state_manager.web import routes
+    # The note still describes unresolved losses; armed pulls now restore them.
+    with env["app"].test_request_context():
+        routes._active_ctx()["_lost_unacked"] = [
+            {"path": "qubits.q1.T1", "applied": 3.3e-5, "now": 2e-5}]
     html = env["client"].get("/state/tray").get_data(as_text=True)
     note = re.search(r'<span class="sync-lost-note.*?</span>', html, re.S).group(0)
     title, text = note.split('">', 1)

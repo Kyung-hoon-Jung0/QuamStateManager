@@ -64,6 +64,28 @@ rather than a person.
 
 ## The fix
 
+### Applied-value restoration (user decision, 2026-11-05)
+
+If the user applies A -> B -> C and an outside memory save writes A or B,
+that is a loss of the applied value C. Any predecessor in that path's applied
+journal chain up to the cursor counts; live C is in sync, and a value never
+replaced by an apply is a newer outside value. After undoing C, the chain
+ends at B and its only predecessor is A.
+
+With Auto-Sync pull armed, both the push-time merge and the pull tick take
+the outside changes and restore C through the default keep-applied merge.
+They ask no question, leave no conflict tray or hold, and keep the session
+armed. One short non-blocking notice reports the restoration. A landed
+restoration refills the consecutive-failure merge budget like every other
+landed merge. This also applies to a pull-only session restoring already
+applied values; it does not flush unrelated pending edits on an ordinary pull.
+
+With Auto-Sync off the loss appears in the sync panel for the user to choose.
+Push-only retains docs/117: no automatic pull; a stale push disarms and leaves
+the edits recoverable in the panel, without opening a prompt or modal.
+
+Pinned in `tests/test_offline3.py` and `tests/autosync_merge_selfcheck.cjs`.
+
 A session that armed pull has already granted SM permission to take live
 changes. A push that finds live moved is exactly what pull exists to resolve.
 So that case **merges** — pull the live change, re-apply the pending edits on

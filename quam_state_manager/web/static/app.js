@@ -5080,6 +5080,11 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
             }
+            if (data.status === "ok" && data.auto_restored_count) {
+                document.dispatchEvent(new CustomEvent('autoSyncRestored', {
+                    detail: { count: data.auto_restored_count }
+                }));
+            }
             // Swap whatever tray the server returned — the synced tray, or (on a
             // fresh conflict during a one-click apply) the conflict tray.
             // _bulkSelfEdit suppresses the /bulk quam:state-changed full re-GET:

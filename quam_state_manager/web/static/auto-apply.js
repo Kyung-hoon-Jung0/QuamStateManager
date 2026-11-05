@@ -345,6 +345,12 @@
               'warning');
     });
 
+    document.addEventListener('autoSyncRestored', function (e) {
+        var n = Number((e.detail || {}).count) || 0;
+        if (n) toast('An outside save reverted ' + n + ' value' + (n === 1 ? '' : 's')
+            + ' you applied; Auto-Sync restored ' + (n === 1 ? 'it.' : 'them.'), 'info');
+    });
+
     function sayLost(list) {
         var lost = Array.isArray(list) ? list : [];
         if (!lost.length) return false;

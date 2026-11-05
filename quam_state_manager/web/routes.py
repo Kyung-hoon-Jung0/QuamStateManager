@@ -12055,7 +12055,7 @@ def _applied_values_held(ctx) -> dict:
                                      for k, v in v0.items())
                     else:
                         newest[p0] = v0
-                        olds[p0] = [o0]
+                        olds.setdefault(p0, []).append(o0)
     if not newest:
         return {}
     held = _HeldApplied()
@@ -12071,8 +12071,8 @@ def _applied_values_held(ctx) -> dict:
 
 
 class _HeldApplied(dict):
-    """``{path: value SM applied}`` plus ``.old`` = ``{path: [the value the latest
-    apply replaced]}`` (``_DOT_MISSING`` for a created key)."""
+    """``{path: value SM applied}`` plus ``.old`` = predecessors in the applied
+    journal chain up to the cursor (``_DOT_MISSING`` for a created key)."""
 
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
@@ -12080,9 +12080,9 @@ class _HeldApplied(dict):
 
 
 def _applied_value_lost(held, path: str, got) -> bool:
-    """An applied value is lost only if live is missing or equals the value
-    replaced by this chip's latest apply of that path; older replaced values
-    are outside values, not losses."""
+    """An applied value is lost if live is missing or equals ANY predecessor
+    in this path's applied journal chain up to the cursor; the current applied
+    value is in sync, and a never-replaced outside value is not a loss."""
     v = held.get(path, _DOT_MISSING)
     if got is not _DOT_MISSING and got == v:
         return False
@@ -31499,6 +31499,43 @@ def auto_sync_pull():
     dom_dirty = request.values.get("dom_dirty") in ("1", "true")
     dom_paths = tuple(p for p in request.values.getlist("dom_path") if p)
 
+    # Pull permission includes restoring values an outside memory save reverted.
+    # Use the same pull-and-keep-applied door as the default manual merge.
+    # Decide before the ordinary pull consumes the journal's held values.
+    # Only a clean working copy takes this door: unapplied edits, saved work
+    # or a stash keep the ordinary per-field pull below (docs/187).
+    if (not dom_dirty and not ctx.get("working_dirty")
+            and not _pending_reapply(ctx)
+            and not _capture_change_log_as_updates(ctx["store"])):
+        held = _applied_values_held(ctx)
+        if held:
+            try:
+                pair = working_copy.read_live_shared(ctx["working_copy"])
+                lost = any(_applied_value_lost(held, p, _dot_get(
+                    pair.wiring if p.startswith("wiring.") else pair.state,
+                    p.removeprefix("wiring.") if p.startswith("wiring.") else p))
+                    for p in held)
+            except (OSError, ValueError, safe_io.LiveFileError):
+                lost = False  # ordinary pull retains its read-failure handling
+            if lost:
+                before = _leaf_snapshot(ctx, lazy=True)
+                merged = make_response(state_sync(_auto_mode="apply"))
+                body = merged.get_json(silent=True) or {}
+                if body.get("status") == "ok":
+                    extra = json.loads(merged.headers.get("HX-Trigger", "{}"))
+                    with ctx["store"]._lock:
+                        seq = int(ctx.get("_pull_seq") or 0) + 1
+                        ctx["_pull_seq"] = seq
+                        ctx["_pull_lost"] = []
+                        hist = list(ctx.get("_pull_lost_hist") or ())
+                        ctx["_pull_lost_hist"] = (hist + [(seq, [])])[-_PULL_LOST_HIST:]
+                    extra["autoSyncPulled"] = {"lost": [], "replaced": False,
+                                              "pull_seq": f"{ctx.get('path', '')}#{seq}"}
+                    resp = make_response(_tray_html())
+                    resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, before, extra=extra)
+                    return resp
+                return merged
+
     # Per-field, not whole-file. Arming Auto-Sync means "adopt what the chip
     # says"; it cannot have meant "and ask me every time anything anywhere
     # moves". So a live change that touches NONE of the user's edits is merged
@@ -33220,7 +33257,7 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
 
 @bp.route("/state/sync", methods=["POST"])
 @_live_write_critical
-def state_sync():
+def state_sync(*, _auto_mode=None):
     """Pull the live state files into the working copy (manual sync).
 
     The ``mode`` form/query param decides what happens to the user's pending
@@ -33241,7 +33278,9 @@ def state_sync():
     ctx = _pin_request_ctx(_active_ctx())   # R3 C1: this press's chip
     if not ctx or ctx.get("type") != "quam":
         return jsonify({"status": "error", "message": "No state loaded"}), 400
-    mode = request.values.get("mode", "discard")
+    mode = _auto_mode or request.values.get("mode", "discard")
+    _auto_restore = bool((_auto_sync_state(ctx) or {}).get("pull"))
+    _restored_applied = []
     if mode in ("apply", "reapply") and _auto_apply_state(ctx):
         # W2-1: the control's "Apply N" presses THIS door (doStateSync), not
         # /state/apply-to-live -- a person's Apply releases the hold here too
@@ -33480,7 +33519,7 @@ def state_sync():
             # removed are re-applied over the pulled chip like edits, so the
             # merge keeps BOTH the run's values and the person's
             _keep_applied = (mode == "apply"
-                             and request.values.get("keep_applied") == "1")
+                             and (request.values.get("keep_applied") == "1" or _auto_restore))
             _held_applied = _applied_values_held(ctx) if _keep_applied else {}
             _sync_point_before = working_copy.sync_point(wc)
             _pulled = working_copy.sync_from_live(wc)
@@ -33504,7 +33543,25 @@ def state_sync():
                     if _got is _DOT_MISSING:
                         _got = _dot_get(_pulled[1], _p)
                     if _applied_value_lost(_held_applied, _p, _got):
-                        pending[_p] = _tagged("set", _v, "keep-applied")
+                        if _got is _DOT_MISSING:
+                            # the outside save dropped the key, maybe with its
+                            # parents: re-create from the first missing ancestor
+                            _wire = _p.startswith("wiring.")
+                            _doc = _pulled[1] if _wire else _pulled[0]
+                            _rel = _p.removeprefix("wiring.") if _wire else _p
+                            _parts = _rel.split(".")
+                            _cut = len(_parts) - 1
+                            while _cut > 0 and _dot_get(_doc, ".".join(_parts[:_cut])) is _DOT_MISSING:
+                                _cut -= 1
+                            _sub = _v
+                            for _k in reversed(_parts[_cut + 1:]):
+                                _sub = {_k: _sub}
+                            _cp = ("wiring." if _wire else "") + ".".join(_parts[:_cut + 1])
+                            if _cp not in pending:
+                                pending[_cp] = _tagged("create", _sub, "keep-applied")
+                        else:
+                            pending[_p] = _tagged("set", _v, "keep-applied")
+                        _restored_applied.append(_p)
                 if _use_live and mode in ("apply", "reapply"):
                     pending = {k: v for k, v in pending.items()
                                if not any(k == p or k.startswith(p + ".") for p in _use_live)}
@@ -33593,8 +33650,18 @@ def state_sync():
         _clear_reapply(ctx)
         # w7/livewrite: the patch (a response detail) is computed after the
         # live write, not before it -- nothing in between touches the store
-        return _sync_pull_apply_to_live(ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
-                                        pulled_other_changes=pulled_other_changes)
+        resp = make_response(_sync_pull_apply_to_live(
+            ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
+            pulled_other_changes=pulled_other_changes))
+        if (_auto_restore and _restored_applied
+                and (resp.get_json(silent=True) or {}).get("status") == "ok"):
+            triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))
+            triggers["autoSyncRestored"] = {"count": len(_restored_applied)}
+            resp.headers["HX-Trigger"] = json.dumps(triggers)
+            body = resp.get_json()
+            body["auto_restored_count"] = len(_restored_applied)
+            resp.set_data(json.dumps(body))
+        return resp
 
     # reapply / discard: the pull consumed the stash; edits (if any) are now
     # pending in the change log (reapply) or intentionally dropped (discard).
