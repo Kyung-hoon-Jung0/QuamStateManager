@@ -1022,63 +1022,64 @@ def _live_write_critical(view):
 #: once the live write is decided. An undo/redo arriving in that window saw an
 #: empty log and walked the journal, undoing an OLDER action while the newest
 #: one stayed in effect. Undo and redo wait here for the press to finish.
-_PRESS_CV = threading.Condition()
-_PRESS_INFLIGHT: dict[int, dict[int, int]] = {}   # id(ctx) -> {thread id: depth}
-_PRESS_WAIT_S = 60.0
+_PRESS_WAIT_S = 10.0
 
 
-def _press_ctx_key():
-    try:
-        ctx = _active_ctx()
-    except Exception:  # noqa: BLE001 -- no context: nothing to serialise with
+def _press_busy_refusal(ctx, verb: str = "undone", timeout: float = _PRESS_WAIT_S):
+    """Wait a bounded time; never walk older history while a write is in flight."""
+    if _wait_for_presses(ctx, timeout=timeout):
         return None
-    return id(ctx) if ctx else None
+    return _press_still_writing(verb)
 
 
-def _press_busy_refusal(ctx, verb: str = "undone"):
-    """Undo/redo wait for an in-flight push to the chip; a push that never ends
-    is answered 409 rather than undoing the wrong action."""
-    if _wait_for_presses(ctx):
-        return None
+def _press_still_writing(verb):
     return render_template(
         "_status.html", level="warning",
-        message=f"Nothing {verb}: the chip is still being written. Press again in a moment."), 409
+        message=f"Nothing {verb}: still writing, press again."), 409
 
 
 def _journal_press(view):
-    """Mark the view as a live-write press on the active context while it runs."""
+    """Mark the captured/pinned chip through save, write and journal completion."""
     @functools.wraps(view)
     def wrapped(*a, **k):
-        key = _press_ctx_key()
-        if key is None:
+        # Helpers receive their captured ctx; views pin BEFORE registering.
+        captured = a[0] if a and isinstance(a[0], dict) else k.get("ctx")
+        ctx = _pin_request_ctx(captured if captured is not None else _active_ctx())
+        with working_copy.live_press.mark(ctx.get("working_copy") if ctx else None):
             return view(*a, **k)
-        tid = threading.get_ident()
-        with _PRESS_CV:
-            per = _PRESS_INFLIGHT.setdefault(key, {})
-            per[tid] = per.get(tid, 0) + 1
-        try:
-            return view(*a, **k)
-        finally:
-            with _PRESS_CV:
-                per = _PRESS_INFLIGHT.get(key, {})
-                per[tid] = per.get(tid, 1) - 1
-                if per[tid] <= 0:
-                    per.pop(tid, None)
-                if not per:
-                    _PRESS_INFLIGHT.pop(key, None)
-                _PRESS_CV.notify_all()
     return wrapped
 
 
 def _wait_for_presses(ctx, timeout: float = _PRESS_WAIT_S) -> bool:
-    """Block until no OTHER thread is pushing *ctx* to the chip. False on timeout."""
-    if not ctx:
-        return True
-    key, tid = id(ctx), threading.get_ident()
-    with _PRESS_CV:
-        return _PRESS_CV.wait_for(
-            lambda: not any(t != tid for t in _PRESS_INFLIGHT.get(key, {})),
-            timeout=timeout)
+    return working_copy.live_press.wait(ctx.get("working_copy") if ctx else None, timeout)
+
+
+def _journal_ready_refusal(ctx, verb="undone"):
+    """Read both tiers between quiet checks; retry if a press crossed the read.
+
+    A writer can start after the first wait or finish between journal and log
+    reads. Its revision forces another read, even when both logs were empty.
+    All retries share one ten-second budget.
+    """
+    deadline = time.monotonic() + _PRESS_WAIT_S
+    while True:
+        busy = _press_busy_refusal(ctx, verb, max(0, deadline - time.monotonic()))
+        if busy is not None:
+            return busy
+        revision = working_copy.live_press.revision()
+        _journal_sync(ctx)
+        store = ctx["store"]
+        with store._lock:
+            pending = tuple(store.change_log)
+        busy = _press_busy_refusal(ctx, verb, max(0, deadline - time.monotonic()))
+        if busy is not None:
+            return busy
+        with store._lock:
+            if (revision == working_copy.live_press.revision()
+                    and pending == tuple(store.change_log)):
+                return None
+        if time.monotonic() >= deadline:
+            return _press_still_writing(verb)
 
 
 def _store_uid(store) -> int:
@@ -19434,6 +19435,7 @@ def _restore_failure(message: str, code: str):
 
 
 @bp.route("/state-history/<timestamp>/restore-live", methods=["POST"])
+@_journal_press
 def state_history_restore_live(timestamp: str):
     """Mode 2 (gated): replace the LIVE chip with a snapshot in one step.
 
@@ -29675,10 +29677,9 @@ def undo():
     guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
     if guard is not None:
         return guard
-    busy = _press_busy_refusal(ctx)
+    busy = _journal_ready_refusal(ctx)
     if busy is not None:
         return busy
-    _journal_sync(ctx)      # docs/160 C: another window may have written the journal
 
     # docs/190 F06/F07 (stress 2026-09-16): two windows share ONE change log,
     # and Ctrl+Z pops its top entry whoever pressed -- a lab-mate's edit was
@@ -30248,6 +30249,7 @@ def _rollback_walk_step(ctx, store, modifier, staged: list) -> bool:
         return False
 
 
+@_journal_press
 def _flush_walk_step_live(ctx, gid: str | None = None, hub: dict | None = None) -> dict:
     """docs/160: the ONE door, pressed for a walk step (``walk=True``, which
     leaves ↺ Revert last apply pointing at the APPLY the user is thinking of
@@ -30569,9 +30571,6 @@ def redo():
     guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
     if guard is not None:
         return guard
-    busy = _press_busy_refusal(ctx, "redone")
-    if busy is not None:
-        return busy
     if request.headers.get("X-SM-Agent"):
         # docs/246: redo un-stages a person's journal step or walks the
         # applied history FORWARD onto the live chip -- a person's key. An
@@ -30579,7 +30578,9 @@ def redo():
         return jsonify(ok=False, refused="redo",
                        message="an agent never redoes; stage the value again with "
                                "state_edit"), 409
-    _journal_sync(ctx)      # docs/160 C
+    busy = _journal_ready_refusal(ctx, "redone")
+    if busy is not None:
+        return busy
 
     top_gid = store.change_log[-1].group_id if store.change_log else None
     if isinstance(top_gid, str) and top_gid.startswith(undo_journal.GID_PREFIX):
@@ -33842,6 +33843,7 @@ def _crash_token(store) -> str:
     return f"{serial}:{seq}"
 
 
+@_journal_press
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False,
                              hub: dict | None = None):
@@ -46113,6 +46115,7 @@ def _replaced_edits_note(entries: list, saved_unapplied: bool) -> str:
 
 
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])
+@_journal_press
 def dataset_load_state(uid):
     """Bring a run's frozen quam_state INTO the open chip (r11 feedback).
 

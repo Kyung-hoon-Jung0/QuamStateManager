@@ -540,6 +540,10 @@ def run_regenerate(
     env_fields = _source_class_env_view(
         python_path, old_state, instance_path, _probe_once)
 
+    # The chosen build version is metadata owned by this rebuild. Carrying
+    # the source's old value would make a later reconstruct select that QOP.
+    if spec.get("qop_version"):
+        protect = (protect or set()) | {"extras.qop_version"}
     result = regen_merge.merge_states(old_state, new_state,
                                       class_schemas=class_schemas,
                                       protect_paths=protect,

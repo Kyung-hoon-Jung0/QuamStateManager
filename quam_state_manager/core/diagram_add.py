@@ -515,6 +515,35 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
     if _num(drive_rf) is None:
         return {"error": "Give the drive frequency in Hz."}
     tpl = d["template"]
+    # Refuse custom port-bearing fields before pruning/renaming can hide them.
+    # Only these standard endpoints have a defined allocation/sharing policy.
+    for base, node in [(("qubits", tpl), qs[tpl]),
+                       (("wiring", "qubits", tpl),
+                        ((merged.get("wiring") or {}).get("qubits") or {}).get(tpl, {}))]:
+        refs = []
+        _pointers(node, base, refs)
+        for path, ptr in refs:
+            target = _abs_target(ptr, path)
+            seen = set()
+            while target and target not in seen:
+                if target[0] == "ports":
+                    if path[len(base):] not in {
+                            ("xy", "opx_output"), ("z", "opx_output"),
+                            ("resonator", "opx_output"), ("resonator", "opx_input"),
+                            ("rr", "opx_output"), ("rr", "opx_input")}:
+                        return {"error": f"Cannot copy port pointer at {'.'.join(path)}: "
+                                         "no allocation rule for this field."}
+                    break
+                seen.add(target)
+                value = merged
+                try:
+                    for segment in target:
+                        value = value[int(segment)] if isinstance(value, list) else value[segment]
+                except (KeyError, TypeError, IndexError, ValueError):
+                    break
+                if not is_pointer(value):
+                    break
+                target = _abs_target(value, target)
     con, fem, pid = drive[0], int(drive[1]), int(drive[2])
     cands = drive_candidates(merged, inv, drive_rf, if_hz=d["if_hz"],
                              prefer_band=d["band"], limit=10 ** 6)
@@ -542,6 +571,10 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
     if "grid_location" in q:
         q["grid_location"] = d["grid"]
     xy = q.get("xy")
+    for line in ("xy", "z"):
+        channel = q.get(line)
+        if isinstance(channel, dict) and "opx_output" in channel:
+            channel["opx_output"] = f"#/wiring/qubits/{name}/{line}/opx_output"
     if isinstance(xy, dict) and _num(xy.get("RF_frequency")) is not None:
         xy["RF_frequency"] = drive_rf
     rr = q.get("resonator")
@@ -607,9 +640,10 @@ def _with_parents(merged: dict, creates: list) -> list:
     """A create whose parent dict is missing (a FEM no port was declared on)
     becomes a create of the first missing ancestor holding the subtree."""
     out = []
+    planned = copy.deepcopy(merged)
     for path, val in creates:
         keys = path.split(".")
-        node: Any = merged
+        node: Any = planned
         i = 0
         while i < len(keys) - 1 and isinstance(node, dict) and keys[i] in node:
             node = node[keys[i]]
@@ -618,7 +652,22 @@ def _with_parents(merged: dict, creates: list) -> list:
             for k in reversed(keys[i + 1:]):
                 val = {k: val}
             path = ".".join(keys[:i + 1])
-        out.append((path, val))
+        # Fold siblings into the first newly-created ancestor. A modifier
+        # cannot create the same missing operations/ports dict twice.
+        ancestor = next(((p, v) for p, v in out if path.startswith(p + ".")), None)
+        if ancestor:
+            parent_path, parent_value = ancestor
+            tail = path[len(parent_path) + 1:].split(".")
+            dest = parent_value
+            for key in tail[:-1]:
+                dest = dest.setdefault(key, {})
+            dest[tail[-1]] = copy.deepcopy(val)
+        else:
+            out.append((path, copy.deepcopy(val)))
+        dest = planned
+        for key in path.split(".")[:-1]:
+            dest = dest[key]
+        dest[path.split(".")[-1]] = copy.deepcopy(val)
     return out
 
 
@@ -716,6 +765,7 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
                 return {"error": "No LF output port on this chip to shape a new one on."}
             creates.append((f"ports.analog_outputs.{con}.{fem}.{pid}", port))
     have = set()
+    collisions = []
 
     def exists(path: tuple) -> bool:
         node: Any = merged
@@ -732,7 +782,10 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
         for p in src:
             node = node[p]
         dst = tuple(rename(p) for p in src)
-        if dst in have or exists(dst):
+        if dst in have:
+            return
+        if exists(dst):
+            collisions.append('.'.join(dst))
             return
         have.add(dst)
         wrapped = _rewrite_ids({"x": copy.deepcopy(node)}, pmap, rename)["x"]
@@ -758,11 +811,15 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
                 _pointers(val, ("qubits", m, line, "operations", op), refs)
                 if any(_abs_target(p, path)[:2] == ("qubit_pairs", tpid) for path, p in refs):
                     add_copy(("qubits", m, line, "operations", op))
+    if collisions:
+        return {"error": f"Cannot copy member operation {collisions[0]}: "
+                         "it already exists and may belong to the template pair."}
+    creates = _with_parents(merged, creates)
     sets = []
     act = merged.get("active_qubit_pair_names")
     if isinstance(act, list):
         sets.append(("active_qubit_pair_names", list(act) + [new_pid]))
-    return {"creates": _with_parents(merged, creates), "sets": sets,
+    return {"creates": creates, "sets": sets,
             "summary": {"kind": "pair", "name": new_pid, "template": tpid,
                         "control": control, "target": target,
                         "flux": flux,

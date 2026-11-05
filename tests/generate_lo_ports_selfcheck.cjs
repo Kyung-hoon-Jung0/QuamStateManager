@@ -463,7 +463,11 @@ function panelText(win) {
   ok(!/QOP note/.test(doc.querySelector('.gen-review-table').textContent),
     'Q1: the review table no longer carries a QOP note wall');
   qsel.value = '3.4';
+  w.st._buildForce = true; w.st._buildAck = true;
+  w.st._buildAckSource = true; w.st._buildAckScripts = true;
   qsel.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+  ok(w.st._buildForce && w.st._buildAck && w.st._buildAckSource && w.st._buildAckScripts,
+    'Q2: selecting QOP preserves build acknowledgements');
   ok(w.st.spec.qop_version === '3.4', 'Q1: picking 3.4 writes spec.qop_version');
   const cav = doc.getElementById('gen-qop-caveats').textContent;
   ok(/QOP 3\.4: coupled MW ports must share one band/.test(cav) && /QOP 3\.4 known issue/.test(cav),
@@ -475,6 +479,11 @@ function panelText(win) {
   q2.value = '';
   q2.dispatchEvent(new w.win.Event('change', { bubbles: true }));
   ok(!('qop_version' in w.st.spec), 'Q1: back to Not set removes the key (unset = as before)');
+  w.st.spec.instruments.controllers[0].fems[0].fem = 'lf';
+  w.G.goToStep(8);
+  ok(!doc.getElementById('gen-qop-version') &&
+     !/QOP version/.test(doc.querySelector('.gen-review-table').textContent),
+    'Q3: a chip without MW-FEM has no QOP row');
 })();
 
 // ---- L8a: a row rewrite also reaches its other coupled port ---------------

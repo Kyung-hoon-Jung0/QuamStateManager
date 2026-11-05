@@ -682,6 +682,19 @@ def _coupled_pairs(state):
     return out
 
 
+def _record_qop(path, state, spec, warnings):
+    """Persist the build's QOP choice and retain caveats for CLI/API builds too."""
+    version = spec.get("qop_version")
+    if version:
+        state.setdefault("extras", {})["qop_version"] = version
+        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    ports = state.get("ports") or {}
+    if (_qop_port_sharing_affected(version) is not False
+            and (ports.get("mw_outputs") or ports.get("mw_inputs"))):
+        warnings.append(_PORT_SHARING_NOTE + (
+            "; QOP version not set" if not version else f"; selected QOP {version}"))
+
+
 def _coupled_band_errors(state, qop_version=None):
     """G1: the coupled MW-FEM port pairs of a saved *state* whose bands the
     QOP refuses when a program opens ("The bands set for output port 1 &
@@ -3259,8 +3272,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
             _saved_state = json.loads(_saved.read_text(encoding="utf-8"))
             _qop = spec.get("qop_version")
             _bad_bands = _coupled_band_errors(_saved_state, _qop)
-            # The non-blocking QOP port-sharing caveat is shown on the wizard's
-            # Review step only (it is not a build result).
+            _record_qop(_saved, _saved_state, spec, warnings)
             if _bad_bands:
                 raise RuntimeError(
                     "coupled MW ports are on an invalid band combination; the QOP "

@@ -186,6 +186,7 @@ def _current_value(chip: ChipHandle, dotted: str):
     return node
 
 
+@working_copy.live_press.marked(lambda chip: chip.wc)
 def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                label: str) -> WriteOutcome:
     """Stage forward-decision rows (``[{path, value, ...}]``) and, in full
@@ -236,6 +237,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                             paths=_written_paths(paths, restaged))
 
 
+@working_copy.live_press.marked(lambda chip: chip.wc)
 def _apply_live_with_one_retry(chip: ChipHandle,
                                restage: Callable[[], str | None], *, src: str = "autofit",
                                mine: Callable[[], list] = lambda: []) -> str | None:
@@ -278,6 +280,7 @@ def _landed(chip: ChipHandle) -> None:
         logger.warning("on_live_landed hook failed", exc_info=True)
 
 
+@working_copy.live_press.marked(lambda chip: chip.wc)
 def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                    label: str) -> WriteOutcome:
     """Deterministically undo a node's own state writes (the reject path).
@@ -387,6 +390,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                             paths=paths, conflicts=conflicts)
 
 
+@working_copy.live_press.marked(lambda chip: chip.wc)
 def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                    label: str) -> WriteOutcome:
     """review-autonomy plan-end restore: write pre-plan values back

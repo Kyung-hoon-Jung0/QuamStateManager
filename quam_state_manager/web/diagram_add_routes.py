@@ -28,7 +28,7 @@ _INV_MEMO: dict = {}
 def _inv(store):
     """The port inventory of the loaded chip, memoized on its mutation_seq
     (one walk per state, never one per keystroke)."""
-    key = (id(store), getattr(store, "mutation_seq", 0))
+    key = (R._store_uid(store), getattr(store, "mutation_seq", 0))
     hit = _INV_MEMO.get("k")
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -147,7 +147,7 @@ def diagram_add_stage():
         return _status("This chip is a read-only archive: open the live chip to add to it.",
                        "warning", 409)
     tok = request.form.get("expect_chip") or ""
-    if tok and not R._chip_token_ok(tok):
+    if not tok or not R._chip_token_ok(tok):
         return _status("The chip changed in another window: reload this page.", "error", 409)
     dry = request.form.get("dry") == "1"
     with store._lock:
@@ -163,21 +163,28 @@ def diagram_add_stage():
         if refusal:
             return _status(refusal[0], "error", 400)
         gid = modifier.new_group_id()
-        done = 0
         try:
             for path, value in plan["creates"]:
                 modifier.create_subtree(path, value, group_id=gid)
-                done += 1
             for path, value in plan["sets"]:
                 modifier.set_value(path, value, group_id=gid)
-                done += 1
         except Exception as exc:  # noqa: BLE001 -- all or nothing
-            for _ in range(done):
+            rollback_error = None
+            # The modifier may have logged a create before a later index
+            # update raised. Roll back the actual group, including that entry.
+            while store.change_log and store.change_log[-1].group_id == gid:
                 try:
-                    modifier.undo()
-                except Exception:  # noqa: BLE001
+                    if not modifier.undo():
+                        raise RuntimeError("Undo returned no staged change")
+                except Exception as rollback_exc:  # noqa: BLE001
+                    rollback_error = rollback_exc
                     break
-            logger.exception("diagram-add staging failed; rolled back")
+            done = [e.dot_path for e in store.change_log if e.group_id == gid]
+            logger.exception("diagram-add staging failed; remaining staged paths: %s", done)
+            if done or rollback_error is not None:
+                return _status(
+                    f"Add failed: {exc}. Rollback failed: {rollback_error}. "
+                    f"Still staged: {', '.join(done) or 'none'}. Review the pending changes.", "error", 500)
             return _status(f"Nothing was added (rolled back): {exc}", "error", 400)
     R._reprobe_if_new_classes(store)
     s = plan["summary"]
