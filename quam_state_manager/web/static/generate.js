@@ -1507,7 +1507,7 @@
         }
       });
     }
-    ["regenTouched", "regenFilled"].forEach(function (name) {
+    ["regenTouched", "regenFilled", "populateTouched"].forEach(function (name) {
       if (!state[name]) return;
       state[name] = remapKeysBy(state[name], function (k) {
         var seg = k.split("|");
@@ -1860,11 +1860,22 @@
       qubits = state.spec.qubits.slice(0, n);
       var used = {};
       qubits.forEach(function (q) { used[q] = true; });
-      var k = 1;
+      var prefix = null, maxSuffix = 0;
+      qubits.forEach(function (q) {
+        var match = /^(\D+)(\d+)$/.exec(q);
+        if (!match) return;
+        maxSuffix = Math.max(maxSuffix, Number(match[2]));
+        if (prefix === null) prefix = match[1];
+        else {
+          while (prefix && match[1].indexOf(prefix) !== 0) prefix = prefix.slice(0, -1);
+        }
+      });
+      prefix = prefix || "q";
+      var k = maxSuffix + 1;
       while (qubits.length < n) {
-        while (used["q" + k]) k++;
-        qubits.push("q" + k);
-        used["q" + k] = true;
+        while (used[prefix + k]) k++;
+        qubits.push(prefix + k);
+        used[prefix + k] = true;
       }
     }
     // Re-generate: a row the count drops keeps its source record aside, and
@@ -3154,6 +3165,14 @@
         // field is not "delete every qubit"; an explicit 0 still clears).
         var n = parseInt(countInput.value, 10);
         if (isNaN(n)) { countInput.value = state.spec.qubits.length; return; }
+        if (n !== state.spec.qubits.length && (state.namesTouched ||
+            state.mode === "regenerate" || (state.naming || {}).preset === "grid")) {
+          var before = stepSnapshot(4);
+          countInput.__wizRestore = function () {
+            stepRestore(4, before);
+            repaintAfterStepReset(4);
+          };
+        }
         setQubitCount(n);
         countInput.value = state.spec.qubits.length;
       });
@@ -6376,6 +6395,22 @@
   // fields that don't belong to the current gate (e.g. cr_* left over after a
   // CR->CZ switch). Keeps the spec + sessionStorage draft clean and stops a
   // hidden override from silently re-attaching when a pair / gate is restored.
+  function mergePairPopulate(from, to) {
+    var pairs = (state.spec.populate || {}).pairs || {};
+    if (!pairs[from] || from === to) return;
+    var touched = state.mode === "regenerate"
+      ? (state.regenTouched || {}) : (state.populateTouched || {});
+    var target = pairs[to] || (pairs[to] = {});
+    Object.keys(pairs[from]).forEach(function (field) {
+      var src = "pairs|" + from + "|" + field;
+      var dst = "pairs|" + to + "|" + field;
+      if (!(field in target) || (touched[src] && !touched[dst])) target[field] = pairs[from][field];
+      if (touched[src]) touched[dst] = 1;
+      delete touched[src];
+    });
+    delete pairs[from];
+  }
+
   function reconcilePopulatePairs() {
     var pop = state.spec.populate;
     if (!pop || !pop.pairs) return;
@@ -6405,7 +6440,7 @@
         var t0 = seg.slice(1).join("-");
         if (t0 && t0.charAt(0) !== "q") t0 = "q" + t0;
         var canon = byMembers[[c0, t0].sort().join("|")];
-        if (canon && !pop.pairs[canon]) pop.pairs[canon] = pop.pairs[id];
+        if (canon) mergePairPopulate(id, canon);
         delete pop.pairs[id];
         if (!canon || !pop.pairs[canon]) return;
         id = canon;
@@ -6462,8 +6497,7 @@
     }
     var pop = state.spec.populate || {};
     if (pop.pairs && pop.pairs[oldId]) {
-      pop.pairs[newId] = pop.pairs[oldId];
-      delete pop.pairs[oldId];
+      mergePairPopulate(oldId, newId);
       var mv = pop.pairs[newId].moving_qubit;
       if (mv === "control") pop.pairs[newId].moving_qubit = "target";
       else if (mv === "target") pop.pairs[newId].moving_qubit = "control";
@@ -8102,7 +8136,11 @@
   // Populate-protect bookkeeping (docs/72): cells the user explicitly owns
   // this wizard session — typed, Set-all'd, preset-applied or re-solved.
   function markPopulateTouched(group, rid, field) {
-    if (state.mode !== "regenerate") return;
+    if (state.mode !== "regenerate") {
+      if (!state.populateTouched) state.populateTouched = {};
+      state.populateTouched[group + "|" + rid + "|" + field] = 1;
+      return;
+    }
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
     state.regenEdited = true;   // QA F6: a populate edit is a leave-worthy edit
@@ -8159,7 +8197,7 @@
       }).join(", ");
     }
     function warn(message, members, kind) {
-      calc.warnings.push({ message: message, members: members, kind: kind || null });
+      addConflictWarning(calc.warnings, { message: message, members: members, kind: kind || null });
     }
     var byId = {};
     calc.groups.forEach(function (g) { byId[g.id] = g; });
@@ -8562,7 +8600,23 @@
   // Render the LO/band-conflict panel and ring the offending ports amber in
   // the step-6 wiring diagram. Hovering a warning line emphasises just that
   // warning's ports; an empty list clears every ring (idempotent).
+  function addConflictWarning(warnings, warning) {
+    var existing = warnings.filter(function (w) { return w.message === warning.message; })[0];
+    if (!existing) {
+      existing = { message: warning.message, kind: warning.kind, members: [] };
+      warnings.push(existing);
+    }
+    (warning.members || []).forEach(function (member) {
+      if (!existing.members.some(function (m) { return m.group === member.group && m.rid === member.rid; })) {
+        existing.members.push(member);
+      }
+    });
+  }
+
   function renderConflicts(warnings, hasPower) {
+    var unique = [];
+    (warnings || []).forEach(function (w) { addConflictWarning(unique, w); });
+    warnings = unique;
     var host = document.getElementById("gen-band-warnings");
     if (!host) return;
     host.innerHTML = "";
@@ -9083,6 +9137,7 @@
   // Apply class `cls` to the diagram port circles of a set of conflict
   // members, clearing it from every other circle first (idempotent).
   function markConflictPorts(members, cls) {
+    cls = cls || "iw-port-conflict";
     var host = document.getElementById("gen-pop-wiring-diagram");
     if (!host) return;
     host.querySelectorAll(".iw-port-circle." + cls).forEach(function (g) {
@@ -9093,6 +9148,11 @@
         g.classList.add(cls);
       });
     });
+    var legend = host.querySelector(".iw-key-conflict");
+    if (legend) {
+      legend.hidden = !host.querySelector(".iw-port-conflict");
+      legend.classList.toggle("ui-iw-conflict-hidden", legend.hidden);
+    }
   }
 
   // Highlight the populate-table row for a hovered diagram port.
@@ -10912,6 +10972,9 @@
         // DragCosine family, so values > cells). Absent on older results.
         var popCellsN = (m.populate_cells != null) ? m.populate_cells : null;
         var popDetail = m.populate_protected_detail || [];
+        var calCh = m.calibration_changed || [];
+        var calChN = (m.calibration_changed_total != null)
+            ? m.calibration_changed_total : calCh.length;
         var popConf = m.populate_conflicts || [];
         var fspCompN = m.fsp_compensated_total || 0;   // QA regenerate-r2-04 / r2-06
         var mp = document.createElement("div");
@@ -10960,9 +11023,13 @@
             'cloud QMM), carried unchanged from the source chip (wiring.json)">' +
             netCarried.length + ' network setting' + (netCarried.length === 1 ? '' : 's') +
             ' carried</span>' : '') +
-          '<span class="gen-merge-stat ' + (lostN ? 'gen-merge-warn' : 'gen-merge-muted') +
+          '<span class="gen-merge-stat gen-merge-loss ' + (lostN || calChN ? 'gen-merge-warn' : 'gen-merge-ok') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
+          (calChN ? '<span class="gen-merge-stat gen-merge-warn gen-merge-cal-count">' +
+            calChN + ' values read differently</span>' : '') +
+          (m.existing_entities_changed != null ? '<span class="gen-merge-stat gen-merge-muted">' +
+            'existing entities changed: ' + m.existing_entities_changed + '</span>' : '') +
           (schemaDropN ? '<span class="gen-merge-stat gen-merge-warn" title="Fields an older ' +
             'stack generation serialized that this env\'s classes renamed or removed ' +
             '(e.g. CZGate.duration_control → duration_qubit) — grafting them would make ' +
@@ -11000,9 +11067,6 @@
         // The contract check: a source value that reads differently in the
         // rebuild (not one you changed, not one listed elsewhere) is never a
         // plain success. Each one is named, old -> new.
-        var calCh = m.calibration_changed || [];
-        var calChN = (m.calibration_changed_total != null)
-            ? m.calibration_changed_total : calCh.length;
         if (calChN) {
           el.className = "gen-build-result gen-build-confirm gen-build-cal-changed";
           msg.textContent += " — " + calChN + " calibrated value" +
@@ -11245,6 +11309,14 @@
           return (typeof v === "number" || typeof v === "string")
             ? String(v) : JSON.stringify(v);
         };
+        var unchangedEdits = popDetail.filter(function (d) { return d.unchanged; }).length;
+        popDetail = popDetail.filter(function (d) { return !d.unchanged; });
+        if (unchangedEdits) {
+          var same = document.createElement("div");
+          same.className = "gen-merge-muted gen-merge-detail";
+          same.textContent = unchangedEdits + " edited values equal the source";
+          el.appendChild(same);
+        }
         popDetail.slice(0, 8).forEach(function (d) {
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
@@ -12156,6 +12228,7 @@
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
         autoPresetRows: state.autoPresetRows,
+        populateTouched: state.populateTouched,
         loTyped: state.loTyped || {},
         // QA r2-13: what became of the last build (trimmed) / one started
         // whose answer has not landed yet.
@@ -12291,6 +12364,7 @@
     // every row it has now counts as prefilled (cleared cells stay cleared),
     // and only rows added from here on prefill. No flag: nothing recorded yet.
     state.loTyped = (d.loTyped && typeof d.loTyped === "object") ? d.loTyped : {};
+    state.populateTouched = d.populateTouched || {};
     var dr = d.autoPresetRows;
     state.autoPresetRows = (dr && typeof dr === "object")
       ? { q: dr.q || {}, pairs: dr.pairs || {} }
@@ -12388,6 +12462,7 @@
     state.regenSourceStash = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
+    state.populateTouched = {};
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
     state.loTyped = {};             // G2
     state.regenSourceHash = null;   // QA regenerate-r2-35
@@ -12442,9 +12517,9 @@
          st: ["naming", "namesTouched", "qubitFlux", "couplerFlux", "chipArch",
               "heldChipArch", "heldPins", "pairGate", "muxSize", "pairsTouched",
               "wiringTouched", "allocation", "autoPresetRows", "crPortMode",
-              "regenTouched", "regenFilled"] },
+              "regenTouched", "regenFilled", "populateTouched"] },
     5: { spec: ["lines", "readout_input"], st: ["allocation", "wiringTouched", "heldPins"] },
-    6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled"] },
+    6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled", "populateTouched"] },
     7: { spec: [], st: ["outputPath", "scriptsEnabled", "scriptsPath", "_scriptsPathTouched"] }
   };
   // QDAC cells the Populate step edits; channel / trigger / bias-tee are the
@@ -12566,7 +12641,7 @@
           return a && b ? [a, b].sort().join("|") + "|" + seg.slice(2).join("|") : null;
         });
       }
-      ["regenTouched", "regenFilled"].forEach(function (name) {
+      ["regenTouched", "regenFilled", "populateTouched"].forEach(function (name) {
         if (state[name]) state[name] = rekey(state[name], cell);
       });
     }
@@ -12601,6 +12676,7 @@
       state.naming = { preset: "one_based", prefix: "q", start: 1 };
       state.namesTouched = false;
       state.pairsTouched = false;
+      state.populateTouched = {};
       state.wiringTouched = false;
       state.qubitFlux = true;
       state.couplerFlux = true;
@@ -12717,6 +12793,7 @@
     } else {
       state.step = 1;
       state.spec = newChipSpec();
+      state.populateTouched = {};
       state.heldPins = {};   // a fresh spec holds nothing of an earlier one
       state.env = null;
       state.allocation = null;
@@ -13256,6 +13333,8 @@
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
+      markConflictPorts: markConflictPorts,
+      renderConflicts: renderConflicts,
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
@@ -13271,6 +13350,7 @@
       VALIDATE_RANGES: VALIDATE_RANGES,
       setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; },
       czAutoOrient: czAutoOrient,
+      reconcilePopulatePairs: reconcilePopulatePairs,
       czOrderStatus: czOrderStatus,
       flipPairOrder: flipPairOrder,
       schemeNames: schemeNames,

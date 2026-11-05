@@ -31,6 +31,7 @@ import re
 from typing import Any, Iterable
 
 from quam_state_manager.core import cr_semantics
+from quam_state_manager.core.differ import compare_equal
 from quam_state_manager.core.regen_merge import _pair_membership
 
 # Mirror of run_build._BAND_TO_DELAY_NS (LF z-port delay per xy band, ns).
@@ -449,6 +450,8 @@ def protected_detail(paths: list[str], old_state: dict, merged: dict,
                     "new": _walk(merged, p),
                     "derived_from": ("x180" if op and _DRAG_FAMILY_RE.match(op)
                                      and not _X180_SEED_RE.match(op) else None)})
+        if compare_equal(_walk(old_state, p), _walk(merged, p)):
+            out[-1]["unchanged"] = True
     # the value the user typed first, then what the build derived from it
     return sorted(out, key=lambda d: d["derived_from"] is not None)
 def fill_protect_paths(filled: Iterable[Iterable[str]] | None,

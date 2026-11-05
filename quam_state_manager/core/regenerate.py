@@ -484,11 +484,13 @@ def run_regenerate(
         regen_merge.rename_source_qubits(old_state, old_wiring, renames,
                                          new_state, new_wiring))
 
+    pair_ids_changed = regen_merge.normalize_pair_ids(
+        old_state, new_state, old_wiring, new_wiring)
     twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
     # Carry plain wiring values from the renamed source: path matching must use
     # the rebuilt qubit ids. Do this before merging state references to them.
     wiring_carried = regen_merge.graft_wiring_values(old_wiring, new_wiring)
-    if twpa_renames or wiring_carried:
+    if pair_ids_changed or twpa_renames or wiring_carried:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
     # The build subprocess harvests the env's dataclass field schemas for every
@@ -619,6 +621,12 @@ def run_regenerate(
     # changed it in the wizard or the report already names the change.
     calibration_changed = _calibration_check(result, old_wiring, new_wiring, protect,
                                              fsp_compensated, add_report)
+    entity_changes = regen_merge.calibration_check(
+        old_state, old_wiring, result.merged, new_wiring)
+    existing_entities_changed = len({tuple(change["path"].split(".")[:2])
+                                     for change in entity_changes
+                                     if change["path"].split(".")[0] in
+                                     ("qubits", "qubit_pairs", "twpas")})
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
     # QA F12: the merged chip, not the build spec, decides -- a merge can
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
@@ -810,6 +818,7 @@ def run_regenerate(
         # the contract check: source values that read differently in the rebuild
         "calibration_changed": calibration_changed[:200],
         "calibration_changed_total": len(calibration_changed),
+        "existing_entities_changed": existing_entities_changed,
         "calibration_restored": s.calibration_restored[:80],
         "calibration_restored_total": len(s.calibration_restored),
         # a Populate edit written where a restored source form reads it (edited leaf, location)

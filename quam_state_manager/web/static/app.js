@@ -16945,14 +16945,21 @@ function _appendWiringLegend(container, roleColors) {
     var iw = UI_CONFIG.instrumentWiring;
     [['iw-key-free', 'Free port', '.8rem', iw.unassignedFill, iw.unassignedStroke],
      ['iw-key-none', 'No port on this row', '.45rem', iw.emptyPortFill, iw.emptyPortStroke],
-     ['iw-key-dig', 'DIG = digital outputs (triggers)', null]].forEach(function (k) {
+     ['iw-key-dig', 'DIG = digital outputs (triggers)', null],
+     ['iw-key-conflict', 'Band or LO conflict', '.8rem']].forEach(function (k) {
         var item = document.createElement('span');
         item.className = 'iw-legend-item ' + k[0];
+        if (k[0] === 'iw-key-conflict') {
+            item.hidden = true;
+            item.classList.add('ui-iw-conflict', 'ui-iw-conflict-hidden');
+        }
         item.setAttribute('role', 'listitem');
         if (k[2]) {
             var sw = document.createElement('span');
             sw.className = 'iw-legend-swatch';
-            sw.style.cssText = 'width:' + k[2] + ';height:' + k[2] + ';background:' + k[3] + ';border-color:' + k[4];
+            if (k[0] !== 'iw-key-conflict') {
+                sw.style.cssText = 'width:' + k[2] + ';height:' + k[2] + ';background:' + k[3] + ';border-color:' + k[4];
+            }
             item.appendChild(sw);
         }
         item.appendChild(document.createTextNode(k[1]));

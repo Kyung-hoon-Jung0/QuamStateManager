@@ -656,6 +656,16 @@
 /* Running-config discovery must never shift the landing controls. */
 .ui-running-overlay { position: static; height: var(--ui-running-height); overflow: auto; }
 
+/* Conflict rings are explained only while the diagram contains one. */
+.ui-iw-conflict-hidden { display: none; }
+.ui-iw-conflict .iw-legend-swatch {
+    width: var(--ui-gap-3);
+    height: var(--ui-gap-3);
+    background: var(--ui-danger-bg);
+    border: var(--ui-bw-tab) solid var(--ui-danger-border);
+    border-radius: var(--ui-r-round);
+}
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,
