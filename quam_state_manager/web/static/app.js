@@ -6055,6 +6055,9 @@ window.livePushExtrasLine = function (typedPaths) {
                      : [String(s).slice(0, i), parseInt(String(s).slice(i + 1), 10) || 0];
     }
     function onPullSeq(d) {
+        if (d && d.auto_restore_resolved) {
+            document.dispatchEvent(new CustomEvent('autoSyncNoticeResolved', {detail: d.auto_restore_resolved}));
+        }
         if (d && d.auto_restore_notice) {
             if (window._pullSeqSeen === undefined && !d.auto_restore_notice.bring_back) {
                 window._restoreNoticeSeen = d.auto_restore_notice.event;

@@ -12374,7 +12374,8 @@ def _current_auto_restore_notice(ctx):
     """Keep the event for 60 seconds; offer it once to each original window."""
     with _active_wc_lock(ctx):
         notice = ctx.get("_auto_restore_notice")
-        if notice and time.time() - notice.get("at", 0) >= 60:
+        if notice and (notice['event'] in ctx.get('_notice_resolved', [])
+                       or time.time() - notice.get("at", 0) >= 60):
             ctx.pop("_auto_restore_notice", None)
             ctx.pop("_notice_recipients", None)
             ctx.pop("_notice_delivered", None)
@@ -33286,6 +33287,7 @@ def _pull_note() -> dict:
     # as a step, not as where the chip already was
     seq = int(ctx.get("_pull_seq") or 0)
     return {"auto_restore_notice": _current_auto_restore_notice(ctx),
+            "auto_restore_resolved": list(ctx.get('_notice_resolved', [])),
             "pull_seq": f"{ctx.get('path', '')}#{seq}",
             "pull_lost": list(ctx.get("_pull_lost") or []),
             # the last few steps, each with what it took away: a window that
@@ -33860,9 +33862,11 @@ def _bring_back_names(bk: dict, failed: list[dict], cap: int = 3) -> str:
 
 @bp.route("/state/take-live/restore", methods=["POST"])
 def state_take_live_restore():
-    """"↶ Bring back": replay the edits the last ↓ Take live dropped, on top of
-    what the working copy holds now. They come back as UNAPPLIED edits -- the
-    live chip is not written (a live write needs its own press, docs/117)."""
+    """Replay the backup; an armed push writes through the normal Apply door.
+
+    Bring back is a person's explicit press. Without push permission the
+    restored edits stay in the tray, like any other edit.
+    """
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning"), 400
@@ -33900,27 +33904,40 @@ def state_take_live_restore():
                         f"Bring back refused: {path} now holds {value}; the notice's node value is no longer current."),
                         level="warning"), 409
         replay = _replay_updates(ctx["modifier"], copy.deepcopy(bk["updates"]))
-        if notice_id:
-            # A notice restores only to the tray. A person's Apply must release
-            # the existing server hold before these edits can reach live.
-            sess = _auto_apply_state(ctx)
-            if sess:
-                sess["hold"] = True
-                sess["hold_seq0"] = ctx["store"].mutation_seq
         _invalidate_engine_cache(ctx)
+        applied_response = None
+        if notice_id and _auto_apply_state(ctx):
+            # Keep the CAS and write under the same working-copy lock. The
+            # Apply door also checks live staleness before its atomic write.
+            applied_response = make_response(state_apply_to_live())
+            if applied_response.status_code >= 400 or ctx['store'].change_log:
+                return applied_response
+        if notice_id:
+            resolved = ctx.setdefault('_notice_resolved', [])
+            resolved.append(notice_id)
+            del resolved[:-50]
     if notice_id:
         ctx["_notice_backups"].pop(notice_id, None)
     else:
         ctx.pop("take_live_backup", None)
-    resp = make_response(_tray_html(), 200)
+    resp = applied_response if applied_response is not None else make_response(_tray_html(), 200)
     _n = replay.get("applied", 0)
     _f = replay.get("failed") or []
-    msg = (f"Brought back {_n} edit{'s' if _n != 1 else ''} as unapplied edits"
+    destination = "to live" if applied_response is not None else "as unapplied edits"
+    msg = (f"Brought back {_n} edit{'s' if _n != 1 else ''} {destination}"
            + (f"; {len(_f)} could not be re-applied: {_bring_back_names(bk, _f)}"
               if _f else "") + ".")
-    resp.headers["HX-Trigger"] = json.dumps({
+    raw_triggers = applied_response.headers.get('HX-Trigger', '{}') if applied_response is not None else '{}'
+    try:
+        triggers = json.loads(raw_triggers)
+    except ValueError:
+        triggers = {name.strip(): True for name in raw_triggers.split(',') if name.strip()}
+    triggers.update({
         "syncToast": {"message": msg, "level": "warning" if _f else "success"},
         "syncValuesMoved": True})
+    if notice_id:
+        triggers["autoSyncNoticeResolved"] = [notice_id]
+    resp.headers["HX-Trigger"] = json.dumps(triggers)
     return resp
 
 

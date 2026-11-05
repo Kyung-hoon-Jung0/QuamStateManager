@@ -365,6 +365,18 @@ function fire(w, name, detail) {
     check('W5 peer first poll displays the server replacement once',
       state.toasts.length === 1 && state.toasts[0].m === detail.message);
     check('W5 peer poll offers Bring back', !!w.document.querySelector('.toast button'));
+    w.onPullSeq({auto_restore_resolved: ['peer-node']});
+    check('W5 peer poll closes resolved notice', !w.document.querySelector('.toast button'));
+    w.onPullSeq({auto_restore_notice: detail});
+    check('W5 buffered notice cannot reopen after resolution', !w.document.querySelector('.toast button'));
+  }
+
+  {
+    const { w } = world();
+    w.document.body.insertAdjacentHTML('beforeend', '<div id="auto-sync-pop-host"><div id="auto-sync-pop"><strong id="as-state">Auto-Sync is ON</strong></div></div>');
+    fire(w, 'autoApplyDisarm', {reason: 'read-only'});
+    check('W5 permanent disarm updates open popover header',
+      w.document.getElementById('as-state').textContent === 'Auto-Sync is OFF: read-only');
   }
 
   // Failure-kind backoff is executed against the shipped scheduler.

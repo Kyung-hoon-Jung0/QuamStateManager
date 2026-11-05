@@ -280,6 +280,8 @@
     document.addEventListener('autoApplyDisarm', function (e) {
         var reason = (e && e.detail && e.detail.reason) || '';
         window.AutoApply._disarm(reason);
+        var header = document.getElementById('as-state');
+        if (header) header.textContent = 'Auto-Sync is OFF' + (reason ? ': ' + reason : '');
     });
 
     /* docs/187 -- the push found the chip moved, and the server has decided
@@ -345,13 +347,23 @@
               'warning');
     });
 
+    var resolvedNotices = new Set();
+    document.addEventListener('autoSyncNoticeResolved', function (e) {
+        (e.detail || []).forEach(function (id) {
+            resolvedNotices.add(id);
+            document.querySelectorAll('[data-restore-notice]').forEach(function (notice) {
+                if (notice.getAttribute('data-restore-notice') === id) notice.remove();
+            });
+        });
+    });
     document.addEventListener('autoSyncRestored', function (e) {
         var d = e.detail || {};
-        if (!d.message || (d.event && d.event === window._restoreNoticeSeen)) return;
+        if (!d.message || resolvedNotices.has(d.event) || (d.event && d.event === window._restoreNoticeSeen)) return;
         if (d.event) window._restoreNoticeSeen = d.event;
         if (d.bring_back && window.showToast) {
             var notice = window.showToast(d.message, 'info', -1);
             if (notice) {
+                notice.setAttribute('data-restore-notice', d.event);
                 var back = document.createElement('button');
                 back.type = 'button'; back.textContent = 'Bring back';
                 back.addEventListener('click', function () {

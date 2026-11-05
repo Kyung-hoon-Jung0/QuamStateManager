@@ -130,7 +130,7 @@ def test_value_without_predecessor_is_announced_and_adopted(env, monkeypatch):
     assert json.loads((env['live'] / 'state.json').read_text())['qubits']['qA1']['T1'] == 4.4e-5
 
 @pytest.mark.parametrize('automatic', [True, False])
-def test_new_node_value_is_adopted_with_backup_and_one_shared_notice(env, automatic):
+def test_new_node_value_is_adopted_with_backup_and_one_shared_notice(env, monkeypatch, automatic):
     _arm(env)
     _apply_name(env)
     if not automatic:
@@ -151,15 +151,34 @@ def test_new_node_value_is_adopted_with_backup_and_one_shared_notice(env, automa
     assert json.loads((env['live'] / 'state.json').read_text())['qubits']['qA1']['T1'] == 4.4e-5
     assert bool(_sess(env)) == automatic
     assert env['client'].get('/state/drift').get_json()['auto_restore_notice'] is None
+    writes = []
+    apply = routes.working_copy.apply_to_live
+    def write(*args, **kwargs):
+        writes.append(True)
+        return apply(*args, **kwargs)
+    monkeypatch.setattr(routes.working_copy, 'apply_to_live', write)
     r = env['client'].post('/state/take-live/restore', data={'notice_id': notice['event']})
     assert r.status_code == 200
     assert ctx['store'].merged['qubits']['qA1']['T1'] == 3.3e-5
-    response = env['client'].post('/state/apply-to-live', data={'auto_flush': '1'})
-    assert json.loads((env['live'] / 'state.json').read_text())['qubits']['qA1']['T1'] == 4.4e-5
-    if automatic:
-        response = env['client'].post('/state/sync', data={'mode': 'apply', 'auto_sync': '1'})
-        assert response.status_code == 409
-        assert json.loads((env['live'] / 'state.json').read_text())['qubits']['qA1']['T1'] == 4.4e-5
+    assert json.loads((env['live'] / 'state.json').read_text())['qubits']['qA1']['T1'] == (3.3e-5 if automatic else 4.4e-5)
+    assert bool(ctx['store'].change_log) == (not automatic)
+    assert not (_sess(env) or {}).get('hold')
+    assert len(writes) == int(automatic)
+    assert ('to live' if automatic else 'as unapplied edits') in json.loads(r.headers['HX-Trigger'])['syncToast']['message']
+
+
+def test_bring_back_resolves_notice_for_two_windows(env):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == notice
+    response = env['client'].post('/state/take-live/restore', data={'notice_id': notice['event']})
+    assert response.status_code == 200
+    for client in (env['client'], second):
+        poll = client.get('/state/drift').get_json()
+        assert notice['event'] in poll['auto_restore_resolved']
+        assert poll['auto_restore_notice'] is None
+    assert second.post('/state/take-live/restore', data={'notice_id': notice['event']}).status_code == 409
 
 @pytest.mark.parametrize('readonly', [False, True])
 def test_first_push_refusal_names_cause_and_transient_has_no_error_response(env, monkeypatch, readonly):
