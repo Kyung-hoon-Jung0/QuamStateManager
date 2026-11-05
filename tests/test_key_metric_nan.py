@@ -397,3 +397,22 @@ class TestCoherenceScaleEvidence:
     def test_saved_keys(self):
         assert "t2ramsey" in D._saved_keys_for("decay")
         assert D._saved_keys_for("T2_echo") == {"t2echo"}
+
+
+def test_a_ns_stamp_on_a_seconds_value_is_not_evidence(tmp_path):
+    """W3-6: a ramsey fit file declares ``ns`` on ``t2_star`` while it holds
+    the same seconds value data.json does; read literally that is 2.4e-14 s
+    and the table showed "0.0 ns". Nothing was saved yet (a run read while
+    still being written), so the bare value in seconds stands."""
+    h5py = pytest.importorskip("h5py")
+    d = tmp_path / "#16_12_ramsey"
+    d.mkdir()
+    with h5py.File(d / "ds_fit.h5", "w") as f:
+        ax = f.create_dataset("idle_time", data=[16.0, 32.0])
+        ax.attrs["units"] = "ns"
+        ax.attrs["CLASS"] = b"DIMENSION_SCALE"
+        v = f.create_dataset("t2_star", data=[2.439166424782799e-05])
+        v.attrs["units"] = "ns"
+    r = _run("12_ramsey", {"qA1": {"decay": 2.439166424782799e-05, "success": True}})
+    r.folder_path = d
+    assert DatasetStore._extract_key_metric(r) == "24.39 µs"

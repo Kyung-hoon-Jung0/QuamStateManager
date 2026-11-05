@@ -3625,6 +3625,14 @@ def _coherence_scale(run, qname: str, key: str, val: float, *,
                     arr = np.asarray(f[name][()], dtype=float).ravel()
                     for v in arr[np.isfinite(arr)]:
                         sc = _snap_scale(v * _TIME_UNIT_SCALE[u] / val) if v else None
+                        # W3-6: a fit file may stamp ``ns`` on a value that
+                        # already holds seconds (a ramsey ``t2_star`` of
+                        # 2.4e-05 "ns"); read literally it is a coherence
+                        # time shorter than one sample, which no fit on a
+                        # ns idle-time axis can produce [derived]. Such a
+                        # stamp is no evidence of the unit.
+                        if sc is not None and abs(val) * sc < _MIN_COHERENCE_S:
+                            sc = None
                         if sc is not None:
                             scales.add(sc)
             if len(scales) == 1:
@@ -3633,6 +3641,9 @@ def _coherence_scale(run, qname: str, key: str, val: float, *,
             logger.debug("ds_fit units read failed", exc_info=True)
     return None
 
+
+# the shortest coherence time a fit can report: one 1 ns sample [derived]
+_MIN_COHERENCE_S = 1e-9
 
 _TIME_UNIT_SCALE = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "s": 1.0}
 
