@@ -11264,6 +11264,14 @@
           return (typeof v === "number" || typeof v === "string")
             ? String(v) : JSON.stringify(v);
         };
+        var unchangedEdits = popDetail.filter(function (d) { return d.unchanged; }).length;
+        popDetail = popDetail.filter(function (d) { return !d.unchanged; });
+        if (unchangedEdits) {
+          var same = document.createElement("div");
+          same.className = "gen-merge-muted gen-merge-detail";
+          same.textContent = unchangedEdits + " edited values equal the source";
+          el.appendChild(same);
+        }
         popDetail.slice(0, 8).forEach(function (d) {
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
