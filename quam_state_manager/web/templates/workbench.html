@@ -23,6 +23,7 @@
       width: 200px; padding: 4px 8px; border-radius: 5px; border: 1px solid #333;
       background: #1a1d23; color: #e6e6e6; font-size: 12px;
     }
+    #wb-bar input[type="checkbox"] { width: auto; margin: 0; vertical-align: middle; }
     #wb-bar button {
       padding: 4px 10px; border-radius: 5px; border: 0; background: #2d6cdf;
       color: #fff; font-size: 12px; cursor: pointer;
@@ -139,7 +140,7 @@
     <label for="wb-url">Qualibrate&nbsp;URL</label>
     <input id="wb-url" type="text" spellcheck="false" />
     <button id="wb-go" title="Reload the left pane with this URL">Reload</button>
-    <button id="wb-viasm" type="button" class="ghost" title="Load Qualibrate through the State Manager: each run in History gets an Open in QSM link that opens it on the right">Through SM</button>
+    <label for="wb-viasm" title="Show Qualibrate through the State Manager: each run gets an Open in QSM link that opens it on the right"><input id="wb-viasm" type="checkbox" />&nbsp;Through&nbsp;SM</label>
     <a id="wb-newtab" href="#" target="_blank" rel="noopener">open ↗</a>
     <button id="wb-detach" class="ghost" title="Open Qualibrate in its own window (great on a second monitor)">⧉ detach</button>
     <button id="wb-help" class="ghost" title="Alt+1/2/3 = views · Alt+[ / ] = nudge divider · Esc = back to split">?</button>
@@ -154,6 +155,7 @@
     </span>
     <button id="wb-link-load" hidden>⤵ Load <span id="wb-link-load-name"></span> in SM</button>
     <span class="wb-link-msg" id="wb-link-msg"></span>
+    <span class="wb-link-msg" id="wb-qb-note" hidden></span>
   </div>
 
   <div id="panes">
@@ -216,7 +218,56 @@
         return DEFAULT_SIZES.slice();
       }
       // ── Qualibrate URL / load (preserved) ──
-      function currentUrl() { return ls(URL_KEY) || QB_DEFAULT; }
+      /* Qualibrate through SM (qualibrate_proxy D-20..D-21): the address box is
+         Qualibrate's own address; "Through SM" decides whether the left pane
+         shows it directly or SM's /qualibrate-ui/. Untouched, the pane goes
+         through SM when SM's own check of that address passes; the user's
+         explicit choice is remembered and wins. */
+      var MODE_KEY = "quam_workbench_qb_mode";
+      var PROXY = "/qualibrate-ui/";
+      var TARGET_API = "/qualibrate-ui-target";
+      var viasm = document.getElementById("wb-viasm");
+      var qbNote = document.getElementById("wb-qb-note");
+      var proxyStatus = null;               // the server's answer, once known
+      var refusal = null;                   // why SM did not take the last address offered
+      if (ls(URL_KEY) === PROXY) {          // the old "Through SM" button stored the proxy as the address
+        try { localStorage.removeItem(URL_KEY); } catch (e) {}
+        lsSet(MODE_KEY, "sm");
+      }
+      function address() {
+        var u = ls(URL_KEY);
+        if (u && /^https?:\/\//i.test(u)) return u;
+        if (proxyStatus && proxyStatus.source !== "default" && /^https?:\/\//i.test(proxyStatus.url)) return proxyStatus.url;
+        return QB_DEFAULT;
+      }
+      function mode() {
+        var m = ls(MODE_KEY);
+        if (m === "sm" || m === "direct") return m;
+        return (proxyStatus && proxyStatus.ok) ? "sm" : "direct";
+      }
+      function note(text) {
+        qbNote.textContent = text || "";
+        qbNote.hidden = !text;
+      }
+      function explainMode() {
+        var st = proxyStatus;
+        if (!st) { note(""); return; }
+        if (refusal && mode() === "sm") {
+          note(refusal + " Through SM still shows " + st.url + ".");
+          return;
+        }
+        if (mode() === "direct" && !ls(MODE_KEY) && !st.ok) {
+          note("Showing Qualibrate directly: SM could not reach it" + (st.reason ? " (" + st.reason + ")" : "") + ".");
+        } else if (mode() === "sm" && !st.ok) {
+          note("Through SM: SM cannot reach Qualibrate at " + st.url + (st.reason ? " (" + st.reason + ")" : "") + ".");
+        } else if (mode() === "sm" && st.source === "environment") {
+          note("Through SM uses " + st.env + "=" + st.url + " from SM's environment.");
+        } else {
+          note("");
+        }
+      }
+      function paneUrl() { return mode() === "sm" ? PROXY : address(); }
+      function currentUrl() { return address(); }
       var loadTimer = null;
       var loadSeq = 0;                      // the press this answer belongs to
       var fbHead = document.getElementById("wb-fb-head");
@@ -238,7 +289,9 @@
 
       function loadQb(url) {
         var seq = ++loadSeq;
-        input.value = url; newtab.href = url; fbLink.href = url;
+        input.value = address(); newtab.href = url; fbLink.href = url;
+        viasm.checked = (url === PROXY);
+        explainMode();
         clearTimeout(loadTimer);
         // 1. the press is acknowledged AT ONCE — this is the whole complaint
         fbShow("Connecting to " + url + "…",
@@ -293,7 +346,41 @@
           }
         }, 0);
       });
-      document.getElementById("wb-viasm").addEventListener("click", function () { setUrl("/qualibrate-ui/"); });
+      viasm.addEventListener("change", function () {
+        lsSet(MODE_KEY, viasm.checked ? "sm" : "direct");
+        loadQb(paneUrl());
+      });
+      function fetchStatus() {
+        return fetch(TARGET_API, { cache: "no-store", credentials: "same-origin" })
+          .then(function (r) { return r.json(); })
+          .then(function (st) { proxyStatus = st; return st; }, function () { return null; });
+      }
+      /* A new address is offered to SM too, so "Through SM" follows it. SM
+         saves it only when it answers as Qualibrate, loopback only unless
+         SM_QUALIBRATE_PROXY_REMOTE=1;
+         an address from SM's environment cannot be replaced from here. */
+      function canonicalAddress(url) {
+        try {
+          var u = new URL(url);
+          if (!/^https?:$/.test(u.protocol)) return null;
+          u.pathname = "/"; u.search = ""; u.hash = "";
+          return u.href;
+        } catch (e) { return null; }
+      }
+      function offerAddress(url) {
+        var canonical = canonicalAddress(url);
+        if (proxyStatus && canonical && canonicalAddress(proxyStatus.url) === canonical) return Promise.resolve(proxyStatus);
+        if (proxyStatus && proxyStatus.source === "environment") return Promise.resolve(proxyStatus);
+        return fetch(TARGET_API, {
+          method: "POST", credentials: "same-origin", cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: url })
+        }).then(function (r) { return r.json(); }).then(function (st) {
+          if (st && st.source) { proxyStatus = st; refusal = null; return st; }
+          refusal = (st && st.reason) || "SM did not save that address.";
+          return proxyStatus;
+        }, function () { return proxyStatus; });
+      }
       /* Qualibrate through SM (qualibrate_proxy D-11): its Open in QSM link asks
          this shell to show the run on the right. Only our own left frame may
          ask, and only for an SM run link. */
@@ -304,7 +391,12 @@
         sm.src = d.href;
         if (view === "qb") setView("split");
       });
-      function setUrl(url) { url = (url || "").trim(); if (!url) return; lsSet(URL_KEY, url); loadQb(url); }
+      function setUrl(url) {
+        url = (url || "").trim(); if (!url) return;
+        if (url === PROXY) { lsSet(MODE_KEY, "sm"); loadQb(PROXY); return; }
+        lsSet(URL_KEY, url);
+        offerAddress(url).then(function () { loadQb(paneUrl()); });
+      }
       document.getElementById("wb-go").addEventListener("click", function () { setUrl(input.value); });
       input.addEventListener("keydown", function (e) { if (e.key === "Enter") setUrl(input.value); });
 
@@ -613,7 +705,13 @@
       var startView = ls(VIEW_KEY) || "split";
       if (startView !== "split" && startView !== "qb" && startView !== "sm") startView = "split";
       setView(startView);
-      loadQb(currentUrl());
+      input.value = address();
+      // the box's address is the one address: if SM has another (not from its
+      // environment), offer this one first, as Reload would
+      fetchStatus().then(function () {
+        var mine = ls(URL_KEY);
+        return (mine && /^https?:\/\//i.test(mine)) ? offerAddress(mine) : null;
+      }).then(function () { loadQb(paneUrl()); });
     })();
   </script>
 </body>

@@ -7,9 +7,12 @@ script tag into the root document; that script adds the links and sends the
 app's WebSockets straight to QUAlibrate (waitress cannot upgrade a socket).
 
 Nothing of QUAlibrate is modified: no package file, no config file.
+Measured against QUAlibrate 1.5.1 and 2.0.0 (both work; see qb-proxy.js for
+the two page layouts).
 
 Security rules (each is pinned by tests/test_qualibrate_proxy.py):
-- the target comes from the server environment only, never from a request;
+- the target is chosen on the server only (its environment, or an address saved
+  from SM's own UI after it answered as QUAlibrate), never by a request;
 - the target is http on a loopback host unless the operator opts in;
 - only listed request/response headers cross; SM's cookies never leave;
 - the run folder is resolved server side and must sit inside the storage
@@ -25,6 +28,7 @@ import logging
 import os
 import re
 import secrets
+import socket
 import threading
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from urllib.parse import quote, urlsplit
@@ -39,6 +43,7 @@ PREFIX = "/qualibrate-ui/"
 TARGET_ENV = "QUALIBRATE_URL"
 REMOTE_ENV = "SM_QUALIBRATE_PROXY_REMOTE"
 DEFAULT_TARGET = "http://127.0.0.1:8001"
+SETTINGS_FILE = "qualibrate_proxy.json"
 MAX_BODY = 32 * 1024 * 1024
 CHUNK = 64 * 1024
 CONNECT_TIMEOUT_S = 3.0
@@ -56,16 +61,24 @@ _RESP_HEADERS = ("Content-Type", "Cache-Control", "ETag", "Last-Modified",
 #: and cannot carry a header).
 TOKEN_HEADER = "X-QSM-Proxy-Token"
 _TOKEN = secrets.token_urlsafe(32)
-_STATIC_EXT = re.compile(r"\.(?:js|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|ico|webp|map)$", re.I)
+_STATIC_EXT = re.compile(r"\.(?:js|mjs|json|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|ico|webp|map)$", re.I)
+# Root files loaded by the recorded shells, including the 1.x hashed bundles.
+_STATIC_ROOT = re.compile(r"(?:(?:main|runtime)(?:\.[a-zA-Z0-9_-]+)?\.(?:js|css)|favicon\.svg)$")
 
 
 def null_origin_allowed(req) -> bool:
     """May a request with ``Origin: null`` reach the proxy? (D-19)"""
     if not req.path.startswith(PREFIX):
         return False
-    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, ""), _TOKEN):
+    if secrets.compare_digest(req.headers.get(TOKEN_HEADER, "").encode("utf-8", "surrogatepass"),
+                              _TOKEN.encode("utf-8")):
         return True
-    return (req.method in ("GET", "HEAD") and _STATIC_EXT.search(req.path) is not None
+    sub = req.path[len(PREFIX):]
+    if "\\" in sub or any(p in (".", "..") for p in sub.split("/")):
+        return False
+    asset = (_STATIC_ROOT.fullmatch(sub) is not None or
+             (sub.startswith(("assets/", "static/")) and _STATIC_EXT.search(sub) is not None))
+    return (req.method in ("GET", "HEAD") and asset
             and "/api/" not in req.path and "/execution/" not in req.path)
 
 
@@ -88,23 +101,101 @@ def _is_loopback(host: str) -> bool:
         return False
 
 
-def target() -> tuple[str, int]:
-    """(host, port) of the QUAlibrate server, from the environment only."""
-    raw = (os.environ.get(TARGET_ENV) or DEFAULT_TARGET).strip()
+def _settings_path() -> Path | None:
+    """``instance/qualibrate_proxy.json`` (Q-1), or None outside an app."""
+    try:
+        from flask import current_app
+        return Path(current_app.instance_path) / SETTINGS_FILE
+    except RuntimeError:
+        return None
+
+
+def _saved_url() -> str | None:
+    p = _settings_path()
+    if p is None:
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    url = data.get("url") if isinstance(data, dict) else None
+    return url.strip() if isinstance(url, str) and url.strip() else None
+
+
+def target_url() -> tuple[str, str]:
+    """(address, source): the environment wins, then the address saved from
+    SM's own UI, then QUAlibrate's default (D-20)."""
+    env = (os.environ.get(TARGET_ENV) or "").strip()
+    if env:
+        return env, "environment"
+    saved = _saved_url()
+    if saved:
+        return saved, "saved"
+    return DEFAULT_TARGET, "default"
+
+
+def parse_target(raw: str, name: str = TARGET_ENV) -> tuple[str, int]:
+    """HTTP target: loopback only unless SM_QUALIBRATE_PROXY_REMOTE=1.
+
+    Link-local / metadata addresses are always refused.
+    """
+    raw = (raw or "").strip()
     parts = urlsplit(raw)
     if parts.scheme != "http":
-        raise TargetError(f"{TARGET_ENV} must be an http:// address, got {raw!r}.")
+        raise TargetError(f"{name} must be an http:// address, got {raw!r}.")
     host = (parts.hostname or "").lower()
     if not host or parts.username or parts.password:
-        raise TargetError(f"{TARGET_ENV} has no usable host: {raw!r}.")
+        raise TargetError(f"{name} has no usable host: {raw!r}.")
     try:
         port = parts.port or 80
     except ValueError:
-        raise TargetError(f"{TARGET_ENV} has a bad port: {raw!r}.") from None
-    if not _is_loopback(host) and os.environ.get(REMOTE_ENV) != "1":
-        raise TargetError(f"{TARGET_ENV} points at {host}, which is not this computer. "
-                          f"Set {REMOTE_ENV}=1 to allow a QUAlibrate on another host.")
+        raise TargetError(f"{name} has a bad port: {raw!r}.") from None
+    refused = f"{name} must not use a link-local / metadata address."
+    if _link_local_text(host):
+        raise TargetError(refused)
+    if not _is_loopback(host):
+        if os.environ.get(REMOTE_ENV) != "1":
+            raise TargetError(f"{name} points at {host}, which is not this computer. "
+                              f"Set {REMOTE_ENV}=1 to allow a QUAlibrate on another host.")
+        # The host text alone is not the address: decimal/octal IPv4 and DNS
+        # names reach link-local too. Judge every address the name resolves to.
+        try:
+            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except (OSError, UnicodeError):
+            raise TargetError(f"{name} names a host that cannot be resolved: {host}.") from None
+        if not infos or any(_link_local_text(str(i[4][0])) for i in infos):
+            raise TargetError(refused)
     return host, port
+
+
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _link_local_text(text: str) -> bool:
+    """Is this address text link-local, directly or through an IPv4 embedding
+    (IPv4-mapped, IPv4-compatible, NAT64)? Non-address text is False."""
+    try:
+        addr = ipaddress.ip_address(text.split("%", 1)[0])
+    except ValueError:
+        return False
+    if addr.is_link_local:
+        return True
+    if addr.version == 6:
+        n = int(addr)
+        embedded = []
+        if addr.ipv4_mapped is not None:
+            embedded.append(addr.ipv4_mapped)
+        if n >> 32 == 0 or addr in _NAT64:
+            embedded.append(ipaddress.IPv4Address(n & 0xFFFFFFFF))
+        return any(e.is_link_local for e in embedded)
+    return False
+
+
+def target() -> tuple[str, int]:
+    """(host, port) of the QUAlibrate server, chosen by the server only (D-2)."""
+    raw, source = target_url()
+    name = TARGET_ENV if source == "environment" else "The QUAlibrate address"
+    return parse_target(raw, name)
 
 
 def _netloc(host: str, port: int) -> str:
@@ -219,7 +310,7 @@ def proxy(sub: str):
     except (OSError, http.client.HTTPException) as e:
         _SLOTS.release()
         return _status(f"QUAlibrate is not answering at http://{_netloc(host, port)} ({e}). "
-                       f"Start it, or set {TARGET_ENV} to its address and restart SM.", 502)
+                       f"Start it, or set its address in the Sync-Qualibrate bar.", 502)
 
     out = {k: v for k in _RESP_HEADERS if (v := resp.getheader(k)) is not None}
     loc = resp.getheader("Location")
@@ -377,3 +468,100 @@ def open_run(run_id: int):
     where = f" under {loc}" if loc is not None else ""
     return _status(f"Run #{run_id} ({shown}) was not found{where} or in any loaded data "
                    f"folder. Add the data folder that holds it in Datasets, then retry.", 404)
+
+
+# ------------------------------------------------------------ the address (Q-1)
+
+def probe(host: str, port: int) -> tuple[str | None, str | None]:
+    """(version, None) when QUAlibrate answers ``/execution/meta`` at
+    host:port, else (None, reason). 1.5.1 and 2.0 both answer
+    ``{"version": "..."}`` there."""
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=CONNECT_TIMEOUT_S)
+        try:
+            conn.request("GET", "/execution/meta", headers={"Host": _netloc(host, port),
+                                                             "Accept": "application/json"})
+            resp = conn.getresponse()
+            body = resp.read(64 * 1024)
+        finally:
+            conn.close()
+    except TimeoutError:
+        return None, "timed out"
+    except (OSError, http.client.HTTPException):
+        return None, "nothing answered"
+    if resp.status != 200:
+        return None, "not a QUAlibrate server"
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except ValueError:
+        data = None
+    v = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(v, str) or not v:
+        return None, "not a QUAlibrate server"
+    return v[:40], None
+
+
+def _target_status() -> dict:
+    raw, source = target_url()
+    out = {"url": raw, "source": source, "env": TARGET_ENV, "ok": False,
+           "version": None, "reason": None}
+    try:
+        host, port = target()
+    except TargetError as e:
+        out["reason"] = str(e)
+        return out
+    version, why = probe(host, port)
+    out.update(ok=version is not None, version=version, reason=why)
+    return out
+
+
+@qbproxy_bp.route("/qualibrate-ui-target", methods=["GET"])
+def proxy_target_get():
+    """Which QUAlibrate SM serves at /qualibrate-ui/, where that address came
+    from, and whether it answers (the workbench's self-check, D-21)."""
+    from flask import jsonify
+    r = jsonify(_target_status())
+    r.headers["Cache-Control"] = "no-store"
+    return r
+
+
+@qbproxy_bp.route("/qualibrate-ui-target", methods=["POST"])
+def proxy_target_set():
+    """Save the QUAlibrate address chosen in SM's UI (D-20).
+
+    Origin-checked like every SM write; loopback only unless
+    SM_QUALIBRATE_PROXY_REMOTE=1 (D-3), always refusing link-local / metadata.
+    It must answer as QUAlibrate before saving. ``{"url": ""}`` forgets it."""
+    from flask import jsonify
+    from quam_state_manager.web.request_body import json_object, json_text
+    data = json_object()
+    url = json_text(data, "url")
+    if (os.environ.get(TARGET_ENV) or "").strip():
+        st = _target_status()
+        st["reason"] = (f"SM uses {TARGET_ENV}={st['url']} from its environment; "
+                        f"change or unset it there and restart SM.")
+        return jsonify(st), 409
+    path = _settings_path()
+    if not url:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            return jsonify(ok=False, reason=f"Could not forget the address: {e}"), 500
+        return jsonify(_target_status())
+    try:
+        host, port = parse_target(url, "The QUAlibrate address")
+    except TargetError as e:
+        return jsonify(ok=False, url=url, reason=str(e)), 400
+    version, why = probe(host, port)
+    if version is None:
+        return jsonify(ok=False, url=url, reason=f"Not saved: {why}."), 502
+    from quam_state_manager.core.safe_io import atomic_write_json
+    canonical = f"http://{_netloc(host, port)}"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, {"url": canonical})
+    except Exception as e:  # noqa: BLE001 (answer with the reason, never a 500 page)
+        return jsonify(ok=False, url=url, reason=f"Could not save the address: {e}"), 500
+    return jsonify(_target_status())

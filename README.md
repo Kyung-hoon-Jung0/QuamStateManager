@@ -26,6 +26,12 @@ qsm browser          # conda / activated env
 uv run qsm browser   # uv project
 ```
 
+The Sync-Qualibrate workbench can show QUAlibrate through QSM. Set its HTTP
+address in the workbench; QSM saves it after checking that QUAlibrate answers.
+The target is loopback only unless `SM_QUALIBRATE_PROXY_REMOTE=1`; link-local /
+metadata IP addresses are refused even with that operator opt-in.
+`QUALIBRATE_URL` takes precedence over the saved address.
+
 To use a specific port, add `--port` (or `-p`); the default is 5050:
 
 ```bash

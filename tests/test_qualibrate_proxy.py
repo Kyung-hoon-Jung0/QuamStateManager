@@ -1,7 +1,8 @@
 """QUAlibrate's web UI through SM, with an Open-in-QSM link per run.
 
-A stub upstream plays the QUAlibrate endpoints the feature relies on (the
-installed qualibrate 1.5.1 was measured for them; see qualibrate_proxy.py).
+A stub upstream plays the QUAlibrate endpoints the feature relies on (measured
+on qualibrate 1.5.1 and 2.0.0; see qualibrate_proxy.py). A real 2.x server is
+used only when SM_TEST_QUALIBRATE2_URL names one.
 """
 from __future__ import annotations
 
@@ -107,6 +108,7 @@ class TestTarget:
     def test_remote_only_when_the_operator_says_so(self, monkeypatch):
         monkeypatch.setenv(qp.TARGET_ENV, "http://10.0.0.5:8001")
         monkeypatch.setenv(qp.REMOTE_ENV, "1")
+        monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"10.0.0.5": ["10.0.0.5"]}))
         assert qp.target() == ("10.0.0.5", 8001)
 
     def test_a_request_cannot_choose_the_target(self, client, up):
@@ -456,7 +458,7 @@ class TestOpenRun:
 # ------------------------------------------------------------------ pages
 def test_workbench_offers_the_proxy_and_trusts_only_its_own_frame(client):
     html = client.get("/workbench").data.decode()
-    assert 'id="wb-viasm"' in html and 'setUrl("/qualibrate-ui/")' in html
+    assert 'id="wb-viasm"' in html and 'var PROXY = "/qualibrate-ui/"' in html
     assert "e.source !== qb.contentWindow" in html
     assert "/^\\/qualibrate-run\\/\\d{1,9}$/" in html
 
@@ -471,3 +473,338 @@ def test_the_script_selfcheck(tmp_path):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "assertions" in r.stdout
+
+
+# ------------------------------------------------------------ both QUAlibrate generations
+_FX = _ROOT / "tests" / "fixtures" / "qualibrate_ui"
+#: what each version answers, measured on qualibrate 1.5.1 and 2.0.0 (paths synthetic)
+_API = {
+    "1.5.1": {"meta": {"version": "1.5.1"}, "data_file": "2026-11-05\\#3_ramsey_075423"},
+    "2.0.0": {"meta": {"version": "2.0.0"}, "data_file": "2026-11-05\\#3_ramsey_075423"},
+}
+
+
+def _version(up, v, loc=None):
+    up.json("/execution/meta", _API[v]["meta"])
+    up.json("/api/data_file/3/", _API[v]["data_file"])
+    up.json("/api/project/active", "demo")
+    up.json("/api/projects/", [{"name": "demo", "nodes_number": 3, "updates": {},
+                                "config": {"qualibrate": {"database": None,
+                                                          "storage": {"location": str(loc or "/nowhere")}},
+                                           "quam": {"state_path": None}}}])
+    up.routes["/"] = (200, {"Content-Type": "text/html; charset=utf-8"},
+                      (_FX / f"v{v.replace('.', '_')}_index.html").read_bytes())
+
+
+@pytest.mark.parametrize("v", ["1.5.1", "2.0.0"])
+class TestBothVersions:
+    def test_the_root_gets_the_tag_and_keeps_its_own_scripts(self, client, up, v):
+        _version(up, v)
+        html = client.get("/qualibrate-ui/").data.decode()
+        assert html.count('src="/static/qb-proxy.js"') == 1
+        head = html.index("<head>") + len("<head>")
+        assert html[head:].lstrip().startswith('<script src="/static/qb-proxy.js"')
+        assert ("main.js" in html) if v == "1.5.1" else ('type="module" crossorigin' in html)
+
+    def test_a_module_asset_loads_from_the_sandboxed_page(self, client, up, v):
+        # 2.0 loads its bundle as <script type="module" crossorigin>: a CORS
+        # request from the opaque origin, without the token
+        up.routes["/assets/index-abc.js"] = (200, {"Content-Type": "text/javascript"}, b"1")
+        r = client.get("/qualibrate-ui/assets/index-abc.js", headers={"Origin": "null"})
+        assert r.status_code == 200 and r.headers["Access-Control-Allow-Origin"] == "null"
+
+    def test_the_run_opens(self, client, up, tmp_path, v):
+        loc = tmp_path / "store"
+        (loc / "2026-11-05" / "#3_ramsey_075423").mkdir(parents=True)
+        _version(up, v, loc)
+        r = client.get("/qualibrate-run/3")
+        assert r.status_code == 302 and "/dataset/by-path" in r.headers["Location"]
+
+    def test_the_address_check_reads_the_version(self, client, up, v):
+        _version(up, v)
+        st = client.get("/qualibrate-ui-target").get_json()
+        assert st["ok"] is True and st["version"] == v and st["source"] == "environment"
+
+
+# ------------------------------------------------------------ the address chosen in SM (D-20)
+_SAME = {"Origin": "http://localhost"}
+
+
+@pytest.mark.parametrize("path", [
+    "private/trace.js", "runs/plot.svg", "config.json", "other/font.woff2",
+    "assets/../private/trace.js", "static/../../private/trace.js", "assets/api/data.json",
+])
+def test_asset_exception_does_not_expose_other_files(client, up, path):
+    up.routes["/" + path] = (200, {}, b"private")
+    r = client.get(qp.PREFIX + path, headers={"Origin": "null"})
+    assert r.status_code == 403
+    assert not up.seen
+
+
+@pytest.mark.parametrize("path", [
+    "runtime.js", "main.js", "main.css", "favicon.svg",
+    "assets/index-abc.js", "static/js/main.abc.js", "assets/chunk.mjs",
+    "static/data.json", "assets/data.json",
+])
+def test_shell_assets_still_load_without_token(client, up, path):
+    up.routes["/" + path] = (200, {}, b"asset")
+    r = client.get(qp.PREFIX + path, headers={"Origin": "null"})
+    assert r.status_code == 200
+    assert r.headers["Access-Control-Allow-Origin"] == "null"
+
+
+def test_non_ascii_token_is_forbidden(client, up):
+    r = client.post(qp.PREFIX + "execution/submit/node", headers={
+        "Origin": "null", qp.TOKEN_HEADER: "\u00e9-invalid"})
+    assert r.status_code == 403
+    assert not up.seen
+
+
+@pytest.mark.parametrize("host", ["169.254.0.1", "169.254.169.254", "169.254.255.255",
+                                  "[fe80::1]", "[febf::1]", "[::ffff:169.254.169.254]"])
+def test_remote_opt_in_still_refuses_link_local(app, client, noenv, monkeypatch, host):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    probes = []
+    monkeypatch.setattr(qp, "probe", lambda *args: (probes.append(args) or ("2.0.0", None)))
+    url = f"http://{host}:8001"
+    r = client.post("/qualibrate-ui-target", json={"url": url}, headers=_SAME)
+    assert r.status_code == 400
+    assert not probes
+    assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+    with pytest.raises(qp.TargetError):
+        qp.parse_target(url)
+
+
+def test_remote_opt_in_can_save_a_remote_server(client, noenv, monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp, "probe", lambda *args: ("2.0.0", None))
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"10.0.0.5": ["10.0.0.5"]}))
+    r = client.post("/qualibrate-ui-target", json={"url": "http://10.0.0.5:8001"}, headers=_SAME)
+    assert r.status_code == 200 and r.get_json()["source"] == "saved"
+
+
+@pytest.mark.parametrize("error,reason", [
+    (OSError("private socket details"), "nothing answered"),
+    (ConnectionRefusedError("private socket details"), "nothing answered"),
+    (TimeoutError("private socket details"), "timed out"),
+    (qp.http.client.HTTPException("private socket details"), "nothing answered"),
+])
+def test_post_probe_errors_use_fixed_reasons(client, noenv, monkeypatch, error, reason):
+    def fail(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(qp.http.client, "HTTPConnection", fail)
+    r = client.post("/qualibrate-ui-target", json={"url": "http://127.0.0.1:8001"}, headers=_SAME)
+    assert r.status_code == 502
+    assert r.get_json()["reason"] == f"Not saved: {reason}."
+
+
+@pytest.mark.parametrize("status,body", [(404, b"missing"), (200, b"{}"), (200, b"not json")])
+def test_post_non_qualibrate_uses_fixed_reason(client, noenv, status, body):
+    u = Upstream()
+    try:
+        u.routes["/execution/meta"] = (status, {}, body)
+        r = client.post("/qualibrate-ui-target", json={"url": f"http://127.0.0.1:{u.port}"}, headers=_SAME)
+        assert r.status_code == 502
+        assert r.get_json()["reason"] == "Not saved: not a QUAlibrate server."
+    finally:
+        u.close()
+
+
+@pytest.fixture
+def noenv(monkeypatch):
+    monkeypatch.delenv(qp.TARGET_ENV, raising=False)
+    monkeypatch.delenv(qp.REMOTE_ENV, raising=False)
+
+
+class TestAddress:
+    def test_default_when_nothing_is_set(self, app, noenv):
+        with app.test_request_context():
+            assert qp.target_url() == (qp.DEFAULT_TARGET, "default")
+
+    def test_a_verified_local_address_is_saved_and_used(self, app, client, noenv):
+        u = Upstream()
+        try:
+            u.json("/execution/meta", {"version": "2.0.0"})
+            r = client.post("/qualibrate-ui-target", json={"url": f"http://localhost:{u.port}/x?y"},
+                            headers=_SAME)
+            assert r.status_code == 200, r.data
+            st = r.get_json()
+            assert st["source"] == "saved" and st["ok"] and st["version"] == "2.0.0"
+            assert st["url"] == f"http://localhost:{u.port}"           # canonical: no path or query
+            saved = json.loads((Path(app.instance_path) / qp.SETTINGS_FILE).read_text())
+            assert saved == {"url": f"http://localhost:{u.port}"}
+            with app.test_request_context():
+                assert qp.target() == ("localhost", u.port)
+            u.routes["/"] = (200, {"Content-Type": "text/html"}, _INDEX)
+            assert b"qb-proxy.js" in client.get("/qualibrate-ui/").data  # the proxy follows it
+        finally:
+            u.close()
+
+    def test_an_address_that_is_not_qualibrate_is_not_saved(self, app, client, noenv):
+        u = Upstream()                                    # answers 404 to /execution/meta
+        try:
+            r = client.post("/qualibrate-ui-target", json={"url": f"http://127.0.0.1:{u.port}"}, headers=_SAME)
+            assert r.status_code == 502 and "Not saved" in r.get_json()["reason"]
+            u.json("/execution/meta", {"name": "something else"})
+            r = client.post("/qualibrate-ui-target", json={"url": f"http://127.0.0.1:{u.port}"}, headers=_SAME)
+            assert r.status_code == 502
+        finally:
+            u.close()
+        assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+        r = client.post("/qualibrate-ui-target", json={"url": "http://127.0.0.1:1"}, headers=_SAME)
+        assert r.status_code == 502 and "nothing answered" in r.get_json()["reason"]
+
+    @pytest.mark.parametrize("url", ["http://10.0.0.5:8001", "https://127.0.0.1:8001",
+                                     "file:///etc", "http://user:pw@127.0.0.1:8001", "127.0.0.1:8001"])
+    def test_only_a_plain_local_address(self, app, client, noenv, url):
+        r = client.post("/qualibrate-ui-target", json={"url": url}, headers=_SAME)
+        assert r.status_code == 400
+        assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+
+    def test_the_environment_wins_and_cannot_be_replaced_from_the_ui(self, app, client, up):
+        r = client.post("/qualibrate-ui-target", json={"url": "http://127.0.0.1:1"}, headers=_SAME)
+        assert r.status_code == 409 and qp.TARGET_ENV in r.get_json()["reason"]
+        assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+        (Path(app.instance_path) / qp.SETTINGS_FILE).write_text('{"url": "http://127.0.0.1:2"}')
+        with app.test_request_context():
+            assert qp.target_url()[1] == "environment"
+
+    def test_an_empty_address_forgets_it(self, app, client, noenv):
+        f = Path(app.instance_path) / qp.SETTINGS_FILE
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text('{"url": "http://127.0.0.1:2"}')
+        with app.test_request_context():
+            assert qp.target_url() == ("http://127.0.0.1:2", "saved")
+        assert client.post("/qualibrate-ui-target", json={"url": ""}, headers=_SAME).status_code == 200
+        assert not f.exists()
+
+    def test_a_saved_non_local_address_is_still_refused(self, app, client, noenv):
+        f = Path(app.instance_path) / qp.SETTINGS_FILE
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text('{"url": "http://10.0.0.5:8001"}')        # edited by hand
+        assert client.get("/qualibrate-ui/").status_code == 400
+        assert client.get("/qualibrate-ui-target").get_json()["ok"] is False
+
+    @pytest.mark.parametrize("origin", ["null", "http://evil.example"])
+    def test_only_sms_own_pages_may_set_it(self, app, noenv, origin):
+        assert TestCsrf()._check(app, "/qualibrate-ui-target", origin) is not None
+        app.config["TESTING"] = False
+        with app.test_request_context("/qualibrate-ui-target", method="POST",
+                                      headers={"Origin": "http://127.0.0.1:5000", "Host": "127.0.0.1:5000"}):
+            assert app_mod._csrf_origin_check() is None             # SM's own page may
+
+    def test_a_request_parameter_never_chooses_it(self, app, client, noenv):
+        client.get("/qualibrate-ui/?target=http://127.0.0.1:9&url=http://127.0.0.1:9")
+        client.get("/workbench?qb=http://127.0.0.1:9")
+        with app.test_request_context():
+            assert qp.target_url() == (qp.DEFAULT_TARGET, "default")
+
+    @pytest.mark.parametrize("body", ['"x"', "[1]", '{"url": 5}'])
+    def test_a_bad_body_is_a_400(self, client, noenv, body):
+        r = client.post("/qualibrate-ui-target", data=body, content_type="application/json", headers=_SAME)
+        assert r.status_code == 400
+
+
+def test_the_workbench_selfcheck(client, tmp_path):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    page = tmp_path / "workbench.html"
+    page.write_bytes(client.get("/workbench").data)
+    r = subprocess.run([node, str(_ROOT / "tests" / "qb_workbench_selfcheck.cjs"), str(page)],
+                       capture_output=True, text=True, timeout=120)
+    if "jsdom not installed" in r.stdout:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "assertions" in r.stdout
+
+
+# ------------------------------------------------------------ opt-in: a real QUAlibrate 2.x
+_LIVE = "SM_TEST_QUALIBRATE2_URL"
+
+
+@pytest.mark.skipif(not __import__("os").environ.get(_LIVE),
+                    reason=f"set {_LIVE}=http://127.0.0.1:<port> of a running QUAlibrate 2.x")
+def test_live_qualibrate_2(app, client, monkeypatch):
+    import os
+    import urllib.request
+    url = os.environ[_LIVE].rstrip("/")
+    monkeypatch.setenv(qp.TARGET_ENV, url)
+    st = client.get("/qualibrate-ui-target").get_json()
+    assert st["ok"] and st["version"].startswith("2."), st
+    root = client.get("/qualibrate-ui/")
+    assert root.status_code == 200 and b'src="/static/qb-proxy.js"' in root.data
+    assert b'type="module"' in root.data
+    hist = json.loads(urllib.request.urlopen(url + "/api/root/nodes_history").read())
+    if not hist.get("items"):
+        pytest.skip("the live QUAlibrate has no runs")
+    run_id = hist["items"][0]["id"]
+    r = client.get(f"/qualibrate-run/{run_id}")
+    assert r.status_code == 302 and "/dataset/by-path" in r.headers["Location"], r.data[:300]
+
+
+def test_surrogate_token_is_forbidden_not_a_crash(client, up):
+    r = client.post(qp.PREFIX + "execution/submit/node", headers={
+        "Origin": "null", qp.TOKEN_HEADER: "x"})
+    assert r.status_code == 403
+
+    class _Req:
+        path = qp.PREFIX + "execution/submit/node"
+        method = "POST"
+        headers = {qp.TOKEN_HEADER: "\udcff-lone-surrogate"}
+    assert qp.null_origin_allowed(_Req()) is False
+
+
+def _fake_resolver(answers):
+    def fake(host, port, *args, **kwargs):
+        if host not in answers:
+            raise OSError("no such host")
+        out = []
+        for a in answers[host]:
+            fam = qp.socket.AF_INET6 if ":" in a else qp.socket.AF_INET
+            sa = (a, port, 0, 0) if fam == qp.socket.AF_INET6 else (a, port)
+            out.append((fam, qp.socket.SOCK_STREAM, 6, "", sa))
+        return out
+    return fake
+
+
+@pytest.mark.parametrize("host,answers", [
+    ("2852039166", ["169.254.169.254"]),
+    ("0251.0376.0251.0376", ["169.254.169.254"]),
+    ("[64:ff9b::a9fe:a9fe]", ["64:ff9b::a9fe:a9fe"]),
+    ("[::169.254.169.254]", ["::a9fe:a9fe"]),
+    ("[::ffff:a9fe:a9fe]", ["::ffff:169.254.169.254"]),
+    ("metadata.example", ["169.254.169.254"]),
+    ("mixed.example", ["10.0.0.5", "fe80::1%3"]),
+    ("v6.example", ["fe80::1"]),
+])
+def test_remote_opt_in_refuses_names_resolving_to_link_local(app, client, noenv, monkeypatch, host, answers):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    bare = host.strip("[]")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({bare: answers}))
+    probes = []
+    monkeypatch.setattr(qp, "probe", lambda *args: (probes.append(args) or ("2.0.0", None)))
+    url = f"http://{host}:8001"
+    r = client.post("/qualibrate-ui-target", json={"url": url}, headers=_SAME)
+    assert r.status_code == 400
+    assert not probes
+    assert not (Path(app.instance_path) / qp.SETTINGS_FILE).exists()
+    with pytest.raises(qp.TargetError):
+        qp.parse_target(url)
+    # also refused when the address is USED (environment target)
+    monkeypatch.setenv(qp.TARGET_ENV, url)
+    with pytest.raises(qp.TargetError):
+        qp.target()
+
+
+def test_remote_opt_in_accepts_a_name_resolving_to_a_routable_address(monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({"lab.example": ["10.0.0.5"]}))
+    assert qp.parse_target("http://lab.example:8001") == ("lab.example", 8001)
+
+
+def test_remote_opt_in_refuses_an_unresolvable_name(monkeypatch):
+    monkeypatch.setenv(qp.REMOTE_ENV, "1")
+    monkeypatch.setattr(qp.socket, "getaddrinfo", _fake_resolver({}))
+    with pytest.raises(qp.TargetError):
+        qp.parse_target("http://nowhere.example:8001")
