@@ -405,14 +405,14 @@ def test_a_ns_stamp_on_a_seconds_value_is_not_evidence(tmp_path):
     and the table showed "0.0 ns". Nothing was saved yet (a run read while
     still being written), so the bare value in seconds stands."""
     h5py = pytest.importorskip("h5py")
-    d = tmp_path / "#16_12_ramsey"
+    d = tmp_path / "#7_12_ramsey"
     d.mkdir()
     with h5py.File(d / "ds_fit.h5", "w") as f:
         ax = f.create_dataset("idle_time", data=[16.0, 32.0])
         ax.attrs["units"] = "ns"
         ax.attrs["CLASS"] = b"DIMENSION_SCALE"
-        v = f.create_dataset("t2_star", data=[2.439166424782799e-05])
+        v = f.create_dataset("t2_star", data=[2.5e-05])
         v.attrs["units"] = "ns"
-    r = _run("12_ramsey", {"qA1": {"decay": 2.439166424782799e-05, "success": True}})
+    r = _run("12_ramsey", {"qA1": {"decay": 2.5e-05, "success": True}})
     r.folder_path = d
-    assert DatasetStore._extract_key_metric(r) == "24.39 µs"
+    assert DatasetStore._extract_key_metric(r) == "25.00 µs"
