@@ -394,7 +394,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
 def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                    label: str) -> WriteOutcome:
     """review-autonomy plan-end restore: write pre-plan values back
-    (docs/56 §7b-A), exact-typed (coerce=False) like reverts. A row carrying
+    (docs/56 section 7b-A), exact-typed (coerce=False, enforce=False) like reverts. A row carrying
     ``expect`` (the last value the plan itself wrote there) is a CAS: when
     the chip holds something else now, someone else saved it after the plan
     and it is kept and reported in ``conflicts``, never clobbered."""
@@ -419,7 +419,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                                 f"changed after the plan wrote it "
                                 f"(current={cur!r})"})
                     continue
-                if _values_equal(cur, r["value"]):
+                if type(cur) is type(r["value"]) and _values_equal(cur, r["value"]):
                     continue          # already the pre-plan value
             keep.append(r)
         return keep, out
@@ -432,7 +432,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                 rows, conflicts = _cas_split(rows)
                 for r in rows:
                     e = chip.modifier.set_value(r["path"], r["value"],
-                                                coerce=False,
+                                                coerce=False, enforce=False,
                                                 _defer_hooks=True,
                                                 group_id=gid)
                     entries.append(e)
@@ -445,7 +445,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             try:
                 for e in reversed(entries):
                     chip.modifier.set_value(e.dot_path, e.old_value,
-                                            coerce=False)
+                                            coerce=False, enforce=False)
             except Exception:  # noqa: BLE001
                 logger.exception("restore rollback failed")
             return WriteOutcome(ok=False, action="restored",
@@ -474,7 +474,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                     conflicts.extend(late)
                     for r in rows:
                         restaged.append(chip.modifier.set_value(
-                            r["path"], r["value"], coerce=False, _defer_hooks=True,
+                            r["path"], r["value"], coerce=False, enforce=False, _defer_hooks=True,
                             group_id=gid))
                     chip.store._clear_pointer_cache()
                 return None

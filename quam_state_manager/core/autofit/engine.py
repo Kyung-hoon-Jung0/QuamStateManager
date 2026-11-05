@@ -357,7 +357,7 @@ class PlanEngine:
             b = post.get(path, _MISSING)
             if b is _MISSING:
                 continue          # a removed key: nothing a CAS can guard
-            if a is not _MISSING and _same(a, b):
+            if a is not _MISSING and type(a) is type(b) and _same(a, b):
                 continue
             ent = _dotted_entity(path)
             if scope and ent is not None and ent not in scope:
