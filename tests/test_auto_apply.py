@@ -491,8 +491,9 @@ class TestAgentRowsAreNeverAutoPushed:
         assert r.status_code == 409 and r.get_json()["conflict"] == "agent_rows_held"
         assert (env["live"] / "state.json").read_bytes() == before, "live untouched"
         assert len(_ctx(env)["store"].change_log) == 2, "both rows still staged"
-        tray = c.get("/state/tray").data.decode()
-        assert 'data-agent-held="1"' in tray and "data-agent-held-note" in tray
+        assert _ctx(env).get("auto_apply") is None
+        assert r.get_json()["failure_class"] == "permanent"
+        assert "auto-apply-off" in r.get_json()["tray_html"]
 
     def test_the_persons_own_apply_still_pushes_them(self, env):
         c = env["client"]

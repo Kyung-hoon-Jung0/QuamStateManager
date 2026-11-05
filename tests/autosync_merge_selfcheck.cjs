@@ -100,8 +100,8 @@ function world() {
   const state = { sync: [], toasts: [] };
   w.htmx = { ajax: function () { return new Promise(function () {}); },
              trigger: function () {} };
-  w.doStateSync = function (mode, forced, ackUnseen, expectChip) {
-    state.sync.push({ mode: mode, forced: forced, ackUnseen: ackUnseen, chip: expectChip });
+  w.doStateSync = function (mode, forced, ackUnseen, expectChip, opts) {
+    state.sync.push({ mode: mode, forced: forced, ackUnseen: ackUnseen, chip: expectChip, automatic: !!(opts && opts.automatic) });
   };
   w.showToast = function (m, l) { state.toasts.push({ m: String(m), l: l }); };
   w.eval(fs.readFileSync(SRC, 'utf8'));
@@ -128,7 +128,7 @@ function fire(w, name, detail) {
     check('A3 …carrying the chip the SIGNAL named',
           state.sync[0] && state.sync[0].chip === 'CHIP-A', JSON.stringify(state.sync[0]));
     check('A4 …and it does not force, or acknowledge unseen edits, on its own',
-          state.sync[0] && !state.sync[0].forced && !state.sync[0].ackUnseen,
+          state.sync[0] && !state.sync[0].forced && !state.sync[0].ackUnseen && state.sync[0].automatic,
           JSON.stringify(state.sync[0]));
   }
 
@@ -165,21 +165,24 @@ function fire(w, name, detail) {
           'a timer was still alive after the bound: ' + JSON.stringify(state.sync));
   }
 
-  /* ── C2b. review R9: giving up must not be SILENT ─────────────────── */
+  // A latch timeout is reported to the server for classification.
   {
-    // The bound is right -- a timer must not outlive its purpose -- but the
-    // server has already spent one of its three tries, and the tray is still
-    // saying Auto-Sync is resolving this. Leaving that on screen while nothing
-    // happens is the class of defect docs/187 exists to fix.
     const { w, state, clock } = world();
-    w._applyInFlight = true;                 // never clears
-    fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-G' });
-    await clock.advance(2600);
-    check('C3 abandoning the merge tells the user', state.toasts.length === 1,
-          JSON.stringify(state.toasts));
-    const m = (state.toasts[0] || {}).m || '';
-    check('C4 …saying the edits are safe', /safe/.test(m), m);
-    check('C5 …and naming what finishes it', /Pull & apply/.test(m), m);
+    const reports = [];
+    w.fetch = function (url, opts) {
+      reports.push({url, opts});
+      return Promise.resolve({json: () => Promise.resolve({merge_failure: {
+        class: 'transient', reason: 'still in flight', tries: 1, delay: 2, chip: 'CHIP-G'
+      }})});
+    };
+    w._applyInFlight = true;
+    fire(w, 'autoSyncMerge', {chip: 'CHIP-G'});
+    await clock.advance(2100);
+    check('C3 latch timeout asks the server to classify', reports.length === 1);
+    check('C4 latch timeout opens no question', state.toasts.length === 0);
+    w._applyInFlight = false;
+    await clock.advance(2000);
+    check('C5 server-classified latch failure retries', state.sync.length === 1);
   }
 
   /* ── D. a merge signal with no chip still works (nothing to pin) ────── */
@@ -318,6 +321,125 @@ function fire(w, name, detail) {
     check('I4 a re-staged restoration names the pending changes, not a write',
           /2 values you applied/.test(m) && /back in your pending changes/.test(m)
           && !/restored them/.test(m), m);
+  }
+
+  // Failure-kind backoff is executed against the shipped scheduler.
+  {
+    const { w, state, clock } = world();
+    w.document.body.insertAdjacentHTML('beforeend', '<button class="auto-apply-on"></button>');
+    w._applyInFlight = false;
+    const delays = [2, 5, 15, 30, 60, 60];
+    for (let i = 0; i < delays.length; i++) {
+      fire(w, 'autoSyncRetry', {class: 'transient', reason: 'synthetic lock',
+        tries: i + 1, delay: delays[i], chip: 'CHIP-R', mode: 'apply'});
+      fire(w, 'autoSyncMerge', {chip: 'CHIP-R'});
+      await clock.advance(delays[i] * 1000 - 1);
+      check('R' + i + ' no early retry or competing merge press', state.sync.length === i);
+      await clock.advance(1);
+      check('R' + i + ' retry at server deadline', state.sync.length === i + 1);
+      check('R' + i + ' exactly one retrying indicator',
+        w.document.querySelectorAll('[data-auto-retry]').length === 1 &&
+        w.document.querySelector('[data-auto-retry]').textContent === 'retrying (' + (i + 1) + ')');
+      check('R' + i + ' reason tooltip', w.document.querySelector('.auto-apply-on').title === 'synthetic lock');
+    }
+    fire(w, 'autoSyncRetry', {class: 'unknown', tries: 7, delay: 60, chip: 'CHIP-R'});
+    fire(w, 'autoSyncLanded', {});
+    await clock.advance(60000);
+    check('R landed cancels queued retry', state.sync.length === 6);
+    fire(w, 'autoSyncRetry', {class: 'permanent', reason: 'staged snapshot', tries: 1});
+    await clock.advance(60000);
+    check('R permanent never re-presses', state.sync.length === 6);
+  }
+
+  {
+    const { w, state, clock } = world();
+    w._applyInFlight = false;
+    const pulls = [];
+    w._autoSyncPullRequest = function(chip) { pulls.push(chip); return Promise.resolve(); };
+    fire(w, 'autoSyncRetry', {class: 'transient', reason: 'read locked', tries: 1,
+                            delay: 2, chip: 'CHIP-P', mode: 'pull'});
+    await clock.advance(2000);
+    check('P retry of a pull stays a pull', pulls.length === 1 && pulls[0] === 'CHIP-P');
+    check('P pull-only retry never presses a write', state.sync.length === 0);
+    fire(w, 'autoSyncRetry', {class: 'transient', tries: 2, delay: 5, chip: 'CHIP-P'});
+    fire(w, 'autoApplyArmed', {});
+    await clock.advance(5000);
+    check('P rearming cancels the previous session timer', state.sync.length === 0);
+  }
+
+  {
+    const { w, state, clock } = world();
+    w._applyInFlight = false;
+    const pill = w.document.createElement('button');
+    pill.className = 'auto-apply-on';
+    const hint = w.document.createElement('span');
+    hint.setAttribute('data-auto-retry', '1');
+    hint.setAttribute('data-retry', JSON.stringify({class: 'transient', tries: 3,
+      reason: 'synthetic lock', chip: 'CHIP-H', mode: 'reapply', delay: 15}));
+    pill.appendChild(hint); w.document.body.appendChild(pill);
+    fire(w, 'DOMContentLoaded', {});
+    await clock.advance(14999);
+    check('H reload retains the retry deadline', state.sync.length === 0);
+    await clock.advance(1);
+    check('H reload resumes the captured merge mode and chip', state.sync.length === 1
+      && state.sync[0].mode === 'reapply' && state.sync[0].chip === 'CHIP-H');
+  }
+
+  {
+    const { w, state, clock } = world();
+    w._applyInFlight = true;
+    fire(w, 'autoSyncMerge', {chip: 'CHIP-W'});
+    await clock.advance(100);
+    fire(w, 'autoSyncRetry', {class: 'transient', tries: 2, delay: 5, chip: 'CHIP-W'});
+    w._applyInFlight = false;
+    await clock.advance(4999);
+    check('W a new failure cancels the older latch waiter', state.sync.length === 0);
+    await clock.advance(1);
+    check('W only the current retry presses', state.sync.length === 1);
+  }
+  {
+    const { w } = world();
+    const app = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+    const start = app.indexOf('window._autoSyncPullRequest = function');
+    w.eval(app.slice(start, app.indexOf('window.doStateSync = function', start)));
+    w.document.body.insertAdjacentHTML('beforeend', '<div class="bulk-cell dirty" data-dot-path="qubits.q1.T1"></div>');
+    const requests = [];
+    w.htmx.ajax = function(method, url) { requests.push({method, url}); };
+    w._autoSyncPullRequest('CHIP-D');
+    const url = requests[0] && requests[0].url || '';
+    check('D pull retry reports the current typed cells', /dom_dirty=1/.test(url) && /dom_path=qubits.q1.T1/.test(url));
+    check('D pull retry carries captured authorization and chip', /auto_sync=1/.test(url) && /expect_chip=CHIP-D/.test(url));
+  }
+
+  {
+    const { w, state, clock } = world();
+    w._applyInFlight = false;
+    const requests = [];
+    let finishRefresh;
+    w.htmx.ajax = function(method, url) {
+      requests.push({method, url});
+      return new Promise(resolve => { finishRefresh = () => {
+        w.document.getElementById('pending-tray').setAttribute('data-change-count', '2');
+        resolve();
+      }; });
+    };
+    w.doStateSync = function() {
+      state.sync.push(w.document.getElementById('pending-tray').getAttribute('data-change-count'));
+    };
+    fire(w, 'autoSyncRetry', {class: 'transient', tries: 1, delay: 2,
+      chip: 'CHIP-U', mode: 'apply', refresh_tray: true});
+    await clock.advance(1999);
+    check('U retry respects schedule before refreshing', requests.length === 0);
+    await clock.advance(1);
+    check('U unseen edits fetch a current tray', requests.length === 1 && requests[0].url === '/state/tray');
+    check('U waits for tray before pushing', state.sync.length === 0);
+    if (finishRefresh) finishRefresh();
+    await clock.advance(40);
+    // After the re-read, the push goes out: the tray observer's flush (which
+    // now sees the edits) or the scheduled merge press with the new count.
+    const pushed = requests.slice(1).some(r => r.url === '/state/apply-to-live')
+      || (state.sync.length === 1 && state.sync[0] === '2');
+    check('U retry pushes only after reading the refreshed change count', pushed);
   }
 
   if (failures) {

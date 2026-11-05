@@ -19,10 +19,11 @@
 {% if _as %}
 <button type="button" class="auto-apply-pill auto-apply-on"
         onclick="AutoSync.toggle(this)" aria-haspopup="dialog" aria-expanded="false"
-        title="Auto-Sync is ON. Click to change what it does, or turn it off.">
+        title="{% if _as.merge_retry %}{{ _as.merge_retry.reason }}. {% endif %}Auto-Sync is ON. Click to change what it does, or turn it off.">
   {{ icon_bolt(13) }} <span class="aa-label">Auto<span class="aa-long">-Sync</span></span>
   {#- P1-10: the state in words, not by colour alone -#}
   <span class="aa-state">on:</span>
+  {% if _as.merge_retry %}<span class="aa-count" data-auto-retry="1" data-retry='{{ _as.merge_retry|tojson }}'>retrying ({{ _as.merge_retry.tries }})</span>{% endif %}
   <b>{% if _as.pull and _as.push %}both{% elif _as.push %}push{% else %}pull{% endif %}</b>
   {%- if _as.pull and not _as.pull_replace %} <span class="aa-hint">(asks before replacing)</span>{% endif %}
   {%- if _as.flushes %} <span class="aa-count">{{ _as.flushes }} landed</span>{% endif %}

@@ -31225,6 +31225,154 @@ def discard_all():
 # ======================================================================
 
 
+def _auto_merge_policy(view):
+    """Apply one retry policy to all three existing Auto-Sync doors.
+
+    The inner doors keep their rollback and live-write gates. Nested pull ->
+    sync calls are accounted once, at the outer request boundary.
+    """
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if getattr(g, "_merge_policy_active", False):
+            return view(*args, **kwargs)
+        from quam_state_manager.core import merge_policy
+        ctx = _pin_request_ctx(_active_ctx())
+        sess = _auto_sync_state(ctx)
+        automatic = (request.values.get("auto_sync") == "1"
+                     or request.values.get("auto_flush") == "1"
+                     or request.path == "/auto-sync/pull")
+        readonly_before = bool(ctx and ctx.get("live_readonly_hint"))
+        if automatic and not sess:
+            if request.path == "/auto-sync/pull":
+                return "", 204
+            return jsonify(status="stopped", message="Auto-Sync is off"), 409
+        if automatic and sess and time.monotonic() < sess.get("merge_due", 0):
+            if request.path in {"/auto-sync/pull", "/state/apply-to-live"}:
+                return "", 204
+            return jsonify(status="retrying", merge_failure=sess.get("merge_retry"))
+        g._merge_policy_active = True
+        g._merge_policy_automatic = automatic
+        g._merge_failure = None
+        g._merge_refusal = None
+        try:
+            wrong_chip = (_chip_mismatch_response(request.values.get("expect_chip", ""), False)
+                          if automatic else None)
+            if wrong_chip is not None:
+                resp = make_response(wrong_chip)
+            elif automatic and sess and _auto_sync_foreign_window(ctx):
+                resp = make_response(jsonify(status="error", conflict="foreign_owner",
+                    message="another live window owns this chip"), 409)
+            elif automatic and sess and (ctx.get("origin") or "live") != "live":
+                resp = make_response(jsonify(status="error", conflict="archive",
+                    message="this chip is a read-only archive"), 409)
+            elif automatic and sess and readonly_before:
+                resp = make_response(jsonify(status="error", conflict="readonly",
+                    message="the live chip folder is read-only or unwritable"), 409)
+            elif (request.values.get("auto_sync") == "1" and sess
+                  and ctx.get("working_dirty")
+                  and (ctx.get("staged_base") or not ctx.get("pending_reapply"))):
+                resp = make_response(jsonify(status="needs_confirm",
+                    message="staged snapshot or wholesale working state needs your Apply"), 409)
+            else:
+                resp = make_response(view(*args, **kwargs))
+        finally:
+            g._merge_policy_active = False
+        body = resp.get_json(silent=True) or g._merge_refusal or {}
+        raw_events = resp.headers.get("HX-Trigger", "{}")
+        try:
+            events = json.loads(raw_events)
+        except ValueError:
+            events = {name.strip(): True for name in raw_events.split(",") if name.strip()}
+        if not isinstance(events, dict):
+            events = {}
+        signal = events.get("autoSyncMerge") or events.get("autoSyncMergePull")
+        code = body.get("conflict") or body.get("error_code") or body.get("status", "")
+        refusal = (g._merge_refusal is not None or resp.status_code >= 400 or body.get("ok") is False
+                   or code in {"conflict", "collision", "torn_live", "live_moved", "needs_confirm"}
+                   or body.get("chip_mismatch") or "autoApplyDisarm" in events
+                   or "liveConflict" in events or signal is not None)
+        if not refusal:
+            if sess and (body.get("status") == "ok" or
+                         (request.path == "/auto-sync/pull" and resp.status_code == 200)):
+                retrying = bool(sess.get("merge_retry"))
+                _auto_apply_landed(ctx)
+                if retrying:
+                    if resp.is_json:
+                        body["tray_html"] = _tray_html()
+                        resp.set_data(json.dumps(body))
+                    else:
+                        resp.set_data(_tray_html())
+                events["autoSyncLanded"] = {}
+                resp.headers["HX-Trigger"] = json.dumps(events)
+            return resp
+        reason = (g._merge_failure or body.get("detail_exc") or body.get("detail")
+                  or body.get("message") or body.get("error")
+                  or ("live chip moved again during the merge" if code == "conflict"
+                      else "merge did not complete"))
+        if body.get("chip_mismatch"):
+            code = "chip_mismatch"
+        if "liveConflict" in events:
+            code = "collision"
+            reason = "live changes overlap your edits; choose values in the sync panel"
+        if signal is not None:
+            code, reason = "stale_live", "the live chip moved during the merge"
+        readonly_after = bool(ctx and ctx.get("live_readonly_hint"))
+        if readonly_after:
+            code, reason = "readonly", "the live chip folder is read-only or unwritable"
+        staged = bool(ctx and ctx.get("working_dirty") and
+                      (ctx.get("staged_base") or not ctx.get("pending_reapply")))
+        if staged and (signal is not None or code in {"conflict", "needs_confirm"}
+                       or "autoApplyDisarm" in events):
+            code, reason = "staged", "staged snapshot or wholesale working state needs your Apply"
+        if sess and not sess.get("pull") and "autoApplyDisarm" in events:
+            code, reason = "no_pull", "live chip changed; this session has no pull permission"
+        if not sess:
+            body["failure_class"] = merge_policy.classify_failure(reason, code=code)
+            if resp.is_json:
+                resp.set_data(json.dumps(body))
+            return resp
+        verdict = merge_policy.failed(sess, reason, code=code)
+        if code == "unseen_changes":
+            verdict["refresh_tray"] = True
+        if signal:
+            verdict = {**signal, **verdict}
+        verdict.update(chip=_active_chip_token() or "",
+                       mode=("reapply" if "autoSyncMergePull" in events else
+                             "pull" if request.path == "/auto-sync/pull" else
+                             request.values.get("mode", "apply")))
+        sess["merge_retry"] = verdict
+        permanent = verdict["class"] == "permanent"
+        if permanent:
+            ctx.pop("auto_apply", None)
+            ctx["auto_merge_blocker"] = verdict["reason"]
+            events = {"autoApplyDisarm": verdict}
+        else:
+            ctx["auto_apply"] = sess
+            sess["merge_due"] = time.monotonic() + verdict["delay"]
+            events.pop("autoApplyDisarm", None)
+            if "autoSyncMerge" in events:
+                events["autoSyncMerge"] = verdict
+            elif "autoSyncMergePull" in events:
+                events["autoSyncMergePull"] = verdict
+            else:
+                events["autoSyncRetry"] = verdict
+        html = _conflict_tray(ctx, ctx["store"], staged_conflict=staged,
+                              auto_disarmed=permanent, auto_merging=not permanent)
+        if request.path == "/auto-sync/pull":
+            resp.mimetype = "text/html"
+            if resp.status_code != 204 or permanent:
+                resp.status_code = 200
+                resp.set_data(html)
+        elif resp.is_json:
+            body.update(merge_failure=verdict, failure_class=verdict["class"], tray_html=html)
+            resp.set_data(json.dumps(body))
+        elif resp.status_code != 204:
+            resp.set_data(html)
+        resp.headers["HX-Trigger"] = json.dumps(events)
+        return resp
+    return wrapped
+
+
 def _auto_apply_landed(ctx) -> None:
     """A write reached the live chip: refill the merge budget (docs/187 R1).
 
@@ -31240,7 +31388,10 @@ def _auto_apply_landed(ctx) -> None:
     """
     sess = ctx.get("auto_apply") if ctx else None
     if sess is not None:
-        sess["merge_tries"] = 0
+        from quam_state_manager.core.merge_policy import landed
+        landed(sess)
+        ctx.pop("auto_merge_blocker", None)
+        ctx.pop("live_auto_at", None)
 
 
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
@@ -31282,6 +31433,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
         change_paths=_change_paths_of(store.change_log),
         staged_conflict=staged_conflict,
         auto_disarmed=auto_disarmed,
+        auto_blocker=(ctx or {}).get("auto_merge_blocker", ""),
         # docs/187 R4: the tray states what was DECIDED. Inferring "a merge is
         # running" from `auto_sync.pull` claimed it on doors where nothing had
         # been decided and nothing would retry.
@@ -31318,12 +31470,9 @@ def _auto_disarm_response(ctx, body: str, reason: str, status: int = 200):
     return resp
 
 
-# docs/187: how many times ONE armed session may answer a staleness conflict
-# with a pull-and-re-apply before giving up and disarming. A node writing the
-# chip between two edits is ordinary and must not cost the session; a merge
-# that conflicts again and again is not ordinary, and a background writer must
-# never retry for ever.
-_AUTO_MERGE_TRIES = 3
+# Compatibility name for existing pins; only unknown failures have a cap.
+# Transient failures keep their armed session with the server's backoff.
+from quam_state_manager.core.merge_policy import UNKNOWN_CAP as _AUTO_MERGE_TRIES
 
 
 def _new_auto_session(*, pull: bool, pull_replace: bool, push: bool) -> dict:
@@ -31613,6 +31762,8 @@ def auto_sync_set():
         for k in ("armed_at", "pre_ts", "last_snap", "flushes"):
             sess[k] = prev.get(k, sess[k])
     ctx["auto_apply"] = sess
+    ctx.pop("auto_merge_blocker", None)
+    ctx.pop("live_auto_at", None)
     _auto_sync_user_choice(ctx, on=True)
     resp = make_response(_tray_html())
     trig: dict[str, Any] = {"autoApplyArmed": True}
@@ -31682,7 +31833,29 @@ def _live_conflict_204(paths):
     return resp
 
 
+def _auto_mine_wins(ctx):
+    """The armed pull+push decision ("mine wins, the node value is saved")
+    applies only to automatic requests. A ticked replace is the opposite
+    consent (live wins), so it keeps its own rule."""
+    sess = _auto_sync_state(ctx) or {}
+    return bool(getattr(g, "_merge_policy_automatic", False)
+                and sess.get("pull") and sess.get("push")
+                and not sess.get("pull_replace"))
+
+
+@bp.route("/auto-sync/retry", methods=["POST"])
+@_auto_merge_policy
+def auto_sync_retry():
+    """The client latch timed out before reaching the merge door."""
+    wrong = _chip_mismatch_response(request.values.get("expect_chip", ""), False)
+    if wrong is not None:
+        return wrong
+    return jsonify(status="error", conflict="live_press",
+                   message="another write is still in flight"), 409
+
+
 @bp.route("/auto-sync/pull", methods=["POST"])
+@_auto_merge_policy
 def auto_sync_pull():
     """Perform (or decline) one automatic pull. The POLICY lives here.
 
@@ -31707,9 +31880,12 @@ def auto_sync_pull():
         return "", 204
     ok, _why = _auto_pull_armable(ctx)
     if not ok:
-        return "", 204
+        g._merge_failure = _why
+        return _auto_disarm_response(ctx, "", _why, status=204)
     if not ctx.get("live_diverged"):
         return "", 204            # nothing to pull; the common case
+    if ctx.get("working_dirty") and (ctx.get("staged_base") or not ctx.get("pending_reapply")):
+        return jsonify(status="needs_confirm", message="staged snapshot or wholesale working state needs your Apply")
 
     # The client reports whether the GRID holds typed-but-uncommitted cells.
     # The server cannot see them: a fill-down or a pasted column lives only in
@@ -31761,6 +31937,7 @@ def auto_sync_pull():
                 # autoSyncMerge signal that finishes the merge), never a JSON
                 # body as the tray's text. Nothing is lost: the door kept the
                 # stash, and the drift stays, so the next poll comes back here.
+                g._merge_refusal = body  # preserve the nested door's refusal across HTML conversion
                 resp = make_response(body.get("tray_html") or _tray_html())
                 if merged.headers.get("HX-Trigger"):
                     resp.headers["HX-Trigger"] = merged.headers["HX-Trigger"]
@@ -31776,14 +31953,26 @@ def auto_sync_pull():
     _dirty = _quam_ctx_dirty(ctx) or dom_dirty
     if _dirty:
         verdict = _auto_pull_verdict(ctx, dom_paths)
-        if verdict is None or verdict is _VERDICT_FAILED or verdict.must_ask:
+        if verdict is None or verdict is _VERDICT_FAILED:
+            return jsonify(status="error",
+                           conflict="live_busy" if verdict is None else "verdict_failed",
+                           message="the live pair could not be compared just now"), 409
+        if verdict.must_ask:
+            if _auto_mine_wins(ctx) and not dom_dirty and not verdict.unaccounted:
+                merged = make_response(state_sync(_auto_mode="apply"))
+                body = merged.get_json(silent=True) or {}
+                g._merge_refusal = body if body.get("status") != "ok" else None
+                resp = make_response(body.get("tray_html") or _tray_html(), merged.status_code)
+                if merged.headers.get("HX-Trigger"):
+                    resp.headers["HX-Trigger"] = merged.headers["HX-Trigger"]
+                return resp
             # THE line docs/87 draws, kept: SM does not choose between the
             # user's work and the live chip. The banner is already showing,
             # and now it can name the fields that actually collide.
             _paths = list(getattr(verdict, "conflicts", ()) or ())
             ctx["live_conflicts"] = _paths          # the banner names these
             ctx["live_auto_at"] = {"sig": _auto_pull_sig(ctx),
-                                   "conflicts": _paths, "merge_tries": 0}
+                                   "conflicts": _paths}
             if not sess.get("pull_replace"):
                 # QA liveedit-r2-07: "the banner is already showing" was true
                 # only after a full render -- an open page got a bare 204 and
@@ -31796,22 +31985,7 @@ def auto_sync_pull():
             # here -- the same division docs/187 chose for the push side: the
             # server decides, the client presses one tested door.
             ctx.pop("live_conflicts", None)
-            # Spend from a per-SITUATION budget rather than forgetting the
-            # attempt: the client may never land the press it is being asked
-            # for (its own latch gives up after ~2 s, the door can refuse a
-            # staged payload), and a forgotten attempt is re-advertised on the
-            # next poll for ever. A new fingerprint -- another edit, another
-            # live write -- is a new situation and starts again at one.
-            _sig = _auto_pull_sig(ctx)
-            _rec = ctx.get("live_auto_at") or {}
-            _tries = (_rec.get("merge_tries", 0) + 1) if _rec.get("sig") == _sig else 1
-            ctx["live_auto_at"] = {"sig": _sig, "conflicts": [],
-                                   "merge_tries": _tries}
-            if _tries > _AUTO_MERGE_TRIES:
-                # Out of attempts. Say nothing more and put the banner up (QA
-                # liveedit-r2-07: it was not "already up" on an open page) to
-                # offer the explicit choices.
-                return _live_conflict_204([])
+            ctx["live_auto_at"] = {"sig": _auto_pull_sig(ctx), "conflicts": []}
             resp = make_response("", 204)
             resp.headers["HX-Trigger"] = json.dumps({"autoSyncMergePull": {
                 "chip": _active_chip_token(),
@@ -31953,9 +32127,10 @@ def auto_sync_pull():
             # stash behind lets a later "Pull & apply (merge)" replay the very
             # values the user was told had been replaced -- back onto the chip.
             _clear_reapply(ctx)
-    except (FileNotFoundError, OSError, ValueError):
-        # A pull that cannot read live is not a reason to keep retrying every
-        # poll: disarm, exactly like the push side's failure branches.
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        g._merge_failure = exc
+        # Preserve the rollback; the outer failure policy decides whether
+        # this read failure should retry or disarm.
         logger.warning("Auto-sync pull failed", exc_info=True)
         # sync_from_live may already have advanced the working folder and the
         # sync point while the in-memory store still holds the OLD content --
@@ -32783,6 +32958,8 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     sess = _auto_sync_state(ctx)
     if not sess or not sess.get("pull"):
         return False
+    if time.monotonic() < sess.get("merge_due", 0):
+        return False
     if (ctx or {}).get("origin", "live") != "live":
         return False
     if not (ctx or {}).get("live_diverged"):
@@ -32821,7 +32998,7 @@ def _auto_pull_due(ctx: dict | None) -> bool:
             # side the same bound, and for the same reason -- a signal that
             # never resolves otherwise fires on every 5 s poll for ever, each
             # one taking the shared apply latch.
-            if rec.get("conflicts") or rec.get("merge_tries", 0) >= _AUTO_MERGE_TRIES:
+            if rec.get("conflicts"):
                 return False
     return True
 
@@ -33481,6 +33658,8 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
     _coll = [c for c in verdict.conflicts if c not in picks]
     if not _coll:
         return None
+    if _auto_mine_wins(ctx):
+        return None
     ctx["live_diverged"] = True
     ctx["live_conflicts"] = _coll
     ctx.pop("live_drift_count", None)
@@ -33497,6 +33676,7 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
 
 
 @bp.route("/state/sync", methods=["POST"])
+@_auto_merge_policy
 @_live_write_critical
 @_journal_press
 def state_sync(*, _auto_mode=None, _held_override=None):
@@ -33528,6 +33708,8 @@ def state_sync(*, _auto_mode=None, _held_override=None):
     mode = _auto_mode or request.values.get("mode", "discard")
     _auto_restore = bool((_auto_sync_state(ctx) or {}).get("pull"))
     _restored_applied = []
+    _auto_overwritten = {}
+    _auto_backup = None
     if mode in ("apply", "reapply") and _auto_apply_state(ctx):
         # W2-1: the control's "Apply N" presses THIS door (doStateSync), not
         # /state/apply-to-live -- a person's Apply releases the hold here too
@@ -33778,6 +33960,15 @@ def state_sync(*, _auto_mode=None, _held_override=None):
                              else (_applied_values_held(ctx) if _keep_applied else {}))
             _restored_creates: dict = {}
             _sync_point_before = working_copy.sync_point(wc)
+            # Save live BEFORE pulling. Compare this version with the adopted
+            # pair below: a node racing the backup gets a transient retry.
+            if _auto_mine_wins(ctx) and pending:
+                _auto_backup = _history().check_and_snapshot(
+                    ctx["path"], "manual", force=True, kind="backup",
+                    project=_scope_for(ctx["path"], ctx))
+                if _auto_backup is None:
+                    return jsonify(status="error", conflict="live_unbacked",
+                                   message="live could not be backed up just now"), 409
             _pulled = working_copy.sync_from_live(wc)
             # v1.5.1 (SB-F1): `pending` was captured before the pull, and
             # /field/edit takes only the store lock -- an edit committed
@@ -33861,6 +34052,21 @@ def state_sync(*, _auto_mode=None, _held_override=None):
                     if request.values.get("ack_collision") != "1":
                         _verdict = _auto_pull_verdict(ctx, (), _pulled)
                         _refusal = _sync_replay_refusal(ctx, _verdict, picks, mode)
+                        if _auto_mine_wins(ctx) and _verdict not in (None, _VERDICT_FAILED):
+                            if _verdict.conflicts:
+                                from quam_state_manager.core.history import _canonical_hash_of
+                                if (_auto_backup is None or _auto_backup.state_hash !=
+                                        _canonical_hash_of(*_pulled)):
+                                    _refusal = (jsonify(status="error", conflict="live_moved",
+                                        message="live moved while saving its backup"), 409)
+                                else:
+                                    for _p in _verdict.conflicts:
+                                        _wire = _p.startswith("wiring.")
+                                        _value = _dot_get(_pulled[1] if _wire else _pulled[0],
+                                                         _p.removeprefix("wiring.") if _wire else _p)
+                                        _auto_overwritten[_p] = (_tagged("delete", None, "auto-sync-backup")
+                                            if _value is _DOT_MISSING else
+                                            _tagged("set", copy.deepcopy(_value), "auto-sync-backup"))
                     if _refusal is None and _moved_since_panel:
                         _refusal = (jsonify({**_live_moved_since_panel_body(_moved_paths),
                                              "tray_html": _tray_html()}), 409)
@@ -33891,12 +34097,14 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         return jsonify({"status": "error",
                         "message": f"{_what}. Nothing was taken."}), 404
     except safe_io.LiveFileError as exc:
+        g._merge_failure = exc
         # v1.3.0: a live file another program is saving right now (it does not
         # parse yet, or it is locked) is a moment, not a crash -- the read
         # already retried. Nothing was pulled; sync never writes the live chip.
         return jsonify({"status": "error", "transient": True,
                         "message": _live_unreadable_message(exc)}), 409
     except (OSError, ValueError) as exc:
+        g._merge_failure = exc
         # v1.5.1 (MINOR 10): known and named -- a 409 with its code, never a
         # 500. A pull never writes the live chip.
         logger.warning("sync (%s) failed", mode, exc_info=True)
@@ -33919,6 +34127,24 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         resp = make_response(_sync_pull_apply_to_live(
             ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
             pulled_other_changes=pulled_other_changes))
+        if _auto_overwritten and (resp.get_json(silent=True) or {}).get("status") == "ok":
+            ctx["take_live_backup"] = {"updates": _auto_overwritten,
+                "snapshot": _auto_backup.timestamp, "n": len(_auto_overwritten)}
+            ctx.pop("live_conflicts", None)
+            ctx.pop("live_auto_at", None)
+            from quam_state_manager.core.units import format_quantity
+            messages = []
+            for _p, _entry in _auto_overwritten.items():
+                _op, _v, _group = _untag(_entry)
+                _qty = format_quantity(_v, _p.rsplit(".", 1)[-1])
+                _shown = " ".join(_qty) if _qty else _fmt_msg_val(_v)
+                if _op == "delete":
+                    _shown = "no value"
+                messages.append(f"kept your value for {_p.removeprefix('qubits.')}; "
+                                f"the node had written {_shown} (in History)")
+            triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))
+            triggers["syncToast"] = {"message": "; ".join(messages), "level": "info"}
+            resp.headers["HX-Trigger"] = json.dumps(triggers)
         if (_auto_restore and _restored_applied
                 and (resp.get_json(silent=True) or {}).get("status") == "ok"):
             triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))
@@ -34293,6 +34519,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
+        g._merge_failure = exc
         # v1.5.1 (SA-F2): a 409 with its code; the tray it carries shows the
         # read-only pill when this write discovered the denial.
         # v1.5.1 (M1): these two branches are the only ones where the chip
@@ -34316,6 +34543,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "live_landed": _live_landed_stamp(ctx),
                         "live_landed_chip": _ctx_chip_key(ctx) or ""}), 409
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
+        g._merge_failure = exc
         logger.exception("apply-to-live (sync) unexpected failure")
         _commit_journal()
         return jsonify({"status": "error", "write_outcome": _write_outcome(_pend),
@@ -34523,6 +34751,7 @@ def _live_write_failure_text(ctx, exc, what: str = "Apply to live", outcome: str
         _live_write_landed(ctx)
         return (f"{what} is UNVERIFIED: the write reached the live chip, but SM could "
                 f"not finish confirming it — {exc}")
+    g._merge_failure = exc
     wc = (ctx or {}).get("working_copy")
     kind = _write_denial(exc, getattr(wc, "live_folder", None))
     if kind == "denied":
@@ -34722,7 +34951,6 @@ def _apply_stale_refusal(ctx, store, _auto):
     # off and let the person choose, which is what the staged branch of the
     # tray is for (it deliberately does not offer pull-and-re-apply).
     _will_merge = bool(_auto and _auto.get("pull")
-                       and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES
                        and not _staged_conflict)
     # docs/117: nothing was written (apply_to_live raises BEFORE its write)
     # and the edit is safe in the tray (docs/255), but a background writer the
@@ -34748,7 +34976,6 @@ def _apply_stale_refusal(ctx, store, _auto):
     if _auto is None:
         return _conflict_tray(ctx, store, staged_conflict=_staged_conflict)
     if _will_merge:
-        _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
         resp = make_response(_conflict_tray(
             ctx, store, staged_conflict=_staged_conflict,
             auto_merging=True))
@@ -34758,12 +34985,12 @@ def _apply_stale_refusal(ctx, store, _auto):
             # and the press (the latch wait is up to ~2s, and the context
             # registry is shared with every other window) is a refusal
             # rather than a write onto the wrong chip.
-            "autoSyncMerge": {"tries": _auto["merge_tries"],
+            "autoSyncMerge": {"tries": _auto.get("merge_tries", 0),
                               "chip": _active_chip_token() or ""},
         })
         return resp
-    # No pull permission, or the merge itself keeps conflicting -- something
-    # is genuinely wrong and a background writer must not keep trying. The
+    # No pull permission, or a wholesale stage blocks pulling. The outer
+    # policy names the blocker and ends the automatic session. The
     # tray is rendered with the verdict, so it can SAY it was turned off
     # rather than leaving a toast as the only mention (docs/187 3).
     # Pop BEFORE rendering, or the pill reads the session that is about to
@@ -34780,6 +35007,7 @@ def _apply_stale_refusal(ctx, store, _auto):
 
 
 @bp.route("/state/apply-to-live", methods=["POST"])
+@_auto_merge_policy
 @_live_write_critical
 @_journal_press
 def state_apply_to_live():
@@ -35116,6 +35344,7 @@ def state_apply_to_live():
         _refused_after_save()          # docs/255: the press changes nothing
         return _apply_stale_refusal(ctx, store, _auto)
     except (OSError, ValueError) as exc:
+        g._merge_failure = exc
         # v1.5.1 (U P1-6): a write that provably never reached the chip puts
         # the press's save back -- the edits stay ROWS (a later lab write can
         # still be merged under them), not a whole saved version. One that
@@ -35134,6 +35363,7 @@ def state_apply_to_live():
             + " Your edits are kept.",
             LIVE_WRITE_FAILED, auto=_auto, detail=str(exc))
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
+        g._merge_failure = exc
         logger.exception("apply-to-live unexpected failure")
         _commit_journal()                  # the save stands (see above)
         _body = render_template(

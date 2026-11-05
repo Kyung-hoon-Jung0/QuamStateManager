@@ -313,7 +313,8 @@ class TestAutoSync:
         assert _drift(client)["auto_pull"] is True
         r = client.post("/auto-sync/pull?dom_dirty=1&dom_path=qubits.q1.T1",
                         headers={"HX-Request": "true"})
-        assert r.status_code == 204
+        assert r.status_code == 200
+        assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
         assert _drift(client)["auto_pull"] is False, \
             "the recorded collision must stop the every-5-s re-press"
 

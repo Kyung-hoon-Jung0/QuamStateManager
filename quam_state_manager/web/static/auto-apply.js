@@ -102,7 +102,7 @@
     }
 
     function flush() {
-        if (_stopped || !armed() || !pending()) return;
+        if (_stopped || Date.now() < _mergeNotBefore || !armed() || !pending()) return;
         if (inFlight()) { _queued = true; return; }
         if (!window.htmx) return;
         window._applyInFlight = true;
@@ -392,49 +392,123 @@
         }
     });
 
-    document.addEventListener('autoSyncMerge', function (e) {
-        /* docs/187 R2: the chip the server says conflicted, carried on the
-           signal. Handing THIS back (rather than whatever the page holds when
-           the latch frees) is what makes a chip switch during the wait a
-           refusal instead of a write onto the wrong chip. */
-        var chip = (e && e.detail && e.detail.chip) || '';
-        _whenLatchFree(function () {
-            if (window.doStateSync) window.doStateSync('apply', false, false, chip);
-        }, 40,            // ~2s, then give up rather than spin
-        /* R9: and SAY so. The bound is right -- a timer must not outlive its
-           purpose -- but the silence was not: the server has already spent one
-           of its three tries, and the tray is still saying Auto-Sync is
-           resolving this. Leaving that on screen while nothing is happening is
-           the class of defect docs/187 exists to fix. */
-        function () {
-            toast('Auto-Sync could not merge just now — another write was '
-                  + 'still in flight. Your edits are safe; press '
-                  + '\u21c4 Pull & apply to finish it.', 'warning');
+    var _mergeTimer = null, _mergeNotBefore = 0, _mergeRetry = null, _mergeGeneration = 0;
+    document.addEventListener('htmx:afterSwap', function () {
+        if (document.querySelector('.auto-apply-off, .auto-apply-blocked')) clearMergeRetry();
+        else { resumeMergeRetry(); paintRetry(); }
+    });
+    function resumeMergeRetry() {
+        if (_mergeRetry) return;
+        var hint = document.querySelector('[data-auto-retry][data-retry]');
+        if (!hint) return;
+        try { receiveFailure(JSON.parse(hint.getAttribute('data-retry'))); } catch (err) {}
+    }
+    document.addEventListener('DOMContentLoaded', resumeMergeRetry);
+    function paintRetry() {
+        if (!_mergeRetry) return;
+        var pill = document.querySelector('.auto-apply-on');
+        if (!pill) return;
+        var hint = pill.querySelector('[data-auto-retry]');
+        if (!hint) { hint = document.createElement('span'); hint.className = 'aa-count'; hint.setAttribute('data-auto-retry', '1'); pill.appendChild(hint); }
+        hint.textContent = 'retrying (' + _mergeRetry.tries + ')';
+        pill.title = _mergeRetry.reason;
+    }
+    function clearMergeRetry() {
+        _mergeGeneration++;
+        clearTimeout(_mergeTimer); _mergeTimer = null;
+        _mergeNotBefore = 0; _mergeRetry = null;
+        document.querySelectorAll('[data-auto-retry]').forEach(function (hint) { hint.remove(); });
+    }
+    function latchFailed(d) {
+        // The server classifies this refusal too; the client owns no reason list.
+        if (!window.fetch) return;
+        window.fetch('/auto-sync/retry', { method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: 'auto_sync=1&expect_chip=' + encodeURIComponent(d.chip || '')
+                  + '&mode=' + encodeURIComponent(d.mode || 'apply') })
+        .then(function (r) { return r.json(); }).then(function (data) {
+            if (data.tray_html) {
+                var t = tray();
+                if (t) t.outerHTML = data.tray_html;
+            }
+            if (data.merge_failure) receiveFailure(data.merge_failure);
         });
+    }
+    function pressMerge(d) {
+        if (_stopped) return;
+        if (d.chip && window.__chipToken && d.chip !== window.__chipToken) return;
+        var generation = _mergeGeneration;
+        _whenLatchFree(function () {
+            if (_stopped || generation !== _mergeGeneration) return;
+            if (d.refresh_tray) {
+                if (!window.htmx) return;
+                Promise.resolve(window.htmx.ajax('GET', '/state/tray', {
+                    target: '#pending-tray', swap: 'outerHTML'
+                })).then(function () {
+                    if (_stopped || generation !== _mergeGeneration) return;
+                    pressMerge(Object.assign({}, d, {refresh_tray: false}));
+                }, function () { latchFailed(d); });
+                return;
+            }
+            if (d.mode === 'pull') {
+                if (!window._autoSyncPullRequest) return;
+                window._applyInFlight = true;
+                var released = false;
+                function release() {
+                    if (released) return;
+                    released = true; clearTimeout(timer);
+                    window._applyInFlight = false;
+                }
+                var timer = setTimeout(release, 20000);
+                try {
+                    var pull = window._autoSyncPullRequest(d.chip || '');
+                    if (pull && pull.then) pull.then(release, release);
+                    else release();
+                } catch (err) { release(); }
+                return;
+            }
+            if (window.doStateSync) window.doStateSync(d.mode || 'apply', false, false,
+                                                       d.chip || '', { automatic: true });
+        }, 40, function () {
+            if (!_stopped && generation === _mergeGeneration) latchFailed(d);
+        });
+    }
+    function receiveFailure(d) {
+        if (d.class === 'permanent') {
+            clearMergeRetry();
+            window.AutoApply._disarm(d.reason);
+            return;
+        }
+        // The server supplies both classification and delay. Coalesce poll,
+        // flush and merge events; none can advance an already scheduled retry.
+        _mergeGeneration++;
+        _mergeRetry = d;
+        var due = Date.now() + Number(d.delay || 2) * 1000;
+        _mergeNotBefore = Math.max(_mergeNotBefore, due);
+        clearTimeout(_mergeTimer);
+        paintRetry();
+        _mergeTimer = setTimeout(function () {
+            _mergeTimer = null;
+            pressMerge(d);
+        }, _mergeNotBefore - Date.now());
+    }
+    document.addEventListener('autoSyncRetry', function (e) { receiveFailure(e.detail || {}); });
+    document.addEventListener('autoSyncMerge', function (e) {
+        var d = e.detail || {}; d.mode = 'apply';
+        if (d.class) { receiveFailure(d); return; }
+        if (_mergeRetry) return;
+        pressMerge(d);
     });
     document.addEventListener('autoSyncMergePull', function (e) {
-        /* The live chip moved somewhere the user has NOT edited, so there is
-           nothing to decide: take the live values and put the user's edits
-           back on top. The server already established that per field -- this
-           side only presses the door that does it (`reapply` keeps the edits
-           pending; only an Apply writes the chip, so the covenant is intact).
-
-           Silent by design. Announcing a merge that resolved itself is the
-           noise this replaced: the user armed Auto-Sync precisely so that
-           adopting the chip's own changes would not need them. */
-        var d = (e && e.detail) || {};
-        var chip = d.chip || '';
-        _whenLatchFree(function () {
-            if (window.doStateSync) window.doStateSync('reapply', false, false, chip);
-        }, 40,
-        function () {
-            /* Same bound, same reason, same honesty as the push side: the
-               drift banner is still up, so say what would finish it. */
-            toast('Auto-Sync could not take the live changes just now — '
-                  + 'another write was still in flight. Your edits are safe; '
-                  + 'press \u21c4 Pull & apply to finish it.', 'warning');
-        });
+        var d = e.detail || {}; d.mode = 'reapply';
+        if (d.class) { receiveFailure(d); return; }
+        if (_mergeRetry) return;
+        pressMerge(d);
     });
+    document.addEventListener('autoApplyDisarm', clearMergeRetry);
+    document.addEventListener('autoApplyArmed', clearMergeRetry);
+    document.addEventListener('autoApplyApplied', clearMergeRetry);
+    document.addEventListener('autoSyncLanded', clearMergeRetry);
     /* QA liveedit-r2-07: a declined pull ("asks before replacing") answered
        with a bare 204, and the banner that asks lives in #live-diverged-slot,
        which only a full page render filled -- so the open page never asked

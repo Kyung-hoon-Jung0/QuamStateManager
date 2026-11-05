@@ -129,11 +129,37 @@ Two details the code carries comments for:
   the latch — and `doStateSync` bails on a held latch **silently**. Without the
   wait the merge would simply never happen. Bounded at ~2 s, because a latch
   that never clears must not leave a timer running for ever.
-- **A merge budget of 3 consecutive failures**, then it disarms after all. A
-  node between two edits is ordinary; a merge that keeps conflicting is not,
-  and a background writer must never retry for ever. An apply that **lands**
-  refills it — the budget counts consecutive failures, or a long healthy
-  session would eventually disarm on its Nth unlucky node write.
+Auto-Sync merge failures are classified by the server (user decision,
+2026-11-05): transient sharing/replace locks, exhausted safe-I/O reads, torn
+pairs, live moving during a merge, and press-wait timeouts keep the session
+armed and retry after 2, 5, 15, 30, then 60 seconds, repeating at 60 seconds.
+The pill says "retrying (n)" and its tooltip names the reason. Staged or
+wholesale content, unwritable folders, identity mismatches, archives, foreign
+window owners and refusals requiring a person's choice turn Auto-Sync off
+on the first occurrence; the conflict tray names the blocker and the existing
+pill turns it back on. Unknown failures may retry ten times, then disarm with
+"kept failing: <reason>". A landed merge clears all retry state. Automatic
+merges never open a prompt or modal and retain the existing permission gates.
+
+**A collision under an armed pull+push session: mine wins, the node value is
+saved in History** (user decision, 2026-11-05). When a pending edit and a live
+write touched the same field, Auto-Sync takes a `kind="backup"` snapshot of live
+first, pulls, re-applies the pending edits on top (the user's value wins on the
+overlapping fields) and pushes. One notice names each overwritten field and the
+node's value ("kept your value for qA1.f_01; the node had written 7.7000 GHz (in
+History)"), and the overwritten values are recorded for the version panel's
+one-press Bring back. No prompt, no disarm; it counts as a landed merge, and a
+node writing again while the backup is taken is a transient retry. A push-only
+session keeps docs/117's permanent `no_pull` disarm, a ticked "replace" keeps
+its live-wins rule, and with Auto-Sync off the
+person chooses as before.
+
+**`unseen_changes` is transient.** Another window's edit on the shared context
+makes this window's declared change count stale; the client re-fetches its tray
+(re-reading `data-change-count`) and retries on the schedule instead of
+disarming. A positive write-denial verdict found during the request classifies
+as `readonly` (permanent); a bare WinError 5 without that verdict is unknown,
+not transient, and "archive" counts only as the structured refusal code.
 
 ## After
 
