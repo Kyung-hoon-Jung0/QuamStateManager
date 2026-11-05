@@ -30,9 +30,53 @@ assert(slot.textContent.includes('running'), 'a hit resets consecutive misses');
 sample('');
 assert.equal(slot.textContent, '', 'three misses hide the banner');
 const base = fs.readFileSync(path.join(root, 'templates', 'base.html'), 'utf8');
-assert(/id="qualibrate-running-slot"[^>]*class="ui-running-overlay"/.test(base));
 const css = read('ui-kit.css');
-assert(/\.ui-running-overlay\s*\{[^}]*position:\s*fixed/.test(css), 'banner cannot push content');
+const failures = [];
+function pin(name, check) {
+  try { check(); } catch (error) { failures.push(name + ': ' + error.message); }
+}
+pin('landing only, reserved space', () => {
+  assert(!base.includes('id="qualibrate-running-slot"'), 'global slot covers other pages');
+  for (const template of ['_landing_shell.html', '_landing_welcome.html']) {
+    const html = fs.readFileSync(path.join(root, 'templates', template), 'utf8');
+    assert(html.includes("{% include '_qualibrate_running_slot.html' %}"), template);
+  }
+  const style = w.document.createElement('style');
+  style.textContent = css;
+  w.document.head.appendChild(style);
+  slot.className = 'ui-running-overlay';
+  const computed = w.getComputedStyle(slot);
+  assert(!['fixed', 'absolute', 'sticky'].includes(computed.position), 'banner stays in flow');
+  assert(computed.height && computed.height !== 'auto', 'reserve height even when empty');
+  assert.equal(computed.overflow, 'auto', 'multiple notices scroll inside reserved space');
+});
+for (const endpoint of ['/qualibrate/dismiss-running', '/qualibrate/use-location']) {
+  pin(endpoint + ' clears immediately', () => {
+    function complete(successful, path = endpoint, verb = 'post') {
+      const form = w.document.createElement('form');
+      form.setAttribute('hx-post', path);
+      slot.appendChild(form);
+      form.dispatchEvent(new w.CustomEvent('htmx:afterRequest', {bubbles:true, detail:{
+        elt:form, successful, requestConfig:{path, verb}, xhr:{status:successful ? 200 : 500}
+      }}));
+      form.remove();
+    }
+    sample('<div>running</div>'); sample(''); sample('');
+    complete(false);
+    assert(slot.textContent.includes('running'), 'failed actions retain the notice');
+    complete(true, '/unrelated');
+    assert(slot.textContent.includes('running'), 'unrelated actions retain the notice');
+    complete(true, endpoint, 'get');
+    assert(slot.textContent.includes('running'), 'only posts clear the notice');
+    complete(true);
+    assert.equal(slot.textContent, '', 'successful action clears before any poll');
+    assert.equal(slot._runningMisses, 0, 'successful action resets hysteresis');
+    sample('<div>running again</div>'); sample(''); sample('');
+    assert(slot.textContent.includes('running again'), 'later notices retain hysteresis');
+    sample('');
+  });
+}
+assert.deepEqual(failures, [], failures.join('\n'));
 w.eval(read('topo-graph.js'));
 w.eval(read('chip-status.js'));
 w.ChipStatus.mount({topo: {nodes: [{id:'q1'}], edges: [], summary:{}}, rawWiring:{}, defaultThresholds:{}, diagFindings:[], metricMeta:{}});

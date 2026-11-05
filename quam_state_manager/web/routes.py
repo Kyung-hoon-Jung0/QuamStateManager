@@ -8552,7 +8552,6 @@ def qualibrate_page():
     template = "_qualibrate.html" if _is_htmx() else "qualibrate.html"
     return render_template(template, **_ctx(
         page="qualibrate",
-        show_running_banner=_is_htmx(),
         listing=listing,
         raw_tomls=raws,
         qualibrate_source=qualibrate_config.config_source(),
@@ -8651,7 +8650,7 @@ def qualibrate_dismiss_running():
                                   / "qualibrate_running_dismissed.json", dismissed)
         current_app.config["running_config_dismissals"] = dismissed
     if _is_htmx():
-        # Refresh any Projects copy as well as the persistent topbar slot.
+        # Refresh the page after recording the choice; the landing clears immediately.
         response = make_response()
         response.headers["HX-Refresh"] = "true"
         return response

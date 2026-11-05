@@ -72,6 +72,7 @@ async function schedulerPolls(pageHtml, status, ticks) {
     // the hidden-tab hook on the REAL poll elements
     const dom = new JSDOM('<!doctype html><html><body>' + FX.page_plain.slice(FX.page_plain.indexOf('<body') + 5)
         .replace(/<script\b[\s\S]*?<\/script>/gi, '') + FX.datasets_html.replace(/<script\b[\s\S]*?<\/script>/gi, '')
+        + FX.landing_html.replace(/<script\b[\s\S]*?<\/script>/gi, '')
         + '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
     const w = dom.window;
     w.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} };

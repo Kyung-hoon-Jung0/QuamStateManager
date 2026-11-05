@@ -31733,7 +31733,18 @@ document.addEventListener('keydown', function (e) {
     }
 }, true);
 
-// Keep discovery jitter from moving or flashing the running-config notice.
+// Explicit choices take effect immediately; polling still tolerates discovery jitter.
+document.addEventListener('htmx:afterRequest', function (evt) {
+    var d = evt.detail, request = d && d.requestConfig;
+    if (!d || !d.successful || !request || request.verb !== 'post') return;
+    if (request.path !== '/qualibrate/dismiss-running' && request.path !== '/qualibrate/use-location') return;
+    var slot = document.getElementById('qualibrate-running-slot');
+    if (!slot) return;
+    slot._runningMisses = 0;
+    slot.replaceChildren();
+});
+
+// Keep discovery jitter from flashing the running-config notice.
 document.addEventListener('htmx:beforeSwap', function (evt) {
     var d = evt.detail, slot = d && d.target;
     if (!slot || slot.id !== 'qualibrate-running-slot') return;

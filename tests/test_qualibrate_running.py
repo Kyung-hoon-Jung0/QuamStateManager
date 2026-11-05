@@ -207,7 +207,7 @@ def test_banner_route_and_existing_adoption(running_app):
     assert visible.isascii() and "--" not in visible
     assert 'hx-post="/qualibrate/use-location"' in html
     assert "The running QUAlibrate uses" in client.get("/").get_data(as_text=True)
-    assert "The running QUAlibrate uses" in client.get("/qualibrate", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert "The running QUAlibrate uses" not in client.get("/qualibrate", headers={"HX-Request": "true"}).get_data(as_text=True)
     response = client.post("/qualibrate/use-location", data={"path": str(server)},
                            headers={"HX-Request": "true"})
     assert response.status_code == 200 and response.headers["HX-Refresh"] == "true"
@@ -215,6 +215,25 @@ def test_banner_route_and_existing_adoption(running_app):
     assert "The running QUAlibrate uses" not in client.get("/qualibrate/running-banner").get_data(as_text=True)
     memo = json.loads((Path(app.instance_path) / "qualibrate_location.json").read_text())
     assert memo["config_file"] == str(server)
+
+
+@pytest.mark.parametrize("htmx", [False, True])
+def test_running_notice_belongs_to_landing_pane_only(running_app, htmx):
+    app, _, _, state = running_app
+    client = app.test_client()
+    headers = {"HX-Request": "true"} if htmx else {}
+    for url in ("/", "/?landing=1"):
+        html = client.get(url, headers=headers).get_data(as_text=True)
+        assert html.count('id="qualibrate-running-slot"') == 1
+        assert "The running QUAlibrate uses" in html
+        assert html.index('class="landing-projects"') < html.index('id="qualibrate-running-slot"')
+    client.post("/load", data={"folder": str(state)})
+    for url in ("/bulk", "/qualibrate", "/agent"):
+        response = client.get(url, headers=headers)
+        assert response.status_code == 200
+        html = response.get_data(as_text=True)
+        assert 'id="qualibrate-running-slot"' not in html
+        assert "The running QUAlibrate uses" not in html
 
 
 def test_dismissal_survives_restart_per_config(running_app):

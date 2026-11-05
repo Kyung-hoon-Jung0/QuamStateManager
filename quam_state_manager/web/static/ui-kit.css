@@ -13,7 +13,7 @@
  */
 
 :root {
-    --ui-running-layer: 100;
+    --ui-running-height: 10rem;
     --ui-find-results-height: 9rem;
     --ui-find-replace-width: 24ch;
     --ui-find-slide: -.5rem;
@@ -654,7 +654,7 @@
 .ui-agent-said { margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-sm); }
 
 /* Running-config discovery must never shift the landing controls. */
-.ui-running-overlay { position: fixed; bottom: var(--ui-gap-4); right: var(--ui-gap-4); max-width: var(--ui-measure); z-index: var(--ui-running-layer); }
+.ui-running-overlay { position: static; height: var(--ui-running-height); overflow: auto; }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
