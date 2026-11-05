@@ -200,6 +200,7 @@ def view(*, facts: Mapping[str, Any] | None, flag_moved: bool,
         # v1.5.1 (U P1-6): the read-only pill is part of what the control
         # shows -- a window repaints when it is raised or dropped
         "readonly": bool(readonly),
+        "refused_cause": (refused or {}).get("cause", ""),
         "refused_at": (refused or {}).get("at") if refused else None,
     }
     out["sig"] = signature(out)
@@ -213,7 +214,7 @@ def signature(v: Mapping[str, Any]) -> str:
     raised one, and nothing repaints for a poll that changed nothing."""
     parts = [v.get("state"), v.get("unapplied"), v.get("working_dirty"),
              v.get("live_n"), sorted(v.get("conflicts") or ()),
-             v.get("unreadable"), v.get("refused_at")]
+             v.get("unreadable"), v.get("refused_at"), v.get("refused_cause") or ""]
     if v.get("readonly"):
         parts.append("ro")          # v1.5.1 (U P1-6); absent: the old signature
     key = json.dumps(parts, sort_keys=True, default=str)

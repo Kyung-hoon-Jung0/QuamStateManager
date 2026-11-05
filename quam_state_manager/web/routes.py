@@ -12284,11 +12284,42 @@ def _applied_values_lost(ctx, held: dict) -> list[dict]:
     return out[:_LOST_APPLIED_MAX]
 
 
+def _notice_node_replacements(ctx, held, state, wiring):
+    """Adopt new node data, keeping the applied values in the Bring back backup.
+
+    Called after the pull read succeeds and before rebuilding the old store.
+    Predecessors belong to automatic recovery, never to this notice.
+    """
+    from quam_state_manager.core.sync_status import fmt_value
+    replacements = {}
+    messages = []
+    for path, value in held.items():
+        got = _dot_get(wiring if path.startswith("wiring.") else state,
+                       path.removeprefix("wiring.") if path.startswith("wiring.") else path)
+        if got is _DOT_MISSING or got == value or _applied_value_lost(held, path, got):
+            continue
+        replacements[path] = _tagged("set", value, "bring-back-applied")
+        messages.append(f"{path.removeprefix('qubits.')} {fmt_value(value)} -> {fmt_value(got)}")
+    if not replacements:
+        return
+    previous = (ctx.get("take_live_backup") or {}).get("updates") or {}
+    _take_live_backup(ctx, ctx["store"], {**previous, **replacements})
+    ctx["_auto_restore_notice"] = {
+        "event": str(time.time_ns()), "bring_back": True,
+        "message": "a node replaced a value you applied: " + "; ".join(messages),
+    }
+    g._node_replacement_notice = ctx["_auto_restore_notice"]
+
+
 def _auto_restore_notice(ctx, count: int) -> dict:
     notice = {"count": count, "event": str(time.time_ns()),
               "message": (f"An outside save reverted {count} value"
                           + (" you applied; Auto-Sync recovered it." if count == 1
                              else "s you applied; Auto-Sync recovered them."))}
+    replacement = getattr(g, "_node_replacement_notice", None)
+    if replacement:
+        notice["message"] = replacement["message"] + ". " + notice["message"]
+        notice["bring_back"] = True
     ctx["_auto_restore_notice"] = notice
     return notice
 
@@ -31341,6 +31372,13 @@ def _auto_merge_policy(view):
             # not a failure: it neither spends a try nor disarms.
             return resp
         if not refusal:
+            if getattr(g, "_node_replacement_notice", None):
+                notice = ctx["_auto_restore_notice"]
+                events["autoSyncRestored"] = notice
+                resp.headers["HX-Trigger"] = json.dumps(events)
+                if resp.is_json:
+                    body["auto_restore_notice"] = notice
+                    resp.set_data(json.dumps(body))
             if sess and (body.get("status") == "ok" or
                          (request.path == "/auto-sync/pull" and resp.status_code == 200)):
                 retrying = bool(sess.get("merge_retry"))
@@ -31415,8 +31453,12 @@ def _auto_merge_policy(view):
                 events["autoSyncMergePull"] = verdict
             else:
                 events["autoSyncRetry"] = verdict
+        cause = ("read-only" if code == "readonly" else
+                 "retrying: file locked" if not permanent and isinstance(reason, BaseException) and _write_denial(
+                     reason, getattr(ctx.get("working_copy"), "live_folder", None)) == "held" else "")
         html = _conflict_tray(ctx, ctx["store"], staged_conflict=staged,
-                              auto_disarmed=permanent, auto_merging=not permanent)
+                              auto_disarmed=permanent, auto_merging=not permanent,
+                              cause=cause)
         if request.path == "/auto-sync/pull":
             resp.mimetype = "text/html"
             if resp.status_code != 204 or permanent:
@@ -31425,11 +31467,22 @@ def _auto_merge_policy(view):
         elif resp.is_json:
             body.update(merge_failure=verdict, failure_class=verdict["class"], tray_html=html)
             resp.set_data(json.dumps(body))
+        elif automatic and not permanent:
+            # Classification owns the whole response from the first failure.
+            # Discard the door's stale disarmed tray and error toast/OOB body.
+            resp.status_code = 200
+            resp.headers.pop("X-SM-Error-Code", None)
+            resp.set_data(html)
         elif resp.status_code != 204 and not resp.headers.get("X-SM-Error-Code"):
             # A door that named its own failure (X-SM-Error-Code: a save that
             # could not write, a read-only folder) already carries the tray and
             # its message; the "live changed" conflict tray would misstate it.
             resp.set_data(html)
+        if permanent and cause and not resp.is_json:
+            # Keep the door's read-only error details alongside the corrected chip.
+            _body = resp.get_data(as_text=True)
+            _prefix, _marker, _status = _body.partition('<div id="status-bar"')
+            resp.set_data(html + ("\n" + _marker + _status if _marker else ""))
         resp.headers["HX-Trigger"] = json.dumps(events)
         return resp
     return wrapped
@@ -31458,7 +31511,7 @@ def _auto_apply_landed(ctx) -> None:
 
 def _conflict_tray(ctx, store, *, staged_conflict: bool,
                    auto_disarmed: bool = False,
-                   auto_merging: bool = False) -> str:
+                   auto_merging: bool = False, cause: str = "") -> str:
     """Render the staleness-conflict tray (docs/187 3).
 
     ONE place that knows what this tray needs. It replaces ``#pending-tray``,
@@ -31482,6 +31535,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
             "staged": bool(staged_conflict),
             "auto_disarmed": bool(auto_disarmed),
             "auto_merging": bool(auto_merging),
+            "cause": cause,
         }
     return render_template(
         "_state_apply_conflict.html",
@@ -32151,7 +32205,7 @@ def auto_sync_pull():
             # v1.5.1 (SB-F1): the sync point before the pull, put back
             # whenever the pulled content is not adopted below.
             _sp0 = working_copy.sync_point(wc)
-            working_copy.sync_from_live(wc)
+            _pulled = working_copy.sync_from_live(wc)
             # RE-CHECK AGAIN, NOW THAT THE I/O IS DONE. The check above closed
             # the lock-acquisition window; it did NOT close the window the
             # comment itself describes, because `sync_from_live` is where those
@@ -32201,6 +32255,7 @@ def auto_sync_pull():
                     discarding = True
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = getattr(_st, "mutation_seq", None)
+                _notice_node_replacements(ctx, _held_applied, *_pulled)
                 _rebuild_after_working_copy_replaced(ctx)
                 _redo_across_pull(ctx, ctx.get("store"), _seq0, _pre_leaves)   # v1.5.1 (SB-P2-2)
                 _sp0 = None          # adopted: nothing to put back
@@ -32277,7 +32332,8 @@ def auto_sync_pull():
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
         extra={"liveDriftChanged": True,
-               **({"autoSyncRestored": ctx["_auto_restore_notice"]} if _restored_n else {}),
+               **({"autoSyncRestored": ctx["_auto_restore_notice"]}
+                  if ctx.get("_auto_restore_notice") else {}),
                # SYNCEXP-09: "replaced" means work was actually DROPPED --
                # a change-log edit, a saved working state or a stash. Typed-
                # but-not-entered grid cells are not dropped: the pull patches
@@ -34039,7 +34095,7 @@ def state_sync(*, _auto_mode=None, _held_override=None):
             _keep_applied = ((mode == "apply" and request.values.get("keep_applied") == "1")
                              or (mode in ("apply", "reapply") and _auto_restore))
             _held_applied = (_held_override if _held_override is not None
-                             else (_applied_values_held(ctx) if _keep_applied else {}))
+                             else _applied_values_held(ctx))
             _restored_creates: dict = {}
             _sync_point_before = working_copy.sync_point(wc)
             # Save live BEFORE pulling. Compare this version with the adopted
@@ -34065,7 +34121,7 @@ def state_sync(*, _auto_mode=None, _held_override=None):
                 # content (with apply, on the live chip too).
                 pending = _merge_reapply(_pending_reapply(ctx),
                                          _capture_change_log_as_updates(store))
-                for _p, _v in _held_applied.items():
+                for _p, _v in (_held_applied.items() if _keep_applied else ()):
                     if _p in pending:
                         continue            # an explicit edit wins
                     _got = _dot_get(_pulled[0], _p)
@@ -34159,6 +34215,7 @@ def state_sync(*, _auto_mode=None, _held_override=None):
                         ctx.pop("_pulled_docs", None)
                         working_copy.repersist_working(wc, store.state, store.wiring, store=store)
                         return _refusal
+                _notice_node_replacements(ctx, _held_applied, *_pulled)
                 # Rebuild the store + derived objects from the freshly-synced copy.
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = store.mutation_seq
@@ -34265,6 +34322,7 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         "replay": replay,
         # sync-ux 2026-09-25: what Take live kept, so the control can say so
         # (v1.5.1, SA-F4: and which edits it dropped, for a caller that reports)
+        "auto_restore_notice": ctx.get("_auto_restore_notice"),
         "backup": ({"n": backup["n"], "snapshot": backup.get("snapshot"),
                     "paths": sorted(backup.get("updates") or {})[:200]}
                    if backup else None),
@@ -34900,6 +34958,11 @@ def _live_write_failure_response(ctx, message: str, code: str, *, auto=None,
     pushing at a chip that refused it)."""
     if auto is not None and ctx is not None:
         ctx.pop("auto_apply", None)
+    cause = _write_denial(getattr(g, "_merge_failure", None),
+                          getattr((ctx or {}).get("working_copy"), "live_folder", None))
+    if ctx and cause:
+        _conflict_tray(ctx, ctx["store"], staged_conflict=bool(ctx.get("working_dirty")),
+                       cause="read-only" if cause == "denied" else "file locked")
     # v1.5.1 (r6 P2-6): the notice carries when a live write last landed, as
     # of this failure -- a later landing takes it down
     _landed = _live_landed_stamp(ctx)

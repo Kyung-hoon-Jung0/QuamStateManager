@@ -72,6 +72,20 @@ journal chain up to the cursor counts; live C is in sync, and a value never
 replaced by an apply is a newer outside value. After undoing C, the chain
 ends at B and its only predecessor is A.
 
+Walk-5 decision (2026-11-06): a live value outside that predecessor chain
+is adopted as newer node data. The pull keeps the applied value in the existing
+Take-live / Bring back backup, including a History snapshot, and publishes one
+shared server notice: `a node replaced a value you applied: qA1.f_01 X -> Y`.
+Its Bring back button re-stages the user's value in one click through the existing
+restore endpoint. This works with Auto-Sync on or off, without prompting or
+disarming. A pull that also recovers predecessors combines both facts in that
+one notice.
+
+A transient push refusal replaces the original error response with the armed
+retry tray from its first failure; it cannot expose an interim Auto-off pill or
+UNVERIFIED toast. Refusal chips carry the actual cause (`retrying: file locked`
+or `read-only`) and include it in their cross-window render signature.
+
 With Auto-Sync pull armed, both the push-time merge and the pull tick take
 the outside changes and restore C through the default keep-applied merge.
 They ask no question, leave no conflict tray or hold, and keep the session

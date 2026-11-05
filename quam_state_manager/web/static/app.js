@@ -5106,7 +5106,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
             }
-            if (data.status === "ok" && data.auto_restored_count) {
+            if (data.status === "ok" && data.auto_restore_notice) {
                 document.dispatchEvent(new CustomEvent('autoSyncRestored', {
                     detail: data.auto_restore_notice
                 }));
@@ -6033,7 +6033,7 @@ window.livePushExtrasLine = function (typedPaths) {
     }
     function onPullSeq(d) {
         if (d && d.auto_restore_notice) {
-            if (window._pullSeqSeen === undefined) {
+            if (window._pullSeqSeen === undefined && !d.auto_restore_notice.bring_back) {
                 window._restoreNoticeSeen = d.auto_restore_notice.event;
             } else {
                 document.dispatchEvent(new CustomEvent('autoSyncRestored', {detail: d.auto_restore_notice}));

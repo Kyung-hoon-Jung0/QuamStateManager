@@ -103,7 +103,11 @@ function world() {
   w.doStateSync = function (mode, forced, ackUnseen, expectChip, opts) {
     state.sync.push({ mode: mode, forced: forced, ackUnseen: ackUnseen, chip: expectChip, automatic: !!(opts && opts.automatic) });
   };
-  w.showToast = function (m, l) { state.toasts.push({ m: String(m), l: l }); };
+  w.showToast = function (m, l) {
+    state.toasts.push({ m: String(m), l: l });
+    const toast = w.document.createElement('div');
+    toast.className = 'toast'; w.document.body.appendChild(toast); return toast;
+  };
   w.eval(fs.readFileSync(SRC, 'utf8'));
   w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
   return { w: w, state: state, clock: clock };
@@ -320,6 +324,47 @@ function fire(w, name, detail) {
     check('I4 a re-staged restoration uses the server notice',
           /2 values you applied/.test(m) && /Auto-Sync recovered them/.test(m)
           && !/restored them/.test(m), m);
+  }
+
+  {
+    const { w, state, clock } = world();
+    const posts = [];
+    w.htmx.ajax = (method, url) => { posts.push([method, url]); return Promise.resolve(); };
+    w.confirm = w.prompt = () => { throw new Error('replacement must not prompt'); };
+    const notice = {event: 'node-1', bring_back: true,
+      message: 'a node replaced a value you applied: qA1.f_01 5 -> 6'};
+    fire(w, 'autoSyncRestored', notice);
+    fire(w, 'autoSyncRestored', notice);
+    check('W5 one shared server notice', state.toasts.length === 1 && state.toasts[0].m === notice.message);
+    const back = w.document.querySelector('.toast button');
+    check('W5 Bring back is one click', back && back.textContent === 'Bring back');
+    if (back) back.click();
+    await clock.advance(1);
+    check('W5 Bring back uses existing backup door', JSON.stringify(posts) === JSON.stringify([['POST', '/state/take-live/restore']]));
+  }
+
+  {
+    const { w, state, clock } = world();
+    w.document.body.insertAdjacentHTML('beforeend', '<button class="auto-apply-on"></button>');
+    fire(w, 'autoSyncRetry', {class: 'transient', reason: 'file locked', tries: 1, delay: 2});
+    await clock.advance(1);
+    check('W5 first lock keeps pill armed with retrying (1)',
+      w.document.querySelector('.auto-apply-on').textContent === 'retrying (1)' &&
+      !w.document.querySelector('.auto-apply-off'));
+    check('W5 transient emits no toast', state.toasts.length === 0);
+  }
+
+  {
+    const { w, state } = world();
+    const app = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/app.js'), 'utf8');
+    w.eval(app.match(/    function _pullSeqParts\(s\) \{[\s\S]*?\n    \}/)[0]
+      + app.match(/    function onPullSeq\(d\) \{[\s\S]*?\n    \}/)[0]);
+    const detail = {event: 'peer-node', bring_back: true, message: 'Server replacement text'};
+    w.onPullSeq({auto_restore_notice: detail});
+    w.onPullSeq({auto_restore_notice: detail});
+    check('W5 peer first poll displays the server replacement once',
+      state.toasts.length === 1 && state.toasts[0].m === detail.message);
+    check('W5 peer poll offers Bring back', !!w.document.querySelector('.toast button'));
   }
 
   // Failure-kind backoff is executed against the shipped scheduler.

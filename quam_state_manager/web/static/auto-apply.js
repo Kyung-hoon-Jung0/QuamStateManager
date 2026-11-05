@@ -349,7 +349,21 @@
         var d = e.detail || {};
         if (!d.message || (d.event && d.event === window._restoreNoticeSeen)) return;
         if (d.event) window._restoreNoticeSeen = d.event;
-        toast(d.message, 'info');
+        if (d.bring_back && window.showToast) {
+            var notice = window.showToast(d.message, 'info', -1);
+            if (notice) {
+                var back = document.createElement('button');
+                back.type = 'button'; back.textContent = 'Bring back';
+                back.addEventListener('click', function () {
+                    if (!window.htmx) return;
+                    back.disabled = true;
+                    Promise.resolve(window.htmx.ajax('POST', '/state/take-live/restore', {
+                        target: '#pending-tray', swap: 'outerHTML'
+                    })).then(function () { notice.remove(); }, function () { back.disabled = false; });
+                });
+                notice.appendChild(back);
+            }
+        } else toast(d.message, 'info');
     });
 
     function sayLost(list) {
