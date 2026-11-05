@@ -1507,7 +1507,7 @@
         }
       });
     }
-    ["regenTouched", "regenFilled"].forEach(function (name) {
+    ["regenTouched", "regenFilled", "populateTouched"].forEach(function (name) {
       if (!state[name]) return;
       state[name] = remapKeysBy(state[name], function (k) {
         var seg = k.split("|");
@@ -6395,6 +6395,22 @@
   // fields that don't belong to the current gate (e.g. cr_* left over after a
   // CR->CZ switch). Keeps the spec + sessionStorage draft clean and stops a
   // hidden override from silently re-attaching when a pair / gate is restored.
+  function mergePairPopulate(from, to) {
+    var pairs = (state.spec.populate || {}).pairs || {};
+    if (!pairs[from] || from === to) return;
+    var touched = state.mode === "regenerate"
+      ? (state.regenTouched || {}) : (state.populateTouched || {});
+    var target = pairs[to] || (pairs[to] = {});
+    Object.keys(pairs[from]).forEach(function (field) {
+      var src = "pairs|" + from + "|" + field;
+      var dst = "pairs|" + to + "|" + field;
+      if (!(field in target) || (touched[src] && !touched[dst])) target[field] = pairs[from][field];
+      if (touched[src]) touched[dst] = 1;
+      delete touched[src];
+    });
+    delete pairs[from];
+  }
+
   function reconcilePopulatePairs() {
     var pop = state.spec.populate;
     if (!pop || !pop.pairs) return;
@@ -6424,7 +6440,7 @@
         var t0 = seg.slice(1).join("-");
         if (t0 && t0.charAt(0) !== "q") t0 = "q" + t0;
         var canon = byMembers[[c0, t0].sort().join("|")];
-        if (canon && !pop.pairs[canon]) pop.pairs[canon] = pop.pairs[id];
+        if (canon) mergePairPopulate(id, canon);
         delete pop.pairs[id];
         if (!canon || !pop.pairs[canon]) return;
         id = canon;
@@ -6481,8 +6497,7 @@
     }
     var pop = state.spec.populate || {};
     if (pop.pairs && pop.pairs[oldId]) {
-      pop.pairs[newId] = pop.pairs[oldId];
-      delete pop.pairs[oldId];
+      mergePairPopulate(oldId, newId);
       var mv = pop.pairs[newId].moving_qubit;
       if (mv === "control") pop.pairs[newId].moving_qubit = "target";
       else if (mv === "target") pop.pairs[newId].moving_qubit = "control";
@@ -8121,7 +8136,11 @@
   // Populate-protect bookkeeping (docs/72): cells the user explicitly owns
   // this wizard session — typed, Set-all'd, preset-applied or re-solved.
   function markPopulateTouched(group, rid, field) {
-    if (state.mode !== "regenerate") return;
+    if (state.mode !== "regenerate") {
+      if (!state.populateTouched) state.populateTouched = {};
+      state.populateTouched[group + "|" + rid + "|" + field] = 1;
+      return;
+    }
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
     state.regenEdited = true;   // QA F6: a populate edit is a leave-worthy edit
@@ -12189,6 +12208,7 @@
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
         autoPresetRows: state.autoPresetRows,
+        populateTouched: state.populateTouched,
         loTyped: state.loTyped || {},
         // QA r2-13: what became of the last build (trimmed) / one started
         // whose answer has not landed yet.
@@ -12324,6 +12344,7 @@
     // every row it has now counts as prefilled (cleared cells stay cleared),
     // and only rows added from here on prefill. No flag: nothing recorded yet.
     state.loTyped = (d.loTyped && typeof d.loTyped === "object") ? d.loTyped : {};
+    state.populateTouched = d.populateTouched || {};
     var dr = d.autoPresetRows;
     state.autoPresetRows = (dr && typeof dr === "object")
       ? { q: dr.q || {}, pairs: dr.pairs || {} }
@@ -12421,6 +12442,7 @@
     state.regenSourceStash = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
+    state.populateTouched = {};
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
     state.loTyped = {};             // G2
     state.regenSourceHash = null;   // QA regenerate-r2-35
@@ -12475,9 +12497,9 @@
          st: ["naming", "namesTouched", "qubitFlux", "couplerFlux", "chipArch",
               "heldChipArch", "heldPins", "pairGate", "muxSize", "pairsTouched",
               "wiringTouched", "allocation", "autoPresetRows", "crPortMode",
-              "regenTouched", "regenFilled"] },
+              "regenTouched", "regenFilled", "populateTouched"] },
     5: { spec: ["lines", "readout_input"], st: ["allocation", "wiringTouched", "heldPins"] },
-    6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled"] },
+    6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled", "populateTouched"] },
     7: { spec: [], st: ["outputPath", "scriptsEnabled", "scriptsPath", "_scriptsPathTouched"] }
   };
   // QDAC cells the Populate step edits; channel / trigger / bias-tee are the
@@ -12599,7 +12621,7 @@
           return a && b ? [a, b].sort().join("|") + "|" + seg.slice(2).join("|") : null;
         });
       }
-      ["regenTouched", "regenFilled"].forEach(function (name) {
+      ["regenTouched", "regenFilled", "populateTouched"].forEach(function (name) {
         if (state[name]) state[name] = rekey(state[name], cell);
       });
     }
@@ -12634,6 +12656,7 @@
       state.naming = { preset: "one_based", prefix: "q", start: 1 };
       state.namesTouched = false;
       state.pairsTouched = false;
+      state.populateTouched = {};
       state.wiringTouched = false;
       state.qubitFlux = true;
       state.couplerFlux = true;
@@ -12750,6 +12773,7 @@
     } else {
       state.step = 1;
       state.spec = newChipSpec();
+      state.populateTouched = {};
       state.heldPins = {};   // a fresh spec holds nothing of an earlier one
       state.env = null;
       state.allocation = null;
@@ -13305,6 +13329,7 @@
       VALIDATE_RANGES: VALIDATE_RANGES,
       setValidateDebounce: function (ms) { VALIDATE_DEBOUNCE_MS = ms; },
       czAutoOrient: czAutoOrient,
+      reconcilePopulatePairs: reconcilePopulatePairs,
       czOrderStatus: czOrderStatus,
       flipPairOrder: flipPairOrder,
       schemeNames: schemeNames,
