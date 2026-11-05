@@ -621,8 +621,11 @@ def run_regenerate(
     # changed it in the wizard or the report already names the change.
     calibration_changed = _calibration_check(result, old_wiring, new_wiring, protect,
                                              fsp_compensated, add_report)
+    intentional = set(protect or ())
+    intentional.update(loc for _, loc in result.stats.populate_written_through)
+    intentional.update(c["path"] for c in (fsp_compensated or ()) if c.get("path"))
     entity_changes = regen_merge.calibration_check(
-        old_state, old_wiring, result.merged, new_wiring)
+        old_state, old_wiring, result.merged, new_wiring, skip=intentional)
     existing_entities_changed = len({tuple(change["path"].split(".")[:2])
                                      for change in entity_changes
                                      if change["path"].split(".")[0] in

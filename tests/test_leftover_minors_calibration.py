@@ -46,7 +46,7 @@ def test_append_preserves_resolved_calibration(tmp_path, monkeypatch, edited):
     report = result['merge']
     print('append calibration_changed_total =', report['calibration_changed_total'])
     assert report['calibration_changed_total'] == 0
-    assert report['existing_entities_changed'] == int(edited)
+    assert report['existing_entities_changed'] == 0
 
 
 def test_calibration_wording():
