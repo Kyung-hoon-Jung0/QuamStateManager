@@ -90,6 +90,21 @@ for (let i = 0; i < 12; i++) {
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q' + i + '.T1', value: i, from: i + 1 }] } }));
 }
 ok(window.UndoTrail.steps().length === 8 && panel().querySelectorAll('.undo-trail-step').length === 8, 'the trail keeps the last 8 steps');
+// W3-7: the same step announced twice (the undo response, then a push echo)
+// is one row, not two
+{
+    const n0 = window.UndoTrail.steps().length;
+    const ev = () => new window.CustomEvent('cellsReverted', { detail: { message: 'Undone: qubits.qD3.anharmonicity', live: true,
+        entries: [{ dot_path: 'qubits.qD3.anharmonicity', old_value_str: '194880000', old_value_disp: '194,880,000', old_kind: 'num', from_value_disp: '194,890,000' }] } });
+    d.dispatchEvent(ev());
+    const n1 = window.UndoTrail.steps().length;
+    d.dispatchEvent(ev());
+    const top2 = window.UndoTrail.steps().slice(0, 2).map(st => JSON.stringify(st.entries));
+    ok(top2[0] !== top2[1], 'a repeated announcement adds no second row');
+    d.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: { message: 'Undone: qubits.qD3.anharmonicity', live: true,
+        entries: [{ dot_path: 'qubits.qD3.anharmonicity', old_value_str: '194870000', old_value_disp: '194,870,000', old_kind: 'num', from_value_disp: '194,880,000' }] } }));
+    ok(window.UndoTrail.steps()[0].entries[0].value === '194,870,000', 'a different step on the same field is its own row');
+}
 // 6. the panel keeps clear of an action button under its corner
 {
     const main = d.createElement('div'); main.id = 'main'; d.body.appendChild(main);

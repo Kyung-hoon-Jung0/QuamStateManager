@@ -16,6 +16,7 @@
 window.UndoTrail = (function () {
     'use strict';
     var MAX = 8;
+    var DUP_MS = 5000;     // W3-7: a repeat of the newest step inside this window is the same step
     var _steps = [];          // newest first: {kind, tier, entries:[{dot_path, value, from}], at}
     var _hidden = false;      // closed by the user for this page
     var _panel = null;
@@ -155,6 +156,16 @@ window.UndoTrail = (function () {
     function push(step) {
         if (!step || !step.entries || !step.entries.length) return;
         step.at = Date.now();
+        /* W3-7: one step announced twice (the undo's own response, then the
+           echo of an Auto-Sync push carrying the same revert) is one row. Two
+           real presses on one field never repeat: each moves the value. */
+        var top = _steps[0];
+        if (top && top.kind === step.kind && top.tier === step.tier
+                && step.at - top.at < DUP_MS
+                && JSON.stringify(top.entries) === JSON.stringify(step.entries)) {
+            top.at = step.at;
+            return;
+        }
         _steps.unshift(step);
         if (_steps.length > MAX) _steps.length = MAX;
         _hidden = false;
