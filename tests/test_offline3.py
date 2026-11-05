@@ -229,6 +229,7 @@ def test_two_applied_leaves_under_a_dropped_parent_are_both_restored(tmp_path):
     _write_chip(live, base)
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
+    c.environ_base["HTTP_X_SM_WINDOW_ID"] = "first"
     assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
     e = {"app": app, "client": c, "live": live}
     _arm(e, pull=True, push=True)

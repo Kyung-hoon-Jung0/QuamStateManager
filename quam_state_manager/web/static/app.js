@@ -1,3 +1,26 @@
+/* A document keeps one window id across swaps. A reload starts a new
+ * recipient, so an earlier replacement notice cannot replay there. */
+(function () {
+    var winId = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + Math.random().toString(36).slice(2);
+    document.addEventListener("htmx:configRequest", function (evt) {
+        evt.detail.headers["X-SM-Window-ID"] = winId;
+    });
+    // The every-page drift heartbeat uses fetch rather than htmx.
+    var originalFetch = window.fetch;
+    window.fetch = function (input, init) {
+        var url = new URL(input && input.url ? input.url : String(input), window.location.href);
+        if (url.origin === window.location.origin) {
+            init = Object.assign({}, init);
+            var headers = new Headers(init.headers || (input && input.headers));
+            headers.set("X-SM-Window-ID", winId);
+            init.headers = headers;
+        }
+        return originalFetch.call(this, input, init);
+    };
+}());
+
 /* ================================================================
  * UI_CONFIG — Design tokens for JavaScript-only consumers
  * ----------------------------------------------------------------

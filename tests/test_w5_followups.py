@@ -36,23 +36,69 @@ def test_real_live_change_is_named(env):
     assert 'unknown failure' not in chip
 
 
-def test_later_window_and_reload_receive_no_old_notice(env):
+def _window(env, win_id):
+    client = env['app'].test_client()
+    client.environ_base['HTTP_X_SM_WINDOW_ID'] = win_id
+    return client
+
+
+def _replacement(env, value=4.4e-5):
     _arm(env)
     _apply_name(env)
-    notice = _notice(_outside_save_and_pull(env, _state(t1=4.4e-5)))
-    assert notice['event'] and notice['at']
-    later = env['app'].test_client()
-    assert later.get('/state/drift').get_json()['auto_restore_notice'] is None
+    return _notice(_outside_save_and_pull(env, _state(t1=value)))
+
+
+@pytest.mark.parametrize('value', [4.4e-5, 2e-5])
+def test_open_windows_each_receive_notice_once(env, value):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env, value)
     assert env['client'].get('/state/drift').get_json()['auto_restore_notice'] is None
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == notice
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] is None
+    assert _ctx(env)['_auto_restore_notice'] == notice
+
+
+def test_later_window_receives_no_old_notice(env):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    assert _window(env, 'third').get('/state/drift').get_json()['auto_restore_notice'] is None
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == notice
+    assert _ctx(env)['_auto_restore_notice'] == notice
+
+
+def test_reload_receives_no_old_notice(env):
+    second = _window(env, 'before-reload')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    assert _window(env, 'after-reload').get('/state/drift').get_json()['auto_restore_notice'] is None
+    assert _ctx(env)['_auto_restore_notice'] == notice
+
+
+def test_notice_expires_before_delivery(env, monkeypatch):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    monkeypatch.setattr(routes.time, 'time', lambda: notice['at'] + 60)
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] is None
     assert not _ctx(env).get('_auto_restore_notice')
 
 
-def test_notice_expires_before_delivery(env):
-    import time
+def test_inactive_window_is_not_a_recipient(env):
+    stale = _window(env, 'stale')
+    stale.get('/state/drift')
+    _ctx(env)['_notice_windows']['stale'] -= 31
+    _replacement(env)
+    assert stale.get('/state/drift').get_json()['auto_restore_notice'] is None
+
+
+def test_notice_backups_are_bounded(env):
     ctx = _ctx(env)
-    ctx['_auto_restore_notice'] = {'event': 'old', 'at': time.time() - 61, 'message': 'old'}
-    assert env['client'].get('/state/drift').get_json()['auto_restore_notice'] is None
-    assert not ctx.get('_auto_restore_notice')
+    ctx['_notice_backups'] = {str(i): {'snapshot': str(i)} for i in range(55)}
+    _replacement(env)
+    assert len(ctx['_notice_backups']) == 50
+    assert '0' not in ctx['_notice_backups']
 
 
 def test_notice_backup_is_independent_and_stale_restore_names_newer_live(env):
@@ -186,3 +232,60 @@ def test_manual_write_refusal_also_names_the_cause(env, monkeypatch, readonly):
     chip = re.search(r'<span class="sync-control-text">(.*?)</span>', html).group(1)
     assert ('read-only' if readonly else 'file locked') in chip
     assert 'live changed' not in chip
+
+
+def test_notice_window_client_identity():
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if shutil.which('node') is None:
+        pytest.skip('node not installed')
+    driver = Path(__file__).with_name('notice_window_selfcheck.cjs')
+    result = subprocess.run(['node', str(driver)], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '8 assertions passed' in result.stdout
+
+
+def test_unidentified_request_cannot_consume_notice(env):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    assert env['app'].test_client().get('/state/drift').get_json()['auto_restore_notice'] is None
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == notice
+
+
+def test_new_event_delivers_again_to_each_open_window(env):
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    first = _replacement(env)
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == first
+    _edit(env, path='qubits.qA1.T1', value='5.5e-5')
+    env['client'].post('/state/apply-to-live')
+    next_notice = _notice(_outside_save_and_pull(env, _state(t1=6.6e-5)))
+    assert next_notice['event'] != first['event']
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] == next_notice
+    assert second.get('/state/drift').get_json()['auto_restore_notice'] is None
+
+
+@pytest.mark.parametrize('stale_event', [False, True])
+def test_buffered_response_cannot_deliver_twice_or_consume_another_event(env, stale_event):
+    from flask import jsonify
+    second = _window(env, 'second')
+    second.get('/state/drift')
+    notice = _replacement(env)
+    ctx = _ctx(env)
+    with env['app'].test_request_context(headers={'X-SM-Window-ID': 'second'}):
+        def buffered():
+            response = jsonify(auto_restore_notice=notice)
+            response.headers['HX-Trigger'] = json.dumps({'autoSyncRestored': notice, 'other': {}})
+            return response
+        response = buffered()
+        if stale_event:
+            ctx['_auto_restore_notice'] = dict(notice, event='next-event')
+        else:
+            routes._finish_auto_restore_notice(buffered())
+        response = routes._finish_auto_restore_notice(response)
+        assert response.get_json()['auto_restore_notice'] is None
+        assert json.loads(response.headers['HX-Trigger']) == {'other': {}}
+        if stale_event:
+            assert 'second' not in ctx['_notice_delivered']

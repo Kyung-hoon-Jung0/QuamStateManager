@@ -12308,10 +12308,12 @@ def _notice_node_replacements(ctx, held, state, wiring):
     event = str(time.time_ns())
     backup["expected"] = expected
     ctx.setdefault("_notice_backups", {})[event] = backup
+    _prune_notice_backups(ctx)
     ctx["_auto_restore_notice"] = {
         "event": event, "at": time.time(), "bring_back": True,
         "message": "a node replaced a value you applied: " + "; ".join(messages),
     }
+    _snapshot_notice_recipients(ctx)
     g._node_replacement_notice = ctx["_auto_restore_notice"]
 
 
@@ -12327,32 +12329,91 @@ def _auto_restore_notice(ctx, count: int) -> dict:
         notice["message"] = replacement["message"] + ". " + notice["message"]
         notice["bring_back"] = True
     ctx["_auto_restore_notice"] = notice
+    if not replacement:
+        _snapshot_notice_recipients(ctx)
     return notice
+
+
+_NOTICE_WINDOW_HEADER = "X-SM-Window-ID"
+
+
+def _prune_notice_backups(ctx):
+    backups = ctx.get("_notice_backups", {})
+    while len(backups) > 50:
+        backups.pop(next(iter(backups)))
+
+
+def _remember_notice_window(ctx):
+    with _active_wc_lock(ctx):
+        now = time.time()
+        windows = ctx.setdefault("_notice_windows", {})
+        for win_id, seen in list(windows.items()):
+            if now - seen > 30:
+                windows.pop(win_id, None)
+        win_id = request.headers.get(_NOTICE_WINDOW_HEADER)
+        if win_id:
+            windows[win_id] = now
+        return win_id
+
+
+@bp.before_request
+def _track_notice_window():
+    ctx = _active_ctx()
+    if ctx is not None:
+        _remember_notice_window(ctx)
+
+
+def _snapshot_notice_recipients(ctx):
+    with _active_wc_lock(ctx):
+        _remember_notice_window(ctx)
+        ctx["_notice_recipients"] = set(ctx.get("_notice_windows", {}))
+        ctx["_notice_delivered"] = set()
 
 
 def _current_auto_restore_notice(ctx):
-    """One delivery, within 60 seconds. Never replay a delivered notice on reload."""
-    notice = ctx.get("_auto_restore_notice")
-    if notice and time.time() - notice.get("at", 0) > 60:
-        ctx.pop("_auto_restore_notice", None)
-        return None
-    return notice
+    """Keep the event for 60 seconds; offer it once to each original window."""
+    with _active_wc_lock(ctx):
+        notice = ctx.get("_auto_restore_notice")
+        if notice and time.time() - notice.get("at", 0) >= 60:
+            ctx.pop("_auto_restore_notice", None)
+            ctx.pop("_notice_recipients", None)
+            ctx.pop("_notice_delivered", None)
+            return None
+        win_id = request.headers.get(_NOTICE_WINDOW_HEADER)
+        if (win_id not in ctx.get("_notice_recipients", set())
+                or win_id in ctx.get("_notice_delivered", set())):
+            return None
+        return notice
 
 
 @bp.after_request
 def _finish_auto_restore_notice(resp):
     ctx = _active_ctx() or {}
-    notice = _current_auto_restore_notice(ctx)
-    if notice:
-        # Response assembly may mention the notice in both JSON and HX-Trigger.
-        # Consume after assembly so both carry the same id in this delivery.
-        event = notice["event"]
+    with _active_wc_lock(ctx):
+        notice = _current_auto_restore_notice(ctx)
         body = resp.get_json(silent=True) if resp.is_json else None
-        events = resp.headers.get("HX-Trigger", "")
-        if ((isinstance(body, dict) and body.get("auto_restore_notice") == notice)
-                or ('"autoSyncRestored"' in events and event in events)):
-            ctx.pop("_auto_restore_notice", None)
-    return resp
+        try:
+            events = json.loads(resp.headers.get("HX-Trigger", "{}"))
+        except (ValueError, TypeError):
+            events = {}
+        carried = ((isinstance(body, dict) and body.get("auto_restore_notice"))
+                   or (isinstance(events, dict) and events.get("autoSyncRestored")))
+        if carried != notice:
+            notice = None
+        if carried:
+            # Recheck after assembly, including direct creation responses and
+            # concurrent requests. JSON and HX-Trigger share one delivery.
+            if notice:
+                ctx.setdefault("_notice_delivered", set()).add(
+                    request.headers.get(_NOTICE_WINDOW_HEADER))
+            else:
+                if isinstance(body, dict) and body.get("auto_restore_notice"):
+                    body["auto_restore_notice"] = None
+                    resp.set_data(json.dumps(body))
+                if isinstance(events, dict) and "autoSyncRestored" in events:
+                    events.pop("autoSyncRestored")
+                    resp.headers["HX-Trigger"] = json.dumps(events)
+        return resp
 
 
 def _merge_refusal_cause(reason, code):
