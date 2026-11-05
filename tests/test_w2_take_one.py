@@ -21,13 +21,19 @@ def test_a_taken_row_is_not_an_unapplied_edit(env):  # noqa: F811
 
 
 def test_a_lost_applied_value_stays_in_the_control_until_dismissed(env):  # noqa: F811
+    """W2-3. A session that armed pull restores a reverted applied value
+    (docs/187), so the note is for the pull that does not: a replace-pull
+    over unapplied edits adopts the chip, as the person asked, and names the
+    applied value that took away -- until the person dismisses it."""
     from tests.test_autosync_lost_applied import _outside_save_and_pull
     from tests.test_autosync_merge import _arm
     from tests.test_sync_review_applied import _apply_t1
-    _arm(env, pull=True, push=False)
+    _arm(env, pull=True, push=False, replace=True)
     _apply_t1(env)
-    assert _outside_save_and_pull(env, _st(f01=5.2e9)).status_code == 200
     c = env["client"]
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey",
+                                       "value": "2.2e-05"}).status_code == 200
+    assert _outside_save_and_pull(env, _st(f01=5.2e9)).status_code == 200
     for _ in range(2):          # survives later renders, other windows too
         tray = env["app"].test_client().get("/state/tray").get_data(as_text=True)
         assert 'data-sync-lost="1"' in tray and "qubits.q1.T1" in tray

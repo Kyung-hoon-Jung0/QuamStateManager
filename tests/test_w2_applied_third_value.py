@@ -48,9 +48,15 @@ def test_third_value_is_not_in_the_loss_toast(env):  # noqa: F811
     assert json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["lost"] == []
 
 
-def test_stale_value_is_in_the_loss_toast(env):  # noqa: F811
+def test_stale_value_is_restored_by_the_armed_pull(env):  # noqa: F811
+    """The stale value IS the loss (W2-6) -- and a session that armed pull
+    restores it instead of naming it (docs/187, applied-value restoration):
+    one notice, nothing in the loss list, the chip holds SM's value again."""
     _arm(env, pull=True, push=False)
     _apply_t1(env)
     r = _outside_save_and_pull(env, _st(t1=2.0e-5, f01=5.2e9))
-    lost = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["lost"]
-    assert [x["path"] for x in lost] == ["qubits.q1.T1"], lost
+    assert r.status_code == 200
+    trig = json.loads(r.headers["HX-Trigger"])
+    assert trig["autoSyncPulled"]["lost"] == []
+    assert trig["autoSyncRestored"]["count"] == 1
+    assert _live(env)["T1"] == 3.3e-5 and _live(env)["f_01"] == 5.2e9

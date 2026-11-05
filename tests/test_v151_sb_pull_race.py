@@ -234,7 +234,12 @@ class TestAnUndoInsideThePull:
     """R2 (the gap the review left open under SB-F1): the merge door replays
     the edits it captured BEFORE the pull. An undo pressed while the pull read
     and wrote took a row out of the change log -- and the stale capture put
-    it back on the pulled content (and, with apply, on the live chip)."""
+    it back on the pulled content (and, with apply, on the live chip).
+
+    Since the live-press wait (an undo during a press waits for it and undoes
+    the newest action) the undo cannot run INSIDE the pull: it waits until the
+    pull has landed, then takes the newest row off the replayed log. The
+    outcome pinned here is the same -- what the person undid stays undone."""
 
     @pytest.mark.parametrize("mode", ["reapply", "apply"])
     def test_it_stays_undone(self, env, monkeypatch, mode):
@@ -246,6 +251,8 @@ class TestAnUndoInsideThePull:
         _write(env["live"], _state(q2=LAB))            # the lab writes
         real_dc = WC.doc_cache
         fired: list = []
+        out: dict = {}
+        threads: list = []
 
         class _Hooked:
             def __getattr__(self, name):
@@ -254,17 +261,23 @@ class TestAnUndoInsideThePull:
             def read_pair(self, folder, *a, **k):
                 pair = real_dc.read_pair(folder, *a, **k)
                 if not fired and k.get("mode") == "fresh":
-                    out = {}
+                    # pressed while the pull is mid-read: the press is in
+                    # flight, so the undo must still be waiting when the pull
+                    # goes on
                     t = threading.Thread(target=lambda: out.update(r=c.post("/undo")))
                     t.start()
-                    t.join(20)
-                    assert out.get("r") is not None and out["r"].status_code == 200
+                    threads.append(t)
+                    t.join(1.5)
+                    assert "r" not in out, "the undo ran inside the pull instead of waiting for it"
                     fired.append(1)
                 return pair
         monkeypatch.setattr(WC, "doc_cache", _Hooked())
         r = c.post("/state/sync", data={"mode": mode, "ack_unseen": "1", "ack_collision": "1"})
         monkeypatch.undo()
         assert fired and r.status_code == 200, r.data
+        for t in threads:
+            t.join(20)
+        assert out.get("r") is not None and out["r"].status_code == 200, out
         st = _ctx(env)["store"].state["qubits"]
         assert st["q2"]["T1"] == LAB and st["q1"]["T1"] == 1.7e-5
         assert st["q3"]["T1"] == 1.0e-5 * 3, "the undo pressed during the pull was reverted"

@@ -22,7 +22,10 @@ def revision():
 
 
 def _key(wc):
-    return os.path.normcase(str(Path(wc.live_folder).resolve())) if wc else None
+    # A handle with no live folder (a test double, a view with no chip) has
+    # nothing to mark: a press on it never makes an undo wait.
+    folder = getattr(wc, "live_folder", None) if wc is not None else None
+    return os.path.normcase(str(Path(folder).resolve())) if folder else None
 
 
 @contextmanager

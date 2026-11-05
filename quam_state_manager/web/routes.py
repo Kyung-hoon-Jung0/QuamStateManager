@@ -50407,6 +50407,9 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # Every staging door shares the store saved by the plan's next write.
     "main.pair_gate_inspector_switch", "main.api_pulse_copy",
     "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
+    # Add a qubit / a pair from the chip diagram: creates subtrees through the
+    # modifier under one group id (a staging door like /field/edit-batch).
+    "main.diagram_add_stage",
     "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.auto_apply_revert",
     "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",

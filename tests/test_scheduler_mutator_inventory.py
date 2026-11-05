@@ -163,6 +163,7 @@ _NON_STAGING_POSTS = {
     'main.state_history_snapshot',
     'main.sync_lost_ack',               # W2-3: drops the acknowledged loss note (a ctx key); stages nothing
     'qbproxy.proxy',                    # forwards QUAlibrate's own requests to QUAlibrate; never touches SM's chip
+    'qbproxy.proxy_target_set',         # remembers / forgets the QUAlibrate UI address: a machine-wide SM setting file
     'main.trend',
     'main.trend_chart',
     'main.type_alarm_dismiss',
