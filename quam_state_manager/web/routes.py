@@ -1232,6 +1232,35 @@ def _note_live_unreadable(ctx, key, reason: str, missing: bool = False,
         ctx["sync_live"] = prev
 
 
+def _lost_still_lost(ctx, pending_paths) -> list[dict]:
+    """W3-1: the "applied value lost" note lasts only while the loss does.
+    An entry whose field the working copy holds at the applied value again,
+    with nothing pending on it and no saved-but-unapplied state (so the
+    working copy IS the live chip at that field), is over: the user applied
+    it again, or the live chip came back to it. Pruned from the context so
+    every window stops showing it."""
+    lu = list(ctx.get("_lost_unacked") or [])
+    store = ctx.get("store")
+    if not lu or store is None or ctx.get("working_dirty"):
+        return lu
+    pending = set(pending_paths or ())
+    keep = []
+    with store._lock:
+        doc = store.merged
+        for x in lu:
+            p = x.get("path")
+            got = _dot_get(doc, p) if p else _DOT_MISSING
+            if p and p not in pending and got is not _DOT_MISSING and got == x.get("applied"):
+                continue
+            keep.append(x)
+    if len(keep) != len(lu):
+        if keep:
+            ctx["_lost_unacked"] = keep
+        else:
+            ctx.pop("_lost_unacked", None)
+    return keep
+
+
 def _sync_view(ctx=None) -> dict | None:
     """Render-time half: the control's state from the cached live facts plus
     the local facts read now. No IO (docs/28). None when no chip is open."""
@@ -1301,7 +1330,7 @@ def _sync_view(ctx=None) -> dict | None:
         # not outlive what it holds (real-Chrome check of W2-1)
         _auto_hold_active(ctx)
         _a = ctx.get("auto_apply") or None
-    _lu = list(ctx.get("_lost_unacked") or [])
+    _lu = _lost_still_lost(ctx, paths)
     if _v is not None:
         _v["lost"] = _lu
         if _lu:
