@@ -755,9 +755,8 @@ window.AgentPanel = (function () {
   function apTexts(w, proposed) {
     var nowV = w.now_known === true ? w.now : (w.now_known === false ? null : w.old);
     var t = fmtRow([nowV, w.old, proposed], w.display);
-    var raw = typeof proposed === "object" ? JSON.stringify(proposed) : String(proposed);
     return { cell: w.now_known === true ? t[0] : t[1], now: t[0], old: t[1], nw: t[2],
-             shown: isNum(proposed) && t[2] !== raw ? t[2] : "" };   // said only when it adds to the raw input
+             shown: proposed === undefined || proposed === "" ? "" : t[2] };   // W3-7: every row, so no row reads as missing it
   }
   function movedTitle(t) { return "the proposal was made from " + t.old + "; SM holds " + t.now + " now"; }
   function apPreview(inp) {

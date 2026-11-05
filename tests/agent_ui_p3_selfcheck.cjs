@@ -32,7 +32,9 @@ const NS = { unit: 'ns', scale: 1, dp: 0, stored: 'ns' };
 const apWrites = [
   { path: 'qubits.q1.T1', old: 4.2e-5, new: 3.3e-5, now: 5.55e-5, now_known: true, display: US },
   { path: 'qubits.q1.f_01', old: 6.25e9, new: 6.25001e9, now: 6.25e9, now_known: true, display: GHZ },
-  { path: 'qubits.q1.xy.operations.x180_DragCosine.amplitude', old: 0.370173854595479, new: 0.373876, now: 0.370173854595479, now_known: true }];
+  { path: 'qubits.q1.xy.operations.x180_DragCosine.amplitude', old: 0.370173854595479, new: 0.373876, now: 0.370173854595479, now_known: true },
+  // W3-7: a value whose formatted text equals its raw text
+  { path: 'qubits.q1.resonator.depletion_time', old: 1000, new: 2000, now: 1000, now_known: true }];
 const runWrites = [
   { path: 'qubits.q1.T1', old: 4.2e-5, new: 3.3e-5, display: US },
   { path: 'qubits.q1.xy.operations.x180.length', old: 40, new: 44, display: NS },
@@ -145,6 +147,8 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   pin('c24-two-close-values-never-print-alike', txt(f[1]) === '6.25000 GHz' && txt(f[2].querySelector('.ag-ap-value')) === '6.25001 GHz', txt(f[1]) + ' | ' + txt(f[2]));
   const amp = rows[2].cells;
   pin('c24-no-unit-means-no-guessed-unit', txt(amp[1]) === '0.37017' && txt(amp[2].querySelector('.ag-ap-value')) === '0.37388' && !amp[2].querySelector('.ag-ap-unit'), txt(amp[1]) + ' | ' + txt(amp[2]));
+  pin('w3-7-every-row-shows-its-formatted-value', rows.length === 4 && rows.every(r => txt(r.cells[2].querySelector('.ag-ap-value')) !== ''),
+      rows.map(r => txt(r.cells[2].querySelector('.ag-ap-value'))).join(' | '));
   const runRows = Array.from(A.card('run:rk-cancel').querySelectorAll('.ag-writes tr')).map(r => txt(r.cells[1]));
   pin('c24-run-writes-share-unit-and-precision', runRows[0] === '42.00 µs → 33.00 µs' && runRows[1] === '40 ns → 44 ns' && runRows[2] === '40.0 ns → 40.5 ns', runRows.join(' | '));
   pin('c24-run-writes-without-a-unit', runRows[3] === '0.10 → 0.11' && runRows[4] === '3.931e-5 → 4.200e-5' && runRows[5] === '1000000 → 2000000', runRows.join(' | '));
