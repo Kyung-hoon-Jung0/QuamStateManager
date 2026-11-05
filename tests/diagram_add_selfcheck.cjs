@@ -163,6 +163,29 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     ok(sel.options.length === 1 && sel.options[0].value === 'con1/3/7', 'only the newest answer lands: ' + (sel.options[0] && sel.options[0].value));
   }
 
+  // A different coupler output invalidates the old review before staging.
+  {
+    const w = world(true);
+    await tick(); await tick();
+    w.document.getElementById('cm-add-panel').innerHTML =
+      '<form id="cm-add-form"><input name="kind" value="pair"><input name="dry" value="1">' +
+      '<select name="flux"><option value="con1/2/3">3</option><option value="con1/2/4">4</option></select></form>' +
+      '<div id="cm-add-review"><button data-cm-add-stage>Stage</button></div>';
+    const select = w.document.querySelector('select[name="flux"]');
+    select.value = 'con1/2/4';
+    select.dispatchEvent(new w.Event('change', { bubbles: true }));
+    ok(!w.document.querySelector('[data-cm-add-stage]'), 'changing the coupler port requires a fresh review');
+    w.document.getElementById('cm-add-review').innerHTML = '<button data-cm-add-stage>Stage</button>';
+    w.htmx.values = (form) => Object.fromEntries(new w.FormData(form));
+    click(w, w.document.querySelector('[data-cm-add-stage]'));
+    const call = w._ajax[w._ajax.length - 1];
+    ok(call[0] === 'POST' && call[1] === '/diagram-add/stage' &&
+       call[2].values.flux === 'con1/2/4' && call[2].values.dry === '0',
+       'staging submits the selected coupler output');
+    await tick();
+    ok(w.document.querySelector('input[name="dry"]').value === '1', 'staging restores review mode');
+  }
+
   if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }
   console.log('all checks passed (' + n + ' assertions)');
 })();

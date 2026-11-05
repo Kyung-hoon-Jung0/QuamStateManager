@@ -30,7 +30,7 @@ import copy
 import re
 from typing import Any
 
-from quam_state_manager.core import mw_fem, spec_constraints
+from quam_state_manager.core import mw_fem, qdac, spec_constraints
 from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core.regen_merge import (
     _MISSING, _hop, _pair_membership, _rewrite_ids, _token_renamer, is_pointer)
@@ -48,7 +48,8 @@ _MEASURED_KEYS = frozenset({
     "confusion_matrix", "gef_confusion_matrix", "gef_centers",
 })
 _OFFSET_KEYS = frozenset({"joint_offset", "independent_offset", "min_offset",
-                          "arbitrary_offset"})
+                          "arbitrary_offset", "decouple_offset", "interaction_offset",
+                          "opx_output_offset"})
 
 
 # ---------------------------------------------------------------- inventory
@@ -290,7 +291,7 @@ def drive_candidates(merged: dict, inv: dict, rf: float | None, *,
                         "new": new, "label": f"{con} slot {fem} out {pid}", "why": why})
     out.sort(key=lambda c: (0 if (c["con"], c["fem"]) == prefer_fem else 1,
                             0 if not c["new"] else 1, natural_key(c["con"]), c["fem"], c["port"]))
-    return out[:limit]
+    return out[:limit] if limit else out
 
 
 def flux_candidates(inv: dict, *, limit: int = 12) -> list[dict]:
@@ -307,7 +308,7 @@ def flux_candidates(inv: dict, *, limit: int = 12) -> list[dict]:
                         "label": f"{con} slot {fem} out {pid}",
                         "why": "declared" if decl else "new port"})
     out.sort(key=lambda c: (0 if not c["new"] else 1, natural_key(c["con"]), c["fem"], c["port"]))
-    return out[:limit]
+    return out[:limit] if limit else out
 
 
 def _new_port(inv: dict, kind: str, con: str, fem: int, pid: int, **sets) -> dict | None:
@@ -315,15 +316,19 @@ def _new_port(inv: dict, kind: str, con: str, fem: int, pid: int, **sets) -> dic
     same FEM type: its class and structural settings, never its calibration
     (filters, crosstalk and offsets are not carried; delay starts at 0)."""
     sib = None
-    for c, fd in (inv["ports"].get(kind) or {}).items():
-        for f, pd in (fd or {}).items():
+    neighbours = list((inv["ports"].get(kind) or {}).items())
+    neighbours.sort(key=lambda item: item[0] != con)
+    for c, fd in neighbours:
+        slots = sorted((fd or {}).items(), key=lambda item: str(item[0]) != str(fem))
+        for f, pd in slots:
             for p, v in (pd or {}).items():
                 if isinstance(v, dict):
                     sib = v
-                    if (c, str(f)) == (con, str(fem)):
-                        break
-            if sib is not None and (c, str(f)) == (con, str(fem)):
+                    break
+            if sib is not None:
                 break
+        if sib is not None:
+            break
     if sib is None:
         return None
     port = {}
@@ -332,6 +337,11 @@ def _new_port(inv: dict, kind: str, con: str, fem: int, pid: int, **sets) -> dic
             port[k] = v
         elif k == "crosstalk":
             port[k] = {}
+        elif "filter" in k or k == "exponential_dc_gain":
+            # Distortion correction is calibration, never carried to a new port.
+            port[k] = None
+        elif kind == "analog_outputs":
+            port[k] = copy.deepcopy(v)
         elif isinstance(v, (list, dict)):
             port[k] = None
         else:
@@ -352,7 +362,7 @@ def _new_port(inv: dict, kind: str, con: str, fem: int, pid: int, **sets) -> dic
 def _clear_measured(node: Any) -> None:
     if isinstance(node, dict):
         for k in list(node):
-            if k in _MEASURED_KEYS:
+            if k in _MEASURED_KEYS or k.startswith("gef_"):
                 node[k] = {} if isinstance(node[k], dict) else None
             elif k in _OFFSET_KEYS and isinstance(node[k], (int, float)) \
                     and not isinstance(node[k], bool):
@@ -361,6 +371,9 @@ def _clear_measured(node: Any) -> None:
                 node[k] = {}
             else:
                 _clear_measured(node[k])
+    elif isinstance(node, list):
+        for value in node:
+            _clear_measured(value)
 
 
 def _pointers(node: Any, path: tuple, out: list) -> None:
@@ -614,17 +627,16 @@ def _with_parents(merged: dict, creates: list) -> list:
 def pick_pair_template(merged: dict, a: str, b: str) -> str | None:
     """An existing pair to copy: one sharing a member with the new pair first
     (its macros already play on the same kind of line), else the first pair.
-    Pairs with a coupler or wiring of their own are skipped (that needs a
-    port this tool does not place)."""
+    QDAC and bias-tee members are outside this door's wiring contract."""
     pairs = merged.get("qubit_pairs") or {}
-    wp = ((merged.get("wiring") or {}).get("qubit_pairs") or {})
     ok = []
     for pid in sorted(pairs, key=natural_key):
         p = pairs[pid]
-        if not isinstance(p, dict) or p.get("coupler") or pid in wp:
+        if not isinstance(p, dict):
             continue
         m = _pair_membership(p, merged)
-        if m:
+        if m and not any(qdac.bias_mode(merged["qubits"][q]) in ("qdac", "bias_tee")
+                         for q in m):
             ok.append((pid, m))
     for pid, m in ok:
         if a in m or b in m:
@@ -632,10 +644,12 @@ def pick_pair_template(merged: dict, a: str, b: str) -> str | None:
     return ok[0][0] if ok else None
 
 
-def plan_pair(merged: dict, control: str, target: str) -> dict:
+def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -> dict:
     qs = merged.get("qubits") or {}
     if control == target or control not in qs or target not in qs:
         return {"error": "Pick two different qubits of this chip."}
+    if any(qdac.bias_mode(qs[q]) in ("qdac", "bias_tee") for q in (control, target)):
+        return {"error": "Pairs with QDAC or bias-tee members cannot be added here."}
     pairs = merged.get("qubit_pairs")
     if not isinstance(pairs, dict):
         return {"error": "This chip has no qubit_pairs to add to."}
@@ -645,7 +659,7 @@ def plan_pair(merged: dict, control: str, target: str) -> dict:
             return {"error": f"{control} and {target} are already a pair ({pid})."}
     tpid = pick_pair_template(merged, control, target)
     if tpid is None:
-        return {"error": "No pair on this chip without a coupler to copy from."}
+        return {"error": "No pair without QDAC or bias-tee members to copy from."}
     tc, tt = _pair_membership(pairs[tpid], merged)
     new_pid = pair_name(merged, control, target)
     if new_pid in pairs:
@@ -658,10 +672,49 @@ def plan_pair(merged: dict, control: str, target: str) -> dict:
     if "id" in pair:
         pair["id"] = new_pid
     _clear_measured(pair)
+    if isinstance(pair.get("coupler"), dict):
+        for key in _OFFSET_KEYS & pair["coupler"].keys():
+            pair["coupler"][key] = 0
 
     # member-side operations the template's macros read, and that read the
     # template pair, re-expressed onto the new members
     creates = [(f"qubit_pairs.{new_pid}", pair)]
+    wp = ((merged.get("wiring") or {}).get("qubit_pairs") or {})
+    wire = wp.get(tpid)
+    has_flux = bool(pair.get("coupler") or wire)
+    if has_flux:
+        coupler = pair.get("coupler")
+        refs = []
+        _pointers(wire, ("wiring", "qubit_pairs", tpid), refs)
+        outputs = [(path, ptr) for path, ptr in refs if ptr.startswith("#/ports/")]
+        output_path = tuple(rename(key) for key in outputs[0][0][3:]) if outputs else ()
+        if (not isinstance(coupler, dict) or not isinstance(wire, dict)
+                or len(outputs) != 1 or outputs[0][0][-1] != "opx_output"
+                or not outputs[0][1].startswith("#/ports/analog_outputs/")
+                or coupler.get("opx_output") != "#/" + "/".join(
+                    ("wiring", "qubit_pairs", new_pid) + output_path)):
+            return {"error": "The template needs a single LF-FEM coupler output with pointer wiring."}
+        inv = inv if inv is not None else inventory(merged)
+        candidates = flux_candidates(inv, limit=0)
+        if flux is None:
+            return {"error": "Pick a free LF-FEM coupler output.", "needs_flux": True,
+                    "summary": {"name": new_pid, "template": tpid,
+                                "control": control, "target": target}}
+        pick = next((c for c in candidates if (c["con"], c["fem"], c["port"]) == flux), None)
+        if pick is None:
+            return {"error": "The coupler port is not a free LF-FEM output."}
+        wire = _rewrite_ids(copy.deepcopy(wire), pmap, rename)
+        node = wire
+        for key in output_path[:-1]:
+            node = node[key]
+        con, fem, pid = flux
+        node["opx_output"] = f"#/ports/analog_outputs/{con}/{fem}/{pid}"
+        creates.append((f"wiring.qubit_pairs.{new_pid}", wire))
+        if pick["new"]:
+            port = _new_port(inv, "analog_outputs", con, fem, pid)
+            if port is None:
+                return {"error": "No LF output port on this chip to shape a new one on."}
+            creates.append((f"ports.analog_outputs.{con}.{fem}.{pid}", port))
     have = set()
 
     def exists(path: tuple) -> bool:
@@ -709,10 +762,11 @@ def plan_pair(merged: dict, control: str, target: str) -> dict:
     act = merged.get("active_qubit_pair_names")
     if isinstance(act, list):
         sets.append(("active_qubit_pair_names", list(act) + [new_pid]))
-    return {"creates": creates, "sets": sets,
+    return {"creates": _with_parents(merged, creates), "sets": sets,
             "summary": {"kind": "pair", "name": new_pid, "template": tpid,
                         "control": control, "target": target,
-                        "member_ops": [p for p, _ in creates[1:]]}}
+                        "flux": flux,
+                        "member_ops": [p for p, _ in creates if p.startswith("qubits.")]}}
 
 
 # ------------------------------------------------------------------ review
@@ -733,5 +787,5 @@ def review_rows(plan: dict, limit: int = 400) -> list[dict]:
         for p, v in leaves(val, path):
             rows.append({"path": p, "value": v, "op": "new"})
     for path, val in plan.get("sets", []):
-        rows.append({"path": path, "value": val, "op": "append"})
+        rows.append({"path": path, "value": val[-1:], "op": "append"})
     return rows[:limit] if limit else rows

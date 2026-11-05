@@ -78,8 +78,11 @@ def diagram_add_panel():
     with store._lock:
         if kind == "pair":
             a, b = request.args.get("a", ""), request.args.get("b", "")
-            plan = da.plan_pair(m, a, b)
+            inv = _inv(store)
+            plan = da.plan_pair(m, a, b, inv=inv)
+            flux = da.flux_candidates(inv) if plan.get("needs_flux") else []
             return render_template("_diagram_add.html", kind="pair", a=a, b=b, plan=plan,
+                                   flux=flux,
                                    rows=da.review_rows(plan) if not plan.get("error") else [],
                                    expect_chip=R._active_chip_token() or "",
                                    auto_push=bool(R._auto_apply_state()))
@@ -121,7 +124,8 @@ def _plan_from_form(store):
     m = store.merged
     kind = request.form.get("kind", "qubit")
     if kind == "pair":
-        return da.plan_pair(m, request.form.get("control", ""), request.form.get("target", ""))
+        return da.plan_pair(m, request.form.get("control", ""), request.form.get("target", ""),
+                            flux=_port_arg("flux"), inv=_inv(store))
     drive = _port_arg("drive")
     if drive is None:
         return {"error": "Pick a drive output."}

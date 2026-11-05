@@ -151,6 +151,10 @@ window.DiagramAdd = (function () {
 
   document.addEventListener("change", function (ev) {
     var t = ev.target;
+    if (t && t.closest && t.closest("#cm-add-form")) {
+      var review = document.getElementById("cm-add-review");
+      if (review) review.textContent = "";
+    }
     if (t && t.matches && t.matches("[data-cm-add-feedline]")) {
       load("/diagram-add/panel?kind=qubit&feedline=" + encodeURIComponent(t.value));
     }
