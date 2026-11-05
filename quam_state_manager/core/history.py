@@ -1261,6 +1261,21 @@ def leaf_series_on(conn: sqlite3.Connection, dot_paths, *,
             continue          # one bad path must not lose the rest
     return out
 
+# W3-7: a capture writes its snapshot folder first and meta.json last, so a
+# listing that runs in between sees a folder without meta.json for a moment.
+# That is not a fault worth a warning; one that stays so is.
+_MISSING_META_GRACE_S = 2.0
+
+
+def _log_missing_meta(child) -> None:
+    try:
+        young = (time.time() - os.stat(child).st_mtime) < _MISSING_META_GRACE_S
+    except OSError:
+        young = True                    # gone already: a capture rolled back
+    (logger.debug if young else logger.warning)(
+        "Skipping snapshot dir without meta.json: %s", child)
+
+
 class HistoryManager:
     """Manage state-file snapshots stored under ``<instance_path>/history/``.
 
@@ -3271,8 +3286,7 @@ class HistoryManager:
                     try:
                         st = os.stat(mp)
                     except OSError:
-                        logger.warning(
-                            "Skipping snapshot dir without meta.json: %s", child)
+                        _log_missing_meta(child)
                         continue
                     try:
                         with open(mp, encoding="utf-8") as f:
@@ -3318,7 +3332,7 @@ class HistoryManager:
                 st = os.stat(os.path.join(de.path, "meta.json"))
                 sig = [st.st_size, st.st_mtime_ns]
             except OSError:
-                logger.warning("Skipping snapshot dir without meta.json: %s", child)
+                _log_missing_meta(child)
                 continue
             cached = manifest.get(child.name)
             if cached is not None and cached.get("sig") == sig                     and isinstance(cached.get("meta"), dict):
