@@ -4732,12 +4732,19 @@ def _hub_stamp_unit(ctx, unit_id, field: str, event_id) -> None:
         logger.warning("hub: unit stamp failed", exc_info=True)
 
 
+def _unit_not_landed(u: dict) -> bool:
+    """A /save's journal unit whose edits no press has landed yet:
+    ``meta.saved`` and no ``meta.hub``. The ONE predicate for "saved, not on
+    the chip" (`_hub_saved_units`, `_applied_values_held`)."""
+    m = u.get("meta") if isinstance(u.get("meta"), dict) else {}
+    return bool(m.get("saved")) and not m.get("hub")
+
+
 def _hub_saved_units(ctx) -> list[str]:
     """Units a /save committed whose edits no press has landed yet (``meta.saved``,
     no ``meta.hub``): the next landed press carries them to the chip."""
     return [str(u.get("id")) for u in (ctx.get("undo_units") or [])
-            if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")
-            and not (u.get("meta") or {}).get("discarded")]
+            if _unit_not_landed(u) and not (u.get("meta") or {}).get("discarded")]
 
 
 # ----------------------------------------------------------------------
@@ -12158,6 +12165,11 @@ def _applied_values_held(ctx) -> dict:
     for unit, was_undone in walk:
         if not isinstance(unit, dict):
             continue
+        if _unit_not_landed(unit):
+            # a /save's unit no press has landed (W3-2's shape): its values were
+            # never on the chip, so an outside value is no loss of them -- and
+            # the restore (F-3) must never write a value nobody applied
+            continue
         # an undone unit's window runs from the undo (meta.undone_ts, stamped
         # by undo_journal.save_cursor); an older sidecar falls back to ts
         meta = unit.get("meta") if isinstance(unit.get("meta"), dict) else {}
@@ -12244,6 +12256,26 @@ def _applied_values_lost(ctx, held: dict) -> list[dict]:
                             "now": None if got is _DOT_MISSING else got,
                             "removed": got is _DOT_MISSING})
     return out[:_LOST_APPLIED_MAX]
+
+
+def _restore_applied_after_replace(ctx, held, lost: list[dict]) -> tuple[int, list[dict]]:
+    """F-3 (user decision 2026-11-05): a replace-pull governs only the
+    UNAPPLIED edits. The applied values it took away (``lost``, judged from
+    ``held`` -- captured BEFORE the pull, since the working copy now holds
+    the chip's values) are written back through the ONE restore the clean
+    pull tick uses (`state_sync(_auto_mode="apply")` with the held values
+    handed in: the same keep-applied block, F-2's subtree folding, the same
+    door, the landed-merge bookkeeping). Returns ``(restored, still_lost)``:
+    a refused write (the chip moved again while we pulled) leaves the loss
+    NAMED, exactly as before, never dropped in silence."""
+    try:
+        merged = make_response(state_sync(_auto_mode="apply", _held_override=held))
+        body = merged.get_json(silent=True) or {}
+    except Exception:  # noqa: BLE001 -- a failed restore names the loss, never a 500 on the poll
+        logger.warning("applied-value restore after a replace-pull failed", exc_info=True)
+        return 0, lost
+    n = int(body.get("auto_restored_count") or 0) if body.get("status") == "ok" else 0
+    return (n, []) if n else (0, lost)
 
 
 def _leaf_snapshot(ctx, *, lazy: bool = False):
@@ -30166,7 +30198,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
             "liveDriftChanged": True, "stateHistoryChanged": True})
         return resp
     if live:
-        _journal_persist_cursor(ctx)
+        # the cursor was persisted BEFORE the write (F-5, in _undo_live_flush);
         # the redo of a live undo re-applies THIS unit forward and writes live
         _push_jrn_live_frame(ctx, store, cursor - 1, unit.get("id"))
 
@@ -30461,6 +30493,15 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
         ctx["undo_cursor"] = cursor_before
         _redo_mark(ctx, store)
         return {"live": False, "ask": True}
+    # F-5 (user decision 2026-11-05): the walk position is persisted BEFORE
+    # the live write. Persisted after it, another SM process polling in the
+    # window between the chip write and the cursor write read a sidecar that
+    # still called this unit applied, judged the undone value a lost apply
+    # and wrote the pre-undo value back (W3-5's own race, one process over).
+    # Moved first, a reader in that window sees the unit undone (stamped,
+    # `undone_ts`); a refused or failed write below puts the cursor back and
+    # takes the stamp off, so nothing in the sidecar outlives the rollback.
+    _journal_persist_cursor(ctx)
     # docs/271: a live Ctrl+Z is an SM write that takes back the recorded
     # event this unit was applied by (its `meta.hub` stamp; none for a unit
     # applied before S4 -- then the link is honestly absent, not guessed)
@@ -30474,6 +30515,7 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
         return {"live": True, "note": None}
     clean = _rollback_walk_step(ctx, store, modifier, staged)
     ctx["undo_cursor"] = cursor_before
+    _journal_persist_cursor(ctx)        # F-5: the sidecar follows the rollback
     _redo_mark(ctx, store)
     if body.get("status") == "conflict":
         note = _walk_conflict_note(ctx, "undo")
@@ -30575,6 +30617,13 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     # docs/271: a live redo takes back the recorded UNDO of this unit (its
     # `meta.hub_undo`), and becomes the event that applied it (`meta.hub`)
     _undo_ev = (unit.get("meta") or {}).get("hub_undo")
+    # F-5: the cursor moves (and the undo stamp comes off) BEFORE the write,
+    # so a reader in the write's window sees this unit back in effect rather
+    # than judging the redone value a lost undo; a refusal below puts it back
+    # (the unit is then stamped undone again, from now -- its protection
+    # window restarts at the refusal, it never ends early)
+    ctx["undo_cursor"] = index + 1
+    _journal_persist_cursor(ctx)
     body = _flush_walk_step_live(
         ctx, gid=gid,
         hub={"kind": "redo", "src": "ctrl_shift_z", "units": [unit.get("id")],
@@ -30583,12 +30632,13 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
         _hub_stamp_unit(ctx, unit.get("id"), "hub", body.get("hub_event"))
     if body.get("status") != "ok":
         _rollback_walk_step(ctx, store, modifier, staged)
+        ctx["undo_cursor"] = index
+        _journal_persist_cursor(ctx)    # F-5: the sidecar follows the rollback
         _redo_mark(ctx, store)
         why = (_walk_conflict_note(ctx, "redo")
                if body.get("status") == "conflict" else f"{body.get('message') or 'apply failed'}; nothing was written")
         return [], why
     ctx["undo_cursor"] = index + 1
-    _journal_persist_cursor(ctx)
     _redo_mark(ctx, store)
     return staged, ("already on the chip" if body.get("already_live") else None)
 
@@ -31952,6 +32002,16 @@ def auto_sync_pull():
     # F2/F23: the applied values this pull took away, and one step of the
     # pull counter every window follows (_pull_note)
     _lost = _applied_values_lost(ctx, _held_applied)
+    _restored_n = 0
+    if _lost:
+        # F-3 (user decision 2026-11-05): "replace" governs only the UNAPPLIED
+        # edits -- discarded above, with the backup and the toast as before. A
+        # value the person had APPLIED that the outside save reverted (any
+        # predecessor in its applied chain, an undone value included -- W3-5)
+        # is restored exactly as in the clean case: no prompt, one notice, the
+        # session armed, a landed merge. Only a restore the chip refuses leaves
+        # the loss named below.
+        _restored_n, _lost = _restore_applied_after_replace(ctx, _held_applied, _lost)
     if _lost:
         # W2-3: kept in the status control until a person acknowledges it
         _keep = [x for x in (ctx.get("_lost_unacked") or [])
@@ -31961,6 +32021,7 @@ def auto_sync_pull():
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
         extra={"liveDriftChanged": True,
+               **({"autoSyncRestored": {"count": _restored_n}} if _restored_n else {}),
                # SYNCEXP-09: "replaced" means work was actually DROPPED --
                # a change-log edit, a saved working state or a stash. Typed-
                # but-not-entered grid cells are not dropped: the pull patches
@@ -33438,8 +33499,13 @@ def _sync_replay_refusal(ctx, verdict, picks, mode):
 @bp.route("/state/sync", methods=["POST"])
 @_live_write_critical
 @_journal_press
-def state_sync(*, _auto_mode=None):
+def state_sync(*, _auto_mode=None, _held_override=None):
     """Pull the live state files into the working copy (manual sync).
+
+    ``_held_override`` (F-3, the replace-pull's restore): the applied values
+    captured BEFORE a pull that has already adopted the chip, handed in
+    because the working copy no longer holds them -- the keep-applied block
+    below judges and restores exactly those, through the same door.
 
     The ``mode`` form/query param decides what happens to the user's pending
     edits, which a plain pull would otherwise discard:
@@ -33606,7 +33672,7 @@ def state_sync(*, _auto_mode=None):
     # D1: the fast path refused an Apply integ/w7 writes).
     if (mode == "apply" and not picks and not ctx.get("pending_reapply")
             and not ctx.get("working_dirty") and not ctx.get("staged_base")
-            and wc.synced_live_hash):
+            and wc.synced_live_hash and _held_override is None):
         try:
             _live_now = (None if working_copy.live_changed(wc)
                          else working_copy.live_content_hash(wc))
@@ -33708,7 +33774,8 @@ def state_sync(*, _auto_mode=None):
             # value and the applied one was gone without a word.
             _keep_applied = ((mode == "apply" and request.values.get("keep_applied") == "1")
                              or (mode in ("apply", "reapply") and _auto_restore))
-            _held_applied = _applied_values_held(ctx) if _keep_applied else {}
+            _held_applied = (_held_override if _held_override is not None
+                             else (_applied_values_held(ctx) if _keep_applied else {}))
             _restored_creates: dict = {}
             _sync_point_before = working_copy.sync_point(wc)
             _pulled = working_copy.sync_from_live(wc)

@@ -1,12 +1,13 @@
 """W2-2: a per-row take of a live value is not an unapplied edit -- the field
 then agrees with the live chip, and nothing says SM's old value is "live".
 
-W2-3 / W3-1, the decided contracts for an applied value an outside save took
-away (one place, three pins, below):
-  - a session that armed pull restores it without asking (docs/187);
+W2-3 / W3-1 / F-3, the decided contracts for an applied value an outside save
+took away (one place, below):
+  - a session that armed pull restores it without asking (docs/187) -- a
+    replace-pull too, which discards only the UNAPPLIED edits (F-3);
   - with no session armed the loss is flagged, never written back;
-  - the loss note ends only once BOTH the working copy and the live chip hold
-    the applied value again (or the person dismisses it).
+  - the loss note (a restore the chip refused) ends only once BOTH the working
+    copy and the live chip hold the applied value again, or on Dismiss.
 """
 from __future__ import annotations
 
@@ -60,13 +61,9 @@ def test_with_no_session_the_loss_is_flagged_and_nothing_is_written(env):  # noq
     assert _live(env)["T1"] == 2.0e-05
 
 
-def test_a_lost_applied_value_stays_in_the_control_until_dismissed(env):  # noqa: F811
-    """W2-3. A session that armed pull restores a reverted applied value
-    (docs/187), so the note is for the pull that does not: a replace-pull
-    over unapplied edits adopts the chip, as the person asked, and names the
-    applied value that took away -- until the person dismisses it. The
-    working copy then holds the chip's value, not the applied one, so W3-1's
-    end (both hold it again) never comes on its own."""
+def _replace_pull_over_an_edit(env):
+    """An applied T1, an unapplied T2 edit, then an outside save that reverts
+    T1 and moves f_01, pulled by a session that armed pull + replace."""
     from tests.test_autosync_lost_applied import _outside_save_and_pull
     from tests.test_autosync_merge import _arm
     from tests.test_sync_review_applied import _apply_t1
@@ -75,7 +72,84 @@ def test_a_lost_applied_value_stays_in_the_control_until_dismissed(env):  # noqa
     c = env["client"]
     assert c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey",
                                        "value": "2.2e-05"}).status_code == 200
-    assert _outside_save_and_pull(env, _st(f01=5.2e9)).status_code == 200
+    return _outside_save_and_pull(env, _st(f01=5.2e9))          # T1 back to 2e-5
+
+
+def test_a_replace_pull_discards_the_edit_and_restores_the_applied_value(env):  # noqa: F811
+    """F-3 (user decision 2026-11-05): "replace" governs only the UNAPPLIED
+    edits. They are discarded as before (backup, toast); the applied value
+    the outside save reverted is restored exactly as in the clean case --
+    no prompt, one notice, nothing named as lost, the session still armed and
+    its merge budget refilled. Before this the pull adopted the chip and only
+    NAMED the applied value it took away."""
+    import json
+    from tests.test_sync_review_applied import _live
+    r = _replace_pull_over_an_edit(env)
+    assert r.status_code == 200
+    trig = json.loads(r.headers["HX-Trigger"])
+    pulled = trig["autoSyncPulled"]
+    assert pulled["replaced"] is True and pulled["count"] == 1, pulled   # the T2 edit, discarded
+    assert pulled["lost"] == [], pulled
+    assert trig["autoSyncRestored"]["count"] == 1, trig
+    live = _live(env)
+    assert live["T1"] == 3.3e-05, "the applied value was not restored"
+    assert live["f_01"] == 5.2e9, "the outside save's own value was not kept"
+    assert live["T2ramsey"] == 1e-05, "the discarded edit reached the chip"
+    c = env["client"]
+    assert "data-sync-lost" not in c.get("/state/tray").get_data(as_text=True)
+    app = env["app"]
+    ctx = app.config["contexts"][app.config["active_context"]]
+    assert not ctx["store"].change_log and not ctx.get("working_dirty")
+    sess = ctx.get("auto_apply")
+    assert sess and sess.get("pull") and sess.get("merge_tries", 0) == 0, sess
+
+
+def test_a_restore_the_chip_refuses_leaves_the_loss_named(env, monkeypatch):  # noqa: F811
+    """The chip moved again between the pull and the restore's write: the
+    restore is refused, and the applied value is NAMED in the status control
+    (W2-3) rather than dropped in silence."""
+    import json
+    import quam_state_manager.web.routes as routes_mod
+    from flask import jsonify
+    monkeypatch.setattr(routes_mod, "state_sync",
+                        lambda **k: (jsonify({"status": "conflict", "tray_html": ""}), 409))
+    r = _replace_pull_over_an_edit(env)
+    assert r.status_code == 200
+    trig = json.loads(r.headers["HX-Trigger"])
+    assert "autoSyncRestored" not in trig
+    assert [x["path"] for x in trig["autoSyncPulled"]["lost"]] == ["qubits.q1.T1"]
+    tray = env["app"].test_client().get("/state/tray").get_data(as_text=True)
+    assert 'data-sync-lost="1"' in tray and "qubits.q1.T1" in tray
+
+
+def test_a_saved_but_never_applied_value_is_not_restored(env):  # noqa: F811
+    """A /save's journal unit no press has landed (W3-2's shape) is not an
+    applied value: the replace-pull neither writes it to the chip nor names
+    it as lost."""
+    import json
+    from tests.test_autosync_lost_applied import _outside_save_and_pull
+    from tests.test_autosync_merge import _arm
+    from tests.test_sync_review_applied import _live
+    _arm(env, pull=True, push=False, replace=True)
+    c = env["client"]
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "9.9e-05"}).status_code == 200
+    assert c.post("/save").status_code in (200, 204)                  # saved, never applied
+    assert c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey",
+                                       "value": "2.2e-05"}).status_code == 200
+    r = _outside_save_and_pull(env, _st(f01=5.2e9))
+    assert r.status_code == 200
+    trig = json.loads(r.headers["HX-Trigger"])
+    assert "autoSyncRestored" not in trig, trig
+    assert trig["autoSyncPulled"]["lost"] == [], trig
+    assert _live(env)["T1"] == 2.0e-05, "a value nobody applied reached the chip"
+    assert "data-sync-lost" not in c.get("/state/tray").get_data(as_text=True)
+
+
+def test_a_lost_applied_value_stays_in_the_control_until_dismissed(env):  # noqa: F811
+    """W2-3: the note (now only for a restore the chip refused) survives later
+    renders and other windows, until the person dismisses it."""
+    _seed_lost(env)
+    c = env["client"]
     for _ in range(2):          # survives later renders, other windows too
         tray = env["app"].test_client().get("/state/tray").get_data(as_text=True)
         assert 'data-sync-lost="1"' in tray and "qubits.q1.T1" in tray
@@ -121,10 +195,10 @@ def test_a_later_edit_of_a_taken_field_counts_again(env):  # noqa: F811
 
 def _seed_lost(env, applied=3.3e-05):
     """A lost applied value in the control, as the pull records it. Since the
-    applied-chain restore (base 010b50b8) an armed pull puts a reverted value
-    back itself, so the note now appears only where that restore cannot run
-    (the replace-pull above); the note's own lifetime is what these pins are
-    about, so they seed the record directly."""
+    applied-chain restore (base 010b50b8, and F-3 for the replace-pull) an
+    armed pull puts a reverted value back itself, so the note now appears only
+    when the chip refuses that restore; the note's own lifetime is what these
+    pins are about, so they seed the record directly."""
     import time
     app = env["app"]
     ctx = app.config["contexts"][app.config["active_context"]]

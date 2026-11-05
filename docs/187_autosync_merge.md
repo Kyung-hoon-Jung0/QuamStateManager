@@ -88,6 +88,19 @@ leaves it for the person's Apply (no live write without a press or an armed
 push). The notice then says "back in your pending changes". Two applied leaves
 under one parent the outside save dropped are re-created as one subtree.
 
+A replace-pull (the session's `pull_replace`) governs only the UNAPPLIED edits
+(user decision, 2026-11-05, F-3): they are discarded with the backup snapshot
+and the toast as before, and a reverted applied value -- any predecessor in its
+applied chain, an undone value included (W3-5) -- is restored exactly as in the
+clean case, through the same door: no prompt, one notice, the session stays
+armed, a landed merge. Only a restore the chip refuses (it moved again during
+the pull) leaves the loss named in the status control until dismissed (W2-3,
+W3-1). A /save's unit no press has landed never counts as applied, so the
+restore cannot write a value nobody applied. The undo-journal cursor is
+persisted BEFORE a live undo/redo writes the chip (F-5): a second SM process
+reading the sidecar in that window sees the unit undone instead of judging the
+undone value a lost apply; a refused write puts the cursor back.
+
 With Auto-Sync off the loss appears in the sync panel for the user to choose.
 Push-only retains docs/117: no automatic pull; a stale push disarms and leaves
 the edits recoverable in the panel, without opening a prompt or modal.
