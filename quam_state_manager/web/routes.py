@@ -31606,7 +31606,16 @@ def auto_sync_pull():
                     resp = make_response(_tray_html())
                     resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, before, extra=extra)
                     return resp
-                return merged
+                # Refused or conflicted (the chip moved again while we merged):
+                # this press is an htmx swap into #pending-tray, so it gets the
+                # TRAY the door rendered (the conflict tray carries the
+                # autoSyncMerge signal that finishes the merge), never a JSON
+                # body as the tray's text. Nothing is lost: the door kept the
+                # stash, and the drift stays, so the next poll comes back here.
+                resp = make_response(body.get("tray_html") or _tray_html())
+                if merged.headers.get("HX-Trigger"):
+                    resp.headers["HX-Trigger"] = merged.headers["HX-Trigger"]
+                return resp
 
     # Per-field, not whole-file. Arming Auto-Sync means "adopt what the chip
     # says"; it cannot have meant "and ask me every time anything anywhere
@@ -33591,9 +33600,17 @@ def state_sync(*, _auto_mode=None):
             # applied (an approval, an Apply) that an outside save then
             # removed are re-applied over the pulled chip like edits, so the
             # merge keeps BOTH the run's values and the person's
-            _keep_applied = (mode == "apply"
-                             and (request.values.get("keep_applied") == "1" or _auto_restore))
+            # A session that armed pull restores through BOTH doors the client
+            # presses: ``apply`` (the push-time merge, the clean pull tick) writes
+            # the value back; ``reapply`` (the pull tick with a typed cell or a
+            # pending edit -- autoSyncMergePull) re-stages it as a pending change,
+            # which an armed push session flushes and a pull-only session leaves
+            # for the person's Apply. Before this, that pull adopted the outside
+            # value and the applied one was gone without a word.
+            _keep_applied = ((mode == "apply" and request.values.get("keep_applied") == "1")
+                             or (mode in ("apply", "reapply") and _auto_restore))
             _held_applied = _applied_values_held(ctx) if _keep_applied else {}
+            _restored_creates: dict = {}
             _sync_point_before = working_copy.sync_point(wc)
             _pulled = working_copy.sync_from_live(wc)
             # v1.5.1 (SB-F1): `pending` was captured before the pull, and
@@ -33626,12 +33643,22 @@ def state_sync(*, _auto_mode=None):
                             _cut = len(_parts) - 1
                             while _cut > 0 and _dot_get(_doc, ".".join(_parts[:_cut])) is _DOT_MISSING:
                                 _cut -= 1
-                            _sub = _v
-                            for _k in reversed(_parts[_cut + 1:]):
-                                _sub = {_k: _sub}
                             _cp = ("wiring." if _wire else "") + ".".join(_parts[:_cut + 1])
-                            if _cp not in pending:
+                            _tail = _parts[_cut + 1:]
+                            if _cp in _restored_creates and _tail:
+                                # a sibling leaf under the same dropped parent:
+                                # fold it into the subtree already re-created
+                                _node = _restored_creates[_cp]
+                                for _k in _tail[:-1]:
+                                    _node = _node.setdefault(_k, {})
+                                _node[_tail[-1]] = _v
+                            elif _cp not in pending:
+                                _sub = _v
+                                for _k in reversed(_tail):
+                                    _sub = {_k: _sub}
                                 pending[_cp] = _tagged("create", _sub, "keep-applied")
+                                if _tail:
+                                    _restored_creates[_cp] = _sub
                         else:
                             pending[_p] = _tagged("set", _v, "keep-applied")
                         _restored_applied.append(_p)
@@ -33733,6 +33760,7 @@ def state_sync(*, _auto_mode=None):
             resp.headers["HX-Trigger"] = json.dumps(triggers)
             body = resp.get_json()
             body["auto_restored_count"] = len(_restored_applied)
+            body["auto_restored_staged"] = False
             resp.set_data(json.dumps(body))
         return resp
 
@@ -33759,6 +33787,10 @@ def state_sync(*, _auto_mode=None):
         "backup": ({"n": backup["n"], "snapshot": backup.get("snapshot"),
                     "paths": sorted(backup.get("updates") or {})[:200]}
                    if backup else None),
+        # an applied value the outside save reverted is back as a PENDING
+        # change (reapply writes nothing); the client's notice says so
+        **({"auto_restored_count": len(_restored_applied), "auto_restored_staged": True}
+           if (_auto_restore and _restored_applied and mode == "reapply") else {}),
         **_sync_patch(ctx, _pre_leaves),
     })
 

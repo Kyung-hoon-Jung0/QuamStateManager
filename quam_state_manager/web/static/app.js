@@ -5082,7 +5082,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             }
             if (data.status === "ok" && data.auto_restored_count) {
                 document.dispatchEvent(new CustomEvent('autoSyncRestored', {
-                    detail: { count: data.auto_restored_count }
+                    detail: { count: data.auto_restored_count,
+                              staged: !!data.auto_restored_staged }
                 }));
             }
             // Swap whatever tray the server returned — the synced tray, or (on a

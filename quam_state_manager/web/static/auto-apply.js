@@ -346,9 +346,17 @@
     });
 
     document.addEventListener('autoSyncRestored', function (e) {
-        var n = Number((e.detail || {}).count) || 0;
-        if (n) toast('An outside save reverted ' + n + ' value' + (n === 1 ? '' : 's')
-            + ' you applied; Auto-Sync restored ' + (n === 1 ? 'it.' : 'them.'), 'info');
+        var d = e.detail || {};
+        var n = Number(d.count) || 0;
+        if (!n) return;
+        var what = n + ' value' + (n === 1 ? '' : 's') + ' you applied; ';
+        /* `staged`: the merge-pull (a typed cell or a pending edit was present)
+           re-staged the value as a pending change instead of writing it -- an
+           armed push session flushes it at once, a pull-only session leaves it
+           for your Apply. The notice must not claim a write that did not happen. */
+        toast('An outside save reverted ' + what + (d.staged
+            ? 'Auto-Sync put ' + (n === 1 ? 'it' : 'them') + ' back in your pending changes.'
+            : 'Auto-Sync restored ' + (n === 1 ? 'it.' : 'them.')), 'info');
     });
 
     function sayLost(list) {

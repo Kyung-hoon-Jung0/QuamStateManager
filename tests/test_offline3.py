@@ -172,3 +172,97 @@ def test_browser_pins():
                        capture_output=True, text=True, encoding="utf-8", timeout=90)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "offline3 passed" in r.stdout
+
+
+@pytest.mark.parametrize("dirt", ["pending_edit", "typed_cell"])
+@pytest.mark.parametrize("push", [True, False])
+def test_merge_pull_restages_a_reverted_applied_value(env, dirt, push):
+    """The pull tick with a typed cell or a pending edit signals the merge-pull,
+    which presses reapply. That pull adopted the outside value and the applied
+    one was gone without a word; it is re-staged as a pending change now -- an
+    armed push session flushes it, a pull-only session leaves it for Apply."""
+    from tests.test_autosync_merge import _arm
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _arm(env, pull=True, push=push)
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    form = {"dom_dirty": "0"}
+    if dirt == "pending_edit":
+        c.post("/field/edit", data={"dot_path": "qubits.q1.T2ramsey", "value": "2.2e-5"})
+    else:
+        form = {"dom_dirty": "1", "dom_path": "qubits.q1.T2ramsey"}
+    _outside(env, _st(f01=5.2e9))                    # T1 back to A, f_01 moved
+    r = c.post("/auto-sync/pull", data=form)
+    assert r.status_code == 204
+    assert "autoSyncMergePull" in json.loads(r.headers["HX-Trigger"])
+    r = c.post("/state/sync?mode=reapply")           # what the client presses
+    body = r.get_json()
+    assert body["status"] == "ok", body
+    assert body["auto_restored_count"] == 1 and body["auto_restored_staged"] is True
+    with env["app"].test_request_context():
+        ctx = routes._active_ctx()
+        staged = {e.dot_path: e.new_value for e in ctx["store"].change_log}
+        assert staged["qubits.q1.T1"] == 4.4e-5, staged
+        assert ctx["store"].merged["qubits"]["q1"]["f_01"] == 5.2e9
+        assert ctx["auto_apply"]["pull"] and not ctx["auto_apply"].get("hold")
+    assert _live(env)["T1"] == 2e-5                  # reapply wrote nothing
+    tray = c.get("/state/tray").get_data(as_text=True)
+    assert "conflict-tray" not in tray
+    # the press the armed push session (or the person) makes next writes it
+    r = c.post("/state/apply-to-live")
+    assert r.status_code == 200, r.get_data(as_text=True)[:200]
+    assert _live(env)["T1"] == 4.4e-5 and _live(env)["f_01"] == 5.2e9
+    if dirt == "pending_edit":
+        assert _live(env)["T2ramsey"] == 2.2e-5
+
+
+def test_two_applied_leaves_under_a_dropped_parent_are_both_restored(tmp_path):
+    from tests.test_autosync_merge import _arm, _write_chip
+    from quam_state_manager.web.app import create_app
+    live = tmp_path / "chips" / "live"
+    base = _st()
+    base["extras"] = {"a": 1, "b": 2}
+    _write_chip(live, base)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    e = {"app": app, "client": c, "live": live}
+    _arm(e, pull=True, push=True)
+    c.post("/field/edit", data={"dot_path": "extras.a", "value": "10"})
+    c.post("/field/edit", data={"dot_path": "extras.b", "value": "20"})
+    assert c.post("/state/apply-to-live").status_code == 200
+    _outside(e, _st(f01=5.2e9))                      # the outside save dropped extras
+    r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+    assert r.status_code == 200
+    assert json.loads(r.headers["HX-Trigger"])["autoSyncRestored"]["count"] == 2
+    doc = json.loads((live / "state.json").read_text(encoding="utf-8"))
+    assert doc["extras"] == {"a": 10, "b": 20}, doc.get("extras")
+    assert doc["qubits"]["q1"]["f_01"] == 5.2e9
+
+
+def test_a_refused_restore_hands_the_tray_back_never_json(env, monkeypatch):
+    """The pull tick is an htmx swap into #pending-tray; the in-process merge
+    may be refused (the chip moved again). The answer is the tray the door
+    rendered, with its signal, not a JSON body as the tray's text."""
+    from tests.test_autosync_merge import _arm
+    from flask import jsonify
+    from quam_state_manager.web import routes
+    c = env["client"]
+    _arm(env, pull=True, push=True)
+    _apply_t1(env)
+    c.post("/field/edit", data={"dot_path": "qubits.q1.T1", "value": "4.4e-5"})
+    c.post("/state/apply-to-live")
+    _outside(env, _st(f01=5.2e9))
+
+    def refused(*_a, **_k):
+        resp = jsonify({"status": "conflict", "mode": "apply",
+                        "tray_html": '<div id="pending-tray" data-probe="conflict"></div>'})
+        resp.headers["HX-Trigger"] = json.dumps({"autoSyncMerge": {"tries": 1, "chip": ""}})
+        return resp
+    monkeypatch.setattr(routes, "_sync_pull_apply_to_live", refused)
+    r = c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+    assert r.status_code == 200
+    assert not r.is_json and 'data-probe="conflict"' in r.get_data(as_text=True)
+    assert "autoSyncMerge" in json.loads(r.headers["HX-Trigger"])

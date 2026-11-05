@@ -80,6 +80,14 @@ restoration refills the consecutive-failure merge budget like every other
 landed merge. This also applies to a pull-only session restoring already
 applied values; it does not flush unrelated pending edits on an ordinary pull.
 
+When the pull tick finds a typed cell or a pending edit, the merge-pull it
+signals (`autoSyncMergePull` -> `/state/sync?mode=reapply`) re-stages the
+reverted applied value as a pending change tagged keep-applied instead of
+writing it: an armed push session flushes it at once, a pull-only session
+leaves it for the person's Apply (no live write without a press or an armed
+push). The notice then says "back in your pending changes". Two applied leaves
+under one parent the outside save dropped are re-created as one subtree.
+
 With Auto-Sync off the loss appears in the sync panel for the user to choose.
 Push-only retains docs/117: no automatic pull; a stale push disarms and leaves
 the edits recoverable in the panel, without opening a prompt or modal.

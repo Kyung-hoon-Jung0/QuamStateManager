@@ -307,6 +307,19 @@ function fire(w, name, detail) {
           /1 value you applied/.test(m) && /Auto-Sync restored it/.test(m), m);
   }
 
+  {
+    // the merge-pull re-staged the value (a typed cell or a pending edit was
+    // present): the notice says "pending changes" and never claims a write
+    const { w, state, clock } = world();
+    fire(w, 'autoSyncRestored', { count: 2, staged: true });
+    await clock.advance(20);
+    check('I3 a re-staged restoration is one notice', state.toasts.length === 1);
+    const m = (state.toasts[0] || {}).m || '';
+    check('I4 a re-staged restoration names the pending changes, not a write',
+          /2 values you applied/.test(m) && /back in your pending changes/.test(m)
+          && !/restored them/.test(m), m);
+  }
+
   if (failures) {
     console.error(failures + ' FAILED of ' + asserts);
     process.exitCode = 1;
