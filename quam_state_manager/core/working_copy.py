@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quam_state_manager.core import doc_cache, json_pieces, path_match, safe_io
+from quam_state_manager.core import doc_cache, json_pieces, path_match, safe_io, live_press
 from quam_state_manager.core.history import chip_name_for
 
 logger = logging.getLogger(__name__)
@@ -1078,6 +1078,7 @@ def _same_backed_content(before: tuple, now: tuple, backup_check) -> bool:
         return False
 
 
+@live_press.marked(lambda wc: wc)
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                   expect_live_hash: str | None = None, expect_replaced_hash: str | None = None,
                   record=None,

@@ -9983,7 +9983,7 @@
 
   // -- step 8: review & generate ---------------------------------------
 
-  function enterReviewStep() {
+  function enterReviewStep(preserveBuildGates) {
     var el = document.getElementById("gen-review");
     if (!el) return;
     czAutoOrient();   // frequencies may have changed since the pairs table
@@ -10116,8 +10116,8 @@
     // The QOP-version caveats live here and nowhere else in the wizard
     // (rendered by renderQopBlock below the table: a version select + short lines).
     var qopLines = qopReviewLines(loCalc);
-    var qopRow = rows.length;
-    rows.push(["QOP version", ""]);
+    var qopRow = hasMwFem() ? rows.length : -1;
+    if (qopRow >= 0) rows.push(["QOP version", ""]);
     var bandBlock = loCalc.warnings.filter(function (w) { return w.kind === "coupled_band"; });
     if (bandBlock.length) {
       rows.push(["✗ Blocks Generate", "The QOP refuses this band combination " +
@@ -10153,9 +10153,11 @@
     });
     renderQopBlock(cells[qopRow], document.getElementById("gen-qop-block"), qopLines);
 
-    state._buildForce = false; state._buildAck = false;   // fresh review → fresh gates
-    state._buildAckSource = false;   // QA regenerate-r2-35
-    state._buildAckScripts = false;  // QA regenerate-r2-18
+    if (!preserveBuildGates) {
+      state._buildForce = false; state._buildAck = false;
+      state._buildAckSource = false;
+      state._buildAckScripts = false;
+    }
     renderCapabilityReport(document.getElementById("gen-capability-report"));
   }
 
@@ -10220,7 +10222,7 @@
       if (sel.value) state.spec.qop_version = sel.value;
       else delete state.spec.qop_version;   // unset = no key, as before
       saveDraft();
-      enterReviewStep();
+      enterReviewStep(true);
       var again = document.getElementById("gen-qop-version");
       if (again) again.focus();
     });

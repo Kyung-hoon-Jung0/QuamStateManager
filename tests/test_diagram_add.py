@@ -179,7 +179,14 @@ def _form(c, store):
     return d, {"kind": "qubit", "name": d["name"], "feedline": d["feedline"],
                "drive_rf": str(d["drive_rf"]), "readout_rf": str(d["readout_rf"]),
                "drive": f"{dr['con']}/{dr['fem']}/{dr['port']}",
-               "flux": f"{fl['con']}/{fl['fem']}/{fl['port']}"}
+               "flux": f"{fl['con']}/{fl['fem']}/{fl['port']}",
+               "expect_chip": _token(c)}
+
+
+def _token(c):
+    from quam_state_manager.web import routes as R
+    with c.application.test_request_context():
+        return R._active_chip_token()
 
 
 class TestRoutes:
@@ -220,7 +227,8 @@ class TestRoutes:
             assert all(now.get(k) == v for k, v in lv.items()), t
         # a pair onto the new qubit, then one Ctrl+Z each
         r = env["c"].post("/diagram-add/stage", data={"kind": "pair", "control": "q101",
-                                                       "target": "q100", "dry": "0"})
+                                                       "target": "q100", "dry": "0",
+                                                       "expect_chip": _token(env['c'])})
         assert r.status_code == 200, r.data
         assert "q101-q100" in st.merged["qubit_pairs"]
         env["c"].post("/undo")
@@ -267,3 +275,146 @@ class TestAutoSyncNote:
         ctx["auto_apply"] = R._new_auto_session(pull=True, pull_replace=False, push=True)
         html = env["c"].get(f"/diagram-add/panel?kind={kind}").get_data(as_text=True)
         assert "data-cm-add-autosync" in html and "writes it to the chip at once" in html
+
+
+def test_shared_member_never_reuses_a_template_operation():
+    m, _, _ = _doc(20)
+    pair = m['qubit_pairs']['q1-q2']
+    m['qubits']['q1']['z']['operations']['shared_cz'] = {
+        'length': '#/qubit_pairs/q1-q2/macros/cz_flattop/length'}
+    pair['member_op'] = '#/qubits/q1/z/operations/shared_cz'
+    p = da.plan_pair(m, 'q1', 'q20')
+    assert p.get('error') and 'operation' in p['error'], p
+
+
+@pytest.mark.parametrize('pointer', ['#/ports/mw_outputs/con1/1/2',
+                                   '#/wiring/qubits/q1/xy/opx_output'])
+def test_unmapped_port_pointer_is_refused(pointer):
+    m, _, _ = _doc(20)
+    d = da.qubit_defaults(m)
+    pointer = pointer.replace('/q1/', '/' + d['template'] + '/')
+    m['qubits'][d['template']]['xy']['custom_output'] = pointer
+    _, p = TestQubitPlan()._plan(m)
+    assert 'port' in p.get('error', '').lower(), p
+
+
+def test_direct_standard_port_pointer_is_repointed():
+    m, _, _ = _doc(20)
+    d = da.qubit_defaults(m)
+    m['qubits'][d['template']]['xy']['opx_output'] = '#/ports/mw_outputs/con1/1/2'
+    _, p = TestQubitPlan()._plan(m)
+    assert not p.get('error'), p
+    q = dict(p['creates'])['qubits.' + d['name']]
+    assert q['xy']['opx_output'] == '#/wiring/qubits/' + d['name'] + '/xy/opx_output'
+
+
+def test_multiple_creates_share_one_missing_parent():
+    assert da._with_parents({}, [('a.b.x', 1), ('a.b.y', 2)]) == [
+        ('a', {'b': {'x': 1, 'y': 2}})]
+
+
+def test_pair_plan_fills_missing_operation_parents():
+    m, _, _ = _doc(20)
+    del m['qubits']['q20']['z']['operations']
+    p = da.plan_pair(m, 'q20', 'q11')
+    assert not p.get('error'), p
+    assert any(path == 'qubits.q20.z.operations' for path, _ in p['creates'])
+
+
+def test_inventory_uses_a_nonreusable_store_identity(env, monkeypatch):
+    from quam_state_manager.web import diagram_add_routes as D
+    from quam_state_manager.web import routes as R
+    st = env['store']
+    D._INV_MEMO.clear()
+    monkeypatch.setattr(D, 'id', lambda _: R._store_uid(st) + 1, raising=False)
+    D._inv(st)
+    assert D._INV_MEMO['k'][0] == (R._store_uid(st), st.mutation_seq)
+
+
+@pytest.mark.parametrize('door', ['/state/sync?mode=reapply', '/state/sync?mode=discard'])
+def test_inventory_refreshes_after_live_pull(env, door):
+    from quam_state_manager.web import diagram_add_routes as D
+    st = env['store']
+    old = D._inv(st)
+    key = D._INV_MEMO['k'][0]
+    s = json.loads((env['chip'] / 'state.json').read_text(encoding='utf-8'))
+    s['qubits']['q1']['custom_output'] = '#/ports/mw_outputs/spare/1/8'
+    (env['chip'] / 'state.json').write_text(json.dumps(s), encoding='utf-8')
+    r = env['c'].post(door)
+    assert r.status_code == 200, r.data
+    with env['app'].app_context():
+        from quam_state_manager.web import routes as R
+        st = R._active_ctx()['store']
+    new = D._inv(st)
+    assert D._INV_MEMO['k'][0] != key
+    assert new is not old and ('mw_outputs', 'spare', 1, 8) in new['used']
+
+
+def test_empty_chip_token_is_refused(env):
+    _, form = _form(env['c'], env['store'])
+    form['expect_chip'] = ''
+    r = env['c'].post('/diagram-add/stage', data=form)
+    assert r.status_code == 409 and not env['store'].change_log
+
+
+def test_rollback_failure_names_what_remains(env, monkeypatch):
+    _, form = _form(env['c'], env['store'])
+    with env['app'].app_context():
+        from quam_state_manager.web import routes as R
+        mod = R._modifier()
+    real = mod.create_subtree
+    calls = []
+    def fail_second(path, value, **kw):
+        calls.append(path)
+        if len(calls) == 2:
+            raise ValueError('stage fault')
+        return real(path, value, **kw)
+    def fail_undo():
+        raise ValueError('rollback fault')
+    monkeypatch.setattr(mod, 'create_subtree', fail_second)
+    monkeypatch.setattr(mod, 'undo', fail_undo)
+    r = env['c'].post('/diagram-add/stage', data=form)
+    text = r.get_data(as_text=True)
+    assert r.status_code == 500 and 'qubits.q101' in text
+    assert 'Nothing was added' not in text and 'rollback fault' in text
+
+
+def test_rollback_covers_a_create_that_raises_after_logging(env, monkeypatch):
+    _, form = _form(env['c'], env['store'])
+    with env['app'].app_context():
+        from quam_state_manager.web import routes as R
+        mod = R._modifier()
+    real = mod.create_subtree
+    calls = []
+    def fail_after_create(path, value, **kw):
+        result = real(path, value, **kw)
+        calls.append(path)
+        if len(calls) == 2:
+            raise ValueError('index update fault')
+        return result
+    monkeypatch.setattr(mod, 'create_subtree', fail_after_create)
+    r = env['c'].post('/diagram-add/stage', data=form)
+    assert r.status_code == 400
+    assert 'q101' not in env['store'].merged['qubits']
+    assert not env['store'].change_log
+
+
+def test_a_rollback_exception_is_reported_even_after_its_last_pop(env, monkeypatch):
+    _, form = _form(env['c'], env['store'])
+    with env['app'].app_context():
+        from quam_state_manager.web import routes as R
+        mod = R._modifier()
+    real_create, real_undo = mod.create_subtree, mod.undo
+    def create(path, value, **kw):
+        if env['store'].change_log:
+            raise ValueError('stage fault')
+        return real_create(path, value, **kw)
+    def undo():
+        real_undo()
+        raise ValueError('rollback completion fault')
+    monkeypatch.setattr(mod, 'create_subtree', create)
+    monkeypatch.setattr(mod, 'undo', undo)
+    r = env['c'].post('/diagram-add/stage', data=form)
+    text = r.get_data(as_text=True)
+    assert r.status_code == 500 and 'rollback completion fault' in text
+    assert 'Still staged: none' in text and 'Nothing was added' not in text

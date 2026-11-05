@@ -207,6 +207,42 @@ await settle();
 // Past the cap we refuse the press rather than discarding one somewhere in the
 // middle, which is what made the original failure invisible.
 {
+    const realAjax = window.htmx.ajax;
+    const realToast = window.showToast;
+    const messages = [];
+    window.showToast = (m) => messages.push(m);
+    let rejectFirst;
+    let first = true;
+    window.htmx.ajax = function (method, url, opts) {
+        calls.push({ method, url, opts });
+        if (first) {
+            first = false;
+            return new Promise((resolve, reject) => { rejectFirst = reject; });
+        }
+        return Promise.resolve();
+    };
+    const n = calls.length;
+    window.UndoQueue.push('/undo');
+    window.UndoQueue.push('/redo');
+    window.UndoQueue.push('/undo');
+    window.document.body.dispatchEvent(new window.CustomEvent('htmx:responseError', {
+        bubbles: true, detail: { target: tray, xhr: {
+            status: 409, responseText: '<p>Nothing undone: still writing, press again.</p>',
+            getResponseHeader: () => null
+        } }
+    }));
+    rejectFirst(new Error('HTTP 409'));
+    for (let i = 0; i < 8; i++) await settle();
+    ok(messages.some(m => /still writing, press again/.test(m)),
+       'a still-writing 409 displays the server message');
+    ok(calls.slice(n).map(c => c.url).join(',') === '/undo,/redo,/undo' &&
+       !window.UndoQueue.busy() && window.UndoQueue.depth() === 0,
+       'a still-writing 409 preserves every later press in order');
+    window.htmx.ajax = realAjax;
+    window.showToast = realToast;
+}
+
+{
     let accepted = 0;
     for (let i = 0; i < 40; i++) if (window.UndoQueue.push('/undo')) accepted++;
     ok(accepted < 40 && accepted >= 20,
