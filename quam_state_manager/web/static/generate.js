@@ -11023,7 +11023,7 @@
             'cloud QMM), carried unchanged from the source chip (wiring.json)">' +
             netCarried.length + ' network setting' + (netCarried.length === 1 ? '' : 's') +
             ' carried</span>' : '') +
-          '<span class="gen-merge-stat gen-merge-loss ' + (lostN || calChN ? 'gen-merge-warn' : 'gen-merge-ok') +
+          '<span class="gen-merge-stat gen-merge-loss ' + (lostN ? 'gen-merge-warn' : 'gen-merge-ok') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
           (calChN ? '<span class="gen-merge-stat gen-merge-warn gen-merge-cal-count">' +

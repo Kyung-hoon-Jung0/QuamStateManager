@@ -7,9 +7,13 @@ for (const count of [3, 0]) {
   }}, 'D:/output');
   const loss = doc.querySelector('.gen-merge-loss');
   assert(loss && loss.textContent.includes('0 not carried'));
-  assert.equal(loss.classList.contains('gen-merge-warn'), count > 0);
-  assert.equal(loss.classList.contains('gen-merge-ok'), count === 0);
-  if (count) assert(doc.querySelector('.gen-merge-cal-count').textContent.includes('3 values read differently'));
+  assert.equal(loss.classList.contains('gen-merge-warn'), false);
+  assert.equal(loss.classList.contains('gen-merge-ok'), true);
+  if (count) {
+    const cal = doc.querySelector('.gen-merge-cal-count');
+    assert(cal.textContent.includes('3 values read differently'));
+    assert(cal.classList.contains('gen-merge-warn'));
+  }
   assert(doc.getElementById('gen-build-result').textContent.includes('existing entities changed: ' + (count ? 1 : 0)));
 }
 dom.window.close();
