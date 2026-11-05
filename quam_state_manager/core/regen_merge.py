@@ -759,7 +759,7 @@ def _merged_doc(state: dict, wiring: dict | None) -> dict:
 
 def normalize_pair_ids(old_state: dict, new_state: dict,
                        old_wiring: dict | None = None,
-                       new_wiring: dict | None = None) -> bool:
+                       new_wiring: dict | None = None, *, dry_run: bool = False) -> bool:
     """Align rebuilt pair ids and references before merge paths are recorded."""
     old_doc = _merged_doc(old_state, old_wiring)
     new_doc = _merged_doc(new_state, new_wiring)
@@ -771,6 +771,7 @@ def normalize_pair_ids(old_state: dict, new_state: dict,
         mem and oid == "-".join(mem) for oid, mem in memberships.items())
     pairs = new_state.get("qubit_pairs") or {}
     mapping = {}
+    changed = False
     aliases = [(oid, pair.get("macros", {}).get("cz"))
                for oid, pair in old_pairs.items() if isinstance(pair, dict)]
     for nid, pair in pairs.items():
@@ -793,13 +794,18 @@ def normalize_pair_ids(old_state: dict, new_state: dict,
                     and values[0] is not None
                     and all(value == values[0] for value in values)
                     and values[0][1] in macros):
+                if dry_run:
+                    return True
+                changed = True
                 shape, macro = values[0]
                 macros["cz"] = (f"#/qubit_pairs/{target}/macros/{macro}"
                                 if shape == "absolute" else f"#./{macro}")
         if target and target != nid and target not in pairs and target not in mapping.values():
             mapping[nid] = target
     if not mapping:
-        return False
+        return changed
+    if dry_run:
+        return True
 
     def rewrite(node):
         if isinstance(node, dict):
@@ -836,6 +842,8 @@ def normalize_pair_ids(old_state: dict, new_state: dict,
 def _reconcile_pair_ids(old_state: dict, new_state: dict,
                         old_wiring: dict | None = None,
                         new_wiring: dict | None = None) -> dict:
+    if not normalize_pair_ids(old_state, new_state, old_wiring, new_wiring, dry_run=True):
+        return new_state
     out = copy.deepcopy(new_state)
     normalize_pair_ids(old_state, out, old_wiring, new_wiring)
     return out
