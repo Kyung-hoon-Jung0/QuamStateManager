@@ -34199,7 +34199,10 @@ def state_sync(*, _auto_mode=None, _held_override=None):
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
-        _restore_redo = bool(_restored_applied and _redo_stack(ctx))
+        # A restore may advance an intact redo timeline, but must not stamp
+        # over a user's intervening edit that already forked it before the pull.
+        _restore_redo = bool(_restored_applied and _redo_stack(ctx)
+                             and ctx.get("redo_seq") == _seq0)
         # R3 M3: the pull consumed the stash -- its edits are rows now. The
         # press below must find it consumed: a refused write puts back the
         # stash the press FOUND, and the pre-merge one beside its own rows
