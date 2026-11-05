@@ -757,44 +757,87 @@ def _merged_doc(state: dict, wiring: dict | None) -> dict:
     return doc
 
 
+def normalize_pair_ids(old_state: dict, new_state: dict,
+                       old_wiring: dict | None = None,
+                       new_wiring: dict | None = None) -> bool:
+    """Align rebuilt pair ids and references before merge paths are recorded."""
+    old_doc = _merged_doc(old_state, old_wiring)
+    new_doc = _merged_doc(new_state, new_wiring)
+    old_pairs = old_state.get("qubit_pairs") or {}
+    memberships = {oid: _pair_membership(pair, old_doc)
+                   for oid, pair in old_pairs.items()}
+    by_members = {mem: oid for oid, mem in memberships.items() if mem}
+    long_source = bool(old_pairs) and all(
+        mem and oid == "-".join(mem) for oid, mem in memberships.items())
+    pairs = new_state.get("qubit_pairs") or {}
+    mapping = {}
+    aliases = [(oid, pair.get("macros", {}).get("cz"))
+               for oid, pair in old_pairs.items() if isinstance(pair, dict)]
+    for nid, pair in pairs.items():
+        mem = _pair_membership(pair, new_doc)
+        target = by_members.get(mem)
+        if target is None and long_source and mem:
+            target = "-".join(mem)
+            macros = pair.get("macros")
+            # Preserve the siblings' relative or absolute macro alias shape.
+            values = []
+            for oid, value in aliases:
+                prefix = f"#/qubit_pairs/{oid}/macros/"
+                if isinstance(value, str) and value.startswith(prefix):
+                    values.append(("absolute", value[len(prefix):]))
+                elif isinstance(value, str) and value.startswith("#./"):
+                    values.append(("relative", value[3:]))
+                else:
+                    values.append(None)
+            if (isinstance(macros, dict) and "cz" not in macros and values
+                    and values[0] is not None
+                    and all(value == values[0] for value in values)
+                    and values[0][1] in macros):
+                shape, macro = values[0]
+                macros["cz"] = (f"#/qubit_pairs/{target}/macros/{macro}"
+                                if shape == "absolute" else f"#./{macro}")
+        if target and target != nid and target not in pairs and target not in mapping.values():
+            mapping[nid] = target
+    if not mapping:
+        return False
+
+    def rewrite(node):
+        if isinstance(node, dict):
+            for key, value in list(node.items()):
+                node[key] = rewrite(value)
+        elif isinstance(node, list):
+            node[:] = [rewrite(value) for value in node]
+        elif isinstance(node, str):
+            for source, target in mapping.items():
+                for prefix, separator in (("#/qubit_pairs/", "/"),
+                                          ("#/wiring/qubit_pairs/", "/"),
+                                          ("qubit_pairs.", "."),
+                                          ("wiring.qubit_pairs.", ".")):
+                    start = prefix + source
+                    if node == start or node.startswith(start + separator):
+                        return prefix + target + node[len(start):]
+        return node
+
+    new_state["qubit_pairs"] = {mapping.get(k, k): v for k, v in pairs.items()}
+    for source, target in mapping.items():
+        pair = new_state["qubit_pairs"][target]
+        if pair.get("id") == source:
+            pair["id"] = target
+    if isinstance(new_wiring, dict):
+        wiring = new_wiring.get("wiring", new_wiring)
+        if isinstance(wiring.get("qubit_pairs"), dict):
+            wiring["qubit_pairs"] = {mapping.get(k, k): v
+                                      for k, v in wiring["qubit_pairs"].items()}
+    rewrite(new_state)
+    rewrite(new_wiring)
+    return True
+
+
 def _reconcile_pair_ids(old_state: dict, new_state: dict,
                         old_wiring: dict | None = None,
                         new_wiring: dict | None = None) -> dict:
-    """Rename NEW ``qubit_pairs`` keys to the OLD ids where the (control, target)
-    membership matches.
-
-    The builder may name a pair differently from the source chip (e.g. it emits
-    ``qA2-A1`` where the source has ``qA2-qA1`` -- the target's ``q`` prefix
-    convention drifts). Both still reference the same qubits, so we align on that
-    and adopt the source id, otherwise the id-keyed merge orphans EVERY pair's
-    calibration. Safe to rename without pointer rewriting: nothing in a QUAM state
-    references a pair by ``#/qubit_pairs/<id>`` (verified on real archives).
-    Returns ``new_state`` (a shallow copy when a rename was needed).
-    """
-    # docs/118: resolve each side's refs against ITS OWN document — a two-hop
-    # pointer only means something inside the state it came from.
-    old_by_mem: dict[tuple[str, str], str] = {}
-    for oid, op in (old_state.get("qubit_pairs") or {}).items():
-        m = _pair_membership(op, _merged_doc(old_state, old_wiring))
-        if m is not None:
-            old_by_mem.setdefault(m, oid)
-    if not old_by_mem:
-        return new_state
-
-    new_pairs = new_state.get("qubit_pairs") or {}
-    remapped: dict[str, Any] = {}
-    changed = False
-    for nid, npair in new_pairs.items():
-        target = old_by_mem.get(
-            _pair_membership(npair, _merged_doc(new_state, new_wiring)))
-        key = target if (target and target not in remapped) else nid
-        if key != nid:
-            changed = True
-        remapped[key] = npair
-    if not changed:
-        return new_state
-    out = dict(new_state)
-    out["qubit_pairs"] = remapped
+    out = copy.deepcopy(new_state)
+    normalize_pair_ids(old_state, out, old_wiring, new_wiring)
     return out
 
 
