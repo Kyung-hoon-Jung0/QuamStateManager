@@ -5108,8 +5108,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             }
             if (data.status === "ok" && data.auto_restored_count) {
                 document.dispatchEvent(new CustomEvent('autoSyncRestored', {
-                    detail: { count: data.auto_restored_count,
-                              staged: !!data.auto_restored_staged }
+                    detail: data.auto_restore_notice
                 }));
             }
             // Swap whatever tray the server returned — the synced tray, or (on a
@@ -6033,6 +6032,13 @@ window.livePushExtrasLine = function (typedPaths) {
                      : [String(s).slice(0, i), parseInt(String(s).slice(i + 1), 10) || 0];
     }
     function onPullSeq(d) {
+        if (d && d.auto_restore_notice) {
+            if (window._pullSeqSeen === undefined) {
+                window._restoreNoticeSeen = d.auto_restore_notice.event;
+            } else {
+                document.dispatchEvent(new CustomEvent('autoSyncRestored', {detail: d.auto_restore_notice}));
+            }
+        }
         if (!d || !d.pull_seq || d.pull_seq === window._pullSeqSeen) return false;
         var first = window._pullSeqSeen === undefined;
         var seen = _pullSeqParts(window._pullSeqSeen);

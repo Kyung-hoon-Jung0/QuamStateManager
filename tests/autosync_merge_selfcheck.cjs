@@ -302,24 +302,23 @@ function fire(w, name, detail) {
     const { w, state, clock } = world();
     w.confirm = () => { throw new Error('automatic restoration must never confirm'); };
     w.prompt = () => { throw new Error('automatic restoration must never prompt'); };
-    fire(w, 'autoSyncRestored', { count: 1 });
+    fire(w, 'autoSyncRestored', { count: 1, message: 'An outside save reverted 1 value you applied; Auto-Sync recovered it.' });
     await clock.advance(20);
     check('I1 restoration sends exactly one non-blocking notice', state.toasts.length === 1);
     const m = (state.toasts[0] || {}).m || '';
     check('I2 notice states the reverted count and automatic restoration',
-          /1 value you applied/.test(m) && /Auto-Sync restored it/.test(m), m);
+          /1 value you applied/.test(m) && /Auto-Sync recovered it/.test(m), m);
   }
 
   {
-    // the merge-pull re-staged the value (a typed cell or a pending edit was
-    // present): the notice says "pending changes" and never claims a write
+    // A merge-pull may stage the value; every window displays the server notice.
     const { w, state, clock } = world();
-    fire(w, 'autoSyncRestored', { count: 2, staged: true });
+    fire(w, 'autoSyncRestored', { count: 2, staged: true, message: 'An outside save reverted 2 values you applied; Auto-Sync recovered them.' });
     await clock.advance(20);
     check('I3 a re-staged restoration is one notice', state.toasts.length === 1);
     const m = (state.toasts[0] || {}).m || '';
-    check('I4 a re-staged restoration names the pending changes, not a write',
-          /2 values you applied/.test(m) && /back in your pending changes/.test(m)
+    check('I4 a re-staged restoration uses the server notice',
+          /2 values you applied/.test(m) && /Auto-Sync recovered them/.test(m)
           && !/restored them/.test(m), m);
   }
 

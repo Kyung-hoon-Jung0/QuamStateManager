@@ -12284,6 +12284,15 @@ def _applied_values_lost(ctx, held: dict) -> list[dict]:
     return out[:_LOST_APPLIED_MAX]
 
 
+def _auto_restore_notice(ctx, count: int) -> dict:
+    notice = {"count": count, "event": str(time.time_ns()),
+              "message": (f"An outside save reverted {count} value"
+                          + (" you applied; Auto-Sync recovered it." if count == 1
+                             else "s you applied; Auto-Sync recovered them."))}
+    ctx["_auto_restore_notice"] = notice
+    return notice
+
+
 def _restore_applied_after_replace(ctx, held, lost: list[dict]) -> tuple[int, list[dict]]:
     """F-3 (user decision 2026-11-05): a replace-pull governs only the
     UNAPPLIED edits. The applied values it took away (``lost``, judged from
@@ -32268,7 +32277,7 @@ def auto_sync_pull():
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
         extra={"liveDriftChanged": True,
-               **({"autoSyncRestored": {"count": _restored_n}} if _restored_n else {}),
+               **({"autoSyncRestored": ctx["_auto_restore_notice"]} if _restored_n else {}),
                # SYNCEXP-09: "replaced" means work was actually DROPPED --
                # a change-log edit, a saved working state or a stash. Typed-
                # but-not-entered grid cells are not dropped: the pull patches
@@ -33111,7 +33120,8 @@ def _pull_note() -> dict:
     # "#0" too: a window opened before the first pull must count that pull
     # as a step, not as where the chip already was
     seq = int(ctx.get("_pull_seq") or 0)
-    return {"pull_seq": f"{ctx.get('path', '')}#{seq}",
+    return {"auto_restore_notice": ctx.get("_auto_restore_notice"),
+            "pull_seq": f"{ctx.get('path', '')}#{seq}",
             "pull_lost": list(ctx.get("_pull_lost") or []),
             # the last few steps, each with what it took away: a window that
             # missed a step (its poll came after two pulls) still names every
@@ -34221,9 +34231,10 @@ def state_sync(*, _auto_mode=None, _held_override=None):
         if (_auto_restore and _restored_applied
                 and (resp.get_json(silent=True) or {}).get("status") == "ok"):
             triggers = json.loads(resp.headers.get("HX-Trigger", "{}"))
-            triggers["autoSyncRestored"] = {"count": len(_restored_applied)}
+            triggers["autoSyncRestored"] = _auto_restore_notice(ctx, len(_restored_applied))
             resp.headers["HX-Trigger"] = json.dumps(triggers)
             body = resp.get_json()
+            body["auto_restore_notice"] = triggers["autoSyncRestored"]
             body["auto_restored_count"] = len(_restored_applied)
             body["auto_restored_staged"] = False
             if _restore_redo:
@@ -34256,7 +34267,8 @@ def state_sync(*, _auto_mode=None, _held_override=None):
                    if backup else None),
         # an applied value the outside save reverted is back as a PENDING
         # change (reapply writes nothing); the client's notice says so
-        **({"auto_restored_count": len(_restored_applied), "auto_restored_staged": True}
+        **({"auto_restored_count": len(_restored_applied), "auto_restored_staged": True,
+            "auto_restore_notice": _auto_restore_notice(ctx, len(_restored_applied))}
            if (_auto_restore and _restored_applied and mode == "reapply") else {}),
         **_sync_patch(ctx, _pre_leaves),
     })
