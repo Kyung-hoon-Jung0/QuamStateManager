@@ -31315,6 +31315,11 @@ def _auto_merge_policy(view):
             # under an armed pull+push session): nothing failed and nothing
             # landed, so the response stands as the door made it.
             return resp
+        if code == "auto_seen_off":
+            # W2-1 hold: an edit from a window that showed Auto-Sync off waits
+            # for a person's Apply. That is the session working as decided,
+            # not a failure: it neither spends a try nor disarms.
+            return resp
         if not refusal:
             if sess and (body.get("status") == "ok" or
                          (request.path == "/auto-sync/pull" and resp.status_code == 200)):
@@ -31348,7 +31353,8 @@ def _auto_merge_policy(view):
         if staged and (signal is not None or code in {"conflict", "needs_confirm"}
                        or "autoApplyDisarm" in events):
             code, reason = "staged", "staged snapshot or wholesale working state needs your Apply"
-        if sess and not sess.get("pull") and "autoApplyDisarm" in events:
+        if (sess and not sess.get("pull") and "autoApplyDisarm" in events
+                and g._merge_failure is None):
             code, reason = "no_pull", "live chip changed; this session has no pull permission"
         # A person's (or an agent's) OWN press that the door answered to the
         # presser -- a needs_confirm the client turns into a confirm(), a
@@ -31399,7 +31405,10 @@ def _auto_merge_policy(view):
         elif resp.is_json:
             body.update(merge_failure=verdict, failure_class=verdict["class"], tray_html=html)
             resp.set_data(json.dumps(body))
-        elif resp.status_code != 204:
+        elif resp.status_code != 204 and not resp.headers.get("X-SM-Error-Code"):
+            # A door that named its own failure (X-SM-Error-Code: a save that
+            # could not write, a read-only folder) already carries the tray and
+            # its message; the "live changed" conflict tray would misstate it.
             resp.set_data(html)
         resp.headers["HX-Trigger"] = json.dumps(events)
         return resp
@@ -35217,6 +35226,7 @@ def state_apply_to_live():
             # read-only share is the common cause and the OS says so.
             _pd = ("the WORKING folder is not writable — "
                    if getattr(exc, "errno", None) in (13, 1) else "")
+            g._merge_failure = exc     # the policy judges THIS cause, not "live moved"
             # v1.5.1 (SA-F2): a known failure is a 409 with its code, not a 500
             return _live_write_failure_response(
                 ctx, (f"Save failed: {_pd}{exc}. Your edits are still in memory — "

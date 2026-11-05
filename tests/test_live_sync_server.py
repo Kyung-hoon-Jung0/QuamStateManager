@@ -369,27 +369,37 @@ class TestADeclinedPullPutsTheBannerUpInPlace:
         _edit(env, "qubits.qA1.f_01", "5.1e9")
         _write_chip(env["live"], _state(f01=7.7e9))
         _ctx(env)["live_diverged"] = True
+        # Merge-budget decision: a collision under a PULL-ONLY session disarms
+        # on the first one (only an armed pull+push session lets mine win).
+        # Nothing is pulled: the edit stays and the session says it stopped.
         r = env["client"].post("/auto-sync/pull")
-        assert r.status_code == 204, "still 204 -- nothing was pulled"
         raw = r.headers.get("HX-Trigger") or ""
         assert "autoSyncMerge" not in raw
-        sig = json.loads(raw)["liveConflict"]
-        assert sig["paths"] == ["qubits.qA1.f_01"] and sig["chip"], sig
+        sig = json.loads(raw)["autoApplyDisarm"]
+        assert sig["class"] == "permanent" and sig["chip"], sig
+        assert "overlap" in sig["reason"], sig
+        assert not _ctx(env).get("auto_apply"), "a pull-only collision disarms"
+        log = _ctx(env)["store"].change_log
+        assert [e.dot_path for e in log] == ["qubits.qA1.f_01"], "nothing was pulled"
         # sync-ux 2026-09-25 (user decision: one control + one panel): the page the signal re-renders is the control
         ctl = env["client"].get("/state/tray").data.decode()
         assert "changed on both sides" in ctl and "qubits.qA1.f_01" in ctl
 
-    def test_the_exhausted_merge_budget_signals_too(self, env):
+    def test_repeated_transient_merges_never_disarm(self, env):
+        # Merge-budget decision: transient failures retry with backoff and
+        # never disarm (the old fixed budget that ended in a banner is gone).
         assert _arm_pull(env).status_code == 200
         _edit(env, "qubits.qA1.f_01", "5.1e9")
         _write_chip(env["live"], _state(t1=9.9e-5))       # nothing collides
         _ctx(env)["live_diverged"] = True
-        last = None
-        for _ in range(routes_mod._AUTO_MERGE_TRIES + 1):
+        for _ in range(routes_mod._AUTO_MERGE_TRIES + 2):
             last = env["client"].post("/auto-sync/pull")
-        assert last.status_code == 204
-        trig = _trigger(last)
-        assert "liveConflict" in trig and "autoSyncMergePull" not in trig, trig
+            assert "liveConflict" not in _trigger(last)
+            sess = _ctx(env).get("auto_apply")
+            assert sess, "a transient merge failure disarmed the session"
+            if sess.get("merge_retry"):
+                assert sess["merge_retry"]["class"] == "transient", sess["merge_retry"]
+            sess["merge_due"] = 0                          # skip the backoff wait
 
     def test_the_banner_route_is_empty_when_nothing_diverged(self, env):
         r = env["client"].get("/state/diverged-banner")
