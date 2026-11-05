@@ -64,7 +64,9 @@ _COLD_SCAN_BUDGET_S = 3.0
 # bare number) and a ramsey run headlines T2* (``decay``), not the detuning.
 # v6 (W2-11): a ramsey-vs-flux run headlines its flux offset, and a fallback
 # number with no unit names the field it is (a v5 row re-served it bare).
-_STORE_CACHE_V = 6
+# v7 (W3-6): a fit file's ns stamp on a seconds value no longer scales a
+# coherence metric to "0.0 ns" (a v6 row re-served it).
+_STORE_CACHE_V = 7
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
