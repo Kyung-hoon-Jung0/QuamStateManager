@@ -23,7 +23,7 @@ def test_applied_predecessor_chain(env, outside, lost):
     assert _live(env)["T1"] == (4.4e-5 if lost else outside)
 
 
-def test_undo_limits_applied_predecessor_chain(env):
+def test_an_undo_that_reached_the_chip_extends_the_applied_chain(env):
     from quam_state_manager.web import routes
     c = env["client"]
     _apply_t1(env)

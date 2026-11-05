@@ -12091,7 +12091,10 @@ def _applied_values_held(ctx) -> dict:
     units, newest value per path) that the working copy still holds, as
     ``{path: value}``. Taken BEFORE a pull so that, after it, a value an
     outside writer removed (a node's ``machine.save`` from its in-memory copy
-    rewrites the whole file) can be named instead of vanishing in silence."""
+    rewrites the whole file) can be named instead of vanishing in silence.
+    A value the user undid (a Ctrl+Z that reached the chip) is protected like
+    an applied value, so an outside writer setting exactly the undone value
+    back is restored under Auto-Sync -- the user's choice."""
     try:
         path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
         units, cursor = undo_journal.load_state(path)
@@ -12113,7 +12116,15 @@ def _applied_values_held(ctx) -> dict:
     undone = units[cursor:][::-1] if has_cursor else []
     walk = [(u, False) for u in applied] + [(u, True) for u in undone]
     for unit, was_undone in walk:
-        if not isinstance(unit, dict) or now - float(unit.get("ts") or 0) > _LOST_APPLIED_WINDOW_S:
+        if not isinstance(unit, dict):
+            continue
+        # an undone unit's window runs from the undo (meta.undone_ts, stamped
+        # by undo_journal.save_cursor); an older sidecar falls back to ts
+        meta = unit.get("meta") if isinstance(unit.get("meta"), dict) else {}
+        t0 = meta.get("undone_ts") if was_undone else None
+        if not isinstance(t0, (int, float)) or isinstance(t0, bool):
+            t0 = unit.get("ts") or 0
+        if now - float(t0) > _LOST_APPLIED_WINDOW_S:
             continue
         for e in unit.get("entries") or ():
             if not (isinstance(e, dict) and isinstance(e.get("path"), str)):

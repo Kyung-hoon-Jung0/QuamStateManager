@@ -62,3 +62,19 @@ def test_an_unrelated_outside_value_is_not_a_loss(env):  # noqa: F811
     with env["app"].test_request_context():
         held = routes_mod._applied_values_held(routes_mod._active_ctx())
         assert not routes_mod._applied_value_lost(held, "qubits.qA1.T1", 7e-05)
+
+
+def test_the_window_for_an_undone_value_runs_from_the_undo(env, monkeypatch):  # noqa: F811
+    """Applied 5h50m ago, undone now, outside save 20 min later: still a loss."""
+    import time as _time
+    _apply_name(env)
+    t_apply = _time.time()
+    monkeypatch.setattr(routes_mod.time, "time", lambda: t_apply + 5 * 3600 + 50 * 60)
+    from quam_state_manager.core import undo_journal
+    monkeypatch.setattr(undo_journal.time, "time", lambda: t_apply + 5 * 3600 + 50 * 60)
+    _undo(env)
+    monkeypatch.setattr(routes_mod.time, "time", lambda: t_apply + 6 * 3600 + 10 * 60)
+    with env["app"].test_request_context():
+        held = routes_mod._applied_values_held(routes_mod._active_ctx())
+        assert held.get("qubits.qA1.T1") == 2e-05
+        assert routes_mod._applied_value_lost(held, "qubits.qA1.T1", 3.3e-05)
