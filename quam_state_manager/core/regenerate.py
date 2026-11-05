@@ -621,6 +621,12 @@ def run_regenerate(
     # changed it in the wizard or the report already names the change.
     calibration_changed = _calibration_check(result, old_wiring, new_wiring, protect,
                                              fsp_compensated, add_report)
+    entity_changes = regen_merge.calibration_check(
+        old_state, old_wiring, result.merged, new_wiring)
+    existing_entities_changed = len({tuple(change["path"].split(".")[:2])
+                                     for change in entity_changes
+                                     if change["path"].split(".")[0] in
+                                     ("qubits", "qubit_pairs", "twpas")})
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
     # QA F12: the merged chip, not the build spec, decides -- a merge can
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
@@ -812,6 +818,7 @@ def run_regenerate(
         # the contract check: source values that read differently in the rebuild
         "calibration_changed": calibration_changed[:200],
         "calibration_changed_total": len(calibration_changed),
+        "existing_entities_changed": existing_entities_changed,
         "calibration_restored": s.calibration_restored[:80],
         "calibration_restored_total": len(s.calibration_restored),
         # a Populate edit written where a restored source form reads it (edited leaf, location)

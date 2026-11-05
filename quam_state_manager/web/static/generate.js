@@ -10972,6 +10972,9 @@
         // DragCosine family, so values > cells). Absent on older results.
         var popCellsN = (m.populate_cells != null) ? m.populate_cells : null;
         var popDetail = m.populate_protected_detail || [];
+        var calCh = m.calibration_changed || [];
+        var calChN = (m.calibration_changed_total != null)
+            ? m.calibration_changed_total : calCh.length;
         var popConf = m.populate_conflicts || [];
         var fspCompN = m.fsp_compensated_total || 0;   // QA regenerate-r2-04 / r2-06
         var mp = document.createElement("div");
@@ -11020,9 +11023,13 @@
             'cloud QMM), carried unchanged from the source chip (wiring.json)">' +
             netCarried.length + ' network setting' + (netCarried.length === 1 ? '' : 's') +
             ' carried</span>' : '') +
-          '<span class="gen-merge-stat ' + (lostN ? 'gen-merge-warn' : 'gen-merge-muted') +
+          '<span class="gen-merge-stat gen-merge-loss ' + (lostN || calChN ? 'gen-merge-warn' : 'gen-merge-ok') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
+          (calChN ? '<span class="gen-merge-stat gen-merge-warn gen-merge-cal-count">' +
+            calChN + ' values read differently</span>' : '') +
+          (m.existing_entities_changed != null ? '<span class="gen-merge-stat gen-merge-muted">' +
+            'existing entities changed: ' + m.existing_entities_changed + '</span>' : '') +
           (schemaDropN ? '<span class="gen-merge-stat gen-merge-warn" title="Fields an older ' +
             'stack generation serialized that this env\'s classes renamed or removed ' +
             '(e.g. CZGate.duration_control → duration_qubit) — grafting them would make ' +
@@ -11060,9 +11067,6 @@
         // The contract check: a source value that reads differently in the
         // rebuild (not one you changed, not one listed elsewhere) is never a
         // plain success. Each one is named, old -> new.
-        var calCh = m.calibration_changed || [];
-        var calChN = (m.calibration_changed_total != null)
-            ? m.calibration_changed_total : calCh.length;
         if (calChN) {
           el.className = "gen-build-result gen-build-confirm gen-build-cal-changed";
           msg.textContent += " — " + calChN + " calibrated value" +
