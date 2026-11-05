@@ -329,7 +329,7 @@ function fire(w, name, detail) {
   {
     const { w, state, clock } = world();
     const posts = [];
-    w.htmx.ajax = (method, url) => { posts.push([method, url]); return Promise.resolve(); };
+    w.htmx.ajax = (method, url, opts) => { posts.push([method, url, opts.values]); return Promise.resolve(); };
     w.confirm = w.prompt = () => { throw new Error('replacement must not prompt'); };
     const notice = {event: 'node-1', bring_back: true,
       message: 'a node replaced a value you applied: qA1.f_01 5 -> 6'};
@@ -340,7 +340,7 @@ function fire(w, name, detail) {
     check('W5 Bring back is one click', back && back.textContent === 'Bring back');
     if (back) back.click();
     await clock.advance(1);
-    check('W5 Bring back uses existing backup door', JSON.stringify(posts) === JSON.stringify([['POST', '/state/take-live/restore']]));
+    check('W5 Bring back names its notice backup', JSON.stringify(posts) === JSON.stringify([['POST', '/state/take-live/restore', {notice_id: 'node-1'}]]));
   }
 
   {

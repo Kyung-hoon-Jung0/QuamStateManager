@@ -358,7 +358,8 @@
                     if (!window.htmx) return;
                     back.disabled = true;
                     Promise.resolve(window.htmx.ajax('POST', '/state/take-live/restore', {
-                        target: '#pending-tray', swap: 'outerHTML'
+                        target: '#pending-tray', swap: 'outerHTML',
+                        values: {notice_id: d.event}
                     })).then(function () { notice.remove(); }, function () { back.disabled = false; });
                 });
                 notice.appendChild(back);

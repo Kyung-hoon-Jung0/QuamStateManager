@@ -30,7 +30,7 @@
   'live': ('Live chip changed' ~ (' · ' ~ _ln ~ ' value' ~ ('s' if _ln != 1 else '') if _ln else ''), 'a run, an editor or another window rewrote the live files; what you see is older.'),
   'both': ((_n ~ ' unapplied · ' if _n else 'Saved edits · ') ~ 'live changed' ~ (' ' ~ _ln if _ln else ''), 'unapplied edits and live changes, no field in both.'),
   'collide': (_cn ~ ' field' ~ ('s' if _cn != 1 else '') ~ ' changed on both sides', 'pick mine or live for each field.'),
-  'refused': ('Apply wrote nothing — live changed', 'the live chip changed meanwhile; nothing was written.'),
+  'refused': ('Apply wrote nothing — write refused', 'nothing was written; open the sync panel for details.'),
   'unreadable': ("Can't read the live chip — your edits are safe", 'the live file is mid-save or broken.'),
   'archive': ('Archive · read-only' ~ ((' · run ' ~ _ai.run_label) if (_ai is defined and _ai and _ai.run_label) else ''), "a dataset run's frozen quam_state."),
 } -%}

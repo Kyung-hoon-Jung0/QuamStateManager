@@ -86,7 +86,7 @@
 {% include '_auto_sync_pill.html' %}
 {# D-45: Auto-Sync never pushes an agent's staged rows; say so while it holds #}
 {% if auto_apply is defined and auto_apply and auto_apply.hold %}<span class="tray-agent-held ui-note" role="status" data-auto-hold-note
-      title="An edit was made in a window that still showed Auto-Sync off. Auto-Sync writes nothing until you press Apply.">Auto-Sync holding: an edit from a window that showed Auto-Sync off waits for your Apply</span>{% endif %}
+      title="Auto-Sync writes nothing until you press Apply.">Auto-Sync holding: unapplied edits wait for your Apply</span>{% endif %}
 {% if auto_apply is defined and auto_apply and _agent_held.n %}<span class="tray-agent-held ui-note" role="status" data-agent-held-note
       title="Auto-Sync never pushes an edit an agent staged. Review the agent's edits in the sync panel and press Apply yourself, or discard them; Auto-Sync resumes once none are pending.">Auto-Sync holding: {{ _agent_held.n }} agent edit{{ 's' if _agent_held.n != 1 else '' }} wait{{ '' if _agent_held.n != 1 else 's' }} for your Apply</span>{% endif %}
 {# docs/20 v2 LiveEditUndo: one ↶ = one event, exactly mirrored in the Review
