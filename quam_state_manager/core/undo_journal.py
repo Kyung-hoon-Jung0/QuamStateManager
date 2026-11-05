@@ -304,13 +304,26 @@ def load_state(path: str | Path) -> tuple[list[dict], int]:
     the sidecar carries one (docs/160), else the tip.  Always clamped into
     ``[0, len(units)]``: a cursor written against a longer list (another
     window trimmed it) can never point past the end."""
-    doc = _read_doc(Path(path))
+    return _state_of(_read_doc(Path(path)))
+
+
+def _state_of(doc: dict) -> tuple[list[dict], int]:
     units = doc.get("units", [])
     units = units if isinstance(units, list) else []
     cur = doc.get("cursor")
     if not isinstance(cur, int) or isinstance(cur, bool):
         cur = len(units)
     return units, max(0, min(cur, len(units)))
+
+
+def load_state_and_tail(path: str | Path) -> tuple[list[dict], int, list[dict]]:
+    """``(units, cursor, tail)`` from ONE read of the sidecar.  Two separate
+    reads (``load_state`` then ``load_tail``) can straddle a truncation by
+    another process: for that one read the dropped unit shows up both as an
+    undone unit and as a tail record, or in neither."""
+    doc = _read_doc(Path(path))
+    units, cur = _state_of(doc)
+    return units, cur, _clean_tail(doc.get("undone_tail"))
 
 
 def save_cursor(path: str | Path, cursor: int) -> None:

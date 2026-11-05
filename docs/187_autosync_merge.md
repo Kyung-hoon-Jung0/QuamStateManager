@@ -134,12 +134,25 @@ Auto-Sync merge failures are classified by the server (user decision,
 pairs, live moving during a merge, and press-wait timeouts keep the session
 armed and retry after 2, 5, 15, 30, then 60 seconds, repeating at 60 seconds.
 The pill says "retrying (n)" and its tooltip names the reason. Staged or
-wholesale content, unwritable folders, identity mismatches, archives, foreign
-window owners and refusals requiring a person's choice turn Auto-Sync off
-on the first occurrence; the conflict tray names the blocker and the existing
-pill turns it back on. Unknown failures may retry ten times, then disarm with
+wholesale content, unwritable folders, identity mismatches, archives and
+refusals requiring a person's choice turn Auto-Sync off on the first
+occurrence; the conflict tray names the blocker and the existing pill turns it
+back on. Unknown failures may retry ten times, then disarm with
 "kept failing: <reason>". A landed merge clears all retry state. Automatic
 merges never open a prompt or modal and retain the existing permission gates.
+
+Three limits of the policy (walk-int review, 2026-11-05): it judges AUTOMATIC
+requests (`auto_sync=1`, `auto_flush=1`, `/auto-sync/pull`) and a door that
+itself signalled the merge or disarmed the session -- a person's own press that
+the door answers to the presser (a needs_confirm, a collision for the sync
+panel, a torn pair) never turns the session off underneath them. A second live
+SM window on the same chip is not a blocker on these doors (it gates only
+auto-arm-on-open, as before): two windows sharing one instance folder is the
+case F-5 and the undone tail were decided for. And a typed, uncommitted cell
+colliding with a node write under an armed pull+push session is deferred, not
+failed: the control names the field, the poll stays quiet on that fingerprint,
+and the commit's own flush meets the moved chip and merges with the user's
+value winning.
 
 **A collision under an armed pull+push session: mine wins, the node value is
 saved in History** (user decision, 2026-11-05). When a pending edit and a live
@@ -149,7 +162,9 @@ overlapping fields) and pushes. One notice names each overwritten field and the
 node's value ("kept your value for qA1.f_01; the node had written 7.7000 GHz (in
 History)"), and the overwritten values are recorded for the version panel's
 one-press Bring back. No prompt, no disarm; it counts as a landed merge, and a
-node writing again while the backup is taken is a transient retry. A push-only
+node writing again while the backup is taken is a transient retry. A stash (a
+/save, a merge part-way through) is the user's own edits and takes the same
+door, each judged against the original recorded when it was stashed. A push-only
 session keeps docs/117's permanent `no_pull` disarm, a ticked "replace" keeps
 its live-wins rule, and with Auto-Sync off the
 person chooses as before.
@@ -157,9 +172,15 @@ person chooses as before.
 **`unseen_changes` is transient.** Another window's edit on the shared context
 makes this window's declared change count stale; the client re-fetches its tray
 (re-reading `data-change-count`) and retries on the schedule instead of
-disarming. A positive write-denial verdict found during the request classifies
-as `readonly` (permanent); a bare WinError 5 without that verdict is unknown,
-not transient, and "archive" counts only as the structured refusal code.
+disarming. WinError 5 is three cases, not one (`merge_policy.classify_failure`,
+pinned): a positive write-denial verdict found during the request
+(`_write_denial` -> `live_readonly_hint`) classifies as `readonly`
+(permanent); an OS error object carrying `winerror == 5` with no such verdict
+is transient (on Windows a replace onto a file another program holds open
+fails with access-denied, the same code as an ACL denial -- permanence is never
+inferred from the code alone); and the bare text "[WinError 5]" with no
+exception behind it is unknown. "archive" counts only as the structured
+refusal code.
 
 ## After
 

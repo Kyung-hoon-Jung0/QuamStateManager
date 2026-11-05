@@ -12144,8 +12144,7 @@ def _applied_values_held(ctx) -> dict:
     back is restored under Auto-Sync -- the user's choice."""
     try:
         path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
-        units, cursor = undo_journal.load_state(path)
-        tail = undo_journal.load_tail(path)
+        units, cursor, tail = undo_journal.load_state_and_tail(path)   # one read
     except Exception:  # noqa: BLE001 -- no journal readable: nothing to name
         return {}
     store = ctx.get("store")
@@ -31269,14 +31268,18 @@ def _auto_merge_policy(view):
         g._merge_policy_automatic = automatic
         g._merge_failure = None
         g._merge_refusal = None
+        g._merge_defer = False
         try:
             wrong_chip = (_chip_mismatch_response(request.values.get("expect_chip", ""), False)
                           if automatic else None)
             if wrong_chip is not None:
                 resp = make_response(wrong_chip)
-            elif automatic and sess and _auto_sync_foreign_window(ctx):
-                resp = make_response(jsonify(status="error", conflict="foreign_owner",
-                    message="another live window owns this chip"), 409)
+            # A second live SM window on the same chip is NOT a blocker here
+            # (walk-int review): two windows sharing one instance folder is the
+            # case F-5 and the undone tail were decided for, and before this
+            # policy the foreign-window test gated only auto-arm-on-open
+            # (`_maybe_auto_arm_on_open`). The shared change log stays guarded
+            # by the unseen-edit gate on every door, as before.
             elif automatic and sess and (ctx.get("origin") or "live") != "live":
                 resp = make_response(jsonify(status="error", conflict="archive",
                     message="this chip is a read-only archive"), 409)
@@ -31306,6 +31309,11 @@ def _auto_merge_policy(view):
                    or code in {"conflict", "collision", "torn_live", "live_moved", "needs_confirm"}
                    or body.get("chip_mismatch") or "autoApplyDisarm" in events
                    or "liveConflict" in events or signal is not None)
+        if getattr(g, "_merge_defer", False):
+            # The door deferred the decision itself (a typed, uncommitted cell
+            # under an armed pull+push session): nothing failed and nothing
+            # landed, so the response stands as the door made it.
+            return resp
         if not refusal:
             if sess and (body.get("status") == "ok" or
                          (request.path == "/auto-sync/pull" and resp.status_code == 200)):
@@ -31341,7 +31349,16 @@ def _auto_merge_policy(view):
             code, reason = "staged", "staged snapshot or wholesale working state needs your Apply"
         if sess and not sess.get("pull") and "autoApplyDisarm" in events:
             code, reason = "no_pull", "live chip changed; this session has no pull permission"
-        if not sess:
+        # A person's (or an agent's) OWN press that the door answered to the
+        # presser -- a needs_confirm the client turns into a confirm(), a
+        # collision for the sync panel, a torn pair, an unseen-edit refusal --
+        # is not a failure of the automatic session (walk-int review: a human
+        # "Take live" over saved content asked its confirm AND turned Auto-Sync
+        # off underneath them). The policy judges automatic merges, and a door
+        # that itself signalled the merge or disarmed the session.
+        own_press = (not automatic and signal is None
+                     and "autoApplyDisarm" not in events)
+        if not sess or own_press:
             body["failure_class"] = merge_policy.classify_failure(reason, code=code)
             if resp.is_json:
                 resp.set_data(json.dumps(body))
@@ -31973,7 +31990,15 @@ def auto_sync_pull():
                            conflict="live_busy" if verdict is None else "verdict_failed",
                            message="the live pair could not be compared just now"), 409
         if verdict.must_ask:
-            if _auto_mine_wins(ctx) and not dom_dirty and not verdict.unaccounted:
+            if _auto_mine_wins(ctx) and not dom_dirty:
+                # User decision 2026-11-05: under an armed pull+push session the
+                # user's value wins. `unaccounted` (a stash: a /save, or a merge
+                # part-way through) is no exception -- the stash IS the user's
+                # own edits, and the door below judges each against the original
+                # recorded when it was stashed, exactly as the push-side merge
+                # (autoSyncMerge -> this same door) has always replayed one.
+                # Refused here as a "collision", the session went off on the
+                # first node save after a Ctrl+S (walk-int review).
                 merged = make_response(state_sync(_auto_mode="apply"))
                 body = merged.get_json(silent=True) or {}
                 g._merge_refusal = body if body.get("status") != "ok" else None
@@ -31988,6 +32013,17 @@ def auto_sync_pull():
             ctx["live_conflicts"] = _paths          # the banner names these
             ctx["live_auto_at"] = {"sig": _auto_pull_sig(ctx),
                                    "conflicts": _paths}
+            if _auto_mine_wins(ctx):
+                # dom_dirty: the colliding value is still being TYPED -- it is
+                # in no change log, so there is no "mine" to make win yet, and
+                # pulling now would adopt the node's value under the user's
+                # fingers. Neither a failure nor a prompt (user decision: a
+                # collision under pull+push never disarms): the control names
+                # the field, the 5 s poll stays quiet on this fingerprint
+                # (`_auto_pull_due`), and the commit itself resolves it -- the
+                # flush meets the moved chip and the merge makes mine win.
+                g._merge_defer = True
+                return _live_conflict_204(_paths)
             if not sess.get("pull_replace"):
                 # QA liveedit-r2-07: "the banner is already showing" was true
                 # only after a full render -- an open page got a bare 204 and
