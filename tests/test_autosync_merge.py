@@ -1238,7 +1238,10 @@ class TestFailureKinds:
             raise OSError("[WinError 32] sharing violation on replace")
         monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", locked)
         for n in range(1, 6):
-            r = env["client"].post("/state/sync", data={"mode": "apply"})
+            # the AUTOMATIC merge's own press (walk-int review: the policy
+            # judges automatic requests; a person's press is answered to them)
+            _sess(env)["merge_due"] = 0          # the backoff has elapsed
+            r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
             assert _sess(env) is not None
             assert _sess(env)["merge_tries"] == n
             event = json.loads(r.headers["HX-Trigger"])["autoSyncRetry"]
@@ -1246,7 +1249,8 @@ class TestFailureKinds:
             assert f"retrying ({n})" in r.get_json()["tray_html"]
         monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", original)
         _sess(env)["unknown_tries"] = 3
-        r = env["client"].post("/state/sync", data={"mode": "apply"})
+        _sess(env)["merge_due"] = 0
+        r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
         assert r.get_json()["status"] == "ok"
         assert _sess(env)["merge_tries"] == 0
         assert not _sess(env).get("merge_retry")
@@ -1259,7 +1263,9 @@ class TestFailureKinds:
             raise RuntimeError("unexpected synthetic failure")
         monkeypatch.setattr(routes_mod.working_copy, "apply_to_live", broken)
         for n in range(1, 11):
-            r = env["client"].post("/state/sync", data={"mode": "apply"})
+            if _sess(env) is not None:
+                _sess(env)["merge_due"] = 0      # the backoff has elapsed
+            r = env["client"].post("/state/sync", data={"mode": "apply", "auto_sync": "1"})
             assert (_sess(env) is None) == (n == 10)
         assert "kept failing:" in r.get_json()["tray_html"]
         assert "unexpected synthetic failure" in r.get_json()["tray_html"]
