@@ -705,12 +705,12 @@
       var startView = ls(VIEW_KEY) || "split";
       if (startView !== "split" && startView !== "qb" && startView !== "sm") startView = "split";
       setView(startView);
-      input.value = address();
+      var bootAddress = address();
+      input.value = bootAddress;
       // the box's address is the one address: if SM has another (not from its
       // environment), offer this one first, as Reload would
       fetchStatus().then(function () {
-        var mine = ls(URL_KEY);
-        return (mine && /^https?:\/\//i.test(mine)) ? offerAddress(mine) : null;
+        return offerAddress(bootAddress);
       }).then(function () { loadQb(paneUrl()); });
     })();
   </script>
