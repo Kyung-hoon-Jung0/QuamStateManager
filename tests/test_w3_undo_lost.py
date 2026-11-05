@@ -78,3 +78,49 @@ def test_the_window_for_an_undone_value_runs_from_the_undo(env, monkeypatch):  #
         held = routes_mod._applied_values_held(routes_mod._active_ctx())
         assert held.get("qubits.qA1.T1") == 2e-05
         assert routes_mod._applied_value_lost(held, "qubits.qA1.T1", 3.3e-05)
+
+
+def _sidecar(env):
+    from quam_state_manager.core import undo_journal
+    with env["app"].test_request_context():
+        ctx = routes_mod._active_ctx()
+        return undo_journal.sidecar_path(env["app"].instance_path, ctx["path"])
+
+
+def test_a_redo_takes_the_undo_stamp_off_the_unit(tmp_path):
+    """save_cursor stamps meta.undone_ts on every unit an undo walks past; a
+    redo that moves the cursor forward over a unit takes the stamp off, so a
+    unit in effect never reads as undone to another window or the next
+    session. A unit still past the cursor keeps its stamp."""
+    from quam_state_manager.core import undo_journal
+    p = tmp_path / "j.undo_journal.json"
+
+    def _u(i):
+        return {"id": f"u{i}", "ts": 1.0, "entries": [
+            {"path": "a.b", "old": i, "new": i + 1, "source_file": "state",
+             "created": False, "deleted": False}], "meta": {}}
+
+    undo_journal.append_units(p, [_u(1), _u(2), _u(3)])
+    undo_journal.save_cursor(p, 1)                      # two units undone live
+    units, cur = undo_journal.load_state(p)
+    assert cur == 1 and "undone_ts" not in units[0]["meta"]
+    assert all(isinstance(u["meta"].get("undone_ts"), float) for u in units[1:]), units
+    undo_journal.save_cursor(p, 2)                      # one redo
+    units, cur = undo_journal.load_state(p)
+    assert cur == 2
+    assert "undone_ts" not in units[1]["meta"], "the redone unit still reads as undone"
+    assert "undone_ts" in units[2]["meta"], "the unit still undone lost its stamp"
+
+
+def test_a_live_redo_leaves_no_undo_stamp_on_the_sidecar(env):  # noqa: F811
+    """Through the real doors: Ctrl+Z then Ctrl+Shift+Z, both live."""
+    from quam_state_manager.core import undo_journal
+    _apply_name(env)
+    _undo(env)
+    units, cur = undo_journal.load_state(_sidecar(env))
+    assert cur == len(units) - 1 and "undone_ts" in (units[-1].get("meta") or {}), units
+    r = env["client"].post("/redo")
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    assert _live_t1(env) == 3.3e-05
+    units, cur = undo_journal.load_state(_sidecar(env))
+    assert cur == len(units) and "undone_ts" not in (units[-1].get("meta") or {}), units

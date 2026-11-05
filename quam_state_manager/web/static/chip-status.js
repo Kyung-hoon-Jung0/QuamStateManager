@@ -8464,7 +8464,10 @@ window.ChipTrends = (function () {
                 margin: { l: 58, r: 12, t: 32, b: 64 },
                 height: 300,
                 showlegend: true,
-                legend: { orientation: 'h', y: -0.28 },
+                /* W3-7: anchored to the bottom of the figure, not a fraction of
+                   the plot: a two-line date axis and its title grew into a
+                   legend placed at y -0.28 (the title overlapped the names) */
+                legend: { orientation: 'h', yref: 'container', y: 0, yanchor: 'bottom' },
                 colorway: (window.UI_CONFIG && UI_CONFIG.plotly && UI_CONFIG.plotly.colorway) || undefined,
                 xaxis: { type: axisType, tickangle: axisType === 'date' ? 0 : -40,
                          /* Say the zone on a TIME axis. A snapshot-id axis is

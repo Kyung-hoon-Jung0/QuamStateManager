@@ -591,3 +591,62 @@ def test_a_rollback_exception_is_reported_even_after_its_last_pop(env, monkeypat
     text = r.get_data(as_text=True)
     assert r.status_code == 500 and 'rollback completion fault' in text
     assert 'Still staged: none' in text and 'Nothing was added' not in text
+
+
+class TestReadoutSlot:
+    """W3-3: the add form copied the template qubit's readout frequency onto
+    the same feedline, so the new resonator sat on top of the template's."""
+
+    def _rr(self, m, q):
+        return da._num(da._resolve(m, m["qubits"][q]["resonator"]["RF_frequency"],
+                                   ("qubits", q, "resonator", "RF_frequency")))
+
+    def test_the_default_is_a_free_slot_away_from_every_resonator(self):
+        m, _s, _w = _doc(20)
+        d = da.qubit_defaults(m)
+        others = [self._rr(m, q) for q in d["members"]]
+        assert d["readout_rf"] is not None and d["readout_note"] is None
+        assert min(abs(d["readout_rf"] - f) for f in others if f is not None) >= da.READOUT_MIN_SEP_HZ
+
+    def test_the_proposal_follows_the_feedline_spacing(self):
+        assert da.propose_readout([7.0e9, 7.1e9, 7.2e9], 7.1e9, 7.0e9) == (7.3e9, None)
+        # above the window: the slot below the lowest
+        assert da.propose_readout([7.0e9, 7.1e9, 7.2e9], 6.85e9, 7.0e9)[0] == 6.9e9
+
+    def test_no_slot_says_so_and_keeps_the_template(self):
+        fs = [7.0e9 + i * 25e6 for i in range(33)]          # the whole window is full
+        rf, note = da.propose_readout(fs, 7.4e9, 7.0e9)
+        assert rf == 7.0e9 and note and "No free readout slot" in note
+
+    def test_a_typed_readout_on_a_member_is_warned_in_the_plan(self):
+        m, _s, _w = _doc(20)
+        d = da.qubit_defaults(m)
+        same = self._rr(m, d["template"])
+        _d, p = TestQubitPlan()._plan(m, readout_rf=same)
+        assert not p.get("error"), p
+        assert any("same feedline" in n for n in p["summary"]["notes"])
+
+
+class TestReadoutBand:
+    """W3-3: a readout proposal stays inside the readout port's band."""
+
+    INFO = {"lo": 7.4e9, "band": 2, "peer_band": 2, "qop": None}
+
+    def test_an_lo_near_the_band_edge_proposes_an_in_band_slot(self):
+        fs = [7.25e9, 7.35e9, 7.45e9]
+        rf, note = da.propose_readout(fs, 7.4e9, 7.25e9, self.INFO)
+        assert note is None and rf == 7.15e9
+
+    def test_no_in_band_slot_says_so(self):
+        fs = [7.0e9 + i * 20e6 for i in range(26)]           # 7.0 .. 7.5 GHz
+        rf, note = da.propose_readout(fs, 7.4e9, 7.0e9, self.INFO)
+        assert rf == 7.0e9 and note and "No free readout slot" in note
+
+    def test_a_typed_readout_outside_the_band_is_warned(self):
+        m, _s, _w = _doc(20)
+        d = da.qubit_defaults(m)
+        rp = da._wire_port(m, d["template"], "rr")
+        da._port(m["ports"], *rp)["band"] = 1
+        _d, p = TestQubitPlan()._plan(m, readout_rf=d["readout_rf"])
+        assert not p.get("error"), p
+        assert any("band" in n for n in p["summary"]["notes"])

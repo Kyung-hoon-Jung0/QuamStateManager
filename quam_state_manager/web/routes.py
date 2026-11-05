@@ -1232,6 +1232,46 @@ def _note_live_unreadable(ctx, key, reason: str, missing: bool = False,
         ctx["sync_live"] = prev
 
 
+def _lost_still_lost(ctx, pending_paths) -> list[dict]:
+    """W3-1: the "applied value lost" note lasts only while the loss does.
+    An entry whose field the working copy holds at the applied value again,
+    with nothing pending on it and no saved-but-unapplied state (so the
+    working copy IS the live chip at that field), is over: the user applied
+    it again, or the live chip came back to it. Pruned from the context so
+    every window stops showing it. The live chip is checked as well."""
+    lu = list(ctx.get("_lost_unacked") or [])
+    store = ctx.get("store")
+    if not lu or store is None or ctx.get("working_dirty"):
+        return lu
+    pending = set(pending_paths or ())
+    keep, over = [], []
+    with store._lock:
+        doc = store.merged
+        for x in lu:
+            p = x.get("path")
+            got = _dot_get(doc, p) if p else _DOT_MISSING
+            if p and p not in pending and got is not _DOT_MISSING and got == x.get("applied"):
+                over.append(x)
+                continue
+            keep.append(x)
+    if over:
+        # the working copy agreeing is not enough: the LIVE chip must hold
+        # the applied value too (it may have changed again since the sync)
+        wc = ctx.get("working_copy")
+        live = _live_merged_tree(wc) if wc is not None else None
+        for x in over:
+            got = _dot_get(live, x["path"]) if live is not None else _DOT_MISSING
+            if got is _DOT_MISSING or got != x.get("applied"):
+                keep.append(x)
+        keep.sort(key=lu.index)
+    if len(keep) != len(lu):
+        if keep:
+            ctx["_lost_unacked"] = keep
+        else:
+            ctx.pop("_lost_unacked", None)
+    return keep
+
+
 def _sync_view(ctx=None) -> dict | None:
     """Render-time half: the control's state from the cached live facts plus
     the local facts read now. No IO (docs/28). None when no chip is open."""
@@ -1301,7 +1341,7 @@ def _sync_view(ctx=None) -> dict | None:
         # not outlive what it holds (real-Chrome check of W2-1)
         _auto_hold_active(ctx)
         _a = ctx.get("auto_apply") or None
-    _lu = list(ctx.get("_lost_unacked") or [])
+    _lu = _lost_still_lost(ctx, paths)
     if _v is not None:
         _v["lost"] = _lu
         if _lu:
@@ -29516,6 +29556,30 @@ def _search_pointer_targets(results) -> dict[str, dict]:
 # ======================================================================
 
 
+def _settle_if_at_sync_point(ctx, store, wc) -> bool:
+    """Clear ``working_dirty`` and the re-apply stash when the saved working
+    content equals the content of the last sync point (W3-2). True when it
+    did. Never raises: a hash failure keeps the flags as they are."""
+    if wc is None or store is None or ctx.get("staged_base"):
+        return False
+    synced = getattr(wc, "synced_live_hash", None)
+    if not synced:
+        return False
+    try:
+        with store._lock:
+            if store.change_log:
+                return False
+            h = working_copy.content_hash(store.state, store.wiring)
+    except Exception:  # noqa: BLE001
+        logger.debug("sync-point settle check failed", exc_info=True)
+        return False
+    if h != synced:
+        return False
+    _set_working_dirty(False, ctx)
+    _clear_reapply(ctx)
+    return True
+
+
 @bp.route("/save", methods=["POST"])
 @_journal_press
 def save():
@@ -29568,6 +29632,11 @@ def save():
     # Flag THIS captured chip dirty, not whatever a concurrent /load may have
     # made active mid-request.
     _set_working_dirty(True, ctx)
+    # W3-2: a save that brought the working copy back to the sync point (an
+    # edit saved, undone and saved again) leaves nothing staged: the content
+    # IS the live chip's as last synced, so neither the flag nor the re-apply
+    # stash may keep saying "staged, not applied".
+    _settle_if_at_sync_point(ctx, store, wc)
 
     toast = render_template(
         "_status.html",

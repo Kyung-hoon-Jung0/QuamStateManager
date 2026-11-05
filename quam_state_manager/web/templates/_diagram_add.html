@@ -26,7 +26,7 @@
           <td class="ui-table-cell ui-table-muted">starts at {{ d.template }}'s value</td></tr>
       <tr><th class="ui-table-head" scope="row">Readout frequency (Hz)</th>
           <td class="ui-table-cell"><input name="readout_rf" inputmode="decimal" value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}" aria-label="Readout frequency in Hz"></td>
-          <td class="ui-table-cell ui-table-muted">within the feedline LO's IF window</td></tr>
+          <td class="ui-table-cell ui-table-muted">{% if d.readout_note %}<span class="ui-badge ui-badge--warn">{{ d.readout_note }}</span>{% else %}the next free slot on this feedline, within its LO's IF window{% endif %}</td></tr>
       <tr><th class="ui-table-head" scope="row">Drive output</th>
           <td class="ui-table-cell"><select name="drive" aria-label="Drive output" data-cm-add-drive>
             {% for c in drive %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free MW-FEM output fits</option>{% endfor %}

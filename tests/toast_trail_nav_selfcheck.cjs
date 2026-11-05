@@ -171,7 +171,7 @@ const shownPanels = (w) => Array.prototype.filter.call(w.document.querySelectorA
   ok(wc.location.pathname === '/trends', '(fixture) the sidebar link navigated: ' + wc.location.pathname);
   ok(panel(wc).hidden === true, 'C2 a page change hides the panel (it sat over the next page\'s charts)');
   ok(wc.UndoTrail.steps().length === 1, 'C3 its steps are kept');
-  wc.htmx.ajax('POST', '/undo', { target: '#pending-tray', swap: 'outerHTML' });
+  wc.htmx.ajax('POST', '/undo?dp=qubits.q2.T1', { target: '#pending-tray', swap: 'outerHTML' });
   await tick(120);
   ok(!panel(wc).hidden && wc.UndoTrail.steps().length === 2, 'C4 the next step shows it again');
 

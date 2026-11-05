@@ -755,9 +755,8 @@ window.AgentPanel = (function () {
   function apTexts(w, proposed) {
     var nowV = w.now_known === true ? w.now : (w.now_known === false ? null : w.old);
     var t = fmtRow([nowV, w.old, proposed], w.display);
-    var raw = typeof proposed === "object" ? JSON.stringify(proposed) : String(proposed);
     return { cell: w.now_known === true ? t[0] : t[1], now: t[0], old: t[1], nw: t[2],
-             shown: isNum(proposed) && t[2] !== raw ? t[2] : "" };   // said only when it adds to the raw input
+             shown: proposed === undefined || proposed === "" ? "" : t[2] };   // W3-7: every row, so no row reads as missing it
   }
   function movedTitle(t) { return "the proposal was made from " + t.old + "; SM holds " + t.now + " now"; }
   function apPreview(inp) {
@@ -812,14 +811,13 @@ window.AgentPanel = (function () {
     var acts = S.observer ? '<span class="muted">observing</span>' :
       '<button type="button" class="btn-sm ag-approve" onclick="AgentPanel.approve(\'' + esc(a.id) + '\', this)">' + (isRun ? "Allow run" : "Write to chip") + "</button> " +
       '<button type="button" class="btn-sm secondary ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
-    if (!S.observer && S.rejecting[a.id] !== undefined) {
-      // an in-page sheet, never a native prompt(): a blocking dialog stops every script of the window
+    if (!S.observer) {
+      /* W3-7: Reject rejects on the FIRST press. The journal note sits beside
+         it, optional, typed before the press; a two-step sheet left a card
+         pending (and its targets blocked) whenever the second press was missed. */
       var rid = esc(a.id);
-      acts = '<div class="ui-agent-reject" aria-label="reject this card">' +
-        '<label>Reject: a note for the journal (optional) <input type="text" class="ui-agent-reject-note" value="' + esc(S.rejecting[a.id]) +
-        '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' + rid + '\')"></label> ' +
-        '<button type="button" class="btn-sm danger ag-reject-ok" onclick="AgentPanel.rejectConfirm(\'' + rid + '\')">Reject</button> ' +
-        '<button type="button" class="btn-sm outline ag-reject-back" onclick="AgentPanel.rejectCancel(\'' + rid + '\')">Back</button></div>';
+      acts += ' <label class="ui-agent-reject">note for the journal (optional) <input type="text" class="ui-agent-reject-note" value="' + esc(S.rejecting[a.id] || "") +
+        '" oninput="AgentPanel.rejectNote(\'' + rid + '\', this.value)" onkeydown="AgentPanel.rejectKey(event, \'' + rid + '\')"></label>';
     }
     var pl = a.plan_id && S.plans[a.plan_id];
     var where = a.plan_id ? ' <span class="muted ag-ap-plan">plan ' + esc(pl ? pl.title : a.plan_id) + (a.step !== undefined && a.step !== null ? " · step " + esc(a.step) : "") + "</span>" : "";
@@ -1632,30 +1630,24 @@ window.AgentPanel = (function () {
       poll(true);
     });
   }
-  function reject(id) {
-    if (S.observer || S.deciding[id]) return;
-    if (S.rejecting[id] === undefined) S.rejecting[id] = "";
-    redrawApproval(id);
-    var inp = document.querySelector('[data-card="approval:' + id + '"] .ui-agent-reject-note');
-    if (inp) inp.focus();
-  }
-  function rejectNote(id, v) { if (S.rejecting[id] !== undefined) S.rejecting[id] = String(v || ""); }
+  function reject(id) { rejectConfirm(id); }
+  function rejectNote(id, v) { S.rejecting[id] = String(v || ""); }
   function rejectCancel(id) { delete S.rejecting[id]; redrawApproval(id); }
   function redrawApproval(id) {
     var a = S.approvals[id];
     if (a) S.mounts.forEach(function (m) { renderApproval(m, a, true); });
-  }   // Back is "not now", not "reject"
+  }
   function rejectKey(ev, id) {
     if (ev.key === "Enter") { ev.preventDefault(); rejectConfirm(id); }
     else if (ev.key === "Escape") { ev.preventDefault(); rejectCancel(id); }
   }
   function rejectConfirm(id) {
-    if (S.observer || S.deciding[id] || S.rejecting[id] === undefined) return;
-    var note = S.rejecting[id];
+    if (S.observer || S.deciding[id]) return;
+    var note = S.rejecting[id] || "";
     delete S.rejecting[id];
     S.deciding[id] = "reject";
     repaintApproval(id);
-    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note || "" }).then(function (r) {
+    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note }).then(function (r) {
       delete S.deciding[id];
       repaintApproval(id);
       if (r.status !== 200) toast(errText(r, "not rejected"), "error");
