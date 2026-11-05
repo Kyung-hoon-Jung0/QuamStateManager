@@ -1239,6 +1239,24 @@ def _end_grant(why: str, *, driver_kind: str | None = None, after_run: bool = Tr
     return g
 
 
+def _sm_made(row: dict, when: float, sm_items: list[dict]) -> bool:
+    """The run folder appeared while SM's own runner ran a node of that name
+    (from 60 s before its start to 120 s after its end; an open end is a
+    still-running item)."""
+    from quam_state_manager.core import story
+    want = story._norm(row.get("experiment_name") or "")
+    if not want:
+        return False
+    for it in sm_items:
+        name = story._norm(it.get("name") or "")
+        if not name or not want.startswith(name):
+            continue
+        end = it.get("end")
+        if it["start"] - 60 <= when and (end is None or when <= end + 120):
+            return True
+    return False
+
+
 def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | None:
     """The newest run folder with no agent origin inside the window: a person
     (or a session SM cannot see) is on the OPX. A FACT, past tense.
@@ -1256,6 +1274,12 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
         mine = story.unattributed_agent_runs(current_app.instance_path, _chip_key(), since=now - 6 * 3600)
     except Exception:  # noqa: BLE001
         mine = []
+    try:
+        from quam_state_manager.core import scheduler
+        from quam_state_manager.web import routes as _r
+        sm_items = scheduler.load_sm_runs(_r._sched_inst(), since=now - 6 * 3600)
+    except Exception:  # noqa: BLE001
+        sm_items = []
     for row in rows:
         # docs/262: the run's instant vs ``now`` and the hook stamps; the returned
         # ``ts`` is that instant too (the run adapter compares it with time.time())
@@ -1271,6 +1295,10 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
         want = story._norm(row.get("experiment_name") or "")
         if any(story._norm(m.get("node") or "") and want.startswith(story._norm(m.get("node") or ""))
                and abs(float(m.get("ts") or 0) - when) < 900 for m in mine):
+            continue
+        # W3-4: a run SM's own runner made (Experiment Runner, Auto
+        # Calibrate) is SM's, not a person's
+        if _sm_made(row, when, sm_items):
             continue
         want = story._norm(row.get("experiment_name") or "")
         hooked = any((e.get("tool_name") or "").rsplit(".", 1)[-1] in _SHELL_TOOLS

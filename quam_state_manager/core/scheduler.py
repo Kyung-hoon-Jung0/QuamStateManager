@@ -1016,6 +1016,65 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+SM_RUNS_FILE = "sm_runs.jsonl"
+_SM_RUNS_KEEP = 500
+
+
+def record_sm_run(instance_path, item: dict) -> None:
+    """Append one finished runner item (node name + its start/end instants)
+    to the scope's SM-run log. Best effort: a failed write only loses an
+    attribution, never the queue."""
+    try:
+        p = Path(instance_path) / SM_RUNS_FILE
+        rec = {"item_id": item.get("id"), "name": item.get("name"),
+               "label": item.get("label") or "", "started_at": item.get("started_at"),
+               "ended_at": item.get("ended_at"), "agent": bool(item.get("state_path"))}
+        lines = []
+        if p.exists():
+            lines = p.read_text(encoding="utf-8").splitlines()[-(_SM_RUNS_KEEP - 1):]
+        lines.append(json.dumps(rec, default=str))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        logger.debug("sm run record failed", exc_info=True)
+
+
+def _iso_epoch(v) -> float | None:
+    try:
+        return datetime.fromisoformat(str(v)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def load_sm_runs(instance_path, since: float = 0.0) -> list[dict]:
+    """SM's own runner items ending at or after ``since`` (epoch), each with
+    ``start``/``end`` epochs. The CURRENT running item counts too (open end)."""
+    out: list[dict] = []
+    try:
+        text = (Path(instance_path) / SM_RUNS_FILE).read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        start, end = _iso_epoch(r.get("started_at")), _iso_epoch(r.get("ended_at"))
+        if start is None or (end if end is not None else start) < since:
+            continue
+        out.append({**r, "start": start, "end": end})
+    try:
+        for it in load_queue(instance_path).get("queue") or []:
+            if it.get("status") == "running":
+                start = _iso_epoch(it.get("started_at"))
+                if start is not None:
+                    out.append({"item_id": it.get("id"), "name": it.get("name"),
+                                "start": start, "end": None})
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def queue_path(instance_path) -> Path:
     return Path(instance_path) / _QUEUE_FILENAME
 
@@ -1896,6 +1955,11 @@ def _worker(instance_path: str) -> None:
                     it["returncode"] = result.get("returncode")
                     it["error"] = result.get("error")
                     it["log_file"] = result.get("log_file")
+                    # W3-4: the runs SM's own runner made (Experiment Runner,
+                    # Auto Calibrate) are SM's, never "a person's"; the queue
+                    # forgets an item (autofit removes each step), so the
+                    # attribution outlives it here.
+                    record_sm_run(instance_path, it)
                 # Bump a monotonic counter the UI watches as a progress signal.
                 state["run"]["completed_count"] = state["run"].get("completed_count", 0) + 1
                 # NB: leave status == 'running' here (don't flip to paused yet) so
