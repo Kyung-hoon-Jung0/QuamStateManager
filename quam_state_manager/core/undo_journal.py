@@ -242,11 +242,29 @@ def save_cursor(path: str | Path, cursor: int) -> None:
         doc = _read_doc(p)
         units = doc.get("units", [])
         units = units if isinstance(units, list) else []
+        new = max(0, min(int(cursor), len(units)))
+        prev = doc.get("cursor")
+        if not isinstance(prev, int) or isinstance(prev, bool):
+            prev = len(units)
+        prev = max(0, min(prev, len(units)))
+        # A unit the walk moves past (an undo) is stamped with the undo's
+        # time, so a protection window over undone values is measured from
+        # the undo, not from the original apply; a redo clears the stamp.
+        now = time.time()
+        for i in range(new, prev):
+            u = units[i]
+            if isinstance(u, dict):
+                meta = u.get("meta") if isinstance(u.get("meta"), dict) else {}
+                u["meta"] = {**meta, "undone_ts": now}
+        for i in range(prev, new):
+            u = units[i]
+            if isinstance(u, dict) and isinstance(u.get("meta"), dict):
+                u["meta"].pop("undone_ts", None)
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION,
                                           "units": units,
-                                          "cursor": max(0, min(int(cursor), len(units)))})
+                                          "cursor": new})
         except Exception:
             logger.warning("undo journal cursor write failed: %s", p, exc_info=True)
 

@@ -232,8 +232,14 @@ window.UndoTrail = (function () {
         var d = (evt && evt.detail) || {};
         push({ kind: d.kind || 'undo', tier: d.tier || 'memory', entries: d.entries || [], label: d.label || null });
     });
-    // a full state replace makes the trail meaningless
-    document.addEventListener('stateRestored', function () { _steps = []; if (_panel) render(); });
+    // a full state replace makes the trail meaningless; a pull that only
+    // moved values in place (W3-5: a node save over an undo, then restored)
+    // leaves every step the user took still true, so the trail keeps them
+    document.addEventListener('stateRestored', function (evt) {
+        var d = (evt && evt.detail) || {};
+        if (d.structural === false && Array.isArray(d.changes)) return;
+        _steps = []; if (_panel) render();
+    });
 
     return { push: push, goTo: goTo, steps: function () { return _steps.slice(); }, _render: render,
              _liftToasts: liftToasts };

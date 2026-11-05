@@ -23,7 +23,7 @@ def test_applied_predecessor_chain(env, outside, lost):
     assert _live(env)["T1"] == (4.4e-5 if lost else outside)
 
 
-def test_undo_limits_applied_predecessor_chain(env):
+def test_an_undo_that_reached_the_chip_extends_the_applied_chain(env):
     from quam_state_manager.web import routes
     c = env["client"]
     _apply_t1(env)
@@ -33,7 +33,9 @@ def test_undo_limits_applied_predecessor_chain(env):
     with env["app"].test_request_context():
         held = routes._applied_values_held(routes._active_ctx())
         assert held["qubits.q1.T1"] == 3.3e-5
-        assert held.old["qubits.q1.T1"] == [2e-5]
+        # the undo that reached the chip is an apply of 3.3e-5 replacing
+        # 4.4e-5 (W3-5), so live back at 4.4e-5 is a loss too
+        assert held.old["qubits.q1.T1"] == [2e-5, 4.4e-5]
     _outside(env, _st())
     assert "1 value you applied" in c.get("/state/review").get_data(as_text=True)
     c.post("/state/sync?mode=apply&keep_applied=1")

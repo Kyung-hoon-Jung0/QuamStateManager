@@ -83,6 +83,12 @@ panel().querySelector('.undo-trail-close').click();
 ok(panel().hidden === true, '× hides the panel');
 d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q3.T1', value: '1', from: '5' }] } }));
 ok(panel().hidden === false, 'the next step brings it back');
+const nKept = window.UndoTrail.steps().length;
+d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: [{ path: 'qubits.q3.T1' }] } }));
+ok(nKept > 0 && window.UndoTrail.steps().length === nKept, 'a value-only pull (patched in place) keeps the trail');
+d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: true, changes: [] } }));
+ok(window.UndoTrail.steps().length === 0, 'a structural restore clears the trail');
+d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q3.T1', value: '1', from: '5' }] } }));
 d.dispatchEvent(new window.CustomEvent('stateRestored'));
 ok(window.UndoTrail.steps().length === 0 && /nothing undone yet/.test(panel().textContent), 'a state restore clears the trail');
 // 5. bounded
