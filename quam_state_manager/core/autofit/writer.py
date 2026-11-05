@@ -414,7 +414,8 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
                 except KeyError:
                     out.append({"path": r["path"], "reason": "path vanished"})
                     continue
-                if not _values_equal(cur, r["expect"]):
+                # A type-only human edit after the plan is still an edit.
+                if type(cur) is not type(r["expect"]) or not _values_equal(cur, r["expect"]):
                     out.append({"path": r["path"], "reason":
                                 f"changed after the plan wrote it "
                                 f"(current={cur!r})"})
