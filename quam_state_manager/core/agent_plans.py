@@ -64,7 +64,22 @@ def load(instance_path, chip: str) -> list[dict]:
     # docs/253: under the writers' lock -- a read inside a Windows replace saw no file, i.e. "no plans",
     # and run_node's grant check reads this
     with _lock_for(instance_path, chip):
-        return _load(instance_path, chip)
+        rows = _load(instance_path, chip)
+        from quam_state_manager.core import approvals
+        # Approval records are authoritative, including decisions made before
+        # the plan-update hook existed; heal the view on every load.
+        decided = {r["id"]: r for r in approvals.load(instance_path, chip)
+                   if r.get("kind") == "writes" and r.get("status") in ("approved", "rejected")}
+        for rec in rows:
+            for step in rec.get("steps") or []:
+                approval = decided.get(step.get("approval"))
+                if approval and approval.get("plan_id") == rec.get("id"):
+                    step["approval"] = None
+                    if approval["status"] == "approved":
+                        step["applied"] = True
+            if rec.get("summary") is not None:
+                rec["summary"] = counts(rec)
+        return rows
 
 
 def _save(instance_path, chip: str, rows: list[dict]) -> None:

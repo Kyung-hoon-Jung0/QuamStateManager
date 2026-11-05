@@ -5080,6 +5080,11 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 window.showToast("Sync failed: " + (data.message || "unknown error"), "error");
                 return;
             }
+            if (data.status === "ok" && data.auto_restored_count) {
+                document.dispatchEvent(new CustomEvent('autoSyncRestored', {
+                    detail: { count: data.auto_restored_count }
+                }));
+            }
             // Swap whatever tray the server returned — the synced tray, or (on a
             // fresh conflict during a one-click apply) the conflict tray.
             // _bulkSelfEdit suppresses the /bulk quam:state-changed full re-GET:
@@ -31732,3 +31737,27 @@ document.addEventListener('keydown', function (e) {
         form.requestSubmit();
     }
 }, true);
+
+// Explicit choices take effect immediately; polling still tolerates discovery jitter.
+document.addEventListener('htmx:afterRequest', function (evt) {
+    var d = evt.detail, request = d && d.requestConfig;
+    if (!d || !d.successful || !request || request.verb !== 'post') return;
+    if (request.path !== '/qualibrate/dismiss-running' && request.path !== '/qualibrate/use-location') return;
+    var slot = document.getElementById('qualibrate-running-slot');
+    if (!slot) return;
+    slot._runningMisses = 0;
+    slot.replaceChildren();
+});
+
+// Keep discovery jitter from flashing the running-config notice.
+document.addEventListener('htmx:beforeSwap', function (evt) {
+    var d = evt.detail, slot = d && d.target;
+    if (!slot || slot.id !== 'qualibrate-running-slot') return;
+    if (!d.xhr || d.xhr.status !== 200) return;
+    if ((d.serverResponse || '').trim()) {
+        slot._runningMisses = 0;
+    } else {
+        slot._runningMisses = (slot._runningMisses || 0) + 1;
+        if (slot._runningMisses < 3) d.shouldSwap = false;
+    }
+});

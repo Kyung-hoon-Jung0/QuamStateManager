@@ -1,6 +1,6 @@
 """F2 (final walk): an outside writer (a node saving its in-memory copy) took
-away a value SM had just applied; the Auto-Sync pull adopted the chip in
-silence and the control said In sync. The pull now names the lost values."""
+away a value SM had just applied. Armed pulls restore it automatically;
+pull history never reports a restored value as an unresolved loss."""
 from __future__ import annotations
 
 import json
@@ -28,14 +28,16 @@ def _outside_save_and_pull(env, state):
     return env["client"].post("/auto-sync/pull", data={"dom_dirty": "0"})
 
 
-def test_the_pull_names_an_applied_value_the_outside_save_removed(env):  # noqa: F811
+def test_the_pull_restores_an_applied_value_the_outside_save_removed(env):  # noqa: F811
     _arm(env, pull=True, push=False)
     _apply_name(env)
     r = _outside_save_and_pull(env, _state(f01=5.2e9))      # T1 back to 2e-5, f_01 moved
     assert r.status_code == 200
-    lost = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["lost"]
-    assert [x["path"] for x in lost] == ["qubits.qA1.T1"], lost
-    assert lost[0]["applied"] == 3.3e-05 and lost[0]["now"] == 2.0e-05
+    triggers = json.loads(r.headers["HX-Trigger"])
+    assert triggers["autoSyncRestored"]["count"] == 1
+    assert triggers["autoSyncPulled"]["lost"] == []
+    doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+    assert doc["qubits"]["qA1"]["T1"] == 3.3e-05
 
 
 def test_an_outside_save_that_kept_the_value_names_nothing(env):  # noqa: F811
@@ -67,8 +69,9 @@ def test_a_chip_name_the_outside_save_dropped_is_named(env):  # noqa: F811
     assert (doc.get("extras") or {}).get("chip_name") == "chip-a", doc
     r = _outside_save_and_pull(env, _state(f01=5.2e9))
     assert r.status_code == 200, r.status_code
-    lost = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["lost"]
-    assert [x["path"] for x in lost] == ["extras.chip_name"], lost
+    assert json.loads(r.headers["HX-Trigger"])["autoSyncRestored"]["count"] == 1
+    doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+    assert doc["extras"]["chip_name"] == "chip-a"
 
 
 def test_every_window_learns_of_the_pull(env):  # noqa: F811
@@ -83,8 +86,8 @@ def test_every_window_learns_of_the_pull(env):  # noqa: F811
     seq = json.loads(r.headers["HX-Trigger"])["autoSyncPulled"]["pull_seq"]
     d1 = c.get("/state/drift").get_json()
     assert d1["pull_seq"] == seq and seq != d0["pull_seq"]
-    assert [x["path"] for x in d1["pull_lost"]] == ["qubits.qA1.T1"]
-    r2 = _outside_save_and_pull(env, _state(f01=5.2e9))       # nothing differs now
+    assert d1["pull_lost"] == []
+    r2 = _outside_save_and_pull(env, _state(f01=5.2e9, t1=3.3e-05))  # nothing differs
     if r2.status_code == 200:
         assert "pull_seq" not in json.loads(r2.headers["HX-Trigger"])["autoSyncPulled"]
     assert c.get("/state/drift").get_json()["pull_seq"] == seq
@@ -124,7 +127,7 @@ def test_two_pulls_between_two_polls_are_both_named(env):  # noqa: F811
     assert d["pull_lost"] == [], "the latest step alone names nothing"
     hist = d["pull_lost_hist"]
     assert [h[0] for h in hist] == [1, 2], hist
-    assert [x["path"] for x in hist[0][1]] == ["qubits.qA1.T1"], hist
+    assert hist[0][1] == [], "restored values must not be announced as lost"
 
 
 def test_the_pull_history_is_bounded(env):  # noqa: F811

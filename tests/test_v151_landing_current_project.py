@@ -82,3 +82,17 @@ def test_a_real_project_keeps_its_button(client, tmp_path):
     html = c.get("/").get_data(as_text=True)
     assert "Open QUAlibrate's current project: lab" in html
     assert _project_button(html).group(1) == "lab"
+
+
+def test_current_chip_answers_even_when_load_fails(client, tmp_path):
+    chip = _chip(tmp_path / "chips" / "chip_k")
+    c = client("ghost", chip, with_folder=False)
+    html = c.get("/").get_data(as_text=True)
+    form = re.search(r'<form[^>]*action="/load"[^>]*class="landing-current-project"[^>]*>', html)
+    assert form and 'hx-target="#table-pane"' in form.group(0)
+    r = c.post("/load", data={"folder": str(chip)},
+               headers={"HX-Request": "true", "HX-Target": "table-pane"})
+    assert r.status_code == 200 and r.headers["HX-Redirect"] == "/explorer"
+    r = c.post("/load", data={"folder": str(chip / "missing")},
+               headers={"HX-Request": "true", "HX-Target": "table-pane"})
+    assert r.status_code == 400 and b"load-failed-panel" in r.data

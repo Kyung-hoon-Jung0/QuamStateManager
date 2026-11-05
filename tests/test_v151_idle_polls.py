@@ -33,6 +33,7 @@ def test_idle_and_hidden_tabs_stop_polling(tmp_path, monkeypatch):
     c = app.test_client()
     monkeypatch.delenv("SM_EXPERIMENTAL", raising=False)
     plain = c.get("/help").get_data(as_text=True)
+    landing = c.get("/?landing=1", headers=HX).get_data(as_text=True)
     datasets = c.get("/datasets", headers=HX).get_data(as_text=True)
     monkeypatch.setenv("SM_EXPERIMENTAL", "1")
     runner = c.get("/help").get_data(as_text=True)
@@ -40,7 +41,7 @@ def test_idle_and_hidden_tabs_stop_polling(tmp_path, monkeypatch):
     assert 'id="qualibrate-running-data-slot"' in datasets
     fx = tmp_path / "fixture.json"
     fx.write_text(json.dumps({"page_plain": plain, "page_runner": runner,
-                              "datasets_html": datasets}), encoding="utf-8")
+                              "datasets_html": datasets, "landing_html": landing}), encoding="utf-8")
     r = subprocess.run([node, str(ROOT / "tests" / "v151_idle_polls_selfcheck.cjs"), str(fx)],
                        capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(ROOT))
     if r.returncode == 2:

@@ -1,0 +1,6 @@
+{# Landing only, inside the pane so navigation removes the notice and its poller.
+   Reserve space even when discovery misses; long notices scroll within it. #}
+<div id="qualibrate-running-slot" class="ui-running-overlay" hx-get="/qualibrate/running-banner"
+     hx-trigger="load, every 3s, smVisible" data-poll-visible hx-swap="innerHTML">
+    {% include '_qualibrate_running_banner.html' %}
+</div>

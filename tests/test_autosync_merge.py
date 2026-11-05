@@ -295,7 +295,7 @@ class TestTheClientPressesTheDoorItIsGiven:
         root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
         py = (root / "routes.py").read_text(encoding="utf-8")
         js = (root / "static" / "auto-apply.js").read_text(encoding="utf-8")
-        for name in ("autoSyncMerge", "autoSyncPulled"):
+        for name in ("autoSyncMerge", "autoSyncPulled", "autoSyncRestored"):
             assert '"%s"' % name in py, (
                 "the server no longer emits %s" % name)
             assert "'%s'" % name in js, (
