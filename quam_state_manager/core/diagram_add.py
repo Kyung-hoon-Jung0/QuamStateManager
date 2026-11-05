@@ -454,6 +454,45 @@ def _num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+# A new resonator on a shared feedline must not sit on an existing one: two
+# readout tones that close cannot be told apart. The step is the feedline's
+# own median spacing; the floor and the default for a single member are
+# [derived] working numbers, not a hardware rule.
+READOUT_MIN_SEP_HZ = 20e6
+READOUT_DEFAULT_STEP_HZ = 50e6
+
+
+def propose_readout(existing, lo, template_rf):
+    """``(rf, note)``: a readout frequency for a new resonator on a feedline
+    whose resonators sit at ``existing`` (Hz), inside the feedline LO's IF
+    window when ``lo`` is known. The next free slot above the highest
+    resonator, else below the lowest, one median spacing away. When no slot
+    fits, the template's value stays and ``note`` says so plainly."""
+    fs = sorted(float(v) for v in existing if v is not None)
+    if not fs:
+        return template_rf, None
+    gaps = [b - a for a, b in zip(fs, fs[1:]) if b - a > 0]
+    step = sorted(gaps)[len(gaps) // 2] if gaps else READOUT_DEFAULT_STEP_HZ
+    step = max(step, READOUT_MIN_SEP_HZ)
+    win = mw_fem.MW_MAX_ABS_IF_HZ
+
+    def fits(f):
+        if lo is not None and abs(f - lo) > win:
+            return False
+        return all(abs(f - g) >= READOUT_MIN_SEP_HZ for g in fs)
+
+    for cand in (fs[-1] + step, fs[0] - step):
+        if fits(cand):
+            return round(cand), None
+    # a gap wide enough between two neighbours
+    for a, b in zip(fs, fs[1:]):
+        mid = (a + b) / 2
+        if b - a >= 2 * READOUT_MIN_SEP_HZ and fits(mid):
+            return round(mid), None
+    return template_rf, ("No free readout slot fits this feedline's IF window; the value "
+                         "starts at the template's resonator, so change it before staging.")
+
+
 def qubit_defaults(merged: dict, feedline: str | None = None) -> dict:
     """What the add panel opens with: feedline, name, template, grid cell and
     the template's frequencies as a starting point."""
@@ -478,12 +517,22 @@ def qubit_defaults(merged: dict, feedline: str | None = None) -> dict:
                    .get("upconverter_frequency")))
         if lo is not None and abs(drive - lo) <= mw_fem.MW_MAX_ABS_IF_HZ:
             if_hz = drive - lo
+    read_note = None
+    if read is not None:
+        others = [v for v in (_num(_resolve(merged, ((qs.get(m) or {}).get("resonator") or {})
+                                             .get("RF_frequency"),
+                                             ("qubits", m, "resonator", "RF_frequency")))
+                               for m in fl["members"]) if v is not None]
+        rp = _wire_port(merged, tpl, "rr")
+        flo = _num((_port(merged.get("ports") or {}, rp[0], rp[1], rp[2], rp[3]) or {})
+                   .get("upconverter_frequency")) if rp else None
+        read, read_note = propose_readout(others, flo, read)
     return {
         "feedline": fl["key"], "feedlines": [f["key"] for f in fls],
         "members": fl["members"], "template": tpl,
         "name": next_qubit_name(list(qs), fl["members"]),
         "grid": propose_grid(merged, fl["members"]),
-        "drive_rf": drive, "readout_rf": read, "if_hz": if_hz,
+        "drive_rf": drive, "readout_rf": read, "readout_note": read_note, "if_hz": if_hz,
         "has_flux": isinstance(t.get("z"), dict) and _wire_port(merged, tpl, "z") is not None,
         "fem": (tp[1], tp[2]) if tp else None,
         "band": ((_port(merged.get("ports") or {}, tp[0], tp[1], tp[2], tp[3]) or {}).get("band")
@@ -587,6 +636,14 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
         fp = _wire_port(merged, tpl, "rr")
         flo = _num((_port(inv["ports"], fp[0], fp[1], fp[2], fp[3]) or {})
                    .get("upconverter_frequency")) if fp else None
+        # W3-3: a readout tone on top of another resonator of this feedline
+        for m in d["members"]:
+            f = _num(_resolve(merged, ((qs.get(m) or {}).get("resonator") or {}).get("RF_frequency"),
+                              ("qubits", m, "resonator", "RF_frequency")))
+            if f is not None and abs(readout_rf - f) < READOUT_MIN_SEP_HZ:
+                notes.append(f"The readout frequency is {abs(readout_rf - f) / 1e6:.1f} MHz from "
+                             f"{m}'s resonator on the same feedline; the two tones may not be "
+                             "told apart.")
         if flo is not None and abs(readout_rf - flo) > mw_fem.MW_MAX_ABS_IF_HZ:
             return {"error": f"The readout frequency is {abs(readout_rf - flo) / 1e6:.0f} MHz "
                              f"from the feedline LO ({flo / 1e9:.4g} GHz); the IF window "
