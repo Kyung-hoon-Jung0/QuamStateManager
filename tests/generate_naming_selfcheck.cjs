@@ -221,8 +221,8 @@ function buildWizard(win, nQubits) {
   const qs = G.state.spec.qubits;
   ok(qs[0] === 'q1' && qs[1] === 'qB5' && qs[2] === 'q3',
     'F7: existing names kept on grow (got ' + JSON.stringify(qs) + ')');
-  ok(qs.length === 5 && qs[3] === 'q2' && qs[4] === 'q4',
-    'F7: grow appends the free q<k> fallbacks (got ' + JSON.stringify(qs) + ')');
+  ok(qs.length === 5 && qs[3] === 'q6' && qs[4] === 'q7',
+    'F7: grow appends after the maximum suffix with the common prefix (got ' + JSON.stringify(qs) + ')');
   setInput(win, win.document.getElementById('gen-qubit-count'), '2');
   ok(JSON.stringify(G.state.spec.qubits) === '["q1","qB5"]',
     'F7: shrink truncates from the end');

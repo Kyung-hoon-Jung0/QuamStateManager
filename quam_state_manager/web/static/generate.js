@@ -1860,11 +1860,22 @@
       qubits = state.spec.qubits.slice(0, n);
       var used = {};
       qubits.forEach(function (q) { used[q] = true; });
-      var k = 1;
+      var prefix = null, maxSuffix = 0;
+      qubits.forEach(function (q) {
+        var match = /^(\D+)(\d+)$/.exec(q);
+        if (!match) return;
+        maxSuffix = Math.max(maxSuffix, Number(match[2]));
+        if (prefix === null) prefix = match[1];
+        else {
+          while (prefix && match[1].indexOf(prefix) !== 0) prefix = prefix.slice(0, -1);
+        }
+      });
+      prefix = prefix || "q";
+      var k = maxSuffix + 1;
       while (qubits.length < n) {
-        while (used["q" + k]) k++;
-        qubits.push("q" + k);
-        used["q" + k] = true;
+        while (used[prefix + k]) k++;
+        qubits.push(prefix + k);
+        used[prefix + k] = true;
       }
     }
     // Re-generate: a row the count drops keeps its source record aside, and
@@ -3154,6 +3165,14 @@
         // field is not "delete every qubit"; an explicit 0 still clears).
         var n = parseInt(countInput.value, 10);
         if (isNaN(n)) { countInput.value = state.spec.qubits.length; return; }
+        if (n !== state.spec.qubits.length && (state.namesTouched ||
+            state.mode === "regenerate" || (state.naming || {}).preset === "grid")) {
+          var before = stepSnapshot(4);
+          countInput.__wizRestore = function () {
+            stepRestore(4, before);
+            repaintAfterStepReset(4);
+          };
+        }
         setQubitCount(n);
         countInput.value = state.spec.qubits.length;
       });
