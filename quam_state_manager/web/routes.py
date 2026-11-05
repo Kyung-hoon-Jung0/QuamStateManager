@@ -3949,7 +3949,9 @@ def _journal_prepare(store, ctx, meta: dict | None = None) -> list[dict]:
             return []
         m = dict(meta or {})
         m.setdefault("owner_pid", os.getpid())
-        return undo_journal.units_from_log(list(store.change_log), meta=m)
+        return undo_journal.units_from_log([
+            e for e in store.change_log
+            if not str(e.group_id or "").startswith("restore-applied:")], meta=m)
     except Exception:
         logger.warning("undo journal capture failed", exc_info=True)
         return []
@@ -5393,6 +5395,8 @@ def _replay_updates(modifier, updates: dict) -> dict:
             # (the suffix also keeps it distinct from any plain `grpN` already in
             # the log).
             _gids[old_gid] = f"{modifier.new_group_id()}-r{len(_gids)}"
+            if old_gid == "keep-applied":
+                _gids[old_gid] = "restore-applied:" + _gids[old_gid]
         return _gids[old_gid]
 
     with store._lock:
@@ -34185,6 +34189,7 @@ def state_sync(*, _auto_mode=None, _held_override=None):
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
+        _restore_redo = bool(_restored_applied and _redo_stack(ctx))
         # R3 M3: the pull consumed the stash -- its edits are rows now. The
         # press below must find it consumed: a refused write puts back the
         # stash the press FOUND, and the pre-merge one beside its own rows
@@ -34221,6 +34226,8 @@ def state_sync(*, _auto_mode=None, _held_override=None):
             body = resp.get_json()
             body["auto_restored_count"] = len(_restored_applied)
             body["auto_restored_staged"] = False
+            if _restore_redo:
+                _redo_mark(ctx, ctx["store"])
             resp.set_data(json.dumps(body))
         return resp
 
