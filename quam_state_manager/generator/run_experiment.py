@@ -483,7 +483,9 @@ def _ptr_escape(seg) -> str:
     return str(seg).replace("~", "~0").replace("/", "~1")
 
 
-def _differs(a, b) -> bool:
+def _differs(a, b, *, direct: bool = False) -> bool:
+    if direct and type(a) in (int, float) and type(b) in (int, float) and a == b:
+        return False
     if type(a) is not type(b):
         return True
     if isinstance(a, float) and a != a and b != b:   # NaN stays NaN: not a write
@@ -498,7 +500,7 @@ def _differs(a, b) -> bool:
             return True
 
 
-def _leaf_delta(pre, post, path: str, out: dict) -> None:
+def _leaf_delta(pre, post, path: str, out: dict, *, direct: bool = False) -> None:
     """``out[pointer] = new`` for every leaf that differs between two machine
     dicts; ``out[pointer] = _DELETED`` for a key *post* no longer has (a pulse
     replaced by another class drops the old class's fields -- leaving them would
@@ -510,16 +512,16 @@ def _leaf_delta(pre, post, path: str, out: dict) -> None:
             if k not in pre:
                 out[sub] = v
             else:
-                _leaf_delta(pre[k], v, sub, out)
+                _leaf_delta(pre[k], v, sub, out, direct=direct)
         for k in pre:
             if k not in post:
                 out[f"{path}/{_ptr_escape(k)}"] = _DELETED
         return
     if isinstance(pre, list) and isinstance(post, list) and len(pre) == len(post):
         for i, (x, y) in enumerate(zip(pre, post)):
-            _leaf_delta(x, y, f"{path}/{i}", out)
+            _leaf_delta(x, y, f"{path}/{i}", out, direct=direct)
         return
-    if _differs(pre, post):
+    if _differs(pre, post, direct=direct):
         out[path] = post
 
 
@@ -614,7 +616,7 @@ class _UpdateRecorder:
         if post is None:
             return None
         out: dict = {}
-        _leaf_delta(self.base, post, "", out)
+        _leaf_delta(self.base, post, "", out, direct=True)
         return out
 
 
@@ -757,15 +759,22 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
             if produced is not None:
                 since_load = {}
                 baseline = _merged_files(original_files)
+                # Compare both sides through the same class and serializer so
+                # nested defaults are present on both sides. Load a dict only:
+                # this must never consult the environment's default state path.
+                load = getattr(type(machine), "load", None)
+                if callable(load):
+                    import copy
+                    baseline = _machine_dict(load(copy.deepcopy(baseline)))
                 # Class defaults absent from the loaded JSON are not node writes.
                 produced = {k: v for k, v in produced.items() if k in baseline}
-                _leaf_delta(baseline, produced, "", since_load)
+                _leaf_delta(baseline, produced, "", since_load, direct=True)
         declared = dict(recorder.writes)
         declared.update(_recorded_state_updates(node))
         # what the node's own save(s) left in the scratch, for the disclosure below
         footprint: dict = {}
         _leaf_delta(_merged_files(original_files),
-                    _merged_files(_snapshot_files(state_path)), "", footprint)
+                    _merged_files(_snapshot_files(state_path)), "", footprint, direct=True)
         if recorder.blocks or declared:
             writes, source = dict(declared), "record_state_updates"
             writes.update(since_load or {})
@@ -793,7 +802,7 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
         # serializer defaults are not writes, but a changed saved leaf is.
         if recorder.base is not None:
             saved_delta = {}
-            _leaf_delta(recorder.base, _merged_files(_snapshot_files(state_path)), "", saved_delta)
+            _leaf_delta(recorder.base, _merged_files(_snapshot_files(state_path)), "", saved_delta, direct=True)
             for ptr, value in footprint.items():
                 root = ptr.split("/")[1].replace("~1", "/").replace("~0", "~")
                 if ptr in saved_delta and root in _merged_files(original_files):

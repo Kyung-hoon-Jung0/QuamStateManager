@@ -65,9 +65,11 @@ def _new(*, kind, chip, node, targets, writes, reason, why_held, actor, plan_id,
 
 def add(instance_path, chip: str, *, kind: str, node: str | None, targets: list | None, writes: list[dict] | None,
         reason: str | None, why_held: str, actor: str, plan_id: str | None = None, run_key: str | None = None,
-        run_id: int | None = None, params: dict | None = None, step: int | None = None) -> dict:
+        run_id: int | None = None, params: dict | None = None, step: int | None = None,
+        writes_omitted: int = 0) -> dict:
     rec = _new(kind=kind, chip=chip, node=node, targets=targets, writes=writes, reason=reason, why_held=why_held,
                actor=actor, plan_id=plan_id, run_key=run_key, run_id=run_id, params=params, step=step)
+    rec["writes_omitted"] = writes_omitted
     # The lock spans read -> change -> write: an atomic write stops a CORRUPT
     # file, not two cycles erasing one another. This store gates a write to
     # the chip, so a lost decision is not a cosmetic loss.

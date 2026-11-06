@@ -71,6 +71,66 @@ def _tof(path):
 
 
 class TestPersistNodeState:
+    @pytest.mark.parametrize("changed", [False, True])
+    def test_unobserved_load_ignores_nested_serializer_defaults(self, rex, tmp_path, changed):
+        import copy
+
+        class Machine:
+            def __init__(self, data):
+                self.data = copy.deepcopy(data)
+
+            @classmethod
+            def load(cls, data):
+                return cls(data)
+
+            def to_dict(self, include_defaults=True):
+                data = copy.deepcopy(self.data)
+                data["qubits"]["q1"]["dc_bias"].setdefault("offset", 0.0)
+                return data
+
+        p = tmp_path / "state.json"
+        baseline = {"qubits": {"q1": {"dc_bias": {"port": 1}, "frequency": 5}}}
+        p.write_text(json.dumps(baseline), encoding="utf-8")
+        original = rex._snapshot_files(str(tmp_path))
+        machine = Machine(baseline)
+        if changed:
+            machine.data["qubits"]["q1"]["frequency"] = 6
+            machine.data["qubits"]["q1"]["dc_bias"]["offset"] = 0.2
+        # A save materializes defaults on an object the node never touched.
+        p.write_text(json.dumps(machine.to_dict()), encoding="utf-8")
+        report = rex._persist_isolated({"node": _Node(machine, {})}, str(tmp_path),
+                                       None, original, rex._UpdateRecorder())
+        assert set(report["direct"]) == ({"/qubits/q1/frequency", "/qubits/q1/dc_bias/offset"} if changed else set())
+        actual = json.loads(p.read_text())
+        assert actual == (machine.to_dict() if changed else baseline)
+
+    @pytest.mark.parametrize("observed", [False, True])
+    def test_direct_numeric_representation_is_not_a_write(self, rex, tmp_path, observed):
+        baseline = {"same": 5, "boolean": True, "changed": 4}
+        produced = {"same": 5.0, "boolean": 1, "changed": 6.0}
+        p = tmp_path / "state.json"
+        p.write_text(json.dumps(baseline), encoding="utf-8")
+        original = rex._snapshot_files(str(tmp_path))
+        machine = type("Machine", (), {"to_dict": lambda self, **kw: produced})()
+        recorder = rex._UpdateRecorder()
+        if observed:
+            recorder.base, recorder.base_id = baseline, id(machine)
+        p.write_text(json.dumps(produced), encoding="utf-8")
+        report = rex._persist_isolated({"node": _Node(machine, {})}, str(tmp_path), None, original, recorder)
+        assert set(report["direct"]) == {"/boolean", "/changed"}
+        actual = json.loads(p.read_text())
+        assert type(actual["same"]) is int
+        assert type(actual["changed"]) is float and actual["changed"] == 6.0
+        assert type(actual["boolean"]) is int
+
+    def test_declared_type_changes_remain_strict(self, rex):
+        writes = {}
+        rex._leaf_delta({"x": 5}, {"x": 5.0}, "", writes)
+        assert type(writes["/x"]) is float
+        direct = {}
+        rex._leaf_delta({"values": [5.0, False]}, {"values": [5, 0]}, "", direct, direct=True)
+        assert direct == {"/values/1": 0}
+
     def test_machine_already_holds_the_update(self, rex, tmp_path):
         """interactive_only=True default: the run applied the value to the machine
         and recorded nothing -> we just save it to the scratch."""
