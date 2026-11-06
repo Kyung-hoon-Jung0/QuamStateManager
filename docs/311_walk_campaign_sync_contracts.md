@@ -170,6 +170,52 @@ stationary. The amplitude difference is explicitly stored minus required.
 Pins: `tests/test_walk6.py`, `tests/test_cz_flux_math_equivalence.py`,
 `tests/test_cz_plan_ux.py`, `tests/test_cz_solve.py`.
 
+## W7-1: approvals preserve string values
+
+Approval writes keep JSON-text strings byte for byte, including whitespace;
+they do not parse a string into a list or dict. Shared field coercion refuses
+list/dict input for a `str` field with a reason, rather than stringifying it.
+
+Pins: `tests/test_field_batch.py`, `tests/test_modifier.py`,
+`tests/test_agent_runs.py`.
+
+## W7-2: Agent proposals include every node write
+
+An Agent run's write set is the union of `record_state_updates` and direct node
+writes. Label direct writes on the approval card; carry provenance and unstaged
+reasons from the isolated run. Compare like against like: replay uses its load
+baseline; normal loads compare defaults-expanded baselines with serialized
+state. Serializer defaults alone are not writes. Equal numeric int/float
+representations are no direct write; booleans remain distinct and declared
+updates retain strict types.
+
+Bound captured write lists at 4000; the bounded approval card says
+"N more not shown" for omitted entries. Refuse a truncated approval as a whole;
+never approve a visible subset as the complete run. Retain the single approval
+door, atomic group staging, `used_by_run` and existing gates.
+
+Pins: `tests/test_node_persist.py`, `tests/test_run_node_isolation.py`,
+`tests/test_agent_runs.py`, `tests/agent_panel_selfcheck.cjs`.
+
+## Wizard coupler model feeds the CZ plan
+
+Wizard and CZ plan use one field list (`COUPLER_MODEL_FIELDS`) for the stored
+`extras.sm_coupler_model`. Convert GHz/MHz display values exactly to stored Hz
+and back without display rounding changing the model. Carry the model through
+spec, generated scripts and build; preserve `created_at` on an unedited rebuild.
+The CZ plan computes ZZ from this model rather than inventing a coupler value
+when the model is absent or invalid.
+
+Pins: `tests/test_generate_coupler_model.py`, `tests/test_cz_coupler.py`,
+`tests/generate_coupler_model_selfcheck.cjs`.
+
+## Hardware walks use the Agent flow
+
+Drive every hardware-walk node through the Agent flow, including review of its
+write set and approval; a standalone node run does not cover this contract.
+Keep hardware evidence outside the repository. Mutation runners use
+`SM_EVIDENCE_DIR`, defaulting to system temp, and refuse repository destinations.
+
 ## Measurement sources require proof
 
 A run is shown as a value's source only when proven by that measurement's own

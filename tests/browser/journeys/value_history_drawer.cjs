@@ -19,7 +19,7 @@ const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 
 const URL0 = process.env.SM_URL || 'http://127.0.0.1:5157/';
-const SHOTS = process.env.SHOTS || path.join(process.cwd(), 'shots');
+const SHOTS = process.env.SHOTS || require('../evidence-output.cjs').directory('value_history_drawer');
 const T1 = process.env.VH_T1 || 'qubits.qA1.T1';
 const ALIAS = process.env.VH_ALIAS || 'qubits.qA1.resonator.operations.readout.amplitude';
 const T1_COL = process.env.VH_T1_COL || 'T1';

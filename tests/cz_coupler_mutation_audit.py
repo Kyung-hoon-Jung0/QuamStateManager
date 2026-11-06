@@ -1,5 +1,6 @@
 """Run each isolated fault, restore source bytes, require RED then GREEN."""
 import os
+from evidence_output import evidence_path
 from pathlib import Path
 import subprocess
 import sys
@@ -32,6 +33,7 @@ def run(test):
 
 
 def main():
+    output = evidence_path('cz_coupler_mutation_results.txt')
     lines = []
     for name, relative, old, new, test in CASES:
         path = ROOT / relative
@@ -47,7 +49,7 @@ def main():
         line = f'{name}: RED={red.returncode != 0}, GREEN={green.returncode == 0}; source restored'
         lines.append(line)
         print(line, flush=True)
-        (ROOT/'tests/cz_coupler_mutation_results.txt').write_text('\n'.join(lines)+'\n', encoding='utf-8')
+        output.write_text('\n'.join(lines)+'\n', encoding='utf-8')
         if red.returncode == 0 or green.returncode != 0:
             print(red.stdout + red.stderr + green.stdout + green.stderr)
             raise SystemExit(1)

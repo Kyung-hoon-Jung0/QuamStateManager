@@ -1,4 +1,5 @@
 """Reversible faults against the A4-UX pins and the stored-length phase; restores every file."""
+from evidence_output import evidence_path
 from pathlib import Path
 import subprocess
 import sys
@@ -29,6 +30,7 @@ def run(*tests):
 
 
 def main():
+    output = evidence_path('cz_plan_a4_ux_mutation_results.txt')
     rows = ['GREEN baseline: ' + run(*ALL).stdout.strip().splitlines()[-1]]
     for name, file, old, new, test in FAULTS:
         path = ROOT / file
@@ -44,7 +46,7 @@ def main():
         finally:
             path.write_bytes(original)
     rows.append('GREEN restored: ' + run(*ALL).stdout.strip().splitlines()[-1])
-    (ROOT / 'tests/cz_plan_a4_ux_mutation_results.txt').write_text('\n'.join(rows) + '\n', encoding='utf8')
+    output.write_text('\n'.join(rows) + '\n', encoding='utf8')
     print('\n'.join(rows))
 
 

@@ -24,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const BASE = process.argv[2] || 'http://127.0.0.1:5117';
-const OUT = process.argv[3] || '.';
+const OUT = process.argv[3] || require('../evidence-output.cjs').directory('refused_apply');
 const LIVE = process.env.RA_LIVE;
 if (!LIVE) { console.error('RA_LIVE=<live chip folder> required'); process.exit(2); }
 fs.mkdirSync(OUT, { recursive: true });

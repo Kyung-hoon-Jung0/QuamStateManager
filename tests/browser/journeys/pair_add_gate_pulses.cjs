@@ -13,7 +13,7 @@ const { open, sleep } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5365);
 const BASE = `http://127.0.0.1:${PORT}`;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pair_add_gate_pulses');
 const PAIR = process.env.PAIR || 'q1-2';
 fs.mkdirSync(DIR, { recursive: true });
 const J = JSON.stringify;

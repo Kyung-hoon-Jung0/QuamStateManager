@@ -19,7 +19,7 @@
 'use strict';
 const { open, sleep } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5326;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulses_classfind');
 const MODE = process.env.MODE || 'b';
 const TAG = process.env.TAG || MODE;
 const W = +(process.env.W || 1600);

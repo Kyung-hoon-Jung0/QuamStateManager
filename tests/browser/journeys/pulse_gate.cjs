@@ -26,7 +26,7 @@ const { open, sleep } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5363);
 const BASE = `http://127.0.0.1:${PORT}`;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulse_gate');
 const SLOW = +(process.env.SLOW || 1);
 const Q = process.env.Q || 'q1', CH = process.env.CH || 'xy';
 const GATE = process.env.GATE || '';

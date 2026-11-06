@@ -1,9 +1,0 @@
-GREEN baseline: 23 passed in 8.65s
-RED caught: A4-UX-1 mismatch not in warn colour
-RED caught: A4-UX-1 phase dropped from the line
-RED caught: A4-UX-2 card duration from the macro
-RED caught: A4-UX-3 flux rows on fixed qubits
-RED caught: A4-UX-4 no idle ZZ line
-RED caught: phase without the factor 2
-RED caught: idle ZZ taken at the pulse
-GREEN restored: 23 passed in 8.70s

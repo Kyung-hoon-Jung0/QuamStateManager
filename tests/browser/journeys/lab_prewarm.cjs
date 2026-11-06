@@ -36,7 +36,7 @@ const { open, sleep } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5351);
 const BASE = `http://127.0.0.1:${PORT}`;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('lab_prewarm');
 const PHASE = process.env.PHASE || 'first';
 const { labValue } = require('../../lab_map.cjs');
 const PROJ = process.env.PROJ || labValue('lab-F', 'project');

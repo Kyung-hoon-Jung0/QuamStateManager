@@ -1,6 +1,7 @@
 """Run reversible faults against coupler-only CZ contracts; restore every file."""
 from pathlib import Path
 import os
+from evidence_output import evidence_path
 import subprocess
 import sys
 
@@ -46,6 +47,7 @@ def check(test=None):
 
 
 def main():
+    output = evidence_path('cz_a4_mutation_results.txt')
     rows = []
     green = check()
     if green.returncode:
@@ -70,7 +72,7 @@ def main():
     green = check()
     assert green.returncode == 0, green.stdout + green.stderr
     rows.append('GREEN restored: ' + green.stdout.strip().splitlines()[-1])
-    (ROOT / 'tests/cz_a4_mutation_results.txt').write_text('\n'.join(rows) + '\n', encoding='utf8')
+    output.write_text('\n'.join(rows) + '\n', encoding='utf8')
     print(rows[-1])
     return 0
 

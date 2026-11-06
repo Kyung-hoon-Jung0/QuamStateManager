@@ -6,7 +6,7 @@
 'use strict';
 const { open, sleep } = require('./cdp.cjs');
 const SM = process.argv[2] || '5113';
-const OUT = process.argv[3] || '.';
+const OUT = process.argv[3] || require('../evidence-output.cjs').directory('agent_back');
 
 const PROBE = `(() => {
   const home = document.getElementById('agent-home');

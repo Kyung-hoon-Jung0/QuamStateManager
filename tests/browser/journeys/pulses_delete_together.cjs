@@ -24,7 +24,7 @@ const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5309);
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulses_delete_together');
 const SLOW = +(process.env.SLOW || 1);
 const E = (k, d) => process.env[k] || d;
 const PAIR = E('PAIR', 'q1-2'), CTL = E('CTL', 'q1'), TGT = E('TGT', 'q2'), GATE = E('GATE', 'cz_SNZ');

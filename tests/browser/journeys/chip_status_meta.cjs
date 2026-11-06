@@ -9,7 +9,7 @@
 'use strict';
 const { open } = require('./cdp.cjs');
 const PORT = process.argv[2] || '5099';
-const SHOTS = process.argv[3] || '.';
+const SHOTS = process.argv[3] || require('../evidence-output.cjs').directory('chip_status_meta');
 const BASE = `http://127.0.0.1:${PORT}`;
 // a big chip (big30x) needs longer before its page settles and its first
 // metadata arrives (docs: the live-diff read stalls the whole server ~9 s)

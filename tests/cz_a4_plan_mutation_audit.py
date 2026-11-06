@@ -1,4 +1,5 @@
 """Reversible faults against the A4 plan pins (tests/test_cz_a4_plan.py); restores every file."""
+from evidence_output import evidence_path
 from pathlib import Path
 import subprocess
 import sys
@@ -36,6 +37,7 @@ def run(test):
 
 
 def main():
+    output = evidence_path('cz_a4_plan_mutation_results.txt')
     rows = ['GREEN baseline: ' + run('tests/test_cz_a4_plan.py').stdout.strip().splitlines()[-1]]
     for name, file, old, new, test in FAULTS:
         path = ROOT / file
@@ -51,7 +53,7 @@ def main():
         finally:
             path.write_bytes(original)
     rows.append('GREEN restored: ' + run('tests/test_cz_a4_plan.py').stdout.strip().splitlines()[-1])
-    (ROOT / 'tests/cz_a4_plan_mutation_results.txt').write_text('\n'.join(rows) + '\n', encoding='utf8')
+    output.write_text('\n'.join(rows) + '\n', encoding='utf8')
     print('\n'.join(rows))
 
 

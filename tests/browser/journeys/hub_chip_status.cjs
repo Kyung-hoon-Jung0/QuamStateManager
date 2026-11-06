@@ -14,7 +14,7 @@ const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 
 const URL0 = (process.env.SM_URL || 'http://127.0.0.1:5163').replace(/\/$/, '');
-const SHOTS = process.env.SHOTS || path.join(process.cwd(), 'shots');
+const SHOTS = process.env.SHOTS || require('../evidence-output.cjs').directory('hub_chip_status');
 fs.mkdirSync(SHOTS, { recursive: true });
 
 let fails = 0;

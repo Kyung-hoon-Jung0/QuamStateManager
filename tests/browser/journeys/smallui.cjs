@@ -17,7 +17,7 @@
 const { open } = require('./cdp.cjs');
 const path = require('path');
 const PORT = process.argv[2] || '5108';
-const SHOTS = process.argv[3] || '.';
+const SHOTS = process.argv[3] || require('../evidence-output.cjs').directory('smallui');
 const BASE = `http://127.0.0.1:${PORT}`;
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + JSON.stringify(detail).slice(0, 500) : '')); }

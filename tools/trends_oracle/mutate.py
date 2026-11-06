@@ -1,13 +1,19 @@
 """Mutation check of the hard-case pins: apply one mutation to product code, run the pin, restore
 byte-for-byte (line endings kept).
 
-SM_TEST_ENV=<conda env with the QM stack> python mutate.py <worktree> [name ...] -> mutations.json
+SM_TEST_ENV=<conda env with the QM stack> python mutate.py <worktree> [name ...] (SM_EVIDENCE_DIR or system temp output)
 """
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+import tempfile
 
+OUTPUT = (Path(os.environ.get("SM_EVIDENCE_DIR") or tempfile.gettempdir()) / "trends_oracle_mutations.json").resolve()
+if OUTPUT.is_relative_to(Path(__file__).resolve().parents[2]):
+    raise ValueError("Evidence output must be outside the repository")
+OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 WT = sys.argv[1]
 ONLY = set(sys.argv[2:])
 MUT = [
@@ -75,4 +81,4 @@ for name, rel, old, new, test in MUT:
             with open(p, "wb") as fh:
                 fh.write(raw)
     print(out[-1], flush=True)
-json.dump(out, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mutations.json"), "w"), indent=1)
+OUTPUT.write_text(json.dumps(out, indent=1) + "\n", encoding="utf-8")

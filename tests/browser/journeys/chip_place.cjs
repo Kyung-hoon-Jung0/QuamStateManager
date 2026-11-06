@@ -37,7 +37,7 @@ const path = require('path');
 
 const CMD = process.argv[2];
 const SERVERS = (process.argv[3] || 'new=5108').split(',').map((s) => { const a = s.split('='); return { label: a[0], base: 'http://127.0.0.1:' + a[1] }; });
-const SHOTS = process.argv[4] || '.';
+const SHOTS = process.argv[4] || require('../evidence-output.cjs').directory('chip_place');
 const REPS = +(process.env.REPS || 1);
 const OPENW = +(process.env.OPENW || 7000);
 const SETTLE = +(process.env.SETTLE || 20000);

@@ -12,6 +12,11 @@
 - Measurement source runs require their own recorded ID (including nested `.run`) or an exact patch match. Value matches and sibling IDs are labeled "inferred (matching fit value), not proven" in the report, popup and Trends.
 - Pair detuning remains V with a shared implausible-value Hz fallback for peek and the report. Phase shifts display in turns; the compare dimension remains `phase`.
 - XEB fit results include `estimated_2q_params` and purity.
+- W7-1: approvals preserve JSON-text strings byte for byte; shared coercion refuses list/dict input for a string field with a reason.
+- W7-2: Agent proposals unite recorded updates with labelled direct node writes, compare defaults consistently, and ignore equal int/float direct-write representations. Bounded cards say "N more not shown"; truncated approvals are refused as a whole.
+- Wizard and CZ plan share one coupler field list with exact display/storage unit conversion. Unedited rebuilds keep `created_at`; the CZ plan computes ZZ from the stored model.
+- Hardware walks drive every node through the Agent flow, including write review and approval.
+- Mutation evidence and browser evidence defaults move outside the repository; generated mutation result files are removed from tracking.
 - Current rules and pinning tests: [Sync, configuration and measurement contracts](docs/311_walk_campaign_sync_contracts.md).
 
 ### Auto-Sync

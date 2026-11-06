@@ -1,5 +1,6 @@
 """Run and revert one production mutation for each CZ7 UX pin."""
 import os
+from evidence_output import evidence_path
 from pathlib import Path
 import subprocess
 import sys
@@ -23,6 +24,7 @@ MUTATIONS = [
 
 
 def main():
+    output = evidence_path('cz_plan_ux_mutation_results.txt')
     results = []
     env = dict(os.environ, PYTHONUTF8='1')
     for item, file, old, new in MUTATIONS:
@@ -45,7 +47,6 @@ def main():
         result = f'UX-{item}: RED (mutation detected), reverted, GREEN; {file}: {old} -> {new}'
         print(result, flush=True)
         results.append(result)
-    output = ROOT / 'tests/cz_plan_ux_mutation_results.txt'
     previous = output.read_text(encoding='utf8').splitlines() if output.exists() and len(sys.argv) > 1 else []
     labels = {r.split(':')[0] for r in results}
     output.write_text('\n'.join([r for r in previous if r.split(':')[0] not in labels] + results) + '\n', encoding='utf8')

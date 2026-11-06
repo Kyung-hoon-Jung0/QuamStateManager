@@ -3,6 +3,7 @@ All subprocess tests use fake workers/SDKs only. Sources are restored in finally
 """
 import json
 import os
+from evidence_output import evidence_path
 from pathlib import Path
 import re
 import subprocess
@@ -48,12 +49,12 @@ PINS = [
  ('D6',BODY,replace('{{ j.id }}','{{ j.id[:8] }}'),'test_stress_d6_full_job_ids'),
  ('D7',CORE,replace(" if verified else '',", ','),'test_stress_d7_unverified_type'),
  ('D8 busy',CORE,replace("f'{len(active_qms)} QMs with active jobs' if len(active_qms) > 1 else ", ''),'test_stress_d8_busy_empty_version'),
- ('D8 empty slot',BODY,replace('<small>{% if r.empty %}{% elif limit is not none %}', '<small>{% if limit is not none %}'),'test_stress_d8_busy_empty_version'),
+ ('D8 empty slot',BODY,replace('{% elif r.empty %}{% elif limit is not none %}', '{% elif limit is not none %}'),'test_stress_d8_busy_empty_version'),
  ('D8 QOP version',BODY,replace("{% if ans.version.get('QOP') %}", '{% if true %}'),'test_stress_d8_busy_empty_version'),
  ('R1',CSS,replace('.ui-opxmon-tiles {display:flex; flex-wrap:wrap;', '.ui-opxmon-tiles {display:flex;'),'test_stress_r1_responsive'),
  ('R2',CORE,replace("'basis': 'Job status: ' + ', '.join(statuses or ['unknown'])", "'basis': 'active or unknown job status'"),'test_stress_r2_plain_language'),
  ('R3',BODY,replace("section|replace('_', ' ')|capitalize", "section|replace('_', ' ')"),'test_stress_r3_section_labels'),
- ('R4',CORE,replace("'color': 'red', 'problem': True, 'reason': cause", "'color': 'grey', 'problem': True, 'reason': cause"),'test_stress_r4_outage_red'),
+ ('R4',CORE,replace("'color': 'red', 'problem': True", "'color': 'grey', 'problem': True"),'test_stress_r4_outage_red'),
  ('R5',BODY,replace('<input name="python" list=', '<select name="python" list='),'test_stress_r5_settings'),
  ('R6',CORE,replace('self.viewer_check_pending = True', 'self.viewer_check_pending = False'),'test_stress_r6_returning_viewer_checks'),
  ('R7',BODY,lambda source: re.sub(r'<circle .*?/>','',source),'test_stress_r7_gap_markers'),
@@ -65,6 +66,7 @@ PINS = [
 
 
 def main():
+    output = evidence_path('opx_monitor_stress_red.json')
     evidence = []
     for label, file, mutate, test in PINS:
         path = ROOT/file
@@ -87,7 +89,7 @@ def main():
             path.write_bytes(original)
             for cache in (path.parent/'__pycache__').glob(path.stem+'.*.pyc'):
                 cache.unlink()
-    (ROOT/'tests/opx_monitor_stress_red.json').write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
+    output.write_text(json.dumps(evidence,indent=2)+'\n',encoding='utf-8')
 
 if __name__ == '__main__':
     main()

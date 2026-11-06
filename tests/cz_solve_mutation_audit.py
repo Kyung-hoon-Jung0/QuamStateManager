@@ -1,5 +1,6 @@
 """Run S2 fault injections, restoring exact source bytes after each attempt."""
 import os
+from evidence_output import evidence_path
 from pathlib import Path
 import subprocess
 import sys
@@ -58,6 +59,7 @@ def run(test):
 
 
 def main():
+    output = evidence_path('cz_solve_mutation_results.txt')
     records = []
     for name, filename, old, new, test, extra in CASES:
         target = ROOT / filename
@@ -79,7 +81,7 @@ def main():
         record = name + ': RED (assertion failure), reverted, GREEN'
         records.append(record)
         print(record, flush=True)
-    (ROOT / 'tests/cz_solve_mutation_results.txt').write_text('\n'.join(records) + '\n', encoding='utf-8')
+    output.write_text('\n'.join(records) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

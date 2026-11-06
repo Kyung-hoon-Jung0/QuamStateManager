@@ -24,7 +24,7 @@
  * argv[2] = json out path, argv[3] = CDP port, argv[4] = base url
  */
 const fs = require('fs');
-const OUT = process.argv[2] || 'liveedit.json';
+const OUT = process.argv[2] || require('path').join(require('./browser/evidence-output.cjs').directory('liveedit'), 'liveedit.json');
 const CDP = process.argv[3] || '9411';
 const BASE = process.argv[4] || 'http://127.0.0.1:5411';
 const SHOTDIR = OUT.replace(/[^\\/]*$/, '');

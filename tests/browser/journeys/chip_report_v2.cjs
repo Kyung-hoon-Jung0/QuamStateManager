@@ -24,7 +24,7 @@ const path = require('path');
 const { open, sleep } = require('./cdp.cjs');
 
 const PORT = process.argv[2] || '5145';
-const OUT = process.argv[3] || '.';
+const OUT = process.argv[3] || require('../evidence-output.cjs').directory('chip_report_v2');
 const SECRETS = (process.argv[4] || '').split(',').filter(Boolean);
 const BASE = `http://127.0.0.1:${PORT}`;
 const ALL = ['overview', 'chip_status', 'trends', 'pulses', 'zline', 'wiring', 'diagnostics', 'raw'];

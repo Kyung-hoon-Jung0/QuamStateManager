@@ -1,6 +1,6 @@
 const cdp = require('../../tests/browser/journeys/cdp.cjs');
 const fs = require('fs');
-const out = 'evidence/review5_merge';
+const out = require('../../tests/browser/evidence-output.cjs').directory('review5_merge');
 fs.mkdirSync(out, {recursive:true});
 const records=[];
 (async()=>{

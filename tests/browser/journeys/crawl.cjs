@@ -28,7 +28,7 @@ const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
 const BASE = arg('base', 'http://127.0.0.1:5099');
 const PATH = arg('path', '/topology?view=overview');
-const OUT = arg('out', 'crawl.jsonl');
+const OUT = arg('out', require('path').join(require('../evidence-output.cjs').directory('crawl'), 'crawl.jsonl'));
 const FROM = +arg('from', 0), TO = +arg('to', 1e9);
 const URL_ = BASE + PATH;
 

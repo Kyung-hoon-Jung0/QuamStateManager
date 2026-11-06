@@ -17,7 +17,7 @@
 'use strict';
 const { open, sleep } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5114;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulses_locations');
 const BASE = `http://127.0.0.1:${PORT}`;
 require('fs').mkdirSync(DIR, { recursive: true });
 let bad = 0;

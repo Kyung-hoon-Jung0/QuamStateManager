@@ -21,7 +21,7 @@ const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 
 const URL0 = (process.env.SM_URL || 'http://127.0.0.1:5301').replace(/\/$/, '');
-const SHOTS = process.env.SHOTS || path.join(process.cwd(), 'shots');
+const SHOTS = process.env.SHOTS || require('../evidence-output.cjs').directory('hub_after_a_run');
 const RIG = process.env.RIG;
 const Q = process.env.QUBIT || 'q6';
 const UNRELATED = process.env.FIELD_UNRELATED || `qubits.${Q}.z.joint_offset`;

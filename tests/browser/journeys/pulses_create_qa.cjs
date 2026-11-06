@@ -17,7 +17,7 @@
 const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5116;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulses_create_qa');
 const W = +(process.env.W || 1600);
 const BASE = `http://127.0.0.1:${PORT}`;
 fs.mkdirSync(DIR, { recursive: true });

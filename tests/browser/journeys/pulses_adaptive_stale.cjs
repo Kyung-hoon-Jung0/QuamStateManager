@@ -21,7 +21,7 @@
 const fs = require('fs');
 const { open, sleep } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5112;
-const DIR = process.env.SHOT_DIR || '.';
+const DIR = process.env.SHOT_DIR || require('../evidence-output.cjs').directory('pulses_adaptive_stale');
 const LAB_FILE = process.env.LAB_FILE;
 const BASE = `http://127.0.0.1:${PORT}`;
 const WOB = 'qubits.q1.z.operations.cz_wobble';

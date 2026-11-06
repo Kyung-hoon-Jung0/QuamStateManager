@@ -29,7 +29,7 @@ async function open(url) {
   return p;
 }
 const PORT = process.argv[2] || '5111';
-const SHOTS = process.argv[3] || '.';
+const SHOTS = process.argv[3] || require('../evidence-output.cjs').directory('zline');
 const BASE = `http://127.0.0.1:${PORT}`;
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + JSON.stringify(detail).slice(0, 300) : '')); }

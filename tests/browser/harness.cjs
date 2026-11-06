@@ -32,7 +32,7 @@ const path = require('path');
 const puppeteer = require('puppeteer-core');
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-const SHOTS = path.join(__dirname, '_shots');
+const SHOTS = require('./evidence-output.cjs').directory('browser-shots');
 
 async function open(opts) {
   const o = opts || {};
