@@ -794,7 +794,7 @@
                 return;
             }
             var gl = gls.find(function (g) { return g.role === ln.role; }) || null;
-            h.push('<div class="czp-card-q"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
+            h.push('<div class="czp-card-q ui-cz-plan-card"><strong>' + esc(ln.role) + ' ' + esc(ln.name) + '</strong>' +
                 (ln.moves ? ' <small class="muted">plays ' + esc((ln.pulse_path || '').split('.').pop()) + (ln.pulse_class ? ' (' + esc(ln.pulse_class) + ')' : '') + '</small>' : ' <small class="muted">does not move</small>') +
                 '<dl>' +
                 '<dt>Z amp</dt><dd title="' + esc(ln.amp_title || '') + '">' + esc(ln.amp_text || '\u2014') + '</dd>' +
@@ -820,13 +820,13 @@
         });
         var near = r.nearest;
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
-        h.push('<div class="czp-card-q"><strong>Operation</strong><dl>' +
+        h.push('<div class="czp-card-q ui-cz-plan-card"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
              (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
              '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') + '</dd>') +
             (r.coupler ? '<dt>Coupler pulse</dt><dd class="czp-card-coupler" title="' + esc(r.coupler.amp_title) + '">' + esc(r.coupler.amp_text) + (r.coupler.amp_reason ? ' <small class="muted">(' + esc(r.coupler.amp_reason) + ')</small>' : '') + '</dd>' : '') +
-            (r.plan ? '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
+            (r.plan ? planMeasurements(r) + '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +
             (r.interaction_frequency_hz ? '<dt>Stored interaction frequency</dt><dd>' + fmtGHz(r.interaction_frequency_hz) + '</dd>' : '') +
             '<dt>Fidelity</dt><dd>' + (fl.length ? fl.join('<br>') : '—') + '</dd>' +
@@ -846,6 +846,22 @@
         return operatingPoint(root, row.path, 'coupler', null) || {};
     }
     // A4-UX-2: the card and the top line read the same stored lengths (row.a4)
+    function planMeasurements(r) {
+        const p = r.plan;
+        return [['two_j_hz', 'Measured 2J', 1e6, 'MHz'], ['t_lim_ns', 'Measured t_lim', 1, 'ns'], ['t_p_ns', 'Measured t_p', 1, 'ns']].map(([key, label, scale, unit]) => {
+            const source = (p.sources || {})[key] || {};
+            const origin = 'state: qubit_pairs.' + r.pair + '.extras.cz_plan.' + key +
+                (source.run_id != null ? '; run #' + source.run_id : '; source run unknown') +
+                (source.t ? '; ' + source.t : '') +
+                (source.provenance ? '; ' + source.provenance : '');
+            const value = p[key] == null ? 'unknown' : Number((p[key] / scale).toFixed(4)) + ' ' + unit;
+            const difference = key === 't_p_ns' && p.duration_minus_t_p_ns != null ?
+                '<br><small>Macro duration minus measured t_p: ' + (p.duration_minus_t_p_ns >= 0 ? '+' : '') +
+                Number(p.duration_minus_t_p_ns.toFixed(4)) + ' ns</small>' : '';
+            return '<dt>' + label + '</dt><dd>' + value + '<br><small class="muted">' + esc(origin) + '</small>' + difference + '</dd>';
+        }).join('');
+    }
+
     function a4Duration(a) {
         var flat = a.stored_flat_length_ns, len = a.stored_length_ns;
         if (flat == null && len == null) return 'unknown';

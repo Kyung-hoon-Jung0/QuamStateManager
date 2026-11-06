@@ -129,6 +129,21 @@ w.eval(fs.readFileSync(path.join(root, 'quam_state_manager/web/static/cz-plan.js
               'the figure includes the mirror operating point');
         dom.window.close(); console.log(checks + ' lobe assertions passed'); return;
     }
+    if (process.env.CZ_MEASUREMENTS_PIN) {
+        const body = payload('qubit_pairs.p.macros.a', false);
+        body.row.plan = {omega_int_hz: 4.8e9, roles: {}, two_j_hz: 14.01e6, t_lim_ns: 71.38, t_p_ns: 38,
+            duration_minus_t_p_ns: 2, sources: {two_j_hz: {run_id: 3}, t_lim_ns: {run_id: 3}, t_p_ns: {run_id: 3}},
+            reasons: ['two_j_needs_remeasure (from run #1 (may be stale))']};
+        answer(0, body); await wait(30);
+        const text = d.getElementById('czp-card').textContent;
+        check(text.includes('Measured 2J14.01 MHz') && text.includes('Measured t_lim71.38 ns') &&
+              text.includes('Measured t_p38 ns'), 'all three stored measurements have units');
+        check(['two_j_hz', 't_lim_ns', 't_p_ns'].every(k => text.includes('state: qubit_pairs.p.extras.cz_plan.' + k + '; run #3')),
+              'each measurement names its own state field and source run');
+        check(text.includes('40 ns') && text.includes('Macro duration minus measured t_p: +2 ns'), 'macro duration and measurement difference');
+        check(text.includes('from run #1 (may be stale)'), 'incomparable reason attribution reaches the card');
+        dom.window.close(); console.log(checks + ' measurement assertions passed'); return;
+    }
     check(pending.length === 1 && pending[0].op === 'qubit_pairs.p.macros.a', 'the selected operation loads on mount');
     // a click on b before a answers: a's late answer must not paint under b
     r.querySelector('tr[data-op="qubit_pairs.p.macros.b"]').dispatchEvent(new w.MouseEvent('click', {bubbles: true}));

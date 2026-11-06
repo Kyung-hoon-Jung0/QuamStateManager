@@ -1100,7 +1100,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "duration_ns": duration_ns, "duration_note": duration_note,
                 "phases": {k: number(current(doc, path + ".phase_shift_" + k)) for k in ("control", "target")},
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
-                "plan": None if pair_refusal else _plan(plan, lines),
+                "plan": None if pair_refusal else _plan(plan, lines, duration_ns),
                 "interaction_frequency_hz": None if pair_refusal else number(current(doc, path + ".interaction_frequency")),
                 "coupler": coupler, "coupler_note": coupler_note,
                 **({"a4": a4} if a4 is not None else {}),
@@ -1394,18 +1394,78 @@ def _fidelity(raw):
     return out
 
 
-def _plan(plan, lines):
+PLAN_FIELDS = ("two_j_hz", "t_lim_ns", "t_p_ns", "reasons_json")
+
+
+def _plan_source(plan, field):
+    """Only a field's own attribution is evidence of its source."""
+    nested = plan.get(field + "_run")
+    nested = nested if isinstance(nested, dict) else {}
+    return {"run_id": plan.get(field + "_run_id", plan.get(field + "_load_id", nested.get("run_id"))),
+            "t": plan.get(field + "_timestamp", nested.get("timestamp"))}
+
+
+def _plan_reasons(out):
+    source = out["sources"]["reasons_json"]
+    measured = out["sources"]["two_j_hz"]
+    newer = None
+    # IDs belong to this chip's history. Prefer timestamps when both exist.
+    from datetime import datetime
+    try:
+        newer = (datetime.fromisoformat(measured["t"].replace("Z", "+00:00")) >
+                 datetime.fromisoformat(source["t"].replace("Z", "+00:00")))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        a, b = measured.get("run_id"), source.get("run_id")
+        if all(isinstance(v, (int, str)) and not isinstance(v, bool) and str(v).isdigit() for v in (a, b)):
+            newer = int(a) > int(b)
+    out["reasons"], out["reason_details"] = [], []
+    for reason in out["stored_reasons"]:
+        status, text = "active", reason
+        if reason == "two_j_needs_remeasure":
+            if out["two_j_hz"] is not None and out["two_j_hz"] > 0 and newer is True:
+                status = "resolved"
+            elif newer is None:
+                status = "uncertain"
+                origin = f"from run #{source['run_id']}" if source.get("run_id") is not None else "source run unknown"
+                text += f" ({origin} (may be stale))"
+        out["reason_details"].append({"reason": reason, "status": status, "source": dict(source)})
+        if status != "resolved":
+            out["reasons"].append(text)
+
+
+def plan_history(plan, prefix, history):
+    """Enrich a plan from each field's effective setting, never a sibling value match."""
+    for field in PLAN_FIELDS:
+        series = (history.get("rows") or {}).get(prefix + field) or {}
+        points = series.get("effective") or series.get("points") or []
+        usable = [p for p in points if not p.get("undone")]
+        point = usable[-1] if usable else {}
+        differs = any(n.get("code") == "current_differs"
+                      for n in (history.get("notes") or {}).get(prefix + field, []))
+        if (not differs and is_setting(point) and "value" in point
+                and point["value"] == plan["stored_values"][field]):
+            plan["sources"][field] = {k: point.get(k) for k in ("run_id", "t", "t_us", "provenance")}
+    _plan_reasons(plan)
+
+
+def _plan(plan, lines, duration_ns=None):
     """The lab planner's interaction point beside what the operation plays now."""
     if not isinstance(plan, dict):
         return None
     out = {"omega_int_hz": number(plan.get("omega_int_hz")), "path_ok": plan.get("path_ok"),
            "leakage_qubit": plan.get("leakage_qubit"), "two_j_hz": number(plan.get("two_j_hz")),
            "reasons": [], "roles": {}}
+    out.update({k: number(plan.get(k)) for k in ("t_lim_ns", "t_p_ns")})
+    out["duration_minus_t_p_ns"] = duration_ns - out["t_p_ns"] if duration_ns is not None and out["t_p_ns"] is not None else None
+    out["sources"] = {k: _plan_source(plan, k) for k in PLAN_FIELDS}
+    out["stored_values"] = {k: plan.get(k) for k in PLAN_FIELDS}
+    out["stored_reasons"] = []
     try:
         reasons = json.loads(plan.get("reasons_json") or "[]")
-        out["reasons"] = [str(r) for r in reasons] if isinstance(reasons, list) else []
+        out["stored_reasons"] = [str(r) for r in reasons] if isinstance(reasons, list) else []
     except (TypeError, ValueError):
         pass
+    _plan_reasons(out)
     for ln in lines:
         v = number(plan.get("v_" + ln["role"] + "_v"))
         out["roles"][ln["role"]] = {"plan_v": v, "difference_v": (

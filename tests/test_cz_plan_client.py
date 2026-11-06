@@ -6,6 +6,15 @@ from pathlib import Path
 import pytest
 
 
+def test_cz_plan_measurements_client():
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, CZ_MEASUREMENTS_PIN='1')
+    result = subprocess.run(['node', str(root / 'tests/cz_plan_selfcheck.cjs')], cwd=root,
+                            env=env, capture_output=True, text=True, encoding='utf-8', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert '4 measurement assertions passed' in result.stdout
+
+
 def test_cz_plan_client():
     root = Path(__file__).resolve().parents[1]
     probe = subprocess.run(["node", "-e", "require('jsdom')"], cwd=root, env=os.environ.copy(),
