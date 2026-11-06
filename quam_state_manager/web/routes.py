@@ -24024,6 +24024,9 @@ def cz_plan_page():
 def _cz_plan_history(rows: list[dict]) -> dict:
     """``value_history`` for every amplitude and dependency path of *rows*, one ledger read."""
     paths = sorted({p for r in rows for p in r["amplitudes"] + r["dependencies"]})
+    from quam_state_manager.core.cz_gate_plan import PLAN_FIELDS
+    paths = sorted(set(paths) | {"qubit_pairs." + r["pair"] + ".extras.cz_plan." + field
+                                for r in rows if r.get("plan") for field in PLAN_FIELDS})
     ctx = _active_ctx()
     if not ctx or not paths:
         return {"mode": "unavailable", "reason": "no chip", "rows": {}}
@@ -24436,6 +24439,8 @@ def cz_plan_data():
                     + ["time"] * (len(notes) - head - len(row["notes"])))
     info_figure = ["time"] * len(info)
     hist = _cz_plan_history([row])
+    if row.get("plan"):
+        czp.plan_history(row["plan"], "qubit_pairs." + row["pair"] + ".extras.cz_plan.", hist)
     cal = czp.calibration(row, hist)
     card = {"last_set": _cz_plan_point_view(cal["last_set"]) if cal["last_set"] else None,
             "proven": bool(cal["last_calibrated"]), "unknown": cal["unknown"], "warnings": cal["warnings"],

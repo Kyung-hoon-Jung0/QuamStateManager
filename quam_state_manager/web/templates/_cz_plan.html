@@ -28,6 +28,9 @@
             population-loss scan of that qubit (cf. arXiv:2112.03708v1 p.11, Fig. 6c): the population lost when the qubit is
             flux-tuned from idle to that frequency for the scan's duration &mdash; a dwell loss, not a gate error.
             For SNZ gates, total duration includes the flat lobes, edges and padding.
+            The operation card shows stored CZ-plan 2J, t_lim and t_p with their field sources;
+            macro duration minus t_p includes those edges and padding. A remeasure reason is hidden
+            when its source predates the recorded 2J source; uncertain ordering is labeled may be stale.
             The time plots map each waveform sample through the same flux-to-frequency model as the operating points.
         </div>
     </details>

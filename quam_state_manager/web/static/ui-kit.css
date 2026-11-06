@@ -13,6 +13,7 @@
  */
 
 :root {
+    --ui-cz-card-columns: minmax(0, 1fr) minmax(0, 1fr);
     --ui-coupler-field-flex: 1fr;
     --ui-coupler-field-min: 15rem;
     --ui-running-height: 10rem;
@@ -676,6 +677,9 @@
 }
 .ui-coupler-model-grid small { display: block; }
 .ui-coupler-model-error { color: var(--ui-danger-text); }
+
+/* CZ cards: reserve room for values even when a field label is long. */
+.ui-cz-plan-card dl { grid-template-columns: var(--ui-cz-card-columns); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
