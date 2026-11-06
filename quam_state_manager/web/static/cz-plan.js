@@ -148,7 +148,7 @@
     function stageCoupler(form) {
         var model = {};
         form.querySelectorAll('input[data-scale]').forEach(function (input) {
-            model[input.name] = Number(input.value) * Number(input.dataset.scale);
+            model[input.name] = window.CouplerUnits.toStored(input.value, input.dataset.scale);
         });
         model.source = form.elements.namedItem('source').value;
         model.created_at = new Date().toISOString();

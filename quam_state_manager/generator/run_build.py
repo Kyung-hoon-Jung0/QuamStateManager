@@ -3011,7 +3011,10 @@ def _apply_coupler_models(machine, populate):
         if not value:
             continue
         candidate = dict(value)
-        candidate["created_at"] = datetime.now(timezone.utc).isoformat()
+        # Reconstructed, unedited models retain provenance. The wizard clears this
+        # on a real parameter edit, including a change to source alone.
+        if not candidate.get("created_at"):
+            candidate["created_at"] = datetime.now(timezone.utc).isoformat()
         model = coupler_model(candidate)
         if model is None:
             raise ValueError("Coupler model for " + pid + ": complete valid fields and source required")

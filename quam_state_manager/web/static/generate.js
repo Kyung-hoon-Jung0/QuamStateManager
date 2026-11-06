@@ -9409,19 +9409,22 @@
         input.setAttribute("aria-describedby", output.id);
         var v = bucket[f.key];
         input.value = v == null ? (f.key === "source" ? "entered in the wizard" : "") :
-          (f.scale && typeof v === "number" ? v / f.scale : v);
+          (f.scale && typeof v === "number" ? window.CouplerUnits.toDisplay(v, f.scale) : v);
         var help = document.createElement("small"); help.className = "muted"; help.textContent = f.help;
         label.appendChild(input); label.appendChild(help); grid.appendChild(label);
         input.addEventListener("input", function () {
           var pop = state.spec.populate || (state.spec.populate = {});
           var models = pop.coupler_models || (pop.coupler_models = {});
           var b = models[id] || (models[id] = {});
+          var before = JSON.stringify(b);
           grid.querySelectorAll("input").forEach(function (el) {
             var field = fields.find(function (x) { return x.key === el.dataset.field; });
             var raw = el.value.trim();
             if (!raw) delete b[el.dataset.field];
-            else b[el.dataset.field] = field && Number.isFinite(Number(raw)) ? Number(raw) * field.scale : raw;
+            else b[el.dataset.field] = field && Number.isFinite(Number(raw)) ? window.CouplerUnits.toStored(raw, field.scale) : raw;
           });
+          // A source-only change is a real edit too; an unchanged model keeps its timestamp.
+          if (JSON.stringify(b) !== before) delete b.created_at;
           if (!fields.some(function (f) { return b[f.key] != null; }) &&
               (!b.source || b.source === "entered in the wizard")) delete models[id];
           markPopulateTouched("coupler_models", id, f.key);

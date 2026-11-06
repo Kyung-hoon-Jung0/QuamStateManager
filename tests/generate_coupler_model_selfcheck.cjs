@@ -29,6 +29,7 @@ function makeWorld() {
   win.renderInstrumentWiring = function () {};
   win.confirm = function () { return true; };
   win.fetch = function () { return new win.Promise(function () {}); };
+  win.eval(fs.readFileSync(path.join(ROOT, 'quam_state_manager/web/static/coupler-units.js'), 'utf8'));
   new win.Function(GEN_JS).call(win);
   return win;
 }
@@ -89,6 +90,71 @@ for (const arch of ['flux_tunable_coupler', 'fixed_tunable_coupler']) {
   ok(G.state.spec.populate.coupler_models[id].g_t_hz === 90e6, 'draft restores model');
   G._test.renderPopulateTables();
   ok(Number(host.querySelector('[data-field="fc_max_hz"]').value) === 8, 'model survives Populate re-entry in GHz');
+  // Decimal sweeps exercise both shipped forms, including 1.07 GHz.
+  const fields = JSON.parse(process.env.COUPLER_MODEL_FIELDS);
+  w.eval(fs.readFileSync(path.join(ROOT, 'quam_state_manager/web/static/cz-plan.js'), 'utf8'));
+  let staged;
+  w.fetch = (url, options) => {
+    if (url === '/field/edit-batch') staged = JSON.parse(options.body).updates[0].value;
+    return new w.Promise(() => {});
+  };
+  const form = w.document.createElement('form');
+  form.dataset.pair = 'q1-2';
+  form.innerHTML = fields.map(f => '<input name="' + f.key + '" data-scale="' + f.scale + '">').join('') +
+    '<input name="source" value="sweep"><output></output>';
+  for (const digits of [2, 3]) {
+    for (let n = 100; n <= 130; n++) {
+      const raw = (n / 10 ** digits).toFixed(digits);
+      for (const f of fields) {
+        const value = f.key === 'd_c' ? '.' + String(n) : raw;
+        const expected = f.scale > 1 ? n * (f.scale / 10 ** digits) : Number(value);
+        input(w, f.key, value);
+        ok(G.state.spec.populate.coupler_models[id][f.key] === expected, 'exact wizard ' + f.key + '=' + value);
+        G._test.renderPopulateTables();
+        const shown = host.querySelector('[data-field="' + f.key + '"]').value;
+        input(w, f.key, shown);
+        ok(G.state.spec.populate.coupler_models[id][f.key] === expected, 'wizard round trip ' + f.key + '=' + value);
+        form.elements.namedItem(f.key).value = shown;
+      }
+      w.CzStageCoupler(form);
+      for (const f of fields) {
+        const value = f.key === 'd_c' ? '.' + String(n) : raw;
+        const expected = f.scale > 1 ? n * (f.scale / 10 ** digits) : Number(value);
+        ok(staged[f.key] === expected, 'exact CZ ' + f.key + '=' + raw);
+      }
+    }
+  }
+  for (const [key, raw, expected] of [
+    ['fc_max_hz', '1.0700000006', 1070000001],
+    ['phi0_v', '0.123456789012345', .123456789012],
+    ['phi_idle', '-0.123456789012345', -.123456789012]
+  ]) {
+    input(w, key, raw);
+    ok(G.state.spec.populate.coupler_models[id][key] === expected, 'wizard resolution ' + key);
+    G._test.renderPopulateTables();
+    const shown = host.querySelector('[data-field="' + key + '"]').value;
+    input(w, key, shown);
+    ok(G.state.spec.populate.coupler_models[id][key] === expected, 'resolution round trip ' + key);
+    form.elements.namedItem(key).value = raw;
+    w.CzStageCoupler(form);
+    ok(staged[key] === expected, 'CZ resolution ' + key);
+    form.elements.namedItem(key).value = shown;
+    w.CzStageCoupler(form);
+    ok(staged[key] === expected, 'CZ resolution round trip ' + key);
+  }
+  // Restoring the model display and dispatching unchanged input preserves provenance.
+  for (const [key, value] of Object.entries(values)) input(w, key, value);
+  G.state.spec.populate.coupler_models[id].created_at = '2026-01-01T00:00:00Z';
+  G._test.renderPopulateTables();
+  input(w, 'fc_max_hz', '8.000');
+  ok(G.state.spec.populate.coupler_models[id].created_at === '2026-01-01T00:00:00Z', 'unchanged input keeps timestamp');
+  input(w, 'source', 'revised source');
+  ok(!G.state.spec.populate.coupler_models[id].created_at, 'source-only edit clears timestamp for build');
+  G.state.spec.populate.coupler_models[id].created_at = 'old';
+  input(w, 'g_c_hz', '81');
+  ok(!G.state.spec.populate.coupler_models[id].created_at, 'physical edit clears timestamp for build');
+  for (const [key, value] of Object.entries(values)) input(w, key, value);
+  input(w, 'source', 'entered in the wizard');
   const pair = G.state.spec.qubit_pairs[0];
   G._test.flipPairOrder(pair);
   const flipped = G.state.spec.populate.coupler_models[pair.join('-')];

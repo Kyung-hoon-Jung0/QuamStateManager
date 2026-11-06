@@ -169,3 +169,31 @@ def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate):
     rebuilt = json.loads((exported / "state.json").read_text(encoding="utf-8"))
     emitted = rebuilt["qubit_pairs"]["q1-2"]["extras"]["sm_coupler_model"]
     assert {k: emitted[k] for k in model()} == model()
+
+
+def test_untouched_model_regen_keeps_created_at_through_run_build(tmp_path):
+    s = spec()
+    original = None
+    for name in ("original", "regen"):
+        result = cg.run_generator(sys.executable, "build", s, tmp_path / name, timeout=300)
+        assert result.get("ok"), result
+        state = json.loads((tmp_path / name / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((tmp_path / name / "wiring.json").read_text(encoding="utf-8"))
+        stored = state["qubit_pairs"]["q1-2"]["extras"]["sm_coupler_model"]
+        if original is None:
+            original = stored
+        else:
+            assert stored == original
+        s = rs.reconstruct_spec(state, wiring).spec
+    # Match the wizard's source-only edit: it clears the old timestamp before build.
+    edited = s["populate"]["coupler_models"]["q1-q2"]
+    edited["source"] = "revised source"
+    del edited["created_at"]
+    result = cg.run_generator(sys.executable, "build", s, tmp_path / "edited", timeout=300)
+    assert result.get("ok"), result
+    state = json.loads((tmp_path / "edited/state.json").read_text(encoding="utf-8"))
+    stored = state["qubit_pairs"]["q1-2"]["extras"]["sm_coupler_model"]
+    assert stored["created_at"] != original["created_at"]
+    assert stored["source"] == "revised source"
+    assert {k: stored[k] for k in model() if k != "source"} == {
+        k: original[k] for k in model() if k != "source"}

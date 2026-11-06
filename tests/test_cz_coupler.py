@@ -118,7 +118,7 @@ const posts=[];
 global.window={__chipToken:'token',_keepMineSeen:()=>({n:7,sig:'seen'})};
 global.refresh=()=>{};
 global.fetch=(url,options)=>{posts.push({url,body:JSON.parse(options.body)});return Promise.resolve({json:()=>({ok:true})});};
-""" + source + """
+""" + (ROOT / "quam_state_manager/web/static/coupler-units.js").read_text(encoding="utf-8") + source + """
 const model=JSON.parse(process.argv[1]);
 const fields=JSON.parse(process.argv[3]);
 const inputs=fields.map(f=>({name:f.key,value:model[f.key]/f.scale,dataset:{scale:String(f.scale)}}));
