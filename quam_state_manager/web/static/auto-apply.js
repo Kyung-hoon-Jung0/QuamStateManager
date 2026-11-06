@@ -95,9 +95,13 @@
             if (body && typeof body === 'object') return { reason: body.message || body.error || '' };
         } catch (err) { /* not JSON: an HTML answer */ }
         var doc = new DOMParser().parseFromString(text || '', 'text/html');
+        // A write failure can carry both a conflict tray and its precise
+        // status message. Preserve that reason before interpreting the tray.
+        var status = doc.querySelector('#status-bar p');
+        if (status) return { reason: (status.textContent || '').trim() };
         var t = doc.getElementById('pending-tray');
         if (t && t.hasAttribute('data-refused')) return conflictVerdict(t, trigger);
-        var msg = doc.querySelector('#status-bar p, .toast p, p');
+        var msg = doc.querySelector('.toast p, p');
         return { reason: msg ? (msg.textContent || '').trim() : '' };
     }
 

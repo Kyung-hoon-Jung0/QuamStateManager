@@ -12309,11 +12309,12 @@ def _notice_node_replacements(ctx, held, state, wiring):
     backup["expected"] = expected
     ctx.setdefault("_notice_backups", {})[event] = backup
     _prune_notice_backups(ctx)
-    ctx["_auto_restore_notice"] = {
-        "event": event, "at": time.time(), "bring_back": True,
-        "message": "a node replaced a value you applied: " + "; ".join(messages),
-    }
-    _snapshot_notice_recipients(ctx)
+    with _notice_lock:
+        ctx["_auto_restore_notice"] = {
+            "event": event, "at": time.time(), "bring_back": True,
+            "message": "a node replaced a value you applied: " + "; ".join(messages),
+        }
+        _snapshot_notice_recipients(ctx)
     g._node_replacement_notice = ctx["_auto_restore_notice"]
 
 
@@ -12328,13 +12329,17 @@ def _auto_restore_notice(ctx, count: int) -> dict:
         notice["at"] = replacement["at"]
         notice["message"] = replacement["message"] + ". " + notice["message"]
         notice["bring_back"] = True
-    ctx["_auto_restore_notice"] = notice
-    if not replacement:
-        _snapshot_notice_recipients(ctx)
+    with _notice_lock:
+        ctx["_auto_restore_notice"] = notice
+        if not replacement:
+            _snapshot_notice_recipients(ctx)
     return notice
 
 
 _NOTICE_WINDOW_HEADER = "X-SM-Window-ID"
+# Notice metadata never needs the working-copy build lock: edits and chip
+# opens must remain free to land while a pull holds that lock for live I/O.
+_notice_lock = threading.RLock()
 
 
 def _prune_notice_backups(ctx):
@@ -12344,7 +12349,7 @@ def _prune_notice_backups(ctx):
 
 
 def _remember_notice_window(ctx):
-    with _active_wc_lock(ctx):
+    with _notice_lock:
         now = time.time()
         windows = ctx.setdefault("_notice_windows", {})
         for win_id, seen in list(windows.items()):
@@ -12364,7 +12369,7 @@ def _track_notice_window():
 
 
 def _snapshot_notice_recipients(ctx):
-    with _active_wc_lock(ctx):
+    with _notice_lock:
         _remember_notice_window(ctx)
         ctx["_notice_recipients"] = set(ctx.get("_notice_windows", {}))
         ctx["_notice_delivered"] = set()
@@ -12372,7 +12377,7 @@ def _snapshot_notice_recipients(ctx):
 
 def _current_auto_restore_notice(ctx):
     """Keep the event for 60 seconds; offer it once to each original window."""
-    with _active_wc_lock(ctx):
+    with _notice_lock:
         notice = ctx.get("_auto_restore_notice")
         if notice and (notice['event'] in ctx.get('_notice_resolved', [])
                        or time.time() - notice.get("at", 0) >= 60):
@@ -12389,8 +12394,12 @@ def _current_auto_restore_notice(ctx):
 
 @bp.after_request
 def _finish_auto_restore_notice(resp):
+    # Downloads and other streams are not notice envelopes. Reading their body
+    # here consumes the stream (or raises for send_file's direct passthrough).
+    if resp.direct_passthrough or resp.is_streamed:
+        return resp
     ctx = _active_ctx() or {}
-    with _active_wc_lock(ctx):
+    with _notice_lock:
         notice = _current_auto_restore_notice(ctx)
         body = resp.get_json(silent=True) if resp.is_json else None
         try:
@@ -32104,6 +32113,9 @@ def auto_sync_pull():
     sess = _auto_sync_state(ctx)
     if not sess or not sess.get("pull"):
         return "", 204
+    # Replace permission covers the edits present at this press. Capture before
+    # preparation and lock acquisition, which can also overlap a new edit.
+    _pull_edit_seq = ctx["store"].mutation_seq
     ok, _why = _auto_pull_armable(ctx)
     if not ok:
         g._merge_failure = _why
@@ -32342,7 +32354,9 @@ def auto_sync_pull():
             # between them was cleared by the reload with no word.
             _st = ctx.get("store")
             with (_st._lock if _st is not None else contextlib.nullcontext()):
-                if _st is not None and _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+                if _st is not None and (
+                        _st.mutation_seq != _pull_edit_seq
+                        or (_quam_ctx_dirty(ctx) and not sess.get("pull_replace"))):
                     working_copy.restore_sync_point(wc, _sp0)
                     try:
                         working_copy.repersist_working(
@@ -32351,18 +32365,6 @@ def auto_sync_pull():
                         logger.exception("post-pull re-persist failed")
                     ctx["live_diverged"] = True
                     return "", 204
-                # docs/187 R10: an edit can land INSIDE `sync_from_live` -- it
-                # holds no `store._lock`, which is why the re-check above
-                # exists -- and with `replace` ON that re-check does not keep
-                # it, so the rebuild below drops it. Every count was taken
-                # BEFORE the pull, so a context that was clean then reported
-                # nothing and the work vanished in silence. Fold it into what
-                # the response reports.
-                _late = ctx.get("store")
-                _late_n = len(getattr(_late, "change_log", None) or []) if _late else 0
-                if _late_n:
-                    _discarded_n = max(_discarded_n, _late_n)
-                    discarding = True
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = getattr(_st, "mutation_seq", None)
                 _notice_node_replacements(ctx, _held_applied, *_pulled)

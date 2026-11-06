@@ -127,9 +127,10 @@ def _after_race_is_consistent(env):
 
 
 class TestAutoSyncPullRace:
-    def test_the_next_apply_keeps_the_lab_value(self, env, monkeypatch):
+    @pytest.mark.parametrize("replace", ["0", "1"])
+    def test_the_next_apply_keeps_the_lab_value(self, env, monkeypatch, replace):
         c = env["c"]
-        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "0", "push": "0"})
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": replace, "push": "0"})
         _lab_writes(env)
         fired = _edit_between_read_and_write(monkeypatch, env)
         c.post("/auto-sync/pull", data={"dom_dirty": "0"})
@@ -148,16 +149,21 @@ class TestAutoSyncPullRace:
         assert (_live_t1(env, "q3") == EDIT
                 or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == EDIT)
 
-    def test_the_auto_apply_flush_keeps_the_lab_value(self, env, monkeypatch):
+    @pytest.mark.parametrize("replace", ["0", "1"])
+    def test_the_auto_apply_flush_keeps_the_lab_value(self, env, monkeypatch, replace):
         c = env["c"]
-        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "0", "push": "0"})
+        c.post("/auto-sync/set", data={"pull": "1", "pull_replace": replace, "push": "0"})
         _lab_writes(env)
         _edit_between_read_and_write(monkeypatch, env)
         c.post("/auto-sync/pull", data={"dom_dirty": "0"})
+        ok, why = _after_race_is_consistent(env)
+        assert ok, f"working copy old while the sync point says new: {why}"
         monkeypatch.undo()
         # the push door the auto-apply flush presses
         c.post("/state/apply-to-live", data=_seen(env), headers={"Accept": "application/json"})
         assert _live_t1(env, "q2") == LAB, "the push wrote the old lab value back"
+        assert (_live_t1(env, "q3") == EDIT
+                or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == EDIT)
 
     def test_a_failed_rebuild_puts_the_sync_point_back(self, env, monkeypatch):
         """The failure branch documents the same absorbing state: the pull

@@ -572,9 +572,9 @@ class TestTheRaceInsideTheWindow:
         on_disk = json.loads((wf / "state.json").read_text(encoding="utf-8"))
         assert on_disk["qubits"]["q1"]["f_01"] == 3.3e9
 
-    def test_a_replace_pull_still_wins_in_the_same_window(self, tmp_path, monkeypatch):
-        """Ticking replace IS the consent — the re-check must not quietly turn
-        it into a refusal."""
+    def test_a_replace_pull_keeps_an_edit_made_in_the_same_window(self, tmp_path, monkeypatch):
+        """Binding decision: an edit made inside a pull window survives,
+        including when replace was armed before that edit existed."""
         import threading
         from quam_state_manager.core import working_copy as WC
 
@@ -597,7 +597,15 @@ class TestTheRaceInsideTheWindow:
         c.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "3.3e9"})
         release.set()
         t.join(10)
-        assert _f01(app) == 7.7e9, "live must win when replace is ticked"
+        assert not t.is_alive(), "the pull did not finish"
+        assert _f01(app) == 3.3e9, "an edit made inside the pull must survive"
+        ctx = _ctx(app)
+        assert ctx["store"].change_log
+        wc = ctx["working_copy"]
+        work = json.loads((Path(wc.working_folder) / "state.json").read_text(encoding="utf-8"))
+        assert work["qubits"]["q1"]["f_01"] == 3.3e9
+        assert wc.synced_live_hash != WC.live_content_hash(wc)
+        assert json.loads((live / "state.json").read_text(encoding="utf-8"))["qubits"]["q1"]["f_01"] == 7.7e9
 
 
 class TestAFailedPullLeavesNothingStale:
