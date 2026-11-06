@@ -8,7 +8,11 @@
 - New node values are adopted with one notice per open window and a safe Bring back action. Transient merge failures retry; permanent blockers stop Auto-Sync with a reason; unknown failures stop after 10 attempts.
 - Undo waits for an active push. Edits from a window showing Auto-Sync off stay held until Apply.
 - Diagram add supports qubits, pairs and coupler pairs; Review includes a QOP version select; the QUAlibrate proxy supports 2.0.
-- Current rules and pinning tests: [Sync contracts](docs/311_walk_campaign_sync_contracts.md).
+- CZ gate-plan SNZ duration and frequency-in-time share the Pulses page's resolved lab pulse. Moves requires a non-zero lobe amplitude; difference is stored minus required.
+- Measurement source runs require their own recorded ID (including nested `.run`) or an exact patch match. Value matches and sibling IDs are labeled "inferred (matching fit value), not proven" in the report, popup and Trends.
+- Pair detuning remains V with a shared implausible-value Hz fallback for peek and the report. Phase shifts display in turns; the compare dimension remains `phase`.
+- XEB fit results include `estimated_2q_params` and purity.
+- Current rules and pinning tests: [Sync, configuration and measurement contracts](docs/311_walk_campaign_sync_contracts.md).
 
 ### Auto-Sync
 

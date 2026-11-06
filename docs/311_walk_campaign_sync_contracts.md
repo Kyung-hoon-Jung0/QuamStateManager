@@ -1,4 +1,4 @@
-# Current sync contracts
+# Current sync, configuration and measurement contracts
 
 These rules describe 1.7.0. They take precedence over older sync descriptions,
 including the three-failure merge budget in docs/187.
@@ -159,3 +159,54 @@ addresses under remote opt-in. Login-enabled upstreams remain unsupported.
 
 Pins: `tests/test_qualibrate_proxy.py`, `tests/qb_proxy_selfcheck.cjs`,
 `tests/qb_workbench_selfcheck.cjs`, `tests/test_leftover_minors_workbench.py`.
+
+## CZ gate plan uses the played pulse
+
+SNZ duration and frequency-in-time come from the same resolved lab pulse as
+the Pulses page, including pointer defaults, both lobes, edges and padding.
+"Moves" means a non-zero lobe amplitude; a line whose lobes are all zero is
+stationary. The amplitude difference is explicitly stored minus required.
+
+Pins: `tests/test_walk6.py`, `tests/test_cz_flux_math_equivalence.py`,
+`tests/test_cz_plan_ux.py`, `tests/test_cz_solve.py`.
+
+## Measurement sources require proof
+
+A run is shown as a value's source only when proven by that measurement's own
+recorded ID (including nested `.run`) or a unique exact path-and-value patch
+match. A sibling's recorded ID cannot prove another measurement's source.
+Value matches and sibling IDs remain "inferred (matching fit value), not proven"
+in the report, the popup and Trends, including navigation to an inferred run.
+Experiment family and operation names filter fit candidates; exact patch proof
+does not depend on those names. Missing proof remains unrecorded when there is
+no inferred candidate; fit equality never establishes the writer of a restored
+value.
+
+Pins: `tests/test_walk6.py`, `tests/test_query.py`,
+`tests/w6_provenance_selfcheck.cjs`, `tests/trends_provenance_selfcheck.cjs`.
+
+## Pair detuning and gate phase units
+
+Pair detuning is V; pulse and macro frequency detuning remain separate. Peek
+and the printable report use one shared implausible-value Hz fallback, with
+an explicit explanation when a pair value is treated as Hz. Keep the shared
+units registry in volts rather than relabeling all pair detuning as frequency.
+
+Gate phase shifts are displayed in turns, following `frame_rotation_2pi`;
+the compare dimension stays `phase` so tolerances and phase swaps retain their
+semantics. Custom gate overrides remain provisional until their source is
+checked.
+
+Pins: `tests/test_pair_detuning_unit.py`, `tests/test_ds_popup_units.py`,
+`tests/test_chip_report.py`, `tests/test_walk6.py`,
+`tests/chip_status_hero_selfcheck.cjs`.
+
+## XEB fits use stored parameters and purity
+
+Extract XEB fit results from numeric `estimated_2q_params` and stored purity
+fields (`purity_err_per_cycle`, `purity_fit_params`, `purity_avg`), preserving
+existing `fit_results` entries. Assign a top-level estimate to the pair only
+when exactly one pair owns it; otherwise keep the estimate under its schema
+key. Do not invent numeric fidelity from figures.
+
+Pins: `tests/test_walk6.py`.
