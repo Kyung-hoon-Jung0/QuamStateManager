@@ -156,6 +156,10 @@ def class_default(qclass: Any, attr: str) -> tuple[bool, Any]:
             return True, f["default"]
         return False, None
     from quam_state_manager.core.pulse_catalog import resolve_qclass
+    from quam_state_manager.core.waveform_synth import LAB_DEFAULTS
+    defaults = LAB_DEFAULTS.get(qclass.rsplit('.', 1)[-1], {})
+    if attr in defaults:
+        return True, defaults[attr]
     spec, how = resolve_qclass(qclass)
     if spec is None or how not in ("exact", "env", "alias"):
         return False, None

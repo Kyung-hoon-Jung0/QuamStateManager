@@ -57,9 +57,9 @@ def test_summary_uses_signed_shared_solve():
     assert result['ok'], result
     assert result['target_detuning_hz'] == -210e6
     assert result['amplitude_v'] == pytest.approx(.1)
-    assert result['difference_v'] == pytest.approx(-.02)
+    assert result['difference_v'] == pytest.approx(.02)
     assert 'target Δ -210.0 MHz' in result['summary']
-    assert 'required amplitude +100.0 mV | stored +120.0 mV | difference -20.0 mV (quad)' in result['summary']
+    assert 'required amplitude +100.0 mV | stored +120.0 mV | stored minus required +20.0 mV (quad)' in result['summary']
     del doc['qubits']['q1']['freq_vs_flux_01_quad_term']
     refusal = C.solve(doc, 'q1-2', 'cz_unipolar')
     assert not refusal['ok'] and refusal['reason'] in refusal['summary']

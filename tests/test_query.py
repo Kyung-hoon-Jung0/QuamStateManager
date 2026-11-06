@@ -830,14 +830,14 @@ class TestExtractPairGateFidelities:
         assert "StandardRB_load_id" not in metrics
         assert metrics == {"StandardRB", "Bell_State"}
 
-    def test_load_id_attached_to_each_row_of_the_gate(self):
+    def test_load_id_attached_only_to_its_measurement(self):
         macros = {"cz_flattop": {"fidelity": {
             "StandardRB": 0.97, "StandardRB_load_id": 529,
             "Bell_State": {"Fidelity": 0.96},
         }}}
         by = self._by_metric(macros)
         assert by["StandardRB"]["load_id"] == 529
-        assert by["Bell_State"]["load_id"] == 529
+        assert by["Bell_State"]["load_id"] is None
 
     def test_interleaved_load_id_fallback(self):
         macros = {"cz_x": {"fidelity": {"InterleavedRB": 0.9, "InterleavedRB_load_id": 77}}}

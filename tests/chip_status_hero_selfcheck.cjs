@@ -327,10 +327,7 @@ function part5() {
     ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
     ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
-    // QA F-24: the pair's detuning is a flux amplitude in volts (quam_builder
-    // FluxTunableTransmonPair); read as Hz it printed "-0.0 MHz"
-    ok(pop && /detuning\s*-0\.1659 V/.test(pop.textContent) && !/detuning\s*-?0\.0 MHz/.test(pop.textContent),
-      'pair popup shows the detuning in volts — ' + (pop && (pop.textContent.match(/detuning[^a-z]{0,20}/) || [''])[0]));
+    ok(pop && /detuning\s*-0\.1659 V/.test(pop.textContent), 'pair popup uses the declared volt unit');
     heroPrefersTheGateNumber();
     overviewTilesStateBothErrorRates();
     anharmSubLine();

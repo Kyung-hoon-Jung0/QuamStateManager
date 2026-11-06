@@ -14059,14 +14059,9 @@ def field_peek():
     for p in clean_paths:
         try:
             target = (resolved.get(p) or {}).get("resolved_path") or p
-            u = _units_mod.stored_unit_label(_units_mod.path_units_key(target))
+            rv = (resolved.get(p) or {}).get("resolved_value", values.get(p))
+            u = _units_mod.stored_value_unit(_units_mod.path_units_key(target), rv)
         except Exception:  # noqa: BLE001 -- a unit lookup must not 500 the popup
-            u = ""
-        # a volt-keyed value no instrument output reaches is not in volts
-        # (units.PLAUSIBLE_VOLT_MAX, the pair-detuning doubt rule)
-        rv = (resolved.get(p) or {}).get("resolved_value", values.get(p))
-        if (u == "V" and isinstance(rv, (int, float)) and not isinstance(rv, bool)
-                and abs(rv) > _units_mod.PLAUSIBLE_VOLT_MAX):
             u = ""
         if u:
             units_by_path[p] = u
@@ -24400,9 +24395,9 @@ def cz_plan_data():
             payload = synth_for_operation(store, ln["pulse_path"], overrides={"length": int(played)})
         samples = payload.get("i") if payload.get("ok") else None
         if not samples:
-            from quam_state_manager.core.waveform_synth import lab_waveform
+            from quam_state_manager.core.waveform_synth import lab_waveform, resolved_lab_pulse
             with store._lock:
-                pulse = czp.resolved_tree(store.merged, ln["pulse_path"])
+                pulse = resolved_lab_pulse(store.merged, ln["pulse_path"])
             waveform_reasons = []
             samples = lab_waveform(pulse, waveform_reasons)
             notes.extend(f"{ln['name']}: {reason}" for reason in waveform_reasons)
@@ -42603,7 +42598,15 @@ def _copy_topology_rb_rows(topo: dict) -> dict:
 def _topology_for_chip_status(engine):
     """The topology Chip Status, its JSON and its report read: the per-gate
     RB derivation, then each entity's calibration age from the ledger."""
-    return _with_fidelity_writers(_with_ledger_calibration(_topology_with_derived_rb(engine)))
+    topo = _with_fidelity_writers(_with_ledger_calibration(_topology_with_derived_rb(engine)))
+    if any(r.get("load_id") is None and r.get("metric") in ("StandardRB", "InterleavedRB", "StandardRB_alpha", "InterleavedRB_alpha")
+           for e in topo.get("edges", []) for r in e.get("gate_fidelities", [])):
+        from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+        topo = _copy_topology_rb_rows(topo)
+        stores = _active_dataset_stores(fast=True, rescan=False)
+        cite_missing_runs(topo.get("edges"),
+                          (run for entry in stores for run in entry["store"].runs.values()))
+    return topo
 
 
 def _with_fidelity_writers(topo):
@@ -45986,7 +45989,8 @@ def dataset_by_path():
                 logger.exception("rescan_if_stale during by-path resolve failed")
         key = _find()
     if key is not None:
-        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}"))
+        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}",
+                                **({"via": request.args["via"]} if request.args.get("via") in ("saved", "inferred") else {})))
     return render_template(
         "_status.html",
         message=(f"Run #{run_id} at {raw} isn't in any loaded data folder. Add the "
@@ -46020,7 +46024,8 @@ def dataset_by_run(run_id):
                 logger.exception("rescan_if_stale during by-run resolve failed")
         key = _find()
     if key is not None:
-        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}"))
+        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}",
+                                **({"via": request.args["via"]} if request.args.get("via") in ("saved", "inferred") else {})))
     return render_template(
         "_status.html",
         message=(f"Run #{run_id} isn't in any loaded data folder. Add the data "
@@ -46083,6 +46088,7 @@ def dataset_detail(uid):
     return render_template(template, **_ctx(page="dataset_detail"), run=run,
                            # docs/301 F9: opened from a value whose writer is not proven
                            via_saved=request.args.get("via") == "saved",
+                           via_inferred=request.args.get("via") == "inferred",
                            fit_targets=resolve_fit_targets(run, names=run_names_),
                            fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],

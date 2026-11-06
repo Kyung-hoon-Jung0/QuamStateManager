@@ -28,6 +28,10 @@
 {#- docs/301 F9: opened from a value (a Trends point, a value drawer row) whose
     writer the ledger cannot prove. Said HERE, on the run, so the run is never
     read as the measurement. -#}
+{% if via_inferred is defined and via_inferred %}
+<p class="ds-provenance-note" role="note">Source inferred source, not proven.
+    This run has a matching fit; no recorded source ID or patch proves it wrote this value.</p>
+{% endif %}
 {% if via_saved is defined and via_saved %}
 <p class="ds-provenance-note" role="note">&#9432; Opened from a value whose writer is not
     proven: this run&rsquo;s saved state is the first to carry it, but its

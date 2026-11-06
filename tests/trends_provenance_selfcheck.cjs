@@ -508,6 +508,28 @@ world.push((function () {
 // is gone; the drawer's ledger points (label / sub / proven run) are pinned in
 // tests/test_hub_chip_status.py and tests/test_trends_provenance.py.
 
+// W6: an inferred candidate is separate from a proven writer and saved-state carrier.
+world.push((function () {
+  const charts = JSON.parse(JSON.stringify(CHARTS));
+  charts[0].series[0].attr = {
+    '20260901_010100': {label:'matching run #12', inferred_uid:'a1b2c3d4:12'},
+  };
+  const win = makeWorld({charts:charts});
+  render(win);
+  return bound(win).then(function () {
+    const cd = host(win).data[0].customdata[1];
+    ok(cd[3] === null && cd[4] === null && cd[5] === 'a1b2c3d4:12',
+       'W6 an inferred run is not a proven writer or saved-state carrier');
+    ok(cd[2].includes('inferred source, not proven'),
+       'W6 Trends labels the matching candidate');
+    fire(win, 'plotly_click', {points:[{customdata:cd}]});
+    ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:12?via=inferred',
+       'W6 Trends opens the matching run with its inference caveat');
+    fire(win, 'plotly_hover', {points:[{customdata:cd}]});
+    ok(host(win).style.cursor === 'pointer', 'W6 inferred run link advertises that it is clickable');
+  });
+})());
+
 Promise.all(world).then(function () {
   if (fails === 0) console.log('all checks passed (' + checks + ' assertions)');
   process.exit(fails ? 1 : 0);

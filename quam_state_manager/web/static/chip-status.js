@@ -2483,6 +2483,13 @@ window.ChipStatus.mount = function (opts) {
                       : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
                 if (v == null) return;
                 var name = _esc(gf.gate) + ' · ' + _esc(gf.metric);
+                var sourceRun = gf.load_id != null ? gf.load_id : gf.inferred_load_id;
+                if (sourceRun != null) {
+                    var inferred = gf.load_id == null;
+                    var sourceUrl = '/dataset/by-run/' + encodeURIComponent(sourceRun) + (inferred ? '?via=inferred' : '');
+                    name += ' <a href="' + sourceUrl + '" hx-get="' + sourceUrl + '" hx-target="#inspector-pane">#'
+                          + _esc(sourceRun) + (inferred ? ': inferred source, not proven' : '') + '</a>';
+                }
                 if (gf.level === 'decay') {
                     // A decay base is a bare number, never a percentage.
                     fitRows += row(name, v.toFixed(5));
@@ -2534,11 +2541,7 @@ window.ChipStatus.mount = function (opts) {
             }
 
             var parRows = '';
-            // QA F-24: the PAIR's detuning is a flux amplitude in volts, not a
-            // frequency -- quam_builder FluxTunableTransmonPair: "detuning
-            // (Optional[float]): Flux amplitude required to bring the qubits to
-            // the same energy in V". Read as Hz, -0.1659 printed "-0.0 MHz".
-            if (typeof e.detuning === 'number') parRows += row('detuning', e.detuning.toFixed(4) + ' V');
+            if (typeof e.detuning === 'number') parRows += row('detuning', e.detuning_display || e.detuning.toFixed(4) + ' V');
             if (typeof e.mutual_flux_bias === 'number') parRows += row('mutual flux bias', e.mutual_flux_bias);
             if (e.has_coupler && typeof e.coupler_decouple_offset === 'number') {
                 parRows += row('coupler decouple offset', e.coupler_decouple_offset.toFixed(4) + ' V');
@@ -3629,7 +3632,8 @@ window.ChipStatus.mount = function (opts) {
                 rbData[rbType][gf.gate].push({
                     pair_id: e.pair_id, source: e.source, target: e.target, value: val,
                     err: typeof gf.err === 'number' ? gf.err : null,
-                    run: typeof gf.load_id === 'number' ? gf.load_id : null
+                    run: typeof gf.load_id === 'number' ? gf.load_id : null,
+                    inferredRun: gf.load_id == null ? gf.inferred_load_id : null
                 });
             });
         });
@@ -3863,7 +3867,7 @@ window.ChipStatus.mount = function (opts) {
                         var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
                         var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
                         var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
-                        var _runTip = p.run != null ? ' \u00b7 run #' + p.run : '';
+                        var _runTip = p.run != null ? ' \u00b7 run #' + p.run : (p.inferredRun != null ? ' \u00b7 run #' + p.inferredRun + ': inferred source, not proven' : '');
                         sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
                             + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
                             + 'data-heat-t="' + ht.toFixed(6) + '" '
@@ -7863,6 +7867,7 @@ window.ChipTrends = (function () {
     var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
         + 'chip yet, or a change made outside SM since the last run.';
     function _hintLine(info) {
+        if (info && info.inferred_uid && !info.uid) return '<i>inferred source, not proven; click to open the matching run</i>';
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
         // docs/301 F9: the run whose saved state first carried the value --
         // opened with a note that it is not proven to have measured it
@@ -7895,8 +7900,9 @@ window.ChipTrends = (function () {
             // provenance line is the why; a captured-only point names the run
             // that did NOT write it). Doing NOTHING is the contract: no
             // navigation to a 404, no error.
-            if (!uid && !saved) return;
-            var url = '/dataset/' + (uid || (saved + '?via=saved'));
+            var inferred = !uid && !saved && cd && cd.length > 5 ? cd[5] : null;
+            if (!uid && !saved && !inferred) return;
+            var url = '/dataset/' + (uid || (saved ? saved + '?via=saved' : inferred + '?via=inferred'));
             // T7: the chart keeps its room and stays in view while the run
             // opens in the inspector (base.html fitClickedChart)
             if (host && window.__smKeepChartInView) window.__smKeepChartInView(host);
@@ -7945,7 +7951,7 @@ window.ChipTrends = (function () {
                     var cd = evt.points[0].customdata;
                     var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
                     host.style.cursor = (sid && (_pointUid(cd, sid)
-                        || (cd && typeof cd !== 'string' && cd.length > 4 && cd[4]))) ? 'pointer' : '';
+                        || (cd && typeof cd !== 'string' && cd.length > 4 && (cd[4] || cd[5])))) ? 'pointer' : '';
                 } catch (e) { /* cursor only */ }
             });
             host.on('plotly_hover', function (evt) {
@@ -8327,9 +8333,11 @@ window.ChipTrends = (function () {
                     // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        return [p[0], _provLine(ov),
+                        var pointData = [p[0], _provLine(ov),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && (ov.saved_uid || ov.first_uid)) || null];
+                        if (!ov.uid && ov.inferred_uid) pointData.push(ov.inferred_uid);
+                        return pointData;
                     }
                     return [p[0], '', '', null];
                 });

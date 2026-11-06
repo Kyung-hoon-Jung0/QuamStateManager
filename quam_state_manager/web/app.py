@@ -675,6 +675,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.core import units as _units
     app.jinja_env.filters["qty"] = _units.qty_filter
     app.jinja_env.filters["pair_detuning_cell"] = _units.pair_detuning_cell
+    app.jinja_env.filters["pair_detuning_display"] = _units.pair_detuning_display
     # `unit_hint` — the SI base unit a field is *stored* in (s / Hz / ns / V),
     # for "you are editing raw <unit>" hints on inspector edit inputs. '' when
     # the field has no known unit.

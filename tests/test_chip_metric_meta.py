@@ -77,7 +77,7 @@ class TestPaths:
             "qubit_pairs.q1-2.macros.cz_SNZ.fidelity.IRB"]
         # the lab's own run id: the metric's *_load_id first, else a nested id
         assert loads["2q:StandardRB:cz_SNZ"]["q1-2"] == 529
-        assert loads["2q:InterleavedRB:cz_SNZ"]["q1-2"] == 529   # gate-level fallback
+        assert "2q:InterleavedRB:cz_SNZ" not in loads  # no source recorded for IRB
 
 
 # S10 C5: TestFold and TestTruncated deleted -- their whole subject was metric_meta's

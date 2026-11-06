@@ -91,3 +91,27 @@ def test_qsm_show_prints_the_pair_detuning_in_volts(tmp_path):
     line = next(ln for ln in r.output.splitlines() if "detuning" in ln)
     assert "-0.1659 V" in line, line
     assert "MHz" not in line
+
+
+@pytest.mark.parametrize("value,display", [
+    (-0.16586175268952874, "-0.1659 V"),
+    (416052075.0, "416052075.0 Hz (treated as Hz: too large for V)"),
+])
+def test_report_and_topology_read_pair_flux_not_macro_frequency(tmp_path, value, display):
+    chip = _chip(tmp_path)
+    path = chip / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    pair = state["qubit_pairs"]["q1-2"]
+    pair["detuning"] = value
+    pair["macros"] = {"cz": {"detuning": 123456789.0}}
+    path.write_text(json.dumps(state), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(chip)})
+    edge = c.get("/api/topology").get_json()["edges"][0]
+    assert edge["detuning"] == value
+    assert edge["detuning_display"] == display
+    report = c.get("/chip-status/report").get_data(as_text=True)
+    assert "<th>Detuning</th>" in report
+    assert display.removesuffix(" V") in report
+    assert "123456789" not in report

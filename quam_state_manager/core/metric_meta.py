@@ -202,7 +202,6 @@ def pair_rb_paths(doc: dict, pairs: Iterable[str], *, resolver=None) -> tuple[
             fid = g.get("fidelity") if isinstance(g, dict) else None
             if not isinstance(fid, dict):
                 continue
-            gate_load = fid.get("StandardRB_load_id") or fid.get("InterleavedRB_load_id")
             for metric, mv in fid.items():
                 rb = _RB_TYPE.get(metric)
                 if not rb:
@@ -223,8 +222,6 @@ def pair_rb_paths(doc: dict, pairs: Iterable[str], *, resolver=None) -> tuple[
                 lid = fid.get(f"{metric}_load_id")
                 if lid is None and isinstance(mv, dict):
                     lid = next((mv[k] for k in mv if _id_key(k)), None)
-                if lid is None:
-                    lid = gate_load
                 if lid is not None and not isinstance(lid, (dict, list)):
                     loads.setdefault(key, {})[pid] = lid
     return paths, loads

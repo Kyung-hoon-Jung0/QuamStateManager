@@ -324,6 +324,27 @@ def _snz_two_flux_length(p):
 #: catalog entries: the Pulses page keeps drawing a lab class with the lab's own code
 LAB_WAVEFORMS = {"SNZTwoFluxPulse": (_snz_two_flux, _snz_two_flux_length)}
 
+# Defaults of the transcribed class, shared with pulse reference resolution.
+LAB_DEFAULTS = {"SNZTwoFluxPulse": {"tail_length": 0, "padding": 0, "t_phi": 0,
+    "b_over_a": 0., "neg_offset_v": 0., "unipolar": False,
+    "lobe3_max_v": .060, "length": "#./inferred_length", "axis_angle": None}}
+
+
+def resolved_lab_pulse(doc, path):
+    """Resolve a pulse with the same object/default semantics as Pulses."""
+    from . import pulse_refs
+    from .cz_gate_plan import current
+    raw = current(doc, path)
+    if not isinstance(raw, dict):
+        return None
+    result = dict(raw)
+    for key, value in raw.items():
+        if pulse_refs.is_ref(value):
+            read = pulse_refs.read(doc, path.split('.'), value)
+            if read.ok:
+                result[key] = read.value
+    return result
+
 
 def lab_waveform(pulse: dict, reasons: list | None = None) -> list | None:
     """Samples (1 per ns) of a transcribed lab pulse class from its resolved fields, else None."""
