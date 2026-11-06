@@ -16,6 +16,8 @@ sys.path.insert(0, str(ROOT))
 from quam_state_manager.core import cz_gate_plan as C, gate_inspector as G
 
 GOLDEN = ROOT / "tests/golden/cz_flux_math_before.json"
+MEASURED_PLAN_KEYS = {"t_lim_ns", "t_p_ns", "duration_minus_t_p_ns", "sources",
+                      "stored_values", "stored_reasons", "reason_details"}
 
 
 def plain(value):
@@ -87,7 +89,18 @@ def test_pre_extraction_fixture_outputs_are_identical():
                 row["amplitudes"] = [holder(p) for p in row["amplitudes"]]
                 for line in row["lines"]:
                     line["amplitude_path"] = holder(line["amplitude_path"])
-        assert invoke(record) == expected, record["call"]
+        actual = invoke(record)
+        if record["call"] == "C.operations":
+            # The measured-timing display adds only these plan keys; their values
+            # are pinned in test_cz_gate_plan_measurements. Every older key stays exact.
+            for exp_row, got_row in zip(expected[0], actual[0]):
+                exp_plan, got_plan = exp_row.get("plan"), got_row.get("plan")
+                if isinstance(exp_plan, dict) and isinstance(got_plan, dict):
+                    added = set(got_plan) - set(exp_plan)
+                    assert added <= MEASURED_PLAN_KEYS, (record["call"], sorted(added))
+                    for key in added:
+                        exp_plan[key] = got_plan[key]
+        assert actual == expected, record["call"]
 
 
 def capture():
