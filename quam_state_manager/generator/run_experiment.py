@@ -728,12 +728,11 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
     it holds: after an offline replay's ``load_from_id`` that is the STORED run's
     whole snapshot (that day's network, data folder, every other qubit); after any
     run it also carries serializer defaults. So the pre-run bytes are restored and
-    one source of writes is applied on top, in this order:
+    the union of the node's writes is applied on top:
 
     1. ``record_state_updates`` blocks (+ ``node.state_updates``) -- the node's
-       declared update. A change the node made to its machine OUTSIDE every block
-       (measurement scaffolding) is not proposed; it is listed in the log.
-    2. no block: the node's machine changes since that machine was last assigned
+       declared update, including updates the framework reverted.
+    2. the node's machine changes since that machine was last assigned
        (a node like 17d/15e writes ``node.machine.x = ...`` directly) -- every
        change it made, never the replay's swapped-in snapshot.
     3. neither observable (qualibrate not importable / the machine was not set
@@ -741,17 +740,26 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
        ``machine.save()`` + phantom-root strip (its machine came from this
        scratch); a replay proposes NOTHING, loudly -- its machine is another run's.
 
-    Any change the node's own save left in the scratch that is not proposed is
-    counted in the log, so a write that bypassed ``node.machine`` is never dropped
-    silently."""
+    Saved scratch leaves are also compared with the observed load. Direct-write
+    provenance and any leaf that cannot be materialized travel to the approval
+    card in a per-scratch capture report."""
     report = {"source": None, "blocks": recorder.blocks, "proposed": 0,
-              "replay": False, "not_proposed": [], "skipped": []}
+              "replay": False, "not_proposed": [], "skipped": [], "direct": [], "unstaged": []}
+    writes = {}
     try:
         node = (ns.get("node") if isinstance(ns, dict) else None) or recorder.node
         machine = getattr(node, "machine", None)
         is_replay = _is_replay(node, replay)
         report["replay"] = is_replay
         since_load = recorder.since_load(machine)
+        if since_load is None and not is_replay:
+            produced = _machine_dict(machine)
+            if produced is not None:
+                since_load = {}
+                baseline = _merged_files(original_files)
+                # Class defaults absent from the loaded JSON are not node writes.
+                produced = {k: v for k, v in produced.items() if k in baseline}
+                _leaf_delta(baseline, produced, "", since_load)
         declared = dict(recorder.writes)
         declared.update(_recorded_state_updates(node))
         # what the node's own save(s) left in the scratch, for the disclosure below
@@ -759,13 +767,8 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
         _leaf_delta(_merged_files(original_files),
                     _merged_files(_snapshot_files(state_path)), "", footprint)
         if recorder.blocks or declared:
-            writes, source = declared, "record_state_updates"
-            outside = [p for p in (since_load or {}) if not _covered(p, writes)]
-            if outside:
-                _log_isolation(f"{len(outside)} change(s) the node made to its machine OUTSIDE its "
-                               f"record_state_updates block(s) are NOT proposed: "
-                               + ", ".join(outside[:8]) + (" ..." if len(outside) > 8 else ""))
-            report["not_proposed"] = outside[:50]
+            writes, source = dict(declared), "record_state_updates"
+            writes.update(since_load or {})
         elif since_load is not None:
             writes, source = since_load, "machine_since_load"
             _log_isolation("the node opened no record_state_updates block: proposing every change it "
@@ -776,16 +779,35 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
                            "it holds (docs/173 S9; loaded from this scratch, so its changes are its own)")
             _persist_node_state(ns if isinstance(ns, dict) else {"node": node},
                                 state_path, original_roots)
+            saved = {}
+            _leaf_delta(_merged_files(original_files), _merged_files(_snapshot_files(state_path)), "", saved)
+            report["direct"] = list(saved)
             return report
         else:
             writes, source = {}, "none"
             _log_isolation("an offline replay whose machine changes could not be observed (no "
                            "record_state_updates block, no observed load): proposing NOTHING -- the "
                            "machine it holds is the stored run's, not this run's writes")
+        # A node can save another machine directly to the scratch. Compare that
+        # footprint with the observed load as well: replay snapshot values and
+        # serializer defaults are not writes, but a changed saved leaf is.
+        if recorder.base is not None:
+            saved_delta = {}
+            _leaf_delta(recorder.base, _merged_files(_snapshot_files(state_path)), "", saved_delta)
+            for ptr, value in footprint.items():
+                root = ptr.split("/")[1].replace("~1", "/").replace("~0", "~")
+                if ptr in saved_delta and root in _merged_files(original_files):
+                    writes.setdefault(ptr, value)
+        report["direct"] = [p for p in writes if not _covered(p, declared)]
+        if report["direct"]:
+            _log_isolation("written by the node directly: " + ", ".join(report["direct"]))
         report["source"] = source
         _restore_files(state_path, original_files)
         applied, skipped = _apply_pointer_writes(state_path, writes)
         report["proposed"], report["skipped"] = applied, [p for p, _ in skipped][:50]
+        report["unstaged"] = [{"pointer": p, "why": why,
+                                "new": None if writes[p] is _DELETED else writes[p],
+                                "deleted": writes[p] is _DELETED} for p, why in skipped]
         dropped = [p for p in footprint if not _covered(p, writes)]
         _log_isolation(f"proposing {applied} write(s) from {source} "
                        f"({recorder.blocks} block(s), replay={is_replay})")
@@ -799,8 +821,16 @@ def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
     except Exception as exc:  # noqa: BLE001
         _record_capture_failure(exc)
         report["source"] = "error"
+        report["unstaged"] = [{"pointer": p, "why": f"{type(exc).__name__}: {exc}",
+                                "new": None if v is _DELETED else v,
+                                "deleted": v is _DELETED} for p, v in writes.items()]
         # never leave a reserialized / swapped machine behind as "the node's writes"
         _restore_files(state_path, original_files)
+    finally:
+        # This file belongs to this scratch only, and is consumed before routing
+        # its leaf diff. Keep provenance and capture failures beside the values.
+        (Path(state_path).parent / "node_write_capture.json").write_text(
+            json.dumps(report, default=_json_safe), encoding="utf-8")
     return report
 
 
@@ -1008,7 +1038,7 @@ def main(argv=None) -> int:
     parser.add_argument("--config-file", help="QUALIBRATE_CONFIG_FILE for the run (run mode)")
     parser.add_argument("--isolate", action="store_true",
                         help="--state-path is a per-run scratch: pin the framework's save there "
-                             "or refuse, and leave only the node's recorded writes in it "
+                             "or refuse, and leave the union of the node's own writes in it "
                              "(run mode; docs/245)")
     parser.add_argument("--replay", action="store_true",
                         help="the run is an offline replay (load_data_id) (run mode; docs/245)")

@@ -1,5 +1,15 @@
 # 173 — SM 1.0 최종 플랜 v3: 사용자가 무엇을 하고, 무엇을 보고, 왜 하는가
 
+**W7-2 correction (1.7.0, 2026-11-06):** S5/S9 proposals include the union of
+recorded updates and leaves the node changed directly, even when it also used
+`record_state_updates`. The isolated runner compares the observed machine with
+its load baseline and captures saved scratch changes; a replay's loaded snapshot
+and serializer defaults remain excluded. A per-scratch capture report labels
+direct leaves **written by the node directly** on the approval card and retains
+capture failures with their reason. New/removed leaves are visible with a
+cannot-stage explanation. One approval still uses the one door atomically;
+`used_by_run`, gate data and string values keep their existing contracts.
+
 **날짜:** 2026-09-06 (v3 = v2 + 사용자 역할 8명 검증의 delta) · **상태:** 최종 검토용, 코드 없음 · **전제:** docs/172 part 1 (`6465c0e`) + §1b (`f2215d6`), 브랜치 `feat/physics-daily-flow`, 미push
 
 **먼저 읽을 세 문장 (검증 라운드의 결론)**

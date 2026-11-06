@@ -114,3 +114,14 @@ class TestPersistNodeState:
         assert m.qubits["qA1"].resonator.time_of_flight == 404
         rex._set_by_ref(m, "#/extras/note", "changed")                    # dict leaf
         assert m.extras["note"] == "changed"
+
+    def test_isolated_capture_reports_a_leaf_it_cannot_materialize(self, rex, tmp_path):
+        p = tmp_path / "state.json"
+        p.write_text('{"a": 1}', encoding="utf-8")
+        original = rex._snapshot_files(str(tmp_path))
+        node = _Node(None, {"#/a/child": {"new": "synthetic"}})
+        report = rex._persist_isolated({"node": node}, str(tmp_path), None, original, rex._UpdateRecorder())
+        assert report["unstaged"][0]["pointer"] == "/a/child"
+        assert "not a container" in report["unstaged"][0]["why"]
+        assert report["unstaged"][0]["new"] == "synthetic"
+        assert json.loads(p.read_text()) == {"a": 1}

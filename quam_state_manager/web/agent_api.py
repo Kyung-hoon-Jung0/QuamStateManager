@@ -1873,6 +1873,11 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
                          "first, then approve"}
     staged, unstaged = [], []
+    if any(w.get("capture_error") for w in writes):
+        return {"group_id": gid, "staged": 0, "applied": False,
+                "unstaged": [{"path": w["path"], "why": w["capture_error"]}
+                             for w in writes if w.get("capture_error")],
+                "error": "node writes could not be captured; nothing was written"}
     with store._lock:
         for w in writes:
             if w.get("created") or w.get("deleted"):
@@ -2574,7 +2579,7 @@ def approvals_decide(aid: str, verb: str):
                     + " was not among them", 400)
             # keep each proposal's own `old`: the value is the person's to
             # change, the anchor it is compared against is not
-            writes = [dict(w, old=proposed[str(w.get("path"))].get("old"))
+            writes = [dict(proposed[str(w.get("path"))], new=w.get("new"))
                       for w in writes]
         if verb == "approve" and cur.get("kind") == "writes" and writes is None:
             # a press that names no values writes what the card ticks by default: never a value
@@ -2591,6 +2596,9 @@ def approvals_decide(aid: str, verb: str):
             # the writes go through the door FIRST; a refusal keeps the approval pending
             # (the human sees why, takes live, presses again) instead of recording an
             # approval that never reached the chip. All or nothing (review R2-2).
+            if any(w.get("capture_error") for w in cur.get("writes") or []):
+                # A missing captured leaf parks the whole run, even if unticked.
+                writes = cur["writes"]
             res = _stage_writes(current_app._get_current_object(), str(r._active_path()),
                                 writes if writes is not None else (cur.get("writes") or []),
                                 f"approved:{aid}", cur.get("actor") or "by_agent", cur.get("plan_id"), True, presser=actor)

@@ -419,7 +419,7 @@ def diff_states(before_folder: Path, after_folder: Path, *, cap: int = MAX_WRITE
             out.append({"path": path, "old": a[path], "new": None, "deleted": True})
         if len(out) >= cap:
             truncated = True
-            break
+            # Hold a large proposal, but retain every row for human review.
     return out, truncated
 
 
@@ -428,6 +428,25 @@ def _both_nan(x, y) -> bool:
         return isinstance(x, float) and isinstance(y, float) and x != x and y != y
     except Exception:  # noqa: BLE001
         return False
+
+
+def node_write_capture(live: Path, writes: list[dict]) -> None:
+    """Carry the subprocess's direct-write provenance and unstaged leaves to the card."""
+    try:
+        report = json.loads((live.parent / "node_write_capture.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+
+    def dot(ptr):
+        return ".".join(s.replace("~1", "/").replace("~0", "~") for s in ptr.lstrip("/").split("/"))
+
+    direct = [dot(p) for p in report.get("direct", [])]
+    for item in report.get("unstaged", []):
+        writes.append({"path": dot(item["pointer"]), "old": None, "new": item.get("new"),
+                       "capture_error": item["why"]})
+    for w in writes:
+        if any(w["path"] == p or w["path"].startswith(p + ".") for p in direct):
+            w["origin"] = "written by the node directly"
 
 
 def _busy_wait_unresolved(text: str) -> bool:
@@ -891,6 +910,7 @@ class Registry:
                 result["failure"] = fail
             # ---- what the node wrote
             writes, truncated = diff_states(before, live)
+            node_write_capture(live, writes)
             result["writes"] = writes
             result["writes_truncated"] = truncated
             # ---- which run it was
