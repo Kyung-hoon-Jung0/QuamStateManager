@@ -182,6 +182,11 @@ class TestTypeCoerce:
     def test_str_to_str(self):
         assert _type_coerce("hello", 42) == "42"
 
+    @pytest.mark.parametrize("value", [[{"detuning_hz": 123000000.0}], {"reason": "synthetic"}])
+    def test_container_into_string_refuses_repr(self, value):
+        with pytest.raises(TypeError, match="Expected str, got (list|dict)"):
+            _type_coerce("[]", value)
+
     def test_bool_coerce(self):
         assert _type_coerce(True, "false") is False
         assert _type_coerce(False, "true") is True

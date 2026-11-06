@@ -77,6 +77,12 @@ def synth_folder(tmp_path, request):
     d = tmp_path / "chip"
     d.mkdir()
     state = _make_state()
+    if getattr(request, "param", None) == "loss_maps":
+        state["qubits"]["qA1"]["extras"] = {
+            "population_loss_defects_json": "[]",
+            "population_loss_safe_intervals_json": "[]",
+            "reasons_json": "[]", "safe_intervals": [],
+        }
     if getattr(request, "param", None) == "port_identity":
         state["ports"] = {"analog_outputs": {"con1": {"2": {"1": {
             "controller_id": "con1", "fem_id": 2, "port_id": 1}}}}}
@@ -205,6 +211,56 @@ def _run(c, **kw):
 
 
 # ------------------------------------------------------------------ pure
+
+@pytest.mark.parametrize("synth_folder", ["loss_maps"], indirect=True)
+@pytest.mark.parametrize("bad_container", [False, True])
+def test_loss_map_approval_preserves_json_text(c, inst, synth_folder, fake_run, bad_container):
+    """Synthetic 25c-shaped updates through scratch diff, approval and live save."""
+    extras = {
+        "population_loss_defects_json": '  [{"detuning_hz": 123000000.0, "reason": "synthetic"}]  ',
+        "population_loss_safe_intervals_json": '[ {"lo_hz": 100000000.0, "hi_hz": 200000000.0} ]\n',
+        "reasons_json": '["synthetic\\nreason", "\\u03bb"]',
+    }
+    fake_run.extra = {"extras": dict(extras, safe_intervals=[])}
+    _arm(c)
+    result = _run(c).get_json()["result"]
+    approval = approvals.get(str(inst), _chip(c), result["approval"]["id"])
+    proposed = {w["path"]: w["new"] for w in approval["writes"]}
+    for key, value in extras.items():
+        assert proposed[f"qubits.qA1.extras.{key}"] == value
+    writes = approval["writes"]
+    if bad_container:
+        writes = [dict(w, new=json.loads(w["new"]))
+                  if w["path"].endswith("population_loss_defects_json") else w for w in writes]
+    response = c.post(f"/api/agent/approvals/{approval['id']}/approve",
+                      json={"writes": writes}, headers=HUMAN)
+    data = response.get_json()
+    live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    actual = live["qubits"]["qA1"]["extras"]
+    if bad_container:
+        assert not data["ok"], data
+        assert actual["population_loss_defects_json"] == "[]"
+        assert "TypeError: Expected str, got list" in json.dumps(data)
+        assert c.get("/api/agent/chip").get_json()["pending"] == 0
+    else:
+        assert data["ok"] and data["stage"]["applied"], data
+        assert actual == dict(extras, safe_intervals=[])
+        assert actual["population_loss_defects_json"].encode() == extras["population_loss_defects_json"].encode()
+
+
+@pytest.mark.parametrize("synth_folder", ["loss_maps"], indirect=True)
+def test_approval_real_list_stays_list(c, inst, synth_folder):
+    value = [{"lo_hz": 100000000.0, "hi_hz": 200000000.0}]
+    approval = approvals.add(str(inst), _chip(c), kind="writes", node="synthetic_map",
+                             targets=["qA1"], writes=[{
+                                 "path": "qubits.qA1.extras.safe_intervals", "old": [], "new": value}],
+                             reason="synthetic list", why_held="mode ask-writes", actor="by_claude")
+    response = c.post(f"/api/agent/approvals/{approval['id']}/approve", json={}, headers=HUMAN)
+    assert response.get_json()["ok"], response.get_json()
+    live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    actual = live["qubits"]["qA1"]["extras"]["safe_intervals"]
+    assert isinstance(actual, list) and actual == value
+
 
 class TestPure:
     def test_diff_states_changed_created_deleted_nan(self, tmp_path):

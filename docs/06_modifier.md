@@ -48,11 +48,44 @@ Removes a single change entry from the log by index and restores its old value i
 | `float` | int/str | `float(new_value)` |
 | `int` | float/str | `int(float(new_value))` |
 | `bool` | str | `"true"/"yes"/"1"` → `True`, `"false"/"no"/"0"` → `False` |
-| `str` | anything | `str(new_value)` |
+| `str` | str | preserved verbatim, including JSON text, whitespace and escapes |
+| `str` | list/dict | TypeError; enter a JSON string literal to store JSON text |
+| `str` | other scalar | legacy `str(new_value)` conversion |
 | `list` | list | accepted, non-list raises TypeError |
 | `dict` | dict | accepted, non-dict raises TypeError |
 
 **Why no range validation**: Real QUAM data has coupler amplitudes > 1, negative T2 from fits, angles outside [-π, π], etc. Strict ranges would block valid researcher edits.
+
+### JSON-text strings at write doors (W7-1)
+
+The Agent scratch-state diff (`core/agent_runs.py:diff_states`) and approval
+storage (`core/approvals.py`) preserve JSON value types. The approval editor
+in `web/static/agent.js` must render strings as JSON literals, including in
+`apTexts`: parsing an unquoted JSON-text string with `parseEdit` turns it into
+a list or dict. `approve` posts that parsed value to
+`web/agent_api.py:approvals_decide`, which calls `_stage_writes`, then
+`Modifier.set_value`. Previously `_type_coerce` converted the container with
+`str()`, silently storing Python repr instead of JSON text.
+
+Strings now edit as JSON literals and unwrap exactly once. The shared
+`Modifier._checked_value` gate either applies the enforced type policy or
+calls `_type_coerce`, which refuses list/dict into a string field with a
+`TypeError`. An explicit literal type-change door can still change the type;
+it does not stringify a container.
+
+Other doors use the same gate: plot-click apply (`app.js:applyAllPlotRows`),
+bulk edits and Dataset Apply selected post to `/field/edit-batch`; MCP
+`state_edit` posts to `/field/edit`. These routes parse text against the
+target type and call the modifier. Dataset whole-state Apply to chip reads
+the JSON state/wiring pair and writes it with `safe_io.write_state_wiring`
+before the shared live apply; it never coerces leaf values to strings.
+
+Synthetic regression pins cover the 25c-shaped string fields and
+`reasons_json` through scratch diff, held approval and live disk save; real
+lists through approval; list/dict rejection; the plot/bulk batch door; and
+the real Agent renderer through its Python-driven jsdom selfcheck. Five
+mutations were killed: unquoted input, unquoted preview, restored
+`str(container)`, list-to-repr coercion, and parsing string values in staging.
 
 ## Rollback mechanics
 

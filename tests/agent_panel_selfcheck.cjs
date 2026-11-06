@@ -112,6 +112,38 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await tick(30);
   ok(calls[0].url === '/api/agent/approvals/ap-1/approve' && calls[0].body.writes[0].new === 4325000000 && calls[0].body.writes[0].path === 'qubits.q1.f_01', 'approve carries the edited value');
 
+  // W7-1: a 25c-shaped JSON-text value edits as a STRING literal, never an array.
+  const lossText = '  [{"detuning_hz": 123000000.0, "reason": "synthetic\\nmap"}]  ';
+  const lossPath = 'qubits.q1.extras.population_loss_defects_json';
+  const listValue = [{ detuning_hz: 456000000, safe: true }];
+  const savedApprovals = feed.live.approvals;
+  feed.live.approvals = [{ id: 'ap-json', kind: 'writes', node: '25c_population_loss_vs_flux',
+    targets: ['q1'], created: now, writes: [
+      { path: lossPath, old: '[]', new: lossText },
+      { path: 'qubits.q1.extras.safe_intervals', old: [], new: listValue },
+      { path: 'qubits.q1.extras.note', old: 'synthetic', new: '' }
+    ] }];
+  await P.poll(true); await tick();
+  const jsonAp = home.querySelector('[data-card="approval:ap-json"]');
+  const jsonInput = jsonAp.querySelector('input.ag-ap-new');
+  ok(jsonInput.value === JSON.stringify(lossText), 'W7-1 string editor shows its JSON literal');
+  ok(jsonAp.querySelector('.ag-ap-value').textContent === JSON.stringify(lossText), 'W7-1 string preview retains quotes and escapes');
+  ok(jsonAp.querySelectorAll('.ag-ap-value')[2].textContent === '""', 'W7-1 empty string preview shows its literal');
+  calls.length = 0;
+  P.approve('ap-json', jsonAp.querySelector('.ag-approve')); await tick(30);
+  ok(calls[0].body.writes[0].new === lossText, 'W7-1 untouched JSON-text string round trips byte for byte');
+  ok(JSON.stringify(calls[0].body.writes[1].new) === JSON.stringify(listValue) && Array.isArray(calls[0].body.writes[1].new), 'W7-1 real list remains a list');
+  ok(calls[0].body.writes[2].new === '', 'W7-1 empty string stays a string');
+  const editedText = ' [{"detuning_hz": 789000000.0, "reason": "edited"}]\n';
+  jsonInput.value = JSON.stringify(editedText);
+  P.apPreview(jsonInput);
+  ok(jsonAp.querySelector('.ag-ap-value').textContent === JSON.stringify(editedText), 'W7-1 edited string preview retains its type');
+  calls.length = 0;
+  P.approve('ap-json', jsonAp.querySelector('.ag-approve')); await tick(30);
+  ok(calls[0].body.writes[0].new === editedText, 'W7-1 edited JSON-text string stays a string');
+  feed.live.approvals = savedApprovals;
+  await P.poll(true); await tick();
+
   // a /run line is a plan POST; other text continues the live session
   const ta = home.querySelector('.ag-input');
   ta.value = '/run 05_power_rabi q1 num_shots=200';

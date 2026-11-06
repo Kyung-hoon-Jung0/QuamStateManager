@@ -25,6 +25,7 @@ def _make_state() -> dict:
                 "T1": 8834.0,
                 "T2ramsey": 1.5e-6,
                 "anharmonicity": -220e6,
+                "extras": {"population_loss_defects_json": "[]", "intervals": []},
                 "xy": {
                     "RF_frequency": 6.25e9,
                     "operations": {
@@ -117,6 +118,27 @@ class TestFieldPeek:
 
 
 class TestFieldEditBatch:
+    @pytest.mark.parametrize("bad", [False, True])
+    def test_loss_map_string_gate_shared_by_plot_and_bulk(self, client, bad):
+        text = '  [{"detuning_hz": 123000000.0, "reason": "synthetic"}]  '
+        path = "qubits.qA1.extras.population_loss_defects_json"
+        # This is the literal input sent by the field editor; an actual JSON
+        # array from the plot/bulk batch must hit the same modifier type gate.
+        value = json.loads(text) if bad else json.dumps(text)
+        response = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": path, "value": value},
+            {"dot_path": "qubits.qA1.extras.intervals", "value": [{"safe": True}]},
+        ]})
+        assert response.status_code == (400 if bad else 200), response.get_json()
+        peek = client.get("/field/peek", query_string={"dot_path": path}).get_json()
+        assert peek["values"][path] == ("[]" if bad else text)
+        if bad:
+            assert "Expected str, got list" in json.dumps(response.get_json())
+        else:
+            peek = client.get("/field/peek", query_string={
+                "dot_path": "qubits.qA1.extras.intervals"}).get_json()
+            assert peek["values"]["qubits.qA1.extras.intervals"] == [{"safe": True}]
+
     def test_happy_path_applies_all(self, client):
         resp = client.post(
             "/field/edit-batch",

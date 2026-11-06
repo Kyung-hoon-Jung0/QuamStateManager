@@ -812,7 +812,8 @@ def _type_coerce(old_value: Any, new_value: Any) -> Any:
       - If old is int (but not bool), cast to int.
       - If old is bool, accept true/false, yes/no, on/off, 1/0 (case-insensitive);
         an unrecognized string raises (never silently True).
-      - If old is str, cast to str.
+      - If old is str, preserve strings; reject list/dict rather than writing
+        Python repr text. Other scalars retain the legacy str conversion.
       - If old is list/dict, accept list/dict (no deep coercion).
       - Otherwise, return new_value as-is.
 
@@ -868,6 +869,11 @@ def _type_coerce(old_value: Any, new_value: Any) -> Any:
         return as_float
 
     if isinstance(old_value, str):
+        if isinstance(new_value, (list, dict)):
+            raise TypeError(
+                f"Expected str, got {type(new_value).__name__}; "
+                "enter a JSON string literal to store JSON text"
+            )
         return str(new_value)
 
     if isinstance(old_value, list):

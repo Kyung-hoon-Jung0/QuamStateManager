@@ -750,13 +750,18 @@ window.AgentPanel = (function () {
      (the finding: "3.931e-5" under now beside an input reading "0.000042").
      The input stays the RAW stored value, because that is what is written
      (docs/254: an approval is what the person saw), and names its stored
-     unit; the formatted value beside it follows what is typed (apPreview). */
+     unit; the formatted value beside it follows what is typed (apPreview).
+     Strings use their JSON literal in BOTH places: parsing raw JSON-text
+     strings here would change their type before they reach the write gate. */
   function parseEdit(t) { t = String(t == null ? "" : t).trim(); try { return JSON.parse(t); } catch (e) { return t; } }
   function apTexts(w, proposed) {
     var nowV = w.now_known === true ? w.now : (w.now_known === false ? null : w.old);
-    var t = fmtRow([nowV, w.old, proposed], w.display);
+    var values = [nowV, w.old, proposed];
+    var t = fmtRow(values, w.display).map(function (text, i) {
+      return typeof values[i] === "string" ? JSON.stringify(values[i]) : text;
+    });
     return { cell: w.now_known === true ? t[0] : t[1], now: t[0], old: t[1], nw: t[2],
-             shown: proposed === undefined || proposed === "" ? "" : t[2] };   // W3-7: every row, so no row reads as missing it
+             shown: proposed === undefined ? "" : t[2] };   // W3-7: every row, so no row reads as missing it
   }
   function movedTitle(t) { return "the proposal was made from " + t.old + "; SM holds " + t.now + " now"; }
   function apPreview(inp) {
@@ -804,7 +809,7 @@ window.AgentPanel = (function () {
       var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
       return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
-          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">' +
+          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(JSON.stringify(w.new)) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
     }).join("");
     // review R2-11: a RUN request is allowed, not written
