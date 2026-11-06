@@ -190,28 +190,29 @@ def _chan_port_path(root: dict, qubit: dict | None, chan: str) -> str | None:
     return _resolve_ptr_path(root, ch.get("opx_output"))
 
 
-def _old_pair_id(members: tuple[str, str] | None, old_state: dict) -> str | None:
+def _old_pair_id(members: tuple[str, str] | None, old_state: dict,
+                 root: dict | None = None) -> str | None:
     """The OLD state's pair id for a (control, target) membership — the merge
     walks post-reconcile keys, which ARE the old ids."""
     if not members:
         return None
     for pid, pair in (old_state.get("qubit_pairs") or {}).items():
-        if _pair_membership(pair) == members:
+        if _pair_membership(pair, root) == members:
             return pid
     return None
 
 
 def _spec_pair_members(rid: str, spec_populate: dict,
-                       new_state: dict) -> tuple[str, str] | None:
+                       new_state: dict, root: dict | None = None) -> tuple[str, str] | None:
     """Members for a wizard ``populate.pairs`` key. The wizard keys buckets by
     the canonical ``control-target`` id derived from pair REFS — never parse
     the id string (short-form ``q1-2`` hazard); look the pair up instead."""
     for pid, pair in (new_state.get("qubit_pairs") or {}).items():
-        m = _pair_membership(pair)
+        m = _pair_membership(pair, root)
         if m and f"{m[0]}-{m[1]}" == rid:
             return m
     # fall back: an id that IS a new-state key
-    m = _pair_membership((new_state.get("qubit_pairs") or {}).get(rid))
+    m = _pair_membership((new_state.get("qubit_pairs") or {}).get(rid), root)
     return m
 
 
@@ -381,6 +382,15 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
                     for op_name in ops:
                         if _DRAG_FAMILY_RE.match(op_name):
                             add(f"{ops_path}.{op_name}.{leaf}")
+        elif group == "coupler_models":
+            members = _spec_pair_members(rid, spec_populate, new_state, new_root)
+            merged_pid = _old_pair_id(members, old_state, old_root)
+            if merged_pid is None:
+                merged_pid = next((pid for pid, pair in (new_state.get("qubit_pairs") or {}).items()
+                                   if members and _pair_membership(pair, new_root) == members), rid)
+            protect.add(f"qubit_pairs.{merged_pid}.extras.sm_coupler_model.{fname}")
+            # A newly entered model gets its build timestamp along with the edited fields.
+            protect.add(f"qubit_pairs.{merged_pid}.extras.sm_coupler_model.created_at")
         elif group == "pairs":
             members = _spec_pair_members(rid, spec_populate, new_state)
             merged_pid = _old_pair_id(members, old_state) or rid

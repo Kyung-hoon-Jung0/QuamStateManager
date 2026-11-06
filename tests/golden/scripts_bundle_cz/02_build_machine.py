@@ -12,6 +12,7 @@ the State Manager's own build subprocess — including the readout-LO
 pointer fix-up — so this bundle reproduces state.json byte-for-byte.
 """
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -135,6 +136,56 @@ def _match_populate_pairs(populate_pairs, built_ids):
         else:
             resolved.setdefault(bid, v)
     return resolved, unmatched
+
+def number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return v if math.isfinite(v) else None
+
+def coupler_model(value):
+    """Validate stored S3 parameters [derived], check S3-MODEL; never default."""
+    if not isinstance(value, dict):
+        return None
+    numeric = ("fc_max_hz", "ec_c_hz", "d_c", "phi0_v", "phi_idle",
+               "g_c_hz", "g_t_hz", "g_ct_hz")
+    if any(isinstance(value.get(k), bool) or number(value.get(k)) is None for k in numeric):
+        return None
+    model = {k: number(value[k]) for k in numeric}
+    if (model["fc_max_hz"] <= 0 or model["ec_c_hz"] <= 0 or
+            not 0 <= model["d_c"] < 1 or model["phi0_v"] <= 0 or
+            any(model[k] < 0 for k in ("g_c_hz", "g_t_hz", "g_ct_hz")) or
+            any(not isinstance(value.get(k), str) or not value[k].strip() for k in ("source", "created_at"))):
+        return None
+    return {**model, **{k: value[k] for k in ("source", "created_at")}}
+
+def _apply_coupler_models(machine, populate):
+    """Store only explicit, complete models, after all pair creation has finished."""
+    from datetime import datetime, timezone
+
+    models = populate.get("coupler_models") or {}
+    if not models:
+        return
+    matched, unmatched = _match_populate_pairs(models, list(machine.qubit_pairs))
+    if unmatched:
+        raise ValueError("Coupler model: no built pair for " + ", ".join(unmatched))
+    for pid, value in matched.items():
+        if not value:
+            continue
+        candidate = dict(value)
+        candidate["created_at"] = datetime.now(timezone.utc).isoformat()
+        model = coupler_model(candidate)
+        if model is None:
+            raise ValueError("Coupler model for " + pid + ": complete valid fields and source required")
+        pair = machine.qubit_pairs[pid]
+        if not getattr(pair, "coupler", None):
+            raise ValueError("Coupler model for " + pid + ": pair has no coupler")
+        if getattr(pair, "extras", None) is None:
+            pair.extras = {}
+        pair.extras["sm_coupler_model"] = model
 
 def _num(v):
     """Return ``v`` if it is a real finite number, else None (rejects bool, str,
@@ -1803,6 +1854,7 @@ for _w in _apply_dual_upconverters(machine, _spec):
 if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
     for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):
         print(f"WARNING: {_w}", file=sys.stderr)
+_apply_coupler_models(machine, POPULATE)
 if (POPULATE.get("options") or {}).get("pin_cores"):
     _pin_cores(machine)
 for _w in _fix_coupled_bands(machine, _spec, []):

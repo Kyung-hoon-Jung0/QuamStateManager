@@ -1371,6 +1371,14 @@
       Object.keys(pop[grp]).forEach(function (qid) { nb[map[qid] || qid] = pop[grp][qid]; });
       pop[grp] = nb;
     });
+    if (pop.coupler_models) {
+      var renamedModels = {};
+      Object.keys(pop.coupler_models).forEach(function (key) {
+        var p = key.split("-");
+        renamedModels[(map[p[0]] || p[0]) + "-" + (map[p[1]] || p[1])] = pop.coupler_models[key];
+      });
+      pop.coupler_models = renamedModels;
+    }
     if (pop.pairs) {
       var npairs = {};
       Object.keys(pop.pairs).forEach(function (key) {
@@ -1464,7 +1472,7 @@
       return q(k.slice(0, i)) + "-" + q(k.slice(i + 1));
     };
     var rid = function (grp, k) {
-      return grp === "pairs" ? pair(k) : _REGEN_POP_GROUPS[grp] ? q(k) : k;
+      return (grp === "pairs" || grp === "coupler_models") ? pair(k) : _REGEN_POP_GROUPS[grp] ? q(k) : k;
     };
     if (state.regenQubitSource) {
       state.regenQubitSource = remapKeysBy(state.regenQubitSource, q);
@@ -1502,7 +1510,7 @@
     if (bp) {
       Object.keys(bp).forEach(function (grp) {
         if (bp[grp] && typeof bp[grp] === "object" &&
-            (grp === "pairs" || _REGEN_POP_GROUPS[grp])) {
+            (grp === "pairs" || grp === "coupler_models" || _REGEN_POP_GROUPS[grp])) {
           bp[grp] = remapKeysBy(bp[grp], function (k) { return rid(grp, k); });
         }
       });
@@ -1943,6 +1951,11 @@
       });
     }
     var pop = state.spec.populate; if (!pop) return;
+    Object.keys(pop.coupler_models || {}).forEach(function (key) {
+      if (key.split("-").some(function (q) { return !(valid[q] || valid["q" + q]); })) {
+        delete pop.coupler_models[key];
+      }
+    });
     ["qubit", "resonator", "flux", "pulses"].forEach(function (grp) {
       if (!pop[grp]) return;
       Object.keys(pop[grp]).forEach(function (qid) { if (!valid[qid]) delete pop[grp][qid]; });
@@ -6413,6 +6426,14 @@
 
   function reconcilePopulatePairs() {
     var pop = state.spec.populate;
+    if (pop && pop.coupler_models) {
+      var held = CHIP_ARCH[state.heldChipArch];
+      var modelGate = state.pairGate === "cz_tunable" || state.pairGate === "cz_coupler" || (held && held.couplerFlux);
+      var live = modelGate ? state.spec.qubit_pairs.map(function (p) { return p[0] + "-" + p[1]; }) : [];
+      Object.keys(pop.coupler_models).forEach(function (id) {
+        if (live.indexOf(id) < 0) delete pop.coupler_models[id];
+      });
+    }
     if (!pop || !pop.pairs) return;
     var liveIds = {};
     var byMembers = {};   // sorted "qA|qB" -> canonical "control-target" id
@@ -6496,6 +6517,15 @@
       if (Array.isArray(sp0.addition_rules) && GR && GR.flipPair) sp0.addition_rules = GR.flipPair(sp0.addition_rules, oldPid, newPid);
     }
     var pop = state.spec.populate || {};
+    if (pop.coupler_models && pop.coupler_models[oldId]) {
+      var model = pop.coupler_models[oldId];
+      pop.coupler_models[newId] = model;
+      delete pop.coupler_models[oldId];
+      var gc = model.g_c_hz; model.g_c_hz = model.g_t_hz; model.g_t_hz = gc;
+      couplerModelFields().concat([{key: "source"}]).forEach(function (f) {
+        markPopulateTouched("coupler_models", newId, f.key);
+      });
+    }
     if (pop.pairs && pop.pairs[oldId]) {
       mergePairPopulate(oldId, newId);
       var mv = pop.pairs[newId].moving_qubit;
@@ -9314,6 +9344,102 @@
     });
   }
 
+  function couplerModelFields() {
+    var el = document.getElementById("gen-coupler-model-fields");
+    try { return JSON.parse(el.textContent); } catch (_) { return []; }
+  }
+
+  function couplerModelPairs() {
+    return (state.spec.qubit_pairs || []).filter(function (p) {
+      return p[0] && p[1] && state.couplerFlux && state.pairGate !== "cr" && state.pairGate !== "cz_fixed";
+    }).map(function (p) { return p[0] + "-" + p[1]; });
+  }
+
+  function couplerModelError(id) {
+    var b = ((state.spec.populate || {}).coupler_models || {})[id];
+    if (!b || !Object.keys(b).length) return "";
+    var missing = [], invalid = [];
+    couplerModelFields().forEach(function (f) {
+      var v = b[f.key];
+      if (v == null || String(v).trim() === "") { missing.push(f.label); return; }
+      var n = Number(v);
+      if (typeof v === "boolean" || !Number.isFinite(n) ||
+          (f.min != null && (f.exclusive_min ? n <= f.min : n < f.min)) ||
+          (f.max != null && n >= f.max)) invalid.push(f.label);
+    });
+    if (typeof b.source !== "string" || !b.source.trim()) missing.push("Source");
+    return [missing.length ? "Missing: " + missing.join(", ") : "",
+            invalid.length ? "Invalid: " + invalid.join(", ") : ""].filter(Boolean).join(". ");
+  }
+
+  function couplerModelErrors() {
+    return couplerModelPairs().map(function (id) {
+      var error = couplerModelError(id);
+      return error ? id + ": " + error : "";
+    }).filter(Boolean);
+  }
+
+  function renderCouplerModels() {
+    var host = document.getElementById("gen-pop-coupler-models");
+    if (!host) return;
+    host.textContent = "";
+    var ids = couplerModelPairs(), fields = couplerModelFields();
+    host.hidden = !ids.length;
+    ids.forEach(function (id) {
+      var section = document.createElement("fieldset");
+      section.dataset.pair = id;
+      var legend = document.createElement("legend");
+      legend.textContent = id + " \u00b7 Coupler model (optional)";
+      section.appendChild(legend);
+      var hint = document.createElement("p");
+      hint.className = "muted";
+      hint.textContent = "Leave all model fields empty to omit the model. Enter every field to compute the coupler shift and ZZ in the CZ gate plan.";
+      section.appendChild(hint);
+      var grid = document.createElement("div"); grid.className = "ui-coupler-model-grid";
+      var bucket = ((state.spec.populate || {}).coupler_models || {})[id] || {};
+      var output = document.createElement("p");
+      output.className = "ui-coupler-model-error"; output.id = "gen-model-error-" + id;
+      output.setAttribute("role", "status");
+      fields.concat([{key: "source", label: "Source", help: "Where these model parameters came from."}]).forEach(function (f) {
+        var label = document.createElement("label");
+        label.textContent = f.label + (f.unit ? " (" + f.unit + ")" : "");
+        var input = document.createElement("input");
+        input.type = "text"; if (f.scale) input.inputMode = "decimal";
+        input.dataset.field = f.key;
+        input.setAttribute("aria-describedby", output.id);
+        var v = bucket[f.key];
+        input.value = v == null ? (f.key === "source" ? "entered in the wizard" : "") :
+          (f.scale && typeof v === "number" ? v / f.scale : v);
+        var help = document.createElement("small"); help.className = "muted"; help.textContent = f.help;
+        label.appendChild(input); label.appendChild(help); grid.appendChild(label);
+        input.addEventListener("input", function () {
+          var pop = state.spec.populate || (state.spec.populate = {});
+          var models = pop.coupler_models || (pop.coupler_models = {});
+          var b = models[id] || (models[id] = {});
+          grid.querySelectorAll("input").forEach(function (el) {
+            var field = fields.find(function (x) { return x.key === el.dataset.field; });
+            var raw = el.value.trim();
+            if (!raw) delete b[el.dataset.field];
+            else b[el.dataset.field] = field && Number.isFinite(Number(raw)) ? Number(raw) * field.scale : raw;
+          });
+          if (!fields.some(function (f) { return b[f.key] != null; }) &&
+              (!b.source || b.source === "entered in the wizard")) delete models[id];
+          markPopulateTouched("coupler_models", id, f.key);
+          updateError(); saveDraft();
+        });
+      });
+      function updateError() {
+        var message = couplerModelError(id);
+        output.textContent = message; output.hidden = !message;
+        grid.querySelectorAll("input").forEach(function (el) {
+          el.classList.toggle("gen-cell-err", !!message);
+          el.setAttribute("aria-invalid", message ? "true" : "false");
+        });
+      }
+      section.appendChild(grid); section.appendChild(output); host.appendChild(section); updateError();
+    });
+  }
+
   function renderPopulateTables() {
     reconcilePopulatePairs();   // drop populate for removed pairs / wrong-gate fields
     czAutoOrient();             // draft restore / step re-entry: order may be stale
@@ -9399,6 +9525,7 @@
         "No TWPAs defined.");
     }
     if (pairs.length) renderPairPopTable(pairs);
+    renderCouplerModels();
     renderPairOrderNote();
     // First-paint validation: covers step entry, draft restore, unit toggle
     // and power-mode flip (all of which land here) — a restored 15.3 GHz
@@ -10085,6 +10212,13 @@
         sp.qubit_pairs.length + " / " + sp.twpas.length],
       ["Control lines", linesSummary],
     ];
+    sp.qubit_pairs.forEach(function (p) {
+      var id = p[0] + "-" + p[1];
+      var b = ((sp.populate || {}).coupler_models || {})[id];
+      rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
+    });
+    var modelErrors = couplerModelErrors();
+    if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
     if (roReview) rows.push(["Readout feedlines", roReview]);
     var qdacQubits = Object.keys((sp.qdac && sp.qdac.qubits) || {});
@@ -11887,6 +12021,11 @@
     // was skipped via the step chips — otherwise the build gets no lines.
     czAutoOrient();   // defense-in-depth: never build a CZ pair backwards
     deriveLines();
+    var modelErrors = couplerModelErrors();
+    if (modelErrors.length) {
+      refuseBuild("Coupler model: " + modelErrors.join("; "), "error");
+      return;
+    }
     var outPath = getOutputPath();
     if (!outPath) {
       refuseBuild("Choose an output folder in step 7.", "warn");

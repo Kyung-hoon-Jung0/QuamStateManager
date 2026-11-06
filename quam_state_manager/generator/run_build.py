@@ -29,6 +29,7 @@ Usage::
 import argparse
 import importlib
 import json
+import math
 import os
 import sys
 import traceback
@@ -2968,6 +2969,60 @@ def _seed_coupler_cz(pair, vals):
     pair.macros["cz"] = "#./cz_coupler"
 
 
+# Standalone validator copies: exact-source parity pinned against core/cz_gate_plan.py.
+def number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def coupler_model(value):
+    """Validate stored S3 parameters [derived], check S3-MODEL; never default."""
+    if not isinstance(value, dict):
+        return None
+    numeric = ("fc_max_hz", "ec_c_hz", "d_c", "phi0_v", "phi_idle",
+               "g_c_hz", "g_t_hz", "g_ct_hz")
+    if any(isinstance(value.get(k), bool) or number(value.get(k)) is None for k in numeric):
+        return None
+    model = {k: number(value[k]) for k in numeric}
+    if (model["fc_max_hz"] <= 0 or model["ec_c_hz"] <= 0 or
+            not 0 <= model["d_c"] < 1 or model["phi0_v"] <= 0 or
+            any(model[k] < 0 for k in ("g_c_hz", "g_t_hz", "g_ct_hz")) or
+            any(not isinstance(value.get(k), str) or not value[k].strip() for k in ("source", "created_at"))):
+        return None
+    return {**model, **{k: value[k] for k in ("source", "created_at")}}
+
+
+def _apply_coupler_models(machine, populate):
+    """Store only explicit, complete models, after all pair creation has finished."""
+    from datetime import datetime, timezone
+
+    models = populate.get("coupler_models") or {}
+    if not models:
+        return
+    matched, unmatched = _match_populate_pairs(models, list(machine.qubit_pairs))
+    if unmatched:
+        raise ValueError("Coupler model: no built pair for " + ", ".join(unmatched))
+    for pid, value in matched.items():
+        if not value:
+            continue
+        candidate = dict(value)
+        candidate["created_at"] = datetime.now(timezone.utc).isoformat()
+        model = coupler_model(candidate)
+        if model is None:
+            raise ValueError("Coupler model for " + pid + ": complete valid fields and source required")
+        pair = machine.qubit_pairs[pid]
+        if not getattr(pair, "coupler", None):
+            raise ValueError("Coupler model for " + pid + ": pair has no coupler")
+        if getattr(pair, "extras", None) is None:
+            pair.extras = {}
+        pair.extras["sm_coupler_model"] = model
+
+
 def _finalize_pair_gates(machine, spec, pair_gate):
     """Add the wizard's chosen 2Q-gate macros (CR / CZ fixed / CZ tunable).
 
@@ -3241,6 +3296,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         warnings.extend(_apply_dual_upconverters(machine, spec))
         if pair_gate in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))
+        _apply_coupler_models(machine, spec.get("populate") or {})
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)
         # docs/141 4ak: say it when a declared pair produced nothing. Silence

@@ -13,6 +13,8 @@
  */
 
 :root {
+    --ui-coupler-field-flex: 1fr;
+    --ui-coupler-field-min: 15rem;
     --ui-running-height: 10rem;
     --ui-find-results-height: 9rem;
     --ui-find-replace-width: 24ch;
@@ -665,6 +667,15 @@
     border: var(--ui-bw-tab) solid var(--ui-danger-border);
     border-radius: var(--ui-r-round);
 }
+
+/* Optional physical model uses the same field rhythm as the wizard. */
+.ui-coupler-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--ui-coupler-field-min), var(--ui-coupler-field-flex)));
+  gap: var(--ui-gap-3);
+}
+.ui-coupler-model-grid small { display: block; }
+.ui-coupler-model-error { color: var(--ui-danger-text); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed

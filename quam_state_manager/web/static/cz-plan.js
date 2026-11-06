@@ -146,8 +146,10 @@
 
     // [derived], S3-FORM: one atomic Review group, identity and drift guards.
     function stageCoupler(form) {
-        var model = {}, numeric = ['fc_max_hz', 'ec_c_hz', 'd_c', 'phi0_v', 'phi_idle', 'g_c_hz', 'g_t_hz', 'g_ct_hz'];
-        numeric.forEach(function (key) { model[key] = Number(form.elements.namedItem(key).value); });
+        var model = {};
+        form.querySelectorAll('input[data-scale]').forEach(function (input) {
+            model[input.name] = Number(input.value) * Number(input.dataset.scale);
+        });
         model.source = form.elements.namedItem('source').value;
         model.created_at = new Date().toISOString();
         var createExtras = form.dataset.createExtras === '1';

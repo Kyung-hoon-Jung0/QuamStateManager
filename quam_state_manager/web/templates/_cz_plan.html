@@ -101,8 +101,9 @@
 {% for f in coupler_forms %}
 <details><summary>Coupler model: {{ f.pair }}</summary>
 <form class="czp-coupler-form" data-pair="{{ f.pair }}" data-create-extras="{{ 1 if f.create_extras else 0 }}">
-{% for key in ['fc_max_hz', 'ec_c_hz', 'd_c', 'phi0_v', 'phi_idle', 'g_c_hz', 'g_t_hz', 'g_ct_hz'] %}
-<label>{{ key }} <input required type="number" step="any" name="{{ key }}" value="{{ f.model.get(key, '') }}"></label>
+{% for field in coupler_model_fields %}
+<label>{{ field.label }}{% if field.unit %} ({{ field.unit }}){% endif %}
+<input required type="number" step="any" name="{{ field.key }}" data-scale="{{ field.scale }}" value="{{ f.model[field.key] / field.scale if field.key in f.model else '' }}" title="{{ field.help }}"></label>
 {% endfor %}
 <label>Source <input required name="source" value="{{ f.model.get('source', 'manual') }}"></label>
 <button type="submit" class="btn-sm">Stage coupler model</button><output></output>

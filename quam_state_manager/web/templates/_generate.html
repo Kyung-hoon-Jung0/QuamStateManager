@@ -477,6 +477,8 @@
         <div id="gen-pop-additions" class="gen-pop-host"></div>
       </div>
 
+      <script type="application/json" id="gen-coupler-model-fields">{{ coupler_model_fields | default([]) | tojson }}</script>
+      <div id="gen-pop-coupler-models"></div>
       <div id="gen-pop-sec-pairs">
         <h4>Qubit pairs &mdash; 2Q gates <span class="muted">&mdash; every gate a pair will have, and its default</span></h4>
         <p id="gen-pop-pair-order-note" class="muted" hidden></p>

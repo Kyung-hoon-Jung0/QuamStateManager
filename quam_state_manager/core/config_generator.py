@@ -656,6 +656,25 @@ def validate_spec(spec) -> list[str]:
     if "populate" in spec and not isinstance(populate, dict):
         errors.append("populate: must be an object")
     elif isinstance(populate, dict):
+        from .coupler_fields import COUPLER_MODEL_FIELDS
+        models = populate.get("coupler_models", {})
+        if not isinstance(models, dict):
+            errors.append("populate.coupler_models: must be an object")
+        else:
+            if models:
+                from .cz_gate_plan import coupler_model
+            for pid, value in models.items():
+                if value == {}:
+                    continue
+                candidate = dict(value) if isinstance(value, dict) else {}
+                candidate["created_at"] = "build time"
+                if coupler_model(candidate) is None:
+                    missing = [f["label"] for f in COUPLER_MODEL_FIELDS
+                               if candidate.get(f["key"]) is None or candidate.get(f["key"]) == ""]
+                    if not isinstance(candidate.get("source"), str) or not candidate["source"].strip():
+                        missing.append("Source")
+                    errors.append(f"populate.coupler_models['{pid}']: " +
+                                  ("missing " + ", ".join(missing) if missing else "invalid coupler model values"))
         pop_options = populate.get("options")
         if pop_options is not None and not isinstance(pop_options, dict):
             errors.append("populate.options: must be an object")
