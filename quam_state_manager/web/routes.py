@@ -45994,7 +45994,8 @@ def dataset_by_path():
                 logger.exception("rescan_if_stale during by-path resolve failed")
         key = _find()
     if key is not None:
-        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}"))
+        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}",
+                                **({"via": request.args["via"]} if request.args.get("via") in ("saved", "inferred") else {})))
     return render_template(
         "_status.html",
         message=(f"Run #{run_id} at {raw} isn't in any loaded data folder. Add the "
@@ -46028,7 +46029,8 @@ def dataset_by_run(run_id):
                 logger.exception("rescan_if_stale during by-run resolve failed")
         key = _find()
     if key is not None:
-        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}"))
+        return redirect(url_for("main.dataset_detail", uid=f"{key}:{run_id}",
+                                **({"via": request.args["via"]} if request.args.get("via") in ("saved", "inferred") else {})))
     return render_template(
         "_status.html",
         message=(f"Run #{run_id} isn't in any loaded data folder. Add the data "
@@ -46091,6 +46093,7 @@ def dataset_detail(uid):
     return render_template(template, **_ctx(page="dataset_detail"), run=run,
                            # docs/301 F9: opened from a value whose writer is not proven
                            via_saved=request.args.get("via") == "saved",
+                           via_inferred=request.args.get("via") == "inferred",
                            fit_targets=resolve_fit_targets(run, names=run_names_),
                            fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],

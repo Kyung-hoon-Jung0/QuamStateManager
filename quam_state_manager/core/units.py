@@ -125,7 +125,9 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "mutual_flux_bias": ("volt", "V"),
     # Pair detuning is stored as a frequency difference in Hz.
     "pair_detuning": ("freq", "Hz"),
-    # CZGate.apply passes these directly to xy.frame_rotation_2pi.
+    # Base CZGate.apply passes these directly to xy.frame_rotation_2pi (2*pi radians).
+    # Custom overrides remain provisional until their source can be checked.
+    # Executable installed-gate source check: test_w6_review_phase_unit_has_executable_source_evidence.
     "phase_shift_control": ("phase_turns", "turns"),
     "phase_shift_target": ("phase_turns", "turns"),
     # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than

@@ -41,15 +41,41 @@ _ERROR_KEYS = ("epg",)
 
 
 def cite_missing_runs(edges, runs):
-    """Recover an omitted RB source only from a unique matching run's own fit.
+    """Recover missing sources from patch proof, or label a fit-only candidate.
 
-    A sibling load id is never evidence. Require the experiment family, played
-    operation, pair, fidelity and (when stored) alpha to agree. Ambiguity stays
-    unrecorded; this is a measurement source, not proof of an apply-to-live.
+    Experiment-name family and operation are candidate filters ONLY, never
+    proof. A unique exact path/value patch proves a writer independently of
+    those names. Equality of fitted values cannot prove a hand-restored value.
     """
     import math
+    from pathlib import Path
+    from .hub_build import _proven, read_node
+    from .hub_rules import Change, _segment
+
+    rows = [(edge, row) for edge in edges or ()
+            for row in edge.get("gate_fidelities") or ()
+            if row.get("load_id") is None]
+    if not rows:
+        return
+
+    def metric_path(edge, row):
+        # Preserve literal keys, including dots, exactly as the hub does.
+        return ".".join(_segment(part) for part in
+                        ("qubit_pairs", edge["pair_id"], "macros", row["gate"], "fidelity", row["metric"]))
+
+    flat = {metric_path(edge, row): row.get("value") for edge, row in rows}
+    changes = [Change(path, "replace") for path in flat]
+    proofs = {}
     index = {}
     for run in runs:
+        # Use the same explicit leaf-patch proof as the hub witness pipeline.
+        # Runs with no writes need no node I/O; tolerate older metadata stubs.
+        folder = getattr(run, "folder_path", None)
+        if folder is not None and getattr(run, "writes", 1):
+            node, error = read_node(Path(folder))
+            if error is None:
+                for path in _proven(node, changes, flat):
+                    proofs.setdefault(path, set()).add(run.run_id)
         name = run.experiment_name.lower()
         family = ("InterleavedRB" if "interleaved" in name and "rb" in name else
                   "StandardRB" if "standard" in name and "rb" in name else None)
@@ -59,25 +85,28 @@ def cite_missing_runs(edges, runs):
         for pair, fit in run.fit_results.items():
             if isinstance(fit, dict):
                 index.setdefault((pair, operation, family), []).append((run.run_id, fit))
-    for edge in edges or ():
-        for row in edge.get("gate_fidelities") or ():
-            if row.get("load_id") is not None:
-                continue
-            matches = []
-            family = row["metric"].removesuffix("_alpha")
-            related = {r["metric"]: r.get("value") for r in edge.get("gate_fidelities", [])
-                       if r["gate"] == row["gate"]}
-            for rid, fit in index.get((edge["pair_id"], row["gate"], family), ()):
-                fields = [(related.get(family), fit.get("fidelity"))]
-                alpha = related.get(family + "_alpha", row.get("alpha"))
-                if alpha is not None:
-                    fields.append((alpha, fit.get("alpha")))
-                if all(isinstance(a, (int, float)) and isinstance(b, (int, float))
-                       and math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12) for a, b in fields):
-                    matches.append(rid)
-            if len(matches) == 1:
-                row["load_id"] = matches[0]
-                row["load_id_source"] = "matching run fit"
+    for edge, row in rows:
+        row.pop("inferred_load_id", None)
+        path = metric_path(edge, row)
+        proven = proofs.get(path, set())
+        if len(proven) == 1:
+            row["load_id"] = next(iter(proven))
+            row["load_id_source"] = "run patch proof"
+            continue
+        matches = set()
+        family = row["metric"].removesuffix("_alpha")
+        related = {r["metric"]: r.get("value") for r in edge.get("gate_fidelities", [])
+                   if r["gate"] == row["gate"]}
+        for rid, fit in index.get((edge["pair_id"], row["gate"], family), ()):
+            fields = [(related.get(family), fit.get("fidelity"))]
+            alpha = related.get(family + "_alpha", row.get("alpha"))
+            if alpha is not None:
+                fields.append((alpha, fit.get("alpha")))
+            if all(type(a) in (int, float) and type(b) in (int, float)
+                   and math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12) for a, b in fields):
+                matches.add(rid)
+        if len(matches) == 1:
+            row["inferred_load_id"] = next(iter(matches))
 
 
 def pair_key_variants(pair_id: str) -> list[str]:

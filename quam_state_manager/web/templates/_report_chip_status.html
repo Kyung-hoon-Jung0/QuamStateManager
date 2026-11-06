@@ -329,7 +329,7 @@
                     <span class="rep-note">&divide;{{ "%.2f" | format(gf.get('average_gates_per_clifford')) }}</span>
                     {%- endif %}
                 {%- else %}-{% endif %}</td>
-            <td>{{ gf.get('load_id') if gf.get('load_id') is not none else 'unrecorded' }}</td>
+            <td>{% if gf.get('load_id') is not none %}{{ gf.load_id }}{% elif gf.get('inferred_load_id') is not none %}<a href="/dataset/by-run/{{ gf.inferred_load_id }}?via=inferred">{{ gf.inferred_load_id }}: inferred (matching fit value), not proven</a>{% else %}unrecorded{% endif %}</td>
         </tr>
         {% endfor %}
         </tbody>

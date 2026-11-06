@@ -83,7 +83,7 @@ def test_w6_2_missing_irb_id_uses_its_own_fit(tmp_path):
     html = client.get('/chip-status/report').get_data(as_text=True)
     for metric in ('InterleavedRB', 'InterleavedRB_alpha'):
         row = next(r for r in re.findall(r'<tr>(.*?)</tr>', html, re.S) if f'<td>{metric}</td>' in r)
-        assert re.search(r'<td>12</td>\s*$', row)
+        assert '12' in row and 'inferred (matching fit value), not proven' in row
 
 
 def test_w6_2_ambiguous_or_wrong_gate_never_gets_a_run():
@@ -147,3 +147,99 @@ def test_w6_8_difference_is_stored_minus_required(chip, monkeypatch):
     monkeypatch.setattr(C, "_solve", lambda *a: {"ok": True, "amplitude_v": .1198, "line": "control"})
     result = C.solve(chip[1].merged, "p", "cz_SNZ")
     assert result["difference_v"] == pytest.approx(.0002)
+
+
+def test_w6_review_fit_is_not_proof(tmp_path):
+    from types import SimpleNamespace
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    row = {'gate': 'cz_SNZ', 'metric': 'InterleavedRB', 'value': .97, 'load_id': None}
+    run = SimpleNamespace(run_id=12, experiment_name='two_qubit_interleaved_rb',
+        parameters={'operation': 'cz_SNZ'}, fit_results={'p': {'fidelity': .97}}, folder_path=tmp_path)
+    cite_missing_runs([{'pair_id': 'p', 'gate_fidelities': [row]}], [run])
+    assert row['load_id'] is None
+    assert row['inferred_load_id'] == 12
+
+
+@pytest.mark.parametrize('name,operation', [('renamed_calibration', 'other'), ('two_qubit_interleaved_rb', 'cz_SNZ')])
+def test_w6_review_patch_proof_ignores_name_heuristic(tmp_path, name, operation):
+    from types import SimpleNamespace
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    (tmp_path / 'node.json').write_text(json.dumps({'patches': [{'op': 'replace',
+        'path': '/quam/qubit_pairs/p/macros/cz_SNZ/fidelity/InterleavedRB', 'value': .97}]}))
+    row = {'gate': 'cz_SNZ', 'metric': 'InterleavedRB', 'value': .97, 'load_id': None}
+    run = SimpleNamespace(run_id=12, experiment_name=name, parameters={'operation': operation},
+        fit_results={}, folder_path=tmp_path)
+    cite_missing_runs([{'pair_id': 'p', 'gate_fidelities': [row]}], [run])
+    assert row['load_id'] == 12
+    assert 'inferred_load_id' not in row
+
+
+@pytest.mark.parametrize('source_kind', ['fixture', 'installed'])
+def test_w6_review_phase_unit_has_executable_source_evidence(source_kind):
+    import ast
+    import sysconfig
+    from pathlib import Path
+    from quam_state_manager.core.units import stored_unit_label
+    source = Path(sysconfig.get_paths()['purelib']) / 'quam_builder/architecture/superconducting/custom_gates/flux_tunable_transmon_pair/two_qubit_gates.py'
+    if source_kind == 'fixture':
+        source = Path(__file__).parent / 'fixtures/w6_cz_gate_phase.py'
+    elif not source.is_file():
+        pytest.skip('Installed gate unavailable; portable source excerpt checked separately')
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    gate = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'CZGate')
+    for side in ('control', 'target'):
+        assert stored_unit_label('phase_shift_' + side) == 'turns'
+        calls = [n for n in ast.walk(gate) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and n.func.attr == 'frame_rotation_2pi'
+                 and ast.unparse(n.func.value).endswith('qubit_' + side + '.xy')]
+        assert any([ast.unparse(a) for a in n.args] == ['self.phase_shift_' + side] for n in calls)
+
+
+def test_w6_review_inferred_ui_surfaces():
+    import subprocess
+    result = subprocess.run(['node', 'tests/w6_provenance_selfcheck.cjs'], capture_output=True,
+                            text=True, encoding='utf-8', timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_w6_review_inferred_deep_link(chip, tmp_path):
+    from quam_state_manager.core.dataset import DatasetStore
+    folder = tmp_path / 'data' / '2026-01-01' / '#12_two_qubit_interleaved_rb_120000'
+    folder.mkdir(parents=True)
+    (folder / 'node.json').write_text('{}')
+    (folder / 'data.json').write_text('{}')
+    client = chip[0]
+    client.application.config['dataset_store'] = DatasetStore(tmp_path / 'data')
+    response = client.get('/dataset/by-run/12?via=inferred', follow_redirects=True)
+    assert response.status_code == 200
+    assert 'inferred (matching fit value), not proven' in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize('patch', [
+    {'op':'replace', 'path':'/qubit_pairs/other/macros/cz_SNZ/fidelity/InterleavedRB', 'value':.97},
+    {'op':'replace', 'path':'/qubit_pairs/p/macros/other/fidelity/InterleavedRB', 'value':.97},
+    {'op':'replace', 'path':'/qubit_pairs/p/macros/cz_SNZ/fidelity/StandardRB', 'value':.97},
+    {'op':'replace', 'path':'/qubit_pairs/p/macros/cz_SNZ/fidelity/InterleavedRB', 'value':.98},
+    {'op':'test', 'path':'/qubit_pairs/p/macros/cz_SNZ/fidelity/InterleavedRB', 'value':.97},
+])
+def test_w6_review_only_the_written_metric_and_value_are_proof(tmp_path, patch):
+    from types import SimpleNamespace
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    (tmp_path / 'node.json').write_text(json.dumps({'patches':[patch]}))
+    row = {'gate':'cz_SNZ', 'metric':'InterleavedRB', 'value':.97, 'load_id':None}
+    run = SimpleNamespace(run_id=12, experiment_name='two_qubit_interleaved_rb',
+        parameters={'operation':'cz_SNZ'}, fit_results={'p':{'fidelity':.97}}, folder_path=tmp_path)
+    cite_missing_runs([{'pair_id':'p', 'gate_fidelities':[row]}], [run])
+    assert row['load_id'] is None
+    assert row['inferred_load_id'] == 12
+
+
+def test_w6_review_patch_path_keeps_literal_gate_key(tmp_path):
+    from types import SimpleNamespace
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    (tmp_path / 'node.json').write_text(json.dumps({'patches':[{'op':'replace',
+        'path':'/qubit_pairs/p/macros/cz/SNZ/fidelity/InterleavedRB', 'value':.97}]}))
+    row = {'gate':'cz.SNZ', 'metric':'InterleavedRB', 'value':.97, 'load_id':None}
+    run = SimpleNamespace(run_id=12, experiment_name='renamed', parameters={}, fit_results={}, folder_path=tmp_path)
+    cite_missing_runs([{'pair_id':'p', 'gate_fidelities':[row]}], [run])
+    assert row['load_id'] is None
