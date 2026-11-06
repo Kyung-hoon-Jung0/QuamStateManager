@@ -2593,6 +2593,8 @@ def approvals_decide(aid: str, verb: str):
             return _err("no value is ticked: tick the values to write, or Reject the card", 400)
         out = {"ok": True}
         if verb == "approve" and cur.get("kind") == "writes":
+            if cur.get("writes_omitted"):
+                return _err("truncated proposal cannot be approved; reject it and rerun with fewer writes", 409)
             # the writes go through the door FIRST; a refusal keeps the approval pending
             # (the human sees why, takes live, presses again) instead of recording an
             # approval that never reached the chip. All or nothing (review R2-2).

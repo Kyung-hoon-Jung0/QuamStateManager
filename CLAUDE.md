@@ -6,6 +6,10 @@ node writes. `run_experiment._persist_isolated` retains both; its per-scratch
 `agent_runs` and the approval card. Replay load baselines and serializer-default
 filtering still apply (docs/173 S5/S9, docs/245). The one door, atomic approval,
 `used_by_run`, gates and W7-1 string preservation are unchanged.
+Unobserved normal loads compare defaults-expanded baselines with the serialized
+machine. Direct capture ignores equal int/float representations, keeping booleans
+distinct; declared updates retain strict types. Write lists are capped at 4000;
+truncated approval cards report the omitted count and refuse the entire group.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 

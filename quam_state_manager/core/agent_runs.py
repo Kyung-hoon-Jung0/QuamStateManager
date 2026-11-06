@@ -398,29 +398,34 @@ def _merged(folder: Path) -> dict:
     return out
 
 
-def diff_states(before_folder: Path, after_folder: Path, *, cap: int = MAX_WRITES) -> tuple[list[dict], bool]:
+def diff_states(before_folder: Path, after_folder: Path, *, cap: int = MAX_WRITES,
+                counts: dict | None = None) -> tuple[list[dict], bool]:
     """Leaf writes the node made: ``[{path, old, new, created?, deleted?}]``,
     dot paths in SM's own grammar. Pointers compare verbatim."""
     from quam_state_manager.core import json_diff
     a, _ = json_diff.flatten(_merged(before_folder), cap=250_000)
     b, _ = json_diff.flatten(_merged(after_folder), cap=250_000)
     out: list[dict] = []
-    truncated = False
+    omitted = 0
     for path in sorted(set(a) | set(b), key=natural_key):
         if path in a and path in b:
             if a[path] == b[path] and type(a[path]) is type(b[path]):
                 continue
             if _both_nan(a[path], b[path]):
                 continue
-            out.append({"path": path, "old": a[path], "new": b[path]})
+            row = {"path": path, "old": a[path], "new": b[path]}
         elif path in b:
-            out.append({"path": path, "old": None, "new": b[path], "created": True})
+            row = {"path": path, "old": None, "new": b[path], "created": True}
         else:
-            out.append({"path": path, "old": a[path], "new": None, "deleted": True})
+            row = {"path": path, "old": a[path], "new": None, "deleted": True}
         if len(out) >= cap:
-            truncated = True
-            # Hold a large proposal, but retain every row for human review.
-    return out, truncated
+            # Keep counting for an honest card without growing the write list.
+            omitted += 1
+        else:
+            out.append(row)
+    if counts is not None:
+        counts["omitted"] = omitted
+    return out, bool(omitted)
 
 
 def _both_nan(x, y) -> bool:
@@ -909,10 +914,12 @@ class Registry:
             if fail:
                 result["failure"] = fail
             # ---- what the node wrote
-            writes, truncated = diff_states(before, live)
+            counts = {}
+            writes, truncated = diff_states(before, live, counts=counts)
             node_write_capture(live, writes)
             result["writes"] = writes
             result["writes_truncated"] = truncated
+            result["writes_omitted"] = counts["omitted"]
             # ---- which run it was
             run = _attribute(adapter, node_info.name, window_start)
             if run is not None:
@@ -1026,7 +1033,7 @@ class Registry:
         why = None
         resized = resized_lists(writes)
         if truncated:
-            why = f"more than {MAX_WRITES} leaves changed"
+            why = f"{result['writes_omitted']} more writes not shown; truncated proposal cannot be approved"
         elif resized:
             # review R1-M6: a list that changed SHAPE cannot be staged leaf by leaf -- the overlapping cells
             # would land as a matrix that never existed
@@ -1053,7 +1060,7 @@ class Registry:
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
                                reason=req.reason, why_held=why, actor=req.actor, plan_id=req.plan_id,
                                run_key=meta["key"], run_id=result.get("run_id"), params=req.params,
-                               step=req.step)          # docs/261: the held write names its plan step
+                               step=req.step, writes_omitted=result.get("writes_omitted", 0))
             result["approval"] = approvals.summary(ap)
             result["why_held"] = why
             return

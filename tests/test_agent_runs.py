@@ -330,15 +330,38 @@ def test_approval_real_list_stays_list(c, inst, synth_folder):
     assert isinstance(actual, list) and actual == value
 
 
+def test_truncated_proposal_names_omitted_count_and_refuses_all_writes(c, inst, synth_folder, fake_run, monkeypatch):
+    original_diff = agent_runs.diff_states
+    monkeypatch.setattr(agent_runs, "diff_states", lambda *a, **kw: original_diff(*a, **dict(kw, cap=1)))
+    fake_run.extra = {"T1": 0.012, "T2ramsey": 0.023}
+    original = (synth_folder / "state.json").read_bytes()
+    _arm(c)
+    result = _run(c).get_json()["result"]
+    assert len(result["writes"]) == 1
+    aid = result["approval"]["id"]
+    card = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]
+    assert "2 more writes not shown" in card["why_held"]
+    for body in ({}, {"writes": card["writes"]}):
+        response = c.post(f"/api/agent/approvals/{aid}/approve", json=body, headers=HUMAN)
+        assert response.status_code == 409, response.get_json()
+        assert "truncated" in response.get_json()["error"]
+        assert (synth_folder / "state.json").read_bytes() == original
+        assert approvals.get(str(inst), _chip(c), aid)["status"] == "pending"
+
+
 class TestPure:
-    def test_large_diff_keeps_every_leaf_for_the_card(self, tmp_path):
+    def test_large_diff_caps_rows_and_counts_omitted_writes(self, tmp_path):
         before, after = tmp_path / "before", tmp_path / "after"
         before.mkdir()
         after.mkdir()
         (before / "state.json").write_text('{"a": 1, "b": 2}', encoding="utf-8")
         (after / "state.json").write_text('{"a": 3, "b": 4}', encoding="utf-8")
-        writes, held = agent_runs.diff_states(before, after, cap=1)
-        assert held and {w["path"] for w in writes} == {"a", "b"}
+        counts = {}
+        writes, held = agent_runs.diff_states(before, after, cap=1, counts=counts)
+        assert held and [w["path"] for w in writes] == ["a"]
+        assert counts["omitted"] == 1
+        writes, held = agent_runs.diff_states(before, after, cap=2)
+        assert not held and len(writes) == 2
 
     def test_diff_states_changed_created_deleted_nan(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
