@@ -198,6 +198,7 @@ def _extract_populate(state: dict, root: dict) -> dict:
     pop_f: dict = {}
     pop_p: dict = {}
     pop_pairs: dict = {}
+    pop_models: dict = {}
     for qid, q in (state.get("qubits") or {}).items():
         if not isinstance(q, dict):
             continue
@@ -302,6 +303,10 @@ def _extract_populate(state: dict, root: dict) -> dict:
     for pid, pair in (state.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):
             continue
+        from .cz_gate_plan import coupler_model, resolved_tree
+        model = coupler_model(resolved_tree(root, f"qubit_pairs.{pid}.extras.sm_coupler_model"))
+        if model and pair.get("coupler"):
+            pop_models[_populate_pair_key(pid, pair, root)] = model
         pairv: dict = {}
         mq = pair.get("moving_qubit")
         if mq in ("control", "target"):
@@ -472,6 +477,8 @@ def _extract_populate(state: dict, root: dict) -> dict:
         out["flux"] = pop_f
     if pop_p:
         out["pulses"] = pop_p
+    if pop_models:
+        out["coupler_models"] = pop_models
     if pop_pairs:
         out["pairs"] = pop_pairs
     if pop_t:
@@ -884,6 +891,11 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
                 populate["pairs"].pop(_populate_pair_key(pid, pr, merged), None)
         if not populate["pairs"]:
             populate.pop("pairs")
+
+    for pid in dropped_pairs:
+        pr = (state.get("qubit_pairs") or {}).get(pid)
+        if isinstance(pr, dict):
+            (populate.get("coupler_models") or {}).pop(_populate_pair_key(pid, pr, merged), None)
 
     # Wiring-only pairs: a wiring.qubit_pairs entry with a live channel whose
     # state pair was deleted (partial edit) would otherwise vanish SILENTLY —

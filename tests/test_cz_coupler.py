@@ -110,6 +110,7 @@ def test_independent_two_hundred():
 
 
 def browser_form(create_extras=False):
+    from quam_state_manager.core.coupler_fields import COUPLER_MODEL_FIELDS
     source = (ROOT/'quam_state_manager/web/static/cz-plan.js').read_text(encoding='utf-8')
     source = source[source.index('    function stageCoupler'):source.index('    window.CzStageCoupler')]
     script = """
@@ -117,12 +118,15 @@ const posts=[];
 global.window={__chipToken:'token',_keepMineSeen:()=>({n:7,sig:'seen'})};
 global.refresh=()=>{};
 global.fetch=(url,options)=>{posts.push({url,body:JSON.parse(options.body)});return Promise.resolve({json:()=>({ok:true})});};
-""" + source + """
+""" + (ROOT / "quam_state_manager/web/static/coupler-units.js").read_text(encoding="utf-8") + source + """
 const model=JSON.parse(process.argv[1]);
-const form={dataset:{pair:'q1-q2',createExtras:process.argv[2]},elements:{namedItem:k=>({value:model[k]})},querySelector:()=>({})};
+const fields=JSON.parse(process.argv[3]);
+const inputs=fields.map(f=>({name:f.key,value:model[f.key]/f.scale,dataset:{scale:String(f.scale)}}));
+const form={dataset:{pair:'q1-q2',createExtras:process.argv[2]},elements:{namedItem:k=>({value:model[k]})},
+    querySelectorAll:()=>inputs,querySelector:()=>({})};
 stageCoupler(form).then(()=>console.log(JSON.stringify(posts)));
 """
-    result = subprocess.run(['node','-e',script,json.dumps(MODEL),'1' if create_extras else '0'],capture_output=True,text=True,check=True)
+    result = subprocess.run(['node','-e',script,json.dumps(MODEL),'1' if create_extras else '0',json.dumps(COUPLER_MODEL_FIELDS)],capture_output=True,text=True,check=True)
     return json.loads(result.stdout)
 
 
@@ -143,6 +147,7 @@ def test_form_one_batch_group_and_identity(loaded):
     assert response.json['ok'], response.json
     stored = store.merged['qubit_pairs']['q1-q2']['extras']['sm_coupler_model']
     assert C.coupler_model(stored)
+    assert all(stored[key] == value for key, value in MODEL.items() if key != "created_at")
     assert len({e.group_id for e in store.change_log}) == 1
     client.post('/undo')
     assert store.state == before

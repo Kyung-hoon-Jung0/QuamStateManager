@@ -368,6 +368,15 @@ def emit_build_script(spec: dict, chip_name: str | None = None,
     w('            pair = pg.add_pair_gate(machine, c, t, gate, coupler=None)')
     w('            print(f"  {pid}: {gate} -> {list(pair.macros.keys())}")')
     w('')
+    models = (spec.get("populate") or {}).get("coupler_models") or {}
+    if models:
+        import inspect
+        from .script_emitter import _run_build
+        runtime = _run_build()
+        w("import math")
+        for name in ("_parse_pair", "_norm_index", "_quam_pair_id", "_match_populate_pairs", "number", "coupler_model", "_apply_coupler_models"):
+            w(inspect.getsource(getattr(runtime, name)))
+        w("_apply_coupler_models(machine, " + repr({"coupler_models": models}) + ")")
     w('machine.save()')
     adds = additions.kept_additions(spec, additions_report)
     if adds:

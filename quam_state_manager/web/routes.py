@@ -59,6 +59,7 @@ from quam_state_manager.web.request_body import BadBody, json_object, json_optio
 from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
+from quam_state_manager.core.coupler_fields import COUPLER_MODEL_FIELDS
 from quam_state_manager.core import (
     add_catalog,
     add_names,
@@ -24014,6 +24015,7 @@ def cz_plan_page():
     return render_template(template, **_ctx(page="czplan", rows=table, selected=selected,
                                            operating_points=[p for r in table for p in r["operating_points"]],
                                            fixed_no_flux=(not rows and not any(q.get("z") for q in qubits.values() if isinstance(q, dict)) and not any(p.get("coupler") for p in pairs.values() if isinstance(p, dict))),
+                                           coupler_model_fields=COUPLER_MODEL_FIELDS,
                                            coupler_forms=[dict(pair=k, model=czp.coupler_model((p.get("extras") or {}).get("sm_coupler_model")) or {}, create_extras="extras" not in p) for k, p in pairs.items() if isinstance(p, dict) and p.get("coupler") and isinstance(p.get("extras", {}), dict)],
                                            unavailable=unavailable, unknown_pair=unknown_pair))
 
@@ -47842,7 +47844,7 @@ def dataset_set_note(uid):
 def generate():
     """The Generate Config wizard page."""
     template = "_generate.html" if _is_htmx() else "generate.html"
-    return render_template(template, **_ctx(page="generate"))
+    return render_template(template, **_ctx(page="generate", coupler_model_fields=COUPLER_MODEL_FIELDS))
 
 
 @bp.route("/regenerate")
@@ -47858,7 +47860,7 @@ def regenerate_page():
     """
     step = min(_int_arg("step", 0, minimum=0), 8)
     template = "_regenerate.html" if _is_htmx() else "regenerate.html"
-    return render_template(template, **_ctx(page="regenerate",
+    return render_template(template, **_ctx(page="regenerate", coupler_model_fields=COUPLER_MODEL_FIELDS,
                                             regen_step=step or None))
 
 

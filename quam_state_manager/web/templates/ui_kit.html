@@ -122,6 +122,10 @@
   <div class="ui-agent-reject"><label>Reject: a note for the journal (optional) <input type="text" class="ui-agent-reject-note"></label><button type="button" class="btn-sm">Reject</button></div>
   <p class="ui-agent-said">Not started: another plan is running on this chip.</p>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Optional model fields</h2>
+<div class="ui-coupler-model-grid"><label>Frequency (GHz)<input value="8"><small class="muted">Frequency at the upper sweet spot.</small></label><label>Flux period (V)<input value="0.8"><small class="muted">Voltage change for one flux quantum.</small></label></div>
+<p class="ui-coupler-model-error">Missing: Junction asymmetry</p>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}
