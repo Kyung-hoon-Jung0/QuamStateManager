@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -64,6 +65,29 @@ def test_peek_follows_a_pointer_and_doubts_an_implausible_volt(tmp_path):
     assert j["units"].get(ok_v) == "V"
     assert bad_v not in j["units"], "250 is not volts (units.PLAUSIBLE_VOLT_MAX)"
     assert j["units"].get(hz) == "Hz"
+
+
+@pytest.mark.parametrize("value, unit", [(0.05, "V"), (10.0, "V"),
+                                       (10.01, "Hz"), (3e8, "Hz"), (-3e8, "Hz")])
+def test_report_and_peek_agree_on_pair_detuning_unit(tmp_path, value, unit):
+    folder = _chip(tmp_path / "chip")
+    state = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    state["qubit_pairs"] = {"p1": {"detuning": value}}
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
+    c.post("/load", data={"folder": str(folder)})
+    path = "qubit_pairs.p1.detuning"
+    peek = c.get("/field/peek", query_string={"dot_path": path}).get_json()
+    response = c.get("/chip-status/report")
+    assert response.status_code == 200
+    html = response.get_data(as_text=True)
+    # Read the actual report cell, including its unit, rather than a helper's result.
+    match = re.search(r"<td>(-?[\d.]+) (V|Hz)(?: \([^<]*\))?</td>", html)
+    assert match, html
+    assert match[2] == peek["units"].get(path) == unit
+    assert float(match[1]) == pytest.approx(value, abs=0.00005)
+    if unit == "Hz":
+        assert "treated as Hz: too large for V" in match[0]
 
 
 def _write(path, dims, arrays):

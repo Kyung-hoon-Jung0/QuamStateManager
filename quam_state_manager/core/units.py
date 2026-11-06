@@ -579,21 +579,33 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
 PLAUSIBLE_VOLT_MAX = 10.0
 
 
+def stored_value_unit(field: str, value: Any) -> str:
+    """Stored unit for a value, including the pair-detuning Hz fallback.
+
+    Oversized pair detuning is treated as Hz; other implausible volt
+    fields have no known unit. Plausible pair detuning remains volts.
+    """
+    unit = stored_unit_label(field)
+    if (unit == "V" and isinstance(value, (int, float))
+            and not isinstance(value, bool) and abs(value) > PLAUSIBLE_VOLT_MAX):
+        return "Hz" if field == "pair_detuning" else ""
+    return unit
+
+
 def pair_detuning_cell(value: Any) -> tuple[str, bool]:
     """``(text, unit_doubtful)`` for a pair's ``detuning`` table cell.
 
     A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts;
     a larger one renders raw (no scaling, no unit) with the doubt flag set.
     """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if abs(value) > PLAUSIBLE_VOLT_MAX:
-            return repr(value), True
+    if stored_value_unit("pair_detuning", value) == "Hz":
+        return repr(value), True
     return qty_filter(value, "pair_detuning"), False
 
 
 def pair_detuning_display(value: Any) -> str:
-    """Full popup text, preserving uncertainty when the declared volts do not fit."""
-    text, doubtful = pair_detuning_cell(value)
-    if doubtful:
-        return text + " (raw, unit doubtful)"
-    return qty_filter(value, "pair_detuning", "full")
+    """Full text using the same stored-unit rule as the Datasets popup."""
+    unit = stored_value_unit("pair_detuning", value)
+    if unit == "Hz":
+        return f"{value!r} Hz (treated as Hz: too large for V)"
+    return qty_filter(value, "pair_detuning", "full") or qty_filter(value, "pair_detuning")

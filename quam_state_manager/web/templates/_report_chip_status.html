@@ -262,7 +262,7 @@
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
             <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
-            <th>Detuning ({{ 'pair_detuning' | unit_hint }})</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
+            <th>Detuning</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
         <tbody>
         {% for p in pairs %}
         {% if p.get('_error') %}
@@ -279,8 +279,7 @@
             <td>{{ pct(e.get('cz_fidelity')) }}</td>
             <td>{{ e.get('fidelity_source') or '-' }}</td>
             <td>{{ e.get('best_gate') or '-' }}</td>
-            {% set _dt = e.get('detuning') | pair_detuning_cell %}
-            <td>{% if _dt[1] %}{{ _dt[0] }} (raw, unit doubtful){% else %}{{ _dt[0] }}{% endif %}</td>
+            <td>{{ e.get('detuning') | pair_detuning_display }}</td>
             <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
             <td>{{ cal.get(p.id) or '-' }}</td>
         </tr>

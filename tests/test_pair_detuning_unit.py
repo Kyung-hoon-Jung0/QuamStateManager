@@ -95,7 +95,7 @@ def test_qsm_show_prints_the_pair_detuning_in_volts(tmp_path):
 
 @pytest.mark.parametrize("value,display", [
     (-0.16586175268952874, "-0.1659 V"),
-    (416052075.0, "416052075.0 (raw, unit doubtful)"),
+    (416052075.0, "416052075.0 Hz (treated as Hz: too large for V)"),
 ])
 def test_report_and_topology_read_pair_flux_not_macro_frequency(tmp_path, value, display):
     chip = _chip(tmp_path)
@@ -112,6 +112,6 @@ def test_report_and_topology_read_pair_flux_not_macro_frequency(tmp_path, value,
     assert edge["detuning"] == value
     assert edge["detuning_display"] == display
     report = c.get("/chip-status/report").get_data(as_text=True)
-    assert "Detuning (V)" in report
+    assert "<th>Detuning</th>" in report
     assert display.removesuffix(" V") in report
     assert "123456789" not in report
