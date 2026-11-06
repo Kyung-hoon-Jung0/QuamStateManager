@@ -1137,6 +1137,7 @@ DOOR_SITES = {
     ("generator/run_build.py", "_inject_qdac_state", "named"): (1, "the NEW folder Generate builds"),
     ("generator/run_build.py", "_link_input_downconverters_to_outputs", "named"): (1, "the NEW folder Generate builds"),
     ("generator/run_experiment.py", "_apply_pointer_writes", "named"): (1, "the run's scratch copy (docs/245)"),
+    ("generator/run_experiment.py", "_persist_isolated", "named"): (1, "non-recording: instance/agent_runs/<key>/quam_state scratch only (docs/173 S5/S9, docs/245); live approval via state_apply_to_live records"),
     ("generator/run_experiment.py", "_restore_files", "named"): (1, "the run's scratch copy (docs/245)"),
     ("generator/run_generate_config.py", "_retry_loop", "named"): (2, "a scratch folder (config preview)"),
     ("core/history_rekey.py", "migrate_history_rekey_v4", "named"): (1, "a history-dir migration journal"),
