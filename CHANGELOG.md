@@ -1,6 +1,14 @@
 # Changelog
 
-## v1.7.0 (2026-11-04)
+## v1.7.0 (unreleased)
+
+### Sync contracts and configuration
+
+- Applied-value predecessor losses and live undos stay protected; pull+push collisions keep your edit with a backup and notice. Replace affects only unapplied edits.
+- New node values are adopted with one notice per open window and a safe Bring back action. Transient merge failures retry; permanent blockers stop Auto-Sync with a reason; unknown failures stop after 10 attempts.
+- Undo waits for an active push. Edits from a window showing Auto-Sync off stay held until Apply.
+- Diagram add supports qubits, pairs and coupler pairs; Review includes a QOP version select; the QUAlibrate proxy supports 2.0.
+- Current rules and pinning tests: [Sync contracts](docs/311_walk_campaign_sync_contracts.md).
 
 ### Auto-Sync
 
