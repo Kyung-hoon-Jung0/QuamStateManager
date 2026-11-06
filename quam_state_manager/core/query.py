@@ -17,7 +17,7 @@ from decimal import Decimal
 
 from typing import Any
 
-from quam_state_manager.core import chip_health, cr_semantics, qdac
+from quam_state_manager.core import chip_health, cr_semantics, qdac, units
 from quam_state_manager.core.loader import QuamStore, natural_key
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
@@ -955,6 +955,8 @@ class QueryEngine:
                 "confusion_diag": confusion_diag,
                 "confusion_offdiag": confusion_offdiag,
                 "detuning": p.get("detuning"),
+                "detuning_display": units.qty_filter(
+                    p.get("detuning"), "pair_detuning", "full"),
                 "coupler_decouple_offset": coupler.get("decouple_offset"),
                 "mutual_flux_bias": p.get("mutual_flux_bias"),
                 "cz_load_id": cz_load_id,
@@ -1741,14 +1743,16 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
         fid = gate.get("fidelity", {})
         if not isinstance(fid, dict) or not fid:
             continue
-        # Provenance: the RB run id for THIS gate's numbers, read once per gate and
-        # attached to every fidelity row of the gate, so the popup can deep-link
-        # each gate to its source dataset — even when this gate isn't the pair's
-        # best (the old single edge-level cz_load_id only surfaced one pair).
-        gate_load_id = fid.get("StandardRB_load_id") or fid.get("InterleavedRB_load_id")
+        # Each metric owns its source run; sibling measurements are independent.
         flat_attrs, flat_used = _flat_metric_attrs(fid)
         # Search for any key containing fidelity-like data
         for metric_name, metric_val in fid.items():
+            gate_load_id = fid.get(metric_name + "_load_id")
+            if metric_name in ("StandardRB_alpha", "InterleavedRB_alpha"):
+                gate_load_id = fid.get(metric_name.removesuffix("_alpha") + "_load_id")
+            if gate_load_id is None and isinstance(metric_val, dict):
+                gate_load_id = next((metric_val[k] for k in ("load_id", "run_id", "dataset_id")
+                                     if metric_val.get(k) is not None), gate_load_id)
             if metric_name in flat_used:
                 continue                 # an attribute of a flat metric, not a metric
             # The *_load_id keys are provenance, not a measurement — don't emit

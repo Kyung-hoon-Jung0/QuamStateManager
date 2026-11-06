@@ -2534,11 +2534,7 @@ window.ChipStatus.mount = function (opts) {
             }
 
             var parRows = '';
-            // QA F-24: the PAIR's detuning is a flux amplitude in volts, not a
-            // frequency -- quam_builder FluxTunableTransmonPair: "detuning
-            // (Optional[float]): Flux amplitude required to bring the qubits to
-            // the same energy in V". Read as Hz, -0.1659 printed "-0.0 MHz".
-            if (typeof e.detuning === 'number') parRows += row('detuning', e.detuning.toFixed(4) + ' V');
+            if (typeof e.detuning === 'number') parRows += row('detuning', e.detuning_display || (e.detuning.toFixed(1) + ' Hz'));
             if (typeof e.mutual_flux_bias === 'number') parRows += row('mutual flux bias', e.mutual_flux_bias);
             if (e.has_coupler && typeof e.coupler_decouple_offset === 'number') {
                 parRows += row('coupler decouple offset', e.coupler_decouple_offset.toFixed(4) + ' V');

@@ -438,6 +438,24 @@ def _calc_duration(start_str: str | None, end_str: str | None) -> float | None:
     return None
 
 
+def extract_fit_results(data: dict, qubit_pairs=()) -> dict:
+    """Normalize stored fit schemas without promoting figures or raw arrays."""
+    fit = dict(data.get("fit_results") or {})
+    estimated = data.get("estimated_2q_params")
+    if not isinstance(estimated, dict):
+        return fit
+    values = {k: v for k, v in estimated.items()
+              if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    for k in ("purity_err_per_cycle", "purity_fit_params", "purity_avg"):
+        if k in data:
+            values[k] = data[k]
+    # A top-level estimate describes one pair. Never assign it to multiple pairs.
+    owner = qubit_pairs[0] if len(qubit_pairs) == 1 else "estimated_2q_params"
+    if values:
+        fit[owner] = {**values, **(fit.get(owner) or {})}
+    return fit
+
+
 def _extract_figure_names(data: dict) -> list[str]:
     """Extract all figure references from data.json.
 
@@ -887,7 +905,7 @@ class DatasetStore:
         parents = node_data.get("parents", [])
         parent_id = parents[0] if parents else None
 
-        fit_results = data_json.get("fit_results", {})
+        fit_results = extract_fit_results(data_json, qubit_pairs)
         figure_names = _extract_figure_names(data_json)
         patches = node_data.get("patches")
         writes = (sum(1 for p in patches if isinstance(p, dict))

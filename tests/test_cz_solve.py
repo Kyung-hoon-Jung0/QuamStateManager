@@ -330,7 +330,7 @@ def test_model_solve_refuses_what_the_forward_map_refuses():
     assert not r['ok']
     assert r['reason'] == 'flux direction unknown: sign convention unclear'
     assert r['difference_v'] is None
-    assert 'difference unknown' in r['summary']
+    assert 'stored minus required unknown' in r['summary']
 
 
 def test_a_missing_qubit_field_is_its_own_clause_in_the_summary():

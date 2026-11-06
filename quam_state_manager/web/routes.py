@@ -24400,9 +24400,9 @@ def cz_plan_data():
             payload = synth_for_operation(store, ln["pulse_path"], overrides={"length": int(played)})
         samples = payload.get("i") if payload.get("ok") else None
         if not samples:
-            from quam_state_manager.core.waveform_synth import lab_waveform
+            from quam_state_manager.core.waveform_synth import lab_waveform, resolved_lab_pulse
             with store._lock:
-                pulse = czp.resolved_tree(store.merged, ln["pulse_path"])
+                pulse = resolved_lab_pulse(store.merged, ln["pulse_path"])
             waveform_reasons = []
             samples = lab_waveform(pulse, waveform_reasons)
             notes.extend(f"{ln['name']}: {reason}" for reason in waveform_reasons)
@@ -42603,7 +42603,15 @@ def _copy_topology_rb_rows(topo: dict) -> dict:
 def _topology_for_chip_status(engine):
     """The topology Chip Status, its JSON and its report read: the per-gate
     RB derivation, then each entity's calibration age from the ledger."""
-    return _with_fidelity_writers(_with_ledger_calibration(_topology_with_derived_rb(engine)))
+    topo = _with_fidelity_writers(_with_ledger_calibration(_topology_with_derived_rb(engine)))
+    if any(r.get("load_id") is None and r.get("metric") in ("StandardRB", "InterleavedRB", "StandardRB_alpha", "InterleavedRB_alpha")
+           for e in topo.get("edges", []) for r in e.get("gate_fidelities", [])):
+        from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+        topo = _copy_topology_rb_rows(topo)
+        stores = _active_dataset_stores(fast=True, rescan=False)
+        cite_missing_runs(topo.get("edges"),
+                          (run for entry in stores for run in entry["store"].runs.values()))
+    return topo
 
 
 def _with_fidelity_writers(topo):

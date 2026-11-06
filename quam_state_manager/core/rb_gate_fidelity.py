@@ -40,6 +40,46 @@ _FIDELITY_KEYS = ("average_gate_fidelity",)
 _ERROR_KEYS = ("epg",)
 
 
+def cite_missing_runs(edges, runs):
+    """Recover an omitted RB source only from a unique matching run's own fit.
+
+    A sibling load id is never evidence. Require the experiment family, played
+    operation, pair, fidelity and (when stored) alpha to agree. Ambiguity stays
+    unrecorded; this is a measurement source, not proof of an apply-to-live.
+    """
+    import math
+    index = {}
+    for run in runs:
+        name = run.experiment_name.lower()
+        family = ("InterleavedRB" if "interleaved" in name and "rb" in name else
+                  "StandardRB" if "standard" in name and "rb" in name else None)
+        operation = run.parameters.get("operation")
+        if family is None or not operation:
+            continue
+        for pair, fit in run.fit_results.items():
+            if isinstance(fit, dict):
+                index.setdefault((pair, operation, family), []).append((run.run_id, fit))
+    for edge in edges or ():
+        for row in edge.get("gate_fidelities") or ():
+            if row.get("load_id") is not None:
+                continue
+            matches = []
+            family = row["metric"].removesuffix("_alpha")
+            related = {r["metric"]: r.get("value") for r in edge.get("gate_fidelities", [])
+                       if r["gate"] == row["gate"]}
+            for rid, fit in index.get((edge["pair_id"], row["gate"], family), ()):
+                fields = [(related.get(family), fit.get("fidelity"))]
+                alpha = related.get(family + "_alpha", row.get("alpha"))
+                if alpha is not None:
+                    fields.append((alpha, fit.get("alpha")))
+                if all(isinstance(a, (int, float)) and isinstance(b, (int, float))
+                       and math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12) for a, b in fields):
+                    matches.append(rid)
+            if len(matches) == 1:
+                row["load_id"] = matches[0]
+                row["load_id_source"] = "matching run fit"
+
+
 def pair_key_variants(pair_id: str) -> list[str]:
     """Every spelling a run's `fit_results` might key this pair under.
 

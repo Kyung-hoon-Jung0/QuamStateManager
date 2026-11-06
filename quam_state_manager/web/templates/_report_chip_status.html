@@ -262,7 +262,7 @@
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
             <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
-            <th>Detuning (V)</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
+            <th>Detuning ({{ 'pair_detuning' | unit_hint }})</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
         <tbody>
         {% for p in pairs %}
         {% if p.get('_error') %}
@@ -329,7 +329,7 @@
                     <span class="rep-note">&divide;{{ "%.2f" | format(gf.get('average_gates_per_clifford')) }}</span>
                     {%- endif %}
                 {%- else %}-{% endif %}</td>
-            <td>{{ gf.get('load_id') if gf.get('load_id') is not none else '-' }}</td>
+            <td>{{ gf.get('load_id') if gf.get('load_id') is not none else 'unrecorded' }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -347,7 +347,7 @@
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Gate</th><th>Amplitude</th><th>Coupler amp</th>
             <th>Length (ns)</th><th>Flat length (ns)</th><th>Smoothing (ns)</th>
-            <th>Phase shift ctrl (rad)</th><th>Phase shift tgt (rad)</th></tr></thead>
+            <th>Phase shift ctrl ({{ 'phase_shift_control' | unit_hint }})</th><th>Phase shift tgt ({{ 'phase_shift_target' | unit_hint }})</th></tr></thead>
         <tbody>
         {% for g in gate_params %}
         <tr>

@@ -319,9 +319,9 @@ class TestEverythingExtractable:
 
     def test_the_pair_row_names_what_measured_its_fidelity(self, rich_client):
         b = rich_client.get("/chip-status/report").get_data(as_text=True)
-        assert "Best 2Q fidelity" in b and "Detuning (V)" in b
+        assert "Best 2Q fidelity" in b and "Detuning (Hz)" in b
         assert "Detuning (MHz)" not in b
-        assert "-0.1659" in b                    # volts, 4 decimals -- not "-0.00" MHz
+        assert "-0.2" in b                       # Hz, from the shared units table
         assert "Pair readout confusion (1)" in b
 
     def test_the_ports_each_channel_is_cabled_to_are_printed(self, rich_client):

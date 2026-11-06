@@ -68,6 +68,7 @@ _LADDERS: dict[str, list[tuple[float, float, str, int]]] = {
 
 # suffix -> (factor, decimals) for *fixed* (non-laddered) display.
 _FIXED: dict[str, tuple[float, int]] = {
+    "turns": (1.0, 4),
     "GHz": (1e-9, 4), "MHz": (1e-6, 2), "kHz": (1e-3, 1), "Hz": (1.0, 1),
     "s": (1.0, 2), "ms": (1e3, 2), MICRO + "s": (1e6, 2), "ns": (1e9, 1),
     "V": (1.0, 4), "mV": (1e3, 2), MICRO + "V": (1e6, 1),
@@ -122,12 +123,11 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "coupler_decouple_offset": ("volt", "V"),
     "coupler_interaction_offset": ("volt", "V"),
     "mutual_flux_bias": ("volt", "V"),
-    # QA F-24: a qubit PAIR's `detuning` is a flux amplitude, not the Hz
-    # `detuning` above (pulses, ZZ drive, XY-detuned channel). quam_builder
-    # FluxTunableTransmonPair, verbatim: "detuning (Optional[float]): Flux
-    # amplitude required to bring the qubits to the same energy in V". Its own
-    # key, because the leaf name alone cannot tell the two apart.
-    "pair_detuning": ("volt", "V"),
+    # Pair detuning is stored as a frequency difference in Hz.
+    "pair_detuning": ("freq", "Hz"),
+    # CZGate.apply passes these directly to xy.frame_rotation_2pi.
+    "phase_shift_control": ("phase_turns", "turns"),
+    "phase_shift_target": ("phase_turns", "turns"),
     # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than
     # borrowing `z_joint_offset`'s — they are volts for the same reason but
     # not the same field, and a later change to one must not silently move
@@ -141,7 +141,7 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
 
 # SI base-unit label per dimension, for "you are editing raw X" hints.
 _STORED_LABEL = {"freq": "Hz", "time": "s", "volt": "V", "duration_ns": "ns",
-                 "slew": "V/s"}
+                 "slew": "V/s", "phase_turns": "turns"}
 
 # A key that NAMES its unit (``gaussian_filter_frequency_mhz``) is stored in
 # that unit, not in the SI base the generic patterns assume: reading it as a
@@ -267,9 +267,8 @@ def pair_field_key(field: str) -> str:
     """The units key of a field stored DIRECTLY on a qubit pair
     (``qubit_pairs.<pair>.<field>``).
 
-    QA F-24: the pair's own ``detuning`` is a flux amplitude in volts
-    (``pair_detuning`` above); by its leaf name alone it reads as the Hz
-    ``detuning`` of pulses / the ZZ drive / the XY-detuned channel. Every
+    The pair's own ``detuning`` uses its explicit units-table entry,
+    rather than the display scale of pulse / ZZ-drive detuning. Every
     pair-level surface that looks a unit up by key (the pair inspector,
     ``qsm show <pair>``) goes through here, so one value cannot get two units.
     """
@@ -298,7 +297,7 @@ def path_units_key(path: str) -> str:
     curated key (``z_joint_offset``), exactly as the qubit/pair inspector row
     for it is; any other leaf by its own name. A field held directly on a
     pair goes through :func:`pair_field_key`, as the pair inspector does, so
-    ``qubit_pairs.<p>.detuning`` is volts and never the Hz ``detuning``.
+    ``qubit_pairs.<p>.detuning`` uses the pair-specific display entry.
     """
     p = str(path or "")
     parts = p.split(".")
@@ -569,21 +568,13 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
     return out
 
 
-# [derived] Upper bound on a magnitude that can still be an output voltage.
-# The pair ``detuning`` is declared volts by its class (see ``pair_detuning``
-# above), but a chip may store a frequency in it (seen: ~5e8). No OPX analog
-# output reaches 10 V, so a larger magnitude cannot be the declared unit and
-# must not be printed under a "V" header.
+# A plausibility guard for other fields explicitly declared in volts.
 PLAUSIBLE_VOLT_MAX = 10.0
 
 
 def pair_detuning_cell(value: Any) -> tuple[str, bool]:
     """``(text, unit_doubtful)`` for a pair's ``detuning`` table cell.
 
-    A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts;
-    a larger one renders raw (no scaling, no unit) with the doubt flag set.
+    Read the declared unit; magnitude does not decide the dimension.
     """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if abs(value) > PLAUSIBLE_VOLT_MAX:
-            return repr(value), True
     return qty_filter(value, "pair_detuning"), False

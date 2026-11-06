@@ -56,12 +56,14 @@ def test_peek_follows_a_pointer_and_doubts_an_implausible_volt(tmp_path):
     c = create_app(testing=True, instance_path=str(tmp_path / "_inst")).test_client()
     c.post("/load", data={"folder": str(_chip(tmp_path / "chip" / "c1"))})
     ln = "qubits.q1.xy.operations.x90.length"
-    ok_v = "qubit_pairs.p1.detuning"
-    bad_v = "qubit_pairs.p2.detuning"
-    j = c.get(f"/field/peek?dot_path={ln}&dot_path={ok_v}&dot_path={bad_v}").get_json()
+    ok_v = "qubits.q1.z.joint_offset"
+    bad_v = "qubits.q1.z.min_offset"
+    hz = "qubit_pairs.p2.detuning"
+    j = c.get(f"/field/peek?dot_path={ln}&dot_path={ok_v}&dot_path={bad_v}&dot_path={hz}").get_json()
     assert j["units"].get(ln) == "ns", "the unit of the pointer's target"
     assert j["units"].get(ok_v) == "V"
     assert bad_v not in j["units"], "250 is not volts (units.PLAUSIBLE_VOLT_MAX)"
+    assert j["units"].get(hz) == "Hz"
 
 
 def _write(path, dims, arrays):

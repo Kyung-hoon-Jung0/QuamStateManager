@@ -1012,14 +1012,16 @@ def operations(doc, conversions=None, unavailable=None):
                               "amplitude_v": amp, "point": pt})
             for ln in lines:
                 ln["lobes"] = []
-                if not ln["moves"] or ln["refusal"]:
+                if not ln["pulse_field"] or ln["refusal"]:
                     continue
                 conv = conversions.get(ln["qubit_path"])
                 if conv is None:
                     continue
                 try:
-                    levels = pulse_lobes(resolved_tree(doc, ln["pulse_path"]) or {}, ln["amplitude_v"])
+                    from .waveform_synth import resolved_lab_pulse
+                    levels = pulse_lobes(resolved_lab_pulse(doc, ln["pulse_path"]) or {}, ln["amplitude_v"])
                     ln["lobes"] = [{"name": stage, "amplitude_v": a, "point": conv.point(a)} for stage, a in levels]
+                    ln["moves"] = any(a is None or a != 0 for _, a in levels)
                     bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
                     if bad:
                         ln["point"] = {**ln["point"], "frequency_hz": None,
@@ -1031,6 +1033,12 @@ def operations(doc, conversions=None, unavailable=None):
                     ln["point"] = {"frequency_hz": None, "reason": str(exc)}
             for ln in lines:
                 _amplitude_view(doc, ln)
+            if kind == "two-flux" and raw_duration is None:
+                from .waveform_synth import lab_waveform, resolved_lab_pulse
+                samples = [lab_waveform(resolved_lab_pulse(doc, ln["pulse_path"])) for ln in lines]
+                if all(s is not None for s in samples):
+                    duration_ns = max(map(len, samples))
+                    duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
@@ -1188,7 +1196,7 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
     mover = next((ln for ln in row["lines"] if ln["role"] == role), None) if row else None
     stored = mover["amplitude_v"] if mover else None
     required = result.get("amplitude_v")
-    difference = required - stored if required is not None and stored is not None else None
+    difference = stored - required if required is not None and stored is not None else None
     result.update(stored_amplitude_v=stored, difference_v=difference)
     target = result.get("target_detuning_hz")
     aim = f"{target / 1e6:+.1f} MHz" if target is not None else "unknown"
@@ -1203,7 +1211,7 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
               else (f" {whose.rstrip()}" if whose else "") + f": unknown — {result['reason']}")
     result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude"
                          + answer
-                         + f" | stored {mv(stored)} | difference {mv(difference)}"
+                         + f" | stored {mv(stored)} | stored minus required {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
     # The stored point may sit on a different resonance than the one the target names
     # (e.g. on iSWAP while aiming at |11>-|20>): an amplitude difference alone hides that.
