@@ -279,7 +279,8 @@
             <td>{{ pct(e.get('cz_fidelity')) }}</td>
             <td>{{ e.get('fidelity_source') or '-' }}</td>
             <td>{{ e.get('best_gate') or '-' }}</td>
-            <td>{{ e.get('detuning') | qty('pair_detuning') }}</td>
+            {% set _dt = e.get('detuning') | pair_detuning_cell %}
+            <td>{% if _dt[1] %}{{ _dt[0] }} (raw, unit doubtful){% else %}{{ _dt[0] }}{% endif %}</td>
             <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
             <td>{{ cal.get(p.id) or '-' }}</td>
         </tr>

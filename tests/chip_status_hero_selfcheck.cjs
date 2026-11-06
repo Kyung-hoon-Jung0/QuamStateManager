@@ -327,7 +327,7 @@ function part5() {
     ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
     ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
-    ok(pop && /detuning\s*-0\.2 Hz/.test(pop.textContent), 'pair popup uses the declared Hz unit');
+    ok(pop && /detuning\s*-0\.1659 V/.test(pop.textContent), 'pair popup uses the declared volt unit');
     heroPrefersTheGateNumber();
     overviewTilesStateBothErrorRates();
     anharmSubLine();

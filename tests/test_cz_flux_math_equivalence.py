@@ -65,6 +65,12 @@ def test_pre_extraction_fixture_outputs_are_identical():
             # Keep all captured numerical outputs and every other field pinned.
             doc = restore(record["args"])[0]
             for row in expected[0]:
+                if row["path"] == "qubit_pairs.q1-2.macros.cz_snz":
+                    # W6-1 resolves the SNZ runtime length: two 10 ns lobes,
+                    # two central samples and two edge samples. Only this
+                    # formerly unknown duration changes; flux math stays pinned.
+                    row["duration_ns"] = 24
+                    row["duration_note"] = "24 ns from the played SNZ waveform (flat length, edges and padding)"
                 def holder(path):
                     return (C.read(doc, path).get("holder_path") or path) if path else path
                 # S3 adds unknown-only coupler metadata and replaces the old omission

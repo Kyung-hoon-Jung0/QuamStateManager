@@ -9,15 +9,15 @@ from quam_state_manager.core import units
 ROOT = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
 
 
-def test_a_small_detuning_uses_the_declared_unit():
+def test_a_volt_sized_detuning_renders_in_volts():
     text, doubt = units.pair_detuning_cell(0.0123)
     assert not doubt
     assert text == units.qty_filter(0.0123, "pair_detuning")
 
 
-def test_a_frequency_detuning_renders_in_hz():
+def test_a_frequency_sized_detuning_is_raw_and_flagged():
     text, doubt = units.pair_detuning_cell(540739600.0281938)
-    assert not doubt
+    assert doubt
     assert "540739600" in text
 
 

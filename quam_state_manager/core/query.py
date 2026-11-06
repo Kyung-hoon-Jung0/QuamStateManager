@@ -955,8 +955,7 @@ class QueryEngine:
                 "confusion_diag": confusion_diag,
                 "confusion_offdiag": confusion_offdiag,
                 "detuning": p.get("detuning"),
-                "detuning_display": units.qty_filter(
-                    p.get("detuning"), "pair_detuning", "full"),
+                "detuning_display": units.pair_detuning_display(p.get("detuning")),
                 "coupler_decouple_offset": coupler.get("decouple_offset"),
                 "mutual_flux_bias": p.get("mutual_flux_bias"),
                 "cz_load_id": cz_load_id,

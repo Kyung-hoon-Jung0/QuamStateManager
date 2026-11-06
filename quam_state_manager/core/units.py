@@ -123,13 +123,14 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "coupler_decouple_offset": ("volt", "V"),
     "coupler_interaction_offset": ("volt", "V"),
     "mutual_flux_bias": ("volt", "V"),
-    # Pair detuning is stored as a frequency difference in Hz.
-    "pair_detuning": ("freq", "Hz"),
+    # FluxTunableTransmonPair declares this flux amplitude in volts.
+    # A macro or pulse detuning is a separate frequency quantity.
+    "pair_detuning": ("volt", "V"),
     # Base CZGate.apply passes these directly to xy.frame_rotation_2pi (2*pi radians).
     # Custom overrides remain provisional until their source can be checked.
     # Executable installed-gate source check: test_w6_review_phase_unit_has_executable_source_evidence.
-    "phase_shift_control": ("phase_turns", "turns"),
-    "phase_shift_target": ("phase_turns", "turns"),
+    "phase_shift_control": ("phase", "turns"),
+    "phase_shift_target": ("phase", "turns"),
     # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than
     # borrowing `z_joint_offset`'s — they are volts for the same reason but
     # not the same field, and a later change to one must not silently move
@@ -143,7 +144,7 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
 
 # SI base-unit label per dimension, for "you are editing raw X" hints.
 _STORED_LABEL = {"freq": "Hz", "time": "s", "volt": "V", "duration_ns": "ns",
-                 "slew": "V/s", "phase_turns": "turns"}
+                 "slew": "V/s", "phase": "turns"}
 
 # A key that NAMES its unit (``gaussian_filter_frequency_mhz``) is stored in
 # that unit, not in the SI base the generic patterns assume: reading it as a
@@ -570,13 +571,29 @@ def fit_metric_units(variables: Any, metrics: Any, axes: Any = (), booleans: Any
     return out
 
 
-# A plausibility guard for other fields explicitly declared in volts.
+# [derived] Upper bound on a magnitude that can still be an output voltage.
+# The pair ``detuning`` is declared volts by its class (see ``pair_detuning``
+# above), but a chip may store a frequency in it (seen: ~5e8). No OPX analog
+# output reaches 10 V, so a larger magnitude cannot be the declared unit and
+# must not be printed under a "V" header.
 PLAUSIBLE_VOLT_MAX = 10.0
 
 
 def pair_detuning_cell(value: Any) -> tuple[str, bool]:
     """``(text, unit_doubtful)`` for a pair's ``detuning`` table cell.
 
-    Read the declared unit; magnitude does not decide the dimension.
+    A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts;
+    a larger one renders raw (no scaling, no unit) with the doubt flag set.
     """
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if abs(value) > PLAUSIBLE_VOLT_MAX:
+            return repr(value), True
     return qty_filter(value, "pair_detuning"), False
+
+
+def pair_detuning_display(value: Any) -> str:
+    """Full popup text, preserving uncertainty when the declared volts do not fit."""
+    text, doubtful = pair_detuning_cell(value)
+    if doubtful:
+        return text + " (raw, unit doubtful)"
+    return qty_filter(value, "pair_detuning", "full")

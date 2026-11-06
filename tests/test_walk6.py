@@ -123,9 +123,12 @@ def test_w6_4_zero_line_stays_idle(chip):
 
 def test_w6_5_pair_detuning_unit(chip):
     from quam_state_manager.core.units import stored_unit_label
-    assert stored_unit_label("pair_detuning") == "Hz"
+    assert stored_unit_label("pair_detuning") == "V"
     html = chip[0].get("/chip-status/report").get_data(as_text=True)
-    assert "Detuning (Hz)" in html
+    assert "Detuning (V)" in html
+    assert "400000000.0 (raw, unit doubtful)" in html
+    assert "400000000.0 V" not in html
+    assert "400000000.0 Hz" not in html
 
 
 def test_w6_6_xeb_fit_extraction(tmp_path):
