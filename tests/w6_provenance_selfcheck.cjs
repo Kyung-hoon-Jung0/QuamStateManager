@@ -22,7 +22,7 @@ win.Function(`
 const edge = {pair_id:'p', gate_fidelities:[{gate:'cz', metric:'InterleavedRB', value:.97, inferred_load_id:12}]};
 win.openPairPopup(edge, win.document.getElementById('anchor'));
 let popup = win.document.querySelector('.topo-pair-popup');
-assert(popup.textContent.includes('inferred (matching fit value), not proven'));
+assert(popup.textContent.includes('inferred source, not proven'));
 assert(popup.querySelector('a[href="/dataset/by-run/12?via=inferred"]'));
 edge.gate_fidelities[0].load_id = 11;
 win.openPairPopup(edge, win.document.getElementById('anchor'));
@@ -37,7 +37,7 @@ win.Function(`
  ${fn('_openSnapDataset')}
  window.hintLine=_hintLine; window.openSnap=_openSnapDataset;
 `).call(win);
-assert(win.hintLine({inferred_uid:'folder:12'}).includes('inferred (matching fit value), not proven'));
+assert(win.hintLine({inferred_uid:'folder:12'}).includes('inferred source, not proven'));
 win.openSnap({points:[{customdata:['point','','',null,null,'folder:12']}]});
 assert.equal(calls[0][1], '/dataset/folder:12?via=inferred');
 const unitEdge = {pair_id:'p', gate_fidelities:[], detuning:400};

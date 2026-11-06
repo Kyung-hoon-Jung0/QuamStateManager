@@ -2488,7 +2488,7 @@ window.ChipStatus.mount = function (opts) {
                     var inferred = gf.load_id == null;
                     var sourceUrl = '/dataset/by-run/' + encodeURIComponent(sourceRun) + (inferred ? '?via=inferred' : '');
                     name += ' <a href="' + sourceUrl + '" hx-get="' + sourceUrl + '" hx-target="#inspector-pane">#'
-                          + _esc(sourceRun) + (inferred ? ': inferred (matching fit value), not proven' : '') + '</a>';
+                          + _esc(sourceRun) + (inferred ? ': inferred source, not proven' : '') + '</a>';
                 }
                 if (gf.level === 'decay') {
                     // A decay base is a bare number, never a percentage.
@@ -3867,7 +3867,7 @@ window.ChipStatus.mount = function (opts) {
                         var _isOut = scorer && _physOk && scorer.isOutlier(p.value);
                         var _outTip = _isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(p.value).toFixed(1) + '\u00d7 MAD from chip median ' + (scorer.median * 100).toFixed(2) + '%)' : '';
                         var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
-                        var _runTip = p.run != null ? ' \u00b7 run #' + p.run : (p.inferredRun != null ? ' \u00b7 run #' + p.inferredRun + ': inferred (matching fit value), not proven' : '');
+                        var _runTip = p.run != null ? ' \u00b7 run #' + p.run : (p.inferredRun != null ? ' \u00b7 run #' + p.inferredRun + ': inferred source, not proven' : '');
                         sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
                             + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
                             + 'data-heat-t="' + ht.toFixed(6) + '" '
@@ -7867,7 +7867,7 @@ window.ChipTrends = (function () {
     var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
         + 'chip yet, or a change made outside SM since the last run.';
     function _hintLine(info) {
-        if (info && info.inferred_uid && !info.uid) return '<i>inferred (matching fit value), not proven; click to open the matching run</i>';
+        if (info && info.inferred_uid && !info.uid) return '<i>inferred source, not proven; click to open the matching run</i>';
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
         // docs/301 F9: the run whose saved state first carried the value --
         // opened with a note that it is not proven to have measured it

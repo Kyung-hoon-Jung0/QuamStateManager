@@ -86,10 +86,13 @@ def cite_missing_runs(edges, runs):
             if isinstance(fit, dict):
                 index.setdefault((pair, operation, family), []).append((run.run_id, fit))
     for edge, row in rows:
-        row.pop("inferred_load_id", None)
+        if row.get("inferred_source") != "shared RB source":
+            row.pop("inferred_load_id", None)
         path = metric_path(edge, row)
         proven = proofs.get(path, set())
         if len(proven) == 1:
+            row.pop("inferred_load_id", None)
+            row.pop("inferred_source", None)
             row["load_id"] = next(iter(proven))
             row["load_id_source"] = "run patch proof"
             continue
@@ -107,6 +110,7 @@ def cite_missing_runs(edges, runs):
                 matches.add(rid)
         if len(matches) == 1:
             row["inferred_load_id"] = next(iter(matches))
+            row["inferred_source"] = "matching fit value"
 
 
 def pair_key_variants(pair_id: str) -> list[str]:

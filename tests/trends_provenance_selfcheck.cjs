@@ -520,7 +520,7 @@ world.push((function () {
     const cd = host(win).data[0].customdata[1];
     ok(cd[3] === null && cd[4] === null && cd[5] === 'a1b2c3d4:12',
        'W6 an inferred run is not a proven writer or saved-state carrier');
-    ok(cd[2].includes('inferred (matching fit value), not proven'),
+    ok(cd[2].includes('inferred source, not proven'),
        'W6 Trends labels the matching candidate');
     fire(win, 'plotly_click', {points:[{customdata:cd}]});
     ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:12?via=inferred',

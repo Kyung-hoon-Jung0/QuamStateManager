@@ -1748,10 +1748,8 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
         # Search for any key containing fidelity-like data
         for metric_name, metric_val in fid.items():
             gate_load_id = fid.get(metric_name + "_load_id")
-            if metric_name in ("StandardRB_alpha", "InterleavedRB_alpha"):
-                gate_load_id = fid.get(metric_name.removesuffix("_alpha") + "_load_id")
             if gate_load_id is None and isinstance(metric_val, dict):
-                gate_load_id = next((metric_val[k] for k in ("load_id", "run_id", "dataset_id")
+                gate_load_id = next((metric_val[k] for k in ("load_id", "run_id", "dataset_id", "run")
                                      if metric_val.get(k) is not None), gate_load_id)
             if metric_name in flat_used:
                 continue                 # an attribute of a flat metric, not a metric
@@ -1809,6 +1807,12 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                        "level": _rb_level(metric_name),
                        "family": fidelity_family(metric_name)}
                 row.update(flat_attrs.get(metric_name) or {})
+                if row.get("load_id") is None and metric_name in ("StandardRB_alpha", "InterleavedRB_alpha"):
+                    # A sibling's recorded source is a candidate, not this leaf's writer.
+                    candidate = fid.get(metric_name.removesuffix("_alpha") + "_load_id")
+                    if candidate is not None:
+                        row["inferred_load_id"] = candidate
+                        row["inferred_source"] = "shared RB source"
                 results.append(_gate_fidelity_row(row))
     return results
 

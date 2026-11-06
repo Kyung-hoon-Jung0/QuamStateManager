@@ -83,7 +83,7 @@ def test_w6_2_missing_irb_id_uses_its_own_fit(tmp_path):
     html = client.get('/chip-status/report').get_data(as_text=True)
     for metric in ('InterleavedRB', 'InterleavedRB_alpha'):
         row = next(r for r in re.findall(r'<tr>(.*?)</tr>', html, re.S) if f'<td>{metric}</td>' in r)
-        assert '12' in row and 'inferred (matching fit value), not proven' in row
+        assert '12' in row and 'inferred source, not proven' in row
 
 
 def test_w6_2_ambiguous_or_wrong_gate_never_gets_a_run():
@@ -212,7 +212,7 @@ def test_w6_review_inferred_deep_link(chip, tmp_path):
     client.application.config['dataset_store'] = DatasetStore(tmp_path / 'data')
     response = client.get('/dataset/by-run/12?via=inferred', follow_redirects=True)
     assert response.status_code == 200
-    assert 'inferred (matching fit value), not proven' in response.get_data(as_text=True)
+    assert 'inferred source, not proven' in response.get_data(as_text=True)
 
 
 @pytest.mark.parametrize('patch', [
@@ -243,3 +243,60 @@ def test_w6_review_patch_path_keeps_literal_gate_key(tmp_path):
     run = SimpleNamespace(run_id=12, experiment_name='renamed', parameters={}, fit_results={}, folder_path=tmp_path)
     cite_missing_runs([{'pair_id':'p', 'gate_fidelities':[row]}], [run])
     assert row['load_id'] is None
+
+
+@pytest.mark.parametrize('field', ['run', 'load_id', 'run_id', 'dataset_id'])
+def test_w6_recorded_nested_run_is_proof(field):
+    from quam_state_manager.core.query import _extract_pair_gate_fidelities
+    rows = _extract_pair_gate_fidelities({'cz': {'fidelity': {
+        'InterleavedRB': {'Fidelity': .97, field: 12}}}})
+    assert rows[0]['load_id'] == 12
+
+
+def test_w6_alpha_owns_its_citation():
+    from quam_state_manager.core.query import _extract_pair_gate_fidelities
+    def rows(fid):
+        return {r['metric']: r for r in _extract_pair_gate_fidelities({'cz': {'fidelity': fid}})}
+    fid = {'StandardRB': .97, 'StandardRB_alpha': .96, 'StandardRB_load_id': 11}
+    alpha = rows(fid)['StandardRB_alpha']
+    assert alpha['load_id'] is None
+    assert alpha['inferred_load_id'] == 11
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    cite_missing_runs([{'pair_id': 'p', 'gate_fidelities': [alpha]}], [])
+    assert alpha['inferred_load_id'] == 11
+    fid['StandardRB_alpha_load_id'] = 12
+    assert rows(fid)['StandardRB_alpha']['load_id'] == 12
+
+
+def test_w6_alpha_patch_overrides_sibling_candidate(tmp_path):
+    from types import SimpleNamespace
+    from quam_state_manager.core.query import _extract_pair_gate_fidelities
+    from quam_state_manager.core.rb_gate_fidelity import cite_missing_runs
+    rows = _extract_pair_gate_fidelities({'cz': {'fidelity': {
+        'StandardRB': .97, 'StandardRB_alpha': .96, 'StandardRB_load_id': 11}}})
+    (tmp_path / 'node.json').write_text(json.dumps({'patches': [{'op': 'replace',
+        'path': '/qubit_pairs/p/macros/cz/fidelity/StandardRB_alpha', 'value': .96}]}))
+    run = SimpleNamespace(run_id=12, experiment_name='renamed', parameters={}, fit_results={}, folder_path=tmp_path)
+    cite_missing_runs([{'pair_id': 'p', 'gate_fidelities': rows}], [run])
+    alpha = next(r for r in rows if r['metric'] == 'StandardRB_alpha')
+    assert alpha['load_id'] == 12
+    assert 'inferred_load_id' not in alpha
+
+
+def test_w6_recorded_run_renders_as_proven(tmp_path):
+    state = fixture_state()
+    state['qubit_pairs']['p']['macros']['cz_SNZ']['fidelity']['InterleavedRB'] = {'Fidelity': .97, 'run': 12}
+    del state['qubit_pairs']['p']['macros']['cz_SNZ']['fidelity']['InterleavedRB_load_id']
+    (tmp_path / 'state.json').write_text(json.dumps(state))
+    (tmp_path / 'wiring.json').write_text('{}')
+    app = create_app(testing=True, instance_path=str(tmp_path / 'instance'))
+    client = app.test_client()
+    client.post('/load', data={'folder': str(tmp_path)})
+    topology = client.get('/api/topology').get_json()
+    metric = next(r for r in topology['edges'][0]['gate_fidelities'] if r['metric'] == 'InterleavedRB')
+    assert metric['load_id'] == 12
+    assert 'inferred_load_id' not in metric
+    html = client.get('/chip-status/report').get_data(as_text=True)
+    row = next(r for r in re.findall(r'<tr>(.*?)</tr>', html, re.S) if '<td>InterleavedRB</td>' in r)
+    assert re.search(r'<td>\s*12\s*</td>\s*$', row)
+    assert 'inferred' not in row
