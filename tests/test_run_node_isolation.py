@@ -1,5 +1,5 @@
 """docs/245: an agent's run_node is ALWAYS pinned to its scratch (D-01), and its
-proposed writes are only what the node itself recorded (D-02).
+proposed writes are the union of what the node itself changed (D-02, W7-2).
 
 D-01: the scheduler passed ``--config-file`` only from ``settings.effective_config``
 (empty until someone pressed "Read config"), and only that flag repointed the
@@ -13,7 +13,7 @@ D-02: an offline replay's ``load_from_id`` swaps ``node.machine`` for the stored
 run's snapshot; saving it made SM propose that whole snapshot (297 leaves incl.
 network.host) as "the node's writes". Now the scratch is its pre-run bytes plus
 what the node's ``record_state_updates`` blocks / ``node.state_updates`` recorded,
-or -- for a node with no block -- its machine changes since that machine was last
+plus its machine changes since that machine was last
 assigned (so a replay's swapped-in snapshot is the baseline, never a write).
 
 The pins use the REAL qualibrate_config / qualibrate resolvers from the lab-B env
@@ -336,7 +336,7 @@ q = node.machine.d["qubits"]["qA1"]
 '''
 
 BLOCK_BODY = '''
-q["resonator"]["time_of_flight"] = 28          # measurement scaffolding, outside the block
+q["resonator"]["time_of_flight"] = 28          # direct write, outside the block
 with node.record_state_updates():
     q["resonator"]["f_01"] = 7.2e9
     q["resonator"]["RF_frequency"] = 7.2e9
@@ -381,7 +381,8 @@ class TestProposalIsTheNodesOwnUpdate:
         assert _proposal(run_dir["scratch"]) == {
             "qubits.qA1.resonator.f_01": 7.2e9,
             "qubits.qA1.resonator.RF_frequency": 7.2e9,
-        }                                   # not network.host, data_folder, qA2, qB9, ToF 28
+            "qubits.qA1.resonator.time_of_flight": 28,
+        }                                   # not network.host, data_folder, qA2, qB9
         assert _bytes(run_dir["live"]) == live_before
         assert rex._ISOLATION_REPORT["source"] == "record_state_updates"
 
@@ -410,11 +411,12 @@ class TestProposalIsTheNodesOwnUpdate:
         target = _node_file(run_dir["tmp"], run_dir["scratch"], None)
         rex.run_target(str(target), str(run_dir["scratch"]), None, isolate=True)
         assert _proposal(run_dir["scratch"]) == {"qubits.qA1.resonator.f_01": 7.2e9,
-                                                 "qubits.qA1.resonator.RF_frequency": 7.2e9}
+                                                 "qubits.qA1.resonator.RF_frequency": 7.2e9,
+                                                 "qubits.qA1.resonator.time_of_flight": 28}
         assert "twpa_ext" not in json.loads((run_dir["scratch"] / "state.json").read_text())
         err = capsys.readouterr().err
-        assert "OUTSIDE its record_state_updates" in err and "time_of_flight" in err
-        assert rex._ISOLATION_REPORT["not_proposed"] == ["/qubits/qA1/resonator/time_of_flight"]
+        assert "written by the node directly" in err and "time_of_flight" in err
+        assert rex._ISOLATION_REPORT["direct"] == ["/qubits/qA1/resonator/time_of_flight"]
 
     def test_replaced_subtree_drops_the_old_fields(self, rex, run_dir):
         # 15e swaps a pulse for another class: a field the new class lacks must go,
@@ -436,9 +438,9 @@ p.write_text(json.dumps(d))     # a second machine object saved by hand
 '''
         target = _node_file(run_dir["tmp"], run_dir["scratch"], None, body)
         rex.run_target(str(target), str(run_dir["scratch"]), None, isolate=True)
-        assert _proposal(run_dir["scratch"]) == {}
+        assert _proposal(run_dir["scratch"]) == {"qubits.qA2.f_01": 1.23e9}
         err = capsys.readouterr().err
-        assert "NOT proposed" in err and "/qubits/qA2/f_01" in err
+        assert "written by the node directly" in err and "/qubits/qA2/f_01" in err
 
     def test_reverted_and_recorded_style_is_applied(self, rex, run_dir):
         # interactive_only=False: qualibrate reverts the machine and records node.state_updates
@@ -491,7 +493,8 @@ p.write_text(json.dumps(d))     # a second machine object saved by hand
         with pytest.raises(SystemExit):
             rex.run_target(str(target), str(run_dir["scratch"]), None, isolate=True, replay=True)
         assert _proposal(run_dir["scratch"]) == {"qubits.qA1.resonator.f_01": 7.2e9,
-                                                 "qubits.qA1.resonator.RF_frequency": 7.2e9}
+                                                 "qubits.qA1.resonator.RF_frequency": 7.2e9,
+                                                 "qubits.qA1.resonator.time_of_flight": 28}
 
     def test_recorder_is_removed_after_the_run(self, rex, run_dir):
         from qualibrate.core.qualibration_node import QualibrationNode

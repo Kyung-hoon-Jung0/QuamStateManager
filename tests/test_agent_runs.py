@@ -212,6 +212,74 @@ def _run(c, **kw):
 
 # ------------------------------------------------------------------ pure
 
+@pytest.mark.parametrize("direct", [False, True])
+def test_node_write_union_reaches_approval_and_chip(c, inst, synth_folder, monkeypatch, direct):
+    """Recorded A and direct B cross the subprocess boundary and the one door."""
+    import copy
+    import importlib.util
+    src = Path(__file__).resolve().parents[1] / "quam_state_manager/generator/run_experiment.py"
+    sys.path.insert(0, str(src.parent))
+    spec = importlib.util.spec_from_file_location("union_pin_runner", src)
+    rex = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rex)
+
+    def node_run(instance_path, item, settings, runner):
+        scratch = item["state_path"]
+        original = rex._snapshot_files(scratch)
+        baseline = rex._merged_files(original)
+        produced = copy.deepcopy(baseline)
+        if direct:
+            produced["qubits"]["qA1"]["resonator"]["f_01"] += 2e6
+        machine = type("Machine", (), {"to_dict": lambda self, **kw: produced})()
+        node = type("Node", (), {"machine": machine, "state_updates": {
+            "#/qubits/qA1/f_01": {"new": baseline["qubits"]["qA1"]["f_01"] + 1e6}}})()
+        recorder = rex._UpdateRecorder()
+        recorder.base, recorder.base_id, recorder.blocks = baseline, id(machine), 1
+        rex._persist_isolated({"node": node}, scratch, None, original, recorder)
+        return {"status": "done", "error": None, "returncode": 0, "log_file": None}
+
+    monkeypatch.setattr(scheduler, "_run_item", node_run)
+    before = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    _arm(c)
+    result = _run(c).get_json()["result"]
+    approval = approvals.get(str(inst), _chip(c), result["approval"]["id"])
+    writes = {w["path"]: w for w in approval["writes"]}
+    a, b = "qubits.qA1.f_01", "qubits.qA1.resonator.f_01"
+    assert set(writes) == ({a, b} if direct else {a})
+    assert "origin" not in writes[a]
+    if direct:
+        assert writes[b]["origin"] == "written by the node directly"
+    response = c.post(f"/api/agent/approvals/{approval['id']}/approve", json={}, headers=HUMAN)
+    assert response.get_json()["stage"]["applied"], response.get_json()
+    after = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    assert after["qubits"]["qA1"]["f_01"] == before["qubits"]["qA1"]["f_01"] + 1e6
+    assert after["qubits"]["qA1"]["resonator"]["f_01"] == before["qubits"]["qA1"]["resonator"]["f_01"] + (2e6 if direct else 0)
+
+
+def test_uncaptured_write_keeps_the_whole_approval_pending(c, inst, synth_folder, tmp_path):
+    scratch = tmp_path / "run" / "quam_state"
+    scratch.mkdir(parents=True)
+    (scratch.parent / "node_write_capture.json").write_text(json.dumps({
+        "direct": ["/qubits/qA1/resonator/f_01"],
+        "unstaged": [{"pointer": "/qubits/qA1/resonator/f_01", "new": 7e9,
+                      "why": "synthetic capture failure"}]}), encoding="utf-8")
+    writes = [{"path": "qubits.qA1.f_01", "old": 5e9, "new": 5.1e9}]
+    agent_runs.node_write_capture(scratch, writes)
+    approval = approvals.add(str(inst), _chip(c), kind="writes", node="synthetic_node", targets=["qA1"],
+                             writes=writes, reason=None, why_held="mode ask-writes", actor="by_codex")
+    card = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]
+    assert card["writes"][1]["capture_error"] == "synthetic capture failure"
+    original = (synth_folder / "state.json").read_bytes()
+    # The browser sends just path/old/new: it cannot erase server-owned metadata.
+    edits = [{k: w[k] for k in ("path", "old", "new")} for w in writes]
+    res = c.post(f"/api/agent/approvals/{approval['id']}/approve", json={"writes": edits}, headers=HUMAN)
+    assert res.status_code == 409 and not res.get_json()["stage"]["applied"]
+    assert (synth_folder / "state.json").read_bytes() == original
+    assert approvals.get(str(inst), _chip(c), approval["id"])["status"] == "pending"
+    res = c.post(f"/api/agent/approvals/{approval['id']}/approve", json={"writes": edits[:1]}, headers=HUMAN)
+    assert res.status_code == 409 and (synth_folder / "state.json").read_bytes() == original
+
+
 @pytest.mark.parametrize("synth_folder", ["loss_maps"], indirect=True)
 @pytest.mark.parametrize("bad_container", [False, True])
 def test_loss_map_approval_preserves_json_text(c, inst, synth_folder, fake_run, bad_container):
@@ -263,6 +331,15 @@ def test_approval_real_list_stays_list(c, inst, synth_folder):
 
 
 class TestPure:
+    def test_large_diff_keeps_every_leaf_for_the_card(self, tmp_path):
+        before, after = tmp_path / "before", tmp_path / "after"
+        before.mkdir()
+        after.mkdir()
+        (before / "state.json").write_text('{"a": 1, "b": 2}', encoding="utf-8")
+        (after / "state.json").write_text('{"a": 3, "b": 4}', encoding="utf-8")
+        writes, held = agent_runs.diff_states(before, after, cap=1)
+        assert held and {w["path"] for w in writes} == {"a", "b"}
+
     def test_diff_states_changed_created_deleted_nan(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
         a.mkdir(), b.mkdir()

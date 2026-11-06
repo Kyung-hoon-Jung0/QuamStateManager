@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+**W7-2 (1.7.0):** Agent run proposals are the union of recorded updates and direct
+node writes. `run_experiment._persist_isolated` retains both; its per-scratch
+`node_write_capture.json` carries direct-write provenance and unstaged reasons to
+`agent_runs` and the approval card. Replay load baselines and serializer-default
+filtering still apply (docs/173 S5/S9, docs/245). The one door, atomic approval,
+`used_by_run`, gates and W7-1 string preservation are unchanged.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **Note on this file's history**: this file previously accumulated long forensic write-ups of past debugging campaigns (reproduction steps, measured timings, "the first fix was wrong because..." narratives). It was trimmed on 2026-08-21 to keep only current contracts/invariants + doc pointers — the full history for any `docs/NN` reference below lives in `docs/NN_*.md`. Read the doc file before touching related code if you need the "why."

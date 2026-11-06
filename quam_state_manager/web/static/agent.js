@@ -802,12 +802,15 @@ window.AgentPanel = (function () {
       else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
         esc(t.cell) + '</span> <span class="ag-ap-from">⚠ proposed from <span class="ag-ap-oldv">' + esc(t.old) + "</span></span></td>";
       var stored = (w.display && w.display.stored) || "";
+      var writeNote = w.origin ? ' <span class="muted">' + esc(w.origin) + '</span>' : '';
+      var cannotStage = w.capture_error || ((w.created || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
+      if (cannotStage) writeNote += ' <span class="muted">cannot be staged: ' + esc(cannotStage) + '</span>';
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;
       var tick = S.observer ? "" : '<input type="checkbox" class="ui-agent-tick" data-i="' + i + '"' + (failed ? "" : " checked") +
         ' title="ticked values are written" aria-label="' + esc("write " + w.path) + '"> ';
       var failNote = failed ? ' <span class="ui-agent-failed-why">✗ the node marked ' + esc(w.failed_target) + " " + esc(w.failed_outcome || "failed") + ": not written unless ticked</span>" : "";
-      return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + "</td>" + nowTd + "<td>" +
+      return "<tr" + (failed ? ' class="ui-agent-failed-row"' : "") + "><td title=\"" + esc(w.path) + "\">" + tick + esc(w.path) + failNote + writeNote + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
           ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(JSON.stringify(w.new)) + '">' +
           (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";

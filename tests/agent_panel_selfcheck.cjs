@@ -40,7 +40,7 @@ let feed = {
               counts: { total: 1, pending: 1 }, may_change: [{ target: 'q1', path: 'qubits.q1.xy.operations.x180.amplitude', now: 0.12 }] }],
     runs: [{ key: 'r1', node: '02_res', targets: ['q1'], status: 'ended', since: now - 200, result: { status: 'done', classification: 'ok', run_id: 77, applied: true, writes: [{ path: 'qubits.q1.f_01', old: 1, new: 2 }] } }],
     approvals: [{ id: 'ap-1', kind: 'writes', node: '05_power_rabi', targets: ['q1'], run_id: 78, why_held: 'mode ask-writes', reason: 'fit ok', created: now - 10,
-                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, new: 4.32e9 }] }]
+                  writes: [{ path: 'qubits.q1.f_01', old: 4.31e9, new: 4.32e9, origin: 'written by the node directly', capture_error: 'synthetic capture failure' }] }]
   },
   session: { alive: true, busy: false, backend: 'claude', ended: null },
   file: { owner: 'human:user-a', backend: 'claude', armed: false, stopped: false },
@@ -91,6 +91,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(run && run.querySelector('a.ag-run').getAttribute('href') === '/dataset/by-run/77' && /1 write\(s\) applied to the chip/.test(run.textContent), 'a run card with the run link and its writes');
   const ap = cards.querySelector('[data-card="approval:ap-1"]');
   ok(ap && ap.querySelector('.ag-approve') && ap.querySelector('input.ag-ap-new').value === '4320000000', 'an approval card with an editable proposed value');
+  ok(ap.textContent.includes('written by the node directly'), 'direct node writes are labelled on the approval card');
+  ok(ap.textContent.includes('cannot be staged: synthetic capture failure'), 'unstageable node writes show their reason on the card');
   const nowCol = home.querySelector('.ag-now');
   // docs/253: no session-wide Arm -- the plan card's Start is the click, for that plan only
   ok(/thinking · by_claude/.test(nowCol.textContent) && !nowCol.querySelector('.ag-arm') && !/>Arm</.test(nowCol.innerHTML) && /not armed/.test(nowCol.textContent), 'the now column: pill text, not armed, and no blank Arm');
