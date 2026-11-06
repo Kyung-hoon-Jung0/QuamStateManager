@@ -32113,9 +32113,6 @@ def auto_sync_pull():
     sess = _auto_sync_state(ctx)
     if not sess or not sess.get("pull"):
         return "", 204
-    # Replace permission covers the edits present at this press. Capture before
-    # preparation and lock acquisition, which can also overlap a new edit.
-    _pull_edit_seq = ctx["store"].mutation_seq
     ok, _why = _auto_pull_armable(ctx)
     if not ok:
         g._merge_failure = _why
@@ -32354,9 +32351,7 @@ def auto_sync_pull():
             # between them was cleared by the reload with no word.
             _st = ctx.get("store")
             with (_st._lock if _st is not None else contextlib.nullcontext()):
-                if _st is not None and (
-                        _st.mutation_seq != _pull_edit_seq
-                        or (_quam_ctx_dirty(ctx) and not sess.get("pull_replace"))):
+                if _st is not None and _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
                     working_copy.restore_sync_point(wc, _sp0)
                     try:
                         working_copy.repersist_working(
@@ -32365,6 +32360,18 @@ def auto_sync_pull():
                         logger.exception("post-pull re-persist failed")
                     ctx["live_diverged"] = True
                     return "", 204
+                # docs/187 R10: an edit can land INSIDE `sync_from_live` -- it
+                # holds no `store._lock`, which is why the re-check above
+                # exists -- and with `replace` ON that re-check does not keep
+                # it, so the rebuild below drops it. Every count was taken
+                # BEFORE the pull, so a context that was clean then reported
+                # nothing and the work vanished in silence. Fold it into what
+                # the response reports.
+                _late = ctx.get("store")
+                _late_n = len(getattr(_late, "change_log", None) or []) if _late else 0
+                if _late_n:
+                    _discarded_n = max(_discarded_n, _late_n)
+                    discarding = True
                 ctx["_alarm_reason"] = "live-pull"
                 _seq0 = getattr(_st, "mutation_seq", None)
                 _notice_node_replacements(ctx, _held_applied, *_pulled)

@@ -871,9 +871,11 @@ class TestTheServerReportsEveryKindOfLoss:
         assert payload["saved"] is True, payload
         assert payload["stash"] >= 1, payload
 
-    def test_work_that_lands_DURING_the_pull_is_kept(self, env):
-        """Binding decision: work made inside a pull must survive. A deferred
-        replace must never report that it discarded the preserved edit."""
+    def test_work_that_lands_DURING_the_pull_is_reported(self, env):
+        """R10. `sync_from_live` holds no store._lock, so an edit can land
+        inside it; with `replace` on the post-pull re-check does not keep it
+        and the rebuild drops it. Every count is taken BEFORE the pull, so
+        that work used to vanish with `replaced: false`."""
         c = env["client"]
         _arm(env, pull=True, push=True, replace=True)
         _write_chip(env["live"], _state(f01=7.7e9))
@@ -895,16 +897,12 @@ class TestTheServerReportsEveryKindOfLoss:
             routes_mod.working_copy.sync_from_live = real
 
         assert landed.get("r") == 200, landed
-        assert r.status_code == 204, r.status_code
-        assert payload is None, "a deferred pull must not report discarded edits"
-        ctx = _ctx(env)
-        assert ctx["store"].state["qubits"]["qA1"]["T1"] == 4.44e-5
-        assert [row.dot_path for row in ctx["store"].change_log] == ["qubits.qA1.T1"]
-        wc = ctx["working_copy"]
-        work = json.loads((Path(wc.working_folder) / "state.json").read_text(encoding="utf-8"))
-        assert work["qubits"]["qA1"]["T1"] == 4.44e-5
-        assert wc.synced_live_hash != routes_mod.working_copy.live_content_hash(wc)
-
+        assert r.status_code == 200, r.status_code
+        assert payload, "no autoSyncPulled at all"
+        assert payload.get("replaced") is True, (
+            "an edit that landed during the pull was dropped with "
+            "replaced=false — silently: %r" % payload)
+        assert payload.get("count", 0) >= 1, payload
 
 class TestAPullAsksOnlyAboutTheFieldTheUserTouched:
     """The customer's rule: Auto-Sync adopts an external change by itself, and

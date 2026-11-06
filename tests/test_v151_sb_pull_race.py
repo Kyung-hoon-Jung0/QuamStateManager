@@ -126,6 +126,23 @@ def _after_race_is_consistent(env):
         "synced": wc.synced_live_hash, "live": live_hash}
 
 
+def _assert_auto_pull_race(env, replace):
+    if replace == "0":
+        ok, why = _after_race_is_consistent(env)
+        assert ok, f"working copy old while the sync point says new: {why}"
+        return
+    # F-3: replace also discards unapplied edits committed during live I/O.
+    ctx = _ctx(env)
+    wc = ctx["working_copy"]
+    work = json.loads((Path(wc.working_folder) / "state.json").read_text(encoding="utf-8"))
+    for state in (work, ctx["store"].state):
+        assert state["qubits"]["q2"]["T1"] == LAB
+        assert state["qubits"]["q3"]["T1"] == _state()["qubits"]["q3"]["T1"]
+    assert not ctx["store"].change_log
+    assert wc.synced_live_hash == WC.live_content_hash(wc)
+    assert WC.load(str(env["inst"]), env["live"]).synced_live_hash == wc.synced_live_hash
+
+
 class TestAutoSyncPullRace:
     @pytest.mark.parametrize("replace", ["0", "1"])
     def test_the_next_apply_keeps_the_lab_value(self, env, monkeypatch, replace):
@@ -135,8 +152,7 @@ class TestAutoSyncPullRace:
         fired = _edit_between_read_and_write(monkeypatch, env)
         c.post("/auto-sync/pull", data={"dom_dirty": "0"})
         assert fired, "the hook never ran: the pull did not reach its live read"
-        ok, why = _after_race_is_consistent(env)
-        assert ok, f"working copy old while the sync point says new: {why}"
+        _assert_auto_pull_race(env, replace)
         monkeypatch.undo()
 
         # the top bar's Apply (mode=apply with the screen's seen set)
@@ -145,9 +161,10 @@ class TestAutoSyncPullRace:
         assert _live_t1(env, "q2") == LAB, (
             "the Apply wrote the old lab value back over the lab's newer one: "
             f"{r.get_json()}")
-        # the edit is not lost either: applied, or still pending
-        assert (_live_t1(env, "q3") == EDIT
-                or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == EDIT)
+        # Non-replace preserves the edit; replace adopts the live value.
+        expected = EDIT if replace == "0" else _state()["qubits"]["q3"]["T1"]
+        assert (_live_t1(env, "q3") == expected
+                or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == expected)
 
     @pytest.mark.parametrize("replace", ["0", "1"])
     def test_the_auto_apply_flush_keeps_the_lab_value(self, env, monkeypatch, replace):
@@ -156,14 +173,14 @@ class TestAutoSyncPullRace:
         _lab_writes(env)
         _edit_between_read_and_write(monkeypatch, env)
         c.post("/auto-sync/pull", data={"dom_dirty": "0"})
-        ok, why = _after_race_is_consistent(env)
-        assert ok, f"working copy old while the sync point says new: {why}"
+        _assert_auto_pull_race(env, replace)
         monkeypatch.undo()
         # the push door the auto-apply flush presses
         c.post("/state/apply-to-live", data=_seen(env), headers={"Accept": "application/json"})
         assert _live_t1(env, "q2") == LAB, "the push wrote the old lab value back"
-        assert (_live_t1(env, "q3") == EDIT
-                or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == EDIT)
+        expected = EDIT if replace == "0" else _state()["qubits"]["q3"]["T1"]
+        assert (_live_t1(env, "q3") == expected
+                or _ctx(env)["store"].state["qubits"]["q3"]["T1"] == expected)
 
     def test_a_failed_rebuild_puts_the_sync_point_back(self, env, monkeypatch):
         """The failure branch documents the same absorbing state: the pull

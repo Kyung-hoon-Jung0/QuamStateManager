@@ -1,4 +1,5 @@
 """Notice delivery must not change request locking or download semantics."""
+import json
 import threading
 
 import pytest
@@ -41,7 +42,7 @@ def test_notice_hooks_leave_requests_free_during_pull_io(env, edit):
         assert ctx["store"].state["qubits"]["qA1"]["T1"] == 4.44e-5
 
 
-def test_replace_keeps_an_edit_during_pre_pull_preparation(env, monkeypatch):
+def test_replace_discards_an_edit_during_pre_pull_preparation(env, monkeypatch):
     _arm(env, pull=True, push=False, replace=True)
     _write_chip(env["live"], _state(f01=7.7e9))
     ctx = _ctx(env)
@@ -61,10 +62,13 @@ def test_replace_keeps_an_edit_during_pre_pull_preparation(env, monkeypatch):
     monkeypatch.setattr(routes, "_leaf_snapshot", prepare)
     response = env["client"].post("/auto-sync/pull")
     assert edited, "the pull never reached preparation"
-    assert response.status_code == 204
-    assert ctx["store"].state["qubits"]["qA1"]["T1"] == 4.44e-5
-    assert ctx["store"].change_log
-    assert routes.working_copy.sync_point(ctx["working_copy"]) == before
+    assert response.status_code == 200
+    assert ctx["store"].state["qubits"]["qA1"]["T1"] != 4.44e-5
+    assert not ctx["store"].change_log
+    assert routes.working_copy.sync_point(ctx["working_copy"]) != before
+    payload = json.loads(response.headers["HX-Trigger"])["autoSyncPulled"]
+    assert payload["replaced"] is True
+    assert payload["count"] >= 1
 
 
 @pytest.mark.parametrize("passthrough", [False, True])
