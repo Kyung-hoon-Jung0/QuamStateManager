@@ -154,7 +154,7 @@ def _fault_run(tmp_path, fault):
     driver.write_text(_DRIVER, encoding="utf-8")
     root = Path(__file__).resolve().parents[1]
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(site.parent), str(root), str(tmp_path)]),
-           "PYTHONDONTWRITEBYTECODE": "1"}
+           "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"}
 
     def run():
         process = subprocess.run([sys.executable, str(driver), str(tmp_path)], env=env,

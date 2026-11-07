@@ -19,6 +19,8 @@ jobs:
   test:
     name: pytest (${{ matrix.python-version }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
     # The full suite takes ~45 min (linux) / 90+ min (windows); a hang must fail
     # the job in minutes, not sit on the 6-hour default.
     timeout-minutes: 180
