@@ -132,6 +132,7 @@ def test_no_save_calls_in_comparison_or_previewer():
 
 
 def test_strict_previewer_never_uses_retry(tmp_path, monkeypatch):
+    pytest.importorskip("quam")
     from quam_state_manager.generator import run_generate_config as previewer
     import quam.core
 
@@ -150,6 +151,7 @@ def test_strict_previewer_never_uses_retry(tmp_path, monkeypatch):
 
 
 def test_real_computation_only_fault_has_known_lag_on_matched_state(tmp_path, monkeypatch):
+    pytest.importorskip("quam")
     site = tmp_path / "Lib/site-packages/official_fixture"
     site.mkdir(parents=True)
     source = ("import numpy as np\nfrom quam.core import quam_dataclass\n"

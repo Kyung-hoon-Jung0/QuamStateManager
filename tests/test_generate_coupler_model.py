@@ -131,6 +131,9 @@ def test_populate_coupler_model_selfcheck():
 
 @pytest.mark.parametrize("gate", ["cz_tunable", "cz_coupler"])
 def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate):
+    if gate == "cz_tunable":
+        pytest.importorskip("quam")
+        pytest.importorskip("quam_builder")
     s = spec()
     s["pair_gate"] = gate
     if gate == "cz_coupler":
@@ -172,6 +175,8 @@ def test_build_to_cz_plan_and_exported_recipe(tmp_path, gate):
 
 
 def test_untouched_model_regen_keeps_created_at_through_run_build(tmp_path):
+    pytest.importorskip("quam")
+    pytest.importorskip("quam_builder")
     s = spec()
     original = None
     for name in ("original", "regen"):

@@ -97,6 +97,7 @@ def test_background_observation_runs_after_quiet_gate(loaded, monkeypatch):
 
 
 def test_wheel_install_flips_signature_and_open_triggers_transition(loaded, tmp_path, monkeypatch):
+    pytest.importorskip("quam")
     import os
     from pathlib import Path
     import subprocess

@@ -62,6 +62,7 @@ def test_cli_wording_pin():
 
 
 def test_real_snapshot_and_check_regenerate_exact_multifile_input(command_folder, tmp_path, monkeypatch):
+    pytest.importorskip("quam")
     site = tmp_path / "Lib/site-packages/official_fixture"
     site.mkdir(parents=True)
     source = '''
