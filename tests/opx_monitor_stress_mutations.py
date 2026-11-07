@@ -27,10 +27,12 @@ def replace(old, new):
 
 
 def prior_function(file, name):
-    old = subprocess.check_output(['git','show',BASE_REV+':'+file], cwd=ROOT).decode('utf-8')
     pattern = r'(?ms)^    def ' + re.escape(name) + r'\(.*?(?=^    def |^#|\Z)'
-    previous = re.search(pattern, old).group()
     def mutate(source):
+        # Resolve history only when this mutation runs, after evidence validation.
+        # Importing the runner also works in a shallow CI checkout.
+        old = subprocess.check_output(['git','show',BASE_REV+':'+file], cwd=ROOT).decode('utf-8')
+        previous = re.search(pattern, old).group()
         match = re.search(pattern, source)
         return source[:match.start()] + previous + source[match.end():]
     return mutate

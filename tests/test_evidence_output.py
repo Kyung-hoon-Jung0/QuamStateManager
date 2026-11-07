@@ -9,6 +9,11 @@ import pytest
 
 
 def test_opx_monitor_stress_evidence_defaults_to_temp(tmp_path, monkeypatch):
+    def unavailable_history(*args, **kwargs):
+        raise subprocess.CalledProcessError(128, args[0])
+
+    # CI uses a shallow checkout without the mutation runner's historical base.
+    monkeypatch.setattr(subprocess, "check_output", unavailable_history)
     scripts = Path(__file__).parent
     monkeypatch.syspath_prepend(str(scripts))
     spec = importlib.util.spec_from_file_location("stress_mutations", scripts / "opx_monitor_stress_mutations.py")
