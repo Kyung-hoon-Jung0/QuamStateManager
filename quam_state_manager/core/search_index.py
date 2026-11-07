@@ -1037,9 +1037,11 @@ def _prewarm_worker() -> None:
         # request is running -- unless someone is waiting for THIS index.
         activity.wait_quiet(stop=superseded)
         if superseded():
+            pre = ()
             continue            # superseded while waiting: take the newer one
         lazy = ref()
         if lazy is None:
+            pre = ()
             continue
         pace = _make_pace(lazy)
         # w7 final-QA P3b: the INDEX first. It holds the store lock only for
@@ -1066,4 +1068,7 @@ def _prewarm_worker() -> None:
                 PREWARM_STEPS[0] += 1
             except Exception:  # noqa: BLE001 -- a warm step never raises; readers compute on demand
                 logger.debug("chip prewarm step failed", exc_info=True)
+        # The idle worker frame must not retain completed callback owners.
+        pre = ()
+        step = None
         del lazy

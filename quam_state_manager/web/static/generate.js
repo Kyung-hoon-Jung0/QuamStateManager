@@ -9400,6 +9400,7 @@
       var output = document.createElement("p");
       output.className = "ui-coupler-model-error"; output.id = "gen-model-error-" + id;
       output.setAttribute("role", "status");
+      section.appendChild(output);
       fields.concat([{key: "source", label: "Source", help: "Where these model parameters came from."}]).forEach(function (f) {
         var label = document.createElement("label");
         label.textContent = f.label + (f.unit ? " (" + f.unit + ")" : "");
@@ -9439,7 +9440,7 @@
           el.setAttribute("aria-invalid", message ? "true" : "false");
         });
       }
-      section.appendChild(grid); section.appendChild(output); host.appendChild(section); updateError();
+      section.appendChild(grid); host.appendChild(section); updateError();
     });
   }
 

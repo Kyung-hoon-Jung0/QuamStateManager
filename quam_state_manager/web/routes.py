@@ -4488,11 +4488,15 @@ def _hub_observed_source(ctx, chip_dir):
     Called on the projector thread: no request context is used."""
     from quam_state_manager.core import hub_sync
     from quam_state_manager.core.history import LINEAGE_PARALLEL
-    hm = _history()
+    # Registrations can outlive their app; the app owns its history manager.
+    hm_ref = weakref.ref(_history())
     path = ctx["path"]
     base = Path(chip_dir)
 
     def source() -> list[dict]:
+        hm = hm_ref()
+        if hm is None:
+            return []
         snaps = hm.list_snapshots(path)
         try:
             srcs = hm.snapshot_sources(path, snaps)
@@ -4677,8 +4681,13 @@ def _hub_sync_open(ctx) -> None:
 
 def install_hub_capture_refresh(app) -> None:
     """S10 C3: promptly import captures of the open folder as observed states."""
+    app_ref = weakref.ref(app)
+
     def captured(path, directory):
         from quam_state_manager.core import hub_sync
+        app = app_ref()
+        if app is None:
+            return
         with app.app_context():
             ctx = _active_ctx()
             if (not ctx or (ctx.get("origin") or "live") != "live"

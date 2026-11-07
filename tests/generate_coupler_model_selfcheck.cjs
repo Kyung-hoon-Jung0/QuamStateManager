@@ -72,6 +72,10 @@ for (const arch of ['flux_tunable_coupler', 'fixed_tunable_coupler']) {
      'blank model is absent');
   input(w, 'fc_max_hz', '8');
   ok(host.textContent.includes('Missing: Coupler charging energy'), 'partial model names missing fields immediately');
+  const error = host.querySelector('.ui-coupler-model-error');
+  ok(error.previousElementSibling === host.querySelector('fieldset > p.muted') &&
+     error.nextElementSibling === host.querySelector('.ui-coupler-model-grid'),
+     arch + ': inline error sits directly after hint and before field grid');
   ok(host.querySelector('input').getAttribute('aria-invalid') === 'true', 'partial model inline invalid');
   const values = {fc_max_hz: '8', ec_c_hz: '250', d_c: '.15', phi0_v: '.8',
     phi_idle: '.1', g_c_hz: '80', g_t_hz: '90', g_ct_hz: '3'};
