@@ -171,7 +171,9 @@ class TestSave:
     def test_parse_error_names_line(self, env):
         c = env["client"]
         o = _open(c)
-        r = _save(c, None, o, text='{\n "a": 1,\n}')
+        # An invalid token has an unambiguous location across Python versions;
+        # trailing-comma diagnostics moved from the closing brace to the comma.
+        r = _save(c, None, o, text='{\n "a": 1,\n "b": invalid\n}')
         d = r.get_json()
         assert r.status_code == 400 and d["line"] == 3
         assert not env["ctx"]["store"].change_log
