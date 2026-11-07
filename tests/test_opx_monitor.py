@@ -1172,6 +1172,7 @@ def test_stress_browser_pins():
 
 def test_stress_kill_tree(tmp_path):
     import os, subprocess, sys, time
+    from pathlib import Path
     # Use the actual EnvWorker launcher with a tiny fake JSON-lines worker.
     script = tmp_path / 'tree_worker.py'
     marker = tmp_path / 'child.pid'
