@@ -1,5 +1,6 @@
 """The env-upgrade card as a person sees it: plain states, real names, tables."""
 import json
+from pathlib import Path
 import re
 import sys
 
@@ -8,6 +9,10 @@ import pytest
 from quam_state_manager.core import env_upgrade
 from quam_state_manager.web.app import create_app
 from quam_state_manager.web import env_upgrade_view as view, routes
+
+
+ENV_ROOT = Path(__file__).resolve().parent / "fixture_envs"
+ENV_PYTHON = str(ENV_ROOT / "venv_up" / "python.exe")
 
 
 @pytest.fixture
@@ -126,13 +131,13 @@ def test_waveform_compare_is_a_table_with_identical_rows_folded(loaded):
 def test_references_show_env_name_local_minute_and_size(loaded, monkeypatch):
     _, client, _ = loaded
     monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: [{
-        "key": "a" * 64, "python_path": r"c:\envs\labenv\python.exe",
+        "key": "a" * 64, "python_path": str(ENV_ROOT / "testenv" / "python.exe"),
         "recorded_at": "2026-10-30T01:02:03.456789+00:00",
         "size": 924191, "traces": {"x": {}, "y": {}}, "files": {"state.json": "d"}, "other_json": []}])
     monkeypatch.setattr(view.config_generator, "discover_envs",
-                        lambda: [{"name": "labenv", "python": r"c:\envs\labenv\python.exe"}])
+                        lambda: [{"name": "testenv", "python": str(ENV_ROOT / "testenv" / "python.exe")}])
     html = client.get("/env-upgrade/references").get_data(as_text=True)
-    assert re.search(r"<code[^>]*>labenv</code>", html) and "903 KB" in html and "924191" not in html
+    assert re.search(r"<code[^>]*>testenv</code>", html) and "903 KB" in html and "924191" not in html
     assert re.search(r"2026-10-30 \d\d:\d\d\b", html) and ".456789" not in html
     assert 'title="' + "a" * 64 in html
     assert '<select class="env-reference-python">' in html and 'type="text" value=' not in html
@@ -313,8 +318,8 @@ def test_w3_state_hashes_become_plain_words_with_a_tooltip(loaded, monkeypatch):
     assert 'title="State 411b3f55c8' in html and "2ede0db29b" in html
 
 
-def _ref(key, recorded, versions, python=r"c:\envs\venv_up\python.exe"):
-    return {"key": key, "python_path": python, "recorded_at": recorded, "versions": versions,
+def _ref(key, recorded, versions, python=ENV_PYTHON):
+    return {"key": key, "python_path": view.baseline.normalize_env_path(python), "recorded_at": recorded, "versions": versions,
             "official_digest": "d", "source_fingerprint": "s", "size": 1024, "traces": {}, "files": {}}
 
 
@@ -323,7 +328,7 @@ def test_reference_rows_show_versions_and_tag_the_before_reference(loaded, monke
     old, new = {"quam_builder": "0.4.0"}, {"quam_builder": "0.6.0"}
     refs = [_ref("b" * 64, "2026-10-31T01:21:00+00:00", new), _ref("a" * 64, "2026-10-31T01:19:00+00:00", old)]
     monkeypatch.setattr(view.waveform_refs, "list_references", lambda inst, key: refs)
-    rows = view.present_references("i", "k", r"c:\envs\venv_up\python.exe", {**_ref("x", "", old)})
+    rows = view.present_references("i", "k", ENV_PYTHON, {**_ref("x", "", old)})
     assert [r["is_before"] for r in rows] == [False, True]
     assert rows[0]["versions_text"] == "quam_builder 0.6.0" and rows[1]["versions_text"] == "quam_builder 0.4.0"
     assert not any(r["is_before"] for r in view.present_references("i", "k"))
@@ -343,7 +348,7 @@ def test_before_tag_renders_only_for_the_marked_row(loaded):
 
 def test_custom_interpreter_option_shows_folder_name_with_full_path_in_title(loaded, monkeypatch):
     _, client, _ = loaded
-    custom = r"c:\somewhere\venv_up\Scripts\python.exe"
+    custom = str(ENV_ROOT / "venv_up" / "Scripts" / "python.exe")
     monkeypatch.setattr(routes.config_generator, "get_selected_env", lambda inst: custom)
     monkeypatch.setattr(view.config_generator, "discover_envs", lambda: [])
     monkeypatch.setattr(view.waveform_refs, "list_references",
@@ -358,7 +363,7 @@ def test_before_tag_follows_the_from_versions_with_an_upgrade_in_one_env(loaded,
     """Two references in one env, recorded before then after an upgrade; the
     tag goes on the one whose versions equal the transition's FROM side."""
     _, client, ctx = loaded
-    env = r"c:\envs\venv_up\python.exe"
+    env = ENV_PYTHON
     base = {"quam": "0.6.0", "qualang_tools": "0.22.0", "qm": "1.4.1", "numpy": "2.5.3", "scipy": "1.18.1"}
     before = {**base, "quam_builder": "0.4.0"}
     after = {**base, "quam_builder": "0.6.0"}
