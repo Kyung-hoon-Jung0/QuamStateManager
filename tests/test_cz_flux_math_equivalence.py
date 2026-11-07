@@ -6,6 +6,7 @@ The capture runs the existing CZ and inspector tests with recording wrappers.
 import copy
 import functools
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -59,6 +60,30 @@ def invoke(record):
     return plain(fn(*args, **kwargs))
 
 
+def assert_equivalent(actual, expected, path, hz_abs_tol=0.0):
+    """Pin structure and values, allowing only floating-point roundoff.
+
+    NumPy's transcendental functions can differ by a few ULPs across platforms.
+    A relative tolerance at GHz scale would hide meaningful frequency changes.
+    """
+    if isinstance(expected, float):
+        assert isinstance(actual, float), path
+        field = path.rsplit(".", 1)[-1].split("[", 1)[0]
+        frequency = path.startswith("C.fitted_shift") or field.endswith("_hz")
+        tolerance = max(hz_abs_tol if frequency else 0.0, 8 * math.ulp(expected))
+        assert abs(actual - expected) <= tolerance, (path, actual, expected)
+    elif isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), path
+        for key in expected:
+            assert_equivalent(actual[key], expected[key], f"{path}.{key}", hz_abs_tol)
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), path
+        for index, (got, want) in enumerate(zip(actual, expected)):
+            assert_equivalent(got, want, f"{path}[{index}]", hz_abs_tol)
+    else:
+        assert actual == expected, (path, actual, expected)
+
+
 def test_pre_extraction_fixture_outputs_are_identical():
     for record in json.loads(GOLDEN.read_text(encoding="utf-8")):
         expected = copy.deepcopy(record["output"])
@@ -100,7 +125,16 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     assert added <= MEASURED_PLAN_KEYS, (record["call"], sorted(added))
                     for key in added:
                         exp_plan[key] = got_plan[key]
-        assert actual == expected, record["call"]
+        model = None
+        if record["call"] == "C.fitted_shift":
+            model = restore(record["args"])[0]
+        elif record["call"].startswith("Conversion."):
+            model = C.model_of(record["qubit"])
+        # Subtracting two GHz arc frequencies propagates their rounding into
+        # shifts and range limits, including at zero. Only Hz fields receive
+        # this allowance; voltages and every other float keep their own ULPs.
+        hz_abs_tol = 8 * math.ulp(model["f_max_hz"] + model["ec_hz"]) if model else 0.0
+        assert_equivalent(actual, expected, record["call"], hz_abs_tol)
 
 
 def capture():
