@@ -161,6 +161,23 @@ def text(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
 
 
+def test_dataset_roots_do_not_cross_apps_when_object_ids_are_reused(tmp_path, monkeypatch):
+    from flask import Flask
+    from types import SimpleNamespace
+
+    # Simulate a retired app's id being reused, independent of GC timing.
+    monkeypatch.setattr(routes_mod, "id", lambda app: 7, raising=False)
+    monkeypatch.setattr(routes_mod, "_dataset_candidates_cache", {})
+    for name in ("first", "second"):
+        root = tmp_path / name
+        root.mkdir()
+        app = Flask(name)
+        app.config["workspace"] = SimpleNamespace(
+            version=1, root_folders=[root], all_entries=[])
+        with app.app_context():
+            assert routes_mod._dataset_candidate_folders(fast=True) == [root]
+
+
 # ======================================================================
 # 1. the drawer reads the ledger, and names only what it proves
 # ======================================================================

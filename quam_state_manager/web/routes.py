@@ -38012,7 +38012,7 @@ def workspace_add():
     if _replace and _replace in getattr(ws, "missing_roots", set)():
         _keys_before = {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
         ws.remove_root(_replace)
-        _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+        _dataset_candidates_cache.pop(current_app._get_current_object(), None)
         _removed = sorted(_keys_before - {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
         _retired_dataset_keys().update(_removed)
         _strip_project_root(_replace)
@@ -38021,7 +38021,7 @@ def workspace_add():
     current_app.config.pop("dataset_store", None)
     # …and the candidate-folder cache, so the per-run fast path (which skips the
     # workspace-token validation) can't serve a list missing the new root.
-    _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+    _dataset_candidates_cache.pop(current_app._get_current_object(), None)
     _save_workspace_roots()
     # QA datasets-r2-26: a re-added folder's keys are live again.
     _retired_dataset_keys().difference_update(
@@ -38079,7 +38079,7 @@ def workspace_remove():
     # Invalidate cached DatasetStore so it rebuilds without removed root
     current_app.config.pop("dataset_store", None)
     # …and the candidate-folder cache (per-run fast path — see workspace_add).
-    _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+    _dataset_candidates_cache.pop(current_app._get_current_object(), None)
     _save_workspace_roots()
     retired_now = _keys_before - {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
     _retired_dataset_keys().update(retired_now)
@@ -41811,7 +41811,7 @@ def hub_link_root():
             except Exception as exc:  # noqa: BLE001 -- said, nothing linked
                 return said(f"The folder could not be added to Datasets: {exc}")
             current_app.config.pop("dataset_store", None)
-            _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
+            _dataset_candidates_cache.pop(current_app._get_current_object(), None)
             _save_workspace_roots()
         save_chip_decision(current_app.instance_path, chip_dir.name, f"root:{key}", "same")
         where = "this chip's Datasets folders"
@@ -43962,7 +43962,7 @@ _RESCAN_BUDGET_S = 20.0
 _RENDER_SCAN_BUDGET_S = 3.0
 
 _dataset_candidates_lock = threading.Lock()
-_dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
+_dataset_candidates_cache: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 
 def _entry_grandparents(entries) -> set[Path]:
@@ -44023,10 +44023,9 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     ws = current_app.config.get("workspace")
     if not ws:
         return []
-    # One cache slot per app (keyed by app identity so multiple apps in-process
-    # don't collide); the token guards staleness for a SLOW caller, ws.version
-    # for a fast one.
-    app_key = id(current_app._get_current_object())
+    # Weak app keys cannot collide when Python reuses a retired app's id.
+    # The token guards staleness for a slow caller, ws.version for a fast one.
+    app_key = current_app._get_current_object()
     token = None
     if fast:
         cached = _dataset_candidates_cache.get(app_key)
