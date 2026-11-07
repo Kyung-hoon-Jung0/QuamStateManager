@@ -20,6 +20,7 @@ Pins, on generic synthetic chips and run folders in ``tmp_path``:
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -69,6 +70,7 @@ def run(root: Path, rid: int, state, *, patches=None, name="scan", t_us=None) ->
     t_us = T0 + rid * 10_000_000 if t_us is None else t_us
     hhmmss = datetime.fromtimestamp(t_us / 1e6, tz=timezone.utc).strftime("%H%M%S")
     folder = root / "2026-01-01" / f"#{rid}_{name}_{hhmmss}"
+    previous_mtime = folder.parent.stat().st_mtime_ns if folder.parent.exists() else 0
     (folder / "quam_state").mkdir(parents=True, exist_ok=True)
     body = {"created_at": iso(t_us), "metadata": {"status": "finished", "name": name},
             "id": rid, "data": {"parameters": {"model": {"qubits": ["qA1", "qA2"]}}}}
@@ -78,6 +80,11 @@ def run(root: Path, rid: int, state, *, patches=None, name="scan", t_us=None) ->
     if state is not None:
         (folder / "quam_state" / "state.json").write_text(json.dumps(state), encoding="utf-8")
         (folder / "quam_state" / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+    # These fixtures exercise history and indexing after discovery. Advance
+    # its watermark explicitly: rapid creates can share an ext4 mtime tick.
+    stamp = folder.parent.stat()
+    os.utime(folder.parent, ns=(stamp.st_atime_ns,
+             max(stamp.st_mtime_ns, previous_mtime + 1_000_000_000)))
     return folder
 
 
