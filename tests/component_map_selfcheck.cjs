@@ -158,6 +158,25 @@ function checkRenderLayout() {
   ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '17.3',
      'cell:120 -> 17.3px id font (19.7 x 0.88, D-98)');
 
+  // D8: compare the actual component-map call with the hero's default sizing.
+  const heroRoles = win.document.createElement('div');
+  heroRoles.innerHTML = '<svg>' + win.TopoGraph.pairGlyphs(TOPO.nodes, TOPO.edges,
+    {roles:true, cell:120, px:id=>({x:id === TOPO.nodes[0].id ? 0 : 180,y:0})}) + '</svg>';
+  const heroFont = +heroRoles.querySelector('.cm-role-txt').getAttribute('font-size');
+  for (const map of [m, mBig]) {
+    ok(Array.from(map.querySelectorAll('.cm-role-txt')).every(t=>
+      +t.getAttribute('font-size') >= 9 && +t.getAttribute('font-size') > heroFont),
+      'D8: component-map pills have a readable font larger than the hero');
+    ok(Array.from(map.querySelectorAll('.cm-role')).every(role=>{
+      const stone = Array.from(map.querySelectorAll('[data-cm]')).find(s=>
+        s.getAttribute('data-cm') === 'q:' + role.getAttribute('data-cm-at')).querySelector('.cm-stone');
+      const rect = role.querySelector('rect'), n=(el,a)=>+el.getAttribute(a);
+      const dx=Math.max(n(rect,'x')-n(stone,'cx'),0,n(stone,'cx')-n(rect,'x')-n(rect,'width'));
+      const dy=Math.max(n(rect,'y')-n(stone,'cy'),0,n(stone,'cy')-n(rect,'y')-n(rect,'height'));
+      return Math.hypot(dx,dy) >= n(stone,'r') + 1.9;
+    }), 'D8: enlarged component pills clear their stones');
+  }
+
   // D1-D5: execute the shared renderer with exact, tiny and missing differences.
   {
     const TG = win.TopoGraph, host = win.document.createElement('div');

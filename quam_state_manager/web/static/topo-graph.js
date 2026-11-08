@@ -459,7 +459,8 @@ window.TopoGraph = (function () {
       if (!a || !b) return;
       var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
       var ux = dx / len, uy = dy / len;
-      var fs = Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
+      // Component maps supply a readable scale; the hero keeps its compact cap.
+      var fs = opts.roleFontSize || Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
       var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
       var fS = fById[e.source], fT = fById[e.target];
       var ordered = fS != null && fT != null && fS !== fT;
@@ -901,7 +902,8 @@ window.TopoGraph = (function () {
     // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
-    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true, compactRoles: true, couplerClear: true, freqSide: "screen" });
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
+      roleFontSize: Math.max(9, CELL * 0.095) });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
@@ -1378,9 +1380,8 @@ window.TopoGraph = (function () {
     }
     return { state: state, value: v, stale: stale, age: at == null ? "unknown" : (stale ? "stale" : "fresh") };
   }
-  // Midpoint badge: a pill with the pair name over at most one number, or a
-  // small dot when the pill does not fit (dense chips). The pill is always in
-  // the markup so a hover or a linked highlight can show it.
+  // Midpoint badge: a pill with the pair name over at most one number.
+  // Dense chips keep only an invisible hit area until hover or highlight.
   function pairBadgeSvg(o) {
     var lines = [o.name];
     if (o.valueText) lines.push(o.valueText);
@@ -1404,10 +1405,11 @@ window.TopoGraph = (function () {
       svg: '<g class="topo-pair-badge' + (dense ? ' topo-pair-badge-dense' : '') +
         (o.state ? ' topo-pair-badge-' + o.state : '') + '"' +
         (o.attrs || '') + ' transform="translate(' + Math.round(o.x * 10) / 10 + ',' + Math.round(o.y * 10) / 10 + ')">' +
-        '<circle class="topo-pair-badge-dot" r="' + Math.max(3, Math.round(fs * 0.45)) + '"' + fill + '></circle>' +
         '<g class="topo-pair-badge-pill">' +
         '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h +
         '" rx="' + Math.min(h / 2, fs) + '"' + fill + '></rect>' + text + '</g>' +
+        '<rect class="topo-hero-edge-hit" x="' + (-w / 2) + '" y="' + (-h / 2) +
+        '" width="' + w + '" height="' + h + '" fill="transparent" stroke="none" pointer-events="all"/>' +
         (o.title ? '<title>' + esc(o.title) + '</title>' : '') + '</g>'
     };
   }
