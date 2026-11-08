@@ -590,17 +590,20 @@ def test_the_runner_answers_while_its_stdin_stays_open(tmp_path):
     """A real runner process with stdin held open must still import and answer
     (a reader thread on the pipe used to hang later imports on Windows)."""
     import subprocess
-    (tmp_path / "script.py").write_text("import json\nCALL_TIMEOUT_S = 1\n", encoding="utf-8")
+    # numpy's import queries stdin: with a reader thread blocked on the pipe
+    # it hangs on Windows (a json-only script never did, so proved nothing).
+    (tmp_path / "script.py").write_text("import numpy\nCALL_TIMEOUT_S = 1\n", encoding="utf-8")
     p = subprocess.Popen([sys.executable, str(Path(runner.__file__)), str(tmp_path / "script.py"), str(tmp_path)],
                          stdin=subprocess.PIPE, text=True,
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     try:
         p.stdin.write(json.dumps({"mode": "nope"}) + "\n")
         p.stdin.flush()
-        deadline = time.time() + 45
+        deadline = time.time() + 20
         while time.time() < deadline and not (tmp_path / "_result.json").exists():
             time.sleep(0.2)
+        assert (tmp_path / "_result.json").exists(), "the runner hung while its stdin stayed open"
         assert "unknown mode" in (tmp_path / "_result.json").read_text(encoding="utf-8")
     finally:
-        p.stdin.close()
+        p.kill()
         p.wait(30)
