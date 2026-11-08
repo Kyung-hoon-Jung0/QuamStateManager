@@ -479,7 +479,7 @@
                 ids.forEach(function (id) {
                     var label = document.createElement('label'), input = document.createElement('input');
                     input.type = 'checkbox'; input.value = id;
-                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.append(label, ' ');
+                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.append(label, ' ');
                 });
                 list._czSignature = signature;
             }

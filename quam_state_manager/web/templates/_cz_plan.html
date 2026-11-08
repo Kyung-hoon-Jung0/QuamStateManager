@@ -89,16 +89,16 @@
         <button type="button" id="czp-map-hide" class="btn-sm outline">Hide all</button>
         <span id="czp-map-count" role="status" aria-live="polite"></span>
     </div>
+    <details class="ui-disclosure">
+        <summary class="ui-disclosure-summary">Choose pairs (keyboard accessible)</summary>
+        <fieldset id="czp-map-pairs" aria-label="Pairs shown in frequency map"></fieldset>
+    </details>
     <div id="czp-map" class="czp-map"></div>
     <details id="czp-map-detail" class="czp-map-detail">
         <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
         <div id="czp-map-detail-body"></div>
     </details>
     <div class="czp-map-footer muted">
-    <details class="ui-disclosure">
-        <summary class="ui-disclosure-summary">Choose pairs (keyboard accessible)</summary>
-        <div id="czp-map-pairs" role="group" aria-label="Pairs shown in frequency map"></div>
-    </details>
         <details id="czp-map-key-box">
             <summary>Key</summary>
             <p id="czp-map-key" class="czp-map-key"></p>
