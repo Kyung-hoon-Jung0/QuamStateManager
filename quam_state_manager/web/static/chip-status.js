@@ -3316,6 +3316,8 @@ window.ChipStatus.mount = function (opts) {
             if (TG.pairGlyphs) {
                 glyphSvg = TG.pairGlyphs(topo.nodes, topo.edges, {
                     cell: CELL, roles: true, compactRoles: true,
+                    // map tidy D-3: under Qubit freq the stones and the printed delta already say it
+                    freqArrows: current !== 'f_01',
                     px: function (id) {
                         var p = lay.positions[id];
                         if (!p) return null;
@@ -3375,7 +3377,10 @@ window.ChipStatus.mount = function (opts) {
                 + '" viewBox="0 0 ' + W + ' ' + H + '"'
                 + ' style="width:' + Math.round(zoom * 100) + '%">'
                 + svg + glyphSvg + evalSvg + '<g class="topo-pair-badges">' + badgeSvg + '</g></svg></div></div>'
-                + legendHtml(current);
+                + legendHtml(current).replace(/<\/div>$/, (TG.pairLegendItems
+                    // map tidy: the pair-glyph legend, shared with the component maps;
+                    // no frequency-arrow entry under Qubit freq, where none is drawn
+                    ? '<span class="topo-hero-lg-item cm-dir-legend">' + TG.pairLegendItems(current !== 'f_01') + '</span>' : '') + '</div>');
             if (TG.closeDetails) TG.closeDetails();
             bindHover();
             if (TG.bindLinked) TG.bindLinked(host);

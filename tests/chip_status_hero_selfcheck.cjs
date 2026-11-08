@@ -658,14 +658,24 @@ function edgeLabelsBesideTheBar() {
                              : lineMid(pa);
   // half the drawn width of a pair's first line
   const barHalf = (pairId) => num(lineOf(pairId), 'stroke-width') / 2;
-  // the chevron's centre, from the polyline points pairGlyphs emits
-  const chevron = (a, b) => {
+  // map tidy D-3: the chevron became a frequency ARROW, drawn in every view but
+  // Qubit freq. Its side of the line is what the label logic avoids, so read the
+  // arrow's centre once in the T1 view and keep using it in the Qubit-freq view.
+  const arrowCentre = (a, b) => {
     const g = hero.querySelector('.cm-freq[data-cm-freq="' + (a < b ? a + '|' + b : b + '|' + a) + '"]');
-    const pts = g ? Array.prototype.map.call(g.querySelectorAll('polyline'), (p) => p.getAttribute('points'))
-        .join(' ').trim().split(/\s+/).map((s) => s.split(',').map(parseFloat)) : [];
-    return pts.length ? { x: pts.reduce((s, p) => s + p[0], 0) / pts.length,
-                          y: pts.reduce((s, p) => s + p[1], 0) / pts.length } : null;
+    const l = g && g.querySelector('.cm-dir-freq-line');
+    return l ? { x: (num(l, 'x1') + num(l, 'x2')) / 2, y: (num(l, 'y1') + num(l, 'y2')) / 2 } : null;
   };
+  ok(!!arrowCentre('q1', 'q2') === false, 'D-3: no frequency arrow under the Qubit-freq view');
+  hero.querySelector('[data-hero-metric="T1"]').click();
+  const _arr = { q12: arrowCentre('q1', 'q2'), q13: arrowCentre('q1', 'q3'), q24: arrowCentre('q2', 'q4') };
+  ok(!!_arr.q12 && !!_arr.q13 && !!_arr.q24, 'D-3: the T1 view draws a frequency arrow on every |delta| >= 1 MHz pair');
+  ok(hero.querySelectorAll('polyline.cm-freqchev, .cm-freqchev').length === 0, 'D-3: no chevron markup');
+  ok(/toward the lower f/.test(hero.textContent), 'D-3: the T1 legend names the frequency arrow');
+  hero.querySelector('[data-hero-metric="f_01"]').click();
+  ok(!/toward the lower f/.test(hero.textContent), 'D-3: the Qubit-freq legend does not');
+  ok(/moving qubit/.test(hero.textContent) && hero.querySelectorAll('.topo-hero-legend .cm-role-txt').length === 3, 'map tidy: the hero legend shows the [C] [T] [M] badges');
+  const chevron = (a, b) => _arr[a === 'q1' && b === 'q2' ? 'q12' : a === 'q1' && b === 'q3' ? 'q13' : 'q24'];
   const textLike = (sel, re) => Array.prototype.find.call(
       hero.querySelectorAll(sel), (t) => re.test(t.textContent));
   // for a VERTICAL pair: which side of the column the chevron took (+1 right / -1 left),
@@ -717,7 +727,8 @@ function edgeLabelsBesideTheBar() {
      + '(offset ' + away(e24, m24, s24).toFixed(1) + ')');
   const e34 = textLike('.topo-hero-eval', /^88\.0/), m34 = mid('q3-4');
   const mC = hero.querySelector('.cm-role-m[data-cm-pair="q3-4"] circle');
-  ok(!!e34 && !!mC && num(mC, 'cy') < m34.y - 5, 'F-26 fixture: q3-q4 carries an M circle ABOVE its line');
+  // D-2 (map tidy): M sits ON its edge line, one step in from its role marker
+  ok(!!e34 && !!mC && Math.abs(num(mC, 'cy') - m34.y) < 0.5, 'D-2: q3-q4 M circle sits ON its (level) line');
   ok(e34 && num(e34, 'y') <= m34.y - barHalf('q3-4') - 1
      && num(e34, 'y') <= num(mC, 'cy') - num(mC, 'r') - 1,
      'F-26: a value pushed onto the M side clears the M circle entirely, not just the bar '

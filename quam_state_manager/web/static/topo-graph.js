@@ -447,22 +447,34 @@ window.TopoGraph = (function () {
    *                glyphs stay proportional whatever the map's zoom is
    *   roles        opt-in C/T/M markers (below)
    */
+  /* Map tidy: ONE legend for the pair glyphs, used by the component maps and
+   * the Chip Status hero. Samples reuse the badge classes so they match. */
+  function pairLegendItems(showFreq) {
+    function badge(l, cls) {
+      return '<span class="cm-dir-legend-m"><svg width="14" height="14" aria-hidden="true">' +
+        '<g class="cm-role cm-role-' + cls + '"><circle class="cm-role-dot" cx="7" cy="7" r="6"/>' +
+        '<text class="cm-role-txt" x="7" y="7" font-size="8" text-anchor="middle" dominant-baseline="central">' +
+        l + '</text></g></svg>' + (l === "C" ? "control" : l === "T" ? "target" : "moving qubit") + '</span>';
+    }
+    return badge("C", "c") + badge("T", "t") + badge("M", "m") +
+      (showFreq ? '<span class="cm-dir-legend-m cm-dir-freq-legend"><svg width="22" height="10" aria-hidden="true">' +
+        '<line x1="1" y1="5" x2="14" y2="5"/><polygon points="12,1 21,5 12,9"/></svg>toward the lower f₀₁</span>' : "");
+  }
+
   function pairGlyphs(nodes, edges, opts) {
     opts = opts || {};
     var px = opts.px, CELL = opts.cell || 64;
     var svg = "";
     nodes = nodes || []; edges = edges || [];
 
-    // Frequency-inequality chevrons (docs/93 F5): ONE glyph per PHYSICAL pair
-    // (CR chips carry both directions as separate edges — deduped by the
-    // sorted endpoint key), offset perpendicular off the midpoint so it never
-    // sits on a coupler dot or CR arrow. The apex points at the LOWER-f_01
-    // qubit — the glyph IS the inequality sign between the endpoints, read
-    // from either side (lo < hi / hi > lo). Honesty gates: BOTH endpoints
-    // numeric and |Δ| >= 1 MHz, else nothing; the exact Δ lives in the
-    // tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside a
-    // direction's group: the glyph describes the PAIR, so one inactive CR
-    // direction must not dim it.
+    // Frequency arrows (docs/93 F5, redrawn by the map tidy D-3): ONE per
+    // PHYSICAL pair (CR chips carry both directions as separate edges --
+    // deduped by the sorted endpoint key), a straight arrow parallel to the
+    // edge pointing at the LOWER-f_01 qubit. Honesty gates: BOTH endpoints
+    // numeric and |delta| >= 1 MHz, else nothing; the exact delta lives in
+    // the tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside
+    // a direction's group: it describes the PAIR, so one inactive CR
+    // direction must not dim it. opts.freqArrows === false draws none.
     var fById = {};
     for (var fbi = 0; fbi < nodes.length; fbi++) {
       var fv = nodes[fbi].f_01;
@@ -471,12 +483,13 @@ window.TopoGraph = (function () {
     function fmtDf(hz) {
       return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
     }
-    var chevW = Math.round(Math.max(1.6, CELL * 0.028) * 10) / 10;
     var chevDone = {}, hasCoupler = {};
     edges.forEach(function (x) {
-      if (x && x.has_coupler) hasCoupler[String(x.source) < String(x.target) ? x.source + "|" + x.target : x.target + "|" + x.source] = 1;
+      if (!x || x.source == null || x.target == null) return;
+      var k = String(x.source) < String(x.target) ? x.source + "|" + x.target : x.target + "|" + x.source;
+      if (x.has_coupler) hasCoupler[k] = 1;
     });
-    for (var ci = 0; ci < edges.length; ci++) {
+    for (var ci = 0; ci < edges.length && opts.freqArrows !== false; ci++) {
       var ce = edges[ci];
       if (ce == null || ce.source == null || ce.target == null) continue;
       var cpa = px(ce.source), cpb = px(ce.target);
@@ -496,25 +509,32 @@ window.TopoGraph = (function () {
       var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
       cux /= cul; cuy /= cul;
       var cnx = -cuy, cny = cux;
-      // A coupler dot (r = couplerR, ~0.30 * 0.42 cell) sits on the midpoint too: on a
-      // map that draws it, move the chevron clear of the dot (D-94).
-      var coff = CELL * ((opts.couplerClear && (ce.has_coupler || hasCoupler[ckey])) ? 0.24 : 0.16);
-      var cmx = (loPt.x + hiPt.x) / 2 + cnx * coff;
-      var cmy = (loPt.y + hiPt.y) / 2 + cny * coff;
-      var arm = CELL * 0.10, half = CELL * 0.075, gap = CELL * 0.09;
-      var chev = "";
-      for (var cg = 0; cg < 2; cg++) {
-        // both apexes point toward the LOWER end (-u); arms open toward the higher
-        var apX = cmx + cux * (cg === 0 ? -gap / 2 : gap / 2);
-        var apY = cmy + cuy * (cg === 0 ? -gap / 2 : gap / 2);
-        chev += '<polyline class="cm-freqchev" stroke-width="' + chevW + '" points="' +
-                (apX + cux * arm + cnx * half) + "," + (apY + cuy * arm + cny * half) + " " +
-                apX + "," + apY + " " +
-                (apX + cux * arm - cnx * half) + "," + (apY + cuy * arm - cny * half) + '"/>';
+      if (opts.freqSide === "screen") {
+        // D-3: one screen side for every pair -- below a level edge, right of
+        // a steep one -- opposite the pair labels (screenSide), so the map
+        // reads straight whatever the frequencies are.
+        var flipN = Math.abs(cny) >= Math.abs(cnx) ? (cny < 0 ? -1 : 1) : (cnx < 0 ? -1 : 1);
+        cnx *= flipN; cny *= flipN;
       }
-      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '">' + chev +
+      // A coupler dot (r = couplerR, ~0.30 * 0.42 cell) sits on the midpoint too: on a
+      // map that draws it, move the arrow clear of the dot (D-94).
+      var coff = CELL * ((opts.couplerClear && (ce.has_coupler || hasCoupler[ckey])) ? 0.24 : 0.16);
+      // D-3 (map tidy): a FREQUENCY ARROW parallel to the pair, the same
+      // geometry as the control -> target arrow (dirEdgeMarks: tip R + 3 from
+      // the stone centre, head DIR_HEAD_SCALE x), pointing at the LOWER f_01.
+      var fR = CELL * 0.30, fTip = fR + 3;
+      var fAh = Math.max(9, fR * 0.36) * DIR_HEAD_SCALE, fAw = fAh * 0.55;
+      var ox = cnx * coff, oy = cny * coff;
+      var sX = hiPt.x - cux * fTip + ox, sY = hiPt.y - cuy * fTip + oy;   // tail at the higher stone
+      var tX = loPt.x + cux * fTip + ox, tY = loPt.y + cuy * fTip + oy;   // tip at the lower stone
+      var bX = tX + cux * fAh, bY = tY + cuy * fAh;
+      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '" data-lo="' + esc(loId) + '">' +
+             '<line class="cm-dir-freq-line" x1="' + r1(sX) + '" y1="' + r1(sY) + '" x2="' + r1(bX) + '" y2="' + r1(bY) + '"/>' +
+             '<polygon class="cm-dir-freq-head" points="' +
+             r1(bX - cuy * fAw) + "," + r1(bY + cux * fAw) + " " + r1(bX + cuy * fAw) + "," +
+             r1(bY - cux * fAw) + " " + r1(tX) + "," + r1(tY) + '"/>' +
              "<title>Δf_01: " + esc(hiId) + " +" + fmtDf(Math.abs(dF)) + " vs " + esc(loId) +
-             "</title></g>";
+             " (arrow points to the lower f_01)</title></g>";
     }
 
     /* C / T / M role markers (docs/120 item 11).
@@ -607,9 +627,13 @@ window.TopoGraph = (function () {
                  " of " + esc(re.pair_id != null ? re.pair_id
                               : rkey.replace("|", "–")) + "</title></g>";
           if (moves) {
-            // -n: the chevron sits at +0.16·CELL on the normal, so M takes the
-            // other side of the line and the two never overlap.
-            var mx = bx - rnx * step, my = by - rny * step;
+            // D-2: M sits ON the line, one step further in from its own role
+            // marker, so every marker is mirrored along the edge and no stone
+            // collects its markers on one side. Capped short of the midpoint
+            // so M always stays nearer its own end.
+            var mIn = Math.min(inset + step, rul / 2 - roleR * 1.1);
+            if (mIn < inset) mIn = inset;
+            var mx = pt.x + rux * mIn * dir, my = pt.y + ruy * mIn * dir;
             svg += '<g class="cm-role cm-role-m"' + attrs + '>' +
                    '<circle class="cm-role-dot cm-role-dot-m" cx="' + mx +
                    '" cy="' + my + '" r="' + roleR + '"/>' +
@@ -637,24 +661,14 @@ window.TopoGraph = (function () {
    * (never below DIR_MIN_FONT, D-6).
    */
   var DIR_SPACING = 1.5, DIR_MIN_FONT = 12;
+  // D-4: the direction arrow is the map's subject: its head grows with the
+  // 1.5x line stroke (ui-kit .cm-dir .cm-edge-line), the pair label shrinks.
+  var DIR_HEAD_SCALE = 1.4, DIR_LABEL_SCALE = 0.87;
   function r1(v) { return Math.round(v * 10) / 10; }
   function dirEdgeMarks(e, x1, y1, x2, y2, R, font) {
-    var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
-    var ux = dx / L, uy = dy / L, out = "";
-    var tip = R + 3, ah = Math.max(9, R * 0.36), aw = ah * 0.55;
-    var tx = x2 - ux * tip, ty = y2 - uy * tip, sx = tx - ux * ah, sy = ty - uy * ah;
-    out += '<polygon class="cm-arrow cm-dir-arrow" points="' +
-           r1(sx - uy * aw) + "," + r1(sy + ux * aw) + " " + r1(sx + uy * aw) + "," +
-           r1(sy - ux * aw) + " " + r1(tx) + "," + r1(ty) + '"/>';
-    var mv = e.moving_qubit;
-    if (mv === "control" || mv === "target") {
-      var mr = Math.max(3.5, R * 0.12), d, mx, my;
-      if (mv === "control") { d = R + 3 + mr; mx = x1 + ux * d; my = y1 + uy * d; }
-      else { d = tip + ah + 2 + mr; mx = x2 - ux * d; my = y2 - uy * d; }
-      out += '<circle class="cm-dir-m" cx="' + r1(mx) + '" cy="' + r1(my) + '" r="' + r1(mr) + '">' +
-             "<title>moving qubit: " + esc(mv === "control" ? e.source : e.target) +
-             " (" + mv + ")</title></circle>";
-    }
+    var dx = x2 - x1, dy = y2 - y1, out = "";
+    // Map tidy: roles are the shared C / T / M badges (pairGlyphs) on every
+    // map now; this draws only the pair label.
     var ang = Math.atan2(dy, dx) * 180 / Math.PI;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
     if (Math.abs(dy) > 0.01) {
@@ -751,7 +765,7 @@ window.TopoGraph = (function () {
   // The items a reader must be able to tell apart on a map: stones, pair
   // labels, role / direction glyphs. Lines are not items (an arrow on its
   // own line is the point).
-  var OVERLAP_ITEMS = ".cm-stone, .cm-pair-label, .cm-role, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler";
+  var OVERLAP_ITEMS = ".cm-stone, .cm-pair-label, .cm-role, .cm-arrow, .cm-freq, .cm-coupler";
   function collectItems(svg, sel) {
     var out = [];
     var els = svg.querySelectorAll(sel || OVERLAP_ITEMS);
@@ -766,6 +780,7 @@ window.TopoGraph = (function () {
         it.poly = bboxPoly(el.getBBox(), 0);
       }
       it.stone = el.classList.contains("cm-stone");
+      it.role = el.classList.contains("cm-role");
       out.push(it);
     }
     return out;
@@ -783,6 +798,8 @@ window.TopoGraph = (function () {
     for (var i = 0; i < items.length; i++) {
       for (var j = i + 1; j < items.length; j++) {
         if (items[i].stone && items[j].stone) continue;
+        // compact C / T / M badges sit ON the stone rim by design (map tidy)
+        if ((items[i].stone && items[j].role) || (items[j].stone && items[i].role)) continue;
         if (itemsHit(items[i], items[j], tol)) pairs.push([name(items[i]), name(items[j])]);
       }
     }
@@ -838,21 +855,31 @@ window.TopoGraph = (function () {
     // A level label needs no transform at all (FB-01: no rotated text).
     t.removeAttribute("transform");
   }
-  /* Place each upright label: above the line first, then below, then one px
+  /* D-1: every label sits on ONE screen side of its edge -- above a level
+   * edge, left of a steep one -- whatever the edge's control -> target
+   * direction. Choosing the side in the edge's own frame made labels
+   * alternate with the arrow direction, which read as a tilted grid. */
+  function screenSide(t) {
+    var ang = +t.getAttribute("data-ang") * Math.PI / 180;
+    var nx = -Math.sin(ang), ny = Math.cos(ang);
+    if (Math.abs(ny) >= Math.abs(nx)) return ny > 0 ? -1 : 1;   // up
+    return nx > 0 ? -1 : 1;                                      // left
+  }
+  /* Place each upright label on its screen side (screenSide), then one px
    * smaller at a time down to minFont; a label that still collides keeps the
    * placement with the fewest hits and is marked .cm-dir-crowded. */
   function declutterLabels(svg, minFont) {
     if (!svg || !svg.querySelectorAll) return;
     minFont = minFont || DIR_MIN_FONT;
-    var fixed = collectItems(svg, ".cm-stone, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler, .cm-res");
+    var fixed = collectItems(svg, ".cm-stone, .cm-arrow, .cm-role, .cm-freq, .cm-coupler, .cm-res");
     var labels = svg.querySelectorAll(".cm-dir-label");
     var placed = [];
     for (var i = 0; i < labels.length; i++) {
       var t = labels[i], f0 = parseFloat(t.getAttribute("font-size")) || 14;
       var best = null;
+      var side = screenSide(t);
       for (var f = f0; f >= minFont - 0.01 && !(best && best.hits === 0); f = (f > minFont && f - 1 < minFont) ? minFont : f - 1) {
-        for (var s = 0; s < 2; s++) {
-          var side = s === 0 ? -1 : 1;
+        for (var s = 0; s < 1; s++) {
           placeLabel(t, side, f);
           var me = { poly: labelPoly(t) }, hits = 0;
           for (var k = 0; k < fixed.length; k++) if (itemsHit(me, fixed[k], 0.5)) hits++;
@@ -996,6 +1023,7 @@ window.TopoGraph = (function () {
     // pair edges (+ CR direction arrows, coupler dots)
     var pairFont = Math.round((CELL * 9 / 64) * 10) / 10;
     pairFont = Math.round(pairFont * 1.2 * 10) / 10;   // D-98: the pair is this map's subject
+    pairFont = Math.max(Math.min(pairFont, DIR_MIN_FONT), Math.round(pairFont * DIR_LABEL_SCALE * 10) / 10);
     for (var ei = 0; ei < edges.length; ei++) {
       var e = edges[ei];
       var a = px(e.source), b = px(e.target);
@@ -1040,7 +1068,7 @@ window.TopoGraph = (function () {
     // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
-    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: false, couplerClear: true });
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true, compactRoles: true, couplerClear: true, freqSide: "screen" });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
@@ -1104,9 +1132,7 @@ window.TopoGraph = (function () {
       (lay.mode === "logical" ? '<div class="cm-note">' + esc(LOGICAL_LAYOUT_NOTE) + "</div>" : "") +
       '<div class="cm-scroll"><svg class="cm-svg cm-dir' + hl + '" width="' + W + '" height="' + H +
       '" viewBox="0 0 ' + W + " " + H + '">' + svg + "</svg></div>" +
-      ('<div class="cm-dir-legend"><svg width="22" height="10" aria-hidden="true"><line x1="1" y1="5" x2="14" y2="5"/><polygon points="12,1 21,5 12,9"/></svg>' +
-             'control → target<span class="cm-dir-legend-m"><svg width="12" height="12" aria-hidden="true"><circle cx="6" cy="6" r="4"/></svg>moving qubit</span>' +
-             '<span class="cm-dir-legend-m"><svg width="14" height="12" aria-hidden="true"><polyline points="2,2 7,6 2,10"/><polyline points="7,2 12,6 7,10"/></svg>points to the lower f₀₁</span></div>');
+      ('<div class="cm-dir-legend">' + pairLegendItems(true) + '</div>');
 
     dirDeclutter(mount.querySelector("svg.cm-svg"));
     // Theme repaint replaces SVG children; keep delegated bindings and indices current.
@@ -1639,6 +1665,8 @@ window.TopoGraph = (function () {
     renderLayout: renderLayout,
     labelOverlaps: labelOverlaps,
     declutterLabels: declutterLabels,
+    screenSide: screenSide,
+    pairLegendItems: pairLegendItems,
     edgeStyleForGate: edgeStyleForGate,
     legendForGate: legendForGate,
     renderStatic: renderStatic,
