@@ -16062,23 +16062,21 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 .env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
 
-/* FB-13: an in-flow sticky row below the pinned date header. Showing it
-   consumes one toolbar height; no absolute toolbar can cover a row's end. */
+/* FB-13: a viewport layer beside the pinned date, outside sidebar clipping. */
 #sidebar { overflow-anchor: none; }
 .compare-float-anchor {
-    position: sticky;
-    clear: both; width: 100%;
-    top: calc(-1 * var(--sidebar-pad-v) + var(--cf-top, 0px));
-    z-index: 6;
-    background: var(--pico-background-color);
+    position: fixed;
+    z-index: 900;
 }
+.compare-float-anchor[hidden] { display: none; }
 .compare-float {
-    display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
-    padding: 2px 3px;
+    display: flex; flex-wrap: nowrap; gap: 3px; align-items: center;
+    box-sizing: border-box; height: var(--cf-height, 26px);
+    padding: 0 3px;
     background: var(--pico-background-color);
     border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
     border-radius: 6px;
-    font-size: .82em; line-height: 1.2;
+    font-size: 11px; line-height: 1.2;
 }
 .compare-float[hidden], .cf-pop[hidden] { display: none; }
 .compare-float .cf-btn {

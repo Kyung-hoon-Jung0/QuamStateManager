@@ -2179,10 +2179,9 @@ window.setFontSize = function(size) {
                                        : hint.dataset.idle;
             hint.style.visibility = n > 1 ? 'hidden' : '';
         }
-        // The top form's Clear/hint can wrap too. Limit the first tick's
-        // movement to the new row's height even when those controls grow.
+        // Keep the tick stationary if the top form's Clear/hint wraps.
         if (tick && tickTop >= sidebar.getBoundingClientRect().top) {
-            var extra = tick.getBoundingClientRect().top - tickTop - float.offsetHeight;
+            var extra = tick.getBoundingClientRect().top - tickTop;
             if (extra > 0) sidebar.scrollTop += extra;
         }
     }
@@ -2197,40 +2196,33 @@ window.setFontSize = function(size) {
         var m = /^#?(\d+)[_\- ]?(.*)$/.exec(base);
         return m ? { id: '#' + m[1], name: m[2] || '' } : { id: '', name: base };
     }
-    var floatAnchor, floatHome;
-    function returnFloatHome() {
-        if (floatHome && floatHome.parentNode && floatAnchor) {
-            floatHome.parentNode.insertBefore(floatAnchor, floatHome.nextSibling);
-        }
-    }
+    var floatAnchor;
     function updateFloatTop() {
         var bar = document.getElementById('compare-float');
-        if (!bar) return;
+        var sidebar = document.getElementById('sidebar');
+        if (!bar || !sidebar) return;
         if (!floatAnchor) {
             floatAnchor = bar.parentNode;
-            floatHome = document.createComment('compare toolbar home');
-            floatAnchor.parentNode.insertBefore(floatHome, floatAnchor);
+            // Escape the sidebar's overflow and collapsed opacity/stacking context.
+            document.body.appendChild(floatAnchor);
         }
-        var sidebar = document.getElementById('sidebar');
-        var top = sidebar ? sidebar.getBoundingClientRect().top : 0;
+        floatAnchor.hidden = !!sidebar.closest('.sidebar-collapsed');
+        if (floatAnchor.hidden) { setPop(false); return; }
+        var sr = sidebar.getBoundingClientRect();
         var header = null;
         document.querySelectorAll('#sidebar-tree .tree-dir.tree-leafdir[open] > summary').forEach(function(hd) {
             var group = hd.parentNode.getBoundingClientRect();
-            if (!header && hd.getClientRects().length && group.bottom > top + hd.offsetHeight) header = hd;
+            var hr = hd.getBoundingClientRect();
+            if (!header && hd.getClientRects().length && group.bottom > sr.top + hd.offsetHeight
+                    && hr.top < sr.bottom) header = hd;
         });
-        // The row belongs to the active date group, immediately before its runs.
-        // Its own height participates in layout, including on the first tick.
-        if (header && !bar.hidden && header.parentNode.getBoundingClientRect().bottom
-                >= top + header.offsetHeight + bar.offsetHeight) {
-            if (floatAnchor.previousElementSibling !== header) header.after(floatAnchor);
-        } else returnFloatHome();
-        // Always overwrite: folded or filtered trees have no pinned header.
-        floatAnchor.style.setProperty('--cf-top', (header ? header.offsetHeight : 0) + 'px');
+        var r = header ? header.getBoundingClientRect() : sr;
+        // Start beyond the sidebar: even a long date and its count stay readable.
+        floatAnchor.style.left = Math.max(sr.right, r.right) + 6 + 'px';
+        floatAnchor.style.top = Math.max(sr.top, r.top) + 'px';
+        floatAnchor.style.setProperty('--cf-height', (header ? r.height : 26) + 'px');
+        floatAnchor.style.fontSize = getComputedStyle(sidebar).fontSize;
     }
-    document.addEventListener('htmx:beforeSwap', function(ev) {
-        var target = ev.detail && (ev.detail.target || ev.detail.elt);
-        if (target && floatAnchor && target.contains(floatAnchor)) returnFloatHome();
-    });
     function floatMoved() {
         setPop(false);
         updateFloatTop();
@@ -2247,6 +2239,8 @@ window.setFontSize = function(size) {
         if (sidebar && window.ResizeObserver) {
             var observer = new window.ResizeObserver(floatMoved);
             observer.observe(sidebar);
+            var layout = sidebar.closest('.app-layout');
+            if (layout) new MutationObserver(floatMoved).observe(layout, { attributes: true, attributeFilter: ['class'] });
         }
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchFloatSize);

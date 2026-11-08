@@ -25,12 +25,12 @@ function treeHtml(n, keep) {
 }
 const FLOAT = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8')
   .match(/<div class="compare-float-anchor">[\s\S]*?<\/div><\/div>/)[0];
-const DOM = '<div id="sidebar"><div id="sidebar-tree">' + treeHtml(8) + '</div>' +
+const DOM = '<div class="app-layout"><div id="sidebar"><div id="sidebar-tree">' + treeHtml(8) + '</div>' +
   '<form id="compare-form"><button type="submit" class="btn-compare">Compare Selected</button>' +
   '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button>' +
   '<span class="compare-hint" id="compare-hint">Tick runs…</span>' +
   '<span class="compare-offview" id="compare-offview" hidden></span></form>' +
-  FLOAT + '</div>';
+  FLOAT + '</div></div>';
 
 function makeWorld(seed) {
   const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>', { url: 'http://localhost/datasets', pretendToBeVisual: true });
@@ -123,7 +123,7 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   u.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   ok(model(store).length === 3 && checked(win) === 3 && listed(win).length === 3, 'Undo clear restores all three');
 }
-// First selection reserves a row, without adding the top form's wrapping jump.
+// First selection does not move the tick when the top form wraps.
 {
   const { win } = makeWorld();
   await settle();
@@ -133,12 +133,14 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   Object.defineProperty(bar, 'offsetHeight', { value: 20 });
   tick.getBoundingClientRect = () => ({ top: bar.hidden ? 100 : 145 });
   click(win, tick);
-  ok(sidebar.scrollTop === 125, 'first tick compensates form growth beyond one bar height');
+  ok(sidebar.scrollTop === 145, 'first tick compensates all form growth');
   const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
   const rules = css.slice(css.indexOf('/* FB-13:'), css.indexOf('.compare-float .cf-btn {'));
   const style = win.document.createElement('style'); style.textContent = rules; win.document.head.appendChild(style);
-  ok(win.getComputedStyle(bar).position !== 'absolute', 'toolbar participates in flow');
-  ok(win.getComputedStyle(bar.parentNode).height !== '0px' && win.getComputedStyle(bar.parentNode).position === 'sticky', 'sticky row reserves its own height');
+  ok(win.getComputedStyle(bar.parentNode).position === 'fixed', 'toolbar is fixed outside run flow');
+  ok(bar.parentNode.parentNode === win.document.body, 'toolbar escapes sidebar clipping and tree swaps');
+  ok(win.getComputedStyle(bar).flexWrap === 'nowrap', 'toolbar stays on one line');
+  ok(Number(win.getComputedStyle(bar.parentNode).zIndex) > 6, 'toolbar is above the main pane and resizer');
   win.close();
 }
 // 4. Real keyboard events and viewport geometry, independent of jsdom layout.
@@ -189,22 +191,44 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   group.className = 'tree-dir tree-leafdir'; group.open = true;
   group.innerHTML = '<summary>2026-01-01 (8)</summary>';
   $(win, 'sidebar-tree').appendChild(group);
-  const header = group.querySelector('summary');
+  const header = group.querySelector('summary'), anchor = bar.parentNode;
   header.getClientRects = () => [{}];
+  let sr = { top: 80, right: 260, bottom: 600 };
+  let hr = { top: 80, right: 245, height: 24 };
+  $(win, 'sidebar').getBoundingClientRect = () => sr;
+  header.getBoundingClientRect = () => hr;
   group.getBoundingClientRect = () => ({ bottom: 900 });
-  Object.defineProperty(header, 'offsetHeight', { value: 37 });
+  Object.defineProperty(header, 'offsetHeight', { value: 24 });
+  const positioned = (left, top, height, why) => {
+    ok(anchor.style.left === left + 'px' && anchor.style.top === top + 'px'
+      && anchor.style.getPropertyValue('--cf-height') === height + 'px', why);
+  };
   win.syncCompareCount();
-  ok(header.nextElementSibling === bar.parentNode, 'sticky row is in flow immediately after the date header');
-  ok(bar.parentNode.style.getPropertyValue('--cf-top') === '37px', 'bar reserves the measured date header height');
+  positioned(266, 80, 24, 'bar is right of the date on the same line');
+  hr = { top: 110, right: 330, height: 22 };
+  $(win, 'sidebar').dispatchEvent(new win.Event('scroll'));
+  positioned(336, 110, 22, 'scroll recomputes header coordinates and row height');
+  sr = { top: 80, right: 420, bottom: 600 };
+  win._resizeCallbacks.forEach(cb => cb());
+  positioned(426, 110, 22, 'sidebar resize or width drag recomputes coordinates');
+  hr = { top: 130, right: 410, height: 28 };
+  win.dispatchEvent(new win.Event('resize'));
+  positioned(426, 130, 28, 'window resize recomputes header coordinates');
+  const layout = $(win, 'sidebar').closest('.app-layout');
+  layout.classList.add('sidebar-collapsed');
+  await settle();
+  ok(anchor.hidden, 'collapsed sidebar hides the overflowing toolbar');
+  layout.classList.remove('sidebar-collapsed');
+  await settle();
+  ok(!anchor.hidden, 'expanded sidebar restores the toolbar');
   group.open = false;
   group.dispatchEvent(new win.Event('toggle'));
-  ok(bar.parentNode.style.getPropertyValue('--cf-top') === '0px', 'collapsing the last group resets the header offset');
+  positioned(426, 80, 26, 'collapsing the last group resets to sidebar coordinates');
   group.open = true; win.syncCompareCount();
-  $(win, 'sidebar-tree').dispatchEvent(new win.CustomEvent('htmx:beforeSwap', { bubbles: true, detail: { target: $(win, 'sidebar-tree') } }));
-  ok(!group.contains(bar) && win.document.contains(bar), 'tree swaps preserve the toolbar outside the replaced subtree');
   group.remove();
   $(win, 'sidebar-tree').dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
-  ok(bar.parentNode.style.getPropertyValue('--cf-top') === '0px', 'filtering all date groups resets the header offset');
+  positioned(426, 80, 26, 'filtering all date groups resets to sidebar coordinates');
+  ok(win.document.contains(bar), 'tree replacement preserves the body toolbar');
   win.close();
 }
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
