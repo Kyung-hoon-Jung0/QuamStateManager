@@ -15,6 +15,7 @@ the journal line, and wakes the page. This module never imports Flask.
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 import time
 import uuid
@@ -250,12 +251,15 @@ class ChatManager:
         if retiring:
             # End leaves an in-flight Codex turn running. Only reap sessions
             # that can retire safely, without blocking Starts on other chips.
-            deadline = time.monotonic() + _END_GRACE_S
-            while cur.alive() and time.monotonic() < deadline:
-                time.sleep(0.02)
-            if cur.alive():
+            proc = cur.proc.proc
+            try:
+                proc.wait(timeout=_END_GRACE_S)
+            except subprocess.TimeoutExpired:
                 cur.stop(now=True)
-                time.sleep(0.05)
+                try:
+                    proc.wait(timeout=_END_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    pass  # the check below refuses while it is still alive
         with self._lock:
             # Another Start may have replaced the retired session while we waited.
             cur = self.sessions.get(chip)

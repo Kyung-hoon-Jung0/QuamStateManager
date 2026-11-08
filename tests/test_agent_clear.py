@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -484,8 +485,6 @@ class TestStartRightAfterClear:
     def test_a_start_in_the_exit_gap_waits_instead_of_refusing(self, c, monkeypatch):
         from quam_state_manager.core import agent_chat
 
-        real_end = agent_chat.ChatSession.end
-
         def slow_end(self):
             # the same end, but the process only sees EOF 0.4 s later
             with self._lock:
@@ -500,7 +499,6 @@ class TestStartRightAfterClear:
         assert c.post("/api/agent/chat/clear", json={"keep": 1}).get_json()["ended"] is True
         r = c.post("/api/agent/chat/start", json={"prompt": "two"})
         assert r.status_code == 200, r.get_json()
-        assert real_end is not None
 
 
 @pytest.fixture
@@ -579,3 +577,62 @@ class TestRestartSafety:
         assert len([s for s in created if s.chip == "first"]) == 1
         assert mgr.get("first") in created
 
+    def test_force_kill_waits_for_delayed_process_exit(self, restart_manager):
+        _, cur, start, created = restart_manager
+        stopped = False
+        exited = False
+        waits = []
+
+        def stop():
+            nonlocal stopped
+            stopped = True
+
+        def wait(timeout):
+            nonlocal exited
+            assert 0 < timeout <= 5
+            waits.append(timeout)
+            if not stopped:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            exited = True  # kill delivery alone did not complete process exit
+
+        cur.proc = SimpleNamespace(alive=lambda: not exited, stop=stop, proc=SimpleNamespace(wait=wait))
+        start()
+        assert stopped and exited and len(waits) == 2
+        assert len(created) == 1
+
+    def test_process_ignoring_eof_is_killed_after_grace(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import agent_backend as ab, agent_chat
+
+        eof = tmp_path / "eof"
+
+        class IgnoreEOF(ab.ClaudeBackend):
+            def command(self, *, resume=None, prompt=None):
+                return [sys.executable, "-c",
+                        "import sys,time; from pathlib import Path; sys.stdin.read(); "
+                        "Path(sys.argv[1]).touch(); time.sleep(60)", str(eof)]
+
+        monkeypatch.setattr(agent_chat, "_END_GRACE_S", 1.0)
+        mgr = agent_chat.ChatManager(lambda e: None, tmp_path)
+        backend = IgnoreEOF("unused", tmp_path / "m.json")
+
+        def start():
+            return mgr.start("first", backend, owner="owner", mode="chat", until=None, prompt=None)
+
+        old = None
+        try:
+            start()
+            old = mgr.get("first").proc
+            mgr.end("first")
+            assert _wait(eof.exists), "process must actually receive EOF"
+            assert old.alive()
+            start()
+            assert old.stopped_by_human
+            assert not old.alive()
+            assert mgr.get("first").proc is not old
+        finally:
+            for session in mgr.sessions.values():
+                session.stop(now=True)
+                session.proc.proc.wait(timeout=5)
+            if old is not None and old.alive():
+                old.stop()
+                old.proc.wait(timeout=5)
