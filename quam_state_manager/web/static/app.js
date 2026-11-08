@@ -22357,6 +22357,8 @@ window.toggleNoteEditor = function(btn) {
     if (acts) acts.hidden = !willOpen;
     btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
     block.classList.toggle('ui-note-open', willOpen);   // compact D-4: the editor takes its own line
+    var head = block.closest('.ui-ds-head');
+    if (head) head.classList.toggle('ui-ds-head-open', willOpen);
     if (willOpen) {
         autoGrowNote(ta);
         ta.focus();

@@ -6294,6 +6294,12 @@ class TestDatasetSelectionFix:
                      'id="ds-detail-tags"', "tag-add-btn", "openTagPicker("):
             assert hook in meta, hook
         assert "ds-tags-label" not in body, "no separate Tags label"
+        # F2: the actions never wrap; the meta truncates first
+        kit = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+               / "ui-kit.css").read_text(encoding="utf-8")
+        assert re.search(r"\.ui-ds-head \{[^}]*flex-wrap: nowrap", kit)
+        assert re.search(r"\.ui-ds-head > \.inspector-actions \{[^}]*flex: 0 0 auto", kit)
+        assert re.search(r"\.ui-ds-meta \{[^}]*flex: 1 1 0[^}]*overflow: hidden", kit)
         assert "ds-folder-line" not in body or "ds-folder-line ui-ds-folder" in meta
 
     def test_note_is_collapsible_badge(self, app, tmp_path):

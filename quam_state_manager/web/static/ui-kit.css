@@ -755,12 +755,17 @@
 .ui-dock-btn:hover, .ui-dock-btn:focus-visible { border-color: var(--ui-accent); color: var(--ui-accent); }
 .ui-split-arrow { position: relative; }
 .ui-split-arrow::before { content: ""; position: absolute; inset: -3px -3px; }
-.ui-ds-head { flex-wrap: wrap; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
+.ui-ds-head { flex-wrap: nowrap; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
+.ui-ds-head > .inspector-title { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.ui-ds-head > .inspector-actions { flex: 0 0 auto; }
+.ui-ds-head .inspector-title small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ui-ds-meta {
-    display: flex; align-items: center; flex-wrap: wrap; gap: var(--ui-gap-2);
-    flex: 1 1 auto; min-width: 0; font-size: var(--ui-fs-sm);
+    display: flex; align-items: center; flex-wrap: nowrap; gap: var(--ui-gap-2);
+    flex: 1 1 0; min-width: 0; overflow: hidden; font-size: var(--ui-fs-sm);
 }
-.ui-ds-folder { margin: 0; max-width: 16rem; }
+.ui-ds-head-open, .ui-ds-head-open > .ui-ds-meta { flex-wrap: wrap; overflow: visible; }
+.ui-ds-folder { margin: 0; max-width: 16rem; min-width: 0; flex: 0 1 auto; }
+.ui-pane-sliver { overflow-x: hidden; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
 .ui-note-open { flex-basis: 100%; order: 9; }
 
