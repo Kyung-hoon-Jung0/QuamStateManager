@@ -102,6 +102,12 @@ def test_tree_structural_revert_selfcheck():
     _run("tree_structural_revert_selfcheck.cjs", "all tree structural-revert checks passed")
 
 
+def test_tree_kind_change_selfcheck():
+    """FB-07: a row follows a change of its value's KIND (null <-> string /
+    number / list / dict) through a live patch and an undo / redo revert."""
+    _run("tree_kind_change_selfcheck.cjs", "all tree kind-change checks passed")
+
+
 def test_tree_edit_integrity_selfcheck():
     """jsontree-r2-07 / r2-08 / r2-10 / r2-17 / JT-07: a paste is a copy, a
     list in a leaf row reads as JSON, the FSP bundle repaints every row it

@@ -16061,3 +16061,34 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-reference-foot > .ui-actions { margin-left: auto; }
 .env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 .env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
+
+/* FB-07 B: a text selection must be visible in every editor, both themes.
+ * Native inputs used the browser's own dark-scheme highlight (a dim blue on
+ * the near-black field), and the CodeMirror panel drew its selection UNDER an
+ * opaque active-line band, so Ctrl+A selected text nobody could see. One
+ * token per theme; the CodeMirror active line is translucent so the
+ * selection layer below it shows through. */
+:root {
+    --sm-selection-bg: #a8ccff;
+    --sm-selection-fg: #0b1a33;
+    --cm-selection: #a8ccff;
+    --cm-active-line: rgba(1, 114, 173, 0.06);
+}
+[data-theme="dark"], [data-theme="qm"] {
+    --sm-selection-bg: #2f6fd6;
+    --sm-selection-fg: #ffffff;
+    --cm-selection: #2f5a9e;
+    --cm-active-line: rgba(255, 255, 255, 0.045);
+}
+input::selection, textarea::selection, .ui-tree-editor::selection,
+[contenteditable]::selection {
+    background-color: var(--sm-selection-bg);
+    color: var(--sm-selection-fg);
+}
+/* CodeMirror's base theme paints the focused selection with its own
+ * high-specificity colour (#233 on dark: invisible on the panel); the app
+ * token wins inside every SM CodeMirror editor. */
+.cm-editor .cm-selectionLayer .cm-selectionBackground,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+    background: var(--cm-selection) !important;
+}

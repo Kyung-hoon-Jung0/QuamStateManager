@@ -6623,7 +6623,11 @@ window.LiveSurfacePatch = (function () {
                 try { window._treeModelSet(tree, e.dot_path, e.value); } catch (err) {}
             }
         });
-        if (node) {
+        if (node && window._treeRepaintPath && node.closest(".json-tree")) {
+            // FB-07: the one repaint -- text, display baseline, type class,
+            // node value and the row's kind-bound parts move together.
+            if (window._treeRepaintPath(node.closest(".json-tree"), e.dot_path, e.value)) n++;
+        } else if (node) {
             var valEl = node.querySelector(".tree-val");
             if (valEl) {
                 var fmt = window._treeFormatValue;
@@ -9846,13 +9850,14 @@ function _revertCell(dotPath, oldValueStr) {
         var form = hidden.parentElement;
         var input = form.querySelector('input[name="value"]');
         if (input) {
-            // Final QA P3b: the reverted string arrives in the grids' lossless
-            // DISPLAY form ("-363,323.0"); an inspector input holds the RAW
-            // value ("-363323.0", what the server parses and what the input
-            // was rendered with). Only a plain grouped number is unwrapped;
-            // "MW,FEM", a pointer or an exponent string stays as it is.
-            if (window.NumberInput && window.NumberInput.strip) oldValueStr = window.NumberInput.strip(oldValueStr);
-            input.value = oldValueStr;
+            // Inspector inputs render with groupdigits (same as NumberInput.format
+            // on first paint). The undo payload may carry that lossless grouped
+            // string or a plain _fmt_val — either way, show the grouped form in
+            // the box while data-committed keeps the raw parseable number.
+            var raw = oldValueStr;
+            if (window.NumberInput && window.NumberInput.strip) raw = window.NumberInput.strip(oldValueStr);
+            input.value = raw;
+            if (window.NumberInput && window.NumberInput.format) window.NumberInput.format(input);
             // The reverted value IS the committed value now. Leaving the
             // baseline (data-committed / defaultValue) at the edited value
             // made the next click-away see "value != baseline" and RE-COMMIT
@@ -9860,8 +9865,8 @@ function _revertCell(dotPath, oldValueStr) {
             // stack, so Ctrl+Shift+Z on Pulses did nothing (real-Chrome
             // check, 2026-08-28). 'input' lets the field's own listeners
             // (the Pulses waveform preview) follow the value.
-            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);
-            input.defaultValue = oldValueStr;
+            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", raw);
+            input.defaultValue = input.value;
             input.classList.remove("edit-input-modified");
             input.removeAttribute("title");
             try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}
@@ -11796,16 +11801,78 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _paintTreeLeaf(container, dotPath, v) {
         if (!container || !dotPath) return false;
         var inModel = _treeModelSet(container, dotPath, v);
-        var nd = null;
-        try { nd = container.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]'); } catch (e) {}
-        var row = nd ? nd.querySelector(":scope > .tree-row") : null;
-        var el = row ? row.querySelector(":scope > .tree-val") : null;
-        if (!el) return inModel;
-        _paintLeafEl(el, v);
-        nd._value = v;
-        row.classList.add("tree-row-pending");
+        var got = _treeRepaintPath(container, dotPath, v);
+        if (!got) return inModel;
+        var nd = got.classList.contains("tree-node") ? got : got.closest(".tree-node");
+        var row = nd && nd.querySelector(":scope > .tree-row");
+        if (row) row.classList.add("tree-row-pending");
         return true;
     }
+
+    /* FB-07: the ONE repaint of a path whose value moved, for every caller
+     * that is not the inline editor's own echo (a JSON-editor save followed
+     * through /explorer/model, a live patch, an undo / redo revert, a batch's
+     * other rows). A scalar -> scalar change paints the leaf in place; a
+     * change that crosses a KIND boundary the row is built around -- to or
+     * from null (the null-only Edit-as-JSON button), to or from a list /
+     * dict (the node has children) -- rebuilds the node, so the row reads
+     * exactly as a fresh render would. The text alone used to change while
+     * the leaf's display baseline kept "null", and the next hover put the
+     * stale text back. Model first, always. Returns the painted value
+     * element, the rebuilt node, or null when nothing is on screen. */
+    function _treeRepaintPath(container, dotPath, v) {
+        if (container) _treeModelSet(container, dotPath, v);
+        var nd = null;
+        try {
+            nd = (container || document).querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
+        } catch (e) {}
+        if (!nd) return null;
+        var row = nd.querySelector(":scope > .tree-row");
+        var el = row ? row.querySelector(":scope > .tree-val") : null;
+        var newObj = v !== null && typeof v === "object";
+        var wasObj = !!nd.querySelector(":scope > .tree-children") || !el;
+        var hasNullBtn = !!(row && row.querySelector(":scope > .tree-json-edit-btn"));
+        var tree = nd.closest(".json-tree");
+        var editing = !!(tree && ((tree._editor && tree._editor.path === dotPath)
+            || (tree._editDrafts && tree._editDrafts.get && tree._editDrafts.get(dotPath))));
+        var wasNull = nd._value === null || hasNullBtn
+            || !!(el && el.classList.contains("tree-val-null"));
+        var structural = newObj || wasObj || (!editing && (v === null) !== wasNull);
+        if (structural && nd._meta) {
+            var pending = !!(row && row.classList.contains("tree-row-pending"));
+            // The row the keyboard sat on inside this subtree, by path (the
+            // old elements are replaced, so focus would fall to <body>).
+            var act = document.activeElement, focusPath = null;
+            if (act && nd.contains(act)) {
+                var an = act.closest(".tree-node");
+                focusPath = an ? an.getAttribute("data-path") : null;
+            }
+            var fresh = _rebuildNode(nd, v);
+            if (fresh && pending) {
+                var fr = fresh.querySelector(":scope > .tree-row");
+                if (fr) fr.classList.add("tree-row-pending");
+            }
+            // A rebuilt subtree carries no search classes: re-apply the
+            // active query so hidden / highlighted rows read as before.
+            var q = tree && tree._lastSearchQuery;
+            if (fresh && q) { tree._lastSearchQuery = undefined; _searchTree(tree, q); }
+            if (fresh && focusPath !== null) {
+                var target = null, all = [fresh].concat(Array.prototype.slice.call(fresh.querySelectorAll(".tree-node")));
+                for (var fi = 0; fi < all.length && !target; fi++) {
+                    if (all[fi].getAttribute("data-path") === focusPath) target = all[fi];
+                }
+                var trow = (target || fresh).querySelector(":scope > .tree-row");
+                if (trow) { try { trow.focus({ preventScroll: true }); } catch (e) { trow.focus(); } }
+            }
+            return fresh;
+        }
+        if (!el) return null;
+        _paintLeafEl(el, v);
+        nd._value = v;
+        if (v !== null && hasNullBtn) row.querySelector(":scope > .tree-json-edit-btn").remove();
+        return el;
+    }
+    window._treeRepaintPath = _treeRepaintPath;
 
     /* The ONE leaf repaint (jsontree-r2-10 review): the text, the raw edit
      * value and the type colour class. An inline commit's echo, a revert and
@@ -11819,6 +11886,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             .trim();
         el.classList.add("tree-val-" + _typeOf(v));
         if (_isPointer(v)) el.classList.add("tree-val-pointer");
+        // A pointer's resolved preview belongs to the value it was fetched
+        // for: drop it (_treeModelSet re-queues every pointer row).
+        el._treeResolved = undefined;
+        el.querySelectorAll(".ui-tree-resolved, .ui-tree-target").forEach(function (c) { c.remove(); });
         // Server undo/redo and live patches also repaint through here. A
         // clean focused editor follows the committed value; a dirty draft
         // keeps its typing and gets the new Escape baseline.
@@ -13418,8 +13489,19 @@ window.clearDetailPanelSearch = function(btnEl) {
                 var _tr = _tn ? _tn.querySelector(":scope > .tree-row") : null;
                 valEl = _tr ? _tr.querySelector(".tree-val") : null;
             }
-            if (!valEl) return;
-            _paintLeafEl(valEl, v);
+            if (!valEl) {
+                // FB-07: a list / dict row has no .tree-val -- its revert to
+                // a scalar (or another container) rebuilds the node.
+                var _tn2 = document.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
+                var _h2 = _tn2 && _tn2.closest(".json-tree");
+                if (_h2) _treeRepaintPath(_h2, dotPath, v);
+                return;
+            }
+            // FB-07: a kind change (null <-> value, scalar <-> list/dict)
+            // rebuilds the row through the one repaint, never text alone.
+            var _host = valEl.closest(".json-tree");
+            if (_host) _treeRepaintPath(_host, dotPath, v);
+            else _paintLeafEl(valEl, v);
         }
         // Nothing on this page holds the model or the node: nothing to do.
         if (!valEl && !document.getElementById("explorer-tree-state")

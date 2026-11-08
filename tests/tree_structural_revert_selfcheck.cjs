@@ -205,8 +205,8 @@ const DATA = { qubits: { q1: { f_01: 6.1e9, xy: { amp: 0.1, len: 40 }, extras: {
     ok(!pb, 'JT-05: the leaf is no longer null, so its null-only ✎ is gone (was: kept, opening null)');
     ok(th._value === 't1', 'JT-05: the node carries the committed value (copy / paste read it)');
 
-    // a leaf filled by an UNDO keeps its ✎ (the repaint does not rebuild):
-    // the pencil must open what the leaf holds NOW, never the null it was built with
+    // a leaf filled by an UNDO reads as a fresh render would (FB-07): the
+    // null-only ✎ is gone and the node carries the value it holds now
     const win2 = makeWorld(DATA);
     const c2 = win2.document.getElementById('explorer-tree-state');
     open(win2, 'qubits'); open(win2, 'qubits.q2');
@@ -215,11 +215,9 @@ const DATA = { qubits: { q1: { f_01: 6.1e9, xy: { amp: 0.1, len: 40 }, extras: {
     await tick(40);
     ok(c2._treeData.qubits.q2.thread === 'r1', 'fixture: the undo reached the model');
     const th2 = nodeAt(win2, 'qubits.q2.thread');
-    const pb2 = th2.querySelector(':scope > .tree-row > .tree-json-edit-btn');
-    ok(!!pb2, 'fixture: the repainted leaf still has its ✎');
-    pb2.click();
-    const ta = th2.querySelector('.tree-json-textarea');
-    ok(ta && ta.value === '"r1"', 'JT-05: the ✎ opens the value the leaf holds now (' + (ta && ta.value) + '; was: null)');
+    ok(!th2.querySelector(':scope > .tree-row > .tree-json-edit-btn'),
+       'FB-07: an undo that fills a null leaf drops its null-only ✎');
+    ok(th2._value === 'r1', 'JT-05: the node carries the value the leaf holds now');
   }
 
   // ── jsontree-r2-06: Enter in the add-key panel ───────────────────────
