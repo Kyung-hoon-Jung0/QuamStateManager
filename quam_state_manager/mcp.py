@@ -255,7 +255,7 @@ def t_take_live(_a: dict) -> Any:
     return {"taken": True, "live_diverged": after.get("live_diverged"), "changed": changed[:200],
             "overlap": overlap, "reverted": reverted,
             **({"dropped": dropped, "backup_version": (backup or {}).get("snapshot"),
-                "bring_back": "the SM window's sync panel offers Bring back; State History holds "
+                "bring_back": "the SM window's sync panel offers Bring back; State logs holds "
                               "the backup version"} if dropped else {}),
             "note": "changed = live vs what SM held; overlap = also in the tray; reverted = unapplied "
                     "changes this pull dropped (kept in backup_version)"}

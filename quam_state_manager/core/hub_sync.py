@@ -2274,7 +2274,7 @@ def progress_words(st: dict | None, *, short: bool = False) -> str:
             return (f": step {k} of {steps}, " if steps > 1 else ": ") + what + cnt
         seen_done, seen_total = st.get("observed_done") or 0, st.get("observed_total") or 0
         if phase == "observing" and seen_total:
-            what = ("reading this chip's Param History snapshots" if st.get("archive")
+            what = ("reading this chip's Param logs snapshots" if st.get("archive")
                     else "importing the states SM saw")
             return step(steps, what, min(seen_done, seen_total), seen_total)
         if st.get("roots"):

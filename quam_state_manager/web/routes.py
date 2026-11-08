@@ -14845,7 +14845,7 @@ def _vh_wait_message(ans: dict) -> str:
     if total and ((done or 0) < total or not seen_total):
         return f"The change history is being built{words}. It shows here when it is complete."
     if seen_total:
-        return (f"The change history is being built from this chip's Param History snapshots "
+        return (f"The change history is being built from this chip's Param logs snapshots "
                 f"({min(seen_done, seen_total):,} of {seen_total:,}). It shows here when it is complete.")
     if st.get("archive"):
         return ("The change history is being built from this chip's Param logs snapshots. "
@@ -17015,7 +17015,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                             f"the working state — this control can set or "
                             f"create a single leaf, not rebuild structure. "
                             f"Bring the structure in first (Pull from live, "
-                            f"or stage the version from State History)."
+                            f"or stage the version from State logs)."
                         ) from ce
                 if _origins[_row_n] is not None:
                     entry.origin = copy.deepcopy(_origins[_row_n])
@@ -21995,7 +21995,7 @@ def _versions_unavailable_text(reason: str, older: int) -> str:
     older Param logs snapshots below its note, so while there are any it
     may not say "nothing older is shown" (S10 C6 review)."""
     if older:
-        return f"{_VH_UNAVAILABLE_WHY[reason]} Older Param History snapshots are listed below."
+        return f"{_VH_UNAVAILABLE_WHY[reason]} Older Param logs snapshots are listed below."
     return _VH_UNAVAILABLE_NOTES[reason]
 
 
@@ -22792,7 +22792,7 @@ def state_archive():
     warn = (' <span class="archive-warn">⚠ live chip — your unapplied edits aren’t '
             'included; apply to live first to bookmark them</span>') if dirty else ''
     return (f'<span class="archive-status archive-ok">✓ Bookmarked &ldquo;{escape(label)}&rdquo; '
-            f'at {when} — see State History</span>{warn}')
+            f'at {when} — see State logs</span>{warn}')
 
 
 # ======================================================================
@@ -41076,7 +41076,7 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
     if peek is not None and peek["build"] == hub_sync.ARCHIVE_DONE and not peek["events"]:
         n = peek["looked"]
         if n:
-            text = (f"None of this chip's {n} Param History snapshot{'' if n == 1 else 's'} could "
+            text = (f"None of this chip's {n} Param logs snapshot{'' if n == 1 else 's'} could "
                     "be read, so its change history cannot be built from them.")
         else:
             text = _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]

@@ -322,7 +322,7 @@ class TestSidebarReorg:
         src = self._src("quam_state_manager/web/templates/base.html")
         assert (src.index('id="qualibrate-subnav"')
                 < src.index('id="load-form"')
-                < src.index('>Generate Config</a>'))
+                < src.index('>Generate config</a>'))
 
     def test_subnav_renders_expanded_and_is_restore_registered(self):
         base = self._src("quam_state_manager/web/templates/base.html")
