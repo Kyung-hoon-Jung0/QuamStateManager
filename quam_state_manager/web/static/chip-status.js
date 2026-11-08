@@ -2717,12 +2717,20 @@ window.ChipStatus.mount = function (opts) {
         var heroGate = 'best';
         try { heroGate = localStorage.getItem(GATE_KEY) || 'best'; } catch (e) {}
         var EDGE_METRICS = [
-            // Same rename as the tile: this is the edge's gate number, and
-            // its source is Bell_State / interleaved RB / the CR channel
-            // depending on the chip (docs/138).
-            { key: 'cz_fidelity', scope: 'edge', label: '2Q gate fid.',
+            // One source per patch (user decision 2026-11-08): the old
+            // "2Q gate fid." patch read cz_fidelity, whose source changes per
+            // pair (Bell_State, else interleaved RB, else the CR channel), and
+            // on a chip without Bell data it duplicated "2Q gate (IRB)". Each
+            // patch below now reads exactly one measurement.
+            { key: 'bell_state', scope: 'edge', label: 'Bell state fid.', always: true,
+              title: 'Bell-state fidelity: the Bell_State measurement of the pair (a state fidelity, not a gate fidelity)',
+              emptyNote: 'No Bell-state data on this chip — fills from qubit_pairs.<pair>.macros.<gate>.fidelity.Bell_State.Fidelity',
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
+              valFn: function(e) { return e.fidelity_source === 'macro' ? _mv(e, 'cz_fidelity') : null; } },
+            { key: 'cr_channel', scope: 'edge', label: 'CR channel fid.',
+              title: 'Fidelity stored on the cross-resonance channel of the pair',
+              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+              valFn: function(e) { return e.fidelity_source === 'channel' ? _mv(e, 'cz_fidelity') : null; } },
             // ORDER IS THE DEFAULT. The first surviving metric is what the
             // hero opens on, and on a chip with no Bell_State the old order
             // made that the CLIFFORD number: the map said 97.1% while the
@@ -2731,6 +2739,7 @@ window.ChipStatus.mount = function (opts) {
             // first now; the Clifford number stays available, last, and says
             // what it is (docs/138).
             { key: 'rb2q_interleaved', scope: 'edge', label: '2Q gate (IRB)', perGate: true,
+              title: 'Per-gate fidelity from interleaved randomized benchmarking (1 - error per gate)',
               match: function(m) { return m === 'InterleavedRB' || m === 'IRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }, heroGate); } },
@@ -2739,17 +2748,26 @@ window.ChipStatus.mount = function (opts) {
             // loaded — otherwise the patch simply is not offered, rather than
             // showing a Clifford number under a gate label.
             { key: 'rb2q_standard_gate', scope: 'edge', label: '2Q gate (SRB÷)', perGate: true,
+              title: 'Per-gate fidelity derived from standard RB: the Clifford error divided by the gates per Clifford of that run',
               match: function(m) { return m === 'StandardRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return edgeBestDerived(e, heroGate); } },
             { key: 'rb2q_standard', scope: 'edge', label: '2Q Clifford (SRB)', perGate: true,
+              title: 'Per-Clifford fidelity from standard randomized benchmarking (1 - error per Clifford), not per gate',
               match: function(m) { return m === 'StandardRB'; },
               fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
               valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
         ].filter(function(m) {
-            return topo.edges.some(function(e) { return m.valFn(e) != null; });
+            return (m.always && topo.edges.length) || topo.edges.some(function(e) { return m.valFn(e) != null; });
         });
         METRICS = METRICS.concat(EDGE_METRICS);
+        // Default 2Q patch: IRB, else Bell, else SRB-derived, else Clifford.
+        var DEFAULT_2Q = null;
+        ['rb2q_interleaved', 'bell_state', 'rb2q_standard_gate', 'rb2q_standard'].some(function(k) {
+            var m = EDGE_METRICS.filter(function(x) { return x.key === k; })[0];
+            if (m && topo.edges.some(function(e) { return m.valFn(e) != null; })) { DEFAULT_2Q = k; return true; }
+            return false;
+        });
         if (topo.nodes.some(function(n) { return n.last_calibrated != null; })) {
             METRICS.push({ key: 'last_calibrated', mode: 'age', label: 'Last calibrated' });
         }
@@ -2757,6 +2775,9 @@ window.ChipStatus.mount = function (opts) {
 
         var current = null;
         try { current = localStorage.getItem(HERO_KEY); } catch (e) {}
+        // The retired mixed-source patch: a remembered choice of it keeps
+        // a 2Q view, on the default 2Q patch.
+        if (current === 'cz_fidelity') current = DEFAULT_2Q;
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
 
         // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
@@ -2881,6 +2902,7 @@ window.ChipStatus.mount = function (opts) {
                 out += '<span class="topo-hero-lg-item">' + (eagg.min != null ? m.fmtFn(eagg.min) : '')
                      + '<span class="topo-hero-lg-grad" style="background:linear-gradient(90deg,' + estops.join(',') + ')"></span>'
                      + (eagg.max != null ? m.fmtFn(eagg.max) : '') + '</span>'
+                     + (!eagg.count && m.emptyNote ? '<span class="topo-hero-lg-item muted">' + _esc(m.emptyNote) + '</span>' : '')
                      + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
                      + dCfg.nullCellColor + '"></span>no data</span>';
                 return out + '</div>';
@@ -2930,7 +2952,8 @@ window.ChipStatus.mount = function (opts) {
                 bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
                      + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '')
                      + (m.scope === 'edge' ? ' topo-hero-mbtn-edge' : '') + '"'
-                     + ' data-hero-metric="' + _esc(m.key) + '">'
+                     + ' data-hero-metric="' + _esc(m.key) + '"'
+                     + (m.title ? ' title="' + _esc(m.title) + '"' : '') + '>'
                      + (m.label ? _esc(m.label) : labelHtml(m.key, true)) + '</button>';
             });
             // no role="group": Pico styles [role=group] as a full-width
