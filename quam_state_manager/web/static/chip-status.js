@@ -1498,8 +1498,15 @@ window.ChipStatus.mount = function (opts) {
         function _ov2QEntries() {
             var src = default2QSource(topo.edges);
             return topo.edges.map(function(e) {
-                return { id: _pairId(e), v: src ? src.val(e, 'best') : null,
-                         gate: src && src.key === 'bell_state' ? e.best_gate : null };
+                var v = src ? src.val(e, 'best') : null, gate = null;
+                if (v != null && (src.key === 'bell_state' || src.key === 'cr_channel')) gate = e.best_gate;
+                else if (v != null) (e.gate_fidelities || []).forEach(function(gf) {
+                    // the pulse whose number this is (the per-pair best)
+                    var gv = src.key === 'rb2q_standard_gate' ? gf.derived_gate_fidelity
+                           : (src.match(gf.metric) ? gf.value : null);
+                    if (gate == null && gv === v) gate = gf.gate;
+                });
+                return { id: _pairId(e), v: v, gate: gate };
             });
         }
         function _ovRangeFor(key) {

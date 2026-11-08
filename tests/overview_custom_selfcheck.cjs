@@ -70,7 +70,7 @@ function topoFixture() {
   }
   return {
     nodes: [node('q1', '0,0', 1.0e-5), node('q2', '1,0', 2.0e-5), node('q3', '0,1', 6.0e-5)],
-    edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+    edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
               gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' }],
   };
 }
