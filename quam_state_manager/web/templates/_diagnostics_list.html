@@ -67,6 +67,14 @@
             onclick="applyDiagFix(this)">{{ fx.label or 'Convert to pointer' }}</button>
     {%- if fx.warns %}
     <div class="diag-fix-warns ui-diag-msg muted" role="note">{{ fx.warns }}</div>
+    {%- if fx.moves_named %}
+    <div class="diag-fix-moves muted" role="note">
+      {%- for row in fx.moves_named %}
+      <div>{{ row.label }} <code class="muted">{{ row.path }}</code></div>
+      {%- endfor %}
+      {%- if fx.moves_more %}<div>and {{ fx.moves_more }} more</div>{%- endif %}
+    </div>
+    {%- endif %}
     {%- endif %}
     {%- elif fx.action == 'fill_gate_ids' %}
     <button type="button" class="btn-sm outline diag-fix"
@@ -172,6 +180,14 @@
                       title="{{ k.title }} One Ctrl+Z undoes all {{ k['items'] | length }}."
                       {% if k.warns %}data-warns="{{ k.warns }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} -- changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
               {% if k.warns %}<div class="diag-fix-warns ui-diag-msg muted" role="note">{{ k.warns }}</div>{% endif %}
+              {% if k.moves_named %}
+              <div class="diag-fix-moves muted" role="note">
+                {% for row in k.moves_named %}
+                <div>{{ row.label }} <code class="muted">{{ row.path }}</code></div>
+                {% endfor %}
+                {% if k.moves_more %}<div>and {{ k.moves_more }} more</div>{% endif %}
+              </div>
+              {% endif %}
               {% endfor %}
               {% for k in g.bulk_refused %}
               <div class="diag-fix-refused ui-diag-msg muted" role="note">No &ldquo;Set all&rdquo; for {{ k.group_label }}: {{ k.why }}.</div>

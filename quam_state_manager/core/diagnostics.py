@@ -1400,6 +1400,49 @@ def _ghz(v) -> str:
         return repr(v)
 
 
+def _dependent_holder_label(path: str) -> str:
+    """Human-readable label for a dependent holder path."""
+    parts = (path or "").split(".")
+    if len(parts) >= 3 and parts[0] == "qubits":
+        q, role = parts[1], parts[2]
+        if role == "resonator":
+            return f"{q} readout (rr)"
+        if role == "xy":
+            return f"{q} drive (xy)"
+        if role == "z":
+            return f"{q} flux (z)"
+        return f"{q} {role}"
+    if len(parts) >= 3 and parts[0] == "wiring" and parts[1] == "qubits":
+        q, role = parts[2], (parts[3] if len(parts) > 3 else "")
+        if role in {"rr", "xy", "z"}:
+            return f"{q} {'readout' if role == 'rr' else ('drive' if role == 'xy' else 'flux')} ({role})"
+        return f"{q} wiring {role or 'entry'}"
+    if len(parts) >= 3 and parts[0] == "qubit_pairs":
+        pair, role = parts[1], parts[2]
+        if role in {"coupler", "c"}:
+            return f"{pair} coupler ({role})"
+        return f"{pair} pair {role}"
+    if len(parts) >= 4 and parts[0] == "wiring" and parts[1] == "qubit_pairs":
+        pair, role = parts[2], parts[3]
+        if role in {"coupler", "c"}:
+            return f"{pair} coupler ({role})"
+        return f"{pair} pair wiring {role}"
+    return path
+
+
+def _moves_summary(moved: list[str], cap: int = 6) -> dict[str, Any]:
+    """Readable+raw summary for the "also moves" warning."""
+    shown = moved[:cap]
+    named = [{"label": _dependent_holder_label(path), "path": path} for path in shown]
+    if not shown:
+        return {"plain": "nothing else reads it", "named": [], "more": 0}
+    plain = ", ".join(f"{row['label']} [{row['path']}]" for row in named)
+    more = max(0, len(moved) - len(shown))
+    if more:
+        plain += f" and {more} more"
+    return {"plain": plain, "named": named, "more": more}
+
+
 def _output_port_dependents(root: dict) -> dict:
     """``{"#/ports/mw_outputs/<c>/<f>/<p>": {holder, ...}}``: every place whose
     value is a pointer into that output port (an element's ``opx_output``, an
@@ -1512,9 +1555,9 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                     port_ptr = f"#/ports/mw_outputs/{oc}/{of}/{op}"
                     moved = sorted(dependents.get(port_ptr, ()))
                     port_name = f"{oc}/FEM {of}/port {op}"
-                    shown = ", ".join(moved[:6]) + (f" and {len(moved) - 6} more" if len(moved) > 6 else "")
+                    move_info = _moves_summary(moved)
                     lo_warns = (f"changes the drive LO of {port_name} -- also moves: "
-                                + (shown or "nothing else reads it"))
+                                + move_info["plain"])
                     # FB-04: two directions, the field being changed first
                     link_fix = {**fix, "matches": False, "kind": "down_to_up",
                                 "group_label": "downconverter_frequency to upconverter_frequency",
@@ -1535,7 +1578,8 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                             "group_label": "upconverter_frequency to downconverter_frequency",
                             "label": (f"Set upconverter_frequency to downconverter_frequency "
                                       f"({_ghz(dc)}) -- changes the drive LO of {port_name}"),
-                            "warns": lo_warns, "moves": moved, "port": port_name,
+                            "warns": lo_warns, "moves": moved, "moves_named": move_info["named"],
+                            "moves_more": move_info["more"], "port": port_name,
                             "title": ("This CHANGES the output LO the hardware plays; the input then "
                                       "keeps its literal and both agree.")}],
                     ))
@@ -3383,9 +3427,11 @@ def finding_groups(rows, ids=None) -> list[dict]:
                         if fix.get("port") and fix["port"] not in k.setdefault("ports", []):
                             k["ports"].append(fix["port"])
                         mv = k.get("moves") or []
+                        move_info = _moves_summary(mv)
+                        k["moves_named"] = move_info["named"]
+                        k["moves_more"] = move_info["more"]
                         k["warns"] = ("changes the drive LO of " + ", ".join(k["ports"]) + " -- also moves: "
-                                      + (", ".join(mv[:6]) + (f" and {len(mv) - 6} more" if len(mv) > 6 else "")
-                                         or "nothing else reads it"))
+                                      + move_info["plain"])
         bulk, refused = [], []
         for k in kinds.values():
             # Several findings can name ONE target (a shared output). The same
@@ -3411,3 +3457,5 @@ def finding_groups(rows, ids=None) -> list[dict]:
         g["bulk_refused"] = refused
         g["ack_keys"] = [f.vack_key for f in g["items"] if f.vack_key and not f.acknowledged]
     return list(groups.values())
+
+

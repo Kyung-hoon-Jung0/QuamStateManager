@@ -44,7 +44,16 @@ def test_reverse_lo_fix_names_the_port_and_what_else_moves():
            if x["kind"] == "up_to_down"][0]
     assert "changes the drive LO of con1/FEM 1/port 1" in rev["label"]
     assert rev["warns"].startswith("changes the drive LO of con1/FEM 1/port 1 -- also moves: ")
-    assert "qubits.q1.resonator" in rev["warns"] and "qubits.q2.resonator" in rev["warns"]
+    assert "q1 readout (rr) [qubits.q1.resonator]" in rev["warns"]
+    assert "q2 readout (rr) [qubits.q2.resonator]" in rev["warns"]
+    assert rev["moves_named"][0]["label"] == "q1 readout (rr)"
+    assert rev["moves_named"][0]["path"] == "qubits.q1.resonator"
+
+
+def test_dependent_holder_label_keeps_readable_name_and_raw_path():
+    assert diag._dependent_holder_label("wiring.qubits.qA1.rr") == "qA1 readout (rr)"
+    assert diag._dependent_holder_label("wiring.qubits.qA1.xy") == "qA1 drive (xy)"
+    assert diag._dependent_holder_label("wiring.qubits.qA1.z") == "qA1 flux (z)"
 
 
 def test_reverse_lo_wording_is_on_screen_and_in_the_toast():
