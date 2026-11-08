@@ -925,6 +925,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.core import diagnostics as _diagnostics
     app.jinja_env.filters["diag_domain"] = _diagnostics.domain_of
     app.jinja_env.globals["diag_domains"] = _diagnostics.DIAG_DOMAINS
+    app.jinja_env.globals["diag_groups"] = _diagnostics.finding_groups
 
     # docs/172: the execution trio (Experiment Runner / Fit Replay / Auto
     # Calibrate) is hidden from every navigation surface unless the operator

@@ -50200,8 +50200,43 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
                 "info" if number == 1 else "warning", f"env_upgrade_{number}",
                 "Environment change report", case.get("message") or "change found",
                 detail="See the Environment match card for evidence and limits."))
+    # copies: the linters memoize their Finding objects, and the stamps below
+    # (Go-to-field path, acknowledgement) must never leak into that cache
+    import dataclasses as _dc
+    findings = [_dc.replace(f) for f in findings]
+    _diag_fill_jump_paths(store, findings)
+    try:
+        from quam_state_manager.core import diag_ack as _da
+        _da.stamp(findings, current_app.instance_path, _diag_ack_chip(), store)
+    except Exception:  # noqa: BLE001 -- an unreadable ack file never breaks Diagnostics
+        logger.warning("diagnostics: reading acknowledgements failed", exc_info=True)
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
+
+
+def _diag_ack_chip() -> str | None:
+    """The per-chip key the Diagnostics acknowledgements are stored under."""
+    ctx = _active_ctx()
+    if not ctx or not ctx.get("path"):
+        return None
+    from quam_state_manager.core import working_copy as _wc
+    return _wc.key_for(ctx["path"])
+
+
+def _diag_fill_jump_paths(store, findings) -> None:
+    """FB-05: a finding whose location IS a state/wiring dot path that resolves
+    gets that path as its Go-to-field target, so every such finding has one."""
+    for f in findings:
+        if f.jump_path:
+            continue
+        loc = (f.location or "").strip()
+        if not loc or " " in loc or "/" in loc or "." not in loc:
+            continue
+        try:
+            store.get_value(loc)
+        except Exception:  # noqa: BLE001 -- not a path into this chip
+            continue
+        f.jump_path = loc
 
 
 def _hub_ledger_findings(store: QuamStore) -> list:
@@ -50600,66 +50635,108 @@ def diagnostics_apply_fix():
             ok=False, error_kind="archive_read_only",
             error=("This chip was opened from a dataset run archive "
                    "(read-only). Load it from its live folder to repair.")), 409
-    action = request.form.get("action", "")
-    dot_path = request.form.get("dot_path", "").strip()
-    pointer = request.form.get("pointer", "").strip()
-
-    if action == "set_value":
-        # r9: the frequency-consistency "Update f_01 → carrier" fix. Same
-        # doctrine as set_pointer below: never trust the render-time form —
-        # re-run the linter on the CURRENT store and require a live finding
-        # offering EXACTLY this fix (chip identity + current values).
-        value = request.form.get("value", "").strip()
-        from quam_state_manager.core.diagnostics import (
-            _frequency_consistency_findings,
-        )
-        if not any(
-            (fnd.fix or {}).get("action") == "set_value"
-            and (fnd.fix or {}).get("dot_path") == dot_path
-            and (fnd.fix or {}).get("value") == value
-            for fnd in _frequency_consistency_findings(modifier.store)
-        ):
+    items = None
+    if request.is_json:
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict) or not isinstance(body.get("items"), list) or not body["items"]:
+            return jsonify(ok=False, error="'items' must be a non-empty list"), 400
+        items = body["items"]
+    else:
+        items = [{k: request.form.get(k, "") for k in ("action", "dot_path", "pointer", "value")}]
+    clean = []
+    for item in items:
+        if not isinstance(item, dict):
+            return jsonify(ok=False, error="each item must be an object"), 400
+        clean.append({k: str(item.get(k) or "").strip() for k in ("action", "dot_path", "pointer", "value")})
+    # Never trust the render-time form: re-run the linters on the CURRENT store
+    # and require a live finding offering EXACTLY each fix. This one check
+    # enforces chip identity, current values and current wiring pairing.
+    offered = _diag_offered_fixes(modifier.store)
+    for item in clean:
+        if item["action"] not in ("set_value", "set_pointer"):
+            return jsonify(ok=False, error="unsupported fix action"), 400
+        if item["action"] == "set_pointer" and not (
+                item["dot_path"].endswith(".downconverter_frequency")
+                and item["pointer"].startswith("#/ports/mw_outputs/")
+                and item["pointer"].endswith("/upconverter_frequency")):
+            return jsonify(ok=False, error="fix is not an allowed downconverter link"), 400
+        key = (item["action"], item["dot_path"],
+               item["pointer"] if item["action"] == "set_pointer" else item["value"])
+        if key not in offered:
             return jsonify(ok=False, error=(
-                "This fix is no longer valid for the loaded chip — the value "
-                "or chip changed since Diagnostics was rendered. Reload the "
-                "page.")), 409
+                "This fix is no longer valid for the loaded chip -- the value, wiring "
+                "or chip changed since Diagnostics was rendered. Reload the page.")), 409
+    # FB-04: every item of one press is ONE undo group (one Ctrl+Z reverts all)
+    from quam_state_manager.core import type_policy as _tp
+    olds = []
+    with modifier.store._lock:
+        gid = modifier.new_group_id()
+        done = []
         try:
-            from quam_state_manager.core import type_policy as _tp
-            modifier.set_value(dot_path, _tp.parse_value(value))
-            _invalidate_engine_cache()
+            for item in clean:
+                try:
+                    old = modifier.store.get_value(item["dot_path"])
+                except KeyError:
+                    old = None
+                if item["action"] == "set_pointer":
+                    modifier.set_value(item["dot_path"], item["pointer"], coerce=False, group_id=gid)
+                    new = item["pointer"]
+                else:
+                    new = _tp.parse_value(item["value"])
+                    modifier.set_value(item["dot_path"], new, group_id=gid)
+                done.append(item)
+                olds.append({"path": item["dot_path"], "old": old, "new": new})
         except (KeyError, TypeError, ValueError, IndexError) as e:
+            if done:
+                try:
+                    modifier.undo_group()
+                except Exception:  # noqa: BLE001
+                    logger.warning("diagnostics fix rollback failed", exc_info=True)
             return jsonify(ok=False, error=str(e)), 400
-        return jsonify(ok=True, tray_html=_tray_html())
+    _invalidate_engine_cache()
+    return jsonify(ok=True, tray_html=_tray_html(), changed=olds, group=gid)
 
-    if action != "set_pointer":
-        return jsonify(ok=False, error="unsupported fix action"), 400
-    if not (dot_path.endswith(".downconverter_frequency")
-            and pointer.startswith("#/ports/mw_outputs/")
-            and pointer.endswith("/upconverter_frequency")):
-        return jsonify(ok=False, error="fix is not an allowed downconverter link"), 400
-    # Re-validate against the CURRENT store (not the render-time client form): re-run
-    # the linter and confirm a LIVE finding still offers EXACTLY this fix. This one
-    # check enforces chip identity (a fix baked for chip A won't match chip B's
-    # findings after a background /load flip — contexts are app-global), current
-    # wiring pairing, and paired-output/target existence (the finding is only offered
-    # when the output resolves) — the gates the raw form-driven apply-fix bypassed.
-    from quam_state_manager.core.diagnostics import _downconverter_findings
-    if not any(
-        (fnd.fix or {}).get("action") == action
-        and (fnd.fix or {}).get("dot_path") == dot_path
-        and (fnd.fix or {}).get("pointer") == pointer
-        for fnd in _downconverter_findings(modifier.store.merged)
-    ):
+
+@bp.route("/diagnostics/ack", methods=["POST"])
+def diagnostics_ack():
+    """FB-03: "I know - intended" on warnings / suggestions (never errors).
+
+    Body ``{"keys": [vack_key, ...], "revoke": bool}``. Stored per chip in the
+    instance folder with the values each finding was about; a later value
+    change brings the finding back."""
+    from quam_state_manager.core import diag_ack as _da
+    store = _store()
+    chip = _diag_ack_chip()
+    if store is None or not chip:
+        return jsonify(ok=False, error="No state loaded"), 400
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("keys"), list)             or not all(isinstance(k, str) and k for k in body["keys"]) or not body["keys"]:
+        return jsonify(ok=False, error="'keys' must be a non-empty list of strings"), 400
+    if body.get("revoke"):
+        n = _da.revoke(current_app.instance_path, chip, body["keys"])
+        return jsonify(ok=True, revoked=n)
+    findings = _active_chip_findings(store) or []
+    n = _da.acknowledge(current_app.instance_path, chip, findings, body["keys"], store)
+    if not n:
         return jsonify(ok=False, error=(
-            "This fix is no longer valid for the loaded chip — the chip, wiring, or "
-            "paired output changed since Diagnostics was rendered. Reload the page."
-        )), 409
-    try:
-        modifier.set_value(dot_path, pointer, coerce=False)
-        _invalidate_engine_cache()
-    except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True, tray_html=_tray_html())
+            "Nothing to acknowledge -- those findings are gone, or are errors "
+            "(errors cannot be acknowledged). Reload the page.")), 409
+    return jsonify(ok=True, acknowledged=n)
+
+
+def _diag_offered_fixes(store) -> set:
+    """Every (action, dot_path, value-or-pointer) a live finding offers now."""
+    from quam_state_manager.core.diagnostics import (
+        _downconverter_findings, _frequency_consistency_findings,
+    )
+    out = set()
+    for fnd in (_frequency_consistency_findings(store) + _downconverter_findings(store.merged)):
+        for fix in [fnd.fix, *(fnd.fixes or [])]:
+            if not isinstance(fix, dict) or fix.get("action") not in ("set_value", "set_pointer"):
+                continue
+            out.add((fix["action"], fix.get("dot_path"),
+                     fix.get("pointer") if fix["action"] == "set_pointer" else fix.get("value")))
+    return out
 
 
 # --- Fit Audit (gate-migration triage, docs/50) ---------------------------

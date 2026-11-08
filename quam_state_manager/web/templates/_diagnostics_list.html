@@ -56,22 +56,85 @@
 {%- for dk, dl in diag_domains if dk in eorder -%}{%- if dorder.append((dk, dl)) -%}{%- endif -%}{%- endfor -%}
 {%- for dk, dl in diag_domains if dk not in eorder -%}{%- if dorder.append((dk, dl)) -%}{%- endif -%}{%- endfor -%}
 {%- set fe = namespace(done=false) -%}
+{%- macro fix_buttons(f) -%}
+  {%- set opts = f.fixes if f.fixes else ([f.fix] if f.fix else []) -%}
+  {%- for fx in opts -%}
+    {%- if fx.action in ('set_pointer', 'set_value') %}
+    <button type="button" class="btn-sm outline diag-fix"
+            data-action="{{ fx.action }}" data-dot-path="{{ fx.dot_path }}"
+            data-pointer="{{ fx.pointer or '' }}" data-value="{{ fx.value or '' }}"
+            title="{{ fx.title or ('Set ' ~ fx.dot_path) }}"
+            onclick="applyDiagFix(this)">{{ fx.label or 'Convert to pointer' }}</button>
+    {%- elif fx.action == 'fill_gate_ids' %}
+    <button type="button" class="btn-sm outline diag-fix"
+            data-action="fill_gate_ids" data-edits='{{ fx.edits | tojson }}'
+            title="{{ fx.confirm or '' }}"
+            onclick="applyDiagFix(this)">{{ fx.label }}</button>
+    {%- endif -%}
+  {%- endfor -%}
+{%- endmacro -%}
+
+{%- macro finding_row(f, group_key='', hidden=false) -%}
+  {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
+  <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}{% if group_key %} diag-row-in-group{% endif %}"
+      data-bucket="{{ bucket }}" data-category="{{ f.category }}"{% if group_key %} data-group="{{ group_key }}"{% endif %}{% if hidden %} hidden{% endif %}>
+    <td>
+      {% if f.advisory %}<span class="diag-badge diag-advisory">Recommendation</span>
+      {% elif f.acknowledged %}<span class="diag-badge diag-acknowledged" title="Acknowledged by you; it counts again when its values change or you take it back">acknowledged</span>
+      {% else %}<span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>{% endif %}
+    </td>
+    {# QA F-Q: break at the dots; <wbr> adds no text #}
+    <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
+    <td class="diag-issue-cell">
+      <div class="diag-msg">{{ f.message }}</div>
+      {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
+    </td>
+    {% if allow_jump %}
+    <td class="diag-action">
+      {# FB-05: Go to field on every finding with a state/wiring path #}
+      {% if f.jump_path %}
+      <button type="button" class="btn-sm outline diag-goto"
+              data-jump-path="{{ f.jump_path }}" onclick="goToDiagField(this)">Go to field</button>
+      {% else %}<span class="diag-nopath muted" title="This finding is about the instrument or the environment, not one field">no single field</span>{% endif %}
+      {# QA diagnostics-r2-13: never offered on a read-only archive #}
+      {% if allow_fix and not f.acknowledged %}{{ fix_buttons(f) }}{% endif %}
+      {# docs/168: environment-match findings keep their own door #}
+      {% if f.ack_key and f.category.startswith('env_') %}
+        {% if f.acknowledged %}
+        <button type="button" class="btn-sm outline diag-ack-revoke" data-ack-key="{{ f.ack_key }}"
+                title="Count this as an issue again" onclick="envAckRevoke(this)">Un-acknowledge</button>
+        {% else %}
+        <button type="button" class="btn-sm outline diag-ack" data-ack-key="{{ f.ack_key }}" data-detail="{{ f.detail }}"
+                title="Tell SM this is expected in this environment. The finding stays listed and keeps its severity — it stops raising the alarm."
+                onclick="envAck(this)">This is correct</button>
+        {% endif %}
+      {% elif f.vack_key %}
+        {# FB-03: every warning / suggestion (never an error) #}
+        {% if f.acknowledged %}
+        <button type="button" class="btn-sm outline diag-vack-revoke" data-vack-keys='{{ [f.vack_key] | tojson }}'
+                title="Count this as an issue again" onclick="diagAck(this, true)">Un-acknowledge</button>
+        {% else %}
+        <button type="button" class="btn-sm outline secondary diag-vack" data-vack-keys='{{ [f.vack_key] | tojson }}'
+                title="Stop counting this one. It comes back if any of its values change."
+                onclick="diagAck(this, false)">I know &ndash; intended</button>
+        {% endif %}
+      {% endif %}
+    </td>
+    {% endif %}
+  </tr>
+{%- endmacro -%}
+
 {% if findings %}
 <div class="diag-results">
 {% for dkey, dlabel in dorder %}
   {% set rows = groups.get(dkey, []) %}
-  {% if rows %}
-    {# acknowledged rows are listed (collapsed, revocable) but never counted #}
-    {% set active = rows | rejectattr('acknowledged') | list %}
-    {% set acked = rows | selectattr('acknowledged') | list %}
-    {% set sk = acked | length %}
+  {% set active = rows | rejectattr('acknowledged') | list %}
+  {% if active %}
     {% set se = active | selectattr('severity', 'equalto', 'error') | list | length %}
     {% set sa = active | selectattr('advisory') | selectattr('severity', 'equalto', 'warning') | list | length %}
     {% set sw = (active | selectattr('severity', 'equalto', 'warning') | list | length) - sa %}
     {% set si = active | selectattr('severity', 'equalto', 'info') | list | length %}
-    {# Open by default any domain with a crash-class error or a real (non-
-       advisory) warning; advisory-only / info-only domains start collapsed so
-       by-design recommendations don't shout on load. #}
+    {% set dgroups = diag_groups(active) %}
     {% set first_err = se and not fe.done %}{% if first_err %}{% set fe.done = true %}{% endif %}
     <details class="detail-section diag-domain" data-domain="{{ dkey }}"{{ ' id="diag-first-error"' | safe if first_err else '' }}{{ ' open' if (se or sw) else '' }}>
       <summary class="section-header diag-domain-summary">
@@ -81,7 +144,7 @@
           {% if sw %}<span class="diag-mini diag-warning" title="{{ sw }} warning(s)">{{ sw }}</span>{% endif %}
           {% if sa %}<span class="diag-mini diag-advisory" title="{{ sa }} recommendation(s)">{{ sa }}</span>{% endif %}
           {% if si %}<span class="diag-mini diag-info" title="{{ si }} suggestion(s)">{{ si }}</span>{% endif %}
-          {% if sk %}<span class="diag-mini diag-acknowledged" title="{{ sk }} acknowledged by you — not counted">{{ sk }} acknowledged</span>{% endif %}
+          {% if dgroups | length < active | length %}<span class="diag-mini diag-kinds" title="same-kind findings are grouped into one row each">{{ active | length }} in {{ dgroups | length }} kind{{ 's' if dgroups | length != 1 }}</span>{% endif %}
         </span>
       </summary>
       <table class="diag-table ui-table">
@@ -89,96 +152,53 @@
           <tr><th>Severity</th><th>Location</th><th class="diag-issue-cell">Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr>
         </thead>
         <tbody>
-        {% for f in active + acked %}
-          {% if acked and loop.index0 == active | length %}
-          <tr class="diag-acked-toggle"><td colspan="{{ 4 if allow_jump else 3 }}">
-            <button type="button" class="btn-xs outline diag-acked-btn" data-n="{{ acked | length }}"
-                    onclick="toggleAckedRows(this)">{{ acked | length }} acknowledged &mdash; show</button></td></tr>
-          {% endif %}
-          {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
-          <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged diag-row-collapsed{% endif %}" data-bucket="{{ bucket }}">
-            <td>
-              {% if f.advisory %}
-                <span class="diag-badge diag-advisory">Recommendation</span>
-              {% else %}
-                {% if f.acknowledged %}<span class="diag-badge diag-acknowledged" title="Acknowledged by you — expected in this environment; Un-acknowledge to count it again">acknowledged</span>
-                {% else %}<span class="diag-badge diag-{{ f.severity }}">{{ 'suggestion' if f.severity == 'info' else f.severity }}</span>{% endif %}
-              {% endif %}
-            </td>
-            {# QA F-Q: break at the dots (<wbr> adds no text, so copy and
-               textContent stay byte-identical), and a floor on the cell -- the
-               nowrap action column squeezed a break-all path to one letter. #}
-            <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
-            <td class="diag-issue-cell">
-              <div class="diag-msg">{{ f.message }}</div>
-              {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
-            </td>
+        {% for g in dgroups %}
+          {% if g['items'] | length == 1 %}
+            {{ finding_row(g['items'][0]) }}
+          {% else %}
+          {% set n = g['items'] | length %}
+          <tr class="diag-row diag-group-row diag-row-{{ g.severity }}" data-bucket="{{ g.bucket }}" data-group-head="{{ g.key }}" data-category="{{ g.category }}">
+            <td><span class="diag-badge diag-{{ 'advisory' if g.bucket == 'advisory' else g.severity }}">{{ {'info': 'suggestion', 'advisory': 'Recommendation'}.get(g.bucket, g.severity) }}</span></td>
+            <td class="diag-loc-cell"><button type="button" class="diag-group-toggle" aria-expanded="false"
+                  onclick="toggleDiagGroup(this)" data-group="{{ g.key }}"><span class="diag-chev" aria-hidden="true">&#9656;</span> {{ n }} places</button></td>
+            <td class="diag-issue-cell"><div class="diag-msg">{{ g.title }}</div>
+              <div class="diag-detail muted">{{ n }} findings of this kind &middot; expand to see each one</div></td>
             {% if allow_jump %}
             <td class="diag-action">
-              {% if f.jump_path %}
-              <button type="button" class="btn-sm outline diag-goto"
-                      data-jump-path="{{ f.jump_path }}" onclick="goToDiagField(this)">Go to field</button>
-              {% endif %}
-              {# docs/78: the batch repair moved to the "Types & values" card at
-                 the top of this page. Repeating it on every one of up to 100
-                 rows made one whole-chip action look like a per-row one. #}
-              {# QA diagnostics-r2-13: never offered on a read-only archive
-                 (allow_fix unset = hidden, fails closed) #}
-              {% if allow_fix and f.fix and f.fix.action == 'set_pointer' %}
-              <button type="button" class="btn-sm outline diag-fix"
-                      data-action="{{ f.fix.action }}"
-                      data-dot-path="{{ f.fix.dot_path }}"
-                      data-pointer="{{ f.fix.pointer }}"
-                      {% if f.severity == 'warning' %}data-confirm="1" data-old="{{ f.detail }}"{% endif %}
-                      title="Set this field to a JSON pointer: {{ f.fix.pointer }}"
-                      onclick="applyDiagFix(this)">{{ f.fix.label or 'Convert to pointer' }}</button>
-              {% elif allow_fix and f.fix and f.fix.action == 'fill_gate_ids' %}
-              <button type="button" class="btn-sm outline diag-fix"
-                      data-action="fill_gate_ids"
-                      data-edits='{{ f.fix.edits | tojson }}'
-                      data-confirm="1" data-confirm-text="{{ f.fix.confirm }}"
-                      onclick="applyDiagFix(this)">{{ f.fix.label }}</button>
-              {% elif allow_fix and f.fix and f.fix.action == 'set_value' %}
-              {# r9: one-click value sync (Update f_01 → carrier). Always
-                 confirmed — it changes a calibration number. #}
-              <button type="button" class="btn-sm outline diag-fix"
-                      data-action="{{ f.fix.action }}"
-                      data-dot-path="{{ f.fix.dot_path }}"
-                      data-value="{{ f.fix.value }}"
-                      data-confirm="1"
-                      data-confirm-text="{{ f.fix.confirm }}"
-                      title="Set {{ f.fix.dot_path }} = {{ f.fix.value }} (lands in pending edits)"
-                      onclick="applyDiagFix(this)">{{ f.fix.label }}</button>
-              {% endif %}
-              {# docs/168 (customer): SM cannot know that a lab extended quam on
-                 purpose, so it must be TELLABLE. Only on environment-match
-                 findings, because only those are about what an env declares.
-                 Acknowledging does not make the finding false and does not
-                 lower its severity -- it stops being COUNTED, so the red
-                 banner and the badge go quiet while the row stays here,
-                 marked, with the date, and revocable. #}
-              {% if f.ack_key and f.category.startswith('env_') %}
-                {% if f.acknowledged %}
-                <button type="button" class="btn-sm outline diag-ack-revoke"
-                        data-ack-key="{{ f.ack_key }}"
-                        title="Count this as an issue again"
-                        onclick="envAckRevoke(this)">Un-acknowledge</button>
-                {% else %}
-                <button type="button" class="btn-sm outline diag-ack"
-                        data-ack-key="{{ f.ack_key }}"
-                        data-detail="{{ f.detail }}"
-                        title="Tell SM this is expected in this environment. The finding stays listed and keeps its severity — it stops raising the alarm."
-                        onclick="envAck(this)">This is correct</button>
-                {% endif %}
+              {% if allow_fix %}{% for k in g.bulk %}
+              <button type="button" class="btn-sm outline diag-fix-all" data-items='{{ k['items'] | tojson }}'
+                      title="{{ k.title }} One Ctrl+Z undoes all {{ k['items'] | length }}."
+                      onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}</button>
+              {% endfor %}{% endif %}
+              {% if g.ack_keys and g.severity != 'error' %}
+              <button type="button" class="btn-sm outline secondary diag-vack diag-vack-group" data-vack-keys='{{ g.ack_keys | tojson }}'
+                      title="Stop counting all {{ g.ack_keys | length }}. Each comes back if its values change."
+                      onclick="diagAck(this, false)">I know &ndash; intended (all {{ g.ack_keys | length }})</button>
               {% endif %}
             </td>
             {% endif %}
           </tr>
+          {% for f in g['items'] %}{{ finding_row(f, g.key, true) }}{% endfor %}
+          {% endif %}
         {% endfor %}
         </tbody>
       </table>
     </details>
   {% endif %}
 {% endfor %}
+{# FB-03: one collapsed section for everything the user acknowledged #}
+{% set acked_all = findings | selectattr('acknowledged') | list %}
+{% if acked_all %}
+  <details class="detail-section diag-domain diag-acked-section" data-domain="acknowledged">
+    <summary class="section-header diag-domain-summary">
+      <span class="diag-domain-title">Acknowledged ({{ acked_all | length }})</span>
+      <span class="diag-domain-badges"><span class="diag-mini diag-acknowledged" title="not counted anywhere; each one counts again when its values change or you take it back">not counted</span></span>
+    </summary>
+    <table class="diag-table ui-table">
+      <thead><tr><th>Severity</th><th>Location</th><th class="diag-issue-cell">Issue</th>{% if allow_jump %}<th></th>{% endif %}</tr></thead>
+      <tbody>{% for f in acked_all %}{{ finding_row(f) }}{% endfor %}</tbody>
+    </table>
+  </details>
+{% endif %}
 </div>
 {% endif %}

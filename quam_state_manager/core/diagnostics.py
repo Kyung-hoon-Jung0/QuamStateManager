@@ -21,7 +21,9 @@ hints. ``null`` is never flagged (it legitimately means "not yet measured").
 
 from __future__ import annotations
 
+import hashlib
 import math
+import re
 import weakref
 from dataclasses import dataclass
 from typing import Any
@@ -78,6 +80,8 @@ class Finding:
     #                         as `advisory` does, and carries who/when so the
     #                         page can show it and offer to revoke.
     ack_key: str = ""       # its own identity, for the acknowledge/revoke door
+    fixes: list | None = None  # FB-04: two-direction reconcile fixes, one per direction
+    vack_key: str = ""      # FB-03: identity for the "I know - intended" door (diag_ack)
 
     def as_dict(self) -> dict:
         return {
@@ -92,6 +96,8 @@ class Finding:
             "advisory": self.advisory,
             "acknowledged": self.acknowledged,
             "ack_key": self.ack_key,
+            "fixes": self.fixes,
+            "vack_key": self.vack_key,
         }
 
 
@@ -1323,22 +1329,26 @@ def _frequency_consistency_findings(store) -> list[Finding]:
             # would silently break a pointer link otherwise. The apply route
             # re-validates against a live re-run of this linter (chip
             # identity + current values), like the downconverter fix.
-            fix = None
+            # FB-04: two explicit directions, the field being changed first.
+            # Each only for a LITERAL number (a pointer would silently break).
+            fixes = []
             if _isnum(f01_raw):
-                leaf = f01_rel[-1]
-                fix = {
-                    "action": "set_value",
-                    "dot_path": f01_dp,
-                    "value": repr(float(rf)),
-                    "label": f"Update {leaf} → {_ghz(rf)}",
-                    "confirm": (
-                        f"Set {f01_dp} to the carrier RF_frequency "
-                        f"({_ghz(rf)})?\n\nCurrent {_ghz(f01)} will be "
-                        "replaced. The change lands in your pending edits — "
-                        "review it in the tray before applying to the live "
-                        "chip. (Skip this if the offset is a deliberate "
-                        "detuning.)"),
-                }
+                fixes.append({
+                    "action": "set_value", "dot_path": f01_dp, "value": repr(float(rf)),
+                    "kind": "f01_to_rf", "group_label": "f_01 to RF_frequency",
+                    "label": f"Set f_01 to RF_frequency ({_ghz(rf)})",
+                    "title": (f"Rewrite the record {f01_dp} to the carrier the hardware plays. "
+                              "What the hardware plays does not change."),
+                })
+            if _isnum(rf_raw):
+                fixes.append({
+                    "action": "set_value", "dot_path": rf_dp, "value": repr(float(f01)),
+                    "kind": "rf_to_f01", "group_label": "RF_frequency to f_01",
+                    "label": f"Set RF_frequency to f_01 ({_ghz(f01)})",
+                    "title": (f"Change {rf_dp}: this CHANGES the carrier the hardware plays "
+                              "to the recorded f_01."),
+                })
+            fix = fixes[0] if fixes else None
             findings.append(Finding(
                 severity, "value_freq_consistency", f01_dp,
                 f"{label} f_01 ({_ghz(f01)}) and RF_frequency ({_ghz(rf)}) differ by "
@@ -1348,6 +1358,7 @@ def _frequency_consistency_findings(store) -> list[Finding]:
                 detail=f"{f01_dp}={f01!r}  vs  {rf_dp}={rf!r}  (Δ={delta:+.3f} Hz)",
                 jump_path=f01_dp,
                 fix=fix,
+                fixes=fixes or None,
             ))
     return findings
 
@@ -1461,6 +1472,11 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                         fix={**fix, "matches": True},
                     ))
                 else:
+                    # FB-04: two directions, the field being changed first
+                    link_fix = {**fix, "matches": False, "kind": "down_to_up",
+                                "group_label": "downconverter_frequency to upconverter_frequency",
+                                "label": f"Set downconverter_frequency to upconverter_frequency ({_ghz(up)}, linked)",
+                                "title": "Link the input to the output so they share one LO value."}
                     findings.append(Finding(
                         "warning", "downconverter_literal", dp,
                         f"downconverter_frequency literal ({_ghz(dc)}) DIFFERS from its paired "
@@ -1468,7 +1484,15 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                         f"they share one physical LO; converting to a pointer relinks them "
                         f"(input becomes {_ghz(up)})",
                         detail=repr(dc), jump_path=dp,
-                        fix={**fix, "matches": False},
+                        fix=link_fix,
+                        fixes=[link_fix, {
+                            "action": "set_value",
+                            "dot_path": f"ports.mw_outputs.{oc}.{of}.{op}.upconverter_frequency",
+                            "value": repr(float(dc)), "kind": "up_to_down",
+                            "group_label": "upconverter_frequency to downconverter_frequency",
+                            "label": f"Set upconverter_frequency to downconverter_frequency ({_ghz(dc)})",
+                            "title": ("This CHANGES the output LO the hardware plays; the input then "
+                                      "keeps its literal and both agree.")}],
                     ))
     return findings
 
@@ -3224,3 +3248,56 @@ _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2}
 def _ordered(findings: list[Finding]) -> list[Finding]:
     """Errors first, then warnings, then info; stable within a severity."""
     return sorted(findings, key=lambda f: _SEVERITY_RANK.get(f.severity, 3))
+
+
+# ---------------------------------------------------------------------------
+# FB-03: same-kind findings are one row (every level), instances collapsible
+# ---------------------------------------------------------------------------
+
+_GROUP_TOKEN = re.compile(r"\S*\d\S*")
+
+
+def _bucket(f) -> str:
+    if f.severity == "error":
+        return "error"
+    if f.severity == "info":
+        return "info"
+    return "advisory" if getattr(f, "advisory", False) else "warning"
+
+
+def _kind_text(message: str) -> str:
+    """The message with every place- or number-carrying token blanked: two
+    findings of the same kind on different qubits read the same."""
+    first = (message or "").split(". ")[0].split("\n")[0]
+    return re.sub(r"(… ?)+", "… ", _GROUP_TOKEN.sub("…", first)).strip()
+
+
+def finding_groups(rows) -> list[dict]:
+    """Group findings by (level, check id, message kind), first-seen order.
+
+    Each group: ``{"key", "bucket", "severity", "category", "title", "items"}``.
+    A one-item group renders as a plain row; two or more get a collapsible
+    header with the group-level actions."""
+    groups: dict[str, dict] = {}
+    for f in rows:
+        b = _bucket(f)
+        kind = _kind_text(f.message)
+        key = hashlib.sha1(f"{b}|{f.category}|{kind}".encode("utf-8")).hexdigest()[:12]
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"key": key, "bucket": b, "severity": f.severity,
+                               "category": f.category, "title": kind, "items": []}
+        g["items"].append(f)
+    for g in groups.values():
+        kinds: dict[str, dict] = {}
+        for f in g["items"]:
+            for fix in (f.fixes or []):
+                if isinstance(fix, dict) and fix.get("kind"):
+                    k = kinds.setdefault(fix["kind"], {"kind": fix["kind"],
+                                                       "group_label": fix.get("group_label") or fix.get("label"),
+                                                       "title": fix.get("title", ""), "items": []})
+                    k["items"].append({"action": fix["action"], "dot_path": fix.get("dot_path", ""),
+                                       "value": fix.get("value", ""), "pointer": fix.get("pointer", "")})
+        g["bulk"] = [k for k in kinds.values() if len(k["items"]) >= 2]
+        g["ack_keys"] = [f.vack_key for f in g["items"] if f.vack_key and not f.acknowledged]
+    return list(groups.values())

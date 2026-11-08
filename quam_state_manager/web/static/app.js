@@ -26079,39 +26079,61 @@ document.addEventListener('click', function(evt) {
         var p = btn && btn.getAttribute("data-jump-path");
         if (p && window._navigateToExplorerPath) window._navigateToExplorerPath(p);
     };
-    window.applyDiagFix = function(btn) {
-        if (!btn) return;
-        // For the value-DIFFERS (warning) case the convert relinks the input so its
-        // value tracks the paired upconverter — i.e. it CHANGES the number. Confirm
-        // first so the customer isn't surprised by a later config diff. (The equal
-        // case is info-severity → no data-confirm → one-click, nothing changes.)
-        if (btn.getAttribute("data-confirm") === "1") {
-            // r9: server-rendered confirm text when present (set_value fixes
-            // carry their own wording); the downconverter relink keeps its
-            // historical message.
-            var confirmText = btn.getAttribute("data-confirm-text");
-            if (!confirmText) {
-                var oldv = btn.getAttribute("data-old") || "the current literal";
-                confirmText = "Relink downconverter_frequency to its paired upconverter?\n\n" +
-                    "Its value (" + oldv + ") will change to track the shared LO. The change is added " +
-                    "to your pending edits — review it in the tray before applying to the live chip.";
-            }
-            if (!window.confirm(confirmText)) {
-                return;
-            }
+    /* FB-04: a fix press is the consent -- no window.confirm. Where it landed
+       follows the real session: Auto-Sync on writes the chip now (the tray
+       swap below is what its observer flushes), off adds to pending edits.
+       Either way the tray moves on the same press and one Ctrl+Z undoes it. */
+    function _diagAutoSyncOn() {
+        var t = document.getElementById("pending-tray");
+        return !!(t && t.getAttribute("data-auto-apply") === "1");
+    }
+    function _diagFmt(v) {
+        if (typeof v === "number" && Math.abs(v) >= 1e6) return (v / 1e9).toPrecision(6).replace(/\.?0+$/, "") + " GHz";
+        if (v === null || v === undefined) return "(none)";
+        return String(v);
+    }
+    function _diagLanded(d) {
+        var ch = (d && d.changed) || [];
+        var where = _diagAutoSyncOn() ? "Written to the chip now (Auto-Sync on)" : "Added to pending edits";
+        var what = ch.length === 1
+            ? ch[0].path + ": " + _diagFmt(ch[0].old) + " → " + _diagFmt(ch[0].new)
+            : ch.length + " values changed";
+        if (window.showToast) window.showToast(where + " — " + what + ". Ctrl+Z undoes it.", "info");
+        var host = document.getElementById("diag-fix-landed");
+        if (host) { host.hidden = false; host.textContent = where + ": " + what + ". Ctrl+Z undoes it."; }
+    }
+    function _diagAfterFix(d) {
+        if (d.tray_html && window._swapPendingTray) {
+            window._swapPendingTray(d.tray_html);
+            if (window._restoreTrayState) window._restoreTrayState();
         }
-        var body = new URLSearchParams();
-        body.append("action", btn.getAttribute("data-action") || "");
-        body.append("dot_path", btn.getAttribute("data-dot-path") || "");
-        body.append("pointer", btn.getAttribute("data-pointer") || "");
-        body.append("value", btn.getAttribute("data-value") || "");
+        _diagLanded(d);
+        // QA F-S: the #diag-findings slot re-fetches itself on diagnostics-changed
+        if (window._diagChanged) window._diagChanged();
+        if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
+        if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+    }
+    function _diagPostFix(btn, url, init) {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = "Applying…";
         _diagFocusAnchor = _diagFocusAnchorFor(btn);
-        var fillIds = btn.getAttribute("data-action") === "fill_gate_ids";
-        var payload;
-        if (fillIds) {
-            payload = {
+        return fetch(url, init)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d && d.ok) { _diagAfterFix(d); return; }
+                _diagFocusAnchor = null;
+                btn.disabled = false; btn.textContent = orig;
+                if (window.showToast) window.showToast((d && d.error) || "The fix was refused", "warning");
+            })
+            .catch(function() {
+                _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig;
+                if (window.showToast) window.showToast("The fix request failed", "warning");
+            });
+    }
+    window.applyDiagFix = function(btn) {
+        if (!btn) return;
+        if (btn.getAttribute("data-action") === "fill_gate_ids") {
+            var payload = {
                 updates: JSON.parse(btn.getAttribute("data-edits") || "[]").map(function (e) {
                     return { dot_path: e.path, value: e.value, create: true };
                 }),
@@ -26120,40 +26142,73 @@ document.addEventListener('click', function(evt) {
             };
             var seen = _keepMineSeen(null);
             if (seen) { payload.seen_changes = seen.n; payload.seen_sig = seen.sig; }
+            return _diagPostFix(btn, "/field/edit-batch", { method: "POST",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         }
-        fetch(fillIds ? "/field/edit-batch" : "/diagnostics/apply-fix", {
-            method: "POST",
-            headers: { "Content-Type": fillIds ? "application/json" : "application/x-www-form-urlencoded" },
-            body: fillIds ? JSON.stringify(payload) : body.toString()
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d && d.ok) {
-                // the edit is a pending working-copy change → refresh the tray,
-                // then re-render diagnostics (the finding is now resolved).
-                if (d.tray_html && window._swapPendingTray) {
-                    window._swapPendingTray(d.tray_html);
-                    if (window._restoreTrayState) window._restoreTrayState();
-                }
-                // QA F-S: through the one announcer, not a whole-page GET of
-                // /diagnostics into #table-pane -- that re-rendered every
-                // domain with the server's default open state (a folded
-                // Config sprang open) and yanked the pane back here if the
-                // user had navigated away mid-POST. The #diag-findings slot
-                // re-fetches itself on diagnostics-changed, keeping the
-                // folds (docs/141 4l-review); the button stays disabled on
-                // "Applying..." until that swap replaces its row.
-                if (window._diagChanged) window._diagChanged();
-                if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
-                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
-            } else {
-                _diagFocusAnchor = null;
-                btn.disabled = false; btn.textContent = orig;
-                alert((d && d.error) || "Convert failed");
-            }
-        })
-        .catch(function() { _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
+        var item = { action: btn.getAttribute("data-action") || "",
+                     dot_path: btn.getAttribute("data-dot-path") || "",
+                     pointer: btn.getAttribute("data-pointer") || "",
+                     value: btn.getAttribute("data-value") || "" };
+        return _diagPostFix(btn, "/diagnostics/apply-fix", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [item] }) });
     };
+    /* FB-04: "Set all N ..." -- one press, one undo group, every instance */
+    window.applyDiagFixAll = function(btn) {
+        if (!btn) return;
+        var items = [];
+        try { items = JSON.parse(btn.getAttribute("data-items") || "[]"); } catch (e) { items = []; }
+        if (!items.length) return;
+        return _diagPostFix(btn, "/diagnostics/apply-fix", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: items }) });
+    };
+    /* FB-03: "I know - intended" (and its revoke) for warnings and suggestions */
+    window.diagAck = function(btn, revoke) {
+        if (!btn) return;
+        var keys = [];
+        try { keys = JSON.parse(btn.getAttribute("data-vack-keys") || "[]"); } catch (e) { keys = []; }
+        if (!keys.length) return;
+        var orig = btn.textContent;
+        btn.disabled = true;
+        return fetch("/diagnostics/ack", { method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ keys: keys, revoke: !!revoke }) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) {
+                    btn.disabled = false; btn.textContent = orig;
+                    if (window.showToast) window.showToast((d && d.error) || "Could not record that", "warning");
+                    return;
+                }
+                if (window.htmx) window.htmx.trigger(document.body, "diagnostics-changed");
+                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+            })
+            .catch(function() { btn.disabled = false; btn.textContent = orig; });
+    };
+    /* FB-03: expand / collapse the instances of one same-kind group */
+    window.toggleDiagGroup = function(btn) {
+        if (!btn) return;
+        var key = btn.getAttribute("data-group");
+        var table = btn.closest("table"); if (!table) return;
+        var open = btn.getAttribute("aria-expanded") !== "true";
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        table.querySelectorAll('tr.diag-row-in-group[data-group="' + key + '"]').forEach(function (tr) {
+            tr.hidden = !open;
+        });
+        try {
+            var s = JSON.parse(sessionStorage.getItem("quam_diag_open_groups") || "{}");
+            if (open) s[key] = 1; else delete s[key];
+            sessionStorage.setItem("quam_diag_open_groups", JSON.stringify(s));
+        } catch (e) { /* storage blocked */ }
+    };
+    // a re-fetched findings list keeps the groups the user opened
+    function _restoreDiagGroups() {
+        var s = {};
+        try { s = JSON.parse(sessionStorage.getItem("quam_diag_open_groups") || "{}"); } catch (e) { s = {}; }
+        document.querySelectorAll("button.diag-group-toggle[aria-expanded='false']").forEach(function (b) {
+            if (s[b.getAttribute("data-group")]) window.toggleDiagGroup(b);
+        });
+    }
+    document.addEventListener("htmx:afterSettle", _restoreDiagGroups);
+    document.addEventListener("DOMContentLoaded", _restoreDiagGroups);
     /* QA diagnostics-r2-20: the self-refresh replaces the fixed row -- and the
        focused button with it -- so focus fell to <body> and a keyboard user
        restarted from the top of the page. Remember where they were; after

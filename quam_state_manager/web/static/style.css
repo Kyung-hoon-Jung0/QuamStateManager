@@ -16069,3 +16069,14 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-rename-steps li.is-current::marker { color: var(--pico-primary, #3b82f6); }
 .env-rename-steps li.is-done { opacity: .65; }
 #env-rename-why { align-self: center; }
+
+/* FB-03: same-kind findings grouped into one collapsible row */
+.diag-group-row > td { background: color-mix(in srgb, var(--pico-primary, #3b82f6) 5%, transparent); }
+.diag-group-toggle { all: unset; cursor: pointer; font-weight: 600; white-space: nowrap; }
+.diag-group-toggle:focus-visible { outline: 2px solid var(--pico-primary, #3b82f6); outline-offset: 2px; }
+.diag-group-toggle .diag-chev { display: inline-block; transition: transform .12s; }
+.diag-group-toggle[aria-expanded="true"] .diag-chev { transform: rotate(90deg); }
+tr.diag-row-in-group > td:first-child { padding-left: 1.4rem; }
+.diag-kinds { opacity: .8; }
+.diag-nopath { font-size: .85em; }
+.diag-action .diag-fix, .diag-action .diag-fix-all, .diag-action .diag-vack, .diag-action .diag-vack-revoke { margin: .1rem 0; }

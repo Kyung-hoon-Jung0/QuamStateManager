@@ -726,8 +726,12 @@ class TestFrequencyConsistency:
         assert fx and fx["action"] == "set_value"
         assert fx["dot_path"] == "qubits.q1.f_01"
         assert fx["value"] == repr(5.0e9)
-        assert "Update f_01" in fx["label"]
-        assert "pending edits" in fx["confirm"]
+        # FB-04: two named directions, the changed field first, no confirm text
+        assert fx["label"] == "Set f_01 to RF_frequency (5 GHz)"
+        assert [x["kind"] for x in fs[0].fixes] == ["f01_to_rf", "rf_to_f01"]
+        assert fs[0].fixes[1]["dot_path"] == "qubits.q1.xy.RF_frequency"
+        assert fs[0].fixes[1]["label"] == "Set RF_frequency to f_01 (5.002 GHz)"
+        assert "CHANGES" in fs[0].fixes[1]["title"]
 
     def test_no_fix_when_f01_is_a_pointer(self):
         """A pointer f_01 must never be overwritten by the one-click fix —
@@ -738,7 +742,11 @@ class TestFrequencyConsistency:
         store = QuamStore.from_dicts(state, {})
         fs = diagnostics._frequency_consistency_findings(store)
         drive = [f for f in fs if f.jump_path == "qubits.q1.f_01"]
-        assert drive and drive[0].fix is None
+        # FB-04: no fix ever writes the pointer f_01; the other direction
+        # (a literal RF_frequency) is still offered
+        assert drive
+        assert all(x["dot_path"] != "qubits.q1.f_01" for x in (drive[0].fixes or []))
+        assert not drive[0].fix or drive[0].fix["dot_path"] != "qubits.q1.f_01"
 
 
 

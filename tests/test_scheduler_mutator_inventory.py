@@ -95,6 +95,7 @@ _NON_STAGING_POSTS = {
     'main.diff_view',
     'main.disk_reclaim',
     'main.disk_settings',
+    'main.diagnostics_ack',
     'main.env_ack_revoke',
     'main.env_ack_save',
     'main.env_schema_dismiss',
