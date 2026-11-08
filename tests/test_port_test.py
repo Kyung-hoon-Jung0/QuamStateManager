@@ -75,7 +75,7 @@ class TestBuild:
         assert el["MWInput"] == c["elements"]["q1.xy"]["MWInput"]
         assert el["intermediate_frequency"] == -1e8
         assert cfg["controllers"]["con1"]["fems"]["1"]["analog_outputs"] == \
-            c["controllers"]["con1"]["fems"]["1"]["analog_outputs"]
+            {"2": c["controllers"]["con1"]["fems"]["1"]["analog_outputs"]["2"]}
         assert plan["expected_peak"] == pytest.approx(0.4) and plan["amp_scale"] == 1.0
 
     def test_raw_basis_holds_only_the_port(self):
@@ -129,38 +129,85 @@ class TestBuild:
         assert "import qm" not in head and "from qm" not in head
 
 
+class FakeKeyring:
+    def __init__(self):
+        self.store = {}
+
+    def set_password(self, s, k, v):
+        self.store[(s, k)] = v
+
+    def get_password(self, s, k):
+        return self.store.get((s, k))
+
+    def delete_password(self, s, k):
+        self.store.pop((s, k), None)
+
+
 @pytest.fixture
-def inst(tmp_path, monkeypatch):
-    monkeypatch.setattr(ptr, "_keyring", lambda: None)
+def kr(monkeypatch):
+    k = FakeKeyring()
+    monkeypatch.setattr(ptr, "_keyring", lambda: k)
+    return k
+
+
+@pytest.fixture
+def inst(tmp_path, kr):
     return tmp_path / "inst"
 
 
 class TestCredentials:
-    def test_the_password_is_saved_apart_and_shown_masked(self, inst):
+    def test_the_password_goes_to_the_keyring_only_and_is_shown_masked(self, inst, kr):
         ptr.save_settings(inst, {"saas": {"email": "a@b.c", "host": "h.example"}})
-        assert ptr.save_password(inst, ptr.load_settings(inst), "s3cret-pw") == "instance"
-        settings_text = (inst / "port_test" / "settings.json").read_text()
-        assert "s3cret-pw" not in settings_text
+        assert ptr.save_password(inst, ptr.load_settings(inst), "s3cret-pw") == "keyring"
+        assert kr.store == {(ptr.KEYRING_SERVICE, "saas:a@b.c@h.example"): "s3cret-pw"}
+        for f in inst.rglob("*"):
+            assert not f.is_file() or b"s3cret-pw" not in f.read_bytes(), f
+        assert not (inst / "port_test" / "secrets.json").exists()
         view = ptr.public_view(inst)
         assert view["saas"]["password_saved"] is True and "s3cret-pw" not in json.dumps(view)
+        assert view["saas"]["password_where"] == "OS keyring"
         assert ptr.load_password(inst, ptr.load_settings(inst))[0] == "s3cret-pw"
         ptr.remove_password(inst, ptr.load_settings(inst))
-        assert ptr.public_view(inst)["saas"]["password_saved"] is False
-        assert "s3cret-pw" not in (inst / "port_test" / "secrets.json").read_text()
+        assert ptr.public_view(inst)["saas"]["password_saved"] is False and not kr.store
 
-    def test_the_keyring_is_used_when_there_is_one(self, inst, monkeypatch):
-        store = {}
-
-        class KR:
-            def set_password(self, s, k, v): store[(s, k)] = v
-            def get_password(self, s, k): return store.get((s, k))
-            def delete_password(self, s, k): store.pop((s, k), None)
-        monkeypatch.setattr(ptr, "_keyring", lambda: KR())
+    def test_without_a_keyring_a_password_is_refused_and_never_written(self, inst, monkeypatch):
+        monkeypatch.setattr(ptr, "_keyring", lambda: None)
         ptr.save_settings(inst, {"saas": {"email": "a@b.c", "host": "h"}})
-        assert ptr.save_password(inst, ptr.load_settings(inst), "pw2") == "keyring"
-        assert not (inst / "port_test" / "secrets.json").exists() or \
-            "pw2" not in (inst / "port_test" / "secrets.json").read_text()
-        assert ptr.public_view(inst)["saas"]["password_where"] == "OS keyring"
+        with pytest.raises(ptr.KeyringUnavailable, match="keyring"):
+            ptr.save_password(inst, ptr.load_settings(inst), "pw2")
+        for f in inst.rglob("*"):
+            assert not f.is_file() or b"pw2" not in f.read_bytes(), f
+        assert ptr.public_view(inst)["keyring_available"] is False
+
+    def test_a_refusing_keyring_is_not_replaced_by_a_file(self, inst, kr, monkeypatch):
+        def boom(*a):
+            raise RuntimeError("locked")
+        monkeypatch.setattr(kr, "set_password", boom)
+        ptr.save_settings(inst, {"saas": {"email": "a@b.c", "host": "h"}})
+        with pytest.raises(ptr.KeyringUnavailable):
+            ptr.save_password(inst, ptr.load_settings(inst), "pw3")
+        assert not (inst / "port_test" / "secrets.json").exists()
+
+    def test_an_old_plain_text_secrets_file_moves_into_the_keyring(self, inst, kr):
+        ptr.save_settings(inst, {"saas": {"email": "a@b.c", "host": "h"}})
+        old = inst / "port_test" / "secrets.json"
+        old.write_text(json.dumps({"saas:a@b.c@h": "legacy-pw"}))
+        assert ptr.load_password(inst, ptr.load_settings(inst)) == ("legacy-pw", "keyring")
+        assert not old.exists()
+
+    def test_an_old_secrets_file_is_deleted_even_without_a_keyring(self, inst, monkeypatch):
+        monkeypatch.setattr(ptr, "_keyring", lambda: None)
+        ptr.save_settings(inst, {"saas": {"email": "a@b.c", "host": "h"}})
+        old = inst / "port_test" / "secrets.json"
+        old.write_text(json.dumps({"saas:a@b.c@h": "legacy-pw"}))
+        assert ptr.public_view(inst)["saas"]["password_saved"] is False
+        assert not old.exists()
+
+    def test_keyring_is_a_core_dependency(self):
+        import tomllib
+        deps = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+        assert any(d.split(">")[0].split("=")[0].strip().lower() == "keyring"
+                   for d in deps["project"]["dependencies"])
 
 
 class _FakeProc:
@@ -175,6 +222,9 @@ class _FakeProc:
         self.got += s
 
     def close(self):
+        self.closed = True
+
+    def flush(self):
         pass
 
     def poll(self):
@@ -222,10 +272,9 @@ class TestRuns:
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(tmp_path, monkeypatch, kr):
     from quam_state_manager.web.app import create_app
     from quam_state_manager.web import routes
-    monkeypatch.setattr(ptr, "_keyring", lambda: None)
     live = tmp_path / "chip"
     live.mkdir()
     (live / "state.json").write_text(json.dumps({"qubits": {"q1": {"id": "q1"}}, "qubit_pairs": {}}))
@@ -285,7 +334,7 @@ class TestRoutes:
         page = client.get("/port-test?element=q1.xy").get_data(as_text=True)
         assert "pw-xyz" not in st and "pw-xyz" not in page
         for p in (tmp_path / "_inst").rglob("*"):
-            if p.is_file() and p.name != "secrets.json":
+            if p.is_file():
                 assert b"pw-xyz" not in p.read_bytes(), p
         assert client.post("/port-test/stop", json={"id": r.get_json()["id"]}, headers=H).get_json()["stopping"]
 
@@ -295,8 +344,7 @@ class _Stubborn(_FakeProc):
         return self.rc
 
 
-def test_a_simulator_run_is_not_killed_at_the_hardware_grace(tmp_path, monkeypatch):
-    monkeypatch.setattr(ptr, "_keyring", lambda: None)
+def test_a_simulator_run_is_not_killed_at_the_hardware_grace(tmp_path, monkeypatch, kr):
     monkeypatch.setattr(ptr, "HEARTBEAT_S", 0.2)
     monkeypatch.setattr(ptr, "STOP_GRACE_S", 0.3)
     r = ptr.Runs(tmp_path)
