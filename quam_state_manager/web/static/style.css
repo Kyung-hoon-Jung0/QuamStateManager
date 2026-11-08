@@ -102,8 +102,8 @@
 
     /* -- SPLIT ARROW BUTTONS (up / down, on the gutter drag handle) -- */
     --inspector-toggle-w:    28px;    /* width of each arrow button (compact D-3: 38 -> 28; the hit area is widened by ::before) */
-    --inspector-toggle-h:    10px;    /* height of each arrow button (compact D-3: 22 -> 10) -- keep 2px+ under --split-gutter-size */
-    --inspector-toggle-font: 9px;    /* font size of the arrow glyph (compact D-3: 15 -> 9) */
+    --inspector-toggle-h:    18px;    /* height of each arrow button (compact D-3: overlays the 12px gutter; ::before widens the hit area to >= 22px) */
+    --inspector-toggle-font: 13px;   /* font size of the arrow glyph (compact D-3: 15 -> 13, still clearly visible) */
     --inspector-toggle-radius: 4px;  /* border-radius of the arrow buttons */
 
     /* ── QUBITS / PAIRS — LIST TABLE (.data-table) ────────────────── */
@@ -2247,7 +2247,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
        longer shifts its content 15 px sideways */
     scrollbar-gutter: stable;
     padding: var(--inspector-pane-pad-v) var(--inspector-pane-pad-h);
-    min-height: 0;
+    min-height: 0; flex-shrink: 0;  /* compact D-1: a docked bar never shrinks under a tall page */
 }
 #inspector-pane.split-hidden {
     display: none;

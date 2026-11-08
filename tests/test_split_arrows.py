@@ -67,14 +67,13 @@ def test_the_arrows_fit_inside_the_gutter():
     font = int(re.search(r"--inspector-toggle-font:\s*(\d+)px", css).group(1))
     width = int(re.search(r"--inspector-toggle-w:\s*(\d+)px", css).group(1))
     assert int(re.search(r"gutterSize:\s*(\d+)", app).group(1)) == gutter
-    assert gutter >= height + 2, "the arrows sit inside the gutter"
     # compact D-3: a thin bar, the arrows' hit area widened by ::before to >= 20 px
     assert gutter <= 12, "the gutter is a thin bar"
     kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
     m = re.search(r"\.ui-split-arrow::before\s*\{[^}]*inset:\s*-(\d+)px\s+-(\d+)px", kit)
     assert m, "the arrows carry a widened hit area"
-    assert height + 2 * int(m.group(1)) >= 20 and width + 2 * int(m.group(2)) >= 20
-    assert font >= 8
+    assert height + 2 * int(m.group(1)) >= 22 and width + 2 * int(m.group(2)) >= 22
+    assert font >= 12, "a clearly visible glyph"
     # the old set-button rules are gone with their buttons
     assert ".split-set-btn" not in css and ".inspector-toggle-btn" not in css
     assert ".split-arrow-btn {" in css

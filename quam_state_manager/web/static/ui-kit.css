@@ -754,7 +754,7 @@
 }
 .ui-dock-btn:hover, .ui-dock-btn:focus-visible { border-color: var(--ui-accent); color: var(--ui-accent); }
 .ui-split-arrow { position: relative; }
-.ui-split-arrow::before { content: ""; position: absolute; inset: -6px -3px; }
+.ui-split-arrow::before { content: ""; position: absolute; inset: -3px -3px; }
 .ui-ds-head { flex-wrap: wrap; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
 .ui-ds-meta {
     display: flex; align-items: center; flex-wrap: wrap; gap: var(--ui-gap-2);
