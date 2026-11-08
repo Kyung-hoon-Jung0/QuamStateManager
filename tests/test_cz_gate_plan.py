@@ -462,3 +462,16 @@ def test_a_spectator_pulse_on_the_other_member_names_its_kind():
     assert rows["spec"]["duration_ns"] == 40
     assert [ln["play_duration_ns"] for ln in rows["spec"]["lines"]] == [40, None]
     assert rows["outside"]["kind"] == rows["plain"]["kind"] == "single mover"
+
+
+def test_a_symmetric_transmon_fit_is_used():
+    """d = 0 is a symmetric transmon (only upper sweet spots): its fit is valid and drawn."""
+    q = model_qubit(0)
+    q["extras"]["lffem_flux_model"]["d"] = 0.0
+    m = C.model_of(q)
+    assert m is not None and m["d"] == 0.0
+    assert C.fitted_frequency(m, 0.0) == pytest.approx(m["f_max_hz"])
+    assert np.isfinite(C.fitted_frequency(m, 0.5))
+    conv = C.Conversion(q)
+    assert conv.model_kind is not None
+    assert conv.curve(.1)["model_hz"] is not None
