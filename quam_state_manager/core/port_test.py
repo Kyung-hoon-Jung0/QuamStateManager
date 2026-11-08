@@ -182,6 +182,20 @@ def _add_digital_output(cfg: dict, dport: list) -> None:
     group.setdefault(str(dport[-1]), {})
 
 
+def _copy_port(source: dict, target: dict, port: list, io: str) -> None:
+    con = target["controllers"].setdefault(str(port[0]), {})
+    original = source["controllers"].get(str(port[0]), {})
+    if len(port) == 3:
+        con = con.setdefault("fems", {}).setdefault(str(port[1]), {})
+        original = (original.get("fems", {}).get(str(port[1])) or
+                    original.get("fems", {}).get(port[1]) or {})
+    # Keep hardware metadata, never unrelated port groups or their DC offsets.
+    for key in ("type",):
+        if key in original:
+            con[key] = copy.deepcopy(original[key])
+    con.setdefault(io, {})[str(port[-1])] = copy.deepcopy(_port_entry(source, port, io))
+
+
 def build(config: dict, element: str, test: str, basis: str, *,
           operation: Optional[str] = None, amplitude: Optional[float] = None,
           amp_cap: float = AMP_CAP_DEFAULT, period_ns: int = DEFAULT_PERIOD_NS,
@@ -211,12 +225,12 @@ def build(config: dict, element: str, test: str, basis: str, *,
         el["operations"] = {}
         name = element
         pulses, wfs, iws = {}, {}, {}
-        cfg: dict[str, Any] = {"controllers": copy.deepcopy(config.get("controllers") or {})}
+        cfg: dict[str, Any] = {"controllers": {}}
         for k in ("mixers", "oscillators", "octaves"):
             if config.get(k):
                 cfg[k] = copy.deepcopy(config[k])
         notes.append(f"Chip basis: the element entry of {element} is the chip's generate_config() "
-                     "output, verbatim (same port, IF and port settings); its operation list holds only "
+                     "output (same port, IF and selected port settings); its operation list holds only "
                      "the tested operation, a copy of the chip's own pulse.")
     else:
         name = "port_test"
@@ -229,35 +243,47 @@ def build(config: dict, element: str, test: str, basis: str, *,
         el["operations"] = {}
         pulses, wfs, iws = {}, {}, {}
         cfg = {"controllers": {}}
-        port = info["port"]
-        ports = [(port, "analog_outputs")]
-        if test == "loopback" and info["in_port"]:
-            ports.append((info["in_port"], "analog_inputs"))
-        if info["kind"] == "iq":
-            q = (src.get("mixInputs") or {}).get("Q")
-            if q:
-                ports.append((list(q), "analog_outputs"))
-            if (src.get("mixInputs") or {}).get("mixer") and config.get("mixers"):
-                cfg["mixers"] = copy.deepcopy(config["mixers"])
-        for p, io in ports:
-            con = cfg["controllers"].setdefault(str(p[0]), {})
-            if len(p) == 3:
-                fem = con.setdefault("fems", {}).setdefault(str(p[1]), {})
-                if _fem_type(config, p):
-                    fem["type"] = _fem_type(config, p)
-                group = fem.setdefault(io, {})
-            else:
-                group = con.setdefault(io, {})
-            group[str(p[-1])] = copy.deepcopy(_port_entry(config, p, io))
-        notes.append(f"Raw-port basis: only port {_fmt_port(port)} with its settings from the chip "
-                     "config, and a fresh element 'port_test' on it. Independent of the chip's elements.")
+        notes.append("Raw-port basis: a fresh element on the selected chip ports.")
+
+    # An isolated QM must reserve and configure only the ports used by this test.
+    el.pop("digitalInputs", None)
+    if test != "loopback":
+        for key in ("MWOutput", "outputs", "time_of_flight", "smearing"):
+            el.pop(key, None)
+    ports = [(info["port"], "analog_outputs")]
+    if info["kind"] == "iq":
+        ports.append((list(src["mixInputs"]["Q"]), "analog_outputs"))
+        if config.get("mixers"):
+            cfg["mixers"] = copy.deepcopy(config["mixers"])
+    if test == "loopback":
+        inputs = ([src["MWOutput"]["port"]] if "MWOutput" in src
+                  else list((src.get("outputs") or {}).values()))
+        ports.extend((list(p), "analog_inputs") for p in inputs)
+    for port, io in ports:
+        _copy_port(config, cfg, port, io)
+    loopback = []
+    if test == "loopback":
+        outs = [p for p, io in ports if io == "analog_outputs"]
+        ins = [p for p, io in ports if io == "analog_inputs"]
+        for k, i_port in enumerate(ins):
+            o_port = outs[min(k, len(outs) - 1)]
+            # The simulator's out->in cable: one tuple per input it feeds.
+            loopback.append([str(o_port[0])] + [int(x) for x in o_port[1:]]
+                            + [str(i_port[0])] + [int(x) for x in i_port[1:]])
+    offset = max((abs(float(_port_entry(config, p, io).get("offset", 0)))
+                  for p, io in ports if io == "analog_outputs"), default=0.0)
+    if not math.isfinite(offset) or offset >= amp_cap:
+        raise PortTestError(f"Port DC offset {offset:g} leaves no room under cap {amp_cap:g}.")
+    available = amp_cap - offset
+    if offset:
+        notes.append(f"DC offset magnitude {offset:g}: waveform allowance {available:g} under cap {amp_cap:g}.")
 
     scale = 1.0
     mw = info["kind"] in ("mw", "iq")
     if test == "cw":
         a = AMP_CAP_DEFAULT / 2 if amplitude is None else float(amplitude)
-        if abs(a) > amp_cap:
-            raise PortTestError(f"Amplitude {a:g} is above the cap {amp_cap:g}. Lower it or raise the cap.")
+        if not math.isfinite(a) or abs(a) > available:
+            raise PortTestError(f"Amplitude {a:g} plus DC offset {offset:g} exceeds cap {amp_cap:g}. Lower it or raise the cap.")
         op = "port_test_cw"
         wfs["port_test_cw.wf"] = {"type": "constant", "sample": a}
         wfs["port_test_zero.wf"] = {"type": "constant", "sample": 0.0}
@@ -286,10 +312,10 @@ def build(config: dict, element: str, test: str, basis: str, *,
             if w in (config.get("integration_weights") or {}):
                 iws.setdefault(w, copy.deepcopy(config["integration_weights"][w]))
         peak0 = pulse_peak(config, src_pulse) or 0.0
-        if peak0 > amp_cap:
-            scale = amp_cap / peak0
+        if peak0 > available:
+            scale = available / peak0
             notes.append(f"The operation's peak {peak0:.4g} is above the cap {amp_cap:g}: it plays "
-                         f"scaled by {scale:.4g} (peak {amp_cap:g}).")
+                         f"scaled by {scale:.4g} (peak {available:g}, DC offset {offset:g}).")
         peak = peak0 * scale
         if test == "pulse":
             p["digital_marker"] = MARKER
@@ -303,9 +329,9 @@ def build(config: dict, element: str, test: str, basis: str, *,
             dmarks[dm] = copy.deepcopy(config["digital_waveforms"][dm])
     if test == "pulse":
         dport = list(marker_port) if marker_port else digital_ports(config, info["port"])[0]
-        _add_digital_output(cfg, dport)
-        el.setdefault("digitalInputs", {})["port_test_trigger"] = {
-            "port": dport, "delay": 0, "buffer": 0}
+        _copy_port(config, cfg, dport, "digital_outputs")
+        el["digitalInputs"] = {"port_test_trigger": {
+            "port": dport, "delay": 0, "buffer": 0}}
         notes.append(f"Scope trigger: a digital marker on {_fmt_port(dport)} for the length of each pulse.")
     else:
         dport = None
@@ -326,6 +352,8 @@ def build(config: dict, element: str, test: str, basis: str, *,
         "kind": info["kind"], "port": info["port"], "in_port": info["in_port"],
         "marker_port": dport, "period_ns": int(period_ns), "shots": int(shots),
         "lo": info["lo"], "if": info["if"], "rf": info["rf"], "full_scale_power_dbm": fsp,
+        "loopback": loopback, "pulse_ns": int(p.get("length") or 0) if test != "cw" else CW_PULSE_NS,
+        "time_of_flight": info["time_of_flight"],
         "notes": notes,
     }
     return cfg, plan
@@ -385,11 +413,16 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "") -> str:
         marker=repr(list(plan["marker_port"]) if plan["marker_port"] else None),
         peak=repr(float(plan["expected_peak"])),
         inputs=1 if plan["kind"] == "mw" else 2,
+        loopback=repr([tuple(c) for c in plan.get("loopback") or []]),
+        pulse_ns=int(plan.get("pulse_ns") or 0), tof=int(plan.get("time_of_flight") or 0),
     )
 
 
 _SCRIPT = '''{doc}
 import argparse
+import signal
+import threading
+import queue
 import os
 import time
 
@@ -409,16 +442,21 @@ OUTPUT_PORT = {port}
 MARKER_PORT = {marker}
 EXPECTED_PEAK = {peak}
 ADC_INPUTS = {inputs}  # an MW-FEM input is one complex input; LF / OPX+ have two
-RUNNING = ("running", "pending", "queued", "processing")
+LOOPBACK = {loopback}  # simulator only: the out->in cable (from ..., to ...)
+PULSE_NS = {pulse_ns}
+TIME_OF_FLIGHT_NS = {tof}
+#: job states that hold no port; ANY other (or unknown) status counts as busy
+TERMINAL = ("done", "completed", "canceled", "cancelled", "error", "failed")
 
 
-def build_program():
+def build_program(shots=None):
     """The test program. CW and pulse train loop until halted."""
+    shots = SHOTS if shots is None else int(shots)
     with program() as prog:
         if TEST == "loopback":
             adc = declare_stream(adc_trace=True)
             n = declare(int)
-            with for_(n, 0, n < SHOTS, n + 1):
+            with for_(n, 0, n < shots, n + 1):
                 measure(OPERATION * amp(AMP_SCALE), ELEMENT, adc_stream=adc)
                 wait(PERIOD_NS // 4, ELEMENT)
             with stream_processing():
@@ -433,53 +471,185 @@ def build_program():
     return prog
 
 
+def reserved_ports(config):
+    ports = set()
+    for cname, con in config.get("controllers", {{}}).items():
+        groups = [(None, con)] + list(con.get("fems", {{}}).items())
+        for slot, group in groups:
+            for io in ("analog_outputs", "analog_inputs", "digital_outputs", "digital_inputs"):
+                for port in group.get(io, {{}}):
+                    ports.add((str(cname), str(slot), io, str(port)))
+    return ports
+
+
 def busy_jobs(qmm):
-    """Running/pending jobs on every open QM. A failed check counts as busy."""
+    """Only explicit terminal states are idle; unknown or failed checks refuse."""
     busy = []
+    needed = reserved_ports(CONFIG)
     for qm_id in qmm.list_open_qms():
         qm = qmm.get_qm(qm_id)
-        for job in qm.get_jobs():
-            if str(getattr(job, "status", "")).lower() in RUNNING:
+        if needed & reserved_ports(qm.get_config()):
+            busy.append((str(qm_id), "ports reserved"))
+        if hasattr(qm, "get_jobs"):
+            jobs = qm.get_jobs()
+        else:
+            # Legacy API: its queue and current job are separate surfaces.
+            jobs = list(qm.queue.pending_jobs)
+            running = qm.get_running_job()
+            if running is not None:
+                jobs.append(running)
+        for job in jobs:
+            status = getattr(job, "status", None)
+            if callable(status):
+                status = status()
+            if str(status).strip().lower() not in TERMINAL:
                 busy.append((str(qm_id), str(getattr(job, "id", ""))))
     return busy
 
 
-def run_on_hardware(qmm, should_stop=lambda: False, max_s=600.0, log=print):
-    """Refuse when the server is busy; open our own QM without closing any other;
-    run until should_stop() (or max_s); halt; close ONLY our QM."""
+CALL_TIMEOUT_S = 15.0
+
+
+def bounded(call, timeout=None, late=None):
+    """Bound a stuck SDK call; dispose of a late resource rather than leak it."""
+    timeout = CALL_TIMEOUT_S if timeout is None else timeout
+    answer = queue.Queue()
+    lock = threading.Lock()
+    expired = False
+    def worker():
+        try:
+            value = call()
+            with lock:
+                dispose = expired
+                answer.put((True, value))
+            if dispose and late:
+                late(value)
+        except BaseException as exc:
+            answer.put((False, exc))
+    thread = threading.Thread(target=worker, daemon=late is None)
+    thread.start()
+    thread.join(timeout)
+    with lock:
+        if answer.empty():
+            expired = True
+            raise TimeoutError("QM API call timed out; refusing further execution.")
+        ok, value = answer.get_nowait()
+    if not ok:
+        raise value
+    return value
+
+
+def halt_close(qm, job=None):
+    """Halt our job and close only the QM we created, even if halt fails or stalls."""
     try:
-        busy = busy_jobs(qmm)
-    except Exception as exc:  # noqa: BLE001 - an unknown answer is not a free OPX
+        if job is not None:
+            bounded(job.halt)
+    finally:
+        bounded(qm.close)
+
+
+class _Cleanup:
+    """Halt + close exactly once, whichever of the guard, Stop or finally gets there first."""
+    def __init__(self, qm, record):
+        self.qm, self.record, self.job = qm, record, None
+        self.lock = threading.Lock()
+        self.done = False
+
+    def __call__(self):
+        with self.lock:
+            if self.done:
+                return
+            self.done = True
+            halt_close(self.qm, self.job)
+            self.record(cleaned=True)
+
+
+def run_on_hardware(qmm, should_stop=lambda: False, max_s=120.0, log=print,
+                    record=lambda **ids: None):
+    """Refuse busy/unknown hardware; open our own QM (never close another);
+    run until should_stop() or max_s; always halt and close ONLY our QM."""
+    max_s = float(max_s)
+    if not 0 < max_s <= 3600:
+        raise ValueError("Hardware duration must be in (0, 3600] seconds.")
+    try:
+        busy = bounded(lambda: busy_jobs(qmm))
+    except Exception as exc:
         raise RuntimeError(f"Could not check the OPX for running jobs ({{exc}}); not running.")
     if busy:
         raise RuntimeError(f"The OPX is busy (open QM / job: {{busy}}); not running.")
-    qm = qmm.open_qm(CONFIG, close_other_machines=False)
+    if should_stop():
+        raise RuntimeError("Stopped before opening a QM.")
+    record(phase="opening a QM")
+    def opened():
+        qm = qmm.open_qm(CONFIG, close_other_machines=False)
+        record(qm_id=str(qm.id))
+        return qm
+    qm = bounded(opened, late=lambda q: bounded(q.close))
+    cleanup = _Cleanup(qm, record)
+    finished = threading.Event()
+    deadline = time.monotonic() + max_s
+    def guard():
+        # Stop / parent death / deadline halt the job even while the main
+        # thread waits inside an SDK call.
+        while not finished.wait(0.1):
+            if should_stop() or time.monotonic() >= deadline:
+                try:
+                    cleanup()
+                except Exception as exc:
+                    record(cleanup_error=str(exc))
+                return
+    threading.Thread(target=guard, daemon=True).start()
     result = {{}}
     try:
-        job = qm.execute(build_program())
+        def execute():
+            j = qm.execute(build_program())
+            cleanup.job = j
+            record(job_id=str(getattr(j, "id", "")))
+            return j
+        job = bounded(execute, late=lambda j: halt_close(qm, j))
         log(f"running job {{getattr(job, 'id', '')}}")
-        t0 = time.monotonic()
         if TEST == "loopback":
-            job.result_handles.wait_for_all_values(timeout=max_s)
+            bounded(lambda: job.result_handles.wait_for_all_values(timeout=max_s),
+                    timeout=max_s + CALL_TIMEOUT_S)
             for k in ("adc1", "adc2"):
                 if k in job.result_handles:
-                    result[k] = job.result_handles.get(k).fetch_all()
+                    result[k] = bounded(lambda: job.result_handles.get(k).fetch_all())
         else:
-            while not should_stop() and time.monotonic() - t0 < max_s:
+            while not should_stop() and time.monotonic() < deadline:
                 time.sleep(0.2)
-            job.halt()
     finally:
-        qm.close()
+        finished.set()
+        cleanup()
     return result
 
 
+SIM_SHOTS = 2
+
+
 def simulate(qmm, duration_ns=None):
-    """Simulated output samples, keyed by port name."""
-    if duration_ns is None:
-        duration_ns = 4 * PERIOD_NS if TEST != "cw" else 4000
-    job = qmm.simulate(CONFIG, build_program(), SimulationConfig(duration=int(duration_ns) // 4))
+    """Simulated output samples, keyed by port name, and (loopback) the
+    simulated raw ADC trace: the simulator models the out->in cable."""
+    from qm.simulate import LoopbackInterface
+    kw = {{}}
+    if TEST == "loopback":
+        kw["simulation_interface"] = LoopbackInterface([tuple(c) for c in LOOPBACK])
+        prog = build_program(SIM_SHOTS)
+        if duration_ns is None:
+            duration_ns = SIM_SHOTS * (PULSE_NS + PERIOD_NS + TIME_OF_FLIGHT_NS) + 2000
+    else:
+        prog = build_program()
+        if duration_ns is None:
+            duration_ns = 4 * PERIOD_NS if TEST != "cw" else 4000
+    job = qmm.simulate(CONFIG, prog, SimulationConfig(duration=int(duration_ns) // 4, **kw))
     job.wait_until("Done") if hasattr(job, "wait_until") else None
-    return job.get_simulated_samples()
+    adc = {{}}
+    if TEST == "loopback":
+        handles = job.result_handles
+        handles.wait_for_all_values()
+        for k in ("adc1", "adc2"):
+            if k in handles:
+                adc[k] = handles.get(k).fetch_all()
+    return job.get_simulated_samples(), adc
 
 
 def saas_qmm(client, version=None):
@@ -508,6 +678,7 @@ def main():
     sub = ap.add_subparsers(dest="target", required=True)
     o = sub.add_parser("opx")
     o.add_argument("--host", required=True)
+    o.add_argument("--seconds", type=float, default=120.0, help="maximum hardware duration (default 120 s)")
     o.add_argument("--cluster", default=None)
     o.add_argument("--port", type=int, default=None)
     s = sub.add_parser("saas")
@@ -521,9 +692,17 @@ def main():
             kw["cluster_name"] = a.cluster
         if a.port:
             kw["port"] = a.port
-        qmm = QuantumMachinesManager(**kw)
+        stopped = threading.Event()
+        def stop_signal(signum, frame):
+            # Only flag it: the run loop halts the job and closes our QM.
+            stopped.set()
+        signal.signal(signal.SIGINT, stop_signal)
+        signal.signal(signal.SIGTERM, stop_signal)
+        if hasattr(signal, "SIGBREAK"):
+            signal.signal(signal.SIGBREAK, stop_signal)
+        qmm = bounded(lambda: QuantumMachinesManager(timeout=CALL_TIMEOUT_S, **kw))
         try:
-            res = run_on_hardware(qmm, should_stop=lambda: False, max_s=1e9)
+            res = run_on_hardware(qmm, should_stop=stopped.is_set, max_s=a.seconds)
         except KeyboardInterrupt:
             print("stopped")
             return
@@ -537,9 +716,14 @@ def main():
         client = QmSaas(email=a.email, password=os.environ["SAAS_PASSWORD"], host=a.host)
         inst, qmm = saas_qmm(client)
         try:
-            samples = simulate(qmm, a.ns)
+            samples, adc = simulate(qmm, a.ns)
             samples.con1.plot() if hasattr(samples, "con1") else None
             import matplotlib.pyplot as plt
+            if adc:
+                plt.figure()
+                for k, v in adc.items():
+                    plt.plot(v, label=k)
+                plt.xlabel("time [ns]"); plt.ylabel("simulated ADC (loopback)"); plt.legend()
             plt.show()
         finally:
             inst.close()
