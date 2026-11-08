@@ -9848,13 +9848,14 @@ function _revertCell(dotPath, oldValueStr) {
         var form = hidden.parentElement;
         var input = form.querySelector('input[name="value"]');
         if (input) {
-            // Final QA P3b: the reverted string arrives in the grids' lossless
-            // DISPLAY form ("-363,323.0"); an inspector input holds the RAW
-            // value ("-363323.0", what the server parses and what the input
-            // was rendered with). Only a plain grouped number is unwrapped;
-            // "MW,FEM", a pointer or an exponent string stays as it is.
-            if (window.NumberInput && window.NumberInput.strip) oldValueStr = window.NumberInput.strip(oldValueStr);
-            input.value = oldValueStr;
+            // Inspector inputs render with groupdigits (same as NumberInput.format
+            // on first paint). The undo payload may carry that lossless grouped
+            // string or a plain _fmt_val — either way, show the grouped form in
+            // the box while data-committed keeps the raw parseable number.
+            var raw = oldValueStr;
+            if (window.NumberInput && window.NumberInput.strip) raw = window.NumberInput.strip(oldValueStr);
+            input.value = raw;
+            if (window.NumberInput && window.NumberInput.format) window.NumberInput.format(input);
             // The reverted value IS the committed value now. Leaving the
             // baseline (data-committed / defaultValue) at the edited value
             // made the next click-away see "value != baseline" and RE-COMMIT
@@ -9862,8 +9863,8 @@ function _revertCell(dotPath, oldValueStr) {
             // stack, so Ctrl+Shift+Z on Pulses did nothing (real-Chrome
             // check, 2026-08-28). 'input' lets the field's own listeners
             // (the Pulses waveform preview) follow the value.
-            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);
-            input.defaultValue = oldValueStr;
+            if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", raw);
+            input.defaultValue = input.value;
             input.classList.remove("edit-input-modified");
             input.removeAttribute("title");
             try { input.dispatchEvent(new Event("input", { bubbles: true })); } catch (e) {}

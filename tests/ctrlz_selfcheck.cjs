@@ -375,6 +375,21 @@ ok(valInput.value === '6.25e9', 'cellsReverted restores the inspector cell value
 ok(!valInput.classList.contains('edit-input-modified'), 'modified marker cleared');
 ok(!td.classList.contains('cell-modified'), 'td modified marker cleared');
 
+// Grouped inspector display on undo: fresh render uses groupdigits; revert
+// must match the visible value while data-committed stays raw for POST.
+const grpForm = window.document.createElement('form');
+grpForm.innerHTML = '<input type="hidden" name="dot_path" value="qubits.q1.z.offset">' +
+    '<input name="value" class="edit-input" data-committed="-500000" value="-500,000">';
+window.document.body.appendChild(grpForm);
+const grpInput = grpForm.querySelector('input[name="value"]');
+revert([{ dot_path: 'qubits.q1.z.offset', old_value_str: '-475000',
+          old_value_disp: '-475,000', old_kind: 'num' }]);
+ok(grpInput.value === '-475,000',
+   'inspector undo shows groupdigits display (-475,000), not raw');
+ok(grpInput.getAttribute('data-committed') === '-475000',
+   'inspector undo keeps raw on data-committed');
+grpForm.remove();
+
 /* docs/122 item 3 — the full-grid re-GET is now the FALLBACK, not the reflex.
    It cost 2,418 ms per press on the real 20-qubit chip while the undo itself
    cost 55 ms, and the response already names every path it reverted. These pin
