@@ -159,7 +159,12 @@ def test_undo_never_navigates_by_itself():
         "cellsReverted flashes what is visible; only the trail's button navigates"
     assert "if (window.UndoNav) window.UndoNav.handle(d.entries || []);" not in app
     assert "window._treeModelSet = _treeModelSet;" in app, "the tree model follows edit / undo / redo"
-    assert 'if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", oldValueStr);' in app
+    # FB-07 follow-up (impl/tree 672a2218): the box shows the grouped number, the
+    # baseline keeps the raw parseable one -- `raw` is the reverted value with the
+    # grouping stripped, never a second value.
+    assert "var raw = oldValueStr;" in app
+    assert "if (window.NumberInput && window.NumberInput.strip) raw = window.NumberInput.strip(oldValueStr);" in app
+    assert 'if (input.hasAttribute("data-committed")) input.setAttribute("data-committed", raw);' in app
 
 
 def test_review_fixes_of_4ffee11():
