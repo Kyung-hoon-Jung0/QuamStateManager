@@ -626,12 +626,23 @@ class TestAuditRegressions:
 class TestPairEntityGetsNoQubitPaths:
     """A {q} path is wrong for a pair-keyed run in BOTH tiers (node-name and coordinate)."""
 
-    def test_node_tier_is_guarded_for_a_pair_entity(self):
+    @pytest.mark.parametrize("kind", ["pair", "qubit_pair"])
+    def test_node_tier_is_guarded_for_a_pair_entity(self, kind):
         from quam_state_manager.core.click_targets import candidates_for
         for name in ("03_resonator_spectroscopy", "08_qubit_spectroscopy"):
-            assert candidates_for(name, "full_freq", None, "qubit_pair") == []
+            assert candidates_for(name, "full_freq", None, kind) == []
             assert candidates_for(name, "full_freq", None, "qubit")  # control: a qubit still gets them
 
-    def test_coordinate_tier_is_guarded_for_a_pair_entity(self):
+    @pytest.mark.parametrize("kind", ["coupler", "resonator", "twpa", "qubits", "qubit_name"])
+    def test_other_entity_names_keep_node_tier_candidates(self, kind):
+        from quam_state_manager.core.click_targets import candidates_for
+        expected = candidates_for("03_resonator_spectroscopy", "full_freq", None, "qubit")
+        expected = [t for t in expected if t["tier"] == "node"]
+        assert expected
+        got = candidates_for("03_resonator_spectroscopy", "full_freq", None, kind)
+        assert [t for t in got if t["tier"] == "node"] == expected
+
+    def test_coordinate_tier_pair_regression_pin(self):
+        """Regression pin for the coordinate-tier pair guard already present on main."""
         from quam_state_manager.core.click_targets import candidates_for
         assert candidates_for("unknown", "full_freq", "flux_bias", "qubit_pair") == []
