@@ -31,7 +31,7 @@ def test_load_check_selfcheck_passes():
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
-@pytest.mark.parametrize("mutation", ["no_disable", "no_checking", "no_restore", "no_ok", "no_detail", "no_env", "no_link_nav"])
+@pytest.mark.parametrize("mutation", ["no_disable", "no_checking", "no_restore", "no_ok", "no_detail", "no_chooser", "no_pick_body", "no_env_label", "no_link_nav"])
 def test_load_check_selfcheck_mutations_fail(mutation):
     r = _run(mutation)
     if r.returncode == 2:

@@ -38,12 +38,18 @@ window.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: () =>
 global.htmx = window.htmx;
 
 window._navigateToExplorerPath = function (p) { window.__lastNav = p; };
-let envRequiredEvents = 0;
-document.addEventListener('sm-env-required', () => { envRequiredEvents += 1; });
-
 let calls = 0;
-window.fetch = global.fetch = function () {
+const bodies = [];
+window.fetch = global.fetch = function (url, init) {
   calls += 1;
+  bodies.push(init && init.body || null);
+  if (calls === 4) {
+    return Promise.resolve({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ ok: true, lib_versions: { quam: '0.6.0' },
+        env: { name: 'envB', source: 'chosen' } })
+    });
+  }
   if (calls === 1) {
     return new Promise((resolve) => {
       setTimeout(() => resolve({
@@ -71,9 +77,10 @@ window.fetch = global.fetch = function () {
     json: () => Promise.resolve({
       ok: false,
       error: 'env_required',
-      project: 'alpha',
+      project: '',
       message: 'Choose env',
-      open_url: ''
+      envs: [{ name: 'envA', python: 'C:/envs/envA/python.exe' },
+             { name: 'envB', python: 'C:/envs/envB/python.exe' }]
     })
   });
 };
@@ -86,7 +93,9 @@ const mutations = {
   no_restore: ['setRunning(false);', 'setRunning(true);'],
   no_ok: ["setStatus('ok', 'Loads OK", "setStatus('fail', 'Wrong"],
   no_detail: ["var detail = esc((data && data.detail)", "var detail = esc((data && data.missing)"],
-  no_env: ["new CustomEvent('sm-env-required'", "new CustomEvent('wrong-event'"],
+  no_chooser: ["for (var i = 0; i < envs.length; i++) {", "for (var i = 0; i < 0; i++) {"],
+  no_pick_body: ["init.body = JSON.stringify({ python: picked });", "init.body = null;"],
+  no_env_label: ["+ envLabel(data.env)", "+ ''"],
   no_link_nav: ['if (p && window._navigateToExplorerPath) window._navigateToExplorerPath(p);', 'if (p) window.__lastNav = "";']
 };
 if (mut) {
@@ -118,7 +127,16 @@ window.eval(appJs);
   }
 
   await window.runLoadCheck(btn);
-  ok(envRequiredEvents === 1, 'env_required emits sm-env-required event');
+  ok(status.classList.contains('ui-verdict--warn') && status.textContent.includes('Choose env'), 'env_required renders a chooser verdict');
+  const picks = status.querySelectorAll('.js-load-check-env');
+  ok(picks.length === 2, 'chooser lists every discovered env');
+  ok(bodies[2] === null, 'a press without a pick sends no python');
+  if (picks.length === 2) {
+    picks[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await wait(10);
+    ok(bodies[3] && JSON.parse(bodies[3]).python === 'C:/envs/envB/python.exe', 'a pick posts the chosen env path');
+    ok(status.textContent.includes('env: envB (chosen here)'), 'status says which env ran');
+  }
 
   if (fails) process.exit(1);
   console.log('load_check_selfcheck ok');

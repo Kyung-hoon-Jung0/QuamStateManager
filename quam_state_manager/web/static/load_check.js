@@ -59,25 +59,42 @@ window.runLoadCheck = (function () {
                     + '" title="Show this path in Json tree">' + esc(p) + '</a>';
             }
         }
-        setStatus('danger', typ, detail + linkHtml + (tb || ''));
+        setStatus('danger', typ, detail + envLabel(data && data.env) + linkHtml + (tb || ''));
     }
+    function envLabel(env) {
+        if (!env || !env.name) return '';
+        var src = { project: 'project', selected: 'selected machine-wide', chosen: 'chosen here' }[env.source] || '';
+        return ' · env: ' + esc(env.name) + (src ? ' (' + esc(src) + ')' : '');
+    }
+    // No project env and no machine-wide env: offer the discovered envs right
+    // in the status line; a pick runs the check in that env (loadchk D-1).
     function envRequired(data) {
         var d = data || {};
-        try {
-            document.dispatchEvent(new CustomEvent('sm-env-required', {
-                detail: { project: d.project || '', message: d.message || '' }
-            }));
-        } catch (e) {}
-        if (!document.getElementById('landing-env-picker') && d.open_url) window.location.href = d.open_url;
-
+        var envs = Array.isArray(d.envs) ? d.envs : [];
+        var html = esc(d.message || 'Choose a Python environment.');
+        if (!envs.length) {
+            html += ' No Python environment was found on this machine.';
+        } else {
+            for (var i = 0; i < envs.length; i++) {
+                var e = envs[i] || {};
+                if (!e.python) continue;
+                html += ' <button type="button" class="btn-sm outline js-load-check-env" data-loadcheck-python="'
+                    + esc(e.python) + '" title="' + esc(e.python) + '">' + esc(e.name || e.python) + '</button>';
+            }
+        }
+        setStatus('warn', 'Choose an env', html);
     }
-    return function () {
+    var picked = null;
+    function run(python) {
+        if (typeof python === 'string' && python) picked = python;
         setRunning(true);
         setStatus('');
-        return fetch('/state/load-check', {
-            method: 'POST',
-            headers: { 'X-Requested-With': 'fetch' }
-        })
+        var init = { method: 'POST', headers: { 'X-Requested-With': 'fetch' } };
+        if (picked) {
+            init.headers['Content-Type'] = 'application/json';
+            init.body = JSON.stringify({ python: picked });
+        }
+        return fetch('/state/load-check', init)
             .then(function (r) {
                 return r.json().catch(function () { return {}; }).then(function (j) {
                     return { ok: r.ok, status: r.status, body: j || {} };
@@ -91,7 +108,7 @@ window.runLoadCheck = (function () {
                 }
                 if (resp.ok && data.ok) {
                     var qv = ((data.lib_versions || {}).quam || '?');
-                    setStatus('ok', 'Loads OK', 'quam ' + esc(qv));
+                    setStatus('ok', 'Loads OK', 'quam ' + esc(qv) + envLabel(data.env));
                     return;
                 }
                 renderFail(data);
@@ -100,8 +117,17 @@ window.runLoadCheck = (function () {
                 setStatus('danger', 'Load check failed', esc(e && e.message || e));
             })
             .finally(function () { setRunning(false); });
-    };
+    }
+    run.withEnv = function (python) { return run(python); };
+    return run;
 })();
+
+document.addEventListener('click', function (evt) {
+    var b = evt.target && evt.target.closest ? evt.target.closest('.js-load-check-env[data-loadcheck-python]') : null;
+    if (!b) return;
+    evt.preventDefault();
+    window.runLoadCheck.withEnv(b.getAttribute('data-loadcheck-python'));
+});
 
 document.addEventListener('click', function (evt) {
     var a = evt.target && evt.target.closest ? evt.target.closest('.load-check-link[data-loadcheck-path]') : null;
