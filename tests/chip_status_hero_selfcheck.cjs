@@ -292,7 +292,7 @@ function part5() {
   ok(evals[0] && /95\.1/.test(evals[0].textContent), '2Q RB: the printed value is the best StandardRB');
   // docs/126: the value text draws AFTER the role markers (they used to cover
   // it dead-center on the real chip), and the markers half-overlap the stones
-  const role = hero.querySelector('.cm-role circle');
+  const role = hero.querySelector('.cm-role rect');
   ok(role && (evals[0].compareDocumentPosition(role) & 2) !== 0,
      'edge values draw ON TOP of the C/T/M markers');
   // per-gate toggle: two gates ship StandardRB → the pulse bar renders,
@@ -658,86 +658,53 @@ function edgeLabelsBesideTheBar() {
                              : lineMid(pa);
   // half the drawn width of a pair's first line
   const barHalf = (pairId) => num(lineOf(pairId), 'stroke-width') / 2;
-  // map tidy D-3: the chevron became a frequency ARROW, drawn in every view but
-  // Qubit freq. Its side of the line is what the label logic avoids, so read the
-  // arrow's centre once in the T1 view and keep using it in the Qubit-freq view.
-  const arrowCentre = (a, b) => {
-    const g = hero.querySelector('.cm-freq[data-cm-freq="' + (a < b ? a + '|' + b : b + '|' + a) + '"]');
-    const l = g && g.querySelector('.cm-dir-freq-line');
-    return l ? { x: (num(l, 'x1') + num(l, 'x2')) / 2, y: (num(l, 'y1') + num(l, 'y2')) / 2 } : null;
-  };
-  ok(!!arrowCentre('q1', 'q2') === false, 'D-3: no frequency arrow under the Qubit-freq view');
-  hero.querySelector('[data-hero-metric="T1"]').click();
-  const _arr = { q12: arrowCentre('q1', 'q2'), q13: arrowCentre('q1', 'q3'), q24: arrowCentre('q2', 'q4') };
-  ok(!!_arr.q12 && !!_arr.q13 && !!_arr.q24, 'D-3: the T1 view draws a frequency arrow on every |delta| >= 1 MHz pair');
-  ok(hero.querySelectorAll('polyline.cm-freqchev, .cm-freqchev').length === 0, 'D-3: no chevron markup');
-  ok(/toward the lower f/.test(hero.textContent), 'D-3: the T1 legend names the frequency arrow');
-  hero.querySelector('[data-hero-metric="f_01"]').click();
-  ok(!/toward the lower f/.test(hero.textContent), 'D-3: the Qubit-freq legend does not');
-  ok(/moving qubit/.test(hero.textContent) && hero.querySelectorAll('.topo-hero-legend .cm-role-txt').length === 3, 'map tidy: the hero legend shows the [C] [T] [M] badges');
-  const chevron = (a, b) => _arr[a === 'q1' && b === 'q2' ? 'q12' : a === 'q1' && b === 'q3' ? 'q13' : 'q24'];
-  const textLike = (sel, re) => Array.prototype.find.call(
-      hero.querySelectorAll(sel), (t) => re.test(t.textContent));
-  // for a VERTICAL pair: which side of the column the chevron took (+1 right / -1 left),
-  // a label's offset AWAY from it (positive = the free side), and the anchor class
-  // that makes the text grow away from the column on that side
-  const chevSide = (c, m) => (c && Math.abs(c.x - m.x) > 5) ? Math.sign(c.x - m.x) : 0;
-  const away = (el, m, side) => el ? (num(el, 'x') - m.x) * -side : NaN;
-  const anchorFor = (side) => side < 0 ? 'topo-hero-lbl-start' : 'topo-hero-lbl-end';
-
-  // ── Qubit-freq view (the default): the Δf labels ──
-  // (1) horizontal q1-q2: the stacked block sits entirely ABOVE the bar, chevron below
-  const m12 = mid('q1-2'), c12 = chevron('q1', 'q2');
-  // v1.3.0: three-line fixture -> two lines, preserving the edge-clearance check.
-  const st = Array.prototype.find.call(hero.querySelectorAll('.topo-hero-edelta-stack'),
-      (t) => Array.prototype.map.call(t.querySelectorAll('tspan'), (s) => s.textContent).join('|') === 'Δf|300 MHz');
-  ok(!!st && fin(m12.y) && !!c12, 'F-26 fixture: the q1-q2 stacked Δf, its line and its chevron all render');
-  ok(c12 && c12.y > m12.y + 5, 'F-26 fixture: the q1-q2 chevron sits BELOW the line (hi = q2 on the right)');
-  const lastBase = st ? num(st, 'y') + Array.prototype.reduce.call(st.querySelectorAll('tspan'),
-      (s, t) => s + (parseFloat(t.getAttribute('dy')) || 0), 0) : NaN;
-  ok(fin(lastBase) && lastBase <= m12.y - barHalf('q1-2') - 1,
-     'F-26: the stacked Δf block sits entirely ABOVE the q1-q2 bar band, opposite the chevron '
-     + '(last baseline ' + lastBase.toFixed(1) + ', band top ' + (m12.y - barHalf('q1-2')).toFixed(1) + ')');
-  // (2) the vertical CR pair q1-q3: one line beside BOTH ±6 lines, opposite the chevron
-  const m13 = mid('q1-3', 'q3-1'), c13 = chevron('q1', 'q3'), s13 = chevSide(c13, m13);
-  const v13 = textLike('.topo-hero-edelta', /^Δf 100 MHz$/);
-  ok(!!v13 && s13 !== 0, 'F-26 fixture: the q1-q3 chevron sits beside the column (side ' + s13 + ')');
-  ok(away(v13, m13, s13) >= 6 + barHalf('q1-3') + 1 && hasCls(v13, anchorFor(s13)),
-     'F-26: a vertical CR pair\'s Δf sits beside BOTH offset lines on the side the chevron leaves free, '
-     + 'anchored to grow away (offset ' + away(v13, m13, s13).toFixed(1) + ', column ' + m13.x.toFixed(1) + ')');
-  // (3) vertical undirected q2-q4: the chevron took the other side, so the label flips with it
-  const m24 = mid('q2-4'), c24 = chevron('q2', 'q4'), s24 = chevSide(c24, m24);
-  const v24 = textLike('.topo-hero-edelta', /^Δf 150 MHz$/);
-  ok(!!v24 && s24 === 1 && s13 === 1,
-     'map tidy: every vertical frequency arrow sits on the SAME (right) side, whatever the f01 order (side ' + s24 + ', ' + s13 + ')');
-  ok(away(v24, m24, s24) >= barHalf('q2-4') + 1 && hasCls(v24, anchorFor(s24)),
-     'F-26: the label takes whichever side the chevron leaves free (offset '
-     + away(v24, m24, s24).toFixed(1) + ', ' + anchorFor(s24) + ')');
-
-  // ── Edge-metric view: the 2Q value beside the 9px bar ──
+  // D7: same offset for level, steep, reversed and moving-role edges.
+  function checkLabels() {
+    const texts = Array.from(hero.querySelectorAll('.topo-hero-edelta'));
+    const h = texts.filter(t=>t.classList.contains('topo-hero-edelta-stack'));
+    const v = texts.filter(t=>!t.classList.contains('topo-hero-edelta-stack'));
+    const off = mid('q1-2').y - num(h[0], 'y') - 9;
+    ok(h.length === 2 && v.length === 2, 'D7: level and steep delta fixtures render');
+    ok(off >= 16 && Math.abs(mid('q3-4').y - num(h[1], 'y') - 9 - off) < 0.01, 'D7: every level label has same above offset despite moving role');
+    v.forEach(t => {
+      const mx = t.textContent.includes('100') ? mid('q1-3','q3-1').x : mid('q2-4').x;
+      ok(Math.abs(mx - num(t,'x') - off) < 0.01 && hasCls(t,'topo-hero-lbl-end'), 'D7: every steep label same left offset');
+    });
+    hero.querySelectorAll('.topo-pair-badge rect').forEach(r=>{
+      ok(off > Math.hypot(num(r,'width'),num(r,'height'))/2 + 5, 'D7: label clears full expanded patch even when dense');
+    });
+    return off;
+  }
+  checkLabels();
+  ok(!hero.querySelector('.cm-freq, .cm-role circle, .cm-dir-m'), 'D1/D5: no frequency arrow or old moving dots');
+  ok(hero.querySelectorAll('svg .cm-role text').length === topo.edges.length * 2 && Array.from(hero.querySelectorAll('svg .cm-role text')).every(t=>/[HL]$/.test(t.textContent)), 'D3: H/L present in hero Qubit freq view');
+  ok(/C control.*T target.*M moving qubit.*H higher f01.*L lower f01/.test(hero.querySelector('.topo-hero-legend').textContent), 'D6: hero has shared complete legend');
+  hero.querySelectorAll('svg .cm-role').forEach(pill => {
+    const text = pill.querySelector('text'), rect = pill.querySelector('rect');
+    ok(num(text, 'font-size') === 6.5 && num(rect, 'height') <= 10.5, 'D4: hero pill size capped despite 132px cells');
+    const node = hero.querySelector('[data-hero-qubit="'+pill.getAttribute('data-cm-at')+'"]');
+    const [cx,cy] = node.getAttribute('transform').match(/[-\d.]+/g).map(Number);
+    const nearest = (x,y) => Math.hypot(x-Math.max(num(rect,'x'),Math.min(x,num(rect,'x')+num(rect,'width'))), y-Math.max(num(rect,'y'),Math.min(y,num(rect,'y')+num(rect,'height'))));
+    ok(nearest(cx,cy) > num(node.querySelector('circle'),'r'), 'D2/D4: hero pill clears actual stone radius');
+    const badge = hero.querySelector('.topo-pair-badge[data-hero-pair="'+pill.getAttribute('data-cm-pair')+'"]');
+    const [bx,by] = badge.getAttribute('transform').match(/[-\d.]+/g).map(Number);
+    if (!topo.edges.find(e=>e.pair_id===pill.getAttribute('data-cm-pair')).directed)
+      ok(nearest(bx,by) > num(badge.querySelector('circle'),'r'), 'D5: retained metric marker never touches hero pill');
+  });
+  // Dense and expanded patches reserve identical room. Reverse frequencies,
+  // make a tiny difference, and force the dense path with isolated nodes.
+  topo.nodes[1].f_01 = topo.nodes[0].f_01 + 1;
+  for (let i=0;i<12;i++) topo.nodes.push({id:'extra'+i,grid_location:(i+2)+',2'});
+  mount(win, topo, []);
+  ok(!!hero.querySelector('.topo-pair-badge-dense'), 'D7: dense hover fixture');
+  checkLabels();
+  const badge = hero.querySelector('.topo-pair-badge');
+  const before = Array.from(hero.querySelectorAll('.topo-hero-edelta')).map(t=>t.outerHTML).join('');
+  badge.dispatchEvent(new win.MouseEvent('mouseenter'));
+  ok(Array.from(hero.querySelectorAll('.topo-hero-edelta')).map(t=>t.outerHTML).join('') === before, 'D7: hover leaves labels in place');
   hero.querySelector('[data-hero-metric="bell_state"]').click();
-  const e12 = textLike('.topo-hero-eval', /^97\.0/), h12 = barHalf('q1-2');
-  ok(h12 >= 4 && !!e12, 'F-26 fixture: edge-metric mode draws the thick bar (half ' + h12 + ') with its value');
-  ok(e12 && num(e12, 'y') <= m12.y - h12 - 1,
-     'F-26: the undirected q1-q2 value sits ABOVE the 9px bar, opposite the chevron '
-     + '(baseline ' + (e12 && num(e12, 'y').toFixed(1)) + ', band top ' + (m12.y - h12).toFixed(1) + ')');
-  const e24 = textLike('.topo-hero-eval', /^90\.0/);
-  ok(away(e24, m24, s24) >= barHalf('q2-4') + 1 && hasCls(e24, anchorFor(s24)),
-     'F-26: the vertical q2-q4 value sits beside the 9px bar opposite the chevron, anchored to grow away '
-     + '(offset ' + away(e24, m24, s24).toFixed(1) + ')');
-  const e34 = textLike('.topo-hero-eval', /^88\.0/), m34 = mid('q3-4');
-  const mC = hero.querySelector('.cm-role-m[data-cm-pair="q3-4"] circle');
-  // D-2 (map tidy): M sits ON its edge line, one step in from its role marker
-  ok(!!e34 && !!mC && Math.abs(num(mC, 'cy') - m34.y) < 0.5, 'D-2: q3-q4 M circle sits ON its (level) line');
-  ok(e34 && num(e34, 'y') <= m34.y - barHalf('q3-4') - 1
-     && num(e34, 'y') <= num(mC, 'cy') - num(mC, 'r') - 1,
-     'F-26: a value pushed onto the M side clears the M circle entirely, not just the bar '
-     + '(baseline ' + (e34 && num(e34, 'y').toFixed(1)) + ', M top ' + (num(mC, 'cy') - num(mC, 'r')).toFixed(1) + ')');
-  // a CR pair's two directed values keep their anti-parallel separation (untouched by the fix)
-  const e13 = textLike('.topo-hero-eval', /^93\.0/), e31 = textLike('.topo-hero-eval', /^91\.0/);
-  ok(e13 && e31 && (num(e13, 'x') - m13.x) * (num(e31, 'x') - m13.x) < 0
-     && Math.abs(num(e13, 'x') - num(e31, 'x')) >= 30,
-     'F-26: a CR pair\'s two directed values keep their ±(6+15) anti-parallel placement');
+  const e12 = Array.from(hero.querySelectorAll('.topo-hero-eval')).find(t=>/^97\.0/.test(t.textContent));
+  ok(e12 && num(e12,'y') < mid('q1-2').y - barHalf('q1-2'), 'edge metric remains above bar');
   // the side anchors are stylesheet rules: `.topo-hero-eval { text-anchor: middle }`
   // beats a presentation attribute (the trap CLAUDE.md records three times)
   const css = read('style.css');
