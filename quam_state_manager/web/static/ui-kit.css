@@ -683,9 +683,9 @@
 .ui-agent-reject { display: flex; flex-wrap: wrap; align-items: end; gap: var(--ui-gap-2); font-size: var(--ui-fs-sm); }
 .ui-agent-reject-note { margin: var(--ui-gap-1) 0 0; }
 .ui-agent-said { margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-sm); }
-
 /* Running-config discovery must never shift the landing controls. */
-.ui-running-overlay { position: static; height: var(--ui-running-height); overflow: auto; }
+/* Only a notice takes room: an empty slot reserved 10rem above every landing. */
+.ui-running-overlay { position: static; max-height: var(--ui-running-height); overflow: auto; }
 
 /* Conflict rings are explained only while the diagram contains one. */
 .ui-iw-conflict-hidden { display: none; }

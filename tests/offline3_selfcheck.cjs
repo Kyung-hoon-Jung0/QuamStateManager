@@ -47,7 +47,11 @@ pin('landing only, reserved space', () => {
   slot.className = 'ui-running-overlay';
   const computed = w.getComputedStyle(slot);
   assert(!['fixed', 'absolute', 'sticky'].includes(computed.position), 'banner stays in flow');
-  assert(computed.height && computed.height !== 'auto', 'reserve height even when empty');
+  // An empty slot takes no room (it left a 10rem gap above every landing);
+  // a notice is capped and scrolls inside the cap.
+  assert(computed.maxHeight && computed.maxHeight !== 'none', 'notices are capped');
+  const rule = (css.match(/\.ui-running-overlay\s*\{[^}]*\}/) || [''])[0];
+  assert(rule && !/(^|[^-])height\s*:/.test(rule.replace(/max-height/g, '')), 'no reserved height when empty');
   assert.equal(computed.overflow, 'auto', 'multiple notices scroll inside reserved space');
 });
 for (const endpoint of ['/qualibrate/dismiss-running', '/qualibrate/use-location']) {
