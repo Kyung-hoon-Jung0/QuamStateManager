@@ -13,9 +13,13 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -472,3 +476,163 @@ def test_agent_clear_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 40, r.stdout
+
+
+class TestStartRightAfterClear:
+    """A cleared session closes its stdin and its process exits a moment later. A message typed
+    in that gap is the user's next conversation, not a second driver on the chip."""
+
+    def test_a_start_in_the_exit_gap_waits_instead_of_refusing(self, c, monkeypatch):
+        from quam_state_manager.core import agent_chat
+
+        def slow_end(self):
+            # the same end, but the process only sees EOF 0.4 s later
+            with self._lock:
+                self.ended = time.time()
+                self.queue.clear()
+            proc = self.proc
+            import threading
+            threading.Timer(0.4, proc.close_stdin).start()
+
+        monkeypatch.setattr(agent_chat.ChatSession, "end", slow_end)
+        _talk(c, "one")
+        assert c.post("/api/agent/chat/clear", json={"keep": 1}).get_json()["ended"] is True
+        r = c.post("/api/agent/chat/start", json={"prompt": "two"})
+        assert r.status_code == 200, r.get_json()
+
+
+@pytest.fixture
+def restart_manager(tmp_path, monkeypatch):
+    """Control process exit independently of scheduling and filesystem I/O."""
+    from quam_state_manager.core import agent_chat
+
+    mgr = agent_chat.ChatManager(lambda e: None, tmp_path)
+    backend = SimpleNamespace(name="claude", one_turn_per_process=False)
+    created = []
+
+    def start_session(self, prompt, *, resume=None):
+        self.proc = SimpleNamespace(alive=lambda: True, pid=1)
+        created.append(self)
+        return {"local_id": self.local_id}
+
+    monkeypatch.setattr(agent_chat.ChatSession, "start", start_session)
+
+    def start(chip="first"):
+        return mgr.start(chip, backend, owner="owner", mode="chat", until=None, prompt="hello")
+
+    cur = agent_chat.ChatSession("first", backend, owner="owner", mode="chat", until=None,
+                                 record=lambda e: None, instance_path=tmp_path)
+    cur.ended = time.time()
+    mgr.sessions["first"] = cur
+    return mgr, cur, start, created
+
+
+class TestRestartSafety:
+    def test_ended_busy_codex_is_refused_without_wait_or_stop(self, restart_manager):
+        mgr, cur, start, created = restart_manager
+        cur.backend = SimpleNamespace(name="codex", one_turn_per_process=True)
+        cur.proc = SimpleNamespace(alive=lambda: True)
+        # No wait/stop methods: touching either is itself a failure.
+        assert cur.busy()
+        with pytest.raises(RuntimeError, match="already driving"):
+            start()
+        assert mgr.get("first") is cur
+        assert not created
+        assert cur.last_event is None
+
+    def test_wait_releases_manager_lock_and_same_chip_has_one_winner(self, restart_manager):
+        mgr, cur, start, created = restart_manager
+        release = threading.Event()
+        both_waiting = threading.Event()
+        count_lock = threading.Lock()
+        count = 0
+
+        def wait(timeout):
+            nonlocal count
+            with count_lock:
+                count += 1
+                if count == 2:
+                    both_waiting.set()
+            assert release.wait(5), "test did not release process exit"
+
+        cur.proc = SimpleNamespace(alive=lambda: not release.is_set(), proc=SimpleNamespace(wait=wait))
+
+        def attempt():
+            try:
+                return start()
+            except RuntimeError:
+                return "refused"
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            first = pool.submit(attempt)
+            second = pool.submit(attempt)
+            try:
+                assert both_waiting.wait(2), "same-chip Starts could not both wait outside the lock"
+                other = pool.submit(start, "second")
+                assert other.result(timeout=2)["local_id"]
+            finally:
+                release.set()
+            results = [first.result(timeout=2), second.result(timeout=2)]
+        assert results.count("refused") == 1
+        assert len([s for s in created if s.chip == "first"]) == 1
+        assert mgr.get("first") in created
+
+    def test_force_kill_waits_for_delayed_process_exit(self, restart_manager):
+        _, cur, start, created = restart_manager
+        stopped = False
+        exited = False
+        waits = []
+
+        def stop():
+            nonlocal stopped
+            stopped = True
+
+        def wait(timeout):
+            nonlocal exited
+            assert 0 < timeout <= 5
+            waits.append(timeout)
+            if not stopped:
+                raise subprocess.TimeoutExpired("fake", timeout)
+            exited = True  # kill delivery alone did not complete process exit
+
+        cur.proc = SimpleNamespace(alive=lambda: not exited, stop=stop, proc=SimpleNamespace(wait=wait))
+        start()
+        assert stopped and exited and len(waits) == 2
+        assert len(created) == 1
+
+    def test_process_ignoring_eof_is_killed_after_grace(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import agent_backend as ab, agent_chat
+
+        eof = tmp_path / "eof"
+
+        class IgnoreEOF(ab.ClaudeBackend):
+            def command(self, *, resume=None, prompt=None):
+                return [sys.executable, "-c",
+                        "import sys,time; from pathlib import Path; sys.stdin.read(); "
+                        "Path(sys.argv[1]).touch(); time.sleep(60)", str(eof)]
+
+        monkeypatch.setattr(agent_chat, "_END_GRACE_S", 1.0)
+        mgr = agent_chat.ChatManager(lambda e: None, tmp_path)
+        backend = IgnoreEOF("unused", tmp_path / "m.json")
+
+        def start():
+            return mgr.start("first", backend, owner="owner", mode="chat", until=None, prompt=None)
+
+        old = None
+        try:
+            start()
+            old = mgr.get("first").proc
+            mgr.end("first")
+            assert _wait(eof.exists), "process must actually receive EOF"
+            assert old.alive()
+            start()
+            assert old.stopped_by_human
+            assert not old.alive()
+            assert mgr.get("first").proc is not old
+        finally:
+            for session in mgr.sessions.values():
+                session.stop(now=True)
+                session.proc.proc.wait(timeout=5)
+            if old is not None and old.alive():
+                old.stop()
+                old.proc.wait(timeout=5)

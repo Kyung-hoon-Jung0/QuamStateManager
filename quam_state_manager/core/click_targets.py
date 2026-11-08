@@ -126,8 +126,13 @@ def candidates_for(experiment_name: str, x_dim: str | None,
                 return axis, dim
         return None, None
 
+    # Pair selectors must not receive qubit paths; other dimension names
+    # retain the node-name heuristics used before the pair guard.
+    node_keyed = entity_kind not in ("pair", "qubit_pair")
+    qubit_keyed = entity_kind in (None, "qubit", "spec_qubit")
+
     for prefix, targets in _NODE_TARGETS.items():
-        if norm.startswith(prefix):
+        if node_keyed and norm.startswith(prefix):
             for t in targets:
                 axis, dim = _bind_dim(t["dim_match"])
                 if dim is None:
@@ -138,7 +143,7 @@ def candidates_for(experiment_name: str, x_dim: str | None,
                                 "label": t["label"], "tier": "node"})
             break
 
-    if entity_kind in (None, "qubit", "spec_qubit"):
+    if qubit_keyed:
         for h in _COORD_TARGETS:
             for axis, dim in (("x", x_dim), ("y", y_dim)):
                 if not dim or not h["match"].search(dim):

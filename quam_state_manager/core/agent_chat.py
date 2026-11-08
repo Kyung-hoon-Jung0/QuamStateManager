@@ -15,6 +15,7 @@ the journal line, and wakes the page. This module never imports Flask.
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 import time
 import uuid
@@ -227,6 +228,9 @@ class ChatSession:
                 "cwd": getattr(self.backend, "cwd", None), "model": getattr(self.backend, "model", None)}
 
 
+_END_GRACE_S = 5.0     # how long Start waits for an ended session's process to exit
+
+
 class ChatManager:
     def __init__(self, record: Callable[[dict], None], instance_path):
         self.record = record
@@ -241,6 +245,23 @@ class ChatManager:
     def start(self, chip: str, backend: ab.Backend, *, owner: str, mode: str, until: float | None,
               prompt: str | None, resume: str | None = None, display: str | None = None) -> dict:
         with self._lock:
+            cur = self.sessions.get(chip)
+            retiring = (cur is not None and cur.ended and cur.alive()
+                        and (not cur.backend.one_turn_per_process or not cur.busy()))
+        if retiring:
+            # End leaves an in-flight Codex turn running. Only reap sessions
+            # that can retire safely, without blocking Starts on other chips.
+            proc = cur.proc.proc
+            try:
+                proc.wait(timeout=_END_GRACE_S)
+            except subprocess.TimeoutExpired:
+                cur.stop(now=True)
+                try:
+                    proc.wait(timeout=_END_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    pass  # the check below refuses while it is still alive
+        with self._lock:
+            # Another Start may have replaced the retired session while we waited.
             cur = self.sessions.get(chip)
             if cur is not None and cur.alive():
                 raise RuntimeError(f"a {cur.backend.name} session by {cur.owner} is already driving {display or chip}")
