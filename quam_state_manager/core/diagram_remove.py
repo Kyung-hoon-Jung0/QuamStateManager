@@ -77,7 +77,7 @@ def _ports_of(node: Any) -> set:
     return out
 
 
-def plan_remove_qubit(merged: dict, qid: str) -> dict:
+def plan_remove_qubit(merged: dict, qid: str, also=()) -> dict:
     qs = merged.get("qubits") if isinstance(merged.get("qubits"), dict) else {}
     if qid not in qs:
         return {"error": f"{qid} is not a qubit of this chip."}
@@ -87,17 +87,17 @@ def plan_remove_qubit(merged: dict, qid: str) -> dict:
     pairs = merged.get("qubit_pairs") if isinstance(merged.get("qubit_pairs"), dict) else {}
     with_pairs = sorted(p for p, v in pairs.items()
                         if qid in (_pair_membership(v, merged) or ()))
-    return _plan(merged, {qid}, set(with_pairs), kind="qubit", name=qid)
+    return _plan(merged, {qid}, set(with_pairs), kind="qubit", name=qid, also=also)
 
 
-def plan_remove_pair(merged: dict, pid: str) -> dict:
+def plan_remove_pair(merged: dict, pid: str, also=()) -> dict:
     pairs = merged.get("qubit_pairs") if isinstance(merged.get("qubit_pairs"), dict) else {}
     if pid not in pairs:
         return {"error": f"{pid} is not a pair of this chip."}
-    return _plan(merged, set(), {pid}, kind="pair", name=pid)
+    return _plan(merged, set(), {pid}, kind="pair", name=pid, also=also)
 
 
-def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str) -> dict:
+def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str, also=()) -> dict:
     roots: list[tuple] = []
     for q in sorted(rq):
         roots.append(("qubits", q))
@@ -129,7 +129,14 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str) -> dict:
                     _pointers(val, path, refs)
                     if any(removed_target(_abs_target(ptr, pp)) for pp, ptr in refs):
                         member_ops.append(path)
-    roots_all = roots + member_ops
+    # what the lab's own check asked to delete TOGETHER with it (an accepted
+    # "Delete together" offer): existing paths not already inside the plan
+    extra: list[tuple] = []
+    for a in also or ():
+        t = tuple(str(a).split("."))
+        if a and _get(merged, t) is not _NOPE and not _under(t, roots + member_ops + extra):
+            extra.append(t)
+    roots_all = roots + member_ops + extra
 
     # keyed entries naming a removed id (spectator tables), and list items
     keyed: list[tuple] = []
@@ -166,12 +173,16 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str) -> dict:
     refs: list = []
     _pointers(sim, (), refs)
     blockers = []
+    dangle = []      # pointers in free-form extras (never rewritten) that will dangle
     for path, ptr in refs:
-        if path and (path[0] == _FREE_FORM or _FREE_FORM in path):
-            continue
         tgt = _abs_target(ptr, path)
-        if _get(sim, tgt) is _NOPE and _get(merged, tgt) is not _NOPE:
+        if not (_get(sim, tgt) is _NOPE and _get(merged, tgt) is not _NOPE):
+            continue
+        if path and _FREE_FORM in path:
+            dangle.append({"path": ".".join(path), "pointer": ptr})
+        else:
             blockers.append({"path": ".".join(path), "pointer": ptr})
+    silent = _silent_changes(merged, list_sets, keyed, ids)
 
     # ports the removal leaves unused (the port configuration itself is kept)
     before = _ports_of({k: v for k, v in merged.items() if k != "ports"})
@@ -192,10 +203,13 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str) -> dict:
             "qubits": sorted(rq), "pairs": sorted(rp),
             "pairs_with": sorted(rp) if kind == "qubit" else [],
             "member_ops": [".".join(p) for p in member_ops],
+            "also": [".".join(p) for p in extra],
             "keyed": [".".join(p) for p in keyed],
             "lists": [".".join(p) for p in list_sets],
             "wiring": [".".join(p) for p in roots if p[0] == "wiring"],
             "freed": freed,
+            "silent": silent,
+            "extras_dangle": dangle,
         },
         "blockers": blockers,
     }
@@ -206,6 +220,45 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str) -> dict:
                          f"{b['pointer']}, which would no longer exist{more}. Change or "
                          "delete that value first.")
     return plan
+
+
+def _entity_ids(merged: dict) -> set:
+    out = set()
+    for coll in ("qubits", "qubit_pairs"):
+        if isinstance(merged.get(coll), dict):
+            out |= set(merged[coll])
+    return out
+
+
+def _silent_changes(merged: dict, list_sets: dict, keyed: list, ids: set) -> list[dict]:
+    """Every list the removal shortens and every key it deletes BECAUSE an
+    element / key equals a removed id -- changes made by name, not by
+    structure. ``check`` marks the ones that do not look like a list (or a
+    table) of entity names: a 2-element list of qubit ids is a pair's
+    membership, not a name list, and a key among non-entity siblings may be
+    a coincidence [derived heuristic]."""
+    known = _entity_ids(merged)
+    out = []
+    for path, new in list_sets.items():
+        old = _get(merged, path)
+        why = None
+        if isinstance(old, list):
+            if len(old) == 2 and all(x in known for x in old):
+                why = "a 2-element list of qubit names: this may be a pair membership, not a name list"
+            elif not all(x in known for x in old):
+                why = "not every element is a qubit or pair name"
+        out.append({"path": ".".join(path), "what": "shortened",
+                    "before": old if isinstance(old, list) else None, "after": new,
+                    "check": why is not None, "why": why})
+    for path in keyed:
+        parent = _get(merged, path[:-1])
+        sibs = [k for k in (parent if isinstance(parent, dict) else {}) if k != path[-1]]
+        why = None
+        if sibs and not all(k in known for k in sibs):
+            why = "its sibling keys are not qubit or pair names"
+        out.append({"path": ".".join(path), "what": "deleted key", "check": why is not None,
+                    "why": why})
+    return out
 
 
 def apply_to_docs(state: dict, wiring: dict, plan: dict) -> tuple[dict, dict]:
