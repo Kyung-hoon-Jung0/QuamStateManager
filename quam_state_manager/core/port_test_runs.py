@@ -423,7 +423,7 @@ class Runs:
         out = {"id": run["id"], "state": "running" if alive or unclean else "done",
                "phase": st.get("phase"), "detail": st.get("detail"),
                "qm_id": st.get("qm_id"), "job_id": st.get("job_id"),
-               "cleanup_pending": unclean, "resumed": bool(run.get("resumed")),
+               "cleanup_pending": unclean and not alive, "resumed": bool(run.get("resumed")),
                "recovery": _read(run["work"] / "_recovery.json"), "meta": run["meta"],
                "elapsed_s": round(time.time() - run["started"], 1),
                "stopping": run["stop_at"] is not None, "stop_why": run.get("stop_why")}
