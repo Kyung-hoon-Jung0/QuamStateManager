@@ -46,7 +46,7 @@ var UI_CONFIG = {
         minSizes:       [0, 60],   /* min height (px) for [upper, lower] pane. Upper=0 lets the inspector be dragged to FULLY cover the page (Qubits / Chip Status / …); lower=60 keeps the inspector grabbable (use its × button to fully reveal the page instead). */
         tableFirstSizes: [35, 65],  /* R4-TP-1: where an inspector opens on Pulses when the user has made no choice yet (the table pane keeps its rows at 1366x768; 15% left 0) */
         datasetExpandedSizes: [25, 75],  /* v1.3.0: the fixed EXPANDED position while the inspector shows a dataset RUN. 15% left about two rows of the run list, and j/k between runs needs the neighbouring rows in view; 25% keeps about five. Every other inspector keeps expandedSizes. */
-        gutterSize:     26          /* height of the drag handle in px (v1.3.0: 6 -> 24, so its buttons sit inside the gutter instead of over the selected row; 24 -> 26 for the larger up/down arrows) -- keep in sync with --split-gutter-size in style.css */
+        gutterSize:     12          /* height of the drag handle in px (compact D-3: 26 -> 12, a thin bar; the arrows sit at its right end with a >= 20px hit area) -- keep in sync with --split-gutter-size in style.css */
     },
 
     plotly: {
@@ -22346,6 +22346,27 @@ window.autoGrowNote = function(ta) {
  * the end. Always-collapsed-by-default means sizing only ever happens here, so
  * there's no hidden->scrollHeight=0 or pinned-mode load-sizing problem.
  */
+/* compact G1: the run header keeps folder, note and tags on line 1 while
+ * they fit; when they do not, they move to a second line (never hidden). */
+function dsHeadFit(root) {
+    var heads = (root || document).querySelectorAll('.ui-ds-head');
+    for (var i = 0; i < heads.length; i++) {
+        var head = heads[i], meta = head.querySelector('.ui-ds-meta');
+        if (!meta) continue;
+        head.classList.remove('ui-ds-head-wrap');
+        if (meta.scrollWidth > meta.clientWidth + 1) head.classList.add('ui-ds-head-wrap');
+    }
+}
+window.dsHeadFit = dsHeadFit;
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('htmx:afterSettle', function() { dsHeadFit(); });
+    window.addEventListener('resize', function() { dsHeadFit(); });
+    document.addEventListener('DOMContentLoaded', function() {
+        dsHeadFit();
+        var pane = document.getElementById('inspector-pane');
+        if (pane && window.ResizeObserver) new ResizeObserver(function() { dsHeadFit(); }).observe(pane);
+    });
+}
 window.toggleNoteEditor = function(btn) {
     var block = btn.closest('.ds-note-block');
     if (!block) return;
@@ -22356,6 +22377,9 @@ window.toggleNoteEditor = function(btn) {
     var acts = block.querySelector('.ds-note-actions');     // v1.5.1 (U P2-22)
     if (acts) acts.hidden = !willOpen;
     btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    block.classList.toggle('ui-note-open', willOpen);   // compact D-4: the editor takes its own line
+    var head = block.closest('.ui-ds-head');
+    if (head) head.classList.toggle('ui-ds-head-open', willOpen);
     if (willOpen) {
         autoGrowNote(ta);
         ta.focus();

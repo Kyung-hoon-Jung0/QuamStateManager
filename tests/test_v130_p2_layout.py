@@ -144,7 +144,8 @@ class TestL6L27SplitGutterAndPresets:
         css = _css()
         gutter = int(re.search(r"--split-gutter-size:\s*(\d+)px", css).group(1))
         button = int(re.search(r"--inspector-toggle-h:\s*(\d+)px", css).group(1))
-        assert gutter >= button + 2
+        # compact D-3: a thin gutter; the arrows overlay it with a >= 22 px hit area
+        assert gutter <= 12 and button >= 16
 
 
 class TestL9MainPaneOverflowAt1280:

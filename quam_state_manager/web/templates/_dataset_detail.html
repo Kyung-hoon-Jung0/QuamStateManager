@@ -23,40 +23,17 @@
 {% set _hdr_utc = run_clock.corrected.utc if run_clock.corrected else run_clock.utc %}
 {% set inspector_sub_html = (_hdr_utc | ts_local) ~ (" corrected" if run_clock.corrected else "") ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
 {% endif %}
-{% include '_inspector_header.html' %}
-
-{#- docs/301 F9: opened from a value (a Trends point, a value drawer row) whose
-    writer the ledger cannot prove. Said HERE, on the run, so the run is never
-    read as the measurement. -#}
-{% if via_inferred is defined and via_inferred %}
-<p class="ds-provenance-note" role="note">Source inferred source, not proven.
-    This run has a matching fit; no recorded source ID or patch proves it wrote this value.</p>
-{% endif %}
-{% if via_saved is defined and via_saved %}
-<p class="ds-provenance-note" role="note">&#9432; Opened from a value whose writer is not
-    proven: this run&rsquo;s saved state is the first to carry it, but its
-    <code>node.json</code> records no patch that set it, so it may not be the
-    run that measured it.</p>
-{% endif %}
-
+{#- compact D-4: the folder, the note and the tags ride the run's own header
+    line (wrapping only when the pane is narrow). -#}
+{% set inspector_meta %}
 {# Which registered data folder this run belongs to (P2) — leaf name shown,
    full registered path on hover. Disambiguates same run-id across folders. #}
 {% if folder_label %}
-<div class="ds-folder-line" title="{{ folder_path }}">
+<div class="ds-folder-line ui-ds-folder" title="{{ folder_path }}">
     <span class="ds-folder-line-icon" aria-hidden="true">&#128193;</span>
     <span class="ds-folder-line-label">{{ folder_label }}</span>
 </div>
 {% endif %}
-
-{# datasets-r2-20: a run file that is present but cannot be parsed (truncated,
-   or still being written) blanks whatever it carries -- say so, once, here. #}
-{% set _fh = file_health if file_health is defined and file_health else {} %}
-{% if _fh.unreadable %}
-<p class="ds-file-health-note" role="status">&#9888; {{ _fh.unreadable | join(" and ") }}
-    could not be read (truncated, or still being written) &mdash; what
-    {{ "they carry is" if _fh.unreadable|length > 1 else "it carries is" }} not shown below.</p>
-{% endif %}
-
 {# Note (collapsible) — a small "Note" badge sits above Tags; clicking it reveals
    a tight, auto-growing editor (one line, grows only on real wraps/newlines).
    Always starts collapsed; the badge wears .has-note (filled dot + the note as a
@@ -70,9 +47,9 @@
 <div class="ds-note-block">
     <button type="button" class="ds-note-toggle{% if _has_note %} has-note{% endif %}"
             aria-expanded="false" onclick="toggleNoteEditor(this)"
-            {% if _has_note %}title="{{ run.note }}"{% endif %}>
+            title="{{ run.note if _has_note else 'Add a note' }}">
         <span class="ds-note-toggle-icon" aria-hidden="true">&#9998;</span>
-        <span>Note</span>
+        <span class="visually-hidden">Note</span>
         <span class="ds-note-dot" aria-hidden="true"></span>
     </button>
     <textarea class="ds-note-input ds-note-textarea" rows="1" placeholder="Add a note…"
@@ -89,13 +66,11 @@
         <span class="ds-note-state muted" role="status" aria-live="polite"></span>
     </div>
 </div>
-
 {# Tag this dataset — the primary tagging entry point. The inner .col-tags div
    is the tag-picker anchor + what _rebuildTagCell rebuilds (badges + "+"); the
    "Tags" label sits outside it so it survives rebuilds. The reserved 'favorite'
    tag is hidden here (it's the ⭐ star, set elsewhere). #}
-<div class="ds-tags-row">
-    <span class="ds-tags-label">Tags</span>
+<div class="ds-tags-row ui-ds-tags" title="Tags">
     {# Badge removal is handled by a delegated click handler in app.js (reads
        data-tag + the container's data-run-id) — no inline onclick with the tag
        inlined, which would break on tags containing quotes. #}
@@ -107,6 +82,34 @@
                 title="Add a tag">+</button>
     </div>
 </div>
+{% endset %}
+{% include '_inspector_header.html' %}
+
+{#- docs/301 F9: opened from a value (a Trends point, a value drawer row) whose
+    writer the ledger cannot prove. Said HERE, on the run, so the run is never
+    read as the measurement. -#}
+{% if via_inferred is defined and via_inferred %}
+<p class="ds-provenance-note" role="note">Source inferred source, not proven.
+    This run has a matching fit; no recorded source ID or patch proves it wrote this value.</p>
+{% endif %}
+{% if via_saved is defined and via_saved %}
+<p class="ds-provenance-note" role="note">&#9432; Opened from a value whose writer is not
+    proven: this run&rsquo;s saved state is the first to carry it, but its
+    <code>node.json</code> records no patch that set it, so it may not be the
+    run that measured it.</p>
+{% endif %}
+
+
+{# datasets-r2-20: a run file that is present but cannot be parsed (truncated,
+   or still being written) blanks whatever it carries -- say so, once, here. #}
+{% set _fh = file_health if file_health is defined and file_health else {} %}
+{% if _fh.unreadable %}
+<p class="ds-file-health-note" role="status">&#9888; {{ _fh.unreadable | join(" and ") }}
+    could not be read (truncated, or still being written) &mdash; what
+    {{ "they carry is" if _fh.unreadable|length > 1 else "it carries is" }} not shown below.</p>
+{% endif %}
+
+
 
 <nav class="dataset-tabs">
     <ul role="tablist">

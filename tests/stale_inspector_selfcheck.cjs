@@ -128,7 +128,8 @@ async function boot(page) {
     s.open(RUN);
     s.nav('/qubits');
     ok(s.pane().querySelector('#ds-detail-root'), 'a dataset run is kept');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'and collapsed, as before');
+    assert.ok(s.d.getElementById('inspector-pane').classList.contains('ui-inspector-docked'),
+        'and docked (compact D-1: was collapsed)');
 
     console.log('stale_inspector_selfcheck: ' + checks + ' checks ok');
 })().catch(e => { console.error(e && e.stack || e); process.exit(1); });

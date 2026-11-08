@@ -98,12 +98,12 @@
     --table-pane-pad-h:      1rem;    /* left/right padding inside the upper content pane */
     --inspector-pane-pad-v:  0.5rem;  /* top/bottom padding inside the lower detail pane (qubit detail, dataset detail…) */
     --inspector-pane-pad-h:  1rem;    /* left/right padding inside the lower detail pane */
-    --split-gutter-size:     26px;    /* height of the drag handle between panes (v1.3.0: 6px -> 24px, room for its buttons; 24px -> 26px for the larger arrows) -- keep in sync with UI_CONFIG.split.gutterSize */
+    --split-gutter-size:     12px;    /* height of the drag handle between panes (compact D-3: 26px -> 12px, a thin blue bar; the arrows keep a >= 20px hit area via ::before) -- keep in sync with UI_CONFIG.split.gutterSize */
 
     /* -- SPLIT ARROW BUTTONS (up / down, on the gutter drag handle) -- */
-    --inspector-toggle-w:    38px;    /* width of each arrow button (v1.3.0: 32 -> 38, a larger hit area) */
-    --inspector-toggle-h:    22px;    /* height of each arrow button (v1.3.0: 20 -> 22) -- keep 2px+ under --split-gutter-size */
-    --inspector-toggle-font: 15px;   /* font size of the arrow glyph (v1.3.0: 12 -> 15) */
+    --inspector-toggle-w:    28px;    /* width of each arrow button (compact D-3: 38 -> 28; the hit area is widened by ::before) */
+    --inspector-toggle-h:    18px;    /* height of each arrow button (compact D-3: overlays the 12px gutter; ::before widens the hit area to >= 22px) */
+    --inspector-toggle-font: 13px;   /* font size of the arrow glyph (compact D-3: 15 -> 13, still clearly visible) */
     --inspector-toggle-radius: 4px;  /* border-radius of the arrow buttons */
 
     /* ── QUBITS / PAIRS — LIST TABLE (.data-table) ────────────────── */
@@ -2247,7 +2247,7 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
        longer shifts its content 15 px sideways */
     scrollbar-gutter: stable;
     padding: var(--inspector-pane-pad-v) var(--inspector-pane-pad-h);
-    min-height: 0;
+    min-height: 0; flex-shrink: 0;  /* compact D-1: a docked bar never shrinks under a tall page */
 }
 #inspector-pane.split-hidden {
     display: none;
@@ -2287,8 +2287,8 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .gutter.gutter-vertical:has(.gutter-controls)::after { display: none; }
 .gutter-controls {
     position: absolute;
-    left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
+    right: 1rem; top: 50%;
+    transform: translateY(-50%);
     display: flex; align-items: center; gap: 6px;
     z-index: 2;
 }
@@ -3513,7 +3513,7 @@ input.sort-key-filter { width: 9rem; margin: 0; padding: .12rem .4rem; font-size
 .inspector-header-dataset {
     top: calc(-1 * var(--inspector-pane-pad-v));
     margin: calc(-1 * var(--inspector-pane-pad-v)) calc(-1 * var(--inspector-pane-pad-h)) 0.3rem;
-    padding: calc(var(--inspector-pane-pad-v) + 0.25rem) var(--inspector-pane-pad-h) 0.25rem;
+    padding: 0.2rem var(--inspector-pane-pad-h) 0.15rem;
 }
 /* The full-page run view renders the same partial inside #table-pane, whose
    top padding is 0.6rem (not 0.5) — match it there so no sliver survives. */
@@ -6368,7 +6368,7 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 .col-metric { font-family: var(--pico-font-family-monospace, monospace); font-size: .82rem; }
 
 /* Dataset detail tabs */
-.dataset-tabs { margin: .5rem 0; border-bottom: 1px solid var(--pico-muted-border-color); }
+.dataset-tabs { margin: .15rem 0 .4rem; border-bottom: 1px solid var(--pico-muted-border-color); }
 .dataset-tabs ul { display: flex; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; gap: 0; }
 .dataset-tabs li { margin: 0; }
 .dataset-tabs a {

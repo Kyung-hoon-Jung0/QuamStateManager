@@ -234,9 +234,16 @@ async function scenario(mode) {
         assert.match(d.getElementById('status-bar').textContent, /locked/i, 'lock notice works after a rerun');
         assert.equal(splitCalls, beforeNotice, 'lock notice does not rebuild the split');
         const compare = d.getElementById('compare-form');
+        const realPreset = w._applySplitPreset;
+        let presetCalls = 0;
+        w._applySplitPreset = (which) => { presetCalls++; return realPreset(which); };
         compare.dispatchEvent(new w.CustomEvent('htmx:beforeRequest', { bubbles: true, detail: { elt: compare } }));
-        assert.equal(splitCalls - beforeNotice, 1, 'one compare handler after a rerun');
-        assert.equal(w.localStorage.getItem('quam_split_sizes'), '[80,20]', 'compare still collapses the inspector');
+        w._applySplitPreset = realPreset;
+        assert.equal(presetCalls, 1, 'one compare handler after a rerun');
+        assert.ok(d.getElementById('inspector-pane').classList.contains('ui-inspector-docked'),
+            'compare docks the inspector (compact D-1)');
+        // restore the split for the next rerun round
+        d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-restore').click();
     }
     const currentInput = d.getElementById('workspace-path-input');
     currentInput.dispatchEvent(new w.Event('input'));

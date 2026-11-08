@@ -1720,9 +1720,10 @@ class TestSidebarFeatures:
                 "calc(-1 * var(--inspector-pane-pad-h))") in block, (
             "The dataset header must pull over the pane's padding strips (top + sides)."
         )
-        assert "padding: calc(var(--inspector-pane-pad-v) + 0.25rem)" in block, (
-            "The covered strip must be re-added as header padding (opaque cover, "
-            "title position at rest unchanged)."
+        # compact D-3 (2026-11-08): the covered strip is no longer re-added in
+        # full -- the blank band under the gutter was the complaint.
+        assert "padding: 0.2rem var(--inspector-pane-pad-h)" in block, (
+            "The header keeps a thin top padding under the gutter (compact D-3)."
         )
         assert "#table-pane .inspector-header-dataset" in text, (
             "The full-page run view's pane has different padding (0.6rem) — "
@@ -6275,6 +6276,31 @@ class TestDatasetSelectionFix:
         # The old always-on teaching tip is gone (replaced by the floating panel).
         assert "Pick 2–5" not in body and "Pick 2&#8211;5" not in body
         assert "<strong>Tip:</strong>" not in body
+
+    def test_run_header_is_one_line(self, app, tmp_path):
+        """compact D-4 (2026-11-08): the folder, the Note button and the tags
+        ride the run's own header line (inside .inspector-header, before the
+        actions), with no separate "Tags" label line; every hook stays."""
+        import re
+        from quam_state_manager.web import routes as _r
+        client, folder = self._client_with_dataset(app, tmp_path)
+        body = client.get(f"/dataset/{_r._folder_key(folder)}:1").data.decode("utf-8")
+        head = re.search(r'<div class="inspector-header inspector-header-dataset[^"]*ui-ds-head[^"]*">'
+                         r'([\s\S]*?)<div class="inspector-actions">', body)
+        assert head, "the dataset header carries the compact meta"
+        meta = head.group(1)
+        assert 'class="ui-ds-meta"' in meta
+        for hook in ("ds-note-block", "ds-note-toggle", "ds-note-textarea", "ds-tags-row",
+                     'id="ds-detail-tags"', "tag-add-btn", "openTagPicker("):
+            assert hook in meta, hook
+        assert "ds-tags-label" not in body, "no separate Tags label"
+        # F2: the actions never wrap; the meta truncates first
+        kit = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+               / "ui-kit.css").read_text(encoding="utf-8")
+        assert re.search(r"\.ui-ds-head \{[^}]*flex-wrap: nowrap", kit)
+        assert re.search(r"\.ui-ds-head > \.inspector-actions \{[^}]*flex: 0 0 auto", kit)
+        assert re.search(r"\.ui-ds-meta \{[^}]*flex: 1 1 0[^}]*overflow: hidden", kit)
+        assert "ds-folder-line" not in body or "ds-folder-line ui-ds-folder" in meta
 
     def test_note_is_collapsible_badge(self, app, tmp_path):
         """The note is a collapsible 'Note' badge above Tags (not an always-visible
