@@ -1435,7 +1435,10 @@ window.TopoGraph = (function () {
     host._linkedBound = true;
     var lit = [], hidden = [];
     function clear() {
-      lit.forEach(function (el) { el.classList.remove('topo-linked'); });
+      lit.forEach(function (el) {
+        el.classList.remove('topo-linked');
+        if (el.hasAttribute('data-link-push')) el.removeAttribute('transform');
+      });
       lit = [];
       hidden.forEach(function (el) { el.style.visibility = ''; });
       hidden = [];
@@ -1449,6 +1452,7 @@ window.TopoGraph = (function () {
       var rects = shown.map(function (el) { return el.getBoundingClientRect(); });
       host.querySelectorAll('svg text').forEach(function (t) {
         if (t.closest('.topo-pair-badge, [data-link-id]')) return;
+        if (t.hasAttribute('data-link-push') && t.classList.contains('topo-linked')) return;
         var r = t.getBoundingClientRect();
         if (!r.width) return;
         if (rects.some(function (b) { return r.right > b.left && r.left < b.right && r.bottom > b.top && r.top < b.bottom; })) {
@@ -1456,7 +1460,13 @@ window.TopoGraph = (function () {
         }
       });
     }
-    function light(el) { el.classList.add('topo-linked'); lit.push(el); }
+    // An element carrying data-link-push="dx dy" (a pair's delta label) steps
+    // aside by that offset while lit, making room for the expanded badge.
+    function light(el) {
+      el.classList.add('topo-linked'); lit.push(el);
+      var push = el.getAttribute('data-link-push');
+      if (push) el.setAttribute('transform', 'translate(' + push.split(' ').join(',') + ')');
+    }
     function apply(target) {
       clear();
       var index = host._linkedIndex;

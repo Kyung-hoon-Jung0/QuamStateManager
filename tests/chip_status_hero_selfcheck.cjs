@@ -664,16 +664,22 @@ function edgeLabelsBesideTheBar() {
     const h = texts.filter(t=>t.classList.contains('topo-hero-edelta-stack'));
     const v = texts.filter(t=>!t.classList.contains('topo-hero-edelta-stack'));
     const off = mid('q1-2').y - num(h[0], 'y') - 9;
+    const push = (t) => (t.getAttribute('data-link-push') || '0 0').split(' ').map(Number);
     ok(h.length === 2 && v.length === 2, 'D7: level and steep delta fixtures render');
-    ok(off >= 16 && Math.abs(mid('q3-4').y - num(h[1], 'y') - 9 - off) < 0.01, 'D7: every level label has same above offset despite moving role');
+    ok(off > 0 && off <= 12, 'D10: at rest a level label sits just above its edge (' + off + ')');
+    ok(Math.abs(mid('q3-4').y - num(h[1], 'y') - 9 - off) < 0.01, 'D10: every level label has the same rest offset despite moving role');
     v.forEach(t => {
       const mx = t.textContent.includes('100') ? mid('q1-3','q3-1').x : mid('q2-4').x;
-      ok(Math.abs(mx - num(t,'x') - off) < 0.01 && hasCls(t,'topo-hero-lbl-end'), 'D7: every steep label same left offset');
+      ok(Math.abs(mx - num(t,'x') - off) < 0.01 && hasCls(t,'topo-hero-lbl-end'), 'D10: every steep label same small left offset at rest');
       const vbX = +hero.querySelector('svg.topo-hero-svg').getAttribute('viewBox').split(' ')[0];
-      ok(num(t,'x') - t.textContent.length * 8 * 0.7 >= vbX, 'D7: the viewBox reaches every steep label (no first-column cut)');
+      ok(num(t,'x') + push(t)[0] - t.textContent.length * 8 * 0.7 >= vbX, 'D12: the viewBox reaches every steep label, pushed too (no first-column cut)');
+      ok(push(t)[1] === 0 && push(t)[0] < 0, 'D11: a steep label is pushed left only');
     });
+    h.forEach(t => ok(push(t)[0] === 0 && push(t)[1] < 0, 'D11: a level label is pushed up only'));
+    const lit = off + Math.abs(push(h[0])[1]);
+    texts.forEach(t => ok(Math.abs(Math.hypot(...push(t)) + off - lit) < 0.01, 'D11: one hovered offset for every label'));
     hero.querySelectorAll('.topo-pair-badge rect').forEach(r=>{
-      ok(off > Math.hypot(num(r,'width'),num(r,'height'))/2 + 5, 'D7: label clears full expanded patch even when dense');
+      ok(lit > Math.hypot(num(r,'width'),num(r,'height'))/2 + 5, 'D11: a hovered label clears the full expanded patch even when dense');
     });
     return off;
   }
@@ -700,8 +706,17 @@ function edgeLabelsBesideTheBar() {
   checkLabels();
   const badge = hero.querySelector('.topo-pair-badge');
   const before = Array.from(hero.querySelectorAll('.topo-hero-edelta')).map(t=>t.outerHTML).join('');
-  badge.dispatchEvent(new win.MouseEvent('mouseenter'));
-  ok(Array.from(hero.querySelectorAll('.topo-hero-edelta')).map(t=>t.outerHTML).join('') === before, 'D7: hover leaves labels in place');
+  badge.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+  const ends = badge.getAttribute('data-link-ends');
+  const labs = Array.from(hero.querySelectorAll('.topo-hero-edelta'));
+  const mine = labs.filter(t => t.getAttribute('data-link-ends') === ends);
+  ok(mine.length === 1 && mine[0].getAttribute('transform') === 'translate(' + mine[0].getAttribute('data-link-push').split(' ').join(',') + ')',
+     'D11: hovering a pair pushes its own delta label out');
+  ok(labs.filter(t => t !== mine[0]).every(t => !t.hasAttribute('transform')), 'D11: labels of other pairs do not move');
+  ok(mine[0].style.visibility !== 'hidden', 'D11: the pushed label stays visible');
+  hero.dispatchEvent(new win.MouseEvent('mouseleave'));
+  ok(labs.every(t => !t.hasAttribute('transform')), 'D11: leaving the map puts every label back at rest');
+  ok(Array.from(hero.querySelectorAll('.topo-hero-edelta')).map(t=>t.outerHTML).join('') === before, 'D11: rest markup identical after hover ends');
   hero.querySelector('[data-hero-metric="bell_state"]').click();
   const e12 = Array.from(hero.querySelectorAll('.topo-hero-eval')).find(t=>/^97\.0/.test(t.textContent));
   ok(e12 && num(e12,'y') < mid('q1-2').y - barHalf('q1-2'), 'edge metric remains above bar');

@@ -3074,6 +3074,17 @@ window.ChipStatus.mount = function (opts) {
             var _lblFs = { edelta: compactMode ? 11 : 8, eval: compactMode ? 19 : 15 };
             var _pillReach = 2 + (5 * 6.5 * 0.55 + 4);
             var _labelOffset = 16;
+            // At rest a delta label sits just beside its edge (half the widest
+            // edge line plus a small gap). Only while its pair is lit (hover)
+            // does it move out to _labelOffset, clear of the badge + Expand.
+            var _restOffset = 11;
+            // The label lights with its pair (data-link-ends) and, while lit,
+            // shifts by (ux, uy) * the extra room the expanded badge needs.
+            function _deltaPush(e, ux, uy) {
+                var d = Math.max(0, _labelOffset - _restOffset);
+                return ' data-link-ends="' + _esc(e.source + ' ' + e.target) + '"'
+                    + ' data-link-push="' + (ux * d) + ' ' + (uy * d) + '"';
+            }
             // Leftmost extent of the steep Δf labels (end-anchored, left of the
             // edge): the viewBox widens to it so a first-column label is never cut.
             var _lblMinX = 0;
@@ -3084,8 +3095,8 @@ window.ChipStatus.mount = function (opts) {
             // until hover. All labels use the same offset, independent of role,
             // frequency ordering, text width or edge direction.
             function _heroLabelAt(sd, mx, my, fs, stackH) {
-                return { x: sd.horiz ? mx : mx - _labelOffset,
-                         y: sd.horiz ? my - _labelOffset - stackH : my + 0.36 * fs,
+                return { x: sd.horiz ? mx : mx - _restOffset,
+                         y: sd.horiz ? my - _restOffset - stackH : my + 0.36 * fs,
                          cls: sd.horiz ? '' : ' topo-hero-lbl-end' };
             }
             // Pairs as first-class objects: a midpoint badge (name + the 2Q
@@ -3189,17 +3200,17 @@ window.ChipStatus.mount = function (opts) {
                                 var dVal = dNum + ' ' + dUnit;
                                 var dAt = _heroLabelAt(dSd, dmx, dmy, _lblFs.edelta, 9);
                                 evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dAt.x
-                                    + '" y="' + dAt.y + '">'
+                                    + '" y="' + dAt.y + '"' + _deltaPush(e, 0, -1) + '>'
                                     + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dVal) + '</tspan>'
                                     + '</text>';
                             } else {
                                 var dAtV = _heroLabelAt(dSd, dmx, dmy, _lblFs.edelta, 0);
                                 evalSvg += '<text class="topo-hero-edelta' + dAtV.cls + '" x="' + dAtV.x
-                                    + '" y="' + dAtV.y + '">'
+                                    + '" y="' + dAtV.y + '"' + _deltaPush(e, -1, 0) + '>'
                                     + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
                                     + '</text>';
-                                _lblMinX = Math.min(_lblMinX, dAtV.x
+                                _lblMinX = Math.min(_lblMinX, dAtV.x - (_labelOffset - _restOffset)
                                     - (mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit).length * _lblFs.edelta * 0.7);
                             }
                         }
