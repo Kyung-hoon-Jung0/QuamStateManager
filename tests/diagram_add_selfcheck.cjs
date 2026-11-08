@@ -45,9 +45,9 @@ const TOPO = {
   edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2', directed: false, has_coupler: false }],
 };
 
-function world(add) {
+function world(add, highlight) {
   const dom = new JSDOM('<!DOCTYPE html><html><body><div id="table-pane">' +
-    '<details class="cmap" id="component-map" data-highlight="qubits" data-cell="120"' +
+    '<details class="cmap" id="component-map" data-highlight="' + (highlight || 'qubits') + '" data-cell="120"' +
     (add ? ' data-cm-add="1"' : '') + ' open><summary>m</summary><div class="cmap-body"></div></details>' +
     (add ? '<div id="cm-add-panel"></div>' : '') + '<div id="inspector-pane"></div></div></body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
@@ -252,6 +252,44 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     await tick(); await tick();
     const f = w.document.querySelectorAll('#cm-rm-rack .cm-lit-freed');
     ok(f.length === 1 && f[0].getAttribute('data-port') === '7', 'exactly the freed port is lit');
+  }
+
+  // ── structural undo/redo refreshes map pages; value undo does not ───────
+  {
+    const w = world(true, 'qubits');
+    await tick(); await tick();
+    w._ajax.length = 0;
+    w.document.dispatchEvent(new w.CustomEvent('cellsReverted', { detail: {
+      message: 'Undone',
+      entries: [{ dot_path: 'qubits.q101', created: true }],
+    } }));
+    await tick();
+    ok(urls(w).includes('/qubits'),
+      'structural undo on qubits refreshes /qubits: ' + JSON.stringify(urls(w)));
+  }
+  {
+    const w = world(true, 'pairs');
+    await tick(); await tick();
+    w._ajax.length = 0;
+    w.document.dispatchEvent(new w.CustomEvent('cellsReverted', { detail: {
+      message: 'Redone',
+      entries: [{ dot_path: 'qubit_pairs.q1-q3', deleted: true }],
+    } }));
+    await tick();
+    ok(urls(w).includes('/pairs'),
+      'structural redo on pairs refreshes /pairs: ' + JSON.stringify(urls(w)));
+  }
+  {
+    const w = world(true, 'qubits');
+    await tick(); await tick();
+    w._ajax.length = 0;
+    w.document.dispatchEvent(new w.CustomEvent('cellsReverted', { detail: {
+      message: 'Undone',
+      entries: [{ dot_path: 'qubits.q1.T1', old_value_str: '12e-6' }],
+    } }));
+    await tick();
+    ok(urls(w).every((u) => u !== '/qubits'),
+      'non-structural undo does not refresh the map page: ' + JSON.stringify(urls(w)));
   }
 
   if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }

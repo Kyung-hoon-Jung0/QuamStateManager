@@ -483,16 +483,21 @@ window.DiagramAdd = (function () {
 
   // A staged add: the page's table and map re-render with the new entity,
   // and the result line is carried over into the fresh panel.
-  document.addEventListener("diagram-added", function () {
-    mode = null; picked = [];
-    var rev = document.getElementById("cm-add-review");
-    var msg = rev ? rev.innerHTML : "";
-    var page = document.querySelector('.cmap[data-highlight="pairs"]') ? "/pairs" : "/qubits";
-    if (!document.querySelector("#table-pane") || !window.htmx) return;
+  function _refreshMapSurface(msg) {
+    var map = document.querySelector("#table-pane .cmap[data-cm-add='1']");
+    if (!map || !window.htmx) return;
+    var page = map.getAttribute("data-highlight") === "pairs" ? "/pairs" : "/qubits";
     window.htmx.ajax("GET", page, { target: "#table-pane", swap: "innerHTML" }).then(function () {
       var p = panel();
       if (p && msg) p.innerHTML = msg;
     });
+  }
+
+  document.addEventListener("diagram-added", function () {
+    mode = null; picked = [];
+    var rev = document.getElementById("cm-add-review");
+    var msg = rev ? rev.innerHTML : "";
+    _refreshMapSurface(msg);
   });
 
   // A staged removal: the entity is gone, so its inspector closes and the
@@ -502,13 +507,17 @@ window.DiagramAdd = (function () {
     var rev = document.getElementById("cm-rm-review");
     var msg = rev ? rev.innerHTML : "";
     if (window.closeInspector) window.closeInspector();
-    var map = document.querySelector("#table-pane .cmap");
-    if (!map || !window.htmx) return;
-    var page = map.getAttribute("data-highlight") === "pairs" ? "/pairs" : "/qubits";
-    window.htmx.ajax("GET", page, { target: "#table-pane", swap: "innerHTML" }).then(function () {
-      var p = panel();
-      if (p && msg) p.innerHTML = msg;
-    });
+    _refreshMapSurface(msg);
+  });
+
+  // Structural undo/redo (entity added/removed) lands through cellsReverted.
+  // Refresh the map pages so the stone set and add/remove panels match store/live.
+  document.addEventListener("cellsReverted", function (evt) {
+    var d = (evt && evt.detail) || {};
+    var entries = d.entries || [];
+    var structural = !!d.structural || entries.some(function (e) { return e && (e.created || e.deleted); });
+    if (!structural) return;
+    _refreshMapSurface("");
   });
 
   return {
