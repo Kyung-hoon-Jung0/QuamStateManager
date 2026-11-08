@@ -16139,7 +16139,7 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
     margin: 0; padding: 2px 7px; width: auto; height: auto;
     font-size: 1em; line-height: 1.25; border-radius: 4px;
     border: 1px solid var(--pico-muted-border-color);
-    background: transparent; color: var(--pico-color); cursor: pointer;
+    background: transparent; color: var(--pico-contrast); cursor: pointer;
     white-space: nowrap;
 }
 .compare-float .cf-compare {
