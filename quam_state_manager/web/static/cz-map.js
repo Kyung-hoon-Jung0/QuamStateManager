@@ -224,9 +224,8 @@
         return qubits.slice();
     }
 
-    /* Figure height: the drawing must be visible without scrolling, so the figure takes
-       what is left of the viewport below its own top (clamped). Top = the figure's position
-       in the unscrolled page (the scrolling ancestors' offsets added back). */
+    /* The viewport clamp supplies the original drawing height and column budget.
+       The columns receive twice that budget; the page can scroll. */
     function figureTop(el) {
         var top = 0;
         try { top = el.getBoundingClientRect().top; } catch (e) { return 0; }
@@ -444,6 +443,55 @@
         });
     }
 
+    var CLEAR = 'rgba(0,0,0,0)';  // transparent hit targets
+
+    function pairVisibility(root, m, pairs) {
+        var key = 'quam_czmap_hidden_v1:' + (window.__chipToken || '') + ':' + (m.op || '');
+        var ids = Object.keys(pairs).sort(natCmp);
+        var state = root._czVisibility;
+        if (!state || state.key !== key) {
+            var stored = [];
+            try { stored = JSON.parse(window.localStorage.getItem(key) || '[]'); } catch (e) {}
+            state = root._czVisibility = { key: key, hidden: new Set(Array.isArray(stored) ? stored.filter(function (id) { return ids.indexOf(id) >= 0; }) : []) };
+        }
+        state.hidden.forEach(function (id) { if (ids.indexOf(id) < 0) state.hidden.delete(id); });
+        function change(id, on) {
+            if (on) state.hidden.delete(id); else state.hidden.add(id);
+        }
+        function save() {
+            try { window.localStorage.setItem(key, JSON.stringify(Array.from(state.hidden))); } catch (e) {}
+            paint(root);
+        }
+        root._czTogglePair = function (id) {
+            if (ids.indexOf(id) < 0) return;
+            change(id, state.hidden.has(id)); save();
+        };
+        ['show', 'hide'].forEach(function (action) {
+            var button = root.querySelector('#czp-map-' + action);
+            if (button) button.onclick = function () { ids.forEach(function (id) { change(id, action === 'show'); }); save(); };
+        });
+        var count = root.querySelector('#czp-map-count');
+        if (count) count.textContent = (ids.length - state.hidden.size) + ' of ' + ids.length + ' pairs shown';
+        var list = root.querySelector('#czp-map-pairs'), signature = key + '|' + ids.join('|');
+        if (list) {
+            if (list._czSignature !== signature) {
+                list.replaceChildren();
+                ids.forEach(function (id) {
+                    var label = document.createElement('label'), input = document.createElement('input');
+                    input.type = 'checkbox'; input.value = id;
+                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.appendChild(label);
+                });
+                list._czSignature = signature;
+            }
+            list.onchange = function (ev) {
+                if (ids.indexOf(ev.target.value) < 0) return;
+                change(ev.target.value, ev.target.checked); save();
+            };
+            list.querySelectorAll('input').forEach(function (input) { input.checked = !state.hidden.has(input.value); });
+        }
+        return state.hidden;
+    }
+
     function render(root, m) {
         var el = root.querySelector('#czp-map');
         if (!el || !m) return Promise.resolve();
@@ -463,6 +511,7 @@
                                   control: c ? c.qubit : null, target: t ? t.qubit : null };
             }
         });
+        var hiddenPairs = pairVisibility(root, m, pairs), allSegments = m.segments;
         var lay = chipLayout(m.qubits, pairs);
         var drawing = lay.mode !== 'none' && m.qubits.length > 0;
         var qs = columnOrder(m.qubits, order, lay);
@@ -470,16 +519,19 @@
         qs.forEach(function (q, i) { col[q.path] = i; byPath[q.path] = q; });
         var n = Math.max(1, qs.length);
         var H = mapHeight(el);
-        el.style.height = H + 'px';
         var plotW = Math.max(240, (el.clientWidth || 1200) - MARGIN.l - MARGIN.r);
         var plotH = H - MARGIN.t - MARGIN.b;
         // fix3 P1-3: the drawing grows with the chip's rows, capped to a share of the plot
         var drawPx = drawing ? Math.round(Math.min(Math.max(DRAW_PX, ROW_PX * (lay.ymax + 1)), DRAW_MAX_FRAC * plotH)) : 0;
-        var dd = drawing ? drawPx / plotH : 0, colLo = drawing ? (drawPx + GAP_PX) / plotH : 0;
+        var columnHeight = 2 * (plotH - drawPx - (drawing ? GAP_PX : 0));
+        H += columnHeight / 2;
+        plotH = H - MARGIN.t - MARGIN.b;
+        el.style.height = H + 'px';
+        var dd = drawing ? drawPx / plotH : 0, drawLo = 1 - dd, colHi = columnHeight / plotH;
         var colPx = plotW / n;
         var y2r = [-0.6, lay.ymax + 0.6];
         var rowPx = drawPx / (y2r[1] - y2r[0]);
-        function paperY(v) { return (v - y2r[0]) / (y2r[1] - y2r[0]) * dd; }
+        function paperY(v) { return drawLo + (v - y2r[0]) / (y2r[1] - y2r[0]) * dd; }
         // fix3 P1-1: when the map draws another operation of the selected pair than the one
         // selected below (its name is not on the picker, or the reader picked another), the
         // outline's hover and the key name both
@@ -505,7 +557,7 @@
 
         // ---- columns: separators, safe strips, loss, defects ----
         qs.forEach(function (q, i) {
-            if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: colLo, y1: 1,
+            if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: 0, y1: colHi,
                                  line: { color: muted, width: 0.6 }, layer: 'below' });
             (q.safe || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'x', x0: i + 0.93, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
@@ -570,7 +622,13 @@
         });
         (m.planned || []).forEach(function (p) { if (col[p.qubit_path] != null) addY(ghz(p.frequency_hz)); });
         var yr = isFinite(lo) ? [lo - Math.max(0.01, 0.04 * (hi - lo)), hi + Math.max(0.01, 0.04 * (hi - lo))] : null;
-        var pxPerGHz = yr ? plotH * (1 - colLo) / (yr[1] - yr[0]) : 1;
+        var pxPerGHz = yr ? columnHeight / (yr[1] - yr[0]) : 1;
+        // Range stays stable while filtering. Every placement pass sees only visible pairs.
+        m = Object.assign({}, m, {
+            segments: m.segments.filter(function (s) { return !hiddenPairs.has(s.pair); }),
+            planned: (m.planned || []).filter(function (s) { return !hiddenPairs.has(s.pair); }),
+            refused: (m.refused || []).filter(function (s) { return !hiddenPairs.has(s.pair); })
+        });
 
         // ---- segments (fix3 P1-4): one column's segments within CLUSTER_PX of each other
         //      share their row side by side, each in its own colour, under one partner label ----
@@ -618,7 +676,6 @@
         });
         // partner names never print over each other (a long list runs into the next column): the
         // Try above either end, then below; a bottom box must also clear segments and idle dots.
-        var columnHeight = plotH * (1 - colLo);
         // Tick labels sit above the columns; reserve their padded boxes before partners.
         var taken = drawing ? qs.map(function (q, i) {
             var half = Math.max(10, partnerWidth(q.name) * 10 / 9 / 2) + 3;
@@ -788,7 +845,7 @@
             qs.forEach(function (q, i) {
                 var nd = lay.node[q.path];
                 if (!nd) return;
-                shapes.push({ type: 'line', xref: 'x', x0: nd.x, x1: i + 0.5, yref: 'paper', y0: paperY(nd.y), y1: colLo,
+                shapes.push({ type: 'line', xref: 'x', x0: nd.x, x1: i + 0.5, yref: 'paper', y0: paperY(nd.y), y1: colHi,
                               line: { color: muted, width: 0.8 }, layer: 'below', name: 'leader' });
             });
             var px = function (nd) { return { X: nd.x * colPx, Y: (nd.y - y2r[0]) * rowPx }; };
@@ -796,14 +853,23 @@
             Object.keys(pairs).sort(natCmp).forEach(function (pair) {
                 var pp = pairs[pair], a = lay.node[pp.control_path], b = lay.node[pp.target_path];
                 if (!a || !b) return;
-                var segs = m.segments.filter(function (s) { return s.pair === pair; });
+                var off = hiddenPairs.has(pair);
+                var segs = allSegments.filter(function (s) { return s.pair === pair; });
                 var refused = (m.refused || []).filter(function (r) { return r.pair === pair; });
                 var computed = segs.length > 0, color = P[(colour[pair] || 0) % P.length];
                 shapes.push({ type: 'line', xref: 'x', yref: 'y2', x0: a.x, y0: a.y, x1: b.x, y1: b.y, layer: 'below', name: 'bar:' + pair,
-                              line: computed ? { color: color, width: 6 } : { color: muted, width: 1.5, dash: 'dot' } });
-                barList.push({ pair: pair, a: px(a), b: px(b), half: computed ? BAR_HALF : 1 });
+                              opacity: off ? 0.35 : 1,
+                              line: computed && !off ? { color: color, width: 6 } : { color: muted, width: 1.5, dash: off ? 'dash' : 'dot' } });
+                // Samples along the whole edge make Plotly's point hit testing reachable anywhere.
+                var hitX = [], hitY = [], steps = Math.max(2, Math.ceil(Math.hypot((a.x - b.x) * colPx, (a.y - b.y) * rowPx) / 6));
+                for (var h = 0; h <= steps; h++) { hitX.push(a.x + (b.x - a.x) * h / steps); hitY.push(a.y + (b.y - a.y) * h / steps); }
+                traces.push({ type: 'scatter', mode: 'lines+markers', x: hitX, y: hitY, yaxis: 'y2',
+                    line: { color: CLEAR, width: 14 }, marker: { color: CLEAR, size: 14 },
+                    customdata: hitX.map(function () { return ['', pair]; }), text: hitX.map(function () { return esc(pair) + (off ? ' — hidden; click to show' : ' — shown; click to hide'); }),
+                    hovertemplate: '%{text}<extra></extra>', showlegend: false, meta: 'pair-hit' });
+                if (!off) barList.push({ pair: pair, a: px(a), b: px(b), half: computed ? BAR_HALF : 1 });
                 var gg = g(pair);
-                gg.barX = [a.x, b.x]; gg.barY = [a.y, b.y];
+                if (!off) { gg.barX = [a.x, b.x]; gg.barY = [a.y, b.y]; }
                 var movers = segs.filter(function (s) { return s.moves; }), label = '';
                 if (computed) {
                     if (movers.length + refused.length >= 2) {
@@ -815,7 +881,7 @@
                     else if (refused.length) label = '?';
                 }
                 if (label && movers.some(function (s) { return /extrapolated/.test(s.kind || ''); })) label = '~' + label;
-                if (label) items.push({ pair: pair, text: label, a: px(a), b: px(b), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, color: color });
+                if (label && !off) items.push({ pair: pair, text: label, a: px(a), b: px(b), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, color: color });
                 var op = segs.length ? segs[0] : null, t;
                 var pointApi = window.CzOperatingPoints;
                 var opPoint = op && pointApi && pointApi.get(root, op.path, op.role, op.operating_point);
@@ -839,7 +905,7 @@
             // fix3 P1-3: each label where it hides no other bar, node or label (see placeLabels);
             // its frame carries its bar's colour, so a label always names its own bar
             var spots = placeLabels(items, barList, placed.map(function (q) { return px(lay.node[q.path]); }),
-                                    { rowPx: rowPx, x0: 0, x1: plotW, y0: 0, y1: drawPx + GAP_PX - 2 });
+                                    { rowPx: rowPx, x0: 0, x1: plotW, y0: -GAP_PX + 18, y1: drawPx });
             items.forEach(function (it) {
                 var sp = spots[it.pair];
                 if (!sp) { hidden++; return; }
@@ -856,23 +922,23 @@
                           marker: { size: 28, color: card, line: { color: ink, width: 1.2 } }, hovertemplate: '%{hovertext}<extra></extra>', meta: 'nodes' });
             // user-view sweep: the bar labels are bare numbers (a unit on each one would push
             // labels to hover only), so the drawing names their unit once
-            if (items.length) annotations.push({ xref: 'paper', yref: 'paper', x: 1, y: dd, xanchor: 'right', yanchor: 'top', showarrow: false,
+            if (items.length) annotations.push({ xref: 'paper', yref: 'paper', x: 1, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false,
                                                  text: 'bar labels: GHz', font: { size: SMALL_FONT, color: muted }, name: 'bar-unit' });
             if (lay.mode === 'logical') {
-                annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: dd, xanchor: 'left', yanchor: 'top', showarrow: false,
+                annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'left', yanchor: 'bottom', showarrow: false,
                                    text: esc(lay.note), font: { size: SMALL_FONT, color: muted }, name: 'logical-note' });
             }
         }
         // the hover highlight: two overlay traces, restyled by index (never a re-render)
         var segIdx = traces.length;
         traces.push({ type: 'scatter', mode: 'lines', x: [], y: [], hoverinfo: 'skip', showlegend: false, opacity: 0.45,
-                      line: { color: 'rgba(0,0,0,0)', width: 9 }, meta: 'highlight-seg' });
+                      line: { color: CLEAR, width: 9 }, meta: 'highlight-seg' });
         var barIdx = traces.length;
         traces.push({ type: 'scatter', mode: 'lines', x: [], y: [], yaxis: drawing ? 'y2' : 'y', hoverinfo: 'skip', showlegend: false,
-                      opacity: 0.45, line: { color: 'rgba(0,0,0,0)', width: 14 }, meta: 'highlight-bar' });
+                      opacity: 0.45, line: { color: CLEAR, width: 14 }, meta: 'highlight-bar' });
         var lossDrawn = !!(G.fillX.length || O.lineX.length);
         if (lossDrawn || bars.x.length) {
-            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
+            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: colHi, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
                                text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: SMALL_FONT, color: muted }, name: 'scale' });
         }
 
@@ -963,10 +1029,10 @@
                      ticktext: qs.map(function (q) { return esc(q.name); }),
                      range: [0, n], showgrid: false, zeroline: false, fixedrange: true, side: drawing ? 'top' : 'bottom',
                      anchor: 'y', tickfont: { size: SMALL_FONT } },
-            yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [colLo, 1] }, yr ? { range: yr, autorange: false } : {}),
+            yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [0, colHi] }, yr ? { range: yr, autorange: false } : {}),
             shapes: shapes, annotations: annotations
         });
-        if (drawing) L.yaxis2 = { domain: [0, dd], range: y2r, visible: false, fixedrange: true, anchor: 'x', showgrid: false, zeroline: false };
+        if (drawing) L.yaxis2 = { domain: [drawLo, 1], range: y2r, visible: false, fixedrange: true, anchor: 'x', showgrid: false, zeroline: false };
         el.setAttribute('data-segments', String(m.segments.length));
         el.setAttribute('data-layout', lay.mode);
         el.setAttribute('data-drawn-op', shown || m.op || '');
@@ -974,7 +1040,7 @@
         var sel = selectionShapes(overlay, selPath);
         L.shapes = sel.concat(L.shapes || []);
         overlay.sel = selPath;
-        root._czH = H;
+        root._czH = mapHeight(el);
         root._czW = plotW;
         function current() { return my === pseq && document.body.contains(root); }
         return window.requirePlotly().then(function () {
@@ -989,6 +1055,9 @@
             el._czpMapClick = el._ev || el.on;
             el.on('plotly_click', function (ev) {
                 var pt = ev && ev.points && ev.points[0], cd = pt && pt.customdata;
+                if (Array.isArray(cd) && pt.data && (pt.data.meta === 'pair-hit' || pt.data.meta === 'bars')) {
+                    root._czTogglePair(cd[1]); return;
+                }
                 var path = Array.isArray(cd) ? cd[0] : cd;
                 if (typeof path === 'string' && path.indexOf('qubit_pairs.') === 0) {
                     root.dispatchEvent(new CustomEvent('czp:open', { detail: { op: path } }));

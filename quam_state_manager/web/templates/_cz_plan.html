@@ -73,7 +73,7 @@
 {% endif %}
 <section class="czp-map-box" aria-label="Chip frequency map">
     <div class="czp-controls czp-map-head">
-        <h3 class="czp-title" title="Each pair's operating point on one frequency axis, the chip drawn below">Chip frequency map</h3>
+        <h3 class="czp-title" title="Click a chip edge to show or hide its pair's frequencies below">Chip frequency map</h3>
         <label>Operation
             <select id="czp-map-op" aria-label="Operation drawn for every pair" title="cz per pair: each pair's cz, else its first CZ operation"><option value="">cz per pair</option></select>
         </label>
@@ -84,12 +84,21 @@
             <select id="czp-map-scale" aria-label="Population loss scale of each column"><option value="0.25" selected>0-25 % (paper)</option><option value="0.5">0-50 %</option><option value="1">0-100 %</option></select>
         </label>
     </div>
+    <div class="czp-controls">
+        <button type="button" id="czp-map-show" class="btn-sm outline">Show all</button>
+        <button type="button" id="czp-map-hide" class="btn-sm outline">Hide all</button>
+        <span id="czp-map-count" role="status" aria-live="polite"></span>
+    </div>
     <div id="czp-map" class="czp-map"></div>
     <details id="czp-map-detail" class="czp-map-detail">
         <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
         <div id="czp-map-detail-body"></div>
     </details>
     <div class="czp-map-footer muted">
+    <details class="ui-disclosure">
+        <summary class="ui-disclosure-summary">Choose pairs (keyboard accessible)</summary>
+        <div id="czp-map-pairs" class="czp-controls" role="group" aria-label="Pairs shown in frequency map"></div>
+    </details>
         <details id="czp-map-key-box">
             <summary>Key</summary>
             <p id="czp-map-key" class="czp-map-key"></p>
