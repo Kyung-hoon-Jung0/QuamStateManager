@@ -125,6 +125,7 @@
         if (!this.checked) return;
         var body = params(); body.hardware_ok = true;
         body.opx = {host: inputVal('opx_host'), cluster: inputVal('opx_cluster'), port: inputVal('opx_port')};
+        body.max_s = inputVal('max_s');
         post('/port-test/confirm', body).then(function (j) {
             if (seq !== confirmSeq) return;
             if (j.ok) { confirmToken = j.token; msg('Hardware confirmation ready for 60 seconds, one run.'); }
@@ -154,12 +155,33 @@
         post('/port-test/stop', {id: runId}).then(function () { msg('Stopping…'); });
     });
 
-    function running(on) { $('#pt-run').hidden = on; $('#pt-stop').hidden = !on; }
+    var closeBtn = $('#pt-close-open');
+    function showCloseButton(on) { if (closeBtn) closeBtn.hidden = !on; }
+    if (closeBtn) closeBtn.addEventListener('click', function () {
+        if (!runId) return;
+        msg('Checking open QMs on this target…');
+        post('/port-test/close-open', {id: runId}).then(function (j) {
+            if (!j.ok) { msg(j.error || 'Could not close matching QMs.', true); return; }
+            var openCount = (j.open_qms || []).length;
+            var closed = (j.closed_qms || []);
+            var closedLabel = closed.length ? closed.join(', ') : 'none';
+            msg('Unknown state cleared: checked ' + openCount + ' open QMs, closed matching QMs: ' + closedLabel + '.');
+            runId = null;
+            running(false);
+        });
+    });
+
+    function running(on) {
+        $('#pt-run').hidden = on;
+        $('#pt-stop').hidden = !on;
+        if (!on) showCloseButton(false);
+    }
     function poll() {
         clearTimeout(pollTimer);
         if (!runId || !document.body.contains(root)) return;
         fetch('/port-test/status?id=' + encodeURIComponent(runId)).then(function (r) { return r.json(); }).then(function (st) {
             if (st.state === 'running') {
+                showCloseButton(!!st.unknown_qm_state);
                 msg((st.cleanup_pending && !st.stopping ? 'Not confirmed closed: ' : '') +
                     (st.stopping ? 'Stopping (' + st.stop_why + ')… ' : 'Running: ') + (st.phase || 'starting') +
                     (st.qm_id ? ' · QM ' + st.qm_id : '') +

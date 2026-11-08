@@ -270,6 +270,39 @@ class TestRuns:
         assert (holder[0].work / "stop").exists()
         assert r.current["stop_why"] == "the page was left"
 
+    def test_unknown_opening_qm_state_is_reported_and_can_be_cleared(self, inst, monkeypatch):
+        r = ptr.Runs(inst)
+        holder = []
+        rid = r.start("py", "x", {"mode": "opx", "target": {"host": "h"}}, {"target": "opx"},
+                      popen=lambda a, **k: holder.append(_FakeProc(a)) or holder[-1])["id"]
+        (holder[0].work / "_status.json").write_text(json.dumps({
+            "phase": "opening a QM",
+            "qm_config_fingerprint": "abc123",
+            "qm_config_name": "port-test:cw:chip:q1.xy",
+        }), encoding="utf-8")
+        holder[0].rc = 1
+        st = r.status(rid)
+        assert st["unknown_qm_state"] is True
+        assert st["phase"] == "unknown state: the QM may be open"
+
+        def fake_run(argv, **kwargs):
+            assert "--close-matching" in argv
+            (holder[0].work / "_close_matching.json").write_text(json.dumps({
+                "ok": True,
+                "open_qms": [
+                    {"qm_id": "a", "fingerprint": "abc123", "matches": True},
+                    {"qm_id": "b", "fingerprint": "zzz", "matches": False},
+                ],
+                "closed_qms": ["a"],
+            }), encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        out = r.close_matching_open_qms(rid)
+        assert out["closed_qms"] == ["a"] and r.current is None
+        cleared = json.loads((holder[0].work / "_status.json").read_text(encoding="utf-8"))
+        assert cleared["cleaned"] is True
+
 
 @pytest.fixture
 def client(tmp_path, monkeypatch, kr):

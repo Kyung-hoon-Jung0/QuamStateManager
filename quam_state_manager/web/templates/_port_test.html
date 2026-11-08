@@ -106,12 +106,15 @@
     <button type="button" class="btn-sync" id="pt-save">Save target</button>
     <button type="button" class="btn-sync" id="pt-run">&#9654; Run</button>
     <button type="button" class="btn-sync pt-stop" id="pt-stop" hidden>&#9632; Stop</button>
+    <button type="button" class="btn-sync" id="pt-close-open" hidden>Close our port-test QMs</button>
     <span id="pt-msg" class="ui-note" aria-live="polite"></span>
   </div>
   <p class="ui-note">Leaving this page stops a running test. The simulator shows the DIGITAL samples the
     port is fed (at baseband for a MW-FEM, before up-conversion): the peak amplitude and length, not the
     analog power at RF; an LF port's samples include its own filters. A loopback simulation models the cable
-    from the output to the input, so the simulated raw ADC trace is shown too.</p>
+    from the output to the input, so the simulated raw ADC trace is shown too. If <code>open_qm()</code> never
+    returns and a QM appears later, SM cannot attribute or close that unrecorded QM automatically. Between a
+    hard kill of both SM and the runner and the next SM start, no process can halt an in-flight hardware job.</p>
   <div id="pt-result"></div>
 </section>
 {% endif %}

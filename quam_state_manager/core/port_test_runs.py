@@ -256,6 +256,16 @@ def _needs_cleanup(run: dict) -> bool:
     return bool(st.get("qm_id")) or st.get("phase") == "opening a QM"
 
 
+def _is_unknown_qm_state(run: dict, st: dict | None = None) -> bool:
+    """Runner ended while opening a QM before recording its id."""
+    if not run.get("hardware_target"):
+        return False
+    data = st if isinstance(st, dict) else _read(run["work"] / "_status.json")
+    if data.get("cleaned") or _read(run["work"] / "_recovery.json").get("ok"):
+        return False
+    return data.get("phase") == "opening a QM" and not data.get("qm_id")
+
+
 class Runs:
     """The one port test running in this SM process."""
 
@@ -304,6 +314,9 @@ class Runs:
             if cur and cur["proc"].poll() is None:
                 raise RuntimeError("Another port test is still running; stop it first.")
             if cur and _needs_cleanup(cur):
+                if _is_unknown_qm_state(cur):
+                    raise RuntimeError("A previous run is in an unknown state: the QM may be open. "
+                                       "Use 'Close our port-test QMs' first.")
                 raise RuntimeError("The previous hardware run's QM is not confirmed closed yet; "
                                    "press Stop to close it first.")
             rid = time.strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
@@ -352,6 +365,41 @@ class Runs:
         except (OSError, subprocess.TimeoutExpired):
             ok = False
         return ok and not _needs_cleanup(run)
+
+    def close_matching_open_qms(self, rid: Optional[str] = None) -> dict:
+        """List open QMs on the run target and close only config-matching ones."""
+        run = self.current
+        if not run or (rid and run["id"] != rid):
+            raise RuntimeError("No matching port test run is active.")
+        if run["proc"].poll() is None:
+            raise RuntimeError("Stop the running test first.")
+        if not _is_unknown_qm_state(run):
+            raise RuntimeError("This action is only for an unknown opening-QM state.")
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        info_path = run["work"] / "_close_matching.json"
+        try:
+            result = subprocess.run(
+                [run["python"], str(RUNNER), str(run["work"] / "script.py"), str(run["work"]), "--close-matching"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=RECOVER_TIMEOUT_S,
+                creationflags=flags,
+            )
+            data = _read(info_path)
+            if result.returncode != 0 or not data.get("ok"):
+                raise RuntimeError(data.get("error") or "Could not list/close matching open QMs.")
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"Could not list/close matching open QMs ({type(exc).__name__}).") from None
+        st = _read(run["work"] / "_status.json")
+        st["cleaned"] = True
+        st["phase"] = "unknown state cleared"
+        _write(run["work"] / "_status.json", st)
+        with self._lock:
+            if self.current is run:
+                self.current = None
+        data["cleared_run"] = run["id"]
+        return data
 
     @staticmethod
     def _close_stdin(run: dict) -> None:
@@ -425,15 +473,18 @@ class Runs:
         st = _read(run["work"] / "_status.json")
         alive = run["proc"].poll() is None
         unclean = _needs_cleanup(run)
+        unknown = (not alive) and unclean and _is_unknown_qm_state(run, st)
         out = {"id": run["id"], "state": "running" if alive or unclean else "done",
                "phase": st.get("phase"), "detail": st.get("detail"),
                "qm_id": st.get("qm_id"), "job_id": st.get("job_id"),
                "cleanup_pending": unclean and not alive, "resumed": bool(run.get("resumed")),
                "recovery": _read(run["work"] / "_recovery.json"), "meta": run["meta"],
                "elapsed_s": round(time.time() - run["started"], 1),
-               "stopping": run["stop_at"] is not None, "stop_why": run.get("stop_why")}
+               "stopping": run["stop_at"] is not None, "stop_why": run.get("stop_why"),
+               "unknown_qm_state": unknown}
         if not alive and unclean:
-            out["phase"] = "the runner ended; closing our QM"
+            out["phase"] = ("unknown state: the QM may be open"
+                            if unknown else "the runner ended; closing our QM")
         if not alive and not unclean:
             res = _read(run["work"] / "_result.json")
             if not res:

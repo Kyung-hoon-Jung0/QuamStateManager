@@ -23,6 +23,8 @@ on the customer's own machine after a download.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import pprint
 from datetime import datetime, timezone
@@ -52,6 +54,20 @@ def dbm(fsp: Optional[float], amp: Optional[float]) -> Optional[float]:
         return float(fsp) + 20.0 * math.log10(abs(float(amp)))
     except (TypeError, ValueError):
         return None
+
+
+def _canon(value):
+    if isinstance(value, dict):
+        return {str(k): _canon(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_canon(v) for v in value]
+    return value
+
+
+def config_fingerprint(config: dict) -> str:
+    """Stable SHA-256 of a config dict for "same test config" checks."""
+    raw = json.dumps(_canon(config), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _out_port(el: dict) -> tuple[Optional[str], Optional[list]]:
@@ -382,6 +398,8 @@ def build(config: dict, element: str, test: str, basis: str, *,
         "loopback": loopback, "pulse_ns": int(p.get("length") or 0) if test != "cw" else CW_PULSE_NS,
         "time_of_flight": info["time_of_flight"],
         "notes": notes,
+        "config_fingerprint": config_fingerprint(cfg),
+        "config_name": f"port-test:{test}:{basis}:{element}",
     }
     return cfg, plan
 
@@ -442,6 +460,7 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "") -> str:
         inputs=1 if plan["kind"] == "mw" else 2,
         loopback=repr([tuple(c) for c in plan.get("loopback") or []]),
         pulse_ns=int(plan.get("pulse_ns") or 0), tof=int(plan.get("time_of_flight") or 0),
+        config_fp=plan["config_fingerprint"], config_name=plan["config_name"],
     )
 
 
@@ -472,8 +491,26 @@ ADC_INPUTS = {inputs}  # an MW-FEM input is one complex input; LF / OPX+ have tw
 LOOPBACK = {loopback}  # simulator only: the out->in cable (from ..., to ...)
 PULSE_NS = {pulse_ns}
 TIME_OF_FLIGHT_NS = {tof}
+CONFIG_FINGERPRINT = {config_fp!r}
+CONFIG_NAME = {config_name!r}
 #: job states that hold no port; ANY other (or unknown) status counts as busy
-TERMINAL = ("done", "completed", "canceled", "cancelled", "error", "failed")
+TERMINAL = ("done", "completed", "canceled", "cancelled", "failed")
+
+
+def _canon(value):
+    if isinstance(value, dict):
+        return {{str(k): _canon(v) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))}}
+    if isinstance(value, (list, tuple)):
+        return [_canon(v) for v in value]
+    return value
+
+
+def config_fingerprint(config):
+    import hashlib
+    import json
+
+    raw = json.dumps(_canon(config), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def build_program(shots=None):
@@ -528,7 +565,10 @@ def busy_jobs(qmm):
         for job in jobs:
             status = getattr(job, "status", None)
             if callable(status):
-                status = status()
+                try:
+                    status = status()
+                except Exception:
+                    status = None
             if str(status).strip().lower() not in TERMINAL:
                 busy.append((str(qm_id), str(getattr(job, "id", ""))))
     return busy
@@ -606,7 +646,7 @@ def run_on_hardware(qmm, should_stop=lambda: False, max_s=120.0, log=print,
         raise RuntimeError(f"The OPX is busy (open QM / job: {{busy}}); not running.")
     if should_stop():
         raise RuntimeError("Stopped before opening a QM.")
-    record(phase="opening a QM")
+    record(phase="opening a QM", qm_config_fingerprint=CONFIG_FINGERPRINT, qm_config_name=CONFIG_NAME)
     def opened():
         qm = qmm.open_qm(CONFIG, close_other_machines=False)
         record(qm_id=str(qm.id))

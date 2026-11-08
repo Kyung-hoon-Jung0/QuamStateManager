@@ -1,7 +1,8 @@
 """Run one port-test script in the chip's env (spawned by core/port_test_runner.py).
 
     python run_port_test.py SCRIPT WORK_DIR             (request JSON on stdin)
-    python run_port_test.py SCRIPT WORK_DIR --recover   (halt + close OUR QM)
+    python run_port_test.py SCRIPT WORK_DIR --recover         (halt + close OUR QM)
+    python run_port_test.py SCRIPT WORK_DIR --close-matching  (close matching open QMs)
 
 The request (the first stdin line, never on disk) is ``{"mode": "saas"|"opx",
 "target": {...}, "max_s": float, "sim_ns": int}``; it carries the credentials,
@@ -11,8 +12,10 @@ killed), asks the run to halt and close its QM -- so a run never outlives SM.
 A file ``WORK_DIR/stop`` asks the same. Progress, and as soon as they are
 known the QM id and job id, go to ``WORK_DIR/_status.json``; the answer to
 ``WORK_DIR/_result.json``. ``--recover`` reconnects to the recorded QM only
-(never another one) and halts + closes it. The script module is the same text
-the user downloads.
+(never another one) and halts + closes it. ``--close-matching`` lists open QMs
+on the same target and closes only those whose config fingerprint equals this
+port-test config fingerprint. The script module is the same text the user
+downloads.
 """
 from __future__ import annotations
 
@@ -145,10 +148,43 @@ def recover_main(script, work):
         return 1
 
 
+def close_matching(mod, qmm, ids):
+    fp = str(ids.get("qm_config_fingerprint") or "").strip()
+    if not fp:
+        raise RuntimeError("No config fingerprint was recorded for this run.")
+    opened, closed = [], []
+    for qm_id in mod.bounded(qmm.list_open_qms):
+        qid = str(qm_id)
+        qm = mod.bounded(lambda qid=qid: qmm.get_qm(qid))
+        cfg = mod.bounded(qm.get_config)
+        got = mod.config_fingerprint(cfg)
+        opened.append({"qm_id": qid, "fingerprint": got, "matches": got == fp})
+        if got == fp:
+            mod.bounded(qm.close)
+            closed.append(qid)
+    return {"target_fingerprint": fp, "open_qms": opened, "closed_qms": closed}
+
+
+def close_matching_main(script, work):
+    out = work / "_close_matching.json"
+    try:
+        mod = _load(script)
+        run = json.loads((work / "_run.json").read_text(encoding="utf-8"))
+        ids = json.loads((work / "_status.json").read_text(encoding="utf-8"))
+        data = close_matching(mod, connection(mod, run["hardware_target"]), ids)
+        _write(out, {"ok": True, **data})
+        return 0
+    except Exception as exc:
+        _write(out, {"ok": False, "error": str(exc)})
+        return 1
+
+
 def main() -> int:
     script, work = Path(sys.argv[1]), Path(sys.argv[2])
     if "--recover" in sys.argv:
         return recover_main(script, work)
+    if "--close-matching" in sys.argv:
+        return close_matching_main(script, work)
     status = work / "_status.json"
     status_data = {}
     status_lock = threading.Lock()

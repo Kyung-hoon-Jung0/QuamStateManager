@@ -158,6 +158,20 @@ def _binding(plan, target):
     return hashlib.sha256(json.dumps([plan, target], sort_keys=True).encode()).hexdigest()
 
 
+def _hardware_seconds(data) -> float:
+    try:
+        seconds = float(data.get("max_s", ptr.MAX_RUN_S))
+        if not 0 < seconds <= 3600:
+            raise ValueError
+        return seconds
+    except (TypeError, ValueError):
+        raise pt.PortTestError("Hardware duration must be in (0, 3600] seconds.") from None
+
+
+def _confirm_binding(plan: dict, target: dict, seconds: float) -> str:
+    return _binding({"plan": plan, "seconds": float(seconds)}, target)
+
+
 @port_test_bp.route("/port-test/confirm", methods=["POST"])
 def port_test_confirm():
     data = json_object()
@@ -165,6 +179,7 @@ def port_test_confirm():
         return jsonify(ok=False, error="Confirm the fridge-line warning."), 400
     try:
         _, plan = _build(data)
+        seconds = _hardware_seconds(data)
     except pt.PortTestError as exc:
         return jsonify(ok=False, error=str(exc)), 400
     owner = session.setdefault("port_test_owner", secrets.token_urlsafe(24))
@@ -173,7 +188,7 @@ def port_test_confirm():
     with manager._lock:
         now = time.monotonic()
         manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
-        manager.confirmations[token] = (now + 60, owner, _binding(plan, data.get("opx") or {}))
+        manager.confirmations[token] = (now + 60, owner, _confirm_binding(plan, data.get("opx") or {}, seconds))
     return jsonify(ok=True, token=token, expires_s=60)
 
 
@@ -194,21 +209,19 @@ def port_test_run():
     s = ptr.load_settings(inst)
     s["target"] = target
     if target == "opx":
+        try:
+            seconds = _hardware_seconds(data)
+        except pt.PortTestError as exc:
+            return jsonify(ok=False, error=str(exc)), 400
         with runs()._lock:
             confirmation = runs().confirmations.pop(str(data.get("confirm_token") or ""), None)
         if (not confirmation or confirmation[0] <= time.monotonic()
                 or confirmation[1] != session.get("port_test_owner")
-                or confirmation[2] != _binding(plan, s["opx"])):
+                or confirmation[2] != _confirm_binding(plan, s["opx"], seconds)):
             return jsonify({"ok": False, "error": "Confirm the fridge-line warning before a hardware run."}), 400
         host = str(s["opx"].get("host") or "").strip()
         if not host:
             return jsonify({"ok": False, "error": "Set the OPX host first."}), 400
-        try:
-            seconds = float(data.get("max_s", ptr.MAX_RUN_S))
-            if not 0 < seconds <= 3600:
-                raise ValueError
-        except (TypeError, ValueError):
-            return jsonify(ok=False, error="Hardware duration must be in (0, 3600] seconds."), 400
         req = {"max_s": seconds, "mode": "opx", "target": {"host": host, "cluster": s["opx"].get("cluster") or None,
                                          "port": s["opx"].get("port") or None}}
     else:
@@ -240,6 +253,16 @@ def port_test_stop():
     rid = (data.get("id") if isinstance(data, dict) else None) or request.args.get("id")
     why = "the page was left" if request.args.get("left") == "1" else "Stop pressed"
     return jsonify({"ok": True, "stopping": runs().stop(rid, why)})
+
+
+@port_test_bp.route("/port-test/close-open", methods=["POST"])
+def port_test_close_open():
+    data = json_object(dict)
+    rid = (data.get("id") if isinstance(data, dict) else None) or request.args.get("id")
+    try:
+        return jsonify({"ok": True, **runs().close_matching_open_qms(rid)})
+    except RuntimeError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
 
 
 @port_test_bp.route("/port-test/settings", methods=["POST"])

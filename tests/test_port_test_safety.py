@@ -155,15 +155,19 @@ class TestBusyCheck:
             mod.run_on_hardware(qmm, max_s=1)
         assert not qmm.opened
 
-    @pytest.mark.parametrize("status", ["Done", "Canceled", "Error", "completed", "cancelled",
+    @pytest.mark.parametrize("status", ["Done", "Canceled", "completed", "cancelled",
                                         "FAILED", " done "])
     def test_v2_terminal_statuses_are_idle(self, tmp_path, fake_qm, status):
         mod, _ = script_module(tmp_path)
         assert mod.busy_jobs(Qmm([QmV2("other", [Job(status)])])) == []
 
+    def test_v2_error_status_is_treated_as_busy(self, tmp_path, fake_qm):
+        mod, _ = script_module(tmp_path)
+        assert mod.busy_jobs(Qmm([QmV2("other", [Job("Error")])])) == [("other", "j1")]
+
     @pytest.mark.parametrize("pending,running,busy", [
         ([], None, False), ([Job("pending")], None, True), ([], Job("running"), True),
-        ([], Job("loading"), True), ([], Job("completed"), False)])
+        ([], Job("loading"), True), ([], Job("completed"), False), ([], Job("error"), True)])
     def test_v1_queue_and_running_job(self, tmp_path, fake_qm, pending, running, busy):
         mod, _ = script_module(tmp_path)
         assert bool(mod.busy_jobs(Qmm([QmV1("old", pending, running)]))) is busy
@@ -298,6 +302,16 @@ class TestRunnerLifetime:
         with pytest.raises(RuntimeError):
             runner.recover(mod, Qmm([peer]), {"phase": "opening a QM"})
         assert peer.closed == 0
+
+    def test_close_matching_lists_open_qms_and_closes_only_matching_fingerprints(self, tmp_path, fake_qm):
+        mod, _ = script_module(tmp_path)
+        ours = QmV2("ours", config={"fp": "match"})
+        peer = QmV2("peer", config={"fp": "other"})
+        mod.config_fingerprint = lambda cfg: cfg["fp"]
+        info = runner.close_matching(mod, Qmm([ours, peer]), {"qm_config_fingerprint": "match"})
+        assert [row["qm_id"] for row in info["open_qms"]] == ["ours", "peer"]
+        assert info["closed_qms"] == ["ours"]
+        assert ours.closed == 1 and peer.closed == 0
 
 
 def _hw_run(tmp_path, procs, status, cls=None):
@@ -539,6 +553,12 @@ class TestConfirmToken:
         tok = _confirm(client).get_json()["token"]
         client.post("/port-test/settings", json={"opx": {"host": "10.0.0.2"}}, headers=H)
         r = client.post("/port-test/run", json={**RUN, "confirm_token": tok}, headers=H)
+        assert r.status_code == 400 and not client.started
+
+    def test_a_token_is_bound_to_the_confirmed_duration(self, client):
+        _set_opx(client)
+        tok = _confirm(client, {**RUN, "max_s": "120"}).get_json()["token"]
+        r = client.post("/port-test/run", json={**RUN, "max_s": "180", "confirm_token": tok}, headers=H)
         assert r.status_code == 400 and not client.started
 
     def test_the_confirm_needs_the_tick(self, client):
