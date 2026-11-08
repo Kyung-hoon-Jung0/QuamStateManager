@@ -144,8 +144,9 @@ def _plan_from_form(store):
     kind = request.form.get("kind", "qubit")
     if request.form.get("op") == "remove":
         ent = (request.form.get("id") or "").strip()
-        return (dr.plan_remove_pair(m, ent) if kind == "pair"
-                else dr.plan_remove_qubit(m, ent))
+        also = [a for a in request.form.getlist("also") if a]
+        return (dr.plan_remove_pair(m, ent, also) if kind == "pair"
+                else dr.plan_remove_qubit(m, ent, also))
     if kind == "pair":
         return da.plan_pair(m, request.form.get("control", ""), request.form.get("target", ""),
                             flux=_port_arg("flux"), inv=_inv(store))
@@ -197,10 +198,13 @@ def diagram_add_stage():
         if getattr(store, "mutation_seq", 0) != seq0:
             return _status("The chip changed while it was being checked: review again.",
                            "warning", 409)
-        if removing:
-            return DR.stage_removal(store, modifier, plan)
         from flask import g
         lab_info = g.lab_info = {"notes": []}
+        if removing:
+            refused = DR.removal_lab_refusal(store, plan, lab_info)
+            if refused is not None:
+                return refused
+            return R._lab_toast(DR.stage_removal(store, modifier, plan))
         refusal = R._lab_write_refusal(store, plan["creates"], info=lab_info)
         if refusal:
             return _status(refusal[0], "error", 400)

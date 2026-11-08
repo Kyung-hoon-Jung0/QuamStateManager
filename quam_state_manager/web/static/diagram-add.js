@@ -354,6 +354,24 @@ window.DiagramAdd = (function () {
     });
   }
 
+  // "Delete together" on a removal the lab's code refused: the named paths
+  // join the removal form, which is reviewed (and env-checked) again whole
+  function together(btn) {
+    var form = document.getElementById("cm-rm-form");
+    if (!form) return;
+    var also = [];
+    try { also = JSON.parse(btn.getAttribute("data-also") || "[]"); } catch (e) { also = []; }
+    Array.prototype.forEach.call(form.querySelectorAll('input[name="also"]'),
+      function (i) { i.remove(); });
+    also.forEach(function (a) {
+      var i = document.createElement("input");
+      i.type = "hidden"; i.name = "also"; i.value = a;
+      form.appendChild(i);
+    });
+    btn.disabled = true;
+    if (form.requestSubmit) form.requestSubmit(); else form.submit();
+  }
+
   document.addEventListener("click", function (ev) {
     var t = ev.target;
     if (!t || !t.closest) return;
@@ -373,6 +391,8 @@ window.DiagramAdd = (function () {
     }
     var opt = t.closest('[data-cm-port-list] [role="option"][data-value]');
     if (opt) { choose(opt); return; }
+    var tg = t.closest("[data-cm-rm-together]");
+    if (tg) { together(tg); return; }
     var st = t.closest("[data-cm-add-stage]");
     if (st) stage(st);
   });

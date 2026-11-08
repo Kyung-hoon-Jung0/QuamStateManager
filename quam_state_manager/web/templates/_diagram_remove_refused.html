@@ -1,0 +1,13 @@
+{# A removal the lab's own code refuses (R._lab_write_refusal on every delete
+   path). When the check names what must go with it, the offer puts those paths into the
+   removal form (#cm-rm-form) and reviews it again ("Delete together", the Pulses page's and
+   the Json Tree's pattern): the bigger removal is checked again as a whole. #}
+<div class="ui-callout ui-callout--danger" data-cm-rm-lab-refused>
+  <p class="ui-callout-title">Not removed: your lab's own code refuses it.</p>
+  <pre class="cm-check-error">{{ message }}</pre>
+  {% if also %}
+  <p class="ui-callout-text">These must go with it, or they are left broken:</p>
+  <ul>{% for a in also %}<li><span class="ui-path">{{ a }}</span></li>{% endfor %}</ul>
+  <div class="ui-actions"><button type="button" class="btn-sm" data-cm-rm-together data-also='{{ (prev + also) | tojson }}'>Delete together with {{ also | length }} more</button></div>
+  {% endif %}
+</div>
