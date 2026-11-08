@@ -373,6 +373,41 @@ class TestLiveWalk:
         assert _live_f01(env) == 5.0e9 and _live_off(env) == 0.10
         assert ctx["store"].change_log[-1].group_id.startswith("jrn:")
 
+    def test_a_saved_old_gid_never_fuses_with_a_new_remove_on_apply(self, env):
+        """Regression (job undounit): an unapplied saved add can sit for a while,
+        then a new remove is applied. Even if the remove arrives with the same
+        gid, they are two gestures and must stay two undo units."""
+        c = env["client"]
+        ctx = _ctx(env)
+        store = ctx["store"]
+        modifier = ctx["modifier"]
+        gid = "grp-stale-add"
+
+        with store._lock:
+            modifier.create_subtree("qubits.qA1.old_saved_add", {"v": 1}, group_id=gid)
+        assert c.post("/save").status_code == 200
+        with store._lock:
+            modifier.delete_subtree("qubits.qA1.xy.ops.x180.amp", group_id=gid)
+
+        r = c.post("/state/apply-to-live")
+        assert r.status_code == 200, r.data
+        live = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert "old_saved_add" in live["qubits"]["qA1"]
+        assert "amp" not in live["qubits"]["qA1"]["xy"]["ops"]["x180"]
+
+        units, cur = undo_journal.load_state(_sidecar(env))
+        assert cur == len(units) == 2, [[e["path"] for e in u["entries"]] for u in units]
+
+        c.post("/undo")
+        live = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert "old_saved_add" in live["qubits"]["qA1"], "undo #1 must keep the older saved add"
+        assert live["qubits"]["qA1"]["xy"]["ops"]["x180"]["amp"] == 0.2, \
+            "undo #1 must revert only the newest remove"
+
+        c.post("/undo")
+        live = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert "old_saved_add" not in live["qubits"]["qA1"], "undo #2 must walk the older saved add"
+
     def test_a_staged_snapshot_never_rides_along(self, env):
         """review C2 (the worse half): a staged snapshot that AGREES on the
         undone path would have been pushed to the chip whole, unjournaled."""

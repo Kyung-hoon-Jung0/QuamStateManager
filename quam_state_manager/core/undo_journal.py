@@ -525,8 +525,14 @@ def append_units(path: str | Path, new_units: list[dict], *,
             # Ctrl+Z walks both back together.
             last = units[-1] if units else None
             gid = nu.get("gid")
+            last_meta = (last.get("meta") or {}) if isinstance(last, dict) else {}
+            # A SAVE-only unit is unapplied history: reusing its gid later must
+            # never fuse old unapplied content with a new gesture on apply.
+            # Keep the units separate so Ctrl+Z walks newest gesture first.
+            last_saved_only = bool(last_meta.get("saved")) and not bool(last_meta.get("hub"))
             if (last is not None and isinstance(gid, str) and gid
-                    and last.get("gid") == gid and not (last.get("meta") or {}).get("discarded")):
+                    and last.get("gid") == gid and not last_meta.get("discarded")
+                    and not last_saved_only):
                 last["entries"] = list(last.get("entries") or []) + list(nu.get("entries") or [])
                 continue
             units.append(nu)
