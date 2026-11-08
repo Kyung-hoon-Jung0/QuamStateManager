@@ -143,6 +143,11 @@ window.fetch = function (url, opts) {
   await window.EnvUpgrade.applyRenames();
   ok(cur() === '4' && /written to the chip now/.test(doc.getElementById('env-rename-result').textContent), 'FB-02: staged under Auto-Sync -> says it is on the chip');
   doc.getElementById('pending-tray').removeAttribute('data-auto-apply');
+  // the card re-renders after Stage without the review rows: the staged line survives
+  doc.getElementById('env-upgrade-report').innerHTML = '<p id="env-upgrade-status"></p>';
+  doc.dispatchEvent(new window.CustomEvent('htmx:afterSettle'));
+  ok(/^Staged 3 changes/.test(doc.getElementById('env-upgrade-status').textContent),
+     'FB-02: the staged line survives the card refresh (' + doc.getElementById('env-upgrade-status').textContent.slice(0, 40) + ')');
 
   if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
   console.log('all ok');

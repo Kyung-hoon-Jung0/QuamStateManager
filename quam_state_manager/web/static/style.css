@@ -16065,7 +16065,7 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 /* FB-02: the env-upgrade card's numbered review steps */
 .env-rename-steps { margin: .5rem 0 .4rem 1.2rem; padding: 0; font-size: .92em; color: var(--muted-color, inherit); }
 .env-rename-steps li { margin: .15rem 0; }
-.env-rename-steps li.is-current { color: var(--pico-color, inherit); font-weight: 600; }
+.env-rename-steps li.is-current { color: var(--pico-color, inherit); background: color-mix(in srgb, var(--pico-primary, #3b82f6) 14%, transparent); border-radius: 4px; padding: 0 .3rem; }
 .env-rename-steps li.is-current::marker { color: var(--pico-primary, #3b82f6); }
 .env-rename-steps li.is-done { opacity: .65; }
 #env-rename-why { align-self: center; }
@@ -16080,3 +16080,7 @@ tr.diag-row-in-group > td:first-child { padding-left: 1.4rem; }
 .diag-kinds { opacity: .8; }
 .diag-nopath { font-size: .85em; }
 .diag-action .diag-fix, .diag-action .diag-fix-all, .diag-action .diag-vack, .diag-action .diag-vack-revoke { margin: .1rem 0; }
+
+.env-staged-note { font-weight: 600; }
+.env-staged-go { margin-left: .4rem; }
+.env-staged-pulse { box-shadow: 0 0 0 3px var(--pico-primary, #3b82f6); }
