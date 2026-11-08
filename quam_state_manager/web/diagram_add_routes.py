@@ -17,6 +17,7 @@ import math
 from flask import jsonify, make_response, render_template, request
 
 from quam_state_manager.core import diagram_add as da
+from quam_state_manager.core import diagram_remove as dr
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.routes import bp
 
@@ -65,6 +66,23 @@ def _status(msg, level="error", code=400):
     return render_template("_status.html", message=msg, level=level), code
 
 
+def _feedline_ports(m, template):
+    """The readout ports the new qubit shares with its feedline (the
+    template's resonator line), for the rack's "shared feedline" mark."""
+    out = []
+    if not template:
+        return out
+    wq = ((m.get("wiring") or {}).get("qubits") or {}).get(template) or {}
+    for line, w in wq.items():
+        if not isinstance(w, dict) or "opx_input" not in w:
+            continue
+        for end, io in (("opx_output", "out"), ("opx_input", "in")):
+            r = da._wire_port(m, template, line, end)
+            if r:
+                out.append({"con": r[1], "fem": r[2], "port": r[3], "io": io, "kind": r[0]})
+    return out
+
+
 @bp.route("/diagram-add/panel")
 def diagram_add_panel():
     store = R._store()
@@ -93,6 +111,7 @@ def diagram_add_panel():
         d = da.qubit_defaults(m, feedline)
         if d.get("error"):
             return _status(d["error"], "warning", 200)
+        d["feedline_ports"] = _feedline_ports(m, d.get("template"))
         inv = _inv(store)
         drive = da.drive_candidates(m, inv, d["drive_rf"], prefer_fem=d["fem"], if_hz=d["if_hz"],
                                      prefer_band=d["band"])
@@ -123,6 +142,11 @@ def diagram_add_ports():
 def _plan_from_form(store):
     m = store.merged
     kind = request.form.get("kind", "qubit")
+    if request.form.get("op") == "remove":
+        ent = (request.form.get("id") or "").strip()
+        also = [a for a in request.form.getlist("also") if a]
+        return (dr.plan_remove_pair(m, ent, also) if kind == "pair"
+                else dr.plan_remove_qubit(m, ent, also))
     if kind == "pair":
         return da.plan_pair(m, request.form.get("control", ""), request.form.get("target", ""),
                             flux=_port_arg("flux"), inv=_inv(store))
@@ -154,11 +178,33 @@ def diagram_add_stage():
         plan = _plan_from_form(store)
         if plan.get("error"):
             return _status(plan["error"], "warning", 400)
+        removing = request.form.get("op") == "remove"
+        seq0 = getattr(store, "mutation_seq", 0)
         if dry:
-            return render_template("_diagram_add_review.html", plan=plan,
+            from quam_state_manager.web import diagram_remove_routes as DR
+            env = DR.env_name(DR.env_python())
+            if removing:
+                return render_template("_diagram_remove_review.html", plan=plan, env=env,
+                                       rows=dr.removal_rows(plan, store.merged))
+            return render_template("_diagram_add_review.html", plan=plan, env=env,
                                    rows=da.review_rows(plan), form=request.form)
+    # the env check runs outside the store lock (a subprocess, ~10 s)
+    from quam_state_manager.web import diagram_remove_routes as DR
+    verdict = DR.verdict_for(store, plan) or DR.check(store, plan)
+    if not verdict.get("ok") and request.form.get("override") != "1":
+        return _status("Not staged: " + (verdict.get("error") or "the check did not pass"),
+                       "error", 409)
+    with store._lock:
+        if getattr(store, "mutation_seq", 0) != seq0:
+            return _status("The chip changed while it was being checked: review again.",
+                           "warning", 409)
         from flask import g
         lab_info = g.lab_info = {"notes": []}
+        if removing:
+            refused = DR.removal_lab_refusal(store, plan, lab_info)
+            if refused is not None:
+                return refused
+            return R._lab_toast(DR.stage_removal(store, modifier, plan))
         refusal = R._lab_write_refusal(store, plan["creates"], info=lab_info)
         if refusal:
             return _status(refusal[0], "error", 400)
@@ -193,7 +239,7 @@ def diagram_add_stage():
     msg = render_template(
         "_status.html", level="success",
         message=(f"Added {what} to the working copy ({len(plan['creates'])} new "
-                 "subtrees). Review, then Apply to live; Ctrl+Z takes it all back."))
+                 "subtrees). " + DR.next_step() + " Ctrl+Z takes it all back."))
     resp = make_response(msg + "\n" + R._tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     # after the swap: the page refresh carries this result line over

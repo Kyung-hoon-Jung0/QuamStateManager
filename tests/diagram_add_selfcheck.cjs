@@ -138,8 +138,9 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     const w = world(true);
     await tick(); await tick();
     w.document.getElementById('cm-add-panel').innerHTML =
-      '<form id="cm-add-form"><input name="feedline" value="con1/1/1">' +
-      '<input name="drive_rf" data-cm-add-rf value="5"><select name="drive" data-cm-add-drive></select></form>';
+      '<div data-cm-box><form id="cm-add-form"><input name="feedline" value="con1/1/1">' +
+      '<input name="drive_rf" data-cm-add-rf value="5"><input type="hidden" name="drive" data-cm-port-value="drive" value="">' +
+      '<div role="listbox" data-cm-port-list="drive" data-io="out" data-role="xy" data-cm-add-drive></div></form></div>';
     const rf = w.document.querySelector('[data-cm-add-rf]');
     w._fetch.length = 0;
     for (const v of ['5.1', '5.12', '5.123e9']) {
@@ -153,37 +154,104 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     rf.value = '6e9';
     rf.dispatchEvent(new w.Event('input', { bubbles: true }));
     await tick(300);
-    const sel = w.document.querySelector('[data-cm-add-drive]');
+    const list = w.document.querySelector('[data-cm-add-drive]');
     const answer = (port) => ({ ok: true, json: () => w.Promise.resolve({ drive: [{ con: 'con1', fem: 3, port: port, label: 'p' + port, why: 'x' }], flux: [] }) });
     // the newer request answers first, the older one late: the late one must not land
     w._fetchAnswers[1](answer(7));
     await tick(); await tick();
     w._fetchAnswers[0](answer(2));
     await tick(); await tick();
-    ok(sel.options.length === 1 && sel.options[0].value === 'con1/3/7', 'only the newest answer lands: ' + (sel.options[0] && sel.options[0].value));
+    const opts = list.querySelectorAll('[role="option"]');
+    ok(opts.length === 1 && opts[0].getAttribute('data-value') === 'con1/3/7', 'only the newest answer lands: ' + (opts[0] && opts[0].getAttribute('data-value')));
+    ok(w.document.querySelector('input[name="drive"]').value === 'con1/3/7', 'the re-proposed list chooses its first port');
   }
 
-  // A different coupler output invalidates the old review before staging.
+  // ── "+ pair" stays pressed and says what to do, in words ─────────────────
   {
     const w = world(true);
     await tick(); await tick();
+    const g = w.document.querySelector('[data-cm="add:pair"]');
+    click(w, g);
+    ok(g.getAttribute('aria-pressed') === 'true' && g.classList.contains('cm-dir-ghost--armed'), '"+ pair" shows it is armed');
+    const h = w.document.querySelector('[data-cm-add-hint]');
+    ok(h && /click the control qubit/.test(h.textContent), 'the pick says what to do: ' + (h && h.textContent));
+    click(w, w.document.querySelector('[data-cm="add:pair"]'));
+    ok(g.getAttribute('aria-pressed') === 'false' && !w.document.querySelector('[data-cm-add-hint]'), 'a second press un-arms it');
+  }
+
+  // ── a port list lights its port on the rack: chosen, hovered, arrowed ────
+  {
+    const w = world(true);
+    await tick(); await tick();
+    const cell = (con, slot, port, io) => '<g class="iw-port" data-con="' + con + '" data-slot="' + slot +
+      '" data-port="' + port + '" data-io="' + io + '"><circle cx="10" cy="10" r="5"></circle></g>';
     w.document.getElementById('cm-add-panel').innerHTML =
-      '<form id="cm-add-form"><input name="kind" value="pair"><input name="dry" value="1">' +
-      '<select name="flux"><option value="con1/2/3">3</option><option value="con1/2/4">4</option></select></form>' +
-      '<div id="cm-add-review"><button data-cm-add-stage>Stage</button></div>';
-    const select = w.document.querySelector('select[name="flux"]');
-    select.value = 'con1/2/4';
-    select.dispatchEvent(new w.Event('change', { bubbles: true }));
-    ok(!w.document.querySelector('[data-cm-add-stage]'), 'changing the coupler port requires a fresh review');
-    w.document.getElementById('cm-add-review').innerHTML = '<button data-cm-add-stage>Stage</button>';
+      '<div data-cm-box><form id="cm-add-form"><input name="kind" value="pair"><input name="dry" value="1">' +
+      '<input type="hidden" name="flux" data-cm-port-value="flux" value="con1/5/7">' +
+      '<div role="listbox" tabindex="0" data-cm-port-list="flux" data-io="out" data-role="coupler">' +
+      '<div role="option" id="o1" data-value="con1/5/7" aria-selected="true">a</div>' +
+      '<div role="option" id="o2" data-value="con1/5/8" aria-selected="false">b</div>' +
+      '<div role="option" id="o3" data-value="con1/6/1" aria-selected="false">c</div></div></form>' +
+      '<div data-cm-rack><svg>' + cell('con1', 5, 7, 'out') + cell('con1', 5, 8, 'out') + cell('con1', 5, 8, 'in') +
+      cell('con1', 6, 1, 'out') + '</svg></div><span data-cm-rack-note></span>' +
+      '<div id="cm-add-review" data-cm-review><button data-cm-add-stage>Stage</button></div></div>';
+    const DA = w.DiagramAdd;
+    const rack = w.document.querySelector('[data-cm-rack]');
+    const id = (el) => el ? el.getAttribute('data-con') + '/' + el.getAttribute('data-slot') + '/' + el.getAttribute('data-port') + ':' + el.getAttribute('data-io') : null;
+    ok(id(DA.portCell(rack, 'con1/5/8', 'out')) === 'con1/5/8:out' && id(DA.portCell(rack, 'con1/5/8', 'in')) === 'con1/5/8:in',
+       'a port value maps to its own rack cell, output vs input kept apart');
+    DA.relight(rack, null);
+    const lit = (cls) => Array.prototype.map.call(rack.querySelectorAll('.' + cls), id).join(',');
+    ok(lit('cm-lit-sel') === 'con1/5/7:out', 'the chosen port is lit: ' + lit('cm-lit-sel'));
+    w.document.getElementById('o2').dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true }));
+    ok(lit('cm-lit-hover') === 'con1/5/8:out' && lit('cm-lit-sel') === 'con1/5/7:out', 'the hovered option lights too: ' + lit('cm-lit-hover'));
+    ok(rack.querySelector('.iw-port.cm-lit-hover').getAttribute('data-cm-lit-role') === 'coupler', 'the light carries the field role');
+    ok(rack.querySelectorAll('.cm-lit-ring--hover').length === 1, 'one ring marks the hovered port');
+    w.document.querySelector('[data-cm-port-list]').dispatchEvent(new w.MouseEvent('mouseout', { bubbles: true, relatedTarget: w.document.body }));
+    ok(lit('cm-lit-hover') === '' && rack.querySelectorAll('.cm-lit-ring--hover').length === 0, 'leaving the list returns to the chosen one');
+    const lb = w.document.querySelector('[data-cm-port-list]');
+    lb.focus();
+    const key = (k) => lb.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('ArrowDown'); key('ArrowDown');
+    ok(lit('cm-lit-hover') === 'con1/6/1:out', 'arrow focus counts as hover: ' + lit('cm-lit-hover'));
+    ok(!!w.document.querySelector('[data-cm-add-stage]'), 'arrowing does not choose');
+    key('Enter');
+    ok(w.document.querySelector('input[name="flux"]').value === 'con1/6/1' && lit('cm-lit-sel') === 'con1/6/1:out',
+       'Enter chooses, and the chosen light follows');
+    ok(!w.document.querySelector('[data-cm-add-stage]'), 'a new port requires a fresh review');
     w.htmx.values = (form) => Object.fromEntries(new w.FormData(form));
+    w.document.getElementById('cm-add-review').innerHTML = '<button data-cm-add-stage>Stage</button>';
+    click(w, w.document.querySelector('[data-cm-add-stage]'));
+    ok(w._ajax[w._ajax.length - 1][2].values.override === undefined, 'a plain stage never asks to override the env check');
+    w.document.getElementById('cm-add-review').innerHTML = '<button data-cm-add-stage data-override="1">Stage</button>';
     click(w, w.document.querySelector('[data-cm-add-stage]'));
     const call = w._ajax[w._ajax.length - 1];
     ok(call[0] === 'POST' && call[1] === '/diagram-add/stage' &&
-       call[2].values.flux === 'con1/2/4' && call[2].values.dry === '0',
-       'staging submits the selected coupler output');
+       call[2].values.flux === 'con1/6/1' && call[2].values.dry === '0' && call[2].values.override === '1',
+       'staging submits the chosen port, dry=0, and the override only from its own button');
+    ok(w.document.querySelector('input[name="dry"]').value === '1', 'the form itself stays in review mode');
+  }
+
+  // ── a removal lights the ports it frees ──────────────────────────────────
+  {
+    const w = world(true);
+    await tick(); await tick();
+    w.document.body.insertAdjacentHTML('beforeend', '<div id="cm-rm-slot"><div data-cm-box>' +
+      '<div id="cm-rm-rack" data-cm-rack data-light=\'[{"con":"con1","fem":3,"port":7,"io":"out"}]\'></div></div></div>');
+    w.renderInstrumentWiring = function (cid) {
+      w.document.getElementById(cid).innerHTML = '<svg><g class="iw-port" data-con="con1" data-slot="3" data-port="7" data-io="out"><circle cx="1" cy="1" r="2"></circle></g>' +
+        '<g class="iw-port" data-con="con1" data-slot="3" data-port="6" data-io="out"><circle cx="1" cy="1" r="2"></circle></g></svg>';
+    };
+    w._fetch.length = 0;
+    w._fetchAnswers.length = 0;
+    w.document.dispatchEvent(new w.CustomEvent('htmx:afterSwap', { detail: { target: w.document.getElementById('cm-rm-slot') } }));
     await tick();
-    ok(w.document.querySelector('input[name="dry"]').value === '1', 'staging restores review mode');
+    const i = w._fetch.indexOf('/api/instrument/data');
+    ok(i >= 0, 'the rack asks for the instrument data');
+    w._fetchAnswers[i]({ ok: true, json: () => w.Promise.resolve({ instrument: {}, wiring: {} }) });
+    await tick(); await tick();
+    const f = w.document.querySelectorAll('#cm-rm-rack .cm-lit-freed');
+    ok(f.length === 1 && f[0].getAttribute('data-port') === '7', 'exactly the freed port is lit');
   }
 
   if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }

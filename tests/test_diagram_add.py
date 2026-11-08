@@ -23,6 +23,19 @@ from quam_state_manager.core import diagram_add as da  # noqa: E402
 from quam_state_manager.core.regen_merge import _merged_doc, _resolved_leaves  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _env_check_passes(monkeypatch):
+    """Staging needs a passing env check (Quam.load + generate_config of the
+    result); these tests are about the plan and the staging, so the check
+    answers "loads" without spawning an env. Its own pins are in
+    tests/test_diagram_remove.py."""
+    from quam_state_manager.web import diagram_remove_routes as DR
+    monkeypatch.setattr(DR, "env_python", lambda: "python")
+    monkeypatch.setattr(DR, "run_env_check", lambda py, st, wi: {
+        "ok": True, "error": None, "config": {"elements": {}}, "seconds": 0.0})
+    DR._VERDICTS.clear()
+
+
 def _doc(n=100):
     s, w = make_chip(n)
     return _merged_doc(s, w), s, w

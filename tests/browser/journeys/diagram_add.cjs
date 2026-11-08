@@ -6,7 +6,8 @@
  * Opens the chip, goes to Qubits, clicks the "+" ghost stone, changes the
  * drive frequency (ports re-proposed), reviews, stages, checks the tray and
  * the server's working copy, adds a pair by clicking "+ pair" and two stones,
- * then presses Ctrl+Z twice. Real mouse events throughout. Prints one JSON
+ * waits for the env check (Quam.load + generate_config of the result), then
+ * presses Ctrl+Z twice. Real mouse events throughout. Prints one JSON
  * line of timings and verdicts; screenshots go to SHOT_DIR when it is set.
  */
 'use strict';
@@ -60,6 +61,7 @@ const W = +(process.env.SM_W || 1440), H = +(process.env.SM_H || 900);
   out.review_text = await p.ev(`document.querySelector('#cm-add-review .ui-callout-title').textContent.trim()`);
   await shot('3_review');
 
+  out.check_ms = await until(`!!document.querySelector('[data-cm-check-ok],[data-cm-check-fail]')`, 90000);
   t = Date.now();
   await clickSel('[data-cm-add-stage]');
   out.stage_ms = (await until(`document.querySelectorAll('.cm-node').length === ${n0 + 1} && /Added qubit/.test((document.getElementById('cm-add-panel')||{}).textContent||'')`)) >= 0 ? Date.now() - t : -1;
@@ -76,7 +78,7 @@ const W = +(process.env.SM_W || 1440), H = +(process.env.SM_H || 900);
   out.pair_panel_ms = (await until(`!!document.querySelector('#cm-add-form input[name=control]')`)) >= 0 ? Date.now() - t : -1;
   await shot('5_pair');
   await clickSel('#cm-add-form button[type=submit]');
-  await until(`!!document.querySelector('[data-cm-add-stage]')`);
+  await until(`!!document.querySelector('[data-cm-add-stage]')`, 90000);
   t = Date.now();
   await clickSel('[data-cm-add-stage]');
   out.pair_stage_ms = (await until(`/Added pair/.test((document.getElementById('cm-add-panel')||{}).textContent||'')`)) >= 0 ? Date.now() - t : -1;

@@ -1,0 +1,15 @@
+{# Only the removal: every subtree it deletes and every list it shortens. #}
+{% set s = plan.summary %}
+<div class="ui-callout ui-callout--note">
+  <p class="ui-callout-title">{{ plan.deletes | length }} subtree{{ 's' if plan.deletes | length != 1 }} deleted ({{ rows | selectattr('op', 'equalto', 'delete') | map(attribute='leaves') | sum }} values){% if plan.sets %}, {{ plan.sets | length }} name list{{ 's' if plan.sets | length != 1 }} shortened{% endif %}. Nothing else changes.</p>
+  <p class="ui-callout-text">{{ s.name }}{% if s.pairs_with %} and the pair{{ 's' if s.pairs_with | length != 1 }} {{ s.pairs_with | join(', ') }}{% endif %} leave the working copy; Ctrl+Z brings back all of it at once.</p>
+</div>
+<details class="ui-disclosure">
+  <summary class="ui-disclosure-summary">Every change <span class="ui-count">{{ rows | length }}</span></summary>
+  <div class="ui-disclosure-body">
+    <table class="ui-table">
+      {% for r in rows %}<tr><td class="ui-table-cell"><span class="ui-path">{{ r.path }}</span></td><td class="ui-table-cell">{% if r.op == 'delete' %}deleted ({{ r.leaves }} value{{ 's' if r.leaves != 1 }}){% else %}becomes {{ r.value | tojson }}{% endif %}</td></tr>{% endfor %}
+    </table>
+  </div>
+</details>
+{% set check_form = '#cm-rm-form' %}{% include '_diagram_check_slot.html' %}

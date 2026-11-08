@@ -721,6 +721,7 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
         "summary": {"kind": "qubit", "name": name, "template": tpl,
                     "feedline": feedline, "grid": d["grid"],
                     "drive": pick["label"], "drive_lo": pick["lo"], "drive_band": pick["band"],
+                    "drive_port": [con, fem, pid], "drive_rf": drive_rf,
                     "flux": (f"{flux[0]} slot {int(flux[1])} out {int(flux[2])}"
                              if flux is not None and d["has_flux"] else None),
                     "dropped": dropped, "notes": notes,
