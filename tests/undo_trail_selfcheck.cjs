@@ -123,6 +123,10 @@ ok(window.UndoTrail.steps().length === 8 && panel().querySelectorAll('.undo-trai
         : { left: 1247, top: 700, right: 1587, bottom: 940, width: 340, height: 240 };
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q4.T1', value: '1', from: '2' }] } }));
     ok(p.style.left === '313px' && p.style.right === 'auto', 'a button under the right corner moves the panel to the left corner');
+    apply.style.visibility = 'hidden';
+    d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q4.T2', value: '1', from: '2' }] } }));
+    ok(p.style.left === '' && p.style.right === '', 'a hidden action does not force a left dock');
+    apply.style.visibility = '';
     apply.getBoundingClientRect = () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 });
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q5.T1', value: '1', from: '2' }] } }));
     ok(p.style.left === '' && p.style.right === '', 'with the corner clear the panel docks right again');

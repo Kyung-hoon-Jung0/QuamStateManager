@@ -57,6 +57,13 @@ window.UndoTrail = (function () {
         for (var i = 0; i < btns.length; i++) {
             var b = btns[i];
             if (b.disabled || (_panel && _panel.contains(b))) continue;
+            var cs = window.getComputedStyle ? window.getComputedStyle(b) : null;
+            if (cs) {
+                // Component-map remove controls can exist in the DOM while hidden.
+                // Hidden/ghost controls must not force a left dock.
+                if (cs.visibility === 'hidden' || cs.display === 'none' || cs.opacity === '0' || cs.pointerEvents === 'none') continue;
+            }
+            if (b.getAttribute && b.getAttribute('aria-hidden') === 'true') continue;
             var r = b.getBoundingClientRect();
             if (r.width > 0 && r.height > 0 && _hits(rect, r)) return true;
         }
@@ -255,3 +262,5 @@ window.UndoTrail = (function () {
     return { push: push, goTo: goTo, steps: function () { return _steps.slice(); }, _render: render,
              _liftToasts: liftToasts };
 })();
+
+
