@@ -2130,6 +2130,11 @@ window.setFontSize = function(size) {
         var off = offscreenValues();
         var onScreen = checkedValues().length;
         var n = onScreen + off.length;
+        var float = document.getElementById('compare-float');
+        var sidebar = document.getElementById('sidebar');
+        var tick = n && float && float.hidden && sidebar && sidebar.scrollTop > 0
+            ? boxes().filter(function(b) { return b.checked; })[0] : null;
+        var tickTop = tick ? tick.getBoundingClientRect().top : 0;
         syncHiddenInputs(off);
         var cmp = document.querySelector('#compare-form .btn-compare');
         if (cmp) {
@@ -2160,6 +2165,7 @@ window.setFontSize = function(size) {
         }
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
+        renderFloat(off.concat(checkedValues()));
         // docs/161: the "what are these boxes for" line shows only while
         // nothing is ticked -- once a tick exists the count on the button
         // says it
@@ -2173,14 +2179,233 @@ window.setFontSize = function(size) {
                                        : hint.dataset.idle;
             hint.style.visibility = n > 1 ? 'hidden' : '';
         }
+        // Keep the tick stationary if the top form's Clear/hint wraps.
+        if (tick && tickTop >= sidebar.getBoundingClientRect().top) {
+            var extra = tick.getBoundingClientRect().top - tickTop;
+            if (extra > 0) sidebar.scrollTop += extra;
+        }
     }
     window.syncCompareCount = syncCompareCount;
 
+    /* FB-13: the floating bar. `sel` is the selection model exactly as the
+       Compare button counts it (off-view ticks first, then on-screen ones). */
+    function runLabel(v) {
+        // a tick's value is the run's quam_state folder: name the RUN
+        var s = String(v).replace(/[\\\/]+$/, '').replace(/[\\\/]quam_state$/i, '');
+        var base = s.split(/[\\\/]/).pop() || s;
+        var m = /^#?(\d+)[_\- ]?(.*)$/.exec(base);
+        return m ? { id: '#' + m[1], name: m[2] || '' } : { id: '', name: base };
+    }
+    var floatAnchor;
+    function updateFloatTop() {
+        var bar = document.getElementById('compare-float');
+        var sidebar = document.getElementById('sidebar');
+        if (!bar || !sidebar) return;
+        if (!floatAnchor) {
+            floatAnchor = bar.parentNode;
+            // Escape the sidebar's overflow and collapsed opacity/stacking context.
+            document.body.appendChild(floatAnchor);
+        }
+        floatAnchor.hidden = !!sidebar.closest('.sidebar-collapsed');
+        if (floatAnchor.hidden) { setPop(false); return; }
+        var sr = sidebar.getBoundingClientRect();
+        var header = null;
+        document.querySelectorAll('#sidebar-tree .tree-dir.tree-leafdir[open] > summary').forEach(function(hd) {
+            var group = hd.parentNode.getBoundingClientRect();
+            var hr = hd.getBoundingClientRect();
+            if (!header && hd.getClientRects().length && group.bottom > sr.top + hd.offsetHeight
+                    && hr.top < sr.bottom) header = hd;
+        });
+        var r = header ? header.getBoundingClientRect() : sr;
+        // Start beyond the sidebar: even a long date and its count stay readable.
+        floatAnchor.style.left = Math.max(sr.right, r.right) + 6 + 'px';
+        floatAnchor.style.top = Math.max(sr.top, r.top) + 'px';
+        floatAnchor.style.setProperty('--cf-height', (header ? r.height : 26) + 'px');
+        floatAnchor.style.fontSize = getComputedStyle(sidebar).fontSize;
+    }
+    function floatMoved() {
+        setPop(false);
+        updateFloatTop();
+    }
+    document.addEventListener('scroll', function(ev) {
+        if (ev.target.id === 'sidebar') floatMoved();
+    }, true);
+    document.addEventListener('toggle', function(ev) {
+        if (ev.target.closest && ev.target.closest('#sidebar-tree')) floatMoved();
+    }, true);
+    window.addEventListener('resize', floatMoved);
+    function watchFloatSize() {
+        var sidebar = document.getElementById('sidebar');
+        if (sidebar && window.ResizeObserver) {
+            var observer = new window.ResizeObserver(floatMoved);
+            observer.observe(sidebar);
+            var layout = sidebar.closest('.app-layout');
+            if (layout) new MutationObserver(floatMoved).observe(layout, { attributes: true, attributeFilter: ['class'] });
+        }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchFloatSize);
+    else watchFloatSize();
+    function renderFloat(sel) {
+        var bar = document.getElementById('compare-float');
+        if (!bar) return;
+        var n = sel.length;
+        bar.hidden = n === 0;
+        updateFloatTop();
+        bar.setAttribute('data-count', String(n));
+        var lb = document.getElementById('cf-list');
+        if (lb) {
+            lb.textContent = n + ' ▾';
+            lb.setAttribute('aria-label', n + ' selected: show and edit the list');
+        }
+        var cmp = document.getElementById('cf-compare');
+        var tr = document.getElementById('cf-trend');
+        var why = n < 2 ? 'Tick at least 2 runs' : '';
+        if (cmp) {
+            cmp.textContent = n > 1 ? 'Compare ' + n : 'Compare';
+            cmp.disabled = n < 2;
+            cmp.classList.toggle('cf-compare--off', n < 2);
+            cmp.title = n < 2 ? 'Tick at least 2 runs'
+                : (n > MAX_DIFF
+                   ? n + ' runs selected — the diff reads up to ' + MAX_DIFF
+                   : 'Open the diff of these ' + n + ' runs');
+        }
+        if (tr) { tr.disabled = n < 2; tr.title = why || 'Plot these ' + n + ' runs over time'; }
+        var head = document.getElementById('cf-pop-head');
+        if (head) head.textContent = n + ' of up to ' + MAX_DIFF + ' selected'
+            + (n < 2 ? ' — tick one more to compare' : '');
+        var ul = document.getElementById('cf-items');
+        if (!ul) return;
+        while (ul.firstChild) ul.removeChild(ul.firstChild);
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        sel.forEach(function(v) {
+            var li = document.createElement('li');
+            li.className = 'cf-item';
+            li.setAttribute('data-path', v);
+            li.title = v;
+            var L = runLabel(v);
+            var id = document.createElement('span'); id.className = 'cf-id'; id.textContent = L.id;
+            var nm = document.createElement('span'); nm.className = 'cf-name'; nm.textContent = L.name;
+            li.appendChild(id); li.appendChild(nm);
+            if (!present[v]) {
+                var ov = document.createElement('span'); ov.className = 'cf-off'; ov.textContent = 'not in view';
+                li.appendChild(ov);
+            }
+            var x = document.createElement('button');
+            x.type = 'button'; x.className = 'cf-x'; x.textContent = '×';
+            x.setAttribute('aria-label', 'Remove ' + (L.id ? L.id + ' ' : '') + L.name + ' from the selection');
+            x.onclick = function(ev) { ev.stopPropagation(); removeOne(v); };
+            li.appendChild(x);
+            ul.appendChild(li);
+        });
+        if (!n) setPop(false);
+    }
+    function removeOne(v) {
+        boxes().forEach(function(b) { if (b.value === v) b.checked = false; });
+        write(stored().filter(function(s) { return s !== v; }));
+        syncCompareCount();
+        var first = document.querySelector('#cf-items .cf-x');
+        var bar = document.getElementById('compare-float');
+        if (first) first.focus();
+        else if (bar && !bar.hidden) { var lb = document.getElementById('cf-list'); if (lb) lb.focus(); }
+    }
+    function setPop(open) {
+        var pop = document.getElementById('cf-pop'), lb = document.getElementById('cf-list');
+        if (!pop) return;
+        pop.hidden = !open;
+        if (open) {
+            // fixed, in viewport coords: the sidebar's overflow would clip an
+            // absolutely placed list, and a narrow sidebar has no room for it
+            var r = document.getElementById('compare-float').getBoundingClientRect();
+            var vw = document.documentElement.clientWidth || window.innerWidth;
+            var vh = document.documentElement.clientHeight || window.innerHeight;
+            var w = Math.min(416, vw - 16);
+            pop.style.width = w + 'px';
+            pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
+            pop.style.top = Math.max(8, Math.min(r.bottom + 4, vh - pop.offsetHeight - 8)) + 'px';
+            var first = pop.querySelector('button');
+            if (first) first.focus();
+        }
+        if (lb) lb.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    window._compareFloatPop = setPop;
+    document.addEventListener('click', function(ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        if (!t.closest('#compare-float')) { setPop(false); return; }
+        var b = t.closest('button');
+        if (!b) return;
+        if (b.id === 'cf-list') {
+            var pop = document.getElementById('cf-pop');
+            setPop(!!(pop && pop.hidden));
+        } else if (b.id === 'cf-compare' || b.id === 'cf-trend') {
+            // the real form buttons carry hx-post + the off-view hidden inputs
+            var real = document.querySelector('#compare-form '
+                + (b.id === 'cf-compare' ? '.btn-compare' : '.btn-trend'));
+            setPop(false);
+            if (real && !real.disabled) real.click();
+        } else if (b.id === 'cf-clear') {
+            setPop(false);
+            window.compareClearSelection();
+        }
+    });
+    document.addEventListener('keydown', function(ev) {
+        var pop = document.getElementById('cf-pop');
+        if (!pop || pop.hidden) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            ev.stopPropagation();
+            setPop(false);
+            var lb = document.getElementById('cf-list'); if (lb) lb.focus();
+        } else if (ev.key === 'Tab') {
+            var controls = pop.querySelectorAll('button');
+            var first = controls[0], last = controls[controls.length - 1];
+            if (first && ((ev.shiftKey ? document.activeElement === first : document.activeElement === last)
+                    || !pop.contains(document.activeElement))) {
+                ev.preventDefault();
+                if (first) (ev.shiftKey ? last : first).focus();
+            }
+        }
+    }, true);
+
+    var compareClearToast = null;
+    function mountCompareClearUndo(t, before) {
+        if (!t || !t.appendChild) return;
+        var old = t.querySelector('.toast-undo');
+        if (old) old.parentNode.removeChild(old);
+        var u = document.createElement('button');
+        u.type = 'button'; u.className = 'toast-undo outline btn-sm'; u.textContent = 'Undo clear';
+        u.onclick = function() {
+            write(before); restore(); syncCompareCount();
+            if (t.parentNode) t.parentNode.removeChild(t);
+            compareClearToast = null;
+            var lb = document.getElementById('cf-list'); if (lb) lb.focus();
+        };
+        t.appendChild(u);
+        u.focus();
+    }
     window.compareClearSelection = function() {
+        var before = stored();
         boxes().forEach(function(b) { b.checked = false; });
         lastIdx = -1;
         write([]);                    // Clear is the one place the model empties
         syncCompareCount();
+        // FB-13: Clear asks nothing, so it can be taken back once
+        if (before.length && window.showToast) {
+            var msg = 'Cleared ' + before.length + ' selected run'
+                + (before.length === 1 ? '' : 's') + '.';
+            var t = compareClearToast;
+            if (t && t.isConnected) {
+                var line = t.querySelector('p');
+                if (line) line.textContent = msg;
+                mountCompareClearUndo(t, before);
+                if (window.ToastHold && window.ToastHold.schedule) window.ToastHold.schedule(t, 8000);
+            } else {
+                t = window.showToast(msg, 'info', 8000);
+                compareClearToast = t;
+                mountCompareClearUndo(t, before);
+            }
+        }
     };
     /* A workspace root really going away is the OTHER place a path stops
        existing (an F5 or a filter is not). Called by the workspace remove

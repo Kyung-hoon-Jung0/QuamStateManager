@@ -993,6 +993,22 @@
                             title="Refresh folder list" aria-label="Refresh folder list"><span
                             class="ws-refresh-ico" aria-hidden="true">&#8635;</span></button>
                 </div>
+                {# FB-13: the compare actions occupy a sticky row under the date header
+                   while at least one run is ticked, so a tick deep in a long
+                   group can be compared without scrolling up. The list of the
+                   selection (the sessionStorage model, off-view ticks included)
+                   opens as a popover under it. app.js renders it. #}
+                <div class="compare-float-anchor"><div id="compare-float" class="compare-float" hidden role="toolbar" aria-label="Selected runs">
+                    <button type="button" class="cf-btn cf-list" id="cf-list" aria-haspopup="true" aria-expanded="false"
+                            aria-controls="cf-pop" title="Show and edit the selected runs">0 &#9662;</button>
+                    <button type="button" class="cf-btn cf-compare" id="cf-compare">Compare</button>
+                    <button type="button" class="cf-btn cf-trend" id="cf-trend">Trend</button>
+                    <button type="button" class="cf-btn cf-clear" id="cf-clear" title="Untick every selected run">Clear</button>
+                    <div class="cf-pop" id="cf-pop" hidden role="dialog" aria-label="Selected runs">
+                        <div class="cf-pop-head" id="cf-pop-head"></div>
+                        <ul class="cf-items" id="cf-items"></ul>
+                    </div>
+                </div></div>
                 <div id="sidebar-tree"
                      hx-get="/workspace/tree" hx-trigger="load"
                      hx-include="#sidebar-filter-input"

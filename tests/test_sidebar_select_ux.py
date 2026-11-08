@@ -105,7 +105,8 @@ class TestHint:
         assert 'id="compare-hint"' in form and "Tick runs in the list" in form
         # the JS toggles it: shown at 0 ticks, hidden otherwise
         i = _APP_JS.index("function syncCompareCount()")
-        assert "hint.style.visibility = n > 1" in _APP_JS[i:i + 2700]  # uv-4: slot kept
+        sync = _APP_JS[i:_APP_JS.index("window.syncCompareCount", i)]
+        assert "hint.style.visibility = n > 1" in sync  # uv-4: slot kept
 
     def test_hint_style_is_quiet(self):
         r = _rule(".compare-hint")
