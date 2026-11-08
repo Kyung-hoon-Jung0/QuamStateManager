@@ -22346,6 +22346,27 @@ window.autoGrowNote = function(ta) {
  * the end. Always-collapsed-by-default means sizing only ever happens here, so
  * there's no hidden->scrollHeight=0 or pinned-mode load-sizing problem.
  */
+/* compact G1: the run header keeps folder, note and tags on line 1 while
+ * they fit; when they do not, they move to a second line (never hidden). */
+function dsHeadFit(root) {
+    var heads = (root || document).querySelectorAll('.ui-ds-head');
+    for (var i = 0; i < heads.length; i++) {
+        var head = heads[i], meta = head.querySelector('.ui-ds-meta');
+        if (!meta) continue;
+        head.classList.remove('ui-ds-head-wrap');
+        if (meta.scrollWidth > meta.clientWidth + 1) head.classList.add('ui-ds-head-wrap');
+    }
+}
+window.dsHeadFit = dsHeadFit;
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('htmx:afterSettle', function() { dsHeadFit(); });
+    window.addEventListener('resize', function() { dsHeadFit(); });
+    document.addEventListener('DOMContentLoaded', function() {
+        dsHeadFit();
+        var pane = document.getElementById('inspector-pane');
+        if (pane && window.ResizeObserver) new ResizeObserver(function() { dsHeadFit(); }).observe(pane);
+    });
+}
 window.toggleNoteEditor = function(btn) {
     var block = btn.closest('.ds-note-block');
     if (!block) return;
