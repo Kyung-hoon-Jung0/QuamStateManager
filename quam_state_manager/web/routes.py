@@ -13634,18 +13634,26 @@ def field_edit():
             # The quoted form is the spelling that already survives, so this
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
-        parsed = ((raw_value if _value_was_quoted() else _tp.parse_value(raw_value))
-                  if _tree_kc else _parse_for_target(modifier.store, target_path, raw_value))
         try:
             _old_before = modifier.store.get_value(target_path)
         except Exception:  # noqa: BLE001 — absence is still a kind
             _old_before = None
+        parsed = None
+        if _tree_kc:
+            parsed = raw_value if _value_was_quoted() else _tp.parse_value(raw_value)
+            if not _tree_kind_change_ok(_old_before, parsed, _value_was_quoted()
+                                        or raw_value.strip().startswith('"')):
+                _tree_kc = False
+        if not _tree_kc:
+            parsed = _parse_for_target(modifier.store, target_path, raw_value)
         _coerce = True
-        if _tree_kc and _kind_of(_old_before) != _kind_of(parsed):
+        if _tree_kc:
+            _env_warn = _tree_env_type_warning(modifier.store, target_path, parsed)
             if _type_fix != "convert":
                 _tree_assign_expected_type(ctx, target_path, parsed)
             _coerce = False
-            _type_change_note = f"{_tree_kind_label(_old_before)} → {_tree_kind_label(parsed)}"
+            _type_change_note = (f"{_tree_kind_label(_old_before)} → "
+                                 f"{_tree_kind_label(parsed)}{_env_warn}")
         from quam_state_manager.web.port_identity import (
             edit_offer, edit_offers, move_port, stage_write, pointer_retargets)
         _identity_offer = edit_offer(target_path, parsed)
@@ -13817,6 +13825,45 @@ def _kind_of(v: Any) -> str:
 
 def _tree_kind_label(value: Any) -> str:
     return {"real": "float", "str": "string", "bool": "boolean"}.get(_kind_of(value), _kind_of(value))
+
+
+def _tree_kind_change_ok(old: Any, new: Any, explicit_str: bool) -> bool:
+    """Is a Json-tree edit a deliberate change of JSON kind?
+
+    int <-> float keeps the stored kind (typing ``5`` over ``4.5`` is a
+    value edit, not a type change), and unquoted text over a non-string is
+    a typo that the ordinary parser refuses, never a silent string.
+    """
+    ko, kn = _kind_of(old), _kind_of(new)
+    if ko == kn or {ko, kn} <= {"int", "real"}:
+        return False
+    if kn == "str" and not explicit_str:
+        return False
+    return True
+
+
+def _tree_env_type_warning(store, target_path: str, parsed: Any) -> str:
+    """Words for a kind change the env class schema does not accept, else ''.
+
+    Read BEFORE the user-layer assignment is saved (that assignment outranks
+    the env).  A state that disagrees with its class may fail Quam.load().
+    """
+    from quam_state_manager.core import type_policy as _tp
+    policy = getattr(store, "type_policy", None)
+    if policy is None:
+        return ""
+    try:
+        exp = policy.expected_for(store.merged, target_path, None, infer=False)
+        if exp is None or exp.source not in ("env", "verdict"):
+            return ""
+        ok, _code, _msg = _tp.judge(parsed, exp.spec)
+    except Exception:  # noqa: BLE001 — a warning never blocks the edit
+        return ""
+    if ok:
+        return ""
+    return (f" -- the environment's class schema expects "
+            f"{_tp.format_type(exp.spec)} here; "
+            "Quam.load() may refuse this state")
 
 
 def _tree_kind_change_requested(form: dict | None = None) -> bool:
@@ -17052,12 +17099,14 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                         continue
                     else:
                         _coerce = True
+                        _row_kc = False
                         if _tree_kc:
                             try:
                                 _old_b = modifier.store.get_value(target_path)
                             except Exception:  # noqa: BLE001
                                 _old_b = None
-                            if _kind_of(_old_b) != _kind_of(parsed):
+                            if _tree_kind_change_ok(_old_b, parsed, True):
+                                _row_kc = True
                                 _tree_assign_expected_type(ctx, target_path, parsed)
                                 _coerce = False
                         try:
@@ -17065,7 +17114,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                                 target_path, parsed, _defer_hooks=True,
                                 group_id=_batch_gid, coerce=_coerce)
                         except _tp.TypeMismatchError:
-                            if _tree_kc:
+                            if _row_kc:
                                 _tree_assign_expected_type(ctx, target_path, parsed)
                                 entry = modifier.set_value(
                                     target_path, parsed, _defer_hooks=True,
