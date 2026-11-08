@@ -77,6 +77,36 @@ check('storage access errors ignored', () => {
     Object.defineProperty(global,'localStorage',{configurable:true,get(){throw new Error('blocked');}});
     h.alt('b','ArrowUp'); assert.equal(h.order(),'bac'); document.getElementById('reset-menu-order').click(); assert.equal(h.order(),'abc');
 });
+// Top-level groups share a zone: an item alone between dividers still moves.
+function zone(saved) {
+    const dom = new JSDOM(`<aside id="sidebar"><ul data-nav-group="projects" data-nav-zone="top"><li data-nav-key="p"><a href="#p">P</a></li></ul><hr><ul data-nav-group="creation" data-nav-zone="top"><li data-nav-key="g"><a href="#g">G</a><ul data-nav-group="gsub"><li data-nav-key="v"><a>V</a></li></ul></li></ul><hr><ul data-nav-group="main" data-nav-zone="top"><li data-nav-key="a"><a href="#a">A</a></li><li data-nav-key="b"><a href="#b">B</a></li></ul></aside><button id="reset-menu-order">Reset</button>`, {url:'http://localhost', pretendToBeVisual:true});
+    const w = dom.window;
+    for (const key of ['window','document','localStorage','Event','MouseEvent','KeyboardEvent','CustomEvent']) Object.defineProperty(global, key, {configurable:true, writable:true, value: key === 'window' ? w : w[key]});
+    if (saved !== undefined) localStorage.setItem(KEY, saved);
+    new Function(source)();
+    const row = key => document.querySelector(`[data-nav-key="${key}"]`);
+    const order = () => ['projects','creation','main'].map(g => Array.from(document.querySelector(`[data-nav-group="${g}"]`).children, el => el.dataset.navKey).join('')).join('|');
+    const pointer = (type, target, x=0, y=0) => target.dispatchEvent(new w.MouseEvent(type, {bubbles:true,cancelable:true,button:0,clientX:x,clientY:y}));
+    const alt = (key, direction) => row(key).querySelector('a').dispatchEvent(new w.KeyboardEvent('keydown',{key:direction,altKey:true,bubbles:true,cancelable:true}));
+    return {w, row, order, pointer, alt};
+}
+let zsaved;
+check('a lone top-level item drags into another top-level group', () => {
+    const z = zone(); assert.equal(z.order(), 'p|g|ab');
+    z.pointer('pointerdown', z.row('g')); z.pointer('pointermove', z.row('a'), 0, 10); z.pointer('pointerup', z.row('a'), 0, 10);
+    assert.equal(z.order(), 'p||agb'); assert(z.row('g').querySelector('[data-nav-group="gsub"]'));
+    zsaved = localStorage.getItem(KEY);
+    assert.deepEqual(JSON.parse(zsaved), {projects:['p'], creation:[], main:['a','g','b']});
+});
+check('the cross-group order survives a reload and a reset restores it', () => {
+    const z = zone(zsaved); assert.equal(z.order(), 'p||agb');
+    document.getElementById('reset-menu-order').click(); assert.equal(z.order(), 'p|g|ab'); assert.equal(localStorage.getItem(KEY), null);
+});
+check('Alt+Arrow at a group edge steps into the next top-level group and back', () => {
+    const z = zone(); z.alt('g','ArrowDown'); assert.equal(z.order(), 'p||gab');
+    z.alt('g','ArrowUp'); assert.equal(z.order(), 'p|g|ab'); assert.equal(localStorage.getItem(KEY), null);
+    z.alt('v','ArrowUp'); assert.equal(z.row('v').parentElement.dataset.navGroup, 'gsub');
+});
 // Execute in the browser realm while the parser is still in the head.
 const early = new JSDOM(`<!doctype html><head><script>${source}</script></head><body><aside id="sidebar"><ul data-nav-group="main"><li data-nav-key="a"><a>A</a></li><li data-nav-key="b"><a>B</a></li></ul></aside><main></main></body>`, {
     url:'http://localhost', runScripts:'dangerously',
