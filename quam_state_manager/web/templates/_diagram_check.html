@@ -11,7 +11,7 @@
 <div class="ui-callout ui-callout--note" data-cm-check-ok>
   <p class="ui-callout-title">Loads in {{ v.env }}: Quam.load and generate_config passed on a temporary copy ({{ v.seconds }} s).</p>
   {% if removing %}
-  <p class="ui-callout-text">{% if v.left %}<span class="ui-badge ui-badge--warn">check</span> the generated config still holds {{ v.left | join(', ') }}.{% else %}The generated config holds no element of {{ plan.summary.qubits | join(', ') or plan.summary.name }} any more.{% endif %}</p>
+  <p class="ui-callout-text">{% if v.left %}<span class="ui-badge ui-badge--warn">check</span> the generated config still holds {{ v.left | join(', ') }}.{% else %}The generated config holds no element of {{ (plan.summary.qubits + plan.summary.pairs) | join(', ') or plan.summary.name }} any more.{% endif %}</p>
   {% endif %}
 </div>
 {% elif v.unavailable %}
@@ -35,7 +35,7 @@
         {% if r.kind == 'mw' %}output {{ port(r.port) }}{% if r.in_port %}, input {{ port(r.in_port, 'in') }}{% endif %} · LO {{ hz(r.lo) }} · IF {{ mhz(r.if_) }} · RF {{ hz(r.rf) }} · full-scale {{ r.fsp }} dBm{% if r.template_fsp is defined and r.template_fsp != r.fsp %} <span class="ui-badge ui-badge--warn">template port {{ r.template_fsp }} dBm</span>{% endif %}
         {% elif r.kind == 'lf' %}LF output {{ port(r.port) }}
         {% else %}port not read (not an MW-FEM or LF-FEM element){% endif %}
-        {% if r.shift_db is defined %}<div class="cm-rb-shift"><span class="ui-badge ui-badge--warn">every operation plays {{ '%+.1f' | format(r.shift_db) }} dB vs {{ r.template_element }}</span> the amplitudes were copied from the template, but this port's full-scale power is {{ r.fsp }} dBm and the template's is {{ r.template_fsp }} dBm. To play the template's power, scale the amplitudes by {{ '%.4g' | format(r.shift_factor) }} (a suggestion: you decide).</div>{% endif %}
+        {% if r.shift_db is defined %}<div class="cm-rb-shift"><span class="ui-badge ui-badge--warn">every operation plays {{ '%+.1f' | format(r.shift_db) }} dB vs {{ r.template_element }}</span> {% if r.shift_fsp %}the amplitudes were copied from the template, but this port's full-scale power is {{ r.fsp }} dBm and the template's is {{ r.template_fsp }} dBm.{% else %}both ports have the same full-scale power ({{ r.fsp }} dBm): the pulse amplitudes themselves differ from the template's by the same factor.{% endif %} To play the template's power, scale the amplitudes by {{ '%.4g' | format(r.shift_factor) }} (a suggestion: you decide).</div>{% endif %}
         {% for p in r.problems %}<span class="ui-badge ui-badge--danger">{{ p }}</span>{% endfor %}
         <span class="cm-port-test-slot" data-port-test-slot></span>
       </td>
@@ -52,6 +52,7 @@
   {% endfor %}
 </div>
 {% endif %}
+<p class="ui-note" data-cm-final-autosync>{% if auto_push %}Auto-Sync is on: this {{ 'removal' if removing else 'add' }} writes to the chip now.{% else %}Auto-Sync is off: this {{ 'removal' if removing else 'add' }} goes to the tray; Apply to live writes it to the chip.{% endif %}</p>
 <div class="ui-actions">
   {% if v.ok %}
   <button type="button" class="btn-sm" data-cm-add-stage>{{ 'Remove from the working copy' if removing else 'Add to the working copy' }}</button>

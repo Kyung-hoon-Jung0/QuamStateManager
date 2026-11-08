@@ -75,6 +75,9 @@ def op_peak(config: dict, pulse_name: str) -> float | None:
         return None
     if si is not None and sq is not None and len(si) == len(sq):
         return max(math.hypot(a, b) for a, b in zip(si, sq))
+    # one side constant (or lengths differ): hypot is monotone in each
+    # argument, so max_t hypot(c, q_t) == hypot(|c|, max_t |q_t|) -- the peaks
+    # combine exactly [derived; pinned in tests]
     return math.hypot(pi or 0.0, pq or 0.0)
 
 
@@ -144,6 +147,8 @@ def readback(config: dict, elements: list[str], *, template: str | None = None,
             # said once on the element, not on every operation
             row["shift_db"] = deltas[0]
             row["shift_factor"] = 10 ** (-deltas[0] / 20.0)
+            row["shift_fsp"] = (row.get("fsp") is not None and row.get("template_fsp") is not None
+                                and abs(float(row["fsp"]) - float(row["template_fsp"])) > 0.05)
             for o in row["ops"]:
                 o.pop("factor", None)
         exp = (expect or {}).get(name) or {}
