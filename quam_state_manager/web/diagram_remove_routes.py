@@ -242,6 +242,13 @@ def removal_lab_refusal(store, plan, info):
                            expect_chip=R._active_chip_token() or ""), 400
 
 
+def next_step() -> str:
+    """What happens to a staged add / remove next: Auto-Sync writes it to the
+    chip now, else it waits in the tray for Apply to live."""
+    return ("Auto-Sync writes it to the chip now." if R._auto_apply_state()
+            else "It is in the tray: review, then Apply to live.")
+
+
 def stage_removal(store, modifier, plan):
     gid = modifier.new_group_id()
     try:
@@ -268,8 +275,8 @@ def stage_removal(store, modifier, plan):
     extra = f" together with {n} pair{'s' if n != 1 else ''}" if n else ""
     msg = render_template(
         "_status.html", level="success",
-        message=(f"Removed {s['kind']} {s['name']}{extra} from the working copy. Review, "
-                 "then Apply to live; Ctrl+Z brings it all back."))
+        message=(f"Removed {s['kind']} {s['name']}{extra} from the working copy. "
+                 + next_step() + " Ctrl+Z brings it all back."))
     resp = make_response(msg + "\n" + R._tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     resp.headers["HX-Trigger-After-Settle"] = "diagram-removed"

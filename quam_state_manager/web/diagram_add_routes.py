@@ -239,7 +239,7 @@ def diagram_add_stage():
     msg = render_template(
         "_status.html", level="success",
         message=(f"Added {what} to the working copy ({len(plan['creates'])} new "
-                 "subtrees). Review, then Apply to live; Ctrl+Z takes it all back."))
+                 "subtrees). " + DR.next_step() + " Ctrl+Z takes it all back."))
     resp = make_response(msg + "\n" + R._tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     # after the swap: the page refresh carries this result line over

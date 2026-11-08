@@ -9,7 +9,7 @@
 {% macro port(p, io='out') %}{% if p %}{{ p[0] }} slot {{ p[1] }} {{ io }} {{ p[2] }}{% else %}—{% endif %}{% endmacro %}
 {% if v.ok %}
 <div class="ui-callout ui-callout--note" data-cm-check-ok>
-  <p class="ui-callout-title">Loads in {{ v.env }}: Quam.load and generate_config passed on a temporary copy ({{ v.seconds }} s).</p>
+  <p class="ui-callout-title">Loads in {{ v.env }}: Quam.load and generate_config passed on a temporary copy ({{ v.seconds }} s{% if v.worker %}, {{ "warm worker" if v.worker == "warm" else "cold start" }}{% endif %}).</p>
   {% if removing %}
   <p class="ui-callout-text">{% if v.left %}<span class="ui-badge ui-badge--warn">check</span> the generated config still holds {{ v.left | join(', ') }}.{% else %}The generated config holds no element of {{ (plan.summary.qubits + plan.summary.pairs) | join(', ') or plan.summary.name }} any more.{% endif %}</p>
   {% endif %}

@@ -393,3 +393,10 @@ class TestWarmCheck:
                             lambda py, f: {"ok": False, "error": "KeyError: 'xy'", "config": None})
         v = DR.run_env_check("py", {}, {})
         assert not v["ok"] and v["error"] == "KeyError: 'xy'" and v["worker"] == "warm"
+
+
+def test_the_result_line_says_where_the_change_went(env, monkeypatch):
+    from quam_state_manager.web import routes as R
+    monkeypatch.setattr(R, "_auto_apply_state", lambda *a, **k: None)
+    html = env["c"].post("/diagram-add/stage", data=_rm(env["c"], dry="0")).get_data(as_text=True)
+    assert "in the tray" in html and "writes it to the chip now" not in html
