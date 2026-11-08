@@ -1,0 +1,550 @@
+"""Port test: template QUA scripts that play on one element or one port.
+
+The question answered: "does this element really play on the port, at the
+frequency and amplitude the chip says?" SM never writes a test config by
+hand per chip. Two bases:
+
+* ``chip``: the chip's own ``generate_config()`` output, the element entry
+  verbatim (same port, same IF, same port settings). It proves the CHIP's
+  mapping.
+* ``raw``: a minimal config that holds only the element's port (its port
+  settings copied from the chip config) and a fresh element on it. It proves
+  the hardware and the cable, independent of the chip's elements.
+
+Three tests: ``cw`` (a continuous tone until Stop), ``pulse`` (one operation
+repeated with a period, with a digital marker on a DIG output as the scope
+trigger) and ``loopback`` (play the readout and acquire the raw ADC trace;
+needs a cable from the output to the input).
+
+This module is pure: it builds dicts and script text. Nothing here imports
+``qm``; the script runs in the chip's env (``generator/run_port_test.py``) or
+on the customer's own machine after a download.
+"""
+from __future__ import annotations
+
+import copy
+import math
+import pprint
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+#: the largest |amplitude| (fraction of full scale) a test may play unless
+#: the user raises it on the page; a value above it is scaled down, never sent
+AMP_CAP_DEFAULT = 0.5
+AMP_CAP_MAX = 1.0
+CW_PULSE_NS = 1000
+DEFAULT_PERIOD_NS = 10_000
+DEFAULT_SHOTS = 100
+MARKER = "port_test_on"
+TESTS = ("cw", "pulse", "loopback")
+BASES = ("chip", "raw")
+
+
+class PortTestError(ValueError):
+    """A request this config cannot answer (the message is for the user)."""
+
+
+def dbm(fsp: Optional[float], amp: Optional[float]) -> Optional[float]:
+    """Output power of a MW port: P = FSP + 20*log10|amp| (docs/109)."""
+    if fsp is None or amp is None or not amp:
+        return None
+    try:
+        return float(fsp) + 20.0 * math.log10(abs(float(amp)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _out_port(el: dict) -> tuple[Optional[str], Optional[list]]:
+    if isinstance(el.get("MWInput"), dict):
+        return "mw", list(el["MWInput"].get("port") or [])
+    if isinstance(el.get("singleInput"), dict):
+        return "lf", list(el["singleInput"].get("port") or [])
+    if isinstance(el.get("mixInputs"), dict):
+        return "iq", list(el["mixInputs"].get("I") or [])
+    return None, None
+
+
+def _in_port(el: dict) -> Optional[list]:
+    if isinstance(el.get("MWOutput"), dict):
+        return list(el["MWOutput"].get("port") or [])
+    outs = el.get("outputs")
+    if isinstance(outs, dict) and outs:
+        return list(next(iter(outs.values())))
+    return None
+
+
+def _port_entry(config: dict, port: list, io: str) -> dict:
+    """The controller's settings dict for *port* (``io`` = analog_outputs/inputs)."""
+    if not port:
+        return {}
+    con = (config.get("controllers") or {}).get(str(port[0])) or {}
+    if len(port) == 3:
+        fem = (con.get("fems") or {}).get(str(port[1])) or (con.get("fems") or {}).get(port[1]) or {}
+        group = fem.get(io) or {}
+    else:
+        group = con.get(io) or {}
+    return group.get(str(port[-1])) or group.get(port[-1]) or {}
+
+
+def _fem_type(config: dict, port: list) -> Optional[str]:
+    if len(port) != 3:
+        return None
+    con = (config.get("controllers") or {}).get(str(port[0])) or {}
+    fem = (con.get("fems") or {}).get(str(port[1])) or {}
+    return fem.get("type")
+
+
+def _waveform_peak(config: dict, name: Optional[str]) -> Optional[float]:
+    wf = (config.get("waveforms") or {}).get(name) if name else None
+    if not isinstance(wf, dict):
+        return None
+    if wf.get("type") == "constant":
+        return abs(float(wf.get("sample") or 0.0))
+    s = wf.get("samples") or []
+    try:
+        return max((abs(float(x)) for x in s), default=0.0)
+    except (TypeError, ValueError):
+        return None
+
+
+def pulse_peak(config: dict, pulse_name: str) -> Optional[float]:
+    """Peak |amplitude| of a pulse (the larger of I and Q, or the single wf)."""
+    p = (config.get("pulses") or {}).get(pulse_name) or {}
+    wfs = p.get("waveforms") or {}
+    peaks = [_waveform_peak(config, w) for w in wfs.values()]
+    peaks = [x for x in peaks if x is not None]
+    return max(peaks) if peaks else None
+
+
+def element_info(config: dict, element: str) -> dict:
+    """What the generated config says about *element*: port, frequencies, power."""
+    el = (config.get("elements") or {}).get(element)
+    if not isinstance(el, dict):
+        raise PortTestError(f"The generated config has no element named {element!r}.")
+    kind, port = _out_port(el)
+    if kind is None:
+        raise PortTestError(f"{element!r} has no analog output in the generated config.")
+    pe = _port_entry(config, port, "analog_outputs")
+    fsp = pe.get("full_scale_power_dbm")
+    lo = pe.get("upconverter_frequency")
+    if lo is None and isinstance(pe.get("upconverters"), dict):
+        up = (el.get("MWInput") or {}).get("upconverter", 1)
+        lo = (pe["upconverters"].get(str(up)) or pe["upconverters"].get(up) or {}).get("frequency")
+    if kind == "iq":
+        lo = (el.get("mixInputs") or {}).get("lo_frequency")
+    if_ = el.get("intermediate_frequency")
+    ops = []
+    for op, pulse in sorted((el.get("operations") or {}).items()):
+        p = (config.get("pulses") or {}).get(pulse) or {}
+        peak = pulse_peak(config, pulse)
+        ops.append({"name": op, "pulse": pulse, "length": p.get("length"),
+                    "measurement": p.get("operation") == "measurement",
+                    "peak": peak, "dbm": dbm(fsp, peak) if kind == "mw" else None})
+    return {
+        "element": element, "kind": kind, "port": port,
+        "fem_type": _fem_type(config, port),
+        "full_scale_power_dbm": fsp, "lo": lo, "if": if_,
+        "rf": (lo + if_) if isinstance(lo, (int, float)) and isinstance(if_, (int, float)) else None,
+        "in_port": _in_port(el), "time_of_flight": el.get("time_of_flight"),
+        "operations": ops,
+        "has_measurement": any(o["measurement"] for o in ops) and _in_port(el) is not None,
+    }
+
+
+def elements_on_port(config: dict, con: str, slot, port, io: str = "output") -> list[str]:
+    """Element names whose output (or, for io=input, input) is this port."""
+    want = [str(con), str(slot), str(port)] if slot not in (None, "") else [str(con), str(port)]
+    out = []
+    for name, el in sorted((config.get("elements") or {}).items()):
+        if not isinstance(el, dict):
+            continue
+        p = _in_port(el) if io == "input" else _out_port(el)[1]
+        if p and [str(x) for x in p] == want:
+            out.append(name)
+    return out
+
+
+def digital_ports(config: dict, port: list) -> list[list]:
+    """Candidate DIG outputs for the scope marker: the element's own controller /
+    FEM first (1..8). Purely an offer; the user picks."""
+    if len(port) == 3:
+        return [[port[0], port[1], n] for n in range(1, 9)]
+    return [[port[0], n] for n in range(1, 11)]
+
+
+def _add_digital_output(cfg: dict, dport: list) -> None:
+    con = cfg["controllers"].setdefault(str(dport[0]), {})
+    if len(dport) == 3:
+        fem = con.setdefault("fems", {}).setdefault(str(dport[1]), {})
+        group = fem.setdefault("digital_outputs", {})
+    else:
+        group = con.setdefault("digital_outputs", {})
+    group.setdefault(str(dport[-1]), {})
+
+
+def build(config: dict, element: str, test: str, basis: str, *,
+          operation: Optional[str] = None, amplitude: Optional[float] = None,
+          amp_cap: float = AMP_CAP_DEFAULT, period_ns: int = DEFAULT_PERIOD_NS,
+          marker_port: Optional[list] = None, shots: int = DEFAULT_SHOTS) -> tuple[dict, dict]:
+    """Return ``(test_config, plan)`` for one test.
+
+    ``plan`` carries everything the script and the page need: the element and
+    operation to play, the amplitude scale applied by the cap (with the reason),
+    the expected peak amplitude and power, and the ports to observe.
+    """
+    if test not in TESTS:
+        raise PortTestError(f"Unknown test {test!r}.")
+    if basis not in BASES:
+        raise PortTestError(f"Unknown basis {basis!r}.")
+    try:
+        amp_cap = float(amp_cap)
+    except (TypeError, ValueError):
+        raise PortTestError("The amplitude cap must be a number.") from None
+    if not 0 < amp_cap <= AMP_CAP_MAX:
+        raise PortTestError(f"The amplitude cap must be in (0, {AMP_CAP_MAX}].")
+    info = element_info(config, element)
+    src = config["elements"][element]
+    notes: list[str] = []
+
+    if basis == "chip":
+        el = copy.deepcopy(src)
+        el["operations"] = {}
+        name = element
+        pulses, wfs, iws = {}, {}, {}
+        cfg: dict[str, Any] = {"controllers": copy.deepcopy(config.get("controllers") or {})}
+        for k in ("mixers", "oscillators", "octaves"):
+            if config.get(k):
+                cfg[k] = copy.deepcopy(config[k])
+        notes.append(f"Chip basis: the element entry of {element} is the chip's generate_config() "
+                     "output, verbatim (same port, IF and port settings); its operation list holds only "
+                     "the tested operation, a copy of the chip's own pulse.")
+    else:
+        name = "port_test"
+        el = {k: copy.deepcopy(v) for k, v in src.items()
+              if k in ("MWInput", "singleInput", "mixInputs", "intermediate_frequency")}
+        if test == "loopback":
+            for k in ("MWOutput", "outputs", "time_of_flight", "smearing"):
+                if k in src:
+                    el[k] = copy.deepcopy(src[k])
+        el["operations"] = {}
+        pulses, wfs, iws = {}, {}, {}
+        cfg = {"controllers": {}}
+        port = info["port"]
+        ports = [(port, "analog_outputs")]
+        if test == "loopback" and info["in_port"]:
+            ports.append((info["in_port"], "analog_inputs"))
+        if info["kind"] == "iq":
+            q = (src.get("mixInputs") or {}).get("Q")
+            if q:
+                ports.append((list(q), "analog_outputs"))
+            if (src.get("mixInputs") or {}).get("mixer") and config.get("mixers"):
+                cfg["mixers"] = copy.deepcopy(config["mixers"])
+        for p, io in ports:
+            con = cfg["controllers"].setdefault(str(p[0]), {})
+            if len(p) == 3:
+                fem = con.setdefault("fems", {}).setdefault(str(p[1]), {})
+                if _fem_type(config, p):
+                    fem["type"] = _fem_type(config, p)
+                group = fem.setdefault(io, {})
+            else:
+                group = con.setdefault(io, {})
+            group[str(p[-1])] = copy.deepcopy(_port_entry(config, p, io))
+        notes.append(f"Raw-port basis: only port {_fmt_port(port)} with its settings from the chip "
+                     "config, and a fresh element 'port_test' on it. Independent of the chip's elements.")
+
+    scale = 1.0
+    mw = info["kind"] in ("mw", "iq")
+    if test == "cw":
+        a = AMP_CAP_DEFAULT / 2 if amplitude is None else float(amplitude)
+        if abs(a) > amp_cap:
+            raise PortTestError(f"Amplitude {a:g} is above the cap {amp_cap:g}. Lower it or raise the cap.")
+        op = "port_test_cw"
+        wfs["port_test_cw.wf"] = {"type": "constant", "sample": a}
+        wfs["port_test_zero.wf"] = {"type": "constant", "sample": 0.0}
+        pulses["port_test_cw.pulse"] = {
+            "operation": "control", "length": CW_PULSE_NS,
+            "waveforms": ({"I": "port_test_cw.wf", "Q": "port_test_zero.wf"} if mw
+                          else {"single": "port_test_cw.wf"})}
+        el.setdefault("operations", {})[op] = "port_test_cw.pulse"
+        peak = abs(a)
+    else:
+        candidates = [o for o in info["operations"] if (o["measurement"] if test == "loopback" else True)]
+        if test == "loopback" and not info["has_measurement"]:
+            raise PortTestError(f"{element} has no measurement operation and input port; "
+                                "loopback needs a readout element.")
+        names = [o["name"] for o in candidates]
+        if operation is None:
+            pref = ["readout"] if test == "loopback" else ["x180", "readout", "const"]
+            operation = next((p for p in pref if p in names), names[0] if names else None)
+        if operation not in names:
+            raise PortTestError(f"{element} has no operation {operation!r} usable for this test.")
+        src_pulse = src["operations"][operation]
+        p = copy.deepcopy(config["pulses"][src_pulse])
+        for w in (p.get("waveforms") or {}).values():
+            wfs.setdefault(w, copy.deepcopy(config["waveforms"][w]))
+        for w in (p.get("integration_weights") or {}).values():
+            if w in (config.get("integration_weights") or {}):
+                iws.setdefault(w, copy.deepcopy(config["integration_weights"][w]))
+        peak0 = pulse_peak(config, src_pulse) or 0.0
+        if peak0 > amp_cap:
+            scale = amp_cap / peak0
+            notes.append(f"The operation's peak {peak0:.4g} is above the cap {amp_cap:g}: it plays "
+                         f"scaled by {scale:.4g} (peak {amp_cap:g}).")
+        peak = peak0 * scale
+        if test == "pulse":
+            p["digital_marker"] = MARKER
+        op = f"port_test_{operation}" if test == "pulse" or basis == "raw" else operation
+        pulses[f"port_test.{operation}.pulse"] = p
+        el.setdefault("operations", {})[op] = f"port_test.{operation}.pulse"
+    dmarks = {MARKER: {"samples": [[1, 0]]}}
+    for pl in pulses.values():
+        dm = pl.get("digital_marker")
+        if dm and dm != MARKER and dm in (config.get("digital_waveforms") or {}):
+            dmarks[dm] = copy.deepcopy(config["digital_waveforms"][dm])
+    if test == "pulse":
+        dport = list(marker_port) if marker_port else digital_ports(config, info["port"])[0]
+        _add_digital_output(cfg, dport)
+        el.setdefault("digitalInputs", {})["port_test_trigger"] = {
+            "port": dport, "delay": 0, "buffer": 0}
+        notes.append(f"Scope trigger: a digital marker on {_fmt_port(dport)} for the length of each pulse.")
+    else:
+        dport = None
+    if test == "pulse" and int(period_ns) < int(p.get("length") or 0) + 16:
+        raise PortTestError("The period must be longer than the pulse.")
+
+    cfg["elements"] = {name: el}
+    cfg["pulses"] = pulses
+    cfg["waveforms"] = wfs
+    cfg["digital_waveforms"] = dmarks
+    if iws:
+        cfg["integration_weights"] = iws
+    fsp = info["full_scale_power_dbm"]
+    plan = {
+        "test": test, "basis": basis, "element": name, "source_element": element,
+        "operation": op, "amp_scale": scale, "amp_cap": amp_cap,
+        "expected_peak": peak, "expected_dbm": dbm(fsp, peak) if info["kind"] == "mw" else None,
+        "kind": info["kind"], "port": info["port"], "in_port": info["in_port"],
+        "marker_port": dport, "period_ns": int(period_ns), "shots": int(shots),
+        "lo": info["lo"], "if": info["if"], "rf": info["rf"], "full_scale_power_dbm": fsp,
+        "notes": notes,
+    }
+    return cfg, plan
+
+
+def _hz(v, div, unit, nd) -> str:
+    return "?" if not isinstance(v, (int, float)) else f"{v / div:.{nd}f} {unit}"
+
+
+def _fmt_port(p) -> str:
+    return "/".join(str(x) for x in (p or [])) or "?"
+
+
+_TITLES = {"cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
+_USE = {
+    "cw": "Spectrum analyser: a tone at the RF frequency below, at the power below. Runs until Stop (Ctrl+C).",
+    "pulse": "Oscilloscope: trigger on the marker port; each pulse has the length and peak below, "
+             "repeated every PERIOD_NS. Runs until Stop (Ctrl+C).",
+    "loopback": "Cable the output port to the input port. The script plays the readout SHOTS times and "
+                "plots the averaged raw ADC trace (time of flight, amplitude).",
+}
+
+
+def render_script(cfg: dict, plan: dict, *, chip_label: str = "") -> str:
+    """The downloadable script. SM runs exactly this text (``run_port_test.py``)."""
+    when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    rf = plan.get("rf")
+    lines = [
+        f"Port test: {_TITLES[plan['test']]} on {plan['source_element']} "
+        f"({plan['basis']} basis).",
+        f"Generated by QUAM State Manager at {when}" + (f" from {chip_label}." if chip_label else "."),
+        "",
+        f"Output port : {_fmt_port(plan['port'])}" + (f"   input port: {_fmt_port(plan['in_port'])}"
+                                                    if plan["test"] == "loopback" else ""),
+        f"RF / LO / IF: {_hz(rf, 1e9, 'GHz', 6)} / {_hz(plan['lo'], 1e9, 'GHz', 6)} / "
+        f"{_hz(plan['if'], 1e6, 'MHz', 3)}",
+        f"Peak amplitude {plan['expected_peak']:.4g} (fraction of full scale)"
+        + (f" -> {plan['expected_dbm']:.2f} dBm (P = FSP + 20*log10|amp|, FSP "
+           f"{plan['full_scale_power_dbm']} dBm)" if plan.get("expected_dbm") is not None else ""),
+        "",
+        _USE[plan["test"]],
+        "",
+        "WARNING: a CW tone or pulse train on a line into a fridge heats it and drives the qubits.",
+        "Disconnect the line or make sure this is intended before running on hardware.",
+        "",
+        *plan["notes"],
+        "",
+        "Run:   python this_file.py opx  --host HOST [--cluster NAME] [--port PORT]",
+        "       python this_file.py saas --email EMAIL --host SAAS_HOST   (password: SAAS_PASSWORD env var)",
+    ]
+    doc = '"""' + "\n".join(lines).replace('"""', "'''") + '\n"""'
+    return _SCRIPT.format(
+        doc=doc, config=pprint.pformat(cfg, indent=1, width=100, sort_dicts=True),
+        element=plan["element"], operation=plan["operation"], test=plan["test"],
+        scale=repr(float(plan["amp_scale"])), period=int(plan["period_ns"]),
+        shots=int(plan["shots"]), port=repr(list(plan["port"])),
+        marker=repr(list(plan["marker_port"]) if plan["marker_port"] else None),
+        peak=repr(float(plan["expected_peak"])),
+        inputs=1 if plan["kind"] == "mw" else 2,
+    )
+
+
+_SCRIPT = '''{doc}
+import argparse
+import os
+import time
+
+from qm import QuantumMachinesManager, SimulationConfig
+from qm.qua import (program, play, measure, wait, infinite_loop_, for_, declare,
+                    declare_stream, stream_processing, amp)
+
+CONFIG = {config}
+
+ELEMENT = {element!r}
+OPERATION = {operation!r}
+TEST = {test!r}
+AMP_SCALE = {scale}
+PERIOD_NS = {period}
+SHOTS = {shots}
+OUTPUT_PORT = {port}
+MARKER_PORT = {marker}
+EXPECTED_PEAK = {peak}
+ADC_INPUTS = {inputs}  # an MW-FEM input is one complex input; LF / OPX+ have two
+RUNNING = ("running", "pending", "queued", "processing")
+
+
+def build_program():
+    """The test program. CW and pulse train loop until halted."""
+    with program() as prog:
+        if TEST == "loopback":
+            adc = declare_stream(adc_trace=True)
+            n = declare(int)
+            with for_(n, 0, n < SHOTS, n + 1):
+                measure(OPERATION * amp(AMP_SCALE), ELEMENT, adc_stream=adc)
+                wait(PERIOD_NS // 4, ELEMENT)
+            with stream_processing():
+                adc.input1().average().save("adc1")
+                if ADC_INPUTS == 2:
+                    adc.input2().average().save("adc2")
+        else:
+            with infinite_loop_():
+                play(OPERATION * amp(AMP_SCALE), ELEMENT)
+                if TEST == "pulse":
+                    wait(PERIOD_NS // 4, ELEMENT)
+    return prog
+
+
+def busy_jobs(qmm):
+    """Running/pending jobs on every open QM. A failed check counts as busy."""
+    busy = []
+    for qm_id in qmm.list_open_qms():
+        qm = qmm.get_qm(qm_id)
+        for job in qm.get_jobs():
+            if str(getattr(job, "status", "")).lower() in RUNNING:
+                busy.append((str(qm_id), str(getattr(job, "id", ""))))
+    return busy
+
+
+def run_on_hardware(qmm, should_stop=lambda: False, max_s=600.0, log=print):
+    """Refuse when the server is busy; open our own QM without closing any other;
+    run until should_stop() (or max_s); halt; close ONLY our QM."""
+    try:
+        busy = busy_jobs(qmm)
+    except Exception as exc:  # noqa: BLE001 - an unknown answer is not a free OPX
+        raise RuntimeError(f"Could not check the OPX for running jobs ({{exc}}); not running.")
+    if busy:
+        raise RuntimeError(f"The OPX is busy (open QM / job: {{busy}}); not running.")
+    qm = qmm.open_qm(CONFIG, close_other_machines=False)
+    result = {{}}
+    try:
+        job = qm.execute(build_program())
+        log(f"running job {{getattr(job, 'id', '')}}")
+        t0 = time.monotonic()
+        if TEST == "loopback":
+            job.result_handles.wait_for_all_values(timeout=max_s)
+            for k in ("adc1", "adc2"):
+                if k in job.result_handles:
+                    result[k] = job.result_handles.get(k).fetch_all()
+        else:
+            while not should_stop() and time.monotonic() - t0 < max_s:
+                time.sleep(0.2)
+            job.halt()
+    finally:
+        qm.close()
+    return result
+
+
+def simulate(qmm, duration_ns=None):
+    """Simulated output samples, keyed by port name."""
+    if duration_ns is None:
+        duration_ns = 4 * PERIOD_NS if TEST != "cw" else 4000
+    job = qmm.simulate(CONFIG, build_program(), SimulationConfig(duration=int(duration_ns) // 4))
+    job.wait_until("Done") if hasattr(job, "wait_until") else None
+    return job.get_simulated_samples()
+
+
+def saas_qmm(client, version=None):
+    """Start a QM-SaaS simulator matching CONFIG's FEMs; returns (instance, qmm)."""
+    from qm_saas import ClusterConfig
+    cluster = ClusterConfig()
+    for cname, con in CONFIG["controllers"].items():
+        ctl = cluster.controller()
+        for slot, fem in (con.get("fems") or {{}}).items():
+            (ctl.mw_fems if fem.get("type") == "MW" else ctl.lf_fems)(int(slot))
+    inst = client.simulator(version or client.latest_version(), cluster)
+    inst.spawn()
+    if hasattr(type(inst), "qmm_connection_params"):
+        params = inst.qmm_connection_params
+    else:
+        import ssl
+        params = dict(host=inst.host, port=inst.port,
+                      connection_headers=inst.default_connection_headers,
+                      credentials=ssl.create_default_context(),
+                      follow_gateway_redirections=False)
+    return inst, QuantumMachinesManager(**params)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="target", required=True)
+    o = sub.add_parser("opx")
+    o.add_argument("--host", required=True)
+    o.add_argument("--cluster", default=None)
+    o.add_argument("--port", type=int, default=None)
+    s = sub.add_parser("saas")
+    s.add_argument("--email", required=True)
+    s.add_argument("--host", required=True)
+    s.add_argument("--ns", type=int, default=None, help="simulated duration in ns")
+    a = ap.parse_args()
+    if a.target == "opx":
+        kw = {{"host": a.host}}
+        if a.cluster:
+            kw["cluster_name"] = a.cluster
+        if a.port:
+            kw["port"] = a.port
+        qmm = QuantumMachinesManager(**kw)
+        try:
+            res = run_on_hardware(qmm, should_stop=lambda: False, max_s=1e9)
+        except KeyboardInterrupt:
+            print("stopped")
+            return
+        if res:
+            import matplotlib.pyplot as plt
+            for k, v in res.items():
+                plt.plot(v, label=k)
+            plt.xlabel("time [ns]"); plt.ylabel("ADC"); plt.legend(); plt.show()
+    else:
+        from qm_saas import QmSaas
+        client = QmSaas(email=a.email, password=os.environ["SAAS_PASSWORD"], host=a.host)
+        inst, qmm = saas_qmm(client)
+        try:
+            samples = simulate(qmm, a.ns)
+            samples.con1.plot() if hasattr(samples, "con1") else None
+            import matplotlib.pyplot as plt
+            plt.show()
+        finally:
+            inst.close()
+
+
+if __name__ == "__main__":
+    main()
+'''
