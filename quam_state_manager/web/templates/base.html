@@ -1743,7 +1743,8 @@
         function headingSizes() {
             var pane = document.getElementById("table-pane");
             var host = pane && pane.parentElement;
-            var h = pane && pane.querySelector("h1, h2");
+            // F1: the page's own title (h1), not a breadcrumb or a hidden h2
+            var h = pane && (pane.querySelector("h1") || pane.querySelector("h2"));
             if (!h || !host) return null;
             var pr = pane.getBoundingClientRect(), hr = h.getBoundingClientRect();
             if (!(hr.height > 0)) return null;
@@ -1753,7 +1754,15 @@
             if (!(total > 0) || !(px > 0)) return null;
             var top = Math.max(2, Math.min(Number(UI_CONFIG.split.expandedSizes[0]), px / total * 100));
             top = Math.round(top * 100) / 100;
-            return [top, Math.round((100 - top) * 100) / 100];
+            lastHeading = [top, Math.round((100 - top) * 100) / 100];
+            return lastHeading;
+        }
+        // F1: while the page is only a title sliver its own horizontal
+        // scrollbar is hidden, so the half title reads cleanly.
+        var lastHeading = null;
+        function markSliver(sizes) {
+            var tp = document.getElementById("table-pane");
+            if (tp) tp.classList.toggle("ui-pane-sliver", !!(sizes && sameSizes(sizes, lastHeading)));
         }
         window.__smHeadingSizes = headingSizes;      // (selfcheck)
         window.__smFirstOpenSizes = firstOpenSizes;      // (selfcheck)
@@ -1835,6 +1844,7 @@
         // table-pane initSplit() re-applies quam_split_sizes).
         function applySizes(sizes) {
             sizes = sizes.slice();
+            markSliver(sizes);
             inspectorExpanded = sizes[1] > 30;
             saveSizes(sizes);
             initSplit(sizes);
@@ -1868,6 +1878,7 @@
         window.__smDockInspector = dockInspector;        // (selfcheck)
         window.__smUndockInspector = undockInspector;    // (selfcheck)
         function renderDock(tablePane, inspectorPane) {
+            tablePane.classList.remove("ui-pane-sliver");
             tablePane.style.height = "";
             inspectorPane.style.height = "";
             inspectorPane.classList.add("ui-inspector-docked");
@@ -1973,6 +1984,7 @@
                 removeDockBar();
                 tablePane.style.height = "";
                 inspectorPane.style.height = "";
+                tablePane.classList.remove("ui-pane-sliver");
                 inspectorPane.classList.add("split-hidden");
                 return;
             }
@@ -2001,6 +2013,7 @@
                 onDragEnd: function(s) {
                     if (!scope.alive) return;
                     saveSizes(s); inspectorExpanded = s[1] > 30;
+                    markSliver(null);
                     // v1.3.0 (customer): a drag is the user's last choice; the
                     // next inspector opens at this height. A press on the bar
                     // that did not move it is not a choice.

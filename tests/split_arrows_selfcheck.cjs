@@ -612,7 +612,9 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     // compact D-2: with no choice, the page keeps only the top half of its title
     const s = await boot();
     const pane = s.d.getElementById('table-pane');
-    pane.innerHTML = '<h1>Live edit - Json Tree view</h1><p>text</p>';
+    // F1: a breadcrumb heading above the title must not be measured
+    pane.innerHTML = '<h2 id="crumb">Notes</h2><h1>Live edit - Json Tree view</h1><p>text</p>';
+    pane.querySelector('#crumb').getBoundingClientRect = () => ({ top: 102, bottom: 108, height: 6 });
     Object.defineProperty(pane.parentElement, 'clientHeight', { value: 812, configurable: true });
     pane.getBoundingClientRect = () => ({ top: 100, bottom: 912, height: 812 });
     pane.querySelector('h1').getBoundingClientRect = () => ({ top: 110, bottom: 150, height: 40 });
@@ -620,11 +622,13 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     // (30 px to the title's middle + half the 12 px gutter) of the 812 px parent
     eq(s.sizes(), [4.43, 95.57], 'the top pane ends halfway down the title');
     assert.equal(s.user(), null, 'SM\'s move is not a choice');
+    assert.ok(pane.classList.contains('ui-pane-sliver'), 'the title sliver hides its own horizontal scrollbar');
     s.swap('inspector-pane', RUN);
     eq(s.sizes(), [4.43, 95.57], 'a run opened over another page too');
     s.drag([50, 50]);
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), [50, 50], 'a remembered drag still wins');
+    assert.ok(!pane.classList.contains('ui-pane-sliver'), 'a real split is not a sliver');
     // the Datasets run list keeps its rows
     const t = await boot();
     t.d.getElementById('table-pane').innerHTML = '<h2>Datasets</h2><input id="dataset-search">';
