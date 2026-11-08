@@ -1732,9 +1732,29 @@
         // 0 rows at 1366x768. A remembered choice always wins.
         function firstOpenSizes() {
             var S = UI_CONFIG.split;
-            return (S.tableFirstSizes && document.querySelector('#table-pane #pulses-total'))
-                ? S.tableFirstSizes : expandedSizes();
+            if (S.tableFirstSizes && document.querySelector('#table-pane #pulses-total')) return S.tableFirstSizes;
+            // The Datasets run list keeps its rows (j/k between runs).
+            if (document.querySelector('#table-pane #dataset-search')) return expandedSizes();
+            return headingSizes() || expandedSizes();
         }
+        // D-2 (compact): with no remembered choice, an inspector opens so the
+        // page above keeps only the top half of its title line -- a px target
+        // from the page's own first heading, so it holds at any window size.
+        function headingSizes() {
+            var pane = document.getElementById("table-pane");
+            var host = pane && pane.parentElement;
+            var h = pane && pane.querySelector("h1, h2");
+            if (!h || !host) return null;
+            var pr = pane.getBoundingClientRect(), hr = h.getBoundingClientRect();
+            if (!(hr.height > 0)) return null;
+            var total = host.clientHeight - (UI_CONFIG.split.gutterSize || 0);
+            var px = hr.top - pr.top + pane.scrollTop + hr.height / 2;
+            if (!(total > 0) || !(px > 0)) return null;
+            var top = Math.max(2, Math.min(Number(UI_CONFIG.split.expandedSizes[0]), px / total * 100));
+            top = Math.round(top * 100) / 100;
+            return [top, Math.round((100 - top) * 100) / 100];
+        }
+        window.__smHeadingSizes = headingSizes;      // (selfcheck)
         window.__smFirstOpenSizes = firstOpenSizes;      // (selfcheck)
         function openSizes() {
             var sizes = userSizes() || firstOpenSizes();
@@ -1802,7 +1822,7 @@
             if (!datasetInspector()) return;
             // A low drag is still an open run: the old >30% flag skipped it.
             navigation.collapsed = true;
-            applySizes(navigationSizes());
+            dockInspector();
         }
 
         function inspectorHasContent() {
@@ -1817,6 +1837,72 @@
             inspectorExpanded = sizes[1] > 30;
             saveSizes(sizes);
             initSplit(sizes);
+        }
+
+        // D-1 (compact): SM's own collapse DOCKS the inspector -- one bar
+        // (panel title, restore, close) at the bottom, the page gets the rest.
+        // A layout state, never the user's remembered choice.
+        function dockTitle() {
+            var t = document.querySelector("#inspector-pane .inspector-title");
+            return t ? (t.textContent || "").replace(/\s+/g, " ").trim() : "Panel";
+        }
+        function removeDockBar() {
+            var pane = document.getElementById("inspector-pane");
+            if (!pane) return;
+            pane.classList.remove("ui-inspector-docked");
+            var bar = pane.querySelector(":scope > .ui-dock-bar");
+            if (bar) bar.remove();
+        }
+        function dockInspector() {
+            if (!inspectorHasContent()) return;
+            navigation.docked = true;
+            inspectorExpanded = false;
+            initSplit();
+        }
+        function undockInspector(sizes) {
+            navigation.docked = false;
+            removeDockBar();
+            applySizes(sizes || userSizes() || firstOpenSizes());
+        }
+        window.__smDockInspector = dockInspector;        // (selfcheck)
+        window.__smUndockInspector = undockInspector;    // (selfcheck)
+        function renderDock(tablePane, inspectorPane) {
+            tablePane.style.height = "";
+            inspectorPane.style.height = "";
+            inspectorPane.classList.add("ui-inspector-docked");
+            var bar = inspectorPane.querySelector(":scope > .ui-dock-bar");
+            if (!bar) {
+                bar = document.createElement("div");
+                bar.className = "ui-dock-bar";
+                bar.setAttribute("role", "toolbar");
+                var title = document.createElement("span");
+                title.className = "ui-dock-title";
+                var up = document.createElement("button");
+                up.type = "button";
+                up.className = "ui-dock-btn ui-dock-restore";
+                up.textContent = "\u2191";
+                up.title = "Restore the panel";
+                up.setAttribute("aria-label", "Restore the panel");
+                var x = document.createElement("button");
+                x.type = "button";
+                x.className = "ui-dock-btn ui-dock-close";
+                x.textContent = "\u00D7";
+                x.title = "Close the panel";
+                x.setAttribute("aria-label", "Close the panel");
+                bar.appendChild(title); bar.appendChild(up); bar.appendChild(x);
+                inspectorPane.insertBefore(bar, inspectorPane.firstChild);
+            }
+            bar.querySelector(".ui-dock-title").textContent = dockTitle();
+            bar.title = dockTitle();
+            gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-restore"), "click", function(e) {
+                e.stopPropagation();
+                undockInspector();
+            }));
+            gutterListeners.push(scope.listen(bar.querySelector(".ui-dock-close"), "click", function(e) {
+                e.stopPropagation();
+                navigation.docked = false;
+                if (window.closeInspector) window.closeInspector();
+            }));
         }
 
         function sameSizes(a, b) {
@@ -1838,10 +1924,17 @@
                 // Straight to the fixed position, every press -- never a no-op
                 // from a hidden preset. The press is the user's last choice:
                 // the next inspector opens at this arrow's fixed position.
+                if (choice === "down") {
+                    // D-1: the down arrow docks the panel (a layout move, not a choice)
+                    dockInspector();
+                    var rb = hadFocus && document.querySelector("#inspector-pane > .ui-dock-bar .ui-dock-restore");
+                    if (rb) rb.focus();
+                    return;
+                }
                 saveUserChoice(choice);
                 applySizes(sizesFor());
                 // initSplit rebuilt the gutter; keep a keyboard user on the arrow
-                var again = hadFocus && document.querySelector(".gutter-controls ." + cls);
+                var again = hadFocus && document.querySelector(".gutter-controls ." + cls.split(" ")[0]);
                 if (again) again.focus();
             }));
             return btn;
@@ -1855,8 +1948,8 @@
             wrap.className = "gutter-controls";
             // A button press on the gutter must not start a Split.js drag.
             gutterListeners.push(scope.listen(wrap, "mousedown", function(e) { e.stopPropagation(); }));
-            wrap.appendChild(arrowButton("split-up-btn", "\u25B2", "Expand the panel", "up", expandedSizes));
-            wrap.appendChild(arrowButton("split-down-btn", "\u25BC", "Collapse the panel", "down", collapsedSizes));
+            wrap.appendChild(arrowButton("split-up-btn ui-split-arrow", "\u25B2", "Expand the panel", "up", expandedSizes));
+            wrap.appendChild(arrowButton("split-down-btn ui-split-arrow", "\u25BC", "Dock the panel to the bottom", "down", collapsedSizes));
             gutter.appendChild(wrap);
         }
 
@@ -1875,6 +1968,8 @@
             }
 
             if (!inspectorHasContent()) {
+                navigation.docked = false;
+                removeDockBar();
                 tablePane.style.height = "";
                 inspectorPane.style.height = "";
                 inspectorPane.classList.add("split-hidden");
@@ -1882,6 +1977,12 @@
             }
 
             inspectorPane.classList.remove("split-hidden");
+            if (navigation.docked) {
+                renderDock(tablePane, inspectorPane);
+                inspectorExpanded = false;
+                return;
+            }
+            removeDockBar();
 
             if (!sizes) {
                 var saved = loadSizes();
@@ -1974,6 +2075,8 @@
                 // click fires both an inspector-pane swap (dataset detail) and
                 // a table-pane swap (/workspace/select) at once; whichever
                 // lands last must still leave the inspector at that height.
+                navigation.docked = false;
+                removeDockBar();
                 applySizes(fitClickedChart(openSizes()));
                 keepClickedRowInView();
             } else if (tid === "table-pane") {
@@ -2044,7 +2147,8 @@
         // initSplit() from re-applying stale sizes (same trick the inspector-pane
         // afterSwap handler uses above).
         window._applySplitPreset = function(which) {
-            applySizes(which === "expanded" ? expandedSizes() : collapsedSizes());
+            if (which === "expanded") { navigation.docked = false; removeDockBar(); applySizes(expandedSizes()); }
+            else dockInspector();
         };
 
         scope.listen(document.body, "htmx:afterSettle", function() {
@@ -2197,7 +2301,7 @@
             // A restored dataset panel must keep the navigation collapse;
             // re-running this script must not reapply the remembered height.
             if (navigation.collapsed && datasetInspector()) {
-                applySizes(navigationSizes());
+                dockInspector();
                 return;
             }
             var user = userSizes();

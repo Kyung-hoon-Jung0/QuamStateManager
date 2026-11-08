@@ -38,7 +38,8 @@ MODES = ["buttons", "arrows", "drag", "up_next", "down_next", "drag_after_arrow"
          "programmatic", "retired", "defaults", "still_click", "focus",
          "nav_sidebar", "nav_boost", "nav_push", "nav_history", "nav_same_page",
          "nav_collapse_low", "nav_collapse_high",
-         "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart"]
+         "nav_reopen_low", "nav_reopen_high", "nav_run_only", "table_first", "trend_chart",
+         "dock_bar", "heading"]
 
 
 def _node(*args: str) -> subprocess.CompletedProcess:
@@ -66,9 +67,14 @@ def test_the_arrows_fit_inside_the_gutter():
     font = int(re.search(r"--inspector-toggle-font:\s*(\d+)px", css).group(1))
     width = int(re.search(r"--inspector-toggle-w:\s*(\d+)px", css).group(1))
     assert int(re.search(r"gutterSize:\s*(\d+)", app).group(1)) == gutter
-    assert gutter >= height + 4, "a 2 px margin above and below the arrows"
-    # a bit larger than the old 32x20 px / 12 px glyph
-    assert height > 20 and width > 32 and font > 12
+    assert gutter >= height + 2, "the arrows sit inside the gutter"
+    # compact D-3: a thin bar, the arrows' hit area widened by ::before to >= 20 px
+    assert gutter <= 12, "the gutter is a thin bar"
+    kit = (WEB / "static" / "ui-kit.css").read_text(encoding="utf-8")
+    m = re.search(r"\.ui-split-arrow::before\s*\{[^}]*inset:\s*-(\d+)px\s+-(\d+)px", kit)
+    assert m, "the arrows carry a widened hit area"
+    assert height + 2 * int(m.group(1)) >= 20 and width + 2 * int(m.group(2)) >= 20
+    assert font >= 8
     # the old set-button rules are gone with their buttons
     assert ".split-set-btn" not in css and ".inspector-toggle-btn" not in css
     assert ".split-arrow-btn {" in css

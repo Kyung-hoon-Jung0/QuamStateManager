@@ -1720,9 +1720,10 @@ class TestSidebarFeatures:
                 "calc(-1 * var(--inspector-pane-pad-h))") in block, (
             "The dataset header must pull over the pane's padding strips (top + sides)."
         )
-        assert "padding: calc(var(--inspector-pane-pad-v) + 0.25rem)" in block, (
-            "The covered strip must be re-added as header padding (opaque cover, "
-            "title position at rest unchanged)."
+        # compact D-3 (2026-11-08): the covered strip is no longer re-added in
+        # full -- the blank band under the gutter was the complaint.
+        assert "padding: 0.2rem var(--inspector-pane-pad-h)" in block, (
+            "The header keeps a thin top padding under the gutter (compact D-3)."
         )
         assert "#table-pane .inspector-header-dataset" in text, (
             "The full-page run view's pane has different padding (0.6rem) — "

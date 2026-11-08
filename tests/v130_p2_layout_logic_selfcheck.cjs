@@ -20,7 +20,7 @@ if (mode === 'gutter') {
   assert.ok(config);
   win.eval(config[0]);
   const cssSize = Number(read('static/style.css').match(/--split-gutter-size:\s*(\d+)px/)[1]);
-  assert.ok(win.UI_CONFIG.split.gutterSize >= 20, 'the controls fit inside the gutter');
+  assert.ok(win.UI_CONFIG.split.gutterSize >= 10 && win.UI_CONFIG.split.gutterSize <= 12, 'compact D-3: a thin gutter that still holds the arrows');
   assert.equal(win.UI_CONFIG.split.gutterSize, cssSize, 'the CSS and Split gutter sizes agree');
 } else if (mode === 'preset') {
   const config = read('static/app.js').match(/var UI_CONFIG = \{[\s\S]*?\n\};/);

@@ -139,6 +139,11 @@
     <tr class="ui-diag-in-group"><td>warning</td><td><div class="ui-diag-msg">readout f_01 and RF_frequency differ by +150 kHz</div> <span class="ui-diag-nopath">no single field</span></td></tr>
   </tbody></table>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Compact inspector</h2>
+  <div class="ui-inspector-docked"><div class="ui-dock-bar" role="toolbar"><span class="ui-dock-title">Run 692 resonator spectroscopy q1</span><button type="button" class="ui-dock-btn ui-dock-restore" aria-label="Restore the panel">&#8593;</button><button type="button" class="ui-dock-btn ui-dock-close" aria-label="Close the panel">&times;</button></div></div>
+  <button type="button" class="split-arrow-btn ui-split-arrow" aria-label="Expand the panel">&#9650;</button>
+  <div class="inspector-header ui-ds-head"><div class="inspector-title"><strong>run</strong></div><div class="ui-ds-meta"><span class="ds-folder-line ui-ds-folder">data_folder</span><div class="ds-note-block ui-note-open"><button type="button" class="ds-note-toggle">Note</button></div><div class="ds-tags-row ui-ds-tags"><span class="tag-badge">good</span></div></div></div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

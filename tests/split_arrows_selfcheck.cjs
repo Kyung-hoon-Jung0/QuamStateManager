@@ -55,7 +55,7 @@ assert.ok(splitScript, 'the split script is found');
 
 const SPLIT = {
     defaultSizes: [55, 45], expandedSizes: [15, 85], collapsedSizes: [85, 15],
-    datasetExpandedSizes: [25, 75], minSizes: [0, 60], gutterSize: 26, tableFirstSizes: [35, 65],
+    datasetExpandedSizes: [25, 75], minSizes: [0, 60], gutterSize: 12, tableFirstSizes: [35, 65],
 };
 const RUN = '<div id="ds-detail-root" data-uid="run-a">run</div>';
 const QUBIT = '<div class="qubit-detail">qubit</div>';
@@ -96,6 +96,14 @@ async function boot({ storage = {}, inspector = '' } = {}) {
         sizes: () => Array.from(last().options.sizes),
         user: () => w.localStorage.getItem('quam_split_user'),
         current: () => w.localStorage.getItem('quam_split_sizes'),
+        // compact D-1: SM's own collapse docks the panel to a one-line bar
+        docked: () => d.getElementById('inspector-pane').classList.contains('ui-inspector-docked')
+            && !!d.querySelector('#inspector-pane > .ui-dock-bar') && !d.querySelector('.gutter'),
+        restore() {
+            const b = d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-restore');
+            assert.ok(b, 'the dock bar has a restore button');
+            b.click();
+        },
         rerun() { w.eval(splitScript); },
         swap(id, html) {
             const target = d.getElementById(id);
@@ -152,7 +160,8 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         s.swap('table-pane', 'concurrent workspace selection');
         eq(s.sizes(), expected, 'a concurrent table swap keeps the reopened height');
         s.swap('inspector-pane', RUN_B);
-        const plain = Array.isArray(choice) ? choice : choice === 'down' ? SPLIT.collapsedSizes : SPLIT.datasetExpandedSizes;
+        // compact D-1: the down arrow docks and is not a remembered choice
+        const plain = Array.isArray(choice) ? choice : SPLIT.datasetExpandedSizes;
         eq(s.sizes(), plain, 'the following run within Datasets uses the plain remembered height');
         assert.equal(s.user(), before, 'within-page switching also preserves memory');
     }
@@ -188,16 +197,17 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
                     s.d.dispatchEvent(new s.w.CustomEvent(event));
                 }
             }
-            eq(s.sizes(), expected, event + ': navigation uses min(user share, collapsed share)');
-            eq(JSON.parse(s.current()), expected, event + ': the navigation target is persisted');
+            void expected;
+            assert.ok(s.docked(), event + ': navigation docks the run at any height');
             assert.equal(s.user(), before, event + ': navigation preserves the remembered choice');
             s.w.history.replaceState({}, '', '/qubits');
             s.swap('table-pane', 'other page');
-            eq(s.sizes(), expected, event + ': table swaps keep the min target');
+            assert.ok(s.docked(), event + ': table swaps keep the dock');
             s.rerun();
-            eq(s.sizes(), expected, event + ': script reruns keep the min target');
+            assert.ok(s.docked(), event + ': script reruns keep the dock');
             s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
-            eq(s.sizes(), expected, event + ': history restores keep the min target');
+            assert.ok(s.docked(), event + ': history restores keep the dock');
+            assert.equal(s.d.querySelectorAll('#inspector-pane > .ui-dock-bar').length, 1, event + ': one bar');
             assert.equal(s.user(), before, event + ': swaps and restores preserve user memory');
         }
     }
@@ -220,10 +230,10 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         s.drag(sizes);
         const before = s.user();
         s.d.getElementById('nav-qubits').click();
-        eq(s.sizes(), SPLIT.collapsedSizes, 'sidebar navigation collapses a run at any height');
+        assert.ok(s.docked(), 'sidebar navigation collapses a run at any height');
         assert.equal(s.user(), before, 'sidebar navigation preserves the remembered choice');
         s.swap('table-pane', 'other page');
-        eq(s.sizes(), SPLIT.collapsedSizes, 'table-pane initSplit preserves the navigation collapse');
+        assert.ok(s.docked(), 'table-pane initSplit preserves the navigation collapse');
         assert.equal(s.user(), before, 'table-pane initSplit preserves the remembered choice');
     }
 } else if (mode === 'nav_boost') {
@@ -237,10 +247,10 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', {
         detail: { elt: link, requestConfig: { boosted: true } }
     }));
-    eq(s.sizes(), SPLIT.collapsedSizes, 'boosted page navigation collapses without a sidebar click');
+    assert.ok(s.docked(), 'boosted page navigation collapses without a sidebar click');
     s.w.history.pushState({}, '', '/qubits');
     s.rerun();
-    eq(s.sizes(), SPLIT.collapsedSizes, 'a full-body script rerun keeps the navigation collapse');
+    assert.ok(s.docked(), 'a full-body script rerun keeps the navigation collapse');
     assert.equal(s.user(), before, 'boost and rerun preserve the remembered choice');
 } else if (mode === 'nav_push') {
     const s = await boot();
@@ -250,10 +260,10 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('table-pane', 'other page');
     s.w.history.pushState({}, '', '/qubits');
     s.d.dispatchEvent(new s.w.CustomEvent('htmx:pushedIntoHistory', { detail: { path: '/qubits' } }));
-    eq(s.sizes(), SPLIT.collapsedSizes, 'a pushed page navigation collapses without a sidebar click');
+    assert.ok(s.docked(), 'a pushed page navigation collapses without a sidebar click');
     assert.equal(s.user(), before, 'pushed navigation preserves the remembered choice');
     s.swap('table-pane', 'concurrent swap');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'later table swaps retain the pushed navigation collapse');
+    assert.ok(s.docked(), 'later table swaps retain the pushed navigation collapse');
     s.swap('inspector-pane', RUN_B);
     eq(s.sizes(), SPLIT.datasetExpandedSizes, 'the next run after pushed navigation gets the expanded minimum');
 } else if (mode === 'nav_history') {
@@ -266,10 +276,10 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
             s.w.history.replaceState({}, '', page);
             if (event === 'popstate') s.w.dispatchEvent(new s.w.PopStateEvent(event));
             else s.d.dispatchEvent(new s.w.CustomEvent(event));
-            eq(s.sizes(), SPLIT.collapsedSizes, event + ': another page collapses the dataset panel');
+            assert.ok(s.docked(), event + ': another page collapses the dataset panel');
             s.rerun();
             s.d.dispatchEvent(new s.w.CustomEvent('htmx:historyRestore'));
-            eq(s.sizes(), SPLIT.collapsedSizes, event + ': restored content stays collapsed');
+            assert.ok(s.docked(), event + ': restored content stays collapsed');
             assert.equal(s.user(), before, event + ': history preserves the remembered choice');
         }
     }
@@ -298,38 +308,38 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     assert.equal(up.textContent, String.fromCharCode(0x25B2));
     assert.equal(down.textContent, String.fromCharCode(0x25BC));
     assert.equal(up.title, 'Expand the panel');
-    assert.equal(down.title, 'Collapse the panel');
+    assert.equal(down.title, 'Dock the panel to the bottom');
     assert.equal(up.getAttribute('aria-label'), 'Expand the panel');
-    assert.equal(down.getAttribute('aria-label'), 'Collapse the panel');
+    assert.equal(down.getAttribute('aria-label'), 'Dock the panel to the bottom');
     assert.equal(up.type, 'button');
     assert.equal(s.d.querySelectorAll('.split-set-btn, .inspector-toggle-btn').length, 0,
         'no set-high / set-low / toggle button is left');
     // a rebuild of the split never doubles them
-    s.press('down'); s.press('up');
+    s.press('down'); s.restore(); s.press('up');
     assert.equal(s.d.querySelectorAll('.gutter button').length, 2, 'still two after presses');
 } else if (mode === 'arrows') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
     s.drag([40, 60]);
     s.press('down');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'down lands on the fixed collapsed position, not the dragged one');
-    let n = s.calls.length;
-    s.press('down');
-    assert.equal(s.calls.length, n + 1, 'a second down press is applied again');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'and lands on the same collapsed position');
+    assert.ok(s.docked(), 'down docks the panel to its one-line bar');
+    eq(JSON.parse(s.user()), [40, 60], 'the dock is not a remembered choice');
+    s.restore();
+    assert.ok(!s.docked() && !s.d.querySelector('.ui-dock-bar'), 'restore removes the bar');
+    eq(s.sizes(), [40, 60], 'restore returns to the last remembered split');
     s.press('up');
     eq(s.sizes(), SPLIT.expandedSizes, 'up lands on the fixed expanded position');
-    n = s.calls.length;
+    const n = s.calls.length;
     s.press('up');
     assert.equal(s.calls.length, n + 1, 'a second up press is applied again');
     eq(s.sizes(), SPLIT.expandedSizes, 'and lands on the same expanded position');
     // a dataset RUN in the inspector: up goes to the dataset expanded position
     s.swap('inspector-pane', RUN);
     s.press('down');
+    s.restore();
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'restore on a run after up: datasetExpandedSizes');
     s.press('up');
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'up on a dataset run lands on datasetExpandedSizes');
-    s.press('up');
-    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'twice too');
+    eq(s.sizes(), SPLIT.datasetExpandedSizes, 'up too');
     eq(JSON.parse(s.current()), SPLIT.datasetExpandedSizes, 'the press is the current split');
 } else if (mode === 'drag') {
     // a drag -> the next run opens at the dragged height
@@ -352,6 +362,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', RUN);
     s.drag([40, 60]);
     s.press('down');
+    s.restore();
     s.press('up');
     assert.equal(s.user(), '"up"', 'the press is stored as the last choice');
     s.swap('inspector-pane', RUN_B);
@@ -361,24 +372,26 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', RUN);
     eq(s.sizes(), SPLIT.datasetExpandedSizes, 'and a run again at the run max');
 } else if (mode === 'down_next') {
-    // a down press (after a drag) -> the next inspector opens at the fixed min
+    // compact D-1: a down press docks; the next inspector opens at the remembered height
     const s = await boot();
     s.swap('inspector-pane', RUN);
     s.drag([40, 60]);
     s.press('down');
-    assert.equal(s.user(), '"down"', 'the press is stored as the last choice');
+    eq(JSON.parse(s.user()), [40, 60], 'the down press is not stored as the last choice');
     s.swap('inspector-pane', RUN_B);
-    eq(s.sizes(), SPLIT.collapsedSizes, 'the next run opens at the fixed min, not the dragged height');
+    assert.ok(!s.docked(), 'a new inspector undocks');
+    eq(s.sizes(), [40, 60], 'the next run opens at the remembered height');
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), SPLIT.collapsedSizes, 'a qubit too');
+    eq(s.sizes(), [40, 60], 'a qubit too');
 } else if (mode === 'drag_after_arrow') {
     // a drag after an arrow -> the drag wins
     const s = await boot();
     s.swap('inspector-pane', RUN);
     s.press('down');
+    s.restore();
     s.drag([45, 55]);
     s.swap('inspector-pane', RUN_B);
-    eq(s.sizes(), [45, 55], 'after down then a drag, the next run opens at the dragged height');
+    eq(s.sizes(), [45, 55], 'after down, restore and a drag, the next run opens at the dragged height');
     s.press('up');
     s.drag([70, 30]);
     s.swap('inspector-pane', QUBIT);
@@ -389,7 +402,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     a.swap('inspector-pane', RUN);
     a.drag([40, 60]);
     a.d.getElementById('nav-qubits').click();    // SM's auto-collapse: current = collapsed
-    eq(JSON.parse(a.current()), SPLIT.collapsedSizes, 'precondition: the current split is collapsed');
+    assert.ok(a.d.getElementById('inspector-pane').classList.contains('ui-inspector-docked'), 'precondition: the run is docked');
     const saved = a.storage();
     // a reload of a page that renders the inspector server-side (a qubit page)
     const b = await boot({ storage: saved, inspector: QUBIT });
@@ -404,7 +417,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     // an arrow choice survives a reload as well
     c.press('down');
     const d2 = await boot({ storage: c.storage(), inspector: QUBIT });
-    eq(d2.sizes(), SPLIT.collapsedSizes, 'after down, a reload opens at the fixed min');
+    eq(d2.sizes(), [40, 60], 'a dock is not a choice: a reload opens at the dragged height');
     d2.press('up');
     const e2 = await boot({ storage: d2.storage() });
     e2.swap('inspector-pane', RUN);
@@ -418,10 +431,10 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         const open = first === 'drag' ? [30, 70] : SPLIT.datasetExpandedSizes;
         // the sidebar-menu auto-collapse with a dataset detail open
         s.d.getElementById('nav-qubits').click();
-        eq(s.sizes(), SPLIT.collapsedSizes, first + ': menu navigation collapses the run');
+        assert.ok(s.docked(), first + ': menu navigation collapses the run');
         assert.equal(s.user(), before, first + ': the menu auto-collapse leaves the last choice alone');
         s.swap('table-pane', 'qubits page');
-        eq(s.sizes(), SPLIT.collapsedSizes, first + ': the concurrent table-pane initSplit keeps the collapse');
+        assert.ok(s.docked(), first + ': the concurrent table-pane initSplit keeps the collapse');
         assert.equal(s.user(), before, first + ': the table-pane initSplit leaves it alone');
         s.d.getElementById('nav-datasets').click();
         s.swap('table-pane', 'datasets page');
@@ -431,12 +444,12 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
         // the Compare-form collapse
         const go = s.d.getElementById('compare-go');
         s.d.dispatchEvent(new s.w.CustomEvent('htmx:beforeRequest', { detail: { elt: go } }));
-        eq(s.sizes(), SPLIT.collapsedSizes, first + ': the compare form collapses the inspector');
+        assert.ok(s.docked(), first + ': the compare form collapses the inspector');
         assert.equal(s.user(), before, first + ': the Compare collapse leaves it alone');
         // "Go to state" and the other _applySplitPreset callers
         s.swap('inspector-pane', RUN);
         s.w._applySplitPreset('collapsed');
-        eq(s.sizes(), SPLIT.collapsedSizes);
+        assert.ok(s.docked());
         s.w._applySplitPreset('expanded');
         eq(s.sizes(), SPLIT.datasetExpandedSizes);
         s.w._applySplitPreset('collapsed');
@@ -451,7 +464,7 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), SPLIT.expandedSizes, 'and it no longer decides where an inspector opens');
     s.press('down');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'nor where the down arrow goes');
+    assert.ok(s.docked(), 'nor where the down arrow goes (it docks)');
 } else if (mode === 'defaults') {
     const s = await boot();
     s.swap('inspector-pane', RUN);
@@ -545,13 +558,18 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
 } else if (mode === 'focus') {
     const s = await boot();
     s.swap('inspector-pane', QUBIT);
+    s.d.querySelector('.split-up-btn').focus();
+    s.press('up');
+    let now = s.d.activeElement;
+    assert.ok(now && now.classList && now.classList.contains('split-up-btn'),
+        'focus is on the rebuilt up arrow, not dropped to the body');
     s.d.querySelector('.split-down-btn').focus();
     s.press('down');
-    const now = s.d.activeElement;
-    assert.ok(now && now.classList && now.classList.contains('split-down-btn'),
-        'focus is on the rebuilt down arrow, not dropped to the body');
-    s.press('down');
-    eq(s.sizes(), SPLIT.collapsedSizes, 'a second keyboard press works');
+    now = s.d.activeElement;
+    assert.ok(now && now.classList && now.classList.contains('ui-dock-restore'),
+        'a keyboard dock moves focus to the bar\'s restore button');
+    s.restore();
+    eq(s.sizes(), SPLIT.expandedSizes, 'restore after up returns to the expanded position');
     // a MOUSE press (detail 1) drops focus as before -- no lingering focus ring
     const up = s.d.querySelector('.split-up-btn');
     up.focus();
@@ -560,6 +578,57 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     const after = s.d.activeElement;
     assert.ok(!(after && after.classList && after.classList.contains('split-up-btn')),
         'a mouse press does not put focus back on the rebuilt arrow');
+} else if (mode === 'dock_bar') {
+    // compact D-1: the docked bar names the panel and carries restore + close
+    const s = await boot();
+    s.swap('inspector-pane', '<div class="inspector-header"><div class="inspector-title">'
+        + '<span class="inspector-runid">#7</span> <strong>ramsey</strong></div></div>' + RUN);
+    s.drag([30, 70]);
+    s.d.getElementById('nav-qubits').click();
+    assert.ok(s.docked(), 'navigation docks the run');
+    const bar = s.d.querySelector('#inspector-pane > .ui-dock-bar');
+    assert.equal(bar.querySelector('.ui-dock-title').textContent, '#7 ramsey', 'the bar names the panel');
+    assert.equal(s.d.getElementById('table-pane').style.height, '', 'the page gets everything else');
+    assert.equal(s.d.getElementById('inspector-pane').style.height, '', 'the panel is only its bar');
+    s.restore();
+    eq(s.sizes(), [30, 70], 'restore returns to the remembered split');
+    s.w._applySplitPreset('collapsed');
+    assert.ok(s.docked(), 'Go to state docks too');
+    let closed = 0;
+    s.w.closeInspector = () => {
+        closed++;
+        const p = s.d.getElementById('inspector-pane');
+        p.innerHTML = '';
+        p.dispatchEvent(new s.w.CustomEvent('inspector-closed', { bubbles: true }));
+    };
+    s.d.querySelector('#inspector-pane > .ui-dock-bar .ui-dock-close').click();
+    assert.equal(closed, 1, 'the bar\'s x closes the panel');
+    assert.ok(s.d.getElementById('inspector-pane').classList.contains('split-hidden'), 'and hides the pane');
+    assert.ok(!s.d.getElementById('inspector-pane').classList.contains('ui-inspector-docked'), 'no dock left behind');
+    s.swap('inspector-pane', QUBIT);
+    assert.ok(!s.docked(), 'the next inspector opens undocked');
+    eq(s.sizes(), [30, 70], 'at the remembered split');
+} else if (mode === 'heading') {
+    // compact D-2: with no choice, the page keeps only the top half of its title
+    const s = await boot();
+    const pane = s.d.getElementById('table-pane');
+    pane.innerHTML = '<h1>Live edit - Json Tree view</h1><p>text</p>';
+    Object.defineProperty(pane.parentElement, 'clientHeight', { value: 812, configurable: true });
+    pane.getBoundingClientRect = () => ({ top: 100, bottom: 912, height: 812 });
+    pane.querySelector('h1').getBoundingClientRect = () => ({ top: 110, bottom: 150, height: 40 });
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), [3.75, 96.25], 'the top pane ends halfway down the title (30 of 800 px)');
+    assert.equal(s.user(), null, 'SM\'s move is not a choice');
+    s.swap('inspector-pane', RUN);
+    eq(s.sizes(), [3.75, 96.25], 'a run opened over another page too');
+    s.drag([50, 50]);
+    s.swap('inspector-pane', QUBIT);
+    eq(s.sizes(), [50, 50], 'a remembered drag still wins');
+    // the Datasets run list keeps its rows
+    const t = await boot();
+    t.d.getElementById('table-pane').innerHTML = '<h2>Datasets</h2><input id="dataset-search">';
+    t.swap('inspector-pane', RUN);
+    eq(t.sizes(), SPLIT.datasetExpandedSizes, 'the Datasets list keeps the run position');
 } else {
     assert.fail('unknown mode: ' + mode);
 }

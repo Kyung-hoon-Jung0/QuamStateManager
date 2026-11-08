@@ -731,6 +731,38 @@
 .ui-diag-nopath { color: var(--ui-text-3); }
 .ui-diag-group-title, .ui-diag-msg { overflow-wrap: anywhere; }
 
+/* Compact inspector (D-1..D-4): the docked panel bar, the thin gutter's
+   arrows, the one-line run header. */
+.ui-inspector-docked > * { display: none; }
+.ui-inspector-docked > .ui-dock-bar { display: flex; }
+.ui-dock-bar {
+    align-items: center; gap: var(--ui-gap-2);
+    margin: calc(-1 * var(--inspector-pane-pad-v)) calc(-1 * var(--inspector-pane-pad-h));
+    padding: var(--ui-gap-1) var(--ui-gap-3);
+    border-top: var(--ui-bw-strip) solid var(--ui-accent-fill);
+    background: var(--ui-surface-2); font-size: var(--ui-fs-sm);
+}
+.ui-dock-title {
+    flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--ui-text); font-weight: var(--ui-fw);
+}
+.ui-dock-btn {
+    width: var(--ui-icon-btn); height: var(--ui-icon-btn); padding: 0; margin: 0;
+    border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-sm);
+    background: var(--ui-surface-0); color: var(--ui-text); line-height: var(--ui-lh-tight); cursor: pointer;
+}
+.ui-dock-btn:hover, .ui-dock-btn:focus-visible { border-color: var(--ui-accent); color: var(--ui-accent); }
+.ui-split-arrow { position: relative; }
+.ui-split-arrow::before { content: ""; position: absolute; inset: -6px -3px; }
+.ui-ds-head { flex-wrap: wrap; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
+.ui-ds-meta {
+    display: flex; align-items: center; flex-wrap: wrap; gap: var(--ui-gap-2);
+    flex: 1 1 auto; min-width: 0; font-size: var(--ui-fs-sm);
+}
+.ui-ds-folder { margin: 0; max-width: 16rem; }
+.ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
+.ui-note-open { flex-basis: 100%; order: 9; }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,
