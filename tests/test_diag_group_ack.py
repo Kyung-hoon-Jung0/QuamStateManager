@@ -71,7 +71,7 @@ def test_same_kind_findings_are_one_collapsible_row(loaded):
     freq_head = [h for h in heads if f'data-group-head="{h}" data-category="value_freq_consistency"' in html]
     assert len(freq_head) == 1
     key = freq_head[0]
-    members = re.findall(r'<tr class="diag-row[^"]*diag-row-in-group"\s+data-bucket="warning" '
+    members = re.findall(r'<tr class="diag-row[^"]*diag-row-in-group[^"]*"\s+data-bucket="warning" '
                          r'data-category="value_freq_consistency" data-group="' + key + '" hidden>', html)
     assert len(members) == 3, len(members)
     assert "3 places" in html

@@ -26190,6 +26190,7 @@ document.addEventListener('click', function(evt) {
         var table = btn.closest("table"); if (!table) return;
         var open = btn.getAttribute("aria-expanded") !== "true";
         btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.classList.toggle("is-open", open);
         table.querySelectorAll('tr.diag-row-in-group[data-group="' + key + '"]').forEach(function (tr) {
             tr.hidden = !open;
         });

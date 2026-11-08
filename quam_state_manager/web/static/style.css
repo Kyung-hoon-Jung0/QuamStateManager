@@ -16061,26 +16061,3 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .env-reference-foot > .ui-actions { margin-left: auto; }
 .env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
 .env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
-
-/* FB-02: the env-upgrade card's numbered review steps */
-.env-rename-steps { margin: .5rem 0 .4rem 1.2rem; padding: 0; font-size: .92em; color: var(--muted-color, inherit); }
-.env-rename-steps li { margin: .15rem 0; }
-.env-rename-steps li.is-current { color: var(--pico-color, inherit); background: color-mix(in srgb, var(--pico-primary, #3b82f6) 14%, transparent); border-radius: 4px; padding: 0 .3rem; }
-.env-rename-steps li.is-current::marker { color: var(--pico-primary, #3b82f6); }
-.env-rename-steps li.is-done { opacity: .65; }
-#env-rename-why { align-self: center; }
-
-/* FB-03: same-kind findings grouped into one collapsible row */
-.diag-group-row > td { background: color-mix(in srgb, var(--pico-primary, #3b82f6) 5%, transparent); }
-.diag-group-toggle { all: unset; cursor: pointer; font-weight: 600; white-space: nowrap; }
-.diag-group-toggle:focus-visible { outline: 2px solid var(--pico-primary, #3b82f6); outline-offset: 2px; }
-.diag-group-toggle .diag-chev { display: inline-block; transition: transform .12s; }
-.diag-group-toggle[aria-expanded="true"] .diag-chev { transform: rotate(90deg); }
-tr.diag-row-in-group > td:first-child { padding-left: 1.4rem; }
-.diag-kinds { opacity: .8; }
-.diag-nopath { font-size: .85em; }
-.diag-action .diag-fix, .diag-action .diag-fix-all, .diag-action .diag-vack, .diag-action .diag-vack-revoke { margin: .1rem 0; }
-
-.env-staged-note { font-weight: 600; }
-.env-staged-go { margin-left: .4rem; }
-.env-staged-pulse { box-shadow: 0 0 0 3px var(--pico-primary, #3b82f6); }

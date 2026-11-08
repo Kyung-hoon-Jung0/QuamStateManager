@@ -127,6 +127,15 @@
 <div class="ui-coupler-model-grid"><label>Frequency (GHz)<input value="8"><small class="muted">Frequency at the upper sweet spot.</small></label><label>Flux period (V)<input value="0.8"><small class="muted">Voltage change for one flux quantum.</small></label></div>
 <p class="ui-coupler-model-error">Missing: Junction asymmetry</p>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Review steps and grouped findings</h2>
+  <ol class="ui-steps"><li class="is-done">Tick each change you want.</li><li class="is-current">Test load in this env.</li><li>Stage reviewed changes.</li></ol>
+  <p class="ui-note"><span class="ui-staged-note">Staged 2 changes - Apply from the sync control at the top.</span><button type="button" class="btn-xs outline ui-staged-go">Show the Apply button</button> <span class="ui-steps-why">Stage needs a passing Test load first.</span></p>
+  <button type="button" class="btn-sm ui-staged-pulse">Apply 2</button>
+  <table class="ui-table"><tbody>
+    <tr class="ui-diag-group-row"><td><button type="button" class="ui-diag-toggle is-open" aria-expanded="true"><span class="ui-diag-chev" aria-hidden="true">&#9656;</span> 2 places</button></td><td><div class="ui-diag-group-title">readout f_01 (&hellip; GHz) and RF_frequency (&hellip; GHz) differ by &hellip; kHz</div></td></tr>
+    <tr class="ui-diag-in-group"><td>warning</td><td><div class="ui-diag-msg">readout f_01 and RF_frequency differ by +150 kHz</div> <span class="ui-diag-nopath">no single field</span></td></tr>
+  </tbody></table>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

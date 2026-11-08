@@ -80,19 +80,19 @@
     if (!status || status.querySelector('.env-staged-note')) return;
     status.textContent = '';
     const line = document.createElement('span');
-    line.className = 'env-staged-note';
+    line.className = 'env-staged-note ui-staged-note';
     line.textContent = stagedNote.text + ' ';
     status.appendChild(line);
     if (!stagedNote.live) {
       const go = document.createElement('button');
       go.type = 'button';
-      go.className = 'btn-xs outline env-staged-go';
+      go.className = 'btn-xs outline ui-staged-go';
       go.textContent = 'Show the Apply button';
       go.addEventListener('click', function () {
         const tray = document.getElementById('pending-tray');
         const apply = tray && Array.from(tray.querySelectorAll('button')).find(function (b) { return /Apply/.test(b.textContent); });
         window.scrollTo(0, 0);
-        if (apply) { apply.focus(); apply.classList.add('env-staged-pulse'); setTimeout(function () { apply.classList.remove('env-staged-pulse'); }, 2000); }
+        if (apply) { apply.focus(); apply.classList.add('ui-staged-pulse'); setTimeout(function () { apply.classList.remove('ui-staged-pulse'); }, 2000); }
       });
       status.appendChild(go);
     }

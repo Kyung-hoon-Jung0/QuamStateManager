@@ -114,7 +114,7 @@
         <code>{{ row.old }}</code> &rarr; <code>{{ row.new }}</code></p>{% endfor %}{% endif %}
       {% if heading == 'FYI' %}{% for text in report.fyi %}<p class="ui-item-body">{{ text }}</p>{% endfor %}{% endif %}
       {% if heading == 'Stops loading' and upgrade.editable and report.cases['3'].rows %}
-      <ol class="env-rename-steps" id="env-rename-steps">
+      <ol class="ui-steps" id="env-rename-steps">
         <li data-step="1" class="is-current">Tick each change you want (nothing is written by a tick).</li>
         <li data-step="2"><b>Test load in this env</b> &mdash; a dry run in a temporary copy; it changes nothing.</li>
         <li data-step="3"><b>Stage reviewed changes</b> &mdash; <span class="env-rename-where">adds them to your pending edits (the sync control at the top).</span></li>
@@ -123,7 +123,7 @@
       <div class="ui-actions env-rename-actions">
         <button class="btn-sm outline" id="env-rename-test" onclick="EnvUpgrade.testRenames()">Test load in this env</button>
         <button class="btn-sm" id="env-rename-apply" disabled onclick="EnvUpgrade.applyRenames()">Stage reviewed changes</button>
-        <span class="ui-note" id="env-rename-why">Stage needs a passing Test load first.</span>
+        <span class="ui-note ui-steps-why" id="env-rename-why">Stage needs a passing Test load first.</span>
       </div>
       <p id="env-rename-result" role="status"></p>
       {% endif %}

@@ -76,8 +76,7 @@
 
 {%- macro finding_row(f, group_key='', hidden=false) -%}
   {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
-  <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}{% if group_key %} diag-row-in-group{% endif %}"
-      data-bucket="{{ bucket }}" data-category="{{ f.category }}"{% if group_key %} data-group="{{ group_key }}"{% endif %}{% if hidden %} hidden{% endif %}>
+  <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}{% if group_key %} diag-row-in-group ui-diag-in-group{% endif %}" data-bucket="{{ bucket }}" data-category="{{ f.category }}"{% if group_key %} data-group="{{ group_key }}"{% endif %}{% if hidden %} hidden{% endif %}>
     <td>
       {% if f.advisory %}<span class="diag-badge diag-advisory">Recommendation</span>
       {% elif f.acknowledged %}<span class="diag-badge diag-acknowledged" title="Acknowledged by you; it counts again when its values change or you take it back">acknowledged</span>
@@ -86,7 +85,7 @@
     {# QA F-Q: break at the dots; <wbr> adds no text #}
     <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
     <td class="diag-issue-cell">
-      <div class="diag-msg">{{ f.message }}</div>
+      <div class="diag-msg ui-diag-msg">{{ f.message }}</div>
       {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
     </td>
     {% if allow_jump %}
@@ -95,7 +94,7 @@
       {% if f.jump_path %}
       <button type="button" class="btn-sm outline diag-goto"
               data-jump-path="{{ f.jump_path }}" onclick="goToDiagField(this)">Go to field</button>
-      {% else %}<span class="diag-nopath muted" title="This finding is about the instrument or the environment, not one field">no single field</span>{% endif %}
+      {% else %}<span class="ui-diag-nopath" title="This finding is about the instrument or the environment, not one field">no single field</span>{% endif %}
       {# QA diagnostics-r2-13: never offered on a read-only archive #}
       {% if allow_fix and not f.acknowledged %}{{ fix_buttons(f) }}{% endif %}
       {# docs/168: environment-match findings keep their own door #}
@@ -157,11 +156,11 @@
             {{ finding_row(g['items'][0]) }}
           {% else %}
           {% set n = g['items'] | length %}
-          <tr class="diag-row diag-group-row diag-row-{{ g.severity }}" data-bucket="{{ g.bucket }}" data-group-head="{{ g.key }}" data-category="{{ g.category }}">
+          <tr class="diag-row diag-group-row ui-diag-group-row diag-row-{{ g.severity }}" data-bucket="{{ g.bucket }}" data-group-head="{{ g.key }}" data-category="{{ g.category }}">
             <td><span class="diag-badge diag-{{ 'advisory' if g.bucket == 'advisory' else g.severity }}">{{ {'info': 'suggestion', 'advisory': 'Recommendation'}.get(g.bucket, g.severity) }}</span></td>
-            <td class="diag-loc-cell"><button type="button" class="diag-group-toggle" aria-expanded="false"
-                  onclick="toggleDiagGroup(this)" data-group="{{ g.key }}"><span class="diag-chev" aria-hidden="true">&#9656;</span> {{ n }} places</button></td>
-            <td class="diag-issue-cell"><div class="diag-msg">{{ g.title }}</div>
+            <td class="diag-loc-cell"><button type="button" class="diag-group-toggle ui-diag-toggle" aria-expanded="false"
+                  onclick="toggleDiagGroup(this)" data-group="{{ g.key }}"><span class="ui-diag-chev" aria-hidden="true">&#9656;</span> {{ n }} places</button></td>
+            <td class="diag-issue-cell"><div class="ui-diag-group-title">{{ g.title }}</div>
               <div class="diag-detail muted">{{ n }} findings of this kind &middot; expand to see each one</div></td>
             {% if allow_jump %}
             <td class="diag-action">
@@ -191,7 +190,7 @@
 {% if acked_all %}
   <details class="detail-section diag-domain diag-acked-section" data-domain="acknowledged">
     <summary class="section-header diag-domain-summary">
-      <span class="diag-domain-title">Acknowledged ({{ acked_all | length }})</span>
+      <span class="diag-domain-title ui-diag-group-title">Acknowledged ({{ acked_all | length }})</span>
       <span class="diag-domain-badges"><span class="diag-mini diag-acknowledged" title="not counted anywhere; each one counts again when its values change or you take it back">not counted</span></span>
     </summary>
     <table class="diag-table ui-table">
