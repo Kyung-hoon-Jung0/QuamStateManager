@@ -3102,8 +3102,11 @@ window.ChipStatus.mount = function (opts) {
                 var mv = e.moving_qubit === 'control' || e.moving_qubit === 'target';
                 var sx, sy;
                 if (fS != null && fT != null && Math.abs(fS - fT) >= 1e6) {
-                    var sg = fT > fS ? 1 : -1;       // the chevron sits on +sg·rn
-                    sx = -sg * rnx; sy = -sg * rny;
+                    // map tidy: the frequency arrow takes one screen side
+                    // (below / right, pairGlyphs freqSide "screen"), so the
+                    // value takes the other: above / left
+                    var fl = Math.abs(dx) >= Math.abs(dy) ? (rny > 0 ? -1 : 1) : (rnx > 0 ? -1 : 1);
+                    sx = fl * rnx; sy = fl * rny;
                 } else if (mv) {
                     sx = rnx; sy = rny;              // M sits on -rn
                 } else {
@@ -3316,6 +3319,7 @@ window.ChipStatus.mount = function (opts) {
             if (TG.pairGlyphs) {
                 glyphSvg = TG.pairGlyphs(topo.nodes, topo.edges, {
                     cell: CELL, roles: true, compactRoles: true,
+                    freqSide: 'screen',
                     // map tidy D-3: under Qubit freq the stones and the printed delta already say it
                     freqArrows: current !== 'f_01',
                     px: function (id) {

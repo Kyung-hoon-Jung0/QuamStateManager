@@ -708,8 +708,8 @@ function edgeLabelsBesideTheBar() {
   // (3) vertical undirected q2-q4: the chevron took the other side, so the label flips with it
   const m24 = mid('q2-4'), c24 = chevron('q2', 'q4'), s24 = chevSide(c24, m24);
   const v24 = textLike('.topo-hero-edelta', /^Δf 150 MHz$/);
-  ok(!!v24 && s24 !== 0 && s24 === -s13,
-     'F-26 fixture: the q2-q4 chevron sits on the OTHER side from q1-q3\'s (side ' + s24 + ')');
+  ok(!!v24 && s24 === 1 && s13 === 1,
+     'map tidy: every vertical frequency arrow sits on the SAME (right) side, whatever the f01 order (side ' + s24 + ', ' + s13 + ')');
   ok(away(v24, m24, s24) >= barHalf('q2-4') + 1 && hasCls(v24, anchorFor(s24)),
      'F-26: the label takes whichever side the chevron leaves free (offset '
      + away(v24, m24, s24).toFixed(1) + ', ' + anchorFor(s24) + ')');
