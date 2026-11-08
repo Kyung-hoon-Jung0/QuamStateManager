@@ -81,6 +81,12 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
     const style = win.document.createElement('style'); style.textContent = rules; win.document.head.appendChild(style);
     ok($(win, 'cf-compare').classList.contains('cf-compare--off'),
       'Compare carries off styling at one tick');
+    const cmpSt = win.getComputedStyle($(win, 'cf-compare'));
+    const op = parseFloat(cmpSt.opacity);
+    ok(op > 0.4 && op < 0.5, 'Compare at one tick is ~45% opacity (' + op + ')');
+    ok(cmpSt.cursor === 'not-allowed', 'Compare at one tick shows not-allowed cursor');
+    const fw = Number(cmpSt.fontWeight);
+    ok(fw < 600, 'Compare at one tick is not bold (' + cmpSt.fontWeight + ')');
   }
   click(win, boxes(win)[6]);
   ok($(win, 'cf-compare').textContent === 'Compare 2' && !$(win, 'cf-compare').disabled, 'two ticks: "Compare 2", enabled');

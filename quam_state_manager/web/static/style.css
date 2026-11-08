@@ -16090,16 +16090,15 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
     background: var(--pico-primary); border-color: var(--pico-primary);
     color: var(--pico-primary-inverse, #fff); font-weight: 600;
 }
-.compare-float .cf-compare--off,
-.compare-float .cf-compare:disabled {
-    background: var(--pico-card-sectioning-background-color);
-    border-color: var(--pico-muted-border-color);
-    color: var(--pico-muted-color);
-    opacity: 1; filter: grayscale(.4); cursor: not-allowed;
-}
 .compare-float .cf-btn:disabled { opacity: .45; cursor: not-allowed; }
 .compare-float .cf-compare--off,
-.compare-float .cf-compare:disabled { opacity: 1; }
+.compare-float .cf-compare:disabled {
+    background: transparent;
+    border-color: transparent;
+    color: var(--pico-muted-color);
+    font-weight: inherit;
+    filter: grayscale(1);
+}
 .compare-float .cf-btn:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
 .compare-float .cf-list { color: var(--pico-primary); }
 .cf-pop {
