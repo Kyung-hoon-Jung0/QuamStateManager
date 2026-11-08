@@ -3957,6 +3957,67 @@ window.trapFocus = function(container, onEscape) {
     return release;
 };
 
+/* In-page OK/Cancel for cases that used to call window.confirm (headless
+   Chrome and CDP journeys hang on native dialogs). Enter = OK, Escape =
+   Cancel; trapFocus on the card. Resolves true/false when the sheet closes. */
+window.smConfirm = function (message) {
+    return new Promise(function (resolve) {
+        var prior = document.getElementById("sm-confirm-overlay");
+        if (prior) prior.remove();
+        var wrap = document.createElement("div");
+        wrap.id = "sm-confirm-overlay";
+        wrap.className = "kb-sheet-backdrop";
+        wrap.setAttribute("role", "dialog");
+        wrap.setAttribute("aria-modal", "true");
+        var card = document.createElement("div");
+        card.className = "kb-sheet sm-confirm-sheet";
+        var body = document.createElement("pre");
+        body.className = "sm-confirm-message";
+        body.style.whiteSpace = "pre-wrap";
+        body.style.margin = "0 0 .75rem";
+        body.style.font = "inherit";
+        body.textContent = String(message || "");
+        card.appendChild(body);
+        var foot = document.createElement("div");
+        foot.className = "fsp-actions";
+        var cancelBtn = document.createElement("button");
+        cancelBtn.type = "button";
+        cancelBtn.className = "btn-sm outline sm-confirm-cancel";
+        cancelBtn.textContent = "Cancel";
+        var okBtn = document.createElement("button");
+        okBtn.type = "button";
+        okBtn.className = "btn-sm primary sm-confirm-ok";
+        okBtn.textContent = "OK";
+        foot.appendChild(cancelBtn);
+        foot.appendChild(okBtn);
+        card.appendChild(foot);
+        wrap.appendChild(card);
+        var release = null;
+        var settled = false;
+        function finish(yes) {
+            if (settled) return;
+            settled = true;
+            if (release) { try { release(); } catch (e) {} release = null; }
+            wrap.remove();
+            resolve(!!yes);
+        }
+        okBtn.addEventListener("click", function () { finish(true); });
+        cancelBtn.addEventListener("click", function () { finish(false); });
+        wrap.addEventListener("click", function (ev) {
+            if (ev.target === wrap) finish(false);
+        });
+        card.addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter" && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+                ev.preventDefault();
+                finish(true);
+            }
+        });
+        document.body.appendChild(wrap);
+        if (window.trapFocus) release = window.trapFocus(card, function () { finish(false); });
+        okBtn.focus();
+    });
+};
+
 /**
  * Show a transient toast in #status-bar. level: 'info' | 'success' | 'warning'
  * | 'error'. Used to surface async failures that would otherwise be silent.
@@ -5291,18 +5352,20 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 // QUAlibrate's state.json and wiring.json writes. Nothing was
                 // pulled. The usual answer is to wait a moment; OK takes it as
                 // it is, with its OWN token (never force, docs/41).
-                if (window.confirm((data.message || "The live chip looks mid-save.")
+                window.smConfirm((data.message || "The live chip looks mid-save.")
                         + "\n\nOK = take it as it is now."
-                        + "\nCancel = pull nothing, retry in a moment.")) {
-                    setTimeout(function () {
-                        window._applyInFlight = false;
-                        window.doStateSync(mode, forced, ackUnseen, expectChip,
-                            Object.assign({}, opts || {}, { ackTorn: true }));
-                    }, 0);
-                } else if (window.showToast) {
-                    window.showToast("Nothing was pulled — the live chip looked mid-save; "
-                                     + "retry in a moment.", "info");
-                }
+                        + "\nCancel = pull nothing, retry in a moment.").then(function (yes) {
+                    if (yes) {
+                        setTimeout(function () {
+                            window._applyInFlight = false;
+                            window.doStateSync(mode, forced, ackUnseen, expectChip,
+                                Object.assign({}, opts || {}, { ackTorn: true }));
+                        }, 0);
+                    } else if (window.showToast) {
+                        window.showToast("Nothing was pulled — the live chip looked mid-save; "
+                                         + "retry in a moment.", "info");
+                    }
+                });
                 return;
             }
             if (data.status === "needs_confirm") {
@@ -8256,7 +8319,7 @@ window.smModalOpen = function () {
     var sel = '.ch-overlay, #state-review-overlay, #live-drift-overlay,'
             + ' #version-diff-overlay,'
             + ' #plot-apply-popup, #new-run-popup, #cmd-palette, #kb-cheatsheet, #pt-copy-pop,'
-            + ' .modal';
+            + ' #sm-confirm-overlay, .modal';
     var els = document.querySelectorAll(sel);
     for (var i = 0; i < els.length; i++) {
         var el = els[i];
@@ -9961,15 +10024,16 @@ document.addEventListener("undoAskPrevSession", function (evt) {
     var d = (evt && evt.detail) || {};
     // R2 MINOR 4: presses queued behind the asked one wait for this answer
     if (window.UndoQueue && window.UndoQueue.drain) window.UndoQueue.drain();
-    var yes = window.confirm(String(d.message || "This Ctrl+Z writes the live chip.")
-        + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.");
-    if (yes && window.UndoQueue) {
-        window.UndoQueue.ackPrevSession(d.unit_id);
-        if (window.UndoQueue.rememberPrevSessionYes) window.UndoQueue.rememberPrevSessionYes();
-        window.UndoQueue.push("/undo");
-    } else if (!yes && window.showToast) {
-        window.showToast("Not undone — nothing was written.", "info");
-    }
+    window.smConfirm(String(d.message || "This Ctrl+Z writes the live chip.")
+        + "\n\nOK = undo it on the live chip.\nCancel = leave the chip as it is.").then(function (yes) {
+        if (yes && window.UndoQueue) {
+            window.UndoQueue.ackPrevSession(d.unit_id);
+            if (window.UndoQueue.rememberPrevSessionYes) window.UndoQueue.rememberPrevSessionYes();
+            window.UndoQueue.push("/undo");
+        } else if (!yes && window.showToast) {
+            window.showToast("Not undone — nothing was written.", "info");
+        }
+    });
 });
 
 document.addEventListener("keydown", function(evt) {

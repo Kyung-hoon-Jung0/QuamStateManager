@@ -1,7 +1,7 @@
 /* v1.5.1 T1-F2: Ctrl+Z into an earlier session's journal -- the page side.
  *
  * Pins, against the real app.js + undo-trail.js under jsdom:
- *  A  the server's undoAskPrevSession question is asked (window.confirm with
+ *  A  the server's undoAskPrevSession question is asked (in-page smConfirm with
  *     the server's sentence); OK sends ONE /undo carrying that unit's yes
  *     (ack_prev_session), Cancel sends nothing and says so;
  *  B  a later /undo does not carry that unit's yes again, but carries the
@@ -66,9 +66,20 @@ const d = window.document;
 let fails = 0, n = 0;
 function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
-const asked = [];
-let answer = true;
-window.confirm = function (msg) { asked.push(String(msg)); return answer; };
+function confirmOverlay() { return d.getElementById('sm-confirm-overlay'); }
+function confirmMsg() {
+    const o = confirmOverlay();
+    const pre = o && o.querySelector('.sm-confirm-message');
+    return pre ? pre.textContent : '';
+}
+async function clickConfirm(yes) {
+    await tick(40);
+    const o = confirmOverlay();
+    if (!o) throw new Error('no sm-confirm overlay');
+    const btn = o.querySelector(yes ? '.sm-confirm-ok' : '.sm-confirm-cancel');
+    btn.click();
+    await tick(40);
+}
 const toasts = [];
 const realToast = window.showToast;
 window.showToast = function (m, l, ms) { toasts.push(String(m)); return realToast && realToast(m, l, ms); };
@@ -85,8 +96,9 @@ function ask(unit) {
     /* A: OK */
     ask('u-old-1');
     await tick(80);
-    ok(asked.length === 1 && /from 2 days ago/.test(asked[0]) && /earlier SM session/.test(asked[0]),
-       'A1: the question is asked with the edit and its age -- ' + JSON.stringify(asked[0] || ''));
+    ok(!!confirmOverlay() && /from 2 days ago/.test(confirmMsg()) && /earlier SM session/.test(confirmMsg()),
+       'A1: the question is asked with the edit and its age -- ' + JSON.stringify(confirmMsg() || ''));
+    await clickConfirm(true);
     const undo = ajaxCalls.filter((c) => c.u === '/undo');
     ok(undo.length === 1 && undo[0].o && undo[0].o.values
        && undo[0].o.values.ack_prev_session === 'u-old-1',
@@ -114,21 +126,19 @@ function ask(unit) {
     window.UndoQueue.push('/undo');            // queued behind it
     window.UndoQueue.push('/undo');
     ok(window.UndoQueue.depth() === 2, 'E setup: two presses wait behind the asked one');
-    answer = false;
     ask('u-old-3');                            // the in-flight press was asked about
+    await clickConfirm(false);
     hold = null;
     release();
     await tick(120);
     const undo4 = ajaxCalls.filter((c) => c.u === '/undo' || /^\/undo\?/.test(c.u));
     ok(undo4.length === 4 && window.UndoQueue.depth() === 0,
        'E1: Cancel sends nothing more -- the queued presses were dropped (' + undo4.length + ')');
-    answer = true;
-    asked.length = 0;
     /* A: Cancel */
-    answer = false;
     const before = ajaxCalls.length;
     ask('u-old-2');
     await tick(80);
+    await clickConfirm(false);
     ok(ajaxCalls.length === before, 'A3: Cancel sends nothing');
     ok(toasts.some((t) => /Not undone/.test(t) && /nothing was written/.test(t)), 'A4: ...and says so');
 
