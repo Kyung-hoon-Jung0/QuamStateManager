@@ -1236,6 +1236,12 @@
         <small class="muted" id="tz-note"></small>
         </div>
         </div>
+        {# FB-12 D-4: the saved port-test run targets (OPX / QM-SaaS), loaded on
+           first open of this window; the password is only ever "saved" here. #}
+        <div class="settings-group" id="settings-port-targets">
+        <small class="settings-label">Port test run targets</small>
+        <div hx-get="/port-test/settings/panel" hx-trigger="load" hx-swap="outerHTML"><small class="muted">Loading&hellip;</small></div>
+        </div>
         <div class="settings-group">
         <small class="settings-label">Layout</small>
         <button type="button" class="settings-opt" id="reset-menu-order">Reset menu order</button>

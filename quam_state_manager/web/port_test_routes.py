@@ -9,6 +9,12 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
+import time
+import json
+import hashlib
+
+from flask import session
 
 from flask import Blueprint, current_app, jsonify, make_response, render_template, request
 
@@ -136,6 +142,30 @@ def port_test_script():
     return resp
 
 
+def _binding(plan, target):
+    target = {k: str(target.get(k) or "").strip() for k in ("host", "cluster", "port")}
+    return hashlib.sha256(json.dumps([plan, target], sort_keys=True).encode()).hexdigest()
+
+
+@port_test_bp.route("/port-test/confirm", methods=["POST"])
+def port_test_confirm():
+    data = json_object()
+    if data.get("hardware_ok") is not True:
+        return jsonify(ok=False, error="Confirm the fridge-line warning."), 400
+    try:
+        _, plan = _build(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    owner = session.setdefault("port_test_owner", secrets.token_urlsafe(24))
+    token = secrets.token_urlsafe(32)
+    manager = runs()
+    with manager._lock:
+        now = time.monotonic()
+        manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
+        manager.confirmations[token] = (now + 60, owner, _binding(plan, data.get("opx") or {}))
+    return jsonify(ok=True, token=token, expires_s=60)
+
+
 @port_test_bp.route("/port-test/run", methods=["POST"])
 def port_test_run():
     data = json_object()
@@ -153,12 +183,22 @@ def port_test_run():
     s = ptr.load_settings(inst)
     s["target"] = target
     if target == "opx":
-        if data.get("hardware_ok") is not True:
+        with runs()._lock:
+            confirmation = runs().confirmations.pop(str(data.get("confirm_token") or ""), None)
+        if (not confirmation or confirmation[0] <= time.monotonic()
+                or confirmation[1] != session.get("port_test_owner")
+                or confirmation[2] != _binding(plan, s["opx"])):
             return jsonify({"ok": False, "error": "Confirm the fridge-line warning before a hardware run."}), 400
         host = str(s["opx"].get("host") or "").strip()
         if not host:
             return jsonify({"ok": False, "error": "Set the OPX host first."}), 400
-        req = {"mode": "opx", "target": {"host": host, "cluster": s["opx"].get("cluster") or None,
+        try:
+            seconds = float(data.get("max_s", ptr.MAX_RUN_S))
+            if not 0 < seconds <= 3600:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Hardware duration must be in (0, 3600] seconds."), 400
+        req = {"max_s": seconds, "mode": "opx", "target": {"host": host, "cluster": s["opx"].get("cluster") or None,
                                          "port": s["opx"].get("port") or None}}
     else:
         pw, _where = ptr.load_password(inst, s)
@@ -226,3 +266,33 @@ def port_test_password_remove():
     inst = current_app.instance_path
     ptr.remove_password(inst, ptr.load_settings(inst))
     return jsonify({"ok": True, "settings": ptr.public_view(inst)})
+
+
+@port_test_bp.route("/port-test/settings/panel", methods=["GET", "POST"])
+def port_test_targets_panel():
+    """The saved run targets inside the Settings window (FB-12 D-4)."""
+    inst = current_app.instance_path
+    msg = ""
+    if request.method == "POST":
+        f = request.form
+        before = ptr.load_settings(inst)
+        ptr.save_settings(inst, {
+            "opx": {k: f.get("opx_" + k, "") for k in ("host", "cluster", "port")},
+            "saas": {k: f.get("saas_" + k, "") for k in ("email", "host", "version")}})
+        after = ptr.load_settings(inst)
+        msg = "Saved."
+        try:
+            if f.get("do") == "remove_password":
+                ptr.remove_password(inst, after)
+                msg = "Saved password removed."
+            elif f.get("saas_password"):
+                ptr.save_password(inst, after, f["saas_password"])
+                msg = "Saved (password in the OS keyring)."
+            elif ptr._secret_key(before) != ptr._secret_key(after):
+                old, _w = ptr.load_password(inst, before)
+                if old:  # a renamed account keeps its password
+                    ptr.save_password(inst, after, old)
+                    ptr.remove_password(inst, before)
+        except ValueError as exc:
+            msg = str(exc)
+    return render_template("_port_test_targets.html", pt_settings=ptr.public_view(inst), pt_msg=msg)

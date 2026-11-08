@@ -1,0 +1,27 @@
+{# FB-12 D-4: the saved port-test run targets, editable from the Settings
+   window. The same settings the Port test page uses; a password lives only
+   in the OS keyring and is shown as saved / not saved, never as text. #}
+{% set s = pt_settings %}
+<form id="pt-targets" class="pt-targets" hx-post="/port-test/settings/panel" hx-target="#pt-targets" hx-swap="outerHTML">
+  <div class="settings-sub">
+    <span class="settings-sub-label">Real OPX</span>
+    <label class="pt-tg-field">Host / IP <input name="opx_host" value="{{ s.opx.host }}" autocomplete="off" size="14"></label>
+    <label class="pt-tg-field">Cluster <input name="opx_cluster" value="{{ s.opx.cluster }}" autocomplete="off" size="10"></label>
+    <label class="pt-tg-field">Port <input name="opx_port" value="{{ s.opx.port }}" autocomplete="off" size="6" placeholder="default"></label>
+  </div>
+  <div class="settings-sub">
+    <span class="settings-sub-label">QM-SaaS simulator</span>
+    <label class="pt-tg-field">Email <input name="saas_email" value="{{ s.saas.email }}" autocomplete="off" size="18"></label>
+    <label class="pt-tg-field">Host <input name="saas_host" value="{{ s.saas.host }}" autocomplete="off" size="18"></label>
+    <label class="pt-tg-field">QOP version <input name="saas_version" value="{{ s.saas.version }}" placeholder="latest" size="8"></label>
+    <label class="pt-tg-field">Password <input type="password" name="saas_password" autocomplete="new-password" size="14"
+      {% if not s.keyring_available %}disabled{% endif %}
+      placeholder="{{ '•••••••• saved (OS keyring)' if s.saas.password_saved else 'not saved' }}"></label>
+    {% if not s.keyring_available %}<small class="muted pt-warn" id="pt-tg-nokeyring">No OS keyring is available, so a password cannot be saved (SM never writes passwords to a file).</small>{% endif %}
+  </div>
+  <div class="settings-options">
+    <button type="submit" class="settings-opt" name="do" value="save">Save targets</button>
+    {% if s.saas.password_saved %}<button type="submit" class="settings-opt" name="do" value="remove_password">Remove saved password</button>{% endif %}
+    <small class="muted" id="pt-tg-msg" aria-live="polite">{{ pt_msg or "" }}</small>
+  </div>
+</form>

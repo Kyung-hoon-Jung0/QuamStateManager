@@ -109,12 +109,36 @@
         });
     });
 
+    var confirmToken = null, confirmSeq = 0;
+    function invalidateConfirm() {
+        confirmSeq++; confirmToken = null; $('#pt-hw-ok').checked = false;
+    }
+    form.addEventListener('input', invalidateConfirm);
+    form.addEventListener('change', invalidateConfirm);
+    root.querySelectorAll('[name^="opx_"], [name="pt-target"], [name="max_s"]').forEach(function (e) {
+        e.addEventListener('input', invalidateConfirm);
+        e.addEventListener('change', invalidateConfirm);
+    });
+    $('#pt-hw-ok').addEventListener('change', function () {
+        confirmToken = null;
+        var seq = ++confirmSeq;
+        if (!this.checked) return;
+        var body = params(); body.hardware_ok = true;
+        body.opx = {host: inputVal('opx_host'), cluster: inputVal('opx_cluster'), port: inputVal('opx_port')};
+        post('/port-test/confirm', body).then(function (j) {
+            if (seq !== confirmSeq) return;
+            if (j.ok) { confirmToken = j.token; msg('Hardware confirmation ready for 60 seconds, one run.'); }
+            else { invalidateConfirm(); msg(j.error, true); }
+        });
+    });
+
     $('#pt-run').addEventListener('click', function () {
         var t = target();
-        if (t === 'opx' && !$('#pt-hw-ok').checked) { msg('Tick the fridge-line warning first.', true); return; }
+        if (t === 'opx' && (!$('#pt-hw-ok').checked || !confirmToken)) { msg('Tick the fridge-line warning first.', true); return; }
         saveTarget().then(function (s) {
             if (!s.ok) { msg(s.error, true); return; }
-            var body = params(); body.target = t; body.hardware_ok = t === 'opx' && $('#pt-hw-ok').checked;
+            var body = params(); body.target = t; body.confirm_token = confirmToken; body.max_s = inputVal('max_s');
+            invalidateConfirm();
             msg('Starting…');
             $('#pt-result').innerHTML = '';
             post('/port-test/run', body).then(function (j) {
@@ -136,7 +160,9 @@
         if (!runId || !document.body.contains(root)) return;
         fetch('/port-test/status?id=' + encodeURIComponent(runId)).then(function (r) { return r.json(); }).then(function (st) {
             if (st.state === 'running') {
-                msg((st.stopping ? 'Stopping (' + st.stop_why + ')… ' : 'Running: ') + (st.phase || 'starting') +
+                msg((st.cleanup_pending && !st.stopping ? 'Not confirmed closed: ' : '') +
+                    (st.stopping ? 'Stopping (' + st.stop_why + ')… ' : 'Running: ') + (st.phase || 'starting') +
+                    (st.qm_id ? ' · QM ' + st.qm_id : '') +
                     (st.detail ? ' · ' + st.detail : '') + ' · ' + st.elapsed_s + ' s');
                 pollTimer = setTimeout(poll, 1000);
                 return;
@@ -197,6 +223,12 @@
                     (ok === false ? ' <span class="pt-warn">differs from the config (' + fmt(row.peak / (res.expected_peak || 1), 3) + '×)</span>' : '') +
                     ' · ' + row.n + ' samples' + (row.rate ? ' at ' + (row.rate / 1e9) + ' GSa/s' : '') + '</div>' +
                     sparkline(row, 600, 70) + zoom(row) + '</div>';
+            });
+            Object.keys(res.adc || {}).forEach(function (k) {
+                html += '<div class="pt-res-row pt-sim-adc"><div class="pt-res-head"><code>' + esc(k) +
+                    '</code> simulated raw ADC (loopback out&rarr;in, averaged) · peak ' +
+                    fmt(Math.max.apply(null, res.adc[k].map(Math.abs)), 5) + '</div>' +
+                    sparkline({re: res.adc[k]}, 600, 90) + '</div>';
             });
         } else {
             var adc = res.adc || {};
