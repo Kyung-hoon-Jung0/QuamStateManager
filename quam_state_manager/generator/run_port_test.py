@@ -88,6 +88,18 @@ def watch_stdin(stream, stop: threading.Event) -> threading.Thread:
     return th
 
 
+def _detach_stdin():
+    """Hand the stdin pipe to the watcher alone and point fd 0 / sys.stdin at
+    the null device. On Windows a thread blocked reading a pipe blocks every
+    other call on that handle (an import that asks isatty(stdin) hangs)."""
+    fd = os.dup(sys.stdin.fileno())
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = open(os.devnull, "r")
+    return os.fdopen(fd, "r", encoding="utf-8", errors="replace")
+
+
 def connection(mod, target):
     from qm import QuantumMachinesManager
     kw = {"host": target["host"], "timeout": mod.CALL_TIMEOUT_S}
@@ -150,7 +162,7 @@ def main() -> int:
     try:
         req = json.loads(sys.stdin.readline() or "{}")
         parent_gone = threading.Event()
-        watch_stdin(sys.stdin, parent_gone)
+        watch_stdin(_detach_stdin(), parent_gone)
         mode, t = req.get("mode"), req.get("target") or {}
         mod = _load(script)
         update(**{"phase": "connecting", "at": time.time()})
