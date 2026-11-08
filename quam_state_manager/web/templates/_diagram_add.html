@@ -1,6 +1,16 @@
 {# The add panel under the chip map (core/diagram_add.py). Staging writes the
    working copy only; the pending tray, Review / Apply and one Ctrl+Z hold it. #}
-<div class="ui-item" id="cm-add-box" data-kind="{{ kind }}">
+{# A port field is a listbox, not a native <select>: hovering or arrowing onto
+   an option lights that port on the rack (a native option gives no hover
+   events). The value rides a hidden input of the same name. #}
+{% macro port_list(name, cands, role, label, empty) -%}
+<input type="hidden" name="{{ name }}" value="{% if cands %}{{ cands[0].con }}/{{ cands[0].fem }}/{{ cands[0].port }}{% endif %}" data-cm-port-value="{{ name }}">
+<div class="ui-listbox cm-port-list" role="listbox" tabindex="0" aria-label="{{ label }}" data-cm-port-list="{{ name }}" data-role="{{ role }}" data-io="out"{% if name == 'drive' %} data-cm-add-drive{% endif %}{% if cands %} aria-activedescendant="cmopt-{{ name }}-1"{% endif %}>
+  {%- for c in cands %}<div class="ui-option" role="option" id="cmopt-{{ name }}-{{ loop.index }}" data-value="{{ c.con }}/{{ c.fem }}/{{ c.port }}" data-new="{{ 1 if c.new else 0 }}" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ c.label }} <span class="ui-table-muted">({{ c.why }})</span></div>
+  {%- else %}<div class="ui-option ui-option--empty" aria-disabled="true">{{ empty }}</div>{% endfor %}
+</div>
+{%- endmacro %}
+<div class="ui-item" id="cm-add-box" data-cm-box data-kind="{{ kind }}">
   <div class="ui-item-head">
     <span class="ui-badge ui-badge--accent">Add {{ kind }}</span>
     <span class="ui-item-title">{% if kind == 'qubit' %}copied from {{ d.template }} on feedline {{ d.feedline }}{% else %}{{ a }} and {{ b }}{% endif %}</span>
@@ -27,16 +37,20 @@
       <tr><th class="ui-table-head" scope="row">Readout frequency (Hz)</th>
           <td class="ui-table-cell"><input name="readout_rf" inputmode="decimal" value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}" aria-label="Readout frequency in Hz"></td>
           <td class="ui-table-cell ui-table-muted">{% if d.readout_note %}<span class="ui-badge ui-badge--warn">{{ d.readout_note }}</span>{% else %}the next free slot on this feedline, within its LO's IF window{% endif %}</td></tr>
+    </table>
+    {% if true %}
+    <div class="cm-rack-wrap">
+      <div class="cm-rack-legend ui-note" data-cm-rack-legend><span class="cm-lg cm-lg-sel"></span> chosen port <span class="cm-lg cm-lg-hover"></span> option under the pointer / keyboard {% if kind == 'qubit' and d.feedline_ports %}<span class="cm-lg cm-lg-shared"></span> shared feedline (readout){% endif %} <span class="cm-lg-note" data-cm-rack-note></span></div>
+      <div id="cm-add-rack" class="cm-rack" data-cm-rack data-light='{{ (d.feedline_ports if kind == 'qubit' else []) | tojson }}'></div>
+    </div>
+    {% endif %}
+    <table class="ui-table">
       <tr><th class="ui-table-head" scope="row">Drive output</th>
-          <td class="ui-table-cell"><select name="drive" aria-label="Drive output" data-cm-add-drive>
-            {% for c in drive %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free MW-FEM output fits</option>{% endfor %}
-          </select></td>
+          <td class="ui-table-cell">{{ port_list('drive', drive, 'xy', 'Drive output', 'no free MW-FEM output fits') }}</td>
           <td class="ui-table-cell ui-table-muted">free MW-FEM outputs; coupled-port band rule and IF window applied</td></tr>
       {% if d.has_flux %}
       <tr><th class="ui-table-head" scope="row">Flux output</th>
-          <td class="ui-table-cell"><select name="flux" aria-label="Flux output">
-            {% for c in flux %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free LF-FEM output</option>{% endfor %}
-          </select></td>
+          <td class="ui-table-cell">{{ port_list('flux', flux, 'z', 'Flux output', 'no free LF-FEM output') }}</td>
           <td class="ui-table-cell ui-table-muted">free LF-FEM outputs</td></tr>
       {% endif %}
     </table>
@@ -48,11 +62,15 @@
     <input type="hidden" name="target" value="{{ plan.summary.target }}">
     <p class="ui-note">New pair <span class="ui-chip">{{ plan.summary.name }}</span>: control {{ plan.summary.control }}, target {{ plan.summary.target }}, shaped like {{ plan.summary.template }}.</p>
     {% if plan.needs_flux %}
-    <label>Coupler output
-      <select name="flux" aria-label="Coupler output" required>
-        {% for c in flux %}<option value="{{ c.con }}/{{ c.fem }}/{{ c.port }}">{{ c.label }} ({{ c.why }})</option>{% else %}<option value="">no free LF-FEM output</option>{% endfor %}
-      </select>
-    </label>
+    {% if true %}
+    <div class="cm-rack-wrap">
+      <div class="cm-rack-legend ui-note" data-cm-rack-legend><span class="cm-lg cm-lg-sel"></span> chosen port <span class="cm-lg cm-lg-hover"></span> option under the pointer / keyboard {% if kind == 'qubit' and d.feedline_ports %}<span class="cm-lg cm-lg-shared"></span> shared feedline (readout){% endif %} <span class="cm-lg-note" data-cm-rack-note></span></div>
+      <div id="cm-add-rack" class="cm-rack" data-cm-rack data-light='{{ (d.feedline_ports if kind == 'qubit' else []) | tojson }}'></div>
+    </div>
+    {% endif %}
+    <div class="ui-field"><span class="ui-field-label">Coupler output</span>
+      {{ port_list('flux', flux, 'coupler', 'Coupler output', 'no free LF-FEM output') }}
+    </div>
     <p class="ui-note">Free LF-FEM outputs; coupler flux offsets start at 0.</p>
     {% endif %}
     {% endif %}
@@ -63,5 +81,5 @@
       {% if kind == 'qubit' or not plan.error or plan.needs_flux %}<button type="submit" class="btn-sm">Review the change</button>{% endif %}
     </div>
   </form>
-  <div id="cm-add-review"></div>
+  <div id="cm-add-review" data-cm-review></div>
 </div>

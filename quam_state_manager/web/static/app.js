@@ -8981,6 +8981,8 @@ window.Bundles = (function () {
         [/^\/trends?(\/|$|\?)/, ["chipstatus", "datasets"]],
         [/^\/(qubits|pairs|resonators|flux|couplers|qdac)(\/|$|\?)/, ["components"]],
         // (the /qubit/<id> and /pair/<id> inspector partials reference no lazy global -- 4l-review audit)
+        // FB-10 C: the inspector's "Remove..." panel is driven by diagram-add.js
+        [/^\/diagram-remove(\/|$|\?)/, ["components"]],
         [/^\/(datasets?|collections|fit-audit)(\/|$|\?)/, ["datasets"]],
         [/^\/scheduler(\/|$|\?)/, ["scheduler"]], [/^\/autofit(\/|$|\?)/, ["autofit"]],
         [/^\/(compare-hub|compare|diff)(\/|$|\?)/, ["compare"]],
