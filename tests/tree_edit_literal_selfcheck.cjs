@@ -12,8 +12,8 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
-let fails = 0;
-function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
+let fails = 0, assertions = 0;
+function ok(c, m) { assertions++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
 const dom = new JSDOM('<!doctype html><html><body><div class="explorer-pane">'
     + '<div id="explorer-tree-state" class="json-tree"></div></div></body></html>',
@@ -79,6 +79,8 @@ window.renderJsonTree('explorer-tree-state', {
     ok(!!edit, 'commit POSTs /field/edit');
     ok(edit && /(^|&)value=smooth(&|$)/.test(edit.body),
        'a quoted literal is UNWRAPPED before sending (' + (edit && edit.body) + ')');
+
+    ok(edit && new URLSearchParams(edit.body).get('tree_kind_change') === '1', 'literal tree commit permits type changes');
 
     // a string with an inner quote round-trips through JSON escaping
     const esc = d.querySelector('.tree-node[data-path="qubits.q1.esc"] .tree-val');
@@ -266,6 +268,6 @@ window.renderJsonTree('explorer-tree-state', {
     ok(/\.tree-val-editing \{[^}]*inline-flex/.test(css),
        'the editing value box is inline-flex so the async chip widens it');
 
-    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (28 assertions)');
+    console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (' + assertions + ' assertions)');
     process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error('FATAL', e && e.message); process.exit(1); });

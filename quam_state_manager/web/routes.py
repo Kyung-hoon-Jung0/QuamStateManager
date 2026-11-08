@@ -13537,6 +13537,8 @@ def field_edit():
         return guard
 
     from quam_state_manager.core import type_policy as _tp
+    _tree_kc = _tree_kind_change_requested()
+    _type_change_note = None
     try:
         # Resolve FIRST, parse against the TARGET's expectation: enforcement
         # fires at the resolved write path, and cross-class pointer chains
@@ -13562,7 +13564,7 @@ def field_edit():
             raise ValueError(_pr)
         # ...and a null field takes its type from the rest of the chip.
         _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
-        if _sr is not None:
+        if _sr is not None and not _tree_kc:
             raise ValueError(_sr)
         # docs/20 r12-B: an FSP edit NEVER silently changes amplitudes.
         # D-44: without an ack the FSP COMMITS now and the response carries
@@ -13604,20 +13606,23 @@ def field_edit():
             offer = _type_fix_offer(modifier.store, target_path, raw_value,
                                     was_quoted=_value_was_quoted())
             if offer is not None:
-                return jsonify(
-                    ok=False, type_fix=offer,
-                    error=(f"{target_path} is stored as TEXT "
-                           f"({offer['current_display']}), not a "
-                           f"{offer['proposed']} — convert the type to store "
-                           f"the number, or keep text (wrap the value in "
-                           'quotes "…" to keep text without asking)')), 409
+                if _tree_kc:
+                    _type_fix = "convert"
+                else:
+                    return jsonify(
+                        ok=False, type_fix=offer,
+                        error=(f"{target_path} is stored as TEXT "
+                               f"({offer['current_display']}), not a "
+                               f"{offer['proposed']} — convert the type to store "
+                               f"the number, or keep text (wrap the value in "
+                               'quotes "…" to keep text without asking)')), 409
         if _type_fix == "convert":
             offer = _type_fix_offer(modifier.store, target_path, raw_value,
                                     was_quoted=_value_was_quoted())
             if offer is not None:
                 _tp.save_assignment(
                     current_app.instance_path, ctx["path"], target_path,
-                    {"type": offer["proposed"], "override_env": False,
+                    {"type": offer["proposed"], "override_env": bool(_tree_kc),
                      "note": "converted from text via edit (r14)"})
                 _attach_type_policy(ctx)
         elif _type_fix == "keep" and not (raw_value.startswith('"')
@@ -13629,7 +13634,18 @@ def field_edit():
             # The quoted form is the spelling that already survives, so this
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
-        parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        parsed = ((raw_value if _value_was_quoted() else _tp.parse_value(raw_value))
+                  if _tree_kc else _parse_for_target(modifier.store, target_path, raw_value))
+        try:
+            _old_before = modifier.store.get_value(target_path)
+        except Exception:  # noqa: BLE001 — absence is still a kind
+            _old_before = None
+        _coerce = True
+        if _tree_kc and _kind_of(_old_before) != _kind_of(parsed):
+            if _type_fix != "convert":
+                _tree_assign_expected_type(ctx, target_path, parsed)
+            _coerce = False
+            _type_change_note = f"{_tree_kind_label(_old_before)} → {_tree_kind_label(parsed)}"
         from quam_state_manager.web.port_identity import (
             edit_offer, edit_offers, move_port, stage_write, pointer_retargets)
         _identity_offer = edit_offer(target_path, parsed)
@@ -13676,7 +13692,16 @@ def field_edit():
                         if _origin is not None:
                             entry.origin = copy.deepcopy(_origin)
                 else:
-                    _entry = modifier.set_value(target_path, parsed)
+                    try:
+                        _entry = modifier.set_value(target_path, parsed,
+                                                    coerce=_coerce)
+                    except _tp.TypeMismatchError:
+                        if _tree_kc:
+                            _tree_assign_expected_type(ctx, target_path, parsed)
+                            _entry = modifier.set_value(target_path, parsed,
+                                                        coerce=False)
+                        else:
+                            raise
                 if _origin is not None:
                     _entry.origin = copy.deepcopy(_origin)
         finally:
@@ -13696,6 +13721,8 @@ def field_edit():
     if _lab_notes:
         _warn = " ".join(([_warn] if _warn else []) + _lab_notes)
     _wkw = {"warning": _warn} if _warn else {}
+    if _type_change_note:
+        _wkw["type_change"] = _type_change_note
     if _identity_offers and not _identity_offer and _identity_ack == "fix":
         _wkw.update(group_id=_entry.group_id, port_identity_moved=_moves,
                     port_pointer_retargets=pointer_retargets(_identity_entries))
@@ -13786,6 +13813,37 @@ def _kind_of(v: Any) -> str:
     if isinstance(v, str):
         return "str"
     return "list" if isinstance(v, list) else "dict"
+
+
+def _tree_kind_label(value: Any) -> str:
+    return {"real": "float", "str": "string", "bool": "boolean"}.get(_kind_of(value), _kind_of(value))
+
+
+def _tree_kind_change_requested(form: dict | None = None) -> bool:
+    src = form if form is not None else request.form
+    return str(src.get("tree_kind_change") or "") in ("1", "true", "True")
+
+
+def _type_expr_for_kind(kind: str) -> str | None:
+    return {"bool": "bool", "int": "int", "real": "real", "str": "str",
+            "list": "list", "dict": "dict"}.get(kind)
+
+
+def _tree_assign_expected_type(ctx, target_path: str, parsed: Any, *,
+                             proposed: str | None = None) -> None:
+    """User-layer type assignment for a Json-tree kind change (jtclick)."""
+    from quam_state_manager.core import type_policy as _tp
+    expr = proposed or _type_expr_for_kind(_kind_of(parsed))
+    if not expr:
+        return
+    try:
+        _tp.save_assignment(
+            current_app.instance_path, ctx["path"], target_path,
+            {"type": expr, "override_env": True,
+             "note": "kind change via Json Tree edit"})
+    except ValueError:
+        return
+    _attach_type_policy(ctx)
 
 
 def _value_was_quoted() -> bool:
@@ -16278,7 +16336,7 @@ def tree_json_edit_source():
                    large=len(text.encode("utf-8")) > _JSON_EDIT_LARGE_BYTES)
 
 
-def _json_edit_refusal(store, modifier, op: dict) -> str | None:
+def _json_edit_refusal(store, modifier, op: dict, *, tree_kind_change=False) -> str | None:
     """Why one Edit-as-JSON write would be refused, or None (D-25 preflight).
 
     The same checks the batch door makes, run for EVERY op first so the
@@ -16313,17 +16371,18 @@ def _json_edit_refusal(store, modifier, op: dict) -> str | None:
     reason = _pointer_cell_refusal(store, path, value)
     if reason:
         return reason
-    reason = _sibling_type_refusal(store, path, value)
+    reason = None if tree_kind_change else _sibling_type_refusal(store, path, value)
     if reason:
         return reason
     try:
         parsed = (_parse_for_target(store, target, value)
-                  if isinstance(value, str) and not is_pointer(value.strip()) else value)
+                  if not tree_kind_change and isinstance(value, str) and not is_pointer(value.strip()) else value)
         reason = _container_pointer_refusal(store, target, parsed)
         if reason:
             return reason
-        modifier._checked_value(target, store.get_value(target), parsed,
-                                coerce=True, enforce=True)
+        if not tree_kind_change:
+            modifier._checked_value(target, store.get_value(target), parsed,
+                                    coerce=True, enforce=True)
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         return str(exc)
     return None
@@ -16425,7 +16484,7 @@ def tree_json_edit_save():
         for op in ops:
             if any(r["path"] == op["path"] for r in refused):
                 continue
-            reason = _json_edit_refusal(store, modifier, op)
+            reason = _json_edit_refusal(store, modifier, op, tree_kind_change=bool(payload.get("tree_kind_change")))
             if reason:
                 refused.append({"path": op["path"], "op": op["op"], "error": reason})
         # a pulse added / removed / renamed is the Pulses page's job (w9)
@@ -16463,6 +16522,8 @@ def tree_json_edit_save():
         updates.append(u)
     batch = {"updates": updates, "expect_seq": seq, "group": "new",
              "type_fix": "keep", "expect_chip": payload.get("expect_chip") or ""}
+    if payload.get("tree_kind_change") in (True, 1, "1", "true", "True"):
+        batch["tree_kind_change"] = "1"
     resp = _field_edit_batch_impl(batch)
     relinked = [u["dot_path"] for u in updates if u.get("relink")]
     if relinked and getattr(resp, "status_code", 200) == 200 and resp.is_json:
@@ -16722,6 +16783,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # offender unless acked; type_fix=convert assigns the number type for
     # EVERY offending row (persisted), type_fix=keep proceeds as text.
     _type_fix = str(_pj.get("type_fix") or request.form.get("type_fix") or "")
+    from quam_state_manager.core import type_policy as _tp
+    _tree_kc = _tree_kind_change_requested(_pj)
     _tf_offers: list[tuple[str, dict]] = []
     for _dp, _rv, _c in pairs:
         if not isinstance(_rv, str):
@@ -16734,20 +16797,23 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
         if offer is not None:
             _tf_offers.append((_dp, offer))
     if _tf_offers and _type_fix not in ("convert", "keep"):
-        _dp0, _off0 = _tf_offers[0]
-        _off0["more_in_batch"] = len(_tf_offers) - 1
-        return jsonify(
-            ok=False, type_fix=_off0, type_fix_dot_path=_dp0,
-            error=(f"{len(_tf_offers)} field(s) in this batch are stored as "
-                   f"TEXT (e.g. {_off0['path']} = {_off0['current_display']}) "
-                   "— convert their type to store numbers, or keep text")), 409
+        if _tree_kc:
+            _type_fix = "convert"
+        else:
+            _dp0, _off0 = _tf_offers[0]
+            _off0["more_in_batch"] = len(_tf_offers) - 1
+            return jsonify(
+                ok=False, type_fix=_off0, type_fix_dot_path=_dp0,
+                error=(f"{len(_tf_offers)} field(s) in this batch are stored as "
+                       f"TEXT (e.g. {_off0['path']} = {_off0['current_display']}) "
+                       "— convert their type to store numbers, or keep text")), 409
     if _tf_offers and _type_fix == "convert":
         from quam_state_manager.core import type_policy as _tp2
         for _dp, _off in _tf_offers:
             try:
                 _tp2.save_assignment(
                     current_app.instance_path, ctx["path"], _off["path"],
-                    {"type": _off["proposed"], "override_env": False,
+                    {"type": _off["proposed"], "override_env": bool(_tree_kc),
                      "note": "converted from text via edit (r14)"})
             except ValueError:
                 continue
@@ -16947,12 +17013,12 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     raise ValueError(_pr)
                 # ...and a null field takes its type from the rest of the chip.
                 _sr = _sibling_type_refusal(modifier.store, dot_path, raw_value)
-                if _sr is not None:
+                if _sr is not None and not _tree_kc:
                     raise ValueError(_sr)
                 # String values parse against the TARGET's expectation (JSON
                 # values pass through — the modifier gate is the backstop).
                 parsed = (_parse_for_target(modifier.store, target_path, raw_value)
-                          if isinstance(raw_value, str) else raw_value)
+                          if not _tree_kc and isinstance(raw_value, str) else raw_value)
                 _cno = _container_pointer_refusal(modifier.store, target_path, parsed)
                 if _cno:
                     raise ValueError(_cno)    # SU-11: the grid's own door too
@@ -16985,8 +17051,27 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                                         "port_pointer_retargets": _offer.get("retargets", [])})
                         continue
                     else:
-                        entry = modifier.set_value(target_path, parsed, _defer_hooks=True,
-                                                   group_id=_batch_gid)
+                        _coerce = True
+                        if _tree_kc:
+                            try:
+                                _old_b = modifier.store.get_value(target_path)
+                            except Exception:  # noqa: BLE001
+                                _old_b = None
+                            if _kind_of(_old_b) != _kind_of(parsed):
+                                _tree_assign_expected_type(ctx, target_path, parsed)
+                                _coerce = False
+                        try:
+                            entry = modifier.set_value(
+                                target_path, parsed, _defer_hooks=True,
+                                group_id=_batch_gid, coerce=_coerce)
+                        except _tp.TypeMismatchError:
+                            if _tree_kc:
+                                _tree_assign_expected_type(ctx, target_path, parsed)
+                                entry = modifier.set_value(
+                                    target_path, parsed, _defer_hooks=True,
+                                    group_id=_batch_gid, coerce=False)
+                            else:
+                                raise
                 except KeyError:
                     if not allow_create:
                         raise

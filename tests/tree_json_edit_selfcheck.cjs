@@ -11,6 +11,8 @@ const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 't
 // a Windows checkout may carry CRLF; the mutation targets are written with LF
 let src = fs.readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
 const MUT = {
+    tree_type: ['tree_kind_change: true', 'tree_kind_change: false'],
+    type_note: ['+ typeNote + (warn.length', '+ "" + (warn.length'],
     parse: ['var t = getText(), pe = parseError(t);', 'var t = getText(), pe = null;'],
     no_save_on_error: ['if (lint()) return;                 // D-24', 'lint();                 // D-24'],
     goto: ['var line = lineOf(text, S.path, r.path);', 'var line = 1;'],
@@ -218,5 +220,16 @@ function key(w, target, k, mods) {
            'the warning names the path');
     }
 
+    {
+        const {w, calls, responses, eds} = world();
+        const toasts = []; w.showToast = (s) => toasts.push(s);
+        responses.push({status:200,d:{...SOURCE,path:'value',text:'null'}});
+        await w.TreeJsonEdit.open({tab:'state',path:'value'}); await settle();
+        eds[0].set('[1,2]');
+        responses.push({status:200,d:{ok:true,results:[{}]}});
+        await w.TreeJsonEdit.save(); await settle();
+        ok(calls[calls.length-1].body.tree_kind_change === true, 'JSON panel permits type changes');
+        ok(toasts.some(t=>t.includes('type: null \u2192 list')), 'JSON panel announces the new type');
+    }
     console.log('ALL OK (' + n + ' assertions)');
 })().catch((e) => { console.error(e && e.stack || e); process.exit(1); });
