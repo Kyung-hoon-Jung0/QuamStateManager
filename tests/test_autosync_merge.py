@@ -371,7 +371,7 @@ class TestAReplacePullSaysSo:
 
         This pin is the measurement, not the wording: it asserts that NO
         snapshot on disk contains the discarded value, and that the shipped
-        message therefore does not offer State History for it.
+        message therefore does not offer State logs for it.
         """
         c = env["client"]
         THE_EDIT = 9.99e-5
@@ -398,13 +398,13 @@ class TestAReplacePullSaysSo:
         # message, do not just flip the assert.
         assert not held, (
             "a snapshot holds the discarded edit after all — the toast may now "
-            "honestly offer State History: " + str(held[:2]))
+            "honestly offer State logs: " + str(held[:2]))
 
         js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
               / "static" / "auto-apply.js").read_text(encoding="utf-8")
         i = js.index("document.addEventListener('autoSyncPulled'")
         blk = js[i:i + 1400]
-        assert "State History can bring it back" not in blk, (
+        assert "State logs can bring it back" not in blk, (
             "the toast promises a recovery that was measured not to exist")
         assert "not recoverable" in blk, "it does not say what actually happened"
         # R7: a number must cover everything it describes, or not be given

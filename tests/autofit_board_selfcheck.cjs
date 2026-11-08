@@ -90,7 +90,7 @@ const picked = () => Array.from($('autofit-targets').selectedOptions).map(o => o
   t = await board({ status: 'failed' });
   ok(/not restored/i.test(t), 'no restore record says so: ' + t);
   t = await board({ status: 'failed', restore: { status: 'pending', restored: 0, kept: [], unrestorable: [] } });
-  ok(/did not finish/.test(t) && /State History/.test(t), 'a restore that died says so: ' + t);
+  ok(/did not finish/.test(t) && /State logs/.test(t), 'a restore that died says so: ' + t);
   t = await board({ status: 'done', autonomy: 'full' });
   ok(!/restored/i.test(t), 'full autonomy has no restore line');
 

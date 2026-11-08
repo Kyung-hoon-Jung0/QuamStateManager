@@ -242,7 +242,7 @@ var UI_CONFIG = {
 
     /* ── LIVE-DRIFT TRACKING ──────────────────────────────────────────
      * How often (in seconds) every page polls /state/drift so the "Live
-     * changes since baseline" panels (Param History / State History) and an
+     * changes since baseline" panels (Param logs / State logs) and an
      * open drift overlay stay fresh — there is no main-screen banner any
      * more (docs/58). The server gates the work on a pair of stat() calls
      * (no content read unless the live files actually moved), so short
@@ -384,7 +384,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         evt.detail.shouldSwap = true;
         evt.detail.isError = false;
     }
-    // State History stage/restore gates answer 409 with a warning + force
+    // State logs stage/restore gates answer 409 with a warning + force
     // button. Without this the warning would be dropped (htmx ignores error
     // responses) and the gate would look like a silent no-op.
     if (t.id === 'state-history-detail' && status === 409) {
@@ -1195,7 +1195,7 @@ if (document.readyState === 'loading')
 else syncZoneNote();
 /* An outerHTML swap's detail.target is the element it REPLACED, detached by
    now -- localizing it reached nothing, and the new content kept its hidden
-   UTC fallback (Param History's Changes tab showed no times at all after the
+   UTC fallback (Param logs's Changes tab showed no times at all after the
    Trends -> Changes switch). The new content is wherever the swap put it, so
    a detached target hands the job to the whole document; an out-of-band swap
    is the same case. Only spans not yet localized are touched. */
@@ -2545,7 +2545,7 @@ window.qualibrateSubnavToggleAll = function(btn) {
         // active child keeps context visible either way).
         { id: 'chip-components-subnav', key: 'quam_components_nav_collapsed',   def: '0' },
         { id: 'live-edit-subnav',       key: 'quam_liveedit_nav_collapsed',     def: '1' },
-        { id: 'journal-subnav',         key: 'quam_journal_nav_collapsed',      def: '1' },   // docs/173: Calibration log ▾ (Param History)
+        { id: 'experiment-logs-subnav', key: 'quam_experiment_logs_nav_collapsed', def: '1' },
         { id: 'datasets-subnav',        key: 'quam_datasets_nav_collapsed',     def: '1' },
     ];
     function apply() {
@@ -3480,7 +3480,7 @@ window.closeInspector = function() {
     }
 };
 
-/* A State History stage/restore replaces the working copy (and live, in Mode 2)
+/* A State logs stage/restore replaces the working copy (and live, in Mode 2)
    wholesale, so any qubit/pair/pulse inspector pane left open from another menu
    now shows pre-restore values — and the entity it described (e.g. a pulse that
    the snapshot doesn't have) may no longer exist, which would 404 the next edit.
@@ -3488,7 +3488,7 @@ window.closeInspector = function() {
    already rebuilt every derived cache; this is purely the client catch-up.
 
    docs/65 additions:
-   - ALSO soft-refresh the main state surface: the stage routes (State History
+   - ALSO soft-refresh the main state surface: the stage routes (State logs
      stage, dataset "Load State", the tray's "Revert last apply") emit only
      HX-Trigger events, and the Live-Edit grid re-pulls only on the DOM event
      quam:state-changed — nothing bridged them, so /bulk kept showing
@@ -4701,7 +4701,7 @@ window.SyncStale = (function () {
  * visible live-state surface — never reloads the page. */
 /* Compact "Affected: a, b, +N more" suffix for a replay's failed-edit list, so
    the user sees WHICH edits couldn't be re-applied (not just a count) — audit D6.
-   The dropped values are recoverable from Param History if needed. */
+   The dropped values are recoverable from Param logs if needed. */
 function _failedPathsSummary(failed) {
     var paths = (failed || []).map(function(f){ return f && f.dot_path; })
                               .filter(Boolean);
@@ -5184,7 +5184,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             // instead of showing the pre-apply count until the next 5s poll (feedback #5,
             // audit P0-5). Mirrors resetBaseline's immediate re-poll.
             if (window._pollDrift) window._pollDrift();
-            // Refresh State History surfaces that listen for these triggers.
+            // Refresh State logs surfaces that listen for these triggers.
             // Plain sync (pull/reapply) used to NOT emit them — only apply-to-live
             // did — so the timeline and drift panel stayed stale (sync red-team audit).
             (document.body || document).dispatchEvent(
@@ -5301,7 +5301,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
  * Until now the drift banner and the review modal offered only pull-or-close,
  * which is one direction, not a choice — and the case that needs the other
  * direction is common: a test run wrote parameters by mistake and the state SM
- * is holding is the good one. The capability already existed (State History →
+ * is holding is the good one. The capability already existed (State logs →
  * restore-live; the conflict tray's force-overwrite); what was missing was
  * reaching it at the moment the user learns about the drift.
  *
@@ -5771,7 +5771,7 @@ window.livePushExtrasLine = function (typedPaths) {
  * There is deliberately NO main-screen banner any more (docs/58): the popping
  * "N parameters changed — Reset baseline" alarm interrupted everyone and was
  * almost never acted on. The same data now waits where a user comes looking —
- * the "Live changes since baseline" panels on Param History and State History
+ * the "Live changes since baseline" panels on Param logs and State logs
  * (count + baseline time + per-param table + Reset baseline) — plus the
  * openDrift() overlay for surfaces that link to it. */
 (function () {
@@ -6306,7 +6306,7 @@ window.livePushExtrasLine = function (typedPaths) {
                 }
                 var count = (d && d.ok && d.tracked) ? (d.count || 0) : 0;
                 // Count changed → refresh any embedded panel / open overlay so
-                // the State History page + a viewing user see it accumulate.
+                // the State logs page + a viewing user see it accumulate.
                 if (_lastCount !== null && count !== _lastCount) {
                     (document.body || document).dispatchEvent(new CustomEvent("liveDriftChanged", { bubbles: true }));
                     if (window._driftOverlayOpen) _loadDriftView();
@@ -6418,7 +6418,7 @@ window.resetBaseline = function () {
                 return;
             }
             window.showToast("Baseline reset to the current live chip.", "success");
-            // Refresh the State History embedded panel + any open overlay. Bubble from
+            // Refresh the State logs embedded panel + any open overlay. Bubble from
             // body so the from:body listener on _state_history.html actually receives it
             // (a non-bubbling event on document never reaches a body listener — audit P0-4).
             (document.body || document).dispatchEvent(new CustomEvent("liveDriftChanged", { bubbles: true }));
@@ -6835,8 +6835,8 @@ function _openDiffForSnapshots(tsA, tsB) {
     else { window.location.href = url; }
 }
 
-/* State History page: pick exactly two snapshots and diff them. Reuses the
-   active State History comparison; renders into the State History
+/* State logs page: pick exactly two snapshots and diff them. Reuses the
+   active State logs comparison; renders into the State logs
    detail area. Idempotent init (the partial calls it on swap). */
 window.StateHistory = (function () {
     'use strict';
@@ -7886,7 +7886,7 @@ window.PhysAmp = (function () {
                 return on ? 'undo / redo (an applied edit: writes the chip file; Settings "Ctrl+Z writes live" ON)'
                           : 'undo / redo (an applied edit: staged until Apply; Settings "Ctrl+Z writes live" OFF)';
             })()],
-            ['Live State Edit — the Qubits grid', ''],
+            ['Live state edit (table view) — the Qubits grid', ''],
             ['Tab / Shift+Tab', 'hop between edit cells'],
             ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
             ['Ctrl+Shift+↑ / ↓', 'extend the selection one row (same column)'],
@@ -15856,11 +15856,13 @@ window.syncSidebarNavActive = function() {
     // matcher must agree or a Versions-panel Compare press leaves the
     // PREVIOUS page's item lit (customer, 2026-08-22).
     if (path.indexOf('/diff/') === 0) path = '/diff';
+    if (path === '/opx-monitor') path = '/opx-monitor/live';
     var view = null;
     try { view = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
     var matches = [];
     document.querySelectorAll(".sidebar-nav a[href]").forEach(function(a) {
         a.classList.remove("active");
+        if (a.hasAttribute("data-nav-parent")) return;
         var href = a.getAttribute("href") || "";
         var q = href.indexOf("?");
         var hPath = q < 0 ? href : href.slice(0, q);
@@ -15874,13 +15876,19 @@ window.syncSidebarNavActive = function() {
         if (hView && !view && hView !== "overview") return;
         matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
-    // same-href parent+child (Chip Components + Qubits are both /qubits):
-    // the child owns the highlight — base.html: "Parent deliberately carries
-    // no active class". Distinct hrefs (Chip Status + its ?view= child) keep
-    // both, matching the server's own full-load render.
+    // The destination child owns the highlight. Reveal it after a pane-only
+    // navigation too, since the server does not replace the sidebar then.
     matches.forEach(function(m) {
         var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
-        if (!(m.sub === false && twin)) m.a.classList.add("active");
+        if (!(m.sub === false && twin)) {
+            m.a.classList.add("active");
+            var subnav = m.a.closest('.nav-subitems');
+            if (subnav) {
+                subnav.classList.remove('nav-subitems-collapsed');
+                var toggle = document.querySelector('.nav-sub-toggle[aria-controls="' + subnav.id + '"]');
+                if (toggle) toggle.setAttribute('aria-expanded', 'true');
+            }
+        }
     });
     window.SidebarReveal.reveal();
 };
@@ -23124,7 +23132,7 @@ var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
 // j+Enter (all of which end in the tree's click handler, the table's
 // openDatasetDetail or dsNavRun's server neighbour). They keep the reader's
 // tab and place (queue item 6, docs/221 sections 4/8). A run opened from
-// anywhere ELSE -- a Chip Status or Datasets Trends point, Param History
+// anywhere ELSE -- a Chip Status or Datasets Trends point, Param logs
 // "Data", the value-history drawer / Column History "Data", a Versions run
 // link, a fit-audit row, the detail's parent-run link, a search result -- is
 // a FRESH open: Full View at the top, as when the pane showed no run. The
@@ -24191,7 +24199,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
 
 
 /* ──────────────────────────────────────────────────────────────────
- * Param History — sparkline rendering + drawer
+ * Param logs — sparkline rendering + drawer
  * ────────────────────────────────────────────────────────────────── */
 function renderParamHistorySparklines() {
     // Server-side pre-render (Family D1+D2 in
@@ -24902,7 +24910,7 @@ window.paramHistoryRetryBackfill = function() {
     paramHistoryBackfill(false);
 };
 
-/* Auto-incremental backfill: on Param History load, check if this chip
+/* Auto-incremental backfill: on Param logs load, check if this chip
  * has been imported before AND the workspace alignment scan now reports
  * more importable experiments than the index has. If so, kick off a
  * silent backfill. The QUAM STATE MANAGER loader animation makes the
@@ -25084,7 +25092,7 @@ window.PendingMarkers = (function () {
 
     function isSlow(detail) {
         var path = (detail && detail.requestConfig && detail.requestConfig.path) || '';
-        // docs/158: a Param History FILTER change is an in-page refinement
+        // docs/158: a Param logs FILTER change is an in-page refinement
         // (the grid renders from SQLite in ~0.2 s, docs/142) and swaps only
         // the results — the page-load popup flashing over it on every chip
         // click was half of the customer's "SM shakes". Same answer on
@@ -25241,7 +25249,7 @@ window.PendingMarkers = (function () {
  * navigates away loses all visibility of the job. The pill bridges that
  * gap: it polls /param-history/backfill/status on a slow interval, shows
  * up in the topbar whenever the server reports ``running``, and links
- * back to Param History. On done/error it flashes a brief terminal state
+ * back to Param logs. On done/error it flashes a brief terminal state
  * then auto-hides.
  *
  * Polling cadence is asymmetric on purpose: 30 s when the pill is hidden
@@ -27994,7 +28002,7 @@ document.addEventListener("htmx:configRequest", function (evt) {
 })();
 
 /* ── Per-field value history (docs/20): 🕘 on Live-Edit cells + inspector rows ──
-   Opens a floating panel of the field's past values (Param History change
+   Opens a floating panel of the field's past values (Param logs change
    points). "Use" fills the originating edit input — the commit stays
    user-explicit through the normal staging flow (Enter). "Data" hx-gets the
    producing run's detail into #inspector-pane so value + data sit together. */
@@ -28201,7 +28209,7 @@ window.FieldHistory = (function () {
     }
 
     function renderChart(p) {
-        // The parameter's own mini trend (the Param History drawer chart's
+        // The parameter's own mini trend (the Param logs drawer chart's
         // small twin): change points as a step line, trigger-colored markers.
         var mount = p.querySelector("#fh-chart");
         var dataEl = p.querySelector("#fh-chart-data");
@@ -29555,7 +29563,7 @@ window.ColumnHistory = (function () {
  * two ticks open the docs/84 diff workbench, three or more open the
  * differences-only column table (/diff/versions, docs/128 — the Compare hub
  * stays a link there for the hard cases), and "Go back" posts the same
- * restore-live route State History uses, with both of its independent force
+ * restore-live route State logs uses, with both of its independent force
  * gates intact.
  */
 window.StateVersions = (function () {

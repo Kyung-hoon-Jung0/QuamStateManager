@@ -46,7 +46,7 @@ REBUILDABLE = {
 
 # Directories that are the USER'S RECORD. Never offered as a one-click delete.
 PRECIOUS = {
-    "history": "Chip snapshots — your version history. Prune from State History.",
+    "history": "Chip snapshots — your version history. Prune from State logs.",
     "working_state": "Unapplied edits per chip. Losing one loses work.",
     "journal": "The calibration log.",
     "agent_events": "What the agent did, per day.",

@@ -658,7 +658,7 @@ window.AgentPanel = (function () {
       }
     }
     if (p.pre_ts) {
-      acts += ' <a class="btn-sm outline ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
+      acts += ' <a class="btn-sm outline ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State logs → restore)">state before this plan</a>';
     }
     var said = "";
     var se = S.startErr[p.id];

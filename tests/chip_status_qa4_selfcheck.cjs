@@ -51,7 +51,7 @@ WIRING_TPL.replace(/class="topo-subnav-btn ui-tab" role="tab" data-view="([a-z0-
 const FIRST = VIEWS[0];
 const STRIP = '<div class="topo-subnav">' + VIEWS.map((v) =>
   '<button type="button" class="topo-subnav-btn" data-view="' + v + '">' + v + '</button>').join('') + '</div>';
-const SIDEBAR = '<nav class="sidebar-nav"><a href="/topology">Chip Status</a><ul class="nav-subitems" id="chip-status-subnav">'
+const SIDEBAR = '<nav class="sidebar-nav"><a data-nav-parent="true" href="/topology?view=overview">Chip Status</a><ul class="nav-subitems" id="chip-status-subnav">'
   + VIEWS.map((v) => '<li><a href="/topology?view=' + v + '" data-view="' + v + '">' + v + '</a></li>').join('')
   + '</ul></nav>';
 const DASH = '<div class="topo-dashboard">' + STRIP
@@ -141,8 +141,8 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
     const S = world({ url: 'http://localhost/topology' });
     S.win.syncSidebarNavActive();
     const act = Array.from(S.doc.querySelectorAll('.sidebar-nav a.active')).map((a) => a.getAttribute('href'));
-    ok(act.join(',') === '/topology,/topology?view=' + FIRST,
-       'F-08 syncSidebarNavActive on a bare /topology lights Chip Status + ' + FIRST + ' (' + act.join(',') + ')');
+    ok(act.join(',') === '/topology?view=' + FIRST,
+       'F-08 syncSidebarNavActive on a bare /topology lights only ' + FIRST + ' (' + act.join(',') + ')');
   }
 
   // ── r2-18: the Trends selection survives a reload ───────────────────────

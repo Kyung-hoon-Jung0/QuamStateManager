@@ -28,7 +28,7 @@
   <p class="ns-plan"><strong>{{ p.title }}</strong>
     <span class="muted">· mode {{ p.mode }} · started by {{ p.started_by or "?" }}</span>
     {% if p.pre_ts %}· <a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true"
-       title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>{% endif %}</p>
+       title="the chip as it was right before this plan started (State logs → restore)">state before this plan</a>{% endif %}</p>
   <p class="ns-end">
     {% if s.end %}
     <span class="ag-plan-st ns-reason ns-r-{{ s.end.reason | replace('_', '-') }}">{{ s.end.reason }}</span>

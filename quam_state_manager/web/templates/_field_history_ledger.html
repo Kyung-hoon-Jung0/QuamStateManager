@@ -33,11 +33,11 @@
 </div>
 {% endif %}
 {% for rn in renames %}
-{# docs/296: a Re-generate rename -- the rows before it are the same qubit
+{# docs/296: a Modify config rename -- the rows before it are the same qubit
    under its old name; a qubit new in the rebuild has no rows before it #}
 <p class="vh-rename" data-rename-at="{{ rn.t }}" title="{{ rn.renames | join(', ') }}">
-  {% if rn.new %}New in a Re-generate rebuild: no history before {{ rn.t | ts_local(short=True) }}.
-  {% else %}Renamed by Re-generate: was <code>{{ rn.was_short }}</code>{% if rn.was_short != rn.was %} (<code>{{ rn.was }}</code>){% endif %} until {{ rn.t | ts_local(short=True) }}. Rows before then are this {{ rn.kind }} under that name.
+  {% if rn.new %}New in a Modify config rebuild: no history before {{ rn.t | ts_local(short=True) }}.
+  {% else %}Renamed by Modify config: was <code>{{ rn.was_short }}</code>{% if rn.was_short != rn.was %} (<code>{{ rn.was }}</code>){% endif %} until {{ rn.t | ts_local(short=True) }}. Rows before then are this {{ rn.kind }} under that name.
   {% endif %}
 </p>
 {% endfor %}

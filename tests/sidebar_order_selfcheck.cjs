@@ -4,12 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('jsdom');
 const source = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/sidebar-order.js'), 'utf8');
-const KEY = 'quam_sidebar_order_v1';
-function setup(saved, extra = '') {
+const KEY = 'quam_sidebar_order_v2';
+function setup(saved, extra = '', legacy) {
     const dom = new JSDOM(`<aside id="sidebar"><nav class="sidebar-nav"><ul data-nav-group="main"><li data-nav-key="a"><a href="#a">A</a><ul data-nav-group="sub"><li data-nav-key="s"><a href="#s">S</a></li><li data-nav-key="t"><a href="#t">T</a></li></ul></li>${extra}<li data-nav-key="b"><a href="#b">B</a></li><li data-nav-key="c"><a href="#c">C</a></li></ul><ul data-nav-group="other"><li data-nav-key="d"><a href="#d">D</a></li></ul></nav></aside><div id="settings-dropdown"><button id="reset-menu-order">Reset menu order</button></div>`, {url:'http://localhost', pretendToBeVisual:true});
     const w = dom.window;
     for (const key of ['window','document','localStorage','Event','MouseEvent','KeyboardEvent','CustomEvent']) global[key] = key === 'window' ? w : w[key];
     if (saved !== undefined) localStorage.setItem(KEY, saved);
+    if (legacy !== undefined) localStorage.setItem('quam_sidebar_order_v1', legacy);
     new Function(source)();
     const group = document.querySelector('[data-nav-group="main"]');
     const row = key => document.querySelector(`[data-nav-key="${key}"]`);
@@ -19,6 +20,82 @@ function setup(saved, extra = '') {
     return {w, row, order, pointer, alt};
 }
 function check(name, fn) { fn(); console.log('ok - '+name); }
+check('real IA parents navigate to a visible active default child and all reorder', () => {
+    const base = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/templates/base.html'), 'utf8');
+    // The main group may carry more attributes (FB-08's data-nav-zone), so anchor on the group name alone.
+    const mainStart = base.indexOf('<ul data-nav-group="main"');
+    assert(mainStart >= 0, 'base.html has the main nav group');
+    const nav = base.slice(mainStart, base.indexOf('            <hr>\n', mainStart))
+        .replace(/\{#.*?#\}|\{%.*?%\}/gs, '').replace(/class="active"/g, '');
+    const dom = new JSDOM('<aside id="sidebar"><nav class="sidebar-nav">'+nav+'</aside>', {url:'http://localhost', runScripts:'outside-only'});
+    const w = dom.window;
+    const app = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/app.js'), 'utf8');
+    const start = app.indexOf('window.syncSidebarNavActive = function()');
+    const stop = app.indexOf('\n};', start) + 3;
+    w.SidebarReveal = {reveal(){}};
+    w.eval(app.slice(start, stop));
+    w.localStorage.setItem('quam_sidebar_order_v1', JSON.stringify({main:['journal','bulk','datasets','topology']}));
+    w.eval(source);
+    assert.deepEqual(Array.from(w.document.querySelector('[data-nav-group="main"]').children,
+        row => row.dataset.navKey).filter(key => ['experiment_logs','state_edit','dataset_pages','topology'].includes(key)),
+        ['experiment_logs','state_edit','dataset_pages','topology']);
+    const cases = [
+        ['configuration','generate','/generate'], ['topology','overview','/topology?view=overview'],
+        ['components','qubits','/qubits'], ['state_edit','bulk','/bulk'],
+        ['dataset_pages','datasets','/datasets'], ['experiment_logs','journal','/journal'],
+    ];
+    for (const [parentKey, childKey, url] of cases) {
+        const parent = w.document.querySelector(`[data-nav-key="${parentKey}"]`);
+        const anchor = parent.querySelector(':scope > .nav-sub-row > a');
+        assert.equal(anchor.getAttribute('href'), url, parentKey+' default URL');
+        const child = w.document.querySelector(`[data-nav-key="${childKey}"] > a`);
+        const subnav = child.closest('.nav-subitems');
+        subnav.classList.add('nav-subitems-collapsed');
+        w.history.replaceState(null, '', url);
+        w.syncSidebarNavActive();
+        assert(child.classList.contains('active'), parentKey+' child active');
+        assert(!anchor.classList.contains('active'), parentKey+' parent inactive');
+        assert(!subnav.classList.contains('nav-subitems-collapsed'), parentKey+' child visible');
+        assert.equal(parent.querySelector('.nav-sub-toggle').getAttribute('aria-expanded'),'true');
+        assert(parent.classList.contains('ui-reorder-item'), parentKey+' draggable');
+        const next = parent.nextElementSibling;
+        anchor.dispatchEvent(new w.KeyboardEvent('keydown', {key:'ArrowDown',altKey:true,bubbles:true,cancelable:true}));
+        assert.equal(next.nextElementSibling, parent, parentKey+' reorders with its children');
+        assert(parent.contains(child));
+        assert(JSON.parse(w.localStorage.getItem(KEY)).main.includes(parentKey));
+    }
+    assert.equal(w.document.querySelector('[data-nav-key="history"]'), null);
+    for (const [key, url, label] of [['state_history','/state-history','State logs'], ['param_history','/param-history','Param logs']]) {
+        const child = w.document.querySelector(`[data-nav-key="${key}"] > a`);
+        assert.equal(child.textContent.trim(), label);
+        assert.equal(child.closest('ul').id, 'experiment-logs-subnav');
+        child.closest('ul').classList.add('nav-subitems-collapsed');
+        w.history.replaceState(null, '', url);
+        w.syncSidebarNavActive();
+        assert(child.classList.contains('active'));
+        assert(!child.closest('ul').classList.contains('nav-subitems-collapsed'));
+        assert.equal(w.document.querySelectorAll('.sidebar-nav a.active').length, 1);
+    }
+    // The OPX loop renders this Live child; its legacy bare URL is an alias.
+    const opxSubnav = w.document.querySelector('#ui-opxmon-subnav');
+    opxSubnav.innerHTML = '<li><a href="/opx-monitor/live">Live</a></li>';
+    opxSubnav.classList.add('nav-subitems-collapsed');
+    w.history.replaceState(null, '', '/opx-monitor');
+    w.syncSidebarNavActive();
+    assert(opxSubnav.querySelector('a').classList.contains('active'));
+    assert(!w.document.querySelector('[data-nav-key="opx_monitor"] > .nav-sub-row > a').classList.contains('active'));
+    assert(!opxSubnav.classList.contains('nav-subitems-collapsed'));
+    dom.window.close();
+});
+check('legacy order migrates known rows and resets without resurrecting it', () => {
+    const h = setup(undefined, '', JSON.stringify({main:['c','b','a','gone']}));
+    assert.equal(h.order(),'cba');
+    assert(localStorage.getItem(KEY));
+    assert.equal(localStorage.getItem('quam_sidebar_order_v1'),null);
+    document.getElementById('reset-menu-order').click();
+    document.dispatchEvent(new h.w.CustomEvent('htmx:afterSwap'));
+    assert.equal(h.order(),'abc');
+});
 let h = setup();
 check('plain click still navigates', () => {
     h.pointer('pointerdown', h.row('a').querySelector('a'));

@@ -105,5 +105,5 @@
 <span class="sync-lost-note ui-note" role="status" data-sync-lost="{{ _sv.lost | length }}"
       title="{% for x in _sv.lost %}{{ x.path }}: you applied {{ x.applied }}, live now {{ 'removed' if x.removed else x.now }}&#10;{% endfor %}">{{ _sv.lost | length }} applied value{{ 's' if (_sv.lost | length) != 1 }} lost
   <button type="button" class="btn-sync sync-lost-ack" hx-post="/sync/lost-ack" hx-target="#pending-tray" hx-swap="outerHTML"
-          title="I have seen this; State History keeps the version before the save">Dismiss</button></span>
+          title="I have seen this; State logs keeps the version before the save">Dismiss</button></span>
 {%- endif %}

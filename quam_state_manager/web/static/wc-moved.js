@@ -3,7 +3,7 @@
  * ONE signal, `sm:wc-moved` on document, for every way the chip's working
  * copy changes under an open page: a Take live / Pull / Apply (doStateSync),
  * a tray undo or redo, an approval written by the Agent, an Auto-Sync pull, a
- * State History stage, or another window's edit that the drift poll caught.
+ * State logs stage, or another window's edit that the drift poll caught.
  * Each of those ends with the tray re-rendered, and the tray carries the
  * server's `data-edit-seq` (routes._edit_seq: the change set plus the working
  * files' mtimes -- it moves exactly when the working copy was written). So

@@ -1,6 +1,6 @@
 {# docs/120 items 5+9 — chip-wide Trends.
 
-   Customer, twice: "to see T1/RB/T2 trends today you go to Param History, but
+   Customer, twice: "to see T1/RB/T2 trends today you go to Param logs, but
    that shows PER-QUBIT trends, not an INTEGRATED one. Add a Trends tab under
    Chip Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line
    plot, legend = all qubits."
@@ -136,7 +136,7 @@
     </div>
 
     <script type="application/json" id="topo-trends-data">{{ charts | tojson }}</script>
-    {# docs/296: when the qubits were renamed by Re-generate; each chart marks it #}
+    {# docs/296: when the qubits were renamed by Modify config; each chart marks it #}
     <script type="application/json" id="topo-trends-renames">{{ renames | default([], true) | tojson }}</script>
     {# S10 C7: old -> new, provenance is carried by each ledger point. #}
     <script>

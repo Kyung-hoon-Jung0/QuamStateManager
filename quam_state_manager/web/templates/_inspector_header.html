@@ -21,7 +21,7 @@
         {% if inspector_type in ('qubit', 'pair') and entity_note %}
         {# docs/167: an operator note about THIS entity, right where somebody
            about to trust its numbers will see it. Only the text and its date —
-           editing lives in the Live State Edit panel, so this surface stays a
+           editing lives in the Live state edit (table view) panel, so this surface stays a
            statement rather than a second editor. #}
         <span class="inspector-note" title="{{ entity_note.text }}&#10;&#10;noted {{ entity_note.updated_at }}{% if entity_note.author %} by {{ entity_note.author }}{% endif %}">&#128221; {{ entity_note.text }}</span>
         {% endif %}

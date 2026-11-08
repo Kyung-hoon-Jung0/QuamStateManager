@@ -16,9 +16,9 @@
     </details>
     {# Title row: just the title + the help (ⓘ) toggle beside it. #}
     <div class="bulk-toolbar bulk-toolbar-title">
-        <h2 class="ui-head-title">Live State Edit</h2>
-        {# Customer, 2026-09-10: "let Live State Edit do wiring.json too.
-           On the right of Live State Edit, as a badge: state.json | wiring.json,
+        <h2 class="ui-head-title">Live state edit (table view)</h2>
+        {# Customer, 2026-09-10: "let Live state edit (table view) do wiring.json too.
+           On the right of Live state edit (table view), as a badge: state.json | wiring.json,
            two buttons like that... clean, with a light SM-blue border."
            Which DOCUMENT this page edits. wiring.json has no qubit or pair
            grid of its own; its collections are discovered like every other,
@@ -39,7 +39,7 @@
            keeps aria-pressed in sync. #}
         {# r6 renames: "Live grid" → "Table View", "All values" → "Flat View".
            data-pane keys stay "grid"/"allvalues" — JS hooks + tests bind them. #}
-        <div class="bulk-segmented" role="group" aria-label="Live State Edit view">
+        <div class="bulk-segmented" role="group" aria-label="Live state edit (table view) view">
             <button type="button" class="bulk-seg active" data-pane="grid" aria-pressed="true"
                     title="The curated Qubits + Pairs grids — fast cross-qubit retune">Table View</button>
             <button type="button" class="bulk-seg" data-pane="allvalues" aria-pressed="false"
@@ -55,7 +55,7 @@
            (native <details> dropdown, the bulk-colvis pattern). #}
         <details class="bulk-colvis bulk-help-pop" id="bulk-help-pop">
             <summary class="btn-sm outline bulk-hint-toggle" id="bulk-hint-toggle"
-                     title="How Live State Edit works">&#9432;</summary>
+                     title="How Live state edit (table view) works">&#9432;</summary>
             <div class="bulk-colvis-menu bulk-help-menu">
                 Edit a cell, then <b>Apply</b> its row or <b>Apply&nbsp;all</b>. Edits go to a
                 safe <b>working state</b> (your live chip is untouched) — review them in the tray,

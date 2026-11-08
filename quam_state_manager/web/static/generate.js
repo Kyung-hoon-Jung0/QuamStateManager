@@ -13050,12 +13050,12 @@
   // not committed yet. The output / scripts folders are exempt: both are
   // mirrored in localStorage and come back on the next visit.
   var REGEN_DURABLE_FIELDS = { "gen-output-path": 1, "gen-scripts-path": 1 };
-  var REGEN_LEAVE_MSG = "Re-generate keeps no draft — leaving discards the " +
+  var REGEN_LEAVE_MSG = "Modify config keeps no draft — leaving discards the " +
     "edits made in this wizard (coming back re-reads the source chip). " +
     "Leave anyway?";
-  var REGEN_BUILD_LEAVE_MSG = "A Re-generate build is still running — its " +
+  var REGEN_BUILD_LEAVE_MSG = "A Modify config build is still running — its " +
     "result reaches only this page (the folder is still written, and a later " +
-    "Re-generate into it offers the report back). Leave anyway?";
+    "Modify config into it offers the report back). Leave anyway?";
   function regenMarkEdited(el) {
     if (state.mode !== "regenerate") return;
     if (el && el.id && REGEN_DURABLE_FIELDS[el.id]) return;

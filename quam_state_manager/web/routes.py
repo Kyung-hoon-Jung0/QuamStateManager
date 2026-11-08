@@ -1469,7 +1469,7 @@ def _active_wc_lock(ctx: dict | None = None) -> threading.RLock:
     """The build lock for *ctx*'s folder (default: the active context).
 
     Routes that mutate the active WorkingCopy or its working folder
-    (sync, save, apply-to-live, State History restore) hold this so they
+    (sync, save, apply-to-live, State logs restore) hold this so they
     can't interleave with a concurrent ``_activate_quam`` reconcile
     auto-sync on the same folder — two unserialised ``sync_from_live`` calls
     collide on the same ``state.json.tmp`` and can interleave the
@@ -3025,7 +3025,7 @@ def _invalidate_engine_cache(ctx: dict | None = None) -> None:
 
 def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) -> None:
     """Rebuild every derived object after the working folder's files were
-    replaced wholesale (a sync pull, or a State History restore).
+    replaced wholesale (a sync pull, or a State logs restore).
 
     ``store.reload()`` re-reads the working files (the cached generated
     config is kept -- it is basis-hash-keyed and reads as stale by itself,
@@ -3101,7 +3101,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict, *, replaced: bool = True) ->
 
 
 def _reseed_drift_baseline_if_chip_changed(ctx: dict) -> None:
-    """C31: after the working folder was replaced (sync pull / State History
+    """C31: after the working folder was replaced (sync pull / State logs
     restore), if the new content is a hardware-DIFFERENT chip than the drift
     baseline, re-seed the baseline to the new content so the global "Live changes
     since baseline" count restarts from the new chip — instead of showing a
@@ -4468,7 +4468,7 @@ def _hub_live_identity(ctx) -> dict | None:
 
 
 def _is_run_snapshot(meta) -> bool:
-    """A Param History snapshot of a RUN -- its saved quam_state, ingested from
+    """A Param logs snapshot of a RUN -- its saved quam_state, ingested from
     the run's folder (``trigger == "experiment"``, run fields stamped) -- never
     imported as a state SM saw: runs reach the change ledger from their data
     folder. ``kind == "exp"`` alone is not one: SM's own capture of the LIVE
@@ -4481,7 +4481,7 @@ def _is_run_snapshot(meta) -> bool:
 
 def _hub_observed_source(ctx, chip_dir):
     """docs/282 review P1-2: what the run sync imports as ``observed`` events
-    -- this chip's Param History snapshots that are NOT runs (``auto`` /
+    -- this chip's Param logs snapshots that are NOT runs (``auto`` /
     ``manual`` / ``save`` / ``backup`` / ``restore`` captures: states SM itself
     saw), of this folder's own timeline (never a parallel folder's, docs/250).
     Runs come from the data folders; a snapshot of a run is never imported.
@@ -4561,7 +4561,7 @@ def _hub_archive_sources(hm, target_path, chip_dir):
       that run, and a capture of a run folder still on disk: one equal to
       the run's save is left out by the observed import (that save, seen a
       moment early), one the run rewrote after it was taken (a save made
-      mid-run, replaced by the run's final one) stays -- Param History drew
+      mid-run, replaced by the run's final one) stays -- Param logs drew
       it, so the history keeps it, before the run's final save.
     A snapshot whose saved pair is missing is offered too: it is counted as
     one that could not be read, never passed over in silence."""
@@ -10781,7 +10781,7 @@ def bulk_cells():
 
 @bp.route("/bulk/all-values")
 def bulk_all_values():
-    """Flat 'All values' completeness payload for the Live State Edit → All values tab.
+    """Flat 'All values' completeness payload for the Live state edit (table view) → All values tab.
 
     Enumerates EVERY leaf of merged state+wiring (core/all_values), so a user can
     edit LITERALLY ALL scalar values; pointers/lists/membership are read-only. This
@@ -14178,7 +14178,7 @@ def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | 
 
 # S10 C4: run-scan caches -> ledger index, one shared value history.
 def _run_ts_stamp(run: Any) -> str:
-    """RunInfo -> its Param History stamp (``YYYYMMDD_HHMMSS_NNN``): the dedup
+    """RunInfo -> its Param logs stamp (``YYYYMMDD_HHMMSS_NNN``): the dedup
     key against already-ingested snapshot rows and the runs tier's position
     among them.
 
@@ -14244,7 +14244,7 @@ _VH_UNAVAILABLE_NOTES = {
 }
 # S10 walk: an archived chip whose history cannot be built from its snapshots
 _VH_UNAVAILABLE_NOTES.update({
-    "snapshots_unreadable": ("This chip's Param History snapshots could not be read, so its "
+    "snapshots_unreadable": ("This chip's Param logs snapshots could not be read, so its "
                              "change history cannot be built from them."),
 })
 #: S10 walk: end states a Try again cannot change (the same files answer the same)
@@ -14526,11 +14526,11 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
 def _hub_folder_view(ctx: dict | None, chip_dir=None):
     """S10 C1.5: THE folder view every reader of this chip's ledger binds
     (``hub_lanes.FolderView``): the open folder's comparison key and docs/250
-    cut (Param History's own classification, ``HistoryManager.source_cut``),
+    cut (Param logs's own classification, ``HistoryManager.source_cut``),
     the data roots it declares now (``_hub_roots_for``, kept on the ctx by
     the open), the roots decided ``different`` for this chip, and whether
-    Param History knows another folder of this identity. None for a context
-    with no folder. Param History unreadable: a view whose every other
+    Param logs knows another folder of this identity. None for a context
+    with no folder. Param logs unreadable: a view whose every other
     folder's event counts as parallel (never this folder's)."""
     from quam_state_manager.core import hub_lanes
     from quam_state_manager.core.history import (SOURCE_OTHER, _data_folder_name, _source_key,
@@ -14753,7 +14753,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict, now: dict | None = None) -> 
         trig = str(p.get("src") or "").split(":", 1)[-1] or "snapshot"
         label = f"seen by SM ({trig} snapshot)"
         sub = "writer unknown"
-        title = ("SM saw the chip hold this value when it took a Param History snapshot "
+        title = ("SM saw the chip hold this value when it took a Param logs snapshot "
                  f"({trig}); no run or SM write recorded in the ledger set it, so who did is "
                  "not known (a change made outside SM, or an SM write from before the ledger).")
         trigger = "auto"
@@ -14845,10 +14845,10 @@ def _vh_wait_message(ans: dict) -> str:
     if total and ((done or 0) < total or not seen_total):
         return f"The change history is being built{words}. It shows here when it is complete."
     if seen_total:
-        return (f"The change history is being built from this chip's Param History snapshots "
+        return (f"The change history is being built from this chip's Param logs snapshots "
                 f"({min(seen_done, seen_total):,} of {seen_total:,}). It shows here when it is complete.")
     if st.get("archive"):
-        return ("The change history is being built from this chip's Param History snapshots. "
+        return ("The change history is being built from this chip's Param logs snapshots. "
                 "It shows here when it is complete.")
     return f"The change history is being built{words}. It shows here when it is complete."
 
@@ -17015,7 +17015,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                             f"the working state — this control can set or "
                             f"create a single leaf, not rebuild structure. "
                             f"Bring the structure in first (Pull from live, "
-                            f"or stage the version from State History)."
+                            f"or stage the version from State logs)."
                         ) from ce
                 if _origins[_row_n] is not None:
                     entry.origin = copy.deepcopy(_origins[_row_n])
@@ -19227,7 +19227,7 @@ _STATE_HISTORY_PER_PAGE = 40
 
 @bp.route("/state-history")
 def state_history(snapshot_note: str | None = None):
-    """The State History page: full-chip snapshots over time, newest first,
+    """The State logs page: full-chip snapshots over time, newest first,
     framed by the experiment that produced each (experiment-attribution).
     *snapshot_note*: what a Take snapshot press says (S10 walk)."""
     store = _store()
@@ -19296,7 +19296,7 @@ def _machine_day_end(d: datetime) -> datetime:
 
 
 def _state_history_page_for(ctx, snapshots, day: str, per_page: int) -> int:
-    """P1-9 (UX round): the State History page that holds *day*'s newest row
+    """P1-9 (UX round): the State logs page that holds *day*'s newest row
     (the rows run newest first): every row at or after the END of that day,
     in the page's display zone, comes before it. ``ValueError`` for a date
     that does not parse. A day with no rows: the page holding the nearest
@@ -19458,7 +19458,7 @@ def _history_chip_mismatch(ctx):
 
 
 def _version_pair_or_refusal(hm, path, ref):
-    """docs/284: ``(pair, refusal)``. A Param History snapshot id gives
+    """docs/284: ``(pair, refusal)``. A Param logs snapshot id gives
     ``(None, None)`` (its door is unchanged); a change-ledger version gives
     its exact pair, or the honest refusal ``(response, 404)`` when the ledger
     cannot hand that pair over exactly (DERIVED, a missing blob, its saved
@@ -19657,7 +19657,7 @@ def state_history_stage(timestamp: str):
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
                                message=f"Staging failed: {exc}", level="error"), 500
-    logger.info("State History: staged snapshot %s into working copy", timestamp)
+    logger.info("State logs: staged snapshot %s into working copy", timestamp)
     # QA F19: there is no "diff below" on either door (the tray's Revert last
     # apply lands in #status-bar; State History's Load replaces the detail
     # pane). The review that exists is the top-bar badge -> openReview ->
@@ -20007,7 +20007,7 @@ def state_history_restore_live(timestamp: str):
                                  project=_scope_for(path, ctx))
     except Exception:
         logger.warning("Post-restore snapshot failed", exc_info=True)
-    logger.info("State History: restored snapshot %s to live", timestamp)
+    logger.info("State logs: restored snapshot %s to live", timestamp)
     msg = render_template(
         "_status.html",
         # docs/301 F5: the instant in the page's zone, not the raw UTC stamp
@@ -20143,12 +20143,12 @@ def _live_adds_nothing(ctx) -> bool:
 
 @bp.route("/state-history/snapshot", methods=["POST"])
 def state_history_snapshot():
-    """Capture the current state now and re-render the State History page.
+    """Capture the current state now and re-render the State logs page.
 
     Distinct from ``/api/history/snapshot`` (which returns the Param-History
-    panel) — pointing the State History page's "Take snapshot" button at that
+    panel) — pointing the State logs page's "Take snapshot" button at that
     one swapped the Param-History list in and wiped the timeline + restore/pin
-    controls. This re-renders the State History fragment instead.
+    controls. This re-renders the State logs fragment instead.
     """
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
@@ -20166,7 +20166,7 @@ def state_history_snapshot():
 
 
 def _snapshot_press(ctx, hm) -> str | None:
-    """S10 walk: one Take snapshot press (State History, the History drawer).
+    """S10 walk: one Take snapshot press (State logs, the History drawer).
     When the live chip holds exactly the state this folder's history already
     ends on, nothing is written and the press says so; otherwise a manual
     snapshot, and the same words if the ledger finds it held nothing new."""
@@ -21990,12 +21990,12 @@ _STATE_VERSIONS_CAP = 150
 # ----------------------------------------------------------------------
 
 def _versions_unavailable_text(reason: str, older: int) -> str:
-    """What a listing (Versions, State History, History drawer) says when the
+    """What a listing (Versions, State logs, History drawer) says when the
     change history cannot be read. Unlike a value surface it DOES list the
-    older Param History snapshots below its note, so while there are any it
+    older Param logs snapshots below its note, so while there are any it
     may not say "nothing older is shown" (S10 C6 review)."""
     if older:
-        return f"{_VH_UNAVAILABLE_WHY[reason]} Older Param History snapshots are listed below."
+        return f"{_VH_UNAVAILABLE_WHY[reason]} Older Param logs snapshots are listed below."
     return _VH_UNAVAILABLE_NOTES[reason]
 
 
@@ -22082,7 +22082,7 @@ def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
         elif kind == OBSERVED_KIND:
             trig = str(ev.get("src") or "").split(":", 1)[-1] or "snapshot"
             title, sub = f"seen by SM ({trig} snapshot)", "writer unknown"
-            hover = ("SM saw the chip hold this state when it took a Param History snapshot; no "
+            hover = ("SM saw the chip hold this state when it took a Param logs snapshot; no "
                      "run or SM write recorded in the ledger produced it, so who did is not known.")
             # S10 C1.5: the one classifier's answer (the folder view), never
             # "this folder's own" for another folder's observation
@@ -22162,7 +22162,7 @@ def _version_sources(ctx, snapshots) -> dict:
 
 
 def _version_annotations(hm, res: dict, snapshots, srcs: dict, chip_dir=None) -> tuple[dict, frozenset]:
-    """S10 C3: ``({eid: [SnapshotMeta]}, unattached)`` -- the Param History
+    """S10 C3: ``({eid: [SnapshotMeta]}, unattached)`` -- the Param logs
     snapshots whose pin / label / note a ledger row carries, so a bookmark
     stays visible (and can be unpinned) once its state is a ledger event
     rather than a snapshot row of its own.
@@ -22319,7 +22319,7 @@ def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0,
 
     S10 walk: ``total`` is THE count every history surface shows (the top-bar
     Versions badge, the Chip Status History (N) button and drawer header, the
-    Versions header, State History): the rows the listing lists -- every
+    Versions header, State logs): the rows the listing lists -- every
     state-bearing event of the chip's ledger as this folder's listing shows
     it (its own, and another folder's labelled, never another chip's) plus
     the older snapshot rows; while the ledger cannot answer, the older
@@ -22756,7 +22756,7 @@ def state_archive():
 
     A manual, force-captured snapshot — PINNED so it's prune-exempt (a durable
     bookmark) — annotated with the user's tag (label) + note. It lands in the same
-    snapshot store as State History, so the user views + restores it from there.
+    snapshot store as State logs, so the user views + restores it from there.
     Returns a tiny inline status for the topbar popover form; the response carries
     an ``archive-ok``/``archive-err`` marker the form's hx-on uses to close on success.
     """
@@ -22792,7 +22792,7 @@ def state_archive():
     warn = (' <span class="archive-warn">⚠ live chip — your unapplied edits aren’t '
             'included; apply to live first to bookmark them</span>') if dirty else ''
     return (f'<span class="archive-status archive-ok">✓ Bookmarked &ldquo;{escape(label)}&rdquo; '
-            f'at {when} — see State History</span>{warn}')
+            f'at {when} — see State logs</span>{warn}')
 
 
 # ======================================================================
@@ -28666,7 +28666,7 @@ def api_pulse_delete_together():
     if not holds_pulse:
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
-            "(Live edit - Json Tree view).")), 400
+            "(Live state edit (Json tree view)).")), 400
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
                "expect_chip": pj.get("expect_chip") or "",
@@ -29637,10 +29637,16 @@ def api_pulse_ground_truth():
 #: by Ctrl+K (base.html's cmd-palette-data) and by header Search, so a name
 #: found in one is found in the other. ``exp``: shown only with SM_EXPERIMENTAL.
 _NAV_PAGES = (
+    {"label": "Configuration", "url": "/generate"},
+    {"label": "Chip Components", "url": "/qubits"},
+    {"label": "State Edit", "url": "/bulk"},
+    {"label": "Experiment logs", "url": "/journal"},
+    {"label": "Runs", "url": "/datasets"},
+    {"label": "OPX monitor", "url": "/opx-monitor/live"},
     {"label": "Projects", "url": "/qualibrate"},
-    {"label": "Generate Config", "url": "/generate"},
+    {"label": "Generate config", "url": "/generate"},
     {"label": "Config Viewer", "url": "/config"},
-    {"label": "Re-generate config", "url": "/regenerate"},
+    {"label": "Modify config", "url": "/regenerate"},
     {"label": "Instrument Wiring", "url": "/instrument"},
     {"label": "Qubits", "url": "/qubits"},
     {"label": "Pairs", "url": "/pairs"},
@@ -29653,15 +29659,15 @@ _NAV_PAGES = (
     {"label": "Z-line distortion", "url": "/zline"},
     {"label": "CZ gate plan", "url": "/cz-plan"},
     {"label": "Compare", "url": "/diff"},
-    {"label": "Live State Edit", "url": "/bulk"},
-    {"label": "Live edit - Json Tree view", "url": "/explorer"},
+    {"label": "Live state edit (table view)", "url": "/bulk"},
+    {"label": "Live state edit (Json tree view)", "url": "/explorer"},
     {"label": "Pulses", "url": "/pulses"},
-    {"label": "State History", "url": "/state-history"},
+    {"label": "State logs", "url": "/state-history"},
     {"label": "Calibration log", "url": "/journal"},
     {"label": "Export... (CSV)", "url": "/table"},
     {"label": "Parameter table", "url": "/table"},
     {"label": "Agent home", "url": "/agent"},
-    {"label": "Param History", "url": "/param-history"},
+    {"label": "Param logs", "url": "/param-history"},
     {"label": "Experiment Runner", "url": "/scheduler", "exp": True},
     {"label": "Fit Replay", "url": "/fit-audit", "exp": True},
     {"label": "Auto Calibrate", "url": "/autofit", "exp": True},
@@ -30270,7 +30276,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = json.dumps({"cellsReverted": {
             "message": ((f"This step loaded {_too_large} values at once — too many "
-                         "for Ctrl+Z. Use ↺ Revert last apply (State History) for it.")
+                         "for Ctrl+Z. Use ↺ Revert last apply (State logs) for it.")
                         if _too_large else
                         "This step recorded no values — skipped; the chip is unchanged"),
             "entries": [], "level": "warning", **_walk_burst_extra(n_req)}})
@@ -32512,7 +32518,7 @@ _PULL_LOST_HIST = 8
 @bp.route("/sync/lost-ack", methods=["POST"])
 def sync_lost_ack():
     """W2-3: the person read the record of applied values an outside save
-    took away; it leaves the status control (State History keeps the rest)."""
+    took away; it leaves the status control (State logs keeps the rest)."""
     ctx = _active_ctx()
     if ctx:
         ctx.pop("_lost_unacked", None)
@@ -33424,7 +33430,7 @@ def state_drift():
 @bp.route("/state/drift/view")
 def state_drift_view():
     """Full before/after table of everything the live chip changed since the
-    baseline. Rendered into the State History panel (``?embed=1``) or the
+    baseline. Rendered into the State logs panel (``?embed=1``) or the
     floating overlay (default)."""
     embed = request.args.get("embed") == "1"
     ctx = _active_ctx()
@@ -33702,7 +33708,7 @@ def _staged_version_words(ctx) -> str:
         return "The version before the last apply (Revert last apply)"
     if ref.get("run_id") is not None:
         return f"The state of run #{ref['run_id']}"
-    return "A version from State History"
+    return "A version from State logs"
 
 
 def _unseen_by_paths(ctx):
@@ -33821,7 +33827,7 @@ def _take_live_backup(ctx, store, pending: dict, *, notice=False) -> dict | None
         as unapplied edits; nothing is written to the live chip);
       * a History version of the working copy exactly as the user saw it,
         labelled as a backup, so it survives a restart and can be staged from
-        State History like any other version.
+        State logs like any other version.
     Never raises: a backup that fails must not stop the pull the user asked
     for, and the pull is not made to wait on it more than one snapshot write.
     Caller holds the build lock."""
@@ -33876,7 +33882,7 @@ def _bring_back_names(bk: dict, failed: list[dict], cap: int = 3) -> str:
         except Exception:  # noqa: BLE001 -- a name without its value is still a name
             names.append(p)
     more = f" and {len(failed) - cap} more" if len(failed) > cap else ""
-    kept = " (kept in the Take-live backup, State History)" if bk.get("snapshot") else ""
+    kept = " (kept in the Take-live backup, State logs)" if bk.get("snapshot") else ""
     return ", ".join(names) + more + kept
 
 
@@ -33894,13 +33900,13 @@ def state_take_live_restore():
     bk = ((ctx.get("_notice_backups") or {}).get(notice_id)
           if notice_id else ctx.get("take_live_backup"))
     if notice_id and not bk:
-        return render_template("_status.html", message="This notice's backup is no longer available; use State History.",
+        return render_template("_status.html", message="This notice's backup is no longer available; use State logs.",
                                level="warning"), 409
     if not bk or not bk.get("updates"):
         resp = make_response(_tray_html(), 200)
         resp.headers["HX-Trigger"] = json.dumps({"syncToast": {
             "message": "Nothing to bring back — the backup holds no edits "
-                       "(a staged version is in State History).", "level": "info"}})
+                       "(a staged version is in State logs).", "level": "info"}})
         return resp
     with _active_wc_lock(ctx):
         if notice_id:
@@ -36050,7 +36056,7 @@ def state_overwrite_live_preflight():
 @bp.route("/export", methods=["GET", "POST"])
 def export_csv():
     """The one CSV export (UX round, B2: reachable from the Qubits, Pairs and
-    Resonators tables and Live State Edit, not only from /table).
+    Resonators tables and Live state edit (table view), not only from /table).
 
     * ``?props=`` (default): one row per qubit, the stored values of those
       summary properties -- what /table exports; ``?chain=`` keeps one chain.
@@ -36201,7 +36207,7 @@ def _export_pair_rows(engine, props: list) -> list[dict]:
 
 
 def _export_grid_csv(body: dict):
-    """Live State Edit's grid as CSV: the columns the user sees (``cols``),
+    """Live state edit (table view)'s grid as CSV: the columns the user sees (``cols``),
     one row per qubit (or pair), each cell's STORED value read at the path
     the grid resolved it to; a pointer with no scalar behind it is written as
     the pointer, a missing field as blank."""
@@ -39814,7 +39820,7 @@ def _entry_recency_key(entry) -> tuple:
     """Sort key ordering workspace entries oldest → newest.
 
     docs/262: by the run's INSTANT (``run_time.resolve`` over the entry's
-    ``created_at`` / folder -- the Param History key's reading), so "the
+    ``created_at`` / folder -- the Param logs key's reading), so "the
     newest run" of a chip whose runs come from two archives in different
     zones is the one that really ran last. ``_entry_snapshot_parts`` stays
     the DISPLAY string (the acquisition PC's wall clock, docs/244). An entry
@@ -40963,7 +40969,7 @@ def compare_hub_options():
 
 
 def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
-    """docs/283: the context the Param History grid reads the ledger with.
+    """docs/283: the context the Param logs grid reads the ledger with.
     The loaded chip's own; for an archived chip, its history folder and a
     store that holds only the qubit names its ledger records (there is no
     current state to compare with, and every value is read from the ledger
@@ -41010,7 +41016,7 @@ def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
 
 
 def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | None:
-    """S10 walk: an ARCHIVED chip (one Param History holds but no open folder
+    """S10 walk: an ARCHIVED chip (one Param logs holds but no open folder
     is) whose change ledger holds nothing -- never opened since ledgers exist,
     or its live folder is gone -- gets its history back from its own Param
     History snapshots, with no live folder: the observed import S10 C1 gives a
@@ -41024,7 +41030,7 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
     S10 walk (follow-up): its RUN captures are its run history -- runs whose
     folder is still on disk are read from their data folder, the others from
     their capture (:func:`_hub_archive_sources`) -- so nothing the pre-S10
-    Param History grid drew for the chip is missing. A ledger a live open
+    Param logs grid drew for the chip is missing. A ledger a live open
     made gets the same pass once (marked :data:`hub_sync.ARCHIVE_DONE`; a
     live open clears the mark): it adds what that ledger does not hold.
 
@@ -41070,7 +41076,7 @@ def _hub_archive_ensure(hm, target_path, directory: Path) -> tuple[str, str] | N
     if peek is not None and peek["build"] == hub_sync.ARCHIVE_DONE and not peek["events"]:
         n = peek["looked"]
         if n:
-            text = (f"None of this chip's {n} Param History snapshot{'' if n == 1 else 's'} could "
+            text = (f"None of this chip's {n} Param logs snapshot{'' if n == 1 else 's'} could "
                     "be read, so its change history cannot be built from them.")
         else:
             text = _VH_UNAVAILABLE_NOTES["snapshots_unreadable"]
@@ -41174,7 +41180,7 @@ def _archive_ledger_notes(hm, target_path, ledger: dict) -> list[dict]:
     """S10 C5 (C3 review P1), reworked by the S10 walk: what an ARCHIVED
     chip's history says beside it. Its ledger is built from its own Param
     History snapshots (:func:`_hub_archive_ensure`), so it no longer holds
-    less than Param History holds -- the note says what it was built from
+    less than Param logs holds -- the note says what it was built from
     (runs in their data folders, run captures whose folders are gone, states
     SM saw) and how many snapshots could not be read; and wherever a folder on
     disk opens as the chip, "Open this chip" is offered (S10 final review:
@@ -41246,7 +41252,7 @@ def _hub_grid_summary(ledger: dict, rows: list[dict]) -> dict:
 
 @bp.route("/param-history")
 def param_history():
-    """Param History dashboard — sparkline grid of trended state.json fields.
+    """Param logs dashboard — sparkline grid of trended state.json fields.
 
     Multi-chip aware: ``?chip_key=`` switches the dashboard to a chip
     other than the currently loaded one.  The alignment banner and
@@ -41947,7 +41953,7 @@ def param_history_changes():
 
 
 def _changes_archive(hm) -> dict | None:
-    """S10 walk: the archived chip a Param History request names
+    """S10 walk: the archived chip a Param logs request names
     (``?chip_key=`` other than the open chip's key) -- ``{"key", "path",
     "names"}`` -- or None for the open chip."""
     key = (request.args.get("chip_key") or "").strip()
@@ -42194,7 +42200,7 @@ def _last_backfill_failures(loaded_path: Path) -> tuple[list[dict[str, Any]], in
 
     Only surfaces results when the backfill finished (``status == "done"``);
     while a backfill is still running, the banner stays hidden. Used to
-    drive the Param History page's amber failure-banner so the user can
+    drive the Param logs page's amber failure-banner so the user can
     see *why* the auto-import didn't close the workspace gap — which
     otherwise produces the infinite "Importing…" loop the bug report
     describes.
@@ -46717,7 +46723,7 @@ def dataset_apply_selected_preview(uid):
             if is_pointer(new):
                 row["status"] = "skip"
                 row["reason"] = ("a reference (pointer) differs — change it in "
-                                 "Live edit - Json Tree view")
+                                 "Live state edit (Json tree view)")
                 rows.append(row)
                 continue
             target = path
@@ -46898,7 +46904,7 @@ def _replaced_rows_kept(snap: dict, aside) -> str:
     n = len(rows)
     if not n:
         return ("Your saved-but-unapplied version was replaced by the run's state "
-                "(the pre-apply backup in State History holds the chip's previous state).")
+                "(the pre-apply backup in State logs holds the chip's previous state).")
     shown = ", ".join(dict.fromkeys(r.dot_path for r in rows))
     noun = f"{n} unapplied edit{'s' if n != 1 else ''}"
     if aside is not None:
@@ -46964,7 +46970,7 @@ def dataset_load_state(uid):
 
     With a project chip open, the user's intent is "pull this experiment's
     state into MY chip" — so the snapshot is STAGED into the active context's
-    WORKING COPY (State History Mode-1 semantics: review, then Sync / Apply
+    WORKING COPY (State logs Mode-1 semantics: review, then Sync / Apply
     pushes it live; the live files are never written here). The old behavior
     — activating the run's archive as a separate read-only context, which
     hijacked the active context (project scope lost, load-path box rewritten
@@ -47862,7 +47868,7 @@ def generate():
 
 @bp.route("/regenerate")
 def regenerate_page():
-    """Re-generate Config — rebuild an existing chip from an editable spec
+    """Modify config — rebuild an existing chip from an editable spec
     (reassign ports, change bands, add/remove qubits) while its calibrated
     values are carried over, into a NEW folder. Skeleton; the wizard prefill +
     build/merge wiring (``core.regenerate``) is attached next.

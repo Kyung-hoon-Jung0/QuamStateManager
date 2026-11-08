@@ -1,5 +1,5 @@
 /* docs/283 journey: Chip Status Trends, a metric tile's meta hover, the Param
- * History grid (and a cell's drawer) and Param History Changes, all read from
+ * History grid (and a cell's drawer) and Param logs Changes, all read from
  * the chip's change ledger, walked like a person with real mouse events: open,
  * hover, click, Back, reload -- the page stays whole and the console clean.
  *
@@ -184,13 +184,13 @@ async function trendPoint(b, entity, want) {
     ok(/#7/.test(tag) && !/#/.test(tag2), 'tile tags: qA1 "' + tag + '" names #7, qA2 "' + tag2 + '" names no run');
     await b.shot(path.join(SHOTS, '05_meta_proven.png'));
 
-    // 3. Param History grid (sidebar), and a cell's drawer
-    // Param History sits under the Calibration log's collapsible group
-    if (!(await center(b, '#journal-subnav a[href="/param-history"]'))) {
-      await clickSel(b, 'button[aria-controls="journal-subnav"]');
+    // 3. Param logs grid (sidebar), and a cell's drawer
+    // Param logs sits under the Calibration log's collapsible group
+    if (!(await center(b, '#experiment-logs-subnav a[href="/param-history"]'))) {
+      await clickSel(b, 'button[aria-controls="experiment-logs-subnav"]');
       await sleep(300);
     }
-    ok(await clickSel(b, '#journal-subnav a[href="/param-history"]'), 'sidebar -> Param History');
+    ok(await clickSel(b, '#experiment-logs-subnav a[href="/param-history"]'), 'sidebar -> Param logs');
     ok(!!(await waitFor(b, "!!document.querySelector('.param-history-grid .history-cell')", 30000)), 'the grid is drawn');
     ok(!(await b.ev("document.getElementById('param-history-root').textContent.includes('Older snapshot history')")),
        'the grid reads the ledger (no older-snapshot label)');
@@ -204,7 +204,7 @@ async function trendPoint(b, entity, want) {
     await waitFor(b, "!!document.querySelector('#phd-chart .js-plotly-plot, #phd-chart svg')", 15000);
     await b.shot(path.join(SHOTS, '07_grid_drawer.png'));
 
-    // 4. Param History Changes
+    // 4. Param logs Changes
     ok(await clickSel(b, '.ph-tabs button:not(.active)'), 'Changes tab');
     ok(!!(await waitFor(b, "!!document.querySelector('.ph-change-group')", 30000)), 'Changes lists events');
     const ch = await b.ev("document.querySelector('.ph-changes').textContent.replace(/\\s+/g,' ')");

@@ -1,7 +1,7 @@
-{# S10 walk: one pager for the history listings (State History, the History
-   drawer). State History had 88 pages and only "Next »" (its one older row
+{# S10 walk: one pager for the history listings (State logs, the History
+   drawer). State logs had 88 pages and only "Next »" (its one older row
    sat on page 87): first / previous / next / last, and a page box to jump; a new page opens
-   at its top (*swap*: State History scrolls its pane, the drawer shows its top). #}
+   at its top (*swap*: State logs scrolls its pane, the drawer shows its top). #}
 {% macro history_pager(url, page, total_pages, target, per_page, swap='innerHTML') -%}
 {%- if total_pages > 1 %}
 {%- set q = url ~ ('&' if '?' in url else '?') ~ 'per_page=' ~ per_page ~ '&page=' %}

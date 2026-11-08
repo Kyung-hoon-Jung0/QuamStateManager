@@ -1,6 +1,6 @@
 """v1.5.1 R3 M5: the "nothing pending" refusal names a staged version.
 
-Window A shows its edit; window B stages an older version (State History
+Window A shows its edit; window B stages an older version (State logs
 Load, with its own discard confirm). A's Apply is refused because the rows A
 saw are gone. The refusal said "your edits were saved into the working state
 -- press again", which was false: the STAGE set working_dirty, and pressing
@@ -69,7 +69,7 @@ def test_a_stage_from_another_window_is_named_not_called_your_save(tmp_path):
     assert "saved into the working state" not in msg and "press it again" not in msg, (
         f"the refusal blames the user's own Save and tells them to press again: {msg!r}")
     assert body.get("staged") is True and body.get("saved") is False, body
-    assert "State History" in msg and "not your edits" in msg, msg
+    assert "State logs" in msg and "not your edits" in msg, msg
     q = json.loads((live / "state.json").read_text(encoding="utf-8"))["qubits"]
     assert q["q2"]["T1"] == 2.5e-5, "nothing was written"
 

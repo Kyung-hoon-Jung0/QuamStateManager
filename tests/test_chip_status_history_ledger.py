@@ -1,10 +1,10 @@
 """docs/301 F13 + F14 -- the Chip Status popup trends and the History drawer
-read the chip's change ledger, like Trends and the State History page.
+read the chip's change ledger, like Trends and the State logs page.
 
-F13: the hero map's qubit popup drew its sparklines from the Param History
+F13: the hero map's qubit popup drew its sparklines from the Param logs
 snapshots (3, all flat) beside a Trends chart of 25 changes.
-F14: the "History (N)" drawer, titled State History, listed those 3
-snapshots while the State History page listed ~3,000 recorded states.
+F14: the "History (N)" drawer, titled State logs, listed those 3
+snapshots while the State logs page listed ~3,000 recorded states.
 
 Fixtures: ``test_hub_drawer``'s chip (run #2 moves qA1.T1, #3 qA1.f_01, #4
 retargets qA1's x180).
@@ -50,7 +50,7 @@ def listed_count(html: str) -> int:
 class TestHistoryDrawer:
     def test_the_drawer_lists_the_ledger_states(self, sm):
         html = flat(sm["client"].get("/api/history").data.decode())
-        assert "Open State History" in html and "version-count" in html
+        assert "Open State logs" in html and "version-count" in html
         assert 'class="history-entry hp-ledger-row"' in html
         page = flat(sm["client"].get("/state-history").data.decode())
         total = listed_count(html)
@@ -109,5 +109,5 @@ class TestHistoryDrawer:
         env = load(tmp_path, [(chip_state(), None)], chip_state(), sync=False)
         html = env["client"].get("/api/history").data.decode()
         # S10 C3: old -> new, all listing modes use one renderer with the mode note.
-        assert "hp-ledger-row" not in html and "Open State History" in html
+        assert "hp-ledger-row" not in html and "Open State logs" in html
         assert "being built" in html

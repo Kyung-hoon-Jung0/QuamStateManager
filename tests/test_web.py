@@ -3010,7 +3010,7 @@ class TestParamHistory:
     def test_sidebar_link_present(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
         assert 'href="/param-history"' in html
-        assert "Param History" in html
+        assert "Param logs" in html
 
     def test_route_renders_with_loaded_state(self, loaded_client):
         resp = loaded_client.get("/param-history",
@@ -7477,35 +7477,51 @@ class TestSidebarIAr15:
         return (self._ROOT / "quam_state_manager" / "web" / "static"
                 / "app.js").read_text(encoding="utf-8")
 
+    @pytest.mark.parametrize("url,subnav,label", [
+        ("/generate", "config-subnav", "Generate config"),
+        ("/bulk", "live-edit-subnav", "Live state edit (table view)"),
+        ("/datasets", "datasets-subnav", "Runs"),
+        ("/journal", "experiment-logs-subnav", "Calibration log"),
+        ("/topology?view=overview", "chip-status-subnav", "Overview"),
+        ("/qubits", "chip-components-subnav", "Qubits"),
+        ("/state-history", "experiment-logs-subnav", "State logs"),
+        ("/param-history", "experiment-logs-subnav", "Param logs"),
+        ("/opx-monitor/live", "ui-opxmon-subnav", "Live"),
+    ])
+    def test_parent_default_child_active(self, loaded_client, url, subnav, label):
+        import re
+        html = loaded_client.get(url).get_data(as_text=True)
+        group = re.search(r'<ul[^>]*id="' + subnav + r'"[^>]*>(.*?)</ul>', html, re.S)
+        assert group, subnav
+        assert re.search(r'<a\b[^>]*class="active"[^>]*>' + re.escape(label) + '</a>', group[1]), label
+        parents = re.findall(r'<a\b[^>]*data-nav-parent="true"[^>]*>', html)
+        assert parents and all('class="active"' not in anchor for anchor in parents)
+
+    def test_every_old_navigation_key_survives(self):
+        import re
+        keys = set(re.findall(r'data-nav-key="([^"]+)"', self._base()))
+        assert set(('generate config_browser regenerate topology overview health status_topology '
+                    'status_trends fidelity2q fidelity1q readout coherence frequencies calibration '
+                    'zline czplan bulk explorer pulses datasets collections trends instrument components '
+                    'qubits pairs resonators flux couplers qdac opx_monitor diagnostics diff scheduler '
+                    'fit_audit autofit agent journal state_history param_history').split()) <= keys
+
+    def test_modify_config_title_and_help(self, loaded_client):
+        import re
+        html = loaded_client.get('/regenerate').get_data(as_text=True)
+        assert re.search(r'<h2 class="gen-title ui-head-title">Modify config</h2>', html)
+        for url in ('/regenerate', '/help', '/'):
+            html = loaded_client.get(url).get_data(as_text=True)
+            assert 'Modify config' in html
+            assert 'Re-generate config' not in html and 'Re-generate Config' not in html
+
     def test_structure_then_health_order(self):
-        # v1.5.3 IA (design A, user-approved): CHANGED ON PURPOSE -- the most-used
-        # pages lead (Chip Status, Live State Edit, Datasets); the rest keep the
-        # r15 structure->health order beneath them. The head rows (Projects,
-        # State Load, Generate Config) stay first.
         base = self._base()
-        assert (base.index(">Projects</a>")
-                < base.index(">State Load</button>")
-                < base.index(">Generate Config</a>")
-                < base.index(">Chip Status</a>")
-                < base.index(">Live State Edit</a>")
-                < base.index(">Datasets</a>")
-                < base.index(">Instrument Wiring</a>")
-                < base.index(">Chip Components</a>")
-                < base.index(">Diagnostics</a>")
-                < base.index(">Compare</a>")
-                < base.index(">Experiment Runner</a>")
-                < base.index(">Fit Replay</a>")
-                < base.index(">Auto Calibrate")
-                # customer feedback 2026-09-08: Agent right above the Calibration log,
-                # State History + Param History beneath it
-                < base.index(">Agent</a>")
-                < base.index(">Calibration log</a>")
-                < base.index(">State History</a>")
-                < base.index(">Param History</a>"))
-        # the CZ gate plan and Pulses stay inside their groups, which now lead
-        assert (base.index(">Chip Status</a>") < base.index(">CZ gate plan</a>")
-                < base.index(">Live State Edit</a>") < base.index(">Pulses</a>")
-                < base.index(">Datasets</a>"))
+        labels = ["Configuration", "Instrument Wiring", "Chip Status", "Chip Components",
+                  "State Edit", "Datasets", "Experiment logs", "Compare",
+                  "Diagnostics", "OPX monitor", "Agent", "Experiment Runner", "Fit Replay"]
+        positions = [base.index(">" + label + "</a>") for label in labels]
+        assert positions == sorted(positions)
 
     def test_group_memberships(self):
         base = self._base()
@@ -7517,11 +7533,20 @@ class TestSidebarIAr15:
                       ">Flux</a>", ">Couplers</a>"):
             assert label in comp, label
         live = seg("live-edit-subnav")
-        assert ">Live edit - Json Tree view</a>" in live and ">Pulses</a>" in live
-        hist = seg("journal-subnav")            # docs/173: Param History sits under Calibration log; 2026-09-08: State History too
-        assert ">Param History</a>" in hist and ">State History</a>" in hist
+        assert ">Live state edit (Json tree view)</a>" in live and ">Pulses</a>" in live
+        hist = seg("experiment-logs-subnav")
+        positions = [hist.index(">" + label + "</a>")
+                     for label in ("Calibration log", "State logs", "Param logs")]
+        assert positions == sorted(positions)
+        assert 'data-nav-key="history"' not in base
+        assert 'id="journal-subnav"' not in base
         ds = seg("datasets-subnav")
-        assert ">Collections</a>" in ds and ">Trends</a>" in ds
+        assert all(">" + label + "</a>" in ds for label in ("Runs", "Collections", "Trends"))
+        assert ">Z-line distortion</a>" in live
+        assert ">CZ gate plan</a>" in seg("chip-status-subnav")
+        assert ">CZ gate plan</a>" not in live
+        assert ">Calibration log</a>" in seg("experiment-logs-subnav")
+        assert all(">" + label + "</a>" in seg("config-subnav") for label in ("Generate config", "Modify config", "Config Viewer"))
 
     def test_new_subnavs_restore_registered(self):
         appjs = self._appjs()
@@ -7529,8 +7554,8 @@ class TestSidebarIAr15:
         for ul_id, key in (
                 ("chip-components-subnav", "quam_components_nav_collapsed"),
                 ("live-edit-subnav",       "quam_liveedit_nav_collapsed"),
-                ("journal-subnav",         "quam_journal_nav_collapsed"),
-                ("datasets-subnav",        "quam_datasets_nav_collapsed")):
+                ("datasets-subnav",        "quam_datasets_nav_collapsed"),
+                ("experiment-logs-subnav", "quam_experiment_logs_nav_collapsed")):
             assert "{ id: '%s'" % ul_id in appjs, ul_id
             assert key in appjs and key in base, key
 
@@ -7552,7 +7577,7 @@ class TestSidebarIAr15:
         assert '"/instrument"' in appjs
 
     def test_no_template_still_names_the_page_by_its_old_name(self):
-        """Queue #2: the page is "Live edit - Json Tree view" (the user's
+        """Queue #2: the page is "Live state edit (Json tree view)" (the user's
         exact wording) everywhere a user can read it -- the sidebar and the
         palette were renamed first (167c3bd) while 12+ buttons, tooltips and
         the landing page still said "Json Tree View". Jinja/HTML comments are
@@ -7566,7 +7591,7 @@ class TestSidebarIAr15:
             txt = f.read_text(encoding="utf-8")
             txt = _re.sub(r"\{#.*?#\}", "", txt, flags=_re.S)
             txt = _re.sub(r"<!--.*?-->", "", txt, flags=_re.S)
-            txt = txt.replace("Live edit - Json Tree view", "")
+            txt = txt.replace("Live state edit (Json tree view)", "")
             for line in txt.splitlines():
                 if _re.search(r"json\s*tree\s*view", line, _re.I):
                     hits.append(f"{f.name}: {line.strip()[:120]}")
@@ -7579,12 +7604,44 @@ class TestSidebarIAr15:
         base = self._base()
         assert "nav_pages() | tojson" in base
         labels = {p["label"] for p in _NAV_PAGES}
-        for label in ("Re-generate config", "Diagnostics", "Resonators",
-                      "Couplers", "Live edit - Json Tree view", "Experiment Runner",
-                      "Fit Replay", "Auto Calibrate"):
+        for label in ("Modify config", "Diagnostics", "Resonators",
+                      "Couplers", "Live state edit (Json tree view)", "Experiment Runner",
+                      "Fit Replay", "Auto Calibrate", "Configuration", "State Edit",
+                      "Experiment logs", "State logs", "Param logs", "Runs", "Chip Components"):
             assert label in labels, label
         assert "Qubit Pairs" not in labels            # label drift fixed
         assert '"Qubit Pairs"' not in base
+
+    def test_log_names_cover_all_display_sources(self):
+        import re
+        import io
+        import tokenize
+        web = self._ROOT / "quam_state_manager/web"
+        stale = []
+        for path in sorted(web.rglob("*")):
+            if path.suffix not in (".html", ".js", ".py"):
+                continue
+            text = path.read_text(encoding="utf-8")
+            if path.suffix == ".py":
+                text = "\n".join(token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                                 if token.type == tokenize.STRING)
+            else:
+                text = re.sub(r"\{#.*?#\}|<!--.*?-->|/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            if re.search(r"State History|Param History|Param/State History", text):
+                stale.append(str(path.relative_to(web)))
+        assert not stale, stale
+        from quam_state_manager.web.routes import _NAV_PAGES
+        assert not any(page["label"] == "History" for page in _NAV_PAGES)
+
+    def test_log_titles_and_help(self, loaded_client):
+        import re
+        for url, label in (("/state-history", "State logs"), ("/param-history", "Param logs")):
+            html = loaded_client.get(url).get_data(as_text=True)
+            assert re.search(r"<h2\b[^>]*>\s*" + label + r"\s*</h2>", html), label
+        for url in ("/help", "/?landing=1"):
+            html = loaded_client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+            assert all(label in html for label in ("Experiment logs", "Calibration log", "State logs", "Param logs"))
+            assert "History &gt;" not in html
 
 
 class TestActiveMarkingR15:

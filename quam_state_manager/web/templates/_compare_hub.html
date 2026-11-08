@@ -85,7 +85,7 @@
           <option value="{{ chip.path }}" data-name="{{ chip.name }}">{{ chip.name }}{% if chip.snapshot_ts %} — run {{ chip.snapshot_ts }}{% endif %}</option>
           {% endfor %}
         </select>
-        <select id="cmp-history-select" aria-label="Add from Param/State History"
+        <select id="cmp-history-select" aria-label="Add from Param/State logs"
                 onchange="cmpHubPickHistory(this)">
           <option value="">History…</option>
           {% for chip in history_chips %}

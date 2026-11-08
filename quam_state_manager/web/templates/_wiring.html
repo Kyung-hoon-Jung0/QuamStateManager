@@ -144,7 +144,7 @@
      ═══════════════════════════════════════════════════════════════════ -->
 <!-- ═══════════════════════════════════════════════════════════════════
      docs/120 items 5+9 — chip-wide Trends: every qubit on ONE plot per
-     metric. Param History answers "how did THIS qubit move"; the customer
+     metric. Param logs answers "how did THIS qubit move"; the customer
      asked for the integrated view, and asked for it twice.
      Lazily fetched (see _ensureSectionBuilt) — it reads the history index,
      which is not cheap enough to ride the Chip Status page render.
@@ -240,7 +240,7 @@ ChipStatus.mount({
      ═══════════════════════════════════════════════════════════════════ -->
 <div id="history-panel" class="history-panel">
     <div class="history-panel-header">
-        <span>State History</span>
+        <span>State logs</span>
         <button class="outline btn-sm" onclick="toggleHistoryPanel()">&#10005;</button>
     </div>
     <div id="history-content"

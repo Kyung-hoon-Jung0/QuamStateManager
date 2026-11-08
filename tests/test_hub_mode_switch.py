@@ -107,7 +107,7 @@ def test_nonledger_versions_keep_paged_legacy_rows(no_runs, monkeypatch, mode):
         # S10 C6: "could not be read" (beside "Nothing older is shown", above older rows) ->
         # the listing's own wording, the note may not deny the rows drawn under it
         if mode == "unavailable":
-            assert "Older Param History snapshots are listed below." in body
+            assert "Older Param logs snapshots are listed below." in body
             assert "Nothing older is shown" not in body
         else:
             assert "change history" in body
@@ -568,7 +568,7 @@ def test_no_run_version_count_is_stable_under_app_context(no_runs):
     import sqlite3
     client = no_runs["client"]
     # S10 final review: old -> new, "an int, the same twice" passed with the count
-    # hard-coded to 12345 -- it is the TRUE count: the rows State History lists,
+    # hard-coded to 12345 -- it is the TRUE count: the rows State logs lists,
     # which are the ledger's state-bearing events (no older row on this chip)
     for t1 in (2e-5, 3e-5):
         with no_runs["app"].app_context():

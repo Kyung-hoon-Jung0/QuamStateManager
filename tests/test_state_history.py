@@ -1,4 +1,4 @@
-"""Tests for the State History page (sidebar peer of Bulk Edit): a view +
+"""Tests for the State logs page (sidebar peer of Bulk Edit): a view +
 restore layer over the existing HistoryManager snapshot store.
 
 Restore Mode 1 (stage into working copy → review → apply) and Mode 2 (replace
@@ -59,7 +59,7 @@ def _take_snapshot(client):
 class TestStateHistoryPage:
     def test_page_renders(self, client):
         html = client.get("/state-history").data.decode()
-        assert "State History" in html
+        assert "State logs" in html
         assert 'href="/state-history"' in html   # sidebar entry
 
     def test_no_state(self, app):
@@ -70,18 +70,18 @@ class TestStateHistoryPage:
         ts = _take_snapshot(client)
         assert ts
         html = client.get("/state-history").data.decode()
-        # P1-9 (UX round): one label per action across State History and Versions
+        # P1-9 (UX round): one label per action across State logs and Versions
         assert "Load for review" in html
         assert "Restore to live" in html
         assert "View changes vs current" in html
 
     def test_take_snapshot_returns_state_history_not_param_panel(self, client):
-        # the dedicated route re-renders the State History page (timeline +
+        # the dedicated route re-renders the State logs page (timeline +
         # restore/pin controls), NOT the Param-History panel that would wipe it.
         r = client.post("/state-history/snapshot")
         assert r.status_code == 200
         html = r.data.decode()
-        assert "State History" in html
+        assert "State logs" in html
         assert 'id="state-history-detail"' in html   # timeline fragment intact
         assert "Restore to live" in html
 

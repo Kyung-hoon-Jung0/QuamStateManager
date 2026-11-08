@@ -48,7 +48,7 @@
       </div>
       {% if r.too_large and not r.entries %}
         <span class="applied-log-reverted"
-              title="This write is recorded but too large to put back value by value — use Revert last apply, or State History.">no per-value undo</span>
+              title="This write is recorded but too large to put back value by value — use Revert last apply, or State logs.">no per-value undo</span>
       {% elif r.reverted_by == 'undo' %}
         {# docs/160: undone on the chip by Ctrl+Z -- Ctrl+Shift+Z brings it back #}
         <span class="applied-log-reverted" title="Undone with Ctrl+Z — Ctrl+Shift+Z re-applies it">undone</span>

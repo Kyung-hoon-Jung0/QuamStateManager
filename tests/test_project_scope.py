@@ -322,7 +322,7 @@ class TestSidebarReorg:
         src = self._src("quam_state_manager/web/templates/base.html")
         assert (src.index('id="qualibrate-subnav"')
                 < src.index('id="load-form"')
-                < src.index('>Generate Config</a>'))
+                < src.index('>Generate config</a>'))
 
     def test_subnav_renders_expanded_and_is_restore_registered(self):
         base = self._src("quam_state_manager/web/templates/base.html")
@@ -376,7 +376,7 @@ class TestSidebarReorg:
 
 class TestHistoryLens:
     """Step-6 pins (docs/63): snapshots are STAMPED with the project scope at
-    capture (meta.json-only, display-only); Param/State History gain scoped
+    capture (meta.json-only, display-only); Param/State logs gain scoped
     headers; every persisted key/URL contract stays raw."""
 
     def test_snapshot_meta_round_trip(self, tmp_path):
@@ -399,7 +399,7 @@ class TestHistoryLens:
 
     def test_pre_lens_meta_still_loads(self, tmp_path):
         """meta.json written BEFORE the field existed (no ``project`` key)
-        must load with project=None — not disappear from State History."""
+        must load with project=None — not disappear from State logs."""
         from quam_state_manager.core.history import HistoryManager
         chip = _chip(tmp_path / "chip_old")
         hm = HistoryManager(tmp_path / "inst_old")
@@ -460,7 +460,7 @@ class TestHistoryLens:
         from quam_state_manager.web.routes import _chip_label
         assert f"alpha · {_chip_label(scoped['chip_a'])}" in body
         assert f"/param-history?chip_key={raw_key}" in body  # raw URL contract
-        assert "scope-suffix" in body and "Param History" in body
+        assert "scope-suffix" in body and "Param logs" in body
 
     def test_param_history_unscoped_is_plain(self, scoped):
         c = scoped["client"]
