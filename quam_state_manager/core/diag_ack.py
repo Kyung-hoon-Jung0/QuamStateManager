@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 _LOCK = threading.Lock()
-ACKABLE_SEVERITIES = ("warning", "info")
+ACKABLE_SEVERITIES = ("warning", "info", "recommendation")
 
 
 def _file(instance_path: str | os.PathLike, chip_key: str) -> Path:

@@ -199,22 +199,24 @@ def _findings_objs(loaded):
 
 
 def _warning_categories() -> list[str]:
-    """Every check id that can be raised at warning (or suggestion) level."""
+    """Every check id that can be raised at warning/recommendation/suggestion level."""
     src = (ROOT / "quam_state_manager/core/diagnostics.py").read_text(encoding="utf-8")
     src += (ROOT / "quam_state_manager/web/routes.py").read_text(encoding="utf-8")
-    cats = set(re.findall(r'Finding\(\s*\n?\s*(?:"warning"|"info"|severity|sev|level)\s*,\s*\n?\s*"([a-z_.0-9]+)"', src))
+    cats = set(re.findall(r'Finding\(\s*\n?\s*(?:"warning"|"info"|"recommendation"|severity|sev|level)\s*,\s*\n?\s*"([a-z_.0-9]+)"', src))
     cats |= set(re.findall(r'category="([a-z_.0-9]+)"', src))
     return sorted(c for c in cats if not c.startswith("env_"))
 
 
 def test_every_warning_check_renders_the_ack_control(loaded):
-    """The enumeration pin: every check id the linters can raise at warning
-    level carries "I know - intended" when rendered."""
+    """The enumeration pin: every check id the linters can raise at warning /
+    recommendation / suggestion level carries "I know - intended" when rendered."""
     cats = _warning_categories()
     assert len(cats) >= 20, cats
     from flask import render_template
-    rows = [Finding("warning", c, f"qubits.q1.f_01", f"{c} says something {i}",
-                    jump_path="qubits.q1.f_01") for i, c in enumerate(cats)]
+    recommendation_cats = {"connectivity_band_qop", "connectivity_port_sharing", "pointer_optional_default"}
+    rows = [Finding("recommendation" if c in recommendation_cats else "warning",
+                    c, "qubits.q1.f_01", f"{c} says something {i}", jump_path="qubits.q1.f_01")
+            for i, c in enumerate(cats)]
     diag_ack.stamp(rows, str(loaded["inst"]), "enum", loaded["store"])
     with loaded["app"].test_request_context():
         html = render_template("_diagnostics_list.html", findings=rows,
