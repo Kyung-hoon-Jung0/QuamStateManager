@@ -1177,6 +1177,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.globals["opx_alarm_armed"] = _opx_armed
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
+    # FB-12 port test: template scripts per element/port, download or run
+    from quam_state_manager.web.port_test_routes import port_test_bp
+    app.register_blueprint(port_test_bp)
     # QUAlibrate's web UI through SM, with an Open-in-QSM link per run
     from quam_state_manager.web.qualibrate_proxy import qbproxy_bp
     app.register_blueprint(qbproxy_bp)

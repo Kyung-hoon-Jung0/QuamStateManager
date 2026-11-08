@@ -26,6 +26,26 @@
     <p style="padding:1rem;color:var(--pico-muted-color)">Initializing diagram&hellip;</p>
 </div>
 
+<p class="ui-note iw-port-test-hint">Click a port to open its port test (download a test script, or run it on the simulator or an OPX).</p>
+<script>
+(function () {
+    // FB-12: a click on a wired port of this read-only rack opens its port test.
+    var d = document.getElementById('instrument-diagram');
+    if (!d || d._ptBound) return;
+    d._ptBound = true;
+    d.addEventListener('click', function (e) {
+        var cell = e.target && e.target.closest ? e.target.closest('.iw-port[data-con]') : null;
+        if (!cell || !d.contains(cell) || !cell.querySelector('.iw-port-circle')) return;
+        var q = 'con=' + encodeURIComponent(cell.getAttribute('data-con')) +
+            '&slot=' + encodeURIComponent(cell.getAttribute('data-slot') || '') +
+            '&port=' + encodeURIComponent(cell.getAttribute('data-port')) +
+            '&io=' + encodeURIComponent(cell.getAttribute('data-io') || 'output');
+        if (window.htmx) htmx.ajax('GET', '/port-test?' + q, {target: '#table-pane', swap: 'innerHTML'})
+            .then(function () { history.pushState({}, '', '/port-test?' + q); });
+    });
+})();
+</script>
+
 <!-- Port hover popup (hidden by default) -->
 <div id="port-popup" class="port-popup hidden">
     <div class="port-popup-header">
