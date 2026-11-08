@@ -1,18 +1,25 @@
 """Run one port-test script in the chip's env (spawned by core/port_test_runner.py).
 
-    python run_port_test.py SCRIPT WORK_DIR   (request JSON on stdin)
+    python run_port_test.py SCRIPT WORK_DIR             (request JSON on stdin)
+    python run_port_test.py SCRIPT WORK_DIR --recover   (halt + close OUR QM)
 
-The request (stdin, never on disk) is ``{"mode": "saas"|"opx", "target": {...},
-"max_s": float, "sim_ns": int}``; it carries the credentials, so it is read
-once and never written or printed. Progress goes to ``WORK_DIR/_status.json``,
-the answer to ``WORK_DIR/_result.json``. A file ``WORK_DIR/stop`` asks a
-hardware run to halt. The script module is the same text the user downloads.
+The request (the first stdin line, never on disk) is ``{"mode": "saas"|"opx",
+"target": {...}, "max_s": float, "sim_ns": int}``; it carries the credentials,
+so it is read once and never written or printed. SM keeps stdin OPEN for the
+run's lifetime: a later ``stop`` line, or end-of-file (SM exited or was
+killed), asks the run to halt and close its QM -- so a run never outlives SM.
+A file ``WORK_DIR/stop`` asks the same. Progress, and as soon as they are
+known the QM id and job id, go to ``WORK_DIR/_status.json``; the answer to
+``WORK_DIR/_result.json``. ``--recover`` reconnects to the recorded QM only
+(never another one) and halts + closes it. The script module is the same text
+the user downloads.
 """
 from __future__ import annotations
 
 import importlib.util
 import json
 import os
+import threading
 import sys
 import time
 import traceback
@@ -66,28 +73,100 @@ def _traces(samples) -> dict:
     return out
 
 
+def watch_stdin(stream, stop: threading.Event) -> threading.Thread:
+    """A ``stop`` line or end-of-file on stdin (the parent SM is gone) sets *stop*."""
+    def run():
+        try:
+            for line in stream:
+                if line.strip() == "stop":
+                    break
+        except (OSError, ValueError):
+            pass
+        stop.set()
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    return th
+
+
+def connection(mod, target):
+    from qm import QuantumMachinesManager
+    kw = {"host": target["host"], "timeout": mod.CALL_TIMEOUT_S}
+    if target.get("cluster"):
+        kw["cluster_name"] = target["cluster"]
+    if target.get("port"):
+        kw["port"] = int(target["port"])
+    return mod.bounded(lambda: QuantumMachinesManager(**kw))
+
+
+def recover(mod, qmm, ids):
+    """Reconnect only to our recorded QM; never open or close a peer QM."""
+    if not ids.get("qm_id"):
+        if ids.get("phase") == "opening a QM":
+            raise RuntimeError("Our QM id is not known yet; cleanup cannot be verified.")
+        return  # no QM was ever opened by this run
+    if str(ids["qm_id"]) not in [str(x) for x in mod.bounded(qmm.list_open_qms)]:
+        return  # Already closed by the runner.
+    qm = mod.bounded(lambda: qmm.get_qm(ids["qm_id"]))
+    job = None
+    try:
+        if ids.get("job_id"):
+            if hasattr(qm, "get_job"):
+                job = mod.bounded(lambda: qm.get_job(ids["job_id"]))
+            else:
+                candidate = mod.bounded(qm.get_running_job)
+                if candidate and str(candidate.id) == str(ids["job_id"]):
+                    job = candidate
+    finally:
+        mod.halt_close(qm, job)
+
+
+def recover_main(script, work):
+    try:
+        mod = _load(script)
+        run = json.loads((work / "_run.json").read_text(encoding="utf-8"))
+        ids = json.loads((work / "_status.json").read_text(encoding="utf-8"))
+        recover(mod, connection(mod, run["hardware_target"]), ids)
+        _write(work / "_recovery.json", {"ok": True})
+        return 0
+    except Exception as exc:
+        _write(work / "_recovery.json", {"ok": False, "error": str(exc)})
+        return 1
+
+
 def main() -> int:
     script, work = Path(sys.argv[1]), Path(sys.argv[2])
+    if "--recover" in sys.argv:
+        return recover_main(script, work)
     status = work / "_status.json"
+    status_data = {}
+    status_lock = threading.Lock()
+    def update(**data):
+        with status_lock:
+            status_data.update(data)
+            status_data["at"] = time.time()
+            _write(status, status_data)
     result = {"ok": False}
     req: dict = {}
     try:
-        req = json.loads(sys.stdin.read() or "{}")
+        req = json.loads(sys.stdin.readline() or "{}")
+        parent_gone = threading.Event()
+        watch_stdin(sys.stdin, parent_gone)
         mode, t = req.get("mode"), req.get("target") or {}
         mod = _load(script)
-        _write(status, {"phase": "connecting", "at": time.time()})
+        update(**{"phase": "connecting", "at": time.time()})
         if mode == "saas":
             from qm_saas import QmSaas, QOPVersion
             client = QmSaas(email=t["email"], password=t["password"], host=t["host"])
             ver = QOPVersion(t["version"]) if t.get("version") else None
-            _write(status, {"phase": "starting the simulator (about a minute)", "at": time.time()})
+            update(**{"phase": "starting the simulator (about a minute)", "at": time.time()})
             inst, qmm = mod.saas_qmm(client, ver)
             try:
-                if (work / "stop").exists():
+                if (work / "stop").exists() or parent_gone.is_set():
                     raise RuntimeError("Stopped before the simulation ran.")
-                _write(status, {"phase": "simulating", "at": time.time()})
-                samples = mod.simulate(qmm, req.get("sim_ns"))
+                update(**{"phase": "simulating", "at": time.time()})
+                samples, adc = mod.simulate(qmm, req.get("sim_ns"))
                 result = {"ok": True, "mode": "saas", "traces": _traces(samples),
+                          "adc": {k: [float(x) for x in list(v)[:MAX_POINTS]] for k, v in (adc or {}).items()},
                           "expected_peak": mod.EXPECTED_PEAK,
                           "version": getattr(ver, "name", None) or str(getattr(inst, "version", "") or "")}
             finally:
@@ -96,20 +175,15 @@ def main() -> int:
                 except Exception:  # noqa: BLE001
                     pass
         elif mode == "opx":
-            from qm import QuantumMachinesManager
-            kw = {"host": t["host"]}
-            if t.get("cluster"):
-                kw["cluster_name"] = t["cluster"]
-            if t.get("port"):
-                kw["port"] = int(t["port"])
-            qmm = QuantumMachinesManager(**kw)
-            _write(status, {"phase": "checking for running jobs", "at": time.time()})
+            qmm = connection(mod, t)
+            update(phase="checking for running jobs")
             stop = work / "stop"
-
+            def should_stop():
+                return stop.exists() or parent_gone.is_set()
             def log(msg):
-                _write(status, {"phase": "running", "detail": msg, "at": time.time()})
-            res = mod.run_on_hardware(qmm, should_stop=stop.exists,
-                                      max_s=float(req.get("max_s") or 600), log=log)
+                update(phase="running", detail=msg)
+            res = mod.run_on_hardware(qmm, should_stop=should_stop,
+                                      max_s=float(req.get("max_s") or 120), log=log, record=update)
             result = {"ok": True, "mode": "opx", "adc": {k: [float(x) for x in list(v)[:MAX_POINTS]]
                                                          for k, v in (res or {}).items()}}
         else:
@@ -123,7 +197,7 @@ def main() -> int:
             if isinstance(result.get(k), str):
                 result[k] = result[k].replace(secret, "***")
     _write(work / "_result.json", result)
-    _write(status, {"phase": "done", "at": time.time()})
+    update(**{"phase": "done", "at": time.time()})
     return 0
 
 
