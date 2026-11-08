@@ -38,42 +38,9 @@
 {% for reason in unavailable %}
 <p class="czp-warn-text">{{ reason }}</p>
 {% endfor %}
-{% if rows %}
-<section class="czp-detail" aria-live="polite">
-    <div class="czp-controls">
-        <h3 id="czp-title" class="czp-title">&nbsp;</h3>
-        <button type="button" id="czp-stale-chip" class="czp-stale-chip" hidden></button>
-        <label>Operation
-            <select id="czp-op" aria-label="Operation of this pair"></select>
-        </label>
-    </div>
-    <p id="czp-status" class="czp-status" role="status" hidden></p>
-    <p id="czp-match" class="czp-match" role="status" title="Plot detuning is f_control - f_target; the signed resonance follows the pair roles. Difference is required minus stored amplitude."></p>
-    <p id="czp-pair-coupler-note" class="czp-caveat" hidden></p>
-    <div class="czp-plots">
-        <figure class="czp-fig">
-            <figcaption title="Idle to operating point; resonance levels and measured loss when available">Frequency vs flux amplitude <span class="muted">&mdash; idle &rarr; operating point, resonance levels at that height, the measured loss beside it when there is a scan</span></figcaption>
-            <p id="czp-flux-caveat" class="czp-caveat" hidden></p>
-            <div id="czp-flux" class="czp-plot"></div>
-        </figure>
-        <figure class="czp-fig">
-            <figcaption title="From the operation waveforms; frequency traces are available below">Detuning Δ during the gate <span class="muted">&mdash; from the operation's own waveforms</span></figcaption>
-            <p id="czp-time-caveat" class="czp-caveat" hidden></p>
-            <div id="czp-time" class="czp-plot"></div>
-            <details id="czp-frequency-box"><summary>Frequency during the gate</summary><div id="czp-frequency" class="czp-plot"></div></details>
-        </figure>
-    </div>
-    <div id="czp-card" class="czp-card"></div>
-    <details class="czp-solve-box"><summary>Solve amplitude and stage a proposal</summary><div id="czp-solve"></div></details>
-    <details id="czp-notes-box" class="czp-notes-box ui-disclosure">
-        <summary id="czp-notes-summary" class="ui-disclosure-summary">Notes</summary>
-        <ul id="czp-notes" class="zline-notes czp-notes"></ul>
-    </details>
-</section>
-{% endif %}
 <section class="czp-map-box" aria-label="Chip frequency map">
     <div class="czp-controls czp-map-head">
-        <h3 class="czp-title" title="Click a chip edge to show or hide its pair's frequencies below">Chip frequency map</h3>
+        <h3 class="czp-title" title="Click a pair on the small chip map to show or hide its frequencies; click a pair in the drawing below the columns to open its operation">Chip frequency map</h3>
         <label>Operation
             <select id="czp-map-op" aria-label="Operation drawn for every pair" title="cz per pair: each pair's cz, else its first CZ operation"><option value="">cz per pair</option></select>
         </label>
@@ -89,10 +56,12 @@
         <button type="button" id="czp-map-hide" class="btn-sm outline">Hide all</button>
         <span id="czp-map-count" role="status" aria-live="polite"></span>
     </div>
-    <details class="ui-disclosure">
-        <summary class="ui-disclosure-summary">Choose pairs (keyboard accessible)</summary>
-        <fieldset id="czp-map-pairs" aria-label="Pairs shown in frequency map"></fieldset>
-    </details>
+    {# The small chip map is the pair control: a click (or Enter/Space) on a pair edge hides or
+       shows that pair's traces in the frequency map below; a hidden pair's edge is dimmed. #}
+    {% set cmap_highlight = 'pairs' %}{% set cmap_cell = 46 %}{% set cmap_pick = '1' %}
+    {% set cmap_open_key = 'quam_czp_minimap_open' %}{% set cmap_pick_hint = 'Show or hide in the frequency map' %}
+    {% set cmap_label = '— click a pair to show or hide it in the frequency map' %}
+    {% include '_component_map.html' %}
     <div id="czp-map" class="czp-map"></div>
     <details id="czp-map-detail" class="czp-map-detail">
         <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
@@ -176,6 +145,37 @@
     </tbody>
 </table>
 </div>
+<section class="czp-detail" aria-live="polite">
+    <div class="czp-controls">
+        <h3 id="czp-title" class="czp-title">&nbsp;</h3>
+        <button type="button" id="czp-stale-chip" class="czp-stale-chip" hidden></button>
+        <label>Operation
+            <select id="czp-op" aria-label="Operation of this pair"></select>
+        </label>
+    </div>
+    <p id="czp-status" class="czp-status" role="status" hidden></p>
+    <p id="czp-match" class="czp-match" role="status" title="Plot detuning is f_control - f_target; the signed resonance follows the pair roles. Difference is required minus stored amplitude."></p>
+    <p id="czp-pair-coupler-note" class="czp-caveat" hidden></p>
+    <div class="czp-plots">
+        <figure class="czp-fig">
+            <figcaption title="Idle to operating point; resonance levels and measured loss when available">Frequency vs flux amplitude <span class="muted">&mdash; idle &rarr; operating point, resonance levels at that height, the measured loss beside it when there is a scan</span></figcaption>
+            <p id="czp-flux-caveat" class="czp-caveat" hidden></p>
+            <div id="czp-flux" class="czp-plot"></div>
+        </figure>
+        <figure class="czp-fig">
+            <figcaption title="From the operation waveforms; frequency traces are available below">Detuning Δ during the gate <span class="muted">&mdash; from the operation's own waveforms</span></figcaption>
+            <p id="czp-time-caveat" class="czp-caveat" hidden></p>
+            <div id="czp-time" class="czp-plot"></div>
+            <details id="czp-frequency-box"><summary>Frequency during the gate</summary><div id="czp-frequency" class="czp-plot"></div></details>
+        </figure>
+    </div>
+    <div id="czp-card" class="czp-card"></div>
+    <details class="czp-solve-box"><summary>Solve amplitude and stage a proposal</summary><div id="czp-solve"></div></details>
+    <details id="czp-notes-box" class="czp-notes-box ui-disclosure">
+        <summary id="czp-notes-summary" class="ui-disclosure-summary">Notes</summary>
+        <ul id="czp-notes" class="zline-notes czp-notes"></ul>
+    </details>
+</section>
 
 
 {% else %}

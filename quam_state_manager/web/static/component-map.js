@@ -144,15 +144,20 @@ window.ComponentMap = (function () {
     var hint = document.createElement("button");
     hint.type = "button";
     hint.className = "cm-popup-hint";
-    hint.title = _isPick() ? "click to show only its pulses"
+    // A pick mount may name its own action (data-cm-pick-hint); the Pulses page keeps its words.
+    var root0 = _active && _active.root;
+    var pickHint = _isPick() && root0.getAttribute("data-cm-pick-hint");
+    hint.title = pickHint ? pickHint : _isPick() ? "click to show only its pulses"
                                  : "click to open in the inspector";
-    hint.textContent = _isPick() ? "Show pulses" : "Open inspector";
+    hint.textContent = pickHint ? pickHint : _isPick() ? "Show pulses" : "Open inspector";
     hint.addEventListener("click", function (e) {
       e.stopPropagation();
       var pick = _isPick();
       _hidePopup();
       if (pick) {
-        if (window.pulsePickOwner) window.pulsePickOwner(ent.id);
+        if (pickHint) {
+          root0.dispatchEvent(new CustomEvent("cm:pick", { bubbles: true, detail: { kind: ent.kind, id: ent.id } }));
+        } else if (window.pulsePickOwner) window.pulsePickOwner(ent.id);
       } else if (window.htmx) {
         htmx.ajax("GET", (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id),
                   { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });

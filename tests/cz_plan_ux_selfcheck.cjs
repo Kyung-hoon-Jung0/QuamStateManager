@@ -27,7 +27,12 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const visibleSummary=f.solve.summary.replace(/\(= .*? of H per node 30\)/,
         '(= \u2212anharmonicity of '+higherName+', the higher qubit)')+' (?)';
     if(item===1){
-        assert(detail.compareDocumentPosition(d.querySelector('.czp-map-box')) & w.Node.DOCUMENT_POSITION_FOLLOWING);
+        // D-1: the chip frequency map first, then the pair table, then the one-pair detail
+        const F=w.Node.DOCUMENT_POSITION_FOLLOWING, box=d.querySelector('.czp-map-box'), table=d.getElementById('czp-table');
+        assert(box.compareDocumentPosition(table) & F, 'D-1: the table follows the frequency map');
+        assert(table.compareDocumentPosition(detail) & F, 'D-1: the one-pair detail follows the table');
+        assert(box.querySelector('#component-map') && box.querySelector('#component-map').compareDocumentPosition(box.querySelector('#czp-map')) & F,
+               'D-2: the small chip map sits above the frequency map');
         assert(scrolls.includes(detail),'query pair reveals detail after loading');
         scrolls.length=0; d.querySelector('.czp-row').click();await wait(20);
         assert(scrolls.includes(detail),'table selection reveals detail');

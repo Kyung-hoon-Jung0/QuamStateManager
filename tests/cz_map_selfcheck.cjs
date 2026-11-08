@@ -22,9 +22,17 @@ let checks = 0;
 function check(v, m) { checks++; assert.ok(v, m); }
 
 // v1.5.1: copied visible paragraphs -> shipped map section, pin the footer's actual DOM.
-function html(sel, rows) {
+// D-2: the shared component map is an include; the fixture stands in its drawn edges (one
+// <g data-cm="p:ID"> per pair, as topo-graph.js renders them) so the toggle runs on real markup.
+function miniMap(ids) {
+    return `<details class="cmap" id="component-map" data-cm-pick="1" open><summary>Chip layout</summary><div class="cmap-body"><svg>${
+        (ids || []).map(id => `<g class="cm-edge" data-cm="p:${id}"><line class="cm-edge-hit"/><line class="cm-edge-line"/></g>`).join('')}</svg></div></details>`;
+}
+function html(sel, rows, mini) {
+    const box = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.html'), 'utf8').match(/<section class="czp-map-box"[\s\S]*?<\/section>/)[0];
+    check(box.includes("{% include '_component_map.html' %}"), 'D-2: the map box includes the shared chip drawing');
     return `<div id="czp-root" class="czp-root" data-selected="${sel || ''}">
-${fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.html'), 'utf8').match(/<section class="czp-map-box"[\s\S]*?<\/section>/)[0]}
+${box.replace(/\{#[\s\S]*?#\}/g, '').replace(/\{%[\s\S]*?%\}/g, m => m.includes('_component_map') ? miniMap(mini) : '')}
 <table id="czp-table"><tbody>${(rows || []).map(op => `<tr class="czp-row" data-op="${op}"><td class="czp-last" data-last="${op}">x</td></tr>`).join('')}</tbody></table>
 <p id="czp-history-note"></p>
 <section><h3 id="czp-title"></h3><button id="czp-stale-chip" hidden></button><select id="czp-op"></select><p id="czp-status" hidden></p>
@@ -34,7 +42,7 @@ ${fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_cz_plan.htm
 
 /* One page: the bundle evaluated, fetch answered from `state`, Plotly's restyle/relayout recorded. */
 async function page(opts) {
-    const dom = new JSDOM('<!doctype html><body>' + html(opts.sel, opts.rows) + '</body>',
+    const dom = new JSDOM('<!doctype html><body>' + html(opts.sel, opts.rows, opts.mini) + '</body>',
                           {url: 'http://localhost/cz-plan', runScripts: 'outside-only', pretendToBeVisual: true});
     const w = dom.window, d = w.document;
     Object.assign(w, {console});
@@ -435,8 +443,8 @@ async function footerPins(only) {
           r21.layout.xaxis.ticktext.join(' ') === ORDER_21, 'by chip position: the grid sheared into one column per qubit (13 and 21 qubits pinned)');
     check([S5, S13, S21].every(S => S.mapEl.getAttribute('data-layout') === 'physical'), 'a complete grid is drawn as the chip itself');
     const leaders21 = named(r21, 'leader');
-    check(leaders21.length === 21 && leaders21.every(s => s.x0 === s.x1 && s.y1 < s.y0), 'in chip order every leader is vertical, from the node down to its column');
-    check(leaders21.every(s => s.yref === 'paper' && near(s.y1, r21.layout.yaxis.domain[1])), 'leaders end at the columns\' top edge');
+    check(leaders21.length === 21 && leaders21.every(s => s.x0 === s.x1 && s.y1 > s.y0), 'in chip order every leader is vertical, from the node up to its column (D-3: drawing below the columns)');
+    check(leaders21.every(s => s.yref === 'paper' && near(s.y1, r21.layout.yaxis.domain[0])), 'leaders end at the columns\' bottom edge');
     const nodes21 = r21.traces.find(t => t.meta === 'nodes');
     const yOf = Object.fromEntries(nodes21.text.map((n, k) => [n, nodes21.y[k]]));
     check(yOf.qC2 === 0 && yOf.qD5 === 4 && yOf.qA1 === 4 && yOf.qC5 === 1, 'a node sits at its row rank: the chip\'s row 0 at the bottom of the drawing');
@@ -687,7 +695,7 @@ async function footerPins(only) {
     }
     S5.d.documentElement.style.cssText = '';
     S5.d.documentElement.removeAttribute('data-theme'); await wait(40);
-    check(r21.traces.length <= 30 + Object.keys(map21.pairs).length, 'the map adds at most one hit trace per pair (' + r21.traces.length + ')');
+    check(r21.traces.length <= 30 && !r21.traces.some(t => t.meta === 'pair-hit'), 'the 21-qubit map stays within 30 traces and carries no toggle hit traces (' + r21.traces.length + ')');
 
     // the selected operation stays outlined; hover (map or table row) lights a pair by restyle only
     check(named(r5, 'selected:q3-4').length === 3 && named(r5, 'selected:q3-4').some(s => s.yref === 'y2'),
@@ -814,43 +822,58 @@ async function footerPins(only) {
     check(SV.last().layout.height === 1046 && near(columnPx(SV.last()), 812) && SV.renders.length === nv + 1 && SV.mapFetches() === 1,
           'a taller window doubles the original 406 px columns, without a request');
 
-    // ---- pair toggles: drawing on top, click an edge to hide its pair, persisted per chip+op ----
+    // ---- D-2 / D-3: the small chip map toggles a pair; the drawing below the columns selects it ----
     {
-        const ST = await page({map: map21, loss: loss21, width: 1400});
-        const r0 = ST.last(), ids = [...new Set(map21.segments.map(s => s.pair))];
-        check(r0.layout.yaxis2.domain[0] >= r0.layout.yaxis.domain[1] && near(r0.layout.yaxis2.domain[1], 1) && near(r0.layout.yaxis.domain[0], 0),
-              'toggle: the chip drawing sits above the frequency columns');
+        const ids = [...new Set(map21.segments.map(s => s.pair))];
+        const ST = await page({map: map21, loss: loss21, width: 1400, mini: ids.concat(['no-cz-pair'])});
+        const r0 = ST.last();
+        check(r0.layout.yaxis2.domain[0] === 0 && r0.layout.yaxis2.domain[1] < r0.layout.yaxis.domain[0] && near(r0.layout.yaxis.domain[1], 1),
+              'D-3: the frequency-ordered chip drawing sits below the frequency columns');
         const P = 'qA2-qA1', segsOf = r => segments(r).filter(s => s.pair === P).length;
         const mentions = r => (r.layout.annotations || []).concat(r.layout.shapes || []).filter(a => String(a.name || '').includes(P) && a.name !== 'bar:' + P).length
-                            + r.traces.filter(t => t.meta !== 'pair-hit' && t.meta !== 'bars' && (t.customdata || []).some(c => Array.isArray(c) && c[1] === P)).length;
+                            + r.traces.filter(t => t.meta !== 'bars' && (t.customdata || []).some(c => Array.isArray(c) && c[1] === P)).length;
         const others0 = segments(r0).filter(s => s.pair !== P).length;
         check(segsOf(r0) > 0 && mentions(r0) > 0, 'toggle: the pair is drawn before it is hidden');
-        const hit = r0.traces.find(t => t.meta === 'pair-hit' && t.customdata[0][1] === P);
-        check(hit && hit.line.width >= 14 && hit.x.length > 2, 'toggle: each edge carries a wide transparent hit trace sampled along its length');
-        ST.mapEl._ev.emit('plotly_click', {points: [{data: hit, customdata: ['', P]}]}); await wait(40);
+        const edge = id => ST.d.querySelector('#component-map [data-cm="p:' + id + '"]');
+        check(ids.every(id => edge(id).getAttribute('role') === 'button' && edge(id).getAttribute('tabindex') === '0' && edge(id).getAttribute('aria-pressed') === 'true') &&
+              !edge('no-cz-pair').hasAttribute('tabindex'),
+              'D-2: every CZ pair edge on the small map is a pressed keyboard button; a pair with no CZ is not');
+        edge(P).querySelector('.cm-edge-hit').dispatchEvent(new ST.w.MouseEvent('click', {bubbles: true})); await wait(40);
         const r1 = ST.last(), bar1 = named(r1, 'bar:' + P)[0];
         check(segsOf(r1) === 0 && mentions(r1) === 0 && segments(r1).filter(s => s.pair !== P).length === others0,
-              'toggle: a click on the edge removes exactly that pair from the columns');
-        check(bar1 && bar1.line.dash === 'dash' && bar1.opacity < 1, 'toggle: a hidden pair\'s edge is drawn dimmed and dashed');
+              'D-2: a click on the small map\'s edge removes exactly that pair from the frequency columns');
+        check(edge(P).classList.contains('cm-off') && edge(P).getAttribute('aria-pressed') === 'false' && !edge(ids.find(i => i !== P)).classList.contains('cm-off'),
+              'D-2: the hidden pair\'s edge is dimmed on the small map (and only that one)');
+        check(bar1 && bar1.line.dash === 'dash' && bar1.opacity < 1, 'toggle: a hidden pair\'s edge in the big drawing is dimmed too');
         const bt = r1.traces.find(t => t.meta === 'bars'), bi = bt ? bt.customdata.findIndex(c => c[1] === P) : -1;
         check(bi >= 0 && !/GHz/.test(bt.text[bi]) && /hidden/.test(bt.text[bi]), 'toggle: a hidden pair\'s edge hover names no frequency');
         const key = 'quam_czmap_hidden_v1:' + (ST.w.__chipToken || '') + ':' + (map21.op || '');
         check(JSON.stringify(JSON.parse(ST.w.localStorage.getItem(key))) === JSON.stringify([P]), 'toggle: the hidden set is stored under ' + key);
         const count = () => ST.d.getElementById('czp-map-count').textContent;
         check(count() === (ids.length - 1) + ' of ' + ids.length + ' pairs shown', 'toggle: the count line says ' + count());
-        const box = [...ST.d.querySelectorAll('#czp-map-pairs input')].find(i => i.value === P);
-        check(box && !box.checked && ST.d.querySelectorAll('#czp-map-pairs input').length === ids.length, 'toggle: the keyboard list mirrors the hidden pair');
-        box.checked = true; box.dispatchEvent(new ST.w.Event('change', {bubbles: true})); await wait(40);
-        check(segsOf(ST.last()) === segsOf(r0) && ST.w.localStorage.getItem(key) === '[]', 'toggle: the checkbox shows the pair again (same state as the click)');
+        edge(P).dispatchEvent(new ST.w.KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); await wait(40);
+        check(segsOf(ST.last()) === segsOf(r0) && ST.w.localStorage.getItem(key) === '[]' && !edge(P).classList.contains('cm-off'),
+              'D-2: Enter on the focused edge shows the pair again (keyboard access)');
+        // D-3: a click on a bar of the frequency-ordered drawing opens that pair; it never hides it
+        const opened = [];
+        ST.d.getElementById('czp-root').addEventListener('czp:open', e => opened.push(e.detail.op));
+        const bt2 = ST.last().traces.find(t => t.meta === 'bars'), bj = bt2.customdata.findIndex(c => c[1] === P);
+        const nBefore = ST.renders.length;
+        ST.mapEl._ev.emit('plotly_click', {points: [{data: bt2, customdata: bt2.customdata[bj]}]}); await wait(40);
+        check(opened.length === 1 && opened[0] === bt2.customdata[bj][0] && segsOf(ST.last()) === segsOf(r0) && ST.w.localStorage.getItem(key) === '[]',
+              'D-3: clicking a pair in the drawing below the columns selects its operation and does not hide it');
         ST.d.getElementById('czp-map-hide').click(); await wait(40);
-        check(segments(ST.last()).length === 0 && count() === '0 of ' + ids.length + ' pairs shown', 'toggle: Hide all empties the columns');
+        check(segments(ST.last()).length === 0 && count() === '0 of ' + ids.length + ' pairs shown' && ids.every(id => edge(id).classList.contains('cm-off')),
+              'toggle: Hide all empties the columns and dims every edge');
         ST.d.getElementById('czp-map-show').click(); await wait(40);
         check(segments(ST.last()).length === segments(r0).length && count() === ids.length + ' of ' + ids.length + ' pairs shown', 'toggle: Show all restores every pair');
+        void nBefore;
         ST.close();
-        const SP = await page({map: map21, loss: loss21, width: 1400,
+        const SP = await page({map: map21, loss: loss21, width: 1400, mini: ids,
             beforeScripts: w => w.localStorage.setItem(key, JSON.stringify([P, 'no-such-pair']))});
-        check(segments(SP.last()).filter(s => s.pair === P).length === 0 && SP.d.getElementById('czp-map-count').textContent === (ids.length - 1) + ' of ' + ids.length + ' pairs shown',
-              'toggle: a reload keeps the stored hidden pair and ignores an unknown id');
+        check(segments(SP.last()).filter(s => s.pair === P).length === 0 && SP.d.getElementById('czp-map-count').textContent === (ids.length - 1) + ' of ' + ids.length + ' pairs shown' &&
+              SP.d.querySelector('#component-map [data-cm="p:' + P + '"]').classList.contains('cm-off'),
+              'toggle: a reload keeps the stored hidden pair (dimmed on the small map) and ignores an unknown id');
         SP.close();
     }
 
