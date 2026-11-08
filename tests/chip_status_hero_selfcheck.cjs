@@ -337,6 +337,7 @@ function part5() {
     edgeLabelsBesideTheBar();
     calibrationAgeNamesItsBasis();
     oneSourcePerPatch();
+    overviewTileOneSource();
     finish();
   }, 400);
 }
@@ -813,6 +814,41 @@ function oneSourcePerPatch() {
   hero.querySelector('[data-hero-metric="bell_state"]').click();
   const ev = hero.querySelectorAll('.topo-hero-eval');
   ok(ev[0] && /97\.3/.test(ev[0].textContent), 'one source: the Bell patch prints the Bell value');
+}
+
+// The Overview 2Q tile shows the SAME default source as the map (one shared
+// chooser), titled by it; a pair without that source is '—' in the hover
+// list, never filled from cz_fidelity's per-pair fallback.
+function overviewTileOneSource() {
+  const win = makeWorld();
+  win.document.body.insertAdjacentHTML('beforeend', '<div id="topo-overview-tiles"></div>');
+  const topo = {
+    nodes: [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '1,0' },
+            { id: 'q3', grid_location: '2,0' }],
+    edges: [
+      // Bell-only pair: cz_fidelity is its Bell value
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+        cz_fidelity: 0.961, fidelity_source: 'macro', best_gate: 'cz', gate_fidelities: [] },
+      // IRB-only pair
+      { pair_id: 'q2-3', source: 'q2', target: 'q3', has_cz: true, gate_kind: 'cz',
+        cz_fidelity: 0.992, fidelity_source: 'interleaved_rb', best_gate: 'cz',
+        gate_fidelities: [{ gate: 'cz', metric: 'InterleavedRB', value: 0.992, level: 'gate' }] },
+    ],
+  };
+  mount(win, topo, []);
+  const host = win.document.getElementById('topo-overview-tiles');
+  const tile = host.querySelector('.topo-card[data-tile-id="gate2q"]');
+  ok(!!tile, 'ov 2Q: the gate2q tile exists');
+  ok(tile && /2Q gate \(IRB\)/.test(tile.textContent) && !/\(Best\)/.test(tile.textContent),
+     'ov 2Q: the tile is titled by its one source (' + (tile && tile.textContent.slice(0, 60)) + ')');
+  ok(tile && /99\.2/.test(tile.textContent) && !/96\.1|97\.6/.test(tile.textContent),
+     'ov 2Q: the tile number uses only the IRB pair');
+  tile.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+  const pop = win.document.getElementById('ov-hover-pop');
+  ok(!!pop, 'ov 2Q: hover list opens');
+  ok(pop && !/96\.1/.test(pop.textContent), 'ov 2Q: the Bell-only pair is not filled with its Bell value');
+  ok(pop && /q1-2/.test(pop.textContent) && /—/.test(pop.textContent),
+     'ov 2Q: the pair without the source reads —');
 }
 
 function finish() {
