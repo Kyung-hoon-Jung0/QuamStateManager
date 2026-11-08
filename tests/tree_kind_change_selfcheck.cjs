@@ -32,9 +32,16 @@ function makeWorld() {
   win.fetch = function (url) {
     url = String(url);
     if (url.indexOf('/field/peek') === 0) {
-      const dp = decodeURIComponent(url.split('dot_path=')[1] || '');
-      const values = {}; values[dp] = win._server[dp];
-      return jsonResp({ ok: true, values: values, errors: {}, expected: {} });
+      const dps = url.split('?')[1].split('&').map(function (kv) { return decodeURIComponent(kv.split('=')[1] || ''); });
+      const values = {}, resolved = {};
+      dps.forEach(function (dp) {
+        values[dp] = win._server[dp];
+        const pv = win._server[dp];
+        resolved[dp] = (typeof pv === 'string' && pv.indexOf('#/') === 0)
+          ? { is_pointer: true, resolvable: true, resolved_value: 'T:' + pv, resolved_path: pv.slice(2) }
+          : { is_pointer: false };
+      });
+      return jsonResp({ ok: true, values: values, resolved: resolved, errors: {}, expected: {} });
     }
     if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
     return new Promise(function () {});
@@ -91,6 +98,38 @@ function pencil(win, p) { const n = node(win, p); return !!(n && n.querySelector
   w._server['port.band'] = 7;
   w._revertTreeNode('port.band', '7'); await tick(30);
   ok(shown(w, 'port.band') === '7' && node(w, 'port.band')._value === 7, 'a plain number -> number revert paints in place and moves the node value');
+
+  // 4. an active search survives a rebuild (null -> dict, null -> list)
+  w = makeWorld();
+  w.jsonTreeSearch('explorer-tree-state', 'zz'); await tick(260);
+  ok(node(w, 'port.band').classList.contains('tree-search-hidden'), 'search "zz": a non-matching row is hidden');
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.ct', value: { zz: 1 }, old_value_str: '{"zz":1}' }]);
+  ok(node(w, 'port.ct') && !node(w, 'port.ct').classList.contains('tree-search-hidden') && node(w, 'port.ct.zz') && node(w, 'port.ct.zz').classList.contains('tree-highlight'),
+    'search active, patch null -> dict: the rebuilt match is highlighted and shown');
+  ok(node(w, 'port.band').classList.contains('tree-search-hidden'), 'search active after a rebuild: other rows stay hidden');
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.lo_mode', value: [5], old_value_str: '[5]' }]);
+  ok(node(w, 'port.lo_mode').classList.contains('tree-search-hidden'), 'search active, patch null -> list (no match): the rebuilt row is hidden, not shown bare');
+
+  // 5. focus follows a rebuilt row
+  w = makeWorld();
+  node(w, 'port.ct').querySelector(':scope > .tree-row').focus();
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.ct', value: [1, 2], old_value_str: '[1,2]' }]);
+  const act = w.document.activeElement;
+  ok(act && act.classList.contains('tree-row') && act.closest('.tree-node') === node(w, 'port.ct'), 'focus returns to the rebuilt row (not <body>)');
+
+  // 6. string <-> pointer: the resolved preview is fresh
+  w = makeWorld();
+  w._server['port.lo_mode'] = '#/a/b';
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.lo_mode', value: 'plain', old_value_str: 'plain' }]);
+  w._server['port.lo_mode'] = '#/a/b';
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.lo_mode', value: '#/a/b', old_value_str: '#/a/b' }]);
+  await tick(120);
+  let pv = node(w, 'port.lo_mode').querySelector('.ui-tree-resolved');
+  ok(pv && /T:#\/a\/b/.test(pv.textContent), 'string -> pointer: the resolved preview is fetched (' + (pv && pv.textContent) + ')');
+  w._server['port.lo_mode'] = 'plain2';
+  w.LiveSurfacePatch.apply([{ dot_path: 'port.lo_mode', value: 'plain2', old_value_str: 'plain2' }]);
+  const ve = node(w, 'port.lo_mode').querySelector(':scope > .tree-row > .tree-val');
+  ok(!ve.querySelector('.ui-tree-resolved') && ve._treeResolved === undefined, 'pointer -> string: no stale resolved preview is kept');
 
   console.log(fails ? fails + ' FAILED' : 'all tree kind-change checks passed');
   process.exit(fails ? 1 : 0);

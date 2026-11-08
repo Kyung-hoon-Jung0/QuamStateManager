@@ -11837,10 +11837,29 @@ window.clearDetailPanelSearch = function(btnEl) {
         var structural = newObj || wasObj || (!editing && (v === null) !== wasNull);
         if (structural && nd._meta) {
             var pending = !!(row && row.classList.contains("tree-row-pending"));
+            // The row the keyboard sat on inside this subtree, by path (the
+            // old elements are replaced, so focus would fall to <body>).
+            var act = document.activeElement, focusPath = null;
+            if (act && nd.contains(act)) {
+                var an = act.closest(".tree-node");
+                focusPath = an ? an.getAttribute("data-path") : null;
+            }
             var fresh = _rebuildNode(nd, v);
             if (fresh && pending) {
                 var fr = fresh.querySelector(":scope > .tree-row");
                 if (fr) fr.classList.add("tree-row-pending");
+            }
+            // A rebuilt subtree carries no search classes: re-apply the
+            // active query so hidden / highlighted rows read as before.
+            var q = tree && tree._lastSearchQuery;
+            if (fresh && q) { tree._lastSearchQuery = undefined; _searchTree(tree, q); }
+            if (fresh && focusPath !== null) {
+                var target = null, all = [fresh].concat(Array.prototype.slice.call(fresh.querySelectorAll(".tree-node")));
+                for (var fi = 0; fi < all.length && !target; fi++) {
+                    if (all[fi].getAttribute("data-path") === focusPath) target = all[fi];
+                }
+                var trow = (target || fresh).querySelector(":scope > .tree-row");
+                if (trow) { try { trow.focus({ preventScroll: true }); } catch (e) { trow.focus(); } }
             }
             return fresh;
         }
@@ -11864,6 +11883,10 @@ window.clearDetailPanelSearch = function(btnEl) {
             .trim();
         el.classList.add("tree-val-" + _typeOf(v));
         if (_isPointer(v)) el.classList.add("tree-val-pointer");
+        // A pointer's resolved preview belongs to the value it was fetched
+        // for: drop it (_treeModelSet re-queues every pointer row).
+        el._treeResolved = undefined;
+        el.querySelectorAll(".ui-tree-resolved, .ui-tree-target").forEach(function (c) { c.remove(); });
         // Server undo/redo and live patches also repaint through here. A
         // clean focused editor follows the committed value; a dirty draft
         // keeps its typing and gets the new Escape baseline.
