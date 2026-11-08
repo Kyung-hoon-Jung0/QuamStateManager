@@ -2130,6 +2130,11 @@ window.setFontSize = function(size) {
         var off = offscreenValues();
         var onScreen = checkedValues().length;
         var n = onScreen + off.length;
+        var float = document.getElementById('compare-float');
+        var sidebar = document.getElementById('sidebar');
+        var tick = n && float && float.hidden && sidebar && sidebar.scrollTop > 0
+            ? boxes().filter(function(b) { return b.checked; })[0] : null;
+        var tickTop = tick ? tick.getBoundingClientRect().top : 0;
         syncHiddenInputs(off);
         var cmp = document.querySelector('#compare-form .btn-compare');
         if (cmp) {
@@ -2174,6 +2179,12 @@ window.setFontSize = function(size) {
                                        : hint.dataset.idle;
             hint.style.visibility = n > 1 ? 'hidden' : '';
         }
+        // The top form's Clear/hint can wrap too. Limit the first tick's
+        // movement to the new row's height even when those controls grow.
+        if (tick && tickTop >= sidebar.getBoundingClientRect().top) {
+            var extra = tick.getBoundingClientRect().top - tickTop - float.offsetHeight;
+            if (extra > 0) sidebar.scrollTop += extra;
+        }
     }
     window.syncCompareCount = syncCompareCount;
 
@@ -2186,17 +2197,66 @@ window.setFontSize = function(size) {
         var m = /^#?(\d+)[_\- ]?(.*)$/.exec(base);
         return m ? { id: '#' + m[1], name: m[2] || '' } : { id: '', name: base };
     }
+    var floatAnchor, floatHome;
+    function returnFloatHome() {
+        if (floatHome && floatHome.parentNode && floatAnchor) {
+            floatHome.parentNode.insertBefore(floatAnchor, floatHome.nextSibling);
+        }
+    }
+    function updateFloatTop() {
+        var bar = document.getElementById('compare-float');
+        if (!bar) return;
+        if (!floatAnchor) {
+            floatAnchor = bar.parentNode;
+            floatHome = document.createComment('compare toolbar home');
+            floatAnchor.parentNode.insertBefore(floatHome, floatAnchor);
+        }
+        var sidebar = document.getElementById('sidebar');
+        var top = sidebar ? sidebar.getBoundingClientRect().top : 0;
+        var header = null;
+        document.querySelectorAll('#sidebar-tree .tree-dir.tree-leafdir[open] > summary').forEach(function(hd) {
+            var group = hd.parentNode.getBoundingClientRect();
+            if (!header && hd.getClientRects().length && group.bottom > top + hd.offsetHeight) header = hd;
+        });
+        // The row belongs to the active date group, immediately before its runs.
+        // Its own height participates in layout, including on the first tick.
+        if (header && !bar.hidden && header.parentNode.getBoundingClientRect().bottom
+                >= top + header.offsetHeight + bar.offsetHeight) {
+            if (floatAnchor.previousElementSibling !== header) header.after(floatAnchor);
+        } else returnFloatHome();
+        // Always overwrite: folded or filtered trees have no pinned header.
+        floatAnchor.style.setProperty('--cf-top', (header ? header.offsetHeight : 0) + 'px');
+    }
+    document.addEventListener('htmx:beforeSwap', function(ev) {
+        var target = ev.detail && (ev.detail.target || ev.detail.elt);
+        if (target && floatAnchor && target.contains(floatAnchor)) returnFloatHome();
+    });
+    function floatMoved() {
+        setPop(false);
+        updateFloatTop();
+    }
+    document.addEventListener('scroll', function(ev) {
+        if (ev.target.id === 'sidebar') floatMoved();
+    }, true);
+    document.addEventListener('toggle', function(ev) {
+        if (ev.target.closest && ev.target.closest('#sidebar-tree')) floatMoved();
+    }, true);
+    window.addEventListener('resize', floatMoved);
+    function watchFloatSize() {
+        var sidebar = document.getElementById('sidebar');
+        if (sidebar && window.ResizeObserver) {
+            var observer = new window.ResizeObserver(floatMoved);
+            observer.observe(sidebar);
+        }
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchFloatSize);
+    else watchFloatSize();
     function renderFloat(sel) {
         var bar = document.getElementById('compare-float');
         if (!bar) return;
         var n = sel.length;
         bar.hidden = n === 0;
-        // ride just UNDER the pinned date header, so the date stays readable
-        // (a 260 px sidebar has no room for both on one line)
-        var hd = document.querySelector('#sidebar-tree .tree-dir.tree-leafdir > summary');
-        if (n && hd && hd.offsetHeight && bar.parentNode && bar.parentNode.style) {
-            bar.parentNode.style.setProperty('--cf-top', hd.offsetHeight + 'px');
-        }
+        updateFloatTop();
         bar.setAttribute('data-count', String(n));
         var lb = document.getElementById('cf-list');
         if (lb) {
