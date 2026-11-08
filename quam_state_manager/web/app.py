@@ -1178,8 +1178,12 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
     # FB-12 port test: template scripts per element/port, download or run
-    from quam_state_manager.web.port_test_routes import port_test_bp
+    from quam_state_manager.web.port_test_routes import port_test_bp, resume_runs
     app.register_blueprint(port_test_bp)
+    if not testing:
+        # A hardware run an earlier SM left with its QM maybe open is closed at
+        # start, not only once someone opens the port-test page.
+        resume_runs(app)
     # QUAlibrate's web UI through SM, with an Open-in-QSM link per run
     from quam_state_manager.web.qualibrate_proxy import qbproxy_bp
     app.register_blueprint(qbproxy_bp)

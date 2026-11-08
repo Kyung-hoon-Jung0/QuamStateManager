@@ -633,3 +633,19 @@ def test_the_chip_basis_never_carries_the_octave_section():
                                "RF_outputs": {"2": {"LO_frequency": 6e9, "output_mode": "always_on"}}}}
     tcfg, _plan = pt.build(cfg, "q", "cw", "chip")
     assert "octaves" not in tcfg
+
+
+def test_an_unclean_run_is_resumed_when_sm_starts(tmp_path, monkeypatch, kr):
+    """After a restart the earlier run's QM is closed without anyone having to
+    open the port-test page first."""
+    import inspect
+    from quam_state_manager.web import app as app_module
+    from quam_state_manager.web import port_test_routes as routes_module
+    monkeypatch.setattr(ptr.Runs, "_recover", lambda self, run: False)
+    procs = []
+    rid = _hw_run(tmp_path, procs, {"qm_id": "q7"}).current["id"]
+    fake = types.SimpleNamespace(config={}, instance_path=str(tmp_path))
+    routes_module.resume_runs(fake)
+    assert fake.config["port_test_runs"].current["id"] == rid
+    src = inspect.getsource(app_module.create_app)
+    assert "resume_runs(app)" in src.split("register_blueprint(port_test_bp)", 1)[1].split("qbproxy_bp", 1)[0]

@@ -39,6 +39,17 @@ def runs() -> ptr.Runs:
     return r
 
 
+def resume_runs(app) -> None:
+    """Create the run manager now, so a run an earlier SM left behind (alive,
+    or a hardware run whose QM was not reported closed) is watched and cleaned
+    up from the start."""
+    try:
+        if app.config.get("port_test_runs") is None:
+            app.config["port_test_runs"] = ptr.Runs(app.instance_path)
+    except Exception:  # noqa: BLE001 - the page still resumes it on first use
+        logger.exception("port test: could not resume earlier runs at start")
+
+
 def _config():
     """(config, stale, store) for the active chip, or (None, False, store)."""
     r = _r()
