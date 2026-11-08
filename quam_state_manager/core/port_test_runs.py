@@ -124,8 +124,13 @@ def _keyring():
     try:
         import keyring  # noqa: PLC0415
         kr = keyring.get_keyring()
-        mod = type(kr).__module__.lower()
-        if "fail" in mod or "null" in mod:
+        # A chainer is only as good as what it chains; keyrings.alt's backends
+        # write the password to a file, which is exactly what is refused.
+        for backend in [kr] + list(getattr(kr, "backends", None) or []):
+            mod = type(backend).__module__.lower()
+            if "fail" in mod or "null" in mod or mod.startswith("keyrings.alt"):
+                return None
+        if type(kr).__module__.lower().endswith("chainer") and not getattr(kr, "backends", None):
             return None
         return keyring
     except Exception:  # noqa: BLE001 - no keyring: passwords cannot be saved

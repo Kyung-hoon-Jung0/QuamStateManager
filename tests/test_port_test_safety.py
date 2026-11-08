@@ -649,3 +649,15 @@ def test_an_unclean_run_is_resumed_when_sm_starts(tmp_path, monkeypatch, kr):
     assert fake.config["port_test_runs"].current["id"] == rid
     src = inspect.getsource(app_module.create_app)
     assert "resume_runs(app)" in src.split("register_blueprint(port_test_bp)", 1)[1].split("qbproxy_bp", 1)[0]
+
+
+def test_a_file_based_keyring_backend_is_refused(monkeypatch):
+    """keyrings.alt's Plaintext/Encrypted backends write a file: never used."""
+    keyring = types.ModuleType("keyring")
+    monkeypatch.setitem(sys.modules, "keyring", keyring)
+    plain = type("PlaintextKeyring", (), {"__module__": "keyrings.alt.file"})()
+    chainer = type("ChainerBackend", (), {"__module__": "keyring.backends.chainer"})()
+    chainer.backends = [plain]
+    for kr_ in (plain, chainer):
+        keyring.get_keyring = lambda kr_=kr_: kr_
+        assert ptr._keyring() is None and not ptr.keyring_available()
