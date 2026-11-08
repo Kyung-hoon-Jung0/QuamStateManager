@@ -8,6 +8,9 @@ const { JSDOM } = require('jsdom');
 const SRC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'tree-json-edit.js');
 let src = fs.readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');
 const MUT = {
+    unquote: ['q = q.replace(', 'q = q.slice(0) || q.replace('],
+    multiline: ['spec.case ? "gm" : "gim"', 'spec.case ? "g" : "gi"'],
+    select: ['{anchor: off, head: end}', '{anchor: off}'],
     count: ['+ " of " + matches.length', '+ " / " + matches.length'],
     nested: ['var cp = path ? path + "." + k : String(k);', 'var cp = "wrong";'],
     container: ['mark(i, i + 1, path);', 'mark(i, i + 1, "");'],
@@ -21,10 +24,10 @@ const MUT = {
     current: ['if (marks.children[cur])', 'if (false)'],
     hover: ['b.title = m.path;', 'b.title = "";'],
     tooltip: ['tooltip.textContent = mark.title;', 'tooltip.textContent = "";'],
-    jump: ['gotoOffset(+e.currentTarget.getAttribute("data-from"));', '/* missing jump */'],
+    jump: ['gotoOffset(+e.currentTarget.getAttribute("data-from"), +e.currentTarget.getAttribute("data-to"));', '/* missing jump */'],
     viewport: ['sc.scrollTop / sc.scrollHeight * 100', '0'],
     grouping: ['g + " (" + group.length + ")"', '"wrong"'],
-    list_jump: ['function () { gotoOffset(m.from); refreshRail(); }', 'function () {}'],
+    list_jump: ['function () { gotoOffset(m.from, m.to); refreshRail(); }', 'function () {}'],
     cap: ['var RAIL_LIST_CAP = 500;', 'var RAIL_LIST_CAP = 2;'],
     more: ['(matches.length - shown) + " more not shown"', '"wrong"'],
     debounce: ['var RAIL_DEBOUNCE_LARGE_MS = 400;', 'var RAIL_DEBOUNCE_LARGE_MS = 0;'],
@@ -72,6 +75,7 @@ function world() {
                     dispatch(t) {
                         if (t && t.selection) ed.view.state.selection.main.head = t.selection.anchor;
                         ed.jumped = t && t.selection ? t.selection.anchor : null;
+                        ed.jumpedTo = t && t.selection ? t.selection.head : null;
                     },
                 },
             };
@@ -116,6 +120,8 @@ const SAMPLE = JSON.stringify({
     const hits = find(SAMPLE, spec);
     ok('matches', hits.length === 3);
     ok('positions', hits[2].line === SAMPLE.slice(0, hits[2].from).split('\n').length);
+    ok('unquote', find('{"a": "x",\n"b": 1}', { query: ',\\n"b', case: false, re: false, word: false }).length === 1);
+    ok('multiline', find('{\n"a": 1,\n"b": 2}', { query: '^"', case: false, re: true, word: false }).length === 2);
     ok('word', find(SAMPLE, { ...spec, word: true }).length === 2);
     async function open(text) {
         api.close(true);
@@ -137,6 +143,7 @@ const SAMPLE = JSON.stringify({
     ok('tooltip', q('.ui-jedit-rail-tooltip-on').textContent === 'qubits.q5.xy.thread');
     marks[2].click();
     ok('jump', st.ed.jumped === hits[2].from);
+    ok('select', st.ed.jumpedTo === hits[2].to);
     ok('current', q('.ui-jedit-rail-count').textContent === '3 of 3' && marks[2].classList.contains('ui-jedit-rail-mark-cur') && !marks[0].classList.contains('ui-jedit-rail-mark-cur'));
     ok('viewport', q('.ui-jedit-rail-viewport').style.top === '12.5%' && q('.ui-jedit-rail-viewport').style.height === '25%');
     q('.ui-jedit-rail-listbtn').click();

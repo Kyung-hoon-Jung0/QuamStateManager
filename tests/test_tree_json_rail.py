@@ -41,7 +41,7 @@ def test_tree_json_rail_selfcheck():
     "mutation",
     ["count", "nested", "container", "array", "braces", "escapes", "invalid", "matches", "positions",
      "marks", "current", "hover", "tooltip", "jump", "viewport", "grouping", "list_jump", "cap", "more",
-     "debounce", "batch", "cache", "word"],
+     "debounce", "batch", "cache", "word", "unquote", "multiline", "select"],
 )
 def test_tree_json_rail_mutations(mutation):
     r = _run(mutation)

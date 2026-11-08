@@ -226,7 +226,7 @@
         }
         if (spec.re) {
             try {
-                re = new RegExp(q, spec.case ? "g" : "gi");
+                re = new RegExp(q, spec.case ? "gm" : "gim");
                 var m;
                 while ((m = re.exec(text))) {
                     if (!m[0].length) { re.lastIndex++; continue; }
@@ -235,6 +235,8 @@
                 return out;
             } catch (e) { return []; }
         }
+        // CodeMirror's default (non-literal) search reads \n, \r, \t and \\ as escapes.
+        q = q.replace(/\\([nrt\\])/g, function (_, ch) { return ch === "n" ? "\n" : ch === "r" ? "\r" : ch === "t" ? "\t" : "\\"; });
         var needle = spec.case ? q : q.toLowerCase();
         var hay = spec.case ? text : text.toLowerCase();
         while (from <= hay.length) {
@@ -282,10 +284,10 @@
         S.railTimer = setTimeout(refreshRail, ms);
     }
 
-    function gotoOffset(off) {
+    function gotoOffset(off, end) {
         if (!S || !S.ed) return;
         var v = S.ed.view;
-        try { v.dispatch({selection: {anchor: off}, scrollIntoView: true}); } catch (e) { /* harness */ }
+        try { v.dispatch({selection: end == null ? {anchor: off} : {anchor: off, head: end}, scrollIntoView: true}); } catch (e) { /* harness */ }
         S.ed.focus();
     }
 
@@ -338,7 +340,8 @@
                     b.title = m.path;
                     b.setAttribute("aria-label", m.path);
                     b.setAttribute("data-from", String(m.from));
-                    b.addEventListener("click", function (e) { gotoOffset(+e.currentTarget.getAttribute("data-from")); refreshRail(); });
+                    b.setAttribute("data-to", String(m.to));
+                    b.addEventListener("click", function (e) { gotoOffset(+e.currentTarget.getAttribute("data-from"), +e.currentTarget.getAttribute("data-to")); refreshRail(); });
                     frag.appendChild(b);
                 }
                 marks.appendChild(frag);
@@ -371,7 +374,7 @@
             list.appendChild(el("div", "ui-jedit-rail-group", g + " (" + group.length + ")"));
             group.forEach(function (m) {
                 if (shown >= RAIL_LIST_CAP) return;
-                var row = btn("ui-jedit-rail-list-row btn-xs outline", m.path, function () { gotoOffset(m.from); refreshRail(); });
+                var row = btn("ui-jedit-rail-list-row btn-xs outline", m.path, function () { gotoOffset(m.from, m.to); refreshRail(); });
                 row.title = m.path;
                 list.appendChild(row);
                 shown++;
