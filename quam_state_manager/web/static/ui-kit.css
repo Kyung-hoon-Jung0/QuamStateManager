@@ -764,8 +764,9 @@
     flex: 1 1 0; min-width: 0; overflow: hidden; font-size: var(--ui-fs-sm);
 }
 .ui-ds-head-open, .ui-ds-head-open > .ui-ds-meta { flex-wrap: wrap; overflow: visible; }
-.ui-ds-folder { margin: 0; max-width: 16rem; min-width: 0; flex: 0 1 auto; }
+.ui-ds-folder { margin: 0; max-width: 16rem; min-width: 5rem; flex: 0 1 auto; }
 .ui-pane-sliver { overflow-x: hidden; }
+.ui-pane-sliver button, .ui-pane-sliver input, .ui-pane-sliver select, .ui-pane-sliver a { visibility: hidden; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
 .ui-note-open { flex-basis: 100%; order: 9; }
 
