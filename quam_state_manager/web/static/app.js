@@ -2319,11 +2319,14 @@ window.setFontSize = function(size) {
             // fixed, in viewport coords: the sidebar's overflow would clip an
             // absolutely placed list, and a narrow sidebar has no room for it
             var r = document.getElementById('compare-float').getBoundingClientRect();
-            var vw = document.documentElement.clientWidth;
+            var vw = document.documentElement.clientWidth || window.innerWidth;
+            var vh = document.documentElement.clientHeight || window.innerHeight;
             var w = Math.min(416, vw - 16);
             pop.style.width = w + 'px';
             pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
-            pop.style.top = (r.bottom + 4) + 'px';
+            pop.style.top = Math.max(8, Math.min(r.bottom + 4, vh - pop.offsetHeight - 8)) + 'px';
+            var first = pop.querySelector('button');
+            if (first) first.focus();
         }
         if (lb) lb.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
@@ -2349,13 +2352,23 @@ window.setFontSize = function(size) {
         }
     });
     document.addEventListener('keydown', function(ev) {
-        if (ev.key !== 'Escape') return;
         var pop = document.getElementById('cf-pop');
-        if (pop && !pop.hidden) {
+        if (!pop || pop.hidden) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            ev.stopPropagation();
             setPop(false);
             var lb = document.getElementById('cf-list'); if (lb) lb.focus();
+        } else if (ev.key === 'Tab') {
+            var controls = pop.querySelectorAll('button');
+            var first = controls[0], last = controls[controls.length - 1];
+            if (first && ((ev.shiftKey ? document.activeElement === first : document.activeElement === last)
+                    || !pop.contains(document.activeElement))) {
+                ev.preventDefault();
+                if (first) (ev.shiftKey ? last : first).focus();
+            }
         }
-    });
+    }, true);
 
     window.compareClearSelection = function() {
         var before = stored();
@@ -2373,8 +2386,10 @@ window.setFontSize = function(size) {
                 u.onclick = function() {
                     write(before); restore(); syncCompareCount();
                     if (t.parentNode) t.parentNode.removeChild(t);
+                    var lb = document.getElementById('cf-list'); if (lb) lb.focus();
                 };
                 t.appendChild(u);
+                u.focus();
             }
         }
     };
