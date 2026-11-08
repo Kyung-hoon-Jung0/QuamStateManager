@@ -72,7 +72,7 @@ function mount(win, topo, findings) {
         metrics: { T1: { value: null, raw: -4.7e-5, unresolved: false } } },
     ],
     edges: [
-      { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', has_cz: true, cz_fidelity: 0.97,
+      { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
       { pair_id: 'qA3-qA4', source: 'qA3', target: 'qA4', has_cz: false, cz_fidelity: null,
         gate_kind: 'none', directed: false, active: null, best_gate: null },
@@ -849,6 +849,30 @@ function overviewTileOneSource() {
   ok(pop && !/96\.1/.test(pop.textContent), 'ov 2Q: the Bell-only pair is not filled with its Bell value');
   ok(pop && /q1-2/.test(pop.textContent) && /—/.test(pop.textContent),
      'ov 2Q: the pair without the source reads —');
+  // Edge colour follows the same one source: the Bell-only pair is not
+  // painted from its Bell number on an IRB chip.
+  win.document.querySelector('#topo-hero [data-hero-metric="diag"]').click();   // a node view: edges use _edgePaint
+  const strokes = {};
+  Array.prototype.forEach.call(win.document.querySelectorAll('#topo-hero .topo-hero-edge'), function (g) {
+    strokes[g.getAttribute('data-hero-pair')] = g.querySelector('line').getAttribute('stroke');
+  });
+  ok(strokes['q1-2'] === '#bbbbbb' && strokes['q2-3'] && strokes['q2-3'] !== '#bbbbbb',
+     'ov 2Q: edges are coloured by the one source (' + JSON.stringify(strokes) + ')');
+  ok(!host.querySelector('.topo-card[data-tile-id="irb"]'),
+     'ov 2Q: no duplicate IRB tile beside the IRB-sourced 2Q tile');
+
+  // Prefs stored for the retired 'irb' tile carry over to gate2q.
+  const w2 = makeWorld();
+  w2.document.body.insertAdjacentHTML('beforeend', '<div id="topo-overview-tiles"></div>');
+  w2.localStorage.setItem('quam_overview_tiles_v1',
+    JSON.stringify({ order: ['irb', 'chip_size'], stats: { irb: 'max' } }));
+  mount(w2, topo, []);
+  const first = w2.document.querySelector('#topo-overview-tiles .topo-card[data-tile-id]');
+  ok(first && first.getAttribute('data-tile-id') === 'gate2q',
+     'ov 2Q: a stored irb position lands on gate2q (' + (first && first.getAttribute('data-tile-id')) + ')');
+  const g2 = w2.document.querySelector('.topo-card[data-tile-id="gate2q"]');
+  ok(g2 && /max/i.test(g2.textContent.split('med')[0]) ,
+     'ov 2Q: a stored irb statistic lands on gate2q (' + (g2 && g2.textContent.slice(0, 50)) + ')');
 }
 
 function finish() {

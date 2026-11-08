@@ -352,8 +352,9 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
   {
     const win = makeWorld();
     mountBad(win);
-    const t = tileById(win, 'irb');
-    ok(!!t, 'C9: the IRB tile renders');
+    // the IRB tile is the one 2Q tile on an IRB chip (id gate2q, 2026-11-08)
+    const t = tileById(win, 'gate2q');
+    ok(!!t && !tileById(win, 'irb'), 'C9: the IRB tile renders once, as the 2Q tile');
     const txt = t.textContent.replace(/\s+/g, ' ');
 
     // the aggregate is over the two usable values only (0.99, 0.97)

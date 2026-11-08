@@ -42,8 +42,8 @@ function node(id, gl) {
   return { id: id, grid_location: gl, T1: 2e-5, gate_fidelity_avg: 0.999,
            metrics: { T1: { value: 2e-5 }, gate_fidelity_avg: { value: 0.999 } } };
 }
-function topoFixture(source) {
-  return {
+function topoFixture(source, bellOnly, czFid) {
+  const t = {
     nodes: [node('q1', '0,0'), node('q2', '1,0')],
     edges: [{
       pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
@@ -62,9 +62,14 @@ function topoFixture(source) {
     }],
     summary: { gate_vocab: 'CZ' },
   };
+  // One named source per surface (2026-11-08): a chip with RB rows shows its
+  // RB source; a Bell-only chip shows Bell.
+  if (bellOnly) t.edges[0].gate_fidelities = [];
+  if (czFid != null) { t.edges[0].cz_fidelity = czFid; t.edges[0].metrics.cz_fidelity.value = czFid; }
+  return t;
 }
 
-function world(source) {
+function world(source, bellOnly, czFid) {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body><div id="table-pane"><div class="topo-dashboard">'
     + '<div id="topo-hero"></div><div id="topo-health-tiles"></div>'
@@ -77,7 +82,7 @@ function world(source) {
   win.htmx = { process: function () {}, ajax: function () {} };
   win.fetch = function () { return new Promise(function () {}); };
   new win.Function(SRC).call(win);
-  win.ChipStatus.mount({ topo: topoFixture(source), rawWiring: {}, diagFindings: [],
+  win.ChipStatus.mount({ topo: topoFixture(source, bellOnly, czFid), rawWiring: {}, diagFindings: [],
                          metricMeta: {}, defaultThresholds: {} });
   return win;
 }
@@ -102,9 +107,9 @@ function hoverRows(win, tileId) {
   const expect = {
     srb: ['cz_SNZ', '91.04%'],
     srb_gate: ['cz_SNZ', '98.29%'],
-    irb: ['cz_flattop', '95.70%'],
+    // the IRB tile merged into gate2q (no duplicate tiles, 2026-11-08)
     irb_cliff: ['cz_flattop', null],
-    gate2q: ['cz_flattop', null],
+    gate2q: ['cz_flattop', '95.70%'],
     gate2q_len: ['cz_flattop', null],
   };
   Object.keys(expect).forEach(function (tid) {
@@ -133,11 +138,20 @@ function hoverRows(win, tileId) {
   ok(!/Bell/.test(t), 'B2: …and an interleaved-RB number is not called "Bell" — ' + t);
 }
 {
-  const win = world('macro');
+  const win = world('macro', true);
   const worst = win.document.getElementById('topo-health-worst');
   const chip = worst && worst.querySelector('.worst-chip[data-inspect-id="q1-2"]');
   const t = chip ? chip.textContent : '';
   ok(/Bell/.test(t), 'B3: a Bell-state number still says "Bell" — ' + t);
+}
+{
+  // A Bell number (80%) on a chip whose one 2Q source is IRB: Health's lowest
+  // pair shows the IRB value, never the Bell one (2026-11-08).
+  const win = world('macro', false, 0.80);
+  const chip = win.document.querySelector('#topo-health-worst .worst-chip[data-inspect-id="q1-2"]');
+  const t = chip ? chip.textContent : '';
+  ok(/95\.70%/.test(t) && /IRB/.test(t) && !/80\.00%/.test(t),
+     'B4: the lowest pair shows the one chip source — ' + t);
 }
 
 console.log(fails ? ('FAILED (' + fails + ')')
