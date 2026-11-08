@@ -3457,5 +3457,3 @@ def finding_groups(rows, ids=None) -> list[dict]:
         g["bulk_refused"] = refused
         g["ack_keys"] = [f.vack_key for f in g["items"] if f.vack_key and not f.acknowledged]
     return list(groups.values())
-
-
