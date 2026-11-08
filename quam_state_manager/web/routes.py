@@ -30,6 +30,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import itertools
@@ -35872,6 +35873,140 @@ def state_crash_values():
     if _crash_token(store) != want:
         return jsonify({"stale": True})
     return jsonify({"stale": False, "crash_values": crash})
+
+
+def _loadcheck_links(detail: str, merged: dict) -> list[dict[str, str]]:
+    """Likely dot-path links named in *detail*, restricted to existing paths."""
+    if not isinstance(detail, str) or not isinstance(merged, dict):
+        return []
+    seen: set[str] = set()
+    out: list[dict[str, str]] = []
+
+    # Build a compact key->path map once; first-seen path per key is enough for hints.
+    key_path: dict[str, str] = {}
+    stack: list[tuple[str, Any]] = [("", merged)]
+    while stack and len(key_path) < 6000:
+        base, cur = stack.pop()
+        if isinstance(cur, dict):
+            for k, v in cur.items():
+                if not isinstance(k, str):
+                    continue
+                p = f"{base}.{k}" if base else k
+                key_path.setdefault(k, p)
+                stack.append((p, v))
+        elif isinstance(cur, list):
+            for i, v in enumerate(cur):
+                stack.append((f"{base}.{i}" if base else str(i), v))
+
+    tokens: list[str] = []
+    detail = detail.split("Optional attributes:", 1)[0]
+    for pat in (
+        r'["\']([A-Za-z_][\w.\-/]{0,200})["\']',
+    ):
+        tokens.extend(m.group(1) for m in re.finditer(pat, detail))
+
+    for token in tokens:
+        token = token.removeprefix("#/").replace("/", ".")
+        candidates: list[str] = []
+        if "." in token and _dot_get(merged, token) is not _DOT_MISSING:
+            candidates.append(token)
+        if token in key_path:
+            candidates.append(key_path[token])
+        for p in candidates:
+            if p in seen:
+                continue
+            seen.add(p)
+            out.append({"path": p, "label": token})
+            if len(out) >= 3:
+                return out
+    return out
+
+
+@bp.route("/state/load-check", methods=["POST"])
+def state_load_check():
+    """Probe Quam.load on the CURRENT working state in the project's env."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "error": "no_state"}), 409
+    store = ctx.get("store")
+    if store is None:
+        return jsonify({"ok": False, "error": "no_state"}), 409
+
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    project = str(ctx.get("qualibrate_project") or "").strip()
+    python_path = project_env.remembered(inst, project) if project else None
+    if not python_path or not os.path.isfile(python_path):
+        msg = (f"Choose the Python environment for {project} first."
+               if project else "Choose a project Python environment first.")
+        open_url = (url_for("main.home", landing=1, choose_env=project)
+                    if project else url_for("main.home", landing=1))
+        resp = jsonify({"ok": False, "error": "env_required", "project": project,
+                        "message": msg, "open_url": open_url})
+        resp.status_code = 409
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"sm-env-required": {"project": project, "message": msg}})
+        return resp
+    if not _interpreter_known(python_path):
+        return jsonify({"ok": False, "error": "unknown_interpreter",
+                        "message": _UNKNOWN_INTERPRETER}), 403
+
+    tmp_root = Path(tempfile.mkdtemp(prefix="sm_loadcheck_")).resolve()
+    state_dir = tmp_root / "quam_state"
+    try:
+        wc = ctx.get("working_copy")
+        if wc is not None:
+            shutil.copytree(wc.working_folder, state_dir)
+        with store._lock:
+            state_copy = copy.deepcopy(store.state)
+            wiring_copy = copy.deepcopy(store.wiring)
+            merged_copy = copy.deepcopy(store.merged)
+        Saver(QuamStore.from_dicts(state_copy, wiring_copy)).save(state_dir)
+
+        from quam_state_manager.core.config_generator import _script_path
+        from quam_state_manager.core.fit_audit import _pth
+        args = [python_path, _pth(python_path, str(_script_path("run_quam_load_probe.py"))),
+                "--state", _pth(python_path, str(state_dir))]
+        try:
+            proc = subprocess.run(
+                args, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=120)
+        except subprocess.TimeoutExpired:
+            return jsonify({"ok": False, "error": "timeout",
+                            "stage": "spawn", "exc_type": "TimeoutExpired",
+                            "detail": "probe exceeded 120s"}), 408
+        except OSError as exc:
+            return jsonify({"ok": False, "error": "spawn",
+                            "stage": "spawn", "exc_type": type(exc).__name__,
+                            "detail": str(exc)}), 500
+
+        result = None
+        for line in reversed((proc.stdout or "").splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    result = json.loads(line)
+                    break
+                except ValueError:
+                    continue
+        if (not isinstance(result, dict) or result.get("schema") != "quamload/v1"
+                or type(result.get("ok")) is not bool):
+            return jsonify({"ok": False, "error": "no_output",
+                            "stage": "spawn", "exc_type": "NoOutput",
+                            "detail": (proc.stderr or proc.stdout or "no output")[-800:]}), 502
+        detail = str(result.get("detail") or "")
+        links = _loadcheck_links(detail, merged_copy) if not result.get("ok") else []
+        return jsonify({"ok": bool(result.get("ok")),
+                        "stage": result.get("stage"),
+                        "exc_type": result.get("exc_type"),
+                        "detail": detail,
+                        "lib_versions": result.get("lib_versions") or {},
+                        "links": links})
+    finally:
+        try:
+            shutil.rmtree(tmp_root)
+        except OSError:
+            logger.warning("could not remove load-check temp dir %s", tmp_root, exc_info=True)
 
 
 @bp.route("/state/revert-last-apply/preflight")

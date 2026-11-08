@@ -8,8 +8,14 @@
 {% endif %}
 {% from '_ui.html' import ui_head_fold %}
 {# D-102: every page carries the one page head; it folds (D-103). #}
-<div class="ui-head ui-head--page">
+<div class="ui-head ui-head--page load-check-head">
     <h2 class="ui-head-title">Live state edit (Json tree view)</h2>
+    <div class="ui-actions">
+        <button type="button" class="btn-sm outline js-load-check-btn"
+                title="Check whether the current working state can be loaded by Quam in the selected environment"
+                onclick="window.runLoadCheck && window.runLoadCheck(this)">&#10003; Load check</button>
+    </div>
+    <span class="load-check-status js-load-check-status" aria-live="polite"></span>
     <p class="ui-head-gist">Every key of state.json and wiring.json; edit in place.</p>
     {{ ui_head_fold() }}
 </div>

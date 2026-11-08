@@ -10149,6 +10149,7 @@ button.diag-badge { cursor: pointer; }
    onto a line of its own. Scoped to this page (Datasets reuses .bulk-colvis). */
 .bulk-toolbar-title > .bulk-segmented { flex: 0 0 auto; width: auto; margin-bottom: 0; align-self: center; }
 .bulk-toolbar-title > .bulk-docbadges { margin-bottom: 0; }
+.bulk-toolbar-title > .js-load-check-btn { margin-left: auto; }
 .bulk-panel .bulk-toolbar > details.bulk-colvis { margin-bottom: 0; }
 /* a short window spends less on spacing and type -- nothing is hidden */
 @media screen and (max-height: 760px) {
@@ -12925,6 +12926,17 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     border-left: 1px solid color-mix(in srgb, var(--pico-primary) 30%, transparent); }
 .bulk-docbadge:hover { color: var(--pico-primary);
     background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+
+.load-check-status { font-size: .82em; color: var(--pico-muted-color); white-space: pre-wrap; overflow-wrap: anywhere; }
+.load-check-status.is-ok { color: var(--color-success-text); }
+.load-check-status.is-fail { color: var(--color-error-text); }
+.load-check-link { margin-left: .35rem; font-family: var(--font-mono); font-size: .95em; }
+.load-check-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.load-check-head > .ui-head-title { margin: 0; }
+.ui-head.load-check-head > .ui-actions { margin: 0; order: 0; flex-basis: auto; }
+.load-check-head > .ui-head-gist { flex-basis: 100%; }
+.load-check-head > .load-check-status { flex-basis: 100%; order: 4; }
+.bulk-toolbar-title > .load-check-status.is-fail { flex-basis: 100%; order: 99; }
 /* "a light SM blue" — a tint and blue text, not a solid block. Deliberately the
    same expression the Table/Flat control beside it uses, so two controls in one
    row read as one language rather than competing for attention. */
