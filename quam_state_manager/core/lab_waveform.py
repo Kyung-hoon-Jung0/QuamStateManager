@@ -590,6 +590,37 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
     return results  # type: ignore[return-value]
 
 
+CONFIG_ITEM = "@config"
+
+
+def warm_config(python_path: str | None, state_folder: str) -> dict | None:
+    """Load the chip in *state_folder* (strict, its own ``__class__``) and
+    ``generate_config()`` it on the WARM worker; ``{"ok", "error", "config"}``
+    or None when no warm worker can answer (the caller then runs cold).
+    Never cached: the folder is a temporary copy."""
+    if not (WARM and python_path and Path(python_path).is_file()):
+        return None
+    _TL.waited_since = time.monotonic()
+    lock = _env_lock(python_path)
+    _fg_add(python_path, 1)
+    try:
+        lock.acquire()
+    finally:
+        _fg_add(python_path, -1)
+    try:
+        ran = _run_warm(python_path, [{"qclass": CONFIG_ITEM,
+                                        "params": {"state_folder": state_folder}}])
+    finally:
+        lock.release()
+    if ran is None:
+        return None
+    if not ran["ok"]:
+        return {"ok": False, "error": ran["error"], "config": None}
+    rec = (ran["items"] or [{}])[0] or {}
+    return {"ok": bool(rec.get("ok") and rec.get("config")),
+            "error": rec.get("error"), "config": rec.get("config")}
+
+
 def _sizeof(rec: dict) -> int:
     n = len(rec.get("i") or []) + len(rec.get("q") or [])
     return 256 + 24 * n

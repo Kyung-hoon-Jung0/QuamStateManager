@@ -41,7 +41,7 @@ def _status(msg, level="error", code=400):
 def plan_key(store, plan) -> tuple:
     blob = json.dumps([plan.get("creates", []), plan.get("sets", []),
                        plan.get("deletes", [])], sort_keys=True, default=str)
-    return (R._store_uid(store), getattr(store, "mutation_seq", 0),
+    return (R._store_uid(store), getattr(store, "mutation_seq", 0), str(env_python() or ""),
             hashlib.sha1(blob.encode("utf-8")).hexdigest())
 
 
@@ -68,26 +68,43 @@ def env_name(python_path) -> str:
 
 
 def run_env_check(python_path, state, wiring) -> dict:
-    """``{"ok", "error", "config", "seconds"}`` of loading (state, wiring) in
-    the env at ``python_path``. Tests replace this function."""
-    from quam_state_manager.core import config_generator
+    """``{"ok", "error", "config", "seconds", "worker"}`` of loading (state,
+    wiring) in the env at ``python_path``: written to a temporary folder,
+    loaded strictly by its own ``__class__`` and ``generate_config()``-ed.
+    The WARM lab worker answers when it can (``worker == "warm"``); a cold
+    subprocess (the Config Viewer's previewer) only when it cannot. Tests
+    replace this function."""
+    from quam_state_manager.core import config_generator, lab_waveform
     tmp = Path(tempfile.mkdtemp(prefix="sm_addrm_check_"))
     t0 = time.monotonic()
+    how = "warm"
     try:
         (tmp / "state.json").write_text(json.dumps(state), encoding="utf-8")
         (tmp / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
-        out = config_generator.run_config_preview(python_path, tmp, strict=True)
+        try:
+            warm = lab_waveform.warm_config(python_path, str(tmp))
+        except Exception:  # noqa: BLE001 -- the cold path still answers
+            logger.warning("warm env check failed to run", exc_info=True)
+            warm = None
+        if warm is not None:
+            ok = bool(warm["ok"])
+            err = None if ok else (warm.get("error") or "the env reported an error")
+            cfg = warm.get("config") if ok else None
+        else:
+            how = "cold"
+            out = config_generator.run_config_preview(python_path, tmp, strict=True)
+            res = out.get("result") or {}
+            ok = bool(out.get("ok") and res.get("config"))
+            err = None
+            if not ok:
+                err = out.get("error") or res.get("error") or "the env reported an error"
+                tb = (res.get("traceback") or "").strip()
+                if tb and tb.splitlines()[-1] not in err:
+                    err = f"{err}\n{tb.splitlines()[-1]}"
+            cfg = res.get("config") if ok else None
     finally:
         shutil.rmtree(str(tmp.resolve()), ignore_errors=True)
-    res = out.get("result") or {}
-    ok = bool(out.get("ok") and res.get("config"))
-    err = None
-    if not ok:
-        err = out.get("error") or res.get("error") or "the env reported an error"
-        tb = (res.get("traceback") or "").strip()
-        if tb and tb.splitlines()[-1] not in err:
-            err = f"{err}\n{tb.splitlines()[-1]}"
-    return {"ok": ok, "error": err, "config": res.get("config") if ok else None,
+    return {"ok": ok, "error": err, "config": cfg, "worker": how,
             "seconds": round(time.monotonic() - t0, 1)}
 
 
@@ -134,15 +151,19 @@ def _readback(cfg, plan) -> list:
 
 
 def _left(cfg, plan) -> list:
-    """Elements of a removed qubit that the generated config still holds
-    (should be none)."""
+    """Elements of a removed qubit or pair (its couplers / CZ lines) that the
+    generated config still holds (should be none)."""
     s = plan.get("summary") or {}
     if s.get("op") != "remove":
         return []
     out = []
     for q in s.get("qubits") or []:
         out += dc.elements_of(cfg, q)
-    return out
+    for p in s.get("pairs") or []:
+        # a pair's coupler / CZ element is named after the pair, as a prefix
+        # ("<pair>.coupler") or inside a longer name ("coupler_<pair>")
+        out += [e for e in (cfg.get("elements") or {}) if p in e]
+    return sorted(set(out))
 
 
 @bp.route("/diagram-add/check", methods=["POST"])
@@ -160,7 +181,8 @@ def diagram_add_check():
         return _status(plan["error"], "warning", 400)
     verdict = verdict_for(store, plan) or check(store, plan)
     return render_template("_diagram_check.html", v=verdict, plan=plan,
-                           removing=request.form.get("op") == "remove")
+                           removing=request.form.get("op") == "remove",
+                           auto_push=bool(R._auto_apply_state()))
 
 
 @bp.route("/diagram-remove/panel")
@@ -182,6 +204,42 @@ def diagram_remove_panel():
                            expect_chip=R._active_chip_token() or "",
                            auto_push=bool(R._auto_apply_state()),
                            env=env_name(env_python()))
+
+
+def removal_writes(plan) -> list:
+    """Every write of a removal as the lab check reads them: each delete
+    (the entity, its member ops on other qubits, pulses and pair macros under
+    them, keyed entries, accepted "Delete together" paths) as ``_LAB_DELETE``,
+    then each shortened list."""
+    return ([(p, R._LAB_DELETE) for p in plan.get("deletes", [])]
+            + [(p, v) for p, v in plan.get("sets", [])])
+
+
+def removal_lab_refusal(store, plan, info):
+    """None when the lab's own code accepts the removal (run on EVERY delete
+    path, as an add runs it on its creates); else the refusal response,
+    offering "Delete together" when the check names what must go with it.
+    Called under ``store._lock``."""
+    writes = removal_writes(plan)
+    refusal = R._lab_write_refusal(store, writes, info=info)
+    if not refusal:
+        return None
+    msg, idx = refusal[0], refusal[1] if len(refusal) > 1 else []
+    refused = [writes[i][0] for i in (idx or []) if 0 <= i < len(writes)
+               and writes[i][1] is R._LAB_DELETE] or list(plan.get("deletes", []))
+    try:
+        also = R._lab_delete_also(store, refused, info)
+    except Exception:  # noqa: BLE001 -- the refusal still stands, no offer
+        logger.warning("delete-together closure failed", exc_info=True)
+        also = []
+    have = set(plan.get("deletes", []))
+    also = [a for a in also if a not in have
+            and not any(a.startswith(d + ".") for d in have)]
+    s = plan["summary"]
+    return render_template("_diagram_remove_refused.html", message=msg, also=also,
+                           kind=s["kind"], ent=s["name"],
+                           prev=(plan["summary"].get("also") or []),
+                           expect_chip=R._active_chip_token() or ""), 400
 
 
 def stage_removal(store, modifier, plan):

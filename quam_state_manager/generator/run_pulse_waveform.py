@@ -356,6 +356,37 @@ def _exc_where(exc: BaseException) -> str:
 #: and nothing else. No dataclass is built, no waveform drawn, no chip loaded.
 IMPORT_PREFIX = "@import:"
 
+#: an item whose class is this loads a state FOLDER (``params["state_folder"]``)
+#: with its own ``__class__`` marker, strict (the Config Viewer's
+#: ``--strict-input``), and answers ``config`` = ``generate_config()`` made
+#: JSON-safe -- the add/remove env check, run on the warm worker
+CONFIG_ITEM = "@config"
+
+
+def _gen_config(params: dict) -> dict:
+    import os
+    res = {"ok": False, "error": None, "kind": "config", "config": None}
+    folder = params.get("state_folder")
+    if not isinstance(folder, str) or not folder:
+        res["error"] = "no state folder given"
+        return res
+    old = os.environ.get("QUAM_STATE_PATH")
+    try:
+        import run_generate_config as rgc
+        out = rgc.run_generate_config(Path(folder), strict=True)
+        res["config"] = out.get("config")
+        res["ok"] = bool(res["config"])
+        if not res["ok"]:
+            res["error"] = "generate_config() returned nothing"
+    except BaseException as exc:  # noqa: BLE001 -- the env's own words
+        res["error"] = _exc_where(exc)
+    finally:
+        if old is None:
+            os.environ.pop("QUAM_STATE_PATH", None)
+        else:
+            os.environ["QUAM_STATE_PATH"] = old
+    return res
+
 
 def _import_only(qclass: str) -> dict:
     res = {"ok": False, "kind": "import", "error": None, "canonical": None,
@@ -381,6 +412,9 @@ def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
         params = (it or {}).get("params") or {}
         if not isinstance(qclass, str) or not qclass:
             out.append({"ok": False, "error": "no class named"})
+            continue
+        if qclass == CONFIG_ITEM:
+            out.append(_gen_config(params if isinstance(params, dict) else {}))
             continue
         if qclass.startswith(IMPORT_PREFIX):
             out.append(_import_only(qclass[len(IMPORT_PREFIX):]))
