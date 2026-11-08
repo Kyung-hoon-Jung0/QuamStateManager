@@ -479,7 +479,7 @@
                 ids.forEach(function (id) {
                     var label = document.createElement('label'), input = document.createElement('input');
                     input.type = 'checkbox'; input.value = id;
-                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.appendChild(label);
+                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.append(label, ' ');
                 });
                 list._czSignature = signature;
             }
@@ -898,6 +898,7 @@
                 }
                 if (mismatch && pair === mismatch.pair) t += mmHover;
                 t += amplitudeHover(pair);
+                if (off) t = esc(pair) + ' — hidden; click to show';
                 barPts.x.push((a.x + b.x) / 2); barPts.y.push((a.y + b.y) / 2); barPts.t.push(t);
                 barPts.cd.push([op ? op.path : (refused[0] && refused[0].path) || '', pair]);
             });

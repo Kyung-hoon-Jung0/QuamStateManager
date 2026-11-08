@@ -832,6 +832,8 @@ async function footerPins(only) {
         check(segsOf(r1) === 0 && mentions(r1) === 0 && segments(r1).filter(s => s.pair !== P).length === others0,
               'toggle: a click on the edge removes exactly that pair from the columns');
         check(bar1 && bar1.line.dash === 'dash' && bar1.opacity < 1, 'toggle: a hidden pair\'s edge is drawn dimmed and dashed');
+        const bt = r1.traces.find(t => t.meta === 'bars'), bi = bt ? bt.customdata.findIndex(c => c[1] === P) : -1;
+        check(bi >= 0 && !/GHz/.test(bt.text[bi]) && /hidden/.test(bt.text[bi]), 'toggle: a hidden pair\'s edge hover names no frequency');
         const key = 'quam_czmap_hidden_v1:' + (ST.w.__chipToken || '') + ':' + (map21.op || '');
         check(JSON.stringify(JSON.parse(ST.w.localStorage.getItem(key))) === JSON.stringify([P]), 'toggle: the hidden set is stored under ' + key);
         const count = () => ST.d.getElementById('czp-map-count').textContent;
