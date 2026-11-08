@@ -16,6 +16,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -498,3 +499,44 @@ class TestStartRightAfterClear:
         r = c.post("/api/agent/chat/start", json={"prompt": "two"})
         assert r.status_code == 200, r.get_json()
         assert real_end is not None
+
+
+@pytest.fixture
+def restart_manager(tmp_path, monkeypatch):
+    """Control process exit independently of scheduling and filesystem I/O."""
+    from quam_state_manager.core import agent_chat
+
+    mgr = agent_chat.ChatManager(lambda e: None, tmp_path)
+    backend = SimpleNamespace(name="claude", one_turn_per_process=False)
+    created = []
+
+    def start_session(self, prompt, *, resume=None):
+        self.proc = SimpleNamespace(alive=lambda: True, pid=1)
+        created.append(self)
+        return {"local_id": self.local_id}
+
+    monkeypatch.setattr(agent_chat.ChatSession, "start", start_session)
+
+    def start(chip="first"):
+        return mgr.start(chip, backend, owner="owner", mode="chat", until=None, prompt="hello")
+
+    cur = agent_chat.ChatSession("first", backend, owner="owner", mode="chat", until=None,
+                                 record=lambda e: None, instance_path=tmp_path)
+    cur.ended = time.time()
+    mgr.sessions["first"] = cur
+    return mgr, cur, start, created
+
+
+class TestRestartSafety:
+    def test_ended_busy_codex_is_refused_without_wait_or_stop(self, restart_manager):
+        mgr, cur, start, created = restart_manager
+        cur.backend = SimpleNamespace(name="codex", one_turn_per_process=True)
+        cur.proc = SimpleNamespace(alive=lambda: True)
+        # No wait/stop methods: touching either is itself a failure.
+        assert cur.busy()
+        with pytest.raises(RuntimeError, match="already driving"):
+            start()
+        assert mgr.get("first") is cur
+        assert not created
+        assert cur.last_event is None
+

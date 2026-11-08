@@ -245,7 +245,8 @@ class ChatManager:
               prompt: str | None, resume: str | None = None, display: str | None = None) -> dict:
         with self._lock:
             cur = self.sessions.get(chip)
-            if cur is not None and cur.ended and cur.alive():
+            if (cur is not None and cur.ended and cur.alive()
+                    and (not cur.backend.one_turn_per_process or not cur.busy())):
                 # a session that was ENDED (Clear, End) closes its stdin and exits on its own a
                 # moment later; a Start in that gap is the user's next message, not a second driver
                 deadline = time.time() + _END_GRACE_S
