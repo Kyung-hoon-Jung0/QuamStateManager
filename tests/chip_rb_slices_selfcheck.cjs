@@ -617,7 +617,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const phs = (T) => T.doc.querySelectorAll('.topo-rb-ph').length;
     // tile, its target, the section right above it (what a fully built page shows 720 px up)
     const CASES = [['ro_ge', ROSEL, 'fid1q'], ['gate1q', G1SEL, '2qrb:InterleavedRB'], ['t1', T1SEL, 'fidro'],
-                   ['t2ramsey', P.T2SEL, 'fidro'], ['irb', IRBSEL, '2qrb:StandardRB']];
+                   ['t2ramsey', P.T2SEL, 'fidro'], ['gate2q', IRBSEL, '2qrb:StandardRB']];
     for (const c of CASES) {
       for (const dy of [-720, 720, 0]) {
         const A = big({ state: { htmx: true } });
@@ -636,7 +636,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
         const fin = atLine(A), top = A.topOf(c[1]);
         const want = SM - dy;
         const secOk = dy < 0 ? fin.sec === c[2] : true;
-        ok(landed === SM && top === want && secOk && phs(A) === 0 && built(A).length === 20 && (c[0] === 'irb' || mcount(A) === 15)
+        ok(landed === SM && top === want && secOk && phs(A) === 0 && built(A).length === 20 && (c[0] === 'gate2q' || mcount(A) === 15)
            && A.errors().length === 0,
            'S20 ' + c[0] + ': wheel ' + dy + ' px 100 ms after the jump landed -- the target ends ' + top + ' px down the pane (want '
            + want + '), the reader in ' + JSON.stringify(fin) + (dy < 0 ? ' (want ' + c[2] + ')' : '')
