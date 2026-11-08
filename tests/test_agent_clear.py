@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -539,4 +541,41 @@ class TestRestartSafety:
         assert mgr.get("first") is cur
         assert not created
         assert cur.last_event is None
+
+    def test_wait_releases_manager_lock_and_same_chip_has_one_winner(self, restart_manager):
+        mgr, cur, start, created = restart_manager
+        release = threading.Event()
+        both_waiting = threading.Event()
+        count_lock = threading.Lock()
+        count = 0
+
+        def wait(timeout):
+            nonlocal count
+            with count_lock:
+                count += 1
+                if count == 2:
+                    both_waiting.set()
+            assert release.wait(5), "test did not release process exit"
+
+        cur.proc = SimpleNamespace(alive=lambda: not release.is_set(), proc=SimpleNamespace(wait=wait))
+
+        def attempt():
+            try:
+                return start()
+            except RuntimeError:
+                return "refused"
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            first = pool.submit(attempt)
+            second = pool.submit(attempt)
+            try:
+                assert both_waiting.wait(2), "same-chip Starts could not both wait outside the lock"
+                other = pool.submit(start, "second")
+                assert other.result(timeout=2)["local_id"]
+            finally:
+                release.set()
+            results = [first.result(timeout=2), second.result(timeout=2)]
+        assert results.count("refused") == 1
+        assert len([s for s in created if s.chip == "first"]) == 1
+        assert mgr.get("first") in created
 

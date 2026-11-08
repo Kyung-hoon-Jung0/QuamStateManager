@@ -245,16 +245,20 @@ class ChatManager:
               prompt: str | None, resume: str | None = None, display: str | None = None) -> dict:
         with self._lock:
             cur = self.sessions.get(chip)
-            if (cur is not None and cur.ended and cur.alive()
-                    and (not cur.backend.one_turn_per_process or not cur.busy())):
-                # a session that was ENDED (Clear, End) closes its stdin and exits on its own a
-                # moment later; a Start in that gap is the user's next message, not a second driver
-                deadline = time.time() + _END_GRACE_S
-                while cur.alive() and time.time() < deadline:
-                    time.sleep(0.02)
-                if cur.alive():
-                    cur.stop(now=True)
-                    time.sleep(0.05)
+            retiring = (cur is not None and cur.ended and cur.alive()
+                        and (not cur.backend.one_turn_per_process or not cur.busy()))
+        if retiring:
+            # End leaves an in-flight Codex turn running. Only reap sessions
+            # that can retire safely, without blocking Starts on other chips.
+            deadline = time.monotonic() + _END_GRACE_S
+            while cur.alive() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if cur.alive():
+                cur.stop(now=True)
+                time.sleep(0.05)
+        with self._lock:
+            # Another Start may have replaced the retired session while we waited.
+            cur = self.sessions.get(chip)
             if cur is not None and cur.alive():
                 raise RuntimeError(f"a {cur.backend.name} session by {cur.owner} is already driving {display or chip}")
             s = ChatSession(chip, backend, owner=owner, mode=mode, until=until, record=self.record,
