@@ -790,14 +790,17 @@ window.TopoGraph = (function () {
   }
   function placeStack(t, side, f) {
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
-    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, h = lh * spans.length, i;
+    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, h = 0, i;
     t.setAttribute("font-size", f);
     for (i = 0; i < spans.length; i++) {
       var n = spans[i].getComputedTextLength ? spans[i].getComputedTextLength() : f * 0.6 * spans[i].textContent.length;
       if (n > w) w = n;
+      var box = spans[i].getBBox ? spans[i].getBBox() : null;
+      h = Math.max(h, box && box.height > 0 ? box.height : lh);
     }
     // Re-measure at every trial font, including the final restored candidate.
     // Project the upright box onto the edge normal so diagonal lines clear it.
+    h += lh * (spans.length - 1);
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);
     var off = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear") || 0);

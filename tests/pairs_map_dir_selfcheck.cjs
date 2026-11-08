@@ -136,5 +136,26 @@ for (const [source, target, pair] of [['q1','q2','q1-2'], ['q-one','q-two','q-on
   ok(Array.from(label.children, t => t.textContent).join(',') === [target,'|',source].join(','), 'endpoint ids survive display shape ' + pair);
   ok(!/rotate/.test(label.getAttribute('transform') || ''), 'display shape stays upright ' + pair);
 }
+const short = fixture('q_long_underscore_endpoint', 'q_other_long_endpoint', 'short', 0, 1, 30);
+const label = short.querySelector('.cm-pair-label');
+label.setAttribute('font-size', '20');
+// A narrow free corridor forces the real collision pass to shrink the stack.
+const cy = +label.dataset.cy;
+for (const side of [-1,1]) {
+  const block = win.document.createElementNS('http://www.w3.org/2000/svg','polygon');
+  block.setAttribute('class','cm-res');
+  const y = cy + side*25;
+  block.setAttribute('points', `-2000,${y} 2000,${y} 2000,${y+side*500} -2000,${y+side*500}`);
+  short.appendChild(block);
+}
+win.TopoGraph.declutterLabels(short);
+const f = +label.getAttribute('font-size');
+ok(f < 20 && f >= 12, 'short vertical edge with long underscore ids exercises font shrink');
+const width = Math.max(...Array.from(label.children, t => t.getComputedTextLength()));
+ok(Math.abs(+label.dataset.w-width) < 0.11, 'stack width remeasured at final shrunken font');
+const height = f + 2*f*1.1;
+ok(Math.abs(+label.dataset.h-height) < 0.11, 'stack height remeasured at final shrunken font');
+ok(!label.classList.contains('cm-dir-crowded'), 'shrunken box clears the narrow corridor');
+
 const summary = fails ? fails + ' check(s) FAILED\n' : 'pairs_map_dir_selfcheck: all checks passed (' + checks + ' assertions)\n';
 process.stdout.write(summary, function () { process.exit(fails ? 1 : 0); });
