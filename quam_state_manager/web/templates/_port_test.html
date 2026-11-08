@@ -1,0 +1,123 @@
+<div id="port-test" class="port-test" data-element="{{ pt_element }}"
+     hx-get="{{ request.full_path }}" hx-trigger="configRegenerated from:body" hx-target="#table-pane" hx-swap="innerHTML">
+<div class="table-header-row ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Port test</h2>
+    <button type="button" class="btn-sync" hx-get="/instrument" hx-target="#table-pane" hx-push-url="true">&larr; Instrument Wiring</button>
+</div>
+
+{% if not pt_config %}
+<p class="ui-note">The port test is built from this chip's own generated config
+   (<code>generate_config()</code> in the chip's env), and there is none yet.</p>
+<button type="button" class="btn-sync" hx-post="/config/regenerate" hx-target="#pt-gen-status"
+        hx-indicator="#pt-gen-status">Generate the config now (about 10&ndash;30 s)</button>
+<div id="pt-gen-status" class="ui-note"></div>
+{% else %}
+{% if pt_stale %}<p class="ui-note pt-warn">The generated config is older than the chip's current values.
+  A test plays what the config says, so regenerate it first if you changed anything.
+  <button type="button" class="btn-sync" hx-post="/config/regenerate" hx-target="#pt-gen-status">Regenerate</button></p>
+  <div id="pt-gen-status" class="ui-note"></div>{% endif %}
+
+{% if pt_port and not pt_element %}
+  <p>Port <b>{{ pt_port | reject("equalto", "") | join("/") }}</b>:
+  {% if pt_choices %}choose the element to test:{% else %}no element of the generated config plays on this port.{% endif %}</p>
+  <ul class="pt-choices">{% for c in pt_choices %}
+    <li><a href="#" hx-get="/port-test?element={{ c | urlencode }}" hx-target="#table-pane" hx-push-url="true">{{ c }}</a></li>
+  {% endfor %}</ul>
+{% elif pt_error %}
+  <p class="ui-note pt-warn">{{ pt_error }}</p>
+{% elif not pt_info %}
+  <p class="ui-note">Open this page from a port on Instrument Wiring, or with <code>?element=</code>.</p>
+{% else %}
+{% set i = pt_info %}
+<section class="pt-card">
+  <h3>What the generated config says about <code>{{ i.element }}</code></h3>
+  <table class="ui-table pt-facts"><tbody>
+    <tr><th class="ui-table-head">Output port</th><td class="ui-table-cell"><b id="pt-port">{{ i.port | join("/") }}</b>
+      ({{ {"mw": "MW-FEM", "lf": "LF-FEM", "iq": "IQ pair"}[i.kind] }})</td></tr>
+    {% if i.in_port %}<tr><th class="ui-table-head">Input port</th><td class="ui-table-cell">{{ i.in_port | join("/") }}
+      {% if i.time_of_flight is not none %}&middot; time of flight {{ i.time_of_flight }} ns{% endif %}</td></tr>{% endif %}
+    <tr><th class="ui-table-head">RF / LO / IF</th><td class="ui-table-cell">
+      {{ "%.6f GHz" % (i.rf / 1e9) if i.rf is not none else "—" }} =
+      {{ "%.6f GHz" % (i.lo / 1e9) if i.lo is not none else "—" }} +
+      {{ "%.3f MHz" % (i.if / 1e6) if i.if is not none else "—" }}</td></tr>
+    {% if i.full_scale_power_dbm is not none %}<tr><th class="ui-table-head">Full-scale power</th>
+      <td class="ui-table-cell">{{ i.full_scale_power_dbm }} dBm</td></tr>{% endif %}
+  </tbody></table>
+</section>
+
+<form id="pt-form" class="pt-card" onsubmit="return false">
+  <input type="hidden" name="element" value="{{ i.element }}">
+  <fieldset class="pt-row"><legend>Test</legend>
+    <label><input type="radio" name="test" value="cw" checked> CW tone (spectrum analyser)</label>
+    <label><input type="radio" name="test" value="pulse"> Pulse train + scope trigger</label>
+    <label {% if not i.has_measurement %}title="This element has no measurement operation and input port"{% endif %}>
+      <input type="radio" name="test" value="loopback" {% if not i.has_measurement %}disabled{% endif %}> Loopback raw ADC (needs a cable out&rarr;in)</label>
+  </fieldset>
+  <fieldset class="pt-row"><legend>Basis</legend>
+    <label title="The chip's own element entry from generate_config(): proves the chip's mapping"><input type="radio" name="basis" value="chip" checked> Chip (this element as the chip config defines it)</label>
+    <label title="Only this port with its settings, and a fresh element: proves the hardware and cable"><input type="radio" name="basis" value="raw"> Raw port (independent of the chip)</label>
+  </fieldset>
+  <div class="pt-row">
+    <label class="pt-cw">CW amplitude <input type="number" name="amp" step="0.01" min="-1" max="1" value="0.25"></label>
+    <label class="pt-op">Operation <select name="op">
+      {% for o in i.operations %}<option value="{{ o.name }}" {% if o.name in ("x180", "readout") %}selected{% endif %}
+        data-measure="{{ 1 if o.measurement else 0 }}">{{ o.name }} &middot; {{ o.length }} ns &middot; peak {{ "%.4g" % o.peak if o.peak is not none else "?" }}{% if o.dbm is not none %} &middot; {{ "%.1f" % o.dbm }} dBm{% endif %}</option>{% endfor %}
+    </select></label>
+    <label class="pt-period">Period (ns) <input type="number" name="period" step="4" min="16" value="10000"></label>
+    <label class="pt-marker">Scope trigger (DIG out) <select name="marker">
+      {% for m in pt_markers %}<option value="{{ m | join('/') }}">{{ m | join('/') }}</option>{% endfor %}</select></label>
+    <label>Amplitude cap <input type="number" name="cap" step="0.05" min="0.05" max="{{ pt_cap_max }}" value="{{ pt_settings.amp_cap }}"></label>
+  </div>
+  <p id="pt-plan" class="ui-note" aria-live="polite"></p>
+  <div class="pt-row">
+    <a id="pt-download" class="btn-sync" href="#" download>&darr; Download script (.py)</a>
+  </div>
+</form>
+
+<section class="pt-card">
+  <h3>Run from SM</h3>
+  <fieldset class="pt-row"><legend>Run target</legend>
+    <label><input type="radio" name="pt-target" value="saas" {% if pt_settings.target == "saas" %}checked{% endif %}> QM-SaaS simulator</label>
+    <label><input type="radio" name="pt-target" value="opx" {% if pt_settings.target == "opx" %}checked{% endif %}> Real OPX</label>
+  </fieldset>
+  <div class="pt-row pt-t-saas">
+    <label>Email <input name="saas_email" value="{{ pt_settings.saas.email }}" autocomplete="off"></label>
+    <label>Host <input name="saas_host" value="{{ pt_settings.saas.host }}" autocomplete="off"></label>
+    <label>QOP version <input name="saas_version" value="{{ pt_settings.saas.version }}" placeholder="latest" size="8"></label>
+    <label>Password <input type="password" name="saas_password" autocomplete="new-password"
+      {% if not pt_settings.keyring_available %}disabled{% endif %}
+      placeholder="{{ '•••••••• saved (' ~ pt_settings.saas.password_where ~ ')' if pt_settings.saas.password_saved else 'not saved' }}"></label>
+    {% if pt_settings.saas.password_saved %}<button type="button" class="btn-sync" id="pt-pw-remove">Remove saved password</button>{% endif %}
+  </div>
+  {% if not pt_settings.keyring_available %}<p class="ui-note pt-t-saas pt-warn" id="pt-nokeyring">No OS keyring is available
+    to SM, so the SaaS password cannot be saved: SM stores passwords only in the OS keyring, never in a file.</p>{% endif %}
+  <p class="ui-note">Saved targets can also be edited in Settings.</p>
+  <div class="pt-row pt-t-opx">
+    <label title="The hardware run halts and closes its QM after this long, even without Stop">Maximum seconds <input name="max_s" type="number" min="1" max="3600" value="120"></label>
+    <label>Host / IP <input name="opx_host" value="{{ pt_settings.opx.host }}" autocomplete="off"></label>
+    <label>Cluster name <input name="opx_cluster" value="{{ pt_settings.opx.cluster }}" autocomplete="off"></label>
+    <label>Port <input name="opx_port" value="{{ pt_settings.opx.port }}" size="6" placeholder="default"></label>
+  </div>
+  <p class="ui-note pt-t-opx pt-warn"><label class="ui-check"><input type="checkbox" id="pt-hw-ok">
+    I know this plays on the real line: a CW tone or pulse train into a fridge line heats it and drives the qubits.</label>
+    SM first checks the OPX for running jobs and for another QM holding these ports, and refuses if either;
+    it never closes another QM. Ticking this asks the server for a one-time confirmation valid for 60 s and one run.</p>
+  <div class="pt-row">
+    <button type="button" class="btn-sync" id="pt-save">Save target</button>
+    <button type="button" class="btn-sync" id="pt-run">&#9654; Run</button>
+    <button type="button" class="btn-sync pt-stop" id="pt-stop" hidden>&#9632; Stop</button>
+    <button type="button" class="btn-sync" id="pt-close-open" hidden>Close our port-test QMs</button>
+    <span id="pt-msg" class="ui-note" aria-live="polite"></span>
+  </div>
+  <p class="ui-note">Leaving this page stops a running test. The simulator shows the DIGITAL samples the
+    port is fed (at baseband for a MW-FEM, before up-conversion): the peak amplitude and length, not the
+    analog power at RF; an LF port's samples include its own filters. A loopback simulation models the cable
+    from the output to the input, so the simulated raw ADC trace is shown too. If <code>open_qm()</code> never
+    returns and a QM appears later, SM cannot attribute or close that unrecorded QM automatically. Between a
+    hard kill of both SM and the runner and the next SM start, no process can halt an in-flight hardware job.</p>
+  <div id="pt-result"></div>
+</section>
+{% endif %}
+{% endif %}
+<script src="{{ url_for('static', filename='port-test.js') }}"></script>
+</div>

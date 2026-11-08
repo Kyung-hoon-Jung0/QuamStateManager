@@ -26,6 +26,34 @@
     <p style="padding:1rem;color:var(--pico-muted-color)">Initializing diagram&hellip;</p>
 </div>
 
+<script>
+(function () {
+    // FB-12: the port hover card carries "Test this port"; it remembers the
+    // last wired port the pointer was over (single click opens the inspector,
+    // double click the JSON, so the test needs its own door).
+    var d = document.getElementById('instrument-diagram');
+    if (!d || d._ptBound) return;
+    d._ptBound = true;
+    d.addEventListener('mouseover', function (e) {
+        var cell = e.target && e.target.closest ? e.target.closest('.iw-port[data-con]') : null;
+        var btn = document.getElementById('popup-port-test');
+        if (!cell || !btn || !cell.querySelector('.iw-port-circle')) return;
+        btn.setAttribute('data-q', 'con=' + encodeURIComponent(cell.getAttribute('data-con')) +
+            '&slot=' + encodeURIComponent(cell.getAttribute('data-slot') || '') +
+            '&port=' + encodeURIComponent(cell.getAttribute('data-port')) +
+            '&io=' + encodeURIComponent(cell.getAttribute('data-io') || 'output'));
+    });
+})();
+function openPortTest(btn) {
+    var q = btn.getAttribute('data-q');
+    if (!q || !window.htmx) return;
+    var pop = document.getElementById('port-popup');
+    if (pop) pop.classList.add('hidden');
+    htmx.ajax('GET', '/port-test?' + q, {target: '#table-pane', swap: 'innerHTML'})
+        .then(function () { history.pushState({}, '', '/port-test?' + q); });
+}
+</script>
+
 <!-- Port hover popup (hidden by default) -->
 <div id="port-popup" class="port-popup hidden">
     <div class="port-popup-header">
@@ -33,6 +61,8 @@
         <span id="popup-role-badge" class="role-badge"></span>
     </div>
     <div id="popup-body" class="port-popup-body"></div>
+    <div class="port-popup-actions"><button type="button" class="btn-sync" id="popup-port-test"
+        onclick="openPortTest(this)" title="Download a CW / pulse-train / loopback test script for this port, or run it on the simulator or an OPX">Test this port &rarr;</button></div>
 </div>
 
 <!-- JSON drill-down panel -->
