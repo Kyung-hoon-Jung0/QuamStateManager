@@ -11559,24 +11559,24 @@ window.clearDetailPanelSearch = function(btnEl) {
             var keyEl = document.createElement("span");
             keyEl.className = "tree-key";
             keyEl.textContent = key;
-            keyEl.title = "Click to copy path \u00b7 double-click to copy this value (paste into an empty '" + key + "')";
-            // Single click copies the PATH (debounced so a double-click doesn't also
-            // fire it); double-click copies this node's VALUE into the paste buffer so
-            // it can be dropped into an empty same-key field elsewhere \u2014 the easiest
-            // way to fill a list / matrix / multi-value field (see _treeCopyKey).
+            keyEl.title = "Click to edit JSON; double-click to copy this value";
             (function(el, p, nd) {
                 var t = null;
-                el.onclick = function() {
+                // Keep key presses from mounting the row scalar editor.
+                el.onmousedown = function(e) { e.preventDefault(); };
+                el.onclick = function(e) {
+                    e.stopPropagation();
                     if (t) return;
                     t = setTimeout(function() {
                         t = null;
-                        navigator.clipboard.writeText(p);
-                        el.classList.add("tree-copied");
-                        setTimeout(function() { el.classList.remove("tree-copied"); }, 800);
-                    }, 230);
+                        if (valueClick === "edit" && !isAbsent && !_policyReadOnly(p))
+                            _makeContainerEditable(nd, p, nd._value);
+                        else navigator.clipboard.writeText(p);
+                    }, 250);
                 };
                 el.ondblclick = function(e) {
-                    e.preventDefault(); if (t) { clearTimeout(t); t = null; }
+                    e.preventDefault(); e.stopPropagation();
+                    if (t) { clearTimeout(t); t = null; }
                     _treeCopyKey(nd);
                 };
             })(keyEl, path, node);
