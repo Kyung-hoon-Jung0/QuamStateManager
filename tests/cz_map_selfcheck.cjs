@@ -179,7 +179,7 @@ async function footerPins(only) {
                 'footer/live: announce only the compact summary, never the long notes');
             if (name === 'order') {
                 const box = d.querySelector('.czp-map-box'), children = Array.from(box.children), footer = d.querySelector('.czp-map-footer');
-                check(children.indexOf(S.mapEl) + 1 === children.indexOf(d.querySelector('#czp-map-detail')) &&
+                check(children.indexOf(S.mapEl.closest('.czp-map-view')) + 1 === children.indexOf(d.querySelector('#czp-map-detail')) &&
                     children.indexOf(d.querySelector('#czp-map-detail')) + 1 === children.indexOf(footer) &&
                     children.at(-1) === footer && footer.contains(key) && footer.contains(notes) &&
                     key.contains(d.querySelector('#czp-map-key')) && notes.contains(d.querySelector('#czp-map-notes')),
@@ -858,7 +858,6 @@ async function footerPins(only) {
         const opened = [];
         ST.d.getElementById('czp-root').addEventListener('czp:open', e => opened.push(e.detail.op));
         const bt2 = ST.last().traces.find(t => t.meta === 'bars'), bj = bt2.customdata.findIndex(c => c[1] === P);
-        const nBefore = ST.renders.length;
         ST.mapEl._ev.emit('plotly_click', {points: [{data: bt2, customdata: bt2.customdata[bj]}]}); await wait(40);
         check(opened.length === 1 && opened[0] === bt2.customdata[bj][0] && segsOf(ST.last()) === segsOf(r0) && ST.w.localStorage.getItem(key) === '[]',
               'D-3: clicking a pair in the drawing below the columns selects its operation and does not hide it');
@@ -867,7 +866,6 @@ async function footerPins(only) {
               'toggle: Hide all empties the columns and dims every edge');
         ST.d.getElementById('czp-map-show').click(); await wait(40);
         check(segments(ST.last()).length === segments(r0).length && count() === ids.length + ' of ' + ids.length + ' pairs shown', 'toggle: Show all restores every pair');
-        void nBefore;
         ST.close();
         const SP = await page({map: map21, loss: loss21, width: 1400, mini: ids,
             beforeScripts: w => w.localStorage.setItem(key, JSON.stringify([P, 'no-such-pair']))});

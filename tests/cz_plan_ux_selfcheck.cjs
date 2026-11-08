@@ -32,11 +32,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         assert(box.compareDocumentPosition(table) & F, 'D-1: the table follows the frequency map');
         assert(table.compareDocumentPosition(detail) & F, 'D-1: the one-pair detail follows the table');
         assert(box.querySelector('#component-map') && box.querySelector('#component-map').compareDocumentPosition(box.querySelector('#czp-map')) & F,
-               'D-2: the small chip map sits above the frequency map');
+               'D-2: the small chip map precedes the frequency plot');
         assert(scrolls.includes(detail),'query pair reveals detail after loading');
-        scrolls.length=0; d.querySelector('.czp-row').click();await wait(20);
-        assert(scrolls.includes(detail),'table selection reveals detail');
+        const other=d.querySelector('.czp-row[data-op="qubit_pairs.q1-2.macros.cz_two"]');
+        scrolls.length=0; other.click();await wait(20);
+        assert.strictEqual(r.dataset.selected,other.dataset.op,'D-4: a different row selects its operation');
+        assert(scrolls.includes(detail),'D-4: table selection reveals detail below the table');
         scrolls.length=0;r.dispatchEvent(new w.CustomEvent('czp:open',{detail:{op:f.data.row.path}}));await wait(20);
+        assert.strictEqual(r.dataset.selected,f.data.row.path,'D-3: map selection uses the same detail selection');
         assert(scrolls.includes(detail),'map selection reveals detail');
     }
     if(item===2){
