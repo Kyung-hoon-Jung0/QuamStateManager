@@ -681,6 +681,28 @@
 /* CZ cards: reserve room for values even when a field label is long. */
 .ui-cz-plan-card dl { grid-template-columns: var(--ui-cz-card-columns); }
 
+/* FB-02: the env-upgrade card's numbered review steps */
+.ui-steps { margin: .5rem 0 .4rem 1.2rem; padding: 0; }
+.ui-steps > li { margin: .15rem 0; }
+.ui-steps > li.is-current { background: var(--ui-accent-bg); border-radius: var(--ui-r-sm); padding: 0 .3rem; }
+.ui-steps > li.is-current::marker { color: var(--ui-accent); }
+.ui-steps > li.is-done { opacity: .65; }
+.ui-steps .env-rename-where, .ui-steps .env-rename-apply-step { font-weight: inherit; }
+.ui-steps-why { align-self: center; }
+.ui-staged-note { font-weight: var(--ui-fw); }
+.ui-staged-go { margin-left: .4rem; }
+.ui-staged-pulse { outline: var(--ui-focus-w) solid var(--ui-accent); }
+
+/* FB-03: same-kind findings grouped into one collapsible row */
+.ui-diag-group-row > td { background: var(--ui-accent-bg); }
+.ui-diag-toggle { all: unset; cursor: pointer; font-weight: var(--ui-fw); white-space: nowrap; }
+.ui-diag-toggle:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outline-offset: 2px; }
+.ui-diag-chev { display: inline-block; }
+.ui-diag-toggle.is-open .ui-diag-chev { transform: rotate(90deg); }
+.ui-diag-in-group > td:first-child { padding-left: 1.4rem; }
+.ui-diag-nopath { color: var(--ui-text-3); }
+.ui-diag-group-title, .ui-diag-msg { overflow-wrap: anywhere; }
+
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
  * selectors (tests/test_ui_contract.py): button.btn-sm, [role=button].btn-sm,

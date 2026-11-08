@@ -26079,39 +26079,63 @@ document.addEventListener('click', function(evt) {
         var p = btn && btn.getAttribute("data-jump-path");
         if (p && window._navigateToExplorerPath) window._navigateToExplorerPath(p);
     };
-    window.applyDiagFix = function(btn) {
-        if (!btn) return;
-        // For the value-DIFFERS (warning) case the convert relinks the input so its
-        // value tracks the paired upconverter — i.e. it CHANGES the number. Confirm
-        // first so the customer isn't surprised by a later config diff. (The equal
-        // case is info-severity → no data-confirm → one-click, nothing changes.)
-        if (btn.getAttribute("data-confirm") === "1") {
-            // r9: server-rendered confirm text when present (set_value fixes
-            // carry their own wording); the downconverter relink keeps its
-            // historical message.
-            var confirmText = btn.getAttribute("data-confirm-text");
-            if (!confirmText) {
-                var oldv = btn.getAttribute("data-old") || "the current literal";
-                confirmText = "Relink downconverter_frequency to its paired upconverter?\n\n" +
-                    "Its value (" + oldv + ") will change to track the shared LO. The change is added " +
-                    "to your pending edits — review it in the tray before applying to the live chip.";
-            }
-            if (!window.confirm(confirmText)) {
-                return;
-            }
+    /* FB-04: a fix press is the consent -- no window.confirm. Where it landed
+       follows the real session: Auto-Sync on writes the chip now (the tray
+       swap below is what its observer flushes), off adds to pending edits.
+       Either way the tray moves on the same press and one Ctrl+Z undoes it. */
+    function _diagAutoSyncOn() {
+        var t = document.getElementById("pending-tray");
+        return !!(t && t.getAttribute("data-auto-apply") === "1");
+    }
+    function _diagFmt(v) {
+        if (typeof v === "number" && Math.abs(v) >= 1e6) return (v / 1e9).toPrecision(6).replace(/\.?0+$/, "") + " GHz";
+        if (v === null || v === undefined) return "(none)";
+        return String(v);
+    }
+    function _diagLanded(d, warns) {
+        var ch = (d && d.changed) || [];
+        var where = _diagAutoSyncOn() ? "Written to the chip now (Auto-Sync on)" : "Added to pending edits";
+        var what = ch.length === 1
+            ? ch[0].path + ": " + _diagFmt(ch[0].old) + " → " + _diagFmt(ch[0].new)
+            : ch.length + " values changed";
+        // MAJOR 2: a fix that moves the drive LO says so after the press too
+        var also = warns ? " — this " + warns : "";
+        if (window.showToast) window.showToast(where + " — " + what + also + ". Ctrl+Z undoes it.", warns ? "warning" : "info");
+        var host = document.getElementById("diag-fix-landed");
+        if (host) { host.hidden = false; host.textContent = where + ": " + what + also + ". Ctrl+Z undoes it."; }
+    }
+    function _diagAfterFix(d, warns) {
+        if (d.tray_html && window._swapPendingTray) {
+            window._swapPendingTray(d.tray_html);
+            if (window._restoreTrayState) window._restoreTrayState();
         }
-        var body = new URLSearchParams();
-        body.append("action", btn.getAttribute("data-action") || "");
-        body.append("dot_path", btn.getAttribute("data-dot-path") || "");
-        body.append("pointer", btn.getAttribute("data-pointer") || "");
-        body.append("value", btn.getAttribute("data-value") || "");
+        _diagLanded(d, warns);
+        // QA F-S: the #diag-findings slot re-fetches itself on diagnostics-changed
+        if (window._diagChanged) window._diagChanged();
+        if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
+        if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+    }
+    function _diagPostFix(btn, url, init) {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = "Applying…";
         _diagFocusAnchor = _diagFocusAnchorFor(btn);
-        var fillIds = btn.getAttribute("data-action") === "fill_gate_ids";
-        var payload;
-        if (fillIds) {
-            payload = {
+        return fetch(url, init)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d && d.ok) { _diagAfterFix(d, btn.getAttribute("data-warns") || ""); return; }
+                _diagFocusAnchor = null;
+                btn.disabled = false; btn.textContent = orig;
+                if (window.showToast) window.showToast((d && d.error) || "The fix was refused", "warning");
+            })
+            .catch(function() {
+                _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig;
+                if (window.showToast) window.showToast("The fix request failed", "warning");
+            });
+    }
+    window.applyDiagFix = function(btn) {
+        if (!btn) return;
+        if (btn.getAttribute("data-action") === "fill_gate_ids") {
+            var payload = {
                 updates: JSON.parse(btn.getAttribute("data-edits") || "[]").map(function (e) {
                     return { dot_path: e.path, value: e.value, create: true };
                 }),
@@ -26120,40 +26144,74 @@ document.addEventListener('click', function(evt) {
             };
             var seen = _keepMineSeen(null);
             if (seen) { payload.seen_changes = seen.n; payload.seen_sig = seen.sig; }
+            return _diagPostFix(btn, "/field/edit-batch", { method: "POST",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
         }
-        fetch(fillIds ? "/field/edit-batch" : "/diagnostics/apply-fix", {
-            method: "POST",
-            headers: { "Content-Type": fillIds ? "application/json" : "application/x-www-form-urlencoded" },
-            body: fillIds ? JSON.stringify(payload) : body.toString()
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d && d.ok) {
-                // the edit is a pending working-copy change → refresh the tray,
-                // then re-render diagnostics (the finding is now resolved).
-                if (d.tray_html && window._swapPendingTray) {
-                    window._swapPendingTray(d.tray_html);
-                    if (window._restoreTrayState) window._restoreTrayState();
-                }
-                // QA F-S: through the one announcer, not a whole-page GET of
-                // /diagnostics into #table-pane -- that re-rendered every
-                // domain with the server's default open state (a folded
-                // Config sprang open) and yanked the pane back here if the
-                // user had navigated away mid-POST. The #diag-findings slot
-                // re-fetches itself on diagnostics-changed, keeping the
-                // folds (docs/141 4l-review); the button stays disabled on
-                // "Applying..." until that swap replaces its row.
-                if (window._diagChanged) window._diagChanged();
-                if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
-                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
-            } else {
-                _diagFocusAnchor = null;
-                btn.disabled = false; btn.textContent = orig;
-                alert((d && d.error) || "Convert failed");
-            }
-        })
-        .catch(function() { _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
+        var item = { action: btn.getAttribute("data-action") || "",
+                     dot_path: btn.getAttribute("data-dot-path") || "",
+                     pointer: btn.getAttribute("data-pointer") || "",
+                     value: btn.getAttribute("data-value") || "" };
+        return _diagPostFix(btn, "/diagnostics/apply-fix", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: [item] }) });
     };
+    /* FB-04: "Set all N ..." -- one press, one undo group, every instance */
+    window.applyDiagFixAll = function(btn) {
+        if (!btn) return;
+        var items = [];
+        try { items = JSON.parse(btn.getAttribute("data-items") || "[]"); } catch (e) { items = []; }
+        if (!items.length) return;
+        return _diagPostFix(btn, "/diagnostics/apply-fix", { method: "POST",
+            headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: items }) });
+    };
+    /* FB-03: "I know - intended" (and its revoke) for warnings and suggestions */
+    window.diagAck = function(btn, revoke) {
+        if (!btn) return;
+        var keys = [];
+        try { keys = JSON.parse(btn.getAttribute("data-vack-keys") || "[]"); } catch (e) { keys = []; }
+        if (!keys.length) return;
+        var orig = btn.textContent;
+        btn.disabled = true;
+        return fetch("/diagnostics/ack", { method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ keys: keys, revoke: !!revoke }) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d || !d.ok) {
+                    btn.disabled = false; btn.textContent = orig;
+                    if (window.showToast) window.showToast((d && d.error) || "Could not record that", "warning");
+                    return;
+                }
+                if (window.htmx) window.htmx.trigger(document.body, "diagnostics-changed");
+                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+            })
+            .catch(function() { btn.disabled = false; btn.textContent = orig; });
+    };
+    /* FB-03: expand / collapse the instances of one same-kind group */
+    window.toggleDiagGroup = function(btn) {
+        if (!btn) return;
+        var key = btn.getAttribute("data-group");
+        var table = btn.closest("table"); if (!table) return;
+        var open = btn.getAttribute("aria-expanded") !== "true";
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.classList.toggle("is-open", open);
+        table.querySelectorAll('tr.diag-row-in-group[data-group="' + key + '"]').forEach(function (tr) {
+            tr.hidden = !open;
+        });
+        try {
+            var s = JSON.parse(sessionStorage.getItem("quam_diag_open_groups") || "{}");
+            if (open) s[key] = 1; else delete s[key];
+            sessionStorage.setItem("quam_diag_open_groups", JSON.stringify(s));
+        } catch (e) { /* storage blocked */ }
+    };
+    // a re-fetched findings list keeps the groups the user opened
+    function _restoreDiagGroups() {
+        var s = {};
+        try { s = JSON.parse(sessionStorage.getItem("quam_diag_open_groups") || "{}"); } catch (e) { s = {}; }
+        document.querySelectorAll("button.diag-group-toggle[aria-expanded='false']").forEach(function (b) {
+            if (s[b.getAttribute("data-group")]) window.toggleDiagGroup(b);
+        });
+    }
+    document.addEventListener("htmx:afterSettle", _restoreDiagGroups);
+    document.addEventListener("DOMContentLoaded", _restoreDiagGroups);
     /* QA diagnostics-r2-20: the self-refresh replaces the fixed row -- and the
        focused button with it -- so focus fell to <body> and a keyboard user
        restarted from the top of the page. Remember where they were; after
@@ -27179,28 +27237,51 @@ document.addEventListener('click', function(evt) {
     // Severity-aware sidebar dot: red iff a crash-class ERROR exists on that tab,
     // amber when only warnings/recommendations, none when clean — so a by-design
     // advisory (e.g. the band-edge nudge) doesn't light the sidebar red.
-    function setNavDot(href, level) {  // level: 'error' | 'warn' | null
+    // FB-06: a sidebar dot is lit ONLY by unacknowledged errors and warnings in
+    // the same findings feed the Diagnostics page lists. Suggestions (info),
+    // optional recommendations (advisory) and acknowledged findings never
+    // light it. The hover names the count and where to look.
+    function setNavDot(href, level, why) {  // level: 'error' | 'warn' | null
         var els = document.querySelectorAll('#sidebar a[href="' + href + '"]');
         for (var i = 0; i < els.length; i++) {
             els[i].classList.toggle('nav-diag-dot', level === 'error');
             els[i].classList.toggle('nav-diag-dot-warn', level === 'warn');
+            if (level && why) els[i].setAttribute('data-diag-dot', why);
+            else els[i].removeAttribute('data-diag-dot');
+            if (level && why) els[i].title = why + ' - see Diagnostics';
+            else if (els[i].title && / - see Diagnostics$/.test(els[i].title)) els[i].removeAttribute('title');
         }
     }
-    function _maxLevel(arr) {
-        var hasErr = false, has = false;
+    function _dotCounts(arr) {
+        var e = 0, w = 0;
         (arr || []).forEach(function(f) {
-            if (f.acknowledged) return;          // not counted: no sidebar dot for it
-            has = true; if (f.severity === 'error') hasErr = true;
+            if (f.acknowledged || f.advisory) return;   // not counted: no sidebar dot for it
+            if (f.severity === 'error') e++;
+            else if (f.severity === 'warning') w++;
         });
-        return hasErr ? 'error' : (has ? 'warn' : null);
+        return { e: e, w: w };
     }
+    function _maxLevel(arr) {
+        var c = _dotCounts(arr);
+        return c.e ? 'error' : (c.w ? 'warn' : null);
+    }
+    function _dotWhy(arr, noun) {
+        var c = _dotCounts(arr), parts = [];
+        if (c.e) parts.push(c.e + ' ' + noun + ' error' + (c.e === 1 ? '' : 's'));
+        if (c.w) parts.push(c.w + ' ' + noun + ' warning' + (c.w === 1 ? '' : 's'));
+        return parts.join(', ');
+    }
+    function _paintNavDots(d) {
+        setNavDot('/explorer', _maxLevel(d.value_spec), _dotWhy(d.value_spec, 'value'));
+        setNavDot('/instrument', _maxLevel(d.connectivity), _dotWhy(d.connectivity, 'wiring'));
+    }
+    window._diagDotLevel = _maxLevel;
 
     window._refreshSidebarDiagDots = function() {
         fetch('/diagnostics/findings.json', { cache: 'no-store' })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                setNavDot('/explorer', _maxLevel(d.value_spec));
-                setNavDot('/instrument', _maxLevel(d.connectivity));
+                _paintNavDots(d);
             })
             .catch(function() {});
     };
@@ -27220,8 +27301,7 @@ document.addEventListener('click', function(evt) {
             fetch('/diagnostics/findings.json', { cache: 'no-store' })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
-                    setNavDot('/explorer', _maxLevel(d.value_spec));
-                    setNavDot('/instrument', _maxLevel(d.connectivity));
+                    _paintNavDots(d);
                     if (gen === _markGen && document.getElementById('explorer-tree-state'))
                         _paintExplorerMarks(d, { expand: false });
                 })
@@ -27391,12 +27471,19 @@ document.addEventListener('click', function(evt) {
     // on a #table-pane swap -- Instrument Wiring's dot stayed red after the
     // collision was fixed. Same trailing pause the pill uses.
     var _diagDotsTimer = null;
-    document.addEventListener('diagnostics-changed', function () {
-        if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
-        _diagDotsTimer = setTimeout(function () {
-            _diagDotsTimer = null;
-            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
-        }, 500);
+    // MINOR 10: an undo/redo, a sync pull and another window's change move
+    // the findings too, so they repaint the dots the same way.
+    var DIAG_DOT_EVENTS = ['diagnostics-changed', 'cellsReverted', 'stateRestored',
+                           'liveDriftChanged', 'quam:state-changed'];
+    window._DIAG_DOT_EVENTS = DIAG_DOT_EVENTS;
+    DIAG_DOT_EVENTS.forEach(function (name) {
+        document.addEventListener(name, function () {
+            if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
+            _diagDotsTimer = setTimeout(function () {
+                _diagDotsTimer = null;
+                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+            }, 500);
+        });
     });
     // Once on first full-page load so the dots + filter show immediately.
     function _diagInitOnLoad() {

@@ -106,7 +106,7 @@
           {# docs/168 + on-site 2026-09-07: the same envAck() as the table row,
              the same key and the same sentence, so an acknowledgement made
              here applies there too. #}
-          {% if it.ack_key %}
+          {% if it.ack_key and it.severity != 'error' %}{# D-3: no acknowledgement on an error #}
           <button type="button" class="btn-xs outline diag-ack"
                   data-ack-key="{{ it.ack_key }}" data-detail="{{ it.detail }}"
                   title="Tell SM this is expected in this environment. It stops raising the alarm here and on the badge; the row stays listed and revocable under Environment match below."

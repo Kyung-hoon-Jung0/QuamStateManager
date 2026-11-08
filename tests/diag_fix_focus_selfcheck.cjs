@@ -143,8 +143,8 @@ global.htmx = window.htmx;
 // ── the fix endpoint: the finding is resolved on the server ──────────────
 global.fetch = window.fetch = function (url, opts) {
   if (String(url).indexOf('/diagnostics/apply-fix') === 0) {
-    const body = new URLSearchParams(opts && opts.body || '');
-    const loc = body.get('dot_path');
+    // FB-04: the fix posts JSON {items: [...]}
+    const loc = JSON.parse(opts && opts.body || '{"items":[{}]}').items[0].dot_path;
     Object.keys(findings).forEach(function (k) {
       findings[k] = findings[k].filter(function (x) { return x !== loc; });
     });

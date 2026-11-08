@@ -113,7 +113,8 @@ class TestDiagnosticsListRender:
         ]
         html = _render(findings)
         order = re.findall(r'data-domain="([a-z_]+)"', html)
-        assert order == ["values", "waveforms"], order      # DIAG_DOMAINS order kept
+        # FB-03: an acknowledged finding lives in the one "Acknowledged (N)" section
+        assert order == ["values", "acknowledged"], order
         assert 'id="diag-first-error"' not in html
 
 
@@ -142,18 +143,19 @@ class TestAcknowledgedRowsReadAsSettled:
         assert 'class="diag-mini diag-error"' not in html       # no red domain badge
         assert html.count("diag-badge diag-acknowledged") == 2
         assert "diag-badge diag-error" not in html
-        assert html.count("diag-row-collapsed") == 2
-        assert "2 acknowledged &mdash; show" in html
+        # FB-03: listed in ONE collapsed "Acknowledged (N)" section, revocable
+        assert "Acknowledged (2)" in html
+        assert html.count("diag-ack-revoke") == 2
 
     def test_mixed_counts_only_the_active_and_lists_it_first(self):
         html = _render([self._acked("Quam.twpa_ext"), self._active("Quam.other")])
         assert "1 error" in html and "2 errors" not in html
         assert "1 acknowledged" in html
-        assert html.index("Quam.other") < html.index("diag-acked-toggle") < html.index("Quam.twpa_ext")
+        assert html.index("Quam.other") < html.index("Acknowledged (1)") < html.index("Quam.twpa_ext")
 
     def test_unacknowledged_render_carries_none_of_it(self):
         html = _render([self._active("Quam.x")])
-        assert "diag-acked-toggle" not in html and "acknowledged" not in html
+        assert "Acknowledged (" not in html and "acknowledged" not in html
 
 
 # ── QA F-16: Chip Status counts the finding set Diagnostics counts ──────────

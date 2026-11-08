@@ -109,8 +109,9 @@ class TestApplyFixSetValue:
         body = loaded["client"].get(
             "/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
         assert 'data-action="set_value"' in body
-        assert "Update f_01" in body
-        assert "data-confirm-text" in body
+        # FB-04: two explicit directions, the changed field first, no confirm()
+        assert "Set f_01 to RF_frequency (" in body
+        assert "data-confirm" not in body
 
     # QA diagnostics-r2-13: a read-only dataset archive is told what is wrong
     # (the Types card already says "open the live chip to repair") -- it must

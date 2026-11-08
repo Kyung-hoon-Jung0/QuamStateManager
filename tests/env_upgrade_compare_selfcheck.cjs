@@ -105,7 +105,8 @@ window.fetch = function (url, opts) {
   await window.EnvUpgrade.testRenames();
   await window.EnvUpgrade.applyRenames();
   await flush();
-  ok(doc.getElementById('env-rename-result').textContent === 'Working copy updated; use Apply', 'G7: no "skipped: []" in the status');
+  const staged = doc.getElementById('env-rename-result').textContent;
+  ok(/^Staged 3 changes - Apply from the sync control/.test(staged) && !/skipped/.test(staged), 'G7: no "skipped: []" in the status; FB-02 names where it landed');
   ok(ajax.some(function (a) { return a[0] === 'GET' && a[1] === '/state/tray' && a[2].target === '#pending-tray'; }),
      'W4: Stage refreshes the top-bar pending tray');
   ok(ajax.some(function (a) { return /diagnostics\/env-card\?poll=1/.test(a[1]); }), 'W2: Stage re-renders the card');
@@ -120,6 +121,33 @@ window.fetch = function (url, opts) {
   doc.getElementById('env-rename-result').textContent = 'Working copy updated';
   doc.dispatchEvent(new window.CustomEvent('stateRestored'));
   ok(!doc.querySelector('.env-remove-confirm').checked && doc.getElementById('env-rename-result').textContent === '', 'G8: stateRestored clears ticks and status');
+
+  // FB-02: the steps follow the review, and the wording follows Auto-Sync
+  doc.getElementById('env-upgrade-report').insertAdjacentHTML('beforeend',
+    '<ol id="env-rename-steps"><li data-step="1"></li><li data-step="2"></li>' +
+    '<li data-step="3"><span class="env-rename-where"></span></li><li data-step="4"><span class="env-rename-apply-step"></span></li></ol>' +
+    '<span id="env-rename-why"></span>');
+  const cur = function () { const li = doc.querySelector('#env-rename-steps li.is-current'); return li && li.dataset.step; };
+  window.EnvUpgrade._syncStep();
+  ok(cur() === '1' && /Tick a change/.test(doc.getElementById('env-rename-why').textContent), 'FB-02: nothing ticked -> step 1 with a reason');
+  doc.querySelector('.env-remove-confirm').checked = true;
+  doc.querySelector('.env-remove-confirm').dispatchEvent(new window.Event('change', {bubbles: true}));
+  ok(cur() === '2' && /passing Test load/.test(doc.getElementById('env-rename-why').textContent), 'FB-02: ticked -> step 2, Stage says why it is disabled');
+  await window.EnvUpgrade.testRenames();
+  ok(cur() === '3' && !doc.getElementById('env-rename-apply').disabled, 'FB-02: tested -> step 3, Stage enabled');
+  ok(/pending edits/.test(doc.querySelector('.env-rename-where').textContent), 'FB-02: Auto-Sync off -> Stage lands in pending edits');
+  doc.getElementById('pending-tray').setAttribute('data-auto-apply', '1');
+  window.EnvUpgrade._syncStep();
+  ok(/to the chip at once/.test(doc.querySelector('.env-rename-where').textContent) && /Auto-Sync is on/.test(doc.getElementById('env-rename-why').textContent),
+     'FB-02: Auto-Sync on -> the card says Stage writes the chip before the press');
+  await window.EnvUpgrade.applyRenames();
+  ok(cur() === '4' && /written to the chip now/.test(doc.getElementById('env-rename-result').textContent), 'FB-02: staged under Auto-Sync -> says it is on the chip');
+  doc.getElementById('pending-tray').removeAttribute('data-auto-apply');
+  // the card re-renders after Stage without the review rows: the staged line survives
+  doc.getElementById('env-upgrade-report').innerHTML = '<p id="env-upgrade-status"></p>';
+  doc.dispatchEvent(new window.CustomEvent('htmx:afterSettle'));
+  ok(/^Staged 3 changes/.test(doc.getElementById('env-upgrade-status').textContent),
+     'FB-02: the staged line survives the card refresh (' + doc.getElementById('env-upgrade-status').textContent.slice(0, 40) + ')');
 
   if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
   console.log('all ok');

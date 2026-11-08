@@ -41,7 +41,7 @@ def test_diag_fix_focus_selfcheck_passes():
 def test_the_fix_never_re_renders_the_whole_pane():
     """The static half of S1, so a jsdom-less env still catches the regression."""
     js = (_ROOT / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
-    i = js.index("window.applyDiagFix = function")
+    i = js.index("/* FB-04: a fix press is the consent")
     seg = js[i:js.index("window.togglePreviewIssues", i)]
     assert '"#table-pane"' not in seg and "'#table-pane'" not in seg
     assert "_diagChanged(" in seg

@@ -166,6 +166,24 @@ function finding(jp, sev, ack) {
   ok(!rowOf(TOF).querySelector('.tree-warn-icon'),
      'M5: a late, older findings reply does not repaint the stale ⚠');
 
+  // M6 (FB-06): the Instrument Wiring dot is lit only by unacknowledged wiring
+  // errors/warnings -- never by a suggestion or an optional recommendation --
+  // and its hover names what lights it.
+  const wnav = doc.querySelector('#sidebar a[href="/instrument"]');
+  const conn = function (sev, extra) { return Object.assign({ severity: sev, category: 'connectivity_x', message: 'm' }, extra || {}); };
+  win._findings = { value_spec: [], connectivity: [conn('info'), conn('warning', { advisory: true })] };
+  fire('diagnostics-changed'); await tick(520);
+  ok(!wnav.classList.contains('nav-diag-dot-warn') && !wnav.classList.contains('nav-diag-dot'),
+     'M6: suggestions and recommendations alone never light the wiring dot');
+  win._findings = { value_spec: [], connectivity: [conn('warning'), conn('warning'), conn('info')] };
+  fire('diagnostics-changed'); await tick(520);
+  ok(wnav.classList.contains('nav-diag-dot-warn') && wnav.getAttribute('data-diag-dot') === '2 wiring warnings',
+     'M6: two wiring warnings light the dot and its hover says so (' + wnav.getAttribute('data-diag-dot') + ')');
+  win._findings = { value_spec: [], connectivity: [conn('warning', { acknowledged: { at: 1 } }), conn('warning', { acknowledged: { at: 1 } })] };
+  fire('diagnostics-changed'); await tick(520);
+  ok(!wnav.classList.contains('nav-diag-dot-warn') && !wnav.hasAttribute('data-diag-dot'),
+     'M6: acknowledging them clears the dot in the same interaction');
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('diag_marks_live_selfcheck: all checks passed');
   process.exit(0);

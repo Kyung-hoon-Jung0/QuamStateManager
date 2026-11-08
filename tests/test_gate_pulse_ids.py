@@ -92,18 +92,20 @@ def browser_requests(edits):
     if not shutil.which("node"):
         pytest.skip("Node is required for the shipped handler contract")
     source = (ROOT / "quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
-    source = source[source.index("    window.applyDiagFix = function(btn)"):]
+    source = source[source.index("    /* FB-04: a fix press is the consent"):]
     source = source[:source.index("    /* QA diagnostics-r2-20")]
     script = '''
 const requests = [];
 global.window = {__chipToken: 'token', confirm: () => true};
 global._diagFocusAnchorFor = () => null;
+global.document = {addEventListener() {}, getElementById() { return null; }, querySelectorAll() { return []; }};
+var _diagFocusAnchor = null;
 global._keepMineSeen = () => ({n: 7, sig: 'signature'});
 global.alert = () => {};
 global.fetch = (url, options) => { requests.push({url, body: JSON.parse(options.body)}); return Promise.resolve({json: () => ({ok:false})}); };
 ''' + source + '''
 const attrs = {'data-action': 'fill_gate_ids', 'data-edits': process.argv[1]};
-window.applyDiagFix({getAttribute: k => attrs[k], textContent: 'Fill ids'});
+window.applyDiagFix({getAttribute: k => attrs[k], textContent: 'Fill ids', disabled: false});
 console.log(JSON.stringify(requests));
 '''
     result = subprocess.run(["node", "-e", script, json.dumps(edits)], capture_output=True, text=True, check=True)

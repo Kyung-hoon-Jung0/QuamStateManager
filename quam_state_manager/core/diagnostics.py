@@ -21,7 +21,9 @@ hints. ``null`` is never flagged (it legitimately means "not yet measured").
 
 from __future__ import annotations
 
+import hashlib
 import math
+import re
 import weakref
 from dataclasses import dataclass
 from typing import Any
@@ -78,6 +80,10 @@ class Finding:
     #                         as `advisory` does, and carries who/when so the
     #                         page can show it and offer to revoke.
     ack_key: str = ""       # its own identity, for the acknowledge/revoke door
+    fixes: list | None = None  # FB-04: two-direction reconcile fixes, one per direction
+    vack_key: str = ""      # FB-03: identity for the "I know - intended" door (diag_ack)
+    value_paths: list | None = None  # FB-03: chip leaves the check READ (ack fingerprint)
+    values: Any = None      # FB-03: inputs that are not chip leaves (generated config, reports)
 
     def as_dict(self) -> dict:
         return {
@@ -92,6 +98,8 @@ class Finding:
             "advisory": self.advisory,
             "acknowledged": self.acknowledged,
             "ack_key": self.ack_key,
+            "fixes": self.fixes,
+            "vack_key": self.vack_key,
         }
 
 
@@ -559,6 +567,7 @@ def _coupling_findings(root: dict) -> list[Finding]:
     compat = spec_constraints.band_compat(qop)
     allows_13 = spec_constraints.qop_allows_bands_13(qop)
     pairs_in_use = 0
+    port_sharing_paths: set = set()
     for (ctrl, fem), portmap in index.items():
         for a_port, a_side, b_port, b_side in spec_constraints.COUPLED_PORT_PAIRS:
             a = portmap.get((a_side, a_port))
@@ -570,6 +579,8 @@ def _coupling_findings(root: dict) -> list[Finding]:
             if ba is None or bb is None:
                 continue
             pairs_in_use += 1
+            for info, port in ((a, a_port), (b, b_port)):
+                port_sharing_paths.add(f"ports.{info['section']}.{ctrl}.{fem}.{port}.band")
             if (ba, bb) not in compat:
                 # QM docs, Guides/opx1000_fems.md#bands: "Coupled ports must
                 # be in the same band, or in bands `1` and `3`. ... Other band
@@ -614,6 +625,8 @@ def _coupling_findings(root: dict) -> list[Finding]:
             f"{pairs_in_use} coupled MW port pair(s) in use: {spec_constraints.PORT_SHARING_NOTE}"
             + ("" if qop else "; the chip declares no QOP version"),
             detail=f"qop {qop or 'unknown'}",
+            value_paths=sorted(port_sharing_paths),
+            values={"qop": qop, "pairs": pairs_in_use},
         ))
 
     return findings
@@ -1125,7 +1138,8 @@ def _strnum_findings(root: dict, store=None) -> list[Finding]:
         findings.append(Finding(
             "warning", "value_type_strnum", "qubits",
             f"{len(paths) - _STRNUM_CAP} more numeric-looking TEXT values "
-            f"beyond the first {_STRNUM_CAP} shown"))
+            f"beyond the first {_STRNUM_CAP} shown",
+            value_paths=list(paths[_STRNUM_CAP:])))
     return findings
 
 
@@ -1323,22 +1337,26 @@ def _frequency_consistency_findings(store) -> list[Finding]:
             # would silently break a pointer link otherwise. The apply route
             # re-validates against a live re-run of this linter (chip
             # identity + current values), like the downconverter fix.
-            fix = None
+            # FB-04: two explicit directions, the field being changed first.
+            # Each only for a LITERAL number (a pointer would silently break).
+            fixes = []
             if _isnum(f01_raw):
-                leaf = f01_rel[-1]
-                fix = {
-                    "action": "set_value",
-                    "dot_path": f01_dp,
-                    "value": repr(float(rf)),
-                    "label": f"Update {leaf} → {_ghz(rf)}",
-                    "confirm": (
-                        f"Set {f01_dp} to the carrier RF_frequency "
-                        f"({_ghz(rf)})?\n\nCurrent {_ghz(f01)} will be "
-                        "replaced. The change lands in your pending edits — "
-                        "review it in the tray before applying to the live "
-                        "chip. (Skip this if the offset is a deliberate "
-                        "detuning.)"),
-                }
+                fixes.append({
+                    "action": "set_value", "dot_path": f01_dp, "value": repr(float(rf)),
+                    "kind": "f01_to_rf", "group_label": "f_01 to RF_frequency",
+                    "label": f"Set f_01 to RF_frequency ({_ghz(rf)})",
+                    "title": (f"Rewrite the record {f01_dp} to the carrier the hardware plays. "
+                              "What the hardware plays does not change."),
+                })
+            if _isnum(rf_raw):
+                fixes.append({
+                    "action": "set_value", "dot_path": rf_dp, "value": repr(float(f01)),
+                    "kind": "rf_to_f01", "group_label": "RF_frequency to f_01",
+                    "label": f"Set RF_frequency to f_01 ({_ghz(f01)})",
+                    "title": (f"Change {rf_dp}: this CHANGES the carrier the hardware plays "
+                              "to the recorded f_01."),
+                })
+            fix = fixes[0] if fixes else None
             findings.append(Finding(
                 severity, "value_freq_consistency", f01_dp,
                 f"{label} f_01 ({_ghz(f01)}) and RF_frequency ({_ghz(rf)}) differ by "
@@ -1348,6 +1366,7 @@ def _frequency_consistency_findings(store) -> list[Finding]:
                 detail=f"{f01_dp}={f01!r}  vs  {rf_dp}={rf!r}  (Δ={delta:+.3f} Hz)",
                 jump_path=f01_dp,
                 fix=fix,
+                fixes=fixes or None,
             ))
     return findings
 
@@ -1381,6 +1400,75 @@ def _ghz(v) -> str:
         return repr(v)
 
 
+def _dependent_holder_label(path: str) -> str:
+    """Human-readable label for a dependent holder path."""
+    parts = (path or "").split(".")
+    if len(parts) >= 3 and parts[0] == "qubits":
+        q, role = parts[1], parts[2]
+        if role == "resonator":
+            return f"{q} readout (rr)"
+        if role == "xy":
+            return f"{q} drive (xy)"
+        if role == "z":
+            return f"{q} flux (z)"
+        return f"{q} {role}"
+    if len(parts) >= 3 and parts[0] == "wiring" and parts[1] == "qubits":
+        q, role = parts[2], (parts[3] if len(parts) > 3 else "")
+        if role in {"rr", "xy", "z"}:
+            return f"{q} {'readout' if role == 'rr' else ('drive' if role == 'xy' else 'flux')} ({role})"
+        return f"{q} wiring {role or 'entry'}"
+    if len(parts) >= 3 and parts[0] == "qubit_pairs":
+        pair, role = parts[1], parts[2]
+        if role in {"coupler", "c"}:
+            return f"{pair} coupler ({role})"
+        return f"{pair} pair {role}"
+    if len(parts) >= 4 and parts[0] == "wiring" and parts[1] == "qubit_pairs":
+        pair, role = parts[2], parts[3]
+        if role in {"coupler", "c"}:
+            return f"{pair} coupler ({role})"
+        return f"{pair} pair wiring {role}"
+    return path
+
+
+def _moves_summary(moved: list[str], cap: int = 6) -> dict[str, Any]:
+    """Readable+raw summary for the "also moves" warning."""
+    shown = moved[:cap]
+    named = [{"label": _dependent_holder_label(path), "path": path} for path in shown]
+    if not shown:
+        return {"plain": "nothing else reads it", "named": [], "more": 0}
+    plain = ", ".join(f"{row['label']} [{row['path']}]" for row in named)
+    more = max(0, len(moved) - len(shown))
+    if more:
+        plain += f" and {more} more"
+    return {"plain": plain, "named": named, "more": more}
+
+
+def _output_port_dependents(root: dict) -> dict:
+    """``{"#/ports/mw_outputs/<c>/<f>/<p>": {holder, ...}}``: every place whose
+    value is a pointer into that output port (an element's ``opx_output``, an
+    input linked to its ``upconverter_frequency``). A holder named
+    ``....opx_output`` is shown as its element."""
+    out: dict = {}
+    prefix = "#/ports/mw_outputs/"
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                walk(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}.{i}")
+        elif isinstance(node, str) and node.startswith(prefix):
+            parts = node[len(prefix):].split("/")
+            if len(parts) >= 3:
+                key = prefix + "/".join(parts[:3])
+                holder = path[:-len(".opx_output")] if path.endswith(".opx_output") else path
+                out.setdefault(key, set()).add(holder)
+
+    walk(root, "")
+    return out
+
+
 def _downconverter_findings(root: dict) -> list[Finding]:
     """Readout input ``downconverter_frequency`` that is a literal instead of a
     pointer to its paired output's ``upconverter_frequency``.
@@ -1403,6 +1491,7 @@ def _downconverter_findings(root: dict) -> list[Finding]:
         return findings
     mw_outputs = ports.get("mw_outputs") if isinstance(ports.get("mw_outputs"), dict) else {}
     pairs = _readout_io_pairs(root)
+    dependents = None  # built once, only when a reverse fix is offered
 
     def _up_freq(oc, of, op):
         node = mw_outputs
@@ -1461,6 +1550,19 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                         fix={**fix, "matches": True},
                     ))
                 else:
+                    if dependents is None:
+                        dependents = _output_port_dependents(root)
+                    port_ptr = f"#/ports/mw_outputs/{oc}/{of}/{op}"
+                    moved = sorted(dependents.get(port_ptr, ()))
+                    port_name = f"{oc}/FEM {of}/port {op}"
+                    move_info = _moves_summary(moved)
+                    lo_warns = (f"changes the drive LO of {port_name} -- also moves: "
+                                + move_info["plain"])
+                    # FB-04: two directions, the field being changed first
+                    link_fix = {**fix, "matches": False, "kind": "down_to_up",
+                                "group_label": "downconverter_frequency to upconverter_frequency",
+                                "label": f"Set downconverter_frequency to upconverter_frequency ({_ghz(up)}, linked)",
+                                "title": "Link the input to the output so they share one LO value."}
                     findings.append(Finding(
                         "warning", "downconverter_literal", dp,
                         f"downconverter_frequency literal ({_ghz(dc)}) DIFFERS from its paired "
@@ -1468,7 +1570,18 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                         f"they share one physical LO; converting to a pointer relinks them "
                         f"(input becomes {_ghz(up)})",
                         detail=repr(dc), jump_path=dp,
-                        fix={**fix, "matches": False},
+                        fix=link_fix,
+                        fixes=[link_fix, {
+                            "action": "set_value",
+                            "dot_path": f"ports.mw_outputs.{oc}.{of}.{op}.upconverter_frequency",
+                            "value": repr(float(dc)), "kind": "up_to_down",
+                            "group_label": "upconverter_frequency to downconverter_frequency",
+                            "label": (f"Set upconverter_frequency to downconverter_frequency "
+                                      f"({_ghz(dc)}) -- changes the drive LO of {port_name}"),
+                            "warns": lo_warns, "moves": moved, "moves_named": move_info["named"],
+                            "moves_more": move_info["more"], "port": port_name,
+                            "title": ("This CHANGES the output LO the hardware plays; the input then "
+                                      "keeps its literal and both agree.")}],
                     ))
     return findings
 
@@ -2255,6 +2368,7 @@ def _unphysical_qubit(qn: str, q: Any) -> list[Finding]:
         findings.append(Finding(
             "warning", "value_unphysical", f"qubits.{qn}.resonator.{key}",
             f"{qn}: {key} is not row-stochastic (row sums {sums})",
+            jump_path=f"qubits.{qn}.resonator.{key}",
             detail="Each row of a readout confusion matrix is a probability "
                    "vector, so it must be square, non-negative and sum to 1. "
                    "An unnormalised, counts-valued or transposed matrix would "
@@ -2294,6 +2408,7 @@ def _unphysical_pair(pn: str, pair: Any) -> list[Finding]:
                 findings.append(Finding(
                     "warning", "value_unphysical", dp,
                     f"{pn}/{gn}: {mn} = {val:g} is outside (0, 1]",
+                    jump_path=dp,
                     detail="A fidelity (and an RB decay base) has to lie in "
                            "(0, 1]; zero is excluded because a fit that "
                            "returns exactly zero has not converged. This "
@@ -3054,14 +3169,16 @@ def lint_config(config: dict) -> list[Finding]:
         if pk not in ref_pulses and pulses.get(pk) != _QUAM_TEMPLATE_PULSES.get(pk):
             findings.append(Finding(
                 "warning", "config_orphan_pulse", f"pulses.{pk}",
-                "pulse is defined but never referenced by any element"))
+                "pulse is defined but never referenced by any element",
+                values={"pulse": pulses.get(pk), "referenced": sorted(ref_pulses)}))
 
     ref_wfs = set(config_view._waveform_names_referenced_by(pulses, list(pulses.keys())))
     for wk in waveforms:
         if wk not in ref_wfs:
             findings.append(Finding(
                 "warning", "config_orphan_waveform", f"waveforms.{wk}",
-                "waveform is defined but never referenced by any pulse"))
+                "waveform is defined but never referenced by any pulse",
+                values={"waveform": waveforms.get(wk), "referenced": sorted(ref_wfs)}))
 
     ref_iws: set[str] = set()
     for pulse in pulses.values():
@@ -3071,7 +3188,8 @@ def lint_config(config: dict) -> list[Finding]:
         if ik not in ref_iws:
             findings.append(Finding(
                 "warning", "config_orphan_iw", f"integration_weights.{ik}",
-                "integration weight is defined but never referenced"))
+                "integration weight is defined but never referenced",
+                values={"weight": iws.get(ik), "referenced": sorted(ref_iws)}))
 
     ref_mixers: set[str] = set()
     for elem in elements.values():
@@ -3083,7 +3201,8 @@ def lint_config(config: dict) -> list[Finding]:
         if mk not in ref_mixers:
             findings.append(Finding(
                 "warning", "config_orphan_mixer", f"mixers.{mk}",
-                "mixer is defined but never referenced"))
+                "mixer is defined but never referenced",
+                values={"mixer": mixers.get(mk), "referenced": sorted(ref_mixers)}))
 
     findings.extend(_config_value_findings(config))
     return _ordered(findings)
@@ -3145,19 +3264,19 @@ def _config_value_findings(config: dict) -> list[Finding]:
                         findings.append(Finding(
                             "warning", "config_iw_value", loc,
                             f"integration weight value {val:g} exceeds |{_IW_VALUE_ABS_MAX}|",
-                            detail=repr(val)))
+                            detail=repr(val), values=[val, dur]))
                     if _is_real_num(dur) and float(dur).is_integer():
                         di = int(dur)
                         if di <= 0 or di % 4 != 0:
                             findings.append(Finding(
                                 "warning", "config_iw_duration", loc,
                                 f"integration weight duration {di} must be a positive "
-                                f"multiple of 4 ns", detail=repr(dur)))
+                                f"multiple of 4 ns", detail=repr(dur), values=[val, dur]))
                 elif _is_real_num(item) and abs(item) > _IW_VALUE_ABS_MAX:
                     findings.append(Finding(
                         "warning", "config_iw_value", loc,
                         f"integration weight value {item:g} exceeds |{_IW_VALUE_ABS_MAX}|",
-                        detail=repr(item)))
+                        detail=repr(item), values=item))
 
     # Time-tagging signal/derivative thresholds in [-2048, 2047] (signed 12-bit).
     for ename, el in _as_dict(config.get("elements")).items():
@@ -3178,7 +3297,7 @@ def _config_value_findings(config: dict) -> list[Finding]:
                         f"elements.{ename}.timeTaggingParameters.{field}",
                         f"{field} {iv} is outside the signed-12-bit range "
                         f"[{_TIMETAG_MIN}, {_TIMETAG_MAX}]",
-                        detail=repr(v)))
+                        detail=repr(v), values=v))
 
     return findings
 
@@ -3224,3 +3343,119 @@ _SEVERITY_RANK = {"error": 0, "warning": 1, "info": 2}
 def _ordered(findings: list[Finding]) -> list[Finding]:
     """Errors first, then warnings, then info; stable within a severity."""
     return sorted(findings, key=lambda f: _SEVERITY_RANK.get(f.severity, 3))
+
+
+# ---------------------------------------------------------------------------
+# FB-03: same-kind findings are one row (every level), instances collapsible
+# ---------------------------------------------------------------------------
+
+_GROUP_TOKEN = re.compile(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*")
+_GROUP_NUMBER = re.compile(r"\d+(?:[eE]\d+)?")
+
+
+def _bucket(f) -> str:
+    if f.severity == "error":
+        return "error"
+    if f.severity == "info":
+        return "info"
+    return "advisory" if getattr(f, "advisory", False) else "warning"
+
+
+def _kind_text(message: str, ids=None) -> str:
+    """The whole message with plain numbers and THIS chip's entity ids
+    (qubit / pair / port names, given in *ids*) blanked. Two findings of the
+    same kind on different qubits read the same, while meaningful tokens such
+    as ``T1``/``T2``, ``x90``/``x180`` and field names stay as they are."""
+    ids = ids or ()
+
+    def sub(m):
+        tok = m.group(0)
+        return "\u2026" if (tok in ids or _GROUP_NUMBER.fullmatch(tok)) else tok
+
+    text = _GROUP_TOKEN.sub(sub, (message or "").replace("\n", " "))
+    return re.sub("\u2026(?:[ .,/:+\\-]*\u2026)+", "\u2026", text).strip()
+
+
+def entity_ids(root) -> set:
+    """Names that identify an entity of this chip: qubits, pairs, other entity
+    collections and the controllers under ``ports``."""
+    ids: set = set()
+    if not isinstance(root, dict):
+        return ids
+    for coll in ("qubits", "qubit_pairs", "twpas", "couplers"):
+        node = root.get(coll)
+        if isinstance(node, dict):
+            ids.update(str(k) for k in node)
+    ports = root.get("ports")
+    if isinstance(ports, dict):
+        for sec in ports.values():
+            if isinstance(sec, dict):
+                ids.update(str(k) for k in sec)
+    return ids
+
+
+def finding_groups(rows, ids=None) -> list[dict]:
+    """Group findings by (level, check id, message kind), first-seen order.
+
+    Each group: ``{"key", "bucket", "severity", "category", "title", "items"}``.
+    A one-item group renders as a plain row; two or more get a collapsible
+    header with the group-level actions."""
+    groups: dict[str, dict] = {}
+    for f in rows:
+        b = _bucket(f)
+        kind = _kind_text(f.message, ids)
+        key = hashlib.sha1(f"{b}|{f.category}|{kind}".encode("utf-8")).hexdigest()[:12]
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"key": key, "bucket": b, "severity": f.severity,
+                               "category": f.category, "title": kind, "items": []}
+        g["items"].append(f)
+    for g in groups.values():
+        kinds: dict[str, dict] = {}
+        for f in g["items"]:
+            for fix in (f.fixes or []):
+                if isinstance(fix, dict) and fix.get("kind"):
+                    k = kinds.setdefault(fix["kind"], {"kind": fix["kind"],
+                                                       "group_label": fix.get("group_label") or fix.get("label"),
+                                                       "title": fix.get("title", ""), "items": []})
+                    k["items"].append({"action": fix["action"], "dot_path": fix.get("dot_path", ""),
+                                       "value": fix.get("value", ""), "pointer": fix.get("pointer", "")})
+                    for m in fix.get("moves") or ():
+                        if m not in k.setdefault("moves", []):
+                            k["moves"].append(m)
+                    if fix.get("warns"):
+                        if fix.get("port") and fix["port"] not in k.setdefault("ports", []):
+                            k["ports"].append(fix["port"])
+                        mv = k.get("moves") or []
+                        move_info = _moves_summary(mv)
+                        k["moves_named"] = move_info["named"]
+                        k["moves_more"] = move_info["more"]
+                        k["warns"] = ("changes the drive LO of " + ", ".join(k["ports"]) + " -- also moves: "
+                                      + move_info["plain"])
+        bulk, refused = [], []
+        for k in kinds.values():
+            # Several findings can name ONE target (a shared output). The same
+            # wanted value is one write; different values get no group action.
+            by_path: dict = {}
+            for it in k["items"]:
+                by_path.setdefault(it["dot_path"], set()).add(
+                    (it["action"], it["pointer"] if it["action"] == "set_pointer" else it["value"]))
+            clash = sorted(p for p, w in by_path.items() if len(w) > 1)
+            if clash:
+                refused.append({**k, "why": (f"{len(clash)} target(s) would get different values "
+                                             f"(e.g. {clash[0]}); use the per-item buttons")})
+                continue
+            seen, items = set(), []
+            for it in k["items"]:
+                if it["dot_path"] not in seen:
+                    seen.add(it["dot_path"])
+                    items.append(it)
+            k["items"] = items
+            if len(items) >= 2:
+                bulk.append(k)
+        g["bulk"] = bulk
+        g["bulk_refused"] = refused
+        g["ack_keys"] = [f.vack_key for f in g["items"] if f.vack_key and not f.acknowledged]
+    return list(groups.values())
+
+
