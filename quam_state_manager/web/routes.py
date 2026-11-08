@@ -52825,3 +52825,4 @@ def autofit_diagnose_rows():
 
 # Add a qubit or a pair from the chip diagram: routes registered on bp.
 from quam_state_manager.web import diagram_add_routes  # noqa: E402,F401
+from quam_state_manager.web import diagram_remove_routes  # noqa: E402,F401

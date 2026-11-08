@@ -1,0 +1,61 @@
+{# The answer of the env check (FB-11) and the generated config read back
+   (FB-12 ladder step 2). Every number here comes from generate_config()'s
+   output, never from state.json.
+   Port-test hook (FB-12, built elsewhere): each read-back row carries
+   data-port-test-element / data-port-test-port and an empty
+   [data-port-test-slot] where a "Test this port" link belongs. #}
+{% macro hz(v) %}{% if v is none %}—{% else %}{{ '%.6f' | format(v / 1e9) }} GHz{% endif %}{% endmacro %}
+{% macro mhz(v) %}{% if v is none %}—{% else %}{{ '%.3f' | format(v / 1e6) }} MHz{% endif %}{% endmacro %}
+{% macro port(p, io='out') %}{% if p %}{{ p[0] }} slot {{ p[1] }} {{ io }} {{ p[2] }}{% else %}—{% endif %}{% endmacro %}
+{% if v.ok %}
+<div class="ui-callout ui-callout--note" data-cm-check-ok>
+  <p class="ui-callout-title">Loads in {{ v.env }}: Quam.load and generate_config passed on a temporary copy ({{ v.seconds }} s).</p>
+  {% if removing %}
+  <p class="ui-callout-text">{% if v.left %}<span class="ui-badge ui-badge--warn">check</span> the generated config still holds {{ v.left | join(', ') }}.{% else %}The generated config holds no element of {{ plan.summary.qubits | join(', ') or plan.summary.name }} any more.{% endif %}</p>
+  {% endif %}
+</div>
+{% elif v.unavailable %}
+<div class="ui-callout ui-callout--warn" data-cm-check-fail>
+  <p class="ui-callout-title">Not checked: {{ v.error }}.</p>
+</div>
+{% else %}
+<div class="ui-callout ui-callout--danger" data-cm-check-fail>
+  <p class="ui-callout-title">The result does not load in {{ v.env }} ({{ v.seconds }} s). Nothing was staged. The env said:</p>
+  <pre class="cm-check-error">{{ v.error }}</pre>
+</div>
+{% endif %}
+{% if v.readback %}
+<div class="cm-readback" data-cm-readback>
+  <p class="ui-note">What the generated config tells the hardware (read back from generate_config, not from state.json). Power on a MW output = full-scale power + 20·log10(peak amplitude).</p>
+  {% for r in v.readback %}
+  <table class="ui-table cm-readback-table" data-port-test-element="{{ r.element }}" data-port-test-port="{{ r.port | join('/') }}">
+    <tr class="{{ 'cm-rb-bad' if r.problems }}">
+      <th class="ui-table-head" scope="row">{{ r.element }}</th>
+      <td class="ui-table-cell" colspan="3">
+        {% if r.kind == 'mw' %}output {{ port(r.port) }}{% if r.in_port %}, input {{ port(r.in_port, 'in') }}{% endif %} · LO {{ hz(r.lo) }} · IF {{ mhz(r.if_) }} · RF {{ hz(r.rf) }} · full-scale {{ r.fsp }} dBm{% if r.template_fsp is defined and r.template_fsp != r.fsp %} <span class="ui-badge ui-badge--warn">template port {{ r.template_fsp }} dBm</span>{% endif %}
+        {% elif r.kind == 'lf' %}LF output {{ port(r.port) }}
+        {% else %}port not read (not an MW-FEM or LF-FEM element){% endif %}
+        {% if r.shift_db is defined %}<div class="cm-rb-shift"><span class="ui-badge ui-badge--warn">every operation plays {{ '%+.1f' | format(r.shift_db) }} dB vs {{ r.template_element }}</span> the amplitudes were copied from the template, but this port's full-scale power is {{ r.fsp }} dBm and the template's is {{ r.template_fsp }} dBm. To play the template's power, scale the amplitudes by {{ '%.4g' | format(r.shift_factor) }} (a suggestion: you decide).</div>{% endif %}
+        {% for p in r.problems %}<span class="ui-badge ui-badge--danger">{{ p }}</span>{% endfor %}
+        <span class="cm-port-test-slot" data-port-test-slot></span>
+      </td>
+    </tr>
+    {% for o in r.ops %}
+    <tr class="{{ 'cm-rb-bad' if o.factor is defined or r.shift_db is defined }}">
+      <td class="ui-table-cell ui-table-muted">{{ o.op }}</td>
+      <td class="ui-table-cell">{% if o.amp is none %}—{% else %}peak {{ '%.4g' | format(o.amp) }}{% if r.kind == 'lf' %} V{% endif %}{% endif %}</td>
+      <td class="ui-table-cell">{% if o.dbm is not none %}{{ '%.1f' | format(o.dbm) }} dBm{% endif %}{% if o.template_dbm is defined and o.template_dbm is not none %} <span class="ui-table-muted">(template {{ '%.1f' | format(o.template_dbm) }} dBm)</span>{% endif %}</td>
+      <td class="ui-table-cell">{% if o.factor is defined %}<span class="ui-badge ui-badge--warn">plays {{ '%+.1f' | format(o.dbm - o.template_dbm) }} dB vs the template</span> to match it, scale the amplitude by {{ '%.4g' | format(o.factor) }} (a suggestion: you decide){% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endfor %}
+</div>
+{% endif %}
+<div class="ui-actions">
+  {% if v.ok %}
+  <button type="button" class="btn-sm" data-cm-add-stage>{{ 'Remove from the working copy' if removing else 'Add to the working copy' }}</button>
+  {% else %}
+  <button type="button" class="btn-sm outline secondary" data-cm-add-stage data-override="1">{{ 'Remove anyway' if removing else 'Add anyway' }} ({{ 'not checked' if v.unavailable else 'the env refused it' }})</button>
+  {% endif %}
+</div>

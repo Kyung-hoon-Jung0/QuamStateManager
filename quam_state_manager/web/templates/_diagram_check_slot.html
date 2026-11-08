@@ -1,0 +1,8 @@
+{# The env check of an add / remove (FB-11): loads the RESULT in the chip's env
+   on a temporary copy as soon as the review lands; the stage button arrives
+   with a passing answer (_diagram_check.html). check_form = the form whose
+   fields describe the plan. #}
+<div class="cm-check" data-cm-check
+     hx-post="/diagram-add/check" hx-include="{{ check_form }}" hx-trigger="load" hx-swap="innerHTML">
+  <p class="ui-note cm-check-busy" data-cm-checking>Checking in {{ env or "the chip's env" }}… loading the result on a temporary copy (Quam.load + generate_config). This takes about ten seconds; nothing is staged until it passes.</p>
+</div>

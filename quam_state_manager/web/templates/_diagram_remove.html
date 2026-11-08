@@ -1,0 +1,57 @@
+{# Remove a qubit or a pair (core/diagram_remove.py), opened from the entity's
+   inspector. Every dependent is named before anything is staged; the rack
+   lights the ports the removal frees. Staging writes the working copy only,
+   in one change group (the tray, Review / Apply and one Ctrl+Z hold it). #}
+<div class="ui-item cm-rm-box" id="cm-rm-box" data-cm-box data-kind="{{ kind }}">
+  <div class="ui-item-head">
+    <span class="ui-badge ui-badge--danger">Remove {{ kind }}</span>
+    <span class="ui-item-title">{{ ent }}</span>
+    <span class="ui-actions"><button type="button" class="btn-sm outline secondary" data-cm-rm-cancel>Cancel</button></span>
+  </div>
+  {% if plan.error and not plan.deletes %}
+  <p class="ui-callout ui-callout--warn">{{ plan.error }}</p>
+  {% else %}
+  {% set s = plan.summary %}
+  {% if plan.blockers %}
+  <div class="ui-callout ui-callout--danger" data-cm-rm-blocked>
+    <p class="ui-callout-title">{{ ent }} cannot be removed here: {{ plan.blockers | length }} value{{ 's' if plan.blockers | length != 1 }} elsewhere would point at something that no longer exists.</p>
+    <ul>{% for b in plan.blockers[:12] %}<li><span class="ui-path">{{ b.path }}</span> → {{ b.pointer }}</li>{% endfor %}</ul>
+    <p class="ui-callout-text">Change or delete those values first (Json Tree), then remove {{ ent }}.</p>
+  </div>
+  {% endif %}
+  <div class="cm-rack-wrap">
+    <div class="cm-rack-legend ui-note" data-cm-rack-legend>{% if s.freed %}<span class="cm-lg cm-lg-freed"></span> freed by this removal{% else %}This removal frees no port.{% endif %}</div>
+    <div id="cm-rm-rack" class="cm-rack" data-cm-rack data-light='{{ s.freed | tojson }}'></div>
+  </div>
+  <table class="ui-table cm-rm-deps" data-cm-rm-deps>
+    {% if kind == 'qubit' %}
+    <tr><th class="ui-table-head" scope="row">Pairs removed with it</th>
+        <td class="ui-table-cell">{% if s.pairs_with %}{% for p in s.pairs_with %}<span class="ui-chip">{{ p }}</span> {% endfor %}<span class="ui-table-muted">a pair cannot exist without both its qubits</span>{% else %}none{% endif %}</td></tr>
+    {% endif %}
+    <tr><th class="ui-table-head" scope="row">Operations on other qubits</th>
+        <td class="ui-table-cell">{% if s.member_ops %}{{ s.member_ops | length }} that play only {{ 'its gates' if kind == 'qubit' else 'this pair' }}<details class="ui-disclosure"><summary class="ui-disclosure-summary">list</summary><div class="ui-disclosure-body">{% for p in s.member_ops %}<div class="ui-path">{{ p }}</div>{% endfor %}</div></details>{% else %}none{% endif %}</td></tr>
+    {% if s.keyed %}
+    <tr><th class="ui-table-head" scope="row">Entries naming it</th>
+        <td class="ui-table-cell">{{ s.keyed | length }} (e.g. spectator tables)<details class="ui-disclosure"><summary class="ui-disclosure-summary">list</summary><div class="ui-disclosure-body">{% for p in s.keyed %}<div class="ui-path">{{ p }}</div>{% endfor %}</div></details></td></tr>
+    {% endif %}
+    <tr><th class="ui-table-head" scope="row">Name lists shortened</th>
+        <td class="ui-table-cell">{% for p in s.lists %}<span class="ui-path">{{ p }}</span> {% else %}none{% endfor %}</td></tr>
+    <tr><th class="ui-table-head" scope="row">Wiring lines</th>
+        <td class="ui-table-cell">{% for p in s.wiring %}<span class="ui-path">{{ p }}</span> {% else %}none{% endfor %}</td></tr>
+    <tr><th class="ui-table-head" scope="row">Ports it frees</th>
+        <td class="ui-table-cell" data-cm-rm-freed>{% for f in s.freed %}<span class="ui-chip cm-freed-port" data-port-test-port="{{ f.con }}/{{ f.fem }}/{{ f.port }}">{{ f.label }}</span> {% else %}none (every port it used is shared with something that stays){% endfor %}{% if s.freed %}<span class="ui-table-muted"> lit on the rack below; the port settings (LO, band, full-scale power) are kept for the next user of the port</span>{% endif %}</td></tr>
+  </table>
+  {% if not plan.blockers %}
+  <form id="cm-rm-form" hx-post="/diagram-add/stage" hx-target="#cm-rm-review" hx-swap="innerHTML">
+    <input type="hidden" name="op" value="remove">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="id" value="{{ ent }}">
+    <input type="hidden" name="expect_chip" value="{{ expect_chip }}">
+    <input type="hidden" name="dry" value="1">
+    {% if auto_push %}<p class="ui-note" data-cm-add-autosync>Auto-Sync is on: staging this writes it to the chip at once.</p>{% endif %}
+    <div class="ui-actions"><button type="submit" class="btn-sm">Review the removal</button></div>
+  </form>
+  <div id="cm-rm-review" data-cm-review></div>
+  {% endif %}
+  {% endif %}
+</div>
