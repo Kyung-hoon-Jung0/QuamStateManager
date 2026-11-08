@@ -21,6 +21,9 @@
     --ui-find-replace-width: 24ch;
     --ui-find-slide: -.5rem;
     --ui-find-duration: 150;
+    --ui-jedit-rail-width: 6rem;
+    --ui-jedit-list-width: 19rem;
+    --ui-jedit-list-height: 9rem;
     --ui-tree-value-min: 10ch;
     --ui-tree-value-pad: .15em .35em;
     /* text */
@@ -607,6 +610,27 @@
 .ui-jedit-host .cm-search label { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-xs); }
 .ui-jedit-host .cm-search label input { padding: 0; }
 .ui-jedit-host .cm-search br { display: none; }
+.ui-jedit-body { display: flex; flex-direction: row; align-items: stretch; gap: var(--ui-gap-1); min-height: 0; }
+.ui-jedit-body > .ui-jedit-host { flex: 1 1 auto; min-width: 0; }
+.ui-jedit-rail { position: relative; flex: 0 0 var(--ui-jedit-rail-width); display: flex; flex-direction: column; gap: var(--ui-gap-1); min-height: 0; font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+.ui-jedit-rail-expanded { flex-basis: var(--ui-jedit-list-width); }
+.ui-jedit-rail-group { font-weight: var(--ui-fw); color: var(--ui-text); }
+.ui-jedit-rail-head { display: flex; flex-direction: column; align-items: stretch; gap: var(--ui-gap-1); }
+.ui-jedit-rail-count { font-family: var(--ui-font-mono); text-align: center; color: var(--ui-text); white-space: nowrap; }
+.ui-jedit-rail-listbtn { width: 100%; margin: 0; }
+.ui-jedit-rail-listbtn-on { border-color: var(--ui-accent); color: var(--ui-accent); background: var(--ui-accent-bg); }
+.ui-jedit-rail-track { width: var(--ui-jedit-rail-width); align-self: flex-end; box-sizing: border-box; position: relative; flex: 1 1 auto; min-height: var(--ui-icon-btn); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-sm); background: var(--ui-surface-2); overflow: hidden; }
+.ui-jedit-rail-viewport { position: absolute; left: 0; right: 0; background: var(--ui-accent-bg); border: var(--ui-bw) solid var(--ui-accent); border-radius: var(--ui-r-sm); opacity: 0.35; pointer-events: none; }
+.ui-jedit-rail-marks { position: absolute; inset: 0; }
+.ui-jedit-rail-mark { position: absolute; left: 20%; right: 20%; width: 60%; min-height: 0; height: var(--ui-bw-tab); margin: 0; transform: translateY(-50%); line-height: 0; padding: 0; border: none; border-radius: var(--ui-r-sm); background: var(--ui-warn-text); cursor: pointer; }
+.ui-jedit-rail-mark-cur { z-index: 1; background: var(--ui-accent); box-shadow: var(--ui-ring); }
+.ui-jedit-rail-list { max-height: var(--ui-jedit-list-height); overflow-y: auto; display: none; flex-direction: column; gap: var(--ui-gap-1); }
+.ui-jedit-rail-list-on { display: flex; }
+.ui-jedit-rail-list-row { flex: 0 0 auto; width: 100%; margin: 0; text-align: left; font-family: var(--ui-font-mono); font-size: var(--ui-fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-jedit-rail-list-more { color: var(--ui-text-2); text-align: center; padding: var(--ui-gap-1); }
+.ui-jedit-rail-tooltip { display: none; position: absolute; right: 100%; z-index: 3; width: max-content; max-width: var(--ui-jedit-list-width); padding: var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-sm); background: var(--ui-surface-1); color: var(--ui-text); font-family: var(--ui-font-mono); overflow-wrap: anywhere; pointer-events: none; box-shadow: var(--ui-shadow); }
+.ui-jedit-rail-tooltip-on { display: block; }
+
 
 /* Datasets (DS-1/DS-2, stress walk 2026-11-03). Plot-click popup: a path breaks at
    its dot joints, a value keeps tabular digits and its unit, and a narrow popup
