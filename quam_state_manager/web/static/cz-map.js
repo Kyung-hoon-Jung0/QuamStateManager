@@ -472,24 +472,70 @@
         });
         var count = root.querySelector('#czp-map-count');
         if (count) count.textContent = (ids.length - state.hidden.size) + ' of ' + ids.length + ' pairs shown';
-        var list = root.querySelector('#czp-map-pairs'), signature = key + '|' + ids.join('|');
-        if (list) {
-            if (list._czSignature !== signature) {
-                list.replaceChildren();
-                ids.forEach(function (id) {
-                    var label = document.createElement('label'), input = document.createElement('input');
-                    input.type = 'checkbox'; input.value = id;
-                    label.className = 'ui-check'; label.append(input, document.createTextNode(id)); list.append(label, ' ');
-                });
-                list._czSignature = signature;
-            }
-            list.onchange = function (ev) {
-                if (ids.indexOf(ev.target.value) < 0) return;
-                change(ev.target.value, ev.target.checked); save();
-            };
-            list.querySelectorAll('input').forEach(function (input) { input.checked = !state.hidden.has(input.value); });
-        }
+        root._czPairIds = ids;
+        bindMiniMap(root);
+        syncMiniMap(root);
         return state.hidden;
+    }
+
+    /* The small chip map (the shared component drawing, #component-map) is the pair control:
+       a click, Enter or Space on a pair edge hides or shows that pair in the frequency
+       columns. Its edges become buttons whose pressed state is "shown"; a hidden pair's edge
+       is dimmed with the drawing's own cm-off class. The frequency-ordered drawing inside the
+       Plotly map selects a pair instead (czp:open) and never toggles it. */
+    function miniEdges(root) {
+        var mini = root.querySelector('#component-map');
+        return mini ? Array.prototype.slice.call(mini.querySelectorAll('[data-cm^="p:"]')) : [];
+    }
+
+    function syncMiniMap(root) {
+        var ids = root._czPairIds || [], vis = root._czVisibility;
+        var hidden = vis ? vis.hidden : new Set();
+        miniEdges(root).forEach(function (el) {
+            var id = el.getAttribute('data-cm').slice(2);
+            if (el._czBaseOff == null) el._czBaseOff = el.classList.contains('cm-off');
+            if (ids.indexOf(id) < 0) {
+                el.removeAttribute('tabindex'); el.removeAttribute('role'); el.removeAttribute('aria-pressed');
+                el.classList.toggle('cm-off', el._czBaseOff);
+                return;
+            }
+            var off = hidden.has(id);
+            el.setAttribute('role', 'button');
+            el.setAttribute('tabindex', '0');
+            el.setAttribute('aria-pressed', off ? 'false' : 'true');
+            el.setAttribute('aria-label', id + (off ? ' hidden from the frequency map; press to show' : ' shown in the frequency map; press to hide'));
+            el.setAttribute('data-czp-hidden', off ? '1' : '0');
+            el.classList.toggle('cm-off', off || el._czBaseOff);
+        });
+    }
+
+    function bindMiniMap(root) {
+        var mini = root.querySelector('#component-map');
+        if (!mini || mini._czBound) return;
+        mini._czBound = true;
+        function edgeOf(ev) {
+            var el = ev.target && ev.target.closest && ev.target.closest('[data-cm^="p:"]');
+            return el && mini.contains(el) ? el : null;
+        }
+        function toggle(el) {
+            if (root._czTogglePair) root._czTogglePair(el.getAttribute('data-cm').slice(2));
+        }
+        mini.addEventListener('click', function (ev) { var el = edgeOf(ev); if (el) toggle(el); });
+        // The drawing's own detail card names the same action (data-cm-pick-hint).
+        mini.addEventListener('cm:pick', function (ev) {
+            var d = ev.detail || {};
+            if (d.kind === 'pair' && root._czTogglePair) root._czTogglePair(d.id);
+        });
+        mini.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'Enter' && ev.key !== ' ' && ev.key !== 'Spacebar') return;
+            var el = edgeOf(ev);
+            if (!el) return;
+            ev.preventDefault(); toggle(el);
+        });
+        // The drawing arrives asynchronously (/api/topology): mark its edges when it lands.
+        if (window.MutationObserver) {
+            new MutationObserver(function () { syncMiniMap(root); }).observe(mini, { childList: true, subtree: true });
+        }
     }
 
     function render(root, m) {
@@ -527,11 +573,12 @@
         H += columnHeight / 2;
         plotH = H - MARGIN.t - MARGIN.b;
         el.style.height = H + 'px';
-        var dd = drawing ? drawPx / plotH : 0, drawLo = 1 - dd, colHi = columnHeight / plotH;
+        // The chip drawing sits BELOW the columns (its original place); the columns keep twice the budget.
+        var dd = drawing ? drawPx / plotH : 0, colLo = drawing ? (drawPx + GAP_PX) / plotH : 0;
         var colPx = plotW / n;
         var y2r = [-0.6, lay.ymax + 0.6];
         var rowPx = drawPx / (y2r[1] - y2r[0]);
-        function paperY(v) { return drawLo + (v - y2r[0]) / (y2r[1] - y2r[0]) * dd; }
+        function paperY(v) { return (v - y2r[0]) / (y2r[1] - y2r[0]) * dd; }
         // fix3 P1-1: when the map draws another operation of the selected pair than the one
         // selected below (its name is not on the picker, or the reader picked another), the
         // outline's hover and the key name both
@@ -557,7 +604,7 @@
 
         // ---- columns: separators, safe strips, loss, defects ----
         qs.forEach(function (q, i) {
-            if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: 0, y1: colHi,
+            if (i) shapes.push({ type: 'line', xref: 'x', x0: i, x1: i, yref: 'paper', y0: colLo, y1: 1,
                                  line: { color: muted, width: 0.6 }, layer: 'below' });
             (q.safe || []).forEach(function (b) {
                 shapes.push({ type: 'rect', xref: 'x', x0: i + 0.93, x1: i + 0.98, yref: 'y', y0: ghz(b.lo_hz), y1: ghz(b.hi_hz),
@@ -845,7 +892,7 @@
             qs.forEach(function (q, i) {
                 var nd = lay.node[q.path];
                 if (!nd) return;
-                shapes.push({ type: 'line', xref: 'x', x0: nd.x, x1: i + 0.5, yref: 'paper', y0: paperY(nd.y), y1: colHi,
+                shapes.push({ type: 'line', xref: 'x', x0: nd.x, x1: i + 0.5, yref: 'paper', y0: paperY(nd.y), y1: colLo,
                               line: { color: muted, width: 0.8 }, layer: 'below', name: 'leader' });
             });
             var px = function (nd) { return { X: nd.x * colPx, Y: (nd.y - y2r[0]) * rowPx }; };
@@ -860,13 +907,6 @@
                 shapes.push({ type: 'line', xref: 'x', yref: 'y2', x0: a.x, y0: a.y, x1: b.x, y1: b.y, layer: 'below', name: 'bar:' + pair,
                               opacity: off ? 0.35 : 1,
                               line: computed && !off ? { color: color, width: 6 } : { color: muted, width: 1.5, dash: off ? 'dash' : 'dot' } });
-                // Samples along the whole edge make Plotly's point hit testing reachable anywhere.
-                var hitX = [], hitY = [], steps = Math.max(2, Math.ceil(Math.hypot((a.x - b.x) * colPx, (a.y - b.y) * rowPx) / 6));
-                for (var h = 0; h <= steps; h++) { hitX.push(a.x + (b.x - a.x) * h / steps); hitY.push(a.y + (b.y - a.y) * h / steps); }
-                traces.push({ type: 'scatter', mode: 'lines+markers', x: hitX, y: hitY, yaxis: 'y2',
-                    line: { color: CLEAR, width: 14 }, marker: { color: CLEAR, size: 14 },
-                    customdata: hitX.map(function () { return ['', pair]; }), text: hitX.map(function () { return esc(pair) + (off ? ' — hidden; click to show' : ' — shown; click to hide'); }),
-                    hovertemplate: '%{text}<extra></extra>', showlegend: false, meta: 'pair-hit' });
                 if (!off) barList.push({ pair: pair, a: px(a), b: px(b), half: computed ? BAR_HALF : 1 });
                 var gg = g(pair);
                 if (!off) { gg.barX = [a.x, b.x]; gg.barY = [a.y, b.y]; }
@@ -898,7 +938,7 @@
                 }
                 if (mismatch && pair === mismatch.pair) t += mmHover;
                 t += amplitudeHover(pair);
-                if (off) t = esc(pair) + ' — hidden; click to show';
+                if (off) t = esc(pair) + ' — hidden from the columns (the small chip map shows it again); click to open its operation';
                 barPts.x.push((a.x + b.x) / 2); barPts.y.push((a.y + b.y) / 2); barPts.t.push(t);
                 barPts.cd.push([op ? op.path : (refused[0] && refused[0].path) || '', pair]);
             });
@@ -906,7 +946,7 @@
             // fix3 P1-3: each label where it hides no other bar, node or label (see placeLabels);
             // its frame carries its bar's colour, so a label always names its own bar
             var spots = placeLabels(items, barList, placed.map(function (q) { return px(lay.node[q.path]); }),
-                                    { rowPx: rowPx, x0: 0, x1: plotW, y0: -GAP_PX + 18, y1: drawPx });
+                                    { rowPx: rowPx, x0: 0, x1: plotW, y0: 0, y1: drawPx + GAP_PX - 2 });
             items.forEach(function (it) {
                 var sp = spots[it.pair];
                 if (!sp) { hidden++; return; }
@@ -923,10 +963,10 @@
                           marker: { size: 28, color: card, line: { color: ink, width: 1.2 } }, hovertemplate: '%{hovertext}<extra></extra>', meta: 'nodes' });
             // user-view sweep: the bar labels are bare numbers (a unit on each one would push
             // labels to hover only), so the drawing names their unit once
-            if (items.length) annotations.push({ xref: 'paper', yref: 'paper', x: 1, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false,
+            if (items.length) annotations.push({ xref: 'paper', yref: 'paper', x: 1, y: dd, xanchor: 'right', yanchor: 'top', showarrow: false,
                                                  text: 'bar labels: GHz', font: { size: SMALL_FONT, color: muted }, name: 'bar-unit' });
             if (lay.mode === 'logical') {
-                annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'left', yanchor: 'bottom', showarrow: false,
+                annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: dd, xanchor: 'left', yanchor: 'top', showarrow: false,
                                    text: esc(lay.note), font: { size: SMALL_FONT, color: muted }, name: 'logical-note' });
             }
         }
@@ -939,7 +979,7 @@
                       opacity: 0.45, line: { color: CLEAR, width: 14 }, meta: 'highlight-bar' });
         var lossDrawn = !!(G.fillX.length || O.lineX.length);
         if (lossDrawn || bars.x.length) {
-            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: colHi, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
+            annotations.push({ xref: 'paper', yref: 'paper', x: 0, y: 1, xanchor: 'right', yanchor: 'bottom', showarrow: false, yshift: 8,
                                text: 'loss 0–' + Math.round(100 * scale) + ' %', font: { size: SMALL_FONT, color: muted }, name: 'scale' });
         }
 
@@ -1030,10 +1070,10 @@
                      ticktext: qs.map(function (q) { return esc(q.name); }),
                      range: [0, n], showgrid: false, zeroline: false, fixedrange: true, side: drawing ? 'top' : 'bottom',
                      anchor: 'y', tickfont: { size: SMALL_FONT } },
-            yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [0, colHi] }, yr ? { range: yr, autorange: false } : {}),
+            yaxis: Object.assign({ title: { text: 'frequency (GHz)' }, domain: [colLo, 1] }, yr ? { range: yr, autorange: false } : {}),
             shapes: shapes, annotations: annotations
         });
-        if (drawing) L.yaxis2 = { domain: [drawLo, 1], range: y2r, visible: false, fixedrange: true, anchor: 'x', showgrid: false, zeroline: false };
+        if (drawing) L.yaxis2 = { domain: [0, dd], range: y2r, visible: false, fixedrange: true, anchor: 'x', showgrid: false, zeroline: false };
         el.setAttribute('data-segments', String(m.segments.length));
         el.setAttribute('data-layout', lay.mode);
         el.setAttribute('data-drawn-op', shown || m.op || '');
@@ -1056,9 +1096,6 @@
             el._czpMapClick = el._ev || el.on;
             el.on('plotly_click', function (ev) {
                 var pt = ev && ev.points && ev.points[0], cd = pt && pt.customdata;
-                if (Array.isArray(cd) && pt.data && (pt.data.meta === 'pair-hit' || pt.data.meta === 'bars')) {
-                    root._czTogglePair(cd[1]); return;
-                }
                 var path = Array.isArray(cd) ? cd[0] : cd;
                 if (typeof path === 'string' && path.indexOf('qubit_pairs.') === 0) {
                     root.dispatchEvent(new CustomEvent('czp:open', { detail: { op: path } }));

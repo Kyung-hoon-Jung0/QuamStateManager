@@ -13,6 +13,8 @@
  */
 
 :root {
+    --ui-cz-minimap-width: 16rem;
+    --ui-cz-minimap-max: 25%;
     --ui-cz-card-columns: minmax(0, 1fr) minmax(0, 1fr);
     --ui-coupler-field-flex: 1fr;
     --ui-coupler-field-min: 15rem;
@@ -1060,4 +1062,12 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .cm-lit-ring[data-role="xy"] { stroke: var(--role-xy-color); }
 .cm-lit-ring[data-role="z"] { stroke: var(--role-z-color); }
 .cm-lit-ring[data-role="coupler"] { stroke: var(--role-coupler-color); }
+
+/* CZ pair visibility stays next to the frequency columns in the first view. */
+.czp-map-view { display: flex; align-items: flex-start; gap: var(--ui-gap-3); }
+.czp-map-view > .cmap { flex: 0 0 auto; width: var(--ui-cz-minimap-width); max-width: var(--ui-cz-minimap-max); }
+.czp-map-view > .czp-map { flex: 1; min-width: 0; }
+.czp-map-view .cm-svg { max-width: 100%; height: auto; }
+.czp-map-view [role="button"]:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); }
+.czp-root .czp-lede { font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
 .cm-port-list { max-height: 8.5rem; }
