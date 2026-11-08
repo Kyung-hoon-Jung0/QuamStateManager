@@ -107,10 +107,35 @@ def _waveform_peak(config: dict, name: Optional[str]) -> Optional[float]:
         return None
 
 
-def pulse_peak(config: dict, pulse_name: str) -> Optional[float]:
-    """Peak |amplitude| of a pulse (the larger of I and Q, or the single wf)."""
+def _waveform_samples(config: dict, name: Optional[str]) -> Optional[list]:
+    wf = (config.get("waveforms") or {}).get(name) if name else None
+    if not isinstance(wf, dict):
+        return None
+    try:
+        if wf.get("type") == "constant":
+            return [float(wf.get("sample") or 0.0)]
+        return [float(x) for x in (wf.get("samples") or [])]
+    except (TypeError, ValueError):
+        return None
+
+
+def pulse_peak(config: dict, pulse_name: str, complex_iq: bool = False) -> Optional[float]:
+    """Peak |amplitude| of a pulse: the larger of I and Q (an IQ mixer's two
+    DACs, or the single wf), or with ``complex_iq`` (an MW-FEM output, whose
+    amplitude is |I + jQ|) the peak magnitude of I + jQ."""
     p = (config.get("pulses") or {}).get(pulse_name) or {}
     wfs = p.get("waveforms") or {}
+    if complex_iq and "I" in wfs and "Q" in wfs:
+        i, q = _waveform_samples(config, wfs["I"]), _waveform_samples(config, wfs["Q"])
+        if i is None or q is None:
+            return None
+        if not i or not q:
+            return max((abs(x) for x in i + q), default=0.0)
+        if len(i) == 1 or len(q) == 1 or len(i) == len(q):
+            n = max(len(i), len(q))
+            return max(math.hypot(i[k if len(i) > 1 else 0], q[k if len(q) > 1 else 0]) for k in range(n))
+        # Unequal lengths: the bound that can never be exceeded.
+        return math.hypot(max(abs(x) for x in i), max(abs(x) for x in q))
     peaks = [_waveform_peak(config, w) for w in wfs.values()]
     peaks = [x for x in peaks if x is not None]
     return max(peaks) if peaks else None
@@ -136,7 +161,7 @@ def element_info(config: dict, element: str) -> dict:
     ops = []
     for op, pulse in sorted((el.get("operations") or {}).items()):
         p = (config.get("pulses") or {}).get(pulse) or {}
-        peak = pulse_peak(config, pulse)
+        peak = pulse_peak(config, pulse, complex_iq=kind == "mw")
         ops.append({"name": op, "pulse": pulse, "length": p.get("length"),
                     "measurement": p.get("operation") == "measurement",
                     "peak": peak, "dbm": dbm(fsp, peak) if kind == "mw" else None})
@@ -226,7 +251,9 @@ def build(config: dict, element: str, test: str, basis: str, *,
         name = element
         pulses, wfs, iws = {}, {}, {}
         cfg: dict[str, Any] = {"controllers": {}}
-        for k in ("mixers", "oscillators", "octaves"):
+        # Never "octaves": it configures every RF output of the Octave (other
+        # qubits' lines included), and no tested element routes through one.
+        for k in ("mixers", "oscillators"):
             if config.get(k):
                 cfg[k] = copy.deepcopy(config[k])
         notes.append(f"Chip basis: the element entry of {element} is the chip's generate_config() "
@@ -311,7 +338,7 @@ def build(config: dict, element: str, test: str, basis: str, *,
         for w in (p.get("integration_weights") or {}).values():
             if w in (config.get("integration_weights") or {}):
                 iws.setdefault(w, copy.deepcopy(config["integration_weights"][w]))
-        peak0 = pulse_peak(config, src_pulse) or 0.0
+        peak0 = pulse_peak(config, src_pulse, complex_iq=info["kind"] == "mw") or 0.0
         if peak0 > available:
             scale = available / peak0
             notes.append(f"The operation's peak {peak0:.4g} is above the cap {amp_cap:g}: it plays "

@@ -607,3 +607,29 @@ def test_the_runner_answers_while_its_stdin_stays_open(tmp_path):
     finally:
         p.kill()
         p.wait(30)
+
+
+def _mw_cfg(i_samples, q_samples):
+    return {"controllers": {"con1": {"fems": {"1": {"type": "MW", "analog_outputs": {"1": {
+                "band": 2, "full_scale_power_dbm": -11, "upconverter_frequency": 5e9}}}}}},
+            "elements": {"q": {"MWInput": {"port": ["con1", 1, 1]}, "intermediate_frequency": 1e8,
+                               "operations": {"x180": "p"}}},
+            "pulses": {"p": {"operation": "control", "length": 40, "waveforms": {"I": "wi", "Q": "wq"}}},
+            "waveforms": {"wi": {"type": "arbitrary", "samples": i_samples},
+                          "wq": {"type": "arbitrary", "samples": q_samples}},
+            "digital_waveforms": {}}
+
+
+def test_an_mw_output_is_capped_by_the_magnitude_of_i_plus_jq():
+    """An MW-FEM plays |I + jQ|: I = Q = 0.45 is 0.636, above a 0.5 cap."""
+    _cfg, plan = pt.build(_mw_cfg([0.45] * 40, [0.45] * 40), "q", "pulse", "chip", amp_cap=0.5)
+    assert plan["expected_peak"] == pytest.approx(0.5)
+    assert 0.45 * 2 ** 0.5 * plan["amp_scale"] <= 0.5 + 1e-9
+
+
+def test_the_chip_basis_never_carries_the_octave_section():
+    cfg = _mw_cfg([0.1] * 40, [0.0] * 40)
+    cfg["octaves"] = {"oct1": {"connectivity": "con1",
+                               "RF_outputs": {"2": {"LO_frequency": 6e9, "output_mode": "always_on"}}}}
+    tcfg, _plan = pt.build(cfg, "q", "cw", "chip")
+    assert "octaves" not in tcfg
