@@ -9,6 +9,9 @@ from tests.state_model.repros._rig import Chip
 _NON_STAGING_POSTS = {
     # merge-budget: the client latch timed out; this answers 409 and stages nothing.
     'main.auto_sync_retry',
+    # FB-10/FB-12 (1.8.0): the add/remove panel's Review step loads the planned result in the
+    # chip's env and renders the verdict; only /diagram-add/stage (in the mutator lock) writes.
+    'main.diagram_add_check',
     # v1.7.0 walk: the agent ends its own plan / a person lifts the human_active wait; neither stages state.
     'agent.plan_end',
     'agent.session_release_human',
