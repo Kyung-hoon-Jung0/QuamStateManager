@@ -11559,24 +11559,24 @@ window.clearDetailPanelSearch = function(btnEl) {
             var keyEl = document.createElement("span");
             keyEl.className = "tree-key";
             keyEl.textContent = key;
-            keyEl.title = "Click to copy path \u00b7 double-click to copy this value (paste into an empty '" + key + "')";
-            // Single click copies the PATH (debounced so a double-click doesn't also
-            // fire it); double-click copies this node's VALUE into the paste buffer so
-            // it can be dropped into an empty same-key field elsewhere \u2014 the easiest
-            // way to fill a list / matrix / multi-value field (see _treeCopyKey).
+            keyEl.title = "Click to edit JSON; double-click to copy this value";
             (function(el, p, nd) {
                 var t = null;
-                el.onclick = function() {
+                // Keep key presses from mounting the row scalar editor.
+                el.onmousedown = function(e) { e.preventDefault(); };
+                el.onclick = function(e) {
+                    e.stopPropagation();
                     if (t) return;
                     t = setTimeout(function() {
                         t = null;
-                        navigator.clipboard.writeText(p);
-                        el.classList.add("tree-copied");
-                        setTimeout(function() { el.classList.remove("tree-copied"); }, 800);
-                    }, 230);
+                        if (valueClick === "edit" && !isAbsent && !_policyReadOnly(p))
+                            _makeContainerEditable(nd, p, nd._value);
+                        else navigator.clipboard.writeText(p);
+                    }, 250);
                 };
                 el.ondblclick = function(e) {
-                    e.preventDefault(); if (t) { clearTimeout(t); t = null; }
+                    e.preventDefault(); e.stopPropagation();
+                    if (t) { clearTimeout(t); t = null; }
                     _treeCopyKey(nd);
                 };
             })(keyEl, path, node);
@@ -13220,7 +13220,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // unquoted still cancels, and does not put a no-op in the tray --
             // measured, /field/edit does not no-op an identical value (the
             // change count goes 9 -> 10), which is what this guard is for.
-            var meansTypeChange = false;
+            var meansTypeChange = unwrapped && !isStringKind;
             if (!unwrapped && isStringKind) {
                 try { meansTypeChange = typeof JSON.parse(newVal) !== "string"; }
                 catch (e) { /* not a JSON value -- ordinary text, no intent */ }
@@ -13228,7 +13228,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (newVal === editVal && !meansTypeChange) { cancel(); return Promise.resolve(); }
             // JT-13: a boolean leaf reads the coercer's words, so "1" on a
             // true is true -- it POSTed and staged a "True -> True" no-op.
-            if (valEl.classList.contains("tree-val-boolean")
+            if (!unwrapped && valEl.classList.contains("tree-val-boolean")
                     && _boolWord(newVal) === editVal) { cancel(); return Promise.resolve(); }
             // jsontree-r2-26: a number leaf reads its full-digit display
             // ("0.0000111", "5,000,000,000"), so the same number typed in
@@ -13239,7 +13239,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             // Python float round alike), and for an integral value neither
             // side spelled as a float ("7.0" / "4.5e9" over an int is a real
             // int->float change) nor past 2^53 (Python int is exact there).
-            if (valEl.classList.contains("tree-val-number") && !isStringKind) {
+            if (!unwrapped && valEl.classList.contains("tree-val-number") && !isStringKind) {
                 var _NUM = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
                 var _na = window.NumberInput.strip(newVal), _nb = window.NumberInput.strip(editVal);
                 if (_NUM.test(_na) && _NUM.test(_nb)) {
@@ -13256,6 +13256,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
+            body.append("tree_kind_change", "1");
             body.append("value", newVal);
             if (valEl.classList.contains("tree-val-pointer") && _isPointer(newVal))
                 body.append("pointer_mode", "relink");
@@ -13333,6 +13334,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 // JT-12: a re-point to a target that does not exist lands (by
                 // design, docs/190 F27) -- and is said here, not only by the
                 // global issues badge. Same idiom as delete's dangling toast.
+                if (data.type_change && window.showToast) window.showToast("type: " + data.type_change, "info");
                 if (data.warning && window.showToast) window.showToast(data.warning, "warning");
                 if (data.resolved_path && data.resolved_path !== dotPath) {
                     _paintTreeLeaf(ownerTree, data.resolved_path, data.stored);
@@ -13671,6 +13673,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
             var body = new URLSearchParams();
             body.append("dot_path", dotPath);
+            body.append("tree_kind_change", "1");
             body.append("value", txt);   // server re-parses (authoritative coercion)
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
             _smFetch("/field/edit", {
@@ -13686,7 +13689,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                     save.disabled = false; return;
                 }
                 close();
-                var fresh = _rebuildNode(node, parsed);
+                if (data.type_change && window.showToast) window.showToast("type: " + data.type_change, "info");
+                var fresh = _rebuildNode(node, data.stored_kind !== undefined ? data.stored : parsed);
                 if (fresh) {
                     var fr = fresh.querySelector(":scope > .tree-row");
                     if (fr) fr.classList.add("tree-row-pending");
@@ -13716,6 +13720,10 @@ window.clearDetailPanelSearch = function(btnEl) {
      * already holds is a value revert, not structural: returns false and the
      * caller paints. Returns true when it handled the entry. */
     function _treeStructuralRevert(dotPath, present, value) {
+        // An existing path is a value revert; the other file must not claim it.
+        if (present && ["explorer-tree-state", "explorer-tree-wiring"].some(function(id) {
+            return _treeModelHas(document.getElementById(id), dotPath);
+        })) return false;
         var handled = false;
         var pp = _parentPath(dotPath);
         var key = String(dotPath).slice(pp ? pp.length + 1 : 0);

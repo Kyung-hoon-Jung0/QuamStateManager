@@ -538,7 +538,7 @@
         S.save.disabled = true;
         say("Saving…");
         var body = {tab: S.tab, path: S.path, text: text, base_seq: S.seq,
-                    expect_chip: window.__chipToken || ""};
+                    expect_chip: window.__chipToken || "", tree_kind_change: true};
         if (rebase) { body.rebase = true; body.base_text = S.initial; body.open_token = S.token || ""; }
         return fetch("/tree/json-edit/save", {
             method: "POST", headers: {"Content-Type": "application/json"},
@@ -551,12 +551,15 @@
             var d = res.d || {};
             if (d.ok) {
                 var n = (d.results || []).length;
+                var before = JSON.parse(S.initial), after = JSON.parse(text);
+                function kind(v) { return v === null ? "null" : Array.isArray(v) ? "list" : typeof v === "object" ? "dict" : typeof v === "number" ? (Number.isInteger(v) ? "int" : "float") : typeof v; }
+                var typeNote = kind(before) !== kind(after) ? " \u00b7 type: " + kind(before) + " \u2192 " + kind(after) : "";
                 afterWrite(d);
                 close(true);
                 var warn = (d.warnings || []).map(function (w) { return w.path + " " + w.warning; });
                 if (window.showToast) window.showToast((n ? "Saved " + n + " change" + (n === 1 ? "" : "s")
                     + " in one undo step" : "Nothing changed")
-                    + (warn.length ? ". Warning: " + warn.join("; ") : ""), warn.length ? "warning" : "info");
+                    + typeNote + (warn.length ? ". Warning: " + warn.join("; ") : ""), warn.length ? "warning" : "info");
                 return d;
             }
             if (d.moved) {

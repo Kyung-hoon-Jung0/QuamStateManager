@@ -127,8 +127,9 @@ class Modifier:
                                exc_info=True)
                 expected = None
             if expected is not None and expected.enforced:
-                return policy.check(expected, new_value, path=dot_path,
-                                    old_value=old_value)
+                checked = policy.check(expected, new_value, path=dot_path,
+                                       old_value=old_value)
+                return checked if coerce else new_value
         return _type_coerce(old_value, new_value) if coerce else new_value
 
     # ------------------------------------------------------------------
