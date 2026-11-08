@@ -435,8 +435,8 @@ async function footerPins(only) {
           r21.layout.xaxis.ticktext.join(' ') === ORDER_21, 'by chip position: the grid sheared into one column per qubit (13 and 21 qubits pinned)');
     check([S5, S13, S21].every(S => S.mapEl.getAttribute('data-layout') === 'physical'), 'a complete grid is drawn as the chip itself');
     const leaders21 = named(r21, 'leader');
-    check(leaders21.length === 21 && leaders21.every(s => s.x0 === s.x1 && s.y1 > s.y0), 'in chip order every leader is vertical, from the node up to its column');
-    check(leaders21.every(s => s.yref === 'paper' && near(s.y1, r21.layout.yaxis.domain[0])), 'leaders end at the columns\' bottom edge');
+    check(leaders21.length === 21 && leaders21.every(s => s.x0 === s.x1 && s.y1 < s.y0), 'in chip order every leader is vertical, from the node down to its column');
+    check(leaders21.every(s => s.yref === 'paper' && near(s.y1, r21.layout.yaxis.domain[1])), 'leaders end at the columns\' top edge');
     const nodes21 = r21.traces.find(t => t.meta === 'nodes');
     const yOf = Object.fromEntries(nodes21.text.map((n, k) => [n, nodes21.y[k]]));
     check(yOf.qC2 === 0 && yOf.qD5 === 4 && yOf.qA1 === 4 && yOf.qC5 === 1, 'a node sits at its row rank: the chip\'s row 0 at the bottom of the drawing');
@@ -518,7 +518,7 @@ async function footerPins(only) {
     // v1.4.1 (A14 fix3 P1-3): "a short bar's label is lifted 12 px along its upward normal" -> placed where it
     // hides no other bar, node or label (the old lift put it ON the row above's bar); pinned by geometry below.
     // ---- fix3 P1-3: the drawing follows the rows; bar labels never hide another bar or a node ----
-    const drawnPx = r => r.layout.yaxis2.domain[1] * (r.layout.height - r.layout.margin.t - r.layout.margin.b);
+    const drawnPx = r => (r.layout.yaxis2.domain[1] - r.layout.yaxis2.domain[0]) * (r.layout.height - r.layout.margin.t - r.layout.margin.b);
     check(near(drawnPx(r21), 220, 0.5) && near(drawnPx(r13), Math.max(150, 44 * (r13.layout.yaxis2.range[1] - r13.layout.yaxis2.range[0] - 0.2)), 0.5) &&
           near(drawnPx(r5), 150, 0.5), 'P1-3: the drawing is 44 px per row of the chip (at least 150 px): 5 rows -> 220 px, the 5-qubit chain 150 px');
     // an independent check of the drawn geometry: every bar sampled each px, every node a disc, every
@@ -640,7 +640,7 @@ async function footerPins(only) {
             const x = p.x[i] * col, y = (p.y[i] - r.layout.yaxis.range[0]) * scale;
             return Object.assign(S21.w.CzMap.partnerBox(x, y, p.textposition[i], w, lines.length), {w});
         });
-        const height = (r.layout.height - r.layout.margin.t - r.layout.margin.b) * (1 - r.layout.yaxis.domain[0]);
+        const height = (r.layout.height - r.layout.margin.t - r.layout.margin.b) * (r.layout.yaxis.domain[1] - r.layout.yaxis.domain[0]);
         check(boxes.every((a, i) => a.y0 >= 0 && a.y1 <= height && a.w <= 0.76 * col && r.layout.xaxis.ticktext.every((name, j) => {
             const half = Math.max(10, S21.w.CzMap.partnerWidth(name) * 10 / 9 / 2) + 3;
             return !(a.x0 < (j + 0.5) * col + half + 1 && (j + 0.5) * col - half < a.x1 + 1 && a.y1 + 1 > height - 3);
@@ -687,7 +687,7 @@ async function footerPins(only) {
     }
     S5.d.documentElement.style.cssText = '';
     S5.d.documentElement.removeAttribute('data-theme'); await wait(40);
-    check(r21.traces.length <= 30, 'the 21-qubit map stays within 30 traces (' + r21.traces.length + ')');
+    check(r21.traces.length <= 30 + Object.keys(map21.pairs).length, 'the map adds at most one hit trace per pair (' + r21.traces.length + ')');
 
     // the selected operation stays outlined; hover (map or table row) lights a pair by restyle only
     check(named(r5, 'selected:q3-4').length === 3 && named(r5, 'selected:q3-4').some(s => s.yref === 'y2'),
@@ -803,16 +803,56 @@ async function footerPins(only) {
           'P2-6: a run judged by neither the history nor a chip name says so in its hover, the notes and the detail (and only that run)');
     SU.close();
 
-    // the drawing is inside the viewport at 1280x800: height = viewport - figure top - 40
+    // Drawing keeps its original budget; columns double and the page can scroll.
     const SV = await page({map: map5, loss: loss5, width: 920, innerHeight: 800, top: 260});
     const rv = SV.last(), H = rv.layout.height, plotH = H - rv.layout.margin.t - rv.layout.margin.b;
-    const bottom = 260 + H - rv.layout.margin.b;
-    check(H === 500 && bottom <= 800 && near(rv.layout.yaxis2.domain[1] * plotH, 150, 1e-6) && bottom - 150 > 260,
-          'at 1280x800 the 150 px chip drawing lies inside the viewport (bottom ' + bottom + ')');
+    const columnPx = r => (r.layout.yaxis.domain[1] - r.layout.yaxis.domain[0]) * (r.layout.height - r.layout.margin.t - r.layout.margin.b);
+    check(H === 766 && near(columnPx(rv), 532) && near(drawnPx(rv), 150),
+          'height: original 266 px columns double to 532 px; drawing stays 150 px');
     const nv = SV.renders.length;
     SV.w.innerHeight = 1100; SV.w.dispatchEvent(new SV.w.Event('resize')); await wait(250);
-    check(SV.last().layout.height === 640 && SV.renders.length === nv + 1 && SV.mapFetches() === 1,
-          'a taller window re-renders the map at the new height (clamped to 640), without a request');
+    check(SV.last().layout.height === 1046 && near(columnPx(SV.last()), 812) && SV.renders.length === nv + 1 && SV.mapFetches() === 1,
+          'a taller window doubles the original 406 px columns, without a request');
+
+    // ---- pair toggles: drawing on top, click an edge to hide its pair, persisted per chip+op ----
+    {
+        const ST = await page({map: map21, loss: loss21, width: 1400});
+        const r0 = ST.last(), ids = [...new Set(map21.segments.map(s => s.pair))];
+        check(r0.layout.yaxis2.domain[0] >= r0.layout.yaxis.domain[1] && near(r0.layout.yaxis2.domain[1], 1) && near(r0.layout.yaxis.domain[0], 0),
+              'toggle: the chip drawing sits above the frequency columns');
+        const P = 'qA2-qA1', segsOf = r => segments(r).filter(s => s.pair === P).length;
+        const mentions = r => (r.layout.annotations || []).concat(r.layout.shapes || []).filter(a => String(a.name || '').includes(P) && a.name !== 'bar:' + P).length
+                            + r.traces.filter(t => t.meta !== 'pair-hit' && t.meta !== 'bars' && (t.customdata || []).some(c => Array.isArray(c) && c[1] === P)).length;
+        const others0 = segments(r0).filter(s => s.pair !== P).length;
+        check(segsOf(r0) > 0 && mentions(r0) > 0, 'toggle: the pair is drawn before it is hidden');
+        const hit = r0.traces.find(t => t.meta === 'pair-hit' && t.customdata[0][1] === P);
+        check(hit && hit.line.width >= 14 && hit.x.length > 2, 'toggle: each edge carries a wide transparent hit trace sampled along its length');
+        ST.mapEl._ev.emit('plotly_click', {points: [{data: hit, customdata: ['', P]}]}); await wait(40);
+        const r1 = ST.last(), bar1 = named(r1, 'bar:' + P)[0];
+        check(segsOf(r1) === 0 && mentions(r1) === 0 && segments(r1).filter(s => s.pair !== P).length === others0,
+              'toggle: a click on the edge removes exactly that pair from the columns');
+        check(bar1 && bar1.line.dash === 'dash' && bar1.opacity < 1, 'toggle: a hidden pair\'s edge is drawn dimmed and dashed');
+        const bt = r1.traces.find(t => t.meta === 'bars'), bi = bt ? bt.customdata.findIndex(c => c[1] === P) : -1;
+        check(bi >= 0 && !/GHz/.test(bt.text[bi]) && /hidden/.test(bt.text[bi]), 'toggle: a hidden pair\'s edge hover names no frequency');
+        const key = 'quam_czmap_hidden_v1:' + (ST.w.__chipToken || '') + ':' + (map21.op || '');
+        check(JSON.stringify(JSON.parse(ST.w.localStorage.getItem(key))) === JSON.stringify([P]), 'toggle: the hidden set is stored under ' + key);
+        const count = () => ST.d.getElementById('czp-map-count').textContent;
+        check(count() === (ids.length - 1) + ' of ' + ids.length + ' pairs shown', 'toggle: the count line says ' + count());
+        const box = [...ST.d.querySelectorAll('#czp-map-pairs input')].find(i => i.value === P);
+        check(box && !box.checked && ST.d.querySelectorAll('#czp-map-pairs input').length === ids.length, 'toggle: the keyboard list mirrors the hidden pair');
+        box.checked = true; box.dispatchEvent(new ST.w.Event('change', {bubbles: true})); await wait(40);
+        check(segsOf(ST.last()) === segsOf(r0) && ST.w.localStorage.getItem(key) === '[]', 'toggle: the checkbox shows the pair again (same state as the click)');
+        ST.d.getElementById('czp-map-hide').click(); await wait(40);
+        check(segments(ST.last()).length === 0 && count() === '0 of ' + ids.length + ' pairs shown', 'toggle: Hide all empties the columns');
+        ST.d.getElementById('czp-map-show').click(); await wait(40);
+        check(segments(ST.last()).length === segments(r0).length && count() === ids.length + ' of ' + ids.length + ' pairs shown', 'toggle: Show all restores every pair');
+        ST.close();
+        const SP = await page({map: map21, loss: loss21, width: 1400,
+            beforeScripts: w => w.localStorage.setItem(key, JSON.stringify([P, 'no-such-pair']))});
+        check(segments(SP.last()).filter(s => s.pair === P).length === 0 && SP.d.getElementById('czp-map-count').textContent === (ids.length - 1) + ' of ' + ids.length + ' pairs shown',
+              'toggle: a reload keeps the stored hidden pair and ignores an unknown id');
+        SP.close();
+    }
 
     // the loss arrives after the map: drawn from the page, the map is not asked again
     const SA = await page({map: map5, loss: Object.assign({}, loss5, {staleness: {mode: 'building', note: null, qubits: {}}}), holdLoss: true,
