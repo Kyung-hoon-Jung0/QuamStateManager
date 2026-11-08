@@ -399,3 +399,46 @@ def test_a_failed_observation_names_its_reason_on_the_card_and_logs_a_traceback(
     assert records and records[0].exc_info and records[0].levelno >= logging.ERROR
     html = client.get("/diagnostics").get_data(as_text=True)
     assert "KeyError" in html and "baseline_key" in html
+
+
+def test_test_load_alone_changes_nothing_anywhere(loaded, monkeypatch):
+    """FB-02 (P0): the "Test load in this env" press is a dry run. The store,
+    the change log, the working-copy files and the live files stay byte-identical,
+    so an armed Auto-Sync has nothing to push."""
+    import copy as _copy
+    from pathlib import Path
+    app, client, ctx = _review_context(loaded)
+    live = Path(ctx["path"])
+    live_before = {n: (live / n).read_bytes() for n in ("state.json", "wiring.json")}
+    state_before = _copy.deepcopy(ctx["store"].state)
+    wiring_before = _copy.deepcopy(ctx["store"].wiring)
+    log_before = len(ctx["modifier"].get_change_log())
+    seq_before = getattr(ctx["store"], "mutation_seq", None)
+    wc = Path(ctx["store"].folder) if getattr(ctx["store"], "folder", None) else None
+    wc_before = {p.name: p.read_bytes() for p in wc.glob("*.json")} if wc else {}
+    monkeypatch.setattr(routes.config_generator, "run_config_preview", lambda *a, **k: {"ok": True})
+    payload = {"selections": [{"class": "official.Parent", "old": "old", "new": "new",
+                               "confirmed": True, "meaning_unchanged": True}]}
+    response = client.post("/env-upgrade/rename-test", json=payload)
+    assert response.status_code == 200, response.get_json()
+    assert "nothing was changed" in response.get_json()["message"]
+    assert ctx["store"].state == state_before
+    assert ctx["store"].wiring == wiring_before
+    assert len(ctx["modifier"].get_change_log()) == log_before
+    assert getattr(ctx["store"], "mutation_seq", None) == seq_before
+    assert {n: (live / n).read_bytes() for n in live_before} == live_before
+    if wc:
+        assert {p.name: p.read_bytes() for p in wc.glob("*.json")} == wc_before
+
+
+def test_card_states_the_steps_and_why_stage_is_disabled(loaded):
+    """FB-02: numbered steps and a VISIBLE reason beside the disabled Stage button."""
+    _, client, _ = _review_context(loaded)
+    html = client.get("/env-upgrade/card").get_data(as_text=True)
+    assert 'id="env-rename-steps"' in html
+    for step in ('data-step="1"', 'data-step="2"', 'data-step="3"', 'data-step="4"'):
+        assert step in html
+    assert 'id="env-rename-why"' in html and "Stage needs a passing Test load first." in html
+    assert 'id="env-rename-apply" disabled' in html
+    # a removal never starts ticked
+    assert 'class="env-remove-confirm" checked' not in html

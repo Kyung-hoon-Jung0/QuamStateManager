@@ -469,7 +469,7 @@ def dispatch(action):
                                            "token": token}
                 return jsonify(ok=True, token=token, moves=planned["moves"], skipped=planned["skipped"],
                                removals=len(planned.get("removals") or []),
-                               message="Quam.load passed in this env with the reviewed changes")
+                               message="Test load passed in this env (a dry run on a temporary copy; nothing was changed)")
             tested = ctx.get("env_rename_test") or {}
             if (tested.get("plan") != planned["signature"] or tested.get("env_signature") != signature
                     or not secrets.compare_digest(tested.get("token", ""), payload.get("token") or "")):
