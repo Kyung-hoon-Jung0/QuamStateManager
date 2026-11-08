@@ -150,3 +150,19 @@ class TestTheHeroMapIsKeyboardReachable:
         from pathlib import Path
         tpl = Path("quam_state_manager/web/templates/_wiring.html").read_text(encoding="utf-8")
         assert "<kbd>Enter</kbd> to inspect" in tpl
+
+
+def test_zoom_slider_box_holds_its_thumb_and_never_shrinks():
+    """The map-size slider sat in an 8 px box (height:auto) while its thumb is
+    ~25 px, so the thumb painted onto the metric patch row above it. The box
+    holds the thumb, and the control never shrinks into the patches."""
+    import re
+    from pathlib import Path
+    css = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+           / "static" / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"^\.topo-hero-zslider, \.iw-size-slider \{([^}]*)\}", css, re.M)
+    assert rule, "slider rule not found"
+    h = re.search(r"(?<![-\w])height:\s*([^;]+);", rule.group(1))
+    assert h and h.group(1).strip() not in ("auto", "0"), rule.group(1)
+    ctl = re.search(r"^\.topo-hero-zoomctl \{([^}]*)\}", css, re.M)
+    assert ctl and re.search(r"flex:\s*none", ctl.group(1)), ctl and ctl.group(1)

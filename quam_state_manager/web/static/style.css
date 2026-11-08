@@ -4430,7 +4430,7 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-hero-mbtn.active .metric-label { color: inherit; }
 /* pair-metric patches read as edges: a subtle link glyph before the label */
 .topo-hero-mbtn-edge::before { content: '↔ '; opacity: .7; }
-.topo-hero-zoomctl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; }
+.topo-hero-zoomctl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; flex: none; }
 .topo-hero-zbtn, .iw-size-btn {
     /* width/margin: Pico's global button rules are width:100% + a bottom
        margin — without the override the three controls render as full-row
@@ -4446,7 +4446,7 @@ td.col-delta .val-delta { margin-left: 0; }
    light theme the two tokens are the same colour, so light is unchanged. */
 .topo-hero-zbtn.active, .iw-size-btn.active { background: var(--pico-primary-background); color: var(--pico-primary-inverse);
     border-color: var(--pico-primary-background); }
-.topo-hero-zslider, .iw-size-slider { width: 110px; margin: 0; padding: 0; height: auto; }
+.topo-hero-zslider, .iw-size-slider { width: 110px; margin: 0; padding: 0; height: 1.25rem; }
 /* docs/126 — the per-gate (pulse-variant) picker under the metric row */
 .topo-hero-gatebar { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
     flex-basis: 100%; margin-top: .25rem; }
