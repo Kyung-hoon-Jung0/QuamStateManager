@@ -25,21 +25,21 @@ for (const highlight of ['pairs', 'flux', 'resonators']) {
   win.TopoGraph.renderLayout(mount, { nodes, edges, highlight });
   const edge = mount.querySelector('.cm-edge');
   // map tidy: roles are the shared C / T / M badges; the orange frequency arrow is the one arrow
-  const arrow = mount.querySelector('.cm-freq .cm-dir-freq-head'), ring = mount.querySelector('.cm-role-m circle');
-  assert.ok(edge && arrow && ring, highlight + ': pair line, the frequency arrow and the M badge are drawn'); n++;
+  const pill = mount.querySelector('.cm-role rect'), moving = Array.from(mount.querySelectorAll('.cm-role text')).find(t => / M(?: |$)/.test(t.textContent));
+  assert.ok(edge && pill && moving, highlight + ': pair line, the frequency arrow and the M badge are drawn'); n++;
   assert.equal(mount.querySelectorAll('.cm-dir-arrow, .cm-dir-m').length, 0, highlight + ': no blue arrow, no open ring'); n++;
   const lastStone = mount.querySelectorAll('.cm-stone'); 
-  assert.ok(after(lastStone[lastStone.length - 1], ring), highlight + ': badges paint after the stones'); n++;
+  assert.ok(after(lastStone[lastStone.length - 1], pill), highlight + ': badges paint after the stones'); n++;
   const marks = mount.querySelectorAll('.cm-node .cm-flux, .cm-node .cm-res');
   assert.ok(marks.length === 4, highlight + ': both stones carry a flux stub and a resonator mark'); n++;
-  // the arrow tip and the ring sit OUTSIDE each stone, so the stones painted
-  // after the edges never cover them
-  const stones = Array.from(mount.querySelectorAll('.cm-stone')).map((c) => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')]);
-  const tip = arrow.getAttribute('points').split(' ')[2].split(',').map(Number);
-  const rc = [+ring.getAttribute('cx'), +ring.getAttribute('cy'), +ring.getAttribute('r')];
-  for (const st of stones) {
-    assert.ok(Math.hypot(tip[0] - st[0], tip[1] - st[1]) > st[2], highlight + ': the arrow tip is outside every stone'); n++;
-    assert.ok(Math.hypot(rc[0] - st[0], rc[1] - st[1]) > st[2] + rc[2], highlight + ': the M badge is outside every stone'); n++;
+  const stones = Array.from(mount.querySelectorAll('.cm-stone')).map(c => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')]);
+  for (const rect of mount.querySelectorAll('.cm-role rect')) {
+    const x = +rect.getAttribute('x'), y = +rect.getAttribute('y');
+    const w = +rect.getAttribute('width'), h = +rect.getAttribute('height');
+    for (const [cx,cy,r] of stones) {
+      const nx = Math.max(x,Math.min(cx,x+w)), ny = Math.max(y,Math.min(cy,y+h));
+      assert.ok(Math.hypot(nx-cx,ny-cy) > r, highlight + ': the pill clears every stone'); n++;
+    }
   }
   for (const node of mount.querySelectorAll('.cm-node')) {
     const disc = node.querySelector('.cm-occluder');

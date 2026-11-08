@@ -3067,81 +3067,33 @@ window.ChipStatus.mount = function (opts) {
             var svg = '';
             var evalSvg = '';
             var R = compactMode ? 33 : 37;   // docs/126 compact: smaller stones
-            // Customer ask (2026-08-27, round 2): while a metric with
-            // `edgeDelta` is selected (Qubit freq), each pair edge prints the
-            // difference between its two stones' values — Δf on the line's
-            // midpoint (the chevron sits off-line at +0.16·CELL, M on the
-            // other side, so the midpoint is free; the halo keeps it
-            // readable). Same gated read as the stones (_mv), so an edge
-            // never shows a Δf its stones cannot back — either end missing
-            // or unphysical means no label, never a fabricated 0. Deduped
-            // per physical pair (a CR chip carries both directions as
-            // separate edges).
+            // Delta labels use the same gated values as their endpoint stones.
             var _nById = {};
             topo.nodes.forEach(function(n) { _nById[n.id] = n; });
             var _deltaDone = {};
-            // QA F-26: the printed Δf / edge value used to sit ON its bar (the
-            // bar read through '1.49' as '1:49') and between the C/T markers
-            // ('C95:7%T'), with the chevron over 'Δf'. It now sits BESIDE its
-            // own edge, on the side the shared TopoGraph.pairGlyphs leaves
-            // free: never the chevron's side (+0.16·CELL on the lo→hi normal),
-            // and — only when the value is wide enough to reach them — clear of
-            // the on-line C/T circles and of an M stacked on that side (-rn).
-            // The numbers mirror pairGlyphs(compactRoles) and style.css; both
-            // are pinned against the real output in chip_status_hero_selfcheck.
-            // pairGlyphs itself is untouched (the component maps are pinned).
             var _lblFs = { edelta: compactMode ? 11 : 8, eval: compactMode ? 19 : 15 };
-            var _roleR = Math.max(3.6, CELL * 0.062);
+            var _pillReach = 2 + (5 * 6.5 * 0.55 + 4);
+            var _labelOffset = 16;
+            // Leftmost extent of the steep Δf labels (end-anchored, left of the
+            // edge): the viewBox widens to it so a first-column label is never cut.
+            var _lblMinX = 0;
             function _heroLabelSide(e, x1, y1, x2, y2) {
-                var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
-                var ux = dx / L, uy = dy / L, rnx = -uy, rny = ux;   // pairGlyphs' rn
-                var fnum = function (n) {
-                    return n && typeof n.f_01 === 'number' && isFinite(n.f_01) ? n.f_01 : null;
-                };
-                var fS = fnum(_nById[e.source]), fT = fnum(_nById[e.target]);
-                var mv = e.moving_qubit === 'control' || e.moving_qubit === 'target';
-                var sx, sy;
-                if (fS != null && fT != null && Math.abs(fS - fT) >= 1e6) {
-                    // map tidy: the frequency arrow takes one screen side
-                    // (below / right, pairGlyphs freqSide "screen"), so the
-                    // value takes the other: above / left
-                    var fl = Math.abs(dx) >= Math.abs(dy) ? (rny > 0 ? -1 : 1) : (rnx > 0 ? -1 : 1);
-                    sx = fl * rnx; sy = fl * rny;
-                } else if (mv) {
-                    sx = rnx; sy = rny;              // M sits on -rn
-                } else {
-                    var flip = Math.abs(dx) >= Math.abs(dy) ? (rny > 0 ? -1 : 1) : (rnx < 0 ? -1 : 1);
-                    sx = flip * rnx; sy = flip * rny;   // above / right
-                }
-                return { sx: sx, sy: sy, ux: ux, uy: uy, L: L,
-                         horiz: Math.abs(dx) >= Math.abs(dy),
-                         mOnSide: mv && (-rnx * sx - rny * sy) > 0 };
+                return { horiz: Math.abs(x2 - x1) >= Math.abs(y2 - y1) };
             }
-            // distance from the centre line to the label's near edge
-            function _heroLabelClear(sd, barHalf, hwAlong) {
-                var inner = sd.L / 2 - CELL * 0.30 - _roleR;   // C/T/M inner reach
-                if (hwAlong + 2 < inner) return barHalf + 3;
-                return sd.mOnSide ? 3.1 * _roleR + 3 : Math.max(barHalf, _roleR) + 3;
-            }
-            // {x, y (first baseline), cls} for a label beside its edge
-            function _heroLabelAt(sd, mx, my, barHalf, fs, chars, stackH) {
-                var ax = Math.abs(sd.ux) || 1e-9, ay = Math.abs(sd.uy) || 1e-9;
-                if (sd.horiz) {
-                    var hw = 0.3 * fs * chars;
-                    var gapV = _heroLabelClear(sd, barHalf, hw / ax) / ax + (ay / ax) * hw;
-                    return { x: mx, cls: '',
-                             y: sd.sy < 0 ? my - gapV - stackH : my + gapV + 0.76 * fs };
-                }
-                var gapH = _heroLabelClear(sd, barHalf, 0.5 * fs) / ay + (ax / ay) * 0.4 * fs;
-                return { x: mx + (sd.sx > 0 ? gapH : -gapH), y: my + 0.36 * fs,
-                         cls: sd.sx > 0 ? ' topo-hero-lbl-start' : ' topo-hero-lbl-end' };
+            // Reserve the full expanded badge, including dense badges hidden
+            // until hover. All labels use the same offset, independent of role,
+            // frequency ordering, text width or edge direction.
+            function _heroLabelAt(sd, mx, my, fs, stackH) {
+                return { x: sd.horiz ? mx : mx - _labelOffset,
+                         y: sd.horiz ? my - _labelOffset - stackH : my + 0.36 * fs,
+                         cls: sd.horiz ? '' : ' topo-hero-lbl-end' };
             }
             // Pairs as first-class objects: a midpoint badge (name + the 2Q
             // gate fidelity when the chip holds one), coloured on the same
             // chip-relative scale the 2Q metric paints edges with; no value
             // means the neutral no-data colour, never an invented one.
             var badgeSvg = '';
-            var _badgeDone = {}, _badgeHalfBy = {};
+            var _badgeDone = {};
             var _czAgg = computeAggregates(topo.edges.map(function(e) { return _edge2Q(e); }));
             var _denseChip = topo.nodes.length >= 16;
             var _badgeFs = compactMode ? 10 : 8.5;
@@ -3160,12 +3112,11 @@ window.ChipStatus.mount = function (opts) {
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
                 var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
                 var bKey = _pairKey(e);
-                var badgeHalf = _badgeHalfBy[bKey] || 0;
                 if (!_badgeDone[bKey]) {
                     _badgeDone[bKey] = true;
                     var bL = Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
                     var bHoriz = Math.abs(x2 - x1) >= Math.abs(y2 - y1);
-                    var bRoom = Math.max(0, bL - 2 * R - 2 * _roleR - 4);
+                    var bRoom = Math.max(0, bL - 2 * R - 2 * _pillReach - 4);
                     var bFill = dCfg.nullCellColor, bFg = null;
                     // In an edge-metric view the edge already prints the
                     // selected value, so the badge carries the name only.
@@ -3196,8 +3147,17 @@ window.ChipStatus.mount = function (opts) {
                         title: bTitle,
                     });
                     badgeSvg += badge.svg;
-                    if (!badge.dense) badgeHalf = _badgeHalfBy[bKey] = (bHoriz ? badge.height : badge.width) / 2 + 2;
+                    _labelOffset = Math.max(_labelOffset, Math.ceil(Math.hypot(badge.width, badge.height) / 2) + (e.directed ? 18 : 0) + 6);
                 }
+            });
+            topo.edges.forEach(function(e) {
+                var a = lay.positions[e.source], b = lay.positions[e.target];
+                if (!a || !b) return;
+                var pst = TG.pairState({ cz_fidelity: _edge2Q(e), has_cz: e.has_cz,
+                                         gate_kind: e.gate_kind,
+                                         cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
+                var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
+                var x1 = cx(a) + oA.dx, y1 = cy(a) + oA.dy, x2 = cx(b) + oB.dx, y2 = cy(b) + oB.dy;
                 if (!edgeMode && mCur.edgeDelta) {
                     var dKey = String(e.source) < String(e.target)
                         ? e.source + '|' + e.target : e.target + '|' + e.source;
@@ -3220,7 +3180,6 @@ window.ChipStatus.mount = function (opts) {
                             // QA F-26: beside the bar (a CR pair's two lines
                             // sit ±6 off the centre line), never on it
                             var dSd = _heroLabelSide(e, x1, y1, x2, y2);
-                            var dBar = Math.max((_edgePaint(e).width + 4) / 2 + (e.directed ? 6 : 0), badgeHalf);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
                                 // to write in, so the label stacks: the metric over
@@ -3228,19 +3187,20 @@ window.ChipStatus.mount = function (opts) {
                                 // three-line tower; the widest value, e.g.
                                 // "1.23 GHz", still fits the gap).
                                 var dVal = dNum + ' ' + dUnit;
-                                var dAt = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta,
-                                    Math.max(mCur.edgeDelta.label.length, dVal.length), 9);
-                                evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
+                                var dAt = _heroLabelAt(dSd, dmx, dmy, _lblFs.edelta, 9);
+                                evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dAt.x
                                     + '" y="' + dAt.y + '">'
                                     + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dVal) + '</tspan>'
                                     + '</text>';
                             } else {
-                                var dAtV = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta, 0, 0);
+                                var dAtV = _heroLabelAt(dSd, dmx, dmy, _lblFs.edelta, 0);
                                 evalSvg += '<text class="topo-hero-edelta' + dAtV.cls + '" x="' + dAtV.x
                                     + '" y="' + dAtV.y + '">'
                                     + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
                                     + '</text>';
+                                _lblMinX = Math.min(_lblMinX, dAtV.x
+                                    - (mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit).length * _lblFs.edelta * 0.7);
                             }
                         }
                     }
@@ -3304,24 +3264,18 @@ window.ChipStatus.mount = function (opts) {
                 } else if (evTxt != null) {
                     // QA F-26: beside the 9px bar, clear of C/T (and M)
                     var eAt = _heroLabelAt(_heroLabelSide(e, x1, y1, x2, y2), mx, my,
-                                           Math.max(width / 2, badgeHalf), _lblFs.eval, String(evTxt).length, 0);
+                                           _lblFs.eval, 0);
                     evalSvg += '<text class="topo-hero-eval' + eAt.cls + '" x="' + eAt.x
                         + '" y="' + eAt.y + '">'
                         + _esc(evTxt) + '</text>';
                 }
             });
-            // docs/120 item 11 → amended by docs/126: the C/T/M markers now
-            // draw AFTER the stones (compactRoles centres them ON the rim —
-            // half-overlapping the stone, smaller — so the edge middle stays
-            // free for the metric value; same shared TopoGraph.pairGlyphs,
-            // so the component maps keep their own classic placement).
+            // The same capped end pills as the component maps, outside the
+            // actual hero stone radius (also in compact mode).
             var glyphSvg = '';
             if (TG.pairGlyphs) {
                 glyphSvg = TG.pairGlyphs(topo.nodes, topo.edges, {
-                    cell: CELL, roles: true, compactRoles: true,
-                    freqSide: 'screen',
-                    // map tidy D-3: under Qubit freq the stones and the printed delta already say it
-                    freqArrows: current !== 'f_01',
+                    cell: CELL, roles: true, stoneRadius: R,
                     px: function (id) {
                         var p = lay.positions[id];
                         if (!p) return null;
@@ -3374,24 +3328,23 @@ window.ChipStatus.mount = function (opts) {
             // Zoom: percentage of the scroll pane's width (1 = the old fit).
             // The container scrolls both axes, so a big map never buries the
             // sections below (docs/126 ② — "~2× bigger" is the default).
+            var _vbX = _lblMinX < 0 ? Math.floor(_lblMinX - 2) : 0;
             host.innerHTML = bar + '</div>'
                 + '<div class="topo-hero-map">' + note
                 + '<div class="topo-hero-scroll"><svg class="topo-hero-svg'
-                + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
-                + '" viewBox="0 0 ' + W + ' ' + H + '"'
+                + (compactMode ? ' hero-compact' : '') + '" width="' + (W - _vbX) + '" height="' + H
+                + '" viewBox="' + _vbX + ' 0 ' + (W - _vbX) + ' ' + H + '"'
                 + ' style="width:' + Math.round(zoom * 100) + '%">'
                 + svg + glyphSvg + evalSvg + '<g class="topo-pair-badges">' + badgeSvg + '</g></svg></div></div>'
                 + legendHtml(current).replace(/<\/div>$/, (TG.pairLegendItems
-                    // map tidy: the pair-glyph legend, shared with the component maps;
-                    // no frequency-arrow entry under Qubit freq, where none is drawn
-                    ? '<span class="topo-hero-lg-item cm-dir-legend">' + TG.pairLegendItems(current !== 'f_01') + '</span>' : '') + '</div>');
+                    ? '<span class="topo-hero-lg-item cm-dir-legend">' + TG.pairLegendItems() + '</span>' : '') + '</div>');
             if (TG.closeDetails) TG.closeDetails();
             bindHover();
             if (TG.bindLinked) TG.bindLinked(host);
             // At a zoom where the pill text would be too small to read, every
             // badge falls back to its dot (the pill still opens on hover).
             var _svgEl = host.querySelector('.topo-hero-svg');
-            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / W;
+            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / (W - _vbX);
             if (_scale && _badgeFs * _scale < 7) {
                 host.querySelectorAll('.topo-pair-badge').forEach(function(bg) {
                     bg.classList.add('topo-pair-badge-dense');

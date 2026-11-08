@@ -432,220 +432,53 @@ window.TopoGraph = (function () {
   //            svg root gets class cm-hl-<highlight>; CSS owns the dimming.
   // Returns {mode, highlightEntity(kind, id, on)} — the map↔table hover hook
   // ('qubit'|'pair' + entity id -> .cm-hot on the matching [data-cm] group).
-  /* ── Per-pair endpoint glyphs, shared by BOTH maps (docs/120 item 11) ──
-   *
-   * These used to live inside renderLayout, so only the component-page maps
-   * had them. The Chip Status hero draws its own SVG and therefore had no
-   * frequency chevrons at all — and the customer asked for ONE convention
-   * across SM ("the same goes for the qubit components page"), so the drawing
-   * moved out here and both callers use it. The chevron half is lifted
-   * verbatim; the component map's output is byte-identical (pinned).
-   *
-   *   nodes/edges  the topology model
-   *   px(id)       -> {x, y} in the caller's own coordinate space
-   *   cell         the caller's cell size; every offset scales off it, so the
-   *                glyphs stay proportional whatever the map's zoom is
-   *   roles        opt-in C/T/M markers (below)
-   */
-  /* Map tidy: ONE legend for the pair glyphs, used by the component maps and
-   * the Chip Status hero. Samples reuse the badge classes so they match. */
-  function pairLegendItems(showFreq) {
-    function badge(l, cls) {
-      return '<span class="cm-dir-legend-m"><svg width="14" height="14" aria-hidden="true">' +
-        '<g class="cm-role cm-role-' + cls + '"><circle class="cm-role-dot" cx="7" cy="7" r="6"/>' +
-        '<text class="cm-role-txt" x="7" y="7" font-size="8" text-anchor="middle" dominant-baseline="central">' +
-        l + '</text></g></svg>' + (l === "C" ? "control" : l === "T" ? "target" : "moving qubit") + '</span>';
-    }
-    return badge("C", "c") + badge("T", "t") + badge("M", "m") +
-      (showFreq ? '<span class="cm-dir-legend-m cm-dir-freq-legend"><svg width="22" height="10" aria-hidden="true">' +
-        '<line x1="1" y1="5" x2="14" y2="5"/><polygon points="12,1 21,5 12,9"/></svg>toward the lower f₀₁</span>' : "");
+  // Shared pair-end pills and vocabulary for the component maps and hero.
+  function pairLegendItems() {
+    return [['C', 'control'], ['T', 'target'], ['M', 'moving qubit'],
+            ['H', 'higher f01'], ['L', 'lower f01']].map(function (item) {
+      return '<span class="cm-dir-legend-m"><b>' + item[0] + '</b> ' + item[1] + '</span>';
+    }).join(' &middot; ');
   }
 
+  // One pill per pair end, shared by every map. Moving roles come only from
+  // the stored role; frequency order requires two finite, unequal numbers.
   function pairGlyphs(nodes, edges, opts) {
     opts = opts || {};
-    var px = opts.px, CELL = opts.cell || 64;
-    var svg = "";
-    nodes = nodes || []; edges = edges || [];
-
-    // Frequency arrows (docs/93 F5, redrawn by the map tidy D-3): ONE per
-    // PHYSICAL pair (CR chips carry both directions as separate edges --
-    // deduped by the sorted endpoint key), a straight arrow parallel to the
-    // edge pointing at the LOWER-f_01 qubit. Honesty gates: BOTH endpoints
-    // numeric and |delta| >= 1 MHz, else nothing; the exact delta lives in
-    // the tooltip, never as drawn text (docs/91 §2.4). Top-level, not inside
-    // a direction's group: it describes the PAIR, so one inactive CR
-    // direction must not dim it. opts.freqArrows === false draws none.
-    var fById = {};
-    for (var fbi = 0; fbi < nodes.length; fbi++) {
-      var fv = nodes[fbi].f_01;
-      if (typeof fv === "number" && isFinite(fv)) fById[nodes[fbi].id] = fv;
-    }
-    function fmtDf(hz) {
-      return hz >= 1e9 ? (hz / 1e9).toFixed(2) + " GHz" : (hz / 1e6).toFixed(1) + " MHz";
-    }
-    var chevDone = {}, hasCoupler = {};
-    edges.forEach(function (x) {
-      if (!x || x.source == null || x.target == null) return;
-      var k = String(x.source) < String(x.target) ? x.source + "|" + x.target : x.target + "|" + x.source;
-      if (x.has_coupler) hasCoupler[k] = 1;
+    var px = opts.px, CELL = opts.cell || 64, svg = '', fById = {};
+    (nodes || []).forEach(function (n) {
+      if (typeof n.f_01 === 'number' && isFinite(n.f_01)) fById[n.id] = n.f_01;
     });
-    for (var ci = 0; ci < edges.length && opts.freqArrows !== false; ci++) {
-      var ce = edges[ci];
-      if (ce == null || ce.source == null || ce.target == null) continue;
-      var cpa = px(ce.source), cpb = px(ce.target);
-      if (!cpa || !cpb) continue;
-      var ckey = String(ce.source) < String(ce.target)
-        ? ce.source + "|" + ce.target : ce.target + "|" + ce.source;
-      if (chevDone[ckey]) continue;
-      chevDone[ckey] = true;
-      var fS = fById[ce.source], fT = fById[ce.target];
-      if (fS == null || fT == null) continue;
-      var dF = fS - fT;
-      if (Math.abs(dF) < 1e6) continue;
-      var loPt = dF > 0 ? cpb : cpa, hiPt = dF > 0 ? cpa : cpb;
-      var hiId = dF > 0 ? ce.source : ce.target;
-      var loId = dF > 0 ? ce.target : ce.source;
-      var cux = hiPt.x - loPt.x, cuy = hiPt.y - loPt.y;
-      var cul = Math.sqrt(cux * cux + cuy * cuy) || 1;
-      cux /= cul; cuy /= cul;
-      var cnx = -cuy, cny = cux;
-      if (opts.freqSide === "screen") {
-        // D-3: one screen side for every pair -- below a level edge, right of
-        // a steep one -- opposite the pair labels (screenSide), so the map
-        // reads straight whatever the frequencies are.
-        var flipN = Math.abs(cny) >= Math.abs(cnx) ? (cny < 0 ? -1 : 1) : (cnx < 0 ? -1 : 1);
-        cnx *= flipN; cny *= flipN;
-      }
-      // A coupler dot (r = couplerR, ~0.30 * 0.42 cell) sits on the midpoint too: on a
-      // map that draws it, move the arrow clear of the dot (D-94).
-      var coff = CELL * ((opts.couplerClear && (ce.has_coupler || hasCoupler[ckey])) ? 0.24 : 0.16);
-      // D-3 (map tidy): a FREQUENCY ARROW parallel to the pair, the same
-      // geometry as the control -> target arrow (dirEdgeMarks: tip R + 3 from
-      // the stone centre, head DIR_HEAD_SCALE x), pointing at the LOWER f_01.
-      var fR = CELL * 0.30, fTip = fR + 3;
-      var fAh = Math.max(9, fR * 0.36) * DIR_HEAD_SCALE, fAw = fAh * 0.55;
-      var ox = cnx * coff, oy = cny * coff;
-      var sX = hiPt.x - cux * fTip + ox, sY = hiPt.y - cuy * fTip + oy;   // tail at the higher stone
-      var tX = loPt.x + cux * fTip + ox, tY = loPt.y + cuy * fTip + oy;   // tip at the lower stone
-      var bX = tX + cux * fAh, bY = tY + cuy * fAh;
-      svg += '<g class="cm-freq" data-cm-freq="' + esc(ckey) + '" data-lo="' + esc(loId) + '">' +
-             '<line class="cm-dir-freq-line" x1="' + r1(sX) + '" y1="' + r1(sY) + '" x2="' + r1(bX) + '" y2="' + r1(bY) + '"/>' +
-             '<polygon class="cm-dir-freq-head" points="' +
-             r1(bX - cuy * fAw) + "," + r1(bY + cux * fAw) + " " + r1(bX + cuy * fAw) + "," +
-             r1(bY - cux * fAw) + " " + r1(tX) + "," + r1(tY) + '"/>' +
-             "<title>Δf_01: " + esc(hiId) + " +" + fmtDf(Math.abs(dF)) + " vs " + esc(loId) +
-             " (arrow points to the lower f_01)</title></g>";
-    }
-
-    /* C / T / M role markers (docs/120 item 11).
-     *
-     * The customer's convention, verbatim: "the arrow direction encodes the
-     * f_01 inequality, and C / T / M appear as small circular symbols beside
-     * each qubit at the end of the arrow it belongs to — so control, target,
-     * moving qubit and the frequency ordering are all readable at a glance."
-     *
-     * M is never a THIRD position. `moving_qubit` is a role string
-     * ("control"/"target"), so the mover always coincides with C or T, and it
-     * is drawn as a second small circle stacked just past that end's role
-     * circle. On a chip that records no role, no M is drawn — the frequencies
-     * are NOT used to infer one, because quam_builder's default (the higher
-     * f_01 moves) is exactly what an override would contradict, and a guess
-     * would hide the disagreement worth seeing.
-     *
-     * Deduped per physical pair like the chevrons: a CR chip's two directions
-     * describe one pair with one control end.
-     */
-    if (opts.roles) {
-      // docs/126 (customer): compactRoles pulls each marker HALF ONTO its
-      // stone (centre on the rim) and shrinks it — freeing the edge middle
-      // for the metric value the hero prints there. The component map keeps
-      // the classic outside placement (its drawings are pinned byte-identical
-      // across modes), so this is opt-in.
-      var compact = !!opts.compactRoles;
-      var roleR = compact ? Math.max(3.6, CELL * 0.062)
-                          : Math.max(4.5, CELL * 0.085);
-      var roleFont = Math.round(Math.max(6, CELL * (compact ? 0.085 : 0.115)) * 10) / 10;
-      var roleDone = {};
-      for (var ri = 0; ri < edges.length; ri++) {
-        var re = edges[ri];
-        if (re == null || re.source == null || re.target == null) continue;
-        // Dedup by the PAIR, not by the physical edge. A CR chip carries TWO
-        // qubit_pairs entities for one edge with control/target REVERSED
-        // (cr_semantics.directed_partner), and collapsing them by sorted
-        // endpoints made the map assert a single control end picked by
-        // state.qubit_pairs insertion order — a confident claim that is wrong
-        // half the time. The chevron above still dedups, correctly: a frequency
-        // ordering is symmetric, a role assignment is not.
-        var rkey = re.pair_id != null ? String(re.pair_id)
-          : (String(re.source) < String(re.target)
-             ? re.source + "|" + re.target : re.target + "|" + re.source);
-        if (roleDone[rkey]) continue;
-        roleDone[rkey] = true;
-        // A self-loop has no two ends to label.
-        if (String(re.source) === String(re.target)) continue;
-        var rpa = px(re.source), rpb = px(re.target);
-        if (!rpa || !rpb) continue;
-        var rux = rpb.x - rpa.x, ruy = rpb.y - rpa.y;
-        var rul = Math.sqrt(rux * rux + ruy * ruy) || 1;
-        rux /= rul; ruy /= rul;
-        var rnx = -ruy, rny = rux;          // perpendicular
-        var mv = re.moving_qubit;   // "control" | "target" | null
-        // Walk in from each stone ALONG the edge, so the marker sits beside its
-        // qubit at the end of the arrow it belongs to. M then stacks
-        // PERPENDICULAR to its own role marker rather than further along the
-        // line: walking it along the edge put it past the midpoint on a
-        // one-cell pair (inset 0.34·CELL from each end leaves less room
-        // between the markers than the step consumed), so M ended up nearer
-        // the OTHER qubit — the exact opposite of what it means. Perpendicular
-        // keeps it unambiguously attached to its own end at any edge length,
-        // and on the opposite side from the chevron so the two never collide.
-        // inset must clear the stone, not sit on it. The stones are drawn
-        // AFTER these glyphs and R == CELL*0.30, so an inset of 0.30 put each
-        // role circle's centre exactly on the rim and the opaque stone painted
-        // over roughly a third of it. jsdom cannot see that; a browser can.
-        var inset = compact ? CELL * 0.30            // centre ON the rim
-                            : CELL * 0.30 + roleR * 1.15;
-        var step = roleR * 2.1;
-        // A qubit can be the control of one pair and the target of another, so
-        // every marker names BOTH the pair and the endpoint it belongs to —
-        // otherwise "the C nearest qA1" is an ambiguous question on any chip
-        // with a chain through it.
-        [["C", rpa, 1, mv === "control", re.source],
-         ["T", rpb, -1, mv === "target", re.target]].forEach(function (spec) {
-          var letter = spec[0], pt = spec[1], dir = spec[2], moves = spec[3],
-              atId = spec[4];
-          var attrs = ' data-cm-pair="' + esc(re.pair_id == null ? rkey : re.pair_id) +
-                      '" data-cm-at="' + esc(atId) + '"';
-          var bx = pt.x + rux * inset * dir, by = pt.y + ruy * inset * dir;
-          svg += '<g class="cm-role cm-role-' + letter.toLowerCase() + '"' + attrs + '>' +
-                 '<circle class="cm-role-dot" cx="' + bx + '" cy="' + by +
-                 '" r="' + roleR + '"/>' +
-                 '<text class="cm-role-txt" x="' + bx + '" y="' + by +
-                 '" font-size="' + roleFont + '" text-anchor="middle"' +
-                 ' dominant-baseline="central">' + letter + "</text>" +
-                 "<title>" + (letter === "C" ? "control" : "target") +
-                 " of " + esc(re.pair_id != null ? re.pair_id
-                              : rkey.replace("|", "–")) + "</title></g>";
-          if (moves) {
-            // D-2: M sits ON the line, one step further in from its own role
-            // marker, so every marker is mirrored along the edge and no stone
-            // collects its markers on one side. Capped short of the midpoint
-            // so M always stays nearer its own end.
-            var mIn = Math.min(inset + step, rul / 2 - roleR * 1.1);
-            if (mIn < inset) mIn = inset;
-            var mx = pt.x + rux * mIn * dir, my = pt.y + ruy * mIn * dir;
-            svg += '<g class="cm-role cm-role-m"' + attrs + '>' +
-                   '<circle class="cm-role-dot cm-role-dot-m" cx="' + mx +
-                   '" cy="' + my + '" r="' + roleR + '"/>' +
-                   '<text class="cm-role-txt" x="' + mx + '" y="' + my +
-                   '" font-size="' + roleFont + '" text-anchor="middle"' +
-                   ' dominant-baseline="central">M</text>' +
-                   "<title>moving qubit — its flux is what moves during the gate" +
-                   "</title></g>";
-          }
-        });
-      }
-    }
+    var done = {};
+    (edges || []).forEach(function (e) {
+      if (!opts.roles || !e || e.source == null || e.target == null || e.source === e.target) return;
+      var key = e.pair_id != null ? String(e.pair_id)
+        : [String(e.source), String(e.target)].sort().join('|');
+      if (done[key]) return;
+      done[key] = true;
+      var a = px(e.source), b = px(e.target);
+      if (!a || !b) return;
+      var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
+      var ux = dx / len, uy = dy / len;
+      var fs = Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
+      var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
+      var fS = fById[e.source], fT = fById[e.target];
+      var ordered = fS != null && fT != null && fS !== fT;
+      [['C', a, 1, e.source, 'control'], ['T', b, -1, e.target, 'target']].forEach(function (end) {
+        var text = end[0] + (e.moving_qubit === end[4] ? ' M' : '');
+        if (ordered) text += ' ' + ((end[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
+        var w = text.length * fs * 0.55 + 4;
+        // Axis-aligned text stays readable on steep edges too. Its projection
+        // along the pair clears the stone, leaving the middle line exposed.
+        var reach = Math.abs(ux) * w / 2 + Math.abs(uy) * h / 2;
+        var inset = radius + 2 + reach;
+        var x = end[1].x + ux * end[2] * inset, y = end[1].y + uy * end[2] * inset;
+        svg += '<g class="cm-role cm-role-' + end[0].toLowerCase() + '" data-cm-pair="' + esc(key)
+          + '" data-cm-at="' + esc(end[3]) + '"><rect class="cm-role-dot" x="' + (x - w / 2)
+          + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="' + h / 2 + '"/>'
+          + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fs
+          + '" text-anchor="middle" dominant-baseline="central">' + text + '</text></g>';
+      });
+    });
     return svg;
   }
 
