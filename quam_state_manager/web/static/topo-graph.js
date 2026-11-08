@@ -656,17 +656,13 @@ window.TopoGraph = (function () {
              " (" + mv + ")</title></circle>";
     }
     var ang = Math.atan2(dy, dx) * 180 / Math.PI;
-    // Keep text upright; a vertical edge reads in the arrow's own direction
-    // (down -> +90, up -> -90), so the id reads control-first along the arrow.
-    if (ang > 90) ang -= 180;
-    if (ang < -90) ang += 180;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    if (Math.abs(ang) > 60) {
-      // A steep edge: never rotate the id. Stack it beside the line, the
-      // upper qubit first, the way the edge itself runs (FB-01).
-      var top = y1 <= y2 ? e.source : e.target, bot = top === e.source ? e.target : e.source;
+    if (Math.abs(dy) > 0.01) {
+      // Read every non-level edge top-first, using endpoints rather than the
+      // display pair id (which may abbreviate or contain hyphenated names).
+      var top = y1 <= y2 ? e.source : e.target, bot = y1 <= y2 ? e.target : e.source;
       out += '<text class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
-             ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1"' +
+             ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1" data-ang="' + r1(ang) + '"' +
              (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
              ' data-pair-id="' + esc(e.pair_id) + '" text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
              '<tspan>' + esc(top) + '</tspan><tspan>|</tspan><tspan>' + esc(bot) + "</tspan></text>";
@@ -794,20 +790,24 @@ window.TopoGraph = (function () {
   }
   function placeStack(t, side, f) {
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
-    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, i;
+    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, h = lh * spans.length, i;
     t.setAttribute("font-size", f);
     for (i = 0; i < spans.length; i++) {
       var n = spans[i].getComputedTextLength ? spans[i].getComputedTextLength() : f * 0.6 * spans[i].textContent.length;
       if (n > w) w = n;
     }
-    // clear the line (and the coupler dot on its midpoint, where the edge has one)
-    var off = w / 2 + 3 + Math.max(5, +t.getAttribute("data-clear") || 0);
-    var px = cx + off * side;
-    t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(cy));
-    t.setAttribute("data-w", r1(w)); t.setAttribute("data-h", r1(lh * spans.length));
+    // Re-measure at every trial font, including the final restored candidate.
+    // Project the upright box onto the edge normal so diagonal lines clear it.
+    var ang = +t.getAttribute("data-ang") * Math.PI / 180;
+    var nx = -Math.sin(ang), ny = Math.cos(ang);
+    var off = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear") || 0);
+    var px = cx + nx * off * side, py = cy + ny * off * side;
+    t.removeAttribute("transform");
+    t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
+    t.setAttribute("data-w", r1(w)); t.setAttribute("data-h", r1(h));
     for (i = 0; i < spans.length; i++) {
       spans[i].setAttribute("x", r1(px));
-      spans[i].setAttribute("y", r1(cy + (i - (spans.length - 1) / 2) * lh));
+      spans[i].setAttribute("y", r1(py + (i - (spans.length - 1) / 2) * lh));
     }
   }
   function placeLabel(t, side, f) {
@@ -823,10 +823,9 @@ window.TopoGraph = (function () {
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
     // A level label needs no transform at all (FB-01: no rotated text).
-    if (+t.getAttribute("data-ang")) t.setAttribute("transform", "rotate(" + t.getAttribute("data-ang") + " " + r1(px) + " " + r1(py) + ")");
-    else t.removeAttribute("transform");
+    t.removeAttribute("transform");
   }
-  /* Place each rotated label: above the line first, then below, then one px
+  /* Place each upright label: above the line first, then below, then one px
    * smaller at a time down to minFont; a label that still collides keeps the
    * placement with the fewest hits and is marked .cm-dir-crowded. */
   function declutterLabels(svg, minFont) {

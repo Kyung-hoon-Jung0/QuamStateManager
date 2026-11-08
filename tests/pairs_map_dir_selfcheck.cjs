@@ -37,8 +37,8 @@ function bboxOf(el) {
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
     return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
   }
-  if (tag === 'text') {
-    const f = num(el, 'font-size') || 12, w = (el.textContent || '').length * 0.6 * f;
+  if (tag === 'text' || tag === 'tspan') {
+    const f = num(el, 'font-size') || num(el.parentElement, 'font-size') || 12, w = (el.textContent || '').length * 0.6 * f;
     return { x: num(el, 'x') - w / 2, y: num(el, 'y') - f / 2, width: w, height: f };
   }
   let lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
@@ -51,7 +51,7 @@ function bboxOf(el) {
 }
 win.SVGElement.prototype.getBBox = function () { return bboxOf(this); };
 win.SVGElement.prototype.getComputedTextLength = function () {
-  return (this.textContent || '').length * 0.6 * (parseFloat(this.getAttribute('font-size')) || 12);
+  return (this.textContent || '').length * 0.6 * (parseFloat(this.getAttribute('font-size')) || num(this.parentElement, 'font-size') || 12);
 };
 win.SVGElement.prototype.getBoundingClientRect = function () { return { width: 100, height: 100, top: 0, left: 0, right: 100, bottom: 100 }; };
 
@@ -86,8 +86,8 @@ const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.ha
   (t.hasAttribute('data-stack') || t.hasAttribute('transform') || +t.getAttribute('data-ang') === 0));
 ok(placed, 'every label was placed by declutterLabels (along its edge, or stacked upright on a steep one)');
 // FB-01: no pair label is ever rotated off level.
-ok(Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => !/rotate\((?!0 )/.test(t.getAttribute('transform') || '') ||
-  Math.abs(+t.getAttribute('data-ang')) <= 60), 'no steep pair label is rotated');
+ok(Array.from(m.querySelectorAll('.cm-pair-label')).every(t => !/rotate/.test(t.getAttribute('transform') || '')),
+   'no rotate transform on any pair label');
 const fonts = Array.from(m.querySelectorAll('.cm-dir-label')).map((t) => parseFloat(t.getAttribute('font-size')));
 ok(Math.min(...fonts) >= 12, 'no label is drawn under 12 px (D-6), min ' + Math.min(...fonts));
 ok(m.querySelectorAll('.cm-dir-crowded').length === 0, 'no label had to be left crowded');
@@ -121,11 +121,20 @@ function fixture(source, target, pair, dx, dy, cell = 120) {
     {id:target, grid_location:dx+','+dy}], edges:[{source, target, pair_id:pair}], highlight:'pairs', cell});
   return host.querySelector('svg');
 }
+for (const [dx, dy] of [[7,4], [4,4]]) {
+  const diagonal = fixture('lower', 'upper', 'lower-upper', dx, dy);
+  const label = diagonal.querySelector('.cm-pair-label');
+  ok(!/rotate/.test(label.getAttribute('transform') || ''), 'no rotate transform at ' + Math.round(Math.atan2(dy,dx)*180/Math.PI) + ' degrees');
+  ok(label.hasAttribute('data-stack') && label.firstElementChild.textContent === 'upper', 'diagonal stack reads upper endpoint first');
+  ok(win.TopoGraph.labelOverlaps(diagonal).count === 0, 'diagonal stack clears stones and arrow');
+  const nx = -Math.sin(+label.dataset.ang*Math.PI/180), ny = Math.cos(+label.dataset.ang*Math.PI/180);
+  const distance = Math.abs((+label.dataset.px - +label.dataset.cx)*nx + (+label.dataset.py - +label.dataset.cy)*ny);
+  ok(distance > Math.abs(nx)*+label.dataset.w/2 + Math.abs(ny)*+label.dataset.h/2 + 5, 'diagonal upright box clears the line');
+}
 for (const [source, target, pair] of [['q1','q2','q1-2'], ['q-one','q-two','q-one-q-two']]) {
   const shape = fixture(source, target, pair, 0, 1), label = shape.querySelector('.cm-pair-label');
   ok(Array.from(label.children, t => t.textContent).join(',') === [target,'|',source].join(','), 'endpoint ids survive display shape ' + pair);
   ok(!/rotate/.test(label.getAttribute('transform') || ''), 'display shape stays upright ' + pair);
 }
-
 const summary = fails ? fails + ' check(s) FAILED\n' : 'pairs_map_dir_selfcheck: all checks passed (' + checks + ' assertions)\n';
 process.stdout.write(summary, function () { process.exit(fails ? 1 : 0); });
