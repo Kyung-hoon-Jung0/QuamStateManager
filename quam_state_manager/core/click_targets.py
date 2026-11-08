@@ -126,8 +126,12 @@ def candidates_for(experiment_name: str, x_dim: str | None,
                 return axis, dim
         return None, None
 
+    # Every candidate path here is a ``qubits.{q}`` path: for any entity kind other than a
+    # qubit (a pair, for instance) neither tier may offer one.
+    qubit_keyed = entity_kind in (None, "qubit", "spec_qubit")
+
     for prefix, targets in _NODE_TARGETS.items():
-        if norm.startswith(prefix):
+        if qubit_keyed and norm.startswith(prefix):
             for t in targets:
                 axis, dim = _bind_dim(t["dim_match"])
                 if dim is None:
@@ -138,7 +142,7 @@ def candidates_for(experiment_name: str, x_dim: str | None,
                                 "label": t["label"], "tier": "node"})
             break
 
-    if entity_kind in (None, "qubit", "spec_qubit"):
+    if qubit_keyed:
         for h in _COORD_TARGETS:
             for axis, dim in (("x", x_dim), ("y", y_dim)):
                 if not dim or not h["match"].search(dim):
