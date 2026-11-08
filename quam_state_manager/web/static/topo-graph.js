@@ -661,6 +661,19 @@ window.TopoGraph = (function () {
     if (ang > 90) ang -= 180;
     if (ang < -90) ang += 180;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    var ids = String(e.pair_id).split("-");
+    if (Math.abs(ang) > 60 && ids.length === 2 && ids[0] && ids[1]) {
+      // A steep edge: never rotate the id. Stack it beside the line, the
+      // upper qubit first, the way the edge itself runs (FB-01).
+      var top = y1 <= y2 ? e.source : e.target, bot = top === e.source ? e.target : e.source;
+      if (ids.indexOf(top) < 0 || ids.indexOf(bot) < 0) { top = ids[0]; bot = ids[1]; }
+      out += '<text class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
+             ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1"' +
+             (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
+             ' data-pair-id="' + esc(e.pair_id) + '" text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
+             '<tspan>' + esc(top) + '</tspan><tspan>|</tspan><tspan>' + esc(bot) + "</tspan></text>";
+      return out;
+    }
     out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
            ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-ang="' + r1(ang) + '"' +
            (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
@@ -732,6 +745,9 @@ window.TopoGraph = (function () {
     var f = parseFloat(t.getAttribute("font-size")) || 12;
     var w = t.getComputedTextLength ? t.getComputedTextLength() : f * 4;
     var cx = parseFloat(t.getAttribute("data-px")), cy = parseFloat(t.getAttribute("data-py"));
+    if (t.hasAttribute("data-stack") && !isNaN(cx)) {   // a stacked label: its own upright box
+      return rectPoly(cx, cy, (+t.getAttribute("data-w") || w) + 4, +t.getAttribute("data-h") || f * 3.3, 0);
+    }
     if (isNaN(cx)) {   // an unrotated label: its own box
       var b = t.getBBox();
       return bboxPoly(b, 0);
@@ -778,7 +794,26 @@ window.TopoGraph = (function () {
     }
     return { count: pairs.length, items: items.length, pairs: pairs };
   }
+  function placeStack(t, side, f) {
+    var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
+    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, i;
+    t.setAttribute("font-size", f);
+    for (i = 0; i < spans.length; i++) {
+      var n = spans[i].getComputedTextLength ? spans[i].getComputedTextLength() : f * 0.6 * spans[i].textContent.length;
+      if (n > w) w = n;
+    }
+    // clear the line (and the coupler dot on its midpoint, where the edge has one)
+    var off = w / 2 + 3 + Math.max(5, +t.getAttribute("data-clear") || 0);
+    var px = cx + off * side;
+    t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(cy));
+    t.setAttribute("data-w", r1(w)); t.setAttribute("data-h", r1(lh * spans.length));
+    for (i = 0; i < spans.length; i++) {
+      spans[i].setAttribute("x", r1(px));
+      spans[i].setAttribute("y", r1(cy + (i - (spans.length - 1) / 2) * lh));
+    }
+  }
   function placeLabel(t, side, f) {
+    if (t.hasAttribute("data-stack")) { placeStack(t, side, f); return; }
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);    // the text frame's "down"
@@ -789,7 +824,9 @@ window.TopoGraph = (function () {
     t.setAttribute("font-size", f);
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
-    t.setAttribute("transform", "rotate(" + t.getAttribute("data-ang") + " " + r1(px) + " " + r1(py) + ")");
+    // A level label needs no transform at all (FB-01: no rotated text).
+    if (+t.getAttribute("data-ang")) t.setAttribute("transform", "rotate(" + t.getAttribute("data-ang") + " " + r1(px) + " " + r1(py) + ")");
+    else t.removeAttribute("transform");
   }
   /* Place each rotated label: above the line first, then below, then one px
    * smaller at a time down to minFont; a label that still collides keeps the
@@ -1088,14 +1125,18 @@ window.TopoGraph = (function () {
   // The add door's two ghost stones: dashed, a "+" and a "+ pair" label.
   function ghostStones(x, SP, R, font) {
     var out = "";
-    var rows = [["add:qubit", "+", "Add a qubit"], ["add:pair", "+ pair", "Add a pair: then click two qubits"]];
+    var rows = [["add:qubit", "qubit", "Add qubit", "Add a qubit"],
+                ["add:pair", "pair", "Add pair", "Add a pair: then click two qubits"]];
+    var lh = font * 1.15;
     for (var i = 0; i < rows.length; i++) {
       var y = (i + 0.5) * SP;
+      // Two lines, one size for both buttons: "Add" over the noun.
       out += '<g class="cm-dir-ghost" data-cm="' + rows[i][0] + '" role="button" tabindex="0" aria-label="' +
              esc(rows[i][2]) + '"><circle class="cm-dir-ghost-stone" cx="' + x + '" cy="' + y + '" r="' + R + '"/>' +
-             '<text class="cm-dir-ghost-text" font-size="' + (i ? font : Math.round(font * 2)) + '" x="' + x + '" y="' + y +
-             '" text-anchor="middle" dominant-baseline="central">' + esc(rows[i][1]) + "</text>" +
-             "<title>" + esc(rows[i][2]) + "</title></g>";
+             '<text class="cm-dir-ghost-text" font-size="' + font + '" text-anchor="middle" dominant-baseline="central">' +
+             '<tspan x="' + x + '" y="' + r1(y - lh / 2) + '">Add</tspan>' +
+             '<tspan x="' + x + '" y="' + r1(y + lh / 2) + '">' + esc(rows[i][1]) + "</tspan></text>" +
+             "<title>" + esc(rows[i][3]) + "</title></g>";
     }
     return out;
   }

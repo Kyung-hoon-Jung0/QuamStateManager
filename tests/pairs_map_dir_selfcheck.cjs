@@ -82,8 +82,12 @@ ok(m.querySelectorAll('.cm-dir-arrow').length === edges.length, 'one arrow per p
 ok(m.querySelectorAll('.cm-dir-label').length === edges.length, 'one along-the-edge label per pair edge');
 ok(m.querySelectorAll('.cm-dir-m').length === edges.filter((x) => x.moving_qubit).length, 'one moving ring per edge that declares a moving qubit');
 
-const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') && t.hasAttribute('transform'));
-ok(placed, 'every label was placed by declutterLabels (rotated along its edge)');
+const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') &&
+  (t.hasAttribute('data-stack') || t.hasAttribute('transform') || +t.getAttribute('data-ang') === 0));
+ok(placed, 'every label was placed by declutterLabels (along its edge, or stacked upright on a steep one)');
+// FB-01: no pair label is ever rotated off level.
+ok(Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => !/rotate\((?!0 )/.test(t.getAttribute('transform') || '') ||
+  Math.abs(+t.getAttribute('data-ang')) <= 60), 'no steep pair label is rotated');
 const fonts = Array.from(m.querySelectorAll('.cm-dir-label')).map((t) => parseFloat(t.getAttribute('font-size')));
 ok(Math.min(...fonts) >= 12, 'no label is drawn under 12 px (D-6), min ' + Math.min(...fonts));
 ok(m.querySelectorAll('.cm-dir-crowded').length === 0, 'no label had to be left crowded');
