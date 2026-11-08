@@ -27,6 +27,7 @@ import re
 
 import json
 import os
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -208,6 +209,45 @@ class TestLiveWalk:
         # and back again
         c.post("/undo")
         assert _live_off(env) == 0.08 and ctx["undo_cursor"] == 0
+
+    def test_delete_undo_restores_original_key_order_and_bytes(self, env):
+        c = env["client"]
+        ctx = _ctx(env)
+        with ctx["store"]._lock:
+            ctx["modifier"].create_subtree("qubits.qA2", {
+                "id": "qA2", "f_01": 5.1e9,
+                "z": {"joint_offset": 0.11},
+                "xy": {"ops": {"x180": {"amp": 0.2}}},
+            })
+            ctx["modifier"].create_subtree("qubits.qA3", {
+                "id": "qA3", "f_01": 5.2e9,
+                "z": {"joint_offset": 0.12},
+                "xy": {"ops": {"x180": {"amp": 0.2}}},
+            })
+        _apply(c)
+
+        live_path = env["live"] / "state.json"
+        before = live_path.read_bytes()
+        before_sha = hashlib.sha256(before).hexdigest()
+        before_keys = list(json.loads(before)["qubits"].keys())
+        assert before_keys == ["qA1", "qA2", "qA3"]
+
+        with ctx["store"]._lock:
+            ctx["modifier"].delete_subtree("qubits.qA2")
+        _apply(c)
+        after_delete_keys = list(json.loads(live_path.read_text(encoding="utf-8"))["qubits"].keys())
+        assert after_delete_keys == ["qA1", "qA3"]
+
+        c.post("/undo")
+        restored = live_path.read_bytes()
+        restored_keys = list(json.loads(restored)["qubits"].keys())
+        assert restored_keys == before_keys
+        assert hashlib.sha256(restored).hexdigest() == before_sha
+        assert restored == before
+
+        c.post("/redo")
+        after_redo_keys = list(json.loads(live_path.read_text(encoding="utf-8"))["qubits"].keys())
+        assert after_redo_keys == ["qA1", "qA3"]
 
     def test_two_applies_walk_down_then_up(self, env):
         c = env["client"]

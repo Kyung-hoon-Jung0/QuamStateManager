@@ -137,7 +137,8 @@ class Modifier:
 
     def create_subtree(self, dot_path: str, value: Any, *,
                        group_id: str | None = None,
-                       enforce: bool = True) -> ChangeEntry:
+                       enforce: bool = True,
+                       key_index: int | None = None) -> ChangeEntry:
         """Create a brand-new key (or subtree) at *dot_path*.
 
         The parent path must already exist; *dot_path* itself must NOT exist
@@ -187,8 +188,18 @@ class Modifier:
             # is sufficient; for top-level keys we must write both.
             written = copy.deepcopy(value)
             parent_merged[leaf_key] = written
+            if key_index is not None and isinstance(parent_merged, dict):
+                items = list(parent_merged.items())
+                items.insert(key_index, items.pop())
+                parent_merged.clear()
+                parent_merged.update(items)
             if is_top_level:
                 parent_source[leaf_key] = written
+                if key_index is not None and isinstance(parent_source, dict):
+                    items = list(parent_source.items())
+                    items.insert(key_index, items.pop())
+                    parent_source.clear()
+                    parent_source.update(items)
 
             entry = ChangeEntry(
                 dot_path=dot_path,
@@ -196,6 +207,7 @@ class Modifier:
                 new_value=copy.deepcopy(written),
                 source_file=source_file,
                 created=True,
+                key_index=key_index,
                 group_id=group_id,
             )
             self.store.change_log.append(entry)
