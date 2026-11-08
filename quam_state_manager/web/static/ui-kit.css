@@ -769,6 +769,7 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
     opacity: 1; font-weight: var(--ui-fw); fill: var(--ui-text);
     paint-order: stroke; stroke: var(--ui-surface-1); stroke-width: 4px; stroke-linejoin: round;
 }
+.cm-dir .cm-dir-connector { stroke: var(--ui-text); stroke-width: 1px; }
 .cm-dir .cm-arrow.cm-dir-arrow { fill: var(--ui-text-2); }
 .cm-dir.cm-hl-pairs .cm-arrow.cm-dir-arrow { fill: var(--ui-accent); }
 /* the moving qubit: a hollow ring ON the line beside it (a filled dot read as an arrow tail) */

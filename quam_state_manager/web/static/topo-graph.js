@@ -661,11 +661,11 @@ window.TopoGraph = (function () {
       // Read every non-level edge top-first, using endpoints rather than the
       // display pair id (which may abbreviate or contain hyphenated names).
       var top = y1 <= y2 ? e.source : e.target, bot = y1 <= y2 ? e.target : e.source;
-      out += '<text class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
+      out += '<g class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
              ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1" data-ang="' + r1(ang) + '"' +
              (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
-             ' data-pair-id="' + esc(e.pair_id) + '" text-anchor="middle" dominant-baseline="central" x="0" y="0">' +
-             '<tspan>' + esc(top) + '</tspan><tspan>|</tspan><tspan>' + esc(bot) + "</tspan></text>";
+             ' data-pair-id="' + esc(e.pair_id) + '" text-anchor="middle" dominant-baseline="central">' +
+             '<text>' + esc(top) + '</text><line class="cm-dir-connector"/><text>' + esc(bot) + "</text></g>";
       return out;
     }
     out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
@@ -739,8 +739,8 @@ window.TopoGraph = (function () {
     var f = parseFloat(t.getAttribute("font-size")) || 12;
     var w = t.getComputedTextLength ? t.getComputedTextLength() : f * 4;
     var cx = parseFloat(t.getAttribute("data-px")), cy = parseFloat(t.getAttribute("data-py"));
-    if (t.hasAttribute("data-stack") && !isNaN(cx)) {   // a stacked label: its own upright box
-      return rectPoly(cx, cy, (+t.getAttribute("data-w") || w) + 4, +t.getAttribute("data-h") || f * 3.3, 0);
+    if (t.hasAttribute("data-stack")) {
+      return bboxPoly(t.getBBox(), 2);
     }
     if (isNaN(cx)) {   // an unrotated label: its own box
       var b = t.getBBox();
@@ -790,29 +790,39 @@ window.TopoGraph = (function () {
   }
   function placeStack(t, side, f) {
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
-    var spans = t.querySelectorAll("tspan"), lh = f * 1.1, w = 0, h = 0, i;
+    var texts = t.querySelectorAll("text"), line = t.querySelector(".cm-dir-connector");
     t.setAttribute("font-size", f);
-    for (i = 0; i < spans.length; i++) {
-      var n = spans[i].getComputedTextLength ? spans[i].getComputedTextLength() : f * 0.6 * spans[i].textContent.length;
-      if (n > w) w = n;
-      var box = spans[i].getBBox ? spans[i].getBBox() : null;
-      h = Math.max(h, box && box.height > 0 ? box.height : lh);
+    // Font bounds vary by browser and font: leave a third-em connector plus
+    // a small breathing gap between the two measured text boxes.
+    var rowHeight = 0, i;
+    for (i = 0; i < texts.length; i++) {
+      texts[i].setAttribute("x", 0); texts[i].setAttribute("y", 0);
+      rowHeight = Math.max(rowHeight, texts[i].getBBox().height);
     }
-    // Re-measure at every trial font, including the final restored candidate.
-    // Project the upright box onto the edge normal so diagonal lines clear it.
-    h += lh * (spans.length - 1);
+    var step = rowHeight + f * 0.45;
+    for (i = 0; i < texts.length; i++) texts[i].setAttribute("y", (i - 0.5) * step);
+    var upper = texts[0].getBBox(), lower = texts[1].getBBox();
+    var gapY = (upper.y + upper.height + lower.y) / 2;
+    line.setAttribute("x1", 0); line.setAttribute("x2", 0);
+    line.setAttribute("y1", gapY - f / 6); line.setAttribute("y2", gapY + f / 6);
+    // Re-measure the complete group at every trial font and restored candidate.
+    var box = t.getBBox(), w = box.width, h = box.height;
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);
     var off = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear") || 0);
     var px = cx + nx * off * side, py = cy + ny * off * side;
+    var ox = px - (box.x + w / 2), oy = py - (box.y + h / 2);
     t.removeAttribute("transform");
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("data-w", r1(w)); t.setAttribute("data-h", r1(h));
-    for (i = 0; i < spans.length; i++) {
-      spans[i].setAttribute("x", r1(px));
-      spans[i].setAttribute("y", r1(py + (i - (spans.length - 1) / 2) * lh));
+    for (i = 0; i < texts.length; i++) {
+      texts[i].setAttribute("x", r1(ox));
+      texts[i].setAttribute("y", r1(oy + (i - 0.5) * step));
     }
+    line.setAttribute("x1", r1(ox)); line.setAttribute("x2", r1(ox));
+    line.setAttribute("y1", r1(oy + gapY - f / 6)); line.setAttribute("y2", r1(oy + gapY + f / 6));
   }
+
   function placeLabel(t, side, f) {
     if (t.hasAttribute("data-stack")) { placeStack(t, side, f); return; }
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
@@ -835,7 +845,7 @@ window.TopoGraph = (function () {
     if (!svg || !svg.querySelectorAll) return;
     minFont = minFont || DIR_MIN_FONT;
     var fixed = collectItems(svg, ".cm-stone, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler, .cm-res");
-    var labels = svg.querySelectorAll("text.cm-dir-label");
+    var labels = svg.querySelectorAll(".cm-dir-label");
     var placed = [];
     for (var i = 0; i < labels.length; i++) {
       var t = labels[i], f0 = parseFloat(t.getAttribute("font-size")) || 14;
