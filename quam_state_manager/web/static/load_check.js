@@ -6,7 +6,7 @@ window.runLoadCheck = (function () {
         return Array.prototype.slice.call(document.querySelectorAll('.js-load-check-btn'));
     }
     function allStatus() {
-        return Array.prototype.slice.call(document.querySelectorAll('.js-load-check-status'));
+        return Array.prototype.slice.call(document.querySelectorAll('[data-loadcheck-status]'));
     }
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
@@ -28,29 +28,30 @@ window.runLoadCheck = (function () {
             }
         });
     }
-    function setStatus(kind, html) {
+    // UI kit verdict line: dot + key + why (no page-specific CSS).
+    function setStatus(kind, key, whyHtml) {
         allStatus().forEach(function (s) {
             if (!s) return;
-            s.className = 'load-check-status js-load-check-status ' + (kind ? ('is-' + kind) : '');
-            s.innerHTML = html || '';
+            if (!kind) { s.className = ''; s.innerHTML = ''; return; }
+            s.className = 'ui-verdict ui-verdict--' + kind + '';
+            s.innerHTML = '<span class="ui-dot"></span><span class="ui-verdict-key">' + esc(key)
+                + '</span>' + (whyHtml ? '<span class="ui-verdict-why">' + whyHtml + '</span>' : '');
         });
     }
     function renderFail(data) {
-        var typ = esc((data && data.exc_type) || 'Error');
+        var typ = (data && data.exc_type) || 'Error';
         var detail = esc((data && data.detail) || 'Load check failed.');
         var links = (data && data.links) || [];
         var linkHtml = '';
-        if (Array.isArray(links) && links.length) {
-            linkHtml = ' ';
+        if (Array.isArray(links)) {
             for (var i = 0; i < links.length; i++) {
                 var p = links[i] && links[i].path;
                 if (!p) continue;
-                linkHtml += '<a href="#" class="load-check-link" data-loadcheck-path="' + esc(p)
+                linkHtml += ' <a href="#" class="ui-path load-check-link" data-loadcheck-path="' + esc(p)
                     + '" title="Show this path in Json tree">' + esc(p) + '</a>';
-                if (i + 1 < links.length) linkHtml += ' ';
             }
         }
-        setStatus('fail', typ + ': ' + detail + linkHtml);
+        setStatus('danger', typ, detail + linkHtml);
     }
     function envRequired(data) {
         var d = data || {};
@@ -64,7 +65,7 @@ window.runLoadCheck = (function () {
     }
     return function () {
         setRunning(true);
-        setStatus('', '');
+        setStatus('');
         return fetch('/state/load-check', {
             method: 'POST',
             headers: { 'X-Requested-With': 'fetch' }
@@ -82,13 +83,13 @@ window.runLoadCheck = (function () {
                 }
                 if (resp.ok && data.ok) {
                     var qv = ((data.lib_versions || {}).quam || '?');
-                    setStatus('ok', 'Loads OK (quam ' + esc(qv) + ')');
+                    setStatus('ok', 'Loads OK', 'quam ' + esc(qv));
                     return;
                 }
                 renderFail(data);
             })
             .catch(function (e) {
-                setStatus('fail', 'Load check failed: ' + esc(e && e.message || e));
+                setStatus('danger', 'Load check failed', esc(e && e.message || e));
             })
             .finally(function () { setRunning(false); });
     };

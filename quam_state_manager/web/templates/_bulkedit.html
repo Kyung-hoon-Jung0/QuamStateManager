@@ -17,10 +17,12 @@
     {# Title row: load check, document badges and view controls. #}
     <div class="bulk-toolbar bulk-toolbar-title">
         <h2 class="ui-head-title">Live state edit (table view)</h2>
-        <button type="button" class="btn-sm outline js-load-check-btn"
-                title="Check whether the current working state can be loaded by Quam in the selected environment"
-                onclick="window.runLoadCheck && window.runLoadCheck(this)">&#10003; Load check</button>
-        <span class="load-check-status js-load-check-status" aria-live="polite"></span>
+        <div class="ui-actions">
+            <span data-loadcheck-status aria-live="polite"></span>
+            <button type="button" class="btn-sm outline js-load-check-btn"
+                    title="Check whether the current working state can be loaded by Quam in the selected environment"
+                    onclick="window.runLoadCheck && window.runLoadCheck(this)">&#10003; Load check</button>
+        </div>
         {# Customer, 2026-09-10: "let Live state edit (table view) do wiring.json too.
            On the right of Live state edit (table view), as a badge: state.json | wiring.json,
            two buttons like that... clean, with a light SM-blue border."

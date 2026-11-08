@@ -11,7 +11,7 @@ const dom = new JSDOM(
   '<!doctype html><html><body>'
   + '<div id="status-bar"></div>'
   + '<button class="js-load-check-btn">\u2713 Load check</button>'
-  + '<span class="js-load-check-status"></span>'
+  + '<span data-loadcheck-status></span>'
   + '</body></html>',
   { url: 'http://localhost/bulk', pretendToBeVisual: true }
 );
@@ -98,7 +98,7 @@ window.eval(appJs);
 
 (async function () {
   const btn = document.querySelector('.js-load-check-btn');
-  const status = document.querySelector('.js-load-check-status');
+  const status = document.querySelector('[data-loadcheck-status]');
   ok(typeof window.runLoadCheck === 'function', 'runLoadCheck exported');
 
   const p1 = window.runLoadCheck(btn);
@@ -106,10 +106,10 @@ window.eval(appJs);
   ok(btn.textContent === 'Checking\u2026', 'button shows Checking while running');
   await p1;
   ok(!btn.disabled, 'button re-enabled after check');
-  ok(status.textContent === 'Loads OK (quam 0.6.0)' && status.classList.contains('is-ok'), 'green ok version rendered');
+  ok(status.textContent === 'Loads OKquam 0.6.0' && status.classList.contains('ui-verdict--ok'), 'green ok version rendered');
 
   await window.runLoadCheck(btn);
-  ok(status.textContent.includes("AttributeError: object has no attribute 'f_01'"), 'exception type and detail rendered verbatim');
+  ok(status.textContent.includes('AttributeError') && status.textContent.includes("object has no attribute 'f_01'"), 'exception type and detail rendered verbatim');
   const link = status.querySelector('.load-check-link');
   ok(!!link, 'failure result renders a path link');
   if (link) {
