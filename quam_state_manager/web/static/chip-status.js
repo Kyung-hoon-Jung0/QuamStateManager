@@ -1770,8 +1770,9 @@ window.ChipStatus.mount = function (opts) {
             // On an IRB chip the one 2Q tile IS the interleaved-RB tile (same
             // aggregate, EPG line and excluded-row count), under the one-source
             // name and the gate2q id.
-            _ovIrbMerged ? _tid('gate2q', withErrLine(
-                metricTile('2Q gate (IRB)', irbAgg, pct, fidRange, null, _ovStat('gate2q')), irbAgg, 'EPG', null)) :
+            _ovIrbMerged ? (function() { var t = _tid('gate2q', withErrLine(
+                metricTile('2Q gate (IRB)', irbAgg, pct, fidRange, null, _ovStat('gate2q')), irbAgg, 'EPG', null));
+                t.jumpAs = 'irb'; return t; })() :
             (function() { var src = default2QSource(topo.edges);
                           var t = metricTile(src ? src.label : '2Q gate fidelity',
                               computeAggregates(topo.edges.map(function(e) { return src ? src.val(e, 'best') : null; })),
@@ -1934,7 +1935,8 @@ window.ChipStatus.mount = function (opts) {
     ];
     function _ovJumpFor(tile) {
         if (!tile || !tile.id) return null;
-        var j = OV_JUMP[tile.id];
+        // the merged IRB 2Q tile keeps the IRB tile's own jump target
+        var j = OV_JUMP[tile.jumpAs || tile.id];
         if (j) return { view: j[0], sel: j[1], label: j[2] };
         if (tile.custom && tile.metricKey) {
             if (tile.metricKey === 'cz_fidelity') return { view: 'fidelity2q', sel: null, label: '2Q Gate Fidelity' };
