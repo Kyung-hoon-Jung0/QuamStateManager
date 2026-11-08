@@ -82,21 +82,27 @@ function checkRenderLayout() {
   ok(svg.getAttribute('class').indexOf('cm-hl-pairs') !== -1, 'highlight mode rides the svg root class');
   ok(m.querySelectorAll('.cm-stone').length === 3, 'all 3 stones drawn');
   ok(m.querySelectorAll('.cm-edge').length === 2, 'both pair edges drawn');
-  // D-94: EVERY pair edge carries one arrow head at the TARGET end
-  ok(m.querySelectorAll('.cm-arrow.cm-dir-arrow').length === 2, 'one control -> target arrow per pair edge');
+  // Map tidy: roles are the shared C / T / M badges; no blue arrow, no open ring
+  ok(m.querySelectorAll('.cm-dir-arrow, .cm-dir-m').length === 0, 'no control -> target arrow and no moving ring left');
   {
-    const g = m.querySelector('[data-cm="p:qA1-qA3"]');
-    const tip = g.querySelector('.cm-dir-arrow').getAttribute('points').split(' ')[2].split(',').map(Number);
-    // qA1 = control, qA3 = target: measure against the drawn stone centres
     const at = (id) => { const c = m.querySelector('[data-cm="q:' + id + '"] .cm-stone'); return [+c.getAttribute('cx'), +c.getAttribute('cy')]; };
+    const cen = (sel) => { const c = m.querySelector(sel + ' circle'); return c ? [+c.getAttribute('cx'), +c.getAttribute('cy')] : [1e9, 1e9]; };
     const dist = (p, id) => Math.hypot(p[0] - at(id)[0], p[1] - at(id)[1]);
-    ok(dist(tip, 'qA3') < dist(tip, 'qA1'), 'the arrow tip sits at the target (qA3) end');
-    const ring = g.querySelector('.cm-dir-m');
-    const rp = ring ? [+ring.getAttribute('cx'), +ring.getAttribute('cy')] : [1e9, 1e9];
-    ok(!!ring && dist(rp, 'qA1') < dist(rp, 'qA3'), 'the moving-qubit ring sits beside the moving (control) qubit');
-    ok(!m.querySelector('[data-cm="p:qA2-qA1"] .cm-dir-m'), 'no ring where no moving qubit is declared');
-    ok(m.querySelectorAll('.cm-role-txt').length === 0, 'no C/T/M letters on the component map (the arrow says it)');
-    ok(!!m.querySelector('.cm-dir-legend'), 'the one-line legend sits under the map');
+    const C = cen('.cm-role-c[data-cm-pair="qA1-qA3"]'), T = cen('.cm-role-t[data-cm-pair="qA1-qA3"]');
+    ok(dist(C, 'qA1') < dist(C, 'qA3') && dist(T, 'qA3') < dist(T, 'qA1'), 'C at the control (qA1) end, T at the target (qA3) end');
+    ok(Math.abs(dist(C, 'qA1') - dist(T, 'qA3')) < 0.2, 'C and T mirrored: the same distance from their own stones');
+    const M = cen('.cm-role-m[data-cm-pair="qA1-qA3"]');
+    ok(dist(M, 'qA1') < dist(M, 'qA3'), 'M beside the moving (control) qubit');
+    ok(!m.querySelector('.cm-role-m[data-cm-pair="qA2-qA1"]'), 'no M where no moving qubit is declared');
+    const leg = m.querySelector('.cm-dir-legend');
+    ok(!!leg && /control/.test(leg.textContent) && /target/.test(leg.textContent) && /moving qubit/.test(leg.textContent)
+       && /toward the lower f/.test(leg.textContent) && leg.querySelectorAll('.cm-role-txt').length === 3,
+       'legend: [C] control, [T] target, [M] moving qubit, orange arrow toward the lower f01');
+    // badges identical to the hero's: same shared call with compactRoles
+    const TGx = win.TopoGraph, pxf = (id) => ({ qA1: { x: 0, y: 0 }, qA3: { x: 0, y: 96 } })[id];
+    const ref = TGx.pairGlyphs([], [TOPO.edges[1]], { px: pxf, cell: 64, roles: true, compactRoles: true });
+    const r0 = m.querySelector('.cm-role-c[data-cm-pair="qA1-qA3"] circle').getAttribute('r');
+    ok(ref.indexOf('r="' + r0 + '"') !== -1, 'component-map badge radius == the hero (compactRoles) radius (' + r0 + ')');
   }
   ok(m.querySelectorAll('.cm-coupler').length === 1, 'coupler dot drawn on the has_coupler edge');
   ok(m.querySelectorAll('.cm-res').length === 3, 'resonator marks for all 3 (all have rr_port)');
@@ -170,22 +176,28 @@ function checkRenderLayout() {
   {
     const freqs = m.querySelectorAll('.cm-freq');
     ok(freqs.length === 1,
-       'exactly ONE chevron: qA2-qA1 has both f_01s; qA1-qA3 lacks one (got ' + freqs.length + ')');
+       'exactly ONE frequency arrow: qA2-qA1 has both f_01s; qA1-qA3 lacks one (got ' + freqs.length + ')');
     const g = freqs[0];
     ok(/Δf_01: qA2 \+200\.0 MHz vs qA1/.test(g.querySelector('title').textContent),
        'tooltip names the higher qubit and the exact Δ');
-    ok(g.querySelectorAll('.cm-freqchev').length === 2, 'double chevron (two strokes)');
-    // geometry: the apex (2nd point of the polyline) sits CLOSER to the
-    // lower-f qubit (qA1 at cell 0) than the arm tips do
-    const pts = g.querySelector('.cm-freqchev').getAttribute('points').split(' ')
-      .map((p) => p.split(',').map(Number));
-    const apex = pts[1], armTip = pts[0];
+    ok(g.querySelectorAll('.cm-freqchev, polyline').length === 0, 'D-3: no chevron markup, an arrow instead');
+    // D-3: the arrow's tip sits at the LOWER-f qubit (qA1), tail at the higher
+    const tipOf = (root) => root.querySelector('.cm-dir-freq-head').getAttribute('points').split(' ')[2].split(',').map(Number);
     const qA1x = 0.5 * 96, qA2x = 1.5 * 96;   // stone centres, default cell, x1.5 spacing (D-94)
-    ok(Math.abs(apex[0] - qA1x) < Math.abs(armTip[0] - qA1x),
-       'chevron apex points toward the LOWER-f qubit (qA1)');
-    ok(Math.abs(apex[0] - qA2x) > Math.abs(armTip[0] - qA2x),
-       'chevron opens toward the HIGHER-f qubit (qA2)');
-    // reversed frequencies flip the glyph
+    ok(Math.abs(tipOf(g)[0] - qA1x) < Math.abs(tipOf(g)[0] - qA2x), 'D-3: frequency arrow points to the LOWER-f qubit (qA1)');
+    // D-3: same stroke + same head as the control arrow, and the same length as its visible run
+    const fl = g.querySelector('.cm-dir-freq-line'), fh = g.querySelector('.cm-dir-freq-head').getAttribute('points');
+    const da = '0,0 0,13.86 12.6,6.93';   // the old control arrow head at the default cell (12.6 long, 13.86 wide)
+    const shape = (pts) => { const p = pts.split(' ').map((q) => q.split(',').map(Number));
+      return [Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]),
+              Math.hypot(p[2][0] - (p[0][0] + p[1][0]) / 2, p[2][1] - (p[0][1] + p[1][1]) / 2)]; };
+    ok(Math.abs(shape(fh)[0] - shape(da)[0]) < 0.25 && Math.abs(shape(fh)[1] - shape(da)[1]) < 0.25, 'D-3: frequency head == control head (' + shape(fh) + ' vs ' + shape(da) + ')');
+    const ft = tipOf(g), dt = da.split(' ')[2].split(',').map(Number);
+    const fRun = Math.hypot(+fl.getAttribute('x1') - ft[0], +fl.getAttribute('y1') - ft[1]);
+    ok(Math.abs(fRun - (96 - 2 * (0.30 * 64 + 3))) < 0.6, 'D-3: arrow spans stone rim+3 to rim+3 like the control arrow (' + fRun.toFixed(1) + ')');
+    const kit2 = read('ui-kit.css');
+    ok(/\.cm-freq \.cm-dir-freq-line \{ stroke: var\(--ui-freq-arrow\); stroke-width: 4\.5px;/.test(kit2), 'D-3: arrow stroke 4.5px like the direction line, own token');
+    // reversed frequencies flip it
     const mRev = win.document.createElement('div');
     win.document.body.appendChild(mRev);
     win.TopoGraph.renderLayout(mRev, {
@@ -194,11 +206,8 @@ function checkRenderLayout() {
       edges: [{ pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1' }], highlight: 'pairs',
     });
     ok(/Δf_01: qA1 \+200\.0 MHz vs qA2/.test(mRev.querySelector('.cm-freq title').textContent),
-       'flipped frequencies flip the chevron (qA1 now higher)');
-    const ptsR = mRev.querySelector('.cm-freqchev').getAttribute('points').split(' ')
-      .map((p) => p.split(',').map(Number));
-    ok(Math.abs(ptsR[1][0] - qA2x) < Math.abs(ptsR[0][0] - qA2x),
-       'flipped: apex now points at qA2 (the lower one)');
+       'flipped frequencies flip the arrow (qA1 now higher)');
+    ok(Math.abs(tipOf(mRev)[0] - qA2x) < Math.abs(tipOf(mRev)[0] - qA1x), 'flipped: tip now at qA2, opposite the control arrow');
     // CR both-directions dedupe + near-equal gate
     const mCr = win.document.createElement('div');
     win.document.body.appendChild(mCr);
@@ -213,7 +222,46 @@ function checkRenderLayout() {
       ], highlight: 'pairs',
     });
     ok(mCr.querySelectorAll('.cm-freq').length === 1,
-       'anti-parallel CR directions share ONE chevron, and |Δ| < 1 MHz draws none');
+       'anti-parallel CR directions share ONE frequency arrow, and |Δ| < 1 MHz draws none');
+  }
+  // ---- map tidy (D-1, D-2, D-3 gate, D-4) ----
+  {
+    const TG = win.TopoGraph;
+    // D-4: pair label ~0.87x at a large cell, arrowhead 1.4x, line 1.5x stroke
+    ok(mBig.querySelector('.cm-dir-label').getAttribute('font-size') === '17.7',
+       'D-4: cell:120 pair label 20.3 x 0.87 = 17.7px (got ' + mBig.querySelector('.cm-dir-label').getAttribute('font-size') + ')');
+    const ap = mBig.querySelector('.cm-dir-freq-head').getAttribute('points').split(' ').map((p) => p.split(',').map(Number));
+    const bx = (ap[0][0] + ap[1][0]) / 2, by = (ap[0][1] + ap[1][1]) / 2;
+    const ahLen = Math.hypot(ap[2][0] - bx, ap[2][1] - by);
+    ok(Math.abs(ahLen - Math.max(9, 36 * 0.36) * 1.4) < 0.3, 'D-4: frequency arrowhead length scaled 1.4x (got ' + ahLen.toFixed(2) + ')');
+    // D-1: one screen side whatever the direction: above a level edge, left of a vertical one
+    const lab = (ang) => { const t = win.document.createElementNS('http://www.w3.org/2000/svg', 'text'); t.setAttribute('data-ang', ang); return t; };
+    const side = (ang) => { const t = lab(ang); const a = ang * Math.PI / 180, sd = TG.screenSide(t);
+      return [-Math.sin(a) * sd, Math.cos(a) * sd]; };
+    ok(side(0)[1] < 0 && side(180)[1] < 0, 'D-1: both directions of a level edge put the label ABOVE');
+    ok(side(90)[0] < 0 && side(-90)[0] < 0, 'D-1: both directions of a vertical edge put the label LEFT');
+    // D-2: M sits ON the line (mirrored along the edge), for both edge orientations
+    const px = (id) => ({ a: { x: 0, y: 0 }, b: { x: 100, y: 0 }, c: { x: 0, y: 100 } })[id];
+    const host = win.document.createElement('div');
+    host.innerHTML = '<svg>' + TG.pairGlyphs([], [
+      { pair_id: 'a-b', source: 'a', target: 'b', moving_qubit: 'control' },
+      { pair_id: 'c-a', source: 'c', target: 'a', moving_qubit: 'target' }], { px, cell: 64, roles: true }) + '</svg>';
+    const mAB = host.querySelector('.cm-role-m[data-cm-pair="a-b"] circle');
+    const mCA = host.querySelector('.cm-role-m[data-cm-pair="c-a"] circle');
+    ok(mAB && +mAB.getAttribute('cy') === 0 && +mAB.getAttribute('cx') < 50, 'D-2: level M on the line, on its own half');
+    ok(mCA && +mCA.getAttribute('cx') === 0 && +mCA.getAttribute('cy') < 50, 'D-2: vertical M on the line, on its own half');
+    // D-3: freqArrows:false (the hero's Qubit-freq view) draws none
+    const nodesF = [{ id: 'a', f_01: 5.2e9 }, { id: 'b', f_01: 5.0e9 }];
+    ok(TG.pairGlyphs(nodesF, [{ source: 'a', target: 'b' }], { px, cell: 64 }).indexOf('cm-dir-freq-line') !== -1, 'D-3: arrow drawn by default');
+    ok(TG.pairGlyphs(nodesF, [{ source: 'a', target: 'b' }], { px, cell: 64, freqArrows: false }).indexOf('cm-freq') === -1, 'D-3: freqArrows:false draws none');
+    // D-3 screen side: below a level edge, right of a vertical one, whichever end is lower
+    const nodesG = [{ id: 'a', f_01: 5.0e9 }, { id: 'b', f_01: 5.2e9 }, { id: 'c', f_01: 5.4e9 }];
+    const hostS = win.document.createElement('div');
+    hostS.innerHTML = '<svg>' + TG.pairGlyphs(nodesF.concat([{ id: 'c', f_01: 5.4e9 }]), [{ source: 'a', target: 'b' }, { source: 'a', target: 'c' }], { px, cell: 64, freqSide: 'screen' }) +
+      TG.pairGlyphs(nodesG, [{ source: 'a', target: 'b' }, { source: 'a', target: 'c' }], { px, cell: 64, freqSide: 'screen' }) + '</svg>';
+    const ls = hostS.querySelectorAll('.cm-dir-freq-line');
+    ok(+ls[0].getAttribute('y1') > 0 && +ls[2].getAttribute('y1') > 0, 'D-3: level arrows below the line in both frequency orders');
+    ok(+ls[1].getAttribute('x1') > 0 && +ls[3].getAttribute('x1') > 0, 'D-3: vertical arrows right of the line in both orders');
   }
 
   // F4 (docs/93): feedline slots assigned in SPATIAL order (screen top first),

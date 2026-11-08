@@ -85,9 +85,9 @@ const m = win.document.getElementById('m');
 win.TopoGraph.renderLayout(m, { nodes: nodes, edges: edges, highlight: 'pairs', cell: 120 });
 const svg = m.querySelector('svg.cm-svg');
 ok(!!svg && svg.classList.contains('cm-dir'), 'the map carries the direction drawing (cm-dir)');
-ok(m.querySelectorAll('.cm-dir-arrow').length === edges.length, 'one arrow per pair edge (' + edges.length + ')');
+ok(m.querySelectorAll('.cm-dir-arrow').length === 0 && svg.querySelectorAll('.cm-role-c').length === edges.length, 'map tidy: no blue arrow; one C badge per pair edge (' + edges.length + ')');
 ok(m.querySelectorAll('.cm-dir-label').length === edges.length, 'one along-the-edge label per pair edge');
-ok(m.querySelectorAll('.cm-dir-m').length === edges.filter((x) => x.moving_qubit).length, 'one moving ring per edge that declares a moving qubit');
+ok(m.querySelectorAll('.cm-dir-m').length === 0 && svg.querySelectorAll('.cm-role-m').length === edges.filter((x) => x.moving_qubit).length, 'one M badge per edge that declares a moving qubit, no ring');
 
 const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') &&
   (t.hasAttribute('data-stack') || t.hasAttribute('transform') || +t.getAttribute('data-ang') === 0));
@@ -105,8 +105,8 @@ ok(ov.items > edges.length * 3, 'the overlap count looked at stones, labels and 
 ok(ov.count === 0, 'label overlaps == 0 on the pairs fixture (' + JSON.stringify(ov.pairs.slice(0, 4)) + ')');
 
 const legend = m.querySelector('.cm-dir-legend');
-ok(!!legend && /control → target/.test(legend.textContent) && /moving qubit/.test(legend.textContent)
-   && /lower f/.test(legend.textContent), 'the one-line legend names arrow, ring and chevron');
+ok(!!legend && /control/.test(legend.textContent) && /target/.test(legend.textContent) && /moving qubit/.test(legend.textContent)
+   && /lower f/.test(legend.textContent), 'the one-line legend names C, T, M and the frequency arrow');
 
 // A coupler chip: every pair carries a coupler dot at its midpoint, beside
 // the frequency chevron. The chevron must move clear of it.

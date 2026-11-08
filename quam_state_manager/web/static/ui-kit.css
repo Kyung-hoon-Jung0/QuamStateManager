@@ -38,6 +38,8 @@
     --ui-border-strong: color-mix(in srgb, var(--pico-color) 28%, var(--pico-background-color));
     /* accent */
     --ui-accent: var(--pico-primary);
+    /* the frequency arrow on chip maps: dark orange, mixed toward the theme's text so it darkens on light and lightens on dark */
+    --ui-freq-arrow: color-mix(in srgb, #d9480f 78%, var(--pico-color));
     --ui-accent-fill: var(--pico-primary-background);
     --ui-accent-fill-hover: var(--pico-primary-hover-background);
     --ui-on-accent: var(--pico-primary-inverse);
@@ -849,7 +851,7 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
 /* ===== stage 5: chip maps and the wiring chassis (D-94..D-98) =====
  * The only rules here that target map markup. Every selector names one of the
  * stage-5 classes (cm-dir*, tmap*, iw-chassis*); the existing classes they sit
- * next to (cm-freqchev, heatmap-cell*, topo-outlier, iw-title) appear only as
+ * next to (heatmap-cell*, topo-outlier, iw-title) appear only as
  * context. Values are --ui-* tokens; a size that depends on the panel cell is
  * a scoped --ui-map-* variable set on the map itself.
  */
@@ -859,12 +861,13 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
     paint-order: stroke; stroke: var(--ui-surface-1); stroke-width: 4px; stroke-linejoin: round;
 }
 .cm-dir .cm-dir-connector { stroke: var(--ui-text); stroke-width: 1px; }
-.cm-dir .cm-arrow.cm-dir-arrow { fill: var(--ui-text-2); }
-.cm-dir.cm-hl-pairs .cm-arrow.cm-dir-arrow { fill: var(--ui-accent); }
-/* the moving qubit: a hollow ring ON the line beside it (a filled dot read as an arrow tail) */
-.cm-dir .cm-dir-m { fill: var(--ui-surface-1); stroke: var(--ui-text); stroke-width: 2px; }
-/* the frequency-order chevrons (docs/93) stay, but quiet: the arrow is the direction */
-.cm-dir.cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--ui-text-3); }
+/* the frequency arrow (map tidy D-3): the one arrow on a pair line, toward the lower f01 */
+.cm-freq .cm-dir-freq-line { stroke: var(--ui-freq-arrow); stroke-width: 4.5px; stroke-linecap: round; }
+.cm-freq .cm-dir-freq-head { fill: var(--ui-freq-arrow); }
+.cm-dir-legend .cm-dir-freq-legend svg line { stroke: var(--ui-freq-arrow); }
+.cm-dir-legend .cm-dir-freq-legend svg polygon { fill: var(--ui-freq-arrow); }
+.cm-dir-legend .cm-role-dot { fill: var(--ui-surface-1); stroke: var(--ui-border-strong); stroke-width: 1px; }
+.cm-dir-legend .cm-role-txt { fill: var(--ui-text-2); }
 .cm-dir-legend {
     display: flex; align-items: center; gap: var(--ui-gap-2); flex-wrap: wrap;
     font-size: var(--ui-fs-sm); color: var(--ui-text-2); margin-top: var(--ui-gap-2);
@@ -875,7 +878,6 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
 .cm-dir-legend svg polyline { fill: none; stroke: var(--ui-text-3); stroke-width: 2; }
 .cm-dir-legend-m { display: inline-flex; align-items: center; gap: var(--ui-gap-1); margin-left: var(--ui-gap-3); }
 /* the Pulses page's pick map shows only what can be pressed (docs/166) */
-.cmap[data-cm-pick="1"] .cm-dir-m,
 .cmap[data-cm-pick="1"] .cm-dir-label,
 .cmap[data-cm-pick="1"] .cm-dir-legend { display: none; }
 /* the add door (core/diagram_add.py): two dashed ghost stones and the pair pick */

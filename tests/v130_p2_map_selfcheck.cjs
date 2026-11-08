@@ -24,10 +24,12 @@ let n = 0;
 for (const highlight of ['pairs', 'flux', 'resonators']) {
   win.TopoGraph.renderLayout(mount, { nodes, edges, highlight });
   const edge = mount.querySelector('.cm-edge');
-  // D-94: direction is the edge's own arrow + moving ring (no C/T/M letters)
-  const arrow = mount.querySelector('.cm-edge .cm-dir-arrow'), ring = mount.querySelector('.cm-edge .cm-dir-m');
-  assert.ok(edge && arrow && ring, highlight + ': pair line, its arrow and the moving ring are drawn'); n++;
-  assert.equal(mount.querySelectorAll('.cm-role').length, 0, highlight + ': no C/T/M role letters'); n++;
+  // map tidy: roles are the shared C / T / M badges; the orange frequency arrow is the one arrow
+  const arrow = mount.querySelector('.cm-freq .cm-dir-freq-head'), ring = mount.querySelector('.cm-role-m circle');
+  assert.ok(edge && arrow && ring, highlight + ': pair line, the frequency arrow and the M badge are drawn'); n++;
+  assert.equal(mount.querySelectorAll('.cm-dir-arrow, .cm-dir-m').length, 0, highlight + ': no blue arrow, no open ring'); n++;
+  const lastStone = mount.querySelectorAll('.cm-stone'); 
+  assert.ok(after(lastStone[lastStone.length - 1], ring), highlight + ': badges paint after the stones'); n++;
   const marks = mount.querySelectorAll('.cm-node .cm-flux, .cm-node .cm-res');
   assert.ok(marks.length === 4, highlight + ': both stones carry a flux stub and a resonator mark'); n++;
   // the arrow tip and the ring sit OUTSIDE each stone, so the stones painted
@@ -37,7 +39,7 @@ for (const highlight of ['pairs', 'flux', 'resonators']) {
   const rc = [+ring.getAttribute('cx'), +ring.getAttribute('cy'), +ring.getAttribute('r')];
   for (const st of stones) {
     assert.ok(Math.hypot(tip[0] - st[0], tip[1] - st[1]) > st[2], highlight + ': the arrow tip is outside every stone'); n++;
-    assert.ok(Math.hypot(rc[0] - st[0], rc[1] - st[1]) > st[2] + rc[2], highlight + ': the moving ring is outside every stone'); n++;
+    assert.ok(Math.hypot(rc[0] - st[0], rc[1] - st[1]) > st[2] + rc[2], highlight + ': the M badge is outside every stone'); n++;
   }
   for (const node of mount.querySelectorAll('.cm-node')) {
     const disc = node.querySelector('.cm-occluder');
