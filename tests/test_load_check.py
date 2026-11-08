@@ -171,3 +171,13 @@ def test_named_paths_exist():
     assert routes_mod._loadcheck_links("KeyError: 'q.x'", merged)[0]["path"] == "q.x"
     assert routes_mod._loadcheck_links("AttributeError: 'gain'", merged)[0]["path"] == "items.0.gain"
     assert routes_mod._loadcheck_links("KeyError: 'absent'", merged) == []
+
+
+def test_unknown_interpreter_is_refused_without_spawn(env, monkeypatch):
+    monkeypatch.setattr(routes_mod, "_interpreter_known", lambda p: False)
+    def forbidden(*args, **kwargs):
+        pytest.fail("must not spawn an interpreter SM does not know")
+    monkeypatch.setattr(routes_mod.subprocess, "run", forbidden)
+    response = _check(env)
+    assert response.status_code == 403
+    assert response.json["error"] == "unknown_interpreter"
