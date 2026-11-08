@@ -1380,9 +1380,8 @@ window.TopoGraph = (function () {
     }
     return { state: state, value: v, stale: stale, age: at == null ? "unknown" : (stale ? "stale" : "fresh") };
   }
-  // Midpoint badge: a pill with the pair name over at most one number, or a
-  // small dot when the pill does not fit (dense chips). The pill is always in
-  // the markup so a hover or a linked highlight can show it.
+  // Midpoint badge: a pill with the pair name over at most one number.
+  // Dense chips keep only an invisible hit area until hover or highlight.
   function pairBadgeSvg(o) {
     var lines = [o.name];
     if (o.valueText) lines.push(o.valueText);
@@ -1406,10 +1405,11 @@ window.TopoGraph = (function () {
       svg: '<g class="topo-pair-badge' + (dense ? ' topo-pair-badge-dense' : '') +
         (o.state ? ' topo-pair-badge-' + o.state : '') + '"' +
         (o.attrs || '') + ' transform="translate(' + Math.round(o.x * 10) / 10 + ',' + Math.round(o.y * 10) / 10 + ')">' +
-        '<circle class="topo-pair-badge-dot" r="' + Math.max(3, Math.round(fs * 0.45)) + '"' + fill + '></circle>' +
         '<g class="topo-pair-badge-pill">' +
         '<rect x="' + (-w / 2) + '" y="' + (-h / 2) + '" width="' + w + '" height="' + h +
         '" rx="' + Math.min(h / 2, fs) + '"' + fill + '></rect>' + text + '</g>' +
+        '<rect class="topo-hero-edge-hit" x="' + (-w / 2) + '" y="' + (-h / 2) +
+        '" width="' + w + '" height="' + h + '" fill="transparent" stroke="none" pointer-events="all"/>' +
         (o.title ? '<title>' + esc(o.title) + '</title>' : '') + '</g>'
     };
   }

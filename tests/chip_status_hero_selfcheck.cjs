@@ -689,9 +689,7 @@ function edgeLabelsBesideTheBar() {
     const nearest = (x,y) => Math.hypot(x-Math.max(num(rect,'x'),Math.min(x,num(rect,'x')+num(rect,'width'))), y-Math.max(num(rect,'y'),Math.min(y,num(rect,'y')+num(rect,'height'))));
     ok(nearest(cx,cy) > num(node.querySelector('circle'),'r'), 'D2/D4: hero pill clears actual stone radius');
     const badge = hero.querySelector('.topo-pair-badge[data-hero-pair="'+pill.getAttribute('data-cm-pair')+'"]');
-    const [bx,by] = badge.getAttribute('transform').match(/[-\d.]+/g).map(Number);
-    if (!topo.edges.find(e=>e.pair_id===pill.getAttribute('data-cm-pair')).directed)
-      ok(nearest(bx,by) > num(badge.querySelector('circle'),'r'), 'D5: retained metric marker never touches hero pill');
+    ok(!badge.querySelector('circle'), 'D9: no retained midpoint marker beside hero pill');
   });
   // Dense and expanded patches reserve identical room. Reverse frequencies,
   // make a tiny difference, and force the dense path with isolated nodes.
@@ -853,6 +851,42 @@ function overviewTileOneSource() {
   const g2 = w2.document.querySelector('.topo-card[data-tile-id="gate2q"]');
   ok(g2 && /max/i.test(g2.textContent.split('med')[0]) ,
      'ov 2Q: a stored irb statistic lands on gate2q (' + (g2 && g2.textContent.slice(0, 50)) + ')');
+}
+
+// D9: dense heroes have no midpoint circles and keep both hover entry points.
+{
+  const win = makeWorld(), topo = {nodes:[], edges:[]};
+  for (let r=0; r<4; r++) for (let c=0; c<4; c++) {
+    topo.nodes.push({id:'q'+r+c, grid_location:c+','+r, f_01:5e9+c*1e8});
+    if (c) topo.edges.push({pair_id:'q'+r+(c-1)+'-q'+r+c, source:'q'+r+(c-1), target:'q'+r+c});
+  }
+  win.localStorage.setItem('quam_topo_hero_metric_v2','f_01');
+  const css=read('style.css'), style=win.document.createElement('style');
+  style.textContent=css.slice(css.indexOf('.topo-pair-badge {'),css.indexOf('.topo-pair-badge-stale,'));
+  win.document.head.appendChild(style);
+  mount(win,topo,[]);
+  const hero=win.document.getElementById('topo-hero');
+  ok(!hero.querySelector('.topo-pair-badge-dot, svg circle:not(.topo-hero-stone)'),
+     'D9: hero has no midpoint circle, including hidden legacy dots');
+  const badge=hero.querySelector('.topo-pair-badge'), pill=badge.querySelector('.topo-pair-badge-pill');
+  const hit=badge.querySelector('.topo-hero-edge-hit'), edge=hero.querySelector('.topo-hero-edge');
+  ok(hit && hit.getAttribute('fill') === 'transparent' && hit.getAttribute('stroke') === 'none'
+     && hit.getAttribute('pointer-events') === 'all' && +hit.getAttribute('width') > 16,
+     'D9: badge has an invisible reachable hit area');
+  ok(win.getComputedStyle(pill).display === 'none', 'D9: dense badge hidden before hover');
+  function hover(target,owner) {
+    target.dispatchEvent(new win.MouseEvent('mouseover',{bubbles:true}));
+    owner.dispatchEvent(new win.MouseEvent('mouseenter'));
+  }
+  hover(edge.querySelector('.topo-hero-edge-hit'),edge);
+  ok(badge.classList.contains('topo-linked') && win.getComputedStyle(pill).display === 'inline'
+     && !!win.document.querySelector('.topo-expand'), 'D9: edge hover reveals dense badge and Expand');
+  hero.dispatchEvent(new win.MouseEvent('mouseleave'));
+  win.TopoGraph.closeDetails();
+  if (hit) hover(hit,badge);
+  ok(badge.classList.contains('topo-linked') && win.getComputedStyle(pill).display === 'inline'
+     && !!win.document.querySelector('.topo-expand'),
+     'D9: invisible badge hit area reveals badge and Expand');
 }
 
 function finish() {

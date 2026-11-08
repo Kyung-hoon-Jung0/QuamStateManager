@@ -3342,7 +3342,7 @@ window.ChipStatus.mount = function (opts) {
             bindHover();
             if (TG.bindLinked) TG.bindLinked(host);
             // At a zoom where the pill text would be too small to read, every
-            // badge falls back to its dot (the pill still opens on hover).
+            // badge keeps only its invisible hit area (the pill opens on hover).
             var _svgEl = host.querySelector('.topo-hero-svg');
             var _scale = _svgEl && _svgEl.getBoundingClientRect().width / (W - _vbX);
             if (_scale && _badgeFs * _scale < 7) {
