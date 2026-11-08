@@ -6623,7 +6623,11 @@ window.LiveSurfacePatch = (function () {
                 try { window._treeModelSet(tree, e.dot_path, e.value); } catch (err) {}
             }
         });
-        if (node) {
+        if (node && window._treeRepaintPath && node.closest(".json-tree")) {
+            // FB-07: the one repaint -- text, display baseline, type class,
+            // node value and the row's kind-bound parts move together.
+            if (window._treeRepaintPath(node.closest(".json-tree"), e.dot_path, e.value)) n++;
+        } else if (node) {
             var valEl = node.querySelector(".tree-val");
             if (valEl) {
                 var fmt = window._treeFormatValue;
@@ -11794,16 +11798,59 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _paintTreeLeaf(container, dotPath, v) {
         if (!container || !dotPath) return false;
         var inModel = _treeModelSet(container, dotPath, v);
-        var nd = null;
-        try { nd = container.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]'); } catch (e) {}
-        var row = nd ? nd.querySelector(":scope > .tree-row") : null;
-        var el = row ? row.querySelector(":scope > .tree-val") : null;
-        if (!el) return inModel;
-        _paintLeafEl(el, v);
-        nd._value = v;
-        row.classList.add("tree-row-pending");
+        var got = _treeRepaintPath(container, dotPath, v);
+        if (!got) return inModel;
+        var nd = got.classList.contains("tree-node") ? got : got.closest(".tree-node");
+        var row = nd && nd.querySelector(":scope > .tree-row");
+        if (row) row.classList.add("tree-row-pending");
         return true;
     }
+
+    /* FB-07: the ONE repaint of a path whose value moved, for every caller
+     * that is not the inline editor's own echo (a JSON-editor save followed
+     * through /explorer/model, a live patch, an undo / redo revert, a batch's
+     * other rows). A scalar -> scalar change paints the leaf in place; a
+     * change that crosses a KIND boundary the row is built around -- to or
+     * from null (the null-only Edit-as-JSON button), to or from a list /
+     * dict (the node has children) -- rebuilds the node, so the row reads
+     * exactly as a fresh render would. The text alone used to change while
+     * the leaf's display baseline kept "null", and the next hover put the
+     * stale text back. Model first, always. Returns the painted value
+     * element, the rebuilt node, or null when nothing is on screen. */
+    function _treeRepaintPath(container, dotPath, v) {
+        if (container) _treeModelSet(container, dotPath, v);
+        var nd = null;
+        try {
+            nd = (container || document).querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
+        } catch (e) {}
+        if (!nd) return null;
+        var row = nd.querySelector(":scope > .tree-row");
+        var el = row ? row.querySelector(":scope > .tree-val") : null;
+        var newObj = v !== null && typeof v === "object";
+        var wasObj = !!nd.querySelector(":scope > .tree-children") || !el;
+        var hasNullBtn = !!(row && row.querySelector(":scope > .tree-json-edit-btn"));
+        var tree = nd.closest(".json-tree");
+        var editing = !!(tree && ((tree._editor && tree._editor.path === dotPath)
+            || (tree._editDrafts && tree._editDrafts.get && tree._editDrafts.get(dotPath))));
+        var wasNull = nd._value === null || hasNullBtn
+            || !!(el && el.classList.contains("tree-val-null"));
+        var structural = newObj || wasObj || (!editing && (v === null) !== wasNull);
+        if (structural && nd._meta) {
+            var pending = !!(row && row.classList.contains("tree-row-pending"));
+            var fresh = _rebuildNode(nd, v);
+            if (fresh && pending) {
+                var fr = fresh.querySelector(":scope > .tree-row");
+                if (fr) fr.classList.add("tree-row-pending");
+            }
+            return fresh;
+        }
+        if (!el) return null;
+        _paintLeafEl(el, v);
+        nd._value = v;
+        if (v !== null && hasNullBtn) row.querySelector(":scope > .tree-json-edit-btn").remove();
+        return el;
+    }
+    window._treeRepaintPath = _treeRepaintPath;
 
     /* The ONE leaf repaint (jsontree-r2-10 review): the text, the raw edit
      * value and the type colour class. An inline commit's echo, a revert and
@@ -13416,8 +13463,19 @@ window.clearDetailPanelSearch = function(btnEl) {
                 var _tr = _tn ? _tn.querySelector(":scope > .tree-row") : null;
                 valEl = _tr ? _tr.querySelector(".tree-val") : null;
             }
-            if (!valEl) return;
-            _paintLeafEl(valEl, v);
+            if (!valEl) {
+                // FB-07: a list / dict row has no .tree-val -- its revert to
+                // a scalar (or another container) rebuilds the node.
+                var _tn2 = document.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
+                var _h2 = _tn2 && _tn2.closest(".json-tree");
+                if (_h2) _treeRepaintPath(_h2, dotPath, v);
+                return;
+            }
+            // FB-07: a kind change (null <-> value, scalar <-> list/dict)
+            // rebuilds the row through the one repaint, never text alone.
+            var _host = valEl.closest(".json-tree");
+            if (_host) _treeRepaintPath(_host, dotPath, v);
+            else _paintLeafEl(valEl, v);
         }
         // Nothing on this page holds the model or the node: nothing to do.
         if (!valEl && !document.getElementById("explorer-tree-state")
