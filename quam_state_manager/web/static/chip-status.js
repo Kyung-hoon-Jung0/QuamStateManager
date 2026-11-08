@@ -3074,6 +3074,9 @@ window.ChipStatus.mount = function (opts) {
             var _lblFs = { edelta: compactMode ? 11 : 8, eval: compactMode ? 19 : 15 };
             var _pillReach = 2 + (5 * 6.5 * 0.55 + 4);
             var _labelOffset = 16;
+            // Leftmost extent of the steep Δf labels (end-anchored, left of the
+            // edge): the viewBox widens to it so a first-column label is never cut.
+            var _lblMinX = 0;
             function _heroLabelSide(e, x1, y1, x2, y2) {
                 return { horiz: Math.abs(x2 - x1) >= Math.abs(y2 - y1) };
             }
@@ -3196,6 +3199,8 @@ window.ChipStatus.mount = function (opts) {
                                     + '" y="' + dAtV.y + '">'
                                     + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
                                     + '</text>';
+                                _lblMinX = Math.min(_lblMinX, dAtV.x
+                                    - (mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit).length * _lblFs.edelta * 0.7);
                             }
                         }
                     }
@@ -3323,11 +3328,12 @@ window.ChipStatus.mount = function (opts) {
             // Zoom: percentage of the scroll pane's width (1 = the old fit).
             // The container scrolls both axes, so a big map never buries the
             // sections below (docs/126 ② — "~2× bigger" is the default).
+            var _vbX = _lblMinX < 0 ? Math.floor(_lblMinX - 2) : 0;
             host.innerHTML = bar + '</div>'
                 + '<div class="topo-hero-map">' + note
                 + '<div class="topo-hero-scroll"><svg class="topo-hero-svg'
-                + (compactMode ? ' hero-compact' : '') + '" width="' + W + '" height="' + H
-                + '" viewBox="0 0 ' + W + ' ' + H + '"'
+                + (compactMode ? ' hero-compact' : '') + '" width="' + (W - _vbX) + '" height="' + H
+                + '" viewBox="' + _vbX + ' 0 ' + (W - _vbX) + ' ' + H + '"'
                 + ' style="width:' + Math.round(zoom * 100) + '%">'
                 + svg + glyphSvg + evalSvg + '<g class="topo-pair-badges">' + badgeSvg + '</g></svg></div></div>'
                 + legendHtml(current).replace(/<\/div>$/, (TG.pairLegendItems
@@ -3338,7 +3344,7 @@ window.ChipStatus.mount = function (opts) {
             // At a zoom where the pill text would be too small to read, every
             // badge falls back to its dot (the pill still opens on hover).
             var _svgEl = host.querySelector('.topo-hero-svg');
-            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / W;
+            var _scale = _svgEl && _svgEl.getBoundingClientRect().width / (W - _vbX);
             if (_scale && _badgeFs * _scale < 7) {
                 host.querySelectorAll('.topo-pair-badge').forEach(function(bg) {
                     bg.classList.add('topo-pair-badge-dense');

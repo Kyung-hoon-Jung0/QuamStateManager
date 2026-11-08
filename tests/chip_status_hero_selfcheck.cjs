@@ -669,6 +669,8 @@ function edgeLabelsBesideTheBar() {
     v.forEach(t => {
       const mx = t.textContent.includes('100') ? mid('q1-3','q3-1').x : mid('q2-4').x;
       ok(Math.abs(mx - num(t,'x') - off) < 0.01 && hasCls(t,'topo-hero-lbl-end'), 'D7: every steep label same left offset');
+      const vbX = +hero.querySelector('svg.topo-hero-svg').getAttribute('viewBox').split(' ')[0];
+      ok(num(t,'x') - t.textContent.length * 8 * 0.7 >= vbX, 'D7: the viewBox reaches every steep label (no first-column cut)');
     });
     hero.querySelectorAll('.topo-pair-badge rect').forEach(r=>{
       ok(off > Math.hypot(num(r,'width'),num(r,'height'))/2 + 5, 'D7: label clears full expanded patch even when dense');
