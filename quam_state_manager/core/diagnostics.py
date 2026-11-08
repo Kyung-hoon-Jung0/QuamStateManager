@@ -3254,7 +3254,9 @@ def _ordered(findings: list[Finding]) -> list[Finding]:
 # FB-03: same-kind findings are one row (every level), instances collapsible
 # ---------------------------------------------------------------------------
 
-_GROUP_TOKEN = re.compile(r"\S*\d\S*")
+_GROUP_NUMBER = re.compile(r"(?<![A-Za-z_\d])[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_GROUP_ID = re.compile(r"\b[A-Za-z]{1,3}\d+[A-Za-z0-9]*(?:-[A-Za-z]{1,3}\d+[A-Za-z0-9]*)?\b")
+_GROUP_PATH = re.compile(r"\S*\.\S*…\S*|\S*…\S*\.\S*")
 
 
 def _bucket(f) -> str:
@@ -3266,10 +3268,14 @@ def _bucket(f) -> str:
 
 
 def _kind_text(message: str) -> str:
-    """The message with every place- or number-carrying token blanked: two
-    findings of the same kind on different qubits read the same."""
+    """The message's first sentence with numbers, entity ids (``qA1``,
+    ``q1-q2``) and dot paths through them blanked: two findings of the same
+    kind on different qubits read the same, while field names such as
+    ``f_01`` stay readable."""
     first = (message or "").split(". ")[0].split("\n")[0]
-    return re.sub(r"(… ?)+", "… ", _GROUP_TOKEN.sub("…", first)).strip()
+    text = _GROUP_ID.sub("…", _GROUP_NUMBER.sub("…", first))
+    text = _GROUP_PATH.sub("…", text)
+    return re.sub(r"…(?:[ .,/:]*…)+", "…", text).strip()
 
 
 def finding_groups(rows) -> list[dict]:
