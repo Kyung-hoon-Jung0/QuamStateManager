@@ -2919,6 +2919,26 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     border-color: var(--pico-primary); outline: none;
     box-shadow: 0 0 0 2px rgba(0,123,255,0.15);
 }
+@media (max-width: 1100px) {
+    .table-header-row { align-items: flex-start; }
+    .table-header-row .table-filter {
+        width: 100%;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+    }
+    .table-header-row .table-filter input[type="search"],
+    .table-header-row .table-filter .ui-search {
+        flex: 1 1 14rem;
+        min-width: 12rem;
+        width: auto;
+    }
+    .diag-header-row .diag-whatis-badge { margin-left: auto; }
+    .bulk-toolbar-controls .bulk-search-wrap {
+        order: 3;
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+}
 /* Datasets search only (A7) — borderless-until-focus, tokenized ring. Scoped to the
    id so the SHARED .table-filter input (/compare, /pulses, /pairs, /table) is untouched;
    padding-right (for the ? glyph) is left intact. */

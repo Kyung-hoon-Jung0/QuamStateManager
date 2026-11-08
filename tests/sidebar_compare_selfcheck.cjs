@@ -264,6 +264,13 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
      'cmp-xpj: compare/trend labels are forced to one line with ellipsis');
 }
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (36 assertions)');
+// 7. cmp-dfq: narrow-width toolbar wrapping contract is pinned
+{
+  const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
+  ok(/@media\s*\(max-width:\s*1100px\)\s*\{[\s\S]*?\.table-header-row\s*\.table-filter\s*\{[\s\S]*?flex-wrap:\s*wrap;[\s\S]*?\.bulk-toolbar-controls\s*\.bulk-search-wrap\s*\{[\s\S]*?flex:\s*1 1 100%;/m.test(css),
+     'cmp-dfq: <=1100px rule keeps headers wrapping and bulk search on its own row');
+}
+
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (37 assertions)');
 process.exit(fails ? 1 : 0);
 })();
