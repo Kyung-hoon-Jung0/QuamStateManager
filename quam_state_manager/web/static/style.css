@@ -1,4 +1,4 @@
-/* QUAM State Manager -- full stylesheet on top of Pico CSS */
+﻿/* QUAM State Manager -- full stylesheet on top of Pico CSS */
 
 /* =========================================================
  * DESIGN TOKENS — QUAM State Manager
@@ -2157,7 +2157,12 @@ body.exp-list-compact .entry-name {
 body.exp-list-compact .entry-name wbr { display: none; }
 
 .compare-form { margin-top: .3rem; }
-.btn-compare { width: 100%; }
+.btn-compare, .btn-trend {
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* ---------------------------------------------------------------- */
 /* Main content                                                      */
@@ -16173,3 +16178,7 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
 .port-test .pt-facts th { width: 11rem; }
 .port-test [hidden] { display: none !important; }
 .port-popup-actions { margin-top: 0.45rem; text-align: right; } .port-popup-actions .btn-sync { font-size: 0.95em; padding: 0.15rem 0.6rem; }
+
+
+
+

@@ -257,6 +257,13 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   ok(toasts.length === 1, 'an empty detail shows nothing');
 }
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (35 assertions)');
+// 6. cmp-xpj: sidebar compare buttons keep a single-line label
+{
+  const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
+  ok(/\.btn-compare,\s*\.btn-trend\s*\{[\s\S]*?white-space:\s*nowrap;[\s\S]*?text-overflow:\s*ellipsis;/m.test(css),
+     'cmp-xpj: compare/trend labels are forced to one line with ellipsis');
+}
+
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (36 assertions)');
 process.exit(fails ? 1 : 0);
 })();
