@@ -16,9 +16,67 @@
         } catch (_) { return {}; }
     }
     function groups() { return document.querySelectorAll('#sidebar [data-nav-group]'); }
+    // Top-level groups share one zone: a row may move between them, so an item
+    // that sits alone in its group (one between dividers) can still be reordered.
+    function zoneGroups() { return Array.from(document.querySelectorAll('#sidebar [data-nav-group][data-nav-zone]')); }
+    function inZone(group) { return !!(group && group.hasAttribute('data-nav-zone')); }
+    const zoneDefaults = new Map();
+    const zoneSeen = new WeakSet();
+    function validOrder(order) {
+        return Array.isArray(order) && !order.some(key => typeof key !== 'string') && new Set(order).size === order.length;
+    }
+    function applyZone(saved) {
+        const zone = zoneGroups();
+        if (!zone.length) return;
+        const all = zone.flatMap(items);
+        if (all.some(row => !zoneSeen.has(row))) {
+            // Fresh markup (first load or a sidebar swap) is the default order.
+            zoneDefaults.clear();
+            zone.forEach(group => zoneDefaults.set(group.dataset.navGroup, items(group)));
+            all.forEach(row => { zoneSeen.add(row); row.classList.add('ui-reorder-item'); });
+        }
+        const byKey = new Map(all.map(row => [row.dataset.navKey, row]));
+        const claimed = new Set();
+        zone.forEach(group => {
+            const order = saved[group.dataset.navGroup];
+            if (validOrder(order)) order.forEach(key => { if (byKey.has(key)) claimed.add(key); });
+        });
+        if (!claimed.size) return;
+        zone.forEach(group => {
+            const order = saved[group.dataset.navGroup];
+            const rows = validOrder(order) ? order.filter(key => byKey.has(key)).map(key => byKey.get(key)) : [];
+            (zoneDefaults.get(group.dataset.navGroup) || []).forEach((row, i) => {
+                if (!claimed.has(row.dataset.navKey)) rows.splice(Math.min(i, rows.length), 0, row);
+            });
+            rows.forEach(row => group.appendChild(row));
+        });
+    }
+    function persistZone() {
+        const saved = read();
+        zoneGroups().forEach(group => {
+            const name = group.dataset.navGroup;
+            const rows = items(group);
+            const original = zoneDefaults.get(name) || rows;
+            if (rows.length === original.length && rows.every((row, i) => row === original[i])) delete saved[name];
+            else saved[name] = rows.map(row => row.dataset.navKey);
+        });
+        // A move between groups changes two groups: store every zone group or none.
+        if (zoneGroups().some(group => saved[group.dataset.navGroup])) {
+            zoneGroups().forEach(group => { saved[group.dataset.navGroup] = items(group).map(row => row.dataset.navKey); });
+        }
+        write(saved);
+    }
+    function write(saved) {
+        try {
+            if (Object.keys(saved).length) localStorage.setItem(KEY, JSON.stringify(saved));
+            else localStorage.removeItem(KEY);
+        } catch (_) { /* Storage may be unavailable. */ }
+    }
     function apply() {
         const saved = read();
+        applyZone(saved);
         groups().forEach(group => {
+            if (inZone(group)) return;
             const rows = items(group);
             rows.forEach(row => row.classList.add('ui-reorder-item'));
             if (!defaults.has(group) || rows.some(row => !defaults.get(group).includes(row))) {
@@ -48,15 +106,13 @@
         markers.forEach((marker, i) => marker.replaceWith(rows[i]));
     }
     function persist(group) {
+        if (inZone(group)) { persistZone(); return; }
         const saved = read();
         const rows = items(group);
         const original = defaults.get(group) || rows;
         if (rows.every((row, i) => row === original[i])) delete saved[group.dataset.navGroup];
         else saved[group.dataset.navGroup] = rows.map(row => row.dataset.navKey);
-        try {
-            if (Object.keys(saved).length) localStorage.setItem(KEY, JSON.stringify(saved));
-            else localStorage.removeItem(KEY);
-        } catch (_) { /* Storage may be unavailable. */ }
+        write(saved);
     }
     function rowFor(target) {
         const row = target.closest('#sidebar li[data-nav-key]');
@@ -69,12 +125,18 @@
         if (!drag) return;
         if (drag.active) {
             suppressClick = drag.row;
-            if (!cancel && drag.target) {
-                drag.group.insertBefore(drag.row, drag.after ? drag.target.nextSibling : drag.target);
-                persist(drag.group);
+            if (!cancel && drag.into) {
+                drag.into.appendChild(drag.row);
+                persist(drag.into);
+            } else if (!cancel && drag.target) {
+                const into = drag.target.parentElement;
+                into.insertBefore(drag.row, drag.after ? drag.target.nextSibling : drag.target);
+                persist(into);
             }
         }
         if (drag.row.hasPointerCapture && drag.row.hasPointerCapture(drag.id)) drag.row.releasePointerCapture(drag.id);
+        document.documentElement.classList.remove('ui-reorder-active');
+        zoneGroups().forEach(group => group.classList.remove('ui-reorder-empty'));
         drag.row.classList.remove('ui-reorder-dragging');
         clearIndicator();
         drag = null;
@@ -92,14 +154,24 @@
             drag.row.setPointerCapture(event.pointerId);
         }
         drag.active = true;
+        document.documentElement.classList.add('ui-reorder-active');
+        zoneGroups().forEach(group => group.classList.toggle('ui-reorder-empty', !items(group).length));
         drag.row.classList.add('ui-reorder-dragging');
         event.preventDefault();
         clearIndicator();
         drag.target = null;
+        drag.into = null;
         const hit = document.elementFromPoint ? document.elementFromPoint(event.clientX, event.clientY) : event.target;
         // A point over an expanded sub-menu names the item in THIS group that holds it.
         let target = hit && hit.closest ? hit.closest('li[data-nav-key]') : null;
-        while (target && target.parentElement !== drag.group) {
+        const allowed = g => g === drag.group || (inZone(drag.group) && inZone(g));
+        const empty = hit && hit.closest ? hit.closest('#sidebar [data-nav-group]') : null;
+        if (empty && allowed(empty) && !items(empty).length) {
+            drag.into = empty;
+            empty.classList.add('ui-reorder-before');
+            return;
+        }
+        while (target && !allowed(target.parentElement)) {
             target = target.parentElement && target.parentElement.closest('li[data-nav-key]');
         }
         if (!target || target === drag.row) return;
@@ -116,7 +188,8 @@
         if (suppressClick) { event.preventDefault(); event.stopImmediatePropagation(); suppressClick = null; }
         if (event.target.closest('#reset-menu-order')) {
             finish(true);
-            groups().forEach(group => { if (defaults.has(group)) restore(group, defaults.get(group)); });
+            groups().forEach(group => { if (!inZone(group) && defaults.has(group)) restore(group, defaults.get(group)); });
+            zoneGroups().forEach(group => (zoneDefaults.get(group.dataset.navGroup) || []).forEach(row => group.appendChild(row)));
             try { localStorage.removeItem(KEY); } catch (_) { /* Storage may be unavailable. */ }
         }
     }, true);
@@ -129,6 +202,16 @@
         const index = rows.indexOf(row);
         const other = rows[index + (event.key === 'ArrowUp' ? -1 : 1)];
         event.preventDefault();
+        if (!other && inZone(row.parentElement)) {
+            // At a group's edge, step into the neighbouring top-level group.
+            const zone = zoneGroups();
+            const next = zone[zone.indexOf(row.parentElement) + (event.key === 'ArrowUp' ? -1 : 1)];
+            if (!next) return;
+            if (event.key === 'ArrowUp') next.appendChild(row); else next.insertBefore(row, next.firstChild);
+            event.target.focus();
+            persistZone();
+            return;
+        }
         if (!other) return;
         row.parentElement.insertBefore(row, event.key === 'ArrowUp' ? other : other.nextSibling);
         event.target.focus();

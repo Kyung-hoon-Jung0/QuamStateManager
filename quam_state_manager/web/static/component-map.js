@@ -194,7 +194,8 @@ window.ComponentMap = (function () {
       _clearHotRow();
     });
     if (window.TopoGraph.bindLinked) window.TopoGraph.bindLinked(body);
-    window.TopoGraph.bindDetails(body, "[data-cm]", function (el) {
+    // The add buttons are controls, not entities: no Expand on them (FB-10).
+    window.TopoGraph.bindDetails(body, "[data-cm]:not(.cm-dir-ghost)", function (el) {
       return _parseCm(el).id;
     }, function (el) {
       var ent = _parseCm(el);

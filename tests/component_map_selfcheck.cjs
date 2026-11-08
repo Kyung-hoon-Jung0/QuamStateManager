@@ -117,19 +117,28 @@ function checkRenderLayout() {
   const pairSet = { 'qA2-qA1': 1, 'qA1-qA3': 1 };
   ok(m.querySelectorAll('text.cm-id').length === 3,
      'exactly one id text per qubit (no value text anywhere)');
-  const pl = Array.prototype.map.call(m.querySelectorAll('text.cm-pair-label'), function (t) { return t.textContent; });
+  const pl = Array.prototype.map.call(m.querySelectorAll('.cm-pair-label'), function (t) { return t.getAttribute('data-pair-id') || t.textContent; });
   ok(pl.length === 2 && pairSet[pl[0]] && pairSet[pl[1]] && pl[0] !== pl[1],
      'one pair-id label per pair edge: ' + JSON.stringify(pl));
   let onlyIdsOrRoles = true, anyNumeric = false;
   texts.forEach(function (t) {
-    const s = t.textContent;
     const cls = t.getAttribute('class') || '';
+    // Each text in a non-level pair belongs to its shared label group.
+    const stacked = t.parentElement.matches('g.cm-dir-stack') && !!idSet[t.textContent];
+    const s = stacked ? t.parentElement.getAttribute('data-pair-id') : t.textContent;
     const isId = idSet[s] && cls === 'cm-id';
     const isRole = roleSet[s] && cls.indexOf('cm-role-txt') !== -1;
-    const isPair = pairSet[s] && cls === 'cm-pair-label cm-dir-label';
+    const isPair = pairSet[s] && (cls === 'cm-pair-label cm-dir-label' || stacked);
     if (!isId && !isRole && !isPair) onlyIdsOrRoles = false;
     if (/[0-9]/.test(s) && !idSet[s] && !isPair) anyNumeric = true;
   });
+  // FB-01: no pair label is ever rotated; a steep edge stacks its two ids.
+  const rot = Array.prototype.filter.call(m.querySelectorAll('svg *'), function (t) {
+    return /rotate/.test(t.getAttribute('transform') || ''); });
+  ok(rot.length === 0, 'no pair label carries a rotate transform: ' + rot.length);
+  const st = m.querySelector('g.cm-dir-stack');
+  ok(st && Array.prototype.map.call(st.querySelectorAll('text'), function (x) { return x.textContent; }).join(' ') === 'qA3 qA1' && st.querySelectorAll('line.cm-dir-connector').length === 1,
+     'a vertical edge groups two ids top-first with an SVG connector: ' + (st && st.textContent));
   ok(onlyIdsOrRoles, 'every rendered text is a qubit id, a pair id or a C/T/M role letter');
   ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
 

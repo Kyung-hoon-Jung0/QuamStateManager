@@ -45,6 +45,8 @@
 {#- drag to reorder the sidebar menu (sidebar-order.js); ui-reorder-pending sits on <html> only until the saved order is applied -#}
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">Menu reorder</h2>
 <ul class="ui-kit-side" aria-label="Reorder sample"><li class="ui-reorder-item ui-reorder-before">Drop line before</li><li class="ui-reorder-item ui-reorder-dragging">Being dragged</li><li class="ui-reorder-item ui-reorder-after">Drop line after</li></ul>
+<div class="ui-reorder-active"><ul class="ui-kit-side ui-reorder-empty ui-reorder-before" aria-label="Empty group drop target"></ul></div>
+<p class="ui-kit-label">While dragging, an empty group keeps a drop area between its dividers.</p>
 <p class="ui-kit-label"><span class="ui-reorder-pending">ui-reorder-pending</span> is set on the page root while the saved order loads.</p>
 </section>
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">OPX monitor</h2>

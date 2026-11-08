@@ -656,11 +656,18 @@ window.TopoGraph = (function () {
              " (" + mv + ")</title></circle>";
     }
     var ang = Math.atan2(dy, dx) * 180 / Math.PI;
-    // Keep text upright; a vertical edge reads in the arrow's own direction
-    // (down -> +90, up -> -90), so the id reads control-first along the arrow.
-    if (ang > 90) ang -= 180;
-    if (ang < -90) ang += 180;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+    if (Math.abs(dy) > 0.01) {
+      // Read every non-level edge top-first, using endpoints rather than the
+      // display pair id (which may abbreviate or contain hyphenated names).
+      var top = y1 <= y2 ? e.source : e.target, bot = y1 <= y2 ? e.target : e.source;
+      out += '<g class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
+             ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1" data-ang="' + r1(ang) + '"' +
+             (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
+             ' data-pair-id="' + esc(e.pair_id) + '" text-anchor="middle" dominant-baseline="central">' +
+             '<text>' + esc(top) + '</text><line class="cm-dir-connector"/><text>' + esc(bot) + "</text></g>";
+      return out;
+    }
     out += '<text class="cm-pair-label cm-dir-label" font-size="' + font + '"' +
            ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-ang="' + r1(ang) + '"' +
            (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
@@ -732,6 +739,9 @@ window.TopoGraph = (function () {
     var f = parseFloat(t.getAttribute("font-size")) || 12;
     var w = t.getComputedTextLength ? t.getComputedTextLength() : f * 4;
     var cx = parseFloat(t.getAttribute("data-px")), cy = parseFloat(t.getAttribute("data-py"));
+    if (t.hasAttribute("data-stack")) {
+      return bboxPoly(t.getBBox(), 2);
+    }
     if (isNaN(cx)) {   // an unrotated label: its own box
       var b = t.getBBox();
       return bboxPoly(b, 0);
@@ -778,7 +788,43 @@ window.TopoGraph = (function () {
     }
     return { count: pairs.length, items: items.length, pairs: pairs };
   }
+  function placeStack(t, side, f) {
+    var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
+    var texts = t.querySelectorAll("text"), line = t.querySelector(".cm-dir-connector");
+    t.setAttribute("font-size", f);
+    // Font bounds vary by browser and font: leave a third-em connector plus
+    // a small breathing gap between the two measured text boxes.
+    var rowHeight = 0, i;
+    for (i = 0; i < texts.length; i++) {
+      texts[i].setAttribute("x", 0); texts[i].setAttribute("y", 0);
+      rowHeight = Math.max(rowHeight, texts[i].getBBox().height);
+    }
+    var step = rowHeight + f * 0.45;
+    for (i = 0; i < texts.length; i++) texts[i].setAttribute("y", (i - 0.5) * step);
+    var upper = texts[0].getBBox(), lower = texts[1].getBBox();
+    var gapY = (upper.y + upper.height + lower.y) / 2;
+    line.setAttribute("x1", 0); line.setAttribute("x2", 0);
+    line.setAttribute("y1", gapY - f / 6); line.setAttribute("y2", gapY + f / 6);
+    // Re-measure the complete group at every trial font and restored candidate.
+    var box = t.getBBox(), w = box.width, h = box.height;
+    var ang = +t.getAttribute("data-ang") * Math.PI / 180;
+    var nx = -Math.sin(ang), ny = Math.cos(ang);
+    var off = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear") || 0);
+    var px = cx + nx * off * side, py = cy + ny * off * side;
+    var ox = px - (box.x + w / 2), oy = py - (box.y + h / 2);
+    t.removeAttribute("transform");
+    t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
+    t.setAttribute("data-w", r1(w)); t.setAttribute("data-h", r1(h));
+    for (i = 0; i < texts.length; i++) {
+      texts[i].setAttribute("x", r1(ox));
+      texts[i].setAttribute("y", r1(oy + (i - 0.5) * step));
+    }
+    line.setAttribute("x1", r1(ox)); line.setAttribute("x2", r1(ox));
+    line.setAttribute("y1", r1(oy + gapY - f / 6)); line.setAttribute("y2", r1(oy + gapY + f / 6));
+  }
+
   function placeLabel(t, side, f) {
+    if (t.hasAttribute("data-stack")) { placeStack(t, side, f); return; }
     var cx = +t.getAttribute("data-cx"), cy = +t.getAttribute("data-cy");
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);    // the text frame's "down"
@@ -789,16 +835,17 @@ window.TopoGraph = (function () {
     t.setAttribute("font-size", f);
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
-    t.setAttribute("transform", "rotate(" + t.getAttribute("data-ang") + " " + r1(px) + " " + r1(py) + ")");
+    // A level label needs no transform at all (FB-01: no rotated text).
+    t.removeAttribute("transform");
   }
-  /* Place each rotated label: above the line first, then below, then one px
+  /* Place each upright label: above the line first, then below, then one px
    * smaller at a time down to minFont; a label that still collides keeps the
    * placement with the fewest hits and is marked .cm-dir-crowded. */
   function declutterLabels(svg, minFont) {
     if (!svg || !svg.querySelectorAll) return;
     minFont = minFont || DIR_MIN_FONT;
     var fixed = collectItems(svg, ".cm-stone, .cm-arrow, .cm-dir-m, .cm-freq, .cm-coupler, .cm-res");
-    var labels = svg.querySelectorAll("text.cm-dir-label");
+    var labels = svg.querySelectorAll(".cm-dir-label");
     var placed = [];
     for (var i = 0; i < labels.length; i++) {
       var t = labels[i], f0 = parseFloat(t.getAttribute("font-size")) || 14;
@@ -1088,14 +1135,18 @@ window.TopoGraph = (function () {
   // The add door's two ghost stones: dashed, a "+" and a "+ pair" label.
   function ghostStones(x, SP, R, font) {
     var out = "";
-    var rows = [["add:qubit", "+", "Add a qubit"], ["add:pair", "+ pair", "Add a pair: then click two qubits"]];
+    var rows = [["add:qubit", "qubit", "Add qubit", "Add a qubit"],
+                ["add:pair", "pair", "Add pair", "Add a pair: then click two qubits"]];
+    var lh = font * 1.15;
     for (var i = 0; i < rows.length; i++) {
       var y = (i + 0.5) * SP;
+      // Two lines, one size for both buttons: "Add" over the noun.
       out += '<g class="cm-dir-ghost" data-cm="' + rows[i][0] + '" role="button" tabindex="0" aria-label="' +
              esc(rows[i][2]) + '"><circle class="cm-dir-ghost-stone" cx="' + x + '" cy="' + y + '" r="' + R + '"/>' +
-             '<text class="cm-dir-ghost-text" font-size="' + (i ? font : Math.round(font * 2)) + '" x="' + x + '" y="' + y +
-             '" text-anchor="middle" dominant-baseline="central">' + esc(rows[i][1]) + "</text>" +
-             "<title>" + esc(rows[i][2]) + "</title></g>";
+             '<text class="cm-dir-ghost-text" font-size="' + font + '" text-anchor="middle" dominant-baseline="central">' +
+             '<tspan x="' + x + '" y="' + r1(y - lh / 2) + '">Add</tspan>' +
+             '<tspan x="' + x + '" y="' + r1(y + lh / 2) + '">' + esc(rows[i][1]) + "</tspan></text>" +
+             "<title>" + esc(rows[i][3]) + "</title></g>";
     }
     return out;
   }
