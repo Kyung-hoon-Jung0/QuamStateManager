@@ -661,12 +661,10 @@ window.TopoGraph = (function () {
     if (ang > 90) ang -= 180;
     if (ang < -90) ang += 180;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    var ids = String(e.pair_id).split("-");
-    if (Math.abs(ang) > 60 && ids.length === 2 && ids[0] && ids[1]) {
+    if (Math.abs(ang) > 60) {
       // A steep edge: never rotate the id. Stack it beside the line, the
       // upper qubit first, the way the edge itself runs (FB-01).
       var top = y1 <= y2 ? e.source : e.target, bot = top === e.source ? e.target : e.source;
-      if (ids.indexOf(top) < 0 || ids.indexOf(bot) < 0) { top = ids[0]; bot = ids[1]; }
       out += '<text class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
              ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1"' +
              (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +

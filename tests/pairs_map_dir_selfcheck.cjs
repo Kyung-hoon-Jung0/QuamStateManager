@@ -114,5 +114,18 @@ ok(!!legend && /control → target/.test(legend.textContent) && /moving qubit/.t
   ok(ovc.count === 0, 'coupler fixture: overlaps == 0 (' + JSON.stringify(ovc.pairs.slice(0, 4)) + ')');
 }
 
+// Non-level edges, abbreviated display ids and endpoint names with punctuation.
+function fixture(source, target, pair, dx, dy, cell = 120) {
+  const host = win.document.createElement('div'); win.document.body.appendChild(host);
+  win.TopoGraph.renderLayout(host, {nodes:[{id:source, grid_location:'0,0'},
+    {id:target, grid_location:dx+','+dy}], edges:[{source, target, pair_id:pair}], highlight:'pairs', cell});
+  return host.querySelector('svg');
+}
+for (const [source, target, pair] of [['q1','q2','q1-2'], ['q-one','q-two','q-one-q-two']]) {
+  const shape = fixture(source, target, pair, 0, 1), label = shape.querySelector('.cm-pair-label');
+  ok(Array.from(label.children, t => t.textContent).join(',') === [target,'|',source].join(','), 'endpoint ids survive display shape ' + pair);
+  ok(!/rotate/.test(label.getAttribute('transform') || ''), 'display shape stays upright ' + pair);
+}
+
 const summary = fails ? fails + ' check(s) FAILED\n' : 'pairs_map_dir_selfcheck: all checks passed (' + checks + ' assertions)\n';
 process.stdout.write(summary, function () { process.exit(fails ? 1 : 0); });
