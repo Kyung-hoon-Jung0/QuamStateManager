@@ -58,11 +58,13 @@
     </div>
     {# The small chip map is the pair control: a click (or Enter/Space) on a pair edge hides or
        shows that pair's traces in the frequency map below; a hidden pair's edge is dimmed. #}
+    <div class="czp-map-view">
     {% set cmap_highlight = 'pairs' %}{% set cmap_cell = 46 %}{% set cmap_pick = '1' %}
     {% set cmap_open_key = 'quam_czp_minimap_open' %}{% set cmap_pick_hint = 'Show or hide in the frequency map' %}
     {% set cmap_label = '— click a pair to show or hide it in the frequency map' %}
     {% include '_component_map.html' %}
     <div id="czp-map" class="czp-map"></div>
+    </div>
     <details id="czp-map-detail" class="czp-map-detail">
         <summary id="czp-map-detail-summary">Measured loss per qubit</summary>
         <div id="czp-map-detail-body"></div>

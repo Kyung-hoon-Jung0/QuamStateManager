@@ -163,7 +163,7 @@ window.ComponentMap = (function () {
                   { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
       }
     });
-    if (window.htmx || _isPick()) pop.appendChild(hint);
+    if ((window.htmx || _isPick()) && (!pickHint || ent.kind === "pair")) pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
     window.TopoGraph.positionDetail(pop, el);
