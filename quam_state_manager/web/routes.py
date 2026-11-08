@@ -35875,12 +35875,51 @@ def state_crash_values():
     return jsonify({"stale": False, "crash_values": crash})
 
 
+def _loadcheck_message(detail: str, exc_type: str | None) -> str:
+    """The exception's own message from a traceback tail (the last
+    ``<exc_type>: ...`` line onward); the whole text when none is found."""
+    if not isinstance(detail, str):
+        return ""
+    lines = detail.rstrip().splitlines()
+    if exc_type:
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].startswith(f"{exc_type}:"):
+                return "\n".join(lines[i:])[len(exc_type) + 1:].strip()
+    return detail.strip()
+
+
+_LOADCHECK_OBJ = re.compile(r'''Quam((?:\.[A-Za-z_]\w*|\[["']?[^\]"']+["']?\])+)''')
+_LOADCHECK_ATTR = re.compile(r"(?:Unexpected attribute|attribute)\s+['\"]([A-Za-z_]\w*)['\"]")
+
+
+def _loadcheck_object_path(detail: str) -> tuple[str | None, str | None]:
+    """``Quam.qubits["q1"]`` -> ``qubits.q1`` and the attribute quam named."""
+    m = None
+    for m in _LOADCHECK_OBJ.finditer(detail):
+        pass
+    obj = None
+    if m:
+        parts = re.findall(r'''\.([A-Za-z_]\w*)|\[["']?([^\]"']+)["']?\]''', m.group(1))
+        obj = ".".join(a or b for a, b in parts) or None
+    a = _LOADCHECK_ATTR.search(detail)
+    return obj, (a.group(1) if a else None)
+
+
 def _loadcheck_links(detail: str, merged: dict) -> list[dict[str, str]]:
-    """Likely dot-path links named in *detail*, restricted to existing paths."""
+    """Likely dot-path links named in *detail*, restricted to existing paths.
+
+    The object path quam names (``Quam.qubits["q1"]``) wins; bare-key
+    guesses are used only when it does not resolve."""
     if not isinstance(detail, str) or not isinstance(merged, dict):
         return []
     seen: set[str] = set()
     out: list[dict[str, str]] = []
+    obj, attr = _loadcheck_object_path(detail.split("Optional attributes:", 1)[0])
+    if obj and _dot_get(merged, obj) is not _DOT_MISSING:
+        full = f"{obj}.{attr}" if attr else obj
+        if attr and _dot_get(merged, full) is not _DOT_MISSING:
+            return [{"path": full, "label": attr}]
+        return [{"path": obj, "label": obj}]
 
     # Build a compact key->path map once; first-seen path per key is enough for hints.
     key_path: dict[str, str] = {}
@@ -35999,6 +36038,7 @@ def state_load_check():
         return jsonify({"ok": bool(result.get("ok")),
                         "stage": result.get("stage"),
                         "exc_type": result.get("exc_type"),
+                        "message": _loadcheck_message(detail, result.get("exc_type")),
                         "detail": detail,
                         "lib_versions": result.get("lib_versions") or {},
                         "links": links})

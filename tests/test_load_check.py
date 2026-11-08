@@ -181,3 +181,20 @@ def test_unknown_interpreter_is_refused_without_spawn(env, monkeypatch):
     response = _check(env)
     assert response.status_code == 403
     assert response.json["error"] == "unknown_interpreter"
+
+
+def test_message_is_the_exception_line_not_the_traceback():
+    tb = ('Traceback (most recent call last):\n  File "x.py", line 1, in f\n'
+          '    raise AttributeError(msg)\n    ^^^^^^^^^\n'
+          'AttributeError: Failed to load QUAM state.\nUnexpected attribute \'zz\'')
+    msg = routes_mod._loadcheck_message(tb, "AttributeError")
+    assert msg.startswith("Failed to load QUAM state.") and "File " not in msg
+
+
+def test_link_follows_the_object_quam_names_not_the_first_same_key():
+    merged = {"wiring": {"qubits": {"q1": {"xy": 1}}},
+              "qubits": {"q1": {"zz": 1, "xy": 2}}}
+    detail = ('Unexpected attribute \'zz\' in Quam.qubits["q1"] (some.Class). '
+              "Optional attributes: ['xy']")
+    links = routes_mod._loadcheck_links(detail, merged)
+    assert links == [{"path": "qubits.q1.zz", "label": "zz"}]

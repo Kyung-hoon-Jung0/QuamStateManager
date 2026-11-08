@@ -41,6 +41,14 @@ window.runLoadCheck = (function () {
     function renderFail(data) {
         var typ = (data && data.exc_type) || 'Error';
         var detail = esc((data && data.detail) || 'Load check failed.');
+        var msg = data && data.message;
+        var tb = '';
+        if (msg && msg !== data.detail) {
+            // The exception's own words first; the traceback folds away.
+            tb = '<details class="ui-disclosure"><summary class="ui-disclosure-summary">'
+                + 'Traceback</summary><pre>' + detail + '</pre></details>';
+            detail = esc(msg);
+        }
         var links = (data && data.links) || [];
         var linkHtml = '';
         if (Array.isArray(links)) {
@@ -51,7 +59,7 @@ window.runLoadCheck = (function () {
                     + '" title="Show this path in Json tree">' + esc(p) + '</a>';
             }
         }
-        setStatus('danger', typ, detail + linkHtml);
+        setStatus('danger', typ, detail + linkHtml + (tb || ''));
     }
     function envRequired(data) {
         var d = data || {};
