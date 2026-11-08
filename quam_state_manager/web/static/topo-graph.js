@@ -459,7 +459,8 @@ window.TopoGraph = (function () {
       if (!a || !b) return;
       var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
       var ux = dx / len, uy = dy / len;
-      var fs = Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
+      // Component maps supply a readable scale; the hero keeps its compact cap.
+      var fs = opts.roleFontSize || Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
       var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
       var fS = fById[e.source], fT = fById[e.target];
       var ordered = fS != null && fT != null && fS !== fT;
@@ -901,7 +902,8 @@ window.TopoGraph = (function () {
     // v1.3.0: drawn AFTER the stones (below), as the Chip Status hero has
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
-    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true, compactRoles: true, couplerClear: true, freqSide: "screen" });
+    var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
+      roleFontSize: Math.max(9, CELL * 0.095) });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
