@@ -1,0 +1,62 @@
+/* The component map's two add buttons (FB-10 A/B) against the REAL
+ * topo-graph.js + component-map.js + diagram-add.js under jsdom.
+ *
+ * Pins:
+ *  - hovering or focusing an add button offers NO Expand (they are controls,
+ *    not entities), while a qubit stone still offers one;
+ *  - both buttons read two lines, "Add" over "qubit" / "pair", at one size;
+ *  - aria-labels are "Add qubit" / "Add pair".
+ *
+ * Run: node tests/map_add_buttons_selfcheck.cjs   (driven by tests/test_map_add_buttons.py)
+ */
+'use strict';
+const fs = require('fs');
+const path = require('path');
+let JSDOM;
+try { ({ JSDOM } = require('jsdom')); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
+const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', f), 'utf8');
+const SRC = read('topo-graph.js') + '\n;\n' + read('component-map.js') + '\n;\n' + read('diagram-add.js');
+let fails = 0, n = 0;
+function ok(c, m) { n++; if (!c) { console.error('FAIL: ' + m); fails++; } }
+const TOPO = {
+  nodes: [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '1,0' }],
+  edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2' }],
+};
+const dom = new JSDOM('<!DOCTYPE html><html><body><div id="table-pane"><details class="cmap" id="component-map" ' +
+  'data-highlight="qubits" data-cell="120" data-cm-add="1" open><summary>m</summary><div class="cmap-body"></div></details>' +
+  '<div id="cm-add-panel"></div><div id="inspector-pane"></div></div></body></html>',
+  { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+const win = dom.window;
+win.htmx = { ajax: () => win.Promise.resolve() };
+win.fetch = (url) => win.Promise.resolve({ ok: true, json: () => win.Promise.resolve(JSON.parse(JSON.stringify(TOPO))) });
+new win.Function(SRC).call(win);
+win.ComponentMap.mount(win.document.getElementById('component-map'));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+(async function () {
+  await tick(); await tick();
+  const doc = win.document;
+  const expand = () => doc.querySelector('.topo-expand');
+  const hover = (el) => el.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: false }));
+  const ghosts = doc.querySelectorAll('.cm-dir-ghost');
+  ok(ghosts.length === 2, 'two add buttons: ' + ghosts.length);
+  ghosts.forEach((g) => {
+    hover(g);
+    ok(!expand(), 'no Expand when hovering ' + g.getAttribute('data-cm'));
+    g.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+    ok(!expand(), 'no Expand when focusing ' + g.getAttribute('data-cm'));
+  });
+  hover(doc.querySelector('[data-cm="q:q1"]'));
+  ok(!!expand(), 'a qubit stone still offers Expand');
+  const lines = (g) => Array.prototype.map.call(g.querySelectorAll('tspan'), (t) => t.textContent).join('/');
+  ok(lines(ghosts[0]) === 'Add/qubit', 'qubit button reads Add / qubit: ' + lines(ghosts[0]));
+  ok(lines(ghosts[1]) === 'Add/pair', 'pair button reads Add / pair: ' + lines(ghosts[1]));
+  const fs0 = ghosts[0].querySelector('text').getAttribute('font-size');
+  const fs1 = ghosts[1].querySelector('text').getAttribute('font-size');
+  ok(fs0 && fs0 === fs1, 'both buttons use one font size: ' + fs0 + ' vs ' + fs1);
+  ok(ghosts[0].querySelector('circle').getAttribute('r') === ghosts[1].querySelector('circle').getAttribute('r'), 'same button size');
+  ok(ghosts[0].getAttribute('aria-label') === 'Add qubit' && ghosts[1].getAttribute('aria-label') === 'Add pair',
+     'aria-labels: ' + ghosts[0].getAttribute('aria-label') + ' / ' + ghosts[1].getAttribute('aria-label'));
+  ok(ghosts[0].getAttribute('tabindex') === '0' && ghosts[1].getAttribute('role') === 'button', 'keyboard focusable buttons');
+  console.log((fails ? 'FAILED ' : 'ok ') + (n - fails) + '/' + n);
+  process.exit(fails ? 1 : 0);
+})();
