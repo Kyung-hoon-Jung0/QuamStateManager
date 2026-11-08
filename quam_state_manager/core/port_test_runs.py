@@ -34,6 +34,9 @@ HEARTBEAT_S = 12.0
 #: a hardware run never lasts longer than this unless stopped sooner
 MAX_RUN_S = 600.0
 STOP_GRACE_S = 15.0
+#: a simulator run is never killed mid-call (that would leave the cloud
+#: instance running): it ends at its next check, or after this long
+SAAS_STOP_GRACE_S = 180.0
 KEEP_RUNS = 20
 
 
@@ -223,7 +226,8 @@ class Runs:
             if run["stop_at"] is None and time.time() - run["seen"] > HEARTBEAT_S:
                 logger.info("port test %s: the page stopped asking; stopping the run", run["id"])
                 self._request_stop(run, "the page was left")
-            if run["stop_at"] is not None and time.time() - run["stop_at"] > STOP_GRACE_S:
+            grace = SAAS_STOP_GRACE_S if run["meta"].get("target") == "saas" else STOP_GRACE_S
+            if run["stop_at"] is not None and time.time() - run["stop_at"] > grace:
                 run["proc"].kill()
 
     def _request_stop(self, run: dict, why: str) -> None:

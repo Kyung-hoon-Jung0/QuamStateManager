@@ -288,3 +288,27 @@ class TestRoutes:
             if p.is_file() and p.name != "secrets.json":
                 assert b"pw-xyz" not in p.read_bytes(), p
         assert client.post("/port-test/stop", json={"id": r.get_json()["id"]}, headers=H).get_json()["stopping"]
+
+
+class _Stubborn(_FakeProc):
+    def poll(self):
+        return self.rc
+
+
+def test_a_simulator_run_is_not_killed_at_the_hardware_grace(tmp_path, monkeypatch):
+    monkeypatch.setattr(ptr, "_keyring", lambda: None)
+    monkeypatch.setattr(ptr, "HEARTBEAT_S", 0.2)
+    monkeypatch.setattr(ptr, "STOP_GRACE_S", 0.3)
+    r = ptr.Runs(tmp_path)
+    procs = []
+    r.start("py", "x", {}, {"target": "saas"}, popen=lambda a, **k: procs.append(_Stubborn(a)) or procs[-1])
+    r2 = ptr.Runs(tmp_path / "b")
+    r2.start("py", "x", {}, {"target": "opx"}, popen=lambda a, **k: procs.append(_Stubborn(a)) or procs[-1])
+    time.sleep(3.0)
+    assert procs[0].rc is None, "a simulator run must end at its own check, not be killed"
+    assert procs[1].rc == -9
+
+
+def test_the_instrument_hover_card_offers_the_port_test(client):
+    html = client.get("/instrument").get_data(as_text=True)
+    assert 'id="popup-port-test"' in html and "/port-test?" in html

@@ -83,6 +83,8 @@ def main() -> int:
             _write(status, {"phase": "starting the simulator (about a minute)", "at": time.time()})
             inst, qmm = mod.saas_qmm(client, ver)
             try:
+                if (work / "stop").exists():
+                    raise RuntimeError("Stopped before the simulation ran.")
                 _write(status, {"phase": "simulating", "at": time.time()})
                 samples = mod.simulate(qmm, req.get("sim_ns"))
                 result = {"ok": True, "mode": "saas", "traces": _traces(samples),

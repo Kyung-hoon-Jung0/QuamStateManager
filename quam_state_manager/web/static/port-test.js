@@ -169,6 +169,17 @@
         return '<svg class="pt-trace" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" width="100%" height="' + h + '">' +
             '<path d="' + path(ys) + '" class="pt-re"/>' + (row.im ? '<path d="' + path(row.im) + '" class="pt-im"/>' : '') + '</svg>';
     }
+    /* The first pulse, close up: from just before the first non-zero sample. */
+    function zoom(row) {
+        if (row.digital) return '';
+        var a = row.re, i0 = -1;
+        for (var i = 0; i < a.length; i++) if (Math.abs(a[i]) > 1e-6 || (row.im && Math.abs(row.im[i]) > 1e-6)) { i0 = i; break; }
+        if (i0 < 0) return '';
+        var lo = Math.max(0, i0 - 20), hi = Math.min(a.length, i0 + 400);
+        var sub = {re: a.slice(lo, hi), im: row.im ? row.im.slice(lo, hi) : null};
+        return '<div class="ui-note">First pulse, close up (samples ' + (lo * row.step) + '–' + (hi * row.step) +
+            '; blue = I / real, orange = Q / imaginary)</div>' + sparkline(sub, 600, 90);
+    }
     function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; }); }
     function renderResult(res, pl) {
         var out = $('#pt-result'), html = '';
@@ -185,7 +196,7 @@
                     (ok === true ? ' <span class="pt-ok">matches the config</span>' : '') +
                     (ok === false ? ' <span class="pt-warn">differs from the config (' + fmt(row.peak / (res.expected_peak || 1), 3) + '×)</span>' : '') +
                     ' · ' + row.n + ' samples' + (row.rate ? ' at ' + (row.rate / 1e9) + ' GSa/s' : '') + '</div>' +
-                    sparkline(row, 600, 70) + '</div>';
+                    sparkline(row, 600, 70) + zoom(row) + '</div>';
             });
         } else {
             var adc = res.adc || {};

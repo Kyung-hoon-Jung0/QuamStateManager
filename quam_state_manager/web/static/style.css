@@ -16077,3 +16077,4 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .port-test .pt-res-row { margin: 0.5rem 0; }
 .port-test .pt-facts th { width: 11rem; }
 .port-test [hidden] { display: none !important; }
+.port-popup-actions { margin-top: 0.45rem; text-align: right; } .port-popup-actions .btn-sync { font-size: 0.95em; padding: 0.15rem 0.6rem; }
