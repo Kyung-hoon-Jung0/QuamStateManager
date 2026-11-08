@@ -261,7 +261,7 @@
        and per-Clifford numbers are in the next table, where they are labelled.</p>
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
-            <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
+            <th>Moving</th><th title="Bell_State only; interleaved and standard RB are in their own table">Bell state fid.</th><th>Bell gate</th><th title="Fidelity stored on the cross-resonance channel">CR channel fid.</th>
             <th>Detuning</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
         <tbody>
         {% for p in pairs %}
@@ -276,9 +276,11 @@
             <td>{{ p.qubit_target or '-' }}</td>
             <td>{{ yn(p.is_active) }}</td>
             <td>{{ e.get('moving_qubit') or '-' }}</td>
-            <td>{{ pct(e.get('cz_fidelity')) }}</td>
-            <td>{{ e.get('fidelity_source') or '-' }}</td>
-            <td>{{ e.get('best_gate') or '-' }}</td>
+            {#- one source per column: cz_fidelity's own source changes per pair -#}
+            {% set _src = e.get('fidelity_source') %}
+            <td>{{ pct(e.get('cz_fidelity')) if _src == 'macro' else '-' }}</td>
+            <td>{{ (e.get('best_gate') or '-') if _src == 'macro' else '-' }}</td>
+            <td>{{ pct(e.get('cz_fidelity')) if _src == 'channel' else '-' }}</td>
             <td>{{ e.get('detuning') | pair_detuning_display }}</td>
             <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
             <td>{{ cal.get(p.id) or '-' }}</td>
