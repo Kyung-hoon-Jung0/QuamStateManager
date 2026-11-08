@@ -109,7 +109,7 @@ check('an emptied top-level group accepts a pointer drop, persists and cleans up
     z.pointer('pointermove', empty, 0, 10);
     assert(document.documentElement.classList.contains('ui-reorder-active'));
     const css = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/ui-kit.css'), 'utf8');
-    assert.match(css, /\.ui-reorder-active #sidebar \.ui-reorder-empty\s*\{[^}]*min-height:\s*2rem/s);
+    assert.match(css, /\.ui-reorder-active \.ui-reorder-empty\s*\{[^}]*min-height:\s*2rem/s);
     assert(empty.classList.contains('ui-reorder-before'));
     assert(empty.classList.contains('ui-reorder-empty'));
     assert(empty.childNodes.length > 0, 'empty groups may contain template whitespace and comments');
