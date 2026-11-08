@@ -733,6 +733,7 @@
 
 /* Compact inspector (D-1..D-4): the docked panel bar, the thin gutter's
    arrows, the one-line run header. */
+.ui-inspector-docked { flex-shrink: 0; overflow: hidden; }
 .ui-inspector-docked > * { display: none; }
 .ui-inspector-docked > .ui-dock-bar { display: flex; }
 .ui-dock-bar {

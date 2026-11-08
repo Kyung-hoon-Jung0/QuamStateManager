@@ -617,10 +617,11 @@ if (mode === 'nav_reopen_low' || mode === 'nav_reopen_high') {
     pane.getBoundingClientRect = () => ({ top: 100, bottom: 912, height: 812 });
     pane.querySelector('h1').getBoundingClientRect = () => ({ top: 110, bottom: 150, height: 40 });
     s.swap('inspector-pane', QUBIT);
-    eq(s.sizes(), [3.75, 96.25], 'the top pane ends halfway down the title (30 of 800 px)');
+    // (30 px to the title's middle + half the 12 px gutter) of the 812 px parent
+    eq(s.sizes(), [4.43, 95.57], 'the top pane ends halfway down the title');
     assert.equal(s.user(), null, 'SM\'s move is not a choice');
     s.swap('inspector-pane', RUN);
-    eq(s.sizes(), [3.75, 96.25], 'a run opened over another page too');
+    eq(s.sizes(), [4.43, 95.57], 'a run opened over another page too');
     s.drag([50, 50]);
     s.swap('inspector-pane', QUBIT);
     eq(s.sizes(), [50, 50], 'a remembered drag still wins');
