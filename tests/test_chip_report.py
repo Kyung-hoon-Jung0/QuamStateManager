@@ -319,7 +319,7 @@ class TestEverythingExtractable:
 
     def test_the_pair_row_names_what_measured_its_fidelity(self, rich_client):
         b = rich_client.get("/chip-status/report").get_data(as_text=True)
-        assert "Best 2Q fidelity" in b and "<th>Detuning</th>" in b
+        assert "Bell state fid." in b and "<th>Detuning</th>" in b
         assert "Detuning (MHz)" not in b
         assert "<td>-0.1659 V</td>" in b          # V, from the shared units table
         assert "Pair readout confusion (1)" in b
@@ -558,3 +558,28 @@ class TestGateLengthsAreNumbers:
 
     def test_a_lab_class_sm_has_no_formula_for_prints_a_dash(self, body):
         assert self._gate_cells(body, "cz_lab")[4] == "-"
+
+
+def _pair_row(html, pair):
+    i = html.index("Bell state fid.")
+    j = html.index('<strong>' + pair + '</strong>', i)
+    return html[j:html.index("</tr>", j)]
+
+
+@pytest.mark.parametrize("fid,bell", [
+    ({"InterleavedRB": 0.9871}, False),
+    ({"Bell_State": {"Fidelity": 0.9871}}, True),
+])
+def test_the_pair_table_never_fills_bell_from_another_source(tmp_path, fid, bell):
+    """User 2026-11-08: one named source per column. A pair measured only by
+    interleaved RB has a cz_fidelity (the edge's per-pair fallback), but the
+    Bell column must stay empty for it; a Bell-measured pair prints its value."""
+    folder = _rich_chip(tmp_path / "quam_state")
+    st = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+    st["qubit_pairs"]["q1-q2"]["macros"]["cz_flat"]["fidelity"] = fid
+    (folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_ir"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    row = _pair_row(c.get("/chip-status/report").get_data(as_text=True), "q1-q2")
+    assert ("98.7" in row) is bell, row

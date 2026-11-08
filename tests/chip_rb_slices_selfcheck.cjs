@@ -168,7 +168,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     countCharts(T.win, T);
     await T.advance(1000);
     const before = built(T).length;
-    press(T, 'mouse', 'irb');
+    press(T, 'mouse', 'gate2q');
     const now = built(T);
     ok(before === 0 && now.length >= 1 && now.length <= 2 && now[0] === KEY('InterleavedRB', 'cz_g0')
        && now.every((k) => /^2q:InterleavedRB:/.test(k))
@@ -245,7 +245,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await U.advance(500);
     U.win.ChipStatus.liveDiff.refresh();        // live differs on q2-q3
     await U.advance(100);
-    press(U, 'mouse', 'irb');
+    press(U, 'mouse', 'gate2q');
     ok(!U.doc.querySelector(PSEL(KEY('StandardRB', 'cz_g6'))), 'S5 setup: SRB cz_g6 is not built by the press');
     await U.advance(12000);
     const cell = U.doc.querySelector(PSEL(KEY('StandardRB', 'cz_g6')) + ' .heatmap-cell[data-pair="q2-q3"]');
@@ -285,7 +285,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const W = big({ state: { htmx: true } });
     countCharts(W.win, W);
     await W.advance(1000);
-    press(W, 'mouse', 'irb');
+    press(W, 'mouse', 'gate2q');
     await untilSlicing(W, built(W).length);     // rested: the slices run (IRB panels first)
     const mid = built(W);
     press(W, 'mouse', 'srb');
@@ -308,7 +308,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
   {
     const X = big({ state: { htmx: true } });
     await X.advance(1000);
-    press(X, 'mouse', 'irb');
+    press(X, 'mouse', 'gate2q');
     await untilSlicing(X, built(X).length);
     X.doc.body.dispatchEvent(new X.win.CustomEvent('htmx:beforeSwap', { bubbles: true,
       detail: { target: X.pane, shouldSwap: true, requestConfig: {} } }));
@@ -344,7 +344,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
   }
 
   // ── S11: the F5 matrix on the big chip ───────────────────────────────────
-  for (const c of [['mouse', 'irb', 'fidelity2q', IRBSEL], ['Enter', 't1', 'coherence', T1SEL],
+  for (const c of [['mouse', 'gate2q', 'fidelity2q', IRBSEL], ['Enter', 't1', 'coherence', T1SEL],
                    ['Space', 'ro_ge', 'readout', ROSEL]]) {
     for (const delay of [0, 300, 2000]) {
       const A = big({ state: { htmx: true } });
@@ -389,7 +389,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
       w.IntersectionObserver = function (cb) { io = cb; this.observe = function () {}; this.disconnect = function () {}; };
     } });
     await J2.advance(500);
-    press(J2, 'mouse', 'irb');
+    press(J2, 'mouse', 'gate2q');
     await untilSlicing(J2, built(J2).length);
     const before = built(J2);
     io([{ isIntersecting: true, target: J2.doc.querySelector('[data-topo-section="2qrb"]') }]);
@@ -410,7 +410,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     // its slices are done and its first batch of charts is drawn, the rest to come
     for (let t = 0; t < 5000 && !K.charts.length; t += 5) await K.advance(5);
     const running = K.charts.length;
-    press(K, 'mouse', 'irb');
+    press(K, 'mouse', 'gate2q');
     const at = K.charts.length;
     let during = 0, done = false;
     for (let t = 0; t < 12000 && !done; t += 5) {
@@ -563,7 +563,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     press(Q2, 'mouse', 't1');
     for (let t = 0; t < 3000 && mcount(Q2) <= 4; t += 4) await Q2.advance(4);
     const mAt = mcount(Q2);
-    press(Q2, 'mouse', 'irb');
+    press(Q2, 'mouse', 'gate2q');
     const r2 = await track(Q2, (m, q) => m === 15 && q === 20);
     ok(mAt > 4 && mAt < 15 && r2.both === 0 && /^q+m+$/.test(r2.seq),
        'S18 an IRB press while they run puts the 2Q slices first (metric panels at the press: ' + mAt + '): ' + r2.seq);
@@ -573,7 +573,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
   {
     const O = big({ state: { htmx: true } });
     await O.advance(1000);
-    press(O, 'mouse', 'irb');
+    press(O, 'mouse', 'gate2q');
     const pressed = built(O).length;
     for (let t = 0; t < 5000 && built(O).length < pressed + 4; t += 4) await O.advance(4);
     const early = built(O);
@@ -617,7 +617,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const phs = (T) => T.doc.querySelectorAll('.topo-rb-ph').length;
     // tile, its target, the section right above it (what a fully built page shows 720 px up)
     const CASES = [['ro_ge', ROSEL, 'fid1q'], ['gate1q', G1SEL, '2qrb:InterleavedRB'], ['t1', T1SEL, 'fidro'],
-                   ['t2ramsey', P.T2SEL, 'fidro'], ['irb', IRBSEL, '2qrb:StandardRB']];
+                   ['t2ramsey', P.T2SEL, 'fidro'], ['gate2q', IRBSEL, '2qrb:StandardRB']];
     for (const c of CASES) {
       for (const dy of [-720, 720, 0]) {
         const A = big({ state: { htmx: true } });
@@ -636,7 +636,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
         const fin = atLine(A), top = A.topOf(c[1]);
         const want = SM - dy;
         const secOk = dy < 0 ? fin.sec === c[2] : true;
-        ok(landed === SM && top === want && secOk && phs(A) === 0 && built(A).length === 20 && (c[0] === 'irb' || mcount(A) === 15)
+        ok(landed === SM && top === want && secOk && phs(A) === 0 && built(A).length === 20 && (c[0] === 'gate2q' || mcount(A) === 15)
            && A.errors().length === 0,
            'S20 ' + c[0] + ': wheel ' + dy + ' px 100 ms after the jump landed -- the target ends ' + top + ' px down the pane (want '
            + want + '), the reader in ' + JSON.stringify(fin) + (dy < 0 ? ' (want ' + c[2] + ')' : '')
@@ -680,7 +680,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     {
       const C = big({ state: { htmx: true } });
       await C.advance(1000);
-      press(C, 'mouse', 'irb');
+      press(C, 'mouse', 'gate2q');
       await C.advance(520);
       const pressed = built(C).length;
       C.pane.dispatchEvent(new C.win.Event('wheel', { bubbles: true }));
@@ -704,7 +704,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     {
       const N = big({ state: { htmx: true }, nativeAnchor: true, h: { panel: 300 } });
       await N.advance(1000);
-      press(N, 'mouse', 'irb');
+      press(N, 'mouse', 'gate2q');
       await N.advance(420);
       await untilSlicing(N, built(N).length);
       const first = built(N);
@@ -750,7 +750,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
   {
     const Z = world({ state: { htmx: true } });
     await Z.advance(1000);
-    press(Z, 'mouse', 'irb');
+    press(Z, 'mouse', 'gate2q');
     ok(built(Z).length === 2 && !Z.doc.querySelector('.topo-rb-slot'),
        'S12 a 5-qubit chain builds all of its 2Q panels in the press, no slots (' + built(Z).length + ')');
   }

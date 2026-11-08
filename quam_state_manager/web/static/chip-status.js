@@ -972,6 +972,88 @@ window.ChipStatus.mount = function (opts) {
         var r = entity.metrics && entity.metrics[key];
         return r ? r.value : entity[key];
     }
+    // The 2Q fidelity SOURCES (user decision 2026-11-08): every surface that
+    // shows a pair's 2Q fidelity shows ONE named source, never cz_fidelity's
+    // per-pair fallback (Bell, else interleaved RB, else the CR channel).
+    // val(e, gate) is null when the pair lacks that source -- never filled
+    // from another one. The map patches and the Overview tile share this list.
+    function _edgeBest2Q(e, match, gate) {
+        if (!e.gate_fidelities) return null;
+        var best = null;
+        e.gate_fidelities.forEach(function(gf) {
+            if (!match(gf.metric)) return;
+            if (gate && gate !== 'best' && gf.gate !== gate) return;
+            var v = typeof gf.value === 'number' ? gf.value
+                  : typeof gf.average_gate_fidelity === 'number'
+                      ? gf.average_gate_fidelity : null;
+            if (v != null && v > 0 && v <= 1 && (best == null || v > best)) best = v;
+        });
+        return best;
+    }
+    function _edgeBestDerived(e, gate) {
+        if (!e.gate_fidelities) return null;
+        var best = null;
+        e.gate_fidelities.forEach(function (gf) {
+            if (gf.level !== 'clifford') return;
+            if (gate && gate !== 'best' && gf.gate !== gate) return;
+            var v = gf.derived_gate_fidelity;
+            if (typeof v === 'number' && v > 0 && v <= 1 && (best == null || v > best)) best = v;
+        });
+        return best;
+    }
+    function _isIRBName(m) { return m === 'InterleavedRB' || m === 'IRB'; }
+    function _isSRBName(m) { return m === 'StandardRB'; }
+    var TWOQ_SOURCES = [
+        { key: 'bell_state', label: 'Bell state fid.', always: true,
+          title: 'Bell-state fidelity: the Bell_State measurement of the pair (a state fidelity, not a gate fidelity)',
+          emptyNote: 'No Bell-state data on this chip — fills from qubit_pairs.<pair>.macros.<gate>.fidelity.Bell_State.Fidelity',
+          val: function(e) { return e.fidelity_source === 'macro' ? _mv(e, 'cz_fidelity') : null; } },
+        { key: 'cr_channel', label: 'CR channel fid.',
+          title: 'Fidelity stored on the cross-resonance channel of the pair',
+          val: function(e) { return e.fidelity_source === 'channel' ? _mv(e, 'cz_fidelity') : null; } },
+        { key: 'rb2q_interleaved', label: '2Q gate (IRB)', perGate: true, match: _isIRBName,
+          title: 'Per-gate fidelity from interleaved randomized benchmarking (1 - error per gate)',
+          val: function(e, g) { return _edgeBest2Q(e, _isIRBName, g); } },
+        { key: 'rb2q_standard_gate', label: '2Q gate (SRB÷)', perGate: true, match: _isSRBName,
+          title: 'Per-gate fidelity derived from standard RB: the Clifford error divided by the gates per Clifford of that run',
+          val: function(e, g) { return _edgeBestDerived(e, g); } },
+        { key: 'rb2q_standard', label: '2Q Clifford (SRB)', perGate: true, match: _isSRBName,
+          title: 'Per-Clifford fidelity from standard randomized benchmarking (1 - error per Clifford), not per gate',
+          val: function(e, g) { return _edgeBest2Q(e, _isSRBName, g); } },
+    ];
+    // The default 2Q source: IRB, else Bell, else SRB-derived, else Clifford.
+    // The one value every coloured / numbered 2Q surface reads: the chip's
+    // default source (never the per-pair cz_fidelity fallback).
+    var _e2qSrc;
+    function _edge2Q(e) {
+        if (_e2qSrc === undefined) _e2qSrc = default2QSource((topo && topo.edges) || []);
+        return _e2qSrc ? _e2qSrc.val(e, 'best') : null;
+    }
+    function _edge2QLabel() {
+        if (_e2qSrc === undefined) _edge2Q({});
+        return _e2qSrc ? _e2qSrc.label : '2Q gate fidelity';
+    }
+    // The pulse whose number src shows for e (the per-pair best), or null.
+    function _edge2QGate(src, e) {
+        var v = src ? src.val(e, 'best') : null, gate = null;
+        if (v == null) return null;
+        if (src.key === 'bell_state' || src.key === 'cr_channel') return e.best_gate || null;
+        (e.gate_fidelities || []).forEach(function(gf) {
+            var gv = src.key === 'rb2q_standard_gate' ? gf.derived_gate_fidelity
+                   : (src.match(gf.metric) ? gf.value : null);
+            if (gate == null && gv === v) gate = gf.gate;
+        });
+        return gate;
+    }
+    function default2QSource(edges) {
+        var order = ['rb2q_interleaved', 'bell_state', 'rb2q_standard_gate', 'rb2q_standard'];
+        for (var i = 0; i < order.length; i++) {
+            var src = TWOQ_SOURCES.filter(function(x) { return x.key === order[i]; })[0];
+            if ((edges || []).some(function(e) { return src.val(e, 'best') != null; })) return src;
+        }
+        return null;
+    }
+
     // A measured-but-unphysical value (raw number present, gated value None, not a
     // dangling pointer) — a "likely failed fit", shown distinctly, not as a bad qubit.
     function _badFit(entity, key) {
@@ -1413,6 +1495,14 @@ window.ChipStatus.mount = function (opts) {
         // docs/150 helpers: tile identity + the stored display preferences.
         function _tid(id, tile) { if (tile) tile.id = id; return tile; }
         var ovPrefs = _ovLoad();
+        // No duplicate tiles (user decision 2026-11-08): when the one-source 2Q
+        // tile (gate2q) shows interleaved RB, the older 'irb' tile is the same
+        // number and is dropped; a user's prefs for 'irb' carry over to gate2q.
+        var _ovIrbMerged = (function() {
+            var s2 = default2QSource(topo.edges);
+            return !!(s2 && s2.key === 'rb2q_interleaved');
+        })();
+        if (_ovIrbMerged) _ovMapIrbPrefs(ovPrefs);
         function _ovStat(id) { return (ovPrefs.stats && ovPrefs.stats[id]) || 'avg'; }
 
         // [hi, lo] calibration range for cardColor's magnitude→palette read —
@@ -1434,6 +1524,15 @@ window.ChipStatus.mount = function (opts) {
             }
             return p ? p.fmtFn : function(v) { return fmtNum(v, 4); };
         }
+        // Per-pair hover entries of the default 2Q source; a pair without that
+        // source is null ('—'), never filled from another source.
+        function _ov2QEntries() {
+            var src = default2QSource(topo.edges);
+            return topo.edges.map(function(e) {
+                var v = src ? src.val(e, 'best') : null, gate = _edge2QGate(src, e);
+                return { id: _pairId(e), v: v, gate: gate };
+            });
+        }
         function _ovRangeFor(key) {
             if (key === 'cz_fidelity') return [0.95, 0];
             if (/^gate_fidelity/.test(key)) return fidRange;
@@ -1444,10 +1543,11 @@ window.ChipStatus.mount = function (opts) {
         function _ovCustomTile(key, stat) {
             if (!key) return null;
             var agg = key === 'cz_fidelity'
-                ? computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; }))
+                ? computeAggregates(_ov2QEntries().map(function(x) { return x.v; }))
                 : nodeAgg(key);
             var range = _ovRangeFor(key);
-            var t = metricTile(metricLabel(key), agg, _ovFmtFor(key), range || [1, 0], key, stat || 'avg');
+            var _s2 = key === 'cz_fidelity' ? default2QSource(topo.edges) : null;
+            var t = metricTile(_s2 ? _s2.label : metricLabel(key), agg, _ovFmtFor(key), range || [1, 0], key, stat || 'avg');
             if (!range && !t.muted) t.color = '#76b7b2';
             return t;
         }
@@ -1656,7 +1756,7 @@ window.ChipStatus.mount = function (opts) {
             // fits the GATE fidelity (1-EPG). A Clifford is ~5.4 two-qubit
             // gates here, so the titles say which is which and each tile also
             // states both error rates, bridged only by the run's own divisor.
-            srbTile, srbGateTile, irbCliffTile, irbTile,
+            srbTile, srbGateTile, irbCliffTile, _ovIrbMerged ? null : irbTile,
             // The edge number. Its SOURCE varies by chip — Bell_State, an
             // interleaved-RB gate fidelity, or the CR channel — so the tile is
             // named for what it measures, not for one of the three ways it can
@@ -1664,7 +1764,19 @@ window.ChipStatus.mount = function (opts) {
             // and became wrong on an RB chip too (docs/138).
             // user 2026-09-01: "(Best)" instead of the direction arrow -- the
             // per-edge number IS the best of the pair's candidate gates.
-            (function() { var t = metricTile('2Q gate fidelity (Best)', computeAggregates(topo.edges.map(function(e) { return e.cz_fidelity; })), pct, [0.95, 0], 'cz_fidelity', _ovStat('gate2q'));
+            // One named source (user decision 2026-11-08): the default 2Q
+            // source, shared with the map (default2QSource), never the per-pair
+            // cz_fidelity fallback.
+            // On an IRB chip the one 2Q tile IS the interleaved-RB tile (same
+            // aggregate, EPG line and excluded-row count), under the one-source
+            // name and the gate2q id.
+            _ovIrbMerged ? (function() { var t = _tid('gate2q', withErrLine(
+                metricTile('2Q gate (IRB)', irbAgg, pct, fidRange, null, _ovStat('gate2q')), irbAgg, 'EPG', null));
+                t.jumpAs = 'irb'; return t; })() :
+            (function() { var src = default2QSource(topo.edges);
+                          var t = metricTile(src ? src.label : '2Q gate fidelity',
+                              computeAggregates(topo.edges.map(function(e) { return src ? src.val(e, 'best') : null; })),
+                              pct, [0.95, 0], 'cz_fidelity', _ovStat('gate2q'));
                           t.noArrow = true; return _tid('gate2q', t); })(),
             // Length has no good/bad direction - neutral colour, not a verdict.
             (function() { var t = metricTile('2Q Gate Length', lenAgg, nsF, [1, 0], null, _ovStat('gate2q_len'));
@@ -1702,8 +1814,16 @@ window.ChipStatus.mount = function (opts) {
             srb_gate: { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QFieldE(isSRB, 'derived_gate_fidelity') },
             irb:      { kind: 'pair',  fmt: pct, range: fidRange, entries: collect2QE(isIRB) },
             irb_cliff:{ kind: 'pair',  fmt: pct, range: fidRange, entries: irbEpcE },
-            gate2q:   { kind: 'pair',  fmt: pct, range: [0.95, 0],
-                        entries: topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity, gate: e.best_gate }; }) },
+            gate2q:   _ovIrbMerged
+                        ? { kind: 'pair', fmt: pct, range: fidRange, entries: (function() {
+                              // every pair is listed; one without IRB reads '—'
+                              var en = collect2QE(isIRB), have = {};
+                              en.forEach(function(x) { have[x.id] = 1; });
+                              topo.edges.forEach(function(e) {
+                                  if (!have[_pairId(e)]) { have[_pairId(e)] = 1; en.push({ id: _pairId(e), v: null }); }
+                              });
+                              return en; })() }
+                        : { kind: 'pair',  fmt: pct, range: [0.95, 0], entries: _ov2QEntries() },
             gate2q_len: { kind: 'pair', fmt: nsF, range: null, entries: gateLenE },
             t1:       { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T1') },
             t2ramsey: { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T2ramsey') }
@@ -1728,7 +1848,7 @@ window.ChipStatus.mount = function (opts) {
                     kind: a.key === 'cz_fidelity' ? 'pair' : 'qubit',
                     fmt: _ovFmtFor(a.key), range: _ovRangeFor(a.key),
                     entries: a.key === 'cz_fidelity'
-                        ? topo.edges.map(function(e) { return { id: _pairId(e), v: e.cz_fidelity, gate: e.best_gate }; })
+                        ? _ov2QEntries()
                         : nodeEntries(a.key)
                 };
             }
@@ -1815,7 +1935,8 @@ window.ChipStatus.mount = function (opts) {
     ];
     function _ovJumpFor(tile) {
         if (!tile || !tile.id) return null;
-        var j = OV_JUMP[tile.id];
+        // the merged IRB 2Q tile keeps the IRB tile's own jump target
+        var j = OV_JUMP[tile.jumpAs || tile.id];
         if (j) return { view: j[0], sel: j[1], label: j[2] };
         if (tile.custom && tile.metricKey) {
             if (tile.metricKey === 'cz_fidelity') return { view: 'fidelity2q', sel: null, label: '2Q Gate Fidelity' };
@@ -1854,6 +1975,22 @@ window.ChipStatus.mount = function (opts) {
             return { removed: p.removed || [], stats: p.stats || {}, added: p.added || [],
                      order: p.order || [] };
         } catch (e) { return { removed: [], stats: {}, added: [], order: [] }; }
+    }
+    // Prefs written for the retired 'irb' tile apply to 'gate2q' (in memory;
+    // the next save writes them under the new id).
+    function _ovMapIrbPrefs(p) {
+        if (p.removed.indexOf('irb') >= 0) {
+            p.removed = p.removed.filter(function(x) { return x !== 'irb'; });
+            if (p.removed.indexOf('gate2q') < 0) p.removed.push('gate2q');
+        }
+        if (p.stats.irb && !p.stats.gate2q) p.stats.gate2q = p.stats.irb;
+        delete p.stats.irb;
+        var i = p.order.indexOf('irb');
+        if (i >= 0) {
+            var o = p.order.filter(function(x) { return x !== 'gate2q'; });
+            p.order = o.map(function(x) { return x === 'irb' ? 'gate2q' : x; });
+        }
+        return p;
     }
     function _ovSave(p) {
         try {
@@ -2341,9 +2478,10 @@ window.ChipStatus.mount = function (opts) {
     // BOTH the card diagram and the hero map so they can never disagree.
     function _edgePaint(e) {
         var color = tCfg.edgeFidelityNone, width = 2;
-        if (e.has_cz && e.cz_fidelity != null) {
-            color = e.cz_fidelity >= 0.95 ? tCfg.edgeFidelityGood
-                  : (e.cz_fidelity >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
+        var v2 = _edge2Q(e);   // the chip's one named 2Q source
+        if (e.has_cz && v2 != null) {
+            color = v2 >= 0.95 ? tCfg.edgeFidelityGood
+                  : (v2 >= 0.85 ? tCfg.edgeFidelityWarn : tCfg.edgeFidelityBad);
             width = 3;
         }
         return { color: color, width: width };
@@ -2513,7 +2651,12 @@ window.ChipStatus.mount = function (opts) {
                 fidRows += row(name, shown,
                                e.best_gate && gf.gate === e.best_gate);
             });
-            if (!fidRows && e.cz_fidelity != null) fidRows = row('2Q fidelity', pct(e.cz_fidelity));
+            // Named by its one source, never the unnamed per-pair fallback.
+            if (!fidRows && e.cz_fidelity != null) {
+                var _fsrc = TWOQ_SOURCES.filter(function(x) {
+                    return (x.key === 'bell_state' || x.key === 'cr_channel') && x.val(e) != null; })[0];
+                if (_fsrc) fidRows = row(_fsrc.label, pct(_fsrc.val(e)));
+            }
             if (fidRows) {
                 html += '<div class="topo-popup-section">'
                      + '<div class="topo-popup-section-title">Gate fidelity</div>' + fidRows;
@@ -2673,37 +2816,6 @@ window.ChipStatus.mount = function (opts) {
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
 
-        // Per-edge value for a named 2Q RB metric (the same per-pair-best +
-        // physical (0,1] gate buildOverviewTiles' collect2Q applies). docs/126:
-        // RB numbers exist PER GATE (cz_flattop's RB vs cz_gaussian_bipolar's
-        // …), so the caller can pin one gate — 'best' keeps the old best-of.
-        function edgeBest2Q(e, match, gate) {
-            if (!e.gate_fidelities) return null;
-            var best = null;
-            e.gate_fidelities.forEach(function(gf) {
-                if (!match(gf.metric)) return;
-                if (gate && gate !== 'best' && gf.gate !== gate) return;
-                var v = typeof gf.value === 'number' ? gf.value
-                      : typeof gf.average_gate_fidelity === 'number'
-                          ? gf.average_gate_fidelity : null;
-                if (v != null && v > 0 && v <= 1 && (best == null || v > best)) best = v;
-            });
-            return best;
-        }
-        // docs/138 — the derived per-gate value on a Clifford row, per pulse.
-        function edgeBestDerived(e, gate) {
-            if (!e.gate_fidelities) return null;
-            var best = null;
-            e.gate_fidelities.forEach(function (gf) {
-                if (gf.level !== 'clifford') return;
-                if (gate && gate !== 'best' && gf.gate !== gate) return;
-                var v = gf.derived_gate_fidelity;
-                if (typeof v === 'number' && v > 0 && v <= 1 && (best == null || v > best)) {
-                    best = v;
-                }
-            });
-            return best;
-        }
         function gatesFor2Q(match) {
             var names = {};
             topo.edges.forEach(function(e) {
@@ -2717,39 +2829,19 @@ window.ChipStatus.mount = function (opts) {
         var heroGate = 'best';
         try { heroGate = localStorage.getItem(GATE_KEY) || 'best'; } catch (e) {}
         var EDGE_METRICS = [
-            // Same rename as the tile: this is the edge's gate number, and
-            // its source is Bell_State / interleaved RB / the CR channel
-            // depending on the chip (docs/138).
-            { key: 'cz_fidelity', scope: 'edge', label: '2Q gate fid.',
-              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return _mv(e, 'cz_fidelity'); } },
-            // ORDER IS THE DEFAULT. The first surviving metric is what the
-            // hero opens on, and on a chip with no Bell_State the old order
-            // made that the CLIFFORD number: the map said 97.1% while the
-            // per-pulse sections below it said 99.09% and 99.34%. Same pair,
-            // two numbers, and the smaller one on top. The gate number goes
-            // first now; the Clifford number stays available, last, and says
-            // what it is (docs/138).
-            { key: 'rb2q_interleaved', scope: 'edge', label: '2Q gate (IRB)', perGate: true,
-              match: function(m) { return m === 'InterleavedRB' || m === 'IRB'; },
-              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'InterleavedRB' || m === 'IRB'; }, heroGate); } },
-            // The per-gate number a Standard-RB fit implies, recovered from
-            // that run's own data.json. Present only when the run folder is
-            // loaded — otherwise the patch simply is not offered, rather than
-            // showing a Clifford number under a gate label.
-            { key: 'rb2q_standard_gate', scope: 'edge', label: '2Q gate (SRB÷)', perGate: true,
-              match: function(m) { return m === 'StandardRB'; },
-              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBestDerived(e, heroGate); } },
-            { key: 'rb2q_standard', scope: 'edge', label: '2Q Clifford (SRB)', perGate: true,
-              match: function(m) { return m === 'StandardRB'; },
-              fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
-              valFn: function(e) { return edgeBest2Q(e, function(m) { return m === 'StandardRB'; }, heroGate); } },
-        ].filter(function(m) {
-            return topo.edges.some(function(e) { return m.valFn(e) != null; });
+            // One source per patch: the shared TWOQ_SOURCES (see default2QSource).
+        ].concat(TWOQ_SOURCES.map(function(src) {
+            return { key: src.key, scope: 'edge', label: src.label, title: src.title,
+                     always: src.always, emptyNote: src.emptyNote,
+                     perGate: src.perGate, match: src.match,
+                     fmtFn: function(v) { return fmtPct(v, 1) + '%'; },
+                     valFn: function(e) { return src.val(e, heroGate); } };
+        })).filter(function(m) {
+            return (m.always && topo.edges.length) || topo.edges.some(function(e) { return m.valFn(e) != null; });
         });
         METRICS = METRICS.concat(EDGE_METRICS);
+        var _d2q = default2QSource(topo.edges);
+        var DEFAULT_2Q = _d2q ? _d2q.key : null;
         if (topo.nodes.some(function(n) { return n.last_calibrated != null; })) {
             METRICS.push({ key: 'last_calibrated', mode: 'age', label: 'Last calibrated' });
         }
@@ -2757,6 +2849,9 @@ window.ChipStatus.mount = function (opts) {
 
         var current = null;
         try { current = localStorage.getItem(HERO_KEY); } catch (e) {}
+        // The retired mixed-source patch: a remembered choice of it keeps
+        // a 2Q view, on the default 2Q patch.
+        if (current === 'cz_fidelity') current = DEFAULT_2Q;
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
 
         // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
@@ -2881,6 +2976,7 @@ window.ChipStatus.mount = function (opts) {
                 out += '<span class="topo-hero-lg-item">' + (eagg.min != null ? m.fmtFn(eagg.min) : '')
                      + '<span class="topo-hero-lg-grad" style="background:linear-gradient(90deg,' + estops.join(',') + ')"></span>'
                      + (eagg.max != null ? m.fmtFn(eagg.max) : '') + '</span>'
+                     + (!eagg.count && m.emptyNote ? '<span class="topo-hero-lg-item muted">' + _esc(m.emptyNote) + '</span>' : '')
                      + '<span class="topo-hero-lg-item"><span class="topo-hero-lg-swatch" style="background:'
                      + dCfg.nullCellColor + '"></span>no data</span>';
                 return out + '</div>';
@@ -2930,7 +3026,8 @@ window.ChipStatus.mount = function (opts) {
                 bar += '<button type="button" role="tab" aria-selected="' + (m.key === current) + '"'
                      + ' class="topo-hero-mbtn' + (m.key === current ? ' active' : '')
                      + (m.scope === 'edge' ? ' topo-hero-mbtn-edge' : '') + '"'
-                     + ' data-hero-metric="' + _esc(m.key) + '">'
+                     + ' data-hero-metric="' + _esc(m.key) + '"'
+                     + (m.title ? ' title="' + _esc(m.title) + '"' : '') + '>'
                      + (m.label ? _esc(m.label) : labelHtml(m.key, true)) + '</button>';
             });
             // no role="group": Pico styles [role=group] as a full-width
@@ -3042,7 +3139,7 @@ window.ChipStatus.mount = function (opts) {
             // means the neutral no-data colour, never an invented one.
             var badgeSvg = '';
             var _badgeDone = {}, _badgeHalfBy = {};
-            var _czAgg = computeAggregates(topo.edges.map(function(e) { return _mv(e, 'cz_fidelity'); }));
+            var _czAgg = computeAggregates(topo.edges.map(function(e) { return _edge2Q(e); }));
             var _denseChip = topo.nodes.length >= 16;
             var _badgeFs = compactMode ? 10 : 8.5;
             function _pairStale(ms) { return _ageClass(ms) === 'fail'; }
@@ -3054,7 +3151,7 @@ window.ChipStatus.mount = function (opts) {
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
-                var pst = TG.pairState({ cz_fidelity: _mv(e, 'cz_fidelity'), has_cz: e.has_cz,
+                var pst = TG.pairState({ cz_fidelity: _edge2Q(e), has_cz: e.has_cz,
                                          gate_kind: e.gate_kind,
                                          cz_fidelity_updated_at: e.cz_fidelity_updated_at }, _pairStale);
                 var oA = offsets[e.source] || { dx: 0, dy: 0 }, oB = offsets[e.target] || { dx: 0, dy: 0 };
@@ -3077,7 +3174,7 @@ window.ChipStatus.mount = function (opts) {
                         bFg = textColorForBg(bFill);
                     }
                     var bTitle = e.pair_id + (e.active === false ? ' (off)' : '')
-                        + (pst.value != null ? ' \u2014 2Q gate fidelity ' + fmtPct(pst.value, 2) + '%'
+                        + (pst.value != null ? ' \u2014 ' + _edge2QLabel() + ' ' + fmtPct(pst.value, 2) + '%'
                            : (pst.state === 'pending' ? ' \u2014 2Q gate defined, not measured' : ''))
                         + (pst.age === 'unknown' && pst.value != null ? ' (age unknown)'
                            : (pst.stale ? ' (measured ' + _ageLabel(e.cz_fidelity_updated_at) + ')' : ''));
@@ -3181,7 +3278,8 @@ window.ChipStatus.mount = function (opts) {
                 // dotted = no 2Q gate; a value older than the chip's age rule fades
                 var dash = pst.state === 'pending' ? ' stroke-dasharray="7 5"'
                          : (pst.state === 'none' ? ' stroke-dasharray="2 6"' : '');
-                var tt = e.pair_id + (e.cz_fidelity != null ? ' — ' + (e.cz_fidelity * 100).toFixed(1) + '%' : '')
+                var _tsrc = default2QSource(topo.edges), _tv = _tsrc ? _tsrc.val(e, 'best') : null;
+                var tt = e.pair_id + (_tv != null ? ' — ' + _tsrc.label + ' ' + (_tv * 100).toFixed(1) + '%' : '')
                        + (e.active === false ? ' · off' : '');
                 var coords = ' x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"';
                 var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
@@ -6045,15 +6143,18 @@ window.ChipStatus.mount = function (opts) {
             var la = lowest(nodes, 'assignment_fidelity');
             if (la) items.push({ id: la.id, v: pct(_mval(la, 'assignment_fidelity')), t: 'lowest readout fidelity (GE)',
                                  vr: _verdict(_mval(la, 'assignment_fidelity'), thresholds.assignment_fidelity), kind: 'q' });
-            var lc = lowest(edges, 'cz_fidelity');
+            var lc = null;
+            edges.forEach(function(x) { var v = _edge2Q(x);
+                if (typeof v === 'number' && (lc == null || v < _edge2Q(lc))) lc = x; });
             // QA F-04: "Bell" only when the number IS the Bell-state one
             // (fidelity_source 'macro'); an interleaved-RB or channel number
             // is a gate fidelity, and the pulse that won it is named.
-            if (lc) items.push({ id: lc.pair_id, v: pct(_mval(lc, 'cz_fidelity')),
-                                 t: 'lowest ' + (((topo.summary || {}).gate_vocab) || 'CZ')
-                                    + (lc.fidelity_source === 'macro' ? ' Bell' : ' gate fid.')
-                                    + (lc.best_gate ? ' (' + lc.best_gate + ')' : ''),
-                                 vr: _verdict(_mval(lc, 'cz_fidelity'), thresholds.cz_fidelity), kind: 'p' });
+            // One named source (user decision 2026-11-08): the chip's default.
+            if (lc) items.push({ id: lc.pair_id, v: pct(_edge2Q(lc)),
+                                 t: 'lowest ' + (((topo.summary || {}).gate_vocab) || 'CZ') + ' '
+                                    + _edge2QLabel()
+                                    + (_edge2QGate(_e2qSrc, lc) ? ' (' + _edge2QGate(_e2qSrc, lc) + ')' : ''),
+                                 vr: _verdict(_edge2Q(lc), thresholds.cz_fidelity), kind: 'p' });
             // v1.5.1 (U P2-18): the same set as the "oldest calibration" tile
             // (query.py summary: qubits AND pairs) -- read over qubits alone,
             // the chip named "q1 today" beside a tile saying "2 days ago"

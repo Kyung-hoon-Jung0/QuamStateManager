@@ -70,7 +70,7 @@ function topoFixture() {
   }
   return {
     nodes: [node('q1', '0,0', 1.0e-5), node('q2', '1,0', 2.0e-5), node('q3', '0,1', 6.0e-5)],
-    edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+    edges: [{ pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
               gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' }],
   };
 }
@@ -352,8 +352,9 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
   {
     const win = makeWorld();
     mountBad(win);
-    const t = tileById(win, 'irb');
-    ok(!!t, 'C9: the IRB tile renders');
+    // the IRB tile is the one 2Q tile on an IRB chip (id gate2q, 2026-11-08)
+    const t = tileById(win, 'gate2q');
+    ok(!!t && !tileById(win, 'irb'), 'C9: the IRB tile renders once, as the 2Q tile');
     const txt = t.textContent.replace(/\s+/g, ' ');
 
     // the aggregate is over the two usable values only (0.99, 0.97)

@@ -499,7 +499,7 @@ async function main() {
   }
 
   // ── M: the F5 matrix ──────────────────────────────────────────────────────
-  const CASES = [['mouse', 't1', 'coherence', T1SEL], ['Enter', 'irb', 'fidelity2q', IRBSEL],
+  const CASES = [['mouse', 't1', 'coherence', T1SEL], ['Enter', 'gate2q', 'fidelity2q', IRBSEL],
                  ['Space', 'ro_ge', 'readout', ROSEL], ['tab', 'frequencies', 'frequencies', SEC.frequencies]];
   for (const prof of [['big chip, still loading', 21000], ['5Q, settled', 7500]]) {
     for (const c of CASES) {

@@ -72,7 +72,7 @@ function mount(win, topo, findings) {
         metrics: { T1: { value: null, raw: -4.7e-5, unresolved: false } } },
     ],
     edges: [
-      { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', has_cz: true, cz_fidelity: 0.97,
+      { pair_id: 'qA2-qA1', source: 'qA2', target: 'qA1', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
       { pair_id: 'qA3-qA4', source: 'qA3', target: 'qA4', has_cz: false, cz_fidelity: null,
         gate_kind: 'none', directed: false, active: null, best_gate: null },
@@ -279,7 +279,9 @@ function part5() {
 
   const eb = hero.querySelector('[data-hero-metric="rb2q_standard"]');
   ok(!!eb, 'edge metric: 2Q Clifford (SRB) patch offered');
-  ok(!!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: 2Q gate fid. patch offered');
+  // One source per patch: the mixed-source cz_fidelity patch is retired.
+  ok(!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'edge metric: no mixed-source 2Q gate fid. patch');
+  ok(!!hero.querySelector('[data-hero-metric="bell_state"]'), 'edge metric: Bell state fid. patch offered');
   // docs/138 — the Clifford patch must SAY it is per-Clifford. It used to read
   // "2Q RB", indistinguishable from the interleaved gate number beside it.
   ok(/Clifford/.test(eb.textContent), 'the Clifford patch names itself (' + eb.textContent + ')');
@@ -334,6 +336,8 @@ function part5() {
     edgeDeltaLabels();
     edgeLabelsBesideTheBar();
     calibrationAgeNamesItsBasis();
+    oneSourcePerPatch();
+    overviewTileOneSource();
     finish();
   }, 400);
 }
@@ -547,7 +551,7 @@ function edgeDeltaLabels() {
       { id: 'q4', grid_location: '1,1', T1: 4e-5 },              // no f_01
     ],
     edges: [
-      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
       // a CR pair: BOTH directions ship as separate edges — ONE label only
       { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
@@ -577,7 +581,7 @@ function edgeDeltaLabels() {
   hero.querySelector('[data-hero-metric="T1"]').click();
   ok(hero.querySelectorAll('.topo-hero-edelta').length === 0,
      'edelta: only the Qubit-freq view carries Δf labels');
-  hero.querySelector('[data-hero-metric="cz_fidelity"]').click();
+  hero.querySelector('[data-hero-metric="bell_state"]').click();
   ok(hero.querySelectorAll('.topo-hero-edelta').length === 0,
      'edelta: edge-metric mode keeps the edges for its OWN numbers');
   // CSS: smaller + haloed like the edge-metric value, in both font scales
@@ -622,19 +626,19 @@ function edgeLabelsBesideTheBar() {
     ],
     edges: [
       // horizontal, undirected, no role: hi = q2 (right) → chevron BELOW
-      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.97,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
       // a vertical CR pair, both directions (two lines ±6 off the column)
-      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: 0.93,
+      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.93,
         gate_kind: 'cr', directed: true, active: null, best_gate: 'cr' },
-      { pair_id: 'q3-1', source: 'q3', target: 'q1', has_cz: true, cz_fidelity: 0.91,
+      { pair_id: 'q3-1', source: 'q3', target: 'q1', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.91,
         gate_kind: 'cr', directed: true, active: null, best_gate: 'cr' },
       // vertical, undirected, the higher f_01 at the OTHER end → chevron on the other side
-      { pair_id: 'q2-4', source: 'q2', target: 'q4', has_cz: true, cz_fidelity: 0.90,
+      { pair_id: 'q2-4', source: 'q2', target: 'q4', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.90,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz', moving_qubit: 'control' },
       // horizontal with a MOVING qubit: hi = q4 → chevron BELOW, M ABOVE — the
       // value goes above too and must clear the M circle, not just the bar
-      { pair_id: 'q3-4', source: 'q3', target: 'q4', has_cz: true, cz_fidelity: 0.88,
+      { pair_id: 'q3-4', source: 'q3', target: 'q4', has_cz: true, fidelity_source: 'macro', cz_fidelity: 0.88,
         gate_kind: 'cz', directed: false, active: null, best_gate: 'cz', moving_qubit: 'target' },
     ],
   };
@@ -701,7 +705,7 @@ function edgeLabelsBesideTheBar() {
      + away(v24, m24, s24).toFixed(1) + ', ' + anchorFor(s24) + ')');
 
   // ── Edge-metric view: the 2Q value beside the 9px bar ──
-  hero.querySelector('[data-hero-metric="cz_fidelity"]').click();
+  hero.querySelector('[data-hero-metric="bell_state"]').click();
   const e12 = textLike('.topo-hero-eval', /^97\.0/), h12 = barHalf('q1-2');
   ok(h12 >= 4 && !!e12, 'F-26 fixture: edge-metric mode draws the thick bar (half ' + h12 + ') with its value');
   ok(e12 && num(e12, 'y') <= m12.y - h12 - 1,
@@ -766,6 +770,109 @@ function calibrationAgeNamesItsBasis() {
      'F11: a run-dated stone says so on hover');
   ok(q2 && /last calibrated/.test(q2.innerHTML) && !/moved in a run/.test(q2.innerHTML),
      'F11: a stamp-dated stone keeps its own words');
+}
+
+// User decision 2026-11-08: every 2Q patch reads exactly one measurement.
+// On a chip whose edge number comes from interleaved RB, the old "2Q gate fid."
+// patch duplicated "2Q gate (IRB)". It is gone; Bell state fid. stays listed
+// and says where it fills from; a remembered cz_fidelity lands on the default.
+function oneSourcePerPatch() {
+  function irbTopo() {
+    return { nodes: [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '1,0' }],
+      edges: [{ pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+        cz_fidelity: 0.991, fidelity_source: 'interleaved_rb', best_gate: 'cz',
+        gate_fidelities: [{ gate: 'cz', metric: 'InterleavedRB', value: 0.991, level: 'gate' },
+                          { gate: 'cz', metric: 'StandardRB', value: 0.95, level: 'clifford' }] }] };
+  }
+  let win = makeWorld();
+  win.localStorage.setItem('quam_topo_hero_metric_v2', 'cz_fidelity');
+  mount(win, irbTopo(), []);
+  let hero = win.document.getElementById('topo-hero');
+  ok(!hero.querySelector('[data-hero-metric="cz_fidelity"]'), 'one source: no cz_fidelity patch on an IRB chip');
+  const keys = Array.prototype.map.call(hero.querySelectorAll('[data-hero-metric]'),
+    function (b) { return b.getAttribute('data-hero-metric'); });
+  ok(keys.indexOf('rb2q_interleaved') >= 0 && keys.indexOf('bell_state') >= 0,
+     'one source: IRB and Bell patches listed (' + keys.join(',') + ')');
+  const act = hero.querySelector('.topo-hero-mbtn.active');
+  ok(act && act.getAttribute('data-hero-metric') === 'rb2q_interleaved',
+     'one source: a remembered cz_fidelity opens on the IRB patch (' + (act && act.getAttribute('data-hero-metric')) + ')');
+  ['bell_state', 'rb2q_interleaved', 'rb2q_standard'].forEach(function (k) {
+    const b = hero.querySelector('[data-hero-metric="' + k + '"]');
+    ok(b && (b.getAttribute('title') || '').length > 20, 'one source: ' + k + ' says what it measures');
+  });
+  hero.querySelector('[data-hero-metric="bell_state"]').click();
+  ok(hero.querySelectorAll('.topo-hero-eval').length === 0, 'one source: Bell shows no value from IRB data');
+  ok(/Bell_State/.test(hero.querySelector('.topo-hero-legend').textContent),
+     'one source: an empty Bell patch names its source leaf');
+
+  // A Bell-measured pair: the Bell patch shows the Bell number.
+  win = makeWorld();
+  const t = irbTopo();
+  t.edges[0].fidelity_source = 'macro'; t.edges[0].cz_fidelity = 0.973;
+  mount(win, t, []);
+  hero = win.document.getElementById('topo-hero');
+  hero.querySelector('[data-hero-metric="bell_state"]').click();
+  const ev = hero.querySelectorAll('.topo-hero-eval');
+  ok(ev[0] && /97\.3/.test(ev[0].textContent), 'one source: the Bell patch prints the Bell value');
+}
+
+// The Overview 2Q tile shows the SAME default source as the map (one shared
+// chooser), titled by it; a pair without that source is '—' in the hover
+// list, never filled from cz_fidelity's per-pair fallback.
+function overviewTileOneSource() {
+  const win = makeWorld();
+  win.document.body.insertAdjacentHTML('beforeend', '<div id="topo-overview-tiles"></div>');
+  const topo = {
+    nodes: [{ id: 'q1', grid_location: '0,0' }, { id: 'q2', grid_location: '1,0' },
+            { id: 'q3', grid_location: '2,0' }],
+    edges: [
+      // Bell-only pair: cz_fidelity is its Bell value
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, gate_kind: 'cz',
+        cz_fidelity: 0.961, fidelity_source: 'macro', best_gate: 'cz', gate_fidelities: [] },
+      // IRB-only pair
+      { pair_id: 'q2-3', source: 'q2', target: 'q3', has_cz: true, gate_kind: 'cz',
+        cz_fidelity: 0.992, fidelity_source: 'interleaved_rb', best_gate: 'cz',
+        gate_fidelities: [{ gate: 'cz', metric: 'InterleavedRB', value: 0.992, level: 'gate' }] },
+    ],
+  };
+  mount(win, topo, []);
+  const host = win.document.getElementById('topo-overview-tiles');
+  const tile = host.querySelector('.topo-card[data-tile-id="gate2q"]');
+  ok(!!tile, 'ov 2Q: the gate2q tile exists');
+  ok(tile && /2Q gate \(IRB\)/.test(tile.textContent) && !/\(Best\)/.test(tile.textContent),
+     'ov 2Q: the tile is titled by its one source (' + (tile && tile.textContent.slice(0, 60)) + ')');
+  ok(tile && /99\.2/.test(tile.textContent) && !/96\.1|97\.6/.test(tile.textContent),
+     'ov 2Q: the tile number uses only the IRB pair');
+  tile.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
+  const pop = win.document.getElementById('ov-hover-pop');
+  ok(!!pop, 'ov 2Q: hover list opens');
+  ok(pop && !/96\.1/.test(pop.textContent), 'ov 2Q: the Bell-only pair is not filled with its Bell value');
+  ok(pop && /q1-2/.test(pop.textContent) && /—/.test(pop.textContent),
+     'ov 2Q: the pair without the source reads —');
+  // Edge colour follows the same one source: the Bell-only pair is not
+  // painted from its Bell number on an IRB chip.
+  win.document.querySelector('#topo-hero [data-hero-metric="diag"]').click();   // a node view: edges use _edgePaint
+  const strokes = {};
+  Array.prototype.forEach.call(win.document.querySelectorAll('#topo-hero .topo-hero-edge'), function (g) {
+    strokes[g.getAttribute('data-hero-pair')] = g.querySelector('line').getAttribute('stroke');
+  });
+  ok(strokes['q1-2'] === '#bbbbbb' && strokes['q2-3'] && strokes['q2-3'] !== '#bbbbbb',
+     'ov 2Q: edges are coloured by the one source (' + JSON.stringify(strokes) + ')');
+  ok(!host.querySelector('.topo-card[data-tile-id="irb"]'),
+     'ov 2Q: no duplicate IRB tile beside the IRB-sourced 2Q tile');
+
+  // Prefs stored for the retired 'irb' tile carry over to gate2q.
+  const w2 = makeWorld();
+  w2.document.body.insertAdjacentHTML('beforeend', '<div id="topo-overview-tiles"></div>');
+  w2.localStorage.setItem('quam_overview_tiles_v1',
+    JSON.stringify({ order: ['irb', 'chip_size'], stats: { irb: 'max' } }));
+  mount(w2, topo, []);
+  const first = w2.document.querySelector('#topo-overview-tiles .topo-card[data-tile-id]');
+  ok(first && first.getAttribute('data-tile-id') === 'gate2q',
+     'ov 2Q: a stored irb position lands on gate2q (' + (first && first.getAttribute('data-tile-id')) + ')');
+  const g2 = w2.document.querySelector('.topo-card[data-tile-id="gate2q"]');
+  ok(g2 && /max/i.test(g2.textContent.split('med')[0]) ,
+     'ov 2Q: a stored irb statistic lands on gate2q (' + (g2 && g2.textContent.slice(0, 50)) + ')');
 }
 
 function finish() {
