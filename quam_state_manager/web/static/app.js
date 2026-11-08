@@ -2160,6 +2160,7 @@ window.setFontSize = function(size) {
         }
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
+        renderFloat(off.concat(checkedValues()));
         // docs/161: the "what are these boxes for" line shows only while
         // nothing is ticked -- once a tick exists the count on the button
         // says it
@@ -2176,11 +2177,146 @@ window.setFontSize = function(size) {
     }
     window.syncCompareCount = syncCompareCount;
 
+    /* FB-13: the floating bar. `sel` is the selection model exactly as the
+       Compare button counts it (off-view ticks first, then on-screen ones). */
+    function runLabel(v) {
+        // a tick's value is the run's quam_state folder: name the RUN
+        var s = String(v).replace(/[\\\/]+$/, '').replace(/[\\\/]quam_state$/i, '');
+        var base = s.split(/[\\\/]/).pop() || s;
+        var m = /^#?(\d+)[_\- ]?(.*)$/.exec(base);
+        return m ? { id: '#' + m[1], name: m[2] || '' } : { id: '', name: base };
+    }
+    function renderFloat(sel) {
+        var bar = document.getElementById('compare-float');
+        if (!bar) return;
+        var n = sel.length;
+        bar.hidden = n === 0;
+        // ride just UNDER the pinned date header, so the date stays readable
+        // (a 260 px sidebar has no room for both on one line)
+        var hd = document.querySelector('#sidebar-tree .tree-dir.tree-leafdir > summary');
+        if (n && hd && hd.offsetHeight && bar.parentNode && bar.parentNode.style) {
+            bar.parentNode.style.setProperty('--cf-top', hd.offsetHeight + 'px');
+        }
+        bar.setAttribute('data-count', String(n));
+        var lb = document.getElementById('cf-list');
+        if (lb) {
+            lb.textContent = n + ' ▾';
+            lb.setAttribute('aria-label', n + ' selected: show and edit the list');
+        }
+        var cmp = document.getElementById('cf-compare');
+        var tr = document.getElementById('cf-trend');
+        var why = n < 2 ? 'Tick one more run (2–5) to compare or trend' : '';
+        if (cmp) {
+            cmp.textContent = n > 1 ? 'Compare ' + n : 'Compare';
+            cmp.disabled = n < 2;
+            cmp.title = why || 'Open the diff of these ' + n + ' runs';
+        }
+        if (tr) { tr.disabled = n < 2; tr.title = why || 'Plot these ' + n + ' runs over time'; }
+        var head = document.getElementById('cf-pop-head');
+        if (head) head.textContent = n + ' of up to ' + MAX_DIFF + ' selected'
+            + (n < 2 ? ' — tick one more to compare' : '');
+        var ul = document.getElementById('cf-items');
+        if (!ul) return;
+        while (ul.firstChild) ul.removeChild(ul.firstChild);
+        var present = {};
+        boxes().forEach(function(b) { present[b.value] = true; });
+        sel.forEach(function(v) {
+            var li = document.createElement('li');
+            li.className = 'cf-item';
+            li.setAttribute('data-path', v);
+            li.title = v;
+            var L = runLabel(v);
+            var id = document.createElement('span'); id.className = 'cf-id'; id.textContent = L.id;
+            var nm = document.createElement('span'); nm.className = 'cf-name'; nm.textContent = L.name;
+            li.appendChild(id); li.appendChild(nm);
+            if (!present[v]) {
+                var ov = document.createElement('span'); ov.className = 'cf-off'; ov.textContent = 'not in view';
+                li.appendChild(ov);
+            }
+            var x = document.createElement('button');
+            x.type = 'button'; x.className = 'cf-x'; x.textContent = '×';
+            x.setAttribute('aria-label', 'Remove ' + (L.id ? L.id + ' ' : '') + L.name + ' from the selection');
+            x.onclick = function(ev) { ev.stopPropagation(); removeOne(v); };
+            li.appendChild(x);
+            ul.appendChild(li);
+        });
+        if (!n) setPop(false);
+    }
+    function removeOne(v) {
+        boxes().forEach(function(b) { if (b.value === v) b.checked = false; });
+        write(stored().filter(function(s) { return s !== v; }));
+        syncCompareCount();
+        var first = document.querySelector('#cf-items .cf-x');
+        var bar = document.getElementById('compare-float');
+        if (first) first.focus();
+        else if (bar && !bar.hidden) { var lb = document.getElementById('cf-list'); if (lb) lb.focus(); }
+    }
+    function setPop(open) {
+        var pop = document.getElementById('cf-pop'), lb = document.getElementById('cf-list');
+        if (!pop) return;
+        pop.hidden = !open;
+        if (open) {
+            // fixed, in viewport coords: the sidebar's overflow would clip an
+            // absolutely placed list, and a narrow sidebar has no room for it
+            var r = document.getElementById('compare-float').getBoundingClientRect();
+            var vw = document.documentElement.clientWidth;
+            var w = Math.min(416, vw - 16);
+            pop.style.width = w + 'px';
+            pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
+            pop.style.top = (r.bottom + 4) + 'px';
+        }
+        if (lb) lb.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    window._compareFloatPop = setPop;
+    document.addEventListener('click', function(ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        if (!t.closest('#compare-float')) { setPop(false); return; }
+        var b = t.closest('button');
+        if (!b) return;
+        if (b.id === 'cf-list') {
+            var pop = document.getElementById('cf-pop');
+            setPop(!!(pop && pop.hidden));
+        } else if (b.id === 'cf-compare' || b.id === 'cf-trend') {
+            // the real form buttons carry hx-post + the off-view hidden inputs
+            var real = document.querySelector('#compare-form '
+                + (b.id === 'cf-compare' ? '.btn-compare' : '.btn-trend'));
+            setPop(false);
+            if (real && !real.disabled) real.click();
+        } else if (b.id === 'cf-clear') {
+            setPop(false);
+            window.compareClearSelection();
+        }
+    });
+    document.addEventListener('keydown', function(ev) {
+        if (ev.key !== 'Escape') return;
+        var pop = document.getElementById('cf-pop');
+        if (pop && !pop.hidden) {
+            setPop(false);
+            var lb = document.getElementById('cf-list'); if (lb) lb.focus();
+        }
+    });
+
     window.compareClearSelection = function() {
+        var before = stored();
         boxes().forEach(function(b) { b.checked = false; });
         lastIdx = -1;
         write([]);                    // Clear is the one place the model empties
         syncCompareCount();
+        // FB-13: Clear asks nothing, so it can be taken back once
+        if (before.length && window.showToast) {
+            var t = window.showToast('Cleared ' + before.length + ' selected run'
+                + (before.length === 1 ? '' : 's') + '.', 'info', 8000);
+            if (t && t.appendChild) {
+                var u = document.createElement('button');
+                u.type = 'button'; u.className = 'toast-undo outline btn-sm'; u.textContent = 'Undo clear';
+                u.onclick = function() {
+                    write(before); restore(); syncCompareCount();
+                    if (t.parentNode) t.parentNode.removeChild(t);
+                };
+                t.appendChild(u);
+            }
+        }
     };
     /* A workspace root really going away is the OTHER place a path stops
        existing (an F5 or a filter is not). Called by the workspace remove
