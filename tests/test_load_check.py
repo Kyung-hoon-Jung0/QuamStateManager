@@ -141,18 +141,64 @@ def test_timeout_and_cleanup(env, monkeypatch):
     assert not seen[0].parent.exists()
 
 
-def test_missing_env_does_not_spawn(env, monkeypatch):
-    from quam_state_manager.core import config_generator
-    config_generator.set_selected_env(env["app"].instance_path, sys.executable)
+def _no_project(env):
+    """A chip opened by State Load: no QUAlibrate project, nothing remembered."""
+    env["ctx"]["qualibrate_project"] = None
     project_env._save(env["app"].instance_path, {"projects": {}, "last_used": None})
+
+
+def test_no_project_runs_with_the_selected_env(env, probe):
+    from quam_state_manager.core import config_generator
+    _no_project(env)
+    config_generator.set_selected_env(env["app"].instance_path, sys.executable)
+    response = _check(env)
+    assert response.status_code == 200 and response.json["ok"] is True
+    assert response.json["env"]["source"] == "selected"
+
+
+def test_no_env_offers_a_chooser_and_does_not_spawn(env, monkeypatch):
+    from quam_state_manager.core import config_generator
+    _no_project(env)
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: None)
+    monkeypatch.setattr(config_generator, "discover_envs", lambda refresh=False: [
+        {"name": "envA", "python": sys.executable}])
     def forbidden(*args, **kwargs):
-        pytest.fail("must not spawn an unchosen project interpreter")
+        pytest.fail("must not spawn an unchosen interpreter")
     monkeypatch.setattr(routes_mod.subprocess, "run", forbidden)
     response = _check(env)
     assert response.status_code == 409
     assert response.json["error"] == "env_required"
-    assert response.json["project"] == "alpha"
-    assert "sm-env-required" in response.headers["HX-Trigger"]
+    assert response.json["envs"] == [{"name": "envA", "python": sys.executable}]
+
+
+def test_no_env_a_pick_runs(env, probe, monkeypatch):
+    from quam_state_manager.core import config_generator
+    _no_project(env)
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: None)
+    monkeypatch.setattr(config_generator, "discover_envs", lambda refresh=False: [
+        {"name": "envA", "python": sys.executable}])
+    response = env["client"].post("/state/load-check", json={"python": sys.executable})
+    assert response.status_code == 200 and response.json["ok"] is True
+    assert response.json["env"]["source"] == "chosen"
+
+
+def test_no_env_an_unknown_pick_is_refused(env, monkeypatch, tmp_path):
+    from quam_state_manager.core import config_generator
+    _no_project(env)
+    monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: None)
+    monkeypatch.setattr(config_generator, "discover_envs", lambda refresh=False: [])
+    rogue = tmp_path / "python.exe"
+    rogue.write_text("")
+    def forbidden(*args, **kwargs):
+        pytest.fail("must not spawn an undiscovered interpreter")
+    monkeypatch.setattr(routes_mod.subprocess, "run", forbidden)
+    response = env["client"].post("/state/load-check", json={"python": str(rogue)})
+    assert response.status_code == 403 and response.json["error"] == "unknown_interpreter"
+
+
+def test_project_env_wins_and_is_named(env, probe):
+    response = _check(env)
+    assert response.json["env"]["source"] == "project"
 
 
 def test_only_remembered_env_is_run(env, probe):

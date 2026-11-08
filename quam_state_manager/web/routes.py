@@ -35961,6 +35961,16 @@ def _loadcheck_links(detail: str, merged: dict) -> list[dict[str, str]]:
     return out
 
 
+def _loadcheck_env_name(python_path: str) -> str:
+    """The env's folder name for *python_path* (``<env>/python.exe`` or
+    ``<env>/bin/python``)."""
+    p = Path(python_path)
+    parent = p.parent
+    if parent.name.lower() in ("bin", "scripts"):
+        parent = parent.parent
+    return parent.name or str(p)
+
+
 @bp.route("/state/load-check", methods=["POST"])
 def state_load_check():
     """Probe Quam.load on the CURRENT working state in the project's env."""
@@ -35974,21 +35984,40 @@ def state_load_check():
     from quam_state_manager.core import project_env
     inst = current_app.instance_path
     project = str(ctx.get("qualibrate_project") or "").strip()
+    # Env order (loadchk D-1): the project's remembered env, then the env the
+    # user already selected machine-wide, then the person's own pick from the
+    # chooser in the status line (POST body ``python``).
     python_path = project_env.remembered(inst, project) if project else None
+    env_source = "project"
     if not python_path or not os.path.isfile(python_path):
-        msg = (f"Choose the Python environment for {project} first."
-               if project else "Choose a project Python environment first.")
-        open_url = (url_for("main.home", landing=1, choose_env=project)
-                    if project else url_for("main.home", landing=1))
+        python_path = config_generator.get_selected_env(inst)
+        env_source = "selected"
+    if not python_path or not os.path.isfile(python_path):
+        python_path, env_source = None, None
+        picked = json_text(json_object(), "python").strip()
+        if picked:
+            if not _interpreter_known(picked) or not os.path.isfile(picked):
+                return jsonify({"ok": False, "error": "unknown_interpreter",
+                                "message": _UNKNOWN_INTERPRETER}), 403
+            python_path, env_source = picked, "chosen"
+    if not python_path:
+        msg = "Choose a Python environment to run the load check in."
+        envs = []
+        try:
+            for e in config_generator.discover_envs():
+                py = e.get("python")
+                if py and os.path.isfile(py):
+                    envs.append({"name": e.get("name") or py, "python": py})
+        except Exception:  # noqa: BLE001 -- an empty list still shows the reason
+            logger.warning("env discovery failed for the load check", exc_info=True)
         resp = jsonify({"ok": False, "error": "env_required", "project": project,
-                        "message": msg, "open_url": open_url})
+                        "message": msg, "envs": envs})
         resp.status_code = 409
-        resp.headers["HX-Trigger"] = json.dumps(
-            {"sm-env-required": {"project": project, "message": msg}})
         return resp
     if not _interpreter_known(python_path):
         return jsonify({"ok": False, "error": "unknown_interpreter",
                         "message": _UNKNOWN_INTERPRETER}), 403
+    env_info = {"name": _loadcheck_env_name(python_path), "source": env_source}
 
     tmp_root = Path(tempfile.mkdtemp(prefix="sm_loadcheck_")).resolve()
     state_dir = tmp_root / "quam_state"
@@ -36041,6 +36070,7 @@ def state_load_check():
                         "message": _loadcheck_message(detail, result.get("exc_type")),
                         "detail": detail,
                         "lib_versions": result.get("lib_versions") or {},
+                        "env": env_info,
                         "links": links})
     finally:
         try:
