@@ -1535,7 +1535,7 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                             "group_label": "upconverter_frequency to downconverter_frequency",
                             "label": (f"Set upconverter_frequency to downconverter_frequency "
                                       f"({_ghz(dc)}) -- changes the drive LO of {port_name}"),
-                            "warns": lo_warns, "moves": moved,
+                            "warns": lo_warns, "moves": moved, "port": port_name,
                             "title": ("This CHANGES the output LO the hardware plays; the input then "
                                       "keeps its literal and both agree.")}],
                     ))
@@ -3380,7 +3380,12 @@ def finding_groups(rows, ids=None) -> list[dict]:
                         if m not in k.setdefault("moves", []):
                             k["moves"].append(m)
                     if fix.get("warns"):
-                        k["warns"] = True
+                        if fix.get("port") and fix["port"] not in k.setdefault("ports", []):
+                            k["ports"].append(fix["port"])
+                        mv = k.get("moves") or []
+                        k["warns"] = ("changes the drive LO of " + ", ".join(k["ports"]) + " -- also moves: "
+                                      + (", ".join(mv[:6]) + (f" and {len(mv) - 6} more" if len(mv) > 6 else "")
+                                         or "nothing else reads it"))
         bulk, refused = [], []
         for k in kinds.values():
             # Several findings can name ONE target (a shared output). The same

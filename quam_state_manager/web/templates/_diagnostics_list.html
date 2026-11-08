@@ -170,8 +170,8 @@
               {% if allow_fix %}{% for k in g.bulk %}
               <button type="button" class="btn-sm outline diag-fix-all" data-items='{{ k['items'] | tojson }}'
                       title="{{ k.title }} One Ctrl+Z undoes all {{ k['items'] | length }}."
-                      {% if k.warns %}data-warns="changes the drive LO of the output{{ 's' if k['items'] | length != 1 }} -- also moves: {{ (k.moves or []) | join(', ') or 'nothing else reads it' }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} -- changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
-              {% if k.warns %}<div class="diag-fix-warns ui-diag-msg muted" role="note">changes the drive LO of {{ k['items'] | map(attribute='dot_path') | map('replace', '.upconverter_frequency', '') | join(', ') }} -- also moves: {{ (k.moves or []) | join(', ') or 'nothing else reads it' }}</div>{% endif %}
+                      {% if k.warns %}data-warns="{{ k.warns }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} -- changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
+              {% if k.warns %}<div class="diag-fix-warns ui-diag-msg muted" role="note">{{ k.warns }}</div>{% endif %}
               {% endfor %}
               {% for k in g.bulk_refused %}
               <div class="diag-fix-refused ui-diag-msg muted" role="note">No &ldquo;Set all&rdquo; for {{ k.group_label }}: {{ k.why }}.</div>
