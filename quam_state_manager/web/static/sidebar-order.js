@@ -1,7 +1,7 @@
 /* Sidebar ordering: DOM nodes move intact so navigation and collapse state survive. */
 (function () {
     'use strict';
-    const KEY = 'quam_sidebar_order_v1';
+    const KEY = 'quam_sidebar_order_v2';
     if (!document.getElementById('sidebar')) document.documentElement.classList.add('ui-reorder-pending');
     const defaults = new WeakMap();
     let drag = null;
@@ -11,7 +11,21 @@
     }
     function read() {
         try {
-            const value = JSON.parse(localStorage.getItem(KEY));
+            let raw = localStorage.getItem(KEY);
+            if (raw === null) {
+                const legacy = JSON.parse(localStorage.getItem('quam_sidebar_order_v1'));
+                if (legacy && typeof legacy === 'object' && !Array.isArray(legacy)) {
+                    // Parents now own new keys; preserve the known rows' relative
+                    // order within their current groups. New rows keep their slots.
+                    const renamed = { generate: 'configuration', bulk: 'state_edit', datasets: 'dataset_pages', journal: 'experiment_logs' };
+                    const migrated = Object.assign({}, legacy);
+                    if (Array.isArray(legacy.main)) migrated.main = legacy.main.map(key => renamed[key] || key);
+                    raw = JSON.stringify(migrated);
+                    localStorage.setItem(KEY, raw);
+                }
+                localStorage.removeItem('quam_sidebar_order_v1');
+            }
+            const value = JSON.parse(raw);
             return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
         } catch (_) { return {}; }
     }
