@@ -27179,28 +27179,51 @@ document.addEventListener('click', function(evt) {
     // Severity-aware sidebar dot: red iff a crash-class ERROR exists on that tab,
     // amber when only warnings/recommendations, none when clean — so a by-design
     // advisory (e.g. the band-edge nudge) doesn't light the sidebar red.
-    function setNavDot(href, level) {  // level: 'error' | 'warn' | null
+    // FB-06: a sidebar dot is lit ONLY by unacknowledged errors and warnings in
+    // the same findings feed the Diagnostics page lists. Suggestions (info),
+    // optional recommendations (advisory) and acknowledged findings never
+    // light it. The hover names the count and where to look.
+    function setNavDot(href, level, why) {  // level: 'error' | 'warn' | null
         var els = document.querySelectorAll('#sidebar a[href="' + href + '"]');
         for (var i = 0; i < els.length; i++) {
             els[i].classList.toggle('nav-diag-dot', level === 'error');
             els[i].classList.toggle('nav-diag-dot-warn', level === 'warn');
+            if (level && why) els[i].setAttribute('data-diag-dot', why);
+            else els[i].removeAttribute('data-diag-dot');
+            if (level && why) els[i].title = why + ' - see Diagnostics';
+            else if (els[i].title && / - see Diagnostics$/.test(els[i].title)) els[i].removeAttribute('title');
         }
     }
-    function _maxLevel(arr) {
-        var hasErr = false, has = false;
+    function _dotCounts(arr) {
+        var e = 0, w = 0;
         (arr || []).forEach(function(f) {
-            if (f.acknowledged) return;          // not counted: no sidebar dot for it
-            has = true; if (f.severity === 'error') hasErr = true;
+            if (f.acknowledged || f.advisory) return;   // not counted: no sidebar dot for it
+            if (f.severity === 'error') e++;
+            else if (f.severity === 'warning') w++;
         });
-        return hasErr ? 'error' : (has ? 'warn' : null);
+        return { e: e, w: w };
     }
+    function _maxLevel(arr) {
+        var c = _dotCounts(arr);
+        return c.e ? 'error' : (c.w ? 'warn' : null);
+    }
+    function _dotWhy(arr, noun) {
+        var c = _dotCounts(arr), parts = [];
+        if (c.e) parts.push(c.e + ' ' + noun + ' error' + (c.e === 1 ? '' : 's'));
+        if (c.w) parts.push(c.w + ' ' + noun + ' warning' + (c.w === 1 ? '' : 's'));
+        return parts.join(', ');
+    }
+    function _paintNavDots(d) {
+        setNavDot('/explorer', _maxLevel(d.value_spec), _dotWhy(d.value_spec, 'value'));
+        setNavDot('/instrument', _maxLevel(d.connectivity), _dotWhy(d.connectivity, 'wiring'));
+    }
+    window._diagDotLevel = _maxLevel;
 
     window._refreshSidebarDiagDots = function() {
         fetch('/diagnostics/findings.json', { cache: 'no-store' })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                setNavDot('/explorer', _maxLevel(d.value_spec));
-                setNavDot('/instrument', _maxLevel(d.connectivity));
+                _paintNavDots(d);
             })
             .catch(function() {});
     };
@@ -27220,8 +27243,7 @@ document.addEventListener('click', function(evt) {
             fetch('/diagnostics/findings.json', { cache: 'no-store' })
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
-                    setNavDot('/explorer', _maxLevel(d.value_spec));
-                    setNavDot('/instrument', _maxLevel(d.connectivity));
+                    _paintNavDots(d);
                     if (gen === _markGen && document.getElementById('explorer-tree-state'))
                         _paintExplorerMarks(d, { expand: false });
                 })
