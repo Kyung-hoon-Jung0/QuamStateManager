@@ -2259,11 +2259,15 @@ window.setFontSize = function(size) {
         }
         var cmp = document.getElementById('cf-compare');
         var tr = document.getElementById('cf-trend');
-        var why = n < 2 ? 'Tick one more run (2–5) to compare or trend' : '';
+        var why = n < 2 ? 'Tick at least 2 runs' : '';
         if (cmp) {
             cmp.textContent = n > 1 ? 'Compare ' + n : 'Compare';
             cmp.disabled = n < 2;
-            cmp.title = why || 'Open the diff of these ' + n + ' runs';
+            cmp.classList.toggle('cf-compare--off', n < 2);
+            cmp.title = n < 2 ? 'Tick at least 2 runs'
+                : (n > MAX_DIFF
+                   ? n + ' runs selected — the diff reads up to ' + MAX_DIFF
+                   : 'Open the diff of these ' + n + ' runs');
         }
         if (tr) { tr.disabled = n < 2; tr.title = why || 'Plot these ' + n + ' runs over time'; }
         var head = document.getElementById('cf-pop-head');
@@ -2364,6 +2368,22 @@ window.setFontSize = function(size) {
         }
     }, true);
 
+    var compareClearToast = null;
+    function mountCompareClearUndo(t, before) {
+        if (!t || !t.appendChild) return;
+        var old = t.querySelector('.toast-undo');
+        if (old) old.parentNode.removeChild(old);
+        var u = document.createElement('button');
+        u.type = 'button'; u.className = 'toast-undo outline btn-sm'; u.textContent = 'Undo clear';
+        u.onclick = function() {
+            write(before); restore(); syncCompareCount();
+            if (t.parentNode) t.parentNode.removeChild(t);
+            compareClearToast = null;
+            var lb = document.getElementById('cf-list'); if (lb) lb.focus();
+        };
+        t.appendChild(u);
+        u.focus();
+    }
     window.compareClearSelection = function() {
         var before = stored();
         boxes().forEach(function(b) { b.checked = false; });
@@ -2372,18 +2392,18 @@ window.setFontSize = function(size) {
         syncCompareCount();
         // FB-13: Clear asks nothing, so it can be taken back once
         if (before.length && window.showToast) {
-            var t = window.showToast('Cleared ' + before.length + ' selected run'
-                + (before.length === 1 ? '' : 's') + '.', 'info', 8000);
-            if (t && t.appendChild) {
-                var u = document.createElement('button');
-                u.type = 'button'; u.className = 'toast-undo outline btn-sm'; u.textContent = 'Undo clear';
-                u.onclick = function() {
-                    write(before); restore(); syncCompareCount();
-                    if (t.parentNode) t.parentNode.removeChild(t);
-                    var lb = document.getElementById('cf-list'); if (lb) lb.focus();
-                };
-                t.appendChild(u);
-                u.focus();
+            var msg = 'Cleared ' + before.length + ' selected run'
+                + (before.length === 1 ? '' : 's') + '.';
+            var t = compareClearToast;
+            if (t && t.isConnected) {
+                var line = t.querySelector('p');
+                if (line) line.textContent = msg;
+                mountCompareClearUndo(t, before);
+                if (window.ToastHold && window.ToastHold.schedule) window.ToastHold.schedule(t, 8000);
+            } else {
+                t = window.showToast(msg, 'info', 8000);
+                compareClearToast = t;
+                mountCompareClearUndo(t, before);
             }
         }
     };

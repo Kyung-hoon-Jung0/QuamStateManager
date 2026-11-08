@@ -1,6 +1,7 @@
 """FB-13 -- the floating compare bar in the sidebar run list: visible from
 one tick, hidden at zero, lists exactly the selection model (off-view ticks
-included), x removes one, Clear has a one-step undo, and the bar tracks
+included), x removes one, Clear has a one-step undo (one toast, replaced on
+repeat), Compare is visibly disabled below two ticks, and the bar tracks
 the date header from a fixed layer outside the sidebar. Keyboard focus and
 viewport-clamped popover placement remain pinned
 (tests/compare_float_selfcheck.cjs under jsdom)."""

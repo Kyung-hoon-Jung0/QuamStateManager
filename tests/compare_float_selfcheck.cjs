@@ -25,7 +25,7 @@ function treeHtml(n, keep) {
 }
 const FLOAT = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8')
   .match(/<div class="compare-float-anchor">[\s\S]*?<\/div><\/div>/)[0];
-const DOM = '<div class="app-layout"><div id="sidebar"><div id="sidebar-tree">' + treeHtml(8) + '</div>' +
+const DOM = '<div id="status-bar"></div><div class="app-layout"><div id="sidebar"><div id="sidebar-tree">' + treeHtml(8) + '</div>' +
   '<form id="compare-form"><button type="submit" class="btn-compare">Compare Selected</button>' +
   '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button>' +
   '<span class="compare-hint" id="compare-hint">Tick runs…</span>' +
@@ -52,10 +52,9 @@ function makeWorld(seed) {
   window.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: () => {} }; global.htmx = window.htmx;
   window.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
   window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
-  const toasts = [];
-  window.showToast = function (m, l) { const d = window.document.createElement('div'); window.document.body.appendChild(d); toasts.push({ m: m, l: l, el: d }); return d; };
-  return { win: window, store: store, toasts: toasts };
+  return { win: window, store: store };
 }
+function toastNodes(win) { return Array.from(win.document.querySelectorAll('#status-bar > .toast')); }
 function boxes(win) { return Array.from(win.document.querySelectorAll('#sidebar-tree input[name="paths"]')); }
 function checked(win) { return boxes(win).filter((b) => b.checked).length; }
 function click(win, el, shift) { el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, shiftKey: !!shift })); }
@@ -75,6 +74,14 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   click(win, boxes(win)[3]);
   ok($(win, 'compare-float').hidden === false, 'one tick shows the bar');
   ok($(win, 'cf-compare').disabled === true, 'Compare on the bar is disabled at one tick');
+  ok($(win, 'cf-compare').title === 'Tick at least 2 runs', 'Compare title names the two-run floor at one tick');
+  {
+    const cssAll = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
+    const rules = cssAll.slice(cssAll.indexOf('/* FB-13:'), cssAll.indexOf('.cf-pop {'));
+    const style = win.document.createElement('style'); style.textContent = rules; win.document.head.appendChild(style);
+    ok($(win, 'cf-compare').classList.contains('cf-compare--off'),
+      'Compare carries off styling at one tick');
+  }
   click(win, boxes(win)[6]);
   ok($(win, 'cf-compare').textContent === 'Compare 2' && !$(win, 'cf-compare').disabled, 'two ticks: "Compare 2", enabled');
   ok(JSON.stringify(listed(win)) === JSON.stringify(model(store)), 'listed = selection model: ' + listed(win));
@@ -111,17 +118,36 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
 }
 // 3. clear + undo
 {
-  const { win, store, toasts } = makeWorld();
+  const { win, store } = makeWorld();
   await settle();
   click(win, boxes(win)[0]); click(win, boxes(win)[2]); click(win, boxes(win)[4]);
   click(win, $(win, 'cf-clear'));
   ok(model(store).length === 0 && $(win, 'compare-float').hidden, 'Clear empties model and hides the bar');
-  const t = toasts[toasts.length - 1];
-  const u = t && t.el.querySelector('.toast-undo');
+  const nodes = toastNodes(win);
+  const t = nodes[nodes.length - 1];
+  const u = t && t.querySelector('.toast-undo');
   ok(win.document.activeElement === u, 'Clear focuses Undo');
   ok(u && /Undo clear/.test(u.textContent), 'Clear leaves an "Undo clear" toast');
   u.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   ok(model(store).length === 3 && checked(win) === 3 && listed(win).length === 3, 'Undo clear restores all three');
+}
+// repeated Clear keeps one toast, replaced in place
+{
+  const { win } = makeWorld();
+  await settle();
+  const clearTwice = (idxs) => {
+    idxs.forEach((i) => click(win, boxes(win)[i]));
+    click(win, $(win, 'cf-clear'));
+  };
+  clearTwice([0, 2, 4]);
+  ok(toastNodes(win).length === 1, 'first Clear leaves one toast');
+  clearTwice([1, 3]);
+  const nodes = toastNodes(win);
+  ok(nodes.length === 1, 'second Clear replaces the toast instead of stacking');
+  ok(/Cleared 2/.test(nodes[0].textContent), 'the toast names the latest clear count');
+  clearTwice([5]);
+  ok(toastNodes(win).length === 1 && /Cleared 1/.test(toastNodes(win)[0].textContent),
+    'third Clear still leaves exactly one toast');
 }
 // First selection does not move the tick when the top form wraps.
 {
