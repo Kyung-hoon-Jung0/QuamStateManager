@@ -79,7 +79,7 @@ check('storage access errors ignored', () => {
 });
 // Top-level groups share a zone: an item alone between dividers still moves.
 function zone(saved) {
-    const dom = new JSDOM(`<aside id="sidebar"><ul data-nav-group="projects" data-nav-zone="top"><li data-nav-key="p"><a href="#p">P</a></li></ul><hr><ul data-nav-group="creation" data-nav-zone="top"><li data-nav-key="g"><a href="#g">G</a><ul data-nav-group="gsub"><li data-nav-key="v"><a>V</a></li></ul></li></ul><hr><ul data-nav-group="main" data-nav-zone="top"><li data-nav-key="a"><a href="#a">A</a></li><li data-nav-key="b"><a href="#b">B</a></li></ul></aside><button id="reset-menu-order">Reset</button>`, {url:'http://localhost', pretendToBeVisual:true});
+    const dom = new JSDOM(`<aside id="sidebar"><ul data-nav-group="projects" data-nav-zone="top"><li data-nav-key="p"><a href="#p">P</a></li></ul><hr><ul data-nav-group="creation" data-nav-zone="top">\n<!-- zone -->\n<li data-nav-key="g"><a href="#g">G</a><ul data-nav-group="gsub"><li data-nav-key="v"><a>V</a></li></ul></li></ul><hr><ul data-nav-group="main" data-nav-zone="top"><li data-nav-key="a"><a href="#a">A</a></li><li data-nav-key="b"><a href="#b">B</a></li></ul></aside><button id="reset-menu-order">Reset</button>`, {url:'http://localhost', pretendToBeVisual:true});
     const w = dom.window;
     for (const key of ['window','document','localStorage','Event','MouseEvent','KeyboardEvent','CustomEvent']) Object.defineProperty(global, key, {configurable:true, writable:true, value: key === 'window' ? w : w[key]});
     if (saved !== undefined) localStorage.setItem(KEY, saved);
@@ -101,6 +101,28 @@ check('a lone top-level item drags into another top-level group', () => {
 check('the cross-group order survives a reload and a reset restores it', () => {
     const z = zone(zsaved); assert.equal(z.order(), 'p||agb');
     document.getElementById('reset-menu-order').click(); assert.equal(z.order(), 'p|g|ab'); assert.equal(localStorage.getItem(KEY), null);
+});
+check('an emptied top-level group accepts a pointer drop, persists and cleans up', () => {
+    const z = zone(zsaved);
+    const empty = document.querySelector('[data-nav-group="creation"]');
+    z.pointer('pointerdown', z.row('g'));
+    z.pointer('pointermove', empty, 0, 10);
+    assert(document.documentElement.classList.contains('ui-reorder-active'));
+    const css = fs.readFileSync(path.join(__dirname, '../quam_state_manager/web/static/ui-kit.css'), 'utf8');
+    assert.match(css, /\.ui-reorder-active #sidebar \.ui-reorder-empty\s*\{[^}]*min-height:\s*2rem/s);
+    assert(empty.classList.contains('ui-reorder-before'));
+    assert(empty.classList.contains('ui-reorder-empty'));
+    assert(empty.childNodes.length > 0, 'empty groups may contain template whitespace and comments');
+    z.pointer('pointerup', empty, 0, 10);
+    assert.equal(z.order(), 'p|g|ab');
+    assert.equal(localStorage.getItem(KEY), null);
+    assert(!document.documentElement.classList.contains('ui-reorder-active'));
+    assert(!empty.classList.contains('ui-reorder-before'));
+    assert(!empty.classList.contains('ui-reorder-empty'));
+    z.pointer('pointerdown', z.row('g')); z.pointer('pointermove', z.row('a'), 0, 10);
+    document.dispatchEvent(new z.w.KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+    assert(!document.documentElement.classList.contains('ui-reorder-active'));
+    assert.equal(z.order(), 'p|g|ab');
 });
 check('Alt+Arrow at a group edge steps into the next top-level group and back', () => {
     const z = zone(); z.alt('g','ArrowDown'); assert.equal(z.order(), 'p||gab');

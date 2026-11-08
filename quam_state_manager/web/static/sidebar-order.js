@@ -125,13 +125,18 @@
         if (!drag) return;
         if (drag.active) {
             suppressClick = drag.row;
-            if (!cancel && drag.target) {
+            if (!cancel && drag.into) {
+                drag.into.appendChild(drag.row);
+                persist(drag.into);
+            } else if (!cancel && drag.target) {
                 const into = drag.target.parentElement;
                 into.insertBefore(drag.row, drag.after ? drag.target.nextSibling : drag.target);
                 persist(into);
             }
         }
         if (drag.row.hasPointerCapture && drag.row.hasPointerCapture(drag.id)) drag.row.releasePointerCapture(drag.id);
+        document.documentElement.classList.remove('ui-reorder-active');
+        zoneGroups().forEach(group => group.classList.remove('ui-reorder-empty'));
         drag.row.classList.remove('ui-reorder-dragging');
         clearIndicator();
         drag = null;
@@ -149,14 +154,23 @@
             drag.row.setPointerCapture(event.pointerId);
         }
         drag.active = true;
+        document.documentElement.classList.add('ui-reorder-active');
+        zoneGroups().forEach(group => group.classList.toggle('ui-reorder-empty', !items(group).length));
         drag.row.classList.add('ui-reorder-dragging');
         event.preventDefault();
         clearIndicator();
         drag.target = null;
+        drag.into = null;
         const hit = document.elementFromPoint ? document.elementFromPoint(event.clientX, event.clientY) : event.target;
         // A point over an expanded sub-menu names the item in THIS group that holds it.
         let target = hit && hit.closest ? hit.closest('li[data-nav-key]') : null;
         const allowed = g => g === drag.group || (inZone(drag.group) && inZone(g));
+        const empty = hit && hit.closest ? hit.closest('#sidebar [data-nav-group]') : null;
+        if (empty && allowed(empty) && !items(empty).length) {
+            drag.into = empty;
+            empty.classList.add('ui-reorder-before');
+            return;
+        }
         while (target && !allowed(target.parentElement)) {
             target = target.parentElement && target.parentElement.closest('li[data-nav-key]');
         }

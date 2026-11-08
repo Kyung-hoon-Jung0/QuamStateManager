@@ -394,6 +394,10 @@
 /* Drag to reorder the sidebar menu (sidebar-order.js) ------------------- */
 .ui-reorder-pending #sidebar { visibility: hidden; }
 .ui-reorder-item { position: relative; touch-action: pan-y; }
+.ui-reorder-active #sidebar .ui-reorder-empty {
+  position: relative;
+  min-height: 2rem;
+}
 .ui-reorder-dragging { opacity: 0.55; user-select: none; }
 .ui-reorder-before::before,
 .ui-reorder-after::after {
