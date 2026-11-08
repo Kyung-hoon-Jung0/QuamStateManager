@@ -125,6 +125,7 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
                 "source_file": e.source_file,
                 "created": bool(e.created),
                 "deleted": bool(e.deleted),
+                **({"key_index": int(e.key_index)} if getattr(e, "key_index", None) is not None else {}),
                 **({"origin": copy.deepcopy(e.origin)} if getattr(e, "origin", None) is not None else {}),
                 "actor": getattr(e, "actor", "human"),      # docs/173: who staged it
             }
@@ -152,8 +153,9 @@ def units_from_log(log: list[ChangeEntry], meta: dict | None = None) -> list[dic
 # Inverse ops (what a journal step stages)
 # ----------------------------------------------------------------------
 
-def inverse_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
-    """The staging plan for one journal step: ``(op, path, value, source_file)``
+def inverse_ops(unit: dict) -> list[tuple[str, str, Any, str, int | None]]:
+    """The staging plan for one journal step:
+    ``(op, path, value, source_file, key_index)``
     tuples, **entries in REVERSE order** -- a rename unit is
     create(new)+delete(old); its inverse must re-create the OLD subtree before
     deleting the new one, i.e. undo exactly mirrors :meth:`undo_group`'s LIFO.
@@ -162,22 +164,23 @@ def inverse_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
     its removal) / ``create`` (entry deleted a subtree -> stage its
     restoration).  Values are deep-copied -- the modifier will hold them.
     """
-    ops: list[tuple[str, str, Any, str]] = []
+    ops: list[tuple[str, str, Any, str, int | None]] = []
     for e in reversed(unit.get("entries", [])):
         if e.get("created"):
-            ops.append(("delete", e["path"], None, e.get("source_file", "state")))
+            ops.append(("delete", e["path"], None, e.get("source_file", "state"), None))
         elif e.get("deleted"):
             ops.append(("create", e["path"], copy.deepcopy(e.get("old")),
-                        e.get("source_file", "state")))
+                        e.get("source_file", "state"), e.get("key_index")))
         else:
             ops.append(("set", e["path"], copy.deepcopy(e.get("old")),
-                        e.get("source_file", "state")))
+                        e.get("source_file", "state"), None))
     return ops
 
 
-def forward_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
+def forward_ops(unit: dict) -> list[tuple[str, str, Any, str, int | None]]:
     """The REPLAY plan for one unit (docs/160: Ctrl+Shift+Z after a live undo
-    re-applies the unit forward): ``(op, path, value, source_file)`` tuples in
+    re-applies the unit forward): ``(op, path, value, source_file, key_index)``
+    tuples in
     CHRONOLOGICAL order -- the exact mirror of :func:`inverse_ops`.  A rename
     unit is create(new)+delete(old) again, in that order.
 
@@ -185,16 +188,16 @@ def forward_ops(unit: dict) -> list[tuple[str, str, Any, str]]:
     ``delete`` (entry deleted a subtree -> delete it again) / ``set`` (its
     new value).  Values are deep-copied.
     """
-    ops: list[tuple[str, str, Any, str]] = []
+    ops: list[tuple[str, str, Any, str, int | None]] = []
     for e in unit.get("entries", []):
         if e.get("created"):
             ops.append(("create", e["path"], copy.deepcopy(e.get("new")),
-                        e.get("source_file", "state")))
+                        e.get("source_file", "state"), e.get("key_index")))
         elif e.get("deleted"):
-            ops.append(("delete", e["path"], None, e.get("source_file", "state")))
+            ops.append(("delete", e["path"], None, e.get("source_file", "state"), None))
         else:
             ops.append(("set", e["path"], copy.deepcopy(e.get("new")),
-                        e.get("source_file", "state")))
+                        e.get("source_file", "state"), None))
     return ops
 
 

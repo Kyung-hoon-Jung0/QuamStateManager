@@ -5090,7 +5090,7 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
             elif _differs(bt[k], av_eff):
                 entries.append({"path": p, "old": copy.deepcopy(bt[k]), "new": copy.deepcopy(av_eff),
                                 "source_file": _src(p), "created": False, "deleted": False})
-        for k, bv in bt.items():
+        for _idx, (k, bv) in enumerate(bt.items()):
             if k not in at:
                 p = f"{prefix}.{k}" if prefix else str(k)
                 # A subtree the apply DELETED is recorded even when an edit
@@ -5102,7 +5102,8 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
                 if _excluded(p):
                     continue
                 entries.append({"path": p, "old": copy.deepcopy(bv), "new": None,
-                                "source_file": _src(p), "created": False, "deleted": True})
+                                "source_file": _src(p), "created": False, "deleted": True,
+                                "key_index": _idx})
 
     try:
         _walk(before, after, "")
@@ -30296,13 +30297,14 @@ def _undo_journal_step(ctx, n_req: int = 1):
         log_was_empty = not store.change_log
         _redo_begin(ctx, store)   # a foreign edit since our last op forks redo
         try:
-            for (op, path, value, _src), uent in zip(ops, uents):
+            for (op, path, value, _src, key_index), uent in zip(ops, uents):
                 if op == "delete":
                     e = modifier.delete_subtree(path, group_id=gid)
                     if _differs(e.old_value, uent.get("new")):
                         drift += 1
                 elif op == "create":
-                    e = modifier.create_subtree(path, value, group_id=gid)
+                    e = modifier.create_subtree(path, value, group_id=gid,
+                                               key_index=key_index)
                 else:
                     # coerce=False: restore the historical value VERBATIM — the
                     # field's CURRENT type may differ (e.g. a later type-fix),
@@ -30798,9 +30800,10 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
                             f"(now {_fmt_msg_val(cur)}); nothing was written")
         _redo_begin(ctx, store)
         try:
-            for _n, (op, path, value, _src) in enumerate(fops):
+            for _n, (op, path, value, _src, key_index) in enumerate(fops):
                 if op == "create":
-                    staged.append(modifier.create_subtree(path, value, group_id=gid))
+                    staged.append(modifier.create_subtree(path, value, group_id=gid,
+                                                          key_index=key_index))
                 elif op == "delete":
                     staged.append(modifier.delete_subtree(path, group_id=gid))
                 else:
@@ -32650,7 +32653,7 @@ def auto_apply_revert():
     # (never blocked) and the answer is said
     _lab_warn = _lab_restore_warning(store, writes=[
         (path, _LAB_DELETE if op == "delete" else value)
-        for (op, path, value, _src) in ops])
+        for (op, path, value, _src, _key_index) in ops])
     staged: list = []
     with store._lock:
         # ── CAS pre-check under the same lock hold as the staging, so nothing
@@ -32674,11 +32677,12 @@ def auto_apply_revert():
 
         _redo_begin(ctx, store)
         try:
-            for (op, path, value, _src) in ops:
+            for (op, path, value, _src, key_index) in ops:
                 if op == "delete":
                     staged.append(modifier.delete_subtree(path, group_id=gid))
                 elif op == "create":
-                    staged.append(modifier.create_subtree(path, value, group_id=gid))
+                    staged.append(modifier.create_subtree(path, value, group_id=gid,
+                                                          key_index=key_index))
                 else:
                     # coerce=False: restore the historical value VERBATIM
                     staged.append(modifier.set_value(path, value, coerce=False,

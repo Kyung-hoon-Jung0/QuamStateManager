@@ -178,6 +178,15 @@ class TestDeleteSubtree:
 # ---------------------------------------------------------------------------
 
 class TestUndoDelete:
+    def test_undo_restores_deleted_key_at_original_position(self, modifier):
+        ops = modifier.store.merged["qubits"]["qA1"]["xy"]["operations"]
+        before_keys = list(ops.keys())
+        assert before_keys == ["x180_DragCosine", "x90_DragCosine", "x180", "saturation"]
+        modifier.delete_subtree(f"{OPS}.x90_DragCosine")
+        modifier.undo()
+        after_keys = list(modifier.store.merged["qubits"]["qA1"]["xy"]["operations"].keys())
+        assert after_keys == before_keys
+
     def test_undo_restores_subtree(self, modifier):
         before = json.dumps(modifier.store.merged, sort_keys=True)
         modifier.delete_subtree(f"{OPS}.x180_DragCosine")

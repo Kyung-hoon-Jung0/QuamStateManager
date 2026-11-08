@@ -145,7 +145,7 @@ class TestSegmentation:
         assert ops[1][1].endswith("x180_v2")   # then delete the new name
 
         store.change_log.clear()   # simulate the save boundary
-        for op, path, value, _src in ops:
+        for op, path, value, _src, _key_index in ops:
             if op == "create":
                 mod.create_subtree(path, value)
             elif op == "delete":
@@ -153,6 +153,19 @@ class TestSegmentation:
             else:
                 mod.set_value(path, value, coerce=False)
         assert store.merged["qubits"]["qA1"]["xy"] == before
+
+    def test_inverse_create_keeps_deleted_key_position(self, tmp_path):
+        store, mod = self._store(tmp_path)
+        with store._lock:
+            mod.create_subtree("qubits.qA2", {"id": "qA2", "f_01": 5.1e9})
+            mod.create_subtree("qubits.qA3", {"id": "qA3", "f_01": 5.2e9})
+        before_keys = list(store.merged["qubits"].keys())
+        mod.delete_subtree("qubits.qA2")
+        unit = undo_journal.make_unit([store.change_log[-1]])
+        create = undo_journal.inverse_ops(unit)[0]
+        assert create[0] == "create"
+        mod.create_subtree(create[1], create[2], key_index=create[4])
+        assert list(store.merged["qubits"].keys()) == before_keys
 
 
 # ======================================================================
