@@ -27,6 +27,7 @@ const win = dom.window;
 function num(el, a) { return parseFloat(el.getAttribute(a)) || 0; }
 function bboxOf(el) {
   const tag = el.tagName.toLowerCase();
+  if (tag === 'rect') return { x:num(el,'x'), y:num(el,'y'), width:num(el,'width'), height:num(el,'height') };
   if (tag === 'circle') { const r = num(el, 'r'); return { x: num(el, 'cx') - r, y: num(el, 'cy') - r, width: 2 * r, height: 2 * r }; }
   if (tag === 'line') {
     const x1 = num(el, 'x1'), y1 = num(el, 'y1'), x2 = num(el, 'x2'), y2 = num(el, 'y2');
@@ -87,7 +88,7 @@ const svg = m.querySelector('svg.cm-svg');
 ok(!!svg && svg.classList.contains('cm-dir'), 'the map carries the direction drawing (cm-dir)');
 ok(m.querySelectorAll('.cm-dir-arrow').length === 0 && svg.querySelectorAll('.cm-role-c').length === edges.length, 'map tidy: no blue arrow; one C badge per pair edge (' + edges.length + ')');
 ok(m.querySelectorAll('.cm-dir-label').length === edges.length, 'one along-the-edge label per pair edge');
-ok(m.querySelectorAll('.cm-dir-m').length === 0 && svg.querySelectorAll('.cm-role-m').length === edges.filter((x) => x.moving_qubit).length, 'one M badge per edge that declares a moving qubit, no ring');
+ok(m.querySelectorAll('.cm-dir-m').length === 0 && Array.from(svg.querySelectorAll('.cm-role text')).filter(t => / M(?: |$)/.test(t.textContent)).length === edges.filter((x) => x.moving_qubit).length, 'one M badge per edge that declares a moving qubit, no ring');
 
 const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') &&
   (t.hasAttribute('data-stack') || t.hasAttribute('transform') || +t.getAttribute('data-ang') === 0));
@@ -115,7 +116,7 @@ ok(!!legend && /control/.test(legend.textContent) && /target/.test(legend.textCo
   const mc = win.document.createElement('div');
   win.document.body.appendChild(mc);
   win.TopoGraph.renderLayout(mc, { nodes: nodes, edges: cedges, highlight: 'pairs', cell: 120 });
-  ok(mc.querySelectorAll('.cm-coupler').length === cedges.length && mc.querySelectorAll('.cm-freq').length > 0,
+  ok(mc.querySelectorAll('.cm-coupler').length === cedges.length && mc.querySelectorAll('.cm-role').length === cedges.length * 2,
      'coupler fixture: one coupler dot per pair, chevrons drawn');
   const ovc = win.TopoGraph.labelOverlaps(mc.querySelector('svg.cm-svg'));
   ok(ovc.count === 0, 'coupler fixture: overlaps == 0 (' + JSON.stringify(ovc.pairs.slice(0, 4)) + ')');

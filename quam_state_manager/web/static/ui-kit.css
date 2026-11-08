@@ -41,7 +41,6 @@
     /* accent */
     --ui-accent: var(--pico-primary);
     /* the frequency arrow on chip maps: dark orange, mixed toward the theme's text so it darkens on light and lightens on dark */
-    --ui-freq-arrow: color-mix(in srgb, #d9480f 78%, var(--pico-color));
     --ui-accent-fill: var(--pico-primary-background);
     --ui-accent-fill-hover: var(--pico-primary-hover-background);
     --ui-on-accent: var(--pico-primary-inverse);
@@ -863,11 +862,6 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
     paint-order: stroke; stroke: var(--ui-surface-1); stroke-width: 4px; stroke-linejoin: round;
 }
 .cm-dir .cm-dir-connector { stroke: var(--ui-text); stroke-width: 1px; }
-/* the frequency arrow (map tidy D-3): the one arrow on a pair line, toward the lower f01 */
-.cm-freq .cm-dir-freq-line { stroke: var(--ui-freq-arrow); stroke-width: 4.5px; stroke-linecap: round; }
-.cm-freq .cm-dir-freq-head { fill: var(--ui-freq-arrow); }
-.cm-dir-legend .cm-dir-freq-legend svg line { stroke: var(--ui-freq-arrow); }
-.cm-dir-legend .cm-dir-freq-legend svg polygon { fill: var(--ui-freq-arrow); }
 .cm-dir-legend .cm-role-dot { fill: var(--ui-surface-1); stroke: var(--ui-border-strong); stroke-width: 1px; }
 .cm-dir-legend .cm-role-txt { fill: var(--ui-text-2); }
 .cm-dir-legend {
