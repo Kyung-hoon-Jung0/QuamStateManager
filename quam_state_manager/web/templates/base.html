@@ -295,7 +295,7 @@
                 {# docs/126 r3 — while a main-pane load runs past 400 ms, the
                    brand becomes a blue progress bar + elapsed counter (an
                    HONEST indeterminate sweep — no invented percentage), so a
-                   heavy first open (Param History on a big chip) shows how
+                   heavy first open (Param logs on a big chip) shows how
                    long you have actually been waiting. NavProgress (app.js)
                    drives it off htmx's own request events; pointer-events
                    none keeps the link clickable. #}
@@ -395,7 +395,7 @@
                     hx-swap="innerHTML"></li>
                 {# Global "import in progress" pill. Hidden by default; revealed
                    when /param-history/backfill/status reports running, regardless
-                   of which page the user is on. Click jumps to Param History. #}
+                   of which page the user is on. Click jumps to Param logs. #}
                 <li id="topbar-import-pill" class="topbar-import-pill" hidden>
                     <a href="/param-history" hx-get="/param-history"
                        hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -499,7 +499,7 @@
          hx-swap="innerHTML">{% include '_type_alarm_banner.html' %}</div>
     {# The accumulating live-drift ALARM banner used to live here — removed
        (docs/58): users rarely acted on it. The same data now lives in the
-       "Live changes since baseline" panels on Param History + State History;
+       "Live changes since baseline" panels on Param logs + State logs;
        the /state/drift poll in app.js still runs to keep those fresh. #}
     {% include '_wc_gc_banner.html' %}
     {# Auto-popped diagnostics error banner (only when the active chip has a
@@ -799,27 +799,17 @@
                     <li class="nav-with-sub" data-nav-key="experiment_logs">
                         <div class="nav-sub-row">
                             <a data-nav-parent="true" href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Experiment logs</a>
-                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page == 'journal' else 'false' }}"
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('journal', 'state_history', 'param_history') else 'false' }}"
                                     aria-controls="experiment-logs-subnav" aria-label="Toggle Experiment logs"
                                     onclick="toggleNavSub(this, 'experiment-logs-subnav', 'quam_experiment_logs_nav_collapsed')">&#9662;</button>
                         </div>
-                        <ul class="nav-subitems{% if not (page == 'journal') %} nav-subitems-collapsed{% endif %}" id="experiment-logs-subnav" data-nav-group="experiment-logs-subnav">
+                        <ul class="nav-subitems{% if not (page in ('journal', 'state_history', 'param_history')) %} nav-subitems-collapsed{% endif %}" id="experiment-logs-subnav" data-nav-group="experiment-logs-subnav">
                             <li data-nav-key="journal"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'journal' %}class="active"{% endif %}>Calibration log</a></li>
-                        </ul>
-                    </li>
-                    <li class="nav-with-sub" data-nav-key="history">
-                        <div class="nav-sub-row">
-                            <a data-nav-parent="true" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">History</a>
-                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('state_history', 'param_history') else 'false' }}"
-                                    aria-controls="journal-subnav" aria-label="Toggle History"
-                                    onclick="toggleNavSub(this, 'journal-subnav', 'quam_journal_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if not (page in ('state_history', 'param_history')) %} nav-subitems-collapsed{% endif %}" id="journal-subnav" data-nav-group="journal-subnav">
                             <li data-nav-key="state_history"><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
+                                   {% if page == 'state_history' %}class="active"{% endif %}>State logs</a></li>
                             <li data-nav-key="param_history"><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
+                                   {% if page == 'param_history' %}class="active"{% endif %}>Param logs</a></li>
                         </ul>
                     </li>
                     <li data-nav-key="diff"><a href="/diff" hx-get="/diff" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
@@ -2368,7 +2358,7 @@
     <div id="quam-loader" class="quam-loader" role="status" aria-hidden="true">
       <div class="quam-loader-spinner" aria-hidden="true"></div>
       <div class="quam-loader-sub">Please wait a moment&hellip; a first open can take a while.</div>
-      {# Param History import count — populated by JS; hidden when empty. #}
+      {# Param logs import count — populated by JS; hidden when empty. #}
       <div id="quam-loader-progress" class="quam-loader-progress"></div>
     </div>
 </body>

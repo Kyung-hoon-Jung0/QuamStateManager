@@ -3010,7 +3010,7 @@ class TestParamHistory:
     def test_sidebar_link_present(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
         assert 'href="/param-history"' in html
-        assert "Param History" in html
+        assert "Param logs" in html
 
     def test_route_renders_with_loaded_state(self, loaded_client):
         resp = loaded_client.get("/param-history",
@@ -7484,7 +7484,8 @@ class TestSidebarIAr15:
         ("/journal", "experiment-logs-subnav", "Calibration log"),
         ("/topology?view=overview", "chip-status-subnav", "Overview"),
         ("/qubits", "chip-components-subnav", "Qubits"),
-        ("/state-history", "journal-subnav", "State History"),
+        ("/state-history", "experiment-logs-subnav", "State logs"),
+        ("/param-history", "experiment-logs-subnav", "Param logs"),
         ("/opx-monitor/live", "ui-opxmon-subnav", "Live"),
     ])
     def test_parent_default_child_active(self, loaded_client, url, subnav, label):
@@ -7517,7 +7518,7 @@ class TestSidebarIAr15:
     def test_structure_then_health_order(self):
         base = self._base()
         labels = ["Configuration", "Instrument Wiring", "Chip Status", "Chip Components",
-                  "State Edit", "Datasets", "Experiment logs", "History", "Compare",
+                  "State Edit", "Datasets", "Experiment logs", "Compare",
                   "Diagnostics", "OPX monitor", "Agent", "Experiment Runner", "Fit Replay"]
         positions = [base.index(">" + label + "</a>") for label in labels]
         assert positions == sorted(positions)
@@ -7533,15 +7534,18 @@ class TestSidebarIAr15:
             assert label in comp, label
         live = seg("live-edit-subnav")
         assert ">Live state edit (Json tree view)</a>" in live and ">Pulses</a>" in live
-        hist = seg("journal-subnav")  # History owns State History and Param History.
-        assert ">Param History</a>" in hist and ">State History</a>" in hist
+        hist = seg("experiment-logs-subnav")
+        positions = [hist.index(">" + label + "</a>")
+                     for label in ("Calibration log", "State logs", "Param logs")]
+        assert positions == sorted(positions)
+        assert 'data-nav-key="history"' not in base
+        assert 'id="journal-subnav"' not in base
         ds = seg("datasets-subnav")
         assert all(">" + label + "</a>" in ds for label in ("Runs", "Collections", "Trends"))
         assert ">Z-line distortion</a>" in live
         assert ">CZ gate plan</a>" in seg("chip-status-subnav")
         assert ">CZ gate plan</a>" not in live
         assert ">Calibration log</a>" in seg("experiment-logs-subnav")
-        assert ">Calibration log</a>" not in hist
         assert all(">" + label + "</a>" in seg("config-subnav") for label in ("Generate config", "Modify config", "Config Viewer"))
 
     def test_new_subnavs_restore_registered(self):
@@ -7550,7 +7554,6 @@ class TestSidebarIAr15:
         for ul_id, key in (
                 ("chip-components-subnav", "quam_components_nav_collapsed"),
                 ("live-edit-subnav",       "quam_liveedit_nav_collapsed"),
-                ("journal-subnav",         "quam_journal_nav_collapsed"),
                 ("datasets-subnav",        "quam_datasets_nav_collapsed"),
                 ("experiment-logs-subnav", "quam_experiment_logs_nav_collapsed")):
             assert "{ id: '%s'" % ul_id in appjs, ul_id
@@ -7604,10 +7607,41 @@ class TestSidebarIAr15:
         for label in ("Modify config", "Diagnostics", "Resonators",
                       "Couplers", "Live state edit (Json tree view)", "Experiment Runner",
                       "Fit Replay", "Auto Calibrate", "Configuration", "State Edit",
-                      "Experiment logs", "History", "Runs", "Chip Components"):
+                      "Experiment logs", "State logs", "Param logs", "Runs", "Chip Components"):
             assert label in labels, label
         assert "Qubit Pairs" not in labels            # label drift fixed
         assert '"Qubit Pairs"' not in base
+
+    def test_log_names_cover_all_display_sources(self):
+        import re
+        import io
+        import tokenize
+        web = self._ROOT / "quam_state_manager/web"
+        stale = []
+        for path in sorted(web.rglob("*")):
+            if path.suffix not in (".html", ".js", ".py"):
+                continue
+            text = path.read_text(encoding="utf-8")
+            if path.suffix == ".py":
+                text = "\n".join(token.string for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                                 if token.type == tokenize.STRING)
+            else:
+                text = re.sub(r"\{#.*?#\}|<!--.*?-->|/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            if re.search(r"State History|Param History|Param/State History", text):
+                stale.append(str(path.relative_to(web)))
+        assert not stale, stale
+        from quam_state_manager.web.routes import _NAV_PAGES
+        assert not any(page["label"] == "History" for page in _NAV_PAGES)
+
+    def test_log_titles_and_help(self, loaded_client):
+        import re
+        for url, label in (("/state-history", "State logs"), ("/param-history", "Param logs")):
+            html = loaded_client.get(url).get_data(as_text=True)
+            assert re.search(r"<h2\b[^>]*>\s*" + label + r"\s*</h2>", html), label
+        for url in ("/help", "/?landing=1"):
+            html = loaded_client.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+            assert all(label in html for label in ("Experiment logs", "Calibration log", "State logs", "Param logs"))
+            assert "History &gt;" not in html
 
 
 class TestActiveMarkingR15:

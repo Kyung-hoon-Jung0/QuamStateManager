@@ -35,7 +35,7 @@ window.HubFolders = (function () {
     }
     document.addEventListener('hubLinked', function () {
         close();
-        // The drawer, column modal, Versions and State History own their refresh.
+        // The drawer, column modal, Versions and State logs own their refresh.
         document.querySelectorAll('.hub-notes').forEach(function (notes) {
             if (notes.closest('#field-history-panel, .colhist-overlay, #state-version-panel, #state-history-body')) return;
             var target = notes.closest('#topo-trends, #param-history-drawer, #param-history-root, #inspector-pane');

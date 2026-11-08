@@ -1,10 +1,10 @@
-"""docs/284 (S9) -- the Versions panel and State History read the change ledger.
+"""docs/284 (S9) -- the Versions panel and State logs read the change ledger.
 
 Pins, on generic synthetic chips and run folders in ``tmp_path``:
 
 * rows are the ledger's state-bearing events, named honestly (run #N + node,
   an SM write with its actor and kind, a state SM observed with no writer);
-  an older Param History snapshot is listed only when no event holds its
+  an older Param logs snapshot is listed only when no event holds its
   state (content hash; for a run snapshot, an event of THE SAME run);
 * Diff / Compare read the ledger's merged document (``state_at``) under the
   one comparison rule (``compare_equal``);
@@ -872,7 +872,7 @@ def _parsed(body: str) -> list[dict]:
 
 
 def _bookmark(env, label="known good", note=None):
-    """A labelled Param History snapshot of the live chip as it is now."""
+    """A labelled Param logs snapshot of the live chip as it is now."""
     with env.app.app_context():
         hm = routes_mod._history()
         meta = hm.check_and_snapshot(ctx_of(env)["path"], "manual", force=True)
@@ -888,7 +888,7 @@ def _meta(env, ts):
 
 
 def test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline(env):
-    """C3's Pin on a State History ledger row posted only ``pinned``, and the
+    """C3's Pin on a State logs ledger row posted only ``pinned``, and the
     label door turned the missing label into "clear": a bookmark labelled
     "known good" lost its label for good on one press. Its title also carried
     ts_local's <span>, which cut the attribute short (the button read
@@ -900,7 +900,7 @@ def test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline(env
     assert len(pins) == 1, "the row carrying the bookmark offers its Pin"
     pin = pins[0]
     assert pin["text"].strip() == "Pin", repr(pin["text"])
-    assert "<" not in pin["attrs"]["title"] and pin["attrs"]["title"].startswith("Keep the Param History snapshot of 20")
+    assert "<" not in pin["attrs"]["title"] and pin["attrs"]["title"].startswith("Keep the Param logs snapshot of 20")
     assert pin["attrs"]["hx-target"] == "#state-history-body", "an open diff beside the timeline survives"
     vals = json.loads(pin["attrs"]["hx-vals"])
     r = env.client.post(pin["attrs"]["hx-post"], data=vals, headers={"HX-Request": "true"})
@@ -917,7 +917,7 @@ def test_a_pin_on_a_ledger_row_keeps_its_label_and_only_redraws_the_timeline(env
 @pytest.mark.parametrize("mode", ["unavailable", "building"])
 @pytest.mark.parametrize("url", ["/api/history", "/state/versions", "/state-history?body=1"])
 def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, url, mode):
-    """A listing in ``unavailable`` draws the Param History snapshots as older
+    """A listing in ``unavailable`` draws the Param logs snapshots as older
     rows (the mode table); C3 put the value drawer's "Nothing older is shown in
     its place." right above them. Its counts called them "0 recorded states"
     "from the change history" in every non-ledger mode (seen in Chrome)."""
@@ -936,7 +936,7 @@ def test_an_unreadable_listing_says_the_older_rows_are_below(env, monkeypatch, u
     # S10 walk: old -> new, one count line on every listing and the reason in plain words
     assert re.search(r"\b2 versions \(older snapshots\)", text(body)), text(body)[:600]
     if mode == "unavailable":
-        assert ("The change history file could not be read. Older Param History snapshots are "
+        assert ("The change history file could not be read. Older Param logs snapshots are "
                 "listed below.") in text(body)
 
 

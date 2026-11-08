@@ -743,15 +743,15 @@ class TestP2DeepLinks:
         assert b"View changes vs current" in r.data
 
     def test_history_drawer_has_compare_link(self, env):
-        """Same as above for the Param History panel (docs/141 4ac)."""
+        """Same as above for the Param logs panel (docs/141 4ac)."""
         c, a, _b = env
         c.post("/load", data={"folder": str(a)})
         self._snapshot(c, a)
         r = c.get("/api/history")
         assert r.status_code == 200
         assert b"/compare-hub?src=hist:" not in r.data, "the hub is retired as a destination"
-        # S10 C3: snapshot-row Compare -> ledger drawer's full State History link, with the same diff door.
-        assert b"Open State History" in r.data and b'href="/state-history"' in r.data
+        # S10 C3: snapshot-row Compare -> ledger drawer's full State logs link, with the same diff door.
+        assert b"Open State logs" in r.data and b'href="/state-history"' in r.data
         page = c.get("/state-history")
         assert b"/diff?a=hist:" in page.data and b"&b=working:" in page.data
         assert b"View changes vs current" in page.data

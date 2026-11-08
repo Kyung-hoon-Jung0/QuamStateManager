@@ -216,8 +216,8 @@ function fire(w, name, detail) {
     check('E3 …naming how many were lost', /\b3 unapplied edits\b/.test(m), m);
     check('E4 …saying they are not recoverable', /not recoverable/.test(m), m);
     check('E5 …naming the setting that prevents it', /Untick/.test(m), m);
-    check('E6 …and NOT offering State History, which cannot help',
-          !/State History/.test(m), m);
+    check('E6 …and NOT offering State logs, which cannot help',
+          !/State logs/.test(m), m);
     check('E7 …at warning level', (state.toasts[0] || {}).l === 'warning',
           JSON.stringify(state.toasts[0]));
   }

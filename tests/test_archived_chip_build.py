@@ -1,6 +1,6 @@
 """S10 walk: an archived chip with no change ledger gets its history back.
 
-Before S10 Param History drew an archived chip's history from its snapshots.
+Before S10 Param logs drew an archived chip's history from its snapshots.
 After S10 every surface reads the change ledger, and a chip that never had one
 (last opened before ledgers existed, or its live folder is gone) showed only
 "could not be read (no_ledger)" with a Try again that could never succeed.
@@ -18,7 +18,7 @@ Pins, on generic synthetic chips in ``tmp_path`` (each mutation-checked):
   #N", writer not proven, run folder deleted), and only the run folders the
   captures name are read (another chip's run beside them never is); the
   archived grid then holds, for every parameter, the very value points the
-  pre-S10 Param History grid held for the same snapshots
+  pre-S10 Param logs grid held for the same snapshots
   (``HistoryManager.extract_property_history``, that grid's code path);
 * the build runs off the request thread: the first answer is "being built",
   counted in runs and then in snapshots, and asks again by itself; a build
@@ -87,7 +87,7 @@ def _open_other(app, tmp_path):
 
 def _archived(tmp_path, *, keep_live: bool = False, corrupt: bool = False,
               runs_only: bool = False, name: str = "device") -> dict:
-    """An instance whose Param History captured chip *name* before it had a
+    """An instance whose Param logs captured chip *name* before it had a
     ledger (the chip is never opened here), then another chip opened. Its
     captures: its first state (manual, T1 1e-5), an outside edit SM saw (auto,
     2e-5), a run's saved copy whose run folder is gone (experiment #7, 9e-5)
@@ -124,7 +124,7 @@ def _archived(tmp_path, *, keep_live: bool = False, corrupt: bool = False,
 
 def _run_folder(data: Path, rid: int, minute: int, t1: float, *, name: str = "device"):
     """A run folder of the standard layout whose own patch sets qA1.T1, and
-    the scanner entry Param History ingests it from (its own instant)."""
+    the scanner entry Param logs ingests it from (its own instant)."""
     day, stamp = "2026-01-01", f"2026-01-01T12:{minute:02d}:00+00:00"
     folder = data / day / f"#{rid}_scan_12{minute:02d}00"
     state = chip_state(t1=t1, name=name)
@@ -146,14 +146,14 @@ GONE = (4, 5, 9, 10, 14)
 
 
 def _with_runs(tmp_path, *, rewrite: int | None = None) -> dict:
-    """A 30-snapshot archived chip with runs: #1-#12 ingested by Param History
+    """A 30-snapshot archived chip with runs: #1-#12 ingested by Param logs
     from their run folders (T1 k us, each run's own patch sets it); #13 and
     #14 first captured by SM in the live folder, then stamped by their run's
     ingest (docs/200); 16 states SM saw (T1 101-116 us). The folders of #4,
     #5, #9, #10 and #14 are gone since. Beside them in the same data folder
     lies a run of ANOTHER chip (#99), earlier than all of them. Every
     snapshot changes qA1.T1; qA2.T1 never changes. ``rewrite``: that run
-    saved again after Param History captured it (T1 + 0.5 us, its patch too):
+    saved again after Param logs captured it (T1 + 0.5 us, its patch too):
     the capture held a save the run replaced."""
     app = make_app(tmp_path, sync=False)
     live, data = tmp_path / "chips" / "archived", tmp_path / "data"
@@ -231,7 +231,7 @@ def _tree_sig(folder: Path) -> dict:
 
 
 def _pre_s10(env, qubit: str, prop: str = "T1") -> list:
-    """The values the pre-S10 Param History grid drew for one cell, oldest
+    """The values the pre-S10 Param logs grid drew for one cell, oldest
     first: its code path (``extract_property_history`` over the snapshot
     index, unchanged since f0a94b93) on the same snapshots."""
     with env["app"].app_context():
@@ -311,7 +311,7 @@ def test_the_build_reads_and_never_writes_the_live_folder(tmp_path):
     assert env["client"].post("/load", data={"folder": str(env["live"])}).status_code in (200, 302)
     assert _ledger(env, "SELECT v FROM meta WHERE k='archive_build'") == []
     # and the run imported from its capture stays part of that folder's timeline
-    # (as the capture was in Param History), never "a data folder not linked"
+    # (as the capture was in Param logs), never "a data folder not linked"
     page = env["client"].get("/field/history", query_string={"path": "qubits.qA1.T1"}).get_data(as_text=True)
     # v1.3.0: old -> new, the "Set by" cell may carry <wbr> break hints (A6): compare the visible text
     assert "saved in #7 scan" in _t(page) and "not part of this folder" not in page, _t(page)[:600]
@@ -411,7 +411,7 @@ def _is_subsequence(short: list, long: list) -> bool:
 
 
 def test_a_run_saved_again_after_its_capture_keeps_both_saves(tmp_path):
-    """Param History captured run #6's saved state, then the run saved again
+    """Param logs captured run #6's saved state, then the run saved again
     (its final save) before its folder was read here: the history keeps the
     captured value (what SM copied from the run folder) and the run's final
     one after it -- nothing the pre-S10 grid drew is missing."""
@@ -475,8 +475,8 @@ def test_a_build_of_an_older_kind_is_resumed_with_its_runs(tmp_path, monkeypatch
 
 def test_a_run_the_ledger_holds_is_never_added_twice_and_a_live_open_reads_its_whole_folder(tmp_path):
     """A chip opened live before ingested runs #1 and #2 from its data folder;
-    Param History captured both. Then #1's folder was deleted and a run #3
-    landed beside #2 that Param History never captured. Viewed archived, its
+    Param logs captured both. Then #1's folder was deleted and a run #3
+    landed beside #2 that Param logs never captured. Viewed archived, its
     ledger is not given #1 a second time from its capture, and #3 is not read
     (only the folders the captures name are); opened live again, the chip
     reads its whole data folder once more (#3 lands)."""
@@ -530,7 +530,7 @@ def test_the_build_runs_in_the_background_and_says_so(tmp_path, monkeypatch):
     first = _grid(env)
     assert queued, "the view queued the build"
     assert 'data-vh-mode="building"' in first and 'hx-trigger="load delay:2000ms"' in first
-    assert "being built from this chip's Param History snapshots" in _t(first)
+    assert "being built from this chip's Param logs snapshots" in _t(first)
     assert "Try again" not in first and "history-cell" not in first
     assert '<strong class="ph-archive-name">Test chip 7</strong>' in first
     assert _one_slice(env) is True                    # one snapshot looked at, three to go
@@ -555,7 +555,7 @@ def test_the_snapshot_count_stays_while_a_slice_relists(tmp_path, monkeypatch):
     assert not st["roots"] and st["observes"] and hub_sync.progress_words(st) == ""
     for archive in (True, False):                     # an archived chip, a folderless open one
         msg = routes._vh_wait_message({"mode": "building", "status": dict(st, archive=archive)})
-        assert "Param History snapshots (1 of 4)" in msg, msg
+        assert "Param logs snapshots (1 of 4)" in msg, msg
 
 
 def test_a_build_cut_short_is_resumed_never_read_as_complete(tmp_path, monkeypatch):
@@ -582,14 +582,14 @@ def test_unreadable_snapshots_end_unavailable_in_plain_words(tmp_path):
     for _ in range(2):                                 # a second view: the same end, no rebuild
         grid = _grid(env)
         assert 'data-vh-mode="unavailable"' in grid and 'data-vh-reason="snapshots_unreadable"' in grid
-        assert ("None of this chip's 4 Param History snapshots could be read, so its change "
+        assert ("None of this chip's 4 Param logs snapshots could be read, so its change "
                 "history cannot be built from them.") in _t(grid)
         assert "Try again" not in grid and "load delay:" not in grid and "history-cell" not in grid
         assert f'name="folder" value="{env["live"]}">Open this chip</button>' in grid
         assert _ledger(env, "SELECT outcome, COUNT(*) FROM observed_snapshots GROUP BY outcome") \
             == [("unreadable", 4)]
     body, _row = _drawer(env)
-    assert "None of this chip's 4 Param History snapshots" in _t(body)
+    assert "None of this chip's 4 Param logs snapshots" in _t(body)
     assert "Open this cell again in a moment" not in body
     assert f'name="folder" value="{env["live"]}">Open this chip</button>' in body
 

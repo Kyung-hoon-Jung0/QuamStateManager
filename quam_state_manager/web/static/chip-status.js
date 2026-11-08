@@ -6769,7 +6769,7 @@ window.ChipStatus.mount = function (opts) {
                     e.preventDefault();
                     return;
                 }
-                // QA F-17: the State History drawer, outermost -- after the
+                // QA F-17: the State logs drawer, outermost -- after the
                 // grid's inspector rule above. Through its one toggle, so the
                 // remembered open/closed flag moves exactly as the ✕ moves it.
                 // A modal open over the page, or an Escape another layer has
@@ -7053,7 +7053,7 @@ window.ChipStatus.liveDetection = function () {
 
 /* ── docs/120 items 5+9: chip-wide Trends ────────────────────────────────
  *
- * Customer: "to see T1/RB/T2 trends today you go to Param History, but that
+ * Customer: "to see T1/RB/T2 trends today you go to Param logs, but that
  * shows PER-QUBIT trends, not an INTEGRATED one. Add a Trends tab under Chip
  * Status where ALL qubits' T1 appear in a SINGLE plot. A multiple-line plot,
  * legend = all qubits."
@@ -7708,7 +7708,7 @@ window.ChipTrends = (function () {
        snapshots evenly, which silently redraws three quiet weeks and two
        minutes of frantic retuning as the same distance — on the one page whose
        question is "when did this drift". The snapshot id stays in the hover,
-       because that is what a user carries over to State History.
+       because that is what a user carries over to State logs.
 
        An id that does not parse to an instant keeps its raw label rather than
        being placed at an invented one; such a chart falls back to the category
@@ -8565,7 +8565,7 @@ window.ChipTrends = (function () {
                 drawn.then(function () {
                     _healIfBlank(host, traces, layout, cfg);
                     // Only a drawn host is a Plotly EventEmitter, so binding
-                    // waits for the render the same way the Param History
+                    // waits for the render the same way the Param logs
                     // drawer's does.
                     _bindPointClicks(host);
                     setTimeout(function () { _healIfBlank(host, traces, layout, cfg); }, 250);

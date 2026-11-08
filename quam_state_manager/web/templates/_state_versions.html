@@ -46,7 +46,7 @@
         No recorded versions for this chip yet. One is captured every time the
         chip is <b>applied to live</b> — saving alone stays in your working copy
         — or on demand from <a href="/state-history" hx-get="/state-history"
-        hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State History</a>.
+        hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State logs</a>.
     </p>
     {% else %}
 
@@ -164,13 +164,13 @@
                 {% endif %}
                 {% if not archive and not r.current and not r.why_write and not r.pending %}
                 {# docs/284: load this version into the working copy for review,
-                   then Apply -- the State History door, gates and all #}
+                   then Apply -- the State logs door, gates and all #}
                 <button type="button" class="btn-sm outline sv-stage"
                         hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ chip_key | urlencode }}"
                         hx-target="#status-bar" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
                         title="Load this version into SM to review it, then Apply. Unsaved edits ask first; the live chip is untouched until you press Apply.">Load for review</button>
-                {# The same route State History uses, gates and all — but it
+                {# The same route State logs uses, gates and all — but it
                    WRITES THE LIVE CHIP, and docs/86/97 established one visual
                    language for that: error-tinted, never the primary action.
                    This shipped as a neutral `outline` button reachable in one
@@ -214,7 +214,7 @@
                 {% if r.why_write %}<span class="sv-unavailable" title="{{ r.why_write }}">{{ r.why_write }}</span>{% endif %}
                 {% if r.why_diff and r.why_diff != r.why_write %}<span class="sv-unavailable" title="{{ r.why_diff }}">{{ r.why_diff }}</span>{% endif %}
                 {% else %}
-                <span class="sv-older" title="A Param History snapshot no change-history event covers: read-only history{% if r.pending %}; still being matched against the change history{% endif %}">older snapshot{% if r.pending %} (matching){% endif %}</span>
+                <span class="sv-older" title="A Param logs snapshot no change-history event covers: read-only history{% if r.pending %}; still being matched against the change history{% endif %}">older snapshot{% if r.pending %} (matching){% endif %}</span>
                 <span class="sv-kind sv-kind-{{ r.kind }}{% if r.kind_legacy %} sv-kind-legacy{% endif %}"
                       title="{% if r.kind == 'exp' %}A run produced this state{% elif r.kind == 'backup' %}Protective copy taken right before a write{% else %}You changed the state on purpose (apply / pull / restore / snapshot / bookmark){% endif %} — recorded trigger: {{ r.trigger }}{% if r.kind_legacy %} (recorded before kinds existed; this is the likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[r.kind] }}</span>
                 {% endif %}
@@ -245,7 +245,7 @@
         {% if total > cap %}
         <span class="muted sv-cap-note">of {{ '{:,}'.format(total) }} — open
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
-               hx-push-url="true" onclick="StateVersions.close()">State History</a>
+               hx-push-url="true" onclick="StateVersions.close()">State logs</a>
             for the full list</span>
         {% endif %}
     </div>
@@ -257,7 +257,7 @@
            snapshot: the foot may not say "0 recorded states" from it #}
         <span class="sv-kept-note">{% if ledger_versions.mode == 'ledger' %}From the change history: {% endif %}{{ version_count(ledger_versions) }} — full list in
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
-               hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
+               hx-push-url="true" onclick="StateVersions.close()">State logs</a>.</span>
     </div>
     {% endif %}
 </div>

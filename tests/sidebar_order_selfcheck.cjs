@@ -40,7 +40,6 @@ check('real IA parents navigate to a visible active default child and all reorde
         ['configuration','generate','/generate'], ['topology','overview','/topology?view=overview'],
         ['components','qubits','/qubits'], ['state_edit','bulk','/bulk'],
         ['dataset_pages','datasets','/datasets'], ['experiment_logs','journal','/journal'],
-        ['history','state_history','/state-history'],
     ];
     for (const [parentKey, childKey, url] of cases) {
         const parent = w.document.querySelector(`[data-nav-key="${parentKey}"]`);
@@ -61,6 +60,18 @@ check('real IA parents navigate to a visible active default child and all reorde
         assert.equal(next.nextElementSibling, parent, parentKey+' reorders with its children');
         assert(parent.contains(child));
         assert(JSON.parse(w.localStorage.getItem(KEY)).main.includes(parentKey));
+    }
+    assert.equal(w.document.querySelector('[data-nav-key="history"]'), null);
+    for (const [key, url, label] of [['state_history','/state-history','State logs'], ['param_history','/param-history','Param logs']]) {
+        const child = w.document.querySelector(`[data-nav-key="${key}"] > a`);
+        assert.equal(child.textContent.trim(), label);
+        assert.equal(child.closest('ul').id, 'experiment-logs-subnav');
+        child.closest('ul').classList.add('nav-subitems-collapsed');
+        w.history.replaceState(null, '', url);
+        w.syncSidebarNavActive();
+        assert(child.classList.contains('active'));
+        assert(!child.closest('ul').classList.contains('nav-subitems-collapsed'));
+        assert.equal(w.document.querySelectorAll('.sidebar-nav a.active').length, 1);
     }
     // The OPX loop renders this Live child; its legacy bare URL is an alias.
     const opxSubnav = w.document.querySelector('#ui-opxmon-subnav');

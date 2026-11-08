@@ -1,8 +1,8 @@
 {# docs/301 F14: the Chip Status History drawer on a chip with a change
-   ledger. It used to list only the Param History snapshots (3 on a chip
-   whose State History page lists ~3,000 runs and SM writes) under the same
-   "State History" title. It now lists the newest recorded states of the SAME
-   ledger the State History page reads, with snapshot labels, and links there to
+   ledger. It used to list only the Param logs snapshots (3 on a chip
+   whose State logs page lists ~3,000 runs and SM writes) under the same
+   "State logs" title. It now lists the newest recorded states of the SAME
+   ledger the State logs page reads, with snapshot labels, and links there to
    compare, load or restore one. #}
 {% from '_snapshot_source.html' import source_badge, foreign_tag, baseline_tag, version_flags, version_label %}{% from '_version_count.html' import version_count %}{% from '_history_pager.html' import history_pager %}{% set lv = ledger_versions %}
 {#- S10 walk: the History (N) button shows the one count in every mode (it is
@@ -12,7 +12,7 @@
 <div class="history-toolbar">
     <a class="outline btn-sm" role="button" href="/state-history" hx-get="/state-history"
        hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-       title="Compare, load or restore a version on the State History page">Open State History</a>
+       title="Compare, load or restore a version on the State logs page">Open State logs</a>
     <button class="outline btn-sm"
             hx-post="/api/history/snapshot"
             hx-target="#history-content"
@@ -30,7 +30,7 @@
 {# "All" is capped (S10 C6 review): say so, and where every state is listed #}
 <p class="muted hp-all-cap">All shows the newest {{ '{:,}'.format(lv.rows | length) }} of {{ '{:,}'.format(lv.total) }};
     <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
-       hx-sync="#table-pane:replace" hx-push-url="true">State History</a> lists every one.</p>
+       hx-sync="#table-pane:replace" hx-push-url="true">State logs</a> lists every one.</p>
 {% endif %}
 {% with notes=lv.notes, retry={'url': '/api/history?page=' ~ (page or 1) ~ '&per_page=' ~ per_page, 'target': '#history-content'} %}{% include '_hub_notes.html' %}{% endwith %}
 <div class="history-timeline">
@@ -39,7 +39,7 @@
     <div class="history-entry-header">
         <span class="history-entry-time">{{ r.when | ts_local }}</span>
         {% if r.legacy %}
-        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>{{ source_badge(r.source, 'hp-src') }}{{ baseline_tag(r, lv, 'hp-baseline') }}
+        <span class="sh-older-badge" title="A Param logs snapshot no change-history event covers">older snapshot</span>{{ source_badge(r.source, 'hp-src') }}{{ baseline_tag(r, lv, 'hp-baseline') }}
         {% else %}
         <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
         <span class="muted sh-event-sub">{{ r.sub }}</span>{{ version_flags(r, 'hp-flag') }}{{ source_badge(r.source, 'hp-src') }}{{ foreign_tag(r, 'hp-foreign-tag') }}{{ baseline_tag(r, lv, 'hp-baseline') }}

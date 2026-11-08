@@ -14,13 +14,12 @@ The main group follows workflow order:
 | Chip Components | Qubits | Existing conditional component pages |
 | State Edit | Live state edit (table view) | Live state edit (Json tree view), Pulses, Z-line distortion |
 | Datasets | Runs | Collections, Trends |
-| Experiment logs | Calibration log | |
-| History | State History | Param History |
+| Experiment logs | Calibration log | State logs (`/state-history`), Param logs (`/param-history`) |
 
 Compare, Diagnostics, OPX monitor, Agent and the experimental tools follow.
 Projects and State Load stay above this group. Conditional entries retain their
-existing availability rules. State History and Param History use the separate
-History parent specified in the final decisions.
+existing availability rules. Decision U-7 merges all three log pages under Experiment logs and removes the
+separate History parent. Existing saved orders ignore the removed parent key.
 
 Parent links carry `data-nav-parent` so the destination child owns the active
 mark on full renders and pane-only navigation. The active child's submenu opens

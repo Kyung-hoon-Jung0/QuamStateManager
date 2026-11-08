@@ -343,9 +343,9 @@
       msg = "Chip unchanged: the plan wrote nothing that needed restoring.";
     } else if (r.status === "pending") {
       // written before the restore's write began; still here = the process
-      // ended during it (State History keeps the pre-plan snapshot)
+      // ended during it (State logs keeps the pre-plan snapshot)
       msg = "Chip not restored: the restore did not finish (the process ended " +
-        "during it). State History holds the pre-plan snapshot.";
+        "during it). State logs holds the pre-plan snapshot.";
       cls = "autofit-bad";
     } else {
       cls = "autofit-bad";

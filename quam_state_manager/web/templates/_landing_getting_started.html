@@ -8,7 +8,7 @@
                         <div class="welcome-glossary">
                             <div><b>Live chip</b> — the <code>state.json</code> / <code>wiring.json</code> your instrument &amp; Qualibrate actually read.</div>
                             <div><b>Working state</b> — your private editable copy; edits here reach the instrument only when you <b>Apply to live</b> — or automatically, while <b>Auto-Sync</b> is armed (on by default when you open a chip; turn it off from the top bar, which shows when it is on).</div>
-                            <div><b>Snapshot</b> — an immutable, timestamped archive (in State History) you can roll back to.</div>
+                            <div><b>Snapshot</b> — an immutable, timestamped archive (in State logs) you can roll back to.</div>
                         </div>
 
                         {# Feature tour — collapsible so the page stays compact by default but
@@ -86,8 +86,8 @@
                                     <p class="wc-gist">Nothing is lost — roll back anytime.</p>
                                     <ul class="wc-steps">
                                         <li><b>🔖 bookmark</b> → pin a tagged archive before risky edits</li>
-                                        <li><b>Param History</b> → per-parameter trends</li>
-                                        <li><b>State History</b> → stage or restore any snapshot</li>
+                                        <li><b>Param logs</b> → per-parameter trends</li>
+                                        <li><b>State logs</b> → stage or restore any snapshot</li>
                                     </ul>
                                 </div>
                             </details>
@@ -121,4 +121,4 @@
                             </details>
                         </div>
 
-<p class="muted">Start with Configuration &gt; Generate config, or use Modify config for an existing chip. Instrument Wiring shows connections. Chip Status opens Overview; Chip Components opens Qubits. State Edit contains Live state edit (table view) and Live state edit (Json tree view), Pulses and Z-line distortion. Datasets &gt; Runs lists experiments; Experiment logs &gt; Calibration log and History &gt; State History keep their records.</p>
+<p class="muted">Start with Configuration &gt; Generate config, or use Modify config for an existing chip. Instrument Wiring shows connections. Chip Status opens Overview; Chip Components opens Qubits. State Edit contains Live state edit (table view) and Live state edit (Json tree view), Pulses and Z-line distortion. Datasets &gt; Runs lists experiments; Experiment logs contains Calibration log, State logs and Param logs.</p>

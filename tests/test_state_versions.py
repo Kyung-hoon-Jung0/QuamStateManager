@@ -7,7 +7,7 @@ and forth has to be really free. Clicking it lists the version history with
 diff -> and let a chosen state be applied to the live chip."*
 
 Deliberately a thin surface over machinery that already exists and is already
-gated -- State History's snapshots, the docs/84 diff workbench, the Compare hub
+gated -- State logs's snapshots, the docs/84 diff workbench, the Compare hub
 basket, and ``/state-history/<ts>/restore-live`` with BOTH its independent force
 tokens. What it adds is one click from every page instead of a navigation.
 """
@@ -166,7 +166,7 @@ class TestVersionsPanel:
         assert "sv-current" in body and "live chip is on this version" in body
 
     def test_go_back_uses_the_gated_restore_route(self, client, tmp_path):
-        """Not a new write path: the same restore-live State History uses, whose
+        """Not a new write path: the same restore-live State logs uses, whose
         unsaved-edits and wiring-topology gates are independent and still ask.
 
         Two versions are needed for the button to appear at all, and they have
@@ -309,7 +309,7 @@ class TestTheAuditsHonestyFindings:
         assert "restore-live" in body
         assert "live-diverged-overwrite" in body, "not the shared overwrite style"
         # Label concise per the user (2026-08-20); P1-9 (UX round): one label
-        # per action across State History and Versions -- "Restore to live".
+        # per action across State logs and Versions -- "Restore to live".
         # The ACT -- overwriting the live chip -- stays named in the title.
         assert "Restore to live" in body and "Pull to Live" not in body
         assert "Overwrite the LIVE chip" in body, "the title must name the act"
@@ -1148,7 +1148,7 @@ class TestChangesOnlyFilter:
         assert "From the change history: " in foot and ">3 versions</span>" in foot             and "(2 older snapshots)" in foot, foot[:300]
         assert len(_hm_of(client).list_snapshots(Path(client.application.config["contexts"][
             client.application.config["active_context"]]["path"]))) == 4
-        assert "State History" in body
+        assert "State logs" in body
 
 
 class TestPanelFollowsIngest:

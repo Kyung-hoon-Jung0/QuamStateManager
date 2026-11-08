@@ -15,8 +15,8 @@
      replaces them. S10 C5: every arm of the older change-point index feed
      (its label, snapshot groups, old/arrow/new/delta cells) -> gone with that feed. #}
   <div class="param-history-header ui-head">
-    <div class="ui-head-eyebrow">State History</div>
-    <h2 class="ui-head-title">Param History{% if project_scope and not archive_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
+    <div class="ui-head-eyebrow">Experiment logs</div>
+    <h2 class="ui-head-title">Param logs{% if project_scope and not archive_chip %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
     {% if archive_chip %}
     <p class="muted ui-head-gist">Chip <strong class="ph-archive-name">{{ archive_chip.display }}</strong>
       {%- if archive_chip.display != archive_chip.key %} <code class="ph-archive-key">{{ archive_chip.key }}</code>{% endif %}

@@ -1,6 +1,6 @@
 """S10 walk, round 3 (the v1.2.0 candidate's real-browser walk).
 
-* N4 -- an archived chip has no live state: every cell of its Param History
+* N4 -- an archived chip has no live state: every cell of its Param logs
   grid showed "—" and its cell drawer had no value line. Each cell now shows
   the NEWEST value its history recorded (labelled as such, never "current"),
   the drawer names its newest point as the latest recorded; and the open
@@ -165,15 +165,15 @@ def test_an_archived_build_reads_as_steps_never_a_count_going_down(tmp_path, mon
         if a[0] == b[0] and a[2] == b[2]:
             assert b[3] >= a[3], (a, b)                          # within a step, never down
     whats = {s[2] for s in seen}
-    assert "reading this chip's Param History snapshots" in whats, whats
+    assert "reading this chip's Param logs snapshots" in whats, whats
     assert any(s[0] == 3 for s in seen) and any(s[0] < 3 for s in seen), seen
 
 
 def test_progress_words_number_the_steps_only_when_there_are_several():
     words = hub_sync.progress_words
     st = {"phase": "observing", "observed_done": 2, "observed_total": 4, "observes": True, "archive": True}
-    assert words(st) == ": reading this chip's Param History snapshots (2 of 4)"
+    assert words(st) == ": reading this chip's Param logs snapshots (2 of 4)"
     st = dict(st, roots=[{"path": "x"}], total=9, done=9)
-    assert words(st) == ": step 3 of 3, reading this chip's Param History snapshots (2 of 4)"
+    assert words(st) == ": step 3 of 3, reading this chip's Param logs snapshots (2 of 4)"
     assert words(dict(st, phase="ingesting", done=4)) == ": step 2 of 3, adding runs (4 of 9)"
     assert words({"phase": "ingesting", "done": 4, "total": 9}) == " (4 of 9 runs)"   # no steps named

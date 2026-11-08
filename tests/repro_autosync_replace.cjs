@@ -135,7 +135,7 @@ async function main() {
               anyWarn: (window.__toasts || []).some(function(t){
                  return /replace/i.test(t.m); }),
               namesWayBack: (window.__toasts || []).some(function(t){
-                 return /State History/.test(t.m); }) };})()`);
+                 return /State logs/.test(t.m); }) };})()`);
 
   fs.writeFileSync(OUT, JSON.stringify({ typed, wrote, pulled, told, errors }, null, 2));
   console.log('pull:', JSON.stringify(pulled));

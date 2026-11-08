@@ -1,4 +1,4 @@
-"""S8 (docs/283): Chip Status Trends, the metric meta, Param History and its
+"""S8 (docs/283): Chip Status Trends, the metric meta, Param logs and its
 Changes read the chip's change ledger.
 
 Nothing here builds a value history. Every series comes from the ONE route
@@ -6,7 +6,7 @@ function S7 built (``routes._value_history`` -> ``value_history.read``): the
 same pointer/alias rule (``value_history.holder_at``), the same in-force
 series (``effective``) and the same provenance words (``routes._vh_present``).
 This module only adapts those answers to the shapes the existing Trends and
-Param History renderers already draw, so the renderers are unchanged.
+Param logs renderers already draw, so the renderers are unchanged.
 
 Two display calculations live here, and neither is a history reader:
 
@@ -15,7 +15,7 @@ Two display calculations live here, and neither is a history reader:
   read judges the matrix ELEMENTS as one composite holder
   (``value_history.composite_target``, v1.3.0 TR-02), never a refold of
   elements each filtered by its own verdict;
-* the Param History Source filter needs every ledger event as one of its five
+* the Param logs Source filter needs every ledger event as one of its five
   sources (:func:`source_of`).
 """
 
@@ -78,7 +78,7 @@ def event_key(t_us, eid):
 
 
 def source_of(point: dict) -> str:
-    """The Param History Source a ledger point belongs to.
+    """The Param logs Source a ledger point belongs to.
 
     A run event is ``experiment`` whether or not its patch proves the value:
     the filter names where the event came from, never who wrote the value

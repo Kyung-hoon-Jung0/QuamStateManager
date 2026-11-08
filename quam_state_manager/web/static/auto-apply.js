@@ -314,7 +314,7 @@
        Not a semantic change: `replace` still means what the checkbox says.
        This is the honesty half -- say it happened.
 
-       It does NOT offer State History as the way back, because that is not
+       It does NOT offer State logs as the way back, because that is not
        true and I checked: `check_and_snapshot` reads the LIVE folder's files,
        and a pending edit lives in the in-memory change log, so the pre-pull
        backup holds the node's write rather than the user's work. Measured --
