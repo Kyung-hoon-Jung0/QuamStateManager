@@ -10781,7 +10781,7 @@ def bulk_cells():
 
 @bp.route("/bulk/all-values")
 def bulk_all_values():
-    """Flat 'All values' completeness payload for the Live State Edit → All values tab.
+    """Flat 'All values' completeness payload for the Live state edit (table view) → All values tab.
 
     Enumerates EVERY leaf of merged state+wiring (core/all_values), so a user can
     edit LITERALLY ALL scalar values; pointers/lists/membership are read-only. This
@@ -28666,7 +28666,7 @@ def api_pulse_delete_together():
     if not holds_pulse:
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
-            "(Live edit - Json Tree view).")), 400
+            "(Live state edit (Json tree view)).")), 400
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
                "expect_chip": pj.get("expect_chip") or "",
@@ -29637,10 +29637,17 @@ def api_pulse_ground_truth():
 #: by Ctrl+K (base.html's cmd-palette-data) and by header Search, so a name
 #: found in one is found in the other. ``exp``: shown only with SM_EXPERIMENTAL.
 _NAV_PAGES = (
+    {"label": "Configuration", "url": "/generate"},
+    {"label": "Chip Components", "url": "/qubits"},
+    {"label": "State Edit", "url": "/bulk"},
+    {"label": "Experiment logs", "url": "/journal"},
+    {"label": "History", "url": "/state-history"},
+    {"label": "Runs", "url": "/datasets"},
+    {"label": "OPX monitor", "url": "/opx-monitor/live"},
     {"label": "Projects", "url": "/qualibrate"},
-    {"label": "Generate Config", "url": "/generate"},
+    {"label": "Generate config", "url": "/generate"},
     {"label": "Config Viewer", "url": "/config"},
-    {"label": "Re-generate config", "url": "/regenerate"},
+    {"label": "Modify config", "url": "/regenerate"},
     {"label": "Instrument Wiring", "url": "/instrument"},
     {"label": "Qubits", "url": "/qubits"},
     {"label": "Pairs", "url": "/pairs"},
@@ -29653,8 +29660,8 @@ _NAV_PAGES = (
     {"label": "Z-line distortion", "url": "/zline"},
     {"label": "CZ gate plan", "url": "/cz-plan"},
     {"label": "Compare", "url": "/diff"},
-    {"label": "Live State Edit", "url": "/bulk"},
-    {"label": "Live edit - Json Tree view", "url": "/explorer"},
+    {"label": "Live state edit (table view)", "url": "/bulk"},
+    {"label": "Live state edit (Json tree view)", "url": "/explorer"},
     {"label": "Pulses", "url": "/pulses"},
     {"label": "State History", "url": "/state-history"},
     {"label": "Calibration log", "url": "/journal"},
@@ -36050,7 +36057,7 @@ def state_overwrite_live_preflight():
 @bp.route("/export", methods=["GET", "POST"])
 def export_csv():
     """The one CSV export (UX round, B2: reachable from the Qubits, Pairs and
-    Resonators tables and Live State Edit, not only from /table).
+    Resonators tables and Live state edit (table view), not only from /table).
 
     * ``?props=`` (default): one row per qubit, the stored values of those
       summary properties -- what /table exports; ``?chain=`` keeps one chain.
@@ -36201,7 +36208,7 @@ def _export_pair_rows(engine, props: list) -> list[dict]:
 
 
 def _export_grid_csv(body: dict):
-    """Live State Edit's grid as CSV: the columns the user sees (``cols``),
+    """Live state edit (table view)'s grid as CSV: the columns the user sees (``cols``),
     one row per qubit (or pair), each cell's STORED value read at the path
     the grid resolved it to; a pointer with no scalar behind it is written as
     the pointer, a missing field as blank."""
@@ -46717,7 +46724,7 @@ def dataset_apply_selected_preview(uid):
             if is_pointer(new):
                 row["status"] = "skip"
                 row["reason"] = ("a reference (pointer) differs — change it in "
-                                 "Live edit - Json Tree view")
+                                 "Live state edit (Json tree view)")
                 rows.append(row)
                 continue
             target = path
@@ -47862,7 +47869,7 @@ def generate():
 
 @bp.route("/regenerate")
 def regenerate_page():
-    """Re-generate Config — rebuild an existing chip from an editable spec
+    """Modify config — rebuild an existing chip from an editable spec
     (reassign ports, change bands, add/remove qubits) while its calibrated
     values are carried over, into a NEW folder. Skeleton; the wizard prefill +
     build/merge wiring (``core.regenerate``) is attached next.

@@ -1,6 +1,6 @@
 /* Queue #2 / #5 / #7 / #8 journeys, in real Chrome (2026-09-26).
  *
- *   #2  the sidebar sub-item reads "Live edit - Json Tree view"; it opens the
+ *   #2  the sidebar sub-item reads "Live state edit (Json tree view)"; it opens the
  *       tree, Back returns, reload keeps it
  *   #5  no bare arrow beside a Chip Status panel/tile title; the direction is
  *       in the title's hover text
@@ -44,18 +44,18 @@ const WATCH = `(function(){ if (window.__ldr) return 'already'; window.__ldr=[];
     await p.ev(`(function(){ var ul=document.getElementById('live-edit-subnav'); if(ul && ul.classList.contains('nav-subitems-collapsed')){ var b=document.querySelector('[aria-controls="live-edit-subnav"]'); b && b.click(); } })()`);
     await p.sleep(300);
     const lab = await J(p, `JSON.stringify(Array.from(document.querySelectorAll('#live-edit-subnav a')).map(function(a){return a.textContent.trim();}))`);
-    rec('#2 the sidebar sub-item reads exactly "Live edit - Json Tree view"', Array.isArray(lab) && lab[0] === 'Live edit - Json Tree view', lab);
-    const c = await center(p, '#live-edit-subnav a', 'Live edit - Json Tree view');
+    rec('#2 the sidebar sub-item reads exactly "Live state edit (Json tree view)"', Array.isArray(lab) && lab[0] === 'Live state edit (Json tree view)', lab);
+    const c = await center(p, '#live-edit-subnav a', 'Live state edit (Json tree view)');
     if (c) { await p.click(c.x, c.y); await p.sleep(3000); }
     const on = await J(p, `JSON.stringify({path:location.pathname, tree:!!document.querySelector('#explorer-tree-state, .json-tree'), active:(document.querySelector('#live-edit-subnav a.active')||{}).textContent||null})`);
-    rec('#2 clicking it opens the tree at /explorer and lights itself', on.path === '/explorer' && on.tree && /Live edit - Json Tree view/.test(on.active || ''), on);
+    rec('#2 clicking it opens the tree at /explorer and lights itself', on.path === '/explorer' && on.tree && /Live state edit (Json tree view)/.test(on.active || ''), on);
     await p.shot(path.join(SHOTS, 'q2_explorer.png'));
     await p.ev('history.back()'); await p.sleep(3000);
     const back = await J(p, `JSON.stringify({path:location.pathname, grid:!!document.querySelector('#table-pane .bulk-cell')})`);
     rec('#2 Back returns to Live State Edit, grid intact', back.path === '/bulk' && back.grid, back);
     await p.send('Page.navigate', { url: `${BASE}/explorer` }); await p.sleep(3500);
     const re = await J(p, `JSON.stringify({tree:!!document.querySelector('#explorer-tree-state, .json-tree'), active:(document.querySelector('#live-edit-subnav a.active')||{}).textContent||null, palette:document.documentElement.innerHTML.indexOf('Json Tree View')})`);
-    rec('#2 a reload of /explorer keeps the tree and the new label (no old label anywhere in the page)', re.tree && /Live edit - Json Tree view/.test(re.active || '') , re);
+    rec('#2 a reload of /explorer keeps the tree and the new label (no old label anywhere in the page)', re.tree && /Live state edit (Json tree view)/.test(re.active || '') , re);
     rec('#2 no JS exceptions', p.errors(0).length === 0, p.errors(0));
     await p.close();
   }

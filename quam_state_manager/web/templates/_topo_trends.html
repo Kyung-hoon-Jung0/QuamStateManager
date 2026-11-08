@@ -136,7 +136,7 @@
     </div>
 
     <script type="application/json" id="topo-trends-data">{{ charts | tojson }}</script>
-    {# docs/296: when the qubits were renamed by Re-generate; each chart marks it #}
+    {# docs/296: when the qubits were renamed by Modify config; each chart marks it #}
     <script type="application/json" id="topo-trends-renames">{{ renames | default([], true) | tojson }}</script>
     {# S10 C7: old -> new, provenance is carried by each ledger point. #}
     <script>

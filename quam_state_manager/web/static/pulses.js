@@ -1549,7 +1549,7 @@ window.PulsesPage = (function () {
                 if (info.orient_ok === false) {
                     txt += ' — ⚠ stored control is the LOWER-frequency qubit;' +
                         ' CZ convention is control = higher f₀₁.' +
-                        ' Changing roles requires Re-generate.';
+                        ' Changing roles requires Modify config.';
                 }
                 line.textContent = txt;
                 line.classList.toggle('pulse-pair-line-warn',

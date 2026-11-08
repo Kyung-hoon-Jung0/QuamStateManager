@@ -4,7 +4,7 @@
 <div id="generate-root" class="generate-root">
   {% from '_ui.html' import ui_head_fold %}
   <div class="gen-header ui-head ui-head--page">
-    <h2 class="gen-title ui-head-title">Generate Configuration Files</h2>
+    <h2 class="gen-title ui-head-title">{{ 'Modify config' if page == 'regenerate' else 'Generate Configuration Files' }}</h2>
     <p class="ui-head-gist">Build a new chip's state.json and wiring.json, step by step, in a Python environment you choose.</p>
     <div class="gen-header-actions">
       {# Top mirror of the bottom Back/Next + step counter, so the user never has
@@ -352,7 +352,7 @@
       <h3>Populate <span class="muted">&mdash; optional physics values</span></h3>
       {# The mode-specific sentence is switched by renderPopulateIntro() on
          every step-6 entry (Start over can flip a regen page back to
-         generate). Re-generate: docs/72 "clear = don't re-seed" — tier-1
+         generate). Modify config: docs/72 "clear = don't re-seed" — tier-1
          carries the source chip's value into every blank cell (QA r2-31). #}
       <p class="muted" id="gen-pop-intro">Initial values for the generated <code>state.json</code>.
         <span data-intro-mode="generate">Blank cells keep <code>build_quam</code>'s defaults.</span>

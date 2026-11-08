@@ -434,7 +434,7 @@
                 {# Converter & calculator (feedback #2) — chip-independent client-side
                    tool: power-dB↔amplitude, MW-FEM amp↔dBm (full_scale_power_dbm),
                    dBm↔Volt @R, and a safe free expression box. #}
-                
+
                 <li class="topbar-tools-fallback">
                     {# docs/89 — Settings and Calculator live in the SIDEBAR now. The
                        sidebar collapses to width 0 (not an icon rail), so they would
@@ -658,41 +658,31 @@
             </div>
             <hr class="sidebar-section-divider">
             <nav class="sidebar-nav">
-                <ul data-nav-group="creation">
-                    {# Creation feature — set apart by a divider, since it
-                       builds a new chip rather than viewing one. The
-                       rarely-used Config Viewer nests under it, collapsed by
-                       default, so it no longer occupies permanent sidebar space. #}
-                    <li class="nav-with-sub" data-nav-key="generate">
+                <ul data-nav-group="main">
+                    <li class="nav-with-sub" data-nav-key="configuration">
                         <div class="nav-sub-row">
-                            <a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'generate' %}class="active"{% endif %}>Generate Config</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page in ('config_browser', 'regenerate') else 'false' }}"
-                                    aria-controls="config-subnav" aria-label="Toggle Config tools"
+                            <a data-nav-parent="true" href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Configuration</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('generate', 'regenerate', 'config_browser') else 'false' }}"
+                                    aria-controls="config-subnav" aria-label="Toggle Configuration"
                                     onclick="toggleNavSub(this, 'config-subnav', 'quam_config_nav_collapsed')">&#9662;</button>
                         </div>
-                        <ul class="nav-subitems{% if page not in ('config_browser', 'regenerate') %} nav-subitems-collapsed{% endif %}"
-                            id="config-subnav" data-nav-group="config-subnav">
+                        <ul class="nav-subitems{% if not (page in ('generate', 'regenerate', 'config_browser')) %} nav-subitems-collapsed{% endif %}" id="config-subnav" data-nav-group="config-subnav">
+                            <li data-nav-key="generate"><a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'generate' %}class="active"{% endif %}>Generate config</a></li>
+                            <li data-nav-key="regenerate"><a href="/regenerate" hx-get="/regenerate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'regenerate' %}class="active"{% endif %}>Modify config</a></li>
                             <li data-nav-key="config_browser"><a href="/config" hx-get="/config" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'config_browser' %}class="active"{% endif %}>Config Viewer</a></li>
-                            <li data-nav-key="regenerate"><a href="/regenerate" hx-get="/regenerate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'regenerate' %}class="active"{% endif %}>Re-generate config</a></li>
                         </ul>
                     </li>
-                </ul>
-            </nav>
-            <hr class="sidebar-section-divider">
-            <nav class="sidebar-nav">
-                <ul data-nav-group="main">
-                    {# v1.5.3 IA (design A): by frequency of use -- Chip Status (with
-                       Z-line distortion and the CZ gate plan), Live State Edit (with the
-                       Json Tree view and Pulses), Datasets; then the rest in their r15
-                       structure->health order. #}
+                    <li class="nav-floatable" data-nav-key="instrument"><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a><button
+                           type="button" class="nav-float-btn" title="Open as a floating panel (stays visible while you work elsewhere)"
+                           aria-label="Open Instrument Wiring as a floating panel"
+                           onclick="event.stopPropagation(); if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button></li>
                     <li class="nav-with-sub" data-nav-key="topology">
                         <div class="nav-sub-row">
-                            <a href="/topology" hx-get="/topology" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'topology' %}class="active"{% endif %}>Chip Status</a>
+                            <a data-nav-parent="true" href="/topology?view=overview" hx-get="/topology?view=overview" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Status</a>
                             {# docs/126 #21 — printable report: components + topology as one
                                standalone page (new tab; Print / self-contained download). #}
                             <a class="nav-print" href="/chip-status/report" target="_blank"
@@ -706,7 +696,7 @@
                            in-page scroll-spy jump bar (kept in sync by setChipStatusView). #}
                         <ul class="nav-subitems" id="chip-status-subnav" data-nav-group="chip-status-subnav">
                             <li data-nav-key="overview"><a href="/topology?view=overview" data-view="overview"
-                                   onclick="return chipNavView('overview', event)">Overview</a></li>
+                                   onclick="return chipNavView('overview', event)" {% if page == 'topology' %}class="active"{% endif %}>Overview</a></li>
                             <li data-nav-key="health"><a href="/topology?view=health" data-view="health"
                                    onclick="return chipNavView('health', event)">Health</a></li>
                             <li data-nav-key="status_topology"><a href="/topology?view=topology" data-view="topology"
@@ -725,67 +715,18 @@
                                    onclick="return chipNavView('frequencies', event)">Frequencies</a></li>
                             <li data-nav-key="calibration"><a href="/topology?view=calibration" data-view="calibration"
                                    onclick="return chipNavView('calibration', event)">Calibration</a></li>
-                            {# Distortion and the CZ operating points describe the chip's state, so they
-                               sit under Chip Status (customer feedback, 2026-10-15). #}
-                            <li data-nav-key="zline"><a href="/zline" hx-get="/zline" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   title="The port's exponential + FIR filters applied together to each flux line's step and pulses"
-                                   {% if page == 'zline' %}class="active"{% endif %}>Z-line distortion</a></li>
+                            {# CZ gate planning remains with Chip Status. #}
+
                             <li data-nav-key="czplan"><a href="/cz-plan" hx-get="/cz-plan" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    title="At what frequency each CZ operation of each pair operates: flux, detuning, resonances, when last set"
                                    {% if page == 'czplan' %}class="active"{% endif %}>CZ gate plan</a></li>
                         </ul>
                     </li>
-                    <li class="nav-with-sub" data-nav-key="bulk">
-                        <div class="nav-sub-row">
-                            <a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'bulk' or page == 'table' %}class="active"{% endif %}>Live State Edit</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page in ('explorer', 'pulses') else 'false' }}"
-                                    aria-controls="live-edit-subnav" aria-label="Toggle editing tools"
-                                    onclick="toggleNavSub(this, 'live-edit-subnav', 'quam_liveedit_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if page not in ('explorer', 'pulses') %} nav-subitems-collapsed{% endif %}"
-                            id="live-edit-subnav" data-nav-group="live-edit-subnav">
-                            <li data-nav-key="explorer"><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'explorer' %}class="active"{% endif %}>Live edit - Json Tree view</a></li>
-                            <li data-nav-key="pulses"><a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
-                        </ul>
-                    </li>
-                    <li class="nav-with-sub" data-nav-key="datasets">
-                        <div class="nav-sub-row">
-                            <a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'datasets' or page == 'dataset_detail' %}class="active"{% endif %}>Datasets</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page in ('collections', 'trends') else 'false' }}"
-                                    aria-controls="datasets-subnav" aria-label="Toggle dataset tools"
-                                    onclick="toggleNavSub(this, 'datasets-subnav', 'quam_datasets_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if page not in ('collections', 'trends') %} nav-subitems-collapsed{% endif %}"
-                            id="datasets-subnav" data-nav-group="datasets-subnav">
-                            <li data-nav-key="collections"><a href="/collections" hx-get="/collections" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'collections' %}class="active"{% endif %}>Collections</a></li>
-                            <li data-nav-key="trends"><a href="/trends" hx-get="/trends" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'trends' %}class="active"{% endif %}>Trends</a></li>
-                        </ul>
-                    </li>
-                    {# r15 IA (docs/69): structure→health order — the chip's
-                       physical wiring + component entities first, then the
-                       health/status pair (Diagnostics, Chip Status). #}
-                    {# docs/126 ⑥: the ⧉ opens the port diagram as a FLOATING
-                       panel so a user can keep a port picture in view while
-                       working on any other page — the menu click still swaps
-                       the main pane as before. #}
-                    <li class="nav-floatable" data-nav-key="instrument"><a href="/instrument" hx-get="/instrument" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'instrument' %}class="active"{% endif %}>Instrument Wiring</a><button
-                           type="button" class="nav-float-btn" title="Open as a floating panel (stays visible while you work elsewhere)"
-                           aria-label="Open Instrument Wiring as a floating panel"
-                           onclick="event.stopPropagation(); if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button></li>
                     <li class="nav-with-sub" data-nav-key="components">
                         <div class="nav-sub-row">
                             {# Parent deliberately carries no active class — the
                                Qubits child owns the /qubits highlight. #}
-                            <a href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Components</a>
+                            <a data-nav-parent="true" href="/qubits" hx-get="/qubits" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Components</a>
                             <button type="button" class="nav-sub-toggle" aria-expanded="true"
                                     aria-controls="chip-components-subnav" aria-label="Toggle Chip Components"
                                     onclick="toggleNavSub(this, 'chip-components-subnav', 'quam_components_nav_collapsed')">&#9662;</button>
@@ -820,12 +761,75 @@
                             {% endif %}
                         </ul>
                     </li>
-                    {# OPX monitor: the QM server's devices, open QMs, jobs, history,
-                       clean-up and alarms (core/opx_monitor.py). #}
+                    <li class="nav-with-sub" data-nav-key="state_edit">
+                        <div class="nav-sub-row">
+                            <a data-nav-parent="true" href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">State Edit</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('bulk', 'table', 'explorer', 'pulses', 'zline') else 'false' }}"
+                                    aria-controls="live-edit-subnav" aria-label="Toggle State Edit"
+                                    onclick="toggleNavSub(this, 'live-edit-subnav', 'quam_liveedit_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if not (page in ('bulk', 'table', 'explorer', 'pulses', 'zline')) %} nav-subitems-collapsed{% endif %}" id="live-edit-subnav" data-nav-group="live-edit-subnav">
+                            <li data-nav-key="bulk"><a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page in ('bulk', 'table') %}class="active"{% endif %}>Live state edit (table view)</a></li>
+                            <li data-nav-key="explorer"><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'explorer' %}class="active"{% endif %}>Live state edit (Json tree view)</a></li>
+                            <li data-nav-key="pulses"><a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
+                            <li data-nav-key="zline"><a href="/zline" hx-get="/zline" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   title="The port's exponential + FIR filters applied together to each flux line's step and pulses"
+                                   {% if page == 'zline' %}class="active"{% endif %}>Z-line distortion</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-with-sub" data-nav-key="dataset_pages">
+                        <div class="nav-sub-row">
+                            <a data-nav-parent="true" href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Datasets</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('datasets', 'dataset_detail', 'collections', 'trends') else 'false' }}"
+                                    aria-controls="datasets-subnav" aria-label="Toggle Datasets"
+                                    onclick="toggleNavSub(this, 'datasets-subnav', 'quam_datasets_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if not (page in ('datasets', 'dataset_detail', 'collections', 'trends')) %} nav-subitems-collapsed{% endif %}" id="datasets-subnav" data-nav-group="datasets-subnav">
+                            <li data-nav-key="datasets"><a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page in ('datasets', 'dataset_detail') %}class="active"{% endif %}>Runs</a></li>
+                            <li data-nav-key="collections"><a href="/collections" hx-get="/collections" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'collections' %}class="active"{% endif %}>Collections</a></li>
+                            <li data-nav-key="trends"><a href="/trends" hx-get="/trends" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'trends' %}class="active"{% endif %}>Trends</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-with-sub" data-nav-key="experiment_logs">
+                        <div class="nav-sub-row">
+                            <a data-nav-parent="true" href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Experiment logs</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page == 'journal' else 'false' }}"
+                                    aria-controls="experiment-logs-subnav" aria-label="Toggle Experiment logs"
+                                    onclick="toggleNavSub(this, 'experiment-logs-subnav', 'quam_experiment_logs_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if not (page == 'journal') %} nav-subitems-collapsed{% endif %}" id="experiment-logs-subnav" data-nav-group="experiment-logs-subnav">
+                            <li data-nav-key="journal"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'journal' %}class="active"{% endif %}>Calibration log</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-with-sub" data-nav-key="history">
+                        <div class="nav-sub-row">
+                            <a data-nav-parent="true" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">History</a>
+                            <button type="button" class="nav-sub-toggle" aria-expanded="{{ 'true' if page in ('state_history', 'param_history') else 'false' }}"
+                                    aria-controls="journal-subnav" aria-label="Toggle History"
+                                    onclick="toggleNavSub(this, 'journal-subnav', 'quam_journal_nav_collapsed')">&#9662;</button>
+                        </div>
+                        <ul class="nav-subitems{% if not (page in ('state_history', 'param_history')) %} nav-subitems-collapsed{% endif %}" id="journal-subnav" data-nav-group="journal-subnav">
+                            <li data-nav-key="state_history"><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
+                            <li data-nav-key="param_history"><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
+                        </ul>
+                    </li>
+                    <li data-nav-key="diff"><a href="/diff" hx-get="/diff" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           title="Show only what differs between two versions of this chip"
+                           {% if page in ('diff', 'compare_hub') %}class="active"{% endif %}>Compare</a></li>
+                    <li data-nav-key="diagnostics"><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a></li>
                     <li class="nav-with-sub" data-nav-key="opx_monitor">
                         <div class="nav-sub-row">
-                            <a href="/opx-monitor" hx-get="/opx-monitor" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'opx_monitor' %}class="active"{% endif %}>OPX monitor</a>
+                            <a data-nav-parent="true" href="/opx-monitor/live" hx-get="/opx-monitor/live" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">OPX monitor</a>
                             <button type="button" class="nav-sub-toggle"
                                     aria-expanded="{{ 'true' if page == 'opx_monitor' else 'false' }}"
                                     aria-controls="ui-opxmon-subnav" aria-label="Toggle OPX monitor sections"
@@ -838,23 +842,8 @@
                             {%- endfor %}
                         </ul>
                     </li>
-                    <li data-nav-key="diagnostics"><a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           {% if page == 'diagnostics' %}class="active"{% endif %}>Diagnostics</a></li>
-                    {# Compare — docs/84 made the DIFF the front door: the hub
-                       works but asks for a context, a preset and sometimes an
-                       entity mapping before it shows anything, and users stopped
-                       using it. The hub keeps the hard cases (mapping across
-                       different devices, N-way baskets) one click deeper, from
-                       the diff's "Advanced…". #}
-                    <li data-nav-key="diff"><a href="/diff" hx-get="/diff" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           title="Show only what differs between two versions of this chip"
-                           {% if page in ('diff', 'compare_hub') %}class="active"{% endif %}>Compare</a></li>
-                    {# Execution trio (r15 renames — routes/page tokens unchanged):
-                       Experiment Runner = queue + run nodes on hardware (docs/40);
-                       Fit Replay = read-only re-check of already-saved fits (docs/50);
-                       Auto Calibrate = unattended run→fit→verify→apply loop (docs/56).
-                       docs/172: shown only under SM_EXPERIMENTAL=1 -- users calibrate
-                       from a terminal agent now; SM is its eyes and hands. #}
+                    <li data-nav-key="agent"><a href="/agent" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           id="nav-agent" {% if page in ('agent_home', 'agent_summary') %}class="active"{% endif %}>Agent</a></li>
                     {% if experimental %}
                     <li data-nav-key="scheduler"><a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                            {% if page == 'scheduler' %}class="active"{% endif %}>Experiment Runner</a></li>
@@ -864,30 +853,6 @@
                            {% if page == 'autofit' %}class="active"{% endif %}>Auto Calibrate
                            <span id="autofit-nav-badge" class="autofit-nav-badge" hidden></span></a></li>
                     {% endif %}
-                    {# customer feedback 2026-09-08: the Agent is a page, right above the
-                       Calibration log (it used to be a tool-row button floating a panel). #}
-                    <li data-nav-key="agent"><a href="/agent" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           id="nav-agent" {% if page in ('agent_home', 'agent_summary') %}class="active"{% endif %}>Agent</a></li>
-                    {# docs/173: the story of the chip -- every run, whoever ran it.
-                       One click (top level); State History and Param History are its
-                       detail views (customer feedback 2026-09-08: both beneath it). #}
-                    <li class="nav-with-sub" data-nav-key="journal">
-                        <div class="nav-sub-row">
-                            <a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                               {% if page == 'journal' %}class="active"{% endif %}>Calibration log</a>
-                            <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page in ('param_history', 'state_history') else 'false' }}"
-                                    aria-controls="journal-subnav" aria-label="Toggle history tools"
-                                    onclick="toggleNavSub(this, 'journal-subnav', 'quam_journal_nav_collapsed')">&#9662;</button>
-                        </div>
-                        <ul class="nav-subitems{% if page not in ('param_history', 'state_history') %} nav-subitems-collapsed{% endif %}"
-                            id="journal-subnav" data-nav-group="journal-subnav">
-                            <li data-nav-key="state_history"><a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'state_history' %}class="active"{% endif %}>State History</a></li>
-                            <li data-nav-key="param_history"><a href="/param-history" hx-get="/param-history" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                                   {% if page == 'param_history' %}class="active"{% endif %}>Param History</a></li>
-                        </ul>
-                    </li>
                 </ul>
             </nav>
             <hr>

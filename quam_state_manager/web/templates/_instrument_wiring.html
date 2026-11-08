@@ -4,7 +4,7 @@
        an outerHTML swap on `load` replaced its own trigger, so it could never refresh. #}
     <span class="diag-header-slot" hx-get="/diagnostics/summary"
           hx-trigger="load, diagnostics-changed from:body delay:500ms" hx-swap="innerHTML"></span>
-    {# r15 CG1 (docs/70): jump straight into the Re-generate wizard's Wiring
+    {# r15 CG1 (docs/70): jump straight into the Modify config wizard's Wiring
        step (step 5) pre-filled with THIS chip — the wizard's drag-and-drop is
        the editing surface for the rack this page only displays. Always shown:
        this template only renders when a chip is loaded (instrument_view
@@ -15,7 +15,7 @@
     <button type="button" class="btn-sync iw-modify-btn"
             hx-get="/regenerate?step=5" hx-target="#table-pane"
             hx-sync="#table-pane:replace" hx-push-url="true"
-            title="Open this chip in Re-generate at the Wiring step — drag ports to rewire, then rebuild with calibrated values carried over">
+            title="Open this chip in Modify config at the Wiring step — drag ports to rewire, then rebuild with calibrated values carried over">
         Modify wiring&hellip;</button>
 </div>
 

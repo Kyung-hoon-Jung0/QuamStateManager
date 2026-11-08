@@ -2545,6 +2545,7 @@ window.qualibrateSubnavToggleAll = function(btn) {
         // active child keeps context visible either way).
         { id: 'chip-components-subnav', key: 'quam_components_nav_collapsed',   def: '0' },
         { id: 'live-edit-subnav',       key: 'quam_liveedit_nav_collapsed',     def: '1' },
+        { id: 'experiment-logs-subnav', key: 'quam_experiment_logs_nav_collapsed', def: '1' },
         { id: 'journal-subnav',         key: 'quam_journal_nav_collapsed',      def: '1' },   // docs/173: Calibration log ▾ (Param History)
         { id: 'datasets-subnav',        key: 'quam_datasets_nav_collapsed',     def: '1' },
     ];
@@ -7886,7 +7887,7 @@ window.PhysAmp = (function () {
                 return on ? 'undo / redo (an applied edit: writes the chip file; Settings "Ctrl+Z writes live" ON)'
                           : 'undo / redo (an applied edit: staged until Apply; Settings "Ctrl+Z writes live" OFF)';
             })()],
-            ['Live State Edit — the Qubits grid', ''],
+            ['Live state edit (table view) — the Qubits grid', ''],
             ['Tab / Shift+Tab', 'hop between edit cells'],
             ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
             ['Ctrl+Shift+↑ / ↓', 'extend the selection one row (same column)'],
@@ -15854,11 +15855,13 @@ window.syncSidebarNavActive = function() {
     // matcher must agree or a Versions-panel Compare press leaves the
     // PREVIOUS page's item lit (customer, 2026-08-22).
     if (path.indexOf('/diff/') === 0) path = '/diff';
+    if (path === '/opx-monitor') path = '/opx-monitor/live';
     var view = null;
     try { view = new URLSearchParams(window.location.search).get("view"); } catch (e) {}
     var matches = [];
     document.querySelectorAll(".sidebar-nav a[href]").forEach(function(a) {
         a.classList.remove("active");
+        if (a.hasAttribute("data-nav-parent")) return;
         var href = a.getAttribute("href") || "";
         var q = href.indexOf("?");
         var hPath = q < 0 ? href : href.slice(0, q);
@@ -15872,13 +15875,19 @@ window.syncSidebarNavActive = function() {
         if (hView && !view && hView !== "overview") return;
         matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
-    // same-href parent+child (Chip Components + Qubits are both /qubits):
-    // the child owns the highlight — base.html: "Parent deliberately carries
-    // no active class". Distinct hrefs (Chip Status + its ?view= child) keep
-    // both, matching the server's own full-load render.
+    // The destination child owns the highlight. Reveal it after a pane-only
+    // navigation too, since the server does not replace the sidebar then.
     matches.forEach(function(m) {
         var twin = matches.some(function(o) { return o !== m && o.href === m.href && o.sub; });
-        if (!(m.sub === false && twin)) m.a.classList.add("active");
+        if (!(m.sub === false && twin)) {
+            m.a.classList.add("active");
+            var subnav = m.a.closest('.nav-subitems');
+            if (subnav) {
+                subnav.classList.remove('nav-subitems-collapsed');
+                var toggle = document.querySelector('.nav-sub-toggle[aria-controls="' + subnav.id + '"]');
+                if (toggle) toggle.setAttribute('aria-expanded', 'true');
+            }
+        }
     });
     window.SidebarReveal.reveal();
 };

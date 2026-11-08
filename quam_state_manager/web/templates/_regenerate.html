@@ -1,4 +1,4 @@
-{# Re-generate Config — reuses the Generate wizard, PRE-FILLED from an existing
+{# Modify config — reuses the Generate wizard, PRE-FILLED from an existing
    chip (core.regen_spec) and building into a NEW folder with the source chip's
    calibrated values merged back on (core.regenerate). Default source = the
    loaded chip; "Load different…" swaps another folder. Compact / VSCode-tight. #}
@@ -11,11 +11,11 @@
     <input type="text" id="regen-src-input" class="visually-hidden" tabindex="-1" aria-hidden="true">
     <button type="button" class="btn-sm outline" id="regen-load-btn"
             onclick="openFolderBrowser('regen-src-input')"
-            title="Load a different state/wiring folder to re-generate from">Load different…</button>
+            title="Load a different state/wiring folder to modify">Load different…</button>
   </div>
   <div id="regen-status" class="regen-status" hidden></div>
 
-  {# The Generate wizard, pre-filled. Its title is re-labelled to "Re-generate
+  {# The Generate wizard, pre-filled. Its title is re-labelled to "Modify config
      config" by the bootstrap; its step nav + panels are reused as-is. #}
   <div class="regen-wizard" id="regen-body">
     {% include '_generate.html' %}
@@ -72,7 +72,7 @@
           (res.spec.qubit_pairs || []).length + " pairs" +
           (res.mixed_gates ? " · mixed gates" : "");
         var t = document.querySelector("#regen-body .gen-title");
-        if (t) t.textContent = "Re-generate config";
+        if (t) t.textContent = "Modify config";
         // docs/135: two lists, two voices. `notes` are things that could
         // bite (⚠, warn styling); `info_notes` state what was carried and
         // are not problems — a QDAC carry dressed as a warning is what sent

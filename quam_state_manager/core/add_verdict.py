@@ -15,7 +15,7 @@ NEEDS_LOOK = "Needs a look"
 CANT = "Can't"
 ALREADY = "Already has it"
 BUILD_CHECK = "pointer landing and runtime code checked at Build"
-NEW_CHIP_CLASS = "A new macro class on a built chip is not created on the Pulses page in v1; use Re-generate."
+NEW_CHIP_CLASS = "A new macro class on a built chip is not created on the Pulses page in v1; use Modify config."
 
 
 def _macros(doc, pair):

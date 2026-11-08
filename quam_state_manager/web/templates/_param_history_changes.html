@@ -131,7 +131,7 @@
         <span class="ph-change-exp vh-by">{{ g.label }}</span>
         {% if g.sub %}<span class="muted vh-sub">{{ g.sub }}</span>{% endif %}
         {% for flag in g.flags or [] %}<span class="vh-flag">{{ flag }}</span>{% endfor %}
-        {% if g.renamed_here %}<span class="vh-flag vh-flag-renamed" title="A Re-generate rename came into force in this state ({{ g.renamed_here }}); its rows compare each qubit with itself under its old name">renamed here: {{ g.renamed_here_short or g.renamed_here }}</span>{% endif %}
+        {% if g.renamed_here %}<span class="vh-flag vh-flag-renamed" title="A Modify config rename came into force in this state ({{ g.renamed_here }}); its rows compare each qubit with itself under its old name">renamed here: {{ g.renamed_here_short or g.renamed_here }}</span>{% endif %}
         {% if g.uid %}
         <button type="button" class="btn-xs outline"
                 hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
@@ -151,7 +151,7 @@
                       hx-get="/field/history?path={{ r.path | urlencode }}"
                       hx-target="#inspector-pane" hx-swap="innerHTML"
                       title="Open this parameter's full timeline">{{ r.path }}</button>{% endif %}{% if r.recorded_as %}
-              <span class="vh-flag vh-flag-renamed" title="Recorded as {{ r.recorded_as }}, before a Re-generate rename">as {{ r.recorded_short }}</span>{% endif %}
+              <span class="vh-flag vh-flag-renamed" title="Recorded as {{ r.recorded_as }}, before a Modify config rename">as {{ r.recorded_short }}</span>{% endif %}
             </td>
             <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first' if r.is_first else r.op) }}</td>
             <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}{% if r.undone %} <span class="vh-flag">undone</span>{% endif %}{% if r.doubt %} <span class="vh-flag ph-doubt" title="{{ r.doubt[1] }}">{{ r.doubt[0] }}</span>{% endif %}</td>

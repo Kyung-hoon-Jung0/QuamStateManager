@@ -8081,7 +8081,7 @@ window.ChipTrends = (function () {
             // (and the hover mode bar) would hide it above
             return { x: m.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', xanchor: 'left',
                      xshift: 3, showarrow: false, text: 'renamed', font: { size: 11 },
-                     hovertext: 'Renamed in Re-generate: ' + m.words };
+                     hovertext: 'Renamed in Modify config: ' + m.words };
         });
     }
     /* v1.3.0 A3: a kept chart onto a new view window -- the axis range and
