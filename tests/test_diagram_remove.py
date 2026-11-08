@@ -245,3 +245,151 @@ class TestRoutes:
     def test_the_inspector_offers_remove(self, env):
         html = env["c"].get("/qubit/q2", headers={"HX-Request": "true"}).get_data(as_text=True)
         assert "data-cm-rm-open" in html and "/diagram-remove/panel?kind=qubit&id=q2" in html
+
+
+# ------------------------------------------------- review round (FB-10/11/12)
+
+class TestPreviewFlags:
+    def test_every_list_shortened_by_name_is_listed_and_a_pair_like_one_is_flagged(self):
+        _, _, m = _merged()
+        m = copy.deepcopy(m)
+        m["qubits"]["q5"]["partners"] = ["q2", "q7"]      # looks like a membership
+        plan = drm.plan_remove_qubit(m, "q2")
+        by = {c["path"]: c for c in plan["summary"]["silent"]}
+        assert by["active_qubit_names"]["check"] is False
+        assert by["qubits.q5.partners"]["check"] is True
+        assert "pair membership" in by["qubits.q5.partners"]["why"]
+
+    def test_a_key_named_like_the_id_among_other_keys_is_flagged(self):
+        _, _, m = _merged()
+        m = copy.deepcopy(m)
+        m["qubits"]["q5"]["table"] = {"q2": 1, "gain": 2}
+        plan = drm.plan_remove_qubit(m, "q2")
+        by = {c["path"]: c for c in plan["summary"]["silent"]}
+        assert by["qubits.q5.table.q2"]["what"] == "deleted key" and by["qubits.q5.table.q2"]["check"]
+
+    def test_an_extras_pointer_into_the_removed_qubit_is_listed_as_dangling(self):
+        _, _, m = _merged()
+        m = copy.deepcopy(m)
+        m["qubits"]["q5"]["extras"] = {"ref": "#/qubits/q2/xy"}
+        plan = drm.plan_remove_qubit(m, "q2")
+        assert plan["summary"]["extras_dangle"] == [
+            {"path": "qubits.q5.extras.ref", "pointer": "#/qubits/q2/xy"}]
+        assert not plan["blockers"]
+
+    def test_also_paths_join_the_deletes(self):
+        _, _, m = _merged()
+        q = "q5"
+        op = next(iter(m["qubits"][q]["xy"]["operations"]))
+        path = f"qubits.{q}.xy.operations.{op}"
+        plan = drm.plan_remove_qubit(m, "q2", [path, "qubits.nope"])
+        assert path in plan["deletes"] and plan["summary"]["also"] == [path]
+
+
+class TestPeak:
+    def test_constant_i_with_arbitrary_q_is_a_per_sample_hypot(self):
+        cfg = {"pulses": {"p": {"waveforms": {"I": "c", "Q": "a"}}},
+               "waveforms": {"c": {"type": "constant", "sample": 0.3},
+                             "a": {"type": "arbitrary", "samples": [0.0, 0.4, -0.1]}}}
+        assert dc.op_peak(cfg, "p") == pytest.approx(0.5)
+        cfg["pulses"]["p"]["waveforms"] = {"I": "a", "Q": "c"}
+        assert dc.op_peak(cfg, "p") == pytest.approx(0.5)
+
+    def test_a_shift_on_equal_full_scale_ports_is_not_blamed_on_full_scale(self):
+        cfg = _cfg(0, 0)
+        cfg["waveforms"]["w2"] = {"type": "constant", "sample": 0.05}
+        cfg["pulses"]["pN"] = {"waveforms": {"I": "w2", "Q": "z"}}
+        row = dc.readback(cfg, ["qN.xy"], template="qT", new="qN")[0]
+        assert row["shift_db"] == pytest.approx(20 * __import__("math").log10(0.5))
+        assert row["shift_fsp"] is False
+        assert dc.readback(_cfg(), ["qN.xy"], template="qT", new="qN")[0]["shift_fsp"] is True
+
+
+def _saved_bytes(store, folder):
+    from quam_state_manager.core.saver import Saver
+    folder.mkdir(parents=True, exist_ok=True)
+    Saver(store, backup_retention=0).save(folder)
+    return (folder / "state.json").read_bytes(), (folder / "wiring.json").read_bytes()
+
+
+class TestReviewRoutes:
+    @pytest.mark.parametrize("kind", ["qubit", "pair"])
+    def test_one_undo_gives_back_the_same_bytes(self, env, tmp_path, kind):
+        ent = "q2" if kind == "qubit" else next(iter(env["store"].merged["qubit_pairs"]))
+        before = _saved_bytes(env["store"], tmp_path / "a")
+        r = env["c"].post("/diagram-add/stage", data=_rm(env["c"], kind, ent, dry="0"))
+        assert r.status_code == 200, r.get_data(as_text=True)
+        # (no save in between: a save closes the change log)
+        assert ent not in env["store"].merged["qubits" if kind == "qubit" else "qubit_pairs"]
+        env["c"].post("/undo")
+        assert _saved_bytes(env["store"], tmp_path / "b") == before
+
+    def test_the_lab_check_sees_every_delete_and_its_refusal_offers_delete_together(
+            self, env, monkeypatch):
+        from quam_state_manager.web import routes as R
+        asked = {}
+
+        def refuse(store, writes, **kw):
+            asked["writes"] = list(writes)
+            if any(p.startswith("qubit_pairs.") and v is R._LAB_DELETE for p, v in writes) \
+                    and not any(p == "qubits.q5.extra_op" for p, _ in writes):
+                return ("your lab's code refused", [0])
+            return None
+        monkeypatch.setattr(R, "_lab_write_refusal", refuse)
+        monkeypatch.setattr(R, "_lab_delete_also", lambda s, d, i=None: ["qubits.q5.xy"])
+        plan = drm.plan_remove_qubit(env["store"].merged, "q2")
+        r = env["c"].post("/diagram-add/stage", data=_rm(env["c"], dry="0"))
+        assert r.status_code == 400
+        html = r.get_data(as_text=True)
+        assert "data-cm-rm-together" in html and "qubits.q5.xy" in html
+        dels = {p for p, v in asked["writes"] if v is R._LAB_DELETE}
+        assert dels == set(plan["deletes"])
+        assert not env["store"].change_log
+
+    def test_the_final_button_repeats_the_auto_sync_note(self, env):
+        html = env["c"].post("/diagram-add/check", data=_rm(env["c"])).get_data(as_text=True)
+        assert "data-cm-final-autosync" in html and "goes to the tray" in html
+
+    def test_a_removed_pairs_elements_left_in_the_config_are_named(self):
+        from quam_state_manager.web import diagram_remove_routes as DR
+        cfg = {"elements": {"q1.xy": {}, "coupler_q1-q2": {}, "q1-q2.cz": {}}}
+        plan = {"summary": {"op": "remove", "qubits": [], "pairs": ["q1-q2"]}}
+        assert DR._left(cfg, plan) == ["coupler_q1-q2", "q1-q2.cz"]
+
+    def test_the_verdict_key_names_the_env(self, env, monkeypatch):
+        from quam_state_manager.web import diagram_remove_routes as DR
+        plan = drm.plan_remove_qubit(env["store"].merged, "q2")
+        with env["app"].test_request_context():
+            k1 = DR.plan_key(env["store"], plan)
+            monkeypatch.setattr(DR, "env_python", lambda: "other")
+            assert DR.plan_key(env["store"], plan) != k1
+
+
+class TestWarmCheck:
+    def test_the_warm_worker_answers_and_cold_runs_only_without_it(self, monkeypatch):
+        from quam_state_manager.core import config_generator, lab_waveform
+        from quam_state_manager.web import diagram_remove_routes as DR
+        cold = []
+        monkeypatch.setattr(config_generator, "run_config_preview",
+                            lambda py, f, strict: cold.append(f) or
+                            {"ok": True, "result": {"config": {"elements": {"c": {}}}}})
+        seen = {}
+
+        def warm(py, folder):
+            seen["state"] = (Path(folder) / "state.json").read_text(encoding="utf-8")
+            return {"ok": True, "error": None, "config": {"elements": {"w": {}}}}
+        monkeypatch.setattr(lab_waveform, "warm_config", warm)
+        v = DR.run_env_check("py", {"qubits": {"q1": {}}}, {})
+        assert v["worker"] == "warm" and v["config"] == {"elements": {"w": {}}} and not cold
+        assert '"q1"' in seen["state"]
+        monkeypatch.setattr(lab_waveform, "warm_config", lambda py, f: None)
+        v = DR.run_env_check("py", {"qubits": {}}, {})
+        assert v["worker"] == "cold" and len(cold) == 1
+
+    def test_a_warm_failure_carries_the_envs_words(self, monkeypatch):
+        from quam_state_manager.core import lab_waveform
+        from quam_state_manager.web import diagram_remove_routes as DR
+        monkeypatch.setattr(lab_waveform, "warm_config",
+                            lambda py, f: {"ok": False, "error": "KeyError: 'xy'", "config": None})
+        v = DR.run_env_check("py", {}, {})
+        assert not v["ok"] and v["error"] == "KeyError: 'xy'" and v["worker"] == "warm"
