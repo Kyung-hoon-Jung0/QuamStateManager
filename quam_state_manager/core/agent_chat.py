@@ -227,6 +227,9 @@ class ChatSession:
                 "cwd": getattr(self.backend, "cwd", None), "model": getattr(self.backend, "model", None)}
 
 
+_END_GRACE_S = 5.0     # how long Start waits for an ended session's process to exit
+
+
 class ChatManager:
     def __init__(self, record: Callable[[dict], None], instance_path):
         self.record = record
@@ -242,6 +245,15 @@ class ChatManager:
               prompt: str | None, resume: str | None = None, display: str | None = None) -> dict:
         with self._lock:
             cur = self.sessions.get(chip)
+            if cur is not None and cur.ended and cur.alive():
+                # a session that was ENDED (Clear, End) closes its stdin and exits on its own a
+                # moment later; a Start in that gap is the user's next message, not a second driver
+                deadline = time.time() + _END_GRACE_S
+                while cur.alive() and time.time() < deadline:
+                    time.sleep(0.02)
+                if cur.alive():
+                    cur.stop(now=True)
+                    time.sleep(0.05)
             if cur is not None and cur.alive():
                 raise RuntimeError(f"a {cur.backend.name} session by {cur.owner} is already driving {display or chip}")
             s = ChatSession(chip, backend, owner=owner, mode=mode, until=until, record=self.record,

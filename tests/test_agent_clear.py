@@ -472,3 +472,29 @@ def test_agent_clear_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 40, r.stdout
+
+
+class TestStartRightAfterClear:
+    """A cleared session closes its stdin and its process exits a moment later. A message typed
+    in that gap is the user's next conversation, not a second driver on the chip."""
+
+    def test_a_start_in_the_exit_gap_waits_instead_of_refusing(self, c, monkeypatch):
+        from quam_state_manager.core import agent_chat
+
+        real_end = agent_chat.ChatSession.end
+
+        def slow_end(self):
+            # the same end, but the process only sees EOF 0.4 s later
+            with self._lock:
+                self.ended = time.time()
+                self.queue.clear()
+            proc = self.proc
+            import threading
+            threading.Timer(0.4, proc.close_stdin).start()
+
+        monkeypatch.setattr(agent_chat.ChatSession, "end", slow_end)
+        _talk(c, "one")
+        assert c.post("/api/agent/chat/clear", json={"keep": 1}).get_json()["ended"] is True
+        r = c.post("/api/agent/chat/start", json={"prompt": "two"})
+        assert r.status_code == 200, r.get_json()
+        assert real_end is not None
