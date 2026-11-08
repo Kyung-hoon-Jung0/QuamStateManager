@@ -83,7 +83,7 @@ def test_grouping_reaches_every_level():
     rows = [Finding("info", "pointer_optional_default", f"qubits.q{i}.x", f"q{i} x is a default")
             for i in range(3)]
     rows += [Finding("error", "waveform_range", f"qubits.q{i}.amp", f"sample {i}.5 > 1") for i in range(2)]
-    groups = diag.finding_groups(rows)
+    groups = diag.finding_groups(rows, ids={"q0", "q1", "q2"})
     assert sorted(len(g["items"]) for g in groups) == [2, 3]
 
 
@@ -213,7 +213,8 @@ def test_every_warning_check_renders_the_ack_control(loaded):
     cats = _warning_categories()
     assert len(cats) >= 20, cats
     from flask import render_template
-    rows = [Finding("warning", c, f"qubits.q1.f_01", f"{c} says something {i}") for i, c in enumerate(cats)]
+    rows = [Finding("warning", c, f"qubits.q1.f_01", f"{c} says something {i}",
+                    jump_path="qubits.q1.f_01") for i, c in enumerate(cats)]
     diag_ack.stamp(rows, str(loaded["inst"]), "enum", loaded["store"])
     with loaded["app"].test_request_context():
         html = render_template("_diagnostics_list.html", findings=rows,

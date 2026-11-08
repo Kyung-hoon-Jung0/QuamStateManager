@@ -35,23 +35,67 @@ def _file(instance_path: str | os.PathLike, chip_key: str) -> Path:
     return Path(instance_path) / "diag_acks" / f"{safe}.json"
 
 
-def load(instance_path, chip_key: str) -> dict:
-    """``{identity: {"fp": str, "at": float, "message": str}}``; empty on any read error."""
+def _read(instance_path, chip_key: str) -> dict:
     try:
         data = json.loads(_file(instance_path, chip_key).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    acks = data.get("acks") if isinstance(data, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
+def load(instance_path, chip_key: str) -> dict:
+    """``{identity: {"fp": str, "at": float, "message": str, "paths": [...]}}``;
+    empty on any read error."""
+    acks = _read(instance_path, chip_key).get("acks")
     return acks if isinstance(acks, dict) else {}
 
 
-def _save(instance_path, chip_key: str, acks: dict) -> None:
+def pruned_count(instance_path, chip_key: str) -> int:
+    """How many records were dropped because their place left the chip."""
+    n = _read(instance_path, chip_key).get("pruned")
+    return n if isinstance(n, int) else 0
+
+
+def _place_gone(rec: dict, store) -> bool:
+    """True only when every chip path the record was about is missing now.
+    A record with no chip paths (a generated-config or report finding) is
+    never judged gone here."""
+    paths = rec.get("paths") if isinstance(rec, dict) else None
+    if store is None or not isinstance(paths, list) or not paths:
+        return False
+    for path in paths:
+        try:
+            store.get_value(path)
+            return False
+        except Exception:  # noqa: BLE001 -- missing
+            continue
+    return True
+
+
+def prune(instance_path, chip_key: str, store) -> int:
+    """Drop acknowledgements whose place no longer exists on the chip; keep
+    only a count of them (a tombstone), never their content."""
+    with _LOCK:
+        data = _read(instance_path, chip_key)
+        acks = data.get("acks") if isinstance(data.get("acks"), dict) else {}
+        gone = [k for k, rec in acks.items() if _place_gone(rec, store)]
+        if not gone:
+            return 0
+        for k in gone:
+            acks.pop(k, None)
+        _save(instance_path, chip_key, acks, pruned=pruned_count(instance_path, chip_key) + len(gone))
+        return len(gone)
+
+
+def _save(instance_path, chip_key: str, acks: dict, pruned: int | None = None) -> None:
     path = _file(instance_path, chip_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".diag_ack_", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"version": 1, "acks": acks}, fh, indent=1, sort_keys=True)
+            if pruned is None:
+                pruned = pruned_count(instance_path, chip_key)
+            json.dump({"version": 1, "acks": acks, "pruned": pruned}, fh, indent=1, sort_keys=True)
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -76,26 +120,46 @@ def _fix_paths(finding) -> list[str]:
     return out
 
 
+def value_paths(finding) -> list[str]:
+    """The chip leaves the check read: its field, its fixes' targets and any
+    ``value_paths`` the check declared."""
+    return sorted({p for p in [finding.jump_path, *_fix_paths(finding),
+                               *(getattr(finding, "value_paths", None) or [])] if p})
+
+
+def has_value_source(finding) -> bool:
+    """A value change can bring this finding back: it names chip leaves or
+    carries the non-chip inputs it read (``values``)."""
+    return bool(value_paths(finding)) or getattr(finding, "values", None) is not None
+
+
 def fingerprint(finding, store=None) -> str:
     """The values the finding was about. Changes whenever any of them changes."""
     values: list[Any] = []
-    paths = sorted({p for p in [finding.jump_path, *_fix_paths(finding)] if p})
+    paths = value_paths(finding)
     for path in paths:
         try:
             value = store.get_value(path) if store is not None else None
         except Exception:  # noqa: BLE001 -- a missing path is a value too
             value = "<missing>"
         values.append([path, value])
-    raw = json.dumps([finding.message, finding.detail, values], sort_keys=True, default=str)
+    raw = json.dumps([finding.message, finding.detail, values, getattr(finding, "values", None)],
+                     sort_keys=True, default=str)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
 def ackable(finding) -> bool:
-    return finding.severity in ACKABLE_SEVERITIES and not getattr(finding, "ack_key", "")
+    return (finding.severity in ACKABLE_SEVERITIES and not getattr(finding, "ack_key", "")
+            and has_value_source(finding))
 
 
 def stamp(findings: Iterable, instance_path, chip_key: str | None, store=None) -> None:
     """Give every ackable finding its ``vack_key`` and mark the acknowledged ones."""
+    if chip_key and store is not None:
+        try:
+            prune(instance_path, chip_key, store)
+        except OSError:
+            pass
     acks = load(instance_path, chip_key) if chip_key else {}
     for f in findings:
         if not ackable(f):
@@ -119,6 +183,7 @@ def acknowledge(instance_path, chip_key: str, findings: Iterable, keys: Iterable
             if key in wanted:
                 acks[key] = {"fp": fingerprint(f, store), "at": time.time(),
                              "category": f.category, "location": f.location,
+                             "paths": value_paths(f),
                              "message": f.message[:300]}
                 n += 1
         if n:

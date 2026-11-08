@@ -50139,6 +50139,15 @@ def env_ack_save():
     kind = (request.form.get("kind") or "").strip()
     if not kind:
         return jsonify(ok=False, error="kind required"), 400
+    # D-3: an error is never acknowledgeable -- it breaks a run
+    key = _ea.finding_key(kind, (request.form.get("class_path") or "").strip() or None,
+                          (request.form.get("field") or "").strip() or None,
+                          (request.form.get("code") or "").strip() or None)
+    for f in (_env_schema_findings(store) or []):
+        if getattr(f, "ack_key", "") == key and f.severity == "error":
+            return jsonify(ok=False, error_kind="error_not_ackable", error=(
+                "Errors cannot be acknowledged: this one breaks a run. Fix the value "
+                "or the environment instead.")), 409
     try:
         rec = _ea.acknowledge(
             current_app.instance_path, env_key, kind=kind,
@@ -50190,7 +50199,8 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
     if _env_upgrade_owns_schema(_active_ctx()):
         env = [diagnostics.Finding("warning", "env_upgrade_schema", "Environment change report",
                                    ENV_UPGRADE_DEFERRED,
-                                   detail="See the Environment match card for evidence and limits.")]
+                                   detail="See the Environment match card for evidence and limits.",
+                                   values=ENV_UPGRADE_DEFERRED)]
     findings = findings + env + _hub_ledger_findings(store)
     upgrade_report = ((_active_ctx() or {}).get("env_upgrade_report") or {})
     for number in (1, 5, 6):
@@ -50199,7 +50209,8 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
             findings.append(diagnostics.Finding(
                 "info" if number == 1 else "warning", f"env_upgrade_{number}",
                 "Environment change report", case.get("message") or "change found",
-                detail="See the Environment match card for evidence and limits."))
+                detail="See the Environment match card for evidence and limits.",
+                values=case))
     # copies: the linters memoize their Finding objects, and the stamps below
     # (Go-to-field path, acknowledgement) must never leak into that cache
     import dataclasses as _dc
@@ -50212,6 +50223,18 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
         logger.warning("diagnostics: reading acknowledgements failed", exc_info=True)
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
+
+
+def diag_groups_for_active_chip(rows):
+    """Jinja ``diag_groups``: group findings, blanking THIS chip's entity ids."""
+    ids = None
+    try:
+        store = _store()
+        if store is not None:
+            ids = diagnostics.entity_ids(store.merged)
+    except Exception:  # noqa: BLE001 -- outside a request: numbers only
+        ids = None
+    return diagnostics.finding_groups(rows, ids)
 
 
 def _diag_ack_chip() -> str | None:
@@ -50258,7 +50281,8 @@ def _hub_ledger_findings(store: QuamStore) -> list:
     return [diagnostics.Finding(
         severity="warning", category="history_ledger", location="Change history",
         message=f"{len(errs)} recorded write(s) could not be added to the change history",
-        detail="; ".join(errs[:5]) + (f" (+{len(errs) - 5} more)" if len(errs) > 5 else ""))]
+        detail="; ".join(errs[:5]) + (f" (+{len(errs) - 5} more)" if len(errs) > 5 else ""),
+        values=list(errs))]
 
 
 def _env_card_state(store: QuamStore) -> dict:
@@ -50648,6 +50672,19 @@ def diagnostics_apply_fix():
         if not isinstance(item, dict):
             return jsonify(ok=False, error="each item must be an object"), 400
         clean.append({k: str(item.get(k) or "").strip() for k in ("action", "dot_path", "pointer", "value")})
+    # One target, one wanted value: identical items are one write; two items
+    # wanting different values for one path are refused before anything moves.
+    wanted: dict = {}
+    for item in clean:
+        want = (item["action"], item["pointer"] if item["action"] == "set_pointer" else item["value"])
+        prev = wanted.setdefault(item["dot_path"], want)
+        if prev != want:
+            return jsonify(ok=False, error_kind="conflicting_values", error=(
+                f"{item['dot_path']} would be set to two different values in one press; "
+                "nothing was changed. Apply the items one by one.")), 400
+    _seen_paths: set = set()
+    clean = [it for it in clean
+             if not (it["dot_path"] in _seen_paths or _seen_paths.add(it["dot_path"]))]
     # Never trust the render-time form: re-run the linters on the CURRENT store
     # and require a live finding offering EXACTLY each fix. This one check
     # enforces chip identity, current values and current wiring pairing.
@@ -50710,7 +50747,8 @@ def diagnostics_ack():
     if store is None or not chip:
         return jsonify(ok=False, error="No state loaded"), 400
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or not isinstance(body.get("keys"), list)             or not all(isinstance(k, str) and k for k in body["keys"]) or not body["keys"]:
+    keys = body.get("keys") if isinstance(body, dict) else None
+    if not isinstance(keys, list) or not keys or not all(isinstance(k, str) and k for k in keys):
         return jsonify(ok=False, error="'keys' must be a non-empty list of strings"), 400
     if body.get("revoke"):
         n = _da.revoke(current_app.instance_path, chip, body["keys"])

@@ -26092,22 +26092,24 @@ document.addEventListener('click', function(evt) {
         if (v === null || v === undefined) return "(none)";
         return String(v);
     }
-    function _diagLanded(d) {
+    function _diagLanded(d, warns) {
         var ch = (d && d.changed) || [];
         var where = _diagAutoSyncOn() ? "Written to the chip now (Auto-Sync on)" : "Added to pending edits";
         var what = ch.length === 1
             ? ch[0].path + ": " + _diagFmt(ch[0].old) + " → " + _diagFmt(ch[0].new)
             : ch.length + " values changed";
-        if (window.showToast) window.showToast(where + " — " + what + ". Ctrl+Z undoes it.", "info");
+        // MAJOR 2: a fix that moves the drive LO says so after the press too
+        var also = warns ? " — this " + warns : "";
+        if (window.showToast) window.showToast(where + " — " + what + also + ". Ctrl+Z undoes it.", warns ? "warning" : "info");
         var host = document.getElementById("diag-fix-landed");
-        if (host) { host.hidden = false; host.textContent = where + ": " + what + ". Ctrl+Z undoes it."; }
+        if (host) { host.hidden = false; host.textContent = where + ": " + what + also + ". Ctrl+Z undoes it."; }
     }
-    function _diagAfterFix(d) {
+    function _diagAfterFix(d, warns) {
         if (d.tray_html && window._swapPendingTray) {
             window._swapPendingTray(d.tray_html);
             if (window._restoreTrayState) window._restoreTrayState();
         }
-        _diagLanded(d);
+        _diagLanded(d, warns);
         // QA F-S: the #diag-findings slot re-fetches itself on diagnostics-changed
         if (window._diagChanged) window._diagChanged();
         if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
@@ -26120,7 +26122,7 @@ document.addEventListener('click', function(evt) {
         return fetch(url, init)
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d && d.ok) { _diagAfterFix(d); return; }
+                if (d && d.ok) { _diagAfterFix(d, btn.getAttribute("data-warns") || ""); return; }
                 _diagFocusAnchor = null;
                 btn.disabled = false; btn.textContent = orig;
                 if (window.showToast) window.showToast((d && d.error) || "The fix was refused", "warning");
@@ -27469,12 +27471,19 @@ document.addEventListener('click', function(evt) {
     // on a #table-pane swap -- Instrument Wiring's dot stayed red after the
     // collision was fixed. Same trailing pause the pill uses.
     var _diagDotsTimer = null;
-    document.addEventListener('diagnostics-changed', function () {
-        if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
-        _diagDotsTimer = setTimeout(function () {
-            _diagDotsTimer = null;
-            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
-        }, 500);
+    // MINOR 10: an undo/redo, a sync pull and another window's change move
+    // the findings too, so they repaint the dots the same way.
+    var DIAG_DOT_EVENTS = ['diagnostics-changed', 'cellsReverted', 'stateRestored',
+                           'liveDriftChanged', 'quam:state-changed'];
+    window._DIAG_DOT_EVENTS = DIAG_DOT_EVENTS;
+    DIAG_DOT_EVENTS.forEach(function (name) {
+        document.addEventListener(name, function () {
+            if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
+            _diagDotsTimer = setTimeout(function () {
+                _diagDotsTimer = null;
+                if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+            }, 500);
+        });
     });
     // Once on first full-page load so the dots + filter show immediately.
     function _diagInitOnLoad() {

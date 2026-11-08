@@ -798,7 +798,9 @@ def unacknowledged_rows(rows: list, acknowledged: dict | None, env_label: str = 
     kept: list = []
     n_acked = 0
     for rec in rows or []:
-        if is_acknowledged(rec, acknowledged, env_label, probing=probing):
+        # D-3: an acknowledged ERROR still counts
+        if rec.get("severity") != "error" and is_acknowledged(
+                rec, acknowledged, env_label, probing=probing):
             n_acked += 1
             continue
         kept.append({**rec, "ack_key": _ack_key(rec),
@@ -843,7 +845,8 @@ def to_diag_findings(analysis: dict, env_label: str = "", *,
         # the other. `applies` then checks the finding still SAYS what was
         # acknowledged; a changed detail lapses it.
         ack_key = _ack_key(rec)
-        ack = (acknowledged or {}).get(ack_key)
+        # D-3: an error never takes an acknowledgement, even a stored one
+        ack = None if sev == "error" else (acknowledged or {}).get(ack_key)
         if ack is not None:
             from quam_state_manager.core import env_ack as _ea
             # Compare the COMPOSED sentence -- the one the client stored

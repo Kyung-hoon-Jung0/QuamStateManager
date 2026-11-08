@@ -63,8 +63,11 @@
     <button type="button" class="btn-sm outline diag-fix"
             data-action="{{ fx.action }}" data-dot-path="{{ fx.dot_path }}"
             data-pointer="{{ fx.pointer or '' }}" data-value="{{ fx.value or '' }}"
-            title="{{ fx.title or ('Set ' ~ fx.dot_path) }}"
+            {% if fx.warns %}data-warns="{{ fx.warns }}" {% endif %}title="{{ fx.title or ('Set ' ~ fx.dot_path) }}"
             onclick="applyDiagFix(this)">{{ fx.label or 'Convert to pointer' }}</button>
+    {%- if fx.warns %}
+    <div class="diag-fix-warns ui-diag-msg muted" role="note">{{ fx.warns }}</div>
+    {%- endif %}
     {%- elif fx.action == 'fill_gate_ids' %}
     <button type="button" class="btn-sm outline diag-fix"
             data-action="fill_gate_ids" data-edits='{{ fx.edits | tojson }}'
@@ -102,7 +105,7 @@
         {% if f.acknowledged %}
         <button type="button" class="btn-sm outline diag-ack-revoke" data-ack-key="{{ f.ack_key }}"
                 title="Count this as an issue again" onclick="envAckRevoke(this)">Un-acknowledge</button>
-        {% else %}
+        {% elif f.severity != 'error' %}{# D-3: no acknowledgement on an error #}
         <button type="button" class="btn-sm outline diag-ack" data-ack-key="{{ f.ack_key }}" data-detail="{{ f.detail }}"
                 title="Tell SM this is expected in this environment. The finding stays listed and keeps its severity — it stops raising the alarm."
                 onclick="envAck(this)">This is correct</button>
@@ -167,7 +170,11 @@
               {% if allow_fix %}{% for k in g.bulk %}
               <button type="button" class="btn-sm outline diag-fix-all" data-items='{{ k['items'] | tojson }}'
                       title="{{ k.title }} One Ctrl+Z undoes all {{ k['items'] | length }}."
-                      onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}</button>
+                      {% if k.warns %}data-warns="changes the drive LO of the output{{ 's' if k['items'] | length != 1 }} -- also moves: {{ (k.moves or []) | join(', ') or 'nothing else reads it' }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} -- changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
+              {% if k.warns %}<div class="diag-fix-warns ui-diag-msg muted" role="note">changes the drive LO of {{ k['items'] | map(attribute='dot_path') | map('replace', '.upconverter_frequency', '') | join(', ') }} -- also moves: {{ (k.moves or []) | join(', ') or 'nothing else reads it' }}</div>{% endif %}
+              {% endfor %}
+              {% for k in g.bulk_refused %}
+              <div class="diag-fix-refused ui-diag-msg muted" role="note">No &ldquo;Set all&rdquo; for {{ k.group_label }}: {{ k.why }}.</div>
               {% endfor %}{% endif %}
               {% if g.ack_keys and g.severity != 'error' %}
               <button type="button" class="btn-sm outline secondary diag-vack diag-vack-group" data-vack-keys='{{ g.ack_keys | tojson }}'
