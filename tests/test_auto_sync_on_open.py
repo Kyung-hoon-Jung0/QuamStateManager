@@ -105,8 +105,9 @@ class TestGatesStillRefuse:
                 assert routes_mod._maybe_auto_arm_on_open(ctx) is False
         assert not ctx.get("auto_apply")
 
-    def _gate(self, world, **flags):
-        _open(world)
+    def _gate(self, world, _keep_open=False, **flags):
+        if not _keep_open:
+            _open(world)
         with world["app"].app_context():
             ctx = routes_mod._active_ctx()
         ctx.pop("auto_apply", None)
@@ -118,8 +119,37 @@ class TestGatesStillRefuse:
     def test_read_only(self, world):
         self._gate(world, live_readonly_hint=True)
 
-    def test_diverged(self, world):
-        self._gate(world, live_diverged=True)
+    def test_diverged_with_local_edits(self, world):
+        _open(world)
+        assert world["client"].post("/field/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "5.2e9"}).status_code == 200
+        self._gate(world, live_diverged=True, _keep_open=True)
+
+    def test_diverged_with_saved_unapplied_work(self, world):
+        self._gate(world, live_diverged=True, working_dirty=True)
+
+    def test_diverged_read_only(self, world):
+        self._gate(world, live_diverged=True, live_readonly_hint=True)
+
+
+class TestArmsOverDriftWhileClosed:
+    def test_live_changed_while_closed_arms_and_takes_live(self, world):
+        _open(world)
+        _write_chip(world["live"], f01=5.3e9)        # a node saved while SM was off
+        world["app"], world["client"] = world["new_app"]()
+        _open(world)
+        with world["app"].app_context():
+            ctx = routes_mod._active_ctx()
+        assert ctx.get("live_diverged")
+        s = _sess(world)
+        assert s and s["push"] and s["pull"] and not s["pull_replace"]
+        r = world["client"].post("/auto-sync/pull")
+        assert r.status_code == 200, r.data[:300]
+        with world["app"].app_context():
+            ctx = routes_mod._active_ctx()
+            assert ctx["store"].state["qubits"]["qA1"]["f_01"] == pytest.approx(5.3e9)
+            assert not ctx.get("live_diverged")
+        assert _sess(world)["push"]
 
     def test_foreign_window_on_the_same_chip(self, world, monkeypatch):
         from quam_state_manager.core import instances

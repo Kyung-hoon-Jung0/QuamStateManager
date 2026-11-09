@@ -32015,6 +32015,23 @@ def _auto_sync_foreign_window(ctx: dict) -> bool:
         return True
 
 
+def _open_drift_is_lossless(ctx: dict) -> bool:
+    """True when push is refused ONLY because live drifted and the working
+    copy holds nothing a pull could discard (no edits, no staged or saved
+    work, content equal to the last sync point)."""
+    if not ctx.get("live_diverged") or ctx.get("live_readonly_hint"):
+        return False
+    store = ctx.get("store")
+    if store is None:
+        return False
+    try:
+        if _capture_change_log_as_updates(store):
+            return False
+        return _working_at_sync_point(ctx, store, log_was_empty=True) is None
+    except Exception:  # noqa: BLE001 -- unknown means "let the person choose"
+        return False
+
+
 def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
     """Arm Auto-Sync (take live keeping edits + push) for a chip a PERSON just
     opened. Called only from the user-facing open routes; the scheduler, the
@@ -32030,6 +32047,11 @@ def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
             return False
         push_ok, _ = _auto_apply_armable(ctx)
         pull_ok, _ = _auto_pull_armable(ctx)
+        if not push_ok and pull_ok and _open_drift_is_lossless(ctx):
+            # Live moved while SM was closed and this chip holds no local
+            # work: the armed pull takes live (nothing is lost), which clears
+            # the drift, so arming here is not a trap.
+            push_ok = True
         if not (push_ok and pull_ok):
             return False                    # the pill shows off with its reason
         if _auto_sync_foreign_window(ctx):
