@@ -823,11 +823,16 @@ def simulate(qmm, duration_ns=None):
 def saas_qmm(client, version=None):
     """Start a QM-SaaS simulator matching CONFIG's FEMs; returns (instance, qmm)."""
     from qm_saas import ClusterConfig
+    # QM-SaaS (QOP > 3.3) takes ONE controller; its FEM layout applies to
+    # every controller in the cluster, so declare the union of all slots.
     cluster = ClusterConfig()
-    for cname, con in CONFIG["controllers"].items():
-        ctl = cluster.controller()
+    ctl = cluster.controller()
+    slots = {{}}
+    for con in CONFIG["controllers"].values():
         for slot, fem in (con.get("fems") or {{}}).items():
-            (ctl.mw_fems if fem.get("type") == "MW" else ctl.lf_fems)(int(slot))
+            slots.setdefault(int(slot), fem.get("type"))
+    for slot, kind in sorted(slots.items()):
+        (ctl.mw_fems if kind == "MW" else ctl.lf_fems)(slot)
     inst = client.simulator(version or client.latest_version(), cluster)
     inst.spawn()
     if hasattr(type(inst), "qmm_connection_params"):

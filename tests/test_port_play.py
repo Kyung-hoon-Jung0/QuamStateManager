@@ -183,3 +183,47 @@ def test_jsdom():
     result = subprocess.run(['node', str(ROOT / 'tests/port_play_selfcheck.cjs')],
                             capture_output=True, text=True, env=env, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_saas_cluster_declares_one_controller_with_every_fem_slot():
+    """QM-SaaS above QOP 3.3 refuses a cluster with more than one controller
+    (HTTP 400, found by a real SaaS run of a 3-chassis Port play)."""
+    import ast, types
+    spec = {"instruments": {"controllers": [
+        {"con": c, "fems": [{"slot": 1, "fem": "mw"}, {"slot": 2, "fem": "lf"}, {"slot": 3, "fem": "lf"}]}
+        for c in (1, 2, 3)]}}
+    cfg, plan = pt.build_wizard_dc(spec, ["con2", 3, 5], 0.0123)
+    tree = ast.parse(pt.render_script(cfg, plan))
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "saas_qmm")
+    calls = {"controller": 0, "mw": [], "lf": []}
+
+    class Ctl:
+        def mw_fems(self, *s): calls["mw"].extend(s)
+        def lf_fems(self, *s): calls["lf"].extend(s)
+
+    class Cluster:
+        def controller(self):
+            calls["controller"] += 1
+            return Ctl()
+
+    class Inst:
+        qmm_connection_params = {}
+        def spawn(self): pass
+
+    class Client:
+        def latest_version(self): return "v"
+        def simulator(self, v, c): return Inst()
+
+    fake = types.ModuleType("qm_saas"); fake.ClusterConfig = Cluster
+    ns = {"CONFIG": cfg, "QuantumMachinesManager": lambda **k: None}
+    sys.modules["qm_saas"], saved = fake, sys.modules.get("qm_saas")
+    try:
+        exec(compile(ast.Module([fn], []), "saas", "exec"), ns)
+        ns["saas_qmm"](Client())
+    finally:
+        if saved is None:
+            sys.modules.pop("qm_saas", None)
+        else:
+            sys.modules["qm_saas"] = saved
+    assert calls["controller"] == 1
+    assert sorted(calls["mw"]) == [1] and sorted(calls["lf"]) == [2, 3]
