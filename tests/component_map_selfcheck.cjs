@@ -173,7 +173,7 @@ function checkRenderLayout() {
   { const byPair = {};
     mBig.querySelectorAll('.cm-role').forEach(g => (byPair[g.getAttribute('data-cm-pair')] ||= []).push(+g.querySelector('rect').getAttribute('width')));
     ok(new Set(Object.values(byPair).flat()).size === 1, 'pairpill: every pill on a map has one width');
-    ok(/\.cm-hl-pairs \.cm-res, \.cm-hl-qubits \.cm-res,\s*\.cm-hl-pairs \.cm-feed, \.cm-hl-qubits \.cm-feed,\s*\.cm-hl-pairs \.cm-flux, \.cm-hl-qubits \.cm-flux \{ display: none; \}/.test(read('style.css')), 'pairpill: off-centre readout ring hidden on pair/qubit maps'); }
+    ok(/\.cm-dir\.cm-hl-pairs \.cm-res, \.cm-dir\.cm-hl-qubits \.cm-res,\s*\.cm-dir\.cm-hl-pairs \.cm-feed, \.cm-dir\.cm-hl-qubits \.cm-feed,\s*\.cm-dir\.cm-hl-pairs \.cm-flux, \.cm-dir\.cm-hl-qubits \.cm-flux \{ display: none; \}/.test(read('ui-kit.css')), 'pairpill: off-centre readout ring hidden on pair/qubit maps'); }
   for (const map of [m, mBig]) {
     ok(Array.from(map.querySelectorAll('.cm-role-txt')).every(t=>
       +t.getAttribute('font-size') >= 9 && +t.getAttribute('font-size') > heroFont),

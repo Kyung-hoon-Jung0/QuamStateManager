@@ -857,6 +857,12 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
  * a scoped --ui-map-* variable set on the map itself.
  */
 /* Pairs / component map (D-94, D-98): arrow = control -> target, label along the edge */
+/* pairpill: the off-centre readout ring (NE), the feedline bus and the
+   flux stub under each stone made the pair and qubit maps read as tilted;
+   each is shown on its own page, where it is the subject. */
+.cm-dir.cm-hl-pairs .cm-res, .cm-dir.cm-hl-qubits .cm-res,
+.cm-dir.cm-hl-pairs .cm-feed, .cm-dir.cm-hl-qubits .cm-feed,
+.cm-dir.cm-hl-pairs .cm-flux, .cm-dir.cm-hl-qubits .cm-flux { display: none; }
 .cm-dir .cm-label-plate { fill: var(--ui-surface-1); }
 .cm-dir .cm-pair-label.cm-dir-label {
     opacity: 1; font-weight: var(--ui-fw); fill: var(--ui-text);

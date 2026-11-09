@@ -4648,12 +4648,6 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-hl-qubits .cm-stone { stroke: var(--pico-primary); stroke-width: 2.2; }
 
 .cm-hl-pairs .cm-res, .cm-hl-pairs .cm-flux, .cm-hl-pairs .cm-feed { opacity: .22; }
-/* pairpill: the off-centre readout ring (NE), the feedline bus and the
-   flux stub under each stone made the pair and qubit maps read as tilted;
-   each is shown on its own page, where it is the subject. */
-.cm-hl-pairs .cm-res, .cm-hl-qubits .cm-res,
-.cm-hl-pairs .cm-feed, .cm-hl-qubits .cm-feed,
-.cm-hl-pairs .cm-flux, .cm-hl-qubits .cm-flux { display: none; }
 /* P1-11: the qubits stay readable under the pairs highlight (they were .5,
    near invisible in both themes) and the pair ids are written on the map */
 .cm-hl-pairs .cm-stone { opacity: .8; }

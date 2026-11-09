@@ -485,7 +485,8 @@ window.TopoGraph = (function () {
         // Size the pill to the room on its half of the edge: it clears the
         // stone and the midpoint (coupler ring or a short exposed line), and
         // only shrinks (never below the floor) where that room is short.
-        var room = len / 2 - radius - 2 - (e.has_coupler ? couplerR(radius) + 2 : 8);
+        var gap = opts.stoneGap || 2;
+        var room = len / 2 - radius - gap - (e.has_coupler ? couplerR(radius) + 2 : 8);
         var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, w, he, reach;
         for (;;) {
           w = mapChars * fe * 0.52 + fe * 0.6; he = fe + 5;
@@ -493,7 +494,7 @@ window.TopoGraph = (function () {
           if (2 * reach <= room || fe <= minF) break;
           fe = Math.max(minF, fe - 0.5);
         }
-        var inset = radius + 2 + reach;
+        var inset = radius + gap + reach;   // clear of the stone outline
         var x = end[1].x + ux * end[2] * inset, y = end[1].y + uy * end[2] * inset;
         svg += '<g class="cm-role cm-role-' + end[0].toLowerCase() + '" data-cm-pair="' + esc(key)
           + '" data-cm-at="' + esc(end[3]) + '"><rect class="cm-role-dot" x="' + (x - w / 2)
@@ -947,7 +948,7 @@ window.TopoGraph = (function () {
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
     var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
-      roleFontSize: Math.max(11, CELL * 0.11), roleMinFont: 9 });
+      roleFontSize: Math.max(11, CELL * 0.11), roleMinFont: 9, stoneGap: 5 });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
