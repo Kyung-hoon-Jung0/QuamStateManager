@@ -57,7 +57,8 @@ function world(theme) {
                 set(t) { doc = t; o.onChange && o.onChange(t); },
                 setDark(v) { ed.dark = v; },
                 setDiagnostics(d) { ed.diags = d; },
-                focus() { ed.focused++; },
+                focus() { ed.focused++; ed.lastCall = 'focus'; },
+                openSearch() { ed.searchOpened = (ed.searchOpened || 0) + 1; ed.lastCall = 'openSearch'; },
                 destroy() { ed.destroyed = true; },
                 view: { state: { doc: { lines: 99, line: (n) => ({ from: n * 10 }) } }, dispatch(t) { ed.sel = t.selection.anchor; } },
             };
@@ -97,6 +98,8 @@ function key(w, target, k, mods) {
         ok(p && p.nextElementSibling.id === 'explorer-tree-state', 'panel above the tree');
         ok(eds[0].getDoc() === SOURCE.text, 'editor holds the subtree text');
         ok(eds[0].dark === true, 'dark page -> dark editor');
+        ok(eds[0].searchOpened === 1, 'find panel opened by default');
+        ok(eds[0].lastCall === 'focus', 'focus returns to the text after the find panel opens');
         w.document.documentElement.setAttribute('data-theme', 'light');
         await settle();
         ok(eds[0].dark === false, 'theme change follows');
