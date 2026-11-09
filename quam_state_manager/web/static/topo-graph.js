@@ -456,7 +456,10 @@ window.TopoGraph = (function () {
         // Every pill keeps the same slots: role, moving (M or a faint
         // middle dot) and, when the frequencies are ordered, H/L. Dense
         // 'C M H' beside sparse 'T L' read as a leaning (cafe-wall) grid.
-        var text = r[0] + ' ' + (e.moving_qubit === r[1] ? 'M' : '\u00b7');
+        // The dot means "the other end moves"; with no known mover there
+        // is no M slot at all.
+        var known = e.moving_qubit === 'control' || e.moving_qubit === 'target';
+        var text = r[0] + (known ? ' ' + (e.moving_qubit === r[1] ? 'M' : '\u00b7') : '');
         if (ordered) text += ' ' + ((r[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
         return text;
       });
@@ -504,7 +507,7 @@ window.TopoGraph = (function () {
           + '" y="' + (y - he / 2) + '" width="' + w + '" height="' + he + '" rx="' + he / 2 + '"/>'
           + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fe
           + '" text-anchor="middle" dominant-baseline="central">'
-          + text.replace('\u00b7', '<tspan class="cm-dir-gap">\u00b7</tspan>') + '</text></g>';
+          + text.split('\u00b7').join('<tspan class="cm-dir-gap" aria-hidden="true">\u00b7</tspan>') + '</text></g>';
       });
     });
     return svg;

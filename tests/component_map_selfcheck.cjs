@@ -104,7 +104,7 @@ function checkRenderLayout() {
   // drawn is a number. Values still live in the table beside the map.
   const texts = m.querySelectorAll('svg text');
   const idSet = { qA1: 1, qA2: 1, qA3: 1 };
-  const roleSet = { 'C M': 1, 'T M': 1, 'C \u00b7': 1, 'T \u00b7': 1, 'C M H': 1, 'C M L': 1, 'T M H': 1, 'T M L': 1, 'C \u00b7 H': 1, 'C \u00b7 L': 1, 'T \u00b7 H': 1, 'T \u00b7 L': 1 };
+  const roleSet = { 'C': 1, 'T': 1, 'C H': 1, 'C L': 1, 'T H': 1, 'T L': 1, 'C M': 1, 'T M': 1, 'C \u00b7': 1, 'T \u00b7': 1, 'C M H': 1, 'C M L': 1, 'T M H': 1, 'T M L': 1, 'C \u00b7 H': 1, 'C \u00b7 L': 1, 'T \u00b7 H': 1, 'T \u00b7 L': 1 };
   // P1-11 (UX round): each pair edge carries its pair id -- an id, like the
   // qubit ids, never a value (the Pairs page named pairs only in a hover title)
   const pairSet = { 'qA2-qA1': 1, 'qA1-qA3': 1 };
@@ -222,6 +222,8 @@ function checkRenderLayout() {
     draw(5.1e9,5e9,528);
     ok(host.querySelector('text').getAttribute('font-size') === size && +size <= 8, 'D4: pill font capped for large cells');
     ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:'target'}) === 'C \u00b7 H|T M L', 'D2: target moving role stays at target');
+    ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:null}) === 'C H|T L', 'no known mover: no M slot and no dot');
+    draw(5.1e9,5e9,132,edge); ok(/class="cm-dir-gap" aria-hidden="true"/.test(host.innerHTML), 'dot tspan carries aria-hidden');
     draw(5.1e9,5e9,132,{...edge,target:'c'});
     const t = host.querySelector('text');
     ok(+t.getAttribute('x') === 0 && +t.getAttribute('y') > 37, 'D2: vertical pill on line outside stone');
