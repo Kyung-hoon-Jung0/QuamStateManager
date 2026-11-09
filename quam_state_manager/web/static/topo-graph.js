@@ -442,6 +442,7 @@ window.TopoGraph = (function () {
 
   // One pill per pair end, shared by every map. Moving roles come only from
   // the stored role; frequency order requires two finite, unequal numbers.
+  var PILL_MIN_FONT = 7;
   function pairGlyphs(nodes, edges, opts) {
     opts = opts || {};
     var px = opts.px, CELL = opts.cell || 64, svg = '', fById = {};
@@ -460,23 +461,30 @@ window.TopoGraph = (function () {
       var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
       var ux = dx / len, uy = dy / len;
       // Component maps supply a readable scale; the hero keeps its compact cap.
-      var fs = opts.roleFontSize || Math.min(6.5, Math.max(6, CELL * 0.105)), h = fs + 4;
+      var fs = opts.roleFontSize || Math.min(8, Math.max(7, CELL * 0.12));
       var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
       var fS = fById[e.source], fT = fById[e.target];
       var ordered = fS != null && fT != null && fS !== fT;
       [['C', a, 1, e.source, 'control'], ['T', b, -1, e.target, 'target']].forEach(function (end) {
         var text = end[0] + (e.moving_qubit === end[4] ? ' M' : '');
         if (ordered) text += ' ' + ((end[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
-        var w = text.length * fs * 0.55 + 4;
-        // Axis-aligned text stays readable on steep edges too. Its projection
-        // along the pair clears the stone, leaving the middle line exposed.
-        var reach = Math.abs(ux) * w / 2 + Math.abs(uy) * h / 2;
+        // Size the pill to the room on its half of the edge: it clears the
+        // stone and the midpoint (coupler ring or a short exposed line), and
+        // only shrinks (never below PILL_MIN_FONT) where that room is short.
+        var room = len / 2 - radius - 2 - (e.has_coupler ? couplerR(radius) + 2 : 4);
+        var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, w, he, reach;
+        for (;;) {
+          w = text.length * fe * 0.52 + fe * 0.6; he = fe + 5;
+          reach = Math.abs(ux) * w / 2 + Math.abs(uy) * he / 2;
+          if (2 * reach <= room || fe <= minF) break;
+          fe = Math.max(minF, fe - 0.5);
+        }
         var inset = radius + 2 + reach;
         var x = end[1].x + ux * end[2] * inset, y = end[1].y + uy * end[2] * inset;
         svg += '<g class="cm-role cm-role-' + end[0].toLowerCase() + '" data-cm-pair="' + esc(key)
           + '" data-cm-at="' + esc(end[3]) + '"><rect class="cm-role-dot" x="' + (x - w / 2)
-          + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="' + h / 2 + '"/>'
-          + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fs
+          + '" y="' + (y - he / 2) + '" width="' + w + '" height="' + he + '" rx="' + he / 2 + '"/>'
+          + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fe
           + '" text-anchor="middle" dominant-baseline="central">' + text + '</text></g>';
       });
     });
@@ -903,7 +911,7 @@ window.TopoGraph = (function () {
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
     var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
-      roleFontSize: Math.max(9, CELL * 0.095) });
+      roleFontSize: Math.max(11, CELL * 0.11), roleMinFont: 9 });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny

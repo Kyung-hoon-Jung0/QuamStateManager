@@ -163,6 +163,13 @@ function checkRenderLayout() {
   heroRoles.innerHTML = '<svg>' + win.TopoGraph.pairGlyphs(TOPO.nodes, TOPO.edges,
     {roles:true, cell:120, px:id=>({x:id === TOPO.nodes[0].id ? 0 : 180,y:0})}) + '</svg>';
   const heroFont = +heroRoles.querySelector('.cm-role-txt').getAttribute('font-size');
+  // pairpill: floors for the enlarged pill and the thicker pair line.
+  ok(heroFont >= 7.5 && +heroRoles.querySelector('.cm-role-dot').getAttribute('height') >= 12,
+    'pairpill: hero pill font >= 7.5 and height >= 12 where room allows');
+  ok(Array.from(mBig.querySelectorAll('.cm-role-txt')).some(t=>+t.getAttribute('font-size') >= 11),
+    'pairpill: component-map pill font reaches >= 11 where room allows');
+  { const mm = /^\.cm-edge-line \{[^}]*stroke-width: ([0-9.]+)/m.exec(read('style.css'));
+    ok(mm && +mm[1] >= 4, 'pairpill: pair edge line stroke >= 4'); }
   for (const map of [m, mBig]) {
     ok(Array.from(map.querySelectorAll('.cm-role-txt')).every(t=>
       +t.getAttribute('font-size') >= 9 && +t.getAttribute('font-size') > heroFont),
@@ -200,7 +207,7 @@ function checkRenderLayout() {
     ok(+rects[0].getAttribute('x') > 37 && right + +rects[1].getAttribute('width') < 132-37, 'D2: pills just outside stones');
     const size = host.querySelector('text').getAttribute('font-size');
     draw(5.1e9,5e9,528);
-    ok(host.querySelector('text').getAttribute('font-size') === size && +size <= 7.5, 'D4: pill font capped for large cells');
+    ok(host.querySelector('text').getAttribute('font-size') === size && +size <= 8, 'D4: pill font capped for large cells');
     ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:'target'}) === 'C H|T M L', 'D2: target moving role stays at target');
     draw(5.1e9,5e9,132,{...edge,target:'c'});
     const t = host.querySelector('text');
