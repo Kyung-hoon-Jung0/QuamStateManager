@@ -102,7 +102,7 @@ class _Fake:
         (con, fem, ao), = [cfg["elements"]["lf_offset_probe"]["singleInput"]["port"]]
         _, _, ai = cfg["elements"]["lf_offset_probe"]["outputs"]["out1"]
         assert ai == self.ai_port
-        f = cfg["controllers"][con]["fems"][fem]
+        f = cfg["controllers"][con]["fems"][str(fem)]
         v = self.S_IN * f["analog_inputs"][str(ai)]["offset"] + self.B_IN
         if self.loopback:
             v += self.S_OUT * f["analog_outputs"][str(ao)]["offset"] + self.B_OUT
@@ -224,3 +224,39 @@ def test_real_qua_program_builds():
     ns = {"N_AVG": 5, "ELEM": "e", "AI_PORT": 2}
     exec("from qm.qua import *\n" + block, ns)
     assert ns["prog"] is not None
+
+
+THREE_CHASSIS = {"con1": {"fems": {1: {"type": "MW"}, 3: {"type": "LF", "analog_outputs": {4: {"offset": 0.1}}}}},
+                 "con3": {"type": "opx1000", "fems": {"3": {"type": "LF"}}}}
+
+
+def _built_config(monkeypatch, tmp_path):
+    _install(_Fake(1), monkeypatch)
+    params = dict(ALT, other_controllers=THREE_CHASSIS, run_input_cal=False, run_output_cal=False)
+    path = tmp_path / "cfg.py"
+    path.write_text(ls.render_script(params), encoding="utf-8")
+    ns = {"__file__": str(path), "__name__": "not_main"}
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), ns)
+    return ns["build_config"](0.01, -0.002)
+
+
+def test_every_controller_is_opx1000_and_keys_are_strings(monkeypatch, tmp_path):
+    cfg = _built_config(monkeypatch, tmp_path)
+    assert set(cfg["controllers"]) == {"con1", "con2", "con3"}
+    for ctrl in cfg["controllers"].values():
+        assert ctrl["type"] == "opx1000"
+        assert all(isinstance(k, str) for k in ctrl["fems"])
+        for fem in ctrl["fems"].values():
+            for io in ("analog_outputs", "analog_inputs"):
+                assert all(isinstance(k, str) for k in fem.get(io, {}))
+    assert cfg["controllers"]["con1"]["fems"]["3"]["analog_outputs"]["4"] == {"offset": 0.1}
+
+
+def test_three_chassis_config_passes_qm_validation(monkeypatch, tmp_path):
+    cfg = _built_config(monkeypatch, tmp_path)
+    for name in [n for n in list(sys.modules) if n == "qm" or n.startswith("qm.") or n.startswith("qualang_tools")]:
+        monkeypatch.delitem(sys.modules, name)
+    schema = pytest.importorskip("qm.program._qua_config_schema")
+    from qm import QuantumMachinesManager
+    QuantumMachinesManager.set_capabilities_offline()
+    schema.load_config(cfg)

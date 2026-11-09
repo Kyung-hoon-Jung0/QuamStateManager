@@ -235,17 +235,25 @@ ELEM = "lf_offset_probe"
 # Configuration (built from the settings)
 # =========================
 def build_config(ao_offset, ai_offset):
-    controllers = deepcopy(OTHER_CONTROLLERS)
+    # Every controller is an OPX1000; FEM and port keys are all strings.
+    controllers = {}
+    for name, ctrl in deepcopy(OTHER_CONTROLLERS).items():
+        ctrl = dict(ctrl, type="opx1000")
+        fems = {}
+        for slot, fem in (ctrl.get("fems") or {}).items():
+            fem = dict(fem)
+            for io in ("analog_outputs", "analog_inputs", "digital_outputs", "digital_inputs"):
+                if io in fem:
+                    fem[io] = {str(k): v for k, v in fem[io].items()}
+            fems[str(slot)] = fem
+        ctrl["fems"] = fems
+        controllers[name] = ctrl
     ctrl = controllers.setdefault(CON, {"type": "opx1000", "fems": {}})
-    ctrl.setdefault("type", "opx1000")
-    fems = ctrl.setdefault("fems", {})
-    fem_cfg = fems.get(FEM, fems.pop(str(FEM), {"type": "LF"}))
-    fems[FEM] = fem_cfg
+    fems = ctrl["fems"]
+    fem_cfg = fems.setdefault(str(FEM), {"type": "LF"})
     fem_cfg["type"] = "LF"
     aos = fem_cfg.setdefault("analog_outputs", {})
     ais = fem_cfg.setdefault("analog_inputs", {})
-    aos.pop(AO_PORT, None)
-    ais.pop(AI_PORT, None)
     aos[str(AO_PORT)] = {
         "offset": float(ao_offset),
         "output_mode": OUTPUT_MODE,
