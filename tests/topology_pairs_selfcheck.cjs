@@ -182,8 +182,15 @@ function rectFill(b) { const r = b && b.querySelector('rect'); return r ? norm(r
   const bigBadges = winB.document.querySelectorAll('.topo-pair-badge');
   ok(bigBadges.length === big.edges.length && Array.prototype.every.call(bigBadges,
      (b) => b.classList.contains('topo-pair-badge-dense') && b.querySelector('.topo-pair-badge-pill')),
-     'a 21-qubit chip draws every badge as a dot, keeping the pill for hover');
-  ok(!badge(win, 'q1-q2').classList.contains('topo-pair-badge-dense'), 'a small chip keeps the full pill');
+     'a 21-qubit chip keeps dense hit targets and a pill for hover');
+  ok(badge(win, 'q1-q2').classList.contains('topo-pair-badge-dense')
+     && !!badge(win, 'q1-q2').querySelector('.topo-pair-badge-pill')
+     && !badge(win, 'q1-q2').querySelector('circle'), 'a small chip with crowded endpoint pills retains its dense hover pill without a midpoint dot');
+  const roomy = win.TopoGraph.pairBadgeSvg({name: 'q1-2', valueText: '97.0%',
+    x: 0, y: 0, room: 200, roomAcross: 200});
+  const crowded = win.TopoGraph.pairBadgeSvg({name: 'q1-2', valueText: '97.0%',
+    x: 0, y: 0, room: 10, roomAcross: 10});
+  ok(!roomy.dense && crowded.dense, 'pill density follows available clearance, including on a small chip');
 
   // 8) component maps: same data-driven edge style + linked markup
   const host = win.document.createElement('div');
