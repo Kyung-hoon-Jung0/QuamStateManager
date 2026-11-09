@@ -449,6 +449,22 @@ window.TopoGraph = (function () {
     (nodes || []).forEach(function (n) {
       if (typeof n.f_01 === 'number' && isFinite(n.f_01)) fById[n.id] = n.f_01;
     });
+    function roleTexts(e) {
+      var fS = fById[e.source], fT = fById[e.target];
+      var ordered = fS != null && fT != null && fS !== fT;
+      return [['C', 'control'], ['T', 'target']].map(function (r) {
+        var text = r[0] + (e.moving_qubit === r[1] ? ' M' : '');
+        if (ordered) text += ' ' + ((r[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
+        return text;
+      });
+    }
+    // Every pill on one map has the footprint of the widest one, letters
+    // centred, so the two ends of an edge balance (a 'C M H' / 'T L' pair
+    // made the grid read as tilted).
+    var mapChars = 1;
+    (edges || []).forEach(function (e) {
+      if (e) roleTexts(e).forEach(function (t) { mapChars = Math.max(mapChars, t.length); });
+    });
     var done = {};
     (edges || []).forEach(function (e) {
       if (!opts.roles || !e || e.source == null || e.target == null || e.source === e.target) return;
@@ -463,18 +479,16 @@ window.TopoGraph = (function () {
       // Component maps supply a readable scale; the hero keeps its compact cap.
       var fs = opts.roleFontSize || Math.min(8, Math.max(7, CELL * 0.12));
       var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
-      var fS = fById[e.source], fT = fById[e.target];
-      var ordered = fS != null && fT != null && fS !== fT;
-      [['C', a, 1, e.source, 'control'], ['T', b, -1, e.target, 'target']].forEach(function (end) {
-        var text = end[0] + (e.moving_qubit === end[4] ? ' M' : '');
-        if (ordered) text += ' ' + ((end[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
+      var texts = roleTexts(e);
+      [['C', a, 1, e.source, texts[0]], ['T', b, -1, e.target, texts[1]]].forEach(function (end) {
+        var text = end[4];
         // Size the pill to the room on its half of the edge: it clears the
         // stone and the midpoint (coupler ring or a short exposed line), and
-        // only shrinks (never below PILL_MIN_FONT) where that room is short.
+        // only shrinks (never below the floor) where that room is short.
         var room = len / 2 - radius - 2 - (e.has_coupler ? couplerR(radius) + 2 : 8);
         var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, w, he, reach;
         for (;;) {
-          w = text.length * fe * 0.52 + fe * 0.6; he = fe + 5;
+          w = mapChars * fe * 0.52 + fe * 0.6; he = fe + 5;
           reach = Math.abs(ux) * w / 2 + Math.abs(uy) * he / 2;
           if (2 * reach <= room || fe <= minF) break;
           fe = Math.max(minF, fe - 0.5);
@@ -502,7 +516,7 @@ window.TopoGraph = (function () {
    * declutterLabels() tries the other side of the line, then a smaller font
    * (never below DIR_MIN_FONT, D-6).
    */
-  var DIR_SPACING = 1.5, DIR_MIN_FONT = 12;
+  var DIR_SPACING = 2, DIR_MIN_FONT = 12;
   // D-4: the direction arrow is the map's subject: its head grows with the
   // 1.5x line stroke (ui-kit .cm-dir .cm-edge-line), the pair label shrinks.
   var DIR_HEAD_SCALE = 1.4, DIR_LABEL_SCALE = 0.87;
@@ -513,10 +527,14 @@ window.TopoGraph = (function () {
     // map now; this draws only the pair label.
     var ang = Math.atan2(dy, dx) * 180 / Math.PI;
     var cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-    if (Math.abs(dy) > 0.01) {
+    var level = Math.abs(dy) <= 0.01;
+    // pairpill: a label centred on the line between two pills is the
+    // narrow two-line stack on level edges too (left endpoint first).
+    if (!level || !e.has_coupler) {
       // Read every non-level edge top-first, using endpoints rather than the
       // display pair id (which may abbreviate or contain hyphenated names).
-      var top = y1 <= y2 ? e.source : e.target, bot = y1 <= y2 ? e.target : e.source;
+      var first = level ? x1 <= x2 : y1 <= y2;
+      var top = first ? e.source : e.target, bot = first ? e.target : e.source;
       out += '<g class="cm-pair-label cm-dir-label cm-dir-stack" font-size="' + font + '"' +
              ' data-cx="' + r1(cx) + '" data-cy="' + r1(cy) + '" data-stack="1" data-ang="' + r1(ang) + '"' +
              (e.has_coupler ? ' data-clear="' + r1(couplerR(R) + 3) + '"' : "") +
@@ -668,7 +686,10 @@ window.TopoGraph = (function () {
     var box = t.getBBox(), w = box.width, h = box.height;
     var ang = +t.getAttribute("data-ang") * Math.PI / 180;
     var nx = -Math.sin(ang), ny = Math.cos(ang);
-    var off = Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear") || 0);
+    // pairpill: centred ON the line (over a plate) unless a coupler ring
+    // owns the midpoint, then beside it as before.
+    var off = t.hasAttribute("data-clear")
+      ? Math.abs(nx) * w / 2 + Math.abs(ny) * h / 2 + 3 + Math.max(10, +t.getAttribute("data-clear")) : 0;
     var px = cx + nx * off * side, py = cy + ny * off * side;
     var ox = px - (box.x + w / 2), oy = py - (box.y + h / 2);
     t.removeAttribute("transform");
@@ -689,13 +710,27 @@ window.TopoGraph = (function () {
     var nx = -Math.sin(ang), ny = Math.cos(ang);    // the text frame's "down"
     // clears the arrow head (half-width ~7 px at the default cell), and the
     // coupler dot on the midpoint where the edge has one
-    var off = f * 0.5 + Math.max(10, +t.getAttribute("data-clear") || 0);
+    var off = t.hasAttribute("data-clear") ? f * 0.5 + Math.max(10, +t.getAttribute("data-clear")) : 0;
     var px = cx + nx * off * side, py = cy + ny * off * side;
     t.setAttribute("font-size", f);
     t.setAttribute("data-px", r1(px)); t.setAttribute("data-py", r1(py));
     t.setAttribute("x", r1(px)); t.setAttribute("y", r1(py));
     // A level label needs no transform at all (FB-01: no rotated text).
     t.removeAttribute("transform");
+  }
+  // A plate in the map's surface colour behind a label, so the edge line
+  // passes BEHIND the name instead of through it.
+  function labelPlate(t) {
+    var prev = t.previousElementSibling;
+    if (prev && prev.classList && prev.classList.contains("cm-label-plate")) prev.remove();
+    if (t.hasAttribute("data-clear")) return;   // beside a coupler: no line under it
+    var b = t.getBBox(), pad = 1.5;
+    var r = t.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "rect");
+    r.setAttribute("class", "cm-label-plate");
+    r.setAttribute("x", r1(b.x - pad)); r.setAttribute("y", r1(b.y - pad));
+    r.setAttribute("width", r1(b.width + 2 * pad)); r.setAttribute("height", r1(b.height + 2 * pad));
+    r.setAttribute("rx", 3);
+    t.parentNode.insertBefore(r, t);
   }
   /* D-1: every label sits on ONE screen side of its edge -- above a level
    * edge, left of a steep one -- whatever the edge's control -> target
@@ -733,6 +768,7 @@ window.TopoGraph = (function () {
       }
       placeLabel(t, best.side, best.f);
       t.classList.toggle("cm-dir-crowded", best.hits > 0);
+      labelPlate(t);
       placed.push({ poly: labelPoly(t) });
     }
   }

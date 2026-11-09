@@ -857,6 +857,7 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
  * a scoped --ui-map-* variable set on the map itself.
  */
 /* Pairs / component map (D-94, D-98): arrow = control -> target, label along the edge */
+.cm-dir .cm-label-plate { fill: var(--ui-surface-1); }
 .cm-dir .cm-pair-label.cm-dir-label {
     opacity: 1; font-weight: var(--ui-fw); fill: var(--ui-text);
     paint-order: stroke; stroke: var(--ui-surface-1); stroke-width: 4px; stroke-linejoin: round;

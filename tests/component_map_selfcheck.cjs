@@ -152,8 +152,8 @@ function checkRenderLayout() {
   win.document.body.appendChild(mBig);
   win.TopoGraph.renderLayout(mBig, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: 'pairs', cell: 120 });
   const bigSvg = mBig.querySelector('svg');
-  ok(parseInt(bigSvg.getAttribute('width'), 10) === 360,
-     'cell:120 with x1.5 spacing: 2 cols -> 360 (got ' + bigSvg.getAttribute('width') + ')');
+  ok(parseInt(bigSvg.getAttribute('width'), 10) === 480,
+     'cell:120 with x2 spacing: 2 cols -> 480 (got ' + bigSvg.getAttribute('width') + ')');
   ok(mBig.querySelector('.cm-stone').getAttribute('r') === '36', 'cell:120 -> 36px stones (0.30 ratio kept)');
   ok(mBig.querySelector('.cm-id').getAttribute('font-size') === '17.3',
      'cell:120 -> 17.3px id font (19.7 x 0.88, D-98)');
@@ -169,7 +169,11 @@ function checkRenderLayout() {
   ok(Array.from(mBig.querySelectorAll('.cm-role-txt')).some(t=>+t.getAttribute('font-size') >= 11),
     'pairpill: component-map pill font reaches >= 11 where room allows');
   { const mm = /^\.cm-edge-line \{[^}]*stroke-width: ([0-9.]+)/m.exec(read('style.css'));
-    ok(mm && +mm[1] >= 4, 'pairpill: pair edge line stroke >= 4'); }
+    ok(mm && +mm[1] >= 8, "pairpill: pair edge line stroke >= 8"); }
+  { const byPair = {};
+    mBig.querySelectorAll('.cm-role').forEach(g => (byPair[g.getAttribute('data-cm-pair')] ||= []).push(+g.querySelector('rect').getAttribute('width')));
+    ok(new Set(Object.values(byPair).flat()).size === 1, 'pairpill: every pill on a map has one width');
+    ok(/\.cm-hl-pairs \.cm-res, \.cm-hl-qubits \.cm-res,\s*\.cm-hl-pairs \.cm-feed, \.cm-hl-qubits \.cm-feed,\s*\.cm-hl-pairs \.cm-flux, \.cm-hl-qubits \.cm-flux \{ display: none; \}/.test(read('style.css')), 'pairpill: off-centre readout ring hidden on pair/qubit maps'); }
   for (const map of [m, mBig]) {
     ok(Array.from(map.querySelectorAll('.cm-role-txt')).every(t=>
       +t.getAttribute('font-size') >= 9 && +t.getAttribute('font-size') > heroFont),
