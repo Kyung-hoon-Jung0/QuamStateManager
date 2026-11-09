@@ -126,22 +126,27 @@
     var con = String(port.con).replace(/^con/, '');
     var node = document.createElement('dialog');
     node.id = 'port-play-dialog'; node.setAttribute('aria-labelledby', 'port-play-title');
-    node.innerHTML = '<article class="ui-dialog ui-dialog--s">' +
+    node.innerHTML = '<article class="ui-dialog ui-dialog--m">' +
       '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3></header></div>' +
-      '<div class="ui-dialog-body"><label>Band<select data-band><option value="1">1 (50 MHz - 5.5 GHz)</option>' +
+      '<div class="ui-dialog-body">' +
+      '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Tone</h4></div><div class="ui-field-grid">' +
+      '<label>Band<select data-band><option value="1">1 (50 MHz - 5.5 GHz)</option>' +
       '<option value="2">2 (4.5 - 7.5 GHz)</option><option value="3">3 (6.5 - 10.5 GHz)</option></select></label>' +
-      '<label>Upconverter (LO) frequency (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
+      '<label>LO (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
       '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" value="50" required></label>' +
       '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
-      '<label>Amplitude (fraction of full scale, |a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>' +
-      '<label>Max play time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
-      '<p class="ui-note" role="status" data-power></p>' +
-      '<label><input data-hwok type="checkbox"> This port is safe to drive (spectrum analyser or scope cable, or a tone on this line is intended)</label>' +
-      '<p class="ui-note">Plays a constant-amplitude CW tone at RF = LO + IF until Stop or the time limit. Closing the QM stops the output.</p>' +
-      '<p class="ui-note" role="status" data-message></p></div>' +
-      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-open-qm>Open QM</button><button type="button" class="btn-sm outline" data-close-qm>Close QM</button><button type="button" class="btn-sm" data-play>Play</button>' +
-      '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
-      '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
+      '<label>Amplitude (|a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>' +
+      '<label>Max time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label></div>' +
+      '<p class="ui-note" role="status" data-power></p></section>' +
+      '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Run</h4></div>' +
+      '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a spectrum analyser or scope is on this port</label>' +
+      '<p class="ui-note">Open QM: port configured, no tone. Play: CW tone at LO + IF. Close QM or Stop: output off.</p>' +
+      '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm" data-open-qm>Open QM</button>' +
+      '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button>' +
+      '<button type="button" class="btn-sm outline" data-play>Play</button>' +
+      '<button type="button" class="btn-sm outline" data-stop>Stop</button></div>' +
+      '<p class="ui-note" role="status" data-message></p></section></div>' +
+      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); };
     $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / OUT ' + port.port + ' (MW)';
@@ -188,29 +193,34 @@
     var saved = (source.spec().port_offsets || {})[pin] || {offset: 0, output_mode: 'direct'};
     var node = document.createElement('dialog');
     node.id = 'port-play-dialog'; node.setAttribute('aria-labelledby', 'port-play-title');
-    node.innerHTML = '<article class="ui-dialog ui-dialog--s">' +
+    node.innerHTML = '<article class="ui-dialog ui-dialog--m">' +
       '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3></header></div>' +
-      '<div class="ui-dialog-body"><label>Output mode<select data-mode><option value="direct">direct</option><option value="amplified">amplified</option></select></label>' +
+      '<div class="ui-dialog-body">' +
+      '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Offset and QM</h4></div><div class="ui-field-grid">' +
+      '<label>Output mode<select data-mode><option value="direct">direct (|offset| &lt;= 0.5 V)</option><option value="amplified">amplified (|offset| &lt;= 2.5 V)</option></select></label>' +
       '<label>Offset (V)<input data-offset type="number" step="0.000001" required></label>' +
-      '<label>Max play time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
-      '<label><input data-hwok type="checkbox"> This port is safe to drive (scope cable, or a DC offset on this line is intended)</label>' +
-      '<p class="ui-note">Open QM sets the port to its offset with no program running; Play also plays a zero-amplitude waveform. Closing the QM resets OPX1000 outputs to 0 V.</p>' +
-      '<p class="ui-note" role="status" data-message></p>' +
-      '<section data-loopcal><h4>Loopback calibration</h4>' +
-      '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label>' +
-      '<p class="ui-note" data-ai-saved></p>' +
-      '<p class="ui-note">First calibrate the AI with nothing connected to it (once per FEM/AI and per gain_db; gain_db 0 here). ' +
-      'Then connect this AO to that AI with one cable and calibrate the AO. Uses the safety box above and the network of step 2.</p>' +
-      '<div><button type="button" class="btn-sm outline" data-cal-input>Calibrate AI (input open)</button> ' +
-      '<button type="button" class="btn-sm outline" data-cal-output>Calibrate this AO (loopback)</button> ' +
-      '<button type="button" class="btn-sm outline" data-export>Export script</button></div>' +
-      '<ol class="ui-note" data-cal-progress></ol>' +
-      '<p class="ui-note" role="status" data-cal-result></p>' +
-      '<button type="button" class="btn-sm" data-cal-save disabled>Save calibrated offset</button></section></div>' +
-      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-open-qm>Open QM</button><button type="button" class="btn-sm outline" data-close-qm>Close QM</button><button type="button" class="btn-sm" data-play>Play</button>' +
+      '<label>Max time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label></div>' +
+      '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a scope is on this port</label>' +
+      '<p class="ui-note">Open QM: the port goes to this offset. Close QM: back to 0 V. Play: also runs a zero waveform.</p>' +
+      '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm" data-open-qm>Open QM</button>' +
+      '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button>' +
+      '<button type="button" class="btn-sm outline" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
-      '<button type="button" class="btn-sm outline" data-save>Save offset</button>' +
-      '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
+      '<button type="button" class="btn-sm outline" data-save>Save offset</button></div>' +
+      '<p class="ui-note" role="status" data-message></p></section>' +
+      '<section class="ui-item" data-loopcal><div class="ui-item-head"><h4 class="ui-item-title">Loopback calibration</h4></div><div class="ui-field-grid">' +
+      '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label></div>' +
+      '<ol class="ui-note" data-cal-steps></ol>' +
+      '<p class="ui-note" data-ai-saved></p>' +
+      '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-cal-input>Calibrate input</button>' +
+      '<button type="button" class="btn-sm outline" data-cal-output>Calibrate output</button>' +
+      '<button type="button" class="btn-sm" data-cal-save disabled title="Run a calibration that converges first.">Save calibrated offset</button></div>' +
+      '<p class="ui-note" role="status" data-cal-result></p>' +
+      '<ol class="ui-note" data-cal-progress></ol></section>' +
+      '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Export</h4></div>' +
+      '<p class="ui-note">A Python script that runs the same calibration without SM.</p>' +
+      '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-export>Export script</button></div></section></div>' +
+      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); }, lock = {busy: false};
     $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / AO ' + port.port;
@@ -250,6 +260,12 @@
         ? 'Saved AI offset: ' + Number(e.offset).toFixed(6) + ' V (gain ' + (e.gain_db || 0) + ' dB).'
         : 'No saved AI offset for this AI yet: calibrate the AI first.';
       $('[data-cal-output]').disabled = !e;
+      $('[data-cal-output]').title = e ? '' : 'Calibrate the input first.';
+      var n = $('[data-ai]').value, steps = [
+        'Leave AI ' + n + ' unplugged, then Calibrate input (once per AI, gain 0 dB).', 'Save.',
+        'Connect this AO to AI ' + n + ' with one cable, then Calibrate output.', 'Save, then check on the scope.'];
+      var list = $('[data-cal-steps]'); list.replaceChildren();
+      steps.forEach(function (t) { var li = document.createElement('li'); li.textContent = t; list.appendChild(li); });
     }
     function calMessage(v) { $('[data-cal-result]').textContent = v; }
     $('[data-ai]').onchange = function () {
@@ -281,6 +297,7 @@
         calMessage((res.converged ? 'Converged' : 'Not converged') + ': offset ' + Number(res.final_offset).toFixed(6) +
           ' V after ' + res.iters + ' iteration(s).' + (res.converged ? '' : ' Nothing to save; check the cable.'));
         $('[data-cal-save]').disabled = res.converged !== true;
+        $('[data-cal-save]').title = res.converged === true ? '' : 'Run a calibration that converges first.';
       }).catch(function (e) { calMessage(e.message); });
     }
     function calibrate(kind) {
@@ -319,7 +336,7 @@
           $('[data-mode]').value = j.entry.output_mode;
           $('[data-play]').textContent = 'Play again';
         }
-        $('[data-cal-save]').disabled = true;
+        $('[data-cal-save]').disabled = true; $('[data-cal-save]').title = 'Saved.';
         source.changed(); showAiSaved();
         calMessage('Saved ' + j.pin + ' = ' + Number(j.entry.offset).toFixed(6) + ' V in the wizard draft.' +
           (j.entry.output_mode ? ' Press Play again to check it on the scope.' : ''));
