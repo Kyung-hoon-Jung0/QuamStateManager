@@ -158,14 +158,20 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
     pane.innerHTML = '<form id="trend-form" hx-post="/trend/chart"><button type="submit">Show Chart</button></form>';
     pane.querySelector('button').addEventListener('click', e => { e.preventDefault(); charts++; });
   }
-  function swap(type) { pane.dispatchEvent(new win.CustomEvent(type, { bubbles: true })); }
+  function swap(type, rp, okk) { pane.dispatchEvent(new win.CustomEvent(type, { bubbles: true, detail: { pathInfo: { requestPath: rp || '/trend' }, successful: okk !== false } })); }
   win.document.querySelector('.btn-trend').addEventListener('click', e => e.preventDefault());
-  picker(); swap('htmx:afterSwap'); ok(charts === 0, 'D-1 unrelated picker stays idle');
-  click(win, $(win, 'cf-trend')); picker(); swap('htmx:afterSwap'); swap('htmx:afterSettle');
+  picker(); swap('htmx:afterSwap'); swap('htmx:afterSettle'); await settle(); ok(charts === 0, 'D-1 unrelated picker stays idle');
+  click(win, $(win, 'cf-trend')); picker(); swap('htmx:afterSwap'); await settle();
+  ok(charts === 0, 'D-1 not pressed at afterSwap (htmx has not processed the form yet: a press would be a native submit)');
+  swap('htmx:afterSettle'); await settle();
   ok(charts === 1, 'D-1 floating Trend auto-submits exactly once');
-  picker(); swap('htmx:afterSwap'); ok(charts === 1, 'D-1 flag clears after use');
-  click(win, win.document.querySelector('.btn-trend')); picker(); swap('htmx:afterSettle'); swap('htmx:afterSwap');
-  ok(charts === 2, 'D-1 form Trend also arms afterSettle'); win.close();
+  picker(); swap('htmx:afterSettle'); await settle(); ok(charts === 1, 'D-1 flag clears after use');
+  click(win, win.document.querySelector('.btn-trend')); picker(); swap('htmx:afterSettle'); await settle();
+  ok(charts === 2, 'D-1 form Trend also arms afterSettle');
+  click(win, $(win, 'cf-trend')); picker(); swap('htmx:afterSettle', '/other'); await settle();
+  ok(charts === 2, 'D-1 a picker from another request does not consume the Trend press');
+  swap('htmx:afterRequest', '/trend', false); picker(); swap('htmx:afterSettle'); await settle();
+  ok(charts === 2, 'D-1 a failed /trend disarms the automatic chart'); win.close();
 }
 const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
 const block = css.slice(css.indexOf('/* FB-13:'), css.indexOf('/* FB-12 port test */'));
@@ -237,7 +243,7 @@ function rule(selector) {
   ok(list.tagName === 'BUTTON' && list.type === 'button' && list.getAttribute('aria-controls') === 'cf-pop' && list.getAttribute('aria-expanded') === 'true' && list.querySelector('.cf-arrow').textContent === '\u25be', 'D-6 expanded toggle button and arrow');
   click(win, list.querySelector('.cf-arrow'));
   ok(list.getAttribute('aria-expanded') === 'false' && list.querySelector('.cf-arrow').textContent === '\u25b8', 'D-6 clicking arrow collapses and updates glyph');
-  ok(/font-size: var\(--tree-entry-label-font\)/.test(rule('.cf-arrow')), 'D-6 arrow uses run-row font token'); win.close();
+  ok(/font-size: calc\(var\(--tree-entry-label-font\) \* 1\.3\)/.test(rule('.cf-arrow')), 'D-6 arrow uses run-row font token'); win.close();
 }
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('all ok');

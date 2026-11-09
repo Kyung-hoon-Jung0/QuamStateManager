@@ -2182,7 +2182,7 @@ window.setFontSize = function(size) {
         // Keep the tick stationary if the top form's Clear/hint wraps.
         if (tick && tickTop >= sidebar.getBoundingClientRect().top) {
             var extra = tick.getBoundingClientRect().top - tickTop;
-            if (extra) sidebar.scrollTop += extra;
+            if (Math.abs(extra) >= 1) sidebar.scrollTop += extra;
         }
     }
     window.syncCompareCount = syncCompareCount;
@@ -2232,14 +2232,23 @@ window.setFontSize = function(size) {
     else watchFloatSize();
     function autoShowTrendChart(ev) {
         var pane = document.getElementById('table-pane');
-        if (!trendAutoChart || !pane || !(ev.target === pane || pane.contains(ev.target))) return;
+        var info = ev.detail && ev.detail.pathInfo;
+        var path = info ? String(info.requestPath || '').split('?')[0] : '';
+        if (!trendAutoChart || !pane || ev.target !== pane || path !== '/trend') return;
         var submit = pane.querySelector('#trend-form button[type="submit"]');
         if (!submit) return;
         trendAutoChart = false;
-        submit.click();
+        // after settle htmx has processed the new form; a press before that
+        // would be a native GET submit that reloads the page
+        setTimeout(function() { if (submit.isConnected) submit.click(); }, 0);
     }
-    document.addEventListener('htmx:afterSwap', autoShowTrendChart);
     document.addEventListener('htmx:afterSettle', autoShowTrendChart);
+    // a /trend request that failed lands no picker: disarm so a later one does not auto-submit
+    document.addEventListener('htmx:afterRequest', function(ev) {
+        var info = ev.detail && ev.detail.pathInfo;
+        if (info && String(info.requestPath || '').split('?')[0] === '/trend'
+                && !(ev.detail.successful)) trendAutoChart = false;
+    });
     function renderFloat(sel) {
         var bar = document.getElementById('compare-float');
         if (!bar) return;

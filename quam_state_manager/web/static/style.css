@@ -16124,7 +16124,7 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
     position: sticky; top: calc(-1 * var(--sidebar-pad-v));
     z-index: 5; background: var(--pico-background-color); width: fit-content; max-width: 100%;
 }
-.cf-arrow { font-size: var(--tree-entry-label-font); }
+.cf-arrow { font-size: calc(var(--tree-entry-label-font) * 1.3); line-height: 1; vertical-align: -0.1em; }
 .compare-float {
     display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
     box-sizing: border-box; width: fit-content; max-width: 100%;

@@ -21,3 +21,14 @@ def test_compare_float_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - listed = selection model" in res.stdout
+
+
+def test_d4_anchor_and_tree_share_one_parent_in_base_html():
+    """The sticky bar only pins while its parent spans the run tree: in the
+    real template the anchor is followed directly by #sidebar-tree."""
+    import re
+    html = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf8")
+    i = html.index('<div class="compare-float-anchor">')
+    tail = re.sub(r"\{#.*?#\}", "", html[i:], flags=re.S)
+    j = tail.index("</div></div>") + len("</div></div>")
+    assert tail[j:].lstrip().startswith('<div id="sidebar-tree"')
