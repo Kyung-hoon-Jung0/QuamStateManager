@@ -43,7 +43,118 @@
       });
     };
   }
+  // One Play/Stop driver for every popup kind (LF DC and MW CW): confirm token, run,
+  // retry while our own previous play stops, poll status, Stop by own id only.
+  function wirePlay(node, params, message, lock) {
+    var $ = function (s) { return node.querySelector(s); };
+    function poll(seq) {
+      if (seq !== sequence || dialog !== node || !runId) return;
+      fetch('/port-test/status?id=' + encodeURIComponent(runId)).then(function (r) { return r.json(); }).then(function (st) {
+        if (seq !== sequence || dialog !== node) return;
+        if (st.state === 'running') {
+          message(st.stopping ? 'Stopping...' : 'Playing... ' + (st.phase || ''));
+          timer = setTimeout(function () { poll(seq); }, 1000);
+        } else message(st.result && !st.result.ok ? st.result.error : 'Stopped.');
+      }).catch(function (e) { message(e.message); });
+    }
+    $('[data-play]').onclick = function () {
+      if (lock.busy) return;
+      var data;
+      try { data = params(); } catch (e) { message(e.message); return; }
+      // Snapshot wizard values across retries; later edits belong to the next play.
+      if (!data.hardware_ok) { message('Tick the safety box first.'); return; }
+      data = JSON.parse(JSON.stringify(data));
+      lock.busy = true; var seq = ++sequence; clearTimeout(timer); message('Preparing Play...');
+      function start() {
+        if (seq !== sequence || dialog !== node) { lock.busy = false; return; }
+        post('/port-play/confirm', data).then(function (c) {
+          if (!c.ok) throw new Error(c.error);
+          return post('/port-play/run', Object.assign({confirm_token: c.token}, data));
+        }).then(function (j) {
+          if (seq !== sequence || dialog !== node) {
+            if (j.ok) post('/port-play/stop', {id: j.id});
+            lock.busy = false; return;
+          }
+          if (j.stopping) { message(j.error); timer = setTimeout(start, 500); return; }
+          lock.busy = false;
+          if (!j.ok) { message(j.error); return; }
+          runId = j.id; $('[data-play]').textContent = 'Play again'; poll(seq);
+        }).catch(function (e) { lock.busy = false; message(e.message); });
+      }
+      start();
+    };
+    $('[data-stop]').onclick = function () {
+      lock.busy = false; stop().then(function () { message('Stopping...'); poll(sequence); });
+    };
+  }
+  // MW-FEM output: a CW tone. Limits mirror core/port_test.py mw_params (QM docs,
+  // Guides/opx1000_fems.md "Bands", "Upconverters and Downconverters", "Output Power");
+  // the server re-checks every field. Nothing is saved: the tone has no stored state.
+  var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
+  function mwPower(fsp, amp) {
+    return amp === 0 ? null : fsp + 20 * Math.log10(Math.abs(amp));
+  }
+  function openMw(port, source) {
+    if (dialog) close();
+    var con = String(port.con).replace(/^con/, '');
+    var node = document.createElement('dialog');
+    node.id = 'port-play-dialog'; node.setAttribute('aria-labelledby', 'port-play-title');
+    node.innerHTML = '<article class="ui-dialog ui-dialog--s">' +
+      '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3></header></div>' +
+      '<div class="ui-dialog-body"><label>Band<select data-band><option value="1">1 (50 MHz - 5.5 GHz)</option>' +
+      '<option value="2">2 (4.5 - 7.5 GHz)</option><option value="3">3 (6.5 - 10.5 GHz)</option></select></label>' +
+      '<label>Upconverter (LO) frequency (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
+      '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" value="50" required></label>' +
+      '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
+      '<label>Amplitude (fraction of full scale, |a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>' +
+      '<label>Max play time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
+      '<p class="ui-note" role="status" data-power></p>' +
+      '<label><input data-hwok type="checkbox"> This port is safe to drive (spectrum analyser or scope cable, or a tone on this line is intended)</label>' +
+      '<p class="ui-note">Plays a constant-amplitude CW tone at RF = LO + IF until Stop or the time limit. Closing the QM stops the output.</p>' +
+      '<p class="ui-note" role="status" data-message></p></div>' +
+      '<div class="ui-dialog-foot"><button type="button" class="btn-sm" data-play>Play</button>' +
+      '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
+      '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
+    document.body.appendChild(node); dialog = node;
+    var $ = function (s) { return node.querySelector(s); };
+    $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / OUT ' + port.port + ' (MW)';
+    function message(value) { $('[data-message]').textContent = value; }
+    function params() {
+      var band = Number($('[data-band]').value), lo = Number($('[data-lo]').value);
+      var ifm = Number($('[data-if]').value), fsp = Number($('[data-fsp]').value), amp = Number($('[data-amp]').value);
+      var seconds = $('[data-seconds]');
+      if (![lo, ifm, fsp, amp].every(Number.isFinite) || $('[data-lo]').value === '' || $('[data-if]').value === '' ||
+          $('[data-fsp]').value === '' || $('[data-amp]').value === '')
+        throw new Error('Enter LO, IF, full-scale power and amplitude.');
+      var range = MW_LO_GHZ[band];
+      if (!range) throw new Error('Band must be 1, 2 or 3.');
+      if (lo < range[0] || lo > range[1]) throw new Error('Band ' + band + ' upconverter frequency must be ' + range[0] + '..' + range[1] + ' GHz.');
+      if (Math.abs(ifm) > 500) throw new Error('|IF| must be <= 500 MHz.');
+      if (!Number.isInteger(fsp) || fsp < -11 || fsp > 18) throw new Error('Full-scale power must be an integer -11..18 dBm.');
+      if (!(Math.abs(amp) < 1)) throw new Error('Amplitude must satisfy |amp| < 1 (fraction of full scale).');
+      if (!seconds.checkValidity()) throw new Error('Enter a maximum time in (0, 3600] seconds.');
+      return {kind: 'mw', con: 'con' + con, slot: port.slot, port: port.port, band: band, lo_hz: lo * 1e9,
+        if_hz: ifm * 1e6, full_scale_power_dbm: fsp, amp: amp, hardware_ok: !!$('[data-hwok]').checked,
+        max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
+    }
+    function showPower() {
+      var fsp = Number($('[data-fsp]').value), amp = Number($('[data-amp]').value);
+      var lo = Number($('[data-lo]').value), ifm = Number($('[data-if]').value);
+      var p = Number.isFinite(fsp) && Number.isFinite(amp) ? mwPower(fsp, amp) : null;
+      $('[data-power]').textContent = 'RF ' + (Number.isFinite(lo + ifm / 1000) ? (lo + ifm / 1000).toFixed(6) + ' GHz' : '?') +
+        '; expected output ' + (p === null ? '-inf' : p.toFixed(2)) + ' dBm (P = FSP + 20*log10|amp|, into 50 ohm).';
+    }
+    ['[data-fsp]', '[data-amp]', '[data-lo]', '[data-if]', '[data-band]'].forEach(function (s) {
+      $(s).addEventListener('input', showPower); $(s).addEventListener('change', showPower);
+    });
+    showPower();
+    wirePlay(node, params, message, {busy: false});
+    $('[data-close]').onclick = close;
+    node.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
+    node.showModal(); $('[data-lo]').focus();
+  }
   function open(port, source) {
+    if (/^mw/.test(String(port.femType || ''))) return openMw(port, source);
     if (dialog) close();
     var con = String(port.con).replace(/^con/, '');
     var pin = 'con' + con + '/' + port.slot + '/' + port.port;
@@ -74,7 +185,7 @@
       '<button type="button" class="btn-sm outline" data-save>Save offset</button>' +
       '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
-    var $ = function (s) { return node.querySelector(s); }, busy = false;
+    var $ = function (s) { return node.querySelector(s); }, lock = {busy: false};
     $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / AO ' + port.port;
     $('[data-offset]').value = Number(saved.offset).toFixed(6);
     $('[data-mode]').value = saved.output_mode;
@@ -89,45 +200,7 @@
       return {con: 'con' + con, slot: port.slot, port: port.port, offset: Number(input.value),
         output_mode: mode, hardware_ok: !!$('[data-hwok]').checked, max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
     }
-    function poll(seq) {
-      if (seq !== sequence || dialog !== node || !runId) return;
-      fetch('/port-test/status?id=' + encodeURIComponent(runId)).then(function (r) { return r.json(); }).then(function (st) {
-        if (seq !== sequence || dialog !== node) return;
-        if (st.state === 'running') {
-          message(st.stopping ? 'Stopping...' : 'Playing... ' + (st.phase || ''));
-          timer = setTimeout(function () { poll(seq); }, 1000);
-        } else message(st.result && !st.result.ok ? st.result.error : 'Stopped.');
-      }).catch(function (e) { message(e.message); });
-    }
-    $('[data-play]').onclick = function () {
-      if (busy) return;
-      var data;
-      try { data = params(); } catch (e) { message(e.message); return; }
-      // Snapshot wizard values across retries; later edits belong to the next play.
-      if (!data.hardware_ok) { message('Tick the safety box first.'); return; }
-      data = JSON.parse(JSON.stringify(data));
-      busy = true; var seq = ++sequence; clearTimeout(timer); message('Preparing Play...');
-      function start() {
-        if (seq !== sequence || dialog !== node) { busy = false; return; }
-        post('/port-play/confirm', data).then(function (c) {
-          if (!c.ok) throw new Error(c.error);
-          return post('/port-play/run', Object.assign({confirm_token: c.token}, data));
-        }).then(function (j) {
-          if (seq !== sequence || dialog !== node) {
-            if (j.ok) post('/port-play/stop', {id: j.id});
-            busy = false; return;
-          }
-          if (j.stopping) { message(j.error); timer = setTimeout(start, 500); return; }
-          busy = false;
-          if (!j.ok) { message(j.error); return; }
-          runId = j.id; $('[data-play]').textContent = 'Play again'; poll(seq);
-        }).catch(function (e) { busy = false; message(e.message); });
-      }
-      start();
-    };
-    $('[data-stop]').onclick = function () {
-      busy = false; stop().then(function () { message('Stopping...'); poll(sequence); });
-    };
+    wirePlay(node, params, message, lock);
     $('[data-save]').onclick = function () {
       try {
         var data = params(), spec = source.spec();
@@ -184,25 +257,25 @@
       }).catch(function (e) { calMessage(e.message); });
     }
     function calibrate(kind) {
-      if (busy) return;
+      if (lock.busy) return;
       var data;
       try { data = calBody(kind); } catch (e) { calMessage(e.message); return; }
       if (!data.hardware_ok) { calMessage('Tick the safety box first.'); return; }
-      busy = true; var seq = ++calSeq; sequence++; clearTimeout(timer);
+      lock.busy = true; var seq = ++calSeq; sequence++; clearTimeout(timer);
       $('[data-cal-save]').disabled = true; $('[data-cal-progress]').replaceChildren();
       calMessage('Preparing calibration...');
       function start() {
-        if (seq !== calSeq || dialog !== node) { busy = false; return; }
+        if (seq !== calSeq || dialog !== node) { lock.busy = false; return; }
         post('/port-play/loopcal/confirm', data).then(function (c) {
           if (!c.ok) throw new Error(c.error);
           return post('/port-play/loopcal/run', Object.assign({confirm_token: c.token}, data));
         }).then(function (j) {
-          if (seq !== calSeq || dialog !== node) { if (j.ok) post('/port-play/stop', {id: j.id}); busy = false; return; }
+          if (seq !== calSeq || dialog !== node) { if (j.ok) post('/port-play/stop', {id: j.id}); lock.busy = false; return; }
           if (j.stopping) { calMessage(j.error); timer = setTimeout(start, 500); return; }
-          busy = false;
+          lock.busy = false;
           if (!j.ok) { calMessage(j.error); return; }
           runId = calId = j.id; calPoll(seq);
-        }).catch(function (e) { busy = false; calMessage(e.message); });
+        }).catch(function (e) { lock.busy = false; calMessage(e.message); });
       }
       start();
     }

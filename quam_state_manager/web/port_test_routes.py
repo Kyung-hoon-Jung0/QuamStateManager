@@ -106,13 +106,19 @@ def _play_binding(data) -> str:
     spec = data.get("spec") or {}
     net = spec.get("network") or {}
     try:
-        offset = float(data.get("offset"))
+        offset = 0.0 if data.get("kind") == "mw" else float(data.get("offset"))
         seconds = float(data.get("max_s", 300))
     except (TypeError, ValueError):
         raise pt.PortTestError("Offset and max time must be numbers.") from None
+    target = {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")}
+    if data.get("kind") == "mw":
+        # An MW play authorizes exactly these tone parameters (validated here too).
+        p = pt.mw_params(data.get("band"), data.get("lo_hz"), data.get("if_hz"),
+                         data.get("full_scale_power_dbm"), data.get("amp"))
+        return _binding({"kind": "mw", "port": _port_args(data), "seconds": seconds,
+                         **{k: p[k] for k in ("band", "lo", "if", "full_scale_power_dbm", "amp")}}, target)
     return _binding({"port": _port_args(data), "offset": offset, "seconds": seconds,
-                     "mode": str(data.get("output_mode") or "direct")},
-                    {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")})
+                     "mode": str(data.get("output_mode") or "direct")}, target)
 
 
 def _play_owner() -> str:
@@ -168,8 +174,12 @@ def port_play_run():
     try:
         seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
         spec = data.get("spec") or {}
-        cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
-                                      data.get("offset"), data.get("output_mode", "direct"))
+        if data.get("kind") == "mw":
+            cfg, plan = pt.build_wizard_mw(spec, _port_args(data) or [], data.get("band"), data.get("lo_hz"),
+                                          data.get("if_hz"), data.get("full_scale_power_dbm"), data.get("amp"))
+        else:
+            cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
+                                          data.get("offset"), data.get("output_mode", "direct"))
         python = _r()._build_python(data)
         if not python:
             raise pt.PortTestError("Select a Python environment in step 1.")

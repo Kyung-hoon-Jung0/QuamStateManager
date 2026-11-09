@@ -176,6 +176,115 @@ class PortTestError(ValueError):
     """A request this config cannot answer (the message is for the user)."""
 
 
+# ---- MW-FEM CW play (wizard step 3) ----------------------------------------
+# Limits transcribed from the QM docs, docs/docs/docs/Guides/opx1000_fems.md:
+#   "### Bands": band 1 = 50 MHz - 5.5 GHz, band 2 = 4.5 - 7.5 GHz, band 3 = 6.5 - 10.5 GHz.
+#   "### Upconverters and Downconverters": settable upconverter frequency per band
+#     band 1: 0 - 5.5 GHz, band 2: 4.5 - 7.5 GHz, band 3: 6.5 - 11 GHz; outside the band's
+#     specified range the output "will not meet the performance specification".
+#   "### Bands": each DUC carries a sub-band of about 800 MHz around its centre (+-400 MHz).
+#   "### Output Power": full_scale_power_dbm between -11 and 18 dBm, 1 dB granularity
+#     (QOP >= 3.7; earlier QOP 3.x: upper limit 16 dBm; above 16 dBm not guaranteed).
+#   "### Output Power": full scale is a waveform of {-1, 1}; P = FSP + 20*log10|amp|.
+# IF policy: |IF| > 400 MHz is a warning (outside the DUC sub-band), > 500 MHz is refused
+# (the 1 GSa/s quadrature rate).
+MW_BAND_SPEC_HZ = {1: (50e6, 5.5e9), 2: (4.5e9, 7.5e9), 3: (6.5e9, 10.5e9)}
+MW_LO_SETTABLE_HZ = {1: (0.0, 5.5e9), 2: (4.5e9, 7.5e9), 3: (6.5e9, 11e9)}
+MW_FSP_RANGE_DBM = (-11, 18)
+MW_FSP_GUARANTEED_DBM = 16
+MW_IF_WARN_HZ = 400e6
+MW_IF_MAX_HZ = 500e6
+MW_AMP_MAX = 1.0  # exclusive: |amp| < 1
+MW_DEFAULT_IF_HZ = 50e6
+
+
+def mw_params(band, lo_hz, if_hz, fsp, amp) -> dict:
+    """Validated MW play parameters, plus advisory notes. Raises PortTestError."""
+    if isinstance(band, bool) or str(band).strip() not in ("1", "2", "3"):
+        raise PortTestError("Band must be 1, 2 or 3.")
+    band_i = int(str(band).strip())
+    try:
+        lo, iff, a = float(lo_hz), float(if_hz), float(amp)
+    except (TypeError, ValueError):
+        raise PortTestError("LO, IF and amplitude must be numbers.") from None
+    if not all(math.isfinite(v) for v in (lo, iff, a)):
+        raise PortTestError("LO, IF and amplitude must be finite numbers.")
+    try:
+        fsp_f = float(fsp)
+    except (TypeError, ValueError):
+        raise PortTestError("Full-scale power must be an integer in dBm.") from None
+    if not math.isfinite(fsp_f) or fsp_f != int(fsp_f) or isinstance(fsp, bool):
+        raise PortTestError("Full-scale power must be an integer in dBm (1 dB steps).")
+    fsp_i = int(fsp_f)
+    lo_min, lo_max = MW_LO_SETTABLE_HZ[band_i]
+    if not lo_min <= lo <= lo_max:
+        raise PortTestError(f"Band {band_i} upconverter frequency must be {lo_min / 1e9:g}..{lo_max / 1e9:g} GHz.")
+    if abs(iff) > MW_IF_MAX_HZ:
+        raise PortTestError(f"|IF| must be <= {MW_IF_MAX_HZ / 1e6:g} MHz.")
+    if not MW_FSP_RANGE_DBM[0] <= fsp_i <= MW_FSP_RANGE_DBM[1]:
+        raise PortTestError(f"Full-scale power must be {MW_FSP_RANGE_DBM[0]}..{MW_FSP_RANGE_DBM[1]} dBm.")
+    if not abs(a) < MW_AMP_MAX:
+        raise PortTestError("Amplitude must satisfy |amp| < 1 (fraction of full scale).")
+    rf = lo + iff
+    notes = []
+    spec_lo, spec_hi = MW_BAND_SPEC_HZ[band_i]
+    if not spec_lo <= lo <= spec_hi or not spec_lo <= rf <= spec_hi:
+        notes.append(f"LO or RF is outside band {band_i}'s specified range "
+                     f"{spec_lo / 1e9:g}..{spec_hi / 1e9:g} GHz: performance is not specified.")
+    if abs(iff) > MW_IF_WARN_HZ:
+        notes.append("|IF| is above 400 MHz, outside the upconverter's ~800 MHz sub-band.")
+    if fsp_i > MW_FSP_GUARANTEED_DBM:
+        notes.append("Full-scale power above 16 dBm needs QOP >= 3.7 and is not guaranteed over the whole band.")
+    return {"band": band_i, "lo": lo, "if": iff, "rf": rf, "full_scale_power_dbm": fsp_i,
+            "amp": a, "dbm": dbm(fsp_i, a), "notes": notes}
+
+
+def mw_port(config: dict, port: list) -> list:
+    """Validate a physical MW-FEM output 1..8."""
+    try:
+        con, slot, number = str(port[0]), int(port[1]), int(port[2])
+        fems = config["controllers"][con]["fems"]
+        fem = fems.get(str(slot), fems.get(slot))
+        if len(port) != 3 or not 1 <= number <= 8 or not fem or fem.get("type") != "MW":
+            raise ValueError
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise PortTestError("Choose an MW-FEM analog output (1..8).") from None
+    return [con, slot, number]
+
+
+def build_wizard_mw(spec: dict, port: list, band, lo_hz, if_hz, fsp, amp) -> tuple[dict, dict]:
+    """CW tone on one MW-FEM output of the wizard allocation.
+
+    Only the played MW port is declared; every other port keeps what
+    ``controllers_from_spec`` gives it (LF ports at their saved offsets,
+    MW ports undeclared)."""
+    cfg = {"version": 1, "controllers": controllers_from_spec(spec)}
+    if len(port) == 3:
+        port = [con_name(port[0]), port[1], port[2]]
+    con, slot, number = mw_port(cfg, port)
+    p = mw_params(band, lo_hz, if_hz, fsp, amp)
+    fem = cfg["controllers"][con]["fems"][str(slot)]
+    fem["analog_outputs"] = {str(number): {
+        "band": p["band"], "upconverter_frequency": p["lo"],
+        "full_scale_power_dbm": p["full_scale_power_dbm"], "sampling_rate": 1e9}}
+    cfg.update(elements={"sm_port_play": {"MWInput": {"port": (con, slot, number), "upconverter": 1},
+                                         "intermediate_frequency": p["if"],
+                                         "operations": {"cw": "sm_port_play.pulse"}}},
+               pulses={"sm_port_play.pulse": {"operation": "control", "length": CW_PULSE_NS,
+                                              "waveforms": {"I": "sm_port_play.amp", "Q": "sm_port_play.zero"}}},
+               waveforms={"sm_port_play.amp": {"type": "constant", "sample": p["amp"]},
+                          "sm_port_play.zero": {"type": "constant", "sample": 0.0}})
+    plan = dict(test="cw", basis="port", element="sm_port_play", source_element="sm_port_play",
+                operation="cw", amp_scale=1.0, expected_peak=abs(p["amp"]), expected_dbm=p["dbm"],
+                kind="mw", port=[con, slot, number], in_port=None, marker_port=None,
+                period_ns=DEFAULT_PERIOD_NS, shots=1, lo=p["lo"], **{"if": p["if"]}, rf=p["rf"],
+                full_scale_power_dbm=p["full_scale_power_dbm"], band=p["band"], notes=list(p["notes"]),
+                pulse_ns=CW_PULSE_NS, config_fingerprint=config_fingerprint(cfg),
+                config_name=f"port-play-mw:{con}:{slot}:{number}")
+    return cfg, plan
+
+
+
 def dbm(fsp: Optional[float], amp: Optional[float]) -> Optional[float]:
     """Output power of a MW port: P = FSP + 20*log10|amp| (docs/109)."""
     if fsp is None or amp is None or not amp:

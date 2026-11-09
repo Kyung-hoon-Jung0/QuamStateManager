@@ -17313,7 +17313,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.appendChild(grip);
     }
     }
-    if (onPortPlay && portInfo && portInfo.io === 'output' && portInfo.femType === 'lf-fem') {
+    if (onPortPlay && portInfo && portInfo.io === 'output' && (portInfo.femType === 'lf-fem' || portInfo.femType === 'mw-fem')) {
         var playAnchor = _svgEl('foreignObject');
         // Sit ON the port circle: below it, the next row's cell is painted on top
         // and steals the pointer, so the button vanished on approach.
@@ -17323,7 +17323,7 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         playButton.setAttribute('type', 'button');
         playButton.setAttribute('class', 'btn-sm');
         playButton.textContent = 'Play';
-        playButton.setAttribute('aria-label', 'Play DC on ' + portInfo.con + ' / FEM ' + portInfo.slot + ' / AO ' + portInfo.port);
+        playButton.setAttribute('aria-label', (portInfo.femType === 'mw-fem' ? 'Play a CW tone on ' : 'Play DC on ') + portInfo.con + ' / FEM ' + portInfo.slot + ' / AO ' + portInfo.port);
         playButton.addEventListener('click', function(e) {
             e.stopPropagation();
             onPortPlay(portInfo);
