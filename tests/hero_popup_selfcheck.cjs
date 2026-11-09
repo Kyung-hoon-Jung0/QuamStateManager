@@ -91,17 +91,18 @@ ok(doc.getElementById('topo-html-wrap') === null, 'A2: no card-diagram host');
 ok(doc.querySelectorAll('.topo-node-card').length === 0, 'A3: no property cards');
 
 /* ── B. the pair information the cards carried is on the hero now ────── */
-ok(hero.querySelectorAll('.cm-freq').length === 2,
-  'B1: a frequency chevron per pair (shared TopoGraph.pairGlyphs)');
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\b[HL]\b/.test(g.textContent)).length === 4,
+  'B1: high and low frequency labels on both pair endpoints');
 ok(hero.querySelectorAll('.cm-role-c').length === 2, 'B2: a C marker per pair');
 ok(hero.querySelectorAll('.cm-role-t').length === 2, 'B3: a T marker per pair');
-ok(hero.querySelectorAll('.cm-role-m').length === 2, 'B4: an M marker per pair');
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 2, 'B4: an M marker per pair');
 
 /* M is a ROLE, so it coincides with C or T — never a third position. It must
    sit next to the end that actually moves, which differs per pair here. */
 function markerXY(sel, nth) {
-  const c = hero.querySelectorAll(sel)[nth].querySelector('circle');
-  return { x: parseFloat(c.getAttribute('cx')), y: parseFloat(c.getAttribute('cy')) };
+  const roles = Array.from(hero.querySelectorAll(sel === '.cm-role-m' ? '.cm-role' : sel));
+  const c = (sel === '.cm-role-m' ? roles.filter(g => /\bM\b/.test(g.textContent)) : roles)[nth].querySelector('text');
+  return { x: parseFloat(c.getAttribute('x')), y: parseFloat(c.getAttribute('y')) };
 }
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 {
@@ -136,7 +137,7 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     return w;
   })();
   const h2 = w2.document.getElementById('topo-hero');
-  ok(h2.querySelectorAll('.cm-role-m').length === 0,
+  ok(Array.from(h2.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 0,
     'B7: no moving_qubit recorded => no M is invented from the frequencies');
   ok(h2.querySelectorAll('.cm-role-c').length === 2,
     'B8: ...but C/T still render — the roles are known');
