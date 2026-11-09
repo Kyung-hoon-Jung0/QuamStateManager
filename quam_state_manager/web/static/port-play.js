@@ -92,16 +92,16 @@
           lock.busy = false;
           if (!j.ok) { message(j.error); return; }
           runId = j.id; action = kind;
-          $('[data-open-qm]').textContent = 'Open QM';
+          if ($('[data-open-qm]')) $('[data-open-qm]').textContent = 'Open QM';
           if (kind === 'play') $('[data-play]').textContent = 'Play again';
           poll(seq);
         }).catch(function (e) { lock.busy = false; message(e.message); });
       }
       start();
     }
-    $('[data-open-qm]').onclick = function () { launch('open'); };
+    if ($('[data-open-qm]')) $('[data-open-qm]').onclick = function () { launch('open'); };
     $('[data-play]').onclick = function () { launch('play'); };
-    $('[data-close-qm]').onclick = function () {
+    if ($('[data-close-qm]')) $('[data-close-qm]').onclick = function () {
       if (!runId || !action) { message('No QM open from this popup.'); return; }
       lock.busy = false; closing = true;
       stop().then(function () { message('Closing QM...'); poll(sequence); });
@@ -111,7 +111,7 @@
     };
     // A value edit while our QM is open: the next Open re-opens with the new value.
     node.addEventListener('input', function (e) {
-      if (action === 'open' && e.target && !e.target.matches('[data-hwok]')) $('[data-open-qm]').textContent = 'Open QM again';
+      if (action === 'open' && $('[data-open-qm]') && e.target && !e.target.matches('[data-hwok]')) $('[data-open-qm]').textContent = 'Open QM again';
     });
   }
   // MW-FEM output: a CW tone. Limits mirror core/port_test.py mw_params (QM docs,
@@ -140,10 +140,9 @@
       '<p class="ui-note" role="status" data-power></p></section>' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Run</h4></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a spectrum analyser or scope is on this port</label>' +
-      '<p class="ui-note">Open QM: port configured, no tone. Play: CW tone at LO + IF. Close QM or Stop: output off.</p>' +
-      '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm" data-open-qm>Open QM</button>' +
-      '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button>' +
-      '<button type="button" class="btn-sm outline" data-play>Play</button>' +
+      '<p class="ui-note">Play: CW tone at LO + IF. Stop: output off.</p>' +
+      '<div class="ui-actions ui-actions--start" data-qm-actions>' +
+      '<button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button></div>' +
       '<p class="ui-note" role="status" data-message></p></section></div>' +
       '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
@@ -204,7 +203,7 @@
       '<p class="ui-note">Open QM: the port goes to this offset. Close QM: back to 0 V. Play: also runs a zero waveform.</p>' +
       '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm" data-open-qm>Open QM</button>' +
       '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button>' +
-      '<button type="button" class="btn-sm outline" data-play>Play</button>' +
+      '<button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
       '<button type="button" class="btn-sm outline" data-save>Save offset</button></div>' +
       '<p class="ui-note" role="status" data-message></p></section>' +
