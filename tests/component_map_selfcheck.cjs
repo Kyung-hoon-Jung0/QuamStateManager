@@ -136,18 +136,31 @@ function checkRenderLayout() {
   ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
 
   // emphasis never changes content: same drawing under a different highlight
-  const m2 = win.document.createElement('div');
-  win.document.body.appendChild(m2);
-  win.TopoGraph.renderLayout(m2, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: 'resonators' });
+  // (the qubits and pairs pages size their own subject; every other page
+  // draws the same picture).
+  const mk = (hl) => { const d = win.document.createElement('div'); win.document.body.appendChild(d);
+    win.TopoGraph.renderLayout(d, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: hl }); return d; };
+  const m2 = mk('resonators'), mFx = mk('flux'), mq = mk('qubits');
   const strip = (h) => h.replace(/cm-hl-[a-z]+/g, 'cm-hl-X');
-  ok(strip(m.innerHTML) === strip(m2.innerHTML),
+  ok(strip(mFx.innerHTML) === strip(m2.innerHTML),
      'highlight changes EMPHASIS only — drawings byte-identical up to the mode class');
+  // Subject sizing: the qubits page draws stones ~2x; the pairs page keeps
+  // the stones and enlarges the pair label and the role pills.
+  const rOf = (d) => +d.querySelector('.cm-stone').getAttribute('r');
+  ok(rOf(m2) === 19 && rOf(m) === 19 && rOf(mq) === 37,
+     'stone radius: default 19, pairs 19, qubits 37: ' + [rOf(m2), rOf(m), rOf(mq)]);
+  ok(mq.querySelector('.cm-id').getAttribute('font-size') === '19.2', 'qubits page: id font 12 x 1.6');
+  ok(m2.querySelector('.cm-dir-label').getAttribute('font-size') === '10.8', 'default page: pair label 10.8px');
+  const rfs = (d) => +d.querySelector('.cm-role-txt').getAttribute('font-size');
+  ok(rfs(m) > rfs(m2), 'pairs page: role pills larger than the default: ' + [rfs(m), rfs(m2)]);
+  const qr = mq.querySelector('.cm-role-dot'), qs = mq.querySelector('.cm-stone');
+  ok(qr && qs, 'qubits page still draws role pills');
 
   // F2 (docs/93): text scales with the cell. D-98: the qubit id is one step
   // smaller (x0.88) but never under 12px (D-6); the pair label one step larger.
   const idEl = m.querySelector('.cm-id');
   ok(idEl.getAttribute('font-size') === '12', 'default cell: id font 10.5 x 0.88 floored at 12px');
-  ok(m.querySelector('.cm-dir-label').getAttribute('font-size') === '10.8', 'default cell: pair label 9 x 1.2 = 10.8px');
+  ok(m.querySelector('.cm-dir-label').getAttribute('font-size') === '14', 'pairs page: pair label 10.8 x 1.3 = 14px');
   const mBig = win.document.createElement('div');
   win.document.body.appendChild(mBig);
   win.TopoGraph.renderLayout(mBig, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: 'pairs', cell: 120 });

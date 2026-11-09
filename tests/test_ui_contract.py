@@ -785,6 +785,7 @@ _STAGE6_SELECTORS = {
     '.compare-float[hidden]',
     '.czp-map-view',
     '.czp-map-view .cm-svg',
+    '.cm-svg.cm-hl-qubits',
     '.czp-map-view > .cmap',
     '.czp-map-view > .czp-map',
     '.czp-map-view [role="button"]:focus-visible',

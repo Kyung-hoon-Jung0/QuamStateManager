@@ -826,10 +826,14 @@ window.TopoGraph = (function () {
     }
 
     var CELL = opts.cell || 64;
-    var R = Math.round(CELL * 0.30);
+    // The page's subject reads larger: the qubits page draws its stones about
+    // twice the default size; the pairs page keeps the stones and enlarges the
+    // pair edges and their text instead.
+    var HL = String(opts.highlight || "");
+    var R = Math.round(CELL * (HL === "qubits" ? 0.58 : 0.30));
     // D-94: only the SPACING grows (x DIR_SPACING); stones keep their size,
     // so the gap between two stones has room for a label and an arrow.
-    var SP = Math.round(CELL * DIR_SPACING);
+    var SP = Math.round(CELL * DIR_SPACING * (HL === "qubits" ? 1.4 : 1));   // larger stones keep their gap
     var W = Math.max(SP, Math.round(lay.cols * SP));
     var H = Math.max(SP, Math.round(lay.rows * SP));
     // The add door (core/diagram_add.py): one extra column on the right holds
@@ -910,6 +914,7 @@ window.TopoGraph = (function () {
     var pairFont = Math.round((CELL * 9 / 64) * 10) / 10;
     pairFont = Math.round(pairFont * 1.2 * 10) / 10;   // D-98: the pair is this map's subject
     pairFont = Math.max(Math.min(pairFont, DIR_MIN_FONT), Math.round(pairFont * DIR_LABEL_SCALE * 10) / 10);
+    if (HL === "pairs") pairFont = Math.round(pairFont * 1.3 * 10) / 10;
     for (var ei = 0; ei < edges.length; ei++) {
       var e = edges[ei];
       var a = px(e.source), b = px(e.target);
@@ -955,7 +960,8 @@ window.TopoGraph = (function () {
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
     var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
-      roleFontSize: Math.max(11, CELL * 0.11), roleMinFont: 9, stoneGap: 5 });
+      roleFontSize: Math.max(11, CELL * 0.11) * (HL === "pairs" ? 1.25 : 1), roleMinFont: 9, stoneGap: 5,
+      stoneRadius: R });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
     // id text scales WITH the cell (docs/93 F2) — a CSS-fixed size left tiny
@@ -963,6 +969,7 @@ window.TopoGraph = (function () {
     // original 64px cell, so a default-cell render keeps its exact font.
     var idFont = Math.round((CELL * 10.5 / 64) * 10) / 10;
     idFont = Math.max(DIR_MIN_FONT, Math.round(idFont * 0.88 * 10) / 10);   // D-98
+    if (HL === "qubits") idFont = Math.round(idFont * 1.6 * 10) / 10;
     // Chain emphasis (docs/93 F3): with opts.emphasisChain set (the page's
     // active chain filter), matching stones read as selected and the rest
     // drop to context — composes with the page highlight, purely additive.
