@@ -68,11 +68,13 @@ function smallChip() {
     edges: [
       { pair_id: 'q1-q2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
         cz_fidelity_updated_at: Date.now() - 2 * DAY, cz_fidelity_run: 412,
+        gate_fidelities: [{gate: 'cz', metric: 'InterleavedRB', value: 0.97, run_id: 412}],
         gate_kind: 'cz', directed: false, best_gate: 'cz',
         gate_details: [{ name: 'cz', amplitude: 0.1234, length: 48 }],
         last_calibrated: Date.now() - 2 * DAY },
       { pair_id: 'q3-q4', source: 'q3', target: 'q4', has_cz: true, cz_fidelity: 0.90,
         cz_fidelity_updated_at: Date.now() - 60 * DAY,
+        gate_fidelities: [{gate: 'cz', metric: 'InterleavedRB', value: 0.90}],
         gate_kind: 'cz', directed: false, best_gate: 'cz' },
       { pair_id: 'q1-q3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
         gate_kind: 'cz', directed: false, best_gate: null },
