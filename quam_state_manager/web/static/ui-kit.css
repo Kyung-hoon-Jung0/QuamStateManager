@@ -1243,3 +1243,6 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gen-rule-row input[type="checkbox"], .gen-rule-grpwrap > input.gen-rule-grp-cb { width: var(--ui-rule-checkbox-size); height: var(--ui-rule-checkbox-size); margin: 0; flex: 0 0 auto; cursor: pointer; border: var(--ui-rule-control-7); background-color: transparent; }
 .gen-rule-row input[type="checkbox"]:checked, .gen-rule-grpwrap > input.gen-rule-grp-cb:checked { border-color: var(--ui-accent-fill); background-color: var(--ui-accent-fill); }
 .gen-rule-row input[type="checkbox"]:focus-visible, .gen-rule-grpwrap > input.gen-rule-grp-cb:focus-visible { outline: var(--ui-focus-w) solid var(--ui-ring); outline-offset: var(--ui-rule-control-8); }
+
+/* The qubits page draws large stones: its map scales to the pane width. */
+.cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }

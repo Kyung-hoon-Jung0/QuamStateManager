@@ -4654,7 +4654,7 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-pair-label { opacity: 0; pointer-events: none; font-weight: 600; fill: var(--pico-color);
     paint-order: stroke; stroke: var(--pico-background-color); stroke-width: 3px; }
 .cm-hl-pairs .cm-pair-label { opacity: 1; }
-.cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 9; }
+.cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 14; }
 .cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
 .cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--pico-primary); }
 
