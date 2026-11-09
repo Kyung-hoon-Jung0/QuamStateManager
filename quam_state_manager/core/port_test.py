@@ -42,6 +42,86 @@ TESTS = ("cw", "pulse", "loopback")
 BASES = ("chip", "raw")
 
 
+def controllers_from_spec(spec: dict) -> dict:
+    """Element-free OPX1000 allocation from wizard step 3."""
+    controllers = {}
+    for ctrl in spec.get("instruments", {}).get("controllers", []):
+        con = "con" + str(int(ctrl["con"]))
+        fems = controllers.setdefault(con, {"fems": {}})["fems"]
+        for fem in ctrl.get("fems", []):
+            slot = str(int(fem["slot"]))
+            if fem.get("fem") not in ("lf", "mw") or not 1 <= int(slot) <= 8:
+                raise PortTestError("Choose an LF or MW FEM in slots 1..8.")
+            entry = fems[slot] = {"type": fem["fem"].upper()}
+            if entry["type"] == "LF":
+                entry["analog_outputs"] = {
+                    str(p): {"offset": 0.0, "output_mode": "direct",
+                             "sampling_rate": 1e9, "upsampling_mode": "pulse"}
+                    for p in range(1, 9)}
+    return controllers
+
+
+def build_wizard_dc(spec: dict, port: list, offset: float, output_mode="direct"):
+    cfg = {"controllers": controllers_from_spec(spec)}
+    info = dc_port(cfg, port)
+    con, slot, number = info["port"]
+    cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["output_mode"] = output_mode
+    return build_dc(cfg, port, offset)
+
+
+def dc_port(config: dict, port: list) -> dict:
+    """Validate a physical LF-FEM output, including an unused output 1..8."""
+    try:
+        con, slot, number = str(port[0]), int(port[1]), int(port[2])
+        fems = config["controllers"][con]["fems"]
+        fem = fems.get(str(slot), fems.get(slot))
+        if len(port) != 3 or not 1 <= number <= 8 or not fem or fem.get("type") != "LF":
+            raise ValueError
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise PortTestError("Choose an LF-FEM analog output (1..8).") from None
+    settings = _port_entry(config, [con, slot, number], "analog_outputs")
+    mode = settings.get("output_mode", "direct")
+    if mode not in ("direct", "amplified"):
+        raise PortTestError(f"Unsupported output mode {mode!r}.")
+    return {"port": [con, slot, number], "output_mode": mode,
+            "offset": settings.get("offset") or 0.0, "limit": 2.5 if mode == "amplified" else 0.5}
+
+
+def build_dc(config: dict, port: list, offset: float) -> tuple[dict, dict]:
+    """Keep generated controllers verbatim; override only the selected offset."""
+    info = dc_port(config, port)
+    try:
+        offset = float(offset)
+    except (TypeError, ValueError):
+        raise PortTestError("Offset must be a number in volts.") from None
+    if not math.isfinite(offset) or abs(offset) > info["limit"]:
+        raise PortTestError(f"{info['output_mode'].capitalize()} mode requires |offset| <= {info['limit']:g} V.")
+    cfg = {"version": 1, "controllers": copy.deepcopy(config["controllers"])}
+    con, slot, number = info["port"]
+    fems = cfg["controllers"][con]["fems"]
+    fem = fems.get(str(slot), fems.get(slot))
+    outputs = fem.setdefault("analog_outputs", {})
+    key = number if number in outputs else str(number)
+    if key not in outputs:
+        outputs[key] = {"sampling_rate": 1e9, "output_mode": "direct", "upsampling_mode": "pulse"}
+    outputs[key]["offset"] = offset
+    cfg.update(elements={"sm_port_play": {"singleInput": {"port": (con, slot, number)},
+                                         "intermediate_frequency": 0,
+                                         "operations": {"dc": "sm_port_play.pulse"}}},
+               pulses={"sm_port_play.pulse": {"operation": "control", "length": CW_PULSE_NS,
+                                              "waveforms": {"single": "sm_port_play.zero"}}},
+               waveforms={"sm_port_play.zero": {"type": "constant", "sample": 0.0}})
+    # Reuse the existing script, watchdog, simulator and halt/close machinery.
+    plan = dict(test="dc", basis="port", element="sm_port_play", source_element="sm_port_play",
+                operation="dc", amp_scale=1.0, expected_peak=0.0, expected_dbm=None,
+                kind="lf", port=info["port"], in_port=None, marker_port=None,
+                period_ns=DEFAULT_PERIOD_NS, shots=1, lo=None, **{"if": 0}, rf=None,
+                full_scale_power_dbm=None, notes=[], pulse_ns=CW_PULSE_NS,
+                config_fingerprint=config_fingerprint(cfg), config_name=f"port-play:{con}:{slot}:{number}",
+                output_mode=info["output_mode"], offset=offset)
+    return cfg, plan
+
+
 class PortTestError(ValueError):
     """A request this config cannot answer (the message is for the user)."""
 
@@ -412,8 +492,9 @@ def _fmt_port(p) -> str:
     return "/".join(str(x) for x in (p or [])) or "?"
 
 
-_TITLES = {"cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
+_TITLES = {"dc": "DC offset", "cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
 _USE = {
+    "dc": "Oscilloscope: zero waveform plus the selected port offset. Runs until Stop or the time limit.",
     "cw": "Spectrum analyser: a tone at the RF frequency below, at the power below. Runs until Stop (Ctrl+C).",
     "pulse": "Oscilloscope: trigger on the marker port; each pulse has the length and peak below, "
              "repeated every PERIOD_NS. Runs until Stop (Ctrl+C).",

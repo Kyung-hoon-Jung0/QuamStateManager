@@ -60,10 +60,10 @@ def _config():
 
 
 def _port_args(src) -> list | None:
-    con, port = (src.get("con") or "").strip(), (src.get("port") or "").strip()
+    con, port = str(src.get("con") or "").strip(), str(src.get("port") or "").strip()
     if not con or not port:
         return None
-    slot = (src.get("slot") or "").strip()
+    slot = str(src.get("slot") or "").strip()
     return [con, slot, port]
 
 
@@ -99,6 +99,42 @@ def _build(src):
     tcfg, plan = pt.build(cfg, element, test, basis, **_params(src))
     label = _r()._active_ctx().get("name", "") if _r()._active_ctx() else ""
     return pt.render_script(tcfg, plan, chip_label=str(label or "")), plan
+
+
+@port_test_bp.route("/port-play/run", methods=["POST"])
+def port_play_run():
+    data = json_object()
+    if data.get("hardware_ok") is not True:
+        return jsonify(ok=False, error="Confirm the port is not wired into the fridge (or that a DC offset there is intended)."), 400
+    manager = runs()
+    # Generation binding prevents a concurrent Stop from losing to preparation.
+    with manager._lock:
+        manager.port_play_generation += 1
+        generation = manager.port_play_generation
+    status = manager.status()
+    if status.get("state") == "running":
+        manager.stop(status.get("id"), "Play again")
+        return jsonify(ok=False, stopping=True,
+                       error="Stopping the previous play; waiting for its QM to close."), 409
+    try:
+        seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
+        spec = data.get("spec") or {}
+        cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
+                                      data.get("offset"), data.get("output_mode", "direct"))
+        python = _r()._build_python(data)
+        if not python:
+            raise pt.PortTestError("Select a Python environment in step 1.")
+        network = spec.get("network") or {}
+        host = network.get("host")
+        if not host:
+            raise pt.PortTestError("Enter the network host in step 2.")
+        req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation,
+               "target": {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}}
+        started = manager.start(python, pt.render_script(cfg, plan), req,
+                                {"plan": plan, "target": "opx", "target_label": host})
+        return jsonify(ok=True, **started)
+    except (ValueError, RuntimeError, KeyError, TypeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
 
 
 @port_test_bp.route("/port-test")

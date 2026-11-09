@@ -274,6 +274,7 @@ class Runs:
         self._lock = threading.Lock()
         #: one-time hardware confirmations: token -> (expires monotonic, owner, binding)
         self.confirmations: dict = {}
+        self.port_play_generation = 0
         self.current: Optional[dict] = None
         if resume:
             self._resume()
@@ -310,6 +311,9 @@ class Runs:
     def start(self, python: str, script: str, request: dict, meta: dict,
               popen=subprocess.Popen) -> dict:
         with self._lock:
+            generation = request.get("_port_play_generation")
+            if generation is not None and generation != self.port_play_generation:
+                raise RuntimeError("Play was stopped while preparing the config.")
             cur = self.current
             if cur and cur["proc"].poll() is None:
                 raise RuntimeError("Another port test is still running; stop it first.")
@@ -324,6 +328,7 @@ class Runs:
             work.mkdir()
             (work / "script.py").write_text(script, encoding="utf-8")
             req = dict(request)
+            req.pop("_port_play_generation", None)
             req.setdefault("max_s", MAX_RUN_S)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
             proc = popen([python, str(RUNNER), str(work / "script.py"), str(work)],
@@ -452,6 +457,8 @@ class Runs:
             pass
 
     def stop(self, rid: Optional[str] = None, why: str = "Stop pressed") -> bool:
+        with self._lock:
+            self.port_play_generation += 1
         run = self.current
         if not run or (rid and run["id"] != rid):
             return False

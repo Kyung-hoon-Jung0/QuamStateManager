@@ -17047,7 +17047,7 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
             for (var portNum = 1; portNum <= rows; portNum++) {
                 var py = top + (portNum - 1) * rowH + rowH / 2;
                 _renderPortCell(svg, outCx, py, circleR, roleColors, outPorts[String(portNum)] || [], rawWiring,
-                                {con: ctrlName, slot: femId, port: portNum, io: 'output'}, editable, onPortHover);
+                                {con: ctrlName, slot: femId, port: portNum, io: 'output', femType: femData.type}, editable, onPortHover, options && options.onPortPlay);
             }
 
             // Digital output rows (all 8 physical slots; smaller circles)
@@ -17242,7 +17242,7 @@ function _iwCompactNames(names) {
  * Render one port cell: empty placeholder if no assignments; single row for ≤3 assignments;
  * two-row layout (max 3 per row) for 4+ assignments to avoid horizontal overflow.
  */
-function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, portInfo, editable, onPortHover) {
+function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, portInfo, editable, onPortHover, onPortPlay) {
     // Wrap the cell in a <g class="iw-port"> tagged with its con/slot/port/io
     // so drag-drop callers can identify and hit-test ports. Empty cells get a
     // group too, so they are valid drop targets.
@@ -17312,6 +17312,22 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         grip.style.cursor = 'grab';
         cell.appendChild(grip);
     }
+    }
+    if (onPortPlay && portInfo && portInfo.io === 'output' && portInfo.femType === 'lf-fem') {
+        var playAnchor = _svgEl('foreignObject');
+        _svgAttrs(playAnchor, {x: cx - 25, y: cy + r, width: 54, height: 30});
+        playAnchor.setAttribute('class', 'port-play-anchor');
+        var playButton = document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
+        playButton.setAttribute('type', 'button');
+        playButton.setAttribute('class', 'btn-sm');
+        playButton.textContent = 'Play';
+        playButton.setAttribute('aria-label', 'Play DC on ' + portInfo.con + ' / FEM ' + portInfo.slot + ' / AO ' + portInfo.port);
+        playButton.addEventListener('click', function(e) {
+            e.stopPropagation();
+            onPortPlay(portInfo);
+        });
+        playAnchor.appendChild(playButton);
+        cell.appendChild(playAnchor);
     }
     svg.appendChild(cell);
 }
