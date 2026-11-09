@@ -25,7 +25,9 @@
     table.replaceChildren();
     Object.keys(spec.port_offsets || {}).sort().forEach(function (pin) {
       var row = document.createElement('tr'), settings = spec.port_offsets[pin];
-      [pin, settings.output_mode, Number(settings.offset).toFixed(6)].forEach(function (value) {
+      var what = settings.output_mode || ('AI, gain ' + (settings.gain_db || 0) + ' dB');
+      if (settings.source === 'loopback') what += ' (loopback)';
+      [pin, what, Number(settings.offset).toFixed(6)].forEach(function (value) {
         var cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
       });
       var cell = document.createElement('td'), remove = document.createElement('button');
@@ -55,7 +57,18 @@
       '<label>Max play time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
       '<label><input data-hwok type="checkbox"> This port is safe to drive (scope cable, or a DC offset on this line is intended)</label>' +
       '<p class="ui-note">Plays a zero-amplitude waveform. Closing the QM resets OPX1000 outputs to 0 V.</p>' +
-      '<p class="ui-note" role="status" data-message></p></div>' +
+      '<p class="ui-note" role="status" data-message></p>' +
+      '<section data-loopcal><h4>Loopback calibration</h4>' +
+      '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label>' +
+      '<p class="ui-note" data-ai-saved></p>' +
+      '<p class="ui-note">First calibrate the AI with nothing connected to it (once per FEM/AI and per gain_db; gain_db 0 here). ' +
+      'Then connect this AO to that AI with one cable and calibrate the AO. Uses the safety box above and the network of step 2.</p>' +
+      '<div><button type="button" class="btn-sm outline" data-cal-input>Calibrate AI (input open)</button> ' +
+      '<button type="button" class="btn-sm outline" data-cal-output>Calibrate this AO (loopback)</button> ' +
+      '<button type="button" class="btn-sm outline" data-export>Export script</button></div>' +
+      '<ol class="ui-note" data-cal-progress></ol>' +
+      '<p class="ui-note" role="status" data-cal-result></p>' +
+      '<button type="button" class="btn-sm" data-cal-save disabled>Save calibrated offset</button></section></div>' +
       '<div class="ui-dialog-foot"><button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
       '<button type="button" class="btn-sm outline" data-save>Save offset</button>' +
@@ -126,6 +139,107 @@
         source.changed(); message('Saved in wizard draft. Build applies this offset.');
       } catch (e) { message(e.message); }
     };
+    // ---- Loopback calibration (BRIEF3 E-1..E-4) ----
+    var femKey = 'con' + con + '/' + port.slot, calId = null, calSeq = 0;
+    var aiChoice = (source.spec().port_play_ai || {})[femKey];
+    if (aiChoice) $('[data-ai]').value = String(aiChoice);
+    function aiKey() { return femKey + '/ai' + $('[data-ai]').value; }
+    function showAiSaved() {
+      var e = (source.spec().port_offsets || {})[aiKey()];
+      $('[data-ai-saved]').textContent = e
+        ? 'Saved AI offset: ' + Number(e.offset).toFixed(6) + ' V (gain ' + (e.gain_db || 0) + ' dB).'
+        : 'No saved AI offset for this AI yet: calibrate the AI first.';
+      $('[data-cal-output]').disabled = !e;
+    }
+    function calMessage(v) { $('[data-cal-result]').textContent = v; }
+    $('[data-ai]').onchange = function () {
+      var spec = source.spec();
+      (spec.port_play_ai || (spec.port_play_ai = {}))[femKey] = Number($('[data-ai]').value);
+      source.changed(); showAiSaved();
+    };
+    function calBody(kind) {
+      var data = params();
+      data.kind = kind; data.ai = Number($('[data-ai]').value);
+      return JSON.parse(JSON.stringify(data));
+    }
+    function calPoll(seq) {
+      if (seq !== calSeq || dialog !== node || !calId) return;
+      fetch('/port-test/status?id=' + encodeURIComponent(calId)).then(function (r) { return r.json(); }).then(function (st) {
+        if (seq !== calSeq || dialog !== node) return;
+        var list = $('[data-cal-progress]');
+        list.replaceChildren();
+        (st.progress || []).forEach(function (line) {
+          var li = document.createElement('li'); li.textContent = line; list.appendChild(li);
+        });
+        if (st.state === 'running') {
+          calMessage(st.stopping ? 'Stopping...' : 'Calibrating...');
+          timer = setTimeout(function () { calPoll(seq); }, 1000);
+          return;
+        }
+        var res = st.result || {};
+        if (!res.ok) { calMessage(res.stopped ? 'Stopped.' : (res.error || 'Failed.')); return; }
+        calMessage((res.converged ? 'Converged' : 'Not converged') + ': offset ' + Number(res.final_offset).toFixed(6) +
+          ' V after ' + res.iters + ' iteration(s).' + (res.converged ? '' : ' Nothing to save; check the cable.'));
+        $('[data-cal-save]').disabled = res.converged !== true;
+      }).catch(function (e) { calMessage(e.message); });
+    }
+    function calibrate(kind) {
+      if (busy) return;
+      var data;
+      try { data = calBody(kind); } catch (e) { calMessage(e.message); return; }
+      if (!data.hardware_ok) { calMessage('Tick the safety box first.'); return; }
+      busy = true; var seq = ++calSeq; sequence++; clearTimeout(timer);
+      $('[data-cal-save]').disabled = true; $('[data-cal-progress]').replaceChildren();
+      calMessage('Preparing calibration...');
+      function start() {
+        if (seq !== calSeq || dialog !== node) { busy = false; return; }
+        post('/port-play/loopcal/confirm', data).then(function (c) {
+          if (!c.ok) throw new Error(c.error);
+          return post('/port-play/loopcal/run', Object.assign({confirm_token: c.token}, data));
+        }).then(function (j) {
+          if (seq !== calSeq || dialog !== node) { if (j.ok) post('/port-play/stop', {id: j.id}); busy = false; return; }
+          if (j.stopping) { calMessage(j.error); timer = setTimeout(start, 500); return; }
+          busy = false;
+          if (!j.ok) { calMessage(j.error); return; }
+          runId = calId = j.id; calPoll(seq);
+        }).catch(function (e) { busy = false; calMessage(e.message); });
+      }
+      start();
+    }
+    $('[data-cal-input]').onclick = function () { calibrate('input'); };
+    $('[data-cal-output]').onclick = function () { calibrate('output'); };
+    $('[data-cal-save]').onclick = function () {
+      if (!calId) return;
+      post('/port-play/loopcal/save', {id: calId}).then(function (j) {
+        if (!j.ok) { calMessage(j.error); return; }
+        var spec = source.spec();
+        (spec.port_offsets || (spec.port_offsets = {}))[j.pin] = j.entry;
+        if (j.entry.output_mode) {
+          $('[data-offset]').value = Number(j.entry.offset).toFixed(6);
+          $('[data-mode]').value = j.entry.output_mode;
+          $('[data-play]').textContent = 'Play again';
+        }
+        $('[data-cal-save]').disabled = true;
+        source.changed(); showAiSaved();
+        calMessage('Saved ' + j.pin + ' = ' + Number(j.entry.offset).toFixed(6) + ' V in the wizard draft.' +
+          (j.entry.output_mode ? ' Press Play again to check it on the scope.' : ''));
+      }).catch(function (e) { calMessage(e.message); });
+    };
+    $('[data-export]').onclick = function () {
+      var data;
+      try { data = calBody('output'); } catch (e) { calMessage(e.message); return; }
+      fetch('/port-play/loopcal/script.py', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)}).then(function (r) {
+        if (!r.ok) return r.json().then(function (j) { throw new Error(j.error); });
+        var m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
+        return r.blob().then(function (b) {
+          var a = document.createElement('a'); a.href = URL.createObjectURL(b);
+          a.download = m ? m[1] : 'lf_offset.py'; document.body.appendChild(a); a.click(); a.remove();
+          calMessage('Script downloaded: ' + a.download);
+        });
+      }).catch(function (e) { calMessage(e.message); });
+    };
+    showAiSaved();
     $('[data-close]').onclick = close;
     node.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
     node.showModal(); $('[data-offset]').focus();

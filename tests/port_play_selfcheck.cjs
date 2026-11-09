@@ -60,4 +60,68 @@ assert.equal(d.querySelectorAll('#plain-rack .port-play-anchor').length, 0);
 d.querySelector('#gen-port-offsets button').click();
 assert.equal(Object.keys(G.state.spec.port_offsets).length, 0, 'remove');
 console.log('port_play_selfcheck: passed');
-setTimeout(() => process.exit(0), 50);
+// ---- Loopback calibration section (BRIEF3 E-1..E-4) ----
+(async () => {
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  const calls = [];
+  let statusReply = null;
+  const reply = (obj, extra) => Promise.resolve(Object.assign({ok: true, json: () => Promise.resolve(obj)}, extra || {}));
+  w.fetch = (u, opt) => {
+    const url = String(u), body = opt && opt.body ? JSON.parse(opt.body) : null;
+    calls.push({url, body});
+    if (url.endsWith('/loopcal/confirm')) return reply({ok: true, token: 'tok'});
+    if (url.endsWith('/loopcal/run')) return reply({ok: true, id: 'cal1'});
+    if (url.startsWith('/port-test/status')) return reply(statusReply);
+    if (url.endsWith('/loopcal/save')) return reply({ok: true, pin: body.id === 'cal1' ? 'con2/3/ai1' : '?',
+      entry: {offset: 0.0012, gain_db: 0, source: 'loopback'}});
+    if (url.endsWith('/loopcal/script.py')) return reply({}, {
+      headers: {get: () => 'attachment; filename="lf_offset_con2_fem3_ao5.py"'},
+      blob: () => Promise.resolve(new w.Blob(['x']))});
+    return new Promise(() => {});
+  };
+  w.URL.createObjectURL = () => 'blob:x';
+  let downloaded = null;
+  w.HTMLAnchorElement.prototype.click = function () { downloaded = this.download; };
+  cell.querySelector('button').click();
+  const pop = d.getElementById('port-play-dialog');
+  const q = s => pop.querySelector(s);
+  assert(q('[data-loopcal]'), 'loopback section');
+  assert(q('[data-cal-output]').disabled, 'AO calibration refused without a saved AI offset');
+  assert(/calibrate the AI first/.test(q('[data-ai-saved]').textContent));
+  assert(/gain_db/.test(pop.textContent), 'help line names gain_db');
+  q('[data-cal-input]').click();
+  assert(/safety box/.test(q('[data-cal-result]').textContent), 'cal needs the safety box');
+  assert(!calls.length, 'no request without the safety box');
+  q('[data-hwok]').checked = true;
+  // A run that did not converge: Save stays disabled.
+  statusReply = {state: 'done', progress: ['Iter 1: offset +0.000000 V -> DC +3.000 mV'],
+    result: {ok: true, converged: false, final_offset: 0.01, iters: 6}};
+  q('[data-cal-input]').click();
+  for (let i = 0; i < 5; i++) await tick();
+  const run = calls.find(c => c.url.endsWith('/loopcal/run'));
+  assert(run && run.body.kind === 'input' && run.body.ai === 1 && run.body.confirm_token === 'tok', 'run body');
+  assert.equal(run.body.con, 'con2'); assert.equal(String(run.body.slot), '3'); assert.equal(String(run.body.port), '5');
+  assert.equal(q('[data-cal-progress]').children.length, 1, 'progress lines shown');
+  assert(/Not converged/.test(q('[data-cal-result]').textContent));
+  assert(q('[data-cal-save]').disabled, 'no Save when not converged');
+  statusReply = {state: 'done', progress: ['a', 'b'], result: {ok: true, converged: true, final_offset: 0.0012, iters: 2}};
+  q('[data-cal-input]').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert(/Converged/.test(q('[data-cal-result]').textContent), 'result card');
+  assert(!q('[data-cal-save]').disabled, 'Save after convergence');
+  q('[data-cal-save]').click();
+  for (let i = 0; i < 3; i++) await tick();
+  assert.equal(G.state.spec.port_offsets['con2/3/ai1'].offset, 0.0012, 'AI offset saved in the draft');
+  assert(!q('[data-cal-output]').disabled, 'AO calibration allowed after an AI offset');
+  q('[data-ai]').value = '2'; q('[data-ai]').dispatchEvent(new w.Event('change'));
+  assert.equal(G.state.spec.port_play_ai['con2/3'], 2, 'AI choice remembered per FEM');
+  assert(q('[data-cal-output]').disabled, 'AI 2 has no saved offset');
+  q('[data-export]').click();
+  for (let i = 0; i < 4; i++) await tick();
+  const exp = calls.find(c => c.url.endsWith('/loopcal/script.py'));
+  assert(exp && exp.body.ai === 2 && exp.body.con === 'con2' && exp.body.spec, 'export body prefilled');
+  assert.equal(downloaded, 'lf_offset_con2_fem3_ao5.py', 'download name');
+  console.log('port_play_selfcheck: loopcal passed');
+  setTimeout(() => process.exit(0), 50);
+})().catch(e => { console.error(e); process.exit(1); });
+

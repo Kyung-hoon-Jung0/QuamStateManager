@@ -695,6 +695,20 @@ def apply_port_offsets(state, spec):
     for pin, settings in (spec.get("port_offsets") or {}).items():
         con, slot, port = pin.split("/")
         con = con_name(con)
+        if port in ("ai1", "ai2"):
+            # A loopback-calibrated LF-FEM analog input offset (gain_db 0 only).
+            value = float(settings["offset"])
+            if ((con, slot) not in declared or not math.isfinite(value) or abs(value) > 0.5
+                    or int(settings.get("gain_db") or 0) != 0):
+                raise ValueError(f"Invalid saved LF input offset: {pin}")
+            ports = state.setdefault("ports", {}).setdefault("analog_inputs", {})
+            entry = ports.setdefault(con, {}).setdefault(slot, {}).setdefault(port[2:], {
+                "__class__": "quam.components.ports.analog_inputs.LFFEMAnalogInputPort",
+                "controller_id": con, "fem_id": int(slot), "port_id": int(port[2:]),
+                "sampling_rate": 1e9, "gain_db": 0})
+            entry.update(offset=value)
+            applied.append(f"{con}/{slot}/{port}")
+            continue
         mode = settings.get("output_mode", "direct")
         value = float(settings["offset"])
         if ((con, slot) not in declared or not port.isdigit() or not 1 <= int(port) <= 8

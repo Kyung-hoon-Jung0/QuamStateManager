@@ -23,7 +23,9 @@ def build_loopback_config(controllers, con, fem, ao, ai, ao_offset, ai_offset, o
     """Copy controllers, updating only the selected LF-FEM AO/AI entries.
 
     Pulse and weights reproduce 08995022-configuration_with_lf_fem_single.py,
-    including its control operation and 5000 ns integration weight durations.
+    with 5000 ns integration weight durations. The pulse operation is
+    "measurement" (the reference uses "control"; measure() needs a measurement
+    pulse, and the exported script uses the same).
     """
     mode_limit(output_mode)
     copied = deepcopy(controllers)
@@ -54,7 +56,7 @@ def build_loopback_config(controllers, con, fem, ao, ai, ao_offset, ai_offset, o
             "time_of_flight": 28, "smearing": 0,
         }},
         "pulses": {"readout_pulse": {
-            "operation": "control", "length": 1728, "waveforms": {"single": "readout_wf"},
+            "operation": "measurement", "length": 1728, "waveforms": {"single": "readout_wf"},
             "integration_weights": names, "digital_marker": "ON",
         }},
         "waveforms": {"readout_wf": {"type": "constant", "sample": 0.0}},

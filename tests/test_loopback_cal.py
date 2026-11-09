@@ -117,7 +117,7 @@ def test_reference_config():
              "rotated_minus_sin": "rotated_minus_sine_weights", "opt_cos": "opt_cosine_weights",
              "opt_sin": "opt_sine_weights", "opt_minus_sin": "opt_minus_sine_weights"}
     assert cfg["pulses"] == {"readout_pulse": {
-        "operation": "control", "length": 1728, "waveforms": {"single": "readout_wf"},
+        "operation": "measurement", "length": 1728, "waveforms": {"single": "readout_wf"},
         "integration_weights": names, "digital_marker": "ON"}}
     assert cfg["waveforms"] == {"readout_wf": {"type": "constant", "sample": 0.0}}
     assert cfg["digital_waveforms"] == {"ON": {"samples": [(1, 0)]}}
@@ -285,3 +285,12 @@ def test_main_stop_file_and_result_override(tmp_path, capsys):
     result = json.loads((tmp_path / "answer.json").read_text())
     assert result["stopped"] and result["ok"] is False
     assert capsys.readouterr().out.startswith("@@SM-LOOPCAL@@")
+
+
+def test_readout_pulse_is_a_measurement_pulse_like_the_exported_script():
+    """measure() needs a measurement pulse; the in-app runner and the exported
+    script must use the same operation."""
+    from quam_state_manager.core.loopback_script import render_script
+    cfg = runner.config_for_offset(job(), 0.0)
+    assert cfg["pulses"]["readout_pulse"]["operation"] == "measurement"
+    assert '"operation": "measurement"' in render_script({})
