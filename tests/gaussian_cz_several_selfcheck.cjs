@@ -46,7 +46,7 @@ const text = () => $('#gcz-several').textContent.replace(/\s+/g, ' ');
     for (const w of [
         'Gaussian CZ — to several pairs',
         'Each pair gets its own pulses: <macro>_pulse_<control>_<target>, e.g. cz_gaussian_unipolar_pulse_q1_q2.',
-        'A new macro class on a built chip is not created here in v1; use Re-generate.',
+        'A new macro class on a built chip is not created here in v1; use Modify config.',
         "Ready means SM's checks and your lab code pass (checked on this chip).",
         'Select:', 'All ready', 'None',
         'Ready — 2 of 3 pairs', 'by chip f_01', 'Can’t — 1',

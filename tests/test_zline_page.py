@@ -62,13 +62,13 @@ def _data(c, line, **kw):
 
 
 class TestPage:
-    def test_sidebar_entry_under_chip_status(self, client):
+    def test_sidebar_entry_under_live_edit(self, client):
         html = client.get("/zline").get_data(as_text=True)
         # customer feedback 2026-10-15: distortion describes the chip's state, so it sits under Chip Status.
         status = html.split('id="chip-status-subnav"', 1)[1].split('</ul>', 1)[0]
         editing = html.split('id="live-edit-subnav"', 1)[1].split('</ul>', 1)[0]
-        assert 'href="/zline"' in status and "Z-line distortion" in status
-        assert 'href="/zline"' not in editing
+        assert 'href="/zline"' in editing and "Z-line distortion" in editing
+        assert 'href="/zline"' not in status
 
     def test_table_lists_every_flux_line_with_its_state(self, client):
         html = client.get("/zline", headers={"HX-Request": "true"}).get_data(as_text=True)
