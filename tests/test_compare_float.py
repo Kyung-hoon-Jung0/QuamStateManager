@@ -21,6 +21,8 @@ def test_compare_float_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - listed = selection model" in res.stdout
+    assert "ok - D-7 removing the middle focuses the next row" in res.stdout
+    assert "ok - D-8 height after rows rebuild is published synchronously" in res.stdout
 
 
 def test_d4_anchor_and_tree_share_one_parent_in_base_html():
