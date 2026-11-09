@@ -426,6 +426,17 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
     /* QA correctness-r2-08: a pull that caught the live pair mid-save is
        answered with its OWN token -- OK re-posts ack_torn=1 (never force=1),
        Cancel pulls nothing and says so. */
+    const realTornConfirm = window.smConfirm;
+    let tornAction = 'ok';
+    window.smConfirm = function (message) {
+        const pending = realTornConfirm(message);
+        const dialog = document.querySelector('#sm-confirm-overlay');
+        lastConfirm = dialog ? dialog.textContent : '';
+        const button = dialog && dialog.querySelector('.sm-confirm-' + tornAction);
+        ok(!!button, 'torn-live renders its real in-page ' + tornAction + ' button');
+        if (button) button.click();
+        return pending;
+    };
     syncCalls.length = 0; lastConfirm = '';
     syncQueue = [{ status: 'torn_live', mode: 'discard', count: 1,
                    message: 'The live chip looks mid-save: wiring.json still points X at Y.' },
@@ -440,9 +451,12 @@ window.SyncPanel.config.armMinMs = 0;   // the double-press guard has its own pi
     syncCalls.length = 0;
     syncQueue = [{ status: 'torn_live', mode: 'discard', message: 'mid-save' }];
     confirmAnswer = false;
+    tornAction = 'cancel';
     window.doStateSync('discard');
     await flush(40);
-    ok(syncCalls.length === 1, 'Cancel pulls nothing (one POST, no retry)');
+    ok(syncCalls.length === 1 && !document.querySelector('#sm-confirm-overlay'),
+       'Cancel pulls nothing and closes the dialog (one POST, no retry)');
+    window.smConfirm = realTornConfirm;
 
     /* v1.3.0: the live state.json was unreadable for a moment (another program
        mid-save). The server answers 409 transient; the person is told to retry
