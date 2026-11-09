@@ -318,7 +318,7 @@ class TestSameCode:
         c, _ = chip_client
         _st, body = _section(c, "diagnostics", redact=0)
         live = c.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
-        msgs = re.findall(r'<div class="diag-msg">(.*?)</div>', live, re.S)
+        msgs = re.findall(r'<div class="diag-msg ui-diag-msg">(.*?)</div>', live, re.S)
         assert msgs, "the fixture chip should raise at least one finding"
         for m in msgs:
             assert m in body
