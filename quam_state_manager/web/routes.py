@@ -13862,7 +13862,7 @@ def _tree_env_type_warning(store, target_path: str, parsed: Any) -> str:
         return ""
     if ok:
         return ""
-    return (f" -- the environment's class schema expects "
+    return (f" — the environment's class schema expects "
             f"{_tp.format_type(exp.spec)} here; "
             "Quam.load() may refuse this state")
 
@@ -51072,7 +51072,7 @@ def diagnostics_apply_fix():
                item["pointer"] if item["action"] == "set_pointer" else item["value"])
         if key not in offered:
             return jsonify(ok=False, error=(
-                "This fix is no longer valid for the loaded chip -- the value, wiring "
+                "This fix is no longer valid for the loaded chip — the value, wiring "
                 "or chip changed since Diagnostics was rendered. Reload the page.")), 409
     # FB-04: every item of one press is ONE undo group (one Ctrl+Z reverts all)
     from quam_state_manager.core import type_policy as _tp
@@ -51128,7 +51128,7 @@ def diagnostics_ack():
     n = _da.acknowledge(current_app.instance_path, chip, findings, body["keys"], store)
     if not n:
         return jsonify(ok=False, error=(
-            "Nothing to acknowledge -- those findings are gone, or are errors "
+            "Nothing to acknowledge — those findings are gone, or are errors "
             "(errors cannot be acknowledged). Reload the page.")), 409
     return jsonify(ok=True, acknowledged=n)
 
