@@ -442,7 +442,7 @@ window.TopoGraph = (function () {
 
   // One pill per pair end, shared by every map. Moving roles come only from
   // the stored role; frequency order requires two finite, unequal numbers.
-  var PILL_MIN_FONT = 7;
+  var PILL_MIN_FONT = 6;
   function pairGlyphs(nodes, edges, opts) {
     opts = opts || {};
     var px = opts.px, CELL = opts.cell || 64, svg = '', fById = {};
@@ -471,7 +471,7 @@ window.TopoGraph = (function () {
         // Size the pill to the room on its half of the edge: it clears the
         // stone and the midpoint (coupler ring or a short exposed line), and
         // only shrinks (never below PILL_MIN_FONT) where that room is short.
-        var room = len / 2 - radius - 2 - (e.has_coupler ? couplerR(radius) + 2 : 4);
+        var room = len / 2 - radius - 2 - (e.has_coupler ? couplerR(radius) + 2 : 8);
         var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, w, he, reach;
         for (;;) {
           w = text.length * fe * 0.52 + fe * 0.6; he = fe + 5;
