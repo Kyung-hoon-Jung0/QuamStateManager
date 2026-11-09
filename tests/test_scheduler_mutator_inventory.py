@@ -7,6 +7,17 @@ from tests.state_model.repros._rig import Chip
 # history, queues or generated output; none stages an edit into the chip store.
 # A new POST requires classification here or inclusion in the mutator lock.
 _NON_STAGING_POSTS = {
+    # Load checks save a fresh store into scratch space, never the loaded store.
+    'main.state_load_check',
+    # Port tests operate on hardware and instance run/settings sidecars; none
+    # stages a chip edit. Stop and close must remain available during a run.
+    'port_test.port_test_confirm',
+    'port_test.port_test_run',
+    'port_test.port_test_stop',
+    'port_test.port_test_close_open',
+    'port_test.port_test_settings',
+    'port_test.port_test_password_remove',
+    'port_test.port_test_targets_panel',
     # merge-budget: the client latch timed out; this answers 409 and stages nothing.
     'main.auto_sync_retry',
     # FB-10/FB-12 (1.8.0): the add/remove panel's Review step loads the planned result in the
