@@ -17315,7 +17315,9 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
     }
     if (onPortPlay && portInfo && portInfo.io === 'output' && portInfo.femType === 'lf-fem') {
         var playAnchor = _svgEl('foreignObject');
-        _svgAttrs(playAnchor, {x: cx - 25, y: cy + r, width: 54, height: 30});
+        // Sit ON the port circle: below it, the next row's cell is painted on top
+        // and steals the pointer, so the button vanished on approach.
+        _svgAttrs(playAnchor, {x: cx - 27, y: cy - 15, width: 54, height: 30});
         playAnchor.setAttribute('class', 'port-play-anchor');
         var playButton = document.createElementNS('http://www.w3.org/1999/xhtml', 'button');
         playButton.setAttribute('type', 'button');
