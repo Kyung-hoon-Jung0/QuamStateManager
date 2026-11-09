@@ -662,8 +662,12 @@ _USE = {
 }
 
 
-def render_script(cfg: dict, plan: dict, *, chip_label: str = "") -> str:
-    """The downloadable script. SM runs exactly this text (``run_port_test.py``)."""
+def render_script(cfg: dict, plan: dict, *, chip_label: str = "", run_program: bool = True) -> str:
+    """The downloadable script. SM runs exactly this text (``run_port_test.py``).
+
+    ``run_program=False`` opens the QM and holds it with no program: an OPX1000
+    output sits at its configured offset while a QM with that config is open
+    (QM docs Guides/output_idle_values.md), and closing the QM returns it to 0 V."""
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     rf = plan.get("rf")
     lines = [
@@ -701,6 +705,7 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "") -> str:
         loopback=repr([tuple(c) for c in plan.get("loopback") or []]),
         pulse_ns=int(plan.get("pulse_ns") or 0), tof=int(plan.get("time_of_flight") or 0),
         config_fp=plan["config_fingerprint"], config_name=plan["config_name"],
+        run_program=bool(run_program),
     )
 
 
@@ -733,6 +738,8 @@ PULSE_NS = {pulse_ns}
 TIME_OF_FLIGHT_NS = {tof}
 CONFIG_FINGERPRINT = {config_fp!r}
 CONFIG_NAME = {config_name!r}
+#: False: open the QM and hold it (outputs at their offsets) with no program
+RUN_PROGRAM = {run_program!r}
 #: job states that hold no port; ANY other (or unknown) status counts as busy
 TERMINAL = ("done", "completed", "canceled", "cancelled", "failed")
 
@@ -907,6 +914,16 @@ def run_on_hardware(qmm, should_stop=lambda: False, max_s=120.0, log=print,
                 return
     threading.Thread(target=guard, daemon=True).start()
     result = {{}}
+    if not RUN_PROGRAM:
+        try:
+            record(phase="QM open, no program running")
+            log("QM open; no program running")
+            while not should_stop() and time.monotonic() < deadline:
+                time.sleep(0.2)
+        finally:
+            finished.set()
+            cleanup()
+        return result
     try:
         def execute():
             j = qm.execute(build_program())

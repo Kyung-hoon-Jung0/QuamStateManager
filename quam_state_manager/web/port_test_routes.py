@@ -121,6 +121,11 @@ def _play_binding(data) -> str:
                      "mode": str(data.get("output_mode") or "direct")}, target)
 
 
+def _play_action(data) -> str:
+    """"open" holds a QM open with no program; anything else is a Play."""
+    return "open" if data.get("action") == "open" else "play"
+
+
 def _play_owner() -> str:
     return session.setdefault("port_test_owner", secrets.token_urlsafe(24))
 
@@ -140,7 +145,7 @@ def port_play_confirm():
     with manager._lock:
         now = time.monotonic()
         manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
-        manager.confirmations[token] = (now + 60, _play_owner(), "play:" + binding)
+        manager.confirmations[token] = (now + 60, _play_owner(), _play_action(data) + ":" + binding)
     return jsonify(ok=True, token=token, expires_s=60)
 
 
@@ -150,7 +155,8 @@ def port_play_run():
     owner = _play_owner()
     manager = runs()
     try:
-        binding = "play:" + _play_binding(data)
+        action = _play_action(data)
+        binding = action + ":" + _play_binding(data)
     except pt.PortTestError as exc:
         return jsonify(ok=False, error=str(exc)), 400
     with manager._lock:
@@ -163,7 +169,7 @@ def port_play_run():
         cur = manager.current or {}
         if cur.get("id") == status.get("id") and cur.get("play_owner") == owner:
             # Only our own previous play is stopped; the client confirms again.
-            manager.stop(status.get("id"), "Play again")
+            manager.stop(status.get("id"), "Open QM again" if action == "open" else "Play again")
             return jsonify(ok=False, stopping=True,
                            error="Stopping the previous play; waiting for its QM to close."), 409
         return jsonify(ok=False, busy=True,
@@ -189,7 +195,8 @@ def port_play_run():
             raise pt.PortTestError("Enter the network host in step 2.")
         req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
                "target": {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}}
-        started = manager.start(python, pt.render_script(cfg, plan), req,
+        plan = dict(plan, open_only=action == "open")
+        started = manager.start(python, pt.render_script(cfg, plan, run_program=action == "play"), req,
                                 {"plan": plan, "target": "opx", "target_label": host})
         return jsonify(ok=True, **started)
     except (ValueError, RuntimeError, KeyError, TypeError) as exc:

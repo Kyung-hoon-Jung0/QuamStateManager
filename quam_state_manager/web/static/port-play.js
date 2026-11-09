@@ -45,26 +45,39 @@
   }
   // One Play/Stop driver for every popup kind (LF DC and MW CW): confirm token, run,
   // retry while our own previous play stops, poll status, Stop by own id only.
+  // Open QM holds a QM open with no program: an OPX1000 output sits at its
+  // offset while the QM is open (QM docs Guides/output_idle_values.md) and
+  // returns to 0 V when it closes. Play runs the program. Either one started
+  // while this popup's own run is open stops that run first (server 409
+  // "stopping", then the client retries), so at most one QM is ours.
   function wirePlay(node, params, message, lock) {
     var $ = function (s) { return node.querySelector(s); };
+    var action = null, closing = false;
     function poll(seq) {
       if (seq !== sequence || dialog !== node || !runId) return;
       fetch('/port-test/status?id=' + encodeURIComponent(runId)).then(function (r) { return r.json(); }).then(function (st) {
         if (seq !== sequence || dialog !== node) return;
         if (st.state === 'running') {
-          message(st.stopping ? 'Stopping...' : 'Playing... ' + (st.phase || ''));
+          message(st.stopping ? (closing ? 'Closing QM...' : 'Stopping...') : action === 'open'
+            ? 'QM open — port is at its offset (no program running)' : 'Playing... ' + (st.phase || ''));
           timer = setTimeout(function () { poll(seq); }, 1000);
-        } else message(st.result && !st.result.ok ? st.result.error : 'Stopped.');
+        } else {
+          var failed = st.result && !st.result.ok && !st.result.stopped && st.result.error;
+          message(failed ? st.result.error : closing || action === 'open'
+            ? 'QM closed — outputs returned to 0 V.' : 'Stopped.');
+          action = null;
+        }
       }).catch(function (e) { message(e.message); });
     }
-    $('[data-play]').onclick = function () {
+    function launch(kind) {
       if (lock.busy) return;
       var data;
       try { data = params(); } catch (e) { message(e.message); return; }
-      // Snapshot wizard values across retries; later edits belong to the next play.
+      // Snapshot wizard values across retries; later edits belong to the next press.
       if (!data.hardware_ok) { message('Tick the safety box first.'); return; }
-      data = JSON.parse(JSON.stringify(data));
-      lock.busy = true; var seq = ++sequence; clearTimeout(timer); message('Preparing Play...');
+      data = JSON.parse(JSON.stringify(data)); data.action = kind;
+      lock.busy = true; var seq = ++sequence; clearTimeout(timer); closing = false;
+      message(kind === 'open' ? 'Opening QM...' : 'Preparing Play...');
       function start() {
         if (seq !== sequence || dialog !== node) { lock.busy = false; return; }
         post('/port-play/confirm', data).then(function (c) {
@@ -78,14 +91,28 @@
           if (j.stopping) { message(j.error); timer = setTimeout(start, 500); return; }
           lock.busy = false;
           if (!j.ok) { message(j.error); return; }
-          runId = j.id; $('[data-play]').textContent = 'Play again'; poll(seq);
+          runId = j.id; action = kind;
+          $('[data-open-qm]').textContent = 'Open QM';
+          if (kind === 'play') $('[data-play]').textContent = 'Play again';
+          poll(seq);
         }).catch(function (e) { lock.busy = false; message(e.message); });
       }
       start();
+    }
+    $('[data-open-qm]').onclick = function () { launch('open'); };
+    $('[data-play]').onclick = function () { launch('play'); };
+    $('[data-close-qm]').onclick = function () {
+      if (!runId || !action) { message('No QM open from this popup.'); return; }
+      lock.busy = false; closing = true;
+      stop().then(function () { message('Closing QM...'); poll(sequence); });
     };
     $('[data-stop]').onclick = function () {
-      lock.busy = false; stop().then(function () { message('Stopping...'); poll(sequence); });
+      lock.busy = false; closing = false; stop().then(function () { message('Stopping...'); poll(sequence); });
     };
+    // A value edit while our QM is open: the next Open re-opens with the new value.
+    node.addEventListener('input', function (e) {
+      if (action === 'open' && e.target && !e.target.matches('[data-hwok]')) $('[data-open-qm]').textContent = 'Open QM again';
+    });
   }
   // MW-FEM output: a CW tone. Limits mirror core/port_test.py mw_params (QM docs,
   // Guides/opx1000_fems.md "Bands", "Upconverters and Downconverters", "Output Power");
@@ -112,7 +139,7 @@
       '<label><input data-hwok type="checkbox"> This port is safe to drive (spectrum analyser or scope cable, or a tone on this line is intended)</label>' +
       '<p class="ui-note">Plays a constant-amplitude CW tone at RF = LO + IF until Stop or the time limit. Closing the QM stops the output.</p>' +
       '<p class="ui-note" role="status" data-message></p></div>' +
-      '<div class="ui-dialog-foot"><button type="button" class="btn-sm" data-play>Play</button>' +
+      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-open-qm>Open QM</button><button type="button" class="btn-sm outline" data-close-qm>Close QM</button><button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
       '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
@@ -167,7 +194,7 @@
       '<label>Offset (V)<input data-offset type="number" step="0.000001" required></label>' +
       '<label>Max play time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
       '<label><input data-hwok type="checkbox"> This port is safe to drive (scope cable, or a DC offset on this line is intended)</label>' +
-      '<p class="ui-note">Plays a zero-amplitude waveform. Closing the QM resets OPX1000 outputs to 0 V.</p>' +
+      '<p class="ui-note">Open QM sets the port to its offset with no program running; Play also plays a zero-amplitude waveform. Closing the QM resets OPX1000 outputs to 0 V.</p>' +
       '<p class="ui-note" role="status" data-message></p>' +
       '<section data-loopcal><h4>Loopback calibration</h4>' +
       '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label>' +
@@ -180,7 +207,7 @@
       '<ol class="ui-note" data-cal-progress></ol>' +
       '<p class="ui-note" role="status" data-cal-result></p>' +
       '<button type="button" class="btn-sm" data-cal-save disabled>Save calibrated offset</button></section></div>' +
-      '<div class="ui-dialog-foot"><button type="button" class="btn-sm" data-play>Play</button>' +
+      '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-open-qm>Open QM</button><button type="button" class="btn-sm outline" data-close-qm>Close QM</button><button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
       '<button type="button" class="btn-sm outline" data-save>Save offset</button>' +
       '<button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
