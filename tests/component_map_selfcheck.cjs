@@ -104,7 +104,7 @@ function checkRenderLayout() {
   // drawn is a number. Values still live in the table beside the map.
   const texts = m.querySelectorAll('svg text');
   const idSet = { qA1: 1, qA2: 1, qA3: 1 };
-  const roleSet = { C: 1, T: 1, 'C M': 1, 'T M': 1, 'C H': 1, 'T L': 1 };
+  const roleSet = { 'C M': 1, 'T M': 1, 'C \u00b7': 1, 'T \u00b7': 1, 'C M H': 1, 'C M L': 1, 'T M H': 1, 'T M L': 1, 'C \u00b7 H': 1, 'C \u00b7 L': 1, 'T \u00b7 H': 1, 'T \u00b7 L': 1 };
   // P1-11 (UX round): each pair edge carries its pair id -- an id, like the
   // qubit ids, never a value (the Pairs page named pairs only in a hover title)
   const pairSet = { 'qA2-qA1': 1, 'qA1-qA3': 1 };
@@ -198,10 +198,19 @@ function checkRenderLayout() {
       return Array.from(host.querySelectorAll('.cm-role text')).map(t=>t.textContent).join('|');
     }
     ok(!m.querySelector('.cm-freq, .cm-dir-freq-head') && !read('ui-kit.css').includes('--ui-freq-arrow'), 'D1: orange arrow and unused token removed');
-    ok(draw(5e9+1,5e9) === 'C M H|T L', 'D3: even a 1 Hz difference shows both H and L');
-    ok(draw(5e9,5e9+1) === 'C M L|T H', 'D3: reversed frequency order');
+    ok(draw(5e9+1,5e9) === 'C M H|T \u00b7 L', 'D3: even a 1 Hz difference shows both H and L');
+    ok(draw(5e9,5e9+1) === 'C M L|T \u00b7 H', 'D3: reversed frequency order');
+    {
+      draw(5e9+1,5e9);
+      const gap = host.querySelectorAll('.cm-role-t text tspan.cm-dir-gap');
+      ok(gap.length === 1 && gap[0].textContent === '\u00b7' && !host.querySelector('.cm-role-c tspan'), 'P1: non-moving end has a dot in the M slot, moving end has none');
+      const ws = Array.from(host.querySelectorAll('.cm-role rect')).map(r => r.getAttribute('width'));
+      ok(ws.length === 2 && ws[0] === ws[1], 'P1: both pills share one width');
+      const css = read('ui-kit.css');
+      ok(/\.cm-dir-gap \{ fill: var\(--ui-text-3\)/.test(css), 'P1: dot uses the muted ui-kit token');
+    }
     for (const value of [5e9, null, '5000000000', NaN, Infinity]) {
-      ok(draw(5e9,value) === 'C M|T', 'D3: equal or nonnumeric frequency omits H/L: '+value);
+      ok(draw(5e9,value) === 'C M|T \u00b7', 'D3: equal or nonnumeric frequency omits H/L: '+value);
     }
     draw(5.1e9,5e9);
     const rects = Array.from(host.querySelectorAll('rect'));
@@ -212,7 +221,7 @@ function checkRenderLayout() {
     const size = host.querySelector('text').getAttribute('font-size');
     draw(5.1e9,5e9,528);
     ok(host.querySelector('text').getAttribute('font-size') === size && +size <= 8, 'D4: pill font capped for large cells');
-    ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:'target'}) === 'C H|T M L', 'D2: target moving role stays at target');
+    ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:'target'}) === 'C \u00b7 H|T M L', 'D2: target moving role stays at target');
     draw(5.1e9,5e9,132,{...edge,target:'c'});
     const t = host.querySelector('text');
     ok(+t.getAttribute('x') === 0 && +t.getAttribute('y') > 37, 'D2: vertical pill on line outside stone');
@@ -430,7 +439,7 @@ async function checkComponentMap() {
   await tick(); await tick();
   const legend = win5.document.querySelector('.cmap-body .cm-feed-legend');
   ok(!!legend, 'resonators page renders the feedline legend');
-  ok(legend && /con1\/fem1\/p1 · 2 resonators/.test(legend.textContent),
+  ok(legend && /con1\/fem1\/p1 \u00b7 2 resonators/.test(legend.textContent),
      'legend names the bus port label + count');
   ok(legend && legend.querySelectorAll('.cm-feed-lg').length === 1,
      'single-member rr groups draw no bus and get no legend row');

@@ -453,7 +453,10 @@ window.TopoGraph = (function () {
       var fS = fById[e.source], fT = fById[e.target];
       var ordered = fS != null && fT != null && fS !== fT;
       return [['C', 'control'], ['T', 'target']].map(function (r) {
-        var text = r[0] + (e.moving_qubit === r[1] ? ' M' : '');
+        // Every pill keeps the same slots: role, moving (M or a faint
+        // middle dot) and, when the frequencies are ordered, H/L. Dense
+        // 'C M H' beside sparse 'T L' read as a leaning (cafe-wall) grid.
+        var text = r[0] + ' ' + (e.moving_qubit === r[1] ? 'M' : '\u00b7');
         if (ordered) text += ' ' + ((r[0] === 'C' ? fS > fT : fT > fS) ? 'H' : 'L');
         return text;
       });
@@ -500,7 +503,8 @@ window.TopoGraph = (function () {
           + '" data-cm-at="' + esc(end[3]) + '"><rect class="cm-role-dot" x="' + (x - w / 2)
           + '" y="' + (y - he / 2) + '" width="' + w + '" height="' + he + '" rx="' + he / 2 + '"/>'
           + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fe
-          + '" text-anchor="middle" dominant-baseline="central">' + text + '</text></g>';
+          + '" text-anchor="middle" dominant-baseline="central">'
+          + text.replace('\u00b7', '<tspan class="cm-dir-gap">\u00b7</tspan>') + '</text></g>';
       });
     });
     return svg;
@@ -932,7 +936,7 @@ window.TopoGraph = (function () {
       svg += dirEdgeMarks(e, x1, y1, x2, y2, R, pairFont);
       svg += '<line class="cm-hit" x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '"/>' +
              "<title>" + esc(e.pair_id) + " — control " + esc(e.source) + " → target " +
-             esc(e.target) + (e.moving_qubit ? " · moving: " + esc(e.moving_qubit) : "") +
+             esc(e.target) + (e.moving_qubit ? " \u00b7 moving: " + esc(e.moving_qubit) : "") +
              "</title></g>";
     }
 
