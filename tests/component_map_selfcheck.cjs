@@ -155,6 +155,11 @@ function checkRenderLayout() {
   ok(rfs(m) > rfs(m2), 'pairs page: role pills larger than the default: ' + [rfs(m), rfs(m2)]);
   const qr = mq.querySelector('.cm-role-dot'), qs = mq.querySelector('.cm-stone');
   ok(qr && qs, 'qubits page still draws role pills');
+  // At the cell the component pages mount (120), the qubits page's pills are the largest.
+  const mk120 = (hl) => { const d = win.document.createElement('div'); win.document.body.appendChild(d);
+    win.TopoGraph.renderLayout(d, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: hl, cell: 120 }); return d; };
+  const q120 = mk120('qubits'), p120 = mk120('pairs');
+  ok(rfs(q120) > rfs(p120), 'qubits page: role pills larger than the pairs page: ' + [rfs(q120), rfs(p120)]);
 
   // F2 (docs/93): text scales with the cell. D-98: the qubit id is one step
   // smaller (x0.88) but never under 12px (D-6); the pair label one step larger.

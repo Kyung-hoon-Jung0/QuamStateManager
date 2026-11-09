@@ -960,7 +960,7 @@ window.TopoGraph = (function () {
     // since docs/126 -- the flux stubs and resonator marks are part of each
     // stone's group and were painted over the C/T/M letters.
     var glyphSvg = pairGlyphs(nodes, edges, { px: px, cell: CELL, roles: true,
-      roleFontSize: Math.max(11, CELL * 0.11) * (HL === "pairs" ? 1.25 : 1), roleMinFont: 9, stoneGap: 5,
+      roleFontSize: Math.max(11, CELL * 0.11) * (HL === "pairs" ? 1.25 : HL === "qubits" ? 1.6 : 1), roleMinFont: 9, stoneGap: 5,
       stoneRadius: R });
 
     // qubit stones + per-qubit component marks (resonator NE, flux stub S)
