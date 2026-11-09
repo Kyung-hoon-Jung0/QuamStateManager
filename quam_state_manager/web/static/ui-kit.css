@@ -1053,6 +1053,8 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .iw-chassis-meta { font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); color: var(--ui-text-2); }
 /* the head names the chassis; the drawing's own title would repeat it */
 .iw-chassis svg.instrument-svg .iw-title { display: none; }
+.iw-chassis .port-play-anchor { visibility: hidden; overflow: visible; }
+.iw-chassis .iw-port:hover .port-play-anchor, .iw-chassis .iw-port:focus-within .port-play-anchor { visibility: visible; }
 
 /* Live Edit cell, A/B-5 option c (D-86): the underline's box returns on hover/focus (colours only, never a width);
    Apply shows only on a row with an edit -- hidden, not removed, so the sticky column keeps its width. */

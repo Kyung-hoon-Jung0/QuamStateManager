@@ -1,0 +1,127 @@
+﻿'use strict';
+const fs = require('fs'), path = require('path'), assert = require('assert');
+const {JSDOM} = require('jsdom');
+const root = path.join(__dirname, '..'), staticDir = path.join(root, 'quam_state_manager/web/static');
+const html = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_generate.html'), 'utf8');
+const dom = new JSDOM('<body><div id="table-pane">' + html + '</div></body>', {
+  runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/generate'});
+const w = dom.window;
+const fetched = [];
+w.fetch = (u) => { fetched.push(String(u)); return new Promise(() => {}); };
+w.htmx = {ajax() {}, trigger() {}, process() {}, on() {}};
+w.IntersectionObserver = w.ResizeObserver = class {observe() {} disconnect() {} unobserve() {}};
+w.NumberInput = {fit() {}, attach() {}, format() {}, strip(s) {return String(s || '');}};
+w.armPlainResize = () => {};
+let copied = '';
+w.navigator.clipboard = {writeText(text) {copied = text; return Promise.resolve();}};
+w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+const body = w.document.body; body.remove();
+w.eval(fs.readFileSync(path.join(staticDir, 'port-play.js'), 'utf8'));
+w.document.documentElement.appendChild(body);
+for (const file of ['app.js', 'generate.js']) w.eval(fs.readFileSync(path.join(staticDir, file), 'utf8'));
+const G = w.QuamGen, d = w.document;
+G.state.spec.instruments.controllers = [1, 2, 3].map(con => ({con, fems: [{slot: 1, fem: 'mw'}, {slot: 3, fem: 'lf'}]}));
+G.state.spec.qubits = []; G.state.spec.lines = []; G.state.env = 'mock-python';
+G._test.renderChassis();
+assert(d.getElementById('gen-port-play-panel').hidden, 'collapsed by default');
+d.getElementById('gen-port-play-toggle').click();
+assert(!d.getElementById('gen-port-play-panel').hidden, 'panel opens');
+const rack = d.getElementById('gen-port-play-rack');
+assert.equal(rack.querySelectorAll('.iw-port[data-io="output"]').length, 48, 'all FEM outputs');
+assert.equal(rack.querySelectorAll('.port-play-anchor').length, 24, 'only LF outputs offer play');
+const cell = rack.querySelector('.iw-port[data-con="2"][data-slot="3"][data-port="5"][data-io="output"]');
+assert(cell, 'target exists');
+cell.dispatchEvent(new w.MouseEvent('mouseenter'));
+assert(fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8').includes('.iw-port:hover .port-play-anchor'), 'hover visibility');
+cell.querySelector('button').click();
+let popup = d.getElementById('port-play-dialog');
+assert(popup.open, 'popup opens');
+popup.querySelector('[data-stop]').click();
+assert(!fetched.some(u => /stop/.test(u)), 'no Stop request without an own run id');
+popup.querySelector('[data-offset]').value = '.75';
+popup.querySelector('[data-save]').click();
+assert(popup.querySelector('[data-message]').textContent.includes('requires'), 'direct range refusal');
+popup.querySelector('[data-mode]').value = 'amplified';
+popup.querySelector('[data-save]').click();
+assert.equal(G.state.spec.port_offsets['con2/3/5'].offset, .75);
+assert.equal(G.state.spec.port_offsets['con2/3/5'].output_mode, 'amplified');
+assert.equal(d.querySelectorAll('#gen-port-offsets tr').length, 1, 'saved row');
+const drafts = Object.keys(w.sessionStorage).map(k => w.sessionStorage.getItem(k));
+assert(drafts.some(s => s.includes('con2/3/5')), 'draft persisted');
+d.getElementById('gen-port-offsets-copy').click();
+assert.equal(JSON.parse(copied)['con2/3/5'].offset, .75, 'copy JSON');
+assert(popup.querySelector('[data-hwok]'), 'safety box');
+popup.querySelector('[data-close]').click();
+assert(!fetched.some(u => /stop/.test(u)), 'Close sends no Stop without an id');
+// Default renderer must never add this feature to /instrument.
+d.body.insertAdjacentHTML('beforeend', '<div id="plain-rack"></div>');
+w.renderInstrumentWiring('plain-rack', G._test.buildInstrumentData({}), {}, {});
+assert.equal(d.querySelectorAll('#plain-rack .port-play-anchor').length, 0);
+d.querySelector('#gen-port-offsets button').click();
+assert.equal(Object.keys(G.state.spec.port_offsets).length, 0, 'remove');
+console.log('port_play_selfcheck: passed');
+// ---- Loopback calibration section (BRIEF3 E-1..E-4) ----
+(async () => {
+  const tick = () => new Promise(r => setTimeout(r, 20));
+  const calls = [];
+  let statusReply = null;
+  const reply = (obj, extra) => Promise.resolve(Object.assign({ok: true, json: () => Promise.resolve(obj)}, extra || {}));
+  w.fetch = (u, opt) => {
+    const url = String(u), body = opt && opt.body ? JSON.parse(opt.body) : null;
+    calls.push({url, body});
+    if (url.endsWith('/loopcal/confirm')) return reply({ok: true, token: 'tok'});
+    if (url.endsWith('/loopcal/run')) return reply({ok: true, id: 'cal1'});
+    if (url.startsWith('/port-test/status')) return reply(statusReply);
+    if (url.endsWith('/loopcal/save')) return reply({ok: true, pin: body.id === 'cal1' ? 'con2/3/ai1' : '?',
+      entry: {offset: 0.0012, gain_db: 0, source: 'loopback'}});
+    if (url.endsWith('/loopcal/script.py')) return reply({}, {
+      headers: {get: () => 'attachment; filename="lf_offset_con2_fem3_ao5.py"'},
+      blob: () => Promise.resolve(new w.Blob(['x']))});
+    return new Promise(() => {});
+  };
+  w.URL.createObjectURL = () => 'blob:x';
+  let downloaded = null;
+  w.HTMLAnchorElement.prototype.click = function () { downloaded = this.download; };
+  cell.querySelector('button').click();
+  const pop = d.getElementById('port-play-dialog');
+  const q = s => pop.querySelector(s);
+  assert(q('[data-loopcal]'), 'loopback section');
+  assert(q('[data-cal-output]').disabled, 'AO calibration refused without a saved AI offset');
+  assert(/calibrate the AI first/.test(q('[data-ai-saved]').textContent));
+  assert(/gain_db/.test(pop.textContent), 'help line names gain_db');
+  q('[data-cal-input]').click();
+  assert(/safety box/.test(q('[data-cal-result]').textContent), 'cal needs the safety box');
+  assert(!calls.length, 'no request without the safety box');
+  q('[data-hwok]').checked = true;
+  // A run that did not converge: Save stays disabled.
+  statusReply = {state: 'done', progress: ['Iter 1: offset +0.000000 V -> DC +3.000 mV'],
+    result: {ok: true, converged: false, final_offset: 0.01, iters: 6}};
+  q('[data-cal-input]').click();
+  for (let i = 0; i < 5; i++) await tick();
+  const run = calls.find(c => c.url.endsWith('/loopcal/run'));
+  assert(run && run.body.kind === 'input' && run.body.ai === 1 && run.body.confirm_token === 'tok', 'run body');
+  assert.equal(run.body.con, 'con2'); assert.equal(String(run.body.slot), '3'); assert.equal(String(run.body.port), '5');
+  assert.equal(q('[data-cal-progress]').children.length, 1, 'progress lines shown');
+  assert(/Not converged/.test(q('[data-cal-result]').textContent));
+  assert(q('[data-cal-save]').disabled, 'no Save when not converged');
+  statusReply = {state: 'done', progress: ['a', 'b'], result: {ok: true, converged: true, final_offset: 0.0012, iters: 2}};
+  q('[data-cal-input]').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert(/Converged/.test(q('[data-cal-result]').textContent), 'result card');
+  assert(!q('[data-cal-save]').disabled, 'Save after convergence');
+  q('[data-cal-save]').click();
+  for (let i = 0; i < 3; i++) await tick();
+  assert.equal(G.state.spec.port_offsets['con2/3/ai1'].offset, 0.0012, 'AI offset saved in the draft');
+  assert(!q('[data-cal-output]').disabled, 'AO calibration allowed after an AI offset');
+  q('[data-ai]').value = '2'; q('[data-ai]').dispatchEvent(new w.Event('change'));
+  assert.equal(G.state.spec.port_play_ai['con2/3'], 2, 'AI choice remembered per FEM');
+  assert(q('[data-cal-output]').disabled, 'AI 2 has no saved offset');
+  q('[data-export]').click();
+  for (let i = 0; i < 4; i++) await tick();
+  const exp = calls.find(c => c.url.endsWith('/loopcal/script.py'));
+  assert(exp && exp.body.ai === 2 && exp.body.con === 'con2' && exp.body.spec, 'export body prefilled');
+  assert.equal(downloaded, 'lf_offset_con2_fem3_ao5.py', 'download name');
+  console.log('port_play_selfcheck: loopcal passed');
+  setTimeout(() => process.exit(0), 50);
+})().catch(e => { console.error(e); process.exit(1); });
+

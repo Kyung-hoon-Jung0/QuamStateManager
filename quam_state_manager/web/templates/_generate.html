@@ -111,6 +111,14 @@
         <button type="button" class="outline" id="gen-add-octave" hidden>+ Octave</button>
       </div>
       <div id="gen-chassis-list" class="gen-chassis-list"></div>
+      <button type="button" class="btn-sm outline" id="gen-port-play-toggle" aria-expanded="false">Port play (scope check)</button>
+      <div id="gen-port-play-panel" hidden>
+        <p class="ui-note">Hover an LF-FEM analog output to play its DC offset.</p>
+        <div id="gen-port-play-rack"></div>
+        <table><thead><tr><th>Port</th><th>Mode</th><th>Offset (V)</th><th>Action</th></tr></thead><tbody id="gen-port-offsets"></tbody></table>
+        <button type="button" class="btn-sm outline" id="gen-port-offsets-copy">Copy as JSON</button>
+        <p class="ui-note" id="gen-port-offsets-message" role="status"></p>
+      </div>
       <p class="muted gen-hw-soon">This wizard builds OPX1000 setups with
         MW-FEM / LF-FEM modules. OPX+ and Octave support is coming soon.</p>
       <p id="gen-chassis-empty" class="muted" hidden>

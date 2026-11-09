@@ -27,6 +27,7 @@ import hashlib
 import json
 import math
 import pprint
+import re
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -40,6 +41,135 @@ DEFAULT_SHOTS = 100
 MARKER = "port_test_on"
 TESTS = ("cw", "pulse", "loopback")
 BASES = ("chip", "raw")
+
+
+def con_name(value) -> str:
+    """Wizard controllers store ``con`` as an int; accept ``"con1"`` too."""
+    text = str(value).strip()
+    if text.startswith("con"):
+        text = text[3:]
+    return "con" + str(int(text))
+
+
+#: assumed bound for a saved LF-FEM analog input offset (V)
+AI_OFFSET_LIMIT = 0.5
+
+
+def input_key(con, slot, ai) -> str:
+    """``spec.port_offsets`` key of an LF-FEM analog input: ``con1/5/ai1``."""
+    return f"{con_name(con)}/{int(slot)}/ai{int(ai)}"
+
+
+def input_pin(pin) -> tuple | None:
+    """(con, slot, ai) for an input key, else None (an output key)."""
+    m = re.fullmatch(r"(con\d+|\d+)/(\d+)/ai([12])", str(pin))
+    if not m:
+        return None
+    return con_name(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def controllers_from_spec(spec: dict) -> dict:
+    """Element-free OPX1000 allocation from wizard step 3, with the saved
+    port offsets (``spec.port_offsets``) applied to their ports."""
+    controllers = {}
+    for ctrl in spec.get("instruments", {}).get("controllers", []):
+        con = con_name(ctrl["con"])
+        fems = controllers.setdefault(con, {"fems": {}})["fems"]
+        for fem in ctrl.get("fems", []):
+            slot = str(int(fem["slot"]))
+            if fem.get("fem") not in ("lf", "mw") or not 1 <= int(slot) <= 8:
+                raise PortTestError("Choose an LF or MW FEM in slots 1..8.")
+            entry = fems[slot] = {"type": fem["fem"].upper()}
+            if entry["type"] == "LF":
+                entry["analog_outputs"] = {
+                    str(p): {"offset": 0.0, "output_mode": "direct",
+                             "sampling_rate": 1e9, "upsampling_mode": "pulse"}
+                    for p in range(1, 9)}
+                entry["analog_inputs"] = {
+                    str(p): {"offset": 0.0, "gain_db": 0, "sampling_rate": 1e9} for p in (1, 2)}
+    for pin, saved in (spec.get("port_offsets") or {}).items():
+        ai = input_pin(pin)
+        if ai is not None:
+            try:
+                inp = controllers[ai[0]]["fems"][str(ai[1])]["analog_inputs"][str(ai[2])]
+                value = float(saved.get("offset") or 0.0)
+            except (KeyError, ValueError, TypeError, AttributeError):
+                continue
+            if math.isfinite(value) and abs(value) <= AI_OFFSET_LIMIT and int(saved.get("gain_db") or 0) == 0:
+                inp["offset"] = value
+            continue
+        try:
+            con, slot, port = pin.split("/")
+            out = controllers[con_name(con)]["fems"][str(int(slot))]["analog_outputs"][str(int(port))]
+        except (KeyError, ValueError, AttributeError):
+            continue  # a port the allocation no longer has
+        mode = saved.get("output_mode", "direct")
+        value = float(saved.get("offset") or 0.0)
+        if mode in ("direct", "amplified") and math.isfinite(value) and abs(value) <= (2.5 if mode == "amplified" else 0.5):
+            out.update(offset=value, output_mode=mode)
+    return controllers
+
+
+def build_wizard_dc(spec: dict, port: list, offset: float, output_mode="direct"):
+    cfg = {"controllers": controllers_from_spec(spec)}
+    info = dc_port(cfg, port)
+    con, slot, number = info["port"]
+    cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["offset"] = 0.0
+    cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["output_mode"] = output_mode
+    return build_dc(cfg, port, offset)
+
+
+def dc_port(config: dict, port: list) -> dict:
+    """Validate a physical LF-FEM output, including an unused output 1..8."""
+    try:
+        con, slot, number = str(port[0]), int(port[1]), int(port[2])
+        fems = config["controllers"][con]["fems"]
+        fem = fems.get(str(slot), fems.get(slot))
+        if len(port) != 3 or not 1 <= number <= 8 or not fem or fem.get("type") != "LF":
+            raise ValueError
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise PortTestError("Choose an LF-FEM analog output (1..8).") from None
+    settings = _port_entry(config, [con, slot, number], "analog_outputs")
+    mode = settings.get("output_mode", "direct")
+    if mode not in ("direct", "amplified"):
+        raise PortTestError(f"Unsupported output mode {mode!r}.")
+    return {"port": [con, slot, number], "output_mode": mode,
+            "offset": settings.get("offset") or 0.0, "limit": 2.5 if mode == "amplified" else 0.5}
+
+
+def build_dc(config: dict, port: list, offset: float) -> tuple[dict, dict]:
+    """Keep generated controllers verbatim; override only the selected offset."""
+    info = dc_port(config, port)
+    try:
+        offset = float(offset)
+    except (TypeError, ValueError):
+        raise PortTestError("Offset must be a number in volts.") from None
+    if not math.isfinite(offset) or abs(offset) > info["limit"]:
+        raise PortTestError(f"{info['output_mode'].capitalize()} mode requires |offset| <= {info['limit']:g} V.")
+    cfg = {"version": 1, "controllers": copy.deepcopy(config["controllers"])}
+    con, slot, number = info["port"]
+    fems = cfg["controllers"][con]["fems"]
+    fem = fems.get(str(slot), fems.get(slot))
+    outputs = fem.setdefault("analog_outputs", {})
+    key = number if number in outputs else str(number)
+    if key not in outputs:
+        outputs[key] = {"sampling_rate": 1e9, "output_mode": "direct", "upsampling_mode": "pulse"}
+    outputs[key]["offset"] = offset
+    cfg.update(elements={"sm_port_play": {"singleInput": {"port": (con, slot, number)},
+                                         "intermediate_frequency": 0,
+                                         "operations": {"dc": "sm_port_play.pulse"}}},
+               pulses={"sm_port_play.pulse": {"operation": "control", "length": CW_PULSE_NS,
+                                              "waveforms": {"single": "sm_port_play.zero"}}},
+               waveforms={"sm_port_play.zero": {"type": "constant", "sample": 0.0}})
+    # Reuse the existing script, watchdog, simulator and halt/close machinery.
+    plan = dict(test="dc", basis="port", element="sm_port_play", source_element="sm_port_play",
+                operation="dc", amp_scale=1.0, expected_peak=0.0, expected_dbm=None,
+                kind="lf", port=info["port"], in_port=None, marker_port=None,
+                period_ns=DEFAULT_PERIOD_NS, shots=1, lo=None, **{"if": 0}, rf=None,
+                full_scale_power_dbm=None, notes=[], pulse_ns=CW_PULSE_NS,
+                config_fingerprint=config_fingerprint(cfg), config_name=f"port-play:{con}:{slot}:{number}",
+                output_mode=info["output_mode"], offset=offset)
+    return cfg, plan
 
 
 class PortTestError(ValueError):
@@ -412,8 +542,9 @@ def _fmt_port(p) -> str:
     return "/".join(str(x) for x in (p or [])) or "?"
 
 
-_TITLES = {"cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
+_TITLES = {"dc": "DC offset", "cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
 _USE = {
+    "dc": "Oscilloscope: zero waveform plus the selected port offset. Runs until Stop or the time limit.",
     "cw": "Spectrum analyser: a tone at the RF frequency below, at the power below. Runs until Stop (Ctrl+C).",
     "pulse": "Oscilloscope: trigger on the marker port; each pulse has the length and peak below, "
              "repeated every PERIOD_NS. Runs until Stop (Ctrl+C).",
@@ -722,11 +853,16 @@ def simulate(qmm, duration_ns=None):
 def saas_qmm(client, version=None):
     """Start a QM-SaaS simulator matching CONFIG's FEMs; returns (instance, qmm)."""
     from qm_saas import ClusterConfig
+    # QM-SaaS (QOP > 3.3) takes ONE controller; its FEM layout applies to
+    # every controller in the cluster, so declare the union of all slots.
     cluster = ClusterConfig()
-    for cname, con in CONFIG["controllers"].items():
-        ctl = cluster.controller()
+    ctl = cluster.controller()
+    slots = {{}}
+    for con in CONFIG["controllers"].values():
         for slot, fem in (con.get("fems") or {{}}).items():
-            (ctl.mw_fems if fem.get("type") == "MW" else ctl.lf_fems)(int(slot))
+            slots.setdefault(int(slot), fem.get("type"))
+    for slot, kind in sorted(slots.items()):
+        (ctl.mw_fems if kind == "MW" else ctl.lf_fems)(slot)
     inst = client.simulator(version or client.latest_version(), cluster)
     inst.spawn()
     if hasattr(type(inst), "qmm_connection_params"):

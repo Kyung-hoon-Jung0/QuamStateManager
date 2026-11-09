@@ -36,6 +36,9 @@ import psutil
 logger = logging.getLogger(__name__)
 
 RUNNER = Path(__file__).resolve().parent.parent / "generator" / "run_port_test.py"
+#: the loopback offset calibration job runner (``@@SM-LOOPCAL@@`` progress lines on stdout)
+LOOPCAL_RUNNER = Path(__file__).resolve().parent.parent / "generator" / "run_loopback_cal.py"
+LOOPCAL_PREFIX = "@@SM-LOOPCAL@@"
 KEYRING_SERVICE = "quam-state-manager/port-test"
 #: a page polls status every ~1 s; this many seconds without a poll stops the run
 HEARTBEAT_S = 12.0
@@ -274,6 +277,7 @@ class Runs:
         self._lock = threading.Lock()
         #: one-time hardware confirmations: token -> (expires monotonic, owner, binding)
         self.confirmations: dict = {}
+        self.port_play_generation = 0
         self.current: Optional[dict] = None
         if resume:
             self._resume()
@@ -308,8 +312,14 @@ class Runs:
             shutil.rmtree(p, ignore_errors=True)
 
     def start(self, python: str, script: str, request: dict, meta: dict,
-              popen=subprocess.Popen) -> dict:
+              popen=subprocess.Popen, job: Optional[dict] = None) -> dict:
+        """Start the one port test. With ``job`` the loopback calibration
+        runner runs that job instead of ``script`` (same busy/stop/owner rules;
+        Stop = the ``stop`` file, result = ``_result.json``)."""
         with self._lock:
+            generation = request.get("_port_play_generation")
+            if generation is not None and generation != self.port_play_generation:
+                raise RuntimeError("Play was stopped while preparing the config.")
             cur = self.current
             if cur and cur["proc"].poll() is None:
                 raise RuntimeError("Another port test is still running; stop it first.")
@@ -323,12 +333,23 @@ class Runs:
             work = self._runs_dir() / rid
             work.mkdir()
             (work / "script.py").write_text(script, encoding="utf-8")
+            if job is not None:
+                (work / "job.json").write_text(json.dumps(
+                    {**job, "result_file": "_result.json", "stop_file": "stop"}), encoding="utf-8")
             req = dict(request)
+            req.pop("_port_play_generation", None)
+            play_owner = req.pop("_play_owner", None)
             req.setdefault("max_s", MAX_RUN_S)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
-            proc = popen([python, str(RUNNER), str(work / "script.py"), str(work)],
-                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         text=True, creationflags=flags)
+            if job is None:
+                proc = popen([python, str(RUNNER), str(work / "script.py"), str(work)],
+                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             text=True, creationflags=flags)
+            else:
+                with open(work / "stdout.log", "w", encoding="utf-8") as out,                         open(work / "stderr.log", "w", encoding="utf-8") as err:
+                    proc = popen([python, str(LOOPCAL_RUNNER), str(work / "job.json")],
+                                 stdin=subprocess.PIPE, stdout=out, stderr=err,
+                                 text=True, creationflags=flags)
             try:
                 # One line, then stdin stays OPEN: end-of-file tells the runner SM is gone.
                 proc.stdin.write(json.dumps(req) + "\n")
@@ -340,7 +361,7 @@ class Runs:
             except (AttributeError, TypeError, ValueError, psutil.Error):
                 created = None  # a fake process in tests
             saved = {"id": rid, "pid": getattr(proc, "pid", None), "created": created,
-                     "python": python, "meta": dict(meta), "started": time.time(),
+                     "python": python, "meta": dict(meta), "play_owner": play_owner, "started": time.time(),
                      "hardware_target": (dict(request.get("target") or {})
                                          if request.get("mode") == "opx" else None)}
             _write(work / "_run.json", saved)
@@ -452,6 +473,8 @@ class Runs:
             pass
 
     def stop(self, rid: Optional[str] = None, why: str = "Stop pressed") -> bool:
+        with self._lock:
+            self.port_play_generation += 1
         run = self.current
         if not run or (rid and run["id"] != rid):
             return False
@@ -482,6 +505,9 @@ class Runs:
                "elapsed_s": round(time.time() - run["started"], 1),
                "stopping": run["stop_at"] is not None, "stop_why": run.get("stop_why"),
                "unknown_qm_state": unknown}
+        progress = loopcal_progress(run["work"])
+        if progress is not None:
+            out["progress"] = progress
         if not alive and unclean:
             out["phase"] = ("unknown state: the QM may be open"
                             if unknown else "the runner ended; closing our QM")
@@ -492,3 +518,25 @@ class Runs:
                                              f"(exit code {run['proc'].returncode})."}
             out["result"] = res
         return out
+
+
+def loopcal_progress(work: Path) -> Optional[list]:
+    """Progress messages of a loopback calibration run (None for other runs)."""
+    path = Path(work) / "stdout.log"
+    if not path.exists():
+        return None
+    lines = []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        if not line.startswith(LOOPCAL_PREFIX):
+            continue
+        try:
+            event = json.loads(line[len(LOOPCAL_PREFIX):])
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("event") == "progress":
+            lines.append(str(event.get("message", "")))
+    return lines

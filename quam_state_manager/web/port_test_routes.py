@@ -60,10 +60,10 @@ def _config():
 
 
 def _port_args(src) -> list | None:
-    con, port = (src.get("con") or "").strip(), (src.get("port") or "").strip()
+    con, port = str(src.get("con") or "").strip(), str(src.get("port") or "").strip()
     if not con or not port:
         return None
-    slot = (src.get("slot") or "").strip()
+    slot = str(src.get("slot") or "").strip()
     return [con, slot, port]
 
 
@@ -99,6 +99,301 @@ def _build(src):
     tcfg, plan = pt.build(cfg, element, test, basis, **_params(src))
     label = _r()._active_ctx().get("name", "") if _r()._active_ctx() else ""
     return pt.render_script(tcfg, plan, chip_label=str(label or "")), plan
+
+
+def _play_binding(data) -> str:
+    """What one Play confirmation authorizes: this port, value, mode, time, target."""
+    spec = data.get("spec") or {}
+    net = spec.get("network") or {}
+    try:
+        offset = float(data.get("offset"))
+        seconds = float(data.get("max_s", 300))
+    except (TypeError, ValueError):
+        raise pt.PortTestError("Offset and max time must be numbers.") from None
+    return _binding({"port": _port_args(data), "offset": offset, "seconds": seconds,
+                     "mode": str(data.get("output_mode") or "direct")},
+                    {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")})
+
+
+def _play_owner() -> str:
+    return session.setdefault("port_test_owner", secrets.token_urlsafe(24))
+
+
+@port_test_bp.route("/port-play/confirm", methods=["POST"])
+def port_play_confirm():
+    """One-time, 60 s, owner- and port/value-bound token for one Play press."""
+    data = json_object()
+    if data.get("hardware_ok") is not True:
+        return jsonify(ok=False, error="Confirm the port is safe to drive."), 400
+    try:
+        binding = _play_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    token = secrets.token_urlsafe(32)
+    manager = runs()
+    with manager._lock:
+        now = time.monotonic()
+        manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
+        manager.confirmations[token] = (now + 60, _play_owner(), "play:" + binding)
+    return jsonify(ok=True, token=token, expires_s=60)
+
+
+@port_test_bp.route("/port-play/run", methods=["POST"])
+def port_play_run():
+    data = json_object()
+    owner = _play_owner()
+    manager = runs()
+    try:
+        binding = "play:" + _play_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    with manager._lock:
+        confirmation = manager.confirmations.pop(str(data.get("confirm_token") or ""), None)
+    if (not confirmation or confirmation[0] <= time.monotonic()
+            or confirmation[1] != owner or confirmation[2] != binding):
+        return jsonify(ok=False, error="Confirm the safety box and press Play again."), 400
+    status = manager.status()
+    if status.get("state") == "running":
+        cur = manager.current or {}
+        if cur.get("id") == status.get("id") and cur.get("play_owner") == owner:
+            # Only our own previous play is stopped; the client confirms again.
+            manager.stop(status.get("id"), "Play again")
+            return jsonify(ok=False, stopping=True,
+                           error="Stopping the previous play; waiting for its QM to close."), 409
+        return jsonify(ok=False, busy=True,
+                       error="Busy: another port test is running. Stop it there first."), 409
+    # Generation binding: a Stop pressed after this point refuses the start.
+    with manager._lock:
+        generation = manager.port_play_generation
+    try:
+        seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
+        spec = data.get("spec") or {}
+        cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
+                                      data.get("offset"), data.get("output_mode", "direct"))
+        python = _r()._build_python(data)
+        if not python:
+            raise pt.PortTestError("Select a Python environment in step 1.")
+        network = spec.get("network") or {}
+        host = network.get("host")
+        if not host:
+            raise pt.PortTestError("Enter the network host in step 2.")
+        req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
+               "target": {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}}
+        started = manager.start(python, pt.render_script(cfg, plan), req,
+                                {"plan": plan, "target": "opx", "target_label": host})
+        return jsonify(ok=True, **started)
+    except (ValueError, RuntimeError, KeyError, TypeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+
+@port_test_bp.route("/port-play/stop", methods=["POST"])
+def port_play_stop():
+    """Stop only this session's own play, by its id (never 'whatever runs')."""
+    data = json_object(dict)
+    rid = (data.get("id") if isinstance(data, dict) else None) or request.args.get("id")
+    if not rid:
+        return jsonify(ok=False, error="No play id."), 400
+    manager = runs()
+    cur = manager.current or {}
+    if cur.get("id") != rid or cur.get("play_owner") != session.get("port_test_owner"):
+        return jsonify(ok=False, stopping=False, error="Not this window's play."), 409
+    why = "the page was left" if request.args.get("left") == "1" else "Stop pressed"
+    return jsonify(ok=True, stopping=manager.stop(rid, why))
+
+
+# ---- Loopback offset calibration (BRIEF3 E-1..E-4) -------------------------
+
+def _loopcal_args(data) -> dict:
+    """Validated target of one calibration press: con, fem, ao, ai, kind, mode."""
+    kind = data.get("kind")
+    if kind not in ("input", "output"):
+        raise pt.PortTestError("Choose input or output calibration.")
+    port = _port_args(data)
+    try:
+        con, fem, ao = pt.con_name(port[0]), int(port[1]), int(port[2])
+        ai = int(data.get("ai"))
+    except (TypeError, ValueError, IndexError):
+        raise pt.PortTestError("Choose an LF-FEM output and its analog input (1 or 2).") from None
+    if ai not in (1, 2) or not 1 <= ao <= 8:
+        raise pt.PortTestError("Choose an LF-FEM output 1..8 and analog input 1 or 2.")
+    mode = str(data.get("output_mode") or "direct")
+    if mode not in ("direct", "amplified"):
+        raise pt.PortTestError("Output mode must be direct or amplified.")
+    return {"con": con, "fem": fem, "ao": ao, "ai": ai, "kind": kind, "output_mode": mode}
+
+
+def _saved_ai_offset(spec, con, fem, ai):
+    """The saved AI offset for this FEM/AI at gain_db 0, or None."""
+    entry = (spec.get("port_offsets") or {}).get(pt.input_key(con, fem, ai))
+    if not isinstance(entry, dict) or int(entry.get("gain_db") or 0) != 0:
+        return None
+    try:
+        value = float(entry.get("offset"))
+    except (TypeError, ValueError):
+        return None
+    return value if value == value and abs(value) <= pt.AI_OFFSET_LIMIT else None
+
+
+def _loopcal_binding(data) -> str:
+    args = _loopcal_args(data)
+    net = (data.get("spec") or {}).get("network") or {}
+    return "loopcal:" + _binding(args, {"host": net.get("host"), "cluster": net.get("cluster_name"),
+                                        "port": net.get("port")})
+
+
+@port_test_bp.route("/port-play/loopcal/confirm", methods=["POST"])
+def port_play_loopcal_confirm():
+    """One-time, 60 s, owner-bound token for one calibration press."""
+    data = json_object()
+    if data.get("hardware_ok") is not True:
+        return jsonify(ok=False, error="Confirm the port is safe to drive."), 400
+    try:
+        binding = _loopcal_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    token = secrets.token_urlsafe(32)
+    manager = runs()
+    with manager._lock:
+        now = time.monotonic()
+        manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
+        manager.confirmations[token] = (now + 60, _play_owner(), binding)
+    return jsonify(ok=True, token=token, expires_s=60)
+
+
+@port_test_bp.route("/port-play/loopcal/run", methods=["POST"])
+def port_play_loopcal_run():
+    data = json_object()
+    owner = _play_owner()
+    manager = runs()
+    try:
+        args = _loopcal_args(data)
+        binding = _loopcal_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    with manager._lock:
+        confirmation = manager.confirmations.pop(str(data.get("confirm_token") or ""), None)
+    if (not confirmation or confirmation[0] <= time.monotonic()
+            or confirmation[1] != owner or confirmation[2] != binding):
+        return jsonify(ok=False, error="Confirm the safety box and press the button again."), 400
+    spec = data.get("spec") or {}
+    ai_offset = _saved_ai_offset(spec, args["con"], args["fem"], args["ai"])
+    if args["kind"] == "output" and ai_offset is None:
+        return jsonify(ok=False, error=(
+            f"Calibrate AI {args['ai']} of FEM {args['fem']} (input open, gain_db 0) and save it first.")), 400
+    status = manager.status()
+    if status.get("state") == "running":
+        cur = manager.current or {}
+        if cur.get("id") == status.get("id") and cur.get("play_owner") == owner:
+            manager.stop(status.get("id"), "Calibration started")
+            return jsonify(ok=False, stopping=True,
+                           error="Stopping the previous run; waiting for its QM to close."), 409
+        return jsonify(ok=False, busy=True,
+                       error="Busy: another port test is running. Stop it there first."), 409
+    with manager._lock:
+        generation = manager.port_play_generation
+    try:
+        from quam_state_manager.core.loopback_cal import build_loopback_config, mode_limit  # noqa: PLC0415
+        controllers = pt.controllers_from_spec(spec)
+        try:
+            ao_offset = float(data.get("offset") or 0.0) if args["kind"] == "output" else 0.0
+        except (TypeError, ValueError):
+            raise pt.PortTestError("Offset must be a number.") from None
+        limit = mode_limit(args["output_mode"])
+        if not abs(ao_offset) <= limit:
+            raise pt.PortTestError(f"{args['output_mode']} mode requires |offset| <= {limit} V.")
+        try:
+            build_loopback_config(controllers, args["con"], args["fem"], args["ao"], args["ai"],
+                                  ao_offset, ai_offset or 0.0, args["output_mode"])
+        except (KeyError, ValueError):
+            raise pt.PortTestError("This port is not an LF-FEM output of the step-3 allocation.") from None
+        python = _r()._build_python(data)
+        if not python:
+            raise pt.PortTestError("Select a Python environment in step 1.")
+        network = spec.get("network") or {}
+        host = network.get("host")
+        if not host:
+            raise pt.PortTestError("Enter the network host in step 2.")
+        job = {"host": host, "port": network.get("port") or None,
+               "cluster_name": network.get("cluster_name") or None, "controllers": controllers,
+               "con": args["con"], "fem": args["fem"], "ao": args["ao"], "ai": args["ai"],
+               "kind": args["kind"], "ai_offset": ai_offset or 0.0, "ao_offset": ao_offset,
+               "output_mode": args["output_mode"], "n_avg": 100}
+        target = {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}
+        req = {"mode": "opx", "max_s": ptr.MAX_RUN_S, "_port_play_generation": generation,
+               "_play_owner": owner, "target": target}
+        meta = {"target": "opx", "target_label": host,
+                "loopcal": {**args, "ai_offset": job["ai_offset"], "gain_db": 0}}
+        started = manager.start(python, "# loopback calibration: see job.json\n", req, meta, job=job)
+        return jsonify(ok=True, **started)
+    except (pt.PortTestError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+
+
+@port_test_bp.route("/port-play/loopcal/save", methods=["POST"])
+def port_play_loopcal_save():
+    """The draft entry for a FINISHED, CONVERGED calibration of this window's run.
+
+    SM judges convergence here; the page writes the returned entry into the
+    wizard draft (spec.port_offsets). Nothing is written to any file."""
+    data = json_object(dict)
+    rid = data.get("id") if isinstance(data, dict) else None
+    manager = runs()
+    cur = manager.current or {}
+    if not rid or cur.get("id") != rid or cur.get("play_owner") != session.get("port_test_owner"):
+        return jsonify(ok=False, error="Not this window's calibration."), 409
+    info = (cur.get("meta") or {}).get("loopcal")
+    if not info:
+        return jsonify(ok=False, error="That run was not a calibration."), 400
+    st = manager.status(rid)
+    res = st.get("result") or {}
+    if st.get("state") != "done" or not res.get("ok") or res.get("stopped") or res.get("simulated"):
+        return jsonify(ok=False, error="The calibration has not finished."), 409
+    if res.get("converged") is not True:
+        return jsonify(ok=False, error="Not converged: nothing to save. Check the cable and run again."), 409
+    try:
+        value = float(res.get("final_offset"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="The result has no offset."), 400
+    if info["kind"] == "input":
+        pin = pt.input_key(info["con"], info["fem"], info["ai"])
+        entry = {"offset": value, "gain_db": 0, "source": "loopback"}
+    else:
+        pin = f"{info['con']}/{info['fem']}/{info['ao']}"
+        entry = {"offset": value, "output_mode": info["output_mode"], "source": "loopback",
+                 "ai": info["ai"], "ai_offset": info["ai_offset"]}
+    return jsonify(ok=True, pin=pin, entry=entry, iters=res.get("iters"))
+
+
+@port_test_bp.route("/port-play/loopcal/script.py", methods=["POST"])
+def port_play_loopcal_script():
+    """Download the standalone calibration script, prefilled from this popup."""
+    from quam_state_manager.core.loopback_script import render_script  # noqa: PLC0415
+    data = json_object()
+    try:
+        args = _loopcal_args({**data, "kind": "output"})
+        spec = data.get("spec") or {}
+        net = spec.get("network") or {}
+        try:
+            ao_start = float(data.get("offset") or 0.0)
+        except (TypeError, ValueError):
+            raise pt.PortTestError("Offset must be a number.") from None
+        ai_offset = _saved_ai_offset(spec, args["con"], args["fem"], args["ai"])
+        port = net.get("port")
+        params = {"qop_ip": str(net.get("host") or "127.0.0.1"),
+                  "cluster_name": net.get("cluster_name") or None,
+                  "qop_port": int(port) if port not in (None, "") else None,
+                  "con": args["con"], "fem": args["fem"], "ao_port": args["ao"], "ai_port": args["ai"],
+                  "output_mode": args["output_mode"], "ao_offset_start": ao_start,
+                  "ai_offset_start": ai_offset or 0.0,
+                  "other_controllers": pt.controllers_from_spec(spec)}
+        script = render_script(params)
+    except (pt.PortTestError, ValueError, TypeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    name = f"lf_offset_{args['con']}_fem{args['fem']}_ao{args['ao']}.py"
+    resp = make_response(script)
+    resp.headers["Content-Type"] = "text/x-python; charset=utf-8"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return resp
 
 
 @port_test_bp.route("/port-test")

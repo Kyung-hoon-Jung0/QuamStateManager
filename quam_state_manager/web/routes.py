@@ -51626,6 +51626,7 @@ def _sched_bool(value) -> bool:
 # Routes that mutate the chip or spawn a QM subprocess — locked while a queue
 # runs (the experiment is driving the chip + OPX). Reads/navigation stay live.
 _SCHEDULER_MUTATOR_ENDPOINTS = {
+    "port_test.port_play_run",
     # generic + legacy field editors (all call modifier.set_value)
     "main.field_edit", "main.field_edit_batch",
     # Edit as JSON stages through the batch door, so it holds the run lock too.

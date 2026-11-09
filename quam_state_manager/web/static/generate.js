@@ -1216,7 +1216,31 @@
         renderChassis();
       }));
     });
+    renderPortPlay();
     if (opts && opts.restoreFocus) restoreSlotFocus();
+  }
+
+  function renderPortPlay() {
+    var toggle = document.getElementById("gen-port-play-toggle");
+    var panel = document.getElementById("gen-port-play-panel");
+    if (!toggle || !panel || !window.PortPlay) return;
+    toggle.onclick = function () {
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      renderPortPlay();
+    };
+    if (panel.hidden) return;
+    window.renderInstrumentWiring("gen-port-play-rack", buildInstrumentData({}), {}, {
+      wrapFems: true, sizeKey: "generate",
+      onPortPlay: function (port) {
+        window.PortPlay.open(port, {
+          spec: function () { return state.spec; },
+          python: function () { return state.env; },
+          changed: function () { saveDraft(); renderPortPlay(); }
+        });
+      }
+    });
+    window.PortPlay.renderOffsets(state.spec, function () { saveDraft(); renderPortPlay(); });
   }
 
   // Left/Right move the highlight across all OPX1000 slots; Up/Down cycle the
@@ -13549,6 +13573,8 @@
       uiZoom: uiZoom,
       attachWiringDrag: attachWiringDrag,
       // docs/290 seams -- the two wizard racks that carry the size control
+      renderPortPlay: renderPortPlay,
+      renderChassis: renderChassis,
       renderWiringDiagram: renderWiringDiagram,
       renderPopWiring: renderPopWiring,
       // docs/135 ⑤ seam — the allocation→diagram regroup, incl. digital
