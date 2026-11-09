@@ -2254,7 +2254,6 @@ window.setFontSize = function(size) {
         if (!bar) return;
         var n = sel.length;
         bar.hidden = n === 0;
-        updateFloatTop();
         bar.setAttribute('data-count', String(n));
         var lb = document.getElementById('cf-list');
         if (lb) {
@@ -2306,15 +2305,26 @@ window.setFontSize = function(size) {
             ul.appendChild(li);
         });
         setPop(listExpanded);
+        // Publish the height measured after the rows and the list are final,
+        // in the same task, so the sticky date header never lags a frame.
+        updateFloatTop();
     }
     function removeOne(v) {
+        // Focus goes to the item that took the removed one's place (the next),
+        // else the new last item (the previous), else the bar's list toggle,
+        // else the run's own tick in the tree -- never <body>.
+        var before = Array.prototype.map.call(document.querySelectorAll('#cf-items .cf-item'),
+            function(li) { return li.getAttribute('data-path'); });
+        var at = before.indexOf(v);
         boxes().forEach(function(b) { if (b.value === v) b.checked = false; });
         write(stored().filter(function(s) { return s !== v; }));
         syncCompareCount();
-        var first = document.querySelector('#cf-items .cf-x');
+        var xs = document.querySelectorAll('#cf-items .cf-x');
         var bar = document.getElementById('compare-float');
-        if (first) first.focus();
-        else if (bar && !bar.hidden) { var lb = document.getElementById('cf-list'); if (lb) lb.focus(); }
+        var target = xs.length ? xs[Math.min(Math.max(at, 0), xs.length - 1)] : null;
+        if (!target && bar && !bar.hidden) target = document.getElementById('cf-list');
+        if (!target) target = boxes().filter(function(b) { return b.value === v; })[0] || null;
+        if (target) target.focus();
     }
     function setPop(open) {
         listExpanded = open;

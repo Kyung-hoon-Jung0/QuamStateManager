@@ -245,6 +245,31 @@ function rule(selector) {
   ok(list.getAttribute('aria-expanded') === 'false' && list.querySelector('.cf-arrow').textContent === '\u25b8', 'D-6 clicking arrow collapses and updates glyph');
   ok(/font-size: calc\(var\(--tree-entry-label-font\) \* 1\.3\)/.test(rule('.cf-arrow')), 'D-6 arrow uses run-row font token'); win.close();
 }
+// D-7: removing a run by keyboard leaves focus on the next row, else the previous, else the toggle.
+{
+  const { win } = makeWorld(); await settle();
+  click(win, boxes(win)[1]); click(win, boxes(win)[2]); click(win, boxes(win)[3]);
+  const order = listed(win); const mid = order[1], next = order[2];
+  const xOf = p => win.document.querySelector('#cf-items .cf-item[data-path="' + p + '"] .cf-x');
+  xOf(mid).focus(); click(win, xOf(mid));
+  const ae = () => win.document.activeElement;
+  ok(listed(win).indexOf(mid) < 0 && ae() && ae().closest('.cf-item') && ae().closest('.cf-item').getAttribute('data-path') === next, 'D-7 removing the middle focuses the next row');
+  const last = listed(win)[listed(win).length - 1], prev = listed(win)[0];
+  click(win, xOf(last));
+  ok(ae() && ae().closest('.cf-item') && ae().closest('.cf-item').getAttribute('data-path') === prev, 'D-7 removing the last focuses the previous row');
+  click(win, xOf(prev));
+  ok(ae() && ae() !== win.document.body && ae().matches('input[type=checkbox][value="' + prev + '"]'), 'D-7 removing the only row focuses that run tick, never body');
+  win.close();
+}
+// D-8: the bar height is published in the same task as the rows change (no RO frame).
+{
+  const { win } = makeWorld(); await settle();
+  const bar = $(win, 'compare-float'), anchor = bar.parentNode, sidebar = $(win, 'sidebar');
+  anchor.getBoundingClientRect = () => ({ height: bar.hidden ? 0 : 20 + win.document.querySelectorAll('#cf-items .cf-item').length * 10 });
+  click(win, boxes(win)[0]); click(win, boxes(win)[1]);
+  ok(sidebar.style.getPropertyValue('--cf-h') === '40px', 'D-8 height after rows rebuild is published synchronously');
+  win.close();
+}
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('all ok');
 process.exit(0);
