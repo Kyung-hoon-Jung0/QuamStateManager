@@ -43,7 +43,7 @@ def test_reverse_lo_fix_names_the_port_and_what_else_moves():
     rev = [x for x in _warn(_shared_output_root(7.1e9, 7.1e9))[0].fixes
            if x["kind"] == "up_to_down"][0]
     assert "changes the drive LO of con1/FEM 1/port 1" in rev["label"]
-    assert rev["warns"].startswith("changes the drive LO of con1/FEM 1/port 1 -- also moves: ")
+    assert rev["warns"].startswith("changes the drive LO of con1/FEM 1/port 1 — also moves: ")
     assert "q1 readout (rr) [qubits.q1.resonator]" in rev["warns"]
     assert "q2 readout (rr) [qubits.q2.resonator]" in rev["warns"]
     assert rev["moves_named"][0]["label"] == "q1 readout (rr)"

@@ -71,6 +71,7 @@ const ROOT = path.join(__dirname, '..');
 const HTML = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_generate.html'), 'utf8')
   // D-103: the page head's fold macro (import + call) is Jinja the harness cannot run
+  .replace("{{ 'Modify config' if page == 'regenerate' else 'Generate Configuration Files' }}", 'Generate Configuration Files')
   .replace('{{ coupler_model_fields | default([]) | tojson }}', '[]')
   .replace(/\{%-? *from ['"]_ui\.html['"] import ui_head_fold *-?%\}/g, '')
   .replace(/\{\{-? *ui_head_fold\(\) *-?\}\}/g, '<button type="button" class="ui-btn-icon ui-head-fold"></button>');
@@ -144,6 +145,7 @@ const REGEN_TPL = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_regenerate.html'), 'utf8');
 const REGEN_MARKUP = REGEN_TPL.slice(0, REGEN_TPL.indexOf('<script>'))
   .replace(/\{#[\s\S]*?#\}/g, '')
+  .replace('{{ coupler_model_fields | default([]) | tojson }}', '[]')
   .replace("{% include '_generate.html' %}", HTML)
   .replace(/\{\{ active_path or '' \}\}/, '')
   // v1.5.1 (T1-F4): the chip slot reads the declared name first -- any expression over active_name

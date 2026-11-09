@@ -1,4 +1,4 @@
-﻿/* QUAM State Manager -- full stylesheet on top of Pico CSS */
+/* QUAM State Manager -- full stylesheet on top of Pico CSS */
 
 /* =========================================================
  * DESIGN TOKENS — QUAM State Manager
@@ -16024,69 +16024,6 @@ dialog.gen-rule-dlg::backdrop, dialog#gcz-several::backdrop { background: rgba(0
 .gen-rule-select[role=group], #gcz-several .gcz-sev-select[role=group] { width: auto; margin-bottom: 0; border-radius: 0; box-shadow: none; overflow: visible; }
 .gen-rule-select[role=group] > *, #gcz-several .gcz-sev-select[role=group] > * { flex: 0 0 auto; width: auto; margin: 0; border-radius: 0; }
 .gen-rule-select[role=group] > .ui-segmented, #gcz-several .gcz-sev-select[role=group] > .ui-segmented { border-radius: var(--ui-r-md); }
-.gen-rule-status { margin: var(--ui-gap-1) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
-.gen-rule-status:empty { display: none; }
-.gen-rule-status-stale { color: var(--ui-warn-text); }
-.gen-rule-status-error { color: var(--ui-danger-text); }
-.gen-rule-status > button { margin-left: var(--ui-gap-2); }
-.gen-rule-dim { opacity: 0.45; pointer-events: none; }
-.gen-rule-skel-row { height: 1.1rem; margin: 0.35rem 0; background: var(--ui-surface-2); border-radius: var(--ui-r-sm); }
-.gen-rule-grpwrap { position: relative; padding-left: 1.8rem; margin: 0 0 var(--ui-gap-2); }
-.gen-rule-grpwrap > .ui-disclosure { margin: 0; }
-.gen-rule-grpwrap > input.gen-rule-grp-cb, .gen-rule-grpwrap > .gen-rule-grp-mark { position: absolute; left: 0; top: 0.1rem; margin: 0; }
-.gen-rule-grp-mark { color: var(--ui-text-2); }
-.gen-rule-allcant { margin: 0 0 var(--ui-gap-2); color: var(--ui-text-2); font-size: var(--ui-fs-sm); }
-.gen-rule-row input[type="checkbox"], .gen-rule-grpwrap > input.gen-rule-grp-cb {
-  /* width:auto collapsed Pico's box into a bar: keep a real square, checked vs unchecked clearly distinct */
-  width: 1.1rem; height: 1.1rem; margin: 0; flex: 0 0 auto; cursor: pointer;
-  border: 2px solid var(--ui-text-2); background-color: transparent; }
-.gen-rule-row input[type="checkbox"]:checked, .gen-rule-grpwrap > input.gen-rule-grp-cb:checked {
-  border-color: var(--ui-accent-fill); background-color: var(--ui-accent-fill); }
-.gen-rule-row input[type="checkbox"]:focus-visible, .gen-rule-grpwrap > input.gen-rule-grp-cb:focus-visible {
-  outline: var(--ui-focus-w) solid var(--ui-ring); outline-offset: 2px; }
-/* The group table: pulse names are long, so they ellipsize (full list in the title). */
-.gen-rule-tbl { width: 100%; table-layout: auto; }
-.gen-rule-tbl .gen-rule-c-tick { width: 1.6rem; }
-.gen-rule-tbl .gen-rule-c-names { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gen-rule-tbl .gen-rule-c-on { white-space: nowrap; }
-.gen-rule-choice { width: auto; margin: 0; padding: 0 1.4rem 0 var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
-.gen-rule-cant { display: flex; gap: var(--ui-gap-3); font-size: var(--ui-fs-sm); padding: var(--ui-gap-1) 0; }
-.gen-rule-cant-pairs { color: var(--ui-text-2); }
-.gen-rule-menuhost { position: relative; }
-.gen-rule-menu { position: absolute; z-index: 40; background: var(--ui-surface-1); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md); box-shadow: var(--ui-shadow); padding: var(--ui-gap-1); min-width: 16rem; display: flex; flex-direction: column; }
-.gen-rule-menuitem { text-align: left; background: transparent; border: 0; color: var(--ui-text); padding: var(--ui-gap-1) var(--ui-gap-3); margin: 0; width: 100%; font-size: var(--ui-fs-sm); cursor: pointer; }
-.gen-rule-menuitem:focus, .gen-rule-menuitem:hover { background: var(--ui-surface-2); }
-.gen-rule-menu-sep { border-top: var(--ui-bw) solid var(--ui-border); margin: var(--ui-gap-1) 0; }
-/* env-upgrade card: long class paths and interpreter paths wrap, never widen the pane */
-.env-upgrade-report { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
-.env-upgrade-report code, .env-upgrade-report pre { overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
-.env-upgrade-report table { table-layout: fixed; width: 100%; }
-.env-upgrade-report .env-sig-table th { width: 9rem; text-align: left; }
-/* The kit disclosure shows its open state (attribute selectors are kept out of ui-kit.css). */
-.ui-disclosure[open] > .ui-disclosure-summary::before { content: var(--ui-disclosure-marker-open); }
-/* E1-E7: the card is kit parts; these only space them. */
-.env-upgrade-head { margin-bottom: var(--ui-gap-2); }
-.env-upgrade-head .ui-head-title { font-size: var(--ui-fs-lg); }
-.env-upgrade-head .ui-head-title .ui-badge { font-size: var(--ui-fs-sm); }
-.env-upgrade-head > .ui-actions { justify-content: flex-start; margin-left: 0; }
-.env-upgrade-report .ui-item-body { font-size: var(--ui-fs-sm); }
-.env-upgrade-report > .ui-note, .env-upgrade-report > .ui-verdict { margin: var(--ui-gap-1) 0; }
-.env-upgrade-report > #env-upgrade-status:empty { display: none; }
-.env-group { margin: var(--ui-gap-2) 0; }
-.env-group > .ui-disclosure-summary .ui-verdict { margin: 0; }
-.env-group-name { margin-top: var(--ui-gap-2); color: var(--ui-text); }
-.env-case-found { margin: var(--ui-gap-2) 0 var(--ui-gap-1); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text); }
-.env-upgrade-finding .ui-check { margin: 0; }
-.env-upgrade-finding .ui-disclosure { margin: 0; }
-.env-upgrade-report .env-rename-actions { justify-content: flex-start; margin: var(--ui-gap-2) 0; }
-.env-upgrade-report .env-ack-actions { justify-content: flex-start; margin: var(--ui-gap-2) 0; }
-.env-reference-heading { margin: var(--ui-gap-3) 0 var(--ui-gap-2); }
-.env-upgrade-report .env-reference .ui-table--kv { table-layout: auto; width: auto; }
-.env-reference-foot { flex-wrap: wrap; justify-content: flex-start; }
-.env-reference-foot > .ui-actions { margin-left: auto; }
-.env-reference-field { display: inline-flex; align-items: center; gap: var(--ui-gap-2); margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-text-2); }
-.env-reference-field > select, .env-reference-field > input { width: auto; max-width: 16rem; margin: 0; padding-top: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); height: auto; font-size: var(--ui-fs-sm); }
-
 /* FB-07 B: a text selection must be visible in every editor, both themes.
  * Native inputs used the browser's own dark-scheme highlight (a dim blue on
  * the near-black field), and the CodeMirror panel drew its selection UNDER an
@@ -16117,88 +16054,4 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
 .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
     background: var(--cm-selection) !important;
 }
-
-/* FB-13: sidebar actions and an in-flow selection list above the pinned date. */
-#sidebar { overflow-anchor: none; }
-.compare-float-anchor {
-    position: sticky; top: calc(-1 * var(--sidebar-pad-v));
-    z-index: 5; background: var(--pico-background-color); width: fit-content; max-width: 100%;
-}
-.cf-arrow { font-size: calc(var(--tree-entry-label-font) * 1.3); line-height: 1; vertical-align: -0.1em; }
-.compare-float {
-    display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
-    box-sizing: border-box; width: fit-content; max-width: 100%;
-    padding: 0 3px;
-    background: var(--pico-background-color);
-    border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
-    border-radius: 6px;
-    font-size: 11px; line-height: 1.2;
-}
-.compare-float-anchor[hidden], .compare-float[hidden], .cf-pop[hidden] { display: none; }
-.compare-float .cf-btn {
-    margin: 0; padding: 2px 7px; width: auto; height: auto;
-    font-size: 1em; line-height: 1.25; border-radius: 4px;
-    border: 1px solid var(--pico-muted-border-color);
-    background: transparent; color: var(--pico-contrast); cursor: pointer;
-    white-space: nowrap;
-}
-.compare-float .cf-compare {
-    background: var(--pico-primary); border-color: var(--pico-primary);
-    color: var(--pico-primary-inverse, #fff); font-weight: 600;
-}
-.compare-float .cf-btn:disabled { opacity: .45; cursor: not-allowed; }
-.compare-float .cf-compare--off,
-.compare-float .cf-compare:disabled {
-    background: transparent;
-    border-color: transparent;
-    color: var(--pico-muted-color);
-    font-weight: inherit;
-    filter: grayscale(1);
-}
-.compare-float .cf-btn:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
-.compare-float .cf-list { color: var(--pico-primary); }
-.cf-pop {
-    position: static; flex-basis: 100%; min-width: 0; width: fit-content; max-width: 100%;
-    max-height: 50vh; overflow-y: auto;
-    background: var(--pico-background-color);
-    border: 1px solid var(--pico-muted-border-color);
-    border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
-    padding: 4px 0;
-}
-.cf-pop-head { padding: 2px 10px 4px; color: var(--pico-muted-color); font-size: .95em; }
-.cf-items { list-style: none; margin: 0; padding: 0; }
-.cf-items .cf-item {
-    display: flex; align-items: center; gap: 6px;
-    padding: 2px 6px 2px 10px; margin: 0; list-style: none;
-}
-.cf-items .cf-item:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
-.cf-id { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--pico-primary); }
-.cf-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cf-off { color: var(--pico-muted-color); font-style: italic; font-size: .9em; white-space: nowrap; }
-.cf-items .cf-x {
-    margin: 0; padding: 0 6px; width: auto; height: auto; line-height: 1.3;
-    background: none; border: none; color: var(--pico-muted-color); cursor: pointer; font-size: 1.1em;
-}
-.cf-items .cf-x:hover, .cf-items .cf-x:focus-visible { color: var(--pico-del-color, #c62828); }
-.toast .toast-undo { margin: 4px 0 0; width: auto; padding: 2px 10px; }
-
-/* FB-12 port test */
-.port-test .pt-card { margin: 0.8rem 0; padding: 0.6rem 0.8rem; border: 1px solid var(--pico-muted-border-color); border-radius: 8px; }
-.port-test .pt-row { display: flex; flex-wrap: wrap; gap: 0.5rem 1.2rem; align-items: end; margin: 0.4rem 0; border: 0; padding: 0; }
-.port-test .pt-row label { display: inline-flex; gap: 0.35rem; align-items: center; margin: 0; }
-.port-test .pt-row input:not([type=radio]):not([type=checkbox]), .port-test .pt-row select { width: auto; margin: 0; padding: 0.2rem 0.4rem; height: auto; }
-.port-test .pt-row legend { font-weight: 600; margin-right: 0.6rem; }
-.port-test .pt-warn { color: var(--pico-del-color, #c0392b); }
-.port-test .pt-ok { color: var(--pico-ins-color, #2e8b57); font-weight: 600; }
-.port-test .pt-trace { display: block; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); border-radius: 4px; }
-.port-test .pt-trace path { fill: none; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.port-test .pt-trace .pt-re { stroke: #3b82f6; }
-.port-test .pt-trace .pt-im { stroke: #f59e0b; }
-.port-test .pt-res-row { margin: 0.5rem 0; }
-.port-test .pt-facts th { width: 11rem; }
-.port-test [hidden] { display: none !important; }
-.port-popup-actions { margin-top: 0.45rem; text-align: right; } .port-popup-actions .btn-sync { font-size: 0.95em; padding: 0.15rem 0.6rem; }
-
-
-
 

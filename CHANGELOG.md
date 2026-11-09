@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.8.0 (unreleased)
+
+- Added chip component review, environment checks and port testing.
+- Improved diagnostics, state synchronization and sidebar navigation.
+
 ## v1.7.0 (unreleased)
 
 ### Sync contracts and configuration

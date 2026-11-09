@@ -6,6 +6,25 @@ const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
+// The compare-bar rules live in ui-kit.css as --ui-* tokens. Resolve each
+// --ui-* reference against the first :root token block so every pin below
+// still asserts the same literal value the rule computes to.
+function resolveUiTokens(text) {
+  const kit = fs.readFileSync(path.join(STATIC, 'ui-kit.css'), 'utf8');
+  const rootStart = kit.indexOf(':root {');
+  const root = kit.slice(rootStart, kit.indexOf('}', rootStart));
+  const tokens = {};
+  root.replace(/(--ui-[\w-]+)\s*:\s*([^;]+);/g, (m, k, v) => { if (!(k in tokens)) tokens[k] = v.trim(); return m; });
+  for (let i = 0; i < 20; i++) {
+    const next = text.replace(/var\((--ui-[\w-]+)\)/g, (m, k) => (k in tokens ? tokens[k] : m));
+    if (next === text) break; text = next;
+  }
+  return text;
+}
+function cfBlock(text) {
+  const start = text.indexOf('.compare-float-anchor {');
+  return text.slice(start, text.indexOf('.port-test', start));
+}
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
@@ -70,8 +89,8 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   ok($(win, 'cf-compare').disabled === true, 'Compare on the bar is disabled at one tick');
   ok($(win, 'cf-compare').title === 'Tick at least 2 runs', 'Compare title names the two-run floor at one tick');
   {
-    const cssAll = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
-    const rules = cssAll.slice(cssAll.indexOf('/* FB-13:'), cssAll.indexOf('.cf-pop {'));
+    const cssAll = ['style.css', 'ui-kit.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8')).join(String.fromCharCode(10));
+    const rules = cfBlock(resolveUiTokens(cssAll));
     const style = win.document.createElement('style'); style.textContent = rules; win.document.head.appendChild(style);
     ok($(win, 'cf-compare').classList.contains('cf-compare--off'),
       'Compare carries off styling at one tick');
@@ -173,10 +192,10 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   swap('htmx:afterRequest', '/trend', false); picker(); swap('htmx:afterSettle'); await settle();
   ok(charts === 2, 'D-1 a failed /trend disarms the automatic chart'); win.close();
 }
-const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
-const block = css.slice(css.indexOf('/* FB-13:'), css.indexOf('/* FB-12 port test */'));
+const css = resolveUiTokens(['style.css', 'ui-kit.css'].map((f) => fs.readFileSync(path.join(STATIC, f), 'utf8')).join(String.fromCharCode(10)));
+const block = cfBlock(css);
 function rule(selector) {
-  const start = block.indexOf(selector + ' {');
+  const start = ('\n' + block).indexOf('\n' + selector + ' {');
   return block.slice(start, block.indexOf('}', start) + 1);
 }
 // D-2: default expanded list takes a full row inside the wrapping bar.
@@ -222,7 +241,7 @@ function rule(selector) {
   height = 70; win._resizeCallbacks.forEach(cb => cb());
   ok(sidebar.style.getPropertyValue('--cf-h') === '70px', 'D-4 resize republishes height');
   click(win, tick); ok(sidebar.style.getPropertyValue('--cf-h') === '0px' && sidebar.scrollTop === 100, 'D-4 hidden bar publishes zero and compensates final shrink');
-  ok(/position: sticky/.test(rule('.compare-float-anchor')) && /top: calc\(-1 \* var\(--sidebar-pad-v\)\)/.test(rule('.compare-float-anchor')) && /z-index: 5/.test(rule('.compare-float-anchor')) && /background: var\(--pico-background-color\)/.test(rule('.compare-float-anchor')), 'D-4 opaque sticky anchor stays below main stacking layers');
+  ok(/position: sticky/.test(rule('.compare-float-anchor')) && /top: calc\(-1 \* var\(--sidebar-pad-v\)\)/.test(rule('.compare-float-anchor')) && /z-index: 5;/.test(rule('.compare-float-anchor')) && /background: var\(--pico-background-color\)/.test(rule('.compare-float-anchor')), 'D-4 opaque sticky anchor stays below main stacking layers');
   ok(/\.tree-dir\.tree-leafdir > summary \{\s*position: sticky;\s*top: calc\(var\(--cf-h, 0px\) - var\(--sidebar-pad-v\)\)/.test(css), 'D-4 date header follows bar height');
   win.close();
 }

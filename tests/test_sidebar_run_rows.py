@@ -154,7 +154,7 @@ class TestRowStyle:
         assert "tree-leafdir" in _MACROS
         rule = _css_rule(".tree-dir.tree-leafdir > summary")
         assert "position: sticky" in rule
-        assert "top: calc(-1 * var(--sidebar-pad-v))" in rule
+        assert "top: calc(var(--cf-h, 0px) - var(--sidebar-pad-v))" in rule
         assert "background: var(--tree-summary-bg" in rule
         assert "--tree-summary-bg" in _css_rule("details.tree-branch-active > summary")
 

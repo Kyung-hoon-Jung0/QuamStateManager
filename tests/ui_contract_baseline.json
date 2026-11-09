@@ -84,7 +84,7 @@
   "templates/_compare_hub_results.html": 3,
   "templates/_compare_state.html": 2,
   "templates/_config.html": 2,
-  "templates/_cz_plan.html": 5,
+  "templates/_cz_plan.html": 4,
   "templates/_dataset_compare.html": 1,
   "templates/_dataset_detail.html": 5,
   "templates/_dataset_interactive.html": 2,
@@ -232,7 +232,6 @@
   "czp-caveat-box",
   "czp-coupler-form",
   "czp-coupler-models",
-  "czp-root",
   "czp-shifted",
   "czp-solve-amp",
   "czp-solve-line",
@@ -498,7 +497,7 @@
   "templates/base.html": 8
  },
  "style_css": {
-  "lines": 16064,
-  "rules": 5908
+  "lines": 16058,
+  "rules": 5865
  }
 }

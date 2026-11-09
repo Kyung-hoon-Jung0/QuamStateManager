@@ -448,24 +448,27 @@ _STAGE5_MARK = "/* ===== stage 5:"
 
 
 _STAGE4_MARK = "/* ===== stage 4:"
+_STAGE6_MARK = "/* ===== stage 6:"
 
 
 def _ui_kit_parts():
-    """(stage 0, stage 1, stage 5, stage 4) rule lists, split at the section marks."""
+    """Rule lists for stages 0, 1, 5, 4 and 6, split at section marks."""
     raw = _read(_UI_KIT)
     assert raw.count(_STAGE1_MARK) == 1, "ui-kit.css has exactly one marked stage-1 section"
     assert raw.count(_STAGE5_MARK) == 1, "ui-kit.css has exactly one marked stage-5 section"
     assert raw.count(_STAGE4_MARK) == 1, "ui-kit.css has exactly one marked stage-4 section"
+    assert raw.count(_STAGE6_MARK) == 1, "ui-kit.css has exactly one marked stage-6 section"
     head, tail = raw.split(_STAGE1_MARK, 1)
     mid, last = tail.split(_STAGE5_MARK, 1)
     s5, s4 = last.split(_STAGE4_MARK, 1)
+    s4, s6 = s4.split(_STAGE6_MARK, 1)
     return (list(_blocks(_strip_comments(head))), list(_blocks(_strip_comments(_STAGE1_MARK + mid))),
-            list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))))
+            list(_blocks(_strip_comments(_STAGE5_MARK + s5))), list(_blocks(_strip_comments(_STAGE4_MARK + s4))),
+            list(_blocks(_strip_comments(_STAGE6_MARK + s6))))
 
 
 def _ui_kit_rules():
-    stage0, stage1, stage5, stage4 = _ui_kit_parts()
-    return stage0 + stage1 + stage5 + stage4
+    return [block for part in _ui_kit_parts() for block in part]
 
 
 def test_7b_stage0_boundary_only_ui_selectors_and_one_token_block():
@@ -688,3 +691,190 @@ if __name__ == "__main__":
         print(json.dumps(measure_all(), indent=1, sort_keys=True))
         for row in contrast_results():
             print(*row)
+
+
+# These selectors were reviewed together when their feature styles moved
+# into the kit. New selectors require an explicit addition, as in stage 4.
+_STAGE6_SELECTORS = {
+    '.gen-rule-allcant',
+    '.gen-rule-dim',
+    '.gen-rule-grp-mark',
+    '.gen-rule-grpwrap',
+    '.gen-rule-grpwrap > .gen-rule-grp-mark',
+    '.gen-rule-grpwrap > .ui-disclosure',
+    '.gen-rule-grpwrap > input.gen-rule-grp-cb',
+    '.gen-rule-grpwrap > input.gen-rule-grp-cb:checked',
+    '.gen-rule-grpwrap > input.gen-rule-grp-cb:focus-visible',
+    '.gen-rule-row input[type="checkbox"]',
+    '.gen-rule-row input[type="checkbox"]:checked',
+    '.gen-rule-row input[type="checkbox"]:focus-visible',
+    '.gen-rule-skel-row',
+    '.gen-rule-status',
+    '.gen-rule-status > button',
+    '.gen-rule-status-error',
+    '.gen-rule-status-stale',
+    '.gen-rule-status:empty',
+
+    '.gen-rule-cant',
+    '.gen-rule-cant-pairs',
+    '.gen-rule-choice',
+    '.gen-rule-menu',
+    '.gen-rule-menu-sep',
+    '.gen-rule-menuhost',
+    '.gen-rule-menuitem',
+    '.gen-rule-menuitem:focus',
+    '.gen-rule-menuitem:hover',
+    '.gen-rule-tbl',
+    '.gen-rule-tbl .gen-rule-c-names',
+    '.gen-rule-tbl .gen-rule-c-on',
+    '.gen-rule-tbl .gen-rule-c-tick',
+
+    '#sidebar',
+    '.cf-arrow',
+    '.cf-id',
+    '.cf-items',
+    '.cf-items .cf-item',
+    '.cf-items .cf-item:hover',
+    '.cf-items .cf-x',
+    '.cf-items .cf-x:focus-visible',
+    '.cf-items .cf-x:hover',
+    '.cf-name',
+    '.cf-off',
+    '.cf-pop',
+    '.cf-pop-head',
+    '.cf-pop[hidden]',
+    '.cm-add-hint',
+    '.cm-check',
+    '.cm-check-error',
+    '.cm-dir-ghost.cm-dir-ghost--armed .cm-dir-ghost-stone',
+    '.cm-lg',
+    '.cm-lg-freed',
+    '.cm-lg-hover',
+    '.cm-lg-note',
+    '.cm-lg-shared',
+    '.cm-lit-ring',
+    '.cm-lit-ring--freed',
+    '.cm-lit-ring--hover',
+    '.cm-lit-ring--sel',
+    '.cm-lit-ring--shared',
+    '.cm-lit-ring[data-role="coupler"]',
+    '.cm-lit-ring[data-role="xy"]',
+    '.cm-lit-ring[data-role="z"]',
+    '.cm-port-list',
+    '.cm-port-test-slot:empty',
+    '.cm-rack',
+    '.cm-rack-legend',
+    '.cm-rack-wrap',
+    '.cm-rb-shift',
+    '.cm-readback',
+    '.cm-readback-table',
+    '.cm-readback-table .cm-rb-bad td',
+    '.cm-readback-table .cm-rb-bad th',
+    '.cm-rm-box',
+    '.cm-rm-slot:empty',
+    '.compare-float',
+    '.compare-float .cf-btn',
+    '.compare-float .cf-btn:disabled',
+    '.compare-float .cf-btn:focus-visible',
+    '.compare-float .cf-compare',
+    '.compare-float .cf-compare--off',
+    '.compare-float .cf-compare:disabled',
+    '.compare-float .cf-list',
+    '.compare-float-anchor',
+    '.compare-float-anchor[hidden]',
+    '.compare-float[hidden]',
+    '.czp-map-view',
+    '.czp-map-view .cm-svg',
+    '.czp-map-view > .cmap',
+    '.czp-map-view > .czp-map',
+    '.czp-map-view [role="button"]:focus-visible',
+    '.czp-root .czp-lede',
+    '.env-case-found',
+    '.env-group',
+    '.env-group > .ui-disclosure-summary .ui-verdict',
+    '.env-group-name',
+    '.env-reference-field',
+    '.env-reference-field > input',
+    '.env-reference-field > select',
+    '.env-reference-foot',
+    '.env-reference-foot > .ui-actions',
+    '.env-reference-heading',
+    '.env-upgrade-finding .ui-check',
+    '.env-upgrade-finding .ui-disclosure',
+    '.env-upgrade-head',
+    '.env-upgrade-head .ui-head-title',
+    '.env-upgrade-head .ui-head-title .ui-badge',
+    '.env-upgrade-head > .ui-actions',
+    '.env-upgrade-report',
+    '.env-upgrade-report .env-ack-actions',
+    '.env-upgrade-report .env-reference .ui-table--kv',
+    '.env-upgrade-report .env-rename-actions',
+    '.env-upgrade-report .env-sig-table th',
+    '.env-upgrade-report .ui-item-body',
+    '.env-upgrade-report > #env-upgrade-status:empty',
+    '.env-upgrade-report > .ui-note',
+    '.env-upgrade-report > .ui-verdict',
+    '.env-upgrade-report code',
+    '.env-upgrade-report pre',
+    '.env-upgrade-report table',
+    '.inspector-remove-btn',
+    '.iw-port.cm-lit-freed circle',
+    '.iw-port.cm-lit-hover',
+    '.iw-port.cm-lit-hover circle',
+    '.iw-port.cm-lit-hover[data-cm-lit-role="coupler"] circle',
+    '.iw-port.cm-lit-hover[data-cm-lit-role="xy"] circle',
+    '.iw-port.cm-lit-hover[data-cm-lit-role="z"] circle',
+    '.iw-port.cm-lit-sel',
+    '.iw-port.cm-lit-sel circle',
+    '.iw-port.cm-lit-sel[data-cm-lit-role="coupler"] circle',
+    '.iw-port.cm-lit-sel[data-cm-lit-role="xy"] circle',
+    '.iw-port.cm-lit-sel[data-cm-lit-role="z"] circle',
+    '.iw-port.cm-lit-shared circle',
+    '.port-popup-actions',
+    '.port-popup-actions .btn-sync',
+    '.port-test .pt-card',
+    '.port-test .pt-facts th',
+    '.port-test .pt-ok',
+    '.port-test .pt-res-row',
+    '.port-test .pt-row',
+    '.port-test .pt-row input:not([type=radio]):not([type=checkbox])',
+    '.port-test .pt-row label',
+    '.port-test .pt-row legend',
+    '.port-test .pt-row select',
+    '.port-test .pt-trace',
+    '.port-test .pt-trace .pt-im',
+    '.port-test .pt-trace .pt-re',
+    '.port-test .pt-trace path',
+    '.port-test .pt-warn',
+    '.port-test [hidden]',
+    '.pt-choices',
+    '.pt-res-head',
+    '.pt-targets',
+    '.pt-tg-field',
+    '.sm-confirm-message',
+    '.toast .toast-undo',
+    '.ui-disclosure[open] > .ui-disclosure-summary::before',
+    '.ui-field',
+    '.ui-field-label',
+    '.ui-listbox',
+    '.ui-listbox:focus-visible',
+    '.ui-option',
+    '.ui-option--empty',
+    '.ui-option.ui-option--active',
+    '.ui-option:hover',
+    '.ui-option[aria-selected="true"]',
+}
+
+
+def test_stage6_feature_selectors_are_reviewed_and_tokenized():
+    parts = _ui_kit_parts()
+    assert len(parts) == 5 and parts[4]
+    seen = set()
+    for sel, body, stack in parts[4]:
+        assert not stack
+        assert not any(k.startswith("--") for k, _ in _decls(body))
+        for part in sel.split(","):
+            part = part.strip()
+            assert part in _STAGE6_SELECTORS, part
+            seen.add(part)
+    assert seen == _STAGE6_SELECTORS

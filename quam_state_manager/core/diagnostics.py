@@ -1556,7 +1556,7 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                     moved = sorted(dependents.get(port_ptr, ()))
                     port_name = f"{oc}/FEM {of}/port {op}"
                     move_info = _moves_summary(moved)
-                    lo_warns = (f"changes the drive LO of {port_name} -- also moves: "
+                    lo_warns = (f"changes the drive LO of {port_name} — also moves: "
                                 + move_info["plain"])
                     # FB-04: two directions, the field being changed first
                     link_fix = {**fix, "matches": False, "kind": "down_to_up",
@@ -1577,7 +1577,7 @@ def _downconverter_findings(root: dict) -> list[Finding]:
                             "value": repr(float(dc)), "kind": "up_to_down",
                             "group_label": "upconverter_frequency to downconverter_frequency",
                             "label": (f"Set upconverter_frequency to downconverter_frequency "
-                                      f"({_ghz(dc)}) -- changes the drive LO of {port_name}"),
+                                      f"({_ghz(dc)}) — changes the drive LO of {port_name}"),
                             "warns": lo_warns, "moves": moved, "moves_named": move_info["named"],
                             "moves_more": move_info["more"], "port": port_name,
                             "title": ("This CHANGES the output LO the hardware plays; the input then "
@@ -3430,7 +3430,7 @@ def finding_groups(rows, ids=None) -> list[dict]:
                         move_info = _moves_summary(mv)
                         k["moves_named"] = move_info["named"]
                         k["moves_more"] = move_info["more"]
-                        k["warns"] = ("changes the drive LO of " + ", ".join(k["ports"]) + " -- also moves: "
+                        k["warns"] = ("changes the drive LO of " + ", ".join(k["ports"]) + " — also moves: "
                                       + move_info["plain"])
         bulk, refused = [], []
         for k in kinds.values():

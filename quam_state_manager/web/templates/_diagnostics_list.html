@@ -178,7 +178,7 @@
               {% if allow_fix %}{% for k in g.bulk %}
               <button type="button" class="btn-sm outline diag-fix-all" data-items='{{ k['items'] | tojson }}'
                       title="{{ k.title }} One Ctrl+Z undoes all {{ k['items'] | length }}."
-                      {% if k.warns %}data-warns="{{ k.warns }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} -- changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
+                      {% if k.warns %}data-warns="{{ k.warns }}" {% endif %}onclick="applyDiagFixAll(this)">Set all {{ k['items'] | length }} {{ k.group_label }}{% if k.warns %} — changes {{ k['items'] | length }} drive LO{{ 's' if k['items'] | length != 1 }}{% endif %}</button>
               {% if k.warns %}<div class="diag-fix-warns ui-diag-msg muted" role="note">{{ k.warns }}</div>{% endif %}
               {% if k.moves_named %}
               <div class="diag-fix-moves muted" role="note">

@@ -449,6 +449,10 @@ setTimeout(() => {   // let earlier scenarios' 60ms fallback timers drain first
 // after an edit on /bulk showed the old tray count and a fix confirm quoting
 // the old value. The restored tray's seq vs the server's decides.
 function section10() {
+    // Sidebar diagnostics have their own request contract. Isolate this
+    // tray/pane scenario from the refresh queued by earlier restore events.
+    const realDots = window._refreshSidebarDiagDots;
+    window._refreshSidebarDiagDots = () => {};
     const trayHtml = (seq) => '<div id="pending-tray" data-seq="' + seq + '"></div>';
     const probe = (seq) => {
         const got = [];
@@ -494,6 +498,7 @@ function section10() {
                'a restored snapshot at the server seq is left alone (got '
                + JSON.stringify({ fetched: fetched2, calls: calls, diagChanged: diagChanged }) + ')');
             window._diagChanged = realDiag;
+            window._refreshSidebarDiagDots = realDots;
             section11();                  // JT-10 (fix/qa2-jt-view's section 10)
         }, 150);
     }, 150);

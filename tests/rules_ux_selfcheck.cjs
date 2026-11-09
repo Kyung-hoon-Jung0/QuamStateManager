@@ -87,8 +87,11 @@ function pick(w, el, v) { el.value = v; el.dispatchEvent(new w.Event('change', {
   const sub = w.dlg().querySelector('.gen-rule-sub, .gen-rule-class');
   const head = w.dlg().textContent;
   ok(!/\b(\w+) \(\1[,)]/.test(head), 'X6 the class name is not repeated: ' + head.slice(0, 120));
-  const sheet = css.match(/\.gen-rule-row input\[type="checkbox"\][^{]*\{[^}]*\}/);
-  ok(sheet && /width:\s*1\.\d+rem/.test(sheet[0]) && /height:\s*1\.\d+rem/.test(sheet[0]), 'X6 checkboxes have a real square size');
+  const kit = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'ui-kit.css'), 'utf8');
+  const sheet = kit.match(/\.gen-rule-row input\[type="checkbox"\][^{]*\{[^}]*\}/);
+  ok(sheet && /width:\s*var\(--ui-rule-checkbox-size\)/.test(sheet[0])
+     && /height:\s*var\(--ui-rule-checkbox-size\)/.test(sheet[0])
+     && /--ui-rule-checkbox-size:\s*1\.1rem;/.test(kit), 'X6 checkboxes share the real 1.1rem square-size token');
   // X4 remnant: "table.gen-pop-table tbody td:first-child" (0,2,3, sticky z-index 2) out-ranked the old
   // "tr.gen-gates-formrow > td" (0,1,2), so the sticky header still painted over the form.
   ok(/table\.gen-pop-table\s+tbody\s+tr\.gen-gates-formrow\s*>\s*td[^{]*\{[^}]*z-index:\s*[4-9]/.test(css), 'X4 the form-row rule out-ranks the sticky first-column rule');

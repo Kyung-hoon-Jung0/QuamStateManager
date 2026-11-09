@@ -115,8 +115,9 @@ function world(bodyHtml, url) {
       { dot_path: P + '.detuning', old_value_str: '-363323.0', old_value_disp: '-363,323.0', old_kind: 'float' }] } }));
     await tick(20);
     const inp = d.querySelector('input[name="value"][data-param="detuning"]');
-    ok(inp.value === '-363323.0', 'P3b: the input repaints the RAW value (' + inp.value + ')');
+    ok(inp.value === '-363,323', 'P3b: the input repaints the grouped numeric display (' + inp.value + ')');
     ok(inp.getAttribute('data-committed') === '-363323.0', 'P3b: data-committed is the RAW value (' + inp.getAttribute('data-committed') + ')');
+    ok(w.NumberInput.strip(inp.value) === '-363323', 'the displayed number retains its numeric value');
     // a genuine string with a comma is left alone
     d.dispatchEvent(new w.CustomEvent('cellsReverted', { detail: { message: 'Undone', entries: [
       { dot_path: P + '.detuning', old_value_str: 'MW,FEM', old_value_disp: 'MW,FEM', old_kind: 'str' }] } }));

@@ -103,11 +103,11 @@ function markerAt(letter, pairId, qubitId) {
   // Every marker names its pair AND its endpoint, because a qubit can be the
   // control of one pair and the target of another — "the C nearest qA1" is an
   // ambiguous question on any chip with a chain running through it.
-  const g = hero.querySelector('.cm-role-' + letter
+  const g = hero.querySelector((letter === 'm' ? '.cm-role' : '.cm-role-' + letter)
     + '[data-cm-pair="' + pairId + '"][data-cm-at="' + qubitId + '"]');
-  if (!g) return null;
-  const c = g.querySelector('circle');
-  return { x: parseFloat(c.getAttribute('cx')), y: parseFloat(c.getAttribute('cy')) };
+  if (!g || (letter === 'm' && !/\bM\b/.test(g.textContent))) return null;
+  const text = g.querySelector('text');
+  return { x: parseFloat(text.getAttribute('x')), y: parseFloat(text.getAttribute('y')) };
 }
 function d(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
@@ -136,7 +136,7 @@ ok(hero.querySelectorAll('.cm-role-t').length === 3,
 // M marks the qubit whose flux moves -- one per pair that declares it, and the
 // coupler pair declares none, so exactly two. It is a ROLE, so it always
 // coincides with that pair's C or T rather than being a third position.
-ok(hero.querySelectorAll('.cm-role-m').length === 2,
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 2,
    'an M only where moving_qubit is recorded, got '
    + hero.querySelectorAll('.cm-role-m').length);
 ok(!!markerAt('m', 'qA2-qA1', 'qA2'),

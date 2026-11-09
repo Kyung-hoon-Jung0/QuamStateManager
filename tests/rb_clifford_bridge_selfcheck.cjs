@@ -141,7 +141,7 @@ function byTitle(all, needle) {
 
   // the measured IRB tile beside it is untouched: those are real measurements,
   // however bad the gate is. Only the DERIVED number was nonsense.
-  const irb = byTitle(all, 'gate fid. (IRB)');
+  const irb = byTitle(all, '2Q gate (IRB)');
   ok(irb && /77\.6/.test(irb.value),
     'the measured IRB tile still averages both pairs — ' + (irb && irb.value));
 }

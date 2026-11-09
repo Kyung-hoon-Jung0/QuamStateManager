@@ -2203,7 +2203,6 @@ window.setFontSize = function(size) {
         var sidebar = document.getElementById('sidebar');
         if (!bar || !sidebar) return;
         var anchor = bar.parentNode;
-        anchor.style.fontSize = getComputedStyle(sidebar).fontSize;
         anchor.hidden = !!sidebar.closest('.sidebar-collapsed');
         sidebar.style.setProperty('--cf-h', (bar.hidden || anchor.hidden ? 0 : anchor.getBoundingClientRect().height) + 'px');
     }
@@ -3968,9 +3967,6 @@ window.smConfirm = function (message) {
         card.className = "kb-sheet sm-confirm-sheet";
         var body = document.createElement("pre");
         body.className = "sm-confirm-message";
-        body.style.whiteSpace = "pre-wrap";
-        body.style.margin = "0 0 .75rem";
-        body.style.font = "inherit";
         body.textContent = String(message || "");
         card.appendChild(body);
         var foot = document.createElement("div");

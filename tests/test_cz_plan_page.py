@@ -61,12 +61,15 @@ def client(tmp_path):
     return _client(tmp_path)
 
 
-def test_the_menu_sits_under_chip_status_right_after_z_line_distortion(client):
+def test_the_menu_sits_under_chip_status_and_zline_under_live_edit(client):
     html = client.get("/cz-plan").get_data(as_text=True)
     status = html[html.index('id="chip-status-subnav"'):]
     status = status[:status.index("</ul>")]
     # customer feedback 2026-10-15: both views describe the chip's state -> Chip Status
-    assert status.index('href="/zline"') < status.index('href="/cz-plan"')
+    assert 'href="/zline"' not in status
+    assert 'href="/cz-plan"' in status
+    editing = html.split('id="live-edit-subnav"', 1)[1].split("</ul>", 1)[0]
+    assert 'href="/zline"' in editing
     assert 'class="active">CZ gate plan</a>' in status
 
 
