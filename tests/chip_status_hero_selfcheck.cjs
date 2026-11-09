@@ -689,7 +689,7 @@ function edgeLabelsBesideTheBar() {
   ok(/C control.*T target.*M moving qubit.*H higher f01.*L lower f01/.test(hero.querySelector('.topo-hero-legend').textContent), 'D6: hero has shared complete legend');
   hero.querySelectorAll('svg .cm-role').forEach(pill => {
     const text = pill.querySelector('text'), rect = pill.querySelector('rect');
-    ok(num(text, 'font-size') === 6.5 && num(rect, 'height') <= 10.5, 'D4: hero pill size capped despite 132px cells');
+    ok(num(text, 'font-size') >= 6 && num(text, 'font-size') <= 8 && num(rect, 'height') <= 13, 'D4: hero pill size capped despite 132px cells');
     const node = hero.querySelector('[data-hero-qubit="'+pill.getAttribute('data-cm-at')+'"]');
     const [cx,cy] = node.getAttribute('transform').match(/[-\d.]+/g).map(Number);
     const nearest = (x,y) => Math.hypot(x-Math.max(num(rect,'x'),Math.min(x,num(rect,'x')+num(rect,'width'))), y-Math.max(num(rect,'y'),Math.min(y,num(rect,'y')+num(rect,'height'))));

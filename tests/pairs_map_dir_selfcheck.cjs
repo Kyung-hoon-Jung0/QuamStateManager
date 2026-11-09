@@ -137,7 +137,8 @@ for (const [dx, dy] of [[7,4], [4,4]]) {
   ok(win.TopoGraph.labelOverlaps(diagonal).count === 0, 'diagonal stack clears stones and arrow');
   const nx = -Math.sin(+label.dataset.ang*Math.PI/180), ny = Math.cos(+label.dataset.ang*Math.PI/180);
   const distance = Math.abs((+label.dataset.px - +label.dataset.cx)*nx + (+label.dataset.py - +label.dataset.cy)*ny);
-  ok(distance > Math.abs(nx)*+label.dataset.w/2 + Math.abs(ny)*+label.dataset.h/2 + 5, 'diagonal upright box clears the line');
+  ok(distance < 0.5, 'pairpill: label sits centred on the line');
+  ok(label.previousElementSibling && label.previousElementSibling.classList.contains('cm-label-plate'), 'pairpill: label has a surface plate behind it');
 }
 for (const [source, target, pair] of [['q1','q2','q1-2'], ['q-one','q-two','q-one-q-two']]) {
   const shape = fixture(source, target, pair, 0, 1), label = shape.querySelector('.cm-pair-label');
@@ -176,6 +177,9 @@ for (const side of [-1,1]) {
   block.setAttribute('points', `-2000,${y} 2000,${y} 2000,${y+side*500} -2000,${y+side*500}`);
   short.appendChild(block);
 }
+// pairpill: the label is centred on the line now; this corridor test is
+// about the font shrink, so the end pills of the 30 px edge are taken out.
+short.querySelectorAll('.cm-role').forEach(r => r.remove());
 win.TopoGraph.declutterLabels(short);
 const f = +label.getAttribute('font-size');
 ok(f < 20 && f >= 12, 'short vertical edge with long underscore ids exercises font shrink');

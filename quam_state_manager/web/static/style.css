@@ -4515,7 +4515,7 @@ td.col-delta .val-delta { margin-left: 0; }
    filled with the surface colour so the edge beneath does not show through,
    outlined so they stay legible over a heat-coloured node. */
 .cm-role-dot { fill: var(--pico-card-background-color, #fff);
-    stroke: var(--pico-muted-border-color); stroke-width: 1; }
+    stroke: var(--pico-muted-border-color); stroke-width: 1.5; }
 /* M wears the SAME neutral style as C and T — the accent version shouted
    over the map (user, 2026-08-20: "the M stands out too much"). */
 .cm-role-txt { fill: var(--pico-muted-color); font-weight: 700;
@@ -4610,7 +4610,7 @@ td.col-delta .val-delta { margin-left: 0; }
    font-size ATTRIBUTE renderLayout writes (attrs lose to any stylesheet rule),
    and the attr is what scales the id with the cell (docs/93 F2). */
 .cm-id { font-weight: 600; fill: var(--pico-color); pointer-events: none; }
-.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 3; stroke-linecap: round; }
+.cm-edge-line { stroke: var(--pico-muted-border-color, rgba(128,128,128,.55)); stroke-width: 9; stroke-linecap: round; }
 .cm-arrow { fill: var(--pico-muted-border-color, rgba(128,128,128,.65)); }
 .cm-coupler { fill: var(--pico-card-background-color, #f7f7f7); stroke: var(--pico-primary); stroke-width: 2; }   /* D-101: a component, never dimmed as context */
 .cm-res { fill: none; stroke: var(--pico-muted-border-color, rgba(128,128,128,.65)); stroke-width: 1.6; }
@@ -4654,7 +4654,7 @@ td.col-delta .val-delta { margin-left: 0; }
 .cm-pair-label { opacity: 0; pointer-events: none; font-weight: 600; fill: var(--pico-color);
     paint-order: stroke; stroke: var(--pico-background-color); stroke-width: 3px; }
 .cm-hl-pairs .cm-pair-label { opacity: 1; }
-.cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 3; }
+.cm-hl-pairs .cm-edge-line { stroke: var(--pico-primary); stroke-width: 9; }
 .cm-hl-pairs .cm-arrow { fill: var(--pico-primary); }
 .cm-hl-pairs .cm-freq .cm-freqchev { stroke: var(--pico-primary); }
 
