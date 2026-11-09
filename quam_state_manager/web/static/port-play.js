@@ -10,7 +10,9 @@
   function stop() {
     sequence++;
     clearTimeout(timer);
-    return post('/port-test/stop', runId ? {id: runId} : {});
+    // Only this popup's own run is ever stopped; with no id there is nothing of ours.
+    if (!runId) return Promise.resolve({ok: true, stopping: false});
+    return post('/port-play/stop', {id: runId});
   }
   function close() {
     stop().catch(function () {});
@@ -94,9 +96,12 @@
       busy = true; var seq = ++sequence; clearTimeout(timer); message('Preparing Play...');
       function start() {
         if (seq !== sequence || dialog !== node) { busy = false; return; }
-        post('/port-play/run', data).then(function (j) {
+        post('/port-play/confirm', data).then(function (c) {
+          if (!c.ok) throw new Error(c.error);
+          return post('/port-play/run', Object.assign({confirm_token: c.token}, data));
+        }).then(function (j) {
           if (seq !== sequence || dialog !== node) {
-            if (j.ok) post('/port-test/stop', {id: j.id});
+            if (j.ok) post('/port-play/stop', {id: j.id});
             busy = false; return;
           }
           if (j.stopping) { message(j.error); timer = setTimeout(start, 500); return; }
@@ -128,7 +133,7 @@
   window.PortPlay = {open: open, close: close, renderOffsets: renderOffsets};
   window.addEventListener('pagehide', function () {
     sequence++; clearTimeout(timer);
-    if (dialog || runId) navigator.sendBeacon('/port-test/stop?left=1' + (runId ? '&id=' + encodeURIComponent(runId) : ''));
+    if (runId) navigator.sendBeacon('/port-play/stop?left=1&id=' + encodeURIComponent(runId));
   });
   document.addEventListener('htmx:beforeSwap', function (e) {
     if (dialog && e.detail && e.detail.target && e.detail.target.id === 'table-pane') close();

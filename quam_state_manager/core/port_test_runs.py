@@ -329,6 +329,7 @@ class Runs:
             (work / "script.py").write_text(script, encoding="utf-8")
             req = dict(request)
             req.pop("_port_play_generation", None)
+            play_owner = req.pop("_play_owner", None)
             req.setdefault("max_s", MAX_RUN_S)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
             proc = popen([python, str(RUNNER), str(work / "script.py"), str(work)],
@@ -345,7 +346,7 @@ class Runs:
             except (AttributeError, TypeError, ValueError, psutil.Error):
                 created = None  # a fake process in tests
             saved = {"id": rid, "pid": getattr(proc, "pid", None), "created": created,
-                     "python": python, "meta": dict(meta), "started": time.time(),
+                     "python": python, "meta": dict(meta), "play_owner": play_owner, "started": time.time(),
                      "hardware_target": (dict(request.get("target") or {})
                                          if request.get("mode") == "opx" else None)}
             _write(work / "_run.json", saved)

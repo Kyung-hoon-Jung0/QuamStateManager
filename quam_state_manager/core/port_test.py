@@ -42,11 +42,20 @@ TESTS = ("cw", "pulse", "loopback")
 BASES = ("chip", "raw")
 
 
+def con_name(value) -> str:
+    """Wizard controllers store ``con`` as an int; accept ``"con1"`` too."""
+    text = str(value).strip()
+    if text.startswith("con"):
+        text = text[3:]
+    return "con" + str(int(text))
+
+
 def controllers_from_spec(spec: dict) -> dict:
-    """Element-free OPX1000 allocation from wizard step 3."""
+    """Element-free OPX1000 allocation from wizard step 3, with the saved
+    port offsets (``spec.port_offsets``) applied to their ports."""
     controllers = {}
     for ctrl in spec.get("instruments", {}).get("controllers", []):
-        con = "con" + str(int(ctrl["con"]))
+        con = con_name(ctrl["con"])
         fems = controllers.setdefault(con, {"fems": {}})["fems"]
         for fem in ctrl.get("fems", []):
             slot = str(int(fem["slot"]))
@@ -58,6 +67,16 @@ def controllers_from_spec(spec: dict) -> dict:
                     str(p): {"offset": 0.0, "output_mode": "direct",
                              "sampling_rate": 1e9, "upsampling_mode": "pulse"}
                     for p in range(1, 9)}
+    for pin, saved in (spec.get("port_offsets") or {}).items():
+        try:
+            con, slot, port = pin.split("/")
+            out = controllers[con_name(con)]["fems"][str(int(slot))]["analog_outputs"][str(int(port))]
+        except (KeyError, ValueError, AttributeError):
+            continue  # a port the allocation no longer has
+        mode = saved.get("output_mode", "direct")
+        value = float(saved.get("offset") or 0.0)
+        if mode in ("direct", "amplified") and math.isfinite(value) and abs(value) <= (2.5 if mode == "amplified" else 0.5):
+            out.update(offset=value, output_mode=mode)
     return controllers
 
 
@@ -65,6 +84,7 @@ def build_wizard_dc(spec: dict, port: list, offset: float, output_mode="direct")
     cfg = {"controllers": controllers_from_spec(spec)}
     info = dc_port(cfg, port)
     con, slot, number = info["port"]
+    cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["offset"] = 0.0
     cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["output_mode"] = output_mode
     return build_dc(cfg, port, offset)
 

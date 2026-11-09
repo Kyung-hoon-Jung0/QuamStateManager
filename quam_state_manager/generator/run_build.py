@@ -685,11 +685,16 @@ def _coupled_pairs(state):
 
 def apply_port_offsets(state, spec):
     """Apply scope-checked LF settings to the generated state, including unused ports."""
-    declared = {(f"con{c['con']}", str(f['slot']))
+    def con_name(value):
+        text = str(value).strip()
+        return "con" + str(int(text[3:] if text.startswith("con") else text))
+    declared = {(con_name(c["con"]), str(f["slot"]))
                 for c in spec.get("instruments", {}).get("controllers", [])
                 for f in c.get("fems", []) if f.get("fem") == "lf"}
+    applied = []
     for pin, settings in (spec.get("port_offsets") or {}).items():
         con, slot, port = pin.split("/")
+        con = con_name(con)
         mode = settings.get("output_mode", "direct")
         value = float(settings["offset"])
         if ((con, slot) not in declared or not port.isdigit() or not 1 <= int(port) <= 8
@@ -702,6 +707,8 @@ def apply_port_offsets(state, spec):
             "controller_id": con, "fem_id": int(slot), "port_id": int(port),
             "sampling_rate": 1e9, "upsampling_mode": "pulse"})
         entry.update(offset=value, output_mode=mode)
+        applied.append(f"{con}/{slot}/{port}")
+    return applied
 
 
 def _record_qop(path, state, spec, warnings):
@@ -3350,7 +3357,12 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         _saved = build_dir / "state.json"
         if _saved.exists():
             _saved_state = json.loads(_saved.read_text(encoding="utf-8"))
-            apply_port_offsets(_saved_state, spec)
+            _applied_offsets = apply_port_offsets(_saved_state, spec)
+            if _applied_offsets:
+                # Written to state.json after machine.save(); the in-memory
+                # machine (and any config generated from it) does not carry them.
+                warnings.append("Saved scope-check offsets written to state.json only "
+                                "(not in this build's config preview): " + ", ".join(_applied_offsets))
             _saved.write_text(json.dumps(_saved_state, indent=2), encoding="utf-8")
             _qop = spec.get("qop_version")
             _bad_bands = _coupled_band_errors(_saved_state, _qop)

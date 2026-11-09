@@ -6,7 +6,8 @@ const html = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_
 const dom = new JSDOM('<body><div id="table-pane">' + html + '</div></body>', {
   runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/generate'});
 const w = dom.window;
-w.fetch = () => new Promise(() => {});
+const fetched = [];
+w.fetch = (u) => { fetched.push(String(u)); return new Promise(() => {}); };
 w.htmx = {ajax() {}, trigger() {}, process() {}, on() {}};
 w.IntersectionObserver = w.ResizeObserver = class {observe() {} disconnect() {} unobserve() {}};
 w.NumberInput = {fit() {}, attach() {}, format() {}, strip(s) {return String(s || '');}};
@@ -35,6 +36,8 @@ assert(fs.readFileSync(path.join(staticDir, 'ui-kit.css'), 'utf8').includes('.iw
 cell.querySelector('button').click();
 let popup = d.getElementById('port-play-dialog');
 assert(popup.open, 'popup opens');
+popup.querySelector('[data-stop]').click();
+assert(!fetched.some(u => /stop/.test(u)), 'no Stop request without an own run id');
 popup.querySelector('[data-offset]').value = '.75';
 popup.querySelector('[data-save]').click();
 assert(popup.querySelector('[data-message]').textContent.includes('requires'), 'direct range refusal');
@@ -49,6 +52,7 @@ d.getElementById('gen-port-offsets-copy').click();
 assert.equal(JSON.parse(copied)['con2/3/5'].offset, .75, 'copy JSON');
 assert(popup.querySelector('[data-hwok]'), 'safety box');
 popup.querySelector('[data-close]').click();
+assert(!fetched.some(u => /stop/.test(u)), 'Close sends no Stop without an id');
 // Default renderer must never add this feature to /instrument.
 d.body.insertAdjacentHTML('beforeend', '<div id="plain-rack"></div>');
 w.renderInstrumentWiring('plain-rack', G._test.buildInstrumentData({}), {}, {});

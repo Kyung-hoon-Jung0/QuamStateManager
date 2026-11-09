@@ -101,21 +101,70 @@ def _build(src):
     return pt.render_script(tcfg, plan, chip_label=str(label or "")), plan
 
 
+def _play_binding(data) -> str:
+    """What one Play confirmation authorizes: this port, value, mode, time, target."""
+    spec = data.get("spec") or {}
+    net = spec.get("network") or {}
+    try:
+        offset = float(data.get("offset"))
+        seconds = float(data.get("max_s", 300))
+    except (TypeError, ValueError):
+        raise pt.PortTestError("Offset and max time must be numbers.") from None
+    return _binding({"port": _port_args(data), "offset": offset, "seconds": seconds,
+                     "mode": str(data.get("output_mode") or "direct")},
+                    {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")})
+
+
+def _play_owner() -> str:
+    return session.setdefault("port_test_owner", secrets.token_urlsafe(24))
+
+
+@port_test_bp.route("/port-play/confirm", methods=["POST"])
+def port_play_confirm():
+    """One-time, 60 s, owner- and port/value-bound token for one Play press."""
+    data = json_object()
+    if data.get("hardware_ok") is not True:
+        return jsonify(ok=False, error="Confirm the port is safe to drive."), 400
+    try:
+        binding = _play_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    token = secrets.token_urlsafe(32)
+    manager = runs()
+    with manager._lock:
+        now = time.monotonic()
+        manager.confirmations = {k: v for k, v in manager.confirmations.items() if v[0] > now}
+        manager.confirmations[token] = (now + 60, _play_owner(), "play:" + binding)
+    return jsonify(ok=True, token=token, expires_s=60)
+
+
 @port_test_bp.route("/port-play/run", methods=["POST"])
 def port_play_run():
     data = json_object()
-    if data.get("hardware_ok") is not True:
-        return jsonify(ok=False, error="Confirm the port is not wired into the fridge (or that a DC offset there is intended)."), 400
+    owner = _play_owner()
     manager = runs()
-    # Generation binding prevents a concurrent Stop from losing to preparation.
+    try:
+        binding = "play:" + _play_binding(data)
+    except pt.PortTestError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
     with manager._lock:
-        manager.port_play_generation += 1
-        generation = manager.port_play_generation
+        confirmation = manager.confirmations.pop(str(data.get("confirm_token") or ""), None)
+    if (not confirmation or confirmation[0] <= time.monotonic()
+            or confirmation[1] != owner or confirmation[2] != binding):
+        return jsonify(ok=False, error="Confirm the safety box and press Play again."), 400
     status = manager.status()
     if status.get("state") == "running":
-        manager.stop(status.get("id"), "Play again")
-        return jsonify(ok=False, stopping=True,
-                       error="Stopping the previous play; waiting for its QM to close."), 409
+        cur = manager.current or {}
+        if cur.get("id") == status.get("id") and cur.get("play_owner") == owner:
+            # Only our own previous play is stopped; the client confirms again.
+            manager.stop(status.get("id"), "Play again")
+            return jsonify(ok=False, stopping=True,
+                           error="Stopping the previous play; waiting for its QM to close."), 409
+        return jsonify(ok=False, busy=True,
+                       error="Busy: another port test is running. Stop it there first."), 409
+    # Generation binding: a Stop pressed after this point refuses the start.
+    with manager._lock:
+        generation = manager.port_play_generation
     try:
         seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
         spec = data.get("spec") or {}
@@ -128,13 +177,28 @@ def port_play_run():
         host = network.get("host")
         if not host:
             raise pt.PortTestError("Enter the network host in step 2.")
-        req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation,
+        req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
                "target": {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}}
         started = manager.start(python, pt.render_script(cfg, plan), req,
                                 {"plan": plan, "target": "opx", "target_label": host})
         return jsonify(ok=True, **started)
     except (ValueError, RuntimeError, KeyError, TypeError) as exc:
         return jsonify(ok=False, error=str(exc)), 400
+
+
+@port_test_bp.route("/port-play/stop", methods=["POST"])
+def port_play_stop():
+    """Stop only this session's own play, by its id (never 'whatever runs')."""
+    data = json_object(dict)
+    rid = (data.get("id") if isinstance(data, dict) else None) or request.args.get("id")
+    if not rid:
+        return jsonify(ok=False, error="No play id."), 400
+    manager = runs()
+    cur = manager.current or {}
+    if cur.get("id") != rid or cur.get("play_owner") != session.get("port_test_owner"):
+        return jsonify(ok=False, stopping=False, error="Not this window's play."), 409
+    why = "the page was left" if request.args.get("left") == "1" else "Stop pressed"
+    return jsonify(ok=True, stopping=manager.stop(rid, why))
 
 
 @port_test_bp.route("/port-test")

@@ -70,31 +70,102 @@ def test_apply_saved(spec):
         apply_port_offsets({}, spec)
 
 
-def test_route_uses_wizard_env_and_network(spec, tmp_path, monkeypatch):
+def _app(tmp_path, monkeypatch):
     from quam_state_manager.web import port_test_routes as routes
     from quam_state_manager.core import config_generator
     app = create_app(testing=True, instance_path=str(tmp_path / 'instance'))
     manager = routes.ptr.Runs(tmp_path / 'runs', resume=False)
     app.config['port_test_runs'] = manager
     monkeypatch.setattr(config_generator, 'known_interpreter', lambda p, _: p == sys.executable)
+    return app, manager
+
+
+def _confirmed(client, body):
+    r = client.post('/port-play/confirm', json=dict(body, hardware_ok=True))
+    assert r.status_code == 200, r.json
+    return dict(body, confirm_token=r.json['token'])
+
+
+def test_route_uses_wizard_env_and_network(spec, tmp_path, monkeypatch):
+    app, manager = _app(tmp_path, monkeypatch)
     captured = {}
     def start(python, script, request, meta):
         captured.update(python=python, script=script, request=request, meta=meta)
         return {'id': 'mock'}
     monkeypatch.setattr(manager, 'start', start)
-    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12, hardware_ok=True)
-    assert app.test_client().post('/port-play/run', json=dict(body, hardware_ok=False)).status_code == 400
+    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12)
     client = app.test_client()
-    response = client.post('/port-play/run', json=body)
+    # no token, a token without the safety box, a token for another value: all refused
+    assert client.post('/port-play/run', json=body).status_code == 400
+    assert client.post('/port-play/confirm', json=body).status_code == 400
+    assert client.post('/port-play/run', json=_confirmed(client, dict(body, offset=.2)) | {'offset': .1}).status_code == 400
+    token_body = _confirmed(client, body)
+    response = client.post('/port-play/run', json=token_body)
     assert response.status_code == 200, response.json
+    assert client.post('/port-play/run', json=token_body).status_code == 400  # one-time
     assert captured['python'] == sys.executable
     assert captured['request']['target'] == {'host': 'scope-host', 'cluster': 'scope-cluster', 'port': 80}
     assert captured['request']['max_s'] == 12
-    monkeypatch.setattr(manager, 'status', lambda: {'state': 'running', 'id': 'old'})
+    assert captured['request']['_play_owner']
+
+
+def test_play_again_stops_only_our_own_play(spec, tmp_path, monkeypatch):
+    app, manager = _app(tmp_path, monkeypatch)
+    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12)
+    client = app.test_client()
+    with client.session_transaction() as s:
+        s['port_test_owner'] = 'me'
+    monkeypatch.setattr(manager, 'status', lambda *a: {'state': 'running', 'id': 'old'})
     stopped = []
-    monkeypatch.setattr(manager, 'stop', lambda *args: stopped.append(args))
-    assert client.post('/port-play/run', json=body).status_code == 409
+    monkeypatch.setattr(manager, 'stop', lambda *args: stopped.append(args) or True)
+    manager.current = {'id': 'old', 'play_owner': 'someone-else'}
+    r = client.post('/port-play/run', json=_confirmed(client, body))
+    assert r.status_code == 409 and r.json.get('busy') and not r.json.get('stopping')
+    assert stopped == []
+    manager.current = {'id': 'old', 'play_owner': None}  # a plain port test
+    assert client.post('/port-play/run', json=_confirmed(client, body)).json.get('busy')
+    assert stopped == []
+    manager.current = {'id': 'old', 'play_owner': 'me'}
+    r = client.post('/port-play/run', json=_confirmed(client, body))
+    assert r.status_code == 409 and r.json['stopping']
     assert stopped == [('old', 'Play again')]
+
+
+def test_play_stop_needs_own_id(tmp_path, monkeypatch):
+    app, manager = _app(tmp_path, monkeypatch)
+    client = app.test_client()
+    with client.session_transaction() as s:
+        s['port_test_owner'] = 'me'
+    stopped = []
+    monkeypatch.setattr(manager, 'stop', lambda *args: stopped.append(args) or True)
+    manager.current = {'id': 'r1', 'play_owner': 'other'}
+    assert client.post('/port-play/stop', json={}).status_code == 400
+    assert client.post('/port-play/stop', json={'id': 'r1'}).status_code == 409
+    manager.current = {'id': 'r1', 'play_owner': 'me'}
+    assert client.post('/port-play/stop', json={'id': 'r2'}).status_code == 409
+    assert stopped == []
+    assert client.post('/port-play/stop?left=1&id=r1').json['stopping']
+    assert stopped == [('r1', 'the page was left')]
+
+
+def test_other_ports_keep_saved_offsets(spec):
+    spec['port_offsets'] = {'con2/3/6': {'offset': .2, 'output_mode': 'amplified'},
+                            'con2/3/5': {'offset': .4, 'output_mode': 'direct'}}
+    cfg, _ = pt.build_wizard_dc(spec, ['con2', 3, 5], .1, 'direct')
+    outs = cfg['controllers']['con2']['fems']['3']['analog_outputs']
+    assert outs['6']['offset'] == .2 and outs['6']['output_mode'] == 'amplified'
+    assert outs['5']['offset'] == .1  # the typed value wins on the played port
+    assert outs['7']['offset'] == 0.0
+
+
+@pytest.mark.parametrize('con', [2, '2', 'con2'])
+def test_con_spelling(spec, con):
+    spec['instruments']['controllers'][1]['con'] = con
+    spec['port_offsets'] = {'con2/3/5': {'offset': .3, 'output_mode': 'direct'}}
+    assert pt.controllers_from_spec(spec)['con2']['fems']['3']['analog_outputs']['5']['offset'] == .3
+    state = {}
+    assert apply_port_offsets(state, spec) == ['con2/3/5']
+    assert state['ports']['analog_outputs']['con2']['3']['5']['offset'] == .3
 
 
 def test_stop_cancels_preparation(tmp_path):
