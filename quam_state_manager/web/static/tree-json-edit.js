@@ -665,6 +665,8 @@
             onChange: function () { if (S) { S.ask.hidden = true; lint(); scheduleRail(); } },
             extensions: railExts
         });
+        // the find/replace panel is open from the start; focus returns to the text below
+        if (S.ed.openSearch) S.ed.openSearch();
         mountSearchRail(S);
         panel.addEventListener("keydown", keys, true);
         if (window.MutationObserver) {
