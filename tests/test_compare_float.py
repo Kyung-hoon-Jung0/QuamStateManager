@@ -1,10 +1,7 @@
-"""FB-13 -- the floating compare bar in the sidebar run list: visible from
-one tick, hidden at zero, lists exactly the selection model (off-view ticks
-included), x removes one, Clear has a one-step undo (one toast, replaced on
-repeat), Compare is visibly disabled below two ticks, and the bar tracks
-the date header from a fixed layer outside the sidebar. Keyboard focus and
-viewport-clamped popover placement remain pinned
-(tests/compare_float_selfcheck.cjs under jsdom)."""
+"""Sidebar compare actions, persistent disclosure, and automatic Trend chart.
+
+D-1 through D-6 are exercised by the jsdom harness.
+"""
 from __future__ import annotations
 
 import shutil
@@ -24,3 +21,14 @@ def test_compare_float_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + res.stderr
     assert "ok - listed = selection model" in res.stdout
+
+
+def test_d4_anchor_and_tree_share_one_parent_in_base_html():
+    """The sticky bar only pins while its parent spans the run tree: in the
+    real template the anchor is followed directly by #sidebar-tree."""
+    import re
+    html = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf8")
+    i = html.index('<div class="compare-float-anchor">')
+    tail = re.sub(r"\{#.*?#\}", "", html[i:], flags=re.S)
+    j = tail.index("</div></div>") + len("</div></div>")
+    assert tail[j:].lstrip().startswith('<div id="sidebar-tree"')

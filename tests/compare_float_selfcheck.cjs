@@ -1,12 +1,6 @@
-/* jsdom selfcheck for FB-13 (the floating compare bar), on the docs/141 4y harness.
- * Original header:: the sidebar's compare ticks.
- *  - at most FIVE runs tick (the sixth is refused with a toast; a shift
- *    range is clamped from its far end)
- *  - the ticks survive a tree re-render (htmx swap of #sidebar-tree) and a
- *    reload (sessionStorage mirror)
- *  - Compare Selected is disabled below two ticks
- *  - an HX-Trigger {"sm:toast": …} reaches showToast
- * Run: node tests/sidebar_compare_selfcheck.cjs   (driven by tests/test_sidebar_compare.py)
+/* Sidebar compare selfcheck: selection, undo, and decisions D-1 through D-6.
+ * Run with NODE_PATH set to the jsdom installation:
+ * node tests/compare_float_selfcheck.cjs
  */
 const fs = require('fs');
 const path = require('path');
@@ -25,12 +19,12 @@ function treeHtml(n, keep) {
 }
 const FLOAT = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8')
   .match(/<div class="compare-float-anchor">[\s\S]*?<\/div><\/div>/)[0];
-const DOM = '<div id="status-bar"></div><div class="app-layout"><div id="sidebar"><div id="sidebar-tree">' + treeHtml(8) + '</div>' +
+const DOM = '<div id="status-bar"></div><div class="app-layout"><div id="sidebar">' +
   '<form id="compare-form"><button type="submit" class="btn-compare">Compare Selected</button>' +
   '<button type="submit" class="btn-trend">Trend Tracker</button><button type="button" id="compare-clear" hidden>Clear</button>' +
   '<span class="compare-hint" id="compare-hint">Tick runs…</span>' +
   '<span class="compare-offview" id="compare-offview" hidden></span></form>' +
-  FLOAT + '</div></div>';
+  '<div class="sidebar-workspace">' + FLOAT + '<div id="sidebar-tree">' + treeHtml(8) + '</div></div></div></div>';
 
 function makeWorld(seed) {
   const dom = new JSDOM('<!doctype html><html><body>' + DOM + '</body></html>', { url: 'http://localhost/datasets', pretendToBeVisual: true });
@@ -57,7 +51,7 @@ function makeWorld(seed) {
 function toastNodes(win) { return Array.from(win.document.querySelectorAll('#status-bar > .toast')); }
 function boxes(win) { return Array.from(win.document.querySelectorAll('#sidebar-tree input[name="paths"]')); }
 function checked(win) { return boxes(win).filter((b) => b.checked).length; }
-function click(win, el, shift) { el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, shiftKey: !!shift })); }
+function click(win, el, shift) { el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: !!shift })); }
 function label(win) { return win.document.querySelector('.btn-compare').textContent; }
 function cmpDisabled(win) { return win.document.querySelector('.btn-compare').disabled; }
 function settle() { return new Promise((r) => setTimeout(r, 20)); }
@@ -85,7 +79,7 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
     const op = parseFloat(cmpSt.opacity);
     ok(op > 0.4 && op < 0.5, 'Compare at one tick is ~45% opacity (' + op + ')');
     ok(cmpSt.cursor === 'not-allowed', 'Compare at one tick shows not-allowed cursor');
-    const fw = Number(cmpSt.fontWeight);
+    const fw = cmpSt.fontWeight === 'normal' ? 400 : Number(cmpSt.fontWeight);
     ok(fw < 600, 'Compare at one tick is not bold (' + cmpSt.fontWeight + ')');
   }
   click(win, boxes(win)[6]);
@@ -97,8 +91,7 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   click(win, $(win, 'cf-compare'));
   ok(pressed === 1, 'the bar Compare presses the form Compare');
   // x removes one
-  click(win, $(win, 'cf-list'));
-  ok($(win, 'cf-pop').hidden === false, 'the list opens as a popover');
+  ok($(win, 'cf-pop').hidden === false, 'the selected list starts expanded');
   click(win, win.document.querySelector('#cf-items .cf-x'));
   ok(model(store).length === 1 && checked(win) === 1 && listed(win).length === 1, 'x removes one from model, box and list');
   click(win, boxes(win)[3]);
@@ -155,113 +148,102 @@ const model = (store) => JSON.parse(store.quam_sidebar_compare_sel || '[]');
   ok(toastNodes(win).length === 1 && /Cleared 1/.test(toastNodes(win)[0].textContent),
     'third Clear still leaves exactly one toast');
 }
-// First selection does not move the tick when the top form wraps.
+// D-1: only an explicit Trend action arms one automatic chart request.
 {
-  const { win } = makeWorld();
-  await settle();
-  const bar = $(win, 'compare-float'), sidebar = $(win, 'sidebar'), tick = boxes(win)[0];
-  sidebar.scrollTop = 100;
-  sidebar.getBoundingClientRect = () => ({ top: 0 });
-  Object.defineProperty(bar, 'offsetHeight', { value: 20 });
-  tick.getBoundingClientRect = () => ({ top: bar.hidden ? 100 : 145 });
-  click(win, tick);
-  ok(sidebar.scrollTop === 145, 'first tick compensates all form growth');
-  const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
-  const rules = css.slice(css.indexOf('/* FB-13:'), css.indexOf('.compare-float .cf-btn {'));
-  const style = win.document.createElement('style'); style.textContent = rules; win.document.head.appendChild(style);
-  ok(win.getComputedStyle(bar.parentNode).position === 'fixed', 'toolbar is fixed outside run flow');
-  ok(bar.parentNode.parentNode === win.document.body, 'toolbar escapes sidebar clipping and tree swaps');
-  ok(win.getComputedStyle(bar).flexWrap === 'nowrap', 'toolbar stays on one line');
-  ok(Number(win.getComputedStyle(bar.parentNode).zIndex) > 6, 'toolbar is above the main pane and resizer');
+  const { win } = makeWorld(); await settle();
+  click(win, boxes(win)[0]); click(win, boxes(win)[1]);
+  const pane = win.document.createElement('div'); pane.id = 'table-pane'; win.document.body.appendChild(pane);
+  let charts = 0;
+  function picker() {
+    pane.innerHTML = '<form id="trend-form" hx-post="/trend/chart"><button type="submit">Show Chart</button></form>';
+    pane.querySelector('button').addEventListener('click', e => { e.preventDefault(); charts++; });
+  }
+  function swap(type, rp, okk) { pane.dispatchEvent(new win.CustomEvent(type, { bubbles: true, detail: { pathInfo: { requestPath: rp || '/trend' }, successful: okk !== false } })); }
+  win.document.querySelector('.btn-trend').addEventListener('click', e => e.preventDefault());
+  picker(); swap('htmx:afterSwap'); swap('htmx:afterSettle'); await settle(); ok(charts === 0, 'D-1 unrelated picker stays idle');
+  click(win, $(win, 'cf-trend')); picker(); swap('htmx:afterSwap'); await settle();
+  ok(charts === 0, 'D-1 not pressed at afterSwap (htmx has not processed the form yet: a press would be a native submit)');
+  swap('htmx:afterSettle'); await settle();
+  ok(charts === 1, 'D-1 floating Trend auto-submits exactly once');
+  picker(); swap('htmx:afterSettle'); await settle(); ok(charts === 1, 'D-1 flag clears after use');
+  click(win, win.document.querySelector('.btn-trend')); picker(); swap('htmx:afterSettle'); await settle();
+  ok(charts === 2, 'D-1 form Trend also arms afterSettle');
+  click(win, $(win, 'cf-trend')); picker(); swap('htmx:afterSettle', '/other'); await settle();
+  ok(charts === 2, 'D-1 a picker from another request does not consume the Trend press');
+  swap('htmx:afterRequest', '/trend', false); picker(); swap('htmx:afterSettle'); await settle();
+  ok(charts === 2, 'D-1 a failed /trend disarms the automatic chart'); win.close();
+}
+const css = fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8');
+const block = css.slice(css.indexOf('/* FB-13:'), css.indexOf('/* FB-12 port test */'));
+function rule(selector) {
+  const start = block.indexOf(selector + ' {');
+  return block.slice(start, block.indexOf('}', start) + 1);
+}
+// D-2: default expanded list takes a full row inside the wrapping bar.
+{
+  const { win } = makeWorld(); await settle(); click(win, boxes(win)[0]);
+  ok(!$(win, 'cf-pop').hidden && $(win, 'cf-pop').parentNode === $(win, 'compare-float'), 'D-2 list defaults to expanded inside bar');
+  ok(/flex-wrap: wrap/.test(rule('.compare-float')) && /flex-basis: 100%/.test(rule('.cf-pop')) && /position: static/.test(rule('.cf-pop')), 'D-2 list occupies an in-flow full row'); win.close();
+}
+// D-3: only the disclosure changes the persisted choice, with normal keyboard flow.
+{
+  const { win } = makeWorld(); await settle(); click(win, boxes(win)[0]);
+  const pop = $(win, 'cf-pop'), list = $(win, 'cf-list');
+  const group = win.document.createElement('details'); $(win, 'sidebar-tree').appendChild(group);
+  function layoutEvents() {
+    $(win, 'sidebar').dispatchEvent(new win.Event('scroll'));
+    group.dispatchEvent(new win.Event('toggle'));
+    win.dispatchEvent(new win.Event('resize')); win._resizeCallbacks.forEach(cb => cb());
+    click(win, win.document.body);
+  }
+  layoutEvents(); ok(!pop.hidden, 'D-3 layout and outside clicks keep expanded list');
+  const key = new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+  pop.querySelector('button').dispatchEvent(key);
+  pop.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  ok(!key.defaultPrevented && !pop.hidden, 'D-3 in-flow list has normal Tab and Escape behavior');
+  click(win, list); layoutEvents(); click(win, boxes(win)[1]);
+  $(win, 'sidebar-tree').dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle(); ok(pop.hidden, 'D-3 collapsed choice survives layout and rerender');
+  click(win, list); click(win, boxes(win)[2]); layoutEvents();
+  ok(!pop.hidden, 'D-3 expanded choice survives rerender'); win.close();
+}
+// D-4: sidebar containment, published height, and scroll compensation in both directions.
+{
+  const { win } = makeWorld(); await settle();
+  const bar = $(win, 'compare-float'), anchor = bar.parentNode, sidebar = $(win, 'sidebar'), tick = boxes(win)[0];
+  let height = 40;
+  anchor.getBoundingClientRect = () => ({ height: bar.hidden ? 0 : height });
+  sidebar.getBoundingClientRect = () => ({ top: 0 }); sidebar.scrollTop = 100;
+  tick.getBoundingClientRect = () => ({ top: 100 + (bar.hidden ? 0 : listed(win).length * 20) });
+  click(win, tick); ok(sidebar.scrollTop === 120, 'D-4 first growth compensates tick');
+  click(win, boxes(win)[1]); ok(sidebar.scrollTop === 140, 'D-4 subsequent growth compensates tick');
+  click(win, boxes(win)[1]); ok(sidebar.scrollTop === 120, 'D-4 shrink compensates tick');
+  ok(anchor.parentNode.matches('.sidebar-workspace') && anchor.nextElementSibling.id === 'sidebar-tree' && sidebar.contains(anchor) && sidebar.style.getPropertyValue('--cf-h') === '40px', 'D-4 anchor stays in sidebar and publishes rendered height');
+  height = 70; win._resizeCallbacks.forEach(cb => cb());
+  ok(sidebar.style.getPropertyValue('--cf-h') === '70px', 'D-4 resize republishes height');
+  click(win, tick); ok(sidebar.style.getPropertyValue('--cf-h') === '0px' && sidebar.scrollTop === 100, 'D-4 hidden bar publishes zero and compensates final shrink');
+  ok(/position: sticky/.test(rule('.compare-float-anchor')) && /top: calc\(-1 \* var\(--sidebar-pad-v\)\)/.test(rule('.compare-float-anchor')) && /z-index: 5/.test(rule('.compare-float-anchor')) && /background: var\(--pico-background-color\)/.test(rule('.compare-float-anchor')), 'D-4 opaque sticky anchor stays below main stacking layers');
+  ok(/\.tree-dir\.tree-leafdir > summary \{\s*position: sticky;\s*top: calc\(var\(--cf-h, 0px\) - var\(--sidebar-pad-v\)\)/.test(css), 'D-4 date header follows bar height');
   win.close();
 }
-// 4. Real keyboard events and viewport geometry, independent of jsdom layout.
+// D-5: compact rows retain ellipsis and put remove immediately after the name.
 {
-  const { win } = makeWorld();
-  await settle();
-  click(win, boxes(win)[0]); click(win, boxes(win)[1]);
-  const pop = $(win, 'cf-pop'), bar = $(win, 'compare-float'), list = $(win, 'cf-list');
-  let rect = { left: 120, bottom: 200 };
-  bar.getBoundingClientRect = () => rect;
-  Object.defineProperty(win.document.documentElement, 'clientWidth', { value: 800 });
-  Object.defineProperty(win.document.documentElement, 'clientHeight', { value: 600 });
-  Object.defineProperty(pop, 'offsetHeight', { value: 150 });
-  click(win, list);
-  ok(win.getComputedStyle(pop).left === '120px' && win.getComputedStyle(pop).top === '204px', 'popover follows the stubbed bar rect');
-  ok(pop.contains(win.document.activeElement), 'dialog receives focus on open');
-  const controls = pop.querySelectorAll('button');
-  controls[controls.length - 1].focus();
-  const tab = new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
-  win.document.activeElement.dispatchEvent(tab);
-  ok(tab.defaultPrevented && win.document.activeElement === controls[0], 'Tab wraps inside the dialog');
-  controls[0].dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true }));
-  ok(win.document.activeElement === controls[controls.length - 1], 'Shift Tab wraps inside the dialog');
-  let escaped = 0;
-  win.document.body.addEventListener('keydown', e => { if (e.key === 'Escape') escaped++; });
-  const escape = () => win.document.activeElement.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-  escape();
-  ok(pop.hidden && list.getAttribute('aria-expanded') === 'false' && win.document.activeElement === list, 'Escape closes the dialog and restores trigger focus');
-  ok(escaped === 0, 'open dialog consumes Escape');
-  escape();
-  ok(escaped === 1, 'closed dialog leaves Escape alone');
-  rect = { left: 780, bottom: 590 };
-  click(win, list);
-  ok(win.getComputedStyle(pop).left === '376px' && win.getComputedStyle(pop).top === '442px', 'popover clamps right and bottom to the viewport');
-  escape();
-  rect = { left: -50, bottom: -20 };
-  click(win, list);
-  ok(win.getComputedStyle(pop).left === '8px' && win.getComputedStyle(pop).top === '8px', 'popover clamps left and top to the viewport');
-  win.dispatchEvent(new win.Event('resize'));
-  ok(pop.hidden, 'window resize closes an anchored dialog');
-  click(win, list);
-  $(win, 'sidebar').dispatchEvent(new win.Event('scroll'));
-  ok(pop.hidden, 'sidebar scroll closes an anchored dialog');
-  click(win, list);
-  win._resizeCallbacks.forEach(cb => cb());
-  ok(pop.hidden, 'sidebar resize closes an anchored dialog');
-  const group = win.document.createElement('details');
-  group.className = 'tree-dir tree-leafdir'; group.open = true;
-  group.innerHTML = '<summary>2026-01-01 (8)</summary>';
-  $(win, 'sidebar-tree').appendChild(group);
-  const header = group.querySelector('summary'), anchor = bar.parentNode;
-  header.getClientRects = () => [{}];
-  let sr = { top: 80, right: 260, bottom: 600 };
-  let hr = { top: 80, right: 245, height: 24 };
-  $(win, 'sidebar').getBoundingClientRect = () => sr;
-  header.getBoundingClientRect = () => hr;
-  group.getBoundingClientRect = () => ({ bottom: 900 });
-  Object.defineProperty(header, 'offsetHeight', { value: 24 });
-  const positioned = (left, top, height, why) => {
-    ok(anchor.style.left === left + 'px' && anchor.style.top === top + 'px'
-      && anchor.style.getPropertyValue('--cf-height') === height + 'px', why);
-  };
-  win.syncCompareCount();
-  positioned(266, 80, 24, 'bar is right of the date on the same line');
-  hr = { top: 110, right: 330, height: 22 };
-  $(win, 'sidebar').dispatchEvent(new win.Event('scroll'));
-  positioned(336, 110, 22, 'scroll recomputes header coordinates and row height');
-  sr = { top: 80, right: 420, bottom: 600 };
-  win._resizeCallbacks.forEach(cb => cb());
-  positioned(426, 110, 22, 'sidebar resize or width drag recomputes coordinates');
-  hr = { top: 130, right: 410, height: 28 };
-  win.dispatchEvent(new win.Event('resize'));
-  positioned(426, 130, 28, 'window resize recomputes header coordinates');
-  const layout = $(win, 'sidebar').closest('.app-layout');
-  layout.classList.add('sidebar-collapsed');
-  await settle();
-  ok(anchor.hidden, 'collapsed sidebar hides the overflowing toolbar');
-  layout.classList.remove('sidebar-collapsed');
-  await settle();
-  ok(!anchor.hidden, 'expanded sidebar restores the toolbar');
-  group.open = false;
-  group.dispatchEvent(new win.Event('toggle'));
-  positioned(426, 80, 26, 'collapsing the last group resets to sidebar coordinates');
-  group.open = true; win.syncCompareCount();
-  group.remove();
-  $(win, 'sidebar-tree').dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
-  positioned(426, 80, 26, 'filtering all date groups resets to sidebar coordinates');
-  ok(win.document.contains(bar), 'tree replacement preserves the body toolbar');
-  win.close();
+  const { win } = makeWorld(); await settle();
+  boxes(win)[0].value = '/w/long_run/quam_state'; click(win, boxes(win)[0]);
+  $(win, 'sidebar-tree').innerHTML = treeHtml(8, [1, 2]); win.syncCompareCount();
+  const name = win.document.querySelector('.cf-name');
+  ok(name.nextElementSibling.matches('.cf-x') && /long_run/.test(name.textContent), 'D-5 remove follows run name even off-view');
+  ok(/flex: 0 1 auto/.test(rule('.cf-name')) && /min-width: 0/.test(rule('.cf-name')) && /text-overflow: ellipsis/.test(rule('.cf-name')), 'D-5 names shrink and ellipsize without stretching');
+  ok(['.compare-float-anchor', '.compare-float', '.cf-pop'].every(s => /width: fit-content/.test(rule(s)) && /max-width: 100%/.test(rule(s))), 'D-5 bar and list fit content within sidebar'); win.close();
+}
+// D-6: accessible button with a visible, token-sized state arrow.
+{
+  const { win } = makeWorld(); await settle(); click(win, boxes(win)[0]);
+  const list = $(win, 'cf-list');
+  ok(list.tagName === 'BUTTON' && list.type === 'button' && list.getAttribute('aria-controls') === 'cf-pop' && list.getAttribute('aria-expanded') === 'true' && list.querySelector('.cf-arrow').textContent === '\u25be', 'D-6 expanded toggle button and arrow');
+  click(win, list.querySelector('.cf-arrow'));
+  ok(list.getAttribute('aria-expanded') === 'false' && list.querySelector('.cf-arrow').textContent === '\u25b8', 'D-6 clicking arrow collapses and updates glyph');
+  ok(/font-size: calc\(var\(--tree-entry-label-font\) \* 1\.3\)/.test(rule('.cf-arrow')), 'D-6 arrow uses run-row font token'); win.close();
 }
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('all ok');

@@ -1985,7 +1985,7 @@ details.tree-branch-active > summary {
    padding-cancel pattern as the sticky rules at style.css:3939. */
 .tree-dir.tree-leafdir > summary {
     position: sticky;
-    top: calc(-1 * var(--sidebar-pad-v));
+    top: calc(var(--cf-h, 0px) - var(--sidebar-pad-v));
     z-index: 4;
     background: var(--tree-summary-bg, var(--pico-background-color));
     box-shadow: 0 1px 0 var(--pico-muted-border-color);
@@ -16118,23 +16118,23 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
     background: var(--cm-selection) !important;
 }
 
-/* FB-13: a viewport layer beside the pinned date, outside sidebar clipping. */
+/* FB-13: sidebar actions and an in-flow selection list above the pinned date. */
 #sidebar { overflow-anchor: none; }
 .compare-float-anchor {
-    position: fixed;
-    z-index: 900;
+    position: sticky; top: calc(-1 * var(--sidebar-pad-v));
+    z-index: 5; background: var(--pico-background-color); width: fit-content; max-width: 100%;
 }
-.compare-float-anchor[hidden] { display: none; }
+.cf-arrow { font-size: calc(var(--tree-entry-label-font) * 1.3); line-height: 1; vertical-align: -0.1em; }
 .compare-float {
-    display: flex; flex-wrap: nowrap; gap: 3px; align-items: center;
-    box-sizing: border-box; height: var(--cf-height, 26px);
+    display: flex; flex-wrap: wrap; gap: 3px; align-items: center;
+    box-sizing: border-box; width: fit-content; max-width: 100%;
     padding: 0 3px;
     background: var(--pico-background-color);
     border: 1px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
     border-radius: 6px;
     font-size: 11px; line-height: 1.2;
 }
-.compare-float[hidden], .cf-pop[hidden] { display: none; }
+.compare-float-anchor[hidden], .compare-float[hidden], .cf-pop[hidden] { display: none; }
 .compare-float .cf-btn {
     margin: 0; padding: 2px 7px; width: auto; height: auto;
     font-size: 1em; line-height: 1.25; border-radius: 4px;
@@ -16158,7 +16158,7 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
 .compare-float .cf-btn:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 1px; }
 .compare-float .cf-list { color: var(--pico-primary); }
 .cf-pop {
-    position: fixed; z-index: 1000;
+    position: static; flex-basis: 100%; min-width: 0; width: fit-content; max-width: 100%;
     max-height: 50vh; overflow-y: auto;
     background: var(--pico-background-color);
     border: 1px solid var(--pico-muted-border-color);
@@ -16173,7 +16173,7 @@ input::selection, textarea::selection, .ui-tree-editor::selection,
 }
 .cf-items .cf-item:hover { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
 .cf-id { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--pico-primary); }
-.cf-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cf-off { color: var(--pico-muted-color); font-style: italic; font-size: .9em; white-space: nowrap; }
 .cf-items .cf-x {
     margin: 0; padding: 0 6px; width: auto; height: auto; line-height: 1.3;
