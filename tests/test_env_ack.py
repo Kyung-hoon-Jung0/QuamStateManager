@@ -36,7 +36,7 @@ from quam_state_manager.web.app import create_app
 _ANALYSIS = {
     "findings": [
         {"kind": "unknown_field", "class": "quam_config.my_quam.Quam",
-         "field": "qdac", "code": "", "severity": "error",
+         "field": "qdac", "code": "", "severity": "warning",
          "detail": "this environment does not declare it", "count": 1,
          "example_paths": ["qdac"]},
         {"kind": "missing_required", "class": "quam_config.my_quam.Quam",
@@ -114,7 +114,7 @@ class TestWhatItChangesAndWhatItDoesNot:
 
     def test_it_does_not_lower_the_severity(self, acked):
         f = next(x for x in acked if x.category == "env_unknown_field")
-        assert f.severity == "error", "the fact keeps its weight; only the alarm stops"
+        assert f.severity == "warning", "the fact keeps its weight; only the alarm stops"
 
     def test_nothing_is_hidden(self, acked):
         plain = state_env_validate.to_diag_findings(_ANALYSIS)
@@ -240,7 +240,7 @@ class TestOneSentenceOnBothSurfaces:
 
     _LABEL = "quam 0.6.0 quam_builder 0.4.0"
     _REC = {"kind": "unknown_field", "class": "quam_config.my_quam.Quam",
-            "field": "twpa_ext", "code": "", "severity": "error",
+            "field": "twpa_ext", "code": "", "severity": "warning",
             "detail": "'twpa_ext' is not a field of the selected env's Quam",
             "fix_hint": "select that env or migrate the state",
             "count": 1, "example_paths": ["twpa_ext"]}
@@ -339,3 +339,21 @@ class TestTheKeySurvivesARestart:
         assert env_ack.revoke_for_versions(tmp_path, self.V_NONE, "k|C|f|")
         assert not env_ack.resolve_for_versions(tmp_path, self.V_NONE)
         assert not env_ack.revoke_for_versions(tmp_path, self.V_NONE, "k|C|f|")
+
+
+@pytest.mark.parametrize("surface", ["diagnostics", "card"])
+def test_stored_acknowledgement_never_silences_an_error(tmp_path, surface):
+    rec = {**_ANALYSIS["findings"][0], "severity": "error"}
+    env_ack.acknowledge(tmp_path, _ENV, kind=rec["kind"],
+                        class_path=rec["class"], field=rec["field"],
+                        code=rec["code"], detail=state_env_validate.finding_detail(rec))
+    acks = env_ack.resolve(tmp_path, _ENV)
+    if surface == "diagnostics":
+        findings = state_env_validate.to_diag_findings({"findings": [rec]}, acknowledged=acks)
+        assert findings[0].severity == "error"
+        assert not findings[0].acknowledged
+        assert diagnostics.summarize(findings)["issues"] == 1
+    else:
+        kept, count = state_env_validate.unacknowledged_rows([rec], acks)
+        assert count == 0
+        assert len(kept) == 1 and kept[0]["severity"] == "error"
