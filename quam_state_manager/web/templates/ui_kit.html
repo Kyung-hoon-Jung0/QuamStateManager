@@ -144,6 +144,18 @@
   <button type="button" class="split-arrow-btn ui-split-arrow" aria-label="Expand the panel">&#9650;</button>
   <div class="inspector-header ui-ds-head ui-ds-head-open ui-ds-head-wrap"><div class="ui-pane-sliver"></div><div class="inspector-title"><strong>run</strong></div><div class="ui-ds-meta"><span class="ds-folder-line ui-ds-folder">data_folder</span><div class="ds-note-block ui-note-open"><button type="button" class="ds-note-toggle">Note</button></div><div class="ds-tags-row ui-ds-tags"><span class="tag-badge">good</span></div></div></div>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Port selection and test controls</h2>
+  <label class="ui-field"><span class="ui-field-label">Output port</span><input value="con1 / 1 / 1"></label>
+  <div class="ui-listbox" role="listbox" tabindex="0" aria-label="Available ports">
+    <div class="ui-option ui-option--active" role="option" aria-selected="true">Output 1 - selected</div>
+    <div class="ui-option" role="option" aria-selected="false">Output 2</div>
+    <div class="ui-option ui-option--empty" role="option" aria-disabled="true">No other ports</div>
+  </div>
+  <div class="port-test"><div class="pt-card"><div class="pt-res-head">Simulated readback</div>
+    <p class="pt-ok">Readback completed</p><p class="pt-warn">Review the output before running.</p>
+    <svg class="pt-trace" viewBox="0 0 100 20" role="img" aria-label="Real and imaginary traces"><path class="pt-re" d="M0 10 L100 10"/><path class="pt-im" d="M0 15 L100 5"/></svg>
+  </div></div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}
