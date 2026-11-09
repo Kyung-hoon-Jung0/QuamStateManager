@@ -261,6 +261,17 @@ function rule(selector) {
   ok(ae() && ae() !== win.document.body && ae().matches('input[type=checkbox][value="' + prev + '"]'), 'D-7 removing the only row focuses that run tick, never body');
   win.close();
 }
+// D-7b: the only selected run is off-view (filtered away): focus lands on the sidebar, not body.
+{
+  const { win } = makeWorld(); await settle();
+  click(win, boxes(win)[7]);
+  win.document.getElementById('sidebar-tree').innerHTML = treeHtml(8, [0, 1]);
+  win.document.getElementById('sidebar-tree').dispatchEvent(new win.CustomEvent('htmx:afterSwap', { bubbles: true }));
+  await settle();
+  click(win, win.document.querySelector('#cf-items .cf-x'));
+  ok(win.document.activeElement && win.document.activeElement.id === 'sidebar', 'D-7b removing an off-view only row focuses the sidebar, never body');
+  win.close();
+}
 // D-8: the bar height is published in the same task as the rows change (no RO frame).
 {
   const { win } = makeWorld(); await settle();

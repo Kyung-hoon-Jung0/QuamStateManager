@@ -2280,7 +2280,7 @@ window.setFontSize = function(size) {
         if (head) head.textContent = n + ' of up to ' + MAX_DIFF + ' selected'
             + (n < 2 ? ' — tick one more to compare' : '');
         var ul = document.getElementById('cf-items');
-        if (!ul) return;
+        if (!ul) { updateFloatTop(); return; }
         while (ul.firstChild) ul.removeChild(ul.firstChild);
         var present = {};
         boxes().forEach(function(b) { present[b.value] = true; });
@@ -2325,6 +2325,12 @@ window.setFontSize = function(size) {
         if (!target && bar && !bar.hidden) target = document.getElementById('cf-list');
         if (!target) target = boxes().filter(function(b) { return b.value === v; })[0] || null;
         if (target) target.focus();
+        // A folded-away tick cannot take focus: land on the sidebar itself.
+        var ae = document.activeElement;
+        if (!ae || ae === document.body) {
+            var sb = document.getElementById('sidebar');
+            if (sb) { if (!sb.hasAttribute('tabindex')) sb.setAttribute('tabindex', '-1'); sb.focus(); }
+        }
     }
     function setPop(open) {
         listExpanded = open;
