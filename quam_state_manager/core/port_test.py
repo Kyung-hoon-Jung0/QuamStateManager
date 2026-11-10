@@ -284,6 +284,104 @@ def build_wizard_mw(spec: dict, port: list, band, lo_hz, if_hz, fsp, amp) -> tup
     return cfg, plan
 
 
+# ---- several outputs in one QM (wizard step 3) -----------------------------
+MAX_PLAY_PORTS = 3
+#: MW-FEM output pairs that share a band constraint. QM docs Guides/opx1000_fems.md
+#: "### Bands": "Coupled ports must be in the same band, or in bands `1` and `3`."
+#: (Out 1 & In 1 and Out 8 & In 2 involve inputs, which a play never declares.)
+MW_COUPLED_OUTPUTS = ((2, 3), (4, 5), (6, 7))
+#: QM docs Guides/opx1000_fems.md "### Pulse Generation Timing Variation".
+MIXED_TIMING_NOTE = ("MW-FEM outputs start about 155 ns (bands 1, 3) or 175 ns (band 2) after "
+                     "LF-FEM outputs; this play does not compensate it.")
+
+
+def _coupled_bands_ok(a: int, b: int) -> bool:
+    return a == b or {a, b} == {1, 3}
+
+
+def _single(spec: dict, entry: dict) -> tuple[dict, dict]:
+    """One entry through the one-port builders (their validation and shape)."""
+    if not isinstance(entry, dict):
+        raise PortTestError("Each port entry must be an object.")
+    port = list(entry.get("port") or [])
+    if entry.get("kind") == "mw":
+        return build_wizard_mw(spec, port, entry.get("band"), entry.get("lo_hz"), entry.get("if_hz"),
+                               entry.get("fsp"), entry.get("amp"))
+    return build_wizard_dc(spec, port, entry.get("offset"), entry.get("output_mode", "direct"))
+
+
+def build_wizard_multi(spec: dict, entries: list) -> tuple[dict, dict]:
+    """Up to ``MAX_PLAY_PORTS`` outputs in one config and one program.
+
+    One entry returns exactly what the one-port builder returns. Port 1 keeps
+    element ``sm_port_play``; port i (2..3) is ``sm_port_play_<i>``."""
+    entries = list(entries or [])
+    if not entries:
+        raise PortTestError("Choose at least one output port.")
+    if len(entries) > MAX_PLAY_PORTS:
+        raise PortTestError(f"At most {MAX_PLAY_PORTS} ports can play together.")
+    if len(entries) == 1:
+        return _single(spec, entries[0])
+    cfg = {"version": 1, "controllers": controllers_from_spec(spec),
+           "elements": {}, "pulses": {}, "waveforms": {}}
+    singles, seen, mw_bands, plays, notes = [], {}, {}, [], []
+    for i, entry in enumerate(entries, start=1):
+        try:
+            scfg, splan = _single(spec, entry)
+        except PortTestError as exc:
+            raise PortTestError(f"Port {i}: {exc}") from None
+        con, slot, number = splan["port"]
+        key = (str(con), int(slot), int(number))
+        label = f"{con}/{slot}/{number}"
+        if key in seen:
+            raise PortTestError(f"Port {label} is chosen twice.")
+        seen[key] = i
+        if splan["kind"] == "mw":
+            mw_bands[key] = splan["band"]
+        singles.append((key, scfg, splan))
+    for (con, slot, a), band_a in mw_bands.items():
+        for x, y in MW_COUPLED_OUTPUTS:
+            if a == x and (con, slot, y) in mw_bands and not _coupled_bands_ok(band_a, mw_bands[(con, slot, y)]):
+                raise PortTestError(
+                    f"{con}/{slot}/{x} (band {band_a}) and {con}/{slot}/{y} (band {mw_bands[(con, slot, y)]}) "
+                    "are coupled MW outputs: they need the same band, or bands 1 and 3.")
+    played_mw = {}
+    for i, (key, scfg, splan) in enumerate(singles, start=1):
+        con, slot, number = key
+        name = "sm_port_play" if i == 1 else f"sm_port_play_{i}"
+        out = scfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]
+        if splan["kind"] == "mw":
+            played_mw.setdefault((con, slot), {})[str(number)] = copy.deepcopy(out)
+        else:
+            cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)] = copy.deepcopy(out)
+        el = copy.deepcopy(scfg["elements"]["sm_port_play"])
+        op = splan["operation"]
+        el["operations"] = {op: f"{name}.pulse"}
+        pulse = copy.deepcopy(scfg["pulses"]["sm_port_play.pulse"])
+        pulse["waveforms"] = {k: v.replace("sm_port_play.", f"{name}.", 1) for k, v in pulse["waveforms"].items()}
+        cfg["elements"][name] = el
+        cfg["pulses"][f"{name}.pulse"] = pulse
+        for wname, wf in scfg["waveforms"].items():
+            cfg["waveforms"][wname.replace("sm_port_play.", f"{name}.", 1)] = copy.deepcopy(wf)
+        play = {"element": name, "operation": op, "kind": splan["kind"], "port": [con, slot, number]}
+        for k in ("offset", "output_mode", "band", "lo", "if", "rf", "full_scale_power_dbm", "expected_dbm"):
+            if splan.get(k) is not None:
+                play[k] = splan[k]
+        plays.append(play)
+        notes.extend(f"{con}/{slot}/{number}: {n}" for n in splan.get("notes") or [])
+    for (con, slot), outputs in played_mw.items():
+        # Only the played MW ports are declared, as in a one-port MW play.
+        cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"] = outputs
+    kinds = {p["kind"] for p in plays}
+    if kinds == {"lf", "mw"}:
+        notes.append(MIXED_TIMING_NOTE)
+    plan = dict(singles[0][2])
+    plan.update(test="dc" if kinds == {"lf"} else "cw", plays=plays, notes=notes,
+                config_name="port-play-multi:" + ",".join(":".join(map(str, p["port"])) for p in plays),
+                config_fingerprint=config_fingerprint(cfg))
+    return cfg, plan
+
+
 
 def dbm(fsp: Optional[float], amp: Optional[float]) -> Optional[float]:
     """Output power of a MW port: P = FSP + 20*log10|amp| (docs/109)."""
@@ -694,7 +792,7 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "", run_program: b
         "       python this_file.py saas --email EMAIL --host SAAS_HOST   (password: SAAS_PASSWORD env var)",
     ]
     doc = '"""' + "\n".join(lines).replace('"""', "'''") + '\n"""'
-    return _SCRIPT.format(
+    text = _SCRIPT.format(
         doc=doc, config=pprint.pformat(cfg, indent=1, width=100, sort_dicts=True),
         element=plan["element"], operation=plan["operation"], test=plan["test"],
         scale=repr(float(plan["amp_scale"])), period=int(plan["period_ns"]),
@@ -707,6 +805,28 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "", run_program: b
         config_fp=plan["config_fingerprint"], config_name=plan["config_name"],
         run_program=bool(run_program),
     )
+    plays = plan.get("plays") or []
+    if len(plays) > 1:
+        text = _multi_script(text, plays)
+    return text
+
+
+def _multi_script(text: str, plays: list) -> str:
+    """Several ports: one play per element inside the one loop, no align, so
+    every element (its own thread) starts together. Exact anchors or raise."""
+    listing = [(p["element"], p["operation"]) for p in plays]
+    ports = ", ".join(_fmt_port(p["port"]) for p in plays)
+    swaps = [
+        ("\nOutput port : ", f"\nPlays together: {ports}\nOutput port : "),
+        ("\nOPERATION = ", f"\nPLAYS = {listing!r}  # (element, operation), all in parallel\nOPERATION = "),
+        ("                play(OPERATION * amp(AMP_SCALE), ELEMENT)\n",
+         "                for _el, _op in PLAYS:\n                    play(_op * amp(AMP_SCALE), _el)\n"),
+    ]
+    for old, new in swaps:
+        if text.count(old) != 1:
+            raise PortTestError("Internal: the play script template changed.")
+        text = text.replace(old, new)
+    return text
 
 
 _SCRIPT = '''{doc}
