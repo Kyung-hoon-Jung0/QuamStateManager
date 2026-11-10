@@ -290,9 +290,30 @@ MAX_PLAY_PORTS = 3
 #: "### Bands": "Coupled ports must be in the same band, or in bands `1` and `3`."
 #: (Out 1 & In 1 and Out 8 & In 2 involve inputs, which a play never declares.)
 MW_COUPLED_OUTPUTS = ((2, 3), (4, 5), (6, 7))
-#: QM docs Guides/opx1000_fems.md "### Pulse Generation Timing Variation".
-MIXED_TIMING_NOTE = ("MW-FEM outputs start about 155 ns (bands 1, 3) or 175 ns (band 2) after "
-                     "LF-FEM outputs; this play does not compensate it.")
+#: QM docs Guides/opx1000_fems.md "### Pulse Generation Timing Variation": "Relative to an
+#: LF-FEM analog output port, the additional delay of an MW-FEM analog output port is
+#: approximately: `155 ns` for Bands 1 and 3, `175 ns` for Band 2". A mixed play delays each
+#: LF port by the per-band LF delay the build already uses (D-10) and delays MW ports of a
+#: faster band by the difference to the slowest MW band in the play (D-11).
+#: QM docs Guides/features.md "## Analog Delay": "a delay to the analog ports of up to 16
+#: microseconds, in units of ns."
+MAX_PORT_DELAY_NS = 16000
+
+
+def band_delay_ns(band: int) -> int:
+    """Default LF delay (ns) that aligns an LF output with an MW output in *band*."""
+    from quam_state_manager.core.regen_populate import _BAND_TO_DELAY_NS
+    return _BAND_TO_DELAY_NS[int(band)]
+
+
+def _delay_ns(value, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+            or value != int(value):
+        raise PortTestError(f"{label}: LF delay must be a whole number of ns.")
+    value = int(value)
+    if not 0 <= value <= MAX_PORT_DELAY_NS:
+        raise PortTestError(f"{label}: LF delay must be 0..{MAX_PORT_DELAY_NS} ns.")
+    return value
 
 
 def _coupled_bands_ok(a: int, b: int) -> bool:
@@ -345,11 +366,21 @@ def build_wizard_multi(spec: dict, entries: list) -> tuple[dict, dict]:
                 raise PortTestError(
                     f"{con}/{slot}/{x} (band {band_a}) and {con}/{slot}/{y} (band {mw_bands[(con, slot, y)]}) "
                     "are coupled MW outputs: they need the same band, or bands 1 and 3.")
+    mixed = bool(mw_bands) and len(mw_bands) < len(singles)
+    mw_max = max((band_delay_ns(b) for b in mw_bands.values()), default=0)
     played_mw = {}
     for i, (key, scfg, splan) in enumerate(singles, start=1):
         con, slot, number = key
         name = "sm_port_play" if i == 1 else f"sm_port_play_{i}"
-        out = scfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]
+        out = copy.deepcopy(scfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)])
+        delay = None
+        if mixed and splan["kind"] == "mw":
+            delay = mw_max - band_delay_ns(splan["band"])
+        elif mixed:
+            raw = entries[i - 1].get("delay_ns")
+            delay = mw_max if raw is None else _delay_ns(raw, f"Port {i}")
+        if delay is not None:
+            out["delay"] = delay
         if splan["kind"] == "mw":
             played_mw.setdefault((con, slot), {})[str(number)] = copy.deepcopy(out)
         else:
@@ -367,14 +398,17 @@ def build_wizard_multi(spec: dict, entries: list) -> tuple[dict, dict]:
         for k in ("offset", "output_mode", "band", "lo", "if", "rf", "full_scale_power_dbm", "expected_dbm"):
             if splan.get(k) is not None:
                 play[k] = splan[k]
+        if delay is not None:
+            play["delay_ns"] = delay
         plays.append(play)
         notes.extend(f"{con}/{slot}/{number}: {n}" for n in splan.get("notes") or [])
     for (con, slot), outputs in played_mw.items():
         # Only the played MW ports are declared, as in a one-port MW play.
         cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"] = outputs
     kinds = {p["kind"] for p in plays}
-    if kinds == {"lf", "mw"}:
-        notes.append(MIXED_TIMING_NOTE)
+    if mixed:
+        notes.append("MW-FEM outputs start later than LF-FEM outputs; port delays compensate it: " +
+                     ", ".join(f"{':'.join(map(str, p['port']))} {p['delay_ns']} ns" for p in plays) + ".")
     plan = dict(singles[0][2])
     plan.update(test="dc" if kinds == {"lf"} else "cw", plays=plays, notes=notes,
                 config_name="port-play-multi:" + ",".join(":".join(map(str, p["port"])) for p in plays),

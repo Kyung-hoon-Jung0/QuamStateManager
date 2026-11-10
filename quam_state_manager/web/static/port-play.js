@@ -138,10 +138,48 @@
     sec.innerHTML = '<div class="ui-item-head"><h4 class="ui-item-title">Play together</h4></div>' +
       '<p class="ui-note">Other outputs that play in the same QM and program as this one, all starting together. ' +
       'Stop and Close QM stop every port.</p><div data-rows></div>' +
+      '<p class="ui-note" data-delay-note hidden></p>' +
       '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-add-port>+ Add port</button></div>';
     var first = node.querySelector('.ui-dialog-body > section');
     first.parentNode.insertBefore(sec, first.nextSibling);
     var rows = sec.querySelector('[data-rows]'), add = sec.querySelector('[data-add-port]');
+    var ownLf = !!node.querySelector('[data-offset]');
+    if (ownLf) {
+      var ownWrap = document.createElement('div');
+      ownWrap.className = 'ui-field-grid';
+      ownWrap.innerHTML = DELAY_FIELD.replace('LF delay (ns)', 'LF delay (ns), this port');
+      rows.parentNode.insertBefore(ownWrap, rows);
+    }
+    // D-10/D-11: in an LF + MW play each LF port is delayed (default from the slowest MW band).
+    function delayDefault() {
+      var max = null;
+      node.querySelectorAll('[data-band]').forEach(function (b) {
+        var d = BAND_DELAY_NS[Number(b.value)];
+        if (max === null || d > max) max = d;
+      });
+      var lf = node.querySelectorAll('[data-lf-delay]').length;
+      return max !== null && lf ? max : null;
+    }
+    function refreshDelays() {
+      var def = delayDefault(), note = sec.querySelector('[data-delay-note]');
+      note.hidden = def === null;
+      note.textContent = def === null ? '' : 'MW-FEM outputs start later than LF-FEM outputs. LF delay default: ' + def +
+        ' ns, from the slowest MW band in this play; MW ports of a faster band are delayed by the difference.';
+      node.querySelectorAll('[data-lf-delay]').forEach(function (input) {
+        input.closest('[data-delay-wrap]').hidden = def === null;
+        if (def !== null && !input.hasAttribute('data-touched')) input.value = def;
+      });
+    }
+    node.addEventListener('change', refreshDelays);
+    node.addEventListener('input', function (ev) {
+      if (ev.target.matches && ev.target.matches('[data-lf-delay]')) ev.target.setAttribute('data-touched', '');
+    });
+    function readDelay(input, pin) {
+      var v = input.value;
+      if (v === '' || !Number.isInteger(Number(v)) || Number(v) < 0 || Number(v) > MAX_DELAY_NS)
+        throw new Error('Port ' + pin + ': LF delay must be a whole number 0..' + MAX_DELAY_NS + ' ns.');
+      return Number(v);
+    }
     function chosen() {
       var used = [own];
       rows.querySelectorAll('[data-row]').forEach(function (r) { used.push(r.querySelector('[data-pin]').value); });
@@ -161,7 +199,8 @@
           '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
           '<label>Amplitude (|a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>'
         : '<label>Output mode<select data-mode><option value="direct">direct</option><option value="amplified">amplified</option></select></label>' +
-          '<label>Offset (V)<input data-offset type="number" step="0.000001" value="0" required></label>';
+          '<label>Offset (V)<input data-offset type="number" step="0.000001" value="0" required></label>' + DELAY_FIELD;
+      refreshDelays();
     }
     add.onclick = function () {
       if (rows.querySelectorAll('[data-row]').length >= MAX_PORTS - 1) return;
@@ -183,7 +222,7 @@
       sel.value = pinOf(free[0]);
       fields(row, free[0].kind);
       sel.onchange = function () { fields(row, sel.selectedOptions[0].getAttribute('data-kind')); };
-      row.querySelector('[data-remove]').onclick = function () { row.remove(); sync(); };
+      row.querySelector('[data-remove]').onclick = function () { row.remove(); sync(); refreshDelays(); };
       rows.appendChild(row); sync();
     };
     sync();
@@ -207,17 +246,24 @@
           if (v === '' || !Number.isFinite(Number(v))) throw new Error('Port ' + pin + ': enter an offset.');
           if (Math.abs(Number(v)) > limit) throw new Error('Port ' + pin + ': ' + mode + ' mode requires |offset| <= ' + limit + ' V.');
           Object.assign(e, {output_mode: mode, offset: Number(v)});
+          if (delayDefault() !== null) e.delay_ns = readDelay(q('[data-lf-delay]'), pin);
         }
         out.push(e);
       });
+      if (ownLf && delayDefault() !== null) out.ownDelay = readDelay(sec.querySelector('[data-lf-delay]'), own);
       return out;
     };
   }
   function withExtra(data, extras) {
     var e = extras();
     if (e.length) data.extra = e;
+    if (e.ownDelay !== undefined) data.delay_ns = e.ownDelay;
     return data;
   }
+  // Mirror of run_build._BAND_TO_DELAY_NS, pinned by tests/test_regen_populate.py.
+  var BAND_DELAY_NS = {1: 141, 2: 161, 3: 141};
+  var MAX_DELAY_NS = 16000;  // QM docs Guides/features.md "## Analog Delay": up to 16 us
+  var DELAY_FIELD = '<label data-delay-wrap hidden>LF delay (ns)<input data-lf-delay type="number" step="1" min="0" max="16000"></label>';
   var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
   function mwPower(fsp, amp) {
     return amp === 0 ? null : fsp + 20 * Math.log10(Math.abs(amp));

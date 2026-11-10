@@ -205,6 +205,14 @@ def test_band_delay_table_in_sync_with_run_build():
     assert rp._BAND_TO_DELAY_NS == run_build._BAND_TO_DELAY_NS
 
 
+def test_band_delay_table_in_sync_with_port_play_js():
+    import re, pathlib
+    js = (pathlib.Path(rp.__file__).parent.parent / "web/static/port-play.js").read_text(encoding="utf-8")
+    m = re.search(r"var BAND_DELAY_NS = \{([^}]*)\}", js)
+    table = {int(k): int(v) for k, v in re.findall(r"(\d+):\s*(\d+)", m.group(1))}
+    assert table == rp._BAND_TO_DELAY_NS
+
+
 # --- merge integration ------------------------------------------------------
 
 def test_protect_beats_tier1_in_merge():
