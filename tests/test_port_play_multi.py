@@ -1,5 +1,6 @@
 """Port play on up to three outputs in one QM and one program; no chip, no real QM."""
 import copy
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -69,7 +70,10 @@ def test_three_mixed_ports_and_script(spec):
     assert cfg['elements']['sm_port_play_3']['MWInput']['port'] == ('con1', 1, 6)
     assert cfg['waveforms']['sm_port_play_3.amp']['sample'] == 0.25
     assert cfg['elements']['sm_port_play_2']['singleInput']['port'] == ('con2', 3, 5)
-    assert plan['test'] == 'cw' and pt.MIXED_TIMING_NOTE in plan['notes']
+    assert plan['test'] == 'cw' and any('port delays compensate' in n for n in plan['notes'])
+    # D-10/D-11: band 2 (port 4) is the slowest MW band; the band-3 port waits the difference.
+    assert cfg['controllers']['con2']['fems']['3']['analog_outputs']['5']['delay'] == 161
+    assert mwout['4']['delay'] == 0 and mwout['6']['delay'] == 20
     script = pt.render_script(cfg, plan)
     assert "PLAYS = [('sm_port_play', 'cw'), ('sm_port_play_2', 'dc'), ('sm_port_play_3', 'cw')]" in script
     assert 'for _el, _op in PLAYS:\n                    play(_op * amp(AMP_SCALE), _el)' in script
@@ -78,9 +82,35 @@ def test_three_mixed_ports_and_script(spec):
     compile(script, '<multi>', 'exec')
 
 
-def test_all_lf_has_no_timing_note(spec):
-    _cfg, plan = pt.build_wizard_multi(spec, [lf(['con1', 3, 1]), lf(['con1', 3, 2])])
-    assert pt.MIXED_TIMING_NOTE not in plan['notes']
+def test_all_lf_and_all_mw_have_no_delay(spec):
+    for entries in ([lf(['con1', 3, 1]), dict(lf(['con1', 3, 2]), delay_ns=99)],
+                    [mw(['con1', 1, 4], band=1, lo=5e9), mw(['con1', 1, 6], band=2, lo=6e9)]):
+        cfg, plan = pt.build_wizard_multi(spec, entries)
+        assert 'delay' not in json.dumps(cfg) and not any('delay' in n for n in plan['notes'])
+        assert all('delay_ns' not in p for p in plan['plays'])
+
+
+def test_single_port_ignores_delay(spec):
+    single = pt.build_wizard_dc(spec, ['con1', 3, 1], 0.1, 'direct')
+    assert pt.build_wizard_multi(spec, [dict(lf(['con1', 3, 1]), delay_ns=50)]) == single
+
+
+def test_mixed_bands_align_to_slowest(spec):
+    # D-11: band 2 is the slowest MW band; the band-1 MW port waits the 20 ns difference.
+    cfg, plan = pt.build_wizard_multi(spec, [lf(['con1', 3, 1]), mw(['con1', 1, 4], band=1, lo=5e9),
+                                             mw(['con1', 1, 6], band=2, lo=6e9)])
+    mwout = cfg['controllers']['con1']['fems']['1']['analog_outputs']
+    assert cfg['controllers']['con1']['fems']['3']['analog_outputs']['1']['delay'] == 161
+    assert mwout['4']['delay'] == 20 and mwout['6']['delay'] == 0
+    assert [p['delay_ns'] for p in plan['plays']] == [161, 20, 0]
+
+
+def test_lf_delay_is_editable_and_validated(spec):
+    cfg, _ = pt.build_wizard_multi(spec, [dict(lf(['con1', 3, 1]), delay_ns=150), mw(['con1', 1, 4])])
+    assert cfg['controllers']['con1']['fems']['3']['analog_outputs']['1']['delay'] == 150
+    for bad in (-1, 16001, 1.5, True, '10'):
+        with pytest.raises(pt.PortTestError, match='LF delay'):
+            pt.build_wizard_multi(spec, [dict(lf(['con1', 3, 1]), delay_ns=bad), mw(['con1', 1, 4])])
 
 
 @pytest.mark.parametrize('entries,words', [
@@ -124,10 +154,11 @@ def test_route_runs_every_port_and_binds_each_value(spec, tmp_path, monkeypatch)
     captured = {}
     monkeypatch.setattr(manager, 'start', lambda python, script, request, meta: captured.update(
         script=script, meta=meta) or {'id': 'mock'})
-    extra = [{'kind': 'lf', 'con': 'con2', 'slot': 3, 'port': 6, 'offset': .2, 'output_mode': 'direct'},
+    extra = [{'kind': 'lf', 'con': 'con2', 'slot': 3, 'port': 6, 'offset': .2, 'output_mode': 'direct', 'delay_ns': 170},
              {'kind': 'mw', 'con': 'con1', 'slot': 1, 'port': 4, 'band': 2, 'lo_hz': 6e9, 'if_hz': 5e7,
               'full_scale_power_dbm': 1, 'amp': .3}]
-    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12, extra=extra)
+    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12, extra=extra,
+                delay_ns=150)
     client = app.test_client()
     other = copy.deepcopy(extra); other[1]['amp'] = .4
     stale = _confirmed(client, dict(body, extra=other))
@@ -138,6 +169,9 @@ def test_route_runs_every_port_and_binds_each_value(spec, tmp_path, monkeypatch)
     assert r.status_code == 200, r.json
     plays = captured['meta']['plan']['plays']
     assert [p['port'] for p in plays] == [['con2', 3, 5], ['con2', 3, 6], ['con1', 1, 4]]
+    assert [p['delay_ns'] for p in plays] == [150, 170, 0]  # each LF delay reached the builder
+    moved = _confirmed(client, dict(body, delay_ns=151))
+    assert client.post('/port-play/run', json=dict(moved, delay_ns=150)).status_code == 400
     assert 'PLAYS = ' in captured['script']
     too_many = dict(body, extra=extra + [dict(extra[0], port=7)])
     assert client.post('/port-play/confirm', json=dict(too_many, hardware_ok=True)).status_code == 400

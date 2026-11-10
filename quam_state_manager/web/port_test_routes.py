@@ -129,8 +129,11 @@ def _entry(src) -> dict:
     if src.get("kind") == "mw":
         return {"kind": "mw", "port": _port_args(src) or [], "band": src.get("band"), "lo_hz": src.get("lo_hz"),
                 "if_hz": src.get("if_hz"), "fsp": src.get("full_scale_power_dbm"), "amp": src.get("amp")}
-    return {"kind": "lf", "port": _port_args(src) or [], "offset": src.get("offset"),
-            "output_mode": src.get("output_mode", "direct")}
+    entry = {"kind": "lf", "port": _port_args(src) or [], "offset": src.get("offset"),
+             "output_mode": src.get("output_mode", "direct")}
+    if src.get("delay_ns") is not None:
+        entry["delay_ns"] = src.get("delay_ns")
+    return entry
 
 
 def _extra(data) -> list:
