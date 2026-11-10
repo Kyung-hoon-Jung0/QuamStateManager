@@ -117,6 +117,107 @@
   // MW-FEM output: a CW tone. Limits mirror core/port_test.py mw_params (QM docs,
   // Guides/opx1000_fems.md "Bands", "Upconverters and Downconverters", "Output Power");
   // the server re-checks every field. Nothing is saved: the tone has no stored state.
+  // "Play together" (decisions_multi D-1): up to 2 more outputs in the same QM and
+  // program. Only rows that exist reach the request (`extra`); none = a one-port play.
+  var MAX_PORTS = 3;
+  function outputsOf(spec) {
+    var list = [];
+    ((spec.instruments || {}).controllers || []).forEach(function (c) {
+      (c.fems || []).forEach(function (f) {
+        if (f.fem !== 'lf' && f.fem !== 'mw') return;
+        for (var p = 1; p <= 8; p++)
+          list.push({con: 'con' + String(c.con).replace(/^con/, ''), slot: Number(f.slot), port: p, kind: f.fem});
+      });
+    });
+    return list;
+  }
+  function pinOf(o) { return o.con + '/' + o.slot + '/' + o.port; }
+  function addTogether(node, own, source) {
+    var sec = document.createElement('section');
+    sec.className = 'ui-item'; sec.setAttribute('data-together', '');
+    sec.innerHTML = '<div class="ui-item-head"><h4 class="ui-item-title">Play together</h4></div>' +
+      '<p class="ui-note">Other outputs that play in the same QM and program as this one, all starting together. ' +
+      'Stop and Close QM stop every port.</p><div data-rows></div>' +
+      '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-add-port>+ Add port</button></div>';
+    var first = node.querySelector('.ui-dialog-body > section');
+    first.parentNode.insertBefore(sec, first.nextSibling);
+    var rows = sec.querySelector('[data-rows]'), add = sec.querySelector('[data-add-port]');
+    function chosen() {
+      var used = [own];
+      rows.querySelectorAll('[data-row]').forEach(function (r) { used.push(r.querySelector('[data-pin]').value); });
+      return used;
+    }
+    function sync() {
+      var n = rows.querySelectorAll('[data-row]').length;
+      add.disabled = n >= MAX_PORTS - 1;
+      add.title = add.disabled ? 'At most ' + MAX_PORTS + ' ports play together.' : '';
+    }
+    function fields(row, kind) {
+      var box = row.querySelector('[data-fields]');
+      box.innerHTML = kind === 'mw'
+        ? '<label>Band<select data-band><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>' +
+          '<label>LO (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
+          '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" value="50" required></label>' +
+          '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
+          '<label>Amplitude (|a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>'
+        : '<label>Output mode<select data-mode><option value="direct">direct</option><option value="amplified">amplified</option></select></label>' +
+          '<label>Offset (V)<input data-offset type="number" step="0.000001" value="0" required></label>';
+    }
+    add.onclick = function () {
+      if (rows.querySelectorAll('[data-row]').length >= MAX_PORTS - 1) return;
+      var used = chosen(), all = outputsOf(source.spec());
+      var free = all.filter(function (o) { return used.indexOf(pinOf(o)) < 0; });
+      if (!free.length) { add.title = 'No other output is free.'; return; }
+      var row = document.createElement('div');
+      row.className = 'ui-field-grid'; row.setAttribute('data-row', '');
+      row.innerHTML = '<label>Port<select data-pin></select></label><span data-fields class="ui-field-grid"></span>' +
+        '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-remove>Remove</button></div>';
+      var sel = row.querySelector('[data-pin]');
+      all.forEach(function (o) {
+        if (pinOf(o) === own) return;
+        var opt = document.createElement('option');
+        opt.value = pinOf(o); opt.textContent = pinOf(o) + ' (' + o.kind.toUpperCase() + ')';
+        opt.setAttribute('data-kind', o.kind);
+        sel.appendChild(opt);
+      });
+      sel.value = pinOf(free[0]);
+      fields(row, free[0].kind);
+      sel.onchange = function () { fields(row, sel.selectedOptions[0].getAttribute('data-kind')); };
+      row.querySelector('[data-remove]').onclick = function () { row.remove(); sync(); };
+      rows.appendChild(row); sync();
+    };
+    sync();
+    return function () {
+      var out = [], seen = [own];
+      rows.querySelectorAll('[data-row]').forEach(function (row) {
+        var sel = row.querySelector('[data-pin]'), pin = sel.value, parts = pin.split('/');
+        if (seen.indexOf(pin) >= 0) throw new Error('Port ' + pin + ' is chosen twice.');
+        seen.push(pin);
+        var kind = sel.selectedOptions[0].getAttribute('data-kind');
+        var q = function (s) { return row.querySelector(s); };
+        var e = {kind: kind, con: parts[0], slot: Number(parts[1]), port: Number(parts[2])};
+        if (kind === 'mw') {
+          var vals = ['[data-lo]', '[data-if]', '[data-fsp]', '[data-amp]'].map(function (s) { return q(s).value; });
+          if (vals.some(function (v) { return v === '' || !Number.isFinite(Number(v)); }))
+            throw new Error('Port ' + pin + ': enter LO, IF, full-scale power and amplitude.');
+          Object.assign(e, {band: Number(q('[data-band]').value), lo_hz: Number(vals[0]) * 1e9,
+            if_hz: Number(vals[1]) * 1e6, full_scale_power_dbm: Number(vals[2]), amp: Number(vals[3])});
+        } else {
+          var v = q('[data-offset]').value, mode = q('[data-mode]').value, limit = mode === 'amplified' ? 2.5 : 0.5;
+          if (v === '' || !Number.isFinite(Number(v))) throw new Error('Port ' + pin + ': enter an offset.');
+          if (Math.abs(Number(v)) > limit) throw new Error('Port ' + pin + ': ' + mode + ' mode requires |offset| <= ' + limit + ' V.');
+          Object.assign(e, {output_mode: mode, offset: Number(v)});
+        }
+        out.push(e);
+      });
+      return out;
+    };
+  }
+  function withExtra(data, extras) {
+    var e = extras();
+    if (e.length) data.extra = e;
+    return data;
+  }
   var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
   function mwPower(fsp, amp) {
     return amp === 0 ? null : fsp + 20 * Math.log10(Math.abs(amp));
@@ -149,6 +250,7 @@
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); };
     $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / OUT ' + port.port + ' (MW)';
+    var extras = addTogether(node, 'con' + con + '/' + port.slot + '/' + port.port, source);
     function message(value) { $('[data-message]').textContent = value; }
     function params() {
       var band = Number($('[data-band]').value), lo = Number($('[data-lo]').value);
@@ -164,9 +266,9 @@
       if (!Number.isInteger(fsp) || fsp < -11 || fsp > 18) throw new Error('Full-scale power must be an integer -11..18 dBm.');
       if (!(Math.abs(amp) < 1)) throw new Error('Amplitude must satisfy |amp| < 1 (fraction of full scale).');
       if (!seconds.checkValidity()) throw new Error('Enter a maximum time in (0, 3600] seconds.');
-      return {kind: 'mw', con: 'con' + con, slot: port.slot, port: port.port, band: band, lo_hz: lo * 1e9,
+      return withExtra({kind: 'mw', con: 'con' + con, slot: port.slot, port: port.port, band: band, lo_hz: lo * 1e9,
         if_hz: ifm * 1e6, full_scale_power_dbm: fsp, amp: amp, hardware_ok: !!$('[data-hwok]').checked,
-        max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
+        max_s: Number(seconds.value), spec: source.spec(), python: source.python()}, extras);
     }
     function showPower() {
       var fsp = Number($('[data-fsp]').value), amp = Number($('[data-amp]').value);
@@ -236,7 +338,8 @@
       return {con: 'con' + con, slot: port.slot, port: port.port, offset: Number(input.value),
         output_mode: mode, hardware_ok: !!$('[data-hwok]').checked, max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
     }
-    wirePlay(node, params, message, lock);
+    var extras = addTogether(node, pin, source);
+    wirePlay(node, function () { return withExtra(params(), extras); }, message, lock);
     $('[data-save]').onclick = function () {
       try {
         var data = params(), spec = source.spec();

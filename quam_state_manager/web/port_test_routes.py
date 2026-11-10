@@ -111,6 +111,9 @@ def _play_binding(data) -> str:
     except (TypeError, ValueError):
         raise pt.PortTestError("Offset and max time must be numbers.") from None
     target = {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")}
+    extra = _extra(data)
+    if extra:
+        return _binding({"multi": _multi_binding(data, extra), "seconds": seconds}, target)
     if data.get("kind") == "mw":
         # An MW play authorizes exactly these tone parameters (validated here too).
         p = pt.mw_params(data.get("band"), data.get("lo_hz"), data.get("if_hz"),
@@ -119,6 +122,31 @@ def _play_binding(data) -> str:
                          **{k: p[k] for k in ("band", "lo", "if", "full_scale_power_dbm", "amp")}}, target)
     return _binding({"port": _port_args(data), "offset": offset, "seconds": seconds,
                      "mode": str(data.get("output_mode") or "direct")}, target)
+
+
+def _entry(src) -> dict:
+    """One port of a play request as a ``build_wizard_multi`` entry."""
+    if src.get("kind") == "mw":
+        return {"kind": "mw", "port": _port_args(src) or [], "band": src.get("band"), "lo_hz": src.get("lo_hz"),
+                "if_hz": src.get("if_hz"), "fsp": src.get("full_scale_power_dbm"), "amp": src.get("amp")}
+    return {"kind": "lf", "port": _port_args(src) or [], "offset": src.get("offset"),
+            "output_mode": src.get("output_mode", "direct")}
+
+
+def _extra(data) -> list:
+    """The ports played together with the popup's own port (validated shape)."""
+    extra = data.get("extra")
+    if extra in (None, []):
+        return []
+    if not isinstance(extra, list) or len(extra) > pt.MAX_PLAY_PORTS - 1 or not all(isinstance(e, dict) for e in extra):
+        raise pt.PortTestError(f"At most {pt.MAX_PLAY_PORTS} ports can play together.")
+    return extra
+
+
+def _multi_binding(data, extra) -> str:
+    """Every port and value of a multi-port play, as the builder validated them."""
+    _cfg, plan = pt.build_wizard_multi(data.get("spec") or {}, [_entry(data)] + [_entry(e) for e in extra])
+    return json.dumps(plan["plays"], sort_keys=True, default=str)
 
 
 def _play_action(data) -> str:
@@ -180,7 +208,10 @@ def port_play_run():
     try:
         seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
         spec = data.get("spec") or {}
-        if data.get("kind") == "mw":
+        extra = _extra(data)
+        if extra:
+            cfg, plan = pt.build_wizard_multi(spec, [_entry(data)] + [_entry(e) for e in extra])
+        elif data.get("kind") == "mw":
             cfg, plan = pt.build_wizard_mw(spec, _port_args(data) or [], data.get("band"), data.get("lo_hz"),
                                           data.get("if_hz"), data.get("full_scale_power_dbm"), data.get("amp"))
         else:
