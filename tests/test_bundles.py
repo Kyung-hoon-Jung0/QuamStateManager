@@ -113,7 +113,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     assert "window.Bundles = (function () {" in app_js
     for token in ('["grid"]', '["pulses"]', '["generate"]', '["wiring"]', '["chipstatus", "components"]',
                   '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]',
-                  '["journal"]', '["opxmon"]', '["agent_setup"]', '["zline"]', '["czplan"]', '["cm6"]'):
+                  '["journal"]', '["opxmon"]', '["agent_setup"]', '["zline"]', '["czplan"]', '["cm6"]', '["portplay"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
     assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"
@@ -124,7 +124,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
                '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)(',
                # docs/173 partial-reached bundle pages (dry-run review round 1: the Agent home's
                # "Setup" link swapped a shell that stayed on "Loading..." -- no entry, no script)
-               '/^\\/journal(', '/^\\/agent\\/setup(', '/^\\/zline(', '/^\\/cz-plan('):
+               '/^\\/journal(', '/^\\/agent\\/setup(', '/^\\/zline(', '/^\\/cz-plan(', '/^\\/port-play('):
         assert rx in app_js, rx
 
 

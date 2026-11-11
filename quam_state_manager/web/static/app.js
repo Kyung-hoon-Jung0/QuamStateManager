@@ -9256,6 +9256,7 @@ window.Bundles = (function () {
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
         [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
+        [/^\/port-play(\/|$|\?)/, ["portplay"]],
         [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],

@@ -15,6 +15,9 @@ w.fetch = (u, init) => {
   if (/\/port-play\/run$/.test(url)) return answer(replies.run.shift() || {ok: true, id: 'r1'});
   if (/\/port-test\/status/.test(url)) return answer(replies.status.length > 1 ? replies.status.shift() : replies.status[0] || {state: 'none'});
   if (/\/stop$/.test(url)) return answer({ok: true, stopping: false});
+  if (/\/port-play\/sim-check$/.test(url)) return answer(replies.simCheck || {ok: true, saas: true, reason: null});
+  if (/\/port-play\/script\.py$/.test(url)) return Promise.resolve({ok: true, headers: {get: () => 'attachment; filename="port_play_x.py"'},
+    blob: () => Promise.resolve('print(1)')});
   return new Promise(() => {});
 };
 w.Plotly = {newPlot(div, data, layout) { plots.push({div, data, layout}); }};
@@ -186,7 +189,7 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   pickPin(rowsOf(p)[0], 'con1/3/5');
   p.querySelector('[data-add-port]').click(); pickPin(rowsOf(p)[1], 'con1/1/1');
   const tr = (con, slot, port, kind, member, peak, edge) => Object.assign({con, slot, port, kind, member, peak, n: 4, step: 1,
-    first_edge_ns: edge, re: [0, peak, peak, 0]}, kind === 'mw' ? {im: [0, 0, 0, 0]} : {});
+    first_edge_ns: edge, re: [0, peak, peak, 0]}, kind === 'mw' ? {im: [0, 0, 0, 0]} : {rate: 2e9});
   const simRes = id => ({state: 'done', id, meta: {plan: {expected_peak: null, plays: [{con: 'con1', slot: 3, port: 5, expected_peak: 0},
     {con: 'con1', slot: 1, port: 1, expected_peak: 0.1}]}}, result: {ok: true, simulated: true, backend_label: 'Sim',
     traces: {'con1:3-5': tr('con1', 3, 5, 'lf', true, 0.2, 161), 'con1:1-1-1': tr('con1', 1, 1, 'mw', true, 0.1, 0),
@@ -201,6 +204,7 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(plots.every(x => { const r = x.layout.yaxis.range, ys = [].concat(...x.data.map(t => t.y));
     return Array.isArray(r) && r.length === 2 && r.every(Number.isFinite) && r[0] <= Math.min(...ys) && r[1] >= Math.max(...ys); }), 'D-13 one shared y range per kind');
   ok(/ns/.test(lfPlot.layout.xaxis.title.text), 'D-13 x axis in ns');
+  ok(lfPlot.data[0].x[1] === 0.5 && mwPlot.data[0].x[1] === 1, 'S2 rate: x axis is real ns (2 GSa/s -> 0.5 ns)');
   const simRows = box.querySelectorAll('[data-sim-table] [data-sim-port]');
   ok(simRows.length === 2 && /AO 5/.test(simRows[0].textContent) && /161/.test(simRows[0].textContent), 'D-13 per-port table in set order');
   ok(/-161/.test(simRows[1].textContent) && /0\.1000/.test(simRows[1].textContent), 'D-13 delta to row 1 and expected per port');
@@ -220,6 +224,30 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
      row.querySelector('[data-fsp]').value === '4' && !row.querySelector('[data-chip-badge]').hidden &&
      !p.querySelector('[data-chip-note]').hidden, 'D-25 chip values prefill');
   PP.close(); delete source.chipPort;
+
+  // Integration (S1 <-> S2): waveform / sim_ns reach the request; sim-check gates Simulate; script export.
+  fresh(MW3); p = openAt(3, 5, 'lf');
+  p.querySelector('[data-hwok]').checked = true;
+  p.querySelector('[data-play]').click(); await sleep(10);
+  b = confirmBody();
+  ok(!('waveform' in b) && !('sim_ns' in b), 'D-18 default request carries no waveform/sim_ns');
+  p.querySelector('[data-waveform]').value = 'edge'; set(p.querySelector('[data-sim-ns]'), '20000');
+  replies.run.push({ok: true, id: 'e1'}); replies.status = [{state: 'none'}];
+  p.querySelector('[data-sim]').click(); await sleep(10);
+  b = confirmBody();
+  ok(b.waveform === 'edge' && b.sim_ns === 20000, 'D-18 edge + sim_ns sent');
+  w.URL.createObjectURL = () => 'blob:x'; w.URL.revokeObjectURL = () => {};
+  p.querySelector('[data-script]').click(); await sleep(10);
+  const sc = calls.filter(c => /script\.py$/.test(c.url)).pop();
+  ok(sc && sc.body.waveform === 'edge' && sc.body.port === 5, 'D-21 script export posts the play request');
+  ok(/Script downloaded: port_play_x\.py/.test(p.querySelector('[data-message]').textContent), 'D-21 download named');
+  ok(!p.querySelector('[data-sim]').disabled, 'D-19 Simulate enabled when a simulator exists');
+  PP.close();
+  replies.simCheck = {ok: true, saas: false, local_host: null, reason: 'Simulate needs a QOP host in step 2.'};
+  fresh(MW3); p = openAt(3, 5, 'lf'); await sleep(10);
+  ok(p.querySelector('[data-sim]').disabled && p.querySelector('[data-sim]').title === 'Simulate needs a QOP host in step 2.' &&
+     !p.querySelector('[data-sim-reason]').hidden, 'D-19 Simulate disabled with the reason');
+  PP.close(); delete replies.simCheck;
   console.log('port play set selfcheck ok (' + n + ' assertions)');
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

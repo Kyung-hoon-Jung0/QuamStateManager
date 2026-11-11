@@ -99,6 +99,7 @@ console.log('port_play_selfcheck: passed');
   const reply = (obj, extra) => Promise.resolve(Object.assign({ok: true, json: () => Promise.resolve(obj)}, extra || {}));
   w.fetch = (u, opt) => {
     const url = String(u), body = opt && opt.body ? JSON.parse(opt.body) : null;
+    if (url.endsWith('/port-play/sim-check')) return reply({ok: true, saas: true, reason: null});  // D-19 probe on open, not a play request
     calls.push({url, body});
     if (url.endsWith('/loopcal/confirm')) return reply({ok: true, token: 'tok'});
     if (url.endsWith('/loopcal/run')) return reply({ok: true, id: 'cal1'});
@@ -162,6 +163,7 @@ console.log('port_play_selfcheck: passed');
   let stopReply = {ok: true, stopping: true};
   w.fetch = (u, opt) => {
     const url = String(u), body = opt && opt.body ? JSON.parse(opt.body) : null;
+    if (url.endsWith('/port-play/sim-check')) return reply({ok: true, saas: true, reason: null});  // D-19 probe on open, not a play request
     calls.push({url, body});
     if (url.endsWith('/port-play/confirm')) return reply({ok: true, token: 'otok'});
     if (url.endsWith('/port-play/run')) return reply({ok: true, id: 'open1'});

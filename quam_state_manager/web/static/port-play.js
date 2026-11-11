@@ -97,7 +97,8 @@
     return re.map(function (v, i) { return Math.sqrt(v * v + (im[i] || 0) * (im[i] || 0)); });
   }
   function draw(div, kind, infos) {
-    var step = function (i) { return Number(i.t.step) || 1; };
+    // S2's runner reports each trace's sampling rate; the x axis is real ns, not sample index.
+    var step = function (i) { var r = Number(i.t.rate); return (Number(i.t.step) || 1) * (r > 0 ? 1e9 / r : 1); };
     var data = infos.map(function (i) {
       var ys = ysOf(i);
       return {type: 'scatter', mode: 'lines', name: i.label || i.key,
@@ -370,13 +371,17 @@
       '<button type="button" class="btn-sm outline" data-apply-kind="mw">Apply to all MW rows</button></div>' +
       '<div class="ui-field-grid">' +
       '<label>Auto-stop after (s), whole run<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
-      '<label>Instrument max input (dBm), optional<input data-max-in type="number" step="0.1"></label></div>' +
+      '<label>Instrument max input (dBm), optional<input data-max-in type="number" step="0.1"></label>' +
+      '<label>Waveform<select data-waveform><option value="">' + (lf ? 'DC at the offset' : 'CW tone') + ' (default)</option>' +
+      '<option value="edge">Edge: 1000 ns on every 10000 ns</option></select></label>' +
+      '<label>Simulation length (ns), optional<input data-sim-ns type="number" min="1000" max="200000" step="1"></label></div>' +
       '<div class="ui-callout ui-callout--danger" data-power-warn hidden><p class="ui-callout-text"></p></div></section>' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Safety</h4></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a ' + (lf ? 'scope' : 'spectrum analyser or scope') +
       ' is on every port of this play</label>' +
       '<p class="ui-note">Play: ' + (lf ? 'LF ports go to their offsets' : 'CW tones at LO + IF') +
       '. Stop: outputs off. Simulate: the same program on a simulator (no hardware, no safety box).</p>' +
+      '<p class="ui-note" data-sim-reason hidden></p>' +
       '<p class="ui-note" role="status" data-message></p><div data-error hidden></div>' +
       (source.setCheck ? '<div class="ui-actions ui-actions--start" data-check>' +
         '<button type="button" class="btn-sm outline" data-verdict="ok">\u2713 Works</button>' +
@@ -406,7 +411,8 @@
       '<div class="ui-dialog-foot" data-foot><div class="ui-actions ui-actions--start" data-run-actions>' +
       '<button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button></div>' +
-      '<div class="ui-actions"><button type="button" class="btn-sm outline" data-sim>Simulate (no hardware)</button>' +
+      '<div class="ui-actions"><button type="button" class="btn-sm outline" data-script title="The Python program this play would run">Download script</button>' +
+      '<button type="button" class="btn-sm outline" data-sim>Simulate (no hardware)</button>' +
       '<button type="button" class="btn-sm outline" data-close>Close</button></div></div></article>';
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); };
@@ -727,7 +733,16 @@
     function common() {
       var seconds = $('[data-seconds]');
       if (!seconds.checkValidity() || seconds.value === '') throw new Error('Enter an auto-stop time in (0, 3600] seconds.');
-      return {hardware_ok: !!$('[data-hwok]').checked, max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
+      var out = {hardware_ok: !!$('[data-hwok]').checked, max_s: Number(seconds.value), spec: source.spec(), python: source.python()};
+      // D-18 (client half): only a non-default choice is sent, so a dc/cw request is unchanged.
+      if ($('[data-waveform]').value === 'edge') out.waveform = 'edge';
+      var ns = $('[data-sim-ns]');
+      if (ns.value !== '') {
+        var v = Number(ns.value);
+        if (!Number.isInteger(v) || v < 1000 || v > 200000) throw new Error('Simulation length must be a whole number of ns in 1000..200000.');
+        out.sim_ns = v;
+      }
+      return out;
     }
     function params() {
       var list = rowList();
@@ -751,6 +766,30 @@
       members: function () { return rowList().map(function (r) { return {pin: r.querySelector('[data-pin]').value, label: portLabel(rowPort(r))}; }); }};
     var lock = {busy: false};
     wirePlay(node, params, ui, lock);
+    // D-21 (client half): the program this play would run, from the same request as Play.
+    $('[data-script]').onclick = function () {
+      var data;
+      try { data = params(); } catch (e) { refuse(e.message); return; }
+      data.action = 'play';
+      fetch('/port-play/script.py', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || 'Could not build the script.'); });
+          var name = (/filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'port_play.py';
+          return r.blob().then(function (b) {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click();
+            setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+            message('Script downloaded: ' + name);
+          });
+        }).catch(function (e) { refuse(e.message); });
+    };
+    // D-19 (client half): Simulate is disabled with the server's reason when nothing can simulate.
+    fetch('/port-play/sim-check', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({spec: source.spec()})})
+      .then(function (r) { return r.json(); }).then(function (j) {
+        if (dialog !== node || !j || !j.reason) return;
+        var b = $('[data-sim]'), note = $('[data-sim-reason]');
+        b.disabled = true; b.title = j.reason; note.textContent = j.reason; note.hidden = false;
+      }).catch(function () { /* the run itself still refuses with the same sentence */ });
 
     // ---- D-26 (S1 half): previous / next output on the same FEM order ----
     function step(d) {

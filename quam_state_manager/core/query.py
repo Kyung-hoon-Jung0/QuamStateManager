@@ -1066,6 +1066,7 @@ class QueryEngine:
                 "sampling_rate": _pv("sampling_rate"),
                 "output_mode": _pv("output_mode"),
                 "upsampling_mode": _pv("upsampling_mode"),
+                "offset": _pv("offset"),
                 **extra,
             })
 
