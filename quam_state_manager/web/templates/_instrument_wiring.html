@@ -38,12 +38,24 @@
         var cell = e.target && e.target.closest ? e.target.closest('.iw-port[data-con]') : null;
         var btn = document.getElementById('popup-port-test');
         if (!cell || !btn || !cell.querySelector('.iw-port-circle')) return;
+        var play = document.getElementById('popup-port-play');
+        if (play) play.setAttribute('data-pin', String(cell.getAttribute('data-con')) + '/' +
+            (cell.getAttribute('data-slot') || '') + '/' + cell.getAttribute('data-port'));
         btn.setAttribute('data-q', 'con=' + encodeURIComponent(cell.getAttribute('data-con')) +
             '&slot=' + encodeURIComponent(cell.getAttribute('data-slot') || '') +
             '&port=' + encodeURIComponent(cell.getAttribute('data-port')) +
             '&io=' + encodeURIComponent(cell.getAttribute('data-io') || 'output'));
     });
 })();
+function openPortPlayPage(btn) {
+    var pin = btn.getAttribute('data-pin') || '';
+    var url = '/port-play' + (pin ? '?pin=' + encodeURIComponent(pin) : '');
+    var pop = document.getElementById('port-popup');
+    if (pop) pop.classList.add('hidden');
+    if (!window.htmx) { location.href = url; return; }
+    htmx.ajax('GET', url, {target: '#table-pane', swap: 'innerHTML'})
+        .then(function () { history.pushState({}, '', url); });
+}
 function openPortTest(btn) {
     var q = btn.getAttribute('data-q');
     if (!q || !window.htmx) return;
@@ -62,7 +74,10 @@ function openPortTest(btn) {
     </div>
     <div id="popup-body" class="port-popup-body"></div>
     <div class="port-popup-actions"><button type="button" class="btn-sync" id="popup-port-test"
-        onclick="openPortTest(this)" title="Download a CW / pulse-train / loopback test script for this port, or run it on the simulator or an OPX">Test this port &rarr;</button></div>
+        onclick="openPortTest(this)" title="Download a CW / pulse-train / loopback test script for this port, or run it on the simulator or an OPX">Test this port &rarr;</button>
+        <button type="button" class="btn-sync" id="popup-port-play"
+        onclick="openPortPlayPage(this)" title="Play live outputs on this port and others together, or simulate them">Play this port &rarr;</button></div>
+    <p class="ui-note" data-pp-tell-apart>Test = scripts, pulse trains and loopback for one port. Play = live outputs, several ports together, simulation.</p>
 </div>
 
 <!-- JSON drill-down panel -->
