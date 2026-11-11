@@ -62,7 +62,7 @@ assert(mwCell && mwCell.querySelector('.port-play-anchor button'), 'MW output ha
 mwCell.querySelector('button').click();
 popup = d.getElementById('port-play-dialog');
 assert(popup.open, 'MW popup opens');
-assert.equal(popup.querySelector('#port-play-title').textContent, 'con2 / FEM 1 / OUT 4 (MW)');
+assert.equal(popup.querySelector('#port-play-title').textContent, 'con2 · FEM 1 · OUT 4 (MW)');
 for (const f of ['band', 'lo', 'if', 'fsp', 'amp', 'seconds', 'hwok'])
   assert(popup.querySelector('[data-' + f + ']'), 'MW field ' + f);
 assert(!popup.querySelector('[data-offset]') && !popup.querySelector('[data-save]'), 'no offset/Save on MW');
@@ -172,7 +172,9 @@ console.log('port_play_selfcheck: passed');
   cell.querySelector('button').click();
   const p2 = d.getElementById('port-play-dialog'), r = s => p2.querySelector(s);
   const order = [...p2.querySelectorAll('[data-qm-actions] button')].map(b => b.textContent);
-  assert.deepEqual(order.slice(0, 3), ['Open QM', 'Close QM', 'Play'], 'three buttons in order: ' + order);
+  // S1 D-9/D-10: Open/Close QM sit under "Hold the QM open"; Play lives in the dialog foot.
+  assert.deepEqual(order.slice(0, 2), ['Open QM', 'Close QM'], 'QM buttons in order: ' + order);
+  assert(p2.querySelector('.ui-dialog-foot [data-play]'), 'Play in the foot');
   r('[data-hwok]').checked = true; r('[data-mode]').value = 'direct'; r('[data-offset]').value = '0.1';
   statusReply = {state: 'running'};
   r('[data-open-qm]').click();

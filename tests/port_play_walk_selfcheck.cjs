@@ -88,7 +88,7 @@ const ok = (c, m) => { assert(c, m); n++; };
   ok(!box.hidden, 'F2 sim result shown');
   ok(/Simulation, not hardware/.test(box.textContent), 'F2 labelled as simulation');
   ok(/QM-SaaS/.test(box.textContent), 'F2 names the simulator');
-  ok(box.querySelectorAll('[data-sim-port]').length === 1 && box.querySelector('svg.pt-trace path.pt-re'), 'F2 one analog trace plotted');
+  ok(box.querySelectorAll('[data-sim-port]').length === 1 && box.querySelector('[data-sim-fig="lf"]'), 'F2 one analog trace plotted');
   ok(/Simulation finished: no hardware/.test(p.querySelector('[data-message]').textContent), 'F2 message says no hardware');
   // A hardware Play still needs the box.
   calls.length = 0;
@@ -103,7 +103,7 @@ const ok = (c, m) => { assert(c, m); n++; };
   await sleep(60);
   ok(p.querySelector('[data-message]').textContent === 'Stopped.', 'F1 stopped wins over the error: ' +
      p.querySelector('[data-message]').textContent);
-  ok(box.hidden, 'F1/F2 a new press clears the previous simulation');
+  ok(box.hidden && !p.querySelector('[data-sim-prev]').hidden, 'F1/F2 a new press moves the previous simulation aside (S1 D-8)');
 
   // F5: Play while our previous play stops: one 409, then wait on status, then ONE more run.
   calls.length = 0;
@@ -124,22 +124,22 @@ const ok = (c, m) => { assert(c, m); n++; };
   ok(/50 MHz - 5\.5 GHz/.test(p.querySelector('[data-band]').textContent), 'own band select ranges');
   const sec = p.querySelector('[data-together]');
   sec.querySelector('[data-add-port]').click();
-  const row = sec.querySelector('[data-row]');
+  const row = sec.querySelectorAll('[data-row]')[1];
   const pin = row.querySelector('[data-pin]');
   const mwOpt = Array.from(pin.options).find(o => o.getAttribute('data-kind') === 'mw');
   pin.value = mwOpt.value; pin.dispatchEvent(new w.Event('change'));
   const opts = Array.from(row.querySelectorAll('[data-band] option')).map(o => o.textContent);
   ok(opts.length === 3 && opts.every(t => /GHz/.test(t)), 'F6 row band options carry ranges: ' + opts);
   const line = row.querySelector('[data-line]');
-  ok(row.classList.contains('pt-card') && line.classList.contains('pt-row') && sec.classList.contains('port-test'), 'F6 one card + one line per port');
-  ok(line.lastElementChild.matches('[data-remove]'), 'F6 Remove is the last item of its own row');
-  ok(line.querySelectorAll(':scope > label').length >= 5, 'F6 fields sit in the row');
+  ok(row.matches('tr') && line.classList.contains('pt-row') && sec.classList.contains('port-test'), 'F6 one table row per port (S1 D-3)');
+  ok(row.lastElementChild.querySelector('[data-remove]'), 'F6 Remove is the last cell of its own row');
+  ok(line.querySelectorAll(':scope > label').length >= 4, 'F6 fields sit in the row (LO/IF under Advanced, S1 D-11)');
   pin.value = Array.from(pin.options).find(o => o.getAttribute('data-kind') === 'lf').value;
   pin.dispatchEvent(new w.Event('change'));
-  ok(line.lastElementChild.matches('[data-remove]') && !row.querySelector('[data-band]') && row.querySelector('[data-offset]'),
+  ok(row.lastElementChild.querySelector('[data-remove]') && !row.querySelector('[data-band]') && row.querySelector('[data-offset]'),
      'F6 switching kind replaces the fields, Remove stays last');
   row.querySelector('[data-remove]').click();
-  ok(!sec.querySelector('[data-row]'), 'F6 Remove removes its row');
+  ok(sec.querySelectorAll('[data-row]').length === 1, 'F6 Remove removes its row');
   p.querySelector('[data-close]').click();
 
   // F8: the calibration message shows the live iteration.

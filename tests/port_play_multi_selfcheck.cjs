@@ -46,13 +46,11 @@ await play(popup);
 ok(lastPost().url === '/port-play/confirm' && !('extra' in lastPost().body) && !('delay_ns' in lastPost().body), 'no rows -> no extra key');
 G.state.spec.instruments.controllers = CTRL();
 add.click(); add.click();
-ok(sec.querySelectorAll('[data-row]').length === 2, 'two rows');
-ok(add.disabled && /At most 3/.test(add.title), 'third Add disabled with a reason');
-add.click();
-ok(sec.querySelectorAll('[data-row]').length === 2, 'still two rows');
-const rows = sec.querySelectorAll('[data-row]');
-const opts = Array.from(rows[0].querySelectorAll('[data-pin] option')).map(o => o.value);
-ok(!opts.includes('con2/3/5'), 'own port is not offered');
+ok(sec.querySelectorAll('[data-row]').length === 3, 'opener + two rows');
+ok(!/At most/.test(add.title) && !add.disabled, 'S1 D-1: no 3-port cap');
+const all = sec.querySelectorAll('[data-row]');
+ok(all[0].querySelector('[data-pin]').value === 'con2/3/5', 'opener is row 1');
+const rows = [all[1], all[2]];
 ok(rows[0].querySelector('[data-pin]').value !== rows[1].querySelector('[data-pin]').value, 'rows start on different ports');
 // first row -> an LF port with an offset, second row -> an MW port
 const pick = (row, pin) => { const s = row.querySelector('[data-pin]'); s.value = pin; s.dispatchEvent(new w.Event('change')); };
@@ -86,13 +84,14 @@ pick(rows[1], 'con1/3/2');
 await play(popup);
 ok(/twice/.test(popup.querySelector('[data-message]').textContent) && posted.length === count, 'duplicate refused client-side');
 rows[1].querySelector('[data-remove]').click();
-ok(sec.querySelectorAll('[data-row]').length === 1 && !add.disabled, 'Remove drops a row and re-enables Add');
+ok(sec.querySelectorAll('[data-row]').length === 2 && !add.disabled, 'Remove drops a row');
 await play(popup);
 ok(lastPost().body.extra.length === 1 && !('delay_ns' in lastPost().body) && !('delay_ns' in lastPost().body.extra[0]), 'one LF extra after Remove, no delay');
 ok(delays().every(i => i.closest('[data-delay-wrap]').hidden), 'LF-only play hides the delay');
 rows[0].querySelector('[data-remove]').click();
 await play(popup);
 ok(!('extra' in lastPost().body), 'all removed -> no extra key');
+w.sessionStorage.removeItem('quam_gen_port_play_set');
 popup.querySelector('[data-close]').click();
 
 // ---- MW popup ----
