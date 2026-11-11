@@ -115,8 +115,8 @@ def test_lf_delay_is_editable_and_validated(spec):
 
 @pytest.mark.parametrize('entries,words', [
     ([lf(['con1', 3, 1]), lf(['con1', 3, 1], .2)], 'twice'),
-    ([lf(['con1', 3, p]) for p in (1, 2, 3, 4)], 'At most 3'),
-    ([lf(['con1', 3, 1]), lf(['con1', 3, 2], 0.6)], 'Port 2'),
+    ([lf(['con1', 3, 1])] * 33, r'More outputs than this allocation has \(32\)'),
+    ([lf(['con1', 3, 1]), lf(['con1', 3, 2], 0.6)], 'con1/3/2: '),
     ([lf(['con1', 3, 1]), mw(['con1', 3, 2])], 'MW-FEM'),
     ([mw(['con1', 1, 2], band=1, lo=5e9), mw(['con1', 1, 3], band=2)], 'coupled'),
     ([mw(['con1', 1, 7], band=3, lo=8e9), mw(['con1', 1, 6], band=2)], 'coupled'),
@@ -173,7 +173,7 @@ def test_route_runs_every_port_and_binds_each_value(spec, tmp_path, monkeypatch)
     moved = _confirmed(client, dict(body, delay_ns=151))
     assert client.post('/port-play/run', json=dict(moved, delay_ns=150)).status_code == 400
     assert 'PLAYS = ' in captured['script']
-    too_many = dict(body, extra=extra + [dict(extra[0], port=7)])
+    too_many = dict(body, extra=[dict(extra[0], port=7)] * 32)
     assert client.post('/port-play/confirm', json=dict(too_many, hardware_ok=True)).status_code == 400
     dup = dict(body, extra=[dict(extra[0], port=5)])
     r = client.post('/port-play/confirm', json=dict(dup, hardware_ok=True))
@@ -196,3 +196,204 @@ def test_jsdom():
         pytest.skip('jsdom not installed')
     assert r.returncode == 0, r.stdout + r.stderr
     assert 'port play multi selfcheck ok' in r.stdout
+
+
+# ---- Stage S2 of the UX walk (D-14 .. D-22) ---------------------------------
+import ast
+import importlib.util
+import types
+
+import numpy as np
+
+
+def _runner():
+    spec_ = importlib.util.spec_from_file_location(
+        'run_port_test_s2', ROOT / 'quam_state_manager' / 'generator' / 'run_port_test.py')
+    mod = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(mod)
+    return mod
+
+
+def _chassis():
+    return {'network': {'host': 'scope-host'}, 'qubits': [],
+            'instruments': {'controllers': [{'con': 1, 'fems': [{'slot': 1, 'fem': 'lf'}, {'slot': 2, 'fem': 'mw'}]}]}}
+
+
+def test_d14_cap_is_every_output_of_the_allocation():
+    sp = _chassis()
+    assert pt.max_play_ports(sp) == 16
+    entries = [lf(['con1', 1, p], .01 * p) for p in range(1, 9)] + [mw(['con1', 2, p], band=2) for p in range(1, 9)]
+    cfg, plan = pt.build_wizard_multi(sp, entries)
+    assert len(cfg['elements']) == 16 and len(plan['plays']) == 16
+    with pytest.raises(pt.PortTestError, match='twice'):
+        pt.build_wizard_multi(sp, entries[:15] + [entries[0]])
+    with pytest.raises(pt.PortTestError, match=r'More outputs than this allocation has \(16\)\.'):
+        pt.build_wizard_multi(sp, entries + [lf(['con1', 1, 1])])
+
+
+def test_d15_refusals_name_the_pin():
+    sp = _chassis()
+    sp['instruments']['controllers'][0]['fems'][1] = {'slot': 2, 'fem': 'lf'}
+    with pytest.raises(pt.PortTestError, match='^con1/2/3: '):
+        pt.build_wizard_multi(sp, [lf(['con1', 2, 1]), lf(['con1', 2, 3], 0.9)])
+    with pytest.raises(pt.PortTestError, match='^con1/1/1: LF delay'):
+        pt.build_wizard_multi(_chassis(), [dict(lf(['con1', 1, 1]), delay_ns=-1), mw(['con1', 2, 1])])
+
+
+def test_d16_expectations_are_per_port(spec):
+    cfg, plan = pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .2), mw(['con1', 1, 4], amp=0.1)])
+    assert [p['expected_peak'] for p in plan['plays']] == [0.0, 0.1]
+    assert plan['expected_peak'] is None and plan['expected_dbm'] is None
+    script = pt.render_script(cfg, plan)
+    ast.parse(script)
+    assert "EXPECTED_PEAK = {'sm_port_play': 0.0, 'sm_port_play_2': 0.1}" in script
+
+
+class _Con:
+    def __init__(self, analog, rate=None):
+        self.analog, self.digital = analog, {}
+        self.analog_sampling_rate = rate or {k: 1e9 for k in analog}
+
+
+def test_d17_traces_are_labelled_and_members_marked(spec):
+    cfg, plan = pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .2), mw(['con1', 1, 4])])
+    mod = types.SimpleNamespace(CONFIG=cfg, PLAYS=[(p['element'], p['operation']) for p in plan['plays']])
+    samples = types.SimpleNamespace(con1=_Con({'3-1': np.full(50, .2), '3-2': np.full(50, .05),
+                                               '1-4': np.full(50, .5 + 0j)}))
+    tr = _runner()._traces(samples, mod)
+    assert {k: (v['con'], v['slot'], v['port'], v['kind'], v['member']) for k, v in tr.items()} == {
+        'con1:3-1': ('con1', 3, 1, 'lf', True), 'con1:3-2': ('con1', 3, 2, 'lf', False),
+        'con1:1-4': ('con1', 1, 4, 'mw', True)}
+    assert tr['con1:3-2']['key'] == 'con1:3-2'
+
+
+def test_d18_edge_waveform_and_first_edge(spec):
+    cfg0, plan0 = pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .2), mw(['con1', 1, 4], band=2)])
+    cfg, plan = pt.apply_edge(cfg0, plan0)
+    out = cfg['controllers']['con1']['fems']['3']['analog_outputs']['1']
+    assert out['offset'] == 0.0 and cfg['waveforms']['sm_port_play.zero']['sample'] == .2
+    assert plan['test'] == 'pulse' and plan['waveform'] == 'edge'
+    assert plan['period_ns'] + pt.CW_PULSE_NS == pt.DEFAULT_PERIOD_NS
+    delay = out['delay']
+    assert delay == pt.band_delay_ns(2)
+    script = pt.render_script(cfg, plan)
+    ast.parse(script)
+    assert 'wait(PERIOD_NS // 4, *[_el for _el, _op in PLAYS])' in script
+    with pytest.raises(pt.PortTestError, match='direct'):
+        pt.apply_edge(*pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .2, 'amplified'), mw(['con1', 1, 4])]))
+    # The runner's first edge on a simulated LF trace delayed by the LF port delay.
+    lf_tr = np.r_[np.zeros(delay), np.full(1000, .2)]
+    mw_tr = np.full(1000, .5 + 0j)
+    r = _runner()
+    assert r._first_edge_ns(lf_tr, 1e9) - r._first_edge_ns(mw_tr, 1e9) == delay
+    assert r._first_edge_ns(np.zeros(10), 1e9) is None
+
+
+def test_d18_route_binds_waveform_and_sim_ns_and_cw_is_unchanged(spec, tmp_path, monkeypatch):
+    from quam_state_manager.web import port_test_routes as routes
+    body = dict(spec=spec, con='con1', slot=3, port=1, offset=.1, max_s=12,
+                extra=[{'kind': 'mw', 'con': 'con1', 'slot': 1, 'port': 4, 'band': 2, 'lo_hz': 6e9,
+                        'if_hz': 5e7, 'full_scale_power_dbm': 1, 'amp': .3}])
+    assert routes._play_build(dict(body, waveform='cw')) == routes._play_build(body)
+    assert routes._play_binding(dict(body, waveform='cw')) == routes._play_binding(body)
+    assert routes._play_binding(dict(body, waveform='edge')) != routes._play_binding(body)
+    assert routes._play_binding(dict(body, sim_ns=8000)) != routes._play_binding(body)
+    for bad in (999, 200001, 1.5, True, 'x'):
+        with pytest.raises(pt.PortTestError, match='Simulation length'):
+            routes._play_options(dict(body, sim_ns=bad))
+    app, manager = _app(tmp_path, monkeypatch)
+    captured = {}
+    monkeypatch.setattr(manager, 'start', lambda python, script, request, meta: captured.update(
+        script=script, request=request, meta=meta) or {'id': 'mock'})
+    client = app.test_client()
+    run = dict(body, python=sys.executable, action='sim', waveform='edge')
+    tok = client.post('/port-play/confirm', json=run).json['token']
+    assert client.post('/port-play/run', json=dict(run, waveform='cw', confirm_token=tok)).status_code == 400
+    tok = client.post('/port-play/confirm', json=run).json['token']
+    r = client.post('/port-play/run', json=dict(run, confirm_token=tok))
+    assert r.status_code == 200, r.json
+    assert captured['request']['sim_ns'] == 2 * pt.DEFAULT_PERIOD_NS
+    assert captured['meta']['plan']['waveform'] == 'edge'
+
+
+def test_d19_sim_check_and_one_credentials_ladder(spec, tmp_path, monkeypatch):
+    from quam_state_manager.web import port_test_routes as routes
+    for k in ('SAAS_EMAIL', 'SAAS_PASSWORD', 'SAAS_HOST'):
+        monkeypatch.delenv(k, raising=False)
+    app, manager = _app(tmp_path, monkeypatch)
+    client = app.test_client()
+    r = client.post('/port-play/sim-check', json={'spec': {'network': {}}}).json
+    assert r['saas'] is False and r['local_host'] is None and 'Simulate needs a QOP host' in r['reason']
+    r = client.post('/port-play/sim-check', json={'spec': spec}).json
+    assert r['local_host'] == 'scope-host' and r['reason'] is None
+    monkeypatch.setenv('SAAS_EMAIL', 'a@b.c')
+    monkeypatch.setenv('SAAS_PASSWORD', 'pw-env')
+    monkeypatch.setenv('SAAS_HOST', 'saas.example')
+    assert client.post('/port-play/sim-check', json={'spec': {}}).json['saas'] is True
+    # The Port test page's SaaS run takes the same environment credentials.
+    captured = {}
+    monkeypatch.setattr(routes, '_build', lambda data: ('print(1)\n', {'test': 'cw'}))
+    monkeypatch.setattr(routes.config_generator, 'get_selected_env', lambda inst: sys.executable)
+    monkeypatch.setattr(manager, 'start', lambda python, script, request, meta: captured.update(
+        request=request) or {'id': 'mock'})
+    r = client.post('/port-test/run', json={'target': 'saas'})
+    assert r.status_code == 200, r.json
+    assert captured['request']['target']['password'] == 'pw-env'
+
+
+def test_d19_runner_phase_on_fallthrough():
+    r = _runner()
+    phases = []
+    mod = types.SimpleNamespace(CALL_TIMEOUT_S=1, bounded=lambda f: f())
+
+    def no_answer(mod, t):
+        raise TimeoutError('no answer')
+
+    r.connection = no_answer
+    r.run_saas = lambda mod, t, req, update, stopping, phase='x': (update(phase=phase), {'ok': True})[1]
+    r.run_sim(mod, {'local': {'host': 'h'}, 'saas': {'email': 'e', 'host': 'h', 'password': 'p'}}, {},
+              lambda **k: phases.append(k.get('phase')), lambda: False)
+    assert phases[-1] == 'local simulator did not answer \u2014 starting QM-SaaS (about a minute)'
+
+
+def test_d20_connection_failure_is_a_sentence():
+    r = _runner()
+    QmServerDetectionError = type('QmServerDetectionError', (Exception,), {})
+    out = r.classify(QmServerDetectionError('failed to detect'), {'host': '10.0.0.5', 'cluster': 'c1'})
+    assert out == {'error_kind': 'connect', 'error': 'Could not reach the OPX at 10.0.0.5 (cluster c1).',
+                   'detail': 'QmServerDetectionError: failed to detect'}
+    other = r.classify(ValueError('bad'), {'host': 'h'})
+    assert other['error_kind'] == 'other' and other['detail'] == 'ValueError: bad'
+
+
+def test_d21_status_countdown_and_script_export(spec, tmp_path, monkeypatch):
+    app, manager = _app(tmp_path, monkeypatch)
+    client = app.test_client()
+    monkeypatch.setattr(manager, 'status', lambda rid=None: {'state': 'running', 'id': 'r1', 'meta': {'max_s': 12.0}})
+    manager.current = {'id': 'r1', 'started': 1234.5}
+    st = client.get('/port-test/status').json
+    assert st['started_at'] == 1234.5 and st['max_s'] == 12.0
+    body = dict(spec=spec, con='con1', slot=3, port=1, offset=.1, max_s=12,
+                extra=[{'kind': 'mw', 'con': 'con1', 'slot': 1, 'port': 4, 'band': 2, 'lo_hz': 6e9,
+                        'if_hz': 5e7, 'full_scale_power_dbm': 1, 'amp': .3},
+                       {'kind': 'lf', 'con': 'con2', 'slot': 3, 'port': 6, 'offset': .2}])
+    r = client.post('/port-play/script.py', json=body)
+    assert r.status_code == 200
+    text = r.get_data(as_text=True)
+    ast.parse(text)
+    for el in ('sm_port_play', 'sm_port_play_2', 'sm_port_play_3'):
+        assert f"'{el}'" in text
+
+
+def test_d22_busy_names_the_ports(spec, tmp_path, monkeypatch):
+    app, manager = _app(tmp_path, monkeypatch)
+    client = app.test_client()
+    body = dict(spec=spec, python=sys.executable, con='con2', slot=3, port=5, offset=.1, max_s=12)
+    run = _confirmed(client, body)
+    monkeypatch.setattr(manager, 'status', lambda rid=None: {'state': 'running', 'id': 'other'})
+    manager.current = {'id': 'other', 'play_owner': 'someone-else', 'meta': {'plan': {
+        'config_name': 'port-play-multi:x', 'plays': [{'port': ['con1', 1, 1]}, {'port': ['con1', 1, 2]}]}}}
+    r = client.post('/port-play/run', json=run)
+    assert r.status_code == 409
+    assert r.json['error'] == ('Busy: a port play is running on con1/1/1, con1/1/2 (another window). '
+                               'Stop it there first.')
