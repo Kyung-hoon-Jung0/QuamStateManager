@@ -4,18 +4,20 @@
     <h2 class="ui-head-title">Port test</h2>
     <button type="button" class="btn-sync" hx-get="/instrument" hx-target="#table-pane" hx-push-url="true">&larr; Instrument Wiring</button>
 </div>
+<p class="ui-note" data-pp-tell-apart>Port test = scripts, pulse trains and loopback for one port.
+   <a href="/port-play" hx-get="/port-play" hx-target="#table-pane" hx-push-url="true">Port play</a> = live outputs, several ports together, simulation.</p>
 
 {% if not pt_config %}
 <p class="ui-note">The port test is built from this chip's own generated config
    (<code>generate_config()</code> in the chip's env), and there is none yet.</p>
 <button type="button" class="btn-sync" hx-post="/config/regenerate" hx-target="#pt-gen-status"
         hx-indicator="#pt-gen-status">Generate the config now (about 10&ndash;30 s)</button>
-<div id="pt-gen-status" class="ui-note"></div>
+<div id="pt-gen-status" class="ui-note config-status-host"></div>
 {% else %}
 {% if pt_stale %}<p class="ui-note pt-warn">The generated config is older than the chip's current values.
   A test plays what the config says, so regenerate it first if you changed anything.
   <button type="button" class="btn-sync" hx-post="/config/regenerate" hx-target="#pt-gen-status">Regenerate</button></p>
-  <div id="pt-gen-status" class="ui-note"></div>{% endif %}
+  <div id="pt-gen-status" class="ui-note config-status-host"></div>{% endif %}
 
 {% if pt_port and not pt_element %}
   <p>Port <b>{{ pt_port | reject("equalto", "") | join("/") }}</b>:

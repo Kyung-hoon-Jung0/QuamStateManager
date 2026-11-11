@@ -139,6 +139,7 @@
         'czplan': ['coupler-units.js', 'topo-graph.js', 'cz-map.js', 'cz-plan.js'],
         'topo': ['topo-graph.js'],
         'wiring': ['topo-graph.js', 'wiring-grid.js'],
+        'portplay': ['topo-graph.js', 'wiring-grid.js', 'port-play.js'],
         'components': ['topo-graph.js', 'component-map.js', 'diagram-add.js'],
         'chipstatus': ['topo-graph.js', 'chip-status.js'],
         'generate': ['coupler-units.js', 'topo-graph.js', 'wiring-grid.js', 'pulses.js', 'gen-additions.js', 'gen-rules.js', 'port-play.js', 'generate.js', 'generate_preview.js'],
@@ -161,6 +162,7 @@
         'czplan': ['czplan', 'components'],
         'generate': ['generate'], 'regenerate': ['generate'],
         'instrument': ['wiring'],
+        'port_play': ['portplay'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
         'qubits': ['components'], 'pairs': ['components'], 'resonators': ['components'], 'flux': ['components'],
         'couplers': ['components'], 'qdac': ['components'],
@@ -685,6 +687,8 @@
                            type="button" class="nav-float-btn" title="Open as a floating panel (stays visible while you work elsewhere)"
                            aria-label="Open Instrument Wiring as a floating panel"
                            onclick="event.stopPropagation(); if (window.FloatWiring) FloatWiring.toggle(); return false;">&#10697;</button></li>
+                    <li data-nav-key="port_play"><a href="/port-play" hx-get="/port-play" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                           {% if page == 'port_play' %}class="active" {% endif %}title="Play live outputs on one or several ports, or simulate them">Port play</a></li>
                     <li class="nav-with-sub" data-nav-key="topology">
                         <div class="nav-sub-row">
                             <a data-nav-parent="true" href="/topology?view=overview" hx-get="/topology?view=overview" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Chip Status</a>
