@@ -353,7 +353,7 @@ def test_d19_runner_phase_on_fallthrough():
     r.run_saas = lambda mod, t, req, update, stopping, phase='x': (update(phase=phase), {'ok': True})[1]
     r.run_sim(mod, {'local': {'host': 'h'}, 'saas': {'email': 'e', 'host': 'h', 'password': 'p'}}, {},
               lambda **k: phases.append(k.get('phase')), lambda: False)
-    assert phases[-1] == 'local simulator did not answer — starting QM-SaaS (about a minute)'
+    assert phases[-1] == 'local simulator did not answer \u2014 starting QM-SaaS (about a minute)'
 
 
 def test_d20_connection_failure_is_a_sentence():
