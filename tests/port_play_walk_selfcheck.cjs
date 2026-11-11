@@ -130,9 +130,10 @@ const ok = (c, m) => { assert(c, m); n++; };
   pin.value = mwOpt.value; pin.dispatchEvent(new w.Event('change'));
   const opts = Array.from(row.querySelectorAll('[data-band] option')).map(o => o.textContent);
   ok(opts.length === 3 && opts.every(t => /GHz/.test(t)), 'F6 row band options carry ranges: ' + opts);
-  ok(row.classList.contains('pt-row') && sec.classList.contains('port-test'), 'F6 compact row part');
-  ok(row.lastElementChild.matches('[data-remove]'), 'F6 Remove is the row\'s own last item');
-  ok(!row.querySelector('[data-fields]') && row.querySelectorAll(':scope > label').length >= 5, 'F6 fields sit in the one row');
+  const line = row.querySelector('[data-line]');
+  ok(row.classList.contains('pt-card') && line.classList.contains('pt-row') && sec.classList.contains('port-test'), 'F6 one card + one line per port');
+  ok(line.lastElementChild.matches('[data-remove]'), 'F6 Remove is the last item of its own row');
+  ok(line.querySelectorAll(':scope > label').length >= 5, 'F6 fields sit in the row');
   pin.value = Array.from(pin.options).find(o => o.getAttribute('data-kind') === 'lf').value;
   pin.dispatchEvent(new w.Event('change'));
   ok(line.lastElementChild.matches('[data-remove]') && !row.querySelector('[data-band]') && row.querySelector('[data-offset]'),
