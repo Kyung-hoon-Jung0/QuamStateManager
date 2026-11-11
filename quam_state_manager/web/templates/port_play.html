@@ -70,7 +70,7 @@
   if (window.Bundles && window.Bundles.need) window.Bundles.need('portplay').then(draw, draw); else draw();
   var btn = document.getElementById('pp-test-conn'), out = document.getElementById('pp-conn-status');
   btn.onclick = function () {
-    out.textContent = 'Connecting…';
+    out.textContent = 'Connecting...';
     fetch('/port-play/test-connection', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({host: document.getElementById('pp-host').value.trim(),
                             cluster: document.getElementById('pp-cluster').value.trim(),
