@@ -135,7 +135,7 @@ const ok = (c, m) => { assert(c, m); n++; };
   ok(!row.querySelector('[data-fields]') && row.querySelectorAll(':scope > label').length >= 5, 'F6 fields sit in the one row');
   pin.value = Array.from(pin.options).find(o => o.getAttribute('data-kind') === 'lf').value;
   pin.dispatchEvent(new w.Event('change'));
-  ok(row.lastElementChild.matches('[data-remove]') && !row.querySelector('[data-band]') && row.querySelector('[data-offset]'),
+  ok(line.lastElementChild.matches('[data-remove]') && !row.querySelector('[data-band]') && row.querySelector('[data-offset]'),
      'F6 switching kind replaces the fields, Remove stays last');
   row.querySelector('[data-remove]').click();
   ok(!sec.querySelector('[data-row]'), 'F6 Remove removes its row');

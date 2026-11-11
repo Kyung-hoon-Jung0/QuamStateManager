@@ -274,7 +274,7 @@
           '<label>Offset (V)<input data-offset type="number" step="0.000001" value="0" required></label>' + DELAY_FIELD;
       var remove = row.querySelector('[data-remove]');
       Array.prototype.slice.call(tmp.children).forEach(function (el) {
-        el.setAttribute('data-field', ''); row.insertBefore(el, remove);
+        el.setAttribute('data-field', ''); remove.parentNode.insertBefore(el, remove);
       });
       refreshDelays();
     }
@@ -284,9 +284,10 @@
       var free = all.filter(function (o) { return used.indexOf(pinOf(o)) < 0; });
       if (!free.length) { add.title = 'No other output is free.'; return; }
       var row = document.createElement('div');
-      row.className = 'pt-row'; row.setAttribute('data-row', '');
-      row.innerHTML = '<label>Port<select data-pin></select></label>' +
-        '<button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button>';
+      // One bordered card per port; its fields and its own Remove share one line.
+      row.className = 'pt-card'; row.setAttribute('data-row', '');
+      row.innerHTML = '<div class="pt-row" data-line><label>Port<select data-pin></select></label>' +
+        '<button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button></div>';
       var sel = row.querySelector('[data-pin]');
       all.forEach(function (o) {
         if (pinOf(o) === own) return;
