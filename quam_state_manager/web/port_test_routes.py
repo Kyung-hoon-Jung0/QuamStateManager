@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+import os
 import secrets
 import time
 import json
@@ -153,8 +154,27 @@ def _multi_binding(data, extra) -> str:
 
 
 def _play_action(data) -> str:
-    """"open" holds a QM open with no program; anything else is a Play."""
-    return "open" if data.get("action") == "open" else "play"
+    """"open" holds a QM open with no program; "sim" simulates the Play program;
+    anything else is a Play."""
+    action = data.get("action")
+    return action if action in ("open", "sim") else "play"
+
+
+def _saas_credentials():
+    """QM-SaaS credentials for a simulated play: SM's own environment
+    (SAAS_EMAIL / SAAS_PASSWORD / SAAS_HOST) first, else the saved port-test
+    account. Never written anywhere; they ride the runner's stdin only."""
+    env = {k: os.environ.get("SAAS_" + k.upper(), "").strip() for k in ("email", "password", "host")}
+    if all(env.values()):
+        return env
+    inst = current_app.instance_path
+    s = ptr.load_settings(inst)
+    pw, _where = ptr.load_password(inst, s)
+    saas = s.get("saas") or {}
+    if saas.get("email") and saas.get("host") and pw:
+        return {"email": saas["email"], "host": saas["host"], "password": pw,
+                "version": saas.get("version") or None}
+    return None
 
 
 def _play_owner() -> str:
@@ -165,7 +185,8 @@ def _play_owner() -> str:
 def port_play_confirm():
     """One-time, 60 s, owner- and port/value-bound token for one Play press."""
     data = json_object()
-    if data.get("hardware_ok") is not True:
+    # A simulation drives nothing, so it needs no safety box.
+    if _play_action(data) != "sim" and data.get("hardware_ok") is not True:
         return jsonify(ok=False, error="Confirm the port is safe to drive."), 400
     try:
         binding = _play_binding(data)
@@ -201,7 +222,7 @@ def port_play_run():
         if cur.get("id") == status.get("id") and cur.get("play_owner") == owner:
             # Only our own previous play is stopped; the client confirms again.
             manager.stop(status.get("id"), "Open QM again" if action == "open" else "Play again")
-            return jsonify(ok=False, stopping=True,
+            return jsonify(ok=False, stopping=True, id=status.get("id"),
                            error="Stopping the previous play; waiting for its QM to close."), 409
         return jsonify(ok=False, busy=True,
                        error="Busy: another port test is running. Stop it there first."), 409
@@ -225,10 +246,24 @@ def port_play_run():
             raise pt.PortTestError("Select a Python environment in step 1.")
         network = spec.get("network") or {}
         host = network.get("host")
+        local = {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}
+        if action == "sim":
+            saas = _saas_credentials()
+            if not host and not saas:
+                raise pt.PortTestError("Simulate needs a QOP host in step 2 (its simulator) or "
+                                       "QM-SaaS credentials (Settings, or SAAS_EMAIL / SAAS_PASSWORD / "
+                                       "SAAS_HOST in SM's environment).")
+            req = {"mode": "sim", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
+                   "target": {"local": local if host else None, "saas": saas}}
+            plan = dict(plan, open_only=False, simulated=True)
+            label = (host or "") + (" / QM-SaaS" if saas else "")
+            started = manager.start(python, pt.render_script(cfg, plan, run_program=True), req,
+                                    {"plan": plan, "target": "sim", "target_label": label.strip(" /")})
+            return jsonify(ok=True, simulated=True, **started)
         if not host:
             raise pt.PortTestError("Enter the network host in step 2.")
         req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
-               "target": {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}}
+               "target": local}
         plan = dict(plan, open_only=action == "open")
         started = manager.start(python, pt.render_script(cfg, plan, run_program=action == "play"), req,
                                 {"plan": plan, "target": "opx", "target_label": host})

@@ -974,6 +974,8 @@
     inst.octaves.forEach(function (o, i) { o.index = i + 1; });
   }
 
+  //: chassis count of a wizard with no spec or draft (a fresh install has one OPX1000)
+  var DEFAULT_CHASSIS = 1;
   function setChassisCount(n) {
     n = Math.max(0, Math.min(20, isNaN(n) ? 0 : n));
     var ctrls = instruments().controllers;
@@ -1220,13 +1222,20 @@
     if (opts && opts.restoreFocus) restoreSlotFocus();
   }
 
+  var PORT_PLAY_OPEN_KEY = "quam_gen_port_play_open", portPlayRestored = null;
   function renderPortPlay() {
     var toggle = document.getElementById("gen-port-play-toggle");
     var panel = document.getElementById("gen-port-play-panel");
     if (!toggle || !panel || !window.PortPlay) return;
+    if (portPlayRestored !== panel) {
+      // The panel's open state survives a reload or re-mount (per-viewer convenience only).
+      portPlayRestored = panel;
+      try { if (localStorage.getItem(PORT_PLAY_OPEN_KEY) === "1") panel.hidden = false; } catch (e) { /* storage blocked */ }
+    }
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
     toggle.onclick = function () {
       panel.hidden = !panel.hidden;
-      toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      try { localStorage.setItem(PORT_PLAY_OPEN_KEY, panel.hidden ? "0" : "1"); } catch (e) { /* storage blocked */ }
       renderPortPlay();
     };
     if (panel.hidden) return;
@@ -1315,9 +1324,9 @@
       });
     }
 
-    // Start with 5 OPX1000 chassis the first time the wizard opens.
+    // A wizard with no chassis yet (no spec, no draft) starts with one OPX1000.
     if (!instruments().controllers.length) {
-      setChassisCount(5);
+      setChassisCount(DEFAULT_CHASSIS);
     }
     if (countInput) countInput.value = instruments().controllers.length;
 
@@ -12650,12 +12659,12 @@
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) archSel.value = state.chipArch;
     var cc = document.getElementById("gen-chassis-count");
-    if (cc) cc.value = 5;
+    if (cc) cc.value = DEFAULT_CHASSIS;
     var qc = document.getElementById("gen-qubit-count");
     if (qc) qc.value = 0;
     var mux = document.getElementById("gen-mux-size");
     if (mux) mux.value = 6;
-    setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
+    setChassisCount(DEFAULT_CHASSIS);   // re-seed the starting rack (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
     _regenStepBase = null;         // docs/241: a plain wizard resets to fresh
     goToStep(1);
@@ -12838,7 +12847,7 @@
     } else if (step === 3) {
       state.spec.instruments = fresh.instruments;
       state.allocation = null;
-      setChassisCount(5);          // the wizard's own starting rack
+      setChassisCount(DEFAULT_CHASSIS);   // the wizard's own starting rack
     } else if (step === 4) {
       state.naming = { preset: "one_based", prefix: "q", start: 1 };
       state.namesTouched = false;

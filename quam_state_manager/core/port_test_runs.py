@@ -49,6 +49,8 @@ STOP_GRACE_S = 15.0
 #: instance running): it ends at its next check, or after this long
 SAAS_STOP_GRACE_S = 180.0
 KEEP_RUNS = 20
+#: runner phases before any QM exists: a stop may end the runner outright
+PRE_QM_PHASES = (None, "connecting", "checking for running jobs", "connecting to the local simulator")
 #: the --recover helper (fresh QMM connection, halt, close) gets this long
 RECOVER_TIMEOUT_S = 75.0
 RECOVER_RETRY_S = 10.0
@@ -446,7 +448,9 @@ class Runs:
             if run["stop_at"] is None and time.time() - run["seen"] > HEARTBEAT_S:
                 logger.info("port test %s: the page stopped asking; stopping the run", run["id"])
                 self._request_stop(run, "the page was left")
-            grace = SAAS_STOP_GRACE_S if run["meta"].get("target") == "saas" else STOP_GRACE_S
+            if run["stop_at"] is not None and self._stop_before_qm(run):
+                continue
+            grace = SAAS_STOP_GRACE_S if run["meta"].get("target") in ("saas", "sim") else STOP_GRACE_S
             if run["stop_at"] is not None and time.time() - run["stop_at"] > grace:
                 # The runner did not halt in time. Never kill a hardware runner
                 # first: a fresh helper halts the job and closes OUR QM, then kill.
@@ -455,6 +459,27 @@ class Runs:
                 else:
                     run["stop_why"] = "the QM is not confirmed closed; retrying halt/close"
                     run["stop_at"] = time.time()
+
+    def _stop_before_qm(self, run: dict) -> bool:
+        """A stop asked while the runner has not opened a QM yet (it may sit up to
+        a call timeout inside ``connect``): nothing on the instrument is ours, so
+        the runner is ended at once and the answer says it was stopped. A cloud
+        simulator run is never cut (its instance would keep running)."""
+        if run["meta"].get("target") == "saas" or _needs_cleanup(run):
+            return False
+        st = _read(run["work"] / "_status.json")
+        if st.get("qm_id") or st.get("phase") not in PRE_QM_PHASES:
+            return False
+        try:
+            run["proc"].kill()
+        except (OSError, AttributeError, psutil.Error):
+            return False
+        if _needs_cleanup(run):  # it reached "opening a QM" meanwhile: the cleanup path owns it
+            return True
+        result = run["work"] / "_result.json"
+        if not _read(result):
+            _write(result, {"ok": False, "stopped": True, "why": run.get("stop_why")})
+        return True
 
     def _request_stop(self, run: dict, why: str) -> None:
         if run["stop_at"] is None:
@@ -516,6 +541,9 @@ class Runs:
             if not res:
                 res = {"ok": False, "error": "The test process ended without an answer "
                                              f"(exit code {run['proc'].returncode})."}
+            if run["stop_at"] is not None and not res.get("ok"):
+                # A stop the user asked for ends as stopped, whatever the SDK raised meanwhile.
+                res = dict(res, stopped=True)
             out["result"] = res
         return out
 

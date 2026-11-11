@@ -179,6 +179,60 @@ def close_matching_main(script, work):
         return 1
 
 
+def run_saas(mod, t, req, update, stopping) -> dict:
+    """Simulate on a QM-SaaS cloud instance (credentials only from the request)."""
+    from qm_saas import QmSaas, QOPVersion
+    client = QmSaas(email=t["email"], password=t["password"], host=t["host"])
+    ver = QOPVersion(t["version"]) if t.get("version") else None
+    update(**{"phase": "starting the simulator (about a minute)", "at": time.time()})
+    inst, qmm = mod.saas_qmm(client, ver)
+    try:
+        if stopping():
+            raise RuntimeError("Stopped before the simulation ran.")
+        update(**{"phase": "simulating", "at": time.time()})
+        samples, adc = mod.simulate(qmm, req.get("sim_ns"))
+        return {"ok": True, "mode": "saas", "traces": _traces(samples),
+                "adc": {k: [float(x) for x in list(v)[:MAX_POINTS]] for k, v in (adc or {}).items()},
+                "expected_peak": mod.EXPECTED_PEAK,
+                "version": getattr(ver, "name", None) or str(getattr(inst, "version", "") or "")}
+    finally:
+        try:
+            inst.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def run_sim(mod, t, req, update, stopping) -> dict:
+    """Port play simulation: the same program through the QOP simulator of the
+    step-2 host when one answers, else a QM-SaaS instance when credentials were
+    given. Nothing is played on hardware either way."""
+    local, saas = t.get("local") or {}, t.get("saas") or {}
+    why = None
+    if local.get("host"):
+        try:
+            update(phase="connecting to the local simulator")
+            qmm = connection(mod, local)
+            if stopping():
+                raise RuntimeError("Stopped before the simulation ran.")
+            update(phase="simulating")
+            samples, _adc = mod.simulate(qmm, req.get("sim_ns"))
+            return {"ok": True, "mode": "sim", "simulated": True, "backend": "local",
+                    "backend_label": "QOP simulator at " + str(local["host"]),
+                    "traces": _traces(samples), "expected_peak": mod.EXPECTED_PEAK}
+        except Exception as exc:  # noqa: BLE001 - fall through to the cloud, or report
+            if stopping():
+                raise
+            why = f"{type(exc).__name__}: {exc}"
+    if saas.get("email") and saas.get("host") and saas.get("password"):
+        res = run_saas(mod, saas, req, update, stopping)
+        res.update(mode="sim", simulated=True, backend="saas", backend_label="QM-SaaS cloud simulator")
+        if why:
+            res["local_error"] = why
+        return res
+    raise RuntimeError(("The local simulator did not answer (" + why + ")") if why else
+                       "No simulator: enter a QOP host in step 2 or set the QM-SaaS credentials.")
+
+
 def main() -> int:
     script, work = Path(sys.argv[1]), Path(sys.argv[2])
     if "--recover" in sys.argv:
@@ -195,6 +249,7 @@ def main() -> int:
             _write(status, status_data)
     result = {"ok": False}
     req: dict = {}
+    parent_gone = None
     try:
         req = json.loads(sys.stdin.readline() or "{}")
         parent_gone = threading.Event()
@@ -202,26 +257,12 @@ def main() -> int:
         mode, t = req.get("mode"), req.get("target") or {}
         mod = _load(script)
         update(**{"phase": "connecting", "at": time.time()})
+        def stopping():
+            return (work / "stop").exists() or parent_gone.is_set()
         if mode == "saas":
-            from qm_saas import QmSaas, QOPVersion
-            client = QmSaas(email=t["email"], password=t["password"], host=t["host"])
-            ver = QOPVersion(t["version"]) if t.get("version") else None
-            update(**{"phase": "starting the simulator (about a minute)", "at": time.time()})
-            inst, qmm = mod.saas_qmm(client, ver)
-            try:
-                if (work / "stop").exists() or parent_gone.is_set():
-                    raise RuntimeError("Stopped before the simulation ran.")
-                update(**{"phase": "simulating", "at": time.time()})
-                samples, adc = mod.simulate(qmm, req.get("sim_ns"))
-                result = {"ok": True, "mode": "saas", "traces": _traces(samples),
-                          "adc": {k: [float(x) for x in list(v)[:MAX_POINTS]] for k, v in (adc or {}).items()},
-                          "expected_peak": mod.EXPECTED_PEAK,
-                          "version": getattr(ver, "name", None) or str(getattr(inst, "version", "") or "")}
-            finally:
-                try:
-                    inst.close()
-                except Exception:  # noqa: BLE001
-                    pass
+            result = run_saas(mod, t, req, update, stopping)
+        elif mode == "sim":
+            result = run_sim(mod, t, req, update, stopping)
         elif mode == "opx":
             qmm = connection(mod, t)
             update(phase="checking for running jobs")
@@ -239,7 +280,11 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 - every failure is the user's answer
         result = {"ok": False, "error": f"{type(exc).__name__}: {exc}",
                   "traceback": traceback.format_exc()[-3000:]}
-    secret = str((req.get("target") or {}).get("password") or "")
+        if (work / "stop").exists() or (parent_gone is not None and parent_gone.is_set()):
+            # The user's stop ended it: whatever the SDK raised on the way out is not the answer.
+            result["stopped"] = True
+    t = req.get("target") or {}
+    secret = str(t.get("password") or (t.get("saas") or {}).get("password") or "")
     if secret:
         for k in ("error", "traceback"):
             if isinstance(result.get(k), str):

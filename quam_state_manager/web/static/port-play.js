@@ -50,6 +50,64 @@
   // returns to 0 V when it closes. Play runs the program. Either one started
   // while this popup's own run is open stops that run first (server 409
   // "stopping", then the client retries), so at most one QM is ours.
+  // Our previous play is stopping: wait on its status (always 200), then start once.
+  // Re-pressing run every 500 ms answered 409 each time and filled the console.
+  function waitStopped(oldId, seq, then) {
+    var delay = 400;
+    function check() {
+      if (seq !== sequence) return;
+      fetch('/port-test/status?id=' + encodeURIComponent(oldId || '')).then(function (r) { return r.json(); })
+        .then(function (st) {
+          if (seq !== sequence) return;
+          if (st.state === 'running') { delay = Math.min(delay * 1.5, 2000); timer = setTimeout(check, delay); }
+          else then();
+        }).catch(function () { if (seq === sequence) timer = setTimeout(check, 2000); });
+    }
+    timer = setTimeout(check, delay);
+  }
+  function esc(v) {
+    return String(v).replace(/[&<>"]/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]; });
+  }
+  function sparkline(row, w, h) {
+    var ys = row.re || [], n = ys.length;
+    if (!n) return '';
+    var all = row.im ? ys.concat(row.im) : ys;
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), span = (hi - lo) || 1;
+    function path(a) {
+      var out = '';
+      for (var i = 0; i < a.length; i++)
+        out += (i ? 'L' : 'M') + (i / (n - 1 || 1) * w).toFixed(1) + ',' + (h - (a[i] - lo) / span * h).toFixed(1);
+      return out;
+    }
+    return '<svg class="pt-trace" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" width="100%" height="' + h +
+      '" role="img" aria-label="Simulated samples"><path class="pt-re" d="' + path(ys) + '"/>' +
+      (row.im ? '<path class="pt-im" d="' + path(row.im) + '"/>' : '') + '</svg>';
+  }
+  function clearSim(node) {
+    var box = node.querySelector('[data-sim-result]');
+    if (box) { box.hidden = true; box.replaceChildren(); }
+  }
+  // A simulated result is labelled as a simulation wherever it shows; it is never hardware output.
+  function showSim(node, res, plan) {
+    var box = node.querySelector('[data-sim-result]');
+    if (!box) return;
+    var keys = Object.keys(res.traces || {}).filter(function (k) { return !res.traces[k].digital; }).sort();
+    var peak = plan.expected_peak !== undefined ? plan.expected_peak : res.expected_peak;
+    var html = '<div class="ui-item-head"><h4 class="ui-item-title">Simulated output</h4>' +
+      '<span class="ui-badge ui-badge--warn" data-sim-label>Simulation, not hardware</span></div>' +
+      '<p class="ui-note">' + esc(res.backend_label || 'Simulator') + ': the same program Play runs, simulated' +
+      (res.local_error ? ' (the local QOP did not answer: ' + esc(res.local_error) + ')' : '') +
+      (Number.isFinite(Number(peak)) ? '. Expected peak ' + Number(peak).toPrecision(4) + ' of full scale' : '') +
+      '. Blue = I / real, orange = Q / imaginary.</p>';
+    if (!keys.length) html += '<p class="ui-note">The simulator returned no analog samples.</p>';
+    keys.forEach(function (k) {
+      var row = res.traces[k];
+      html += '<p class="ui-note" data-sim-port><span class="ui-chip">' + esc(k) + '</span> peak ' +
+        Number(row.peak).toPrecision(4) + ', ' + Number(row.n) + ' samples</p>' + sparkline(row, 600, 60);
+    });
+    box.innerHTML = html;
+    box.hidden = false;
+  }
   function wirePlay(node, params, message, lock) {
     var $ = function (s) { return node.querySelector(s); };
     var action = null, closing = false;
@@ -59,12 +117,19 @@
         if (seq !== sequence || dialog !== node) return;
         if (st.state === 'running') {
           message(st.stopping ? (closing ? 'Closing QM...' : 'Stopping...') : action === 'open'
-            ? 'QM open — port is at its offset (no program running)' : 'Playing... ' + (st.phase || ''));
+            ? 'QM open — port is at its offset (no program running)'
+            : (action === 'sim' ? 'Simulating (no hardware)... ' : 'Playing... ') + (st.phase || ''));
           timer = setTimeout(function () { poll(seq); }, 1000);
         } else {
-          var failed = st.result && !st.result.ok && !st.result.stopped && st.result.error;
-          message(failed ? st.result.error : closing || action === 'open'
-            ? 'QM closed — outputs returned to 0 V.' : 'Stopped.');
+          var res = st.result || {};
+          var failed = !res.ok && !res.stopped && res.error;
+          if (res.simulated && res.ok) {
+            message('Simulation finished: no hardware was driven.');
+            showSim(node, res, (st.meta || {}).plan || {});
+          } else {
+            message(failed ? res.error : res.stopped ? 'Stopped.' : closing || action === 'open'
+              ? 'QM closed — outputs returned to 0 V.' : 'Stopped.');
+          }
           action = null;
         }
       }).catch(function (e) { message(e.message); });
@@ -74,10 +139,12 @@
       var data;
       try { data = params(); } catch (e) { message(e.message); return; }
       // Snapshot wizard values across retries; later edits belong to the next press.
-      if (!data.hardware_ok) { message('Tick the safety box first.'); return; }
+      // A simulation drives nothing, so only a hardware press needs the safety box.
+      if (kind !== 'sim' && !data.hardware_ok) { message('Tick the safety box first.'); return; }
       data = JSON.parse(JSON.stringify(data)); data.action = kind;
       lock.busy = true; var seq = ++sequence; clearTimeout(timer); closing = false;
-      message(kind === 'open' ? 'Opening QM...' : 'Preparing Play...');
+      clearSim(node);
+      message(kind === 'open' ? 'Opening QM...' : kind === 'sim' ? 'Preparing simulation...' : 'Preparing Play...');
       function start() {
         if (seq !== sequence || dialog !== node) { lock.busy = false; return; }
         post('/port-play/confirm', data).then(function (c) {
@@ -88,7 +155,7 @@
             if (j.ok) post('/port-play/stop', {id: j.id});
             lock.busy = false; return;
           }
-          if (j.stopping) { message(j.error); timer = setTimeout(start, 500); return; }
+          if (j.stopping) { message(j.error); waitStopped(j.id, seq, start); return; }
           lock.busy = false;
           if (!j.ok) { message(j.error); return; }
           runId = j.id; action = kind;
@@ -101,6 +168,7 @@
     }
     if ($('[data-open-qm]')) $('[data-open-qm]').onclick = function () { launch('open'); };
     $('[data-play]').onclick = function () { launch('play'); };
+    if ($('[data-sim]')) $('[data-sim]').onclick = function () { launch('sim'); };
     if ($('[data-close-qm]')) $('[data-close-qm]').onclick = function () {
       if (!runId || !action) { message('No QM open from this popup.'); return; }
       lock.busy = false; closing = true;
@@ -120,6 +188,8 @@
   // "Play together" (decisions_multi D-1): up to 2 more outputs in the same QM and
   // program. Only rows that exist reach the request (`extra`); none = a one-port play.
   var MAX_PORTS = 3;
+  var SIM_BUTTON = '<button type="button" class="btn-sm outline" data-sim>Simulate</button>';
+  var SIM_BOX = '<section class="ui-item port-test" data-sim-result hidden></section>';
   function outputsOf(spec) {
     var list = [];
     ((spec.instruments || {}).controllers || []).forEach(function (c) {
@@ -134,7 +204,7 @@
   function pinOf(o) { return o.con + '/' + o.slot + '/' + o.port; }
   function addTogether(node, own, source) {
     var sec = document.createElement('section');
-    sec.className = 'ui-item'; sec.setAttribute('data-together', '');
+    sec.className = 'ui-item port-test'; sec.setAttribute('data-together', '');
     sec.innerHTML = '<div class="ui-item-head"><h4 class="ui-item-title">Play together</h4></div>' +
       '<p class="ui-note">Other outputs that play in the same QM and program as this one, all starting together. ' +
       'Stop and Close QM stop every port.</p><div data-rows></div>' +
@@ -190,16 +260,22 @@
       add.disabled = n >= MAX_PORTS - 1;
       add.title = add.disabled ? 'At most ' + MAX_PORTS + ' ports play together.' : '';
     }
+    // One compact line per port: its own fields, then its own Remove at the end.
     function fields(row, kind) {
-      var box = row.querySelector('[data-fields]');
-      box.innerHTML = kind === 'mw'
-        ? '<label>Band<select data-band><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>' +
+      row.querySelectorAll('[data-field]').forEach(function (el) { el.remove(); });
+      var tmp = document.createElement('div');
+      tmp.innerHTML = kind === 'mw'
+        ? '<label>Band<select data-band>' + bandOptions() + '</select></label>' +
           '<label>LO (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
           '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" value="50" required></label>' +
           '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
           '<label>Amplitude (|a| &lt; 1)<input data-amp type="number" step="0.001" min="-0.999" max="0.999" value="0.1" required></label>'
         : '<label>Output mode<select data-mode><option value="direct">direct</option><option value="amplified">amplified</option></select></label>' +
           '<label>Offset (V)<input data-offset type="number" step="0.000001" value="0" required></label>' + DELAY_FIELD;
+      var remove = row.querySelector('[data-remove]');
+      Array.prototype.slice.call(tmp.children).forEach(function (el) {
+        el.setAttribute('data-field', ''); row.insertBefore(el, remove);
+      });
       refreshDelays();
     }
     add.onclick = function () {
@@ -208,9 +284,9 @@
       var free = all.filter(function (o) { return used.indexOf(pinOf(o)) < 0; });
       if (!free.length) { add.title = 'No other output is free.'; return; }
       var row = document.createElement('div');
-      row.className = 'ui-field-grid'; row.setAttribute('data-row', '');
-      row.innerHTML = '<label>Port<select data-pin></select></label><span data-fields class="ui-field-grid"></span>' +
-        '<div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" data-remove>Remove</button></div>';
+      row.className = 'pt-row'; row.setAttribute('data-row', '');
+      row.innerHTML = '<label>Port<select data-pin></select></label>' +
+        '<button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button>';
       var sel = row.querySelector('[data-pin]');
       all.forEach(function (o) {
         if (pinOf(o) === own) return;
@@ -265,6 +341,12 @@
   var MAX_DELAY_NS = 16000;  // QM docs Guides/features.md "## Analog Delay": up to 16 us
   var DELAY_FIELD = '<label data-delay-wrap hidden>LF delay (ns)<input data-lf-delay type="number" step="1" min="0" max="16000"></label>';
   var MW_LO_GHZ = {1: [0, 5.5], 2: [4.5, 7.5], 3: [6.5, 11]};
+  // Band ranges: QM docs Guides/opx1000_fems.md "### Bands" (1: 50 MHz - 5.5 GHz,
+  // 2: 4.5 GHz - 7.5 GHz, 3: 6.5 GHz - 10.5 GHz). One list for every band select.
+  var BAND_LABEL = {1: '1 (50 MHz - 5.5 GHz)', 2: '2 (4.5 - 7.5 GHz)', 3: '3 (6.5 - 10.5 GHz)'};
+  function bandOptions() {
+    return [1, 2, 3].map(function (b) { return '<option value="' + b + '">' + BAND_LABEL[b] + '</option>'; }).join('');
+  }
   function mwPower(fsp, amp) {
     return amp === 0 ? null : fsp + 20 * Math.log10(Math.abs(amp));
   }
@@ -277,8 +359,7 @@
       '<div class="ui-dialog-head"><header class="ui-head"><h3 class="ui-head-title" id="port-play-title"></h3></header></div>' +
       '<div class="ui-dialog-body">' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Tone</h4></div><div class="ui-field-grid">' +
-      '<label>Band<select data-band><option value="1">1 (50 MHz - 5.5 GHz)</option>' +
-      '<option value="2">2 (4.5 - 7.5 GHz)</option><option value="3">3 (6.5 - 10.5 GHz)</option></select></label>' +
+      '<label>Band<select data-band>' + bandOptions() + '</select></label>' +
       '<label>LO (GHz)<input data-lo type="number" step="0.000001" value="5" required></label>' +
       '<label>IF (MHz)<input data-if type="number" step="0.001" min="-500" max="500" value="50" required></label>' +
       '<label>Full-scale power (dBm)<input data-fsp type="number" step="1" min="-11" max="18" value="-11" required></label>' +
@@ -287,11 +368,11 @@
       '<p class="ui-note" role="status" data-power></p></section>' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Run</h4></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a spectrum analyser or scope is on this port</label>' +
-      '<p class="ui-note">Play: CW tone at LO + IF. Stop: output off.</p>' +
+      '<p class="ui-note">Play: CW tone at LO + IF. Stop: output off. Simulate: the same program on a simulator (no hardware, no safety box).</p>' +
       '<div class="ui-actions ui-actions--start" data-qm-actions>' +
       '<button type="button" class="btn-sm" data-play>Play</button>' +
-      '<button type="button" class="btn-sm outline" data-stop>Stop</button></div>' +
-      '<p class="ui-note" role="status" data-message></p></section></div>' +
+      '<button type="button" class="btn-sm outline" data-stop>Stop</button>' + SIM_BUTTON + '</div>' +
+      '<p class="ui-note" role="status" data-message></p></section>' + SIM_BOX + '</div>' +
       '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); };
@@ -348,13 +429,13 @@
       '<label>Offset (V)<input data-offset type="number" step="0.000001" required></label>' +
       '<label>Max time (s)<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label></div>' +
       '<label class="ui-check"><input data-hwok type="checkbox"> Safe to drive: a scope is on this port</label>' +
-      '<p class="ui-note">Open QM: the port goes to this offset. Close QM: back to 0 V. Play: also runs a zero waveform.</p>' +
+      '<p class="ui-note">Open QM: the port goes to this offset. Close QM: back to 0 V. Play: also runs a zero waveform. Simulate: the same program on a simulator (no hardware, no safety box).</p>' +
       '<div class="ui-actions ui-actions--start" data-qm-actions><button type="button" class="btn-sm" data-open-qm>Open QM</button>' +
       '<button type="button" class="btn-sm outline" data-close-qm>Close QM</button>' +
       '<button type="button" class="btn-sm" data-play>Play</button>' +
       '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
-      '<button type="button" class="btn-sm outline" data-save>Save offset</button></div>' +
-      '<p class="ui-note" role="status" data-message></p></section>' +
+      '<button type="button" class="btn-sm outline" data-save>Save offset</button>' + SIM_BUTTON + '</div>' +
+      '<p class="ui-note" role="status" data-message></p></section>' + SIM_BOX +
       '<section class="ui-item" data-loopcal><div class="ui-item-head"><h4 class="ui-item-title">Loopback calibration</h4></div><div class="ui-field-grid">' +
       '<label>Analog input (same FEM)<select data-ai><option value="1">AI 1</option><option value="2">AI 2</option></select></label></div>' +
       '<ol class="ui-note" data-cal-steps></ol>' +
@@ -370,7 +451,7 @@
       '<div class="ui-dialog-foot"><button type="button" class="btn-sm outline" data-close>Close</button></div></article>';
     document.body.appendChild(node); dialog = node;
     var $ = function (s) { return node.querySelector(s); }, lock = {busy: false};
-    $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / AO ' + port.port;
+    $('#port-play-title').textContent = 'con' + con + ' / FEM ' + port.slot + ' / AO ' + port.port + ' (LF)';
     $('[data-offset]').value = Number(saved.offset).toFixed(6);
     $('[data-mode]').value = saved.output_mode;
     function message(value) { $('[data-message]').textContent = value; }
@@ -436,7 +517,9 @@
           var li = document.createElement('li'); li.textContent = line; list.appendChild(li);
         });
         if (st.state === 'running') {
-          calMessage(st.stopping ? 'Stopping...' : 'Calibrating...');
+          var lines = st.progress || [];
+          calMessage(st.stopping ? 'Stopping...' : 'Calibrating... ' +
+            (lines.length ? lines[lines.length - 1] : (st.phase || 'starting')));
           timer = setTimeout(function () { calPoll(seq); }, 1000);
           return;
         }

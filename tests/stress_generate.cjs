@@ -1410,11 +1410,11 @@ async function main() {
   // QA F4: the env is a machine-wide choice, not wizard content — Reset keeps
   // it, so the highlighted row IS the selection and Next moves on.
   ok('…and keeps the highlighted env as the real selection', R.env === R.envHl, R);
-  // Reset seeds 5 EMPTY chassis, and with no LF-FEM the architecture is
+  // Reset seeds 1 EMPTY chassis, and with no LF-FEM the architecture is
   // honestly derived as fixed-frequency — the stored default only survives
   // once hardware that can build it exists.
-  ok('…and restores 5 chassis with no FEMs',
-     R.chassis === 5 &&
+  ok('…and restores 1 chassis with no FEMs',
+     R.chassis === 1 &&
      (await ev(`QuamGen.state.spec.instruments.controllers.every(function(c){return !c.fems.length;})`)), R);
   ok('…and the architecture is the one the empty rack can actually build',
      R.arch === 'fixed_frequency', R.arch);
