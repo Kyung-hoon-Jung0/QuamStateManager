@@ -112,6 +112,33 @@ def _play_binding(data) -> str:
     except (TypeError, ValueError):
         raise pt.PortTestError("Offset and max time must be numbers.") from None
     target = {"host": net.get("host"), "cluster": net.get("cluster_name"), "port": net.get("port")}
+    options = _play_options(data)
+    if options != (None, None):
+        # D-18: the waveform and the simulation length are part of what was confirmed.
+        return _binding({"options": list(options), "base": _base_binding(data, offset, seconds, target)}, target)
+    return _base_binding(data, offset, seconds, target)
+
+
+def _play_options(data) -> tuple:
+    """(waveform, sim_ns) of a play request; (None, None) is today's dc/cw play."""
+    waveform = data.get("waveform")
+    if waveform in (None, "", "dc", "cw"):
+        waveform = None
+    elif waveform not in pt.PLAY_WAVEFORMS:
+        raise pt.PortTestError("Waveform must be dc, cw or edge.")
+    sim_ns = data.get("sim_ns")
+    if sim_ns in (None, ""):
+        sim_ns = None
+    else:
+        if isinstance(sim_ns, bool) or not isinstance(sim_ns, (int, float)) or sim_ns != int(sim_ns) \
+                or not pt.SIM_NS_MIN <= sim_ns <= pt.SIM_NS_MAX:
+            raise pt.PortTestError(f"Simulation length must be a whole number of ns in "
+                                   f"{pt.SIM_NS_MIN}..{pt.SIM_NS_MAX}.")
+        sim_ns = int(sim_ns)
+    return waveform, sim_ns
+
+
+def _base_binding(data, offset, seconds, target) -> str:
     extra = _extra(data)
     if extra:
         return _binding({"multi": _multi_binding(data, extra), "seconds": seconds}, target)
@@ -142,9 +169,45 @@ def _extra(data) -> list:
     extra = data.get("extra")
     if extra in (None, []):
         return []
-    if not isinstance(extra, list) or len(extra) > pt.MAX_PLAY_PORTS - 1 or not all(isinstance(e, dict) for e in extra):
-        raise pt.PortTestError(f"At most {pt.MAX_PLAY_PORTS} ports can play together.")
+    if not isinstance(extra, list) or not all(isinstance(e, dict) for e in extra):
+        raise pt.PortTestError("The other ports must be a list of port objects.")
+    limit = pt.max_play_ports(data.get("spec") or {})
+    if len(extra) + 1 > limit:
+        raise pt.PortTestError(f"More outputs than this allocation has ({limit}).")
     return extra
+
+
+def _play_build(data) -> tuple[dict, dict]:
+    """The config and plan a play request runs (one builder for run and script)."""
+    spec = data.get("spec") or {}
+    extra = _extra(data)
+    if extra:
+        cfg, plan = pt.build_wizard_multi(spec, [_entry(data)] + [_entry(e) for e in extra])
+    elif data.get("kind") == "mw":
+        cfg, plan = pt.build_wizard_mw(spec, _port_args(data) or [], data.get("band"), data.get("lo_hz"),
+                                      data.get("if_hz"), data.get("full_scale_power_dbm"), data.get("amp"))
+    else:
+        cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
+                                      data.get("offset"), data.get("output_mode", "direct"))
+    if _play_options(data)[0] == "edge":
+        cfg, plan = pt.apply_edge(cfg, plan)
+    return cfg, plan
+
+
+def _plan_ports(plan) -> list:
+    plays = (plan or {}).get("plays") or ([{"port": plan["port"]}] if (plan or {}).get("port") else [])
+    return ["/".join(str(x) for x in p["port"]) for p in plays]
+
+
+def _busy_message(manager, owner) -> str:
+    """D-22: name what is running and where."""
+    cur = manager.current or {}
+    plan = (cur.get("meta") or {}).get("plan") or {}
+    ports = _plan_ports(plan) if str(plan.get("config_name") or "").startswith("port-play") else []
+    if not ports:
+        return "Busy: another port test is running. Stop it there first."
+    where = "this window" if cur.get("play_owner") == owner else "another window"
+    return f"Busy: a port play is running on {', '.join(ports)} ({where}). Stop it there first."
 
 
 def _multi_binding(data, extra) -> str:
@@ -224,23 +287,15 @@ def port_play_run():
             manager.stop(status.get("id"), "Open QM again" if action == "open" else "Play again")
             return jsonify(ok=False, stopping=True, id=status.get("id"),
                            error="Stopping the previous play; waiting for its QM to close."), 409
-        return jsonify(ok=False, busy=True,
-                       error="Busy: another port test is running. Stop it there first."), 409
+        return jsonify(ok=False, busy=True, error=_busy_message(manager, owner)), 409
     # Generation binding: a Stop pressed after this point refuses the start.
     with manager._lock:
         generation = manager.port_play_generation
     try:
         seconds = _hardware_seconds({"max_s": data.get("max_s", 300)})
         spec = data.get("spec") or {}
-        extra = _extra(data)
-        if extra:
-            cfg, plan = pt.build_wizard_multi(spec, [_entry(data)] + [_entry(e) for e in extra])
-        elif data.get("kind") == "mw":
-            cfg, plan = pt.build_wizard_mw(spec, _port_args(data) or [], data.get("band"), data.get("lo_hz"),
-                                          data.get("if_hz"), data.get("full_scale_power_dbm"), data.get("amp"))
-        else:
-            cfg, plan = pt.build_wizard_dc(spec, _port_args(data) or [],
-                                          data.get("offset"), data.get("output_mode", "direct"))
+        cfg, plan = _play_build(data)
+        waveform, sim_ns = _play_options(data)
         python = _r()._build_python(data)
         if not python:
             raise pt.PortTestError("Select a Python environment in step 1.")
@@ -255,10 +310,13 @@ def port_play_run():
                                        "SAAS_HOST in SM's environment).")
             req = {"mode": "sim", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
                    "target": {"local": local if host else None, "saas": saas}}
+            if sim_ns is not None or waveform == "edge":
+                req["sim_ns"] = sim_ns if sim_ns is not None else 2 * pt.DEFAULT_PERIOD_NS
             plan = dict(plan, open_only=False, simulated=True)
             label = (host or "") + (" / QM-SaaS" if saas else "")
             started = manager.start(python, pt.render_script(cfg, plan, run_program=True), req,
-                                    {"plan": plan, "target": "sim", "target_label": label.strip(" /")})
+                                    {"plan": plan, "target": "sim", "target_label": label.strip(" /"),
+                                     "max_s": seconds})
             return jsonify(ok=True, simulated=True, **started)
         if not host:
             raise pt.PortTestError("Enter the network host in step 2.")
@@ -266,10 +324,39 @@ def port_play_run():
                "target": local}
         plan = dict(plan, open_only=action == "open")
         started = manager.start(python, pt.render_script(cfg, plan, run_program=action == "play"), req,
-                                {"plan": plan, "target": "opx", "target_label": host})
+                                {"plan": plan, "target": "opx", "target_label": host, "max_s": seconds})
         return jsonify(ok=True, **started)
     except (ValueError, RuntimeError, KeyError, TypeError) as exc:
         return jsonify(ok=False, error=str(exc)), 400
+
+
+@port_test_bp.route("/port-play/sim-check", methods=["POST"])
+def port_play_sim_check():
+    """D-19: can Simulate run, before the press? Same ladder as the run."""
+    data = json_object(dict)
+    net = ((data.get("spec") or {}).get("network") or {}) if isinstance(data, dict) else {}
+    host = str(net.get("host") or "").strip() or None
+    saas = _saas_credentials() is not None
+    reason = None if (host or saas) else (
+        "Simulate needs a QOP host in step 2 (its simulator) or QM-SaaS credentials "
+        "(Settings, or SAAS_EMAIL / SAAS_PASSWORD / SAAS_HOST in SM's environment).")
+    return jsonify(ok=True, local_host=host, saas=saas, reason=reason)
+
+
+@port_test_bp.route("/port-play/script.py", methods=["POST"])
+def port_play_script():
+    """D-21: the program this play would run (the same renderer as the run)."""
+    data = json_object()
+    try:
+        cfg, plan = _play_build(data)
+        script = pt.render_script(cfg, plan, run_program=_play_action(data) != "open")
+    except (pt.PortTestError, ValueError, KeyError, TypeError) as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", "port_play_" + "_".join(_plan_ports(plan)) + ".py")
+    resp = make_response(script)
+    resp.headers["Content-Type"] = "text/x-python; charset=utf-8"
+    resp.headers["Content-Disposition"] = f'attachment; filename="{name}"'
+    return resp
 
 
 @port_test_bp.route("/port-play/stop", methods=["POST"])
@@ -606,16 +693,16 @@ def port_test_run():
         req = {"max_s": seconds, "mode": "opx", "target": {"host": host, "cluster": s["opx"].get("cluster") or None,
                                          "port": s["opx"].get("port") or None}}
     else:
-        pw, _where = ptr.load_password(inst, s)
-        if not (s["saas"].get("email") and s["saas"].get("host") and pw):
+        creds = _saas_credentials()  # D-19: one credentials ladder (environment, then saved)
+        if not creds:
             return jsonify({"ok": False, "error": "Set the SaaS email, host and password first."}), 400
-        req = {"mode": "saas", "target": {"email": s["saas"]["email"], "host": s["saas"]["host"],
-                                          "password": pw, "version": s["saas"].get("version") or None}}
+        req = {"mode": "saas", "target": {"email": creds["email"], "host": creds["host"],
+                                          "password": creds["password"], "version": creds.get("version") or None}}
     ptr.save_settings(inst, {"target": target})
     try:
         started = runs().start(python, script, req, {"plan": plan, "target": target,
                                                     "target_label": (s["opx"]["host"] if target == "opx"
-                                                                     else s["saas"]["host"])})
+                                                                     else req["target"]["host"])})
     except RuntimeError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 409
     return jsonify({"ok": True, **started})
@@ -623,8 +710,19 @@ def port_test_run():
 
 @port_test_bp.route("/port-test/status")
 def port_test_status():
-    st = runs().status(request.args.get("id") or None)
+    manager = runs()
+    st = manager.status(request.args.get("id") or None)
     st.get("meta", {}).pop("secret", None)
+    if st.get("state") == "running":
+        # D-21: what a countdown needs (the watchdog's own bound).
+        cur = manager.current or {}
+        st["started_at"] = cur.get("started")
+        st["max_s"] = (st.get("meta") or {}).get("max_s")
+    res = st.get("result")
+    if isinstance(res, dict) and not res.get("ok") and res.get("error"):
+        # D-20: always both fields, whatever runner wrote the result.
+        res.setdefault("error_kind", "other")
+        res.setdefault("detail", res["error"])
     return jsonify(st)
 
 
