@@ -1060,6 +1060,13 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .iw-chassis svg.instrument-svg .iw-title { display: none; }
 .iw-chassis .port-play-anchor { visibility: hidden; overflow: visible; }
 .iw-chassis .iw-port:hover .port-play-anchor, .iw-chassis .iw-port:focus-within .port-play-anchor { visibility: visible; }
+/* Port play D-23/D-24/D-26: a focused playable port, the running set's ring, checked ports by verdict */
+.iw-chassis .iw-port[data-play]:focus { outline: none; }
+.iw-chassis .iw-port[data-play]:focus-visible circle { stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
+.iw-chassis .iw-port-num { pointer-events: none; font-size: var(--ui-fs-xs); }
+.iw-chassis .iw-port-live circle { stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
+.iw-chassis .iw-port-ok circle { fill: var(--ui-ok-bg); stroke: var(--ui-ok-border); }
+.iw-chassis .iw-port-bad circle { fill: var(--ui-danger-bg); stroke: var(--ui-danger-border); }
 
 /* Live Edit cell, A/B-5 option c (D-86): the underline's box returns on hover/focus (colours only, never a width);
    Apply shows only on a row with an edit -- hidden, not removed, so the sticky column keeps its width. */

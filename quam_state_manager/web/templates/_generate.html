@@ -114,9 +114,17 @@
       <button type="button" class="btn-sm outline" id="gen-port-play-toggle" aria-expanded="false">Port play (scope check)</button>
       <div id="gen-port-play-panel" hidden>
         <p class="ui-note">Hover an analog output to play it: an LF-FEM output plays a DC offset, an MW-FEM output a CW tone. Simulate runs the same program on a simulator, with no hardware.</p>
+        <div id="gen-port-play-live" class="ui-actions ui-actions--start ui-note" role="status" hidden>
+          <span class="ui-badge ui-badge--accent">LIVE</span>
+          <span data-live-members></span>
+          <span data-live-left></span>
+          <button type="button" class="btn-sm" data-live-stop>Stop all</button>
+        </div>
         <div id="gen-port-play-rack"></div>
         <table><thead><tr><th>Port</th><th>Mode</th><th>Offset (V)</th><th>Action</th></tr></thead><tbody id="gen-port-offsets"></tbody></table>
         <button type="button" class="btn-sm outline" id="gen-port-offsets-copy">Copy as JSON</button>
+        <button type="button" class="btn-sm outline" id="gen-port-checks-copy">Copy as CSV</button>
+        <table id="gen-port-checks-table" hidden><thead><tr><th>Port</th><th>Verdict</th><th>Note</th><th>Checked</th></tr></thead><tbody id="gen-port-checks"></tbody></table>
         <p class="ui-note" id="gen-port-offsets-message" role="status"></p>
       </div>
       <p class="muted gen-hw-soon">This wizard builds OPX1000 setups with
