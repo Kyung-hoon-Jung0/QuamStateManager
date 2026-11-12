@@ -182,7 +182,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.loadContext();
   await tick(30);
   const sel = document.querySelector('#as-ctx select[data-q="tunable"]');
-  ok(sel && sel.value === 'mixed' && /\(SM detected\)/.test(sel.selectedOptions[0].textContent) && sel.options[0].value === '', 'the detected answer is preselected and marked; an empty "not answered" choice is first');
+  ok(sel && sel.value === '' && /\(SM detected\)/.test(Array.from(sel.options).filter(o => o.value === 'mixed')[0].textContent) && sel.options[0].value === '',
+     'review r5 P2: the detected answer is marked but NOT chosen; "not answered" stays selected');
   sel.value = 'flux-tunable'; A.answer(sel);
   const ta = document.querySelector('#as-ctx textarea[data-q="notes"]'); ta.value = 'cooldown 9'; A.answer(ta);
   calls.length = 0;
@@ -210,6 +211,14 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(!document.querySelector('#as-test [data-stale]'), 'D-23: a result for this project reads as current');
   ok(document.getElementById('as-confirm-result').classList.contains('asx-result-bad') && !document.getElementById('as-confirm-result').classList.contains('asx-result-ok'),
      'review r3 P2-6: a card with a disagreeing row is not green');
+  // review r5 P2: rows that prove nothing new keep the card neutral -- green only when every row agrees
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  { const c = document.getElementById('as-confirm-result');
+    ok(c && !c.classList.contains('asx-result-ok') && !c.classList.contains('asx-result-bad'), 'review r5 P2: an echo row keeps the card neutral'); }
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-ok'), 'review r5 P2: all independent agreements -> green');
   // D-23: a result for another project is shown as stale
   lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
   A.load(); await tick(40);

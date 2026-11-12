@@ -146,7 +146,8 @@ class TestContext:
                  "qubit_pairs": {"q1-2": {"coupler": None, "qubit_control": "#/qubits/q1"}}}
         f = st.detect_facts(state, node_names=[])
         assert f["couplers_seen"] is False
-        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] == "fixed coupling"
+        # review r5 P2: no coupler value is NOT a detection -- nothing is claimed
+        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] is None
         state["qubit_pairs"]["q1-2"]["coupler"] = "#/couplers/c12"
         assert st.detect_facts(state, node_names=[])["couplers_seen"] is True, "a pointer to a coupler is one"
 

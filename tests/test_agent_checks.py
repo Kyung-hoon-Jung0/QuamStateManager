@@ -258,7 +258,7 @@ def test_every_choice_has_not_sure_and_flux_is_detected():
     assert fq["detected"] == "QDAC" and fq["detected_counts"] == {"qdac": 3}
     assert st.detected_flux_source({"opx": 1, "qdac": 2}) == "mixed"
     assert st.detected_flux_source({"none": 5}) == "none (fixed-frequency)"
-    assert st.detected_flux_source({}) == "unknown"
+    assert st.detected_flux_source({}) is None
     nt = next(q for q in qs if q["id"] == "never_touch")
     assert "q1" in nt["tokens"] and "qubits" in nt["tokens"]
 
@@ -638,3 +638,60 @@ def test_a_listed_qubit_protects_its_port_at_both_doors(pc):
         res = agent_api._stage_writes(pc._app, live, [{"path": "probe_ports.p1.delay", "old": 0, "new": 4}], "g3",
                                       "by_claude", None, False)
     assert res["staged"] == 0 and "never_touch" in res["error"]
+
+
+# ---- review r5
+def test_a_headerless_write_is_not_a_person(pc):
+    """review r5 P1: never_touch applies to every mutating request not PROVEN to come from a person."""
+    from quam_state_manager.web import callers
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    _write_ctx(pc, {"never_touch": [q]})
+    pc._app.config["PROVE_CALLERS"] = True
+    pc._app.config["SM_PERSON_SECRET"] = "s3cret"
+    try:
+        r1 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"})
+        assert r1.status_code == 403 and (r1.get_json() or {}).get("refused") == "never_touch"
+        r1b = pc.post("/field/delete", data={"dot_path": f"qubits.{q}.T1"})       # only the central guard covers it
+        assert r1b.status_code == 403 and (r1b.get_json() or {}).get("refused") == "never_touch"
+        pc.set_cookie(callers.COOKIE_PREFIX, "s3cret")
+        r2 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"})
+        assert (r2.get_json(silent=True) or {}).get("refused") not in ("never_touch", "never_touch_unchecked")
+    finally:
+        pc._app.config.pop("PROVE_CALLERS", None)
+        pc.delete_cookie(callers.COOKIE_PREFIX)
+
+
+def test_a_listed_qubit_protects_its_pairs():
+    from quam_state_manager.core import agent_setup as st
+    merged = {"qubits": {"qA1": {}, "qA2": {}, "qA3": {}},
+              "qubit_pairs": {"qA2-qA1": {"qubit_control": "#/qubits/qA2"}, "pairX": {"qubit_target": "#/qubits/qA2"},
+                              "q1-2": {}, "qA3-qA1": {"qubit_control": "#/qubits/qA3"}},
+              "wiring": {"qubit_pairs": {"pairY": {"c": {"control_qubit": "#/qubits/qA2"}}}}}
+    merged["qubit_pairs"]["pairY"] = {}
+    tok = st.expand_never_touch(["qA2"], merged)
+    for p in ("qubit_pairs.qA2-qA1.mutual_flux_bias.0", "qubit_pairs.pairX.T", "qubit_pairs.pairY.x"):
+        assert st.never_touch_hit(p, tok), p
+    assert st.never_touch_hit("qubit_pairs.qA3-qA1.x", tok) is None
+    assert st.never_touch_hit("qubit_pairs.q1-2.x", st.expand_never_touch(["q2"], {"qubit_pairs": {"q1-2": {}}}))
+
+
+def test_detection_only_from_evidence():
+    from quam_state_manager.core import agent_setup as st
+    assert st.detected_tunable({"qdac": 5}) is None
+    assert st.detected_tunable({}) is None
+    assert st.detected_tunable({"opx": 3}) == "flux-tunable"
+    assert st.detected_tunable({"opx": 3, "none": 2}) == "mixed"
+    qs = {q["id"]: q for q in st.questions({"bias_modes": {}, "n_pairs": 3, "couplers_seen": False})}
+    assert qs["coupler"]["detected"] is None and qs["tunable"]["detected"] is None and qs["flux_source"]["detected"] is None
+
+
+def test_an_agent_apply_with_a_listed_path_staged_is_refused(pc):
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "3e-5"})      # a person stages it
+    _write_ctx(pc, {"never_touch": [q]})
+    r1 = pc.post("/state/apply-to-live", data={}, headers={"X-SM-Agent": "claude"})
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"

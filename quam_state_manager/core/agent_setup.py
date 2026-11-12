@@ -511,14 +511,29 @@ FLUX_OPTIONS = ["QDAC", "LF-FEM", "both (bias tee)", "none (fixed-frequency)", "
 _MODE_TO_FLUX = {"qdac": "QDAC", "opx": "LF-FEM", "bias_tee": "both (bias tee)", "none": "none (fixed-frequency)"}
 
 
-def detected_flux_source(bias_modes: dict) -> str:
-    """D-19: the flux bias SM sees structurally (``qdac.bias_mode`` counts)."""
+def detected_flux_source(bias_modes: dict) -> str | None:
+    """D-19: the flux bias SM sees structurally (``qdac.bias_mode`` counts).
+    review r5 P2: no qubits, or nothing recognisable -> no detection (None)."""
     kinds = {k for k, v in (bias_modes or {}).items() if v and k != "unknown"}
     if not kinds:
-        return NOT_SURE
+        return None
     if len(kinds) > 1:
         return "mixed"
-    return _MODE_TO_FLUX.get(next(iter(kinds)), NOT_SURE)
+    return _MODE_TO_FLUX.get(next(iter(kinds)))
+
+
+def detected_tunable(bias_modes: dict) -> str | None:
+    """review r5 P2: flux-tunable only where SM SEES an LF-FEM flux line on every
+    qubit (mixed where some have one and some have none). A QDAC-biased chip, a
+    chip with no qubits, or an unrecognised shape is no detection."""
+    m = {k: v for k, v in (bias_modes or {}).items() if v}
+    tun = m.get("opx", 0) + m.get("bias_tee", 0)
+    other = sum(v for k, v in m.items() if k not in ("opx", "bias_tee"))
+    if tun and not other:
+        return "flux-tunable"
+    if tun and m.get("none") and not (other - m.get("none", 0)):
+        return "mixed"
+    return None
 
 
 def investigate_hints(state: dict, wiring: dict | None, cal_folder: str | None) -> dict:
@@ -574,8 +589,7 @@ def questions(facts: dict) -> list[dict]:
     q = []
     q.append({"id": "tunable", "kind": "choice", "options": ["flux-tunable", "fixed-frequency", "mixed", NOT_SURE],
               "question": "Are the qubits flux-tunable?",
-              "detected": ("flux-tunable" if facts.get("flux_tunable_seen") and not facts.get("bias_modes", {}).get("none")
-                           else "fixed-frequency" if not facts.get("flux_tunable_seen") else "mixed"),
+              "detected": detected_tunable(facts.get("bias_modes") or {}),
               "why": "a flux line in the state says a qubit CAN be tuned, not whether the lab parks it"})
     q.append({"id": "flux_source", "kind": "choice", "options": list(FLUX_OPTIONS),
               "question": "What biases the qubits' flux?",
@@ -584,7 +598,8 @@ def questions(facts: dict) -> list[dict]:
               "why": "SM detected this from the state's bias lines; the counts are shown beside it"})
     q.append({"id": "coupler", "kind": "choice", "options": ["tunable coupler", "fixed coupling", "none", NOT_SURE],
               "question": "Two-qubit coupling?",
-              "detected": "tunable coupler" if facts.get("couplers_seen") else ("fixed coupling" if facts.get("n_pairs") else "none")})
+              # review r5 P2: only a coupler VALUE is a detection; its absence is not
+              "detected": "tunable coupler" if facts.get("couplers_seen") else None})
     q.append({"id": "purcell", "kind": "choice", "options": ["yes", "no", NOT_SURE],
               "question": "Is there a Purcell filter on the readout line?",
               "detected": None,      # review r3 P2-5: a word in the state is not a detection
@@ -599,7 +614,7 @@ def questions(facts: dict) -> list[dict]:
               "question": "Which elements, fields or qubits must the agent never change?",
               "detected": [], "tokens": list(facts.get("qubit_ids") or []) + list(facts.get("top_level") or []),
               "why": "a safety rule comes from a person; SM refuses an agent's write under any of these. A qubit or "
-                     "pair id also covers the ports it is wired to; another qubit's pairs are listed separately."})
+                     "pair id also covers the ports it is wired to, and a qubit also covers every pair it is in."})
     q.append({"id": "notes", "kind": "text", "question": "Anything else the agent must know about this device or lab?",
               "detected": ""})
     return q
@@ -780,6 +795,10 @@ def expand_never_touch(tokens, merged: dict | None) -> list[str]:
         t = str(t).strip()
         if not t or "." in t:
             continue
+        # decision D-26: a listed qubit protects every pair that contains it
+        for pk, pv in (merged.get("qubit_pairs") or {}).items():
+            if _pair_has_qubit(pk, pv, ((merged.get("wiring") or {}).get("qubit_pairs") or {}).get(pk), t):
+                out += [f"qubit_pairs.{pk}", f"wiring.qubit_pairs.{pk}"]
         for coll in ("qubits", "qubit_pairs"):
             for k, v in (merged.get(coll) or {}).items():
                 if str(k).lower() == t.lower():
@@ -808,6 +827,37 @@ def expand_never_touch(tokens, merged: dict | None) -> list[str]:
     for r in roots:
         walk(r)
     return out
+
+
+def _pair_has_qubit(pair_key, pair: Any, wiring_pair: Any, qubit: str) -> bool:
+    """Does this pair contain *qubit*? By its references (``#/qubits/<q>`` in the
+    pair or its wiring, any depth) or by the members of its id."""
+    q = str(qubit).lower()
+    target = "/qubits/" + q
+    found = [False]
+
+    def walk(node, depth=0):
+        if found[0] or depth > 8:
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, depth + 1)
+        elif isinstance(node, str) and node.lower().rstrip("/").endswith(target):
+            found[0] = True
+    walk(pair)
+    walk(wiring_pair)
+    if found[0]:
+        return True
+    members = [m.lower() for m in str(pair_key).split("-")]
+    if q in members:
+        return True
+    # short spelling q1-2: the second member borrows the first one's prefix
+    import re as _re
+    m = _re.match(r"^([a-z]+)", members[0]) if members else None
+    return bool(m) and len(members) == 2 and (m.group(1) + members[1]) == q
 
 
 def save_never_touch(instance_path, project: str | None, chip: str | None, lst: list[str]) -> None:

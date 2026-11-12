@@ -6797,8 +6797,11 @@ def _never_touch_unchecked(why: str):
 def _never_touch_refusal(paths) -> Any:
     """Q-4 (agents ver180): an AGENT's write (``X-SM-Agent``) under a path the
     person listed as never-touch is refused with that line. Human requests are
-    untouched. None = allowed. review r3 P2-3: an error FAILS CLOSED for an agent."""
-    if not request.headers.get("X-SM-Agent"):
+    untouched. None = allowed. review r3 P2-3: an error FAILS CLOSED for an agent.
+    review r5 P1: "a person" is PROVEN (callers.from_person), never inferred from
+    a missing X-SM-Agent header."""
+    from quam_state_manager.web import callers
+    if callers.from_person():
         return None
     from quam_state_manager.core import agent_setup
     try:
@@ -6876,10 +6879,15 @@ def _request_paths() -> list[str]:
 def _never_touch_agent_guard():
     """review r3 P2-3: ONE guard for every agent-originated mutating request
     (no door list to keep in step). Fails closed for an agent."""
-    if request.method in ("GET", "HEAD", "OPTIONS") or not request.headers.get("X-SM-Agent"):
+    from quam_state_manager.web import callers
+    if request.method in ("GET", "HEAD", "OPTIONS") or callers.from_person():
         return None
     try:
         paths = _request_paths()
+        if request.path in ("/state/apply-to-live", "/state/sync"):
+            # review r5 P2: an apply pushes the STAGED set -- check every staged path
+            store = _store() if _context_type() == "quam" else None
+            paths = paths + [str(e.dot_path) for e in (getattr(store, "change_log", None) or [])]
     except Exception as exc:  # noqa: BLE001
         return _never_touch_unchecked(type(exc).__name__)
     if not paths:

@@ -32,7 +32,7 @@ const QS = [
 ];
 let inv = { ok: true, kind: 'investigate', backend: 'claude', done: true, failed: false, elapsed_s: 9, at: 5, current: true,
   answers: [
-    { id: 'purcell', value: 'yes', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/readme.md', line: 4, quote: 'Purcell filter installed' }] },
+    { id: 'purcell', value: 'yes', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/readme.md', line: 4, quote: 'Purcell filter installed' }, { ok: false, kind: 'file', ref: 'D:/lab/cal/other.md', line: 9, quote: 'a filter line', why: 'the quote is not at the cited line' }] },
     { id: 'tunable', value: 'flux-tunable', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'state_key', ref: 'qubits.q1.z', quote: 'x' }] },
     { id: 'squid', value: null, agent_confidence: 'unsure', agent_leans: 'symmetric', status: 'proposed', evidence: [{ ok: false, kind: 'file', ref: null, quote: null, why: 'outside the folders SM lets an agent cite' }] },
     { id: 'notes', value: 'cool down weekly', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/n.md', line: 1, quote: 'weekly' }] }
@@ -66,7 +66,8 @@ const $ = (s) => document.querySelector(s);
   ok(sels.length === 4 && sels.every(s => Array.from(s.options).some(o => o.value === 'unknown' && /^not sure/.test(o.textContent))), 'D-18: every choice question offers "not sure" (saved as unknown)');
   // D-19: flux source pre-filled from what SM detected, the counts beside it
   const fs_ = $('#as-ctx select[data-q="flux_source"]');
-  ok(fs_ && fs_.value === 'LF-FEM' && /SM detected/.test(fs_.selectedOptions[0].textContent) && /opx ×4/.test($('[data-counts]').textContent), 'D-19: flux_source pre-filled "SM detected" with the counts shown');
+  ok(fs_ && fs_.value === '' && /SM detected/.test(Array.from(fs_.options).filter(o => o.value === 'LF-FEM')[0].textContent) && /opx ×4/.test($('[data-counts]').textContent),
+     'D-19 / review r5 P2: flux_source marks "SM detected" with the counts, but nothing is chosen for the person');
   // D-20: never_touch is free text with the chip's names offered
   const nt = $('#as-ctx input[data-q="never_touch"]');
   ok(nt && nt.getAttribute('list') === 'as-nt-tokens' && document.querySelectorAll('#as-nt-tokens option').length === 3, 'D-20: never_touch offers the chip names as autocomplete');
@@ -81,13 +82,16 @@ const $ = (s) => document.querySelector(s);
   status.codex = { mcp: true }; A.load(); await tick(40); A.loadContext(); await tick(40);
   const props = Array.from(document.querySelectorAll('[data-prop]'));
   ok(props.length === 4 && props.every(p => p.getAttribute('data-status') === 'proposed'), 'D-21: every answer starts "proposed", sure or not');
-  ok(A._state.answers.purcell === 'unknown' && A._state.answers.tunable === 'mixed', 'D-21: nothing enters the answers before Accept/Edit');
+  ok(A._state.answers.purcell === undefined && A._state.answers.tunable === undefined, 'D-21: nothing enters the answers before Accept/Edit (not even what SM detected)');
   ok(/Purcell filter installed/.test($('[data-prop="purcell"]').textContent) && /readme\.md:4/.test($('[data-prop="purcell"]').textContent), 'D-17/R-7: the quote is shown beside the answer');
   ok(!/Accept/.test($('[data-prop="squid"]').textContent), 'D-18: an unsure answer has no value to accept');
   // decision D-25: the agent's confidence is labelled as the agent's; SM's facts are neutral
   ok(/agent says: sure/.test($('[data-prop="purcell"] [data-agent-says]').textContent), 'D-25: the card says "agent says: sure", not a verdict');
   ok(!document.querySelector('[data-prop] .asx-ok, [data-prop] .asx-no') && document.querySelector('[data-prop="purcell"] [data-fact="found"]')
      && /SM found the quote at/.test($('[data-prop="purcell"]').textContent), 'D-25: SM states what it checked, with no green or red verdict');
+  { const nf = $('[data-prop="purcell"] [data-fact="not-found"]');
+    ok(nf && /SM: the quote is not at the cited line/.test(nf.textContent) && !/SM found the quote/.test(nf.textContent),
+       'review r5: a citation SM could not find is never rendered as found'); }
   ok(/leans towards symmetric/.test($('[data-prop="squid"]').textContent), 'review r4 P2-6: an unsure card says what the agent leaned towards');
   // the popup: only for SM-sent ids, with "not sure"
   const pop = $('#as-popup');

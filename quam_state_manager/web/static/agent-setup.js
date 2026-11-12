@@ -188,13 +188,15 @@ window.AgentSetup = (function () {
     var stale = rec.current === false;
     // review r3 P2-6: the frame follows the worst row
     var bad = (rec.rows || []).some(function (r) { return r.agent === "disagrees" || r.agent === "unverified"; });
+    // review r5 P2: green only when EVERY row is an independent agreement; otherwise neutral
+    var allAgree = (rec.rows || []).length > 0 && (rec.rows || []).every(function (r) { return r.agent === "agrees"; });
     var rows = (rec.rows || []).map(function (r) {
       var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
       var cls = r.agent === "agrees" && !stale ? "asx-ok" : "asx-no";
       return '<li class="asx-chk ' + cls + '" data-row="' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">' + esc(ROW_LABEL[r.key] || r.key)
         + ': <span class="muted">SM: ' + esc(mine) + "</span> · " + esc(agentCell(r)) + "</li>";
     }).join("");
-    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : bad ? " asx-result-bad" : " asx-result-ok") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
+    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : bad ? " asx-result-bad" : allAgree ? " asx-result-ok" : "") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
       + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
       + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
       + '<ul class="asx-checks">' + rows + "</ul>"
@@ -742,7 +744,8 @@ window.AgentSetup = (function () {
       var saved = r.body.saved || {};
       (r.body.questions || []).forEach(function (q) {
         S.qById[q.id] = q;
-        var start = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
+        // review r5 P2: what SM detected is SHOWN, never saved as the person's answer
+        var start = S.answers[q.id] !== undefined ? S.answers[q.id] : saved[q.id];
         if (start === null || start === undefined || (Array.isArray(start) && !start.length && q.kind !== "list")) delete S.answers[q.id];
         else S.answers[q.id] = start;
         html.push('<div class="as-q" data-qid="' + esc(q.id) + '"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>" + ctrlHtml(q) + "</div>");
