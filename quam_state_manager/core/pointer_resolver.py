@@ -98,14 +98,13 @@ def resolve_pointer(
         value = _traverse(root, root, segments, pointer, (),
                           cache=cache, lock=lock, _visited=_visited)
     elif pointer.startswith("#../"):
-        if len(current_path) < 2:
+        parent_path, relative_segments = _relative_parts(pointer, current_path)
+        if parent_path is None:
             logger.warning(
                 "Cannot resolve relative pointer %r: current_path too short (%s)",
                 pointer, current_path,
             )
             return _store(pointer)
-        parent_path = current_path[:-2]
-        relative_segments = pointer[4:].split("/")
         parent = _traverse(root, root, list(parent_path), pointer, (),
                            cache=cache, lock=lock, _visited=_visited)
         if parent is _SENTINEL:
@@ -290,6 +289,31 @@ def _compute_resolved_path(
     if pointer.startswith("#/"):
         return tuple(pointer[2:].split("/"))
     if pointer.startswith("#../"):
-        parent_path = current_path[:-2]
-        return parent_path + tuple(pointer[4:].split("/"))
+        parent_path, rest = _relative_parts(pointer, current_path)
+        if parent_path is None:
+            return current_path
+        return tuple(parent_path) + tuple(rest)
     return current_path
+
+
+def _relative_parts(pointer: str, current_path: tuple[str, ...]):
+    """Split a ``#../`` pointer into (base path, remaining segments).
+
+    The pointer is relative to the object that holds the leaf, as in quam:
+    each leading ``../`` goes up one level from that object, so
+    ``#../x`` on ``a.b.leaf`` reads ``a.x`` and ``#../../x`` reads ``x``
+    one level higher. Returns (None, None) when the path is too short.
+    """
+    body = pointer[1:]
+    ups = 0
+    while body.startswith("../"):
+        ups += 1
+        body = body[3:]
+    keep = len(current_path) - 1 - ups
+    if keep < 0:
+        return None, None
+    return current_path[:keep], (body.split("/") if body else [])
+
+
+#: Public name: every module that interprets ``#../`` uses this one rule.
+relative_parts = _relative_parts

@@ -63,8 +63,8 @@ def ref_target(obj_segs, ref: str) -> list[str] | None:
     """Absolute segments of *ref* held by the object at *obj_segs* -- the
     SAME target SM's pointer index records (``pointer_path.pointer_to_abs``),
     so a value read here and the rows the index refreshes on a write never
-    disagree. One ``../`` step, as every SM resolver follows (docs/248: the
-    multi-level ``#../../`` form is in no real chip); None for anything else."""
+    disagree. Each leading ``../`` climbs one level (``pointer_resolver.
+    relative_parts``, quam's own reading); None for anything else."""
     from quam_state_manager.core.pointer_path import pointer_to_abs
     segs = pointer_to_abs(ref, list(obj_segs) + ["_"])
     if not segs or any(s in ("..", ".") for s in segs):
@@ -239,9 +239,7 @@ def _read(merged, obj_segs, value, origin, lab, seen, depth) -> Read:
     seen = seen | {key}
     t = ref_target(obj_segs, value)
     if t is None:
-        why = ("climbs more than one level; SM follows one ../ step (docs/248)"
-               if "../../" in value else "names no target")
-        return Read(False, None, "unknown", reason=f"{value} {why}")
+        return Read(False, None, "unknown", reason=f"{value} names no target")
     owner_segs, attr = t[:-1], t[-1]
     real, owner = _locate(merged, owner_segs, set(seen), depth)
     tdot = ".".join(t)

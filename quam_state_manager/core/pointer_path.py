@@ -67,9 +67,11 @@ def _pointer_to_abs(pointer: str, holder: list[str]) -> list[str] | None:
         return [s for s in body.split("/") if s != ""]
 
     if pointer.startswith("#../"):
-        if len(holder) < 2:
+        from quam_state_manager.core.pointer_resolver import relative_parts
+        base, rest = relative_parts(pointer, tuple(holder))
+        if base is None:
             return None
-        return list(holder[:-2]) + _segs(pointer[4:])
+        return list(base) + [s for s in rest if s != ""]
     if pointer.startswith("#./"):
         if len(holder) < 1:
             return None

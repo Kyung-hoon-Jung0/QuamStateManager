@@ -97,9 +97,10 @@ class TestAnalyzeState:
         recs = [r for r in _findings(state) if r.get("code") == code]
         assert recs and recs[0]["severity"] == "warning", recs
 
-    def test_component_or_str_union_string_stays_warning(self):
+    def test_component_or_str_union_string_is_not_a_finding(self):
         # the probe collapses Union[Component, str] to `component` (raw keeps
         # the Union); quam's str arm accepts any string there, so it LOADS
+        # and a str value is declared legal -- no finding at all
         import copy
         man = copy.deepcopy(MANIFEST)
         man["classes"]["q.Transmon"]["fields"]["gate_pulse"] = {
@@ -112,7 +113,12 @@ class TestAnalyzeState:
         state = _state()
         state["qubits"]["qA1"]["gate_pulse"] = "qA1"
         recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
-        assert recs and recs[0]["severity"] == "warning", recs
+        assert recs == [], recs
+        # a plain component field still flags a str
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["type"]["raw"] = "q.Pulse"
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["raw"] = "q.Pulse"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert recs, recs
 
     def test_a_text_number_reaches_the_crash_banner_count(self):
         # the chain the banner reads: analyzer -> diagnostics Finding -> summary

@@ -342,11 +342,29 @@ def judge(value: Any, ts: dict) -> tuple[bool, str, str]:
         # non-pointer is the crash class
         if isinstance(value, dict):
             return True, "", ""
+        if isinstance(value, str) and _declares_str(ts):
+            return True, "", ""                 # declared Union[Component, str]
         return False, "type_mismatch", (
             f"expected a {ts.get('class') or 'component'} dict, got "
             f"{_typename(value)} {value!r}")
 
     return True, "", ""
+
+
+def _declares_str(ts: dict) -> bool:
+    """True when the declared annotation allows a str (Union[Component, str]).
+
+    New probes set ``str_ok``; a cached manifest from an older probe still
+    carries the annotation text in ``raw``, read here so a warm cache agrees.
+    """
+    if ts.get("str_ok"):
+        return True
+    raw = str(ts.get("raw") or "").replace(" ", "")
+    if not (raw.startswith(("typing.Union[", "Union[", "Optional[", "typing.Optional["))
+            or "|" in raw):
+        return False
+    inner = raw[raw.find("[") + 1:raw.rfind("]")] if "[" in raw else raw
+    return any(a in ("str", "<class'str'>") for a in inner.replace("|", ",").split(","))
 
 
 def _typename(value: Any) -> str:
