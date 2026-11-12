@@ -506,18 +506,29 @@ def context_post():
     if not cal or not Path(cal).is_dir():
         return _err("no calibrations folder (set it in the run environment first)", 409)
     answers = data.get("answers") if isinstance(data.get("answers"), dict) else {}
+    # D-21: the evidence of the answers the person ACCEPTED rides along, kept in the record
+    evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+    evidence = {k: [e for e in v if isinstance(e, dict)][:3] for k, v in evidence.items()
+                if isinstance(k, str) and isinstance(v, list) and k in answers}
+    nt = answers.get("never_touch")
+    if isinstance(nt, str):
+        nt = [x.strip() for x in nt.split(",") if x.strip()]
+    nt = [str(x).strip() for x in (nt or []) if isinstance(x, (str, int, float)) and str(x).strip()][:200]
+    if "never_touch" in answers:
+        answers = {**answers, "never_touch": nt}
     local = data.get("local", True) is not False
     targets = data.get("targets") or ["claude", "codex"]
     targets = [t for t in targets if t in ("claude", "codex")]
     facts = st.detect_facts(store.state, store.wiring)
-    block = st.context_block(facts, answers, chip=aa._chip_name(), data_folder=_data_folder())
+    block = st.context_block(facts, answers, chip=aa._chip_name(), data_folder=_data_folder(), evidence=evidence)
     previews = {t: st.preview_context(cal, block, target=t, local=local) for t in targets}
     out = {"ok": True, "block": block, "previews": previews, "applied": bool(data.get("apply")), "writes": {}}
     if data.get("apply"):
         for t in targets:
             out["writes"][t] = st.write_context(cal, block, target=t, local=local)
         st.save_record(current_app.instance_path, {"context": {"at": time.time(), "folder": cal, "local": local,
-                                                               "targets": targets, "answers": answers}})
+                                                               "targets": targets, "answers": answers,
+                                                               "answers_evidence": evidence, "never_touch": nt}})
         journal_mod.append(current_app.instance_path, aa._chip_name(),
                            f"lab context written to {', '.join(Path(w['file']).name for w in out['writes'].values())} "
                            f"by {r._request_actor()}", kind="sm")
@@ -717,6 +728,56 @@ def confirm():
         st.save_record(current_app.instance_path, {"tested": {backend: {"at": time.time(), "elapsed_s": out["elapsed_s"],
                                                                         "ok": out["done"] and not out["failed"]}}})
         _store_result("confirm", rec)
+        return jsonify(ok=True, **_with_current(rec))
+    finally:
+        _release(busy)
+
+
+@setup_bp.route("/investigate", methods=["POST"])
+def investigate():
+    """Investigate by agent (D-16..D-21): one read-only ask carrying the
+    question schema. Every answer comes back PROPOSED with its citations
+    checked by SM; nothing is saved here (the person's Write context does)."""
+    from quam_state_manager.core import agent_checks as ac, node_scan
+    r = _r()
+    store = r._store()
+    if store is None:
+        return _err("open a chip first", 409)
+    data = json_object()
+    backend = str(data.get("backend") or "claude").lower()
+    if backend not in ab.BACKENDS:
+        return _err("backend must be claude or codex")
+    busy = _ask_slot("investigate")
+    if busy is None:
+        return _err("another agent check is running on this page", 409, busy=True)
+    try:
+        cal = _cal_folder()
+        nodes = []
+        if cal:
+            try:
+                nodes = [i.name for i in node_scan.scan_folder(cal, instance_path=current_app.instance_path) if i.error is None]
+            except Exception:  # noqa: BLE001
+                nodes = []
+        qs = st.questions(st.detect_facts(store.state, store.wiring, nodes))
+        roots = _roots()
+        key = _ask_key()
+        try:
+            out = _ask_and_wait(backend, ac.investigate_prompt(qs, roots), ASK_TIMEOUT_S, model=data.get("model"))
+        except (ValueError, OSError) as exc:
+            return _err(f"could not start {backend}: {exc}", 502)
+        rec = {"kind": "investigate", "backend": backend, "at": time.time(), "key": key, "elapsed_s": out["elapsed_s"],
+               "done": out["done"], "failed": out["failed"], "error": out["error"], "tools": out["tools"],
+               "question_ids": [q["id"] for q in qs]}
+        if out["done"] and not out["failed"]:
+            parsed, why = ac.parse_answer(out["answer"])
+            if parsed is None:
+                rec.update(parse_error=why, raw=(out["answer"] or "")[:8000])
+            else:
+                rec.update(ac.vet_investigate(parsed, qs, roots=[roots["calibrations"], roots["config"], roots["state"]],
+                                              exist_roots=[roots["data"]], state_lookup=_state_lookup()))
+        elif out["answer"]:
+            rec["raw"] = str(out["answer"])[:8000]
+        _store_result("investigate", rec)
         return jsonify(ok=True, **_with_current(rec))
     finally:
         _release(busy)

@@ -6788,6 +6788,28 @@ def _calibrations(ctx: dict | None = None) -> dict[str, Any]:
     return calibrations.resolve(current_app.instance_path, (ctx or {}).get("qualibrate_project"), legacy=legacy)
 
 
+def _never_touch_refusal(paths) -> Any:
+    """Q-4 (agents ver180): an AGENT's write (``X-SM-Agent``) under a path the
+    person listed as never-touch is refused with that line. Human doors are
+    untouched. None = allowed."""
+    if not request.headers.get("X-SM-Agent"):
+        return None
+    from quam_state_manager.core import agent_setup
+    try:
+        tokens = agent_setup.never_touch_list(current_app.instance_path, _calibrations_folder() or None)
+    except Exception:  # noqa: BLE001
+        return None
+    if not tokens:
+        return None
+    for p in paths:
+        hit = agent_setup.never_touch_hit(str(p or ""), tokens)
+        if hit:
+            return jsonify(ok=False, refused="never_touch", path=p, rule=hit,
+                           error=f"{p} is under '{hit}', which the person listed as never to be changed",
+                           how="leave it; ask the person if it must change"), 403
+    return None
+
+
 def _calibrations_folder(ctx: dict | None = None) -> str:
     """The resolved calibrations folder, or "" (see ``_calibrations``)."""
     try:
@@ -13554,6 +13576,9 @@ def field_edit():
 
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
+    _nt = _never_touch_refusal([dot_path])
+    if _nt is not None:
+        return _nt
 
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
@@ -16778,6 +16803,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
+    _nt = _never_touch_refusal([p for (p, _v, _c) in pairs])
+    if _nt is not None:
+        return _nt
 
     # Preflight EVERY identity row before type assignments or any batch write,
     # even for independent batches. A single answer covers all listed rows.

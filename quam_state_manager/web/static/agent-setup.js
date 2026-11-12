@@ -8,7 +8,7 @@
  * Bundle 'agent_setup' (base.html). */
 window.AgentSetup = (function () {
   "use strict";
-  var S = { data: null, root: null, previews: {}, context: null, answers: {} };
+  var S = { data: null, root: null, previews: {}, context: null, answers: {}, evidence: {}, review: {}, popupDone: {}, popupQueue: [] };
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   // English only, and for the same reason as in agent.js: this value goes
@@ -280,7 +280,9 @@ window.AgentSetup = (function () {
     if (!cs.length) return "";
     return '<div class="asx-row" id="as-checks"><span class="asx-k">SM checks</span><ul class="asx-checks">'
       + cs.map(function (c) { return '<li class="asx-chk ' + (c.ok ? "asx-ok" : "asx-no") + '" data-check="' + esc(c.key) + '" title="' + esc(c.detail || "") + '">'
-        + (c.ok === true ? "✓" : c.ok === false ? "✗" : "○") + " " + esc(c.label) + ' <span class="muted">' + esc(c.detail || "") + "</span></li>"; }).join("")
+        + (c.ok === true ? "✓" : c.ok === false ? "✗" : "○") + " " + esc(c.label)
+        // a passing check keeps its detail on hover; a failing one says it on the line
+        + (c.ok === true ? "" : ' <span class="muted">' + esc(c.detail || "") + "</span>") + "</li>"; }).join("")
       + "</ul></div>";
   }
 
@@ -582,33 +584,175 @@ window.AgentSetup = (function () {
     // path that could not be used.
     try { p.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
   }
+  /* ---- Step 3: the questions, Investigate by agent, the popup (D-16..D-21) ---- */
+  var NS = "unknown";
+  function optLabel(o) { return o === NS ? "not sure" : o; }
+  function ctrlHtml(q) {
+    var v = S.answers[q.id];
+    if (q.kind === "choice") {
+      return '<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">' + q.options.map(function (o) {
+        return '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + ">" + esc(optLabel(o)) + (o === q.detected ? (q.id === "flux_source" ? " (SM detected)" : " (detected)") : "") + "</option>";
+      }).join("") + "</select>"
+        + (q.id === "flux_source" && q.detected_counts ? ' <span class="muted asx-small" data-counts="1">SM sees: ' + esc(Object.keys(q.detected_counts).map(function (k) { return k + " ×" + q.detected_counts[k]; }).join(", ") || "no bias lines") + "</span>" : "");
+    }
+    if (q.kind === "list") {
+      // free text with the chip's own names offered; any text is accepted (D-20)
+      var list = Array.isArray(v) ? v.join(", ") : String(v || "");
+      return '<input type="text" data-q="' + esc(q.id) + '" list="as-nt-tokens" value="' + esc(list) + '" placeholder="e.g. q3, twpa, qubits.q1.xy" onchange="AgentSetup.answer(this)">'
+        + '<datalist id="as-nt-tokens">' + (q.tokens || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join("") + "</datalist>";
+    }
+    return '<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";
+  }
+  function evHtml(e) {
+    var where = e.kind === "state_key" ? "state " + (e.ref || "") : (e.ref ? e.ref + (e.line ? ":" + e.line : "") : "(a path outside the allowed folders)");
+    return '<li class="asx-chk ' + (e.ok ? "asx-ok" : "asx-no") + '">' + (e.ok ? "✓ " : "✗ ") + esc(where)
+      + (e.quote ? ' — <code>' + esc(e.quote) + "</code>" : "") + (e.ok ? "" : ' <span class="muted">(' + esc(e.why || "not checked") + ")</span>") + "</li>";
+  }
+  function proposalHtml(a, q) {
+    var st = S.review[a.id] || "proposed";
+    var badge = { proposed: "ui-badge--accent", accepted: "ui-badge--ok", edited: "ui-badge--ok", rejected: "ui-badge--danger" }[st] || "";
+    var val = a.value === null || a.value === undefined ? "no answer (not sure)" : (Array.isArray(a.value) ? a.value.join(", ") : optLabel(String(a.value)));
+    return '<article class="ui-item" data-prop="' + esc(a.id) + '" data-status="' + esc(st) + '"><div class="ui-item-head"><span class="ui-badge ' + badge + '">' + esc(st) + "</span>"
+      + '<span class="ui-item-title">' + esc((q && q.question) || a.id) + "</span></div>"
+      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · " + esc(a.confidence) + "</p>"
+      + (a.evidence && a.evidence.length ? '<ul class="asx-checks">' + a.evidence.map(evHtml).join("") + "</ul>" : '<p class="ui-note">no citation</p>')
+      + '<div class="ui-item-foot">'
+      + (a.value !== null && a.value !== undefined ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'accepted\')">Accept</button>' : "")
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'edited\')">Edit</button>'
+      + '<button type="button" class="asx-link" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'rejected\')">Reject</button></div></article>';
+  }
+  function popupHtml(qid) {
+    var q = (S.qById || {})[qid];
+    if (!q) return "";
+    var opts = q.kind === "choice" ? q.options.slice() : [];
+    var body = q.kind === "choice"
+      ? '<div class="as-acts">' + opts.map(function (o) { return '<button type="button" class="btn-sm outline asx-btn-2" data-pick="' + esc(o) + '" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', this.getAttribute(\'data-pick\'))">' + esc(optLabel(o)) + "</button>"; }).join("") + "</div>"
+      : '<p class="ui-note">Answer it in the form above, or:</p><div class="as-acts"><button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', \'' + NS + '\')">not sure</button></div>';
+    return '<div class="ui-dialog ui-dialog--s" role="dialog" id="as-popup" data-q="' + esc(qid) + '" aria-label="' + esc(q.question) + '">'
+      + '<div class="ui-dialog-head"><b>The agent was not sure</b></div>'
+      + '<div class="ui-dialog-body"><p>' + esc(q.question) + "</p>" + body + "</div>"
+      + '<div class="ui-dialog-foot"><button type="button" class="asx-link" onclick="AgentSetup.popupSkip()">Later</button></div></div>';
+  }
+  function investigateHtml() {
+    var rec = (S.asks || {}).investigate;
+    var clis = (S.data && S.data.clis) || {};
+    var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
+    var running = (S.asks || {}).running;
+    var head = '<div class="as-acts" id="as-investigate">' + ks.map(function (k) {
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-investigate="' + k + '"' + (running ? " disabled" : "")
+        + ' onclick="AgentSetup.investigate(\'' + k + '\')">Investigate by ' + esc(NAMES[k]) + "</button>";
+    }).join("") + '<span class="asx-small muted">read-only; every answer comes back as a proposal you accept, edit or reject. Nothing is saved until Write.</span></div>';
+    if (S.invMsg) return head + S.invMsg;
+    if (!rec) return head;
+    var out = [head, staleLine(rec)];
+    if (rec.failed || !rec.done) return out.join("") + askFail(rec);
+    if (rec.parse_error) return out.join("") + '<p class="ag-err">the answer was not in the expected form</p>' + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "");
+    out.push('<p class="asx-small muted">' + esc(NAMES[rec.backend] || rec.backend) + " answered in " + esc(rec.elapsed_s) + " s"
+      + (rec.dropped_ids ? " · " + esc(rec.dropped_ids) + " answers outside the questions dropped" : "")
+      + (rec.dropped_values ? " · " + esc(rec.dropped_values) + " values outside the options dropped" : "") + "</p>");
+    if (rec.current !== false) {
+      (rec.answers || []).forEach(function (a) { out.push(proposalHtml(a, (S.qById || {})[a.id])); });
+      var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
+      if (pending.length) out.push(popupHtml(pending[0]));
+    }
+    if (rec.also_asked && rec.also_asked.length) {
+      out.push('<p class="asx-small muted" id="as-also-asked">The agent also asked (not saved): ' + rec.also_asked.map(esc).join(" · ") + "</p>");
+    }
+    return out.join("");
+  }
+  function renderInvestigate() {
+    var host = document.getElementById("as-inv");
+    if (host) host.innerHTML = investigateHtml();
+  }
+  function setupReview(rec) {
+    S.review = {}; S.popupDone = {};
+    S.popupQueue = rec && rec.current !== false ? (rec.asks || []).filter(function (id) { return (S.qById || {})[id]; }) : [];
+  }
   function loadContext() {
     api("GET", "/api/agent/setup/context").then(function (r) {
       var host = document.getElementById("as-ctx");
       if (!host) return;
       if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
       S.context = r.body;
+      S.qById = {};
+      S.evidence = S.evidence || {};
+      S.review = S.review || {}; S.popupDone = S.popupDone || {};
       var f = r.body.facts || {};
       var html = ['<p class="muted">SM sees: ' + f.n_qubits + " qubits, " + f.n_pairs + " pairs; bias sources " + esc(JSON.stringify(f.bias_modes || {})) + (f.nodes && f.nodes.length ? "; " + f.nodes.length + " node files" : "") + ". It cannot see what follows — please confirm.</p>"];
       // what the lab answered last time comes before what SM detects: writing the context again
       // must never drop a note the lab wrote (measured: "Never retry hardware" vanished on a re-write)
       var saved = r.body.saved || {};
       (r.body.questions || []).forEach(function (q) {
+        S.qById[q.id] = q;
         S.answers[q.id] = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
-        html.push('<div class="as-q"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>");
-        if (q.kind === "choice") {
-          html.push('<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">' + q.options.map(function (o) { return '<option value="' + esc(o) + '"' + (o === S.answers[q.id] ? " selected" : "") + ">" + esc(o) + (o === q.detected ? " (detected)" : "") + "</option>"; }).join("") + "</select>");
-        } else {
-          html.push('<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(S.answers[q.id] || "") + "</textarea>");
-        }
-        html.push("</div>");
+        html.push('<div class="as-q" data-qid="' + esc(q.id) + '"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>" + ctrlHtml(q) + "</div>");
       });
+      // D-23: a result kept for this SM session is re-read with the page
+      var inv = (S.asks || {}).investigate;
+      if (inv && S._invFor !== inv.at) { setupReview(inv); S._invFor = inv.at; }
+      html.push('<div id="as-inv"></div>');
       html.push('<div class="as-acts"><label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> Claude: CLAUDE.local.md (not shared through git)</label> ' +
         '<span class="muted" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md.">Codex: always AGENTS.md</span> ' +
         '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> CLAUDE</label> <label class="ag-observer"><input type="checkbox" id="as-ctx-codex" checked> AGENTS</label> ' +
         '<button type="button" class="btn-sm" onclick="AgentSetup.previewContext()">Preview the block</button></div><div id="as-ctx-prev"></div>');
       host.innerHTML = html.join("");
+      renderInvestigate();
     });
+  }
+  function investigate(k) {
+    if (S.asks && S.asks.running) return;
+    S.asks = S.asks || {};
+    S.asks.running = "investigate";
+    S.invMsg = '<p class="muted">asking ' + esc(NAMES[k] || k) + " to look for evidence (read-only, up to 2 min)…</p>";
+    renderInvestigate();
+    api("POST", "/api/agent/setup/investigate", { backend: k }).then(function (r) {
+      S.asks.running = null;
+      S.invMsg = null;
+      var b = r.body || {};
+      if (r.status !== 200) S.invMsg = '<p class="ag-err" role="alert">' + esc(b.error || ("failed (HTTP " + r.status + ")")) + "</p>";
+      else { S.asks.investigate = b; setupReview(b); S._invFor = b.at; }
+      renderInvestigate();
+    });
+  }
+  function setCtrl(id, v) {
+    var el = document.querySelector('#as-ctx [data-q="' + id + '"]');
+    if (!el) return;
+    el.value = Array.isArray(v) ? v.join(", ") : String(v);
+  }
+  // D-21: every proposal starts "proposed"; only Accept or Edit puts it into the answers
+  function review(id, verdict) {
+    var rec = (S.asks || {}).investigate || {};
+    var a = (rec.answers || []).filter(function (x) { return x.id === id; })[0];
+    if (!a) return;
+    S.review[id] = verdict;
+    if (verdict === "accepted" && a.value !== null && a.value !== undefined) {
+      S.answers[id] = a.value;
+      S.evidence[id] = (a.evidence || []).filter(function (e) { return e.ok; }).map(function (e) { return { kind: e.kind, ref: e.ref, line: e.line }; });
+      setCtrl(id, a.value);
+    } else if (verdict === "edited") {
+      if (a.value !== null && a.value !== undefined) { S.answers[id] = a.value; setCtrl(id, a.value); }
+      delete S.evidence[id];                      // the person's own value carries no agent citation
+      var el = document.querySelector('#as-ctx [data-q="' + id + '"]');
+      if (el && el.focus) el.focus();
+    } else {
+      delete S.evidence[id];
+    }
+    renderInvestigate();
+  }
+  function popupPick(id, v) {
+    var q = (S.qById || {})[id];
+    if (q && q.kind === "list") S.answers[id] = v === NS ? [] : v;
+    else S.answers[id] = v;
+    S.popupDone[id] = true;
+    S.review[id] = "edited";
+    delete S.evidence[id];
+    setCtrl(id, S.answers[id]);
+    renderInvestigate();
+  }
+  function popupSkip() {
+    var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
+    if (pending.length) S.popupDone[pending[0]] = "later";
+    renderInvestigate();
   }
   function saveLimits() {
     var g = function (id) { return String((document.getElementById(id) || {}).value || "").trim(); };
@@ -627,12 +771,19 @@ window.AgentSetup = (function () {
       render();
     });
   }
-  function answer(el) { S.answers[el.getAttribute("data-q")] = el.value; }
+  function answer(el) {
+    var id = el.getAttribute("data-q"), q = (S.qById || {})[id];
+    S.answers[id] = q && q.kind === "list"
+      ? String(el.value || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean) : el.value;
+    delete (S.evidence || {})[id];             // a value the person typed carries no agent citation
+  }
   function ctxBody(apply) {
     var targets = [];
     if ((document.getElementById("as-ctx-claude") || {}).checked) targets.push("claude");
     if ((document.getElementById("as-ctx-codex") || {}).checked) targets.push("codex");
-    return { answers: S.answers, local: !!(document.getElementById("as-ctx-local") || { checked: true }).checked, targets: targets, apply: !!apply };
+    var ev = {};
+    Object.keys(S.evidence || {}).forEach(function (k) { if (S.evidence[k] && S.evidence[k].length) ev[k] = S.evidence[k]; });
+    return { answers: S.answers, evidence: ev, local: !!(document.getElementById("as-ctx-local") || { checked: true }).checked, targets: targets, apply: !!apply };
   }
   function previewContext() {
     api("POST", "/api/agent/setup/context", ctxBody(false)).then(function (r) {
@@ -673,6 +824,6 @@ window.AgentSetup = (function () {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
-           loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
+           loadContext: loadContext, answer: answer, investigate: investigate, review: review, popupPick: popupPick, popupSkip: popupSkip, previewContext: previewContext, writeContext: writeContext,
            test: test, confirmBy: confirmBy, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();

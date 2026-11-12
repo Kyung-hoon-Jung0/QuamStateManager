@@ -1873,6 +1873,19 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
                          "first, then approve"}
     staged, unstaged = [], []
+    # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
+    try:
+        from quam_state_manager.core import agent_setup as _as
+        _nt = _as.never_touch_list(app.instance_path, r._calibrations_folder(ctx) or None)
+    except Exception:  # noqa: BLE001
+        _nt = []
+    if _nt:
+        hits = [(w["path"], _as.never_touch_hit(w["path"], _nt)) for w in writes]
+        hits = [(p_, h) for p_, h in hits if h]
+        if hits:
+            return {"group_id": gid, "staged": 0, "applied": False,
+                    "unstaged": [{"path": p_, "why": f"never_touch: under '{h}', listed by the person"} for p_, h in hits[:50]],
+                    "error": "never_touch: the run wrote paths the person listed as never to be changed; nothing was written"}
     if any(w.get("capture_error") for w in writes):
         return {"group_id": gid, "staged": 0, "applied": False,
                 "unstaged": [{"path": w["path"], "why": w["capture_error"]}

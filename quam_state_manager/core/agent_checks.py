@@ -249,8 +249,11 @@ def _agrees(key: str, mine, theirs) -> bool:
     if key in ("node_files", "run_folders"):
         if not isinstance(theirs, list) or not isinstance(mine, (list, tuple, set)):
             return False
-        m = {os.path.splitext(str(x))[0] for x in mine}
-        t = {os.path.splitext(str(x))[0] for x in theirs}
+        # a name, a relative "date/run" path or an absolute one: compare the last component
+        def _name(x):
+            return os.path.splitext(str(x).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])[0]
+        m = {_name(x) for x in mine}
+        t = {_name(x) for x in theirs}
         return bool(m & t)
     if key == "n_qubits":
         try:

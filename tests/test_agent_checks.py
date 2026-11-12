@@ -95,6 +95,12 @@ class TestCompare:
         assert rows["calibrations_folder_in_config"] == "unverified"
         assert rows["run_folders"] == "not reported" and rows["config_file"] == "not reported"
 
+    def test_run_folders_compare_by_name_whatever_the_path_form(self, roots):
+        # measured with the real CLI: it reports "date/run" relative paths, SM holds names
+        ans = {"seen": {"run_folders": ["2026-08-31/#1_x", "D:\data\2026-09-06\#9_y"]}}
+        rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, self._sm(roots), roots=roots["list"])["rows"]}
+        assert rows["run_folders"] == "agrees"
+
     def test_verdict_ok_without_evidence_is_never_a_check(self, roots):
         ans = {"verdict": "ok", "seen": {"calibrations_folder_in_config": "D:/lab/cal"}}
         rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, self._sm(roots), roots=roots["list"])["rows"]}
@@ -223,3 +229,112 @@ def test_confirm_writes_nothing(pc, monkeypatch):
         assert scheduler.load_settings(r._sched_inst()) == s0
     assert before == {p: p.stat().st_mtime_ns for p in pc._cdir.rglob("*")}
     assert (live / "state.json").read_bytes() == st0
+
+
+# ---- the context block round-trips the new lines (F-12, D-18..D-21)
+def test_block_round_trip():
+    from quam_state_manager.core import agent_setup as st
+    facts = {"n_qubits": 2, "n_pairs": 1, "bias_modes": {"opx": 2}}
+    answers = {"tunable": "unknown", "coupler": "none", "flux_source": "both (bias tee)", "purcell": "yes",
+               "squid": "unknown", "data_read": "unknown", "never_touch": ["q1", "qubits.q2.xy"], "notes": "a\nb"}
+    ev = {"purcell": [{"kind": "file", "ref": "D:/lab/cal/readme.md", "line": 4}],
+          "flux_source": [{"kind": "state_key", "ref": "qubits.q1.z"}]}
+    block = st.context_block(facts, answers, chip="c", data_folder="D:/data", evidence=ev)
+    assert "(source: readme.md:4)" in block and "(source: qubits.q1.z)" in block
+    back = st._answers_from_block(block)
+    assert back == answers
+
+
+def test_every_choice_has_not_sure_and_flux_is_detected():
+    from quam_state_manager.core import agent_setup as st
+    qs = st.questions({"bias_modes": {"qdac": 3}, "qubit_ids": ["q1"], "top_level": ["qubits"]})
+    for q in qs:
+        if q["kind"] == "choice":
+            assert "unknown" in q["options"], q["id"]
+    fq = next(q for q in qs if q["id"] == "flux_source")
+    assert fq["detected"] == "QDAC" and fq["detected_counts"] == {"qdac": 3}
+    assert st.detected_flux_source({"opx": 1, "qdac": 2}) == "mixed"
+    assert st.detected_flux_source({"none": 5}) == "none (fixed-frequency)"
+    assert st.detected_flux_source({}) == "unknown"
+    nt = next(q for q in qs if q["id"] == "never_touch")
+    assert "q1" in nt["tokens"] and "qubits" in nt["tokens"]
+
+
+def test_never_touch_hit():
+    from quam_state_manager.core import agent_setup as st
+    assert st.never_touch_hit("qubits.q3.xy.operations.x180.amplitude", ["q3"]) == "q3"
+    assert st.never_touch_hit("qubits.q30.xy", ["q3"]) is None
+    assert st.never_touch_hit("qubits.q2.xy.RF", ["qubits.q2.xy"]) == "qubits.q2.xy"
+    assert st.never_touch_hit("qubits.q2.xyz", ["qubits.q2.xy"]) is None
+
+
+def _write_ctx(pc, answers, evidence=None):
+    return pc.post("/api/agent/setup/context", json={"answers": answers, "evidence": evidence or {}, "apply": True,
+                                                     "targets": ["claude"]})
+
+
+def test_context_write_keeps_evidence_and_never_touch(pc):
+    r = _write_ctx(pc, {"purcell": "yes", "never_touch": "q1, qubits.q2"},
+                   {"purcell": [{"kind": "file", "ref": "x/readme.md", "line": 2}], "squid": [{"ref": "unaccepted"}]})
+    assert r.status_code == 200
+    from quam_state_manager.core import agent_setup as st
+    rec = st.load_record(pc._app.instance_path)["context"]
+    assert rec["never_touch"] == ["q1", "qubits.q2"]
+    assert rec["answers_evidence"] == {"purcell": [{"kind": "file", "ref": "x/readme.md", "line": 2}]}
+    text = (pc._projcal / "CLAUDE.local.md").read_text(encoding="utf-8")
+    assert "- Never touch: q1, qubits.q2" in text and "(source: readme.md:2)" in text
+    assert st.saved_answers(pc._app.instance_path, str(pc._projcal))["never_touch"] == ["q1", "qubits.q2"]
+
+
+def test_never_touch_refuses_agents_only(pc):
+    _write_ctx(pc, {"never_touch": ["q1"]})
+    agent = {"X-SM-Agent": "claude"}
+    r = pc.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5e9"}, headers=agent)
+    assert r.status_code == 403 and r.get_json()["refused"] == "never_touch"
+    r = pc.post("/field/edit-batch", json={"updates": [{"dot_path": "qubits.q1.f_01", "value": 5e9}]}, headers=agent)
+    assert r.status_code == 403 and r.get_json()["rule"] == "q1"
+    # a person's door is untouched
+    r = pc.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5e9"})
+    assert not (r.status_code == 403 and (r.get_json(silent=True) or {}).get("refused") == "never_touch")
+
+
+def test_investigate_route_proposes_and_saves_nothing(pc, monkeypatch):
+    readme = pc._projcal / "readme.md"
+    readme.write_text("line one\nThis device has a Purcell filter on every readout line.\n", encoding="utf-8")
+    ans = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
+                        "evidence": [{"kind": "file", "ref": str(readme), "line": 2,
+                                      "quote": "This device has a  Purcell filter on every readout line."}]},
+                       {"id": "squid", "value": "symmetric", "confidence": "sure", "evidence": []},
+                       {"id": "made_up", "value": "x"}],
+           "asks": [{"id": "squid"}, {"id": "not_a_question"}]}
+    seen = _fake(monkeypatch, "```json\n" + json.dumps(ans) + "\n```")
+    from quam_state_manager.core import agent_setup as st
+    rec0 = st.load_record(pc._app.instance_path)
+    b = pc.post("/api/agent/setup/investigate", json={"backend": "codex"}).get_json()
+    by = {a["id"]: a for a in b["answers"]}
+    assert by["purcell"]["confidence"] == "sure" and by["purcell"]["status"] == "proposed"
+    assert by["squid"]["value"] is None and by["squid"]["confidence"] == "unsure"
+    assert b["dropped_ids"] == 1 and "not_a_question" not in b["asks"] and b["asks"][0] == "squid"
+    assert "flux_source" in seen["prompt"] and "never_touch" in seen["prompt"]
+    assert st.load_record(pc._app.instance_path) == rec0
+    assert not (pc._projcal / "CLAUDE.local.md").exists()
+
+
+def test_agent_investigate_selfcheck():
+    """The REAL agent-setup.js under jsdom (tests/agent_investigate_selfcheck.cjs)."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parent.parent
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(root / "tests" / "agent_investigate_selfcheck.cjs")], capture_output=True, text=True,
+                       encoding="utf-8", timeout=180, cwd=str(root))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 20, r.stdout
