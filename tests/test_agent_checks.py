@@ -486,3 +486,121 @@ def test_config_row_follows_override_and_missing(pc, tmp_path):
     chk = {c["key"]: c for c in pc.get("/api/agent/setup").get_json()["paths"]["checks"]}
     assert chk["config"]["ok"] is False
     assert chk["data"]["label"] == "Run folders in the data folder"
+
+
+# ---- review r3 fixes
+class TestReviewR3Citations:
+    def _f(self, roots):
+        f = roots["cal"] / "cfg.py"
+        f.write_text("# node config\nFREQ = 5e9  # node frequency\nThe readout line has a Purcell filter\n", encoding="utf-8")
+        return f
+
+    def test_reviewer_probes_are_rejected(self, roots):
+        f = self._f(roots)
+        cases = [{"id": "purcell", "value": "no", "confidence": "sure", "evidence": [_ev(f, "# node config", line=1)]},
+                 {"id": "data_read", "value": "no", "confidence": "sure", "evidence": [_ev(f, "FREQ = 5e9  # node frequency", line=2)]},
+                 {"id": "purcell", "value": "yes", "confidence": "sure",
+                  "evidence": [{"kind": "state_key", "ref": "qubits.q1.id", "quote": "q1"}]}]
+        for a in cases:
+            v = ac.vet_investigate({"answers": [a]}, QS + [{"id": "data_read", "kind": "choice", "options": ["yes", "no", "unknown"]}],
+                                   roots=roots["list"], state_lookup=lambda k: "q1")
+            assert v["answers"][0]["confidence"] == "unsure", a
+
+    def test_honest_answers_still_pass(self, roots):
+        f = self._f(roots)
+        qs = QS + [{"id": "tunable", "kind": "choice", "options": ["flux-tunable", "fixed-frequency"]},
+                   {"id": "coupler", "kind": "choice", "options": ["tunable coupler", "fixed coupling", "none"]},
+                   {"id": "never_touch", "kind": "list"}]
+        rd = roots["cal"] / "README.md"
+        rd.write_text("Do not change qubits.q3 parameters, they are parked\n", encoding="utf-8")
+        state = {"qubits.qA1.__class__": "quam_builder.architecture.superconducting.qubit.flux_tunable_transmon.FluxTunableTransmon",
+                 "qubit_pairs.qA2-qA1.coupler": None}
+        ans = {"answers": [
+            {"id": "purcell", "value": "yes", "confidence": "sure", "evidence": [_ev(f, "The readout line has a Purcell filter", line=3)]},
+            {"id": "tunable", "value": "flux-tunable", "confidence": "sure",
+             "evidence": [{"kind": "state_key", "ref": "qubits.qA1.__class__", "quote": state["qubits.qA1.__class__"]}]},
+            {"id": "coupler", "value": "fixed coupling", "confidence": "sure",
+             "evidence": [{"kind": "state_key", "ref": "qubit_pairs.qA2-qA1.coupler", "quote": "null"}]},
+            {"id": "never_touch", "value": ["qubits.q3"], "confidence": "sure",
+             "evidence": [_ev(rd, "Do not change qubits.q3 parameters, they are parked", line=1)]}]}
+        v = ac.vet_investigate(ans, qs, roots=roots["list"], state_lookup=lambda k: state[k])
+        got = {a["id"]: (a["value"], a["confidence"]) for a in v["answers"]}
+        assert got == {"purcell": ("yes", "sure"), "tunable": ("flux-tunable", "sure"),
+                       "coupler": ("fixed coupling", "sure"), "never_touch": (["qubits.q3"], "sure")}
+
+    def test_a_dropped_list_value_is_not_sure(self, roots):
+        v = ac.vet_investigate({"answers": [{"id": "never_touch", "value": [{"x": 1}], "confidence": "sure", "evidence": []}]},
+                               [{"id": "never_touch", "kind": "list"}], roots=roots["list"])
+        assert v["answers"][0]["confidence"] == "unsure" and v["answers"][0]["value"] is None
+
+    def test_config_file_may_name_both_true_sources(self, roots):
+        mine = [str(roots["cfg"] / "config.toml"), str(roots["cfg"] / "p.toml")]
+        ok = {"seen": {"config_file": [mine[0], mine[1]]}}
+        two = {"seen": {"config_file": f"{mine[0]} and {mine[1]}"}}
+        bad = {"seen": {"config_file": [mine[0], str(roots["outside"] / "x.toml")]}}
+        f = lambda a: {r["key"]: r["agent"] for r in ac.compare_confirm(a, {"config_file": mine}, roots=roots["list"])["rows"]}["config_file"]
+        assert f(ok) == "agrees" and f(two) == "agrees" and f(bad) == "disagrees"
+
+
+def test_hints_name_the_keys_and_the_prompt_carries_them(tmp_path):
+    from quam_state_manager.core import agent_setup as st
+    state = {"qubits": {"q1": {"__class__": "X", "z": {}, "resonator": {}}}, "qubit_pairs": {"q1-2": {"coupler": None}}}
+    cal = tmp_path / "cal"
+    cal.mkdir()
+    (cal / "README.md").write_text("x", encoding="utf-8")
+    h = st.investigate_hints(state, {"wiring": {"qubits": {"q1": {"z": {}}}}}, str(cal))
+    assert "qubits.q1.z" in h["flux_source"]["state"] and "wiring.qubits.q1.z" in h["flux_source"]["state"]
+    assert "qubit_pairs.q1-2.coupler" in h["coupler"]["state"] and h["purcell"]["files"] == [str(cal / "README.md")]
+    p = ac.investigate_prompt(st.questions({}), {"calibrations": str(cal)}, h)
+    assert "qubits.q1.z" in p and "read_first" in p
+
+
+def test_unanswered_lines_are_not_read_back(tmp_path):
+    from quam_state_manager.core import agent_setup as st
+    block = st.context_block({"n_qubits": 1}, {"tunable": "flux-tunable"}, chip="c", data_folder="D:/d")
+    assert "Purcell filter: not answered" in block and "direct reads: not answered" in block
+    back = st._answers_from_block(block)
+    assert back == {"tunable": "flux-tunable", "never_touch": []}
+
+
+def test_the_run_key_is_the_runs_chip_not_the_window(pc, monkeypatch):
+    """review r3 P1-1: the window switching chip mid-run must not change which rule applies."""
+    _write_ctx(pc, {"never_touch": ["qubits"]})
+    from quam_state_manager.web import agent_api
+    monkeypatch.setattr(agent_api, "_chip_key", lambda: "another-chip")
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        live = str(r._active_ctx()["path"])
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+        res = agent_api._stage_writes(pc._app, live, [{"path": f"qubits.{q}.T1", "old": 1, "new": 2}], "g1", "by_claude",
+                                      None, False)
+    assert res["staged"] == 0 and "never_touch" in res["error"]
+
+
+def test_one_guard_for_every_agent_write(pc, monkeypatch):
+    _write_ctx(pc, {"never_touch": ["qubits"]})
+    agent = {"X-SM-Agent": "claude"}
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    r1 = pc.post(f"/qubit/{q}/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"}, headers=agent)
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+    # fails closed for an agent when the list cannot be read
+    from quam_state_manager.core import agent_setup as st
+    monkeypatch.setattr(st, "never_touch_list", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+    r2 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"}, headers=agent)
+    assert r2.status_code == 403 and r2.get_json()["refused"] == "never_touch_unchecked"
+    # a person's request is untouched
+    r3 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"})
+    assert (r3.get_json(silent=True) or {}).get("refused") not in ("never_touch", "never_touch_unchecked")
+
+
+def test_a_code_comment_is_no_evidence_but_a_markdown_heading_is(roots):
+    py = roots["cal"] / "notes.py"
+    py.write_text("x = 1\n# purcell filter installed on readout\n", encoding="utf-8")
+    md = roots["cal"] / "notes.md"
+    md.write_text("x\n# purcell filter installed on readout\n", encoding="utf-8")
+    mk = lambda f: {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
+                                 "evidence": [_ev(f, "# purcell filter installed on readout", line=2)]}]}
+    assert ac.vet_investigate(mk(py), QS, roots=roots["list"])["answers"][0]["confidence"] == "unsure"
+    assert ac.vet_investigate(mk(md), QS, roots=roots["list"])["answers"][0]["confidence"] == "sure"

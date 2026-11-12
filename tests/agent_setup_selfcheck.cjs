@@ -182,7 +182,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.loadContext();
   await tick(30);
   const sel = document.querySelector('#as-ctx select[data-q="tunable"]');
-  ok(sel && sel.value === 'mixed' && /\(detected\)/.test(sel.options[2].textContent), 'the detected answer is preselected and marked');
+  ok(sel && sel.value === 'mixed' && /\(SM detected\)/.test(sel.selectedOptions[0].textContent) && sel.options[0].value === '', 'the detected answer is preselected and marked; an empty "not answered" choice is first');
   sel.value = 'flux-tunable'; A.answer(sel);
   const ta = document.querySelector('#as-ctx textarea[data-q="notes"]'); ta.value = 'cooldown 9'; A.answer(ta);
   calls.length = 0;
@@ -208,6 +208,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/unverified/.test(rowOf('calibrations_folder_in_config').textContent) && rowOf('calibrations_folder_in_config').classList.contains('asx-no'), 'D-13: a failed citation is unverified, never agrees');
   ok(/not reported/.test(rowOf('run_folders').textContent), 'D-13: a missing value reads "not reported"');
   ok(!document.querySelector('#as-test [data-stale]'), 'D-23: a result for this project reads as current');
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-bad') && !document.getElementById('as-confirm-result').classList.contains('asx-result-ok'),
+     'review r3 P2-6: a card with a disagreeing row is not green');
   // D-23: a result for another project is shown as stale
   lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
   A.load(); await tick(40);
@@ -334,6 +336,9 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
     ok(calls.slice(n3).some(c => /\/setup\/calibrations$/.test(c.url) && c.body.use_legacy === true), 'D-6: Use it is one explicit click');
     delete status.paths;
   }
+  status.context = { 'claude:local': 'x', 'codex:shared': 'y' }; A.load(); await tick(40);
+  ok(/Written for Claude Code \(CLAUDE\.local\.md, not shared\) and Codex \(AGENTS\.md\)/.test(document.getElementById('as-context').textContent),
+     'review r3 P2-8: the written-for line uses words, not claude:local / codex:shared');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

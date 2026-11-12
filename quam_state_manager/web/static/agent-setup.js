@@ -84,6 +84,9 @@ window.AgentSetup = (function () {
   // the hardware switch's words follow the SAVED value (render and dryRun share them)
   function dryText(on) { return on ? "Dry run — the agent's runs are simulated, nothing touches the OPX" : "Live — the agent's runs use the OPX"; }
   var MARKS = { claude: "CC", codex: "CX" };
+  // review r3 P2-8: words a first-time user can read for the context files
+  var CTX_WORDS = { "claude:local": "Claude Code (CLAUDE.local.md, not shared)", "claude:shared": "Claude Code (CLAUDE.md)",
+                    "codex:shared": "Codex (AGENTS.md)", "codex:local": "Codex (AGENTS.local.md)" };
   function chk(ok, label, title) {
     return '<li class="asx-chk ' + (ok ? "asx-ok" : "asx-no") + '"' + (title ? ' title="' + esc(title) + '"' : "") + ">"
       + (ok ? "✓" : "○") + " " + esc(label) + "</li>";
@@ -146,7 +149,8 @@ window.AgentSetup = (function () {
   }
   function agentCell(row) {
     var n = row.of ? " (" + row.matched + " of the " + row.of + " it listed are SM's)" : "";
-    if (row.agent === "echo") return "same as SM — the agent read it through SM, so this proves nothing new";
+    if (row.agent === "echo") return row.key === "cwd" ? "same as SM — SM starts the agent in this folder, so this proves nothing new"
+      : "same as SM — the agent read it through SM, so this proves nothing new";
     if (row.agent === "agrees") return "agrees" + n;
     if (row.agent === "disagrees" && row.of) return "disagrees" + n;
     if (row.agent === "disagrees") return "disagrees — agent saw: " + short(row.agent_value);
@@ -181,13 +185,15 @@ window.AgentSetup = (function () {
     }
     // review r2 P2-5: a result for another project is never painted green
     var stale = rec.current === false;
+    // review r3 P2-6: the frame follows the worst row
+    var bad = (rec.rows || []).some(function (r) { return r.agent === "disagrees" || r.agent === "unverified"; });
     var rows = (rec.rows || []).map(function (r) {
       var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
       var cls = r.agent === "agrees" && !stale ? "asx-ok" : "asx-no";
       return '<li class="asx-chk ' + cls + '" data-row="' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">' + esc(ROW_LABEL[r.key] || r.key)
         + ': <span class="muted">SM: ' + esc(mine) + "</span> · " + esc(agentCell(r)) + "</li>";
     }).join("");
-    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : " asx-result-ok") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
+    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : bad ? " asx-result-bad" : " asx-result-ok") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
       + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
       + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
       + '<ul class="asx-checks">' + rows + "</ul>"
@@ -353,7 +359,7 @@ window.AgentSetup = (function () {
     // 3. lab context
     parts.push(card("context", 3, "Tell the agent about this device", !!ctxDone,
       (ctxUnread.length ? '<p class="ag-err asx-small">Codex never reads ' + esc(ctxUnread.join(", ")) + ": write the notes again to move them into AGENTS.md.</p>" : "")
-      + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(esc).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
+      + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(function (k) { return esc(CTX_WORDS[k] || k); }).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
       + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "outline asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
         : '<p class="muted asx-small">Set the calibrations folder first (step 2).</p>') + "</div>"));
 
@@ -602,8 +608,11 @@ window.AgentSetup = (function () {
   function ctrlHtml(q) {
     var v = S.answers[q.id];
     if (q.kind === "choice") {
-      return '<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">' + q.options.map(function (o) {
-        return '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + ">" + esc(optLabel(o)) + (o === q.detected ? (q.id === "flux_source" ? " (SM detected)" : " (detected)") : "") + "</option>";
+      // review r3 P2-5: "(detected)" only for what SM detected; nothing chosen = an empty choice
+      return '<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">'
+        + '<option value=""' + (v === undefined || v === null || v === "" ? " selected" : "") + ">— not answered —</option>"
+        + q.options.map(function (o) {
+        return '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + ">" + esc(optLabel(o)) + (q.detected !== null && q.detected !== undefined && o === q.detected ? " (SM detected)" : "") + "</option>";
       }).join("") + "</select>"
         + (q.id === "flux_source" && q.detected_counts ? ' <span class="muted asx-small" data-counts="1">SM sees: ' + esc(Object.keys(q.detected_counts).map(function (k) { return k + " ×" + q.detected_counts[k]; }).join(", ") || "no bias lines") + "</span>" : "");
     }
@@ -702,7 +711,9 @@ window.AgentSetup = (function () {
       var saved = r.body.saved || {};
       (r.body.questions || []).forEach(function (q) {
         S.qById[q.id] = q;
-        S.answers[q.id] = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
+        var start = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
+        if (start === null || start === undefined || (Array.isArray(start) && !start.length && q.kind !== "list")) delete S.answers[q.id];
+        else S.answers[q.id] = start;
         html.push('<div class="as-q" data-qid="' + esc(q.id) + '"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>" + ctrlHtml(q) + "</div>");
       });
       // D-23: a result kept for this SM session is re-read with the page
@@ -794,6 +805,10 @@ window.AgentSetup = (function () {
     S.answers[id] = q && q.kind === "list"
       ? String(el.value || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean) : el.value;
     delete (S.evidence || {})[id];             // a value the person typed carries no agent citation
+    if (el.value === "" && q && q.kind === "choice") delete S.answers[id];
+    // review r3 P2-7: a proposal card follows what the person types
+    var inv = (S.asks || {}).investigate;
+    if (inv && (inv.answers || []).some(function (a) { return a.id === id; })) { S.review[id] = "edited"; renderInvestigate(); }
   }
   function ctxBody(apply) {
     var targets = [];
@@ -846,9 +861,12 @@ window.AgentSetup = (function () {
     api("GET", "/api/agent/setup").then(function (r) {
       if (r.status !== 200 || scopeOf(r.body) === scopeOf(S.data)) return;
       S.answers = {}; S.evidence = {}; S.review = {}; S.popupDone = {}; S.popupQueue = [];
-      load();
+      // review r3 P2-8: the sidebar and top bar belong to the page; a project switched in
+      // another window reloads the whole page so every part names the same project
+      S.reloadPage();
     });
   }
+  S.reloadPage = function () { try { window.location.reload(); } catch (e) { load(); } };
   window.addEventListener("focus", refreshIfMoved);
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:historyRestore", function () { init(); });

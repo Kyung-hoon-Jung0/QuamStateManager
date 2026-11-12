@@ -207,7 +207,8 @@ def paths_report() -> dict:
                    "detail": f"{len(nodes)} node files" if cal.get("folder") else "no calibrations folder"})
     nruns = _count_runs(data)
     checks.append({"key": "data", "ok": (nruns > 0) if data else None, "label": "Run folders in the data folder",
-                   "detail": (f"holds {nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders" if data
+                   "detail": (("no run folders yet" if nruns == 0 else
+                               f"{nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders found") if data
                               else "no data folder")})
     names = [_config_names((paths or {}).get(k), (paths or {}).get("files"), project)
              for k in ("calibration_library", "storage", "state_path")]
@@ -693,7 +694,9 @@ def _sm_values(P: dict) -> dict:
         except Exception:  # noqa: BLE001
             nodes = []
     return {"chip_name": aa._chip_name(), "n_qubits": len((store.state.get("qubits") or {})) if store else None,
-            "cwd": chat_api._cwd(), "config_file": ((P.get("files") or {}).get("root") or {}).get("path"),
+            "cwd": chat_api._cwd(),
+            "config_file": [f.get("path") for f in ((P.get("files") or {}).get("root") or {},
+                                                    (P.get("files") or {}).get("project") or {}) if f.get("exists")],
             "state_path_in_config": (P.get("state_path") or {}).get("native"),
             "calibrations_folder_in_config": entry.get("native"),
             "storage_in_config": (P.get("storage") or {}).get("native"),
@@ -774,7 +777,8 @@ def investigate():
         roots = _roots()
         key = _ask_key()
         try:
-            out = _ask_and_wait(backend, ac.investigate_prompt(qs, roots), ASK_TIMEOUT_S, model=data.get("model"))
+            hints = st.investigate_hints(store.state, store.wiring, cal)
+            out = _ask_and_wait(backend, ac.investigate_prompt(qs, roots, hints), ASK_TIMEOUT_S, model=data.get("model"))
         except (ValueError, OSError) as exc:
             return _err(f"could not start {backend}: {exc}", 502)
         rec = {"kind": "investigate", "backend": backend, "at": time.time(), "key": key, "elapsed_s": out["elapsed_s"],

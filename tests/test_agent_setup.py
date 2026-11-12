@@ -134,8 +134,9 @@ class TestContext:
         # agents ver180 D-19/D-20: flux_source and never_touch join the questions
         assert ids == ["tunable", "flux_source", "coupler", "purcell", "squid", "data_read", "never_touch", "notes"]
         by = {q["id"]: q for q in qs}
-        assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] == "unknown"
-        assert by["data_read"]["detected"] == "no", "direct data reads are opt-in"
+        # review r3 P2-5: SM detects the coupler; it does NOT detect a Purcell filter or a lab's read policy
+        assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] is None
+        assert by["data_read"]["detected"] is None and by["squid"]["detected"] is None
 
     def test_a_null_coupler_field_is_not_a_coupler(self):
         """QA agents round: quam_builder writes `coupler: null` on every pair, and

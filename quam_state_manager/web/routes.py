@@ -6788,10 +6788,16 @@ def _calibrations(ctx: dict | None = None) -> dict[str, Any]:
     return calibrations.resolve(current_app.instance_path, (ctx or {}).get("qualibrate_project"), legacy=legacy)
 
 
+def _never_touch_unchecked(why: str):
+    return jsonify(ok=False, refused="never_touch_unchecked",
+                   error=f"SM could not check the person's never-touch list ({why}); nothing was written",
+                   how="ask the person"), 403
+
+
 def _never_touch_refusal(paths) -> Any:
     """Q-4 (agents ver180): an AGENT's write (``X-SM-Agent``) under a path the
-    person listed as never-touch is refused with that line. Human doors are
-    untouched. None = allowed."""
+    person listed as never-touch is refused with that line. Human requests are
+    untouched. None = allowed. review r3 P2-3: an error FAILS CLOSED for an agent."""
     if not request.headers.get("X-SM-Agent"):
         return None
     from quam_state_manager.core import agent_setup
@@ -6800,8 +6806,8 @@ def _never_touch_refusal(paths) -> Any:
         from quam_state_manager.web import agent_api as _aa
         tokens = agent_setup.never_touch_list(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
                                               _aa._chip_key() if _active_path() else None)
-    except Exception:  # noqa: BLE001
-        return None
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
     if not tokens:
         return None
     for p in paths:
@@ -6813,41 +6819,65 @@ def _never_touch_refusal(paths) -> Any:
     return None
 
 
-# review r2 P2-3: write doors whose target path rides a form field; an agent's
-# request to any of them is checked against never_touch before the route runs.
-NEVER_TOUCH_DOORS = ("/field/create", "/field/delete", "/pulse/edit", "/api/pulse/create", "/api/pulse/delete",
-                     "/api/pulse/delete-together", "/api/pulse/duplicate", "/api/pulse/copy", "/api/pulse/rename")
+_PATH_FIELDS = ("dot_path", "path", "parent_path", "target", "target_path", "src", "dst", "new_path")
+_URL_ENTITY = {"/qubit/": "qubits", "/pair/": "qubit_pairs", "/coupler/": "couplers"}
 
 
-def _door_paths() -> list[str]:
+def _request_paths() -> list[str]:
+    """Every state path an agent's mutating request names: form + JSON fields,
+    batch rows, a created key, the entity in the URL; each also RESOLVED
+    through pointers, since the write lands at the resolved path."""
+    out: list[str] = []
     f = request.form
-    out = [str(f.get(k) or "").strip() for k in ("dot_path", "path") if f.get(k)]
-    for v in f.getlist("paths"):
-        if v:
-            out.append(str(v).strip())
+    for k in _PATH_FIELDS:
+        out += [str(v).strip() for v in f.getlist(k) if v]
+    out += [str(v).strip() for v in f.getlist("paths") if v]
     if f.get("dot_path") and f.get("key"):
         out.append(f"{f.get('dot_path').strip()}.{f.get('key').strip()}")
-    if f.get("qubit"):
-        out.append(f"qubits.{f.get('qubit').strip()}")
+    for k in ("qubit", "pair"):
+        if f.get(k):
+            out.append(f"{'qubits' if k == 'qubit' else 'qubit_pairs'}.{f.get(k).strip()}")
     body = request.get_json(silent=True) if request.is_json else None
     if isinstance(body, dict):
-        for k in ("path", "dot_path"):
+        for k in _PATH_FIELDS:
             if isinstance(body.get(k), str):
                 out.append(body[k])
-        for k in ("paths", "updates"):
+        for k in ("paths", "updates", "items", "writes"):
             for v in body.get(k) or []:
                 if isinstance(v, str):
                     out.append(v)
-                elif isinstance(v, dict) and isinstance(v.get("dot_path") or v.get("path"), str):
-                    out.append(v.get("dot_path") or v.get("path"))
-    return [p for p in out if p]
+                elif isinstance(v, dict):
+                    for kk in ("dot_path", "path"):
+                        if isinstance(v.get(kk), str):
+                            out.append(v[kk])
+    for prefix, root in _URL_ENTITY.items():
+        if request.path.startswith(prefix) and (request.view_args or {}).get("name"):
+            out.append(f"{root}.{request.view_args['name']}")
+    out = [_normalize_dot_path(p) for p in out if p]
+    store = _store() if _context_type() == "quam" else None
+    resolved = []
+    if store is not None:
+        for p in out:
+            try:
+                resolved.append(_resolve_edit_path(store, p))
+            except Exception:  # noqa: BLE001 -- a path that does not exist yet is checked as written
+                pass
+    return out + resolved
 
 
 @bp.before_request
-def _never_touch_door_guard():
-    if request.method != "POST" or request.path not in NEVER_TOUCH_DOORS or not request.headers.get("X-SM-Agent"):
+def _never_touch_agent_guard():
+    """review r3 P2-3: ONE guard for every agent-originated mutating request
+    (no door list to keep in step). Fails closed for an agent."""
+    if request.method in ("GET", "HEAD", "OPTIONS") or not request.headers.get("X-SM-Agent"):
         return None
-    return _never_touch_refusal(_door_paths())
+    try:
+        paths = _request_paths()
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
+    if not paths:
+        return None
+    return _never_touch_refusal(paths)
 
 
 def _calibrations_folder(ctx: dict | None = None) -> str:

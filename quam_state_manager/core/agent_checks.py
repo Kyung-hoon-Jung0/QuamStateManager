@@ -65,12 +65,13 @@ def confirm_prompt(config_dir: str | None, project: str | None) -> str:
         "Use null for anything you could not see.")
 
 
-def investigate_prompt(questions: list[dict], roots: dict) -> str:
+def investigate_prompt(questions: list[dict], roots: dict, hints: dict | None = None) -> str:
     qs = []
     for q in questions:
         opts = q.get("options")
         qs.append({"id": q["id"], "question": q.get("question"),
-                   **({"options": opts} if opts else {"kind": "text"})})
+                   **({"options": opts} if opts else {"kind": q.get("kind") or "text"}),
+                   **({"read_first": (hints or {}).get(q["id"])} if (hints or {}).get(q["id"]) else {})})
     allowed = [r for r in (roots.get("calibrations"), roots.get("config"), roots.get("state")) if r]
     return (
         "You are helping a person answer questions about their quantum device, READ-ONLY. Change nothing.\n"
@@ -78,8 +79,10 @@ def investigate_prompt(questions: list[dict], roots: dict) -> str:
         + "; ".join(allowed) + ".\n"
         "For each question below, answer ONLY if you can cite evidence: a file path + line + the exact line "
         "text, or a state key + its value. If you are not sure, set value to null and confidence to unsure -- "
-        "never guess. A choice answer must be one of its options. List under \"asks\" the ids of questions the "
-        "person should answer themselves.\n"
+        "never guess. A choice answer must be one of its options; a list answer is a list of strings. List under "
+        "\"asks\" the ids of questions the person should answer themselves.\n"
+        "Where a question has \"read_first\", start there: \"state\" entries are exact dot paths for "
+        "state_get(path=...), \"files\" are files to open. Cite the line or key you actually read.\n"
         "Questions:\n" + json.dumps(qs, ensure_ascii=True) + "\n"
         "Answer with exactly ONE fenced ```json block, shaped:\n"
         '{"answers": [{"id": "", "value": null, "confidence": "sure|unsure", "evidence": '
@@ -272,20 +275,51 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
 
 # words a quote must carry to be ABOUT a question (when it does not carry the value itself)
 QUESTION_WORDS = {
-    "tunable": ("tunable", "flux", "fixed"), "flux_source": ("flux", "qdac", "lf-fem", "lffem", "bias"),
-    "coupler": ("coupl",), "purcell": ("purcell",), "squid": ("squid",),
-    "data_read": ("data", "read"), "never_touch": ("never", "touch", "do not", "don't"), "notes": (),
+    "tunable": ("tunable", "flux", "fixed frequency", "z"), "flux_source": ("flux", "qdac", "lf", "fem", "bias", "z"),
+    "coupler": ("coupl*",), "purcell": ("purcell",), "squid": ("squid",),
+    "data_read": ("data folder", "direct read*", "read access"), "never_touch": ("never", "do not touch", "untouchable"),
+    "notes": (),
 }
 
 
-def _quote_about(quote, qid: str, value) -> bool:
-    q = str(quote or "").lower()
-    if value is not None and str(value).strip() and str(value).lower() in q:
-        return True
+_COMMENT = re.compile(r"^\s*(#|//|;|--|/\*|\*)")
+
+
+def _words(text) -> str:
+    """Split camelCase, snake_case, dotted and slashed spellings into words."""
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(text or ""))
+    return " " + re.sub(r"[^a-z0-9+-]+", " ", s.lower()) + " "
+
+
+def _has_word(text_words: str, w: str) -> bool:
+    w = w.lower().strip()
+    if not w:
+        return False
+    if w.endswith("*"):                         # a stem: "coupl*" matches coupler / coupling
+        return re.search(r"(?<![a-z0-9])" + re.escape(w[:-1]), text_words) is not None
+    return re.search(r"(?<![a-z0-9])" + re.escape(" ".join(_words(w).split())) + r"(?![a-z0-9])", text_words) is not None
+
+
+_CODE_SUFFIXES = (".py", ".toml", ".yaml", ".yml", ".ini", ".cfg", ".json", ".js")
+
+
+def _quote_about(quote, qid: str, value, ref=None, file_ref=None) -> bool:
+    """review r3 P1-2: the evidence must be ABOUT this question -- the answer value or a
+    topic word as a whole word (never a substring), never a comment line, and for a
+    state key the key path or its value must carry the topic."""
+    q = str(quote or "")
+    # a comment in CODE is no evidence (a markdown "# heading" is prose, so it counts)
+    if file_ref and str(file_ref).lower().endswith(_CODE_SUFFIXES) and _COMMENT.match(q):
+        return False
+    text = _words(q) + _words(ref or "")
+    vals = value if isinstance(value, list) else [value]
+    for v in vals:
+        if v is not None and str(v).strip() and qid not in ("data_read", "purcell") and _has_word(text, str(v)):
+            return True
     words = QUESTION_WORDS.get(qid)
-    if words is None or qid == "notes":
-        return bool(q)
-    return any(w in q for w in words)
+    if not words:
+        return qid == "notes" and bool(q.strip())
+    return any(_has_word(text, w) for w in words)
 
 
 def _quote_has(quote, value) -> bool:
@@ -310,6 +344,13 @@ def _list_match(mine, theirs) -> tuple[int, int]:
 
 
 def _agrees(key: str, mine, theirs) -> bool:
+    if key == "config_file":
+        # review r3 P2-6: an honest answer may name the root AND the project config; every
+        # path it names must be one of the true sources
+        mines = mine if isinstance(mine, (list, tuple)) else [mine]
+        theirs_l = theirs if isinstance(theirs, list) else re.split(r"\s*(?:,|;|\band\b|\+)\s*", str(theirs))
+        theirs_l = [t for t in (str(x).strip() for x in theirs_l) if t]
+        return bool(theirs_l) and all(any(same_path(m, t) for m in mines if m) for t in theirs_l)
     if key in PATH_FIELDS:
         return isinstance(theirs, str) and same_path(mine, theirs)
     if key in ("node_files", "run_folders"):
@@ -343,21 +384,26 @@ def vet_investigate(answer: dict, questions: list[dict], *, roots: list[str], ex
         if value is not None and q.get("kind") == "choice" and value not in (q.get("options") or []):
             dropped_values += 1
             value = None
-        if value is not None and not isinstance(value, (str, int, float, bool)):
+        if q.get("kind") == "list" and isinstance(value, list):
+            value = [str(x).strip() for x in value if isinstance(x, (str, int)) and str(x).strip()][:50] or None
+        elif value is not None and not isinstance(value, (str, int, float, bool)):
             dropped_values += 1
             value = None
+        value_dropped = a.get("value") is not None and value is None
         ev_items, d = cap_evidence([{**e, "for": a["id"]} if isinstance(e, dict) else e
                                     for e in (a.get("evidence") or [])][:MAX_EVIDENCE_PER_VALUE + 50])
         ev_dropped += d
         checked = [check_evidence(e, roots=roots, exist_roots=exist_roots, state_lookup=state_lookup) for e in ev_items]
         # review r2 P1-1: a FILE quote must name the answer or what the question is about
-        checked = [c if not c["ok"] or c.get("kind") != "file" or _quote_about(c.get("quote"), a["id"], value)
-                   else {**c, "ok": False, "why": "the quote does not mention the answer or the question"}
+        checked = [c if not c["ok"] or c.get("kind") not in ("file", "state_key")
+                   or _quote_about(c.get("quote"), a["id"], value, c.get("ref") if c.get("kind") == "state_key" else None,
+                                   c.get("ref") if c.get("kind") == "file" else None)
+                   else {**c, "ok": False, "why": "the citation is not about this question"}
                    for c in checked]
         verified = any(c["ok"] for c in checked)
         sure = str(a.get("confidence") or "").lower() == "sure"
-        if value is not None and not verified:
-            sure = False                                   # D-17: uncited / failed -> unsure
+        if (value is not None and not verified) or value_dropped or value is None:
+            sure = False                                   # D-17 / review r3: uncited, failed or dropped -> unsure
         if not sure:
             value = None                                   # D-18: unsure means no guess
         out.append({"id": a["id"], "value": value, "confidence": "sure" if sure else "unsure",

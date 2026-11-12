@@ -1876,7 +1876,10 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
     try:
         from quam_state_manager.core import agent_setup as _as
-        _nt = _as.never_touch_list(app.instance_path, ctx.get("qualibrate_project"), _chip_key())
+        # review r3 P1-1: the RUN's own chip (its live path, captured at start) -- never the
+        # chip the window happens to show when the driver thread stages minutes later
+        from quam_state_manager.core import working_copy as _wc
+        _nt = _as.never_touch_list(app.instance_path, ctx.get("qualibrate_project"), _wc.key_for(live))
     except Exception:  # noqa: BLE001
         _nt = []
     if _nt:
