@@ -3060,6 +3060,9 @@ def _seed_coupler_only(pair, vals):
     """Seed the lab layout's coupler-only CZ on one pair (decisions D-8): the
     coupler port and parking, the pulse on the coupler, the lab gate under
     ``cz_coupler_only`` and the ``cz`` alias."""
+    import importlib
+    import math
+
     c = _COUPLER_ONLY
     coupler = getattr(pair, "coupler", None)
     if coupler is None:

@@ -166,3 +166,40 @@ def test_the_build_refuses_before_writing_without_the_lab_gate(monkeypatch):
     with pytest.raises(RuntimeError, match="cz_coupler_only needs quam_config.coupler_cz_gate"):
         rb._require_lab_coupler_gate(_spec())
     rb._require_lab_coupler_gate(dict(_spec(), pair_gate="cz_coupler"))   # the ext mode is not asked
+
+
+# --- recipe and additions (D-9, D-10) ------------------------------------------------------
+
+def _bundle(spec):
+    from quam_state_manager.core import script_emitter
+    return script_emitter.emit_bundle(spec, {}, {}, chip_name="chip", stamp="2026-01-01")
+
+
+def test_the_recipe_builds_the_lab_layout():
+    spec = _spec()
+    spec["quam_class"] = "quam_config.my_quam.Quam"
+    b = _bundle(spec)
+    for name in ("01_make_wiring.py", "02_build_machine.py"):
+        assert "from quam_config.my_quam import Quam as QuamCls" in b[name], name
+    assert "qubit_pair_type" not in b["01_make_wiring.py"]          # the stock pair class
+    two = b["02_build_machine.py"]
+    assert "PAIR_GATE = 'cz_coupler_only'" in two
+    assert "_COUPLER_ONLY = {" in two and "def _seed_coupler_only(" in two
+    assert "    for _w in _finalize_coupler_only(machine, _spec):" in two
+    compile(two, "02_build_machine.py", "exec")
+
+
+def test_without_a_declared_root_the_recipe_roots_flux_tunable():
+    two = _bundle(_spec())["02_build_machine.py"]
+    assert "FluxTunableQuam as QuamCls" in two and "FixedFrequencyQuam as QuamCls" not in two
+
+
+def test_the_extension_recipe_carries_none_of_it():
+    spec = dict(_spec(), pair_gate="cz_coupler")
+    two = _bundle(spec)["02_build_machine.py"]
+    assert "_seed_coupler_only" not in two and "_COUPLER_ONLY" not in two
+
+
+def test_additions_name_the_lab_macro():
+    from quam_state_manager.core import additions
+    assert additions.builder_gate_names(_spec(), ["q1", "q2"]) == ["cz_coupler_only", "cz"]
