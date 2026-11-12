@@ -709,14 +709,28 @@ def _qdac_z_class(state: dict, segs: list[str]) -> str | None:
     return cls.rsplit(".", 1)[-1] if "QdacBias" in cls else None
 
 
-def _ops_under(state: dict, path: list[str]) -> dict[str, list[str]]:
+def _ops_under(state: dict, path: list[str], reads: list | None = None) -> dict[str, list[str]]:
     """``{op name: [holder paths]}`` over a qubit's channels, or a channel's own operations."""
     ok, node = _walk(state, path)
     if not ok or not isinstance(node, dict):
         return {}
-    chans = [(path, node)] if isinstance(node.get("operations"), dict) else [
-        (path + [k], v) for k, v in node.items()
-        if isinstance(v, dict) and isinstance(v.get("operations"), dict)]
+    if isinstance(node.get("operations"), dict):
+        chans = [(path, node)]
+    else:
+        # quam's ``channels`` reads attributes with follow_references=True,
+        # so a channel stored as a pointer counts as the object it names
+        chans = []
+        for k, v in node.items():
+            cp = path + [k]
+            if is_pointer(v):
+                ok, dest, v = _follow(state, cp, v)
+                if not ok:
+                    continue
+                cp = list(dest)
+                if reads is not None:
+                    reads.append(".".join(cp))
+            if isinstance(v, dict) and isinstance(v.get("operations"), dict):
+                chans.append((cp, v))
     out: dict[str, list[str]] = {}
     for cp, ch in chans:
         for name in ch["operations"]:

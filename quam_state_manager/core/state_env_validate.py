@@ -351,38 +351,47 @@ def judge(value: Any, ts: dict) -> tuple[bool, str, str]:
     return True, "", ""
 
 
-def operation_name_problem(state: dict, path: str, name: str) -> str | None:
+def operation_name_problem(state: dict, path: str, name: str,
+                           reads: list | None = None) -> str | None:
     """Why a pulse NAME stored on a Union[Pulse, str] field will not resolve.
 
-    quam resolves the name at use time with ``get_pulse``: exactly one
-    operation of that name on the owning qubit's channels (the rule
-    ``additions._ref_problem`` applies to Generate additions). A qubit macro
-    is owned by ``qubits.<q>``; a pair macro may play on either qubit or the
-    coupler. An owner SM cannot tell is not judged (None)."""
-    from quam_state_manager.core.additions import _ops_under
+    quam resolves the name at use time with ``Qubit.get_pulse``: exactly one
+    operation of that name over the qubit's ``channels`` (attributes read with
+    follow_references=True, so a pointer channel counts as its target). The
+    rule is ``additions._ops_under``, shared with Generate additions.
+
+    Owner, as quam looks it up:
+      * a qubit macro (``qubits.<q>...``): that qubit;
+      * a pair macro's ``flux_pulse_qubit``: the pair's MOVING qubit
+        (two_qubit_gates.py: ``qubit_control if qubit_pair.moving_qubit ==
+        "control" else qubit_target``; the class default is "control").
+    Any other place is not judged (None). *reads*, when given, receives every
+    path the verdict depended on (a memo keyed on one section must not keep
+    a verdict that read another)."""
+    from quam_state_manager.core.additions import _ops_under, _qubit_of
     segs = path.split(".")
     if len(segs) >= 2 and segs[0] == "qubits":
-        owners = [["qubits", segs[1]]]
-    elif len(segs) >= 2 and segs[0] == "qubit_pairs":
+        owner = ["qubits", segs[1]]
+    elif len(segs) >= 2 and segs[0] == "qubit_pairs" and segs[-1] == "flux_pulse_qubit":
         pair = (state.get("qubit_pairs") or {}).get(segs[1])
         if not isinstance(pair, dict):
             return None
-        owners = []
-        for role in ("qubit_control", "qubit_target"):
-            ref = pair.get(role)
-            if isinstance(ref, str) and ref.startswith("#/qubits/"):
-                owners.append(["qubits", ref[len("#/qubits/"):].split("/")[0]])
-        if isinstance(pair.get("coupler"), dict):
-            owners.append(["qubit_pairs", segs[1], "coupler"])
-        if not owners:
+        role = "control" if pair.get("moving_qubit", "control") == "control" else "target"
+        q = _qubit_of(state, ["qubit_pairs", segs[1], "qubit_" + role],
+                      pair.get("qubit_" + role))
+        if not q:
             return None
+        owner = ["qubits", q]
     else:
         return None
-    hits = [h for op in owners for h in _ops_under(state, op).get(name, [])]
-    where = " or ".join(".".join(o) for o in owners)
+    if reads is not None:
+        reads.append(".".join(owner))
+    found = _ops_under(state, owner, reads)
+    hits = found.get(name, [])
+    where = ".".join(owner)
     if not hits:
         return f"plays an operation named {name!r}, which does not exist on {where}"
-    if len(owners) == 1 and len(hits) > 1:
+    if len(hits) > 1:
         return (f"{name!r} is not unique on {where} ({', '.join(hits)}); "
                 "quam's get_pulse refuses an ambiguous name")
     return None
@@ -447,6 +456,8 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
     # walk's insertion order (a recorded chunk writes only to its own record)
     cur: list = [types]
     parts: list = []
+    chunk_prefix: list = [None]       # dot path of the chunk being recorded
+    chunk_foreign: list = [False]     # it read a path outside itself
 
     def emit(kind: str, severity: str, cls: str | None, field: str | None,
              path: str, detail: str, fix_hint: str = "", code: str = "") -> None:
@@ -503,13 +514,19 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             return
         rec_events[0], rec_types[0] = [], {}
         before = checked_nodes[0]
+        chunk_prefix[0], chunk_foreign[0] = child_path, False
         try:
             walk(v, child_path, child_ctx, 2)
-            _chunks.put(k1, k2, (rec_events[0], rec_types[0],
-                                 checked_nodes[0] - before))
+            # a verdict that read ANOTHER section (a pair's name check reads
+            # the moving qubit) is not covered by this chunk's token: do not
+            # memoize it, so it is recomputed on every analysis
+            if not chunk_foreign[0]:
+                _chunks.put(k1, k2, (rec_events[0], rec_types[0],
+                                     checked_nodes[0] - before))
             parts.append(cur[0]); parts.append(rec_types[0]); cur[0] = {}
         finally:
             rec_events[0], rec_types[0] = None, None
+            chunk_prefix[0] = None
 
     def walk(node: Any, path: str, ctx, depth: int = 0) -> None:
         if isinstance(node, dict):
@@ -581,7 +598,12 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
                 continue                       # containers recurse; pointers pass
             ok, code, msg = judge(v, ts)
             if ok and isinstance(v, str) and ts.get("base") == "component":
-                why = operation_name_problem(state, kpath, v)
+                reads: list = []
+                why = operation_name_problem(state, kpath, v, reads)
+                pre = chunk_prefix[0]
+                if pre is not None and any(
+                        r != pre and not r.startswith(pre + ".") for r in reads):
+                    chunk_foreign[0] = True
                 if why:
                     emit("type_mismatch", "warning", cls_str, k, kpath,
                          f"{leaf_cls}.{k}: {why}",

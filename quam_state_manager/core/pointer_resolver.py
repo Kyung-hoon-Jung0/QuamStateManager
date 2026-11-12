@@ -97,6 +97,17 @@ def resolve_pointer(
         segments = pointer[2:].split("/")
         value = _traverse(root, root, segments, pointer, (),
                           cache=cache, lock=lock, _visited=_visited)
+    elif pointer.startswith("#../") and _has_mid_dotdot(pointer):
+        # a ".." after a named step climbs from the object actually REACHED
+        # (quam's get_relative_reference_value uses obj.parent), so a step
+        # that crossed a reference climbs from the reference's target
+        real = _walk_relative(root, pointer, current_path)
+        if real is None:
+            return _store(pointer)
+        absolute = "#/" + "/".join(real)
+        got = resolve_pointer(root, absolute, current_path,
+                              cache=cache, lock=lock, _visited=_visited)
+        return _store(pointer if got == absolute else got)
     elif pointer.startswith("#../"):
         parent_path, relative_segments = _relative_parts(pointer, current_path)
         if parent_path is None:
@@ -326,6 +337,76 @@ def _relative_parts(pointer: str, current_path: tuple[str, ...]):
         elif seg != ".":
             rest.append(seg)
     return tuple(base), rest
+
+
+def _has_mid_dotdot(pointer: str) -> bool:
+    """True when a ``..`` follows a named step (``#../a/../b``)."""
+    segs = pointer[1:].split("/")
+    i = 0
+    while i < len(segs) and segs[i] == "..":
+        i += 1
+    return ".." in segs[i:]
+
+
+def _get(root: Any, path: list[str]) -> Any:
+    node = root
+    for seg in path:
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif isinstance(node, list) and seg.lstrip("-").isdigit() and -len(node) <= int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return _SENTINEL
+    return node
+
+
+def _landing(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -> list[str] | None:
+    """The real path a pointer chain lands on (following pointer to pointer)."""
+    path = field_path
+    for _ in range(hops):
+        if ptr.startswith("#./"):
+            return None
+        path = _compute_resolved_path(root, ptr, path)
+        node = _get(root, list(path))
+        if node is _SENTINEL:
+            return None
+        if isinstance(node, str) and node.startswith("#"):
+            ptr = node
+            continue
+        return list(path)
+    return None
+
+
+def _walk_relative(root: Any, pointer: str, current_path: tuple[str, ...]) -> list[str] | None:
+    """quam's step-by-step reading of a relative pointer: each ``..`` climbs
+    to the PARENT of the object reached so far, and a step that lands on a
+    reference continues from the reference's target (``obj.parent`` of the
+    real object), not from the text of the path."""
+    body = pointer[1:]
+    ups = 0
+    while body.startswith("../"):
+        ups, body = ups + 1, body[3:]
+    keep = len(current_path) - 1 - ups
+    if keep < 0:
+        return None
+    cur = list(current_path[:keep])
+    segs = [s for s in body.split("/") if s not in ("", ".")]
+    for i, seg in enumerate(segs):
+        if seg == "..":
+            if not cur:
+                return None
+            cur.pop()
+            continue
+        cur.append(seg)
+        node = _get(root, cur)
+        if node is _SENTINEL:
+            return None
+        if (i < len(segs) - 1 and isinstance(node, str) and node.startswith("#")):
+            real = _landing(root, node, tuple(cur))
+            if real is None:
+                return None
+            cur = real
+    return cur
 
 
 #: Public name: every module that interprets ``#../`` uses this one rule.

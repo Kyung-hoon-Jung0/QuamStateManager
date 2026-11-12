@@ -66,6 +66,97 @@ def test_probe_marks_union_component_str(monkeypatch):
     assert plain["base"] == "component" and not plain.get("str_ok")
 
 
+def test_a_mid_path_dotdot_climbs_from_the_object_a_reference_reached():
+    # quam (get_relative_reference_value) steps attribute by attribute; the
+    # ".." after opx_output climbs from the PORT it points at, not from xy.
+    # A decoy xy["1"] shows textual normalisation would read the wrong value.
+    st = {"ports": {"mw_outputs": {"con1": {"1": {
+              "1": {"upconverter_frequency": 7.4e9},
+              "2": {"upconverter_frequency": 7.6e9}}}}},
+          "qubits": {"q": {"xy": {
+              "opx_output": "#/ports/mw_outputs/con1/1/2",
+              "1": {"upconverter_frequency": 999.0},
+              "operations": {"p": {"f": "#../../opx_output/../1/upconverter_frequency"}}}}}}
+    leaf = ("qubits", "q", "xy", "operations", "p", "f")
+    assert resolve_value(st, st["qubits"]["q"]["xy"]["operations"]["p"]["f"], leaf) == 7.4e9
+
+
+def _op_state(xy_as_pointer=False):
+    chan = {"operations": {"x180": {"amplitude": 0.1}}}
+    st = {"channels": {"c1": chan}, "qubits": {"q1": {}, "q2": {"xy": {"operations": {}}}},
+          "qubit_pairs": {"p": {"qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+                                "macros": {"cz": {"flux_pulse_qubit": "x180"}}}}}
+    st["qubits"]["q1"]["xy"] = "#/channels/c1" if xy_as_pointer else chan
+    return st
+
+
+def test_a_pointer_channel_counts_as_its_target():
+    from quam_state_manager.core.state_env_validate import operation_name_problem as onp
+    st = _op_state(xy_as_pointer=True)
+    assert onp(st, "qubits.q1.macros.x.pulse", "x180") is None
+    assert "does not exist" in onp(st, "qubits.q1.macros.x.pulse", "nope")
+
+
+def test_a_pair_name_is_looked_up_on_the_moving_qubit_only():
+    from quam_state_manager.core.state_env_validate import operation_name_problem as onp
+    st = _op_state()
+    path = "qubit_pairs.p.macros.cz.flux_pulse_qubit"
+    assert onp(st, path, "x180") is None                     # default moving = control = q1
+    st["qubit_pairs"]["p"]["moving_qubit"] = "target"        # q2 has no x180
+    assert "qubits.q2" in onp(st, path, "x180")
+    st["qubit_pairs"]["p"]["moving_qubit"] = "control"
+    st["qubits"]["q1"]["z"] = {"operations": {"x180": {}}}   # two on the moving qubit
+    assert "not unique" in onp(st, path, "x180")
+
+
+def test_a_pair_verdict_is_not_memoised_past_a_change_on_the_qubit():
+    import copy
+    from quam_state_manager.core import state_env_validate as sev
+    from tests.test_type_policy import MANIFEST, _ts, _field
+    man = copy.deepcopy(MANIFEST)
+    man["classes"]["q.Root"]["fields"]["qubit_pairs"] = _field(
+        _ts("dict", item=_ts("component", **{"class": "q.Pair"})))
+    man["classes"]["q.Pair"] = {"importable": True, "canonical": "q.Pair", "bases": [],
+                                "is_dataclass": True, "error": None, "fields": {
+        "qubit_control": _field(_ts("component", **{"class": "q.Transmon"})),
+        "qubit_target": _field(_ts("component", **{"class": "q.Transmon"})),
+        "macros": _field(_ts("dict", item=_ts("component", **{"class": "q.CZ"})))}}
+    man["classes"]["q.CZ"] = {"importable": True, "canonical": "q.CZ", "bases": [],
+                              "is_dataclass": True, "error": None, "fields": {
+        "flux_pulse_qubit": _field(_ts("component", **{"class": "q.Pulse"},
+                                       raw="typing.Union[q.Pulse, str]"))}}
+    st = {"__class__": "q.Root", "qubits": {
+              "q1": {"__class__": "q.Transmon", "xy": {"__class__": "q.Channel", "operations": {
+                  "x180": {"__class__": "q.Pulse", "amplitude": 0.1}}}},
+              "q2": {"__class__": "q.Transmon"}},
+          "qubit_pairs": {"p": {"__class__": "q.Pair", "qubit_control": "#/qubits/q1",
+                                "qubit_target": "#/qubits/q2", "macros": {"cz": {
+                                    "__class__": "q.CZ", "flux_pulse_qubit": "x180"}}}}}
+
+    class Memo:   # a memo whose tokens only see a chunk's OWN section
+        def __init__(self):
+            self.d = {}
+
+        def get(self, k1, k2):
+            return self.d.get((k1, k2))
+
+        def put(self, k1, k2, v):
+            self.d[(k1, k2)] = v
+
+    def flagged(memo):
+        res = sev.analyze_state(st, man, _chunks=memo)["findings"]
+        return [f for f in res if f.get("field") == "flux_pulse_qubit"]
+
+    memo = Memo()
+    assert flagged(memo) == []
+    # rename the op on q1 (another section): the pair's verdict must follow
+    ops = st["qubits"]["q1"]["xy"]["operations"]
+    ops["x180_new"] = ops.pop("x180")
+    del memo.d[("qubits", "q1")]          # q1's own token moved
+    got = flagged(memo)
+    assert len(got) == 1 and got[0]["code"] == "missing_operation", got
+
+
 def test_a_warm_cache_without_str_ok_reads_the_annotation():
     old = {"base": "component", "class": "quam.components.pulses.Pulse",
            "raw": "typing.Union[quam.components.pulses.Pulse, str]"}
@@ -80,7 +171,9 @@ def test_a_dotdot_in_the_middle_climbs_too():
     # holder object x; ../../ -> q1; b/../gate_fidelity -> q1.gate_fidelity
     p = "#../../b/../gate_fidelity/averaged"
     assert relative_parts(p, LEAF) == (("qubits", "q1"), ["gate_fidelity", "averaged"])
-    assert resolve_value(_state(), p, LEAF) == 0.9878
+    # the resolver steps like quam: "b" must exist before ".." climbs from it
+    assert resolve_value(_state(), p, LEAF) == p
+    assert resolve_value(_state(), "#../../macros/../gate_fidelity/averaged", LEAF) == 0.9878
     assert pointer_to_abs(p, list(LEAF)) == ["qubits", "q1", "gate_fidelity", "averaged"]
 
 
