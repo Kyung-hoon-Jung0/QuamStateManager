@@ -6590,8 +6590,9 @@
   // interaction offset: this gate plays on the coupler only (review r2 P2-3/4).
   var POP_COUPLER_ONLY_PAIR_COLS = [
     { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"] },
-    { field: "cz_interaction_duration", label: "CZ dur", dim: "time" },
-    { field: "cz_amplitude", label: "CZ amp", dim: "volt" },
+    // the gate's own fields (no preset default fills them): blank = the lab defaults (D-8)
+    { field: "coupler_cz_length", label: "CZ length", dim: "time" },
+    { field: "coupler_amplitude", label: "CZ amp", dim: "volt" },
     { field: "snz_padding", label: "SNZ padding", dim: "time" },
     { field: "t_phi", label: "SNZ t_phi" },
     { field: "b_over_a", label: "SNZ b/a" },
