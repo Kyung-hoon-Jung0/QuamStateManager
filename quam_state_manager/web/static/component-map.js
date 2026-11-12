@@ -155,10 +155,17 @@ window.ComponentMap = (function () {
                 right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
     });
     if (!a) a = _boxOf(anchor);
-    // the add door's ghost buttons are controls, not map content
-    var boxes = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
-      return mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
-    }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    // the add door's ghost buttons are not map content (a panel beside its anchor
+    // may sit by them) but a docked panel never covers them
+    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
+      return mine.indexOf(e) < 0;
+    });
+    function rects(list) {
+      return list.map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    }
+    var mapBoxes = rects(others.filter(function (e) { return !e.classList.contains("cm-dir-ghost"); }));
+    var dockBoxes = rects(others);
+    var boxes = mapBoxes;
     // the panel stays inside the map card's columns and below its top edge:
     // never over the sidebar nav or the banners above the card
     var card = (anchor.closest(".cmap") || body).getBoundingClientRect();
@@ -191,6 +198,7 @@ window.ComponentMap = (function () {
     for (i = 0; i < beside.length && !pick; i++) { c = fit(beside[i]); if (!cover(c)) pick = c; }
     if (!pick) {
       docked = true;
+      boxes = dockBoxes;
       // the nearest free spot around the anchor (a grid search, nearest first)
       var near = [], step = 24, ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
       for (var gx = minX; gx + b.width <= W - pad; gx += step) {
@@ -237,6 +245,40 @@ window.ComponentMap = (function () {
     pop._graceMs = docked ? 900 : 0;
     pop.style.left = Math.round(pick[0]) + "px";
     pop.style.top = Math.round(pick[1]) + "px";
+    _tether(docked ? anchor : null, a, pop);
+  }
+
+  // A docked panel sits away from its entity: the entity gets a filled ring and
+  // a thin line runs from it to the panel. Both go when the panel closes.
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var _tetherEl = null, _tetherAnchor = null;
+  function _untether() {
+    if (_tetherEl) { _tetherEl.remove(); _tetherEl = null; }
+    if (_tetherAnchor) { _tetherAnchor.classList.remove("cm-dir-docked"); _tetherAnchor = null; }
+  }
+  function _tether(anchor, a, pop) {
+    _untether();
+    if (!anchor) return;
+    anchor.classList.add("cm-dir-docked");
+    _tetherAnchor = anchor;
+    var p = pop.getBoundingClientRect();
+    var ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
+    var px = Math.max(p.left, Math.min(ax, p.right)), py = Math.max(p.top, Math.min(ay, p.bottom));
+    var svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("class", "cm-dir-tether");
+    svg.setAttribute("aria-hidden", "true");
+    var ring = document.createElementNS(SVGNS, "rect");
+    ring.setAttribute("class", "cm-dir-tether-ring");
+    ring.setAttribute("x", a.left - 4); ring.setAttribute("y", a.top - 4);
+    ring.setAttribute("width", (a.right - a.left) + 8); ring.setAttribute("height", (a.bottom - a.top) + 8);
+    ring.setAttribute("rx", 8);
+    var line = document.createElementNS(SVGNS, "line");
+    line.setAttribute("class", "cm-dir-tether-line");
+    line.setAttribute("x1", ax); line.setAttribute("y1", ay);
+    line.setAttribute("x2", px); line.setAttribute("y2", py);
+    svg.appendChild(ring); svg.appendChild(line);
+    document.body.appendChild(svg);
+    _tetherEl = svg;
   }
 
   function _servedRowsEl(rows) {
@@ -336,6 +378,31 @@ window.ComponentMap = (function () {
       });
   }
 
+  // An open panel follows the state: the same events that patch the table
+  // (an edit landing, Ctrl+Z / redo, a pull) re-read it, newest answer wins.
+  var _rereadTimer = null;
+  function _rereadOpen() {
+    clearTimeout(_rereadTimer);
+    _rereadTimer = setTimeout(function () {
+      if (!_popEnt || !_pop || _pop.hidden || !_pop.isConnected) return;
+      var i = _popEnt.indexOf(":"), kind = _popEnt.slice(0, i), id = _popEnt.slice(i + 1);
+      if (kind === "pair" && document.getElementById("cm-pair-panel")) {
+        _refreshPairRows(_pop, id, _popEnt);
+      } else if (_popAnchor && _popAnchor.isConnected) {
+        // a qubit panel reads the table row, which the same event has patched
+        var key = _popEnt;
+        _popEnt = null;
+        _showPopup({ kind: kind, id: id }, _rowFor(kind, id), _popAnchor);
+        if (_popEnt !== key) _popEnt = key;
+      }
+    }, 60);
+  }
+  if (typeof document !== "undefined") {
+    ["quam:state-changed", "cellsReverted", "stateRestored", "sm:tray-swapped"].forEach(function (name) {
+      document.addEventListener(name, _rereadOpen);
+    });
+  }
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -351,7 +418,7 @@ window.ComponentMap = (function () {
     }
     var pop = _popupEl();
     pop._closeDetail = function () {
-      pop.hidden = true; _popEnt = null; _restoreNativeTitle();
+      pop.hidden = true; _popEnt = null; _restoreNativeTitle(); _untether();
       if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
       if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
       _popHl = null;
@@ -499,7 +566,9 @@ window.ComponentMap = (function () {
       if (window.DiagramAdd && window.DiagramAdd.onMapClick(el)) return;
       var e = _parseCm(el);
       if (!e || !window.htmx) return;
-      htmx.ajax("GET", (e.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(e.id),
+      var tok = _pageChip();
+      htmx.ajax("GET", (e.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(e.id) +
+                (tok ? "?expect_chip=" + encodeURIComponent(tok) : ""),
                 { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
     });
   }

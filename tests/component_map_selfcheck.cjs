@@ -444,6 +444,23 @@ async function checkComponentMap() {
     ok(!overlaps(300, 300, 60, 60) && !overlaps(500, 300, 60, 60) && !overlaps(360, 329, 140, 2),
        'a pair panel clears the edge and both end stones (' + px + ',' + py + ')');
     delete pe.getBoundingClientRect;
+    // no free spot beside the stone: the panel docks away and is tethered to it
+    cmRoot.setAttribute('data-highlight', 'qubits');
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    box(stone).getBoundingClientRect = R(500, 350, 40, 40);
+    box(nb).getBoundingClientRect = R(300, 150, 460, 440);    // a crowd all around the stone
+    box(ed).getBoundingClientRect = R(0, 0, 0, 0);
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pd = doc.querySelector('.cm-popup');
+    pd.getBoundingClientRect = R(0, 0, 120, 80);
+    win.TopoGraph.positionDetail(pd, stone);
+    ok(pd._docked === true, 'a crowded stone docks its panel');
+    ok(!!doc.querySelector('svg.cm-dir-tether line.cm-dir-tether-line') && stone.classList.contains('cm-dir-docked'),
+       'a docked panel is tied to its stone by a ring and a line');
+    delete pd.getBoundingClientRect;
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    ok(!doc.querySelector('svg.cm-dir-tether') && !stone.classList.contains('cm-dir-docked'),
+       'closing the panel removes the ring and the line');
     cmRoot.setAttribute('data-highlight', 'qubits');
     delete pp.getBoundingClientRect;
     saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
@@ -523,6 +540,26 @@ async function checkComponentMap() {
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
      'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
   ok(!pop.querySelector('[data-panel-status]'), 'a landed re-read clears the status line');
+  // an open panel follows an undo / edit: the event that patches the table re-reads it
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.7777', 'after undo']] };
+  doc.dispatchEvent(new win.CustomEvent('cellsReverted', { detail: {} }));
+  await wait(150);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.7777') === 0,
+     'an open pair panel follows Ctrl+Z (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  doc.dispatchEvent(new win.CustomEvent('quam:state-changed'));
+  await wait(150);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0, 'an open pair panel follows an edit');
+  // a map click carries the page's chip too
+  win._htmxCalls.length = 0;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  ok(win._htmxCalls.some((c) => c[1] === '/pair/qA2-qA1?expect_chip=tokA'),
+     'a map click asks for the inspector with the page chip (' + win._htmxCalls.map((c) => c[1]).join(',') + ')');
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(300);
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
   // Expand carries the page's chip, so a stale window never opens another chip's inspector
   win._htmxCalls.length = 0;
   pop.querySelector('.cm-popup-hint').click();

@@ -16,9 +16,13 @@ def test_topology_expand_shipped_ui(tmp_path):
     state = {'qubits': {
         'q1': {'id': 'q1', 'grid_location': '0,0', 'T1': 2e-5, 'f_01': 5e9,
                'gate_fidelity': {'averaged': .99}},
-        'q2': {'id': 'q2', 'grid_location': '1,0', 'T1': 3e-5}},
+        'q2': {'id': 'q2', 'grid_location': '1,0', 'T1': 3e-5},
+        'q3': {'id': 'q3', 'grid_location': '2,0', 'T1': 3e-5}},
+        # two pairs: the keyboard walk needs a "next pair edge"
         'qubit_pairs': {'q1-q2': {'id': 'q1-q2', 'qubit_control': '#/qubits/q1',
-                                   'qubit_target': '#/qubits/q2', 'detuning': .1}}}
+                                   'qubit_target': '#/qubits/q2', 'detuning': .1},
+                        'q2-q3': {'id': 'q2-q3', 'qubit_control': '#/qubits/q2',
+                                   'qubit_target': '#/qubits/q3'}}}
     (chip / 'state.json').write_text(json.dumps(state), encoding='utf-8')
     (chip / 'wiring.json').write_text('{"wiring":{"qubits":{}}}', encoding='utf-8')
     app = create_app(testing=True, instance_path=str(tmp_path / 'instance'))

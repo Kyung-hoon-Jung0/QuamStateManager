@@ -1315,7 +1315,38 @@ window.TopoGraph = (function () {
       if (anchor.isConnected) anchor.focus({preventScroll: true});
     };
   }
-  function offerDetail(anchor, label, open) {
+  // Keyboard walk over a map: the next entity of the same kind, and after the
+  // last one the first focusable element after the map (never <body>).
+  function anchorKind(el) {
+    var cm = el.getAttribute('data-cm');
+    if (cm) return cm.split(':')[0];
+    return el.hasAttribute('data-hero-pair') ? 'hero-pair' : 'hero-qubit';
+  }
+  var FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  function focusAfterHost(host) {
+    var all = document.querySelectorAll(FOCUSABLE);
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (host.contains(el) || el.disabled || el === detailButton || (detailPanel && detailPanel.contains(el))) continue;
+      if (!(host.compareDocumentPosition(el) & 4)) continue;   // DOCUMENT_POSITION_FOLLOWING
+      if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) continue;
+      el.focus({preventScroll: false});
+      if (document.activeElement === el) return true;
+    }
+    return false;
+  }
+  function focusNextAnchor(host, from) {
+    var b = host && host._detailBinding;
+    if (!b) return false;
+    var kind = anchorKind(from);
+    var same = Array.prototype.filter.call(host.querySelectorAll(b.selector), function (el) {
+      return anchorKind(el) === kind;
+    });
+    var next = same[same.indexOf(from) + 1];
+    if (next) { next.focus({preventScroll: true}); return true; }
+    return focusAfterHost(host);
+  }
+  function offerDetail(anchor, label, open, host) {
     if (closingDetail || detailPanel) return;
     clearTimeout(detailTimer);
     if (detailButton && detailAnchor === anchor) return;
@@ -1332,6 +1363,14 @@ window.TopoGraph = (function () {
     button.addEventListener('mouseleave', scheduleDetailHide);
     button.addEventListener('focus', function () { clearTimeout(detailTimer); });
     button.addEventListener('blur', scheduleDetailHide);
+    // Tab from the floating Expand walks on to the next entity of the same kind
+    // (the button lives at the end of <body>); Shift+Tab returns to the entity.
+    button.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      if (e.shiftKey) { anchor.focus({preventScroll: true}); return; }
+      if (!(host && focusNextAnchor(host, anchor))) anchor.focus({preventScroll: true});
+    });
     button.addEventListener('click', function (e) {
       e.stopPropagation();
       hideDetailButton();
@@ -1415,9 +1454,7 @@ window.TopoGraph = (function () {
           e.preventDefault(); from.focus({preventScroll: true});
         } else if (!e.shiftKey && document.activeElement === items[items.length - 1]) {
           e.preventDefault();
-          var all = b ? Array.prototype.slice.call(host.querySelectorAll(b.selector)) : [];
-          var next = all[all.indexOf(from) + 1] || from;
-          next.focus({preventScroll: true});
+          if (!focusNextAnchor(host, from)) from.focus({preventScroll: true});
         }
       });
       panel.addEventListener('focusout', function (e) {

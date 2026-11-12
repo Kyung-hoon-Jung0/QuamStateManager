@@ -243,6 +243,37 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       assert.ok(d.querySelector('.topo-expand'));
       event(w, d.body, 'click');
     });
+    await check('keyboard on the Expand offer walks the same kind, then leaves the map, never <body>', async () => {
+      const edges = Array.from(d.querySelectorAll('[data-cm^="p:"]'));
+      if (edges.length < 2) return;
+      edges[0].focus(); key(w, edges[0], 'Tab');
+      const btn = d.querySelector('.topo-expand');
+      assert.ok(btn && d.activeElement === btn, 'Tab from the edge reaches its Expand offer');
+      assert.ok(key(w, btn, 'Tab'), 'Tab from the offer is handled');
+      assert.equal(d.activeElement, edges[1], 'focus lands on the next pair edge');
+      // the last edge: Tab leaves the map to the next focusable after it
+      const last = edges[edges.length - 1];
+      last.focus(); key(w, last, 'Tab');
+      const b2 = d.querySelector('.topo-expand');
+      key(w, b2, 'Tab');
+      const host = d.querySelector('#component-map');
+      assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement),
+                'after the last edge focus is past the map, not <body> (' + d.activeElement.tagName + ')');
+      assert.ok(host.compareDocumentPosition(d.activeElement) & 4, 'the focus target follows the map');
+      d.activeElement.blur(); await wait(300);
+    });
+    await check('hover panel: Tab from the last stone leaves the map, never <body>', async () => {
+      const stones = Array.from(d.querySelectorAll('[data-cm^="q:"]'));
+      const last = stones[stones.length - 1];
+      last.focus(); key(w, last, 'Tab');
+      const hint = panel(d) && panel(d).querySelector('.cm-popup-hint');
+      assert.ok(hint && d.activeElement === hint);
+      key(w, hint, 'Tab');
+      const host = d.querySelector('#component-map');
+      assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement) && !d.activeElement.closest('.cm-popup'),
+                'focus is past the map (' + d.activeElement.tagName + '.' + d.activeElement.className + ')');
+      d.activeElement.blur(); await wait(300);
+    });
     await check('component X closes; navigation tears it down', async () => {
       event(w, node, 'mouseenter'); panel(d).querySelector('.topo-popup-close').click();
       assert.equal(panel(d), null);
