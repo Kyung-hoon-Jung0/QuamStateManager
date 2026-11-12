@@ -1486,6 +1486,13 @@ def check_lab_code_dir(python_path: str, folder: str) -> dict:
     if not os.path.isdir(folder):
         out["error"] = f"No such folder: {folder}"
         return out
+    pkg = os.path.join(folder, "quam_config")
+    if os.path.isdir(pkg) and not os.path.isfile(os.path.join(pkg, "__init__.py")):
+        # without __init__.py it is a namespace package: Python takes any other
+        # quam_config on the path first, or reports a file of None
+        out["error"] = ("quam_config in this folder has no __init__.py; "
+                        "add an empty __init__.py to " + pkg)
+        return out
     env = dict(os.environ, PYTHONPATH=effective_pythonpath(python_path, folder) or "")
     kwargs = {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)} if os.name == "nt" else {}
     try:
@@ -1501,11 +1508,6 @@ def check_lab_code_dir(python_path: str, folder: str) -> dict:
         out["error"] = "quam_config does not import from this folder: " + (tail[-1] if tail else "no output")
         return out
     found = line.split("=", 1)[1]
-    if found == "None":
-        # a namespace package: the folder holds quam_config/ without __init__.py
-        out["error"] = ("quam_config in this folder has no __init__.py, so Python reads it as a "
-                        "namespace package; add an __init__.py to its quam_config folder")
-        return out
     out["quam_config_file"] = found
     root = os.path.normcase(os.path.abspath(folder))
     try:

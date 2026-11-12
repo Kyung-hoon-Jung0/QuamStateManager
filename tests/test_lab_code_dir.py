@@ -156,7 +156,7 @@ def test_a_namespace_quam_config_is_named(tmp_path, monkeypatch):
     monkeypatch.delenv("PYTHONPATH", raising=False)
     (tmp_path / "lab" / "quam_config").mkdir(parents=True)
     got = cg.check_lab_code_dir(sys.executable, str(tmp_path / "lab"))
-    assert not got["ok"] and "__init__.py" in got["error"] and "None" not in got["error"], got
+    assert not got["ok"] and "has no __init__.py" in got["error"], got
 
 
 def test_the_schema_cache_misses_when_the_folder_moves(tmp_path, monkeypatch):
@@ -240,3 +240,18 @@ def test_concurrent_settings_writes_keep_both_keys(tmp_path, monkeypatch):
         t.join()
     data = json.loads((inst / cg._SETTINGS_FILENAME).read_text(encoding="utf-8"))
     assert data.get("selected_env_python") == "C:/py.exe" and data.get("lab_code_dirs"), data
+
+
+def test_spawn_routes_through_the_lab_env(monkeypatch):
+    from quam_state_manager.core import lab_worker
+    seen = {}
+
+    def boom(argv, **kw):
+        seen.update(kw)
+        raise OSError("stop")
+
+    monkeypatch.setattr(subprocess, "Popen", boom)
+    cg._LAB_DIRS[cg._env_key("py")] = "L"
+    with pytest.raises(OSError):
+        lab_worker._spawn(["py", "x"], env={"PYTHONPATH": "X"})
+    assert seen["env"]["PYTHONPATH"] == "L" + os.pathsep + "X"
