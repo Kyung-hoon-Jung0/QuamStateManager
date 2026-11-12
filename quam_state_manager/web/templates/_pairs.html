@@ -22,6 +22,8 @@
 {% set cmap_add = (chip_origin | default('live')) == 'live' %}
 {% set cmap_label = '— pair adjacency highlighted' %}
 {% include '_component_map.html' %}
+{# The map's hover panel for each pair (core/pair_map_panel). #}
+<script type="application/json" id="cm-pair-panel" data-chip="{{ chip_token if chip_token is defined else '' }}" data-at="{{ pair_panel_at | default('') }}">{{ (pair_panel or {}) | script_json }}</script>
 
 {% if pair_vocab == 'cr' %}
 {# CR-native columns (docs/54): drive levers + canonical 2Q fidelity + the

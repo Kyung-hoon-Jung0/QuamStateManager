@@ -47,7 +47,7 @@ function key(w, el, value, extra = {}) {
 function button(d) { const b = d.querySelector('.topo-expand'); assert.ok(b, 'Expand is available'); return b; }
 function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, .cm-popup:not([hidden])'); }
 (async () => {
-  for (const component of [false, true]) {
+  for (const component of [false]) {
     const w = world(component), d = w.document;
     await wait(80);
     const selector = component ? '[data-cm]' : '[data-hero-qubit]';
@@ -167,23 +167,150 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
     });
     w.close();
   }
-  await check('standalone report dialogs trap focus without app.js helpers', async () => {
+  // ver1.8: component maps show the panel on hover; its Expand opens the inspector.
+  {
+    const w = world(true), d = w.document; await wait(80);
+    const node = d.querySelector('[data-cm^="q:"]');
+    await check('component hover opens the panel at once, non-modal', async () => {
+      event(w, node, 'mouseenter');
+      assert.ok(panel(d), 'hover opens details');
+      assert.equal(d.querySelector('.topo-expand'), null, 'no separate Expand offer');
+      assert.equal(panel(d).getAttribute('aria-modal'), 'false');
+      assert.ok(!panel(d).contains(d.activeElement), 'hover does not steal focus');
+      assert.equal(node.getAttribute('aria-expanded'), 'true');
+      assert.equal(panel(d).querySelector('.cm-popup-hint').textContent, 'Expand');
+      assert.equal(w.getComputedStyle(d.querySelector('.cm-edge-hit')).pointerEvents, 'stroke');
+    });
+    await check('component grace keeps the panel on the way in; leaving closes it', async () => {
+      const p = panel(d);
+      event(w, node, 'mouseleave'); await wait(80); assert.ok(panel(d));
+      p.dispatchEvent(new w.MouseEvent('mouseenter')); await wait(300); assert.ok(panel(d));
+      p.dispatchEvent(new w.MouseEvent('mouseleave')); await wait(1000);
+      assert.equal(panel(d), null);
+      assert.equal(node.getAttribute('aria-expanded'), 'false');
+    });
+    await check('component hover moves to the next entity', async () => {
+      event(w, node, 'mouseenter');
+      const other = d.querySelectorAll('[data-cm^="q:"]')[1];
+      event(w, other, 'mouseenter'); await wait(200);   // a side-column panel switches after a short rest
+      assert.ok(panel(d)); assert.equal(node.getAttribute('aria-expanded'), 'false');
+      event(w, d.body, 'click'); assert.equal(panel(d), null);
+    });
+    await check('component keyboard: focus shows it, Tab reaches Expand, Escape returns', async () => {
+      node.focus(); assert.ok(panel(d)); key(w, node, 'Tab');
+      assert.equal(d.activeElement, panel(d).querySelector('.cm-popup-hint'));
+      key(w, d.activeElement, 'Escape');
+      assert.equal(panel(d), null); assert.equal(d.activeElement, node);
+    });
+    await check('component focus leaving the panel closes it', async () => {
+      node.blur(); await wait(1000); node.focus(); key(w, node, 'Tab');
+      const hint = panel(d).querySelector('.cm-popup-hint');
+      assert.equal(d.activeElement, hint);
+      const out = d.createElement('button'); out.textContent = 'elsewhere'; d.body.append(out);
+      out.focus(); await wait(1000);
+      assert.equal(panel(d), null, 'Tab out of the panel closes it');
+      out.remove();
+    });
+    await check('component Tab past the panel returns to the map', async () => {
+      node.blur(); await wait(1000); node.focus(); key(w, node, 'Tab');
+      const hint = panel(d).querySelector('.cm-popup-hint');
+      assert.equal(d.activeElement, hint);
+      const prevented = key(w, hint, 'Tab');
+      const stones = Array.from(d.querySelectorAll('[data-cm]'));
+      assert.ok(prevented, 'Tab from the last control is handled');
+      assert.equal(d.activeElement, stones[stones.indexOf(node) + 1], 'focus lands on the next map entity');
+      d.activeElement.blur(); await wait(300);
+      node.focus(); key(w, node, 'Tab');
+      const first = panel(d).querySelector('button');
+      first.focus();
+      assert.ok(key(w, first, 'Tab', {shiftKey: true}), 'Shift+Tab from the first control is handled');
+      assert.equal(d.activeElement, node, 'Shift+Tab goes back to the entity');
+      key(w, d.activeElement, 'Escape'); node.blur(); await wait(300);
+    });
+    await check('component Expand opens the inspector and focus follows into it', async () => {
+      event(w, node, 'mouseenter');
+      panel(d).querySelector('.cm-popup-hint').click();
+      assert.equal(panel(d), null); assert.equal(w._detailInspects.length, 1);
+      assert.ok(/[?]expect_chip=/.test(w._detailInspects[0]) || !w.__chipToken, 'Expand carries the page chip (' + w._detailInspects[0] + ')');
+      const pane = d.querySelector('#inspector-pane');
+      assert.ok(pane && pane.contains(d.activeElement), 'focus is in the inspector, not on <body>');
+    });
+    await check('a pair edge on the Qubits page keeps the Expand offer, no empty panel', async () => {
+      const edge = d.querySelector('[data-cm^="p:"]');
+      if (!edge) return;
+      event(w, edge, 'mouseenter');
+      assert.equal(panel(d), null);
+      assert.ok(d.querySelector('.topo-expand'));
+      event(w, d.body, 'click');
+    });
+    await check('keyboard on the Expand offer walks the map in document order', async () => {
+      const edges = Array.from(d.querySelectorAll('[data-cm^="p:"]'));
+      if (edges.length < 2) return;
+      edges[0].focus(); key(w, edges[0], 'Tab');
+      const btn = d.querySelector('.topo-expand');
+      assert.ok(btn && d.activeElement === btn, 'Tab from the edge reaches its Expand offer');
+      assert.ok(key(w, btn, 'Tab'), 'Tab from the offer is handled');
+      const hostEl = d.querySelector('#component-map');
+      const order = Array.from(hostEl.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'));
+      assert.equal(d.activeElement, order[order.indexOf(edges[0]) + 1],
+                   'focus lands on the next map item in document order (' + (d.activeElement.getAttribute('data-cm') || d.activeElement.tagName) + ')');
+      // every map item in document order, then past the map (never <body>)
+      d.activeElement.blur(); await wait(300);
+      d.body.dispatchEvent(new w.MouseEvent('click', {bubbles: true}));
+      d.activeElement.blur && d.activeElement.blur();
+    });
+    await check('Tab from the last map entity leaves the map, never <body>', async () => {
+      const host = d.querySelector('#component-map');
+      const order = Array.from(host.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'));
+      const anchors = order.filter((el) => el.matches('[data-cm]:not(.cm-dir-ghost)'));
+      const last = anchors[anchors.length - 1];
+      last.focus(); key(w, last, 'Tab');
+      const btn = (panel(d) && panel(d).querySelector('.cm-popup-hint')) || d.querySelector('.topo-expand');
+      assert.ok(btn && d.activeElement === btn, 'Tab from the last entity reaches its button');
+      key(w, btn, 'Tab');
+      const after = order[order.indexOf(last) + 1];
+      if (after) assert.equal(d.activeElement, after, 'then the next map item');
+      else {
+        assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement) && !d.activeElement.closest('.cm-popup'),
+                  'past the map, not <body> (' + d.activeElement.tagName + ')');
+        assert.ok(host.compareDocumentPosition(d.activeElement) & 4, 'the focus target follows the map');
+      }
+      d.activeElement.blur(); await wait(300);
+    });
+    await check('component X closes; navigation tears it down', async () => {
+      event(w, node, 'mouseenter'); panel(d).querySelector('.topo-popup-close').click();
+      assert.equal(panel(d), null);
+      event(w, node, 'mouseenter');
+      d.dispatchEvent(new w.CustomEvent('htmx:beforeSwap', {detail: {target: d.querySelector('#table-pane')}}));
+      assert.equal(panel(d), null);
+    });
+    w.close();
+  }
+  await check('standalone report maps show the panel without app.js helpers', async () => {
     const w = world(true), d = w.document; await wait(80);
     w.trapFocus = undefined; w.htmx = undefined;
-    const n = d.querySelector('[data-cm]'); event(w, n, 'mouseenter'); button(d).click();
-    assert.ok(panel(d).contains(d.activeElement));
+    const n = d.querySelector('[data-cm^="q:"]'); event(w, n, 'mouseenter');
+    assert.ok(panel(d));
     assert.equal(panel(d).querySelector('.cm-popup-hint'), null);
-    assert.ok(key(w, d.activeElement, 'Tab'));
-    assert.ok(key(w, d.activeElement, 'Tab', {shiftKey: true}));
-    key(w, d.activeElement, 'Escape'); assert.equal(panel(d), null);
-    assert.equal(d.activeElement, n); w.close();
+    key(w, d, 'Escape'); assert.equal(panel(d), null); w.close();
   });
-  await check('touch pulse maps retain their filter action in details', async () => {
+  await check('pick maps keep the Expand step: hover offers Expand only', async () => {
+    const w = world(true), d = w.document; await wait(80);
+    const root = d.querySelector('#component-map');
+    root.setAttribute('data-cm-pick', '1'); root._cmapLoaded = false;
+    w.ComponentMap.mount(root); await wait(80);
+    const n = d.querySelector('[data-cm="q:q1"]');
+    event(w, n, 'mouseenter'); assert.equal(panel(d), null, 'a pick map opens no panel on hover');
+    assert.ok(button(d)); event(w, d.body, 'click'); w.close();
+  });
+  await check('touch pulse maps: a tap offers Expand, then the filter action', async () => {
     const w = world(true, true), d = w.document; await wait(80);
-    d.querySelector('#component-map').setAttribute('data-cm-pick', '1');
+    const root = d.querySelector('#component-map');
+    root.setAttribute('data-cm-pick', '1');
+    w.ComponentMap.mount(root); await wait(80);
     let picked = null; w.pulsePickOwner = id => { picked = id; };
     const n = d.querySelector('[data-cm="q:q1"]');
-    event(w, n, 'click'); button(d).click();
+    event(w, n, 'click'); assert.equal(panel(d), null); button(d).click(); assert.ok(panel(d));
     panel(d).querySelector('.cm-popup-hint').click();
     assert.equal(picked, 'q1'); assert.equal(panel(d), null); w.close();
   });

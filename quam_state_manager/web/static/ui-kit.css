@@ -98,6 +98,7 @@
     --ui-lh-btn: 1.2;
     --ui-btn-gap: .3em;
     --ui-focus-w: 2px;
+    --ui-topbar-h: var(--topbar-height, 48px);   /* app.js publishes the measured height */
     --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
     --ui-dialog-s: 560px;
@@ -1078,6 +1079,20 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .bulk-cell:hover, .bulk-cell:focus { border-color: var(--ui-border-strong); }
 .bulk-cell:focus { border-color: var(--ui-accent); }
 .bulk-row-apply:disabled { visibility: hidden; }
+
+/* Chip map hover panels: a panel with no clean spot beside its entity is an overlay
+   card fixed to the viewport's bottom-right (scrolls inside itself, Expand sticky in
+   view), and that entity wears a filled ring (component-map.js _placeAvoiding, _ring) */
+.cm-popup.cm-dir-overlay { left: auto; top: auto; right: var(--ui-gap-3); bottom: var(--ui-gap-3); max-height: calc(100vh - var(--ui-topbar-h) - var(--ui-gap-4)); overflow: auto; }
+.cm-dir-overlay > .cm-popup-hint { position: sticky; bottom: 0; }
+/* the toast lane stays above an open overlay card (its height in --cm-overlay-h), and
+   above the undo trail when that is open too */
+body.cm-dir-overlay-on #status-bar { bottom: calc(var(--ui-gap-3) + max(var(--cm-overlay-h, 0px), var(--undo-trail-h, 0px)) + var(--ui-gap-2)); }
+.cm-popup-title > .cm-dir-where { margin-left: var(--ui-gap-2); font-weight: var(--ui-fw-normal); }
+.cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
+.cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
+.cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }
+.cm-svg .cm-dir-docked .cm-edge-line { stroke: var(--ui-accent); }
 
 /* ===== stage 4: existing shared selectors moved onto the kit (docs/308, W5/W7/W15, D-43/D-45/D-61) =====
    Every consumer of these selectors moves in this one section; the old

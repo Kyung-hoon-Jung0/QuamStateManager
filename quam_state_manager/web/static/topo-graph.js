@@ -1202,6 +1202,7 @@ window.TopoGraph = (function () {
   var detailTimer = null, releaseDetailTrap = null, closingDetail = false;
   function positionDetail(surface, anchor) {
     if (!anchor || !anchor.isConnected) { closeDetails(); return; }
+    if (surface._place) { surface._place(anchor); return; }
     var stone = anchor.querySelector('.cm-stone');
     var a = (stone || anchor).getBoundingClientRect(), b = surface.getBoundingClientRect();
     if (!a.width && !a.height) a = anchor.getBoundingClientRect();
@@ -1274,6 +1275,10 @@ window.TopoGraph = (function () {
     if (detailPanel) {
       var panel = detailPanel;
       detailPanel = null;
+      // A hover panel holding focus hands it back to its anchor.
+      if (panel._hoverMode && anchor && anchor.isConnected && panel.contains(document.activeElement)) {
+        anchor.focus({preventScroll: true});
+      }
       if (panel._closeDetail) panel._closeDetail();
       panel.remove();
     }
@@ -1310,7 +1315,36 @@ window.TopoGraph = (function () {
       if (anchor.isConnected) anchor.focus({preventScroll: true});
     };
   }
-  function offerDetail(anchor, label, open) {
+  // Keyboard walk over a map: after the last map item, the first focusable
+  // element after the map (never <body>).
+  var FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  function focusAfterHost(host) {
+    var all = document.querySelectorAll(FOCUSABLE);
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      if (host.contains(el) || el.disabled || el === detailButton || (detailPanel && detailPanel.contains(el))) continue;
+      if (!(host.compareDocumentPosition(el) & 4)) continue;   // DOCUMENT_POSITION_FOLLOWING
+      if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) continue;
+      el.focus({preventScroll: false});
+      if (document.activeElement === el) return true;
+    }
+    return false;
+  }
+  // The next focusable item of the map in document order (stones, edges and
+  // the Add buttons alike, as plain Tab would walk them), then past the map.
+  function focusNextAnchor(host, from) {
+    var items = Array.prototype.filter.call(host.querySelectorAll(FOCUSABLE), function (el) {
+      return !el.disabled && el.getAttribute('tabindex') !== '-1' && !(detailPanel && detailPanel.contains(el));
+    });
+    for (var i = items.indexOf(from) + 1; i < items.length; i++) {
+      items[i].focus({preventScroll: true});
+      if (document.activeElement === items[i]) return true;
+    }
+    return focusAfterHost(host);
+  }
+  function offerDetail(anchor, label, open, host) {
+    // another entity's hover panel gives way to this one's Expand offer
+    if (detailPanel && detailPanel._hoverMode && detailAnchor !== anchor && !closingDetail) closeDetails();
     if (closingDetail || detailPanel) return;
     clearTimeout(detailTimer);
     if (detailButton && detailAnchor === anchor) return;
@@ -1327,6 +1361,14 @@ window.TopoGraph = (function () {
     button.addEventListener('mouseleave', scheduleDetailHide);
     button.addEventListener('focus', function () { clearTimeout(detailTimer); });
     button.addEventListener('blur', scheduleDetailHide);
+    // Tab from the floating Expand walks on to the next entity of the same kind
+    // (the button lives at the end of <body>); Shift+Tab returns to the entity.
+    button.addEventListener('keydown', function (e) {
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      if (e.shiftKey) { anchor.focus({preventScroll: true}); return; }
+      if (!(host && focusNextAnchor(host, anchor))) anchor.focus({preventScroll: true});
+    });
     button.addEventListener('click', function (e) {
       e.stopPropagation();
       hideDetailButton();
@@ -1352,8 +1394,76 @@ window.TopoGraph = (function () {
     document.body.appendChild(button);
     positionDetail(button, anchor);
   }
-  function bindDetails(host, selector, label, open) {
-    host._detailBinding = {selector: selector, label: label, open: open};
+  // Hover mode (opts.hover): the panel itself is the hover surface -- no
+  // Expand step. It is non-modal (focus stays where it is), survives the
+  // move from the anchor into the panel by a grace delay, and closes when
+  // the pointer or focus leaves both.
+  var HOVER_GRACE_MS = 240;
+  function isHovered(el) {
+    try { return !!(el && el.matches && el.matches(':hover')); } catch (e) { return false; }
+  }
+  function scheduleHoverClose() {
+    clearTimeout(detailTimer);
+    detailTimer = setTimeout(function () {
+      if (!detailPanel || !detailPanel._hoverMode) return;
+      var act = document.activeElement;
+      if (isHovered(detailPanel)) return;
+      if (act && (detailPanel.contains(act) || act === detailAnchor)) return;
+      closeDetails();
+    }, (detailPanel && detailPanel._graceMs) || HOVER_GRACE_MS);
+  }
+  // A docked panel (placed away from its anchor, see component-map) is a
+  // longer trip: the pointer may cross other entities on the way, so another
+  // entity takes over only after the pointer rests on it.
+  var SWITCH_DWELL_MS = 150, switchTimer = null;
+  function openHoverDetail(anchor, label, open, host) {
+    clearTimeout(detailTimer);
+    if (closingDetail) return;
+    if (detailPanel && detailAnchor === anchor) return;
+    if (detailPanel || detailButton) closeDetails();
+    var panel = open(anchor);
+    if (!panel) return;
+    detailPanel = panel; detailAnchor = anchor;
+    panel._hoverMode = true;
+    panel._hoverHost = host || null;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'false');
+    panel.setAttribute('aria-label', label + ' details');
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-expanded', 'true');
+    if (!panel._hoverBound) {
+      panel._hoverBound = true;
+      panel.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
+      panel.addEventListener('mouseleave', function () { if (panel._hoverMode) scheduleHoverClose(); });
+      panel.addEventListener('focusin', function () { clearTimeout(detailTimer); });
+      // Keyboard: the panel is appended to <body>, so a plain Tab past its last
+      // control would leave the map. Tab from the last control goes to the next
+      // map entity after the one that opened it; Shift+Tab from the first goes
+      // back to that entity.
+      panel.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab' || !panel._hoverMode || !detailAnchor) return;
+        var items = Array.prototype.filter.call(panel.querySelectorAll(
+          'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+          function (el) { return !el.disabled; });
+        if (!items.length) return;
+        var host = panel._hoverHost, b = host && host._detailBinding;
+        var from = detailAnchor;
+        if (e.shiftKey && document.activeElement === items[0]) {
+          e.preventDefault(); from.focus({preventScroll: true});
+        } else if (!e.shiftKey && document.activeElement === items[items.length - 1]) {
+          e.preventDefault();
+          if (!focusNextAnchor(host, from)) from.focus({preventScroll: true});
+        }
+      });
+      panel.addEventListener('focusout', function (e) {
+        if (panel._hoverMode && !(e.relatedTarget && panel.contains(e.relatedTarget))) scheduleHoverClose();
+      });
+    }
+    positionDetail(panel, anchor);
+  }
+  function bindDetails(host, selector, label, open, opts) {
+    // opts.hover: true, or a function(anchor) deciding per entity
+    host._detailBinding = {selector: selector, label: label, open: open, hover: (opts && opts.hover) || false};
     host.querySelectorAll(selector).forEach(function (anchor) {
       anchor.setAttribute('aria-label', label(anchor));
       Array.prototype.forEach.call(anchor.children, function (child) {
@@ -1368,11 +1478,25 @@ window.TopoGraph = (function () {
       var binding = host._detailBinding;
       var anchor = e.target.closest && e.target.closest(binding.selector);
       if (!anchor || !host.contains(anchor)) return;
-      function offer() { offerDetail(anchor, binding.label(anchor), function () { return binding.open(anchor); }); }
+      var hover = typeof binding.hover === 'function' ? !!binding.hover(anchor) : !!binding.hover;
+      function offer() {
+        (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); }, host);
+      }
       if (e.type === 'mouseenter' || e.type === 'focusin') {
-        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) offer();
+        if (e.relatedTarget && anchor.contains(e.relatedTarget)) return;
+        clearTimeout(switchTimer);
+        if (hover && e.type === 'mouseenter' && detailPanel && detailPanel._hoverMode &&
+            detailPanel._docked && detailAnchor !== anchor) {
+          switchTimer = setTimeout(offer, SWITCH_DWELL_MS);
+        } else offer();
       } else if (e.type === 'mouseleave' || e.type === 'focusout') {
-        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) scheduleDetailHide();
+        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) {
+          clearTimeout(switchTimer);
+          (hover ? scheduleHoverClose : scheduleDetailHide)();
+        }
+      } else if (hover && e.type === 'keydown' && e.key === 'Tab' && !e.shiftKey && detailPanel && detailAnchor === anchor) {
+        var first = detailPanel.querySelector('[data-detail-primary]') || detailPanel.querySelector('button');
+        if (first) { e.preventDefault(); first.focus(); }
       } else if (e.type === 'pointerdown') {
         touchAnchor = e.pointerType === 'touch' ? anchor : null;
       } else if (e.type === 'click') {
@@ -1390,7 +1514,8 @@ window.TopoGraph = (function () {
   // Page-wide closers; absent when the module is loaded without a DOM.
   if (typeof document !== 'undefined') {
   document.addEventListener('click', function (e) {
-    if (detailPanel && !detailPanel.contains(e.target)) closeDetails();
+    if (detailPanel && !detailPanel.contains(e.target) &&
+        !(detailPanel._hoverMode && detailAnchor && detailAnchor.contains(e.target))) closeDetails();
     else if (detailButton && e.target !== detailButton &&
              !(detailAnchor && detailAnchor.contains(e.target))) closeDetails();
   });

@@ -62,6 +62,15 @@ function makeWorld(bodyHtml) {
   win._fetchUrls = [];
   win.fetch = function (url) {
     win._fetchUrls.push(String(url));
+    if (String(url).indexOf('/api/pair-map-panel/') === 0) {
+      let rep = win._pairPanelReply;
+      if (typeof rep === 'function') rep = rep(String(url));
+      if (rep && rep.reject) return win.Promise.reject(new win.Error('network'));
+      const status = rep && rep.status ? rep.status : (rep ? 200 : 404);
+      const body = rep && rep.body !== undefined ? rep.body : (rep || {});
+      const res = { ok: status < 400, status: status, json: function () { return win.Promise.resolve(body); } };
+      return new win.Promise(function (r) { setTimeout(function () { r(res); }, (rep && rep.delay) || 0); });
+    }
     return win.Promise.resolve({ ok: true, json: function () { return win.Promise.resolve(JSON.parse(JSON.stringify(TOPO))); } });
   };
   new win.Function(TOPO_JS + '\n;\n' + CMAP_JS).call(win);
@@ -330,9 +339,9 @@ const PANE_HTML =
   '<div id="table-pane">'
   + '<details class="cmap" id="component-map" data-highlight="pairs" open>'
   + '<summary>Chip layout</summary><div class="cmap-body"></div></details>'
-  + '<table><thead><tr><th>ID</th><th>P(RO) <span class="unit phys-unit-label">(dBm)</span></th></tr></thead><tbody>'
-  + '<tr data-pair-id="qA2-qA1"><td>pair row</td><td colspan="1">x</td></tr>'
-  + '<tr data-qubit-id="qA1"><td>qubit row</td><td data-dbm="-20">-20.0 dBm</td></tr>'
+  + '<table><thead><tr><th>ID</th><th>P(RO) <span class="unit phys-unit-label">(dBm)</span></th><th>T1</th><th>Grid</th></tr></thead><tbody>'
+  + '<tr data-pair-id="qA2-qA1"><td>pair row</td><td colspan="1">x</td><td></td><td></td></tr>'
+  + '<tr data-qubit-id="qA1"><td>qubit row</td><td data-dbm="-20">-20.0 dBm</td><td>-</td><td>0,1</td></tr>'
   + '</tbody></table>'
   + '</div><div id="inspector-pane"></div>';
 
@@ -370,33 +379,331 @@ async function checkComponentMap() {
   ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }),
      'clicking a map entity opens its inspector');
 
-  // v1.5.2: hover card -> explicit Expand, so maps stay visible.
-  // docs/109 (3): the hover card — the entity's table row as a floating
-  // summary (audit: mutation-testing showed the popup had ZERO coverage).
+  const cmRoot = doc.getElementById('component-map');
+  cmRoot.setAttribute('data-highlight', 'qubits');   // the Qubits page: stones get the hover panel
+  // ver1.8: hovering shows the panel at once; its Expand button opens the
+  // inspector. The panel survives the move into it (grace) and closes on leave.
+  const wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  win._htmxCalls.length = 0;
   stone.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
   stone.dispatchEvent(new win.MouseEvent('mouseenter'));
-  ok(!doc.querySelector('.cm-popup:not([hidden])'), 'hover offers no detail panel');
-  doc.querySelector('.topo-expand').click();
   let pop = doc.querySelector('.cm-popup');
-  ok(!!pop && !pop.hidden, 'hovering a stone shows the summary card');
+  ok(!!pop && !pop.hidden, 'hovering a stone shows the panel at once');
+  ok(!doc.querySelector('.topo-expand'), 'no separate Expand offer before the panel');
+  ok(pop.getAttribute('aria-modal') === 'false', 'the hover panel is non-modal');
   ok(pop.querySelector('.cm-popup-title').firstChild.textContent === 'qA1',
      'the card is titled with the entity id');
   const rows = pop.querySelectorAll('.cm-popup-row');
   ok(rows.length === 1 && rows[0].querySelector('.cm-popup-k').textContent.indexOf('P(RO)') === 0
      && rows[0].querySelector('.cm-popup-v').textContent === '-20.0 dBm',
-     'the card pairs the row cells with their thead labels (col 0 skipped)');
+     'the card pairs cells with their thead labels; absent "-" and Grid rows are hidden ('
+     + rows.length + ')');
+  const hint = pop.querySelector('.cm-popup-hint');
+  ok(rows[0].querySelector('.cm-popup-k').textContent.trim() === 'P(RO)', 'a unit the value carries is not repeated in the label (' + rows[0].querySelector('.cm-popup-k').textContent + ')');
+  ok(hint && hint.textContent === 'Expand', 'the panel button reads Expand');
+  // leave the stone, enter the panel within the grace: it stays
+  stone.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(60);
+  pop.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(320);
+  ok(!pop.hidden && pop.isConnected, 'moving from the stone into the panel keeps it open');
+  pop.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(1000);
+  ok(!pop.isConnected || pop.hidden, 'leaving the panel closes it after the grace');
+  // placement: the panel goes to the side that covers no neighbouring entity
+  (function () {
+    const R = (l, t, w, h) => () => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h });
+    const box = (e) => e.querySelector('.cm-stone') || e.querySelector('.cm-edge-hit, .cm-hit') || e;
+    const all = Array.prototype.slice.call(body.querySelectorAll('[data-cm]'));
+    const saved = all.map((e) => [box(e), box(e).getBoundingClientRect]);
+    all.forEach((e) => { box(e).getBoundingClientRect = R(0, 0, 0, 0); });
+    box(stone).getBoundingClientRect = R(300, 300, 40, 40);
+    const nb = body.querySelector('[data-cm="q:qA2"]');
+    box(nb).getBoundingClientRect = R(360, 290, 40, 60);        // the right-hand neighbour
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pp = doc.querySelector('.cm-popup');
+    pp.getBoundingClientRect = R(0, 0, 120, 80);
+    pp._placeMode = null;   // place afresh with the stubbed geometry
+    win.TopoGraph.positionDetail(pp, stone);
+    const x = parseFloat(pp.style.left), y = parseFloat(pp.style.top);
+    const hitsNb = x < 400 && x + 120 > 360 && y < 350 && y + 80 > 290;
+    const hitsSelf = x < 340 && x + 120 > 300 && y < 340 && y + 80 > 300;
+    ok(!hitsNb && !hitsSelf, 'the panel avoids its neighbour and its own stone (' + x + ',' + y + ')');
+    box(stone).getBoundingClientRect = R(300, 260, 40, 40);     // the map scrolled 40 px
+    box(nb).getBoundingClientRect = R(360, 250, 40, 60);
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(parseFloat(pp.style.left) === x && parseFloat(pp.style.top) === y - 40,
+       'a scroll moves a beside panel with its stone, same side (' + pp.style.left + ',' + pp.style.top + ')');
+    // after the scroll something now sits where the panel is: it still does not jump elsewhere
+    box(nb).getBoundingClientRect = R(x, y - 40, 120, 80);
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(parseFloat(pp.style.left) === x && parseFloat(pp.style.top) === y - 40,
+       'a scroll never re-chooses the spot (' + pp.style.left + ',' + pp.style.top + ')');
+    // a pair: clear of the edge AND its two end stones
+    cmRoot.setAttribute('data-highlight', 'pairs');
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    const ed = body.querySelector('[data-cm="p:qA2-qA1"]');
+    box(stone).getBoundingClientRect = R(300, 300, 60, 60);
+    box(nb).getBoundingClientRect = R(500, 300, 60, 60);
+    box(ed).getBoundingClientRect = R(360, 329, 140, 2);
+    ed.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pe = doc.querySelector('.cm-popup');
+    pe.getBoundingClientRect = R(0, 0, 200, 80);
+    pe._placeMode = null;   // place afresh with the stubbed geometry
+    win.TopoGraph.positionDetail(pe, ed);
+    const px = parseFloat(pe.style.left), py = parseFloat(pe.style.top);
+    const overlaps = (l, t, w, h) => px < l + w && px + 200 > l && py < t + h && py + 80 > t;
+    ok(!overlaps(300, 300, 60, 60) && !overlaps(500, 300, 60, 60) && !overlaps(360, 329, 140, 2),
+       'a pair panel clears the edge and both end stones (' + px + ',' + py + ')');
+    delete pe.getBoundingClientRect;
+    // no free spot beside the stone: the panel docks away and is tethered to it
+    cmRoot.setAttribute('data-highlight', 'qubits');
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    box(stone).getBoundingClientRect = R(500, 350, 40, 40);
+    box(nb).getBoundingClientRect = R(300, 150, 460, 440);    // a crowd all around the stone
+    box(ed).getBoundingClientRect = R(0, 0, 0, 0);
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pd = doc.querySelector('.cm-popup');
+    pd.getBoundingClientRect = R(0, 0, 120, 80);
+    pd._placeMode = null;   // place afresh with the stubbed geometry
+    win.TopoGraph.positionDetail(pd, stone);
+    ok(pd._docked === true, 'a crowded stone docks its panel');
+    ok(stone.classList.contains('cm-dir-docked'), 'the first docked placement rings its stone');
+    // the fallback is an overlay card fixed to the viewport corner: never moved in the DOM
+    ok(!body.querySelector('.cm-dir-side') && !body.classList.contains('cm-dir-hasside'), 'no side column: the map keeps its size');
+    ok(pd.parentNode === doc.body, 'the panel stays where it was in the DOM (keyboard order)');
+    ok(pd.classList.contains('cm-dir-overlay'), 'a panel with no clean spot beside its stone is the corner overlay card');
+    ok(!pd.style.maxHeight && !pd.style.left && !pd.style.top, 'the overlay card is placed by CSS, never shrunk inline');
+    ok(!!pd.querySelector('.cm-popup-hint'), 'Expand is part of the overlay card');
+    ok(doc.body.classList.contains('cm-dir-overlay-on') && /px$/.test(doc.body.style.getPropertyValue('--cm-overlay-h')),
+       'an open overlay card lifts the toast lane (body class + its height)');
+    ok(!!pd.querySelector('.cm-popup-title .cm-dir-where'), 'the overlay title says where the entity is');
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(pd.classList.contains('cm-dir-overlay') && !pd.style.left && !pd.style.top, 'a scroll does not move the overlay card');
+    // a click inside the overlay card keeps it open
+    win._htmxCalls.length = 0;
+    pd.querySelector('.cm-popup-title').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(!pd.hidden && pd.classList.contains('cm-dir-overlay'), 'clicking inside the overlay card keeps it open');
+    ok(!!doc.querySelector('svg.cm-dir-tether .cm-dir-tether-ring') && stone.classList.contains('cm-dir-docked'),
+       'a docked panel rings its stone');
+    ok(!doc.querySelector('svg.cm-dir-tether line'), 'no connector line (it would read as a pair edge)');
+    delete pd.getBoundingClientRect;
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    ok(!doc.querySelector('svg.cm-dir-tether') && !stone.classList.contains('cm-dir-docked'),
+       'closing the panel removes the ring and the line');
+    ok(!doc.body.classList.contains('cm-dir-overlay-on') && !doc.body.style.getPropertyValue('--cm-overlay-h'),
+       'closing the overlay card drops the toast lift');
+    cmRoot.setAttribute('data-highlight', 'qubits');
+    delete pp.getBoundingClientRect;
+    saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
+  // a docked panel (no free spot beside the anchor): another entity takes over
+  // only after the pointer rests on it, so the trip to the panel crosses freely
+  await (async function () {
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pq = doc.querySelector('.cm-popup');
+    pq._docked = true;
+    const nbr = body.querySelector('[data-cm="q:qA2"]');
+    nbr.dispatchEvent(new win.MouseEvent('mouseenter'));
+    nbr.dispatchEvent(new win.MouseEvent('mouseleave'));
+    await wait(200);
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA1',
+       'crossing a neighbour on the way to a docked panel does not switch');
+    nbr.dispatchEvent(new win.MouseEvent('mouseenter'));
+    await wait(200);
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA2',
+       'resting on a neighbour switches to it');
+    // moving inside the panel never switches (the panel holds no switching logic)
+    const p2 = doc.querySelector('.cm-popup');
+    const v = p2.querySelector('.cm-popup-row') || p2.querySelector('.cm-popup-title');
+    v.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA2',
+       'moving inside the panel keeps it');
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
+  // the qubit panel reads its table row: a patched row patches the open panel
+  await (async function () {
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const cell = doc.querySelector('tr[data-qubit-id="qA1"] td[data-dbm]');
+    const was = cell.textContent;
+    cell.textContent = '-21.0 dBm';
+    await wait(500);
+    const v = doc.querySelector('.cm-popup:not([hidden]) .cm-popup-v');
+    ok(v && v.textContent === '-21.0 dBm', 'an open qubit panel follows its patched row (' + (v && v.textContent) + ')');
+    cell.textContent = was;
+    await wait(150);
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
+  // Expand -> inspector
+  stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+  pop = doc.querySelector('.cm-popup');
+  pop.querySelector('.cm-popup-hint').click();
+  ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }), 'Expand opens the inspector');
+  ok(!doc.querySelector('.cm-popup:not([hidden])'), 'Expand closes the panel');
+  // keyboard: focus shows it, Tab moves into it, Escape closes
+  stone.dispatchEvent(new win.FocusEvent('focusin'));
+  pop = doc.querySelector('.cm-popup');
+  ok(!!pop && !pop.hidden, 'keyboard focus on a stone shows the panel');
+  stone.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  ok(doc.activeElement === pop.querySelector('.cm-popup-hint'), 'Tab from the stone reaches Expand');
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  ok(!doc.querySelector('.cm-popup:not([hidden])') || !pop.isConnected, 'Escape closes the panel');
+  // touch: a tap shows the panel, it does not open the inspector
+  win._htmxCalls.length = 0;
+  stone.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true }));
+  const pd = new win.Event('pointerdown', { bubbles: true }); pd.pointerType = 'touch';
+  stone.dispatchEvent(pd);
+  stone.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  pop = doc.querySelector('.cm-popup');
+  ok(!!pop && !pop.hidden && win._htmxCalls.length === 0, 'a touch tap shows the panel only');
   doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
-  ok(pop.hidden, 'outside click closes the card');
-  // an entity with NO matching row still gets the minimal card
+  ok(!pop.isConnected || pop.hidden, 'outside click closes the card');
+  // a pair served by the page uses the page's rows (core/pair_map_panel)
+  cmRoot.setAttribute('data-highlight', 'pairs');   // the Pairs page from here on
   const edgeNoRow = body.querySelector('[data-cm="p:qA2-qA1"]');
+  const js = doc.createElement('script');
+  js.type = 'application/json'; js.id = 'cm-pair-panel';
+  js.setAttribute('data-chip', 'tokA'); js.setAttribute('data-at', '12:00:00');
+  js.textContent = JSON.stringify({ 'qA2-qA1': [['Best 2Q fidelity', '0.9570', 'cz_x · per gate (IRB)']] });
+  doc.body.appendChild(js);
+  win._pairPanelReply = null;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  pop = doc.querySelector('.cm-popup');
+  const prs = pop.querySelectorAll('.cm-popup-row');
+  ok(!pop.hidden && prs.length === 1 && prs[0].querySelector('.cm-popup-v').textContent.indexOf('0.9570') === 0
+     && prs[0].textContent.indexOf('per gate (IRB)') > 0, 'a pair panel shows the served rows with their kind');
+  // an edit since the page loaded: the panel re-reads the pair and shows the new value
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  win._fetchUrls.length = 0;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
+  ok(win._fetchUrls.some((u) => u.indexOf('/api/pair-map-panel/qA2-qA1?expect_chip=tokA') === 0),
+     'opening a pair panel re-reads that pair with the page chip token (' + win._fetchUrls.join(',') + ')');
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
+     'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
+  ok(!pop.querySelector('[data-panel-status]'), 'a landed re-read clears the status line');
+  // an open panel follows an undo / edit: the event that patches the table re-reads it
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.7777', 'after undo']] };
+  doc.dispatchEvent(new win.CustomEvent('cellsReverted', { detail: {} }));
+  await wait(500);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.7777') === 0,
+     'an open pair panel follows Ctrl+Z (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  doc.dispatchEvent(new win.CustomEvent('stateRestored', { detail: {} }));
+  await wait(500);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0, 'an open pair panel follows a pull (stateRestored)');
+  // an inspector commit is an htmx POST: the open panel re-reads
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.6666', 'after commit']] };
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  await wait(500);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.6666') === 0,
+     'an open pair panel follows an inspector commit (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  await wait(500);
+  // one commit fires several signals: they coalesce into ONE re-read
+  const nReads = () => win._fetchUrls.filter((u) => u.indexOf('/api/pair-map-panel/') === 0).length;
+  let r0 = nReads();
+  const post = () => doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  post(); await wait(100); doc.dispatchEvent(new win.CustomEvent('cellsReverted', { detail: {} })); await wait(100); post();
+  doc.dispatchEvent(new win.CustomEvent('quam:state-changed')); doc.dispatchEvent(new win.CustomEvent('sm:tray-swapped'));
+  await wait(600);
+  ok(nReads() - r0 === 1, 'one commit = one re-read (' + (nReads() - r0) + ')');
+  // a GET (a page fetch, a poll) never re-reads
+  r0 = nReads();
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'get' } } }));
+  await wait(600);
+  ok(nReads() === r0, 'a GET never re-reads');
+  // the Auto-Sync push after a commit is not a second re-read
+  r0 = nReads();
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/state/apply-to-live' } } }));
+  await wait(600);
+  ok(nReads() === r0, 'a push to live never re-reads');
+  // the Pairs page: a qubit stone taking focus closes the open pair panel
+  stone.dispatchEvent(new win.FocusEvent('focusin'));
+  ok(!doc.querySelector('.cm-popup:not([hidden])') || doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent !== 'pair qA2-qA1',
+     'focus on a stone closes the pair panel');
+  stone.dispatchEvent(new win.FocusEvent('focusout'));
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
+  // a map click carries the page's chip too
+  win._htmxCalls.length = 0;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  ok(win._htmxCalls.some((c) => c[1] === '/pair/qA2-qA1?expect_chip=tokA'),
+     'a map click asks for the inspector with the page chip (' + win._htmxCalls.map((c) => c[1]).join(',') + ')');
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(1000);
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
+  // Expand carries the page's chip, so a stale window never opens another chip's inspector
+  win._htmxCalls.length = 0;
+  pop.querySelector('.cm-popup-hint').click();
+  ok(win._htmxCalls.some((c) => c[1] === '/pair/qA2-qA1?expect_chip=tokA'),
+     'Expand asks for the inspector with the page chip (' + win._htmxCalls.map((c) => c[1]).join(',') + ')');
+  // an unchanged answer leaves the rows in place (a reader may be selecting in them)
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  const rowsBefore = doc.querySelector('.cm-popup .cm-popup-rows');
+  doc.querySelector('.cm-popup')._rowsJson = JSON.stringify(win._pairPanelReply.rows);
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  const rowsOpen = doc.querySelector('.cm-popup .cm-popup-rows');
+  await tick(); await tick(); await tick();
+  ok(doc.querySelector('.cm-popup .cm-popup-rows') === rowsOpen && rowsOpen,
+     'an unchanged re-read keeps the same rows element');
+  const statusOf = () => { const t = doc.querySelector('.cm-popup:not([hidden]) [data-panel-status]'); return t ? t.textContent : ''; };
+  const reopen = async (reply, ms) => {
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    win._pairPanelReply = reply;
+    edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+    await wait(ms || 5);
+    return doc.querySelector('.cm-popup');
+  };
+  // loading
+  pop = await reopen({ delay: 400, body: { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] } }, 300);
+  ok(/refreshing/.test(statusOf()), 'a pending re-read says refreshing (' + statusOf() + ')');
+  await wait(200);
+  // chip switched in another window: page copy, marked, never the other chip's numbers
+  pop = await reopen({ status: 409, body: { rows: null, reason: 'chip_changed' } }, 20);
+  ok(/chip changed in another window/.test(statusOf()) && pop.querySelector('.cm-popup-v').textContent.indexOf('0.98') === 0,
+     'a chip change keeps the page copy and says so (' + statusOf() + ')');
+  // failure: page copy with its time
+  pop = await reopen({ reject: true }, 20);
+  ok(/could not refresh; showing values from page load at 12:00:00/.test(statusOf()),
+     'a failed re-read says so with the page-load time (' + statusOf() + ')');
+  // late answer: an older open's answer neither repaints a newer panel nor overwrites newer cache
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = (u) => ({ delay: 120, body: { rows: [['2Q fidelity (Chip Status)', '0.1111', 'old']] } });
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(5);
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = (u) => ({ delay: 5, body: { rows: [['2Q fidelity (Chip Status)', '0.2222', 'new']] } });
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(200);
+  pop = doc.querySelector('.cm-popup');
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.2222') === 0,
+     'an older late answer does not repaint the newer panel (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  ok(JSON.parse(JSON.stringify(js._parsed['qA2-qA1']))[0][1] === '0.2222', 'an older answer never overwrites newer cached rows');
+  win._pairPanelReply = null;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(1000);
+  js.remove();
+  // an entity with NO matching row still gets the minimal card
   const prowEl = doc.querySelector('tr[data-pair-id="qA2-qA1"]');
   prowEl.parentNode.removeChild(prowEl);
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
-  doc.querySelector('.topo-expand').click();
   pop = doc.querySelector('.cm-popup');
   ok(!pop.hidden && pop.querySelector('.cm-popup-title').firstChild.textContent === 'pair qA2-qA1'
      && pop.querySelectorAll('.cm-popup-row').length === 0,
      'a row-less entity gets the minimal title-only card');
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
 
   // HTMX swap: replace the pane content, re-mount — binding still single
   const pane = doc.getElementById('table-pane');

@@ -58,6 +58,8 @@ window.ComponentMap = (function () {
   // Shared TopoGraph controls own its affordance, positioning and dismissal.
   var _pop = null;
   var _popEnt = null;          // "kind:id" of the card currently shown
+  var _popHl = null;          // the entity lit for the open hover panel
+  var _popAnchor = null;      // the anchor of the card shown
   var _popTitleEl = null;      // the SVG <title> we emptied while showing it
   var _popTitleText = "";
   function _popupEl() {
@@ -84,6 +86,325 @@ window.ComponentMap = (function () {
   // stale. One module-level guard each closes both cases for every mount.
 
 
+  var _ABSENT = { "-": 1, "—": 1, "–": 1, "?": 1 };
+  // Pairs page: rows served by the page (core/pair_map_panel), one per pair.
+  function _pairPanelRows(id) {
+    var el = document.getElementById("cm-pair-panel");
+    if (!el) return null;
+    if (el._parsed === undefined) {
+      try { el._parsed = JSON.parse(el.textContent || "{}"); } catch (e) { el._parsed = null; }
+    }
+    var rows = el._parsed && el._parsed[id];
+    return rows && rows.length ? rows : null;
+  }
+
+  // Hover panels (Qubits / Pairs pages only): a map whose click does something
+  // else -- a pick filter, the add door's ghosts -- keeps the explicit Expand.
+  function _hoverMode(root) {
+    if (!root || root.getAttribute("data-cm-pick") === "1") return false;
+    var hl = root.getAttribute("data-highlight") || "";
+    return hl === "qubits" || hl === "pairs";
+  }
+  // ...and only for the page's own entity: a pair edge on the Qubits page (or a
+  // stone on the Pairs page) has no panel content there, so it keeps Expand.
+  function _hoverFor(root, kind) {
+    if (!_hoverMode(root)) return false;
+    var hl = root.getAttribute("data-highlight");
+    return (hl === "qubits" && kind === "qubit") || (hl === "pairs" && kind === "pair");
+  }
+  // The chip the page was rendered for (the pairs page states it on its data).
+  function _pageChip() {
+    var el = document.getElementById("cm-pair-panel");
+    return (el && el.getAttribute("data-chip")) || window.__chipToken || "";
+  }
+  // After Expand the reader continues in the inspector, never on <body>.
+  function _focusInspector(anchor) {
+    var pane = document.getElementById("inspector-pane");
+    var t = pane && (pane.querySelector("h1, h2, h3, [data-autofocus]") || pane);
+    if (t) {
+      if (!t.hasAttribute("tabindex")) t.setAttribute("tabindex", "-1");
+      try { t.focus({ preventScroll: false }); } catch (e) { t.focus(); }
+    }
+    if ((!t || document.activeElement !== t) && anchor && anchor.isConnected) anchor.focus({ preventScroll: true });
+  }
+  function _boxOf(el) {
+    var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
+    return s.getBoundingClientRect();
+  }
+  // Placement. The panel floats beside its entity when a whole spot inside the
+  // drawing covers nothing on the map; otherwise it is an overlay card fixed to
+  // the viewport's bottom-right corner (it never moves on scroll, scrolls inside
+  // itself when tall, and keeps Expand in view). The entity then wears a filled
+  // ring and the panel title names it. The map keeps its full size, and the panel
+  // never moves in the DOM, so the keyboard order is untouched.
+  function _entityBox(anchor, body) {
+    // a pair's own end stones belong to it: the panel goes clear of all three
+    var ends = (anchor.getAttribute("data-link-ends") || "").split(/\s+/).filter(Boolean);
+    var mine = [anchor];
+    ends.forEach(function (id) {
+      var st = body.querySelector('[data-cm="q:' + _cssEsc(id) + '"]');
+      if (st) mine.push(st);
+    });
+    var a = null;
+    mine.forEach(function (e) {
+      var r = _boxOf(e);
+      if (!r.width && !r.height) return;
+      a = a ? { left: Math.min(a.left, r.left), top: Math.min(a.top, r.top),
+                right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
+    });
+    return { box: a || _boxOf(anchor), mine: mine };
+  }
+  function _overlap(x, y, w, h, r) {
+    return Math.min(x + w, r.right) > Math.max(x, r.left) && Math.min(y + h, r.bottom) > Math.max(y, r.top);
+  }
+  // While the overlay card is open the toast lane sits above it (a body class,
+  // like ag-composer-on / undo-trail-on; never :has()), and its title says where
+  // the entity is.
+  function _overlayOn(pop) {
+    var b = document.body;
+    if (!pop) {
+      b.classList.remove("cm-dir-overlay-on");
+      b.style.removeProperty("--cm-overlay-h");
+      var w0 = document.querySelector(".cm-popup .cm-dir-where");
+      if (w0) w0.remove();
+      return;
+    }
+    b.classList.add("cm-dir-overlay-on");
+    b.style.setProperty("--cm-overlay-h", Math.ceil(pop.getBoundingClientRect().height) + "px");
+    var t = pop.querySelector(".cm-popup-title");
+    if (t && !t.querySelector(".cm-dir-where")) {
+      var w = document.createElement("small");
+      w.className = "muted cm-dir-where";
+      w.textContent = "ringed on the map";
+      t.insertBefore(w, t.firstChild.nextSibling);
+    }
+  }
+  function _placeAvoiding(pop, anchor) {
+    var body = anchor.closest(".cmap-body") || document;
+    var ent = _entityBox(anchor, body), a = ent.box;
+    var mode = pop._placeMode;
+    if (mode && mode.anchor === anchor) {
+      if (mode.kind === "beside") {
+        pop.style.left = Math.round(a.left + mode.dx) + "px";
+        pop.style.top = Math.round(a.top + mode.dy) + "px";
+      }
+      _ring(pop._docked ? anchor : null, a);
+      return;
+    }
+    pop.classList.remove("cm-dir-overlay");
+    pop.style.maxHeight = "";
+    var b = pop.getBoundingClientRect();
+    var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
+    // the visible part of the drawing: a beside panel stays inside it
+    var area = (body.querySelector && body.querySelector(".cm-scroll") || body).getBoundingClientRect();
+    if (!area.width || !area.height) area = { left: 0, top: 0, right: W, bottom: H };
+    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
+      return ent.mine.indexOf(e) < 0;            // the Add buttons are obstacles too
+    }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
+    var beside = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
+                  [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
+                  [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
+    var minX = Math.max(area.left, pad), minY = Math.max(area.top, pad);
+    var maxX = Math.min(area.right, W - pad), maxY = Math.min(area.bottom, H - pad);
+    var pick = null;
+    for (var i = 0; i < beside.length && !pick; i++) {
+      // beside as it stands: whole, inside the drawing and the viewport, covering nothing
+      var c = beside[i];
+      if (c[0] < minX || c[1] < minY || c[0] + b.width > maxX || c[1] + b.height > maxY) continue;
+      if (!others.some(function (r) { return _overlap(c[0], c[1], b.width, b.height, r); })) pick = c;
+    }
+    var docked = !pick;
+    if (docked) {
+      // the overlay card: CSS places it (bottom-right, fixed); no inline geometry
+      pop.style.left = ""; pop.style.top = "";
+      pop.classList.add("cm-dir-overlay");
+      _overlayOn(pop);
+    } else {
+      pop.style.left = Math.round(pick[0]) + "px";
+      pop.style.top = Math.round(pick[1]) + "px";
+    }
+    pop._docked = docked;
+    pop._graceMs = docked ? 900 : 0;
+    pop._placeMode = docked ? { kind: "overlay", anchor: anchor }
+                                 : { kind: "beside", anchor: anchor, dx: pick[0] - a.left, dy: pick[1] - a.top };
+    _ring(pop._docked ? anchor : null, a);
+  }
+
+  // A docked panel sits away from its entity, so the entity wears a filled
+  // ring (no connector: a line on the map reads as a pair edge). It goes when
+  // the panel closes.
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var _tetherEl = null, _tetherAnchor = null;
+  function _untether() {
+    if (_tetherEl) { _tetherEl.remove(); _tetherEl = null; }
+    if (_tetherAnchor) { _tetherAnchor.classList.remove("cm-dir-docked"); _tetherAnchor = null; }
+  }
+  function _ring(anchor, a) {
+    _untether();
+    if (!anchor) return;
+    anchor.classList.add("cm-dir-docked");
+    _tetherAnchor = anchor;
+    var svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("class", "cm-dir-tether");
+    svg.setAttribute("aria-hidden", "true");
+    var ring = document.createElementNS(SVGNS, "rect");
+    ring.setAttribute("class", "cm-dir-tether-ring");
+    ring.setAttribute("x", a.left - 4); ring.setAttribute("y", a.top - 4);
+    ring.setAttribute("width", (a.right - a.left) + 8); ring.setAttribute("height", (a.bottom - a.top) + 8);
+    ring.setAttribute("rx", 8);
+    svg.appendChild(ring);
+    document.body.appendChild(svg);
+    _tetherEl = svg;
+  }
+
+  function _servedRowsEl(rows) {
+    var sl = document.createElement("div");
+    sl.className = "cm-popup-rows";
+    sl.setAttribute("data-served", "");
+    rows.forEach(function (rw) {
+      var r = document.createElement("div");
+      r.className = "cm-popup-row";
+      var k = document.createElement("span");
+      k.className = "cm-popup-k";
+      k.textContent = rw[0];
+      var v = document.createElement("span");
+      v.className = "cm-popup-v";
+      v.textContent = rw[1];
+      if (rw[2]) {
+        var n = document.createElement("small");
+        n.className = "muted";
+        n.textContent = rw[2];
+        v.appendChild(document.createElement("br"));
+        v.appendChild(n);
+      }
+      r.appendChild(k); r.appendChild(v);
+      sl.appendChild(r);
+    });
+    return sl;
+  }
+  // One re-read per open. The page's chip token rides along: another window
+  // may have switched the server to another chip, and a panel must never show
+  // that chip's numbers. Each id keeps the newest answer only.
+  var _pairSeq = 0, _pairApplied = {}, _pairAbort = null;
+  function _panelStatus(pop, text) {
+    var st = pop.querySelector("[data-panel-status]");
+    if (!text) { if (st) st.remove(); return; }
+    if (!st) {
+      st = document.createElement("small");
+      st.className = "muted";
+      st.setAttribute("data-panel-status", "");
+      var rows = pop.querySelector(".cm-popup-rows");
+      pop.insertBefore(st, rows ? rows.nextSibling : pop.querySelector(".cm-popup-hint"));
+    }
+    st.textContent = text;
+  }
+  function _refreshPairRows(pop, id, key) {
+    if (!window.fetch) return;
+    var el = document.getElementById("cm-pair-panel");
+    var tok = (el && el.getAttribute("data-chip")) || "";
+    var at = (el && el.getAttribute("data-at")) || "";
+    if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} }
+    var ctl = window.AbortController ? new AbortController() : null;
+    _pairAbort = ctl;
+    var seq = ++_pairSeq;
+    function live() { return _popEnt === key && pop.isConnected && !pop.hidden; }
+    function pageCopy() { return "showing values from page load" + (at ? " at " + at : ""); }
+    // a slow answer only: a quick one never flickers a line in and out
+    var slow = setTimeout(function () { if (live() && seq === _pairSeq) _panelStatus(pop, "refreshing\u2026"); }, 250);
+    fetch("/api/pair-map-panel/" + encodeURIComponent(id) + "?expect_chip=" + encodeURIComponent(tok),
+          { cache: "no-store", signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; })
+          .then(function (j) { return { ok: r.ok, j: j || {} }; });
+      })
+      .then(function (res) {
+        clearTimeout(slow);
+        var rows = res.ok && res.j.rows;
+        // an older answer never overwrites a newer one in the cache
+        if (rows && rows.length && seq > (_pairApplied[id] || 0)) {
+          _pairApplied[id] = seq;
+          if (el && el._parsed) el._parsed[id] = rows;
+        }
+        // the answer paints whatever panel is showing now, so this guard is
+        // what keeps an older open's answer off a newer panel
+        pop = _pop;
+        if (!live() || seq !== _pairSeq) return;   // a newer open owns the panel
+        if (rows && rows.length) {
+          // unchanged rows stay as they are: a reader may be selecting text in them
+          var js = JSON.stringify(rows);
+          if (js !== pop._rowsJson) {
+            var fresh = _servedRowsEl(rows), old = pop.querySelector(".cm-popup-rows");
+            if (old) pop.replaceChild(fresh, old);
+            else pop.insertBefore(fresh, pop.querySelector(".cm-popup-hint"));
+            pop._rowsJson = js;
+            if (pop._place) pop._place(_popAnchor || pop);
+          }
+          _panelStatus(pop, "");
+        } else if (res.j.reason === "chip_changed") {
+          _panelStatus(pop, "chip changed in another window -- reload; " + pageCopy());
+        } else {
+          _panelStatus(pop, "could not refresh; " + pageCopy());
+        }
+      })
+      .catch(function (err) {
+        clearTimeout(slow);
+        if (err && err.name === "AbortError") return;
+        pop = _pop;
+        if (live() && seq === _pairSeq) _panelStatus(pop, "could not refresh; " + pageCopy());
+      });
+  }
+
+  // An open panel follows the state: the same events that patch the table
+  // (an edit landing, Ctrl+Z / redo, a pull) re-read it, newest answer wins.
+  // One trigger per door: an inspector commit (htmx POST), Ctrl+Z / redo
+  // (cellsReverted), a pull (stateRestored). Triggers inside one window coalesce
+  // into ONE re-read; the fetch itself aborts an older one.
+  var REREAD_MS = 400;
+  var _rereadTimer = null;
+  function _rereadOpen(e) {
+    // a qubit panel follows its table row (the row observer); the doors only re-read pairs
+    if (e && _popEnt && _popEnt.indexOf("pair:") !== 0) return;
+    clearTimeout(_rereadTimer);
+    _rereadTimer = setTimeout(function () {
+      if (!_popEnt || !_pop || _pop.hidden || !_pop.isConnected) return;
+      var i = _popEnt.indexOf(":"), kind = _popEnt.slice(0, i), id = _popEnt.slice(i + 1);
+      if (kind === "pair" && document.getElementById("cm-pair-panel")) {
+        _refreshPairRows(_pop, id, _popEnt);
+      } else if (_popAnchor && _popAnchor.isConnected) {
+        // a qubit panel reads the table row, which the same event has patched
+        var key = _popEnt;
+        _popEnt = null;
+        _showPopup({ kind: kind, id: id }, _rowFor(kind, id), _popAnchor);
+        if (_popEnt !== key) _popEnt = key;
+      }
+    }, REREAD_MS);
+  }
+  if (typeof document !== "undefined") {
+    ["cellsReverted", "stateRestored"].forEach(function (name) {
+      document.addEventListener(name, _rereadOpen);
+    });
+    // an inspector commit is an htmx POST that fires none of the events above
+    document.addEventListener("htmx:afterRequest", function (e) {
+      var d = e.detail || {}, cfg = d.requestConfig || {};
+      var verb = String(cfg.verb || (d.xhr && d.xhr._smVerb) || "").toLowerCase();
+      var path = String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || "");
+      // only a value write: an inspector commit or a field edit (not the
+      // Auto-Sync push that follows it, which would be a second re-read)
+      if (d.successful && verb && verb !== "get" && /\/edit(-batch)?(\?|$)|\/field\/edit/.test(path)) _rereadOpen();
+    });
+  }
+  // The open entity's own table row: whatever patches it (an edit, Ctrl+Z, a
+  // pull) patches the panel too -- read AFTER the row changed, never before.
+  var _rowObs = null;
+  function _watchRow(row) {
+    if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }
+    var table = row && row.closest && row.closest("table");
+    if (!table || !window.MutationObserver) return;
+    _rowObs = new MutationObserver(function () { if (_popEnt && _popEnt.indexOf("qubit:") === 0) _rereadOpen(); });
+    _rowObs.observe(table, { childList: true, subtree: true, characterData: true });
+  }
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -98,7 +419,15 @@ window.ComponentMap = (function () {
       _popTitleEl = nt; _popTitleText = nt.textContent; nt.textContent = "";
     }
     var pop = _popupEl();
-    pop._closeDetail = function () { pop.hidden = true; _popEnt = null; _restoreNativeTitle(); };
+    pop._closeDetail = function () {
+      pop.hidden = true; _popEnt = null; _restoreNativeTitle(); _untether();
+      pop.classList.remove("cm-dir-overlay");
+      _overlayOn(null);
+      if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
+      if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
+      _popHl = null;
+      if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }
+    };
     while (pop.firstChild) pop.removeChild(pop.firstChild);
     var title = document.createElement("div");
     title.className = "cm-popup-title";
@@ -109,7 +438,13 @@ window.ComponentMap = (function () {
     close.addEventListener("click", function () { window.TopoGraph.closeDetails(); });
     title.appendChild(close);
     pop.appendChild(title);
-    if (row) {
+    var served = ent.kind === "pair" ? _pairPanelRows(ent.id) : null;
+    // the page's copy shows at once; a fresh read replaces it (edits, undo, sync)
+    if (ent.kind === "pair" && document.getElementById("cm-pair-panel")) _refreshPairRows(pop, ent.id, key);
+    pop._rowsJson = served ? JSON.stringify(served) : null;
+    if (served) {
+      pop.appendChild(_servedRowsEl(served));
+    } else if (row) {
       var table = row.closest("table");
       var ths = table ? table.querySelectorAll("thead th") : [];
       var dl = document.createElement("div");
@@ -125,6 +460,12 @@ window.ComponentMap = (function () {
         var val = (row.cells[i].textContent || "").trim();
         hcur += span;
         if (i === 0 || !val) continue;   // col 0 repeats the title
+        // absent values have no row; an active entity needs no "Active" row
+        if (_ABSENT[val] || (/^active$/i.test(label) && val === "✓")) continue;
+        if (/^grid$/i.test(label)) continue;  // the map already shows where it sits
+        // a value that already carries its unit does not repeat it in the label
+        var um = /\s*\(([^()]+)\)\s*$/.exec(label);
+        if (um && val.slice(-um[1].length - 1) === " " + um[1]) label = label.slice(0, um.index);
         var r = document.createElement("div");
         r.className = "cm-popup-row";
         if (label) {
@@ -144,12 +485,13 @@ window.ComponentMap = (function () {
     var hint = document.createElement("button");
     hint.type = "button";
     hint.className = "cm-popup-hint";
+    hint.setAttribute("data-detail-primary", "");
     // A pick mount may name its own action (data-cm-pick-hint); the Pulses page keeps its words.
     var root0 = _active && _active.root;
     var pickHint = _isPick() && root0.getAttribute("data-cm-pick-hint");
     hint.title = pickHint ? pickHint : _isPick() ? "click to show only its pulses"
-                                 : "click to open in the inspector";
-    hint.textContent = pickHint ? pickHint : _isPick() ? "Show pulses" : "Open inspector";
+                                 : "open in the inspector";
+    hint.textContent = pickHint ? pickHint : _isPick() ? "Show pulses" : "Expand";
     hint.addEventListener("click", function (e) {
       e.stopPropagation();
       var pick = _isPick();
@@ -159,13 +501,26 @@ window.ComponentMap = (function () {
           root0.dispatchEvent(new CustomEvent("cm:pick", { bubbles: true, detail: { kind: ent.kind, id: ent.id } }));
         } else if (window.pulsePickOwner) window.pulsePickOwner(ent.id);
       } else if (window.htmx) {
-        htmx.ajax("GET", (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id),
-                  { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
+        var tok = _pageChip();
+        var url = (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id) +
+                  (tok ? "?expect_chip=" + encodeURIComponent(tok) : "");
+        var done = htmx.ajax("GET", url, { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
+        if (done && done.then) done.then(function () { _focusInspector(el); });
+        else _focusInspector(el);
       }
     });
     if ((window.htmx || _isPick()) && (!pickHint || ent.kind === "pair")) pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
+    _popAnchor = el;
+    if (_hoverFor(_active && _active.root, ent.kind)) _watchRow(row);
+    // the anchor stays lit while its panel is open (a docked panel sits away from it)
+    if (_hoverFor(_active && _active.root, ent.kind) && _active.api) {
+      _active.api.highlightEntity(ent.kind, ent.id, true);
+      _popHl = { kind: ent.kind, id: ent.id };
+    }
+    pop._placeMode = null;
+    pop._place = _hoverFor(_active && _active.root, ent.kind) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;
   }
@@ -205,7 +560,10 @@ window.ComponentMap = (function () {
     }, function (el) {
       var ent = _parseCm(el);
       return _showPopup(ent, _rowFor(ent.kind, ent.id), el);
-    });
+    }, { hover: function (anchor) {
+      var e = _parseCm(anchor);
+      return !!e && _hoverFor(_active && _active.root, e.kind);
+    } });
     body.addEventListener("click", function (ev) {
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)
@@ -215,7 +573,9 @@ window.ComponentMap = (function () {
       if (window.DiagramAdd && window.DiagramAdd.onMapClick(el)) return;
       var e = _parseCm(el);
       if (!e || !window.htmx) return;
-      htmx.ajax("GET", (e.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(e.id),
+      var tok = _pageChip();
+      htmx.ajax("GET", (e.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(e.id) +
+                (tok ? "?expect_chip=" + encodeURIComponent(tok) : ""),
                 { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
     });
   }

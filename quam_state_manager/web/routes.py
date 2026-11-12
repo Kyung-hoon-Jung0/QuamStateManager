@@ -12813,10 +12813,22 @@ _PULSE_NAME_RE = add_names.OPERATION_NAME_RE
 _QCLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
+def _stale_chip_note():
+    """The inspector's answer to a window rendered for another chip (``?expect_chip=``)."""
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return ('<p class="muted" data-chip-changed>chip changed in another window -- '
+                'reload this page to inspect the chip that is open now.</p>')
+    return None
+
+
 @bp.route("/qubit/<name>")
 def qubit_detail(name: str):
     # ?focus=<dot-path> deep-links straight to a field (scroll + focus + flash)
     # — exposes the existing focus_path plumbing to the data-viewer value chip.
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_qubit_detail(name, focus_path=request.args.get("focus") or None)
 
 
@@ -17286,6 +17298,37 @@ def _pair_bell(p: dict) -> None:
         p["bell_others"] = ", ".join(others)
 
 
+def _pair_map_panel(engine) -> dict:
+    """The chip map's hover-panel rows for every pair (core/pair_map_panel)."""
+    from quam_state_manager.core import pair_map_panel
+    try:
+        return pair_map_panel.all_pair_rows(engine)
+    except Exception:  # noqa: BLE001 -- the panel falls back to the table row
+        logger.exception("building the pair map panel failed")
+        return {}
+
+
+@bp.route("/api/pair-map-panel/<path:name>")
+def api_pair_map_panel(name: str):
+    """One pair's map hover-panel rows, read fresh (the panel re-asks on every open)."""
+    from quam_state_manager.core import pair_map_panel
+    engine = _engine()
+    if not engine:
+        return jsonify({"rows": None, "reason": "no_chip", "error": "No chip is loaded."}), 409
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return jsonify({"rows": None, "reason": "chip_changed",
+                        "error": "Another chip is open now; reload this page."}), 409
+    try:
+        rows = pair_map_panel.all_pair_rows(engine, only=name).get(name)
+    except Exception:  # noqa: BLE001 -- the panel keeps what it showed
+        logger.exception("pair map panel for %r failed", name)
+        return jsonify({"rows": None, "reason": "error", "error": "Could not read the pair."}), 500
+    if rows is None:
+        return jsonify({"rows": None, "reason": "unknown_pair", "error": f"No pair named {name!r}."}), 404
+    return jsonify({"rows": rows})
+
+
 @bp.route("/pairs")
 def pairs():
     engine = _engine()
@@ -17339,6 +17382,8 @@ def pairs():
             page="pairs",
             pairs=page_pairs,
             pair_vocab=pair_vocab,
+            pair_panel=_pair_map_panel(engine),
+            pair_panel_at=time.strftime("%H:%M:%S"),
             cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,
@@ -17351,6 +17396,9 @@ def pairs():
 
 @bp.route("/pair/<name>")
 def pair_detail(name: str):
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_pair_detail(name, focus_path=request.args.get("focus") or None)
 
 
