@@ -170,20 +170,48 @@ def test_a_warm_cache_without_str_ok_reads_the_annotation():
 def test_a_dotdot_in_the_middle_climbs_too():
     # holder object x; ../../ -> q1; b/../gate_fidelity -> q1.gate_fidelity
     p = "#../../b/../gate_fidelity/averaged"
-    assert relative_parts(p, LEAF) == (("qubits", "q1"), ["gate_fidelity", "averaged"])
+    # the text alone cannot tell where a mid-path ".." lands
+    assert relative_parts(p, LEAF) == (None, None)
+    assert pointer_to_abs(p, list(LEAF)) is None
     # the resolver steps like quam: "b" must exist before ".." climbs from it
     assert resolve_value(_state(), p, LEAF) == p
-    assert resolve_value(_state(), "#../../macros/../gate_fidelity/averaged", LEAF) == 0.9878
-    assert pointer_to_abs(p, list(LEAF)) == ["qubits", "q1", "gate_fidelity", "averaged"]
+    assert pointer_to_abs(p, list(LEAF), _state()) is None
+    ok = "#../../macros/../gate_fidelity/averaged"
+    assert resolve_value(_state(), ok, LEAF) == 0.9878
+    assert pointer_to_abs(ok, list(LEAF), _state()) == ["qubits", "q1", "gate_fidelity", "averaged"]
 
 
 def test_store_revs_and_regen_merge_share_the_rule():
     from quam_state_manager.core.regen_merge import _one_hop
     p = "#../../gate_fidelity/averaged"
     assert _one_hop(_state(), p, LEAF) == 0.9878
-    assert _one_hop(_state(), "#../../b/../gate_fidelity/averaged", LEAF) == 0.9878
-    assert store_revs.pointer_target_segs(list(LEAF), "#../../b/../gate_fidelity/averaged") \
+    mid = "#../../macros/../gate_fidelity/averaged"
+    assert _one_hop(_state(), mid, LEAF) == 0.9878
+    assert store_revs.pointer_target_segs(list(LEAF), mid, _state()) \
         == ["qubits", "q1", "gate_fidelity", "averaged"]
+
+
+def test_the_edit_target_is_the_leaf_the_value_is_read_from():
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    st = {"a": {"ref": "#/b/c", "d": 1, "h": {"f": "#../ref/../d"}}, "b": {"c": {}, "d": 2}}
+    assert resolve_value(st, "#../ref/../d", ("a", "h", "f")) == 2
+    ft = resolve_field_target(st, "a.h.f")
+    assert ft["resolved_path"] == "b.d" and ft["resolved_value"] == 2, ft
+    assert store_revs.pointer_target_segs(["a", "h", "f"], "#../ref/../d", st) == ["b", "d"]
+    assert pointer_to_abs("#../ref/../d", ["a", "h", "f"], st) == ["b", "d"]
+
+
+def test_a_dotdot_from_a_scalar_does_not_resolve():
+    # quam asks the reached object for .parent; an int has none
+    st = {"ops": {"x90": {"length": "#../x180/length", "amplitude": 0.25},
+                  "x180": {"length": 40, "amplitude": 0.5,
+                           "detuning": "#../x90/length/../amplitude"}}}
+    leaf = ("ops", "x180", "detuning")
+    p = st["ops"]["x180"]["detuning"]
+    assert resolve_value(st, p, leaf) == p
+    assert pointer_to_abs(p, list(leaf), st) is None
+    st2 = {"a": {"v": 5, "d": 1, "h": {"f": "#../v/../d"}}}
+    assert resolve_value(st2, "#../v/../d", ("a", "h", "f")) == "#../v/../d"
 
 
 def test_the_autofit_alias_walk_follows_a_multi_level_alias():

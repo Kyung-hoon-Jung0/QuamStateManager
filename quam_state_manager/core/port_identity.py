@@ -94,7 +94,7 @@ def pointer_landing(root: dict, path: str) -> str | None:
                 holder = tuple(location)
                 if holder in seen or len(seen) >= 64:
                     return None
-                target = pointer_to_abs(node, location)
+                target = pointer_to_abs(node, location, root)
                 if target is None:
                     return None
                 return walk(target + remaining, seen | {holder})

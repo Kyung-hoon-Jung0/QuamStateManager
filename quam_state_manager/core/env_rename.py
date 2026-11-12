@@ -72,7 +72,8 @@ def plan(state, wiring, manifest, selections, reference=None):
                     break
             for move in moved:
                 if holder == move["old"] or holder.startswith(move["old"] + "."):
-                    target = pointer_to_abs(updated, holder.split("."))
+                    target = pointer_to_abs(updated, holder.split("."),
+                                            {**state_copy, **wiring_copy})
                     if target:
                         new_holder = move["new"] + holder[len(move["old"]):]
                         updated = _derive_pointer(_flavor(updated), new_holder.split("."), target)
@@ -100,7 +101,8 @@ def add_removals(planned, removals):
     for tree in (state_copy, wiring_copy):
         for holder, value in _leaves(tree):
             if isinstance(value, str) and value.startswith(("#/", "#./", "#../")):
-                target = pointer_to_abs(value, holder.split("."))
+                target = pointer_to_abs(value, holder.split("."),
+                                        {**state_copy, **wiring_copy})
                 if target:
                     referrers.append((holder, ".".join(str(p) for p in target)))
     removed = []

@@ -52,33 +52,20 @@ def _walk(root: dict, segments: list[str]) -> tuple[bool, Any]:
     return True, current
 
 
-def pointer_to_abs(pointer: str, holder: list[str]) -> list[str] | None:
+def pointer_to_abs(pointer: str, holder: list[str], root: Any = None) -> list[str] | None:
     """Public alias of :func:`_pointer_to_abs` (used by pulse_index)."""
-    return _pointer_to_abs(pointer, holder)
+    return _pointer_to_abs(pointer, holder, root)
 
 
-def _pointer_to_abs(pointer: str, holder: list[str]) -> list[str] | None:
-    """Absolute path a pointer resolves to, given the *holder* node's path.
+def _pointer_to_abs(pointer: str, holder: list[str], root: Any = None) -> list[str] | None:
+    """Absolute path a pointer names, given the *holder* leaf's path.
 
-    ``#/X`` → ``X``; ``#../X`` → ``holder[:-2] + X``; ``#./X`` → ``holder[:-1] + X``.
-    Returns ``None`` for malformed / too-short relative pointers.
+    One rule with the value resolver: ``pointer_resolver.target_path``. Pass
+    *root* (the merged document) whenever it is at hand: a ``..`` after a
+    named step needs it, and without it the target is None (unknown).
     """
-    def _segs(body: str) -> list[str]:
-        return [s for s in body.split("/") if s != ""]
-
-    if pointer.startswith("#../"):
-        from quam_state_manager.core.pointer_resolver import relative_parts
-        base, rest = relative_parts(pointer, tuple(holder))
-        if base is None:
-            return None
-        return list(base) + [s for s in rest if s != ""]
-    if pointer.startswith("#./"):
-        if len(holder) < 1:
-            return None
-        return list(holder[:-1]) + _segs(pointer[3:])
-    if pointer.startswith("#/"):
-        return _segs(pointer[2:])
-    return None
+    from quam_state_manager.core.pointer_resolver import target_path
+    return target_path(root, pointer, holder)
 
 
 def _candidate(path_segs: list[str], value: Any) -> dict:
@@ -118,7 +105,7 @@ def resolve_field_target(merged: dict, dot_path: str) -> dict:
             resolvable = False
             return "deadend"
         visited.add(key)
-        target = _pointer_to_abs(current, abs_path)
+        target = _pointer_to_abs(current, abs_path, merged)
         if target is None:
             resolvable = False
             return "deadend"

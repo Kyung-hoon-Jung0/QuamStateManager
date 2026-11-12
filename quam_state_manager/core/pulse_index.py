@@ -92,7 +92,7 @@ def build_reverse_pointer_index(merged: dict, tick=None) -> dict[str, list[str]]
                                         else _walk_ticked(merged, tick)):
         if not is_pointer(value):
             continue
-        target = pointer_to_abs(value, list(path_tuple))
+        target = pointer_to_abs(value, list(path_tuple), merged)
         if not target:
             continue
         index.setdefault(".".join(target), []).append(dot_path)

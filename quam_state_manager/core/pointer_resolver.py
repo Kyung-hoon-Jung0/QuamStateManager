@@ -300,10 +300,8 @@ def _compute_resolved_path(
     if pointer.startswith("#/"):
         return tuple(pointer[2:].split("/"))
     if pointer.startswith("#../"):
-        parent_path, rest = _relative_parts(pointer, current_path)
-        if parent_path is None:
-            return current_path
-        return tuple(parent_path) + tuple(rest)
+        t = target_path(root, pointer, current_path)
+        return current_path if t is None else tuple(t)
     return current_path
 
 
@@ -325,16 +323,12 @@ def _relative_parts(pointer: str, current_path: tuple[str, ...]):
         return None, None
     base = list(current_path[:keep])
     rest: list[str] = []
-    # a ".." later in the path climbs too (quam normalises the whole path)
     for seg in (body.split("/") if body else []):
         if seg == "..":
-            if rest:
-                rest.pop()
-            elif base:
-                base.pop()
-            else:
-                return None, None
-        elif seg != ".":
+            # a ".." after a named step climbs from the OBJECT reached, which
+            # the text alone cannot tell (see target_path / _walk_relative)
+            return None, None
+        if seg != ".":
             rest.append(seg)
     return tuple(base), rest
 
@@ -393,7 +387,9 @@ def _walk_relative(root: Any, pointer: str, current_path: tuple[str, ...]) -> li
     segs = [s for s in body.split("/") if s not in ("", ".")]
     for i, seg in enumerate(segs):
         if seg == "..":
-            if not cur:
+            # quam asks the reached object for .parent: only a component
+            # (dict) or a list has one; a scalar fails (InvalidReferenceError)
+            if not cur or not isinstance(_get(root, cur), (dict, list)):
                 return None
             cur.pop()
             continue
@@ -407,6 +403,32 @@ def _walk_relative(root: Any, pointer: str, current_path: tuple[str, ...]) -> li
                 return None
             cur = real
     return cur
+
+
+def target_path(root: Any, pointer: str, holder: tuple[str, ...] | list[str]) -> list[str] | None:
+    """THE absolute path a pointer stored at *holder* names (first hop), as
+    quam lands on it. Every target computation (edit target, change reach,
+    used_by, rename rewrite, history) goes through this, so the leaf a value
+    is READ from and the leaf an edit WRITES are the same.
+
+    A ``..`` after a named step depends on the objects (a reference crossed on
+    the way changes where ``..`` climbs from), so it needs *root*; without it
+    the answer is None (unknown), never a guess from the text."""
+    holder = tuple(holder)
+    if pointer.startswith("#/"):
+        return [s for s in pointer[2:].split("/") if s != ""]
+    if pointer.startswith("#./"):
+        if not holder:
+            return None
+        return list(holder[:-1]) + [s for s in pointer[3:].split("/") if s != ""]
+    if pointer.startswith("#../"):
+        if _has_mid_dotdot(pointer):
+            return None if root is None else _walk_relative(root, pointer, holder)
+        base, rest = _relative_parts(pointer, holder)
+        if base is None:
+            return None
+        return list(base) + [s for s in rest if s != ""]
+    return None
 
 
 #: Public name: every module that interprets ``#../`` uses this one rule.

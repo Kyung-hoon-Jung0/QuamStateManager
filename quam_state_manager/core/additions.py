@@ -579,7 +579,7 @@ def _follow(state: dict, holder: list[str], value: Any, hops: int = 6):
     hop resolved relative to the node that holds it)."""
     path = None
     for _ in range(hops):
-        dest = pointer_to_abs(value, holder)
+        dest = pointer_to_abs(value, holder, state)
         if dest is None:
             return False, None, None
         ok, node = _walk(state, dest)

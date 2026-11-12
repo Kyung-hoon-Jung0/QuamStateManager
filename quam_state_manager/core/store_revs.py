@@ -294,17 +294,18 @@ def _chunk_of(segs: list[str]) -> tuple:
     return (segs[0], segs[1]) if len(segs) >= 2 else GLOBAL
 
 
-def pointer_target_segs(holder: list[str], ptr: str) -> list[str] | None:
-    """The absolute path a pointer string NAMES (first hop only), computed
-    syntactically from the holder's path -- ``None`` when it cannot be told."""
+def pointer_target_segs(holder: list[str], ptr: str, root: Any = None) -> list[str] | None:
+    """The absolute path a pointer string NAMES (first hop only) --
+    ``None`` when it cannot be told. Relative forms go through
+    ``pointer_resolver.target_path`` (the resolver's own rule; *root* lets a
+    mid-path ``..`` be answered)."""
     if ptr.startswith("#/"):
         return [x for x in ptr[2:].split("/")]
     if ptr.startswith("#./"):
         base, rest = holder[:-1], ptr[3:]
     elif ptr.startswith("#../"):
-        from quam_state_manager.core.pointer_resolver import relative_parts
-        b, r = relative_parts(ptr, tuple(holder))
-        return None if b is None else list(b) + [s for s in r if s]
+        from quam_state_manager.core.pointer_resolver import target_path
+        return target_path(root, ptr, tuple(holder))
     else:
         return None
     out = list(base)
@@ -331,7 +332,7 @@ def _build_edges(merged: dict) -> dict[tuple[str, str], set]:
                     walk(v, segs + [str(k)])
                 elif isinstance(v, str) and v.startswith("#"):
                     hold = segs + [str(k)]
-                    tgt = pointer_target_segs(hold, v)
+                    tgt = pointer_target_segs(hold, v, merged)
                     dst = _chunk_of(tgt) if tgt else GLOBAL
                     src = _chunk_of(hold)
                     if dst != src:
@@ -342,7 +343,7 @@ def _build_edges(merged: dict) -> dict[tuple[str, str], set]:
                     walk(v, segs + [str(i)])
                 elif isinstance(v, str) and v.startswith("#"):
                     hold = segs + [str(i)]
-                    tgt = pointer_target_segs(hold, v)
+                    tgt = pointer_target_segs(hold, v, merged)
                     dst = _chunk_of(tgt) if tgt else GLOBAL
                     src = _chunk_of(hold)
                     if dst != src:
@@ -553,7 +554,7 @@ def path_closure(store, prefixes: Iterable[str], max_nodes: int = 5000) -> froze
         ptrs: list = []
         _pointers_under(node, segs, ptrs)
         for hold, v in ptrs:
-            tgt = pointer_target_segs(hold, v)
+            tgt = pointer_target_segs(hold, v, merged)
             if tgt is None:
                 if v.startswith("#./"):
                     continue  # quam self-ref to a runtime property: names nothing stored

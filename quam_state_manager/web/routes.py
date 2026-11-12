@@ -15762,7 +15762,7 @@ def _count_refs_into(store, dot_path: str) -> tuple[int, list[dict]]:
         elif isinstance(node, str) and is_pointer(node):
             if segs[:len(target)] == target:
                 return                       # pointers INSIDE the subtree don't count
-            abs_segs = pointer_to_abs(node, segs)
+            abs_segs = pointer_to_abs(node, segs, store.merged)
             if abs_segs and abs_segs[:len(target)] == target:
                 count += 1
                 if len(refs) < 50:
@@ -27282,7 +27282,7 @@ def _lab_resolve_in_batch(store, pointer: str, wp: str, writes):
     batch deletes resolves to nothing, anything else from the chip."""
     from quam_state_manager.core.pointer_path import pointer_to_abs
     from quam_state_manager.core.pointer_resolver import resolve_pointer
-    t = pointer_to_abs(pointer, wp.split("."))
+    t = pointer_to_abs(pointer, wp.split("."), store.merged)
     if t:
         for w2, v2 in reversed(writes):
             if not isinstance(w2, str) or w2 == wp:
@@ -27655,7 +27655,7 @@ def _lab_contents(merged: dict, seeds: set) -> dict:
             return
         for k, v in items:
             if isinstance(v, str) and v.startswith("#"):
-                t = pointer_to_abs(v, segs + [str(k)])
+                t = pointer_to_abs(v, segs + [str(k)], merged)
                 # a qubit's links INTO other pairs (its z operations that are
                 # other gates' pulses) are not followed: a gate's apply()
                 # plays its own pulses only, and on a 30-qubit chip following
@@ -28066,7 +28066,7 @@ def _lab_cut_ops(contents: dict, keep: set) -> list[str]:
         for k, v in items:
             s2 = segs + [str(k)]
             if isinstance(v, str) and v.startswith("#"):
-                t = pointer_to_abs(v, s2)
+                t = pointer_to_abs(v, s2, contents)
                 if t and len(t) >= 2 and t[0] in _LAB_PRUNED \
                         and t[1] not in (contents.get(t[0]) or {}):
                     for n in range(len(s2) - 1, 0, -1):
