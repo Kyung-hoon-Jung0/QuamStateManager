@@ -96,6 +96,62 @@ window.ComponentMap = (function () {
     return rows && rows.length ? rows : null;
   }
 
+  // Hover panels (Qubits / Pairs pages only): a map whose click does something
+  // else -- a pick filter, the add door's ghosts -- keeps the explicit Expand.
+  function _hoverMode(root) {
+    if (!root || root.getAttribute("data-cm-pick") === "1") return false;
+    var hl = root.getAttribute("data-highlight") || "";
+    return hl === "qubits" || hl === "pairs";
+  }
+  function _boxOf(el) {
+    var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
+    return s.getBoundingClientRect();
+  }
+  // Place the panel beside its anchor on the side that covers the fewest
+  // other map entities, so the pointer can still reach a neighbour.
+  function _placeAvoiding(pop, anchor) {
+    var b = pop.getBoundingClientRect();
+    var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
+    var body = anchor.closest(".cmap-body") || document;
+    // a pair's own end stones belong to it: the panel goes clear of all three
+    var ends = (anchor.getAttribute("data-link-ends") || "").split(/\s+/).filter(Boolean);
+    var mine = [anchor];
+    ends.forEach(function (id) {
+      var st = body.querySelector('[data-cm="q:' + _cssEsc(id) + '"]');
+      if (st) mine.push(st);
+    });
+    var a = null;
+    mine.forEach(function (e) {
+      var r = _boxOf(e);
+      if (!r.width && !r.height) return;
+      a = a ? { left: Math.min(a.left, r.left), top: Math.min(a.top, r.top),
+                right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
+    });
+    if (!a) a = _boxOf(anchor);
+    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
+      return mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
+    }).map(_boxOf).filter(function (r) { return r.width || r.height; });
+    var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
+    var cands = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
+                 [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
+                 [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
+    var best = null, bestScore = Infinity;
+    cands.forEach(function (c) {
+      var x = Math.max(pad, Math.min(c[0], W - b.width - pad));
+      var y = Math.max(pad, Math.min(c[1], H - b.height - pad));
+      var score = 0;
+      others.concat([a]).forEach(function (r, i) {
+        var w = Math.min(x + b.width, r.right) - Math.max(x, r.left);
+        var h = Math.min(y + b.height, r.bottom) - Math.max(y, r.top);
+        // covering its own anchor is worst: the pointer would lose it
+        if (w > 0 && h > 0) score += w * h * (i === others.length ? 4 : 1) + 1e5;
+      });
+      if (score < bestScore) { bestScore = score; best = [x, y]; }
+    });
+    pop.style.left = Math.round(best[0]) + "px";
+    pop.style.top = Math.round(best[1]) + "px";
+  }
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -209,6 +265,7 @@ window.ComponentMap = (function () {
     if ((window.htmx || _isPick()) && (!pickHint || ent.kind === "pair")) pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
+    pop._place = _hoverMode(_active && _active.root) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;
   }
@@ -248,7 +305,7 @@ window.ComponentMap = (function () {
     }, function (el) {
       var ent = _parseCm(el);
       return _showPopup(ent, _rowFor(ent.kind, ent.id), el);
-    }, { hover: true });
+    }, { hover: _hoverMode(_active && _active.root) });
     body.addEventListener("click", function (ev) {
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)

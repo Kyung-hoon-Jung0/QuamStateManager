@@ -23,7 +23,8 @@ def _state():
                 "moving_qubit": "control", "detuning": -0.1659,
                 "macros": {
                     "cz_a": {"phase_shift_control": 0.1337, "phase_shift_target": 0.9008,
-                             "fidelity": {"StandardRB": 0.6583, "InterleavedRB": 0.9570}},
+                             "fidelity": {"StandardRB": 0.6583, "InterleavedRB": 0.9570,
+                                          "StandardRB_load_id": 12}},
                     "cz_b": {"fidelity": {"StandardRB": 0.9104, "InterleavedRB": 0.9233}},
                 },
             },
@@ -56,12 +57,14 @@ def _d(rows):
 
 def test_irb_pair_leads_with_the_per_gate_number_and_lists_each_variant(tmp_path):
     r = _d(_rows(tmp_path)["q1-2"])
-    assert r["Best 2Q fidelity"][1] == "0.9570"
-    assert r["Best 2Q fidelity"][2] == "cz_a · per gate (IRB)"
+    assert r["2Q fidelity (Chip Status)"][1] == "0.9570"
+    assert r["2Q fidelity (Chip Status)"][2] == "cz_a · per gate (IRB)"
     # an SRB number is always marked per Clifford, never as a gate number
     assert r["cz_a"][1] == "IRB 0.9570 · SRB 0.6583 /Clifford"
     assert r["cz_b"][1] == "IRB 0.9233 · SRB 0.9104 /Clifford"
     assert r["Moving"][1] == "control (q1)"
+    # an SRB run's per-gate value lives on Chip Status; the panel says so
+    assert r["SRB per gate"][1] == "on Chip Status"
     assert r["cz_a phase ctrl (turns)"][1] == "0.1337"
     assert r["q1 f_01 (GHz)"][1] == "4.8954"
     assert r["Detuning"][1].startswith("-0.1659")
@@ -70,7 +73,7 @@ def test_irb_pair_leads_with_the_per_gate_number_and_lists_each_variant(tmp_path
 def test_bell_pair_says_bell_and_hides_absent_rows(tmp_path):
     rows = _rows(tmp_path)["q2-3"]
     r = _d(rows)
-    assert r["Best 2Q fidelity"][1:] == ["0.9600", "cz · Bell state"]
+    assert r["2Q fidelity (Chip Status)"][1:] == ["0.9600", "cz · Bell state"]
     labels = [x[0] for x in rows]
     assert "Detuning" not in labels and "Moving" not in labels
     assert "q3 f_01 (GHz)" not in labels         # q3 has no stored f_01
@@ -93,4 +96,25 @@ def test_pairs_page_ships_the_panel_rows(tmp_path):
     m = re.search(r'<script type="application/json" id="cm-pair-panel">(.*?)</script>', html, re.S)
     assert m, "the pairs page carries the panel data"
     data = json.loads(m.group(1))
-    assert _d(data["q1-2"])["Best 2Q fidelity"][1] == "0.9570"
+    assert _d(data["q1-2"])["2Q fidelity (Chip Status)"][1] == "0.9570"
+
+
+def test_a_two_mover_gate_shows_each_movers_pulse_by_qubit(tmp_path):
+    st = _state()
+    st["qubits"]["q1"]["z"] = {"operations": {"cz_q1": {"amplitude": 0.25, "flat_length": 68}}}
+    st["qubit_pairs"]["q1-2"]["macros"]["cz_a"].update({
+        "flux_pulse_qubit": "#/qubits/q1/z/operations/cz_q1",
+        "flux_pulse_target": {"amplitude": 0.17, "flat_length": 64}})
+    (tmp_path / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+    r = _d(all_pair_rows(QueryEngine(QuamStore(tmp_path)))["q1-2"])
+    assert r["cz_a amp (q1)"][1] == "0.250000"
+    assert r["cz_a amp (q2)"][1] == "0.170000"
+    assert r["cz_a flat length (ns) (q1)"][1] == "68"
+    assert r["cz_a flat length (ns) (q2)"][1] == "64"
+
+
+def test_a_pointed_pulse_is_labelled_by_the_line_it_lives_on():
+    from quam_state_manager.core.pair_map_panel import _pulse_qubit
+    assert _pulse_qubit(("qubits", "q7", "z", "operations", "cz"), "q1") == "q7"
+    assert _pulse_qubit(("qubit_pairs", "q1-2", "macros"), "q1") == "q1"

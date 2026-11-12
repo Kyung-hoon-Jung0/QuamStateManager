@@ -1202,6 +1202,7 @@ window.TopoGraph = (function () {
   var detailTimer = null, releaseDetailTrap = null, closingDetail = false;
   function positionDetail(surface, anchor) {
     if (!anchor || !anchor.isConnected) { closeDetails(); return; }
+    if (surface._place) { surface._place(anchor); return; }
     var stone = anchor.querySelector('.cm-stone');
     var a = (stone || anchor).getBoundingClientRect(), b = surface.getBoundingClientRect();
     if (!a.width && !a.height) a = anchor.getBoundingClientRect();

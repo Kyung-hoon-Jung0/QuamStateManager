@@ -399,6 +399,43 @@ async function checkComponentMap() {
   pop.dispatchEvent(new win.MouseEvent('mouseleave'));
   await wait(320);
   ok(!pop.isConnected || pop.hidden, 'leaving the panel closes it after the grace');
+  // placement: the panel goes to the side that covers no neighbouring entity
+  (function () {
+    const R = (l, t, w, h) => () => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h });
+    const box = (e) => e.querySelector('.cm-stone') || e.querySelector('.cm-edge-hit, .cm-hit') || e;
+    const all = Array.prototype.slice.call(body.querySelectorAll('[data-cm]'));
+    const saved = all.map((e) => [box(e), box(e).getBoundingClientRect]);
+    all.forEach((e) => { box(e).getBoundingClientRect = R(0, 0, 0, 0); });
+    box(stone).getBoundingClientRect = R(300, 300, 40, 40);
+    const nb = body.querySelector('[data-cm="q:qA2"]');
+    box(nb).getBoundingClientRect = R(360, 290, 40, 60);        // the right-hand neighbour
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pp = doc.querySelector('.cm-popup');
+    pp.getBoundingClientRect = R(0, 0, 120, 80);
+    win.TopoGraph.positionDetail(pp, stone);
+    const x = parseFloat(pp.style.left), y = parseFloat(pp.style.top);
+    const hitsNb = x < 400 && x + 120 > 360 && y < 350 && y + 80 > 290;
+    const hitsSelf = x < 340 && x + 120 > 300 && y < 340 && y + 80 > 300;
+    ok(!hitsNb && !hitsSelf, 'the panel avoids its neighbour and its own stone (' + x + ',' + y + ')');
+    // a pair: clear of the edge AND its two end stones
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    const ed = body.querySelector('[data-cm="p:qA2-qA1"]');
+    box(stone).getBoundingClientRect = R(300, 300, 60, 60);
+    box(nb).getBoundingClientRect = R(500, 300, 60, 60);
+    box(ed).getBoundingClientRect = R(360, 329, 140, 2);
+    ed.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pe = doc.querySelector('.cm-popup');
+    pe.getBoundingClientRect = R(0, 0, 200, 80);
+    win.TopoGraph.positionDetail(pe, ed);
+    const px = parseFloat(pe.style.left), py = parseFloat(pe.style.top);
+    const overlaps = (l, t, w, h) => px < l + w && px + 200 > l && py < t + h && py + 80 > t;
+    ok(!overlaps(300, 300, 60, 60) && !overlaps(500, 300, 60, 60) && !overlaps(360, 329, 140, 2),
+       'a pair panel clears the edge and both end stones (' + px + ',' + py + ')');
+    delete pe.getBoundingClientRect;
+    delete pp.getBoundingClientRect;
+    saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
   // Expand -> inspector
   stone.dispatchEvent(new win.MouseEvent('mouseenter'));
   pop = doc.querySelector('.cm-popup');

@@ -202,6 +202,15 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       key(w, d.activeElement, 'Escape');
       assert.equal(panel(d), null); assert.equal(d.activeElement, node);
     });
+    await check('component focus leaving the panel closes it', async () => {
+      node.blur(); await wait(300); node.focus(); key(w, node, 'Tab');
+      const hint = panel(d).querySelector('.cm-popup-hint');
+      assert.equal(d.activeElement, hint);
+      const out = d.createElement('button'); out.textContent = 'elsewhere'; d.body.append(out);
+      out.focus(); await wait(320);
+      assert.equal(panel(d), null, 'Tab out of the panel closes it');
+      out.remove();
+    });
     await check('component Expand opens the inspector', async () => {
       event(w, node, 'mouseenter');
       panel(d).querySelector('.cm-popup-hint').click();
@@ -224,12 +233,23 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
     assert.equal(panel(d).querySelector('.cm-popup-hint'), null);
     key(w, d, 'Escape'); assert.equal(panel(d), null); w.close();
   });
-  await check('touch pulse maps: a tap shows the panel with its filter action', async () => {
+  await check('pick maps keep the Expand step: hover offers Expand only', async () => {
+    const w = world(true), d = w.document; await wait(80);
+    const root = d.querySelector('#component-map');
+    root.setAttribute('data-cm-pick', '1'); root._cmapLoaded = false;
+    w.ComponentMap.mount(root); await wait(80);
+    const n = d.querySelector('[data-cm="q:q1"]');
+    event(w, n, 'mouseenter'); assert.equal(panel(d), null, 'a pick map opens no panel on hover');
+    assert.ok(button(d)); event(w, d.body, 'click'); w.close();
+  });
+  await check('touch pulse maps: a tap offers Expand, then the filter action', async () => {
     const w = world(true, true), d = w.document; await wait(80);
-    d.querySelector('#component-map').setAttribute('data-cm-pick', '1');
+    const root = d.querySelector('#component-map');
+    root.setAttribute('data-cm-pick', '1');
+    w.ComponentMap.mount(root); await wait(80);
     let picked = null; w.pulsePickOwner = id => { picked = id; };
     const n = d.querySelector('[data-cm="q:q1"]');
-    event(w, n, 'click'); assert.ok(panel(d));
+    event(w, n, 'click'); assert.equal(panel(d), null); button(d).click(); assert.ok(panel(d));
     panel(d).querySelector('.cm-popup-hint').click();
     assert.equal(picked, 'q1'); assert.equal(panel(d), null); w.close();
   });

@@ -51,7 +51,39 @@ def _variant_line(rows: list[dict]) -> str:
     return " · ".join(parts)
 
 
-def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = None) -> list[list[str]]:
+def _pulse_qubit(path: tuple, fallback: str | None) -> str | None:
+    """The qubit whose line a flux pulse lives on: from its resolved path, else the fallback."""
+    if len(path) >= 2 and path[0] == "qubits":
+        return str(path[1])
+    return fallback
+
+
+def flux_movers(engine, pair_name: str, gate: str, pair: dict) -> list[tuple[str | None, dict]]:
+    """``[(qubit, pulse dict), ...]`` for a gate's flux pulse(s): ``flux_pulse_qubit`` on the
+    moving qubit and, on a two-mover gate, ``flux_pulse_target`` on the other qubit.
+    Pointers are followed as ``get_pair`` follows them (``query._deref_pulse_ref``)."""
+    from quam_state_manager.core.query import _deref_pulse_ref
+    raw = (engine.store.merged.get("qubit_pairs", {}).get(pair_name) or {})
+    macro = (raw.get("macros") or {}).get(gate)
+    if not isinstance(macro, dict):
+        return []
+    ctrl, tgt = pair.get("qubit_control"), pair.get("qubit_target")
+    mover = tgt if pair.get("moving_qubit") == "target" else ctrl
+    other = ctrl if mover == tgt else tgt
+    out = []
+    for field, fb in (("flux_pulse_qubit", mover), ("flux_pulse_target", other)):
+        val = macro.get(field)
+        if not val:
+            continue
+        base = ("qubit_pairs", pair_name, "macros", gate, field)
+        body, path = _deref_pulse_ref(engine.store, val, base)
+        if body:
+            out.append((_pulse_qubit(path, fb), body))
+    return out
+
+
+def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = None,
+              movers: list | None = None) -> list[list[str]]:
     """``[[label, value, note], ...]`` for one pair; ``note`` may be ``""``."""
     edge = edge or {}
     pair = pair or {}
@@ -61,7 +93,8 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
     if _num(fid):
         kind = _SOURCE_KIND.get(edge.get("fidelity_source") or "", "")
         note = " · ".join(x for x in (best, kind) if x)
-        out.append(["Best 2Q fidelity", _fid(fid), note])
+        # the Chip Status edge value: a Bell number wins over an IRB one when both exist
+        out.append(["2Q fidelity (Chip Status)", _fid(fid), note])
     elif edge.get("has_cz") or edge.get("gate_kind") in ("cz", "cr"):
         out.append(["2Q fidelity", "not measured", "a gate is defined, no fidelity stored"])
 
@@ -77,6 +110,12 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
             if line:
                 out.append([gate, line, ""])
 
+    if any(r.get("level") == "clifford" and r.get("load_id") is not None
+           and not _num(r.get("derived_gate_fidelity"))
+           for rows in by_gate.values() for r in rows):
+        out.append(["SRB per gate", "on Chip Status",
+                    "derived from the SRB run there; not read here"])
+
     mv = edge.get("moving_qubit") or pair.get("moving_qubit")
     if mv in ("control", "target"):
         q = pair.get("qubit_control" if mv == "control" else "qubit_target")
@@ -88,6 +127,16 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
                  and not k.endswith("_coupler_amplitude")]
         gate = names[0] if len(names) == 1 else None
     if gate:
+        two = movers is not None and len(movers) > 1
+        if two:
+            # a two-mover gate: each flux pulse labelled with the qubit it moves
+            for q, body in movers:
+                for key, label, fmt in (("amplitude", "amp", "{:.6f}"),
+                                        ("flat_length", "flat length (ns)", "{:g}")):
+                    v = body.get(key)
+                    if _num(v):
+                        out.append([f"{gate} {label} ({q})", fmt.format(v), ""])
+        mover_q = movers[0][0] if movers else None
         for suffix, label, fmt in (
                 ("amplitude", "amp", "{:.6f}"),
                 ("coupler_amplitude", "coupler amp", "{:.6f}"),
@@ -95,9 +144,12 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
                 ("flat_length", "flat length (ns)", "{:g}"),
                 ("phase_shift_control", "phase ctrl (turns)", "{:.4f}"),
                 ("phase_shift_target", "phase tgt (turns)", "{:.4f}")):
+            if two and suffix in ("amplitude", "flat_length"):
+                continue
             v = pair.get(f"{gate}_{suffix}")
             if _num(v):
-                out.append([f"{gate} {label}", fmt.format(v), ""])
+                who = f" ({mover_q})" if mover_q and suffix in ("amplitude", "flat_length", "length") else ""
+                out.append([f"{gate} {label}{who}", fmt.format(v), ""])
 
     for role in ("qubit_control", "qubit_target"):
         q = pair.get(role)
@@ -135,5 +187,8 @@ def all_pair_rows(engine) -> dict[str, list[list[str]]]:
                     v = None
                 if _num(v):
                     f01[q] = v
-        out[name] = pair_rows(edges.get(name), pair, f01)
+        edge = edges.get(name) or {}
+        gate = edge.get("best_gate")
+        movers = flux_movers(engine, name, gate, pair) if gate else None
+        out[name] = pair_rows(edge, pair, f01, movers)
     return out
