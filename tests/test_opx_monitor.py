@@ -92,6 +92,23 @@ def _measured(m, clock, skew, unc=1.0):
     m.clock_measure = {'skew_s': skew, 'uncertainty_s': unc, 'at': clock.t, 'at_mono': m.mono()}
 
 
+def _watch(m, clock, seconds, step=None):
+    """SM watches continuously: one successful poll every interval for ``seconds``."""
+    step = step or m.poll_interval()
+    for _ in range(int(seconds // step) + 1):
+        clock.t += step
+        m.poll_once()
+
+
+def _slow(m):
+    """Long intervals so a two-hour continuous watch is a few dozen polls."""
+    s = m.settings(); s['interval_s'] = 300; om.save_settings(m.instance, s)
+
+
+def _w(sig_q, watched_s=99_999, continuous=True):
+    return {'watched_s': watched_s, 'continuous': continuous, 'sig': om.job_signature(sig_q)}
+
+
 def page(app, tab):
     return app.test_client().get(f"/opx-monitor/body?tab={tab}").get_data(as_text=True)
 
@@ -484,21 +501,25 @@ def test_d13_idle_recheck_skips_new_activity(env):
     from types import SimpleNamespace
     app, m, w, clock, _ = env
     w.script[:] = [answer(qms=(("QM-a", [], []),))]
+    _slow(m)
     m.poll_once()
     clock.t += 7300
     m.poll_once()
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')  # one 2 h gap is not a watch
+    _watch(m, clock, 7300)
     assert 'Close idle QMs (1)' in page(app, 'cleanup')
-    assert 'since SM first saw it' in page(app, 'jobs')
+    assert 'while SM watched continuously' in page(app, 'jobs')
     qmm = _FakeQmm(['QM-a'])
     qm = _FakeQM(qmm.closed, 'QM-a')
     qm.get_jobs = lambda: [SimpleNamespace(id='job-new', status='Running')]
     qmm.get_qm = lambda qid: qm
-    result = _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)
+    watched = {'QM-a': _w({'jobs': []})}
+    result = _worker_target(qmm).close_idle(['QM-a'], watched, 30)
     assert result['closed'] == [] and result['skipped'] == ['QM-a']
     assert 'Running' in result['skip_reasons']['QM-a'] and not qmm.closed
     qm.get_jobs = lambda: []
-    assert _worker_target(qmm).close_idle(['QM-a'], {'QM-a': '2020-01-01T00:00:00Z'}, 30)['closed'] == ['QM-a']
-    assert not om.idle_state({'jobs': None}, '2020-01-01T00:00:00Z', clock.t)['idle']
+    assert _worker_target(qmm).close_idle(['QM-a'], watched, 30)['closed'] == ['QM-a']
+    assert not om.idle_state({'jobs': None}, watched['QM-a'])['idle']
 
 
 def test_d14_admin_health_and_unknown(env, monkeypatch):
@@ -639,6 +660,8 @@ def test_round2_dom_selfcheck(env, tmp_path, monkeypatch):
     clock.t += 7300
     pages['stale'] = page(app, 'live')
     m.poll_once()
+    s = m.settings(); s['idle_minutes'] = 1; om.save_settings(m.instance, s)
+    _watch(m, clock, 70)
     pages['idle'] = page(app, 'cleanup')
     a = answer()
     from datetime import datetime, timezone
@@ -683,7 +706,7 @@ def test_d13_remembers_activity_after_job_disappears(env):
     w.script[:] = [answer(qms=(("QM-a", [], []),))]
     m.poll_once()
     assert 'Close idle QMs (0)' in page(app, 'cleanup')
-    assert 'OPX clock offset is unknown' in page(app, 'cleanup')
+    assert 'no job change for 0 min' in page(app, 'cleanup')
 
 
 def test_unknown_job_list_is_not_none_or_a_gone_event(env):
@@ -790,9 +813,8 @@ def test_d26_format_count_rounding_and_frozen(env):
     assert '100 of 313 jobs shown' in html and 'Show more' in html
     assert html.count('No chip is open') == 1 and '(OPX clock)' in html and 'UTC+' not in html.split('Server jobs')[1]
     assert '.123456Z</span>' not in html
-    fs = __import__('datetime').datetime.fromtimestamp(clock.t - 50, __import__('datetime').timezone.utc).isoformat()
-    state = om.idle_state({'jobs': []}, {'first_seen': fs}, clock.t, 1)
-    assert not state['idle'] and state['basis'].startswith('no job for 0 min')
+    state = om.idle_state({'jobs': []}, _w({'jobs': []}, 50), 1)
+    assert not state['idle'] and state['basis'].startswith('no job change for 0 min')
     assert om.words('OPERATIONAL_CLUSTER') == 'operational'
     trends = m.trends()
     for t in range(0, 181, 5):
@@ -886,8 +908,8 @@ def test_round4_unconfigured_health_preserves_occupancy(env, mode, label):
     w.script[:] = [a]
     m.poll_once()
     if mode == 'idle':
-        clock.t += 7300
-        m.poll_once()
+        _slow(m)
+        _watch(m, clock, 7300)
     html = page(app, 'live')
     assert '<strong>' + label + '</strong>' in html
     assert 'health not assessed: no admin URL / no limits set' in html
@@ -970,8 +992,8 @@ def test_round5_mixed_idle_headline(env):
     app, m, w, clock, _ = env
     old = (('QM-old-a', [], []), ('QM-old-b', [], []))
     w.script[:] = [answer(qms=old)]
-    m.poll_once()
-    clock.t += 3 * 3600
+    _slow(m)
+    _watch(m, clock, 3 * 3600)
     w.script[:] = [answer(qms=old + (('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
@@ -1165,7 +1187,9 @@ def test_stress_r6_returning_viewer_checks(env):
     app, m, w, clock, _ = env
     m.poll_once(); clock.t += 25
     html = page(app,'live')
-    assert '<strong>Checking' in html and '<strong>BUSY' not in html
+    # earlier answers exist: their age is shown, never "Waiting for the first server answer"
+    assert 'Waiting for the first server answer' not in html
+    assert '<strong>BUSY — as of 25 s ago</strong>' in html and 'last good read was 25 s ago' in html
 
 
 def test_stress_r7_gap_markers(env):
@@ -1233,7 +1257,7 @@ def test_stress_pending_until_reply(env):
     m.poll_once(); clock.t += 9; m.want('live')
     original = w.request
     def request(op, **kw):
-        assert m.status()['state'] == 'starting'
+        assert m.status()['state'] == 'stale'
         assert m.viewer_check_pending and not m.capabilities()['close']
         return original(op, **kw)
     w.request = request
@@ -1387,7 +1411,7 @@ def test_all_fem_limit_is_not_green_while_a_populated_slot_reads_nothing():
 def test_sdk_active_statuses_are_busy_never_idle(status):
     q = {"id": "qm-1", "ports": ["con1/1"], "jobs": [{"id": "j1", "status": status,
          "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:01Z"}]}
-    idle = {"qm-1": om.idle_state(q, "2026-01-01T00:00:00+00:00", 1e10, 120)}
+    idle = {"qm-1": om.idle_state(q, _w(q), 120)}
     assert idle["qm-1"]["idle"] is False
     assert om.verdict({"open_qms": [q]}, {"color": "amber"}, idle, "ok", 1.0)['label'] == 'BUSY'
 
@@ -1396,10 +1420,10 @@ def test_sdk_error_status_is_not_finished_and_never_idle():
     # the SDK maps its UNKNOWN job state to "Error"
     q = {"id": "qm-2", "jobs": [{"id": "j2", "status": "Error", "created_at": "2026-01-01T00:00:00Z",
          "updated_at": "2026-01-01T00:00:00Z"}]}
-    st = om.idle_state(q, "2026-01-01T00:00:00+00:00", 1e10, 120)
+    st = om.idle_state(q, _w(q), 120)
     assert st['idle'] is False and 'Error' in st['basis']
     q2 = dict(q, jobs=[dict(q['jobs'][0], status="Done")])
-    assert om.idle_state(q2, "2026-01-01T00:00:00+00:00", 1e10, 120, 1e10)['idle'] is True
+    assert om.idle_state(q2, _w(q2), 120)['idle'] is True
 
 
 def test_worker_close_idle_skips_a_qm_whose_job_reads_error():
@@ -1407,7 +1431,7 @@ def test_worker_close_idle_skips_a_qm_whose_job_reads_error():
     qmm = _FakeQmm(["QM-a"])
     job = SimpleNamespace(id="j", status="Error", time_created=None, time_last_status_update=None)
     qmm.get_qm = lambda qid: SimpleNamespace(get_jobs=lambda: [job], close=lambda: True)
-    res = _worker_target(qmm).close_idle(["QM-a"], {"QM-a": "2026-01-01T00:00:00+00:00"}, 1)
+    res = _worker_target(qmm).close_idle(["QM-a"], {"QM-a": {'watched_s': 9e9, 'continuous': True, 'sig': [['j', 'Error']]}}, 1)
     assert res["closed"] == [] and res["skipped"] == ["QM-a"]
 
 
@@ -1419,18 +1443,20 @@ def test_fem_tile_marks_a_queued_job_busy(env):
     assert "ui-opxmon-fem--busy" in html
 
 
-def test_a_zero_metric_the_server_sent_is_a_real_reading_and_alarms():
+def test_a_zero_metric_cannot_be_told_from_unset_and_never_judges_a_limit():
     from quam_state_manager.generator import opx_monitor_worker as wk
     refused = {}
     out = wk._readings({"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0, "disk_available_gb": None},
                        "con1", refused, "metrics")
     assert out == {"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0}
     ans = _one_ctrl({"FEM 0": 45.0, "FEM 1": 50.0}, metrics=out)
-    assert "metric:memory_available_gb" in {x['key'] for x in om.offered_metrics(ans)}
-    alarms = om.evaluate_alarms(ans, {"metric:memory_available_gb": 1.0})
-    assert [a['key'] for a in alarms] == ["metric:memory_available_gb"]
+    # proto3 doubles have no presence: 0.0 is also an unfilled field
+    assert om.evaluate_alarms(ans, {"metric:memory_available_gb": 1.0}) == []
+    assert om.evaluate_alarms(ans, {"metric:memory_available_gb": -1.0}) == []
     h = om.health(ans, _NO_ADMIN, {"temp:all_fems": 80.0, "metric:memory_available_gb": 1.0}, 'ok')
-    assert h['color'] == 'red'
+    assert h['color'] == 'grey' and 'cannot tell from unset' in h['details']
+    ans2 = _one_ctrl({"FEM 0": 45.0, "FEM 1": 50.0}, metrics={"memory_available_gb": 0.5})
+    assert [a['key'] for a in om.evaluate_alarms(ans2, {"metric:memory_available_gb": 1.0})] == ["metric:memory_available_gb"]
     # a metric the server did not send stays unknown (grey), never a value
     h = om.health(ans, _NO_ADMIN, {"temp:all_fems": 80.0, "metric:disk_available_gb": 1.0}, 'ok')
     assert h['color'] == 'grey'
@@ -1466,34 +1492,122 @@ def _iso(t):
     return datetime.fromtimestamp(t, timezone.utc).isoformat()
 
 
-def test_idle_never_ages_server_times_against_the_pc_clock():
-    pc_now = 1_800_000_000.0
-    skew = {'skew_s': 80.0, 'uncertainty_s': 1.0}  # the OPX clock reads 80 s behind this PC
-    done = pc_now - 80.0 - 100  # the job finished 100 s ago in OPX time
-    q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": _iso(done - 5), "updated_at": _iso(done)}]}
-    first = {"first_seen": _iso(pc_now - 10_000)}
-    st = om.idle_state(q, first, pc_now, 1, None)
-    assert st['idle'] is False and 'offset is unknown' in st['basis']
-    # offset measured: aged in OPX time (minus the uncertainty) -> 99 s, not 180 s
-    st = om.idle_state(q, first, pc_now, 2, om.server_now({}, pc_now, skew))
-    assert st['idle'] is False and 'no job for 1 min' in st['basis']
+def test_idle_needs_a_continuous_watch_with_no_job_change():
+    q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": None, "updated_at": None}]}
+    assert om.idle_state(q, None, 1)['idle'] is False  # never watched
+    assert 'not watched' in om.idle_state(q, None, 1)['basis']
+    assert om.idle_state(q, _w(q, 59), 1)['idle'] is False  # watched too briefly
+    assert om.idle_state(q, _w(q, 61), 1)['idle'] is True
+    assert om.idle_state(q, _w(q, 61, continuous=False), 1)['idle'] is False  # watch interrupted
+    changed = dict(q, jobs=q['jobs'] + [{"id": "j2", "status": "Done"}])
+    assert om.idle_state(changed, _w(q, 61), 1)['idle'] is False  # job list moved
 
 
-def test_idle_actually_uses_the_measured_skew_and_its_uncertainty():
-    """r2 M3: server_now must be corrected by the measured skew (a PC reading
-    taken raw would age an OPX time 3600 s too long and close a busy QM)."""
-    pc_now = 1_800_000_000.0
-    last = pc_now - 3600 - 30 * 60  # 30 min ago on an OPX clock 1 h behind
-    q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": _iso(last), "updated_at": _iso(last)}]}
-    first = {"first_seen": _iso(pc_now - 99_999)}
-    st = om.idle_state(q, first, pc_now, 60, om.server_now(None, pc_now, {'skew_s': 3600.0, 'uncertainty_s': 1.0}))
-    assert st['idle'] is False and 'no job for 29 min' in st['basis']
-    # the uncertainty goes the cautious way: never more idle
-    assert om.server_now(None, pc_now, {'skew_s': 0.0, 'uncertainty_s': 5.0}) == pc_now - 5.0
-    assert om.server_now(None, pc_now, {'skew_s': 0.0, 'uncertainty_s': -5.0}) == pc_now - 5.0
-    # no measurement: only the OPX's own times bound its clock
-    assert om.server_now({'jobs': [{'created_at': _iso(last)}]}, pc_now, None) == last
-    assert om.server_now(None, pc_now, None) is None
+def test_watched_then_idle_and_a_job_change_restarts_the_watch(env):
+    app, m, w, clock, _ = env
+    s = m.settings(); s['idle_minutes'] = 1; om.save_settings(m.instance, s)
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], []),))]
+    m.poll_once()
+    _watch(m, clock, 40)
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')
+    _watch(m, clock, 30)
+    assert 'Close idle QMs (1)' in page(app, 'cleanup')
+    m.viewer_check_pending = True  # answer not fresh: no idle offer even with a long watch
+    assert m.status()['state'] != 'ok'
+    from quam_state_manager.web import opx_monitor_routes as routes
+    with app.test_request_context('/opx-monitor/body?tab=cleanup'):
+        app.config['opx_monitor'] = m
+        assert routes._view('cleanup')['idle_ids'] == []
+    m.viewer_check_pending = False
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Done"), ("j2", "Done")], []),))]
+    m.poll_once()
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')  # a new job: the watch starts again
+    # a gap longer than a few intervals breaks the watch, even with no job change
+    _watch(m, clock, 70)
+    assert 'Close idle QMs (1)' in page(app, 'cleanup')
+    clock.t += 5 * m.poll_interval()
+    m.poll_once()
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')
+    # no read for a few intervals (poller stopped): the watch is no longer continuous
+    _watch(m, clock, 70)
+    assert m.watch_info()['QM-a']['continuous']
+    clock.t += 5 * m.poll_interval()
+    assert not m.watch_info()['QM-a']['continuous']
+    assert not om.idle_state(answer(qms=(("QM-a", [("j1", "Done"), ("j2", "Done")], []),))['open_qms'][0],
+                             m.watch_info()['QM-a'], 1)['idle']
+
+
+def test_r3_skew_repro_admin_clock_ahead_never_makes_a_qm_idle(env):
+    """r3 D1: the admin host's Date header 3 h ahead of the QM server; a QM busy
+    10 min ago must not read idle (idle never compares clocks)."""
+    import threading, time as _t, http.server
+    from email.utils import formatdate
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def date_time_string(self, timestamp=None):
+            return formatdate(_t.time() + 3 * 3600, usegmt=True)
+
+        def do_GET(self):
+            body = b'[]'
+            self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+    srv = http.server.HTTPServer(('127.0.0.1', 0), H)
+    th = threading.Thread(target=srv.serve_forever, daemon=True); th.start()
+    try:
+        app, m, w, clock, _ = env
+        clock.t = _t.time()
+        s = m.settings(); s['admin_url'] = f'http://127.0.0.1:{srv.server_port}'; s['idle_minutes'] = 120
+        om.save_settings(m.instance, s)
+        a = answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]),))
+        a['open_qms'][0]['jobs'][0].update(created_at=_iso(clock.t - 700), updated_at=_iso(clock.t - 600))
+        w.script[:] = [a]
+        m.poll_once()
+        sk = m.clock_skew()
+        assert sk is not None and sk['skew_s'] < -10000  # the admin clock really is 3 h ahead
+        html = page(app, 'cleanup')
+        assert 'Close idle QMs (0)' in html and 'OPEN-IDLE' not in html
+        assert 'admin server clock, measured' in page(app, 'jobs') and 'OPX clock, measured' not in html
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_skew_that_puts_a_job_in_the_pc_future_is_discarded(env):
+    app, m, w, clock, _ = env
+    a = answer()
+    a['open_qms'][0]['jobs'][0].update(created_at=_iso(clock.t - 10), updated_at=_iso(clock.t - 10))
+    w.script[:] = [a]
+    m.poll_once()
+    _measured(m, clock, 5.0, 1.0)
+    assert m.clock_skew() is not None  # job maps to clock.t - 5: past
+    _measured(m, clock, 30.0, 1.0)
+    assert m.clock_skew() is None  # job would map 20 s into the PC future
+
+
+def test_skew_wording_zero_age_and_failed_admin_reads():
+    now = 1_800_000_000.0
+    assert om.skew_text({'skew_s': 0.3, 'uncertainty_s': 1.4, 'at': now, 'latest': True}, now).startswith(
+        'admin server clock matches this PC within \u00b12 s')
+    t = om.skew_text({'skew_s': 80.2, 'uncertainty_s': 1.0, 'at': now, 'latest': True}, now)
+    assert t.startswith('admin server clock, measured 80 \u00b1 1 s behind this PC at ')
+    assert 'not reported' not in t
+    t = om.skew_text({'skew_s': -80.0, 'uncertainty_s': 1.0, 'at': now - 300, 'latest': False}, now)
+    assert 'last measured 80' in t and 'ahead of' in t and '5 min ago; newer admin reads gave no clock' in t
+
+
+def test_skew_stops_being_measured_when_admin_reads_fail(env, monkeypatch):
+    app, m, w, clock, _ = env
+    s = m.settings(); s['admin_url'] = 'http://sample.invalid'; om.save_settings(m.instance, s)
+    monkeypatch.setattr(om, 'read_admin', lambda *a, **k: {'known': True, 'clock': {'skew_s': 10.0, 'uncertainty_s': 1.0}, 'cluster': {}, 'devices': []})
+    m.poll_once()
+    assert m.clock_skew()['latest'] is True
+    monkeypatch.setattr(om, 'read_admin', lambda *a, **k: {'known': False, 'problem': True, 'reason': 'Admin unavailable'})
+    clock.t += 60
+    m.poll_once()
+    assert m.clock_skew()['latest'] is False
+    assert 'newer admin reads gave no clock' in page(app, 'jobs')
 
 
 def test_skew_is_measured_from_the_admin_date_header():
@@ -1574,7 +1688,7 @@ def test_r1_late_first_sight_never_links_a_wrong_run(env, monkeypatch):
     _measured(m, clock, 0.0, 1.0)
     html = page(app, 'jobs')
     assert 'probably #7' in html and 'probably #8' not in html
-    assert 'reads 0 &plusmn; 1 s behind this PC' in html
+    assert 'admin server clock matches this PC within \u00b11 s' in html
 
 
 def test_r3_pc_clock_step_never_makes_a_busy_qm_idle(env):
@@ -1595,7 +1709,6 @@ def test_r3_pc_clock_step_never_makes_a_busy_qm_idle(env):
     _measured(m, clock, -3 * 3600.0, 1.0)  # measured while the PC was 3 h slow
     clock.t += 3 * 3600  # NTP corrects the PC clock; no monotonic time passed
     assert m.clock_skew() is None
-    assert m._server_now() == last
     html = page(app, 'cleanup')
     assert 'OPEN-IDLE' not in html
 
@@ -1611,25 +1724,66 @@ def test_run_match_uncertainty_widens_never_narrows():
     assert 'url' not in routes.run_match(job, run, skew={'skew_s': None})
 
 
-def test_close_idle_worker_uses_the_server_clock_bound():
+def test_close_idle_worker_rechecks_the_watched_job_list():
     from types import SimpleNamespace
-    from datetime import datetime
-    t = 1_000_000.0
     job = SimpleNamespace(id="j", status="Done", time_created=None, time_last_status_update=None)
     qmm = _FakeQmm(["QM-a"])
     qmm.get_qm = lambda qid: SimpleNamespace(get_jobs=lambda: [job], close=lambda: True)
     from quam_state_manager.generator import opx_monitor_worker as wk
     orig = wk._job_row
-    wk._job_row = lambda j: {"id": "j", "status": "Done", "created_at": _iso(t), "updated_at": _iso(t)}
+    wk._job_row = lambda j: {"id": "j", "status": "Done", "created_at": None, "updated_at": None}
     try:
         tgt = _worker_target(qmm)
         tgt._verified_close = lambda qid, qm: {"closed": [qid], "failed": {}}
-        res = tgt.close_idle(["QM-a"], {"QM-a": _iso(t - 99999)}, 1, None)
-        assert res["closed"] == []
-        res = tgt.close_idle(["QM-a"], {"QM-a": _iso(t - 99999)}, 1, t + 3600)
-        assert res["closed"] == ["QM-a"]
+        assert tgt.close_idle(["QM-a"], {}, 1)["closed"] == []  # never watched
+        stale = {"QM-a": {'watched_s': 9e9, 'continuous': True, 'sig': []}}
+        assert tgt.close_idle(["QM-a"], stale, 1)["closed"] == []  # job list differs now
+        ok = {"QM-a": {'watched_s': 9e9, 'continuous': True, 'sig': [['j', 'Done']]}}
+        assert tgt.close_idle(["QM-a"], ok, 1)["closed"] == ["QM-a"]
     finally:
         wk._job_row = orig
+
+
+def test_stale_open_qm_table_is_never_shown_as_current(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    assert 'Not current.' not in page(app, 'jobs')
+    w.script[:] = [om.WorkerError('connect failed')]
+    clock.t += 99
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert 'Not current.' in html and 'last good read, 99 s ago' in html and 'data-stale="1"' in html
+    # an empty list from an old answer never says "No QM is open."
+    w.script[:] = [answer(qms=())]
+    clock.t += 1
+    m._retry_at = 0
+    m.poll_once()
+    assert 'No QM is open.' in page(app, 'jobs')
+    w.script[:] = [om.WorkerError('connect failed')]
+    clock.t += 50
+    m._retry_at = 0
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert 'No QM is open.' not in html and 'No QM was open at the last good read' in html
+
+
+def test_returning_viewer_keeps_the_age_on_slot_cards(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'FEM 0': 45.0})]
+    m.poll_once(); clock.t += 77
+    html = page(app, 'live')
+    assert 'Waiting for the first server answer' not in html
+    assert 'ui-opxmon-tile--stale' in html and 'stale, as of' in html
+
+
+def test_metric_zero_is_shown_as_cannot_tell(env):
+    app, m, w, clock, _ = env
+    a = answer()
+    a['controllers'][0]['metrics'] = {'disk_available_gb': 0.0, 'cpu_utilization_percent': 12.5}
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, 'live')
+    assert '0 (SDK cannot tell 0 from unset)' in html and '12.5' in html and '>0.0<' not in html
 
 
 def test_a_full_job_list_is_a_cap_not_a_total(env):

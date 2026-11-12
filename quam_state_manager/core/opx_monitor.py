@@ -141,48 +141,74 @@ def measure_skew(t0, t1, date_header):
     return {'skew_s': (t0 + t1) / 2.0 - (server + 0.5), 'uncertainty_s': (t1 - t0) + 1.0}
 
 
-def server_now(answer, now, skew=None):
-    """A lower bound of the OPX clock's present time, or None when nothing bounds it.
-
-    ``skew`` is a measured ``{'skew_s', 'uncertainty_s'}`` (or None): the PC
-    reading is corrected by it and moved back by its uncertainty, so the bound
-    can only be early (an age from it can only be short, never more idle)."""
-    bounds = server_times(answer)
-    if isinstance(skew, dict) and skew.get('skew_s') is not None:
-        bounds.append(now - skew['skew_s'] - abs(skew.get('uncertainty_s') or 0.0))
-    return max(bounds) if bounds else None
+#: SM's watch of a QM is continuous only while successful reads of the open-QM
+#: list are never further apart than this many poll intervals.
+WATCH_GAP_INTERVALS = 3
 
 
-def idle_state(q, first_seen, now, minutes=120, server_clock_now=None):
-    """Conservative activity judgement, including queued jobs and unknown jobs.
+def job_signature(q):
+    """What "no job change" is judged on: every (job id, status) of a QM, sorted.
+    None when the QM's job list is unknown."""
+    jobs = q.get('jobs')
+    if jobs is None:
+        return None
+    return sorted([str(j.get('id')), str(j.get('status'))] for j in jobs)
 
-    PC-clock observations (SM first saw the QM) are aged against the PC clock;
-    server timestamps (job created/updated) only against a lower bound of the
-    server's own clock (``server_clock_now``). The two clocks are never mixed."""
+
+def skew_consistent(skew, answer, now):
+    """False when the offset maps any job time of ``answer`` into this PC's
+    future beyond its uncertainty (then the admin clock is not the job clock)."""
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
+        return False
+    limit = now + abs(skew.get('uncertainty_s') or 0.0)
+    return all(t + skew['skew_s'] <= limit for t in server_times(answer))
+
+
+def skew_text(skew, now=None):
+    """The admin clock offset in words: what was measured, never an OPX claim."""
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
+        return ''
+    unc = int(math.ceil(abs(skew.get('uncertainty_s') or 0.0)))
+    n = int(round(skew['skew_s']))
+    if n == 0:
+        text = f'admin server clock matches this PC within ±{unc} s'
+    else:
+        text = (f"admin server clock, measured {abs(n)} ± {unc} s "
+                f"{'behind' if n > 0 else 'ahead of'} this PC")
+    if not skew.get('latest'):
+        age = (now - skew['at']) if now is not None and skew.get('at') is not None else None
+        text = text.replace('measured', 'last measured', 1) if n else text
+        text += (f' ({age / 60:.0f} min ago; newer admin reads gave no clock)' if age is not None
+                 else ' (newer admin reads gave no clock)')
+    elif skew.get('at') is not None:
+        text += ' at ' + datetime.fromtimestamp(skew['at']).astimezone().strftime('%H:%M:%S')
+    return text
+
+
+def idle_state(q, watched, minutes=120):
+    """A QM is idle only when SM itself watched it continuously (monotonic
+    time, successful reads, no gap) for ``minutes`` with no job change and
+    every job finished. No clock of another machine is ever compared.
+
+    ``watched`` is ``{'watched_s', 'continuous', 'sig'}`` from the monitor, or None."""
     jobs = q.get('jobs')
     if jobs is None or any(job_activity(j.get('status')) != 'finished' for j in jobs):
         statuses = sorted({str(j.get('status') or 'unknown') for j in jobs or []
                            if job_activity(j.get('status')) != 'finished'})
         return {'idle': False, 'basis': 'Job status: ' + ', '.join(statuses or ['unknown']), 'last_activity': None}
-    remembered = first_seen if isinstance(first_seen, dict) else {'first_seen': first_seen}
-    if any(timestamp(j.get('created_at')) is None or timestamp(j.get('updated_at')) is None for j in jobs):
-        return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
-    srv = [t for t in [timestamp(remembered.get('job_activity'))]
-           + [timestamp(j.get(k)) for j in jobs for k in ('created_at', 'updated_at')] if t is not None]
-    ages = []
-    pc_first = timestamp(remembered.get('first_seen'))
-    if pc_first is not None:
-        ages.append((max(0, now - pc_first), 'SM first saw it'))
-    if srv:
-        if server_clock_now is None:
-            return {'idle': False, 'basis': 'last activity unknown: the OPX clock offset is unknown',
-                    'last_activity': None}
-        ages.append((max(0, server_clock_now - max(srv)), 'job created/last status update (OPX clock)'))
-    if not ages:
-        return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
-    age, basis = min(ages)
-    return {'idle': age > minutes * 60, 'last_activity': now - age,
-            'basis': f'no job for {int(age // 60)} min, since {basis}'}
+    if not isinstance(watched, dict):
+        return {'idle': False, 'basis': 'SM has not watched this QM yet; idle not established', 'last_activity': None}
+    if not watched.get('continuous'):
+        return {'idle': False, 'basis': "SM's watch was interrupted; idle not established", 'last_activity': None}
+    if watched.get('sig') != job_signature(q):
+        return {'idle': False, 'basis': 'its jobs changed since SM last read them; idle not established',
+                'last_activity': None}
+    w = max(0.0, float(watched.get('watched_s') or 0.0))
+    if w < minutes * 60:
+        return {'idle': False, 'last_activity': None,
+                'basis': f'no job change for {int(w // 60)} min while SM watched; idle after {minutes:g} min'}
+    return {'idle': True, 'last_activity': None,
+            'basis': f'no job change for {int(w // 60)} min while SM watched continuously'}
 
 
 def value_vs_limit(value, limit):
@@ -660,12 +686,21 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
     return sorted(out.values(), key=lambda r: r["key"])
 
 
+def metric_known(value) -> bool:
+    """A controller metric is a proto3 double without presence: 0.0 is also
+    what an unfilled field reads, so only a non-zero value is a known reading."""
+    return value is not None and value != 0.0
+
+
+METRIC_ZERO_TEXT = '0 (SDK cannot tell 0 from unset)'
+
+
 def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
     fired = []
     meta = {m["key"]: m for m in offered_metrics(answer)}
     for c in (answer or {}).get("controllers") or []:
         values = {f"temp:{r['key']}": r["value"] for r in temperature_rows(c)}
-        values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items()})
+        values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items() if metric_known(v)})
         for k, v in values.items():
             lim = temperature_limit(k[5:], thresholds) if k.startswith('temp:') else thresholds.get(k)
             if lim in (None, "") or v is None:
@@ -966,11 +1001,12 @@ def health(answer, admin, thresholds, state):
     for key in thresholds:
         if key.startswith('temp:') and key != 'temp:all_fems' and key[5:] not in values:
             unknown.append('a configured temperature input is unavailable')
-    metric_values = {k: v for c in ans.get('controllers') or [] for k, v in (c.get('metrics') or {}).items()
-                     if v is not None}
+    all_metrics = {k: v for c in ans.get('controllers') or [] for k, v in (c.get('metrics') or {}).items()}
+    metric_values = {k: v for k, v in all_metrics.items() if metric_known(v)}
     for key, lim in thresholds.items():
         if key.startswith('metric:') and lim not in (None, '') and key[7:] not in metric_values:
-            unknown.append('a configured metric input is unavailable')
+            unknown.append('a configured metric reads 0, which the SDK cannot tell from unset'
+                           if all_metrics.get(key[7:]) == 0.0 else 'a configured metric input is unavailable')
     if thresholds.get('temp:all_fems') is not None:
         if not any(k.startswith('FEM ') for k in values):
             unknown.append('configured FEM readings unavailable')
@@ -1042,6 +1078,7 @@ class Monitor:
         # an injected wall clock (tests) also drives the monotonic one
         self.mono = mono or (time.monotonic if clock is time.time else clock)
         self.clock_measure: Optional[dict] = None
+        self._watch: dict = {}
         self.worker_factory = worker_factory or (lambda py, t: EnvWorker(py, t))
         self.clock = clock
         self._lock = threading.Lock()
@@ -1105,6 +1142,7 @@ class Monitor:
             self.section_errors.clear()
             self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
             self.clock_measure = None
+            self._watch = {}
             self.last_ok_at = None
             self.last_error = None
             self.last_try_at = None
@@ -1185,7 +1223,12 @@ class Monitor:
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
             self.admin = read_admin(s.get('admin_url'), selected_cluster, clock=self.clock)
             if isinstance(self.admin.get('clock'), dict):
-                self.clock_measure = {**self.admin['clock'], 'at': self.clock(), 'at_mono': self.mono()}
+                self.clock_measure = {**self.admin['clock'], 'at': self.clock(), 'at_mono': self.mono(),
+                                      'latest': True}
+            elif self.clock_measure:
+                self.clock_measure['latest'] = False  # this admin read gave no clock
+            if ans.get('open_qms') is not None:
+                self._observe_watch(ans['open_qms'])
             fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
             self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
                                    for field, call in fields.items() if ans.get(field) is None and (field != 'jobs' or ans.get('jobs_requested', True))}
@@ -1216,6 +1259,34 @@ class Monitor:
             except OSError as exc:
                 logger.warning("opx monitor: history write failed: %s", exc)
         self.alarms = evaluate_alarms(ans, s.get("thresholds") or {}) if s.get("alarms_armed") else []
+
+    def _watch_gap_s(self):
+        return WATCH_GAP_INTERVALS * max(self.poll_interval(), self.last_poll_interval or 0)
+
+    def _observe_watch(self, open_qms):
+        """A successful open-QM read: extend each QM's continuous watch, or
+        restart it on a job change or after a gap. Monotonic time only."""
+        now = self.mono()
+        gap = self._watch_gap_s()
+        seen = {}
+        for q in open_qms:
+            qid = str(q.get('id'))
+            sig = job_signature(q)
+            w = self._watch.get(qid)
+            if w is None or sig is None or w['sig'] != sig or now - w['last_mono'] > gap or now < w['last_mono']:
+                w = {'since_mono': now, 'sig': sig}
+            w['last_mono'] = now
+            seen[qid] = w
+        self._watch = seen
+
+    def watch_info(self) -> dict:
+        """Per open QM: how long SM has watched it with no job change, and
+        whether that watch is still continuous (no read gap since)."""
+        now = self.mono()
+        gap = self._watch_gap_s()
+        return {qid: {'watched_s': w['last_mono'] - w['since_mono'], 'sig': w['sig'],
+                      'continuous': 0 <= now - w['last_mono'] <= gap and w['sig'] is not None}
+                for qid, w in self._watch.items()}
 
     def want(self, tab=None, job_limit=100):
         """A monitor page asked: keep polling for a few intervals."""
@@ -1297,10 +1368,8 @@ class Monitor:
                 w = self._ensure_worker(s)
                 r = (w.request("close_qm", qm_id=qm_id) if not every
                      else w.request("close_idle" if idle else "close_qms", qm_ids=names,
-                                    **({'first_seen': {r['qm_id']: r for r in self.history().table()
-                                                      if not r.get('job_id')},
-                                        'idle_minutes': s['idle_minutes'],
-                                        'server_now': self._server_now()} if idle else {})))
+                                    **({'watched': self.watch_info(),
+                                        'idle_minutes': s['idle_minutes']} if idle else {})))
             except WorkerError as exc:
                 r = {"ok": False, "error": str(exc)}
                 self._drop_worker(str(exc))
@@ -1376,10 +1445,12 @@ class Monitor:
         wall_age = self.clock() - m['at']
         if mono_age < 0 or mono_age > SKEW_MAX_AGE_S or abs(wall_age - mono_age) > SKEW_STEP_TOLERANCE_S:
             return None
-        return {'skew_s': m['skew_s'], 'uncertainty_s': m['uncertainty_s'], 'at': m['at']}
-
-    def _server_now(self):
-        return server_now(self.last_answer, self.clock(), self.clock_skew())
+        out = {'skew_s': m['skew_s'], 'uncertainty_s': m['uncertainty_s'], 'at': m['at'],
+               'latest': bool(m.get('latest', True))}
+        # used for display and run links only; dropped when it puts a job in the PC's future
+        if not skew_consistent(out, self.last_answer, self.clock()):
+            return None
+        return out
 
     def status_state_unfresh(self):
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
@@ -1401,9 +1472,12 @@ class Monitor:
             sentence = self.last_error.rstrip('.') + '.'
             if age is not None:
                 sentence += f" The last good read was {age:.0f} s ago."
-        elif age is None or self.viewer_check_pending:
+        elif age is None:
             state = "starting"
             sentence = "Checking the server..."
+        elif self.viewer_check_pending:
+            state = "stale"
+            sentence = f"Checking the server again; the last good read was {age:.0f} s ago."
         elif age > STALE_INTERVALS * self.poll_interval():
             state = "stale"
             sentence = f"No fresh answer for {age:.0f} s; the values below are from then."

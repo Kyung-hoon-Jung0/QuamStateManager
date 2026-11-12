@@ -70,9 +70,9 @@ def _readings(src, name, refused, what):
             if v is not None:
                 refused[f"{name}.{what}.{k}"] = f"not a number: {str(v)[:80]!r}"
             continue
-        # A value the server sent is a reading, 0.0 included (the SDK hands the
-        # metrics only when the message is present, HasField). "Not sent" is a
-        # None from the SDK and is skipped above, never a value.
+        # Kept as sent, 0.0 included. A proto3 double has no presence, so 0.0
+        # may also mean "not filled"; SM shows it as such and never judges a
+        # limit on it (opx_monitor.metric_known).
         out[str(k)] = f
     return out or None
 
@@ -208,7 +208,7 @@ class QmmTarget:
                 failed[qid] = _err_text(exc)
         return {"closed": closed, "skipped": skipped, "failed": failed}
 
-    def close_idle(self, qm_ids, first_seen, idle_minutes, server_now=None):
+    def close_idle(self, qm_ids, watched, idle_minutes):
         # Load the pure activity rule without importing the SM package or qm into SM.
         import importlib.util
         from pathlib import Path
@@ -224,7 +224,8 @@ class QmmTarget:
                     continue
                 qm = self.qmm.get_qm(qid)
                 jobs = [_job_row(j) for j in qm.get_jobs()]
-                state = rules.idle_state({'jobs': jobs}, first_seen.get(qid), time.time(), idle_minutes, server_now)
+                # the fresh job list must equal what SM watched (a new job or status restarts the watch)
+                state = rules.idle_state({'jobs': jobs}, (watched or {}).get(qid), idle_minutes)
                 if not state['idle']:
                     skipped.append(qid)
                     reasons[qid] = state['basis']
@@ -294,7 +295,7 @@ def main():
             elif op == "close_qms":
                 res = target.close_qms(list(req.get("qm_ids") or []))
             elif op == 'close_idle':
-                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 120), req.get('server_now'))
+                res = target.close_idle(req.get('qm_ids') or [], req.get('watched') or {}, req.get('idle_minutes', 120))
             else:
                 raise ValueError(f"unknown op {op!r}")
             _out({"ok": True, "result": res, "took_s": round(time.time() - t0, 3)})

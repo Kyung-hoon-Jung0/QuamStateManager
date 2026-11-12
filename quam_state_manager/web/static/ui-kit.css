@@ -548,6 +548,8 @@
 .ui-opxmon-tile--unreadable small {overflow-wrap:anywhere}
 .ui-opxmon-tile--stale strong {color:var(--ui-opxmon-muted)}
 .ui-opxmon-tile--stale {border-style:dashed}
+.ui-opxmon-qm-stale {margin:var(--ui-gap-2) 0}
+.ui-opxmon-table--stale {opacity:0.6}
 .ui-opxmon-hot {color:var(--ui-danger-text)}
 .ui-opxmon-hottest {font-size:var(--ui-opxmon-input-font); color:var(--ui-opxmon-muted)}
 .ui-opxmon-confirm {white-space:pre-line; padding:var(--ui-opxmon-confirm-padding); margin:var(--ui-gap-2) 0}
