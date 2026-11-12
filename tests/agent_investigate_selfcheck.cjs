@@ -51,7 +51,7 @@ global.fetch = window.fetch = function (url, opts) {
   else if (/\/setup\/context$/.test(url) && method === 'GET') resp = { ok: true, facts: { n_qubits: 4, n_pairs: 3, bias_modes: { opx: 4 } }, questions: QS, saved: {} };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, previews: {}, writes: {} };
   else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true };
-  return Promise.resolve({ status: 200, json: () => Promise.resolve(resp) });
+  return Promise.resolve({ status: 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(resp))) });
 };
 vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'agent-setup.js'), 'utf8'), { filename: 'agent-setup.js' });
 const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
@@ -108,6 +108,13 @@ const $ = (s) => document.querySelector(s);
   // never_touch typed as a list
   nt.value = 'q1, qubits.q2.xy'; A.answer(nt);
   ok(JSON.stringify(A._state.answers.never_touch) === '["q1","qubits.q2.xy"]', 'D-20: never_touch is stored as a list');
+  // D-8: a refocus with nothing moved never wipes the form; a project change re-reads
+  window.dispatchEvent(new window.Event('focus')); await tick(40);
+  ok(!!$('#as-ctx select[data-q="purcell"]'), 'D-8: a plain refocus keeps the questions on screen (measured wipe in Chrome)');
+  status.paths = Object.assign({}, status.paths, { project: 'P2' });
+  window.dispatchEvent(new window.Event('focus')); await tick(60);
+  ok(!$('#as-ctx select[data-q="purcell"]') && JSON.stringify(A._state.answers) === '{}', 'D-8: a project change re-renders from the new project, answers not carried over');
+  status.paths = Object.assign({}, status.paths, { project: 'P1' });
   // D-23: a result for another project is stale and offers no review
   invStored = Object.assign({}, inv, { current: false, at: 6, key: { project: 'P0' } });
   A.load(); await tick(40); A.loadContext(); await tick(40);

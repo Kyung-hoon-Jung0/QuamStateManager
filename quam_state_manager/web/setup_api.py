@@ -775,6 +775,7 @@ def investigate():
             else:
                 rec.update(ac.vet_investigate(parsed, qs, roots=[roots["calibrations"], roots["config"], roots["state"]],
                                               exist_roots=[roots["data"]], state_lookup=_state_lookup()))
+                rec["raw"] = (out["answer"] or "")[:8000]     # the agent's own words, one click away
         elif out["answer"]:
             rec["raw"] = str(out["answer"])[:8000]
         _store_result("investigate", rec)

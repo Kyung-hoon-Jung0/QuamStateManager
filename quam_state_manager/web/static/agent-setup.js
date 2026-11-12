@@ -655,6 +655,7 @@ window.AgentSetup = (function () {
       var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
       if (pending.length) out.push(popupHtml(pending[0]));
     }
+    if (rec.raw) out.push('<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>");
     if (rec.also_asked && rec.also_asked.length) {
       out.push('<p class="asx-small muted" id="as-also-asked">The agent also asked (not saved): ' + rec.also_asked.map(esc).join(" · ") + "</p>");
     }
@@ -816,14 +817,27 @@ window.AgentSetup = (function () {
   }
   // D-8: a Setup page open in another window re-reads when it regains focus
   // (the project or chip may have changed there)
-  window.addEventListener("focus", function () {
-    if (S.root && document.body && document.body.contains(S.root)) load();
-  });
+  // Only when the project, chip or folder actually moved: a plain refocus must
+  // never wipe a form the person is filling in (measured in Chrome: the click
+  // that opened the questions focused the window and the re-render erased them).
+  function scopeOf(d) {
+    var P = (d && d.paths) || {};
+    return [P.project || "", d && d.chip || "", (P.calibrations || {}).folder || (d && d.calibrations_folder) || ""].join("|");
+  }
+  function refreshIfMoved() {
+    if (!(S.root && document.body && document.body.contains(S.root)) || !S.data) return;
+    api("GET", "/api/agent/setup").then(function (r) {
+      if (r.status !== 200 || scopeOf(r.body) === scopeOf(S.data)) return;
+      S.answers = {}; S.evidence = {}; S.review = {}; S.popupDone = {}; S.popupQueue = [];
+      load();
+    });
+  }
+  window.addEventListener("focus", refreshIfMoved);
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:historyRestore", function () { init(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, investigate: investigate, review: review, popupPick: popupPick, popupSkip: popupSkip, previewContext: previewContext, writeContext: writeContext,
-           test: test, confirmBy: confirmBy, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           test: test, confirmBy: confirmBy, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, refreshIfMoved: refreshIfMoved, _state: S };
 })();
