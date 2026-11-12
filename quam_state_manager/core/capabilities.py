@@ -30,6 +30,7 @@ sync with validation. See ``docs/52_env_capabilities.md``.
 
 from __future__ import annotations
 from quam_state_manager.core.loader import natural_key
+from quam_state_manager.core import coupler_cz_layout as _ccl
 
 from typing import Any
 
@@ -168,6 +169,18 @@ REGISTRY: dict[str, dict] = {
         "fix": "needs the qsm_quam_ext package in this environment "
                "(pip install <path to extensions/qsm_quam_ext>)",
         "severity": BLOCKER},
+    "pair.coupler_cz_lab": {
+        "label": "Coupler-only CZ gate (your lab's class)", "category": "2Q gates",
+        "package": "quam_config (your lab's package)", "symbol": "quam_config.coupler_cz_gate.CouplerCZGate",
+        "produces": "the cz_coupler_only macro on fixed-frequency qubits with a tunable coupler",
+        "fix": "put the quam_config package that has coupler_cz_gate.py on this environment's path",
+        "severity": BLOCKER},
+    "pulse.snz_two_flux": {
+        "label": "SNZ coupler CZ shape (your lab's class)", "category": "2Q pulse shapes",
+        "package": "quam_config (your lab's package)", "symbol": "quam_config.two_flux_gate.SNZTwoFluxPulse",
+        "produces": "the SNZ shape of the coupler-only CZ pulse (pairs that ask for it)",
+        "fix": "put the quam_config package that has two_flux_gate.py on this environment's path",
+        "severity": DEGRADE},
     "pair.cz_gate": {
         "label": "CZ gate macro", "category": "2Q gates",
         "package": "quam-builder", "symbol": "CZGate",
@@ -349,6 +362,14 @@ def required_capabilities(spec: dict) -> set[str]:
     if has_pairs:
         if pair_gate == "cz_coupler":
             req.update({"pair.coupler_cz", "pulse.cr_flattop"})
+        elif pair_gate == _ccl.MODE:
+            # the lab layout: the lab gate, plus the shape class each pair asks for
+            req.add("pair.coupler_cz_lab")
+            shapes = _ccl.pair_shapes(spec)
+            if _ccl.SHAPE_FLATTOP in shapes:
+                req.add("pulse.cr_flattop")
+            if _ccl.SHAPE_SNZ in shapes:
+                req.add("pulse.snz_two_flux")
         elif pair_gate.startswith("cz"):
             req.add("pair.cz_gate")
             if pair_gate == "cz_fixed":
@@ -406,7 +427,8 @@ def _cz_default_variant_caps(spec: dict) -> set[str]:
     variant attempts only that one (which ``required_capabilities`` covers).
     """
     pairs = spec.get("qubit_pairs") or []
-    if not pairs or spec.get("pair_gate") == "cz_coupler" or not (spec.get("pair_gate") or "").startswith("cz"):
+    if (not pairs or spec.get("pair_gate") in _ccl.MODES
+            or not (spec.get("pair_gate") or "").startswith("cz")):
         return set()
     explicit = sum(1 for pv in _pair_populate(spec)
                    if (pv.get("cz_variant") or "all") != "all")
@@ -509,6 +531,9 @@ def assess(spec: dict, manifest: Any) -> dict:
         if spec.get("pair_gate") == "cz_coupler" and cid == "pulse.cr_flattop":
             # Coupler-only CZ always uses this public pulse class, with no fallback.
             row["severity"] = inventory[-1]["severity"] = BLOCKER
+        if spec.get("pair_gate") == _ccl.MODE and cid in ("pulse.cr_flattop", "pulse.snz_two_flux"):
+            # the lab layout: a shape a pair asks for has no fallback
+            row["severity"] = inventory[-1]["severity"] = BLOCKER
         if cid in attempted:
             row["produces"] = _cz_skip_text(cid)
         if available:
@@ -569,6 +594,8 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
             roots = [r for r in raw if isinstance(r, dict)]
     out = {"needed": needed, "chosen": None, "blocker": None,
            "candidates": [r.get("path") for r in roots if r.get("importable")]}
+    if _ccl.is_coupler_only(spec):
+        return _lab_layout_root(spec, roots, needed, out)
     if not needed or not roots:
         return out
 
@@ -622,6 +649,48 @@ def qpu_root_check(spec: dict, manifest: Any) -> dict:
         "your own quam_config that widens `qubits` to the QDAC-biased "
         "transmon class and declares a `qdac` field, and it will be offered here."
     )
+    return out
+
+
+_STOCK_ROOT_PREFIX = "quam_builder."
+Z_GUARD_WARNING = (
+    "{root} is a stock root: its set_all_fluxes reads every qubit's flux line, so "
+    "initialize_qpu raises on this chip, whose qubits have none. Use your lab's own "
+    "root (one that skips qubits without a flux line).")
+
+
+def _lab_layout_root(spec: dict, roots: list, needed: bool, out: dict) -> dict:
+    """The root of a ``cz_coupler_only`` chip (decisions D-3, D-7, Q-6).
+
+    It must be flux-tunable (the lab layout's qubits are flux-tunable transmons
+    with no flux line). A declared fixed-frequency root is refused, and so is a
+    declared root the probe saw fail to import. A stock root is allowed with a
+    warning (``out["warning"]``): its flux setter does not skip z-less qubits.
+    Unknown (an unprobed flag, a root the probe never saw) is not a negative.
+    """
+    out["warning"] = None
+    declared = (spec.get("quam_class") or "").strip()
+    if declared:
+        out["chosen"] = declared
+        match = next((r for r in roots if r.get("path") == declared), None)
+        if match is not None and not match.get("importable"):
+            out["blocker"] = (f"{declared} does not import in this environment, and this chip's "
+                              "layout needs its own root class (no fallback root is used).")
+        elif match is not None and match.get("fixed_root") is True:
+            out["blocker"] = (f"{declared} is a fixed-frequency root; the coupler-only CZ with your "
+                              "lab's gate needs a flux-tunable root whose qubits carry no flux line.")
+        elif declared.startswith(_STOCK_ROOT_PREFIX):
+            out["warning"] = Z_GUARD_WARNING.format(root=declared)
+        return out
+    usable = [r for r in roots if r.get("importable") and r.get("fixed_root") is not True
+              and (not needed or r.get("holds_qdac"))]
+    if not usable:
+        return out                      # nothing probed: unknown, the build derives the root
+    lab = [r for r in usable if not str(r.get("path", "")).startswith(_STOCK_ROOT_PREFIX)]
+    fit = (lab or usable)[0]
+    out["chosen"] = fit["path"]
+    if not lab:
+        out["warning"] = Z_GUARD_WARNING.format(root=fit["path"])
     return out
 
 

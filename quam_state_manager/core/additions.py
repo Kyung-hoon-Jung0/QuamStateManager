@@ -304,10 +304,13 @@ def builder_gate_names(spec: dict, pair) -> list[str]:
     ``run_build._finalize_pair_gates``): ``cz_<variant>`` for every variant
     asked for on a flux CZ chip (a variant whose pulse class the env lacks is
     skipped there with a warning), ``cz_coupler`` + its ``cz`` alias on a
-    tunable-coupler chip, ``cr`` (+ ``stark_cz`` with a ZZ line) on a CR chip."""
+    tunable-coupler chip (``cz_coupler_only`` + ``cz`` in the lab layout), ``cr``
+    (+ ``stark_cz`` with a ZZ line) on a CR chip."""
     gate = str(spec.get("pair_gate") or "").lower()
     if gate == "cz_coupler":
         return ["cz_coupler", DEFAULT_GATE_NAME]
+    if gate == "cz_coupler_only":
+        return ["cz_coupler_only", DEFAULT_GATE_NAME]
     if gate == "cr":
         zz = any(isinstance(ln, dict) and ln.get("line") in ("zz", "zz_drive")
                  and str(ln.get("element")) == _long(pair) for ln in spec.get("lines") or [])

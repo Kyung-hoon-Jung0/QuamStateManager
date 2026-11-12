@@ -598,7 +598,7 @@ def validate_spec(spec) -> list[str]:
         ln.get("line") for ln in lines if isinstance(ln, dict)
     }
     if ("coupler" in line_types_present and "flux" not in line_types_present
-            and spec.get("pair_gate") != "cz_coupler"):
+            and spec.get("pair_gate") not in ("cz_coupler", "cz_coupler_only")):
         errors.append(
             "coupler lines need qubit flux lines (flux-tunable qubits): a tunable-"
             "coupler CZ plays on the qubit z line. For fixed-frequency qubits use "
@@ -609,15 +609,22 @@ def validate_spec(spec) -> list[str]:
     # run_build dispatches the 2Q-gate family on this; an unknown value silently
     # builds a chip with no 2Q macros, so validate it here.
     pair_gate = spec.get("pair_gate")
-    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable", "cz_coupler"):
+    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable", "cz_coupler", "cz_coupler_only"):
         errors.append(
             f"pair_gate: unknown value {pair_gate!r} "
-            f"(expected 'cr', 'cz_fixed', 'cz_tunable', or 'cz_coupler')"
+            f"(expected 'cr', 'cz_fixed', 'cz_tunable', 'cz_coupler', or 'cz_coupler_only')"
         )
 
     if pair_gate == "cz_coupler" and any(ln.get("line") == "flux" for ln in lines):
         errors.append("cz_coupler requires no qubit z line")
-    if pair_gate in ("cz_coupler", "cz_tunable"):
+    if pair_gate == "cz_coupler_only" and any(ln.get("line") == "flux" for ln in lines):
+        errors.append("cz_coupler_only requires no qubit z line (its qubits keep z empty)")
+    if pair_gate == "cz_coupler_only":
+        for pv in (((spec.get("populate") or {}).get("pairs")) or {}).values():
+            shape = (pv or {}).get("coupler_pulse_shape") if isinstance(pv, dict) else None
+            if shape not in (None, "", "flattop", "snz"):
+                errors.append(f"coupler_pulse_shape: unknown value {shape!r} (expected 'flattop' or 'snz')")
+    if pair_gate in ("cz_coupler", "cz_tunable", "cz_coupler_only"):
         # the builder makes a tunable-coupler pair FROM its coupler line: a
         # pair without one is silently left out of the built chip
         for pair in spec.get("qubit_pairs") or []:
@@ -1757,8 +1764,13 @@ def probe_capabilities(python_path: str, instance_path=None, *,
         roots_ok = ("qpu_roots" in man and all(
             "fixed_root" in r for r in (man.get("qpu_roots") or [])
             if isinstance(r, dict) and r.get("importable")))
+        # review P2-7: the lab package files decide the lab layout's classes, and an
+        # editable install changes them with no version bump -- a moved file (or an
+        # older entry that never recorded them, or another PYTHONPATH) is a MISS
+        lab_ok = ("lab_files" in man and _lab_files_unchanged(man.get("lab_files"))
+                  and isinstance(entry, dict) and entry.get("pythonpath") == os.environ.get("PYTHONPATH"))
         if (isinstance(entry, dict) and entry.get("versions") == versions
-                and roots_ok):
+                and roots_ok and lab_ok):
             return {"ok": True, "cached": True, "error": None,
                     "capabilities": man.get("capabilities") or {},
                     "versions": man.get("versions") or versions,
@@ -1790,16 +1802,34 @@ def probe_capabilities(python_path: str, instance_path=None, *,
 
     manifest = {"capabilities": parsed.get("capabilities") or {},
                 "versions": parsed.get("versions") or versions,
-                "qpu_roots": parsed.get("qpu_roots") or []}
+                "qpu_roots": parsed.get("qpu_roots") or [],
+                "lab_files": parsed.get("lab_files") or {}}
     result.update(ok=True, capabilities=manifest["capabilities"],
                   versions=manifest["versions"],
                   qpu_roots=manifest["qpu_roots"])
 
     if instance_path is not None:                       # cache only successes
         cache = _load_capability_cache(instance_path)
-        cache[python_path] = {"versions": versions, "manifest": manifest}
+        cache[python_path] = {"versions": versions, "manifest": manifest,
+                              "pythonpath": os.environ.get("PYTHONPATH")}
         _save_capability_cache(instance_path, cache)
     return result
+
+
+def _lab_files_unchanged(recorded) -> bool:
+    """Every lab file the probe recorded still has the same ``[mtime_ns, size]``
+    (or is still absent)."""
+    if not isinstance(recorded, dict):
+        return False
+    for path, sig in recorded.items():
+        try:
+            st = os.stat(path)
+            now = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            now = None
+        if now != sig:
+            return False
+    return True
 
 
 def _load_capability_cache(instance_path) -> dict[str, dict]:

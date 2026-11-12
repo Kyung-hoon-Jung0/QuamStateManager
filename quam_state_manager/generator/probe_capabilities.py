@@ -119,6 +119,9 @@ CATALOG: dict[str, dict] = {
     "pulses.square": {"module": _PULSES, "attr": "SquarePulse"},
     # -- two-qubit gate macros --------------------------------------------
     "pair.coupler_cz": {"module": "qsm_quam_ext", "attr": "CouplerCZGate"},
+    # the lab layout's own classes (quam_config on the env's path), decisions D-6
+    "pair.coupler_cz_lab": {"module": "quam_config.coupler_cz_gate", "attr": "CouplerCZGate"},
+    "pulse.snz_two_flux": {"module": "quam_config.two_flux_gate", "attr": "SNZTwoFluxPulse"},
     "pair.cz_gate": {"module": _TWO_Q_FTC, "attr": "CZGate"},
     "pair.cz_parametric": {"module": _TWO_Q_FTC, "attr": "ParametricCZGate"},
     "pair.fixed_pair": {"module": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair",
@@ -384,7 +387,41 @@ def detect() -> dict:
         roots = [{"path": "", "importable": False,
                   "detail": f"probe error: {type(exc).__name__}: {exc}"}]
     return {"versions": _library_versions(), "capabilities": caps,
-            "qpu_roots": roots}
+            "qpu_roots": roots, "lab_files": lab_files()}
+
+
+# The lab package files the lab layout depends on (decisions D-17, review P2-7):
+# an editable install changes them without a version bump, so the cached
+# manifest is valid only while these stay as they were.
+LAB_PACKAGE = "quam_config"
+LAB_FILES = ("__init__.py", "my_quam.py", "coupler_cz_gate.py", "two_flux_gate.py")
+
+
+def file_sig(path):
+    """``[mtime_ns, size]`` of *path*, or None when it does not exist."""
+    import os
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return [st.st_mtime_ns, st.st_size]
+
+
+def lab_files() -> dict:
+    """``{path: file_sig}`` of the lab package folder(s) and its layout files."""
+    import importlib.util
+    import os
+    try:
+        spec = importlib.util.find_spec(LAB_PACKAGE)
+    except Exception:  # noqa: BLE001 -- no lab package is a valid answer
+        spec = None
+    out = {}
+    for folder in list(getattr(spec, "submodule_search_locations", None) or []):
+        out[folder] = file_sig(folder)
+        for name in LAB_FILES:
+            path = os.path.join(folder, name)
+            out[path] = file_sig(path)
+    return out
 
 
 def main() -> int:

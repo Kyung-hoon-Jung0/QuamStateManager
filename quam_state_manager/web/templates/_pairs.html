@@ -125,7 +125,7 @@
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
         <td>{% if p.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_pair_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_pair_names">off</span>{% endif %}</td>
-        <td>{{ p.moving_qubit or '-' }}</td>
+        <td>{% if p.get('coupler_only_cz') %}<span class="muted" title="This pair's CZ plays on the coupler only; no qubit moves (stored: {{ p.moving_qubit or 'not set' }})">none</span>{% else %}{{ p.moving_qubit or '-' }}{% endif %}</td>
         {# r16 0-1: `is number` gates — see the CR table's note #}
         <td>{% if p.get('cz_flattop_amplitude') is none %}-{% elif p.cz_flattop_amplitude is number %}{{ "%.6f" | format(p.cz_flattop_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cz_flattop_amplitude }}&quot;</span>{% endif %}</td>
         {#- docs/301 (F21): the Bell fidelity of the gate that has one -- it was

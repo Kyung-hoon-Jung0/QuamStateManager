@@ -329,7 +329,10 @@ class QueryEngine:
         qt = p.get("qubit_target", "")
         result["qubit_control"] = _pair_qubit_ref(self.store, qc, base + ("qubit_control",))
         result["qubit_target"] = _pair_qubit_ref(self.store, qt, base + ("qubit_target",))
+        # the stored value as it is (the inspector shows the file); a pair whose CZ plays on
+        # the coupler only moves no qubit, which the Pairs table and the map say (review r3 P2-a)
         result["moving_qubit"] = p.get("moving_qubit")
+        result["coupler_only_cz"] = _coupler_only_pair(p)
 
         macros = p.get("macros") or {}
         if not isinstance(macros, dict):
@@ -365,7 +368,9 @@ class QueryEngine:
             fpq = gate.get("flux_pulse_qubit") or {}
             fpq_base = base + ("macros", gate_name, "flux_pulse_qubit")
             fpq, fpq_base = _deref_pulse_ref(self.store, fpq, fpq_base)
-            result[f"{prefix}_amplitude"] = fpq.get("amplitude")
+            if fpq or not gate.get("coupler_flux_pulse"):
+                # a coupler-only CZ has no qubit pulse: no qubit amplitude row for it (review r2 P2-4)
+                result[f"{prefix}_amplitude"] = fpq.get("amplitude")
             result[f"{prefix}_length"] = _resolve(self.store, fpq.get("length"), fpq_base + ("length",))
 
             if "flat_length" in fpq:
@@ -376,6 +381,17 @@ class QueryEngine:
             cfp_base = base + ("macros", gate_name, "coupler_flux_pulse")
             cfp, _cfp_base = _deref_pulse_ref(self.store, cfp, cfp_base)
             result[f"{prefix}_coupler_amplitude"] = cfp.get("amplitude")
+            if not gate.get("flux_pulse_qubit") and cfp:
+                # a coupler-only CZ plays on the coupler: its length is that
+                # pulse's own (decisions D-14), never another gate's
+                length = _resolve(self.store, cfp.get("length"), _cfp_base + ("length",))
+                if not _num_or_none(length):
+                    # a quam alias ("#./inferred_length") has no JSON value: the
+                    # computed length (as the Pulses page shows it), else a blank
+                    length = gate_flux_length(self.store, name, gate_name, slot="coupler_flux_pulse")
+                result[f"{prefix}_length"] = length
+                if "flat_length" in cfp:
+                    result[f"{prefix}_flat_length"] = cfp.get("flat_length")
 
             result[f"{prefix}_phase_shift_control"] = gate.get("phase_shift_control")
             result[f"{prefix}_phase_shift_target"] = gate.get("phase_shift_target")
@@ -904,7 +920,7 @@ class QueryEngine:
                                  or best_fid_obj.get("updated_at"))
 
             gate_fidelities = _extract_pair_gate_fidelities(macros)
-            gate_details = _extract_gate_details(macros)
+            gate_details = _extract_gate_details(macros, store=self.store, pair_name=pair_name)
             gate_details.extend(_extract_cr_details(self.store, pair_name, p))
             confusion_raw = p.get("confusion")
             confusion_offdiag = _extract_pair_confusion_offdiag(confusion_raw)
@@ -939,6 +955,7 @@ class QueryEngine:
                 # because an override is exactly the case worth seeing.
                 "moving_qubit": (p.get("moving_qubit")
                                  if p.get("moving_qubit") in ("control", "target")
+                                 and not _coupler_only_pair(p)
                                  else None),
                 "cz_fidelity": best_fidelity,
                 "fidelity_source": fidelity_source,
@@ -1834,8 +1851,12 @@ def _extract_pair_confusion_offdiag(confusion: Any) -> list[float] | None:
         return None
 
 
-def _extract_gate_details(macros: dict) -> list[dict]:
-    """Extract per-gate characterization: amplitude, coupler amp, length, phase shifts."""
+def _extract_gate_details(macros: dict, store: QuamStore | None = None,
+                          pair_name: str | None = None) -> list[dict]:
+    """Extract per-gate characterization: amplitude, coupler amp, length, phase shifts.
+
+    A coupler-only CZ stores its pulse as a reference to the coupler operation;
+    with *store* it is read through that reference, as ``get_pair`` reads it."""
     results = []
     if not isinstance(macros, dict):
         return results
@@ -1844,6 +1865,14 @@ def _extract_gate_details(macros: dict) -> list[dict]:
             continue
         flux = gate.get("flux_pulse_qubit", {})
         coupler_pulse = gate.get("coupler_flux_pulse", {})
+        if store is not None and pair_name is not None and isinstance(coupler_pulse, str):
+            coupler_pulse, _cbase = _deref_pulse_ref(
+                store, coupler_pulse, ("qubit_pairs", pair_name, "macros", gate_name, "coupler_flux_pulse"))
+            if isinstance(coupler_pulse, dict) and not isinstance(coupler_pulse.get("length"), (int, float)):
+                coupler_pulse = dict(coupler_pulse)
+                n = gate_flux_length(store, pair_name, gate_name, slot="coupler_flux_pulse")
+                if n is not None:
+                    coupler_pulse["length"] = n
         if not isinstance(flux, dict):
             flux = {}
         if not isinstance(coupler_pulse, dict):
@@ -1859,8 +1888,10 @@ def _extract_gate_details(macros: dict) -> list[dict]:
         c_amp = _num(coupler_pulse.get("amplitude"))
         if c_amp is not None:
             entry["coupler_amp"] = c_amp
-        length = _num(flux.get("length"))
-        flat_length = _num(flux.get("flat_length"))
+        # a coupler-only CZ (no qubit flux pulse) takes its lengths from the coupler pulse
+        timing = flux if flux else coupler_pulse
+        length = _num(timing.get("length"))
+        flat_length = _num(timing.get("flat_length"))
         if length is not None:
             entry["length"] = length
         if flat_length is not None:
@@ -1947,7 +1978,20 @@ def _deref_pulse_ref(
     return {}, path_tuple
 
 
-def gate_flux_length(store: QuamStore, pair_id: str, gate_name: str) -> int | None:
+def _coupler_only_pair(pair: Any) -> bool:
+    """True when every CZ macro of *pair* plays on the coupler only (a
+    ``coupler_flux_pulse`` and no ``flux_pulse_qubit``): no qubit moves."""
+    macros = (pair or {}).get("macros") if isinstance(pair, dict) else None
+    gates = [g for g in (macros or {}).values() if isinstance(g, dict)]
+    return bool(gates) and any(g.get("coupler_flux_pulse") for g in gates)         and not any(g.get("flux_pulse_qubit") for g in gates)
+
+
+def _num_or_none(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def gate_flux_length(store: QuamStore, pair_id: str, gate_name: str,
+                     slot: str = "flux_pulse_qubit") -> int | None:
     """The sample count of a pair gate's ``flux_pulse_qubit``, or None.
 
     A modern chip stores such a pulse's ``length`` as the quam alias
@@ -1968,12 +2012,12 @@ def gate_flux_length(store: QuamStore, pair_id: str, gate_name: str) -> int | No
     macro = (pair.get("macros") or {}).get(gate_name)
     if not isinstance(macro, dict):
         return None
-    base = ("qubit_pairs", pair_id, "macros", gate_name, "flux_pulse_qubit")
+    base = ("qubit_pairs", pair_id, "macros", gate_name, slot)
     body, body_base = _deref_pulse_ref(
-        store, macro.get("flux_pulse_qubit") or {}, base)
+        store, macro.get(slot) or {}, base)
     if not body:
         return None
-    spec = pulse_catalog.infer_spec(body, context_slot="flux_pulse_qubit")
+    spec = pulse_catalog.infer_spec(body, context_slot=slot)
     if spec is None:
         return None
     params: dict[str, Any] = {}

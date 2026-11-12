@@ -99,6 +99,16 @@ window.GenPreview = (function () {
 
     if (group === "pairs") {
       var p = rowValues("pairs", rid);
+      if ((st.pairGate || "") === "cz_coupler_only") {
+        // the lab coupler-only CZ plays on the coupler: its flat-top pulse, as the build makes
+        // it (D-8); the lab's SNZ class has no preview here -- no preview rather than a wrong one
+        if (String(p.coupler_pulse_shape || "flattop").toLowerCase() === "snz") return null;
+        var len = num(p.coupler_cz_length, num(p.cz_interaction_duration, 76));
+        var flat = Math.max(0, len - 16);
+        return { qclass: "FlatTopGaussianPulse", title: "Coupler CZ, flat-top (your lab's gate) · " + rid,
+                 params: { length: Math.ceil((flat + 16) / 4) * 4, flat_length: flat,
+                           amplitude: num(p.coupler_amplitude, num(p.cz_amplitude, 0.1)), axis_angle: 0 } };
+      }
       if ((st.pairGate || "") === "cr") {
         // ZZ (Stark-CZ) cells preview the flattop ZZ drive run_build actually
         // seeds (SquarePulse used to fall through here — a misleading trace).

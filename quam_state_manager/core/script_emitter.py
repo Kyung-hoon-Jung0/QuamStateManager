@@ -75,6 +75,10 @@ _QDAC_CONSTS = ("QDAC_COMPONENTS_MODULE",)
 _QDAC_FUNCS = ("_import_qdac_components", "_find_bias_tee_class",
                "_attach_qdac_bias", "_inject_qdac_state",
                "_inject_qdac_trigger_wiring")
+# decisions D-9 -- emitted ONLY for the lab layout of the coupler-only CZ, so every
+# other recipe (the extension layout included) stays byte-for-byte.
+_COUPLER_ONLY_CONSTS = ("_COUPLER_ONLY",)
+_COUPLER_ONLY_FUNCS = ("_coupler_only_pulse_key", "_seed_coupler_only", "_finalize_coupler_only")
 _RUNTIME_FUNCS = (
     "_norm_index", "_parse_pair", "_quam_pair_id", "_norm_pair_qubits",
     "_match_populate_pairs", "number", "coupler_model", "_apply_coupler_models",
@@ -564,8 +568,11 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
 
     if adds:
         w(additions.recipe_block(adds))
-    if qdac_qubits:
-        w(_runtime_block(_QDAC_CONSTS, _QDAC_FUNCS))
+    lab_coupler = pair_gate == "cz_coupler_only"
+    if qdac_qubits or lab_coupler:
+        consts = (_QDAC_CONSTS if qdac_qubits else ()) + (_COUPLER_ONLY_CONSTS if lab_coupler else ())
+        funcs = (_QDAC_FUNCS if qdac_qubits else ()) + (_COUPLER_ONLY_FUNCS if lab_coupler else ())
+        w(_runtime_block(consts, funcs))
     else:
         w(_runtime_block())
     w("# =============================== run ==================================")
@@ -594,6 +601,11 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w('if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):')
     w("    for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):")
     w('        print(f"WARNING: {_w}", file=sys.stderr)')
+    if lab_coupler:
+        # the lab's coupler-only CZ: the lab gate under cz_coupler_only (decisions D-8)
+        w('if PAIR_GATE == "cz_coupler_only":')
+        w("    for _w in _finalize_coupler_only(machine, _spec):")
+        w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('_apply_coupler_models(machine, POPULATE)')
     w('if (POPULATE.get("options") or {}).get("pin_cores"):')
     w("    _pin_cores(machine)")
