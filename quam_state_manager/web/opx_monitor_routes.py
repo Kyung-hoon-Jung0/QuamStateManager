@@ -4,6 +4,9 @@ The pages read the cached answer of ``core.opx_monitor.Monitor``; a page GET
 asks the poller to keep going for a few intervals and never waits on the OPX.
 Clean-up and settings are POSTs (the app's origin guard applies)."""
 from __future__ import annotations
+import math
+import re
+import datetime as _dt
 
 import json
 import logging
@@ -20,6 +23,15 @@ opxmon_bp = Blueprint("opx_monitor", __name__)
 TABS = ("live", "jobs", "history", "cleanup", "settings")
 TAB_LABELS = {"live": "Live", "jobs": "Jobs", "history": "History", "cleanup": "Clean up",
               "settings": "Monitor settings"}
+
+
+def _idle_minutes(raw, old):
+    """The form's idle minutes as a number; a blank or bad value keeps the old one."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return float(old)
+    return v if math.isfinite(v) else float(old)
 
 
 def monitor() -> om.Monitor:
@@ -69,16 +81,23 @@ def _run_candidates():
     return candidates, ''
 
 
-def run_match(job, candidates, reason='', window=90):
+def run_match(job, candidates, reason='', window=90, skew=None):
+    """Job times are the OPX clock, run times the PC clock: compare only after
+    correcting by the MEASURED offset (``{'skew_s', 'uncertainty_s'}``); its
+    uncertainty widens the window, never narrows it. Unknown offset: no link."""
     if reason:
         return {'reason': reason}
     instant = om.timestamp(job.get('created_at'))
     if instant is None:
         return {'reason': 'Job creation time unknown; no estimated link.'}
-    matches = [r for r in candidates if abs(r['time'] - instant) <= window]
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
+        return {'reason': 'OPX clock offset unknown; no estimated link.'}
+    instant += skew['skew_s']
+    width = window + abs(skew.get('uncertainty_s') or 0.0)
+    matches = [r for r in candidates if abs(r['time'] - instant) <= width]
     if len(matches) == 1:
-        return {**matches[0], 'reason': 'estimated from times (job and run creation, +/-90 s)'}
-    return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-90 s)'}
+        return {**matches[0], 'reason': f'estimated from times (job and run creation, +/-{width:.0f} s)'}
+    return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-{width:.0f} s)'}
 
 
 def last_job(q):
@@ -87,7 +106,36 @@ def last_job(q):
     if not q['jobs']:
         return 'none observed'
     job = max(q['jobs'], key=lambda j: om.timestamp(j.get('updated_at')) or om.timestamp(j.get('created_at')) or 0)
-    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.local_time(job.get('created_at'))
+    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.opx_time(job.get('created_at')) + ' (OPX clock)'
+
+
+_RAW_ERROR = re.compile(r':\s+[A-Za-z_][\w.]*(?:Error|Exception):.*?(?=\. The last good read|$)', re.S)
+
+
+def plain_error(text):
+    """The plain sentence without the raw exception text (shown once in Technical details)."""
+    return _RAW_ERROR.sub('', text) if isinstance(text, str) else text
+
+
+def raw_error(st):
+    """The first raw exception text on the page, or None."""
+    cap = st.get('capabilities') or {}
+    for text in ((st.get('health') or {}).get('details'), st.get('sentence'), cap.get('live_reason'), cap.get('jobs_reason'), cap.get('close_reason')):
+        m = _RAW_ERROR.search(text) if isinstance(text, str) else None
+        if m:
+            return m.group(0).lstrip(': ').strip()
+    return None
+
+
+def stale_time(value):
+    """A last-good-read time: HH:MM:SS today, the full date and zone otherwise."""
+    full = om.local_time(value)
+    t = om.timestamp(value)
+    if t is None:
+        return full
+    if _dt.datetime.fromtimestamp(t).date() == _dt.date.today():
+        return full.split(' ')[1]
+    return full
 
 
 def _view(tab: str) -> dict:
@@ -98,16 +146,20 @@ def _view(tab: str) -> dict:
     t = dict(s.get("target") or {})
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
-    first = {r['qm_id']: r for r in h.table() if not r.get('job_id')} if h else {}
-    idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
+    skew = m.clock_skew()
+    watched = m.watch_info()
+    idle_states = {q['id']: om.idle_state(q, watched.get(str(q['id'])), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
+    if st['state'] != 'ok':
+        age = ('%.0f s ago' % st['age_s']) if st.get('age_s') is not None else 'at an unknown time'
+        idle_states = {k: om.stale_idle_state(v, age) for k, v in idle_states.items()}
     hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: (om.temperature_limit(r['key'], s['thresholds']) is not None and r['value'] > om.temperature_limit(r['key'], s['thresholds']), r['value']), default=None)
     try:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
-            "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
+    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+            "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
             "actions": h.recent_actions() if h and tab in ("history", "cleanup") else [],
@@ -134,7 +186,13 @@ def opx_monitor_body():
     if tab not in TABS:
         tab = "live"
     monitor().want(tab, request.args.get("limit", 100, type=int))
-    return render_template("_opx_monitor_body.html", **_view(tab))
+    html = render_template("_opx_monitor_body.html", **_view(tab))
+    if request.headers.get("HX-Request"):
+        # keep the top-bar health pill in step with the body it sits above
+        html += ('<div id="ui-opxmon-alarm-slot" hx-swap-oob="innerHTML">'
+                 + render_template("_opx_alarm_badge.html", st=monitor().status(),
+                                   value_vs_limit=om.value_vs_limit) + '</div>')
+    return html
 
 
 @opxmon_bp.route("/opx-monitor/api/status")
@@ -150,11 +208,11 @@ def opx_alarm_badge():
     m = monitor()
     m.ensure_running_if_armed()
     st = m.status()
-    resp = make_response(render_template("_opx_alarm_badge.html", st=st))
+    resp = make_response(render_template("_opx_alarm_badge.html", st=st, value_vs_limit=om.value_vs_limit))
     fresh = m.new_alarm_toasts() if st.get("alarms_armed") else []
     if fresh:
         a = fresh[0]
-        value = f"{a['value']:.1f}".removesuffix('.0')
+        value = om.value_vs_limit(a['value'], a['limit'])
         more = f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""
         resp.headers["HX-Trigger"] = json.dumps({"showToast": {
             "message": f"OPX alarm: {a['controller']} {a['label']} = {value} {a['unit']} "
@@ -198,7 +256,7 @@ def opx_monitor_save_settings():
             return _settings_reply(f"The limit for {k[4:]} is not a number.", error=True)
         th[k[4:]] = val
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": f.get("idle_minutes", s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
     hdr_txt = f.get("headers")

@@ -116,7 +116,7 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;
-    ok(/Close idle QMs \(1\)/.test(doc('idle').body.textContent) && /since SM first saw it/.test(doc('idle').body.textContent), 'D-13 rendered idle count states its basis');
+    ok(/Close idle QMs \(1\)/.test(doc('idle').body.textContent) && /while SM watched continuously/.test(doc('idle').body.textContent), 'D-13 rendered idle count states its basis');
     ok(doc('unknown').querySelector('[data-health="grey"]') && /OPEN 1/.test(doc('unknown').body.textContent), 'round 4 unassessed health is muted while occupancy remains OPEN');
     ok(doc('stale').querySelector('[data-health="grey"]') && /fresh/.test(doc('stale').body.textContent), 'D-14 stale data is grey');
     ok(doc('trend').querySelectorAll('svg polyline').length === 2 && /actual span 100 s/.test(doc('trend').body.textContent), 'D-15 real markup has separate gap segments and actual span');
