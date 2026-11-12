@@ -379,6 +379,8 @@ async function checkComponentMap() {
   ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }),
      'clicking a map entity opens its inspector');
 
+  const cmRoot = doc.getElementById('component-map');
+  cmRoot.setAttribute('data-highlight', 'qubits');   // the Qubits page: stones get the hover panel
   // ver1.8: hovering shows the panel at once; its Expand button opens the
   // inspector. The panel survives the move into it (grace) and closes on leave.
   const wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
@@ -427,6 +429,7 @@ async function checkComponentMap() {
     const hitsSelf = x < 340 && x + 120 > 300 && y < 340 && y + 80 > 300;
     ok(!hitsNb && !hitsSelf, 'the panel avoids its neighbour and its own stone (' + x + ',' + y + ')');
     // a pair: clear of the edge AND its two end stones
+    cmRoot.setAttribute('data-highlight', 'pairs');
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
     const ed = body.querySelector('[data-cm="p:qA2-qA1"]');
     box(stone).getBoundingClientRect = R(300, 300, 60, 60);
@@ -441,6 +444,7 @@ async function checkComponentMap() {
     ok(!overlaps(300, 300, 60, 60) && !overlaps(500, 300, 60, 60) && !overlaps(360, 329, 140, 2),
        'a pair panel clears the edge and both end stones (' + px + ',' + py + ')');
     delete pe.getBoundingClientRect;
+    cmRoot.setAttribute('data-highlight', 'qubits');
     delete pp.getBoundingClientRect;
     saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
@@ -494,6 +498,7 @@ async function checkComponentMap() {
   doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   ok(!pop.isConnected || pop.hidden, 'outside click closes the card');
   // a pair served by the page uses the page's rows (core/pair_map_panel)
+  cmRoot.setAttribute('data-highlight', 'pairs');   // the Pairs page from here on
   const edgeNoRow = body.querySelector('[data-cm="p:qA2-qA1"]');
   const js = doc.createElement('script');
   js.type = 'application/json'; js.id = 'cm-pair-panel';
@@ -518,6 +523,11 @@ async function checkComponentMap() {
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
      'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
   ok(!pop.querySelector('[data-panel-status]'), 'a landed re-read clears the status line');
+  // Expand carries the page's chip, so a stale window never opens another chip's inspector
+  win._htmxCalls.length = 0;
+  pop.querySelector('.cm-popup-hint').click();
+  ok(win._htmxCalls.some((c) => c[1] === '/pair/qA2-qA1?expect_chip=tokA'),
+     'Expand asks for the inspector with the page chip (' + win._htmxCalls.map((c) => c[1]).join(',') + ')');
   // an unchanged answer leaves the rows in place (a reader may be selecting in them)
   doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));

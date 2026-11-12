@@ -12813,10 +12813,22 @@ _PULSE_NAME_RE = add_names.OPERATION_NAME_RE
 _QCLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
+def _stale_chip_note():
+    """The inspector's answer to a window rendered for another chip (``?expect_chip=``)."""
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return ('<p class="muted" data-chip-changed>chip changed in another window -- '
+                'reload this page to inspect the chip that is open now.</p>')
+    return None
+
+
 @bp.route("/qubit/<name>")
 def qubit_detail(name: str):
     # ?focus=<dot-path> deep-links straight to a field (scroll + focus + flash)
     # — exposes the existing focus_path plumbing to the data-viewer value chip.
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_qubit_detail(name, focus_path=request.args.get("focus") or None)
 
 
@@ -17384,6 +17396,9 @@ def pairs():
 
 @bp.route("/pair/<name>")
 def pair_detail(name: str):
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_pair_detail(name, focus_path=request.args.get("focus") or None)
 
 

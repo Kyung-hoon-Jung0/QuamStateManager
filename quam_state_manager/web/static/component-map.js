@@ -105,6 +105,28 @@ window.ComponentMap = (function () {
     var hl = root.getAttribute("data-highlight") || "";
     return hl === "qubits" || hl === "pairs";
   }
+  // ...and only for the page's own entity: a pair edge on the Qubits page (or a
+  // stone on the Pairs page) has no panel content there, so it keeps Expand.
+  function _hoverFor(root, kind) {
+    if (!_hoverMode(root)) return false;
+    var hl = root.getAttribute("data-highlight");
+    return (hl === "qubits" && kind === "qubit") || (hl === "pairs" && kind === "pair");
+  }
+  // The chip the page was rendered for (the pairs page states it on its data).
+  function _pageChip() {
+    var el = document.getElementById("cm-pair-panel");
+    return (el && el.getAttribute("data-chip")) || window.__chipToken || "";
+  }
+  // After Expand the reader continues in the inspector, never on <body>.
+  function _focusInspector(anchor) {
+    var pane = document.getElementById("inspector-pane");
+    var t = pane && (pane.querySelector("h1, h2, h3, [data-autofocus]") || pane);
+    if (t) {
+      if (!t.hasAttribute("tabindex")) t.setAttribute("tabindex", "-1");
+      try { t.focus({ preventScroll: false }); } catch (e) { t.focus(); }
+    }
+    if ((!t || document.activeElement !== t) && anchor && anchor.isConnected) anchor.focus({ preventScroll: true });
+  }
   function _boxOf(el) {
     var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
     return s.getBoundingClientRect();
@@ -133,12 +155,17 @@ window.ComponentMap = (function () {
                 right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
     });
     if (!a) a = _boxOf(anchor);
+    // the add door's ghost buttons are controls, not map content
     var boxes = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
-      return mine.indexOf(e) < 0;   // the add door's ghosts are controls too
+      return mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
     }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    // the panel stays inside the map card's columns and below its top edge:
+    // never over the sidebar nav or the banners above the card
+    var card = (anchor.closest(".cmap") || body).getBoundingClientRect();
+    var minX = Math.max(pad, card.left), minY = Math.max(pad, card.top);
     function fit(c) {
-      return [Math.max(pad, Math.min(c[0], W - b.width - pad)),
-              Math.max(pad, Math.min(c[1], H - b.height - pad))];
+      return [Math.max(minX, Math.min(c[0], W - b.width - pad)),
+              Math.max(minY, Math.min(c[1], H - b.height - pad))];
     }
     function cover(c) {
       var n = 0;
@@ -153,16 +180,27 @@ window.ComponentMap = (function () {
     var beside = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
                   [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
                   [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
-    var m = (anchor.closest(".cmap") || body).getBoundingClientRect();
-    var docks = [[cx, m.bottom + gap], [cx, m.top - b.height - gap],
-                 [m.right + gap, cy], [m.left - b.width - gap, cy]];
-    for (var y = pad; y + b.height <= H - pad; y += 40) {
-      docks.push([pad, y]); docks.push([W - b.width - pad, y]);
-    }
+    var m = card;
+    var docks = [[cx, m.bottom + gap], [m.right + gap, cy]];
+    // nearest first: a dock spot closer to the anchor wins
+    var ys0 = [];
+    for (var y = minY; y + b.height <= H - pad; y += 40) ys0.push(y);
+    ys0.sort(function (u, v) { return Math.abs(u - cy) - Math.abs(v - cy); });
+    ys0.forEach(function (yv) { docks.push([W - b.width - pad, yv]); });
     var pick = null, docked = false, i, c;
     for (i = 0; i < beside.length && !pick; i++) { c = fit(beside[i]); if (!cover(c)) pick = c; }
     if (!pick) {
       docked = true;
+      // the nearest free spot around the anchor (a grid search, nearest first)
+      var near = [], step = 24, ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
+      for (var gx = minX; gx + b.width <= W - pad; gx += step) {
+        for (var gy = minY; gy + b.height <= H - pad; gy += step) {
+          var ddx = Math.max(gx - ax, 0, ax - (gx + b.width)), ddy = Math.max(gy - ay, 0, ay - (gy + b.height));
+          near.push([ddx * ddx + ddy * ddy, gx, gy]);
+        }
+      }
+      near.sort(function (u, v) { return u[0] - v[0]; });
+      for (i = 0; i < near.length && !pick; i++) { c = [near[i][1], near[i][2]]; if (!cover(c)) pick = c; }
       for (i = 0; i < docks.length && !pick; i++) { c = fit(docks[i]); if (!cover(c)) pick = c; }
     }
     if (!pick) {
@@ -171,14 +209,18 @@ window.ComponentMap = (function () {
       var vis = boxes.filter(function (r) { return r.right > 0 && r.left < W && r.bottom > 0 && r.top < H; });
       var minL = W, maxR = 0;
       vis.forEach(function (r) { minL = Math.min(minL, r.left); maxR = Math.max(maxR, r.right); });
-      var strips = [[pad, minL - gap - pad], [maxR + gap, W - maxR - gap - pad]];
-      strips.sort(function (u, v) { return v[1] - u[1]; });
+      // inside the card: the side nearer the anchor first, the right side on a tie
+      var right = Math.min(W - pad, card.right - pad);
+      var strips = [[maxR + gap, right - maxR - gap], [Math.max(minX, card.left + pad), minL - gap - Math.max(minX, card.left + pad)]];
+      var dR = Math.abs(maxR - (a.left + a.right) / 2), dL = Math.abs((a.left + a.right) / 2 - minL);
+      if (dL < dR) strips.reverse();
       for (i = 0; i < strips.length && !pick; i++) {
         if (strips[i][1] < 200) continue;
         pop.style.maxWidth = Math.floor(strips[i][1]) + "px";
         b = pop.getBoundingClientRect();
         var ys = [cy];
-        for (var yy = pad; yy + b.height <= H - pad; yy += 40) ys.push(yy);
+        for (var yy = minY; yy + b.height <= H - pad; yy += 40) ys.push(yy);
+        ys.sort(function (u, v) { return Math.abs(u - cy) - Math.abs(v - cy); });
         for (var k = 0; k < ys.length && !pick; k++) {
           c = fit([strips[i][0], ys[k]]);
           if (!cover(c)) pick = c;
@@ -387,8 +429,12 @@ window.ComponentMap = (function () {
           root0.dispatchEvent(new CustomEvent("cm:pick", { bubbles: true, detail: { kind: ent.kind, id: ent.id } }));
         } else if (window.pulsePickOwner) window.pulsePickOwner(ent.id);
       } else if (window.htmx) {
-        htmx.ajax("GET", (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id),
-                  { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
+        var tok = _pageChip();
+        var url = (ent.kind === "pair" ? "/pair/" : "/qubit/") + encodeURIComponent(ent.id) +
+                  (tok ? "?expect_chip=" + encodeURIComponent(tok) : "");
+        var done = htmx.ajax("GET", url, { source: "#inspector-pane", target: "#inspector-pane", swap: "innerHTML" });
+        if (done && done.then) done.then(function () { _focusInspector(el); });
+        else _focusInspector(el);
       }
     });
     if ((window.htmx || _isPick()) && (!pickHint || ent.kind === "pair")) pop.appendChild(hint);
@@ -396,11 +442,11 @@ window.ComponentMap = (function () {
     _popEnt = key;
     _popAnchor = el;
     // the anchor stays lit while its panel is open (a docked panel sits away from it)
-    if (_hoverMode(_active && _active.root) && _active.api) {
+    if (_hoverFor(_active && _active.root, ent.kind) && _active.api) {
       _active.api.highlightEntity(ent.kind, ent.id, true);
       _popHl = { kind: ent.kind, id: ent.id };
     }
-    pop._place = _hoverMode(_active && _active.root) ? function (a) { _placeAvoiding(pop, a); } : null;
+    pop._place = _hoverFor(_active && _active.root, ent.kind) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;
   }
@@ -440,7 +486,10 @@ window.ComponentMap = (function () {
     }, function (el) {
       var ent = _parseCm(el);
       return _showPopup(ent, _rowFor(ent.kind, ent.id), el);
-    }, { hover: _hoverMode(_active && _active.root) });
+    }, { hover: function (anchor) {
+      var e = _parseCm(anchor);
+      return !!e && _hoverFor(_active && _active.root, e.kind);
+    } });
     body.addEventListener("click", function (ev) {
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)

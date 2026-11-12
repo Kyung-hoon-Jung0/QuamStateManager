@@ -173,3 +173,16 @@ def test_two_flux_gate_labels_follow_the_gate_roles_not_moving_qubit(tmp_path):
     assert r["cz_a amp (q1)"][1] == "0.310000"      # flux_pulse_qubit -> control
     assert r["cz_a amp (q2)"][1] == "0.170000"      # flux_pulse_target -> target
     assert "Moving" not in r
+
+
+def test_the_inspector_refuses_a_window_rendered_for_another_chip(tmp_path):
+    _write(tmp_path)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(tmp_path)}, headers={"Origin": "http://localhost"})
+    tok = c.get("/api/agent/chip").get_json()["chip_token"]
+    for url in ("/pair/q1-2", "/qubit/q1"):
+        stale = c.get(url + "?expect_chip=not-this-chip", headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "data-chip-changed" in stale and "chip changed in another window" in stale
+        fine = c.get(url + "?expect_chip=" + tok, headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "data-chip-changed" not in fine

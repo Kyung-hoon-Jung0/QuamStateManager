@@ -1399,6 +1399,27 @@ window.TopoGraph = (function () {
       panel.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
       panel.addEventListener('mouseleave', function () { if (panel._hoverMode) scheduleHoverClose(); });
       panel.addEventListener('focusin', function () { clearTimeout(detailTimer); });
+      // Keyboard: the panel is appended to <body>, so a plain Tab past its last
+      // control would leave the map. Tab from the last control goes to the next
+      // map entity after the one that opened it; Shift+Tab from the first goes
+      // back to that entity.
+      panel.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab' || !panel._hoverMode || !detailAnchor) return;
+        var items = Array.prototype.filter.call(panel.querySelectorAll(
+          'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+          function (el) { return !el.disabled; });
+        if (!items.length) return;
+        var host = panel._hoverHost, b = host && host._detailBinding;
+        var from = detailAnchor;
+        if (e.shiftKey && document.activeElement === items[0]) {
+          e.preventDefault(); from.focus({preventScroll: true});
+        } else if (!e.shiftKey && document.activeElement === items[items.length - 1]) {
+          e.preventDefault();
+          var all = b ? Array.prototype.slice.call(host.querySelectorAll(b.selector)) : [];
+          var next = all[all.indexOf(from) + 1] || from;
+          next.focus({preventScroll: true});
+        }
+      });
       panel.addEventListener('focusout', function (e) {
         if (panel._hoverMode && !(e.relatedTarget && panel.contains(e.relatedTarget))) scheduleHoverClose();
       });
@@ -1406,7 +1427,8 @@ window.TopoGraph = (function () {
     positionDetail(panel, anchor);
   }
   function bindDetails(host, selector, label, open, opts) {
-    host._detailBinding = {selector: selector, label: label, open: open, hover: !!(opts && opts.hover)};
+    // opts.hover: true, or a function(anchor) deciding per entity
+    host._detailBinding = {selector: selector, label: label, open: open, hover: (opts && opts.hover) || false};
     host.querySelectorAll(selector).forEach(function (anchor) {
       anchor.setAttribute('aria-label', label(anchor));
       Array.prototype.forEach.call(anchor.children, function (child) {
@@ -1421,7 +1443,7 @@ window.TopoGraph = (function () {
       var binding = host._detailBinding;
       var anchor = e.target.closest && e.target.closest(binding.selector);
       if (!anchor || !host.contains(anchor)) return;
-      var hover = binding.hover;
+      var hover = typeof binding.hover === 'function' ? !!binding.hover(anchor) : !!binding.hover;
       function offer() {
         (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); }, host);
       }
