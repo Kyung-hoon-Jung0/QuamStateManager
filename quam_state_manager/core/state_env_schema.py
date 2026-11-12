@@ -275,9 +275,18 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
 
     modules = load_pulse_modules(instance_path)
     cached_classes: dict = {}
-    if instance_path is not None and not force:
+    # every class this env's entry has ever covered: a re-probe (stale entry,
+    # forced, another chip open) re-checks them all, so opening chip B never
+    # drops chip A's classes from the shared per-env entry
+    prior_names: list[str] = []
+    if instance_path is not None:
         with _cache_lock:
             entry = _load_cache(instance_path).get(python_path)
+        if isinstance(entry, dict):
+            prior_names = [c for c in (entry.get("classes") or {}) if isinstance(c, str)]
+    else:
+        entry = None
+    if instance_path is not None and not force:
         if (isinstance(entry, dict) and entry.get("versions") == versions
                 and entry.get("format") == SCHEMA_FORMAT
                 and _entry_fresh(entry, modules)):
@@ -306,7 +315,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
         return result
 
     # miss → probe the UNION so the per-env entry grows monotonically
-    union = list(dict.fromkeys([*cached_classes.keys(), *requested]))[:_CLASS_CAP]
+    union = list(dict.fromkeys([*requested, *cached_classes.keys(), *prior_names]))[:_CLASS_CAP]
 
     import json
     outcome = _blank_outcome()
@@ -344,7 +353,13 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     if instance_path is not None:                       # cache only successes
         with _cache_lock:
             cache = _load_cache(instance_path)
-            cache.pop(python_path, None)                # re-insert last = most recent
+            old = cache.pop(python_path, None)          # re-insert last = most recent
+            # MERGE: a class this probe did not cover keeps its schema when it
+            # was probed under the same env versions (never dropped by a probe
+            # made for another chip); a fresh answer always wins
+            if (isinstance(old, dict) and old.get("versions") == versions
+                    and old.get("format") == SCHEMA_FORMAT):
+                classes = {**(old.get("classes") or {}), **classes}
             cache[python_path] = {
                 "format": SCHEMA_FORMAT,
                 "versions": versions,

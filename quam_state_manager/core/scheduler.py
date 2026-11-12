@@ -1181,6 +1181,9 @@ def _new_item(info: dict, targets: list | None) -> dict:
         # an agent run carries the env the run's gate resolved (the project's chosen env when the
         # runner settings name none); None = the settings' env_python (a human's item)
         "env_python": info.get("env_python") or None,
+        # decisions D-1/Q-2 (agents ver180): the calibrations folder the request's
+        # resolver chose for this chip's project; None = the legacy setting
+        "calibrations_folder": info.get("calibrations_folder") or None,
         # docs/174: an agent run also carries a baseline dir; run_experiment writes
         # a serializer-normalized pre-node snapshot there so SM's diff cancels
         # class-default phantom writes. None for human items (no scratch/diff).
@@ -1713,6 +1716,26 @@ def _prepare_content(item: dict, settings: dict) -> str:
     return src
 
 
+# decisions Q-2 (agents ver180): the folder the request path RESOLVED for the last
+# start of this instance (stamped by the route; never written into the shared
+# settings). The orphan temp-copy sweeps use it and fall back to the legacy
+# setting -- they only ever delete SM's own marked temp copies.
+_STAMPED_CAL: dict[str, str] = {}
+
+
+def stamp_calibrations_folder(instance_path, folder: str | None) -> None:
+    if folder:
+        _STAMPED_CAL[str(instance_path)] = str(folder)
+
+
+def sweep_folders(instance_path, settings: dict) -> list[str]:
+    out: list[str] = []
+    for f in (_STAMPED_CAL.get(str(instance_path)), settings.get("calibrations_folder")):
+        if f and f not in out:
+            out.append(str(f))
+    return out
+
+
 def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
     """Spawn + wait for one item. Returns {status, error, returncode, log_file}."""
     log_path = _logs_dir(instance_path) / f"{item['id']}.log"
@@ -1723,6 +1746,9 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
                 "returncode": None, "log_file": log_str}
     if item.get("env_python"):
         settings = {**settings, "env_python": item["env_python"]}
+    _cal = item.get("calibrations_folder") or _STAMPED_CAL.get(str(instance_path))
+    if _cal:
+        settings = {**settings, "calibrations_folder": _cal}
     if not settings.get("env_python"):
         return {"status": "failed", "error": "no env selected",
                 "returncode": None, "log_file": log_str}
@@ -2119,8 +2145,7 @@ def start(instance_path) -> dict:
         settings = load_settings(instance_path)
         # Sweep any orphan _sched_*.py temp copies left by a crashed/interrupted
         # run before we start spawning (docs/40 §1 hazard).
-        folder = settings.get("calibrations_folder")
-        if folder:
+        for folder in sweep_folders(instance_path, settings):
             node_inject.cleanup_orphan_temp_copies(folder)
         state = load_queue(instance_path)
         # Clear a stale 'running' item from a prior crashed run before starting.
@@ -2176,8 +2201,7 @@ def cancel(instance_path) -> dict:
         # it mid-run, and a leftover marked copy can be picked up by qualibrate's
         # own scanner as a real node. Best-effort.
         try:
-            folder = load_settings(instance_path).get("calibrations_folder")
-            if folder:
+            for folder in sweep_folders(instance_path, load_settings(instance_path)):
                 node_inject.cleanup_orphan_temp_copies(folder)
         except Exception:  # noqa: BLE001
             logger.warning("scheduler temp-copy sweep on cancel failed", exc_info=True)

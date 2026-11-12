@@ -590,7 +590,7 @@ window.AgentPanel = (function () {
     if (s.status === "skipped" && s.halted) out += ' <span class="muted ag-step-gate" title="' + esc(s.error || "") + '">' + esc(s.halted) + " halted</span>";
     return out;
   }
-  var REFUSAL_TEXT = { no_env: "no Python environment is chosen for this chip", no_calibrations_folder: "no calibrations folder is set",
+  var REFUSAL_TEXT = { no_env: "no Python environment is chosen for this chip", no_calibrations_folder: "no calibrations folder: open a QUAlibrate project whose config sets calibration_library.folder, or choose one in Agent → Setup",
                        human_active: "a person ran a node on this chip a moment ago", node_not_found: "no such node in the calibrations folder",
                        awaiting_approval: "waiting for a person's approval", stale_live: "the live files moved outside SM",
                        run_active: "another run is in progress", queue_not_empty: "the run queue holds other rows",

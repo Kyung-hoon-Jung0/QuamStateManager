@@ -129,14 +129,15 @@ def test_a_missing_object_says_so():
     assert err and err.startswith("length:")
 
 
-def test_a_multi_level_reference_is_refused_with_the_reason():
-    """One ``../`` step, as SM's pointer index follows (docs/248; no real
-    chip writes ``#../../``): the reader and the index that refreshes rows on
-    a write must never disagree, so the form is named, not half-followed."""
+def test_a_multi_level_reference_climbs_one_level_per_step():
+    """Each ``../`` climbs one level from the object holding the field, as
+    quam reads it (real quam 0.6 chips write ``#../../gate_fidelity/...``);
+    the reader and the pointer index share ``pointer_resolver.relative_parts``."""
     m = _chip()
     r = read(m, _op("deep"), "#../../../../q2/amp")
+    assert (r.ok, r.value) == (True, 0.33)
+    r = read(m, _op("deep"), "#../../../../../../q2/amp")
     assert not r.ok and r.how == "unknown"
-    assert "one ../ step" in r.reason
     r = read(m, _op("deep"), "#../sq/amplitude")
     assert (r.ok, r.value) == (True, 0.1)
 

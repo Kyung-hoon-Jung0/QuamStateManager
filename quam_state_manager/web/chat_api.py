@@ -93,8 +93,7 @@ def _cwd() -> str:
     """The agent works in the calibrations folder the Experiment Runner was
     told about (machine-wide, docs/80), else in the empty home."""
     try:
-        from quam_state_manager.core import scheduler
-        folder = scheduler.load_settings(_r()._sched_inst()).get("calibrations_folder") or ""
+        folder = _r()._calibrations_folder()
     except Exception:  # noqa: BLE001
         return _home()
     folder = str(folder).strip()

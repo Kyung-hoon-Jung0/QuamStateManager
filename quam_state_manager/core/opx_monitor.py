@@ -81,27 +81,163 @@ def timestamp(value):
         return None
 
 
-def idle_state(q, first_seen, now, minutes=120):
-    """Conservative activity judgement, including queued jobs and unknown jobs."""
+# Job status strings as the qm SDK reports them (job_api JOB_STATUS_MAPPING):
+# "In queue", "Running", "Processing", "Done", "Canceled", "Error". The SDK also
+# maps its own UNKNOWN state to "Error", so "Error" alone never proves a job ended.
+FINISHED_JOB_STATUSES = ('done', 'completed', 'canceled', 'cancelled', 'failed')
+UNPROVEN_JOB_STATUSES = ('error',)
+
+
+def job_activity(status) -> str:
+    """'finished', 'unknown' (Error: finished or unknown to the server) or 'active'.
+    Any status string not known to be finished counts as active, never idle."""
+    s = str(status or '').strip().lower()
+    if s in FINISHED_JOB_STATUSES:
+        return 'finished'
+    if s in UNPROVEN_JOB_STATUSES:
+        return 'unknown'
+    return 'active'
+
+
+# The server's get_jobs() lists at most this many jobs; a list this long is a cap, not a total.
+JOB_LIST_CAP = 1000
+
+
+def _answer_jobs(answer):
+    ans = answer or {}
+    return list(ans.get('jobs') or []) + [j for q in ans.get('open_qms') or [] for j in q.get('jobs') or []]
+
+
+def server_times(answer):
+    """Every job timestamp in an answer (the OPX's own clock), as POSIX seconds."""
+    return [t for j in _answer_jobs(answer)
+            for t in (timestamp(j.get('created_at')), timestamp(j.get('updated_at'))) if t is not None]
+
+
+#: A clock measurement older than this (monotonic seconds) is not used.
+SKEW_MAX_AGE_S = 600.0
+#: Wall-clock and monotonic ages of one measurement may differ by this much
+#: before the PC clock is taken to have stepped (the measurement is dropped).
+SKEW_STEP_TOLERANCE_S = 2.0
+
+
+def measure_skew(t0, t1, date_header):
+    """(this PC's clock - the OPX clock) from one HTTP ``Date`` header.
+
+    The server stamped the header at a PC time between ``t0`` (request sent)
+    and ``t1`` (answer received), with a whole-second value (RFC 9110 5.6.7,
+    IMF-fixdate). Returns ``{'skew_s', 'uncertainty_s'}`` or None when the
+    header is absent or unreadable. uncertainty = round trip + 1 s granularity."""
+    if not date_header or t0 is None or t1 is None or t1 < t0:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        d = parsedate_to_datetime(str(date_header))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if d is None or d.tzinfo is None:
+        return None
+    server = d.timestamp()
+    return {'skew_s': (t0 + t1) / 2.0 - (server + 0.5), 'uncertainty_s': (t1 - t0) + 1.0}
+
+
+#: SM's watch of a QM is continuous only while successful reads of the open-QM
+#: list are never further apart than this many poll intervals.
+WATCH_GAP_INTERVALS = 3
+
+
+def job_list_capped(jobs):
+    """True when a job list is as long as the server ever returns: newer jobs
+    may be missing from it, whichever ones the server chose to keep."""
+    return isinstance(jobs, list) and len(jobs) >= JOB_LIST_CAP
+
+
+CAPPED_BASIS = (f'job list capped at {JOB_LIST_CAP} by the server; SM cannot see new jobs, '
+                'so activity cannot be judged (never idle)')
+
+
+def stale_idle_state(state, age_text):
+    """The same verdict worded for a page whose last poll failed: never idle."""
+    basis = state['basis'].replace(' while SM watched continuously', ' while SM watched')
+    return {'idle': False, 'last_activity': None,
+            'basis': f'watch interrupted; as of the last good read ({age_text}): {basis}'}
+
+
+def job_signature(q):
+    """What "no job change" is judged on: every (job id, status) of a QM, sorted.
+    None when the QM's job list is unknown or at the server cap (a capped
+    list may not show new jobs, so "no change" cannot be judged on it)."""
     jobs = q.get('jobs')
-    if jobs is None or any(str(j.get('status', '')).lower() not in
-                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed') for j in jobs):
+    if jobs is None or job_list_capped(jobs):
+        return None
+    return sorted([str(j.get('id')), str(j.get('status'))] for j in jobs)
+
+
+def skew_consistent(skew, answer, now):
+    """False when the offset maps any job time of ``answer`` into this PC's
+    future beyond its uncertainty (then the admin clock is not the job clock)."""
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
+        return False
+    limit = now + abs(skew.get('uncertainty_s') or 0.0)
+    return all(t + skew['skew_s'] <= limit for t in server_times(answer))
+
+
+def skew_text(skew, now=None):
+    """The admin clock offset in words: what was measured, never an OPX claim."""
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
+        return ''
+    unc = int(math.ceil(abs(skew.get('uncertainty_s') or 0.0)))
+    n = int(round(skew['skew_s']))
+    if n == 0:
+        text = f'admin server clock matches this PC within ±{unc} s'
+    else:
+        text = (f"admin server clock, measured {abs(n)} ± {unc} s "
+                f"{'behind' if n > 0 else 'ahead of'} this PC")
+    if not skew.get('latest'):
+        age = (now - skew['at']) if now is not None and skew.get('at') is not None else None
+        text = text.replace('measured', 'last measured', 1) if n else text
+        text += (f' ({age / 60:.0f} min ago; newer admin reads gave no clock)' if age is not None
+                 else ' (newer admin reads gave no clock)')
+    elif skew.get('at') is not None:
+        text += ' at ' + datetime.fromtimestamp(skew['at']).astimezone().strftime('%H:%M:%S')
+    return text
+
+
+def idle_state(q, watched, minutes=120):
+    """A QM is idle only when SM itself watched it continuously (monotonic
+    time, successful reads, no gap) for ``minutes`` with no job change and
+    every job finished. No clock of another machine is ever compared.
+
+    ``watched`` is ``{'watched_s', 'continuous', 'sig'}`` from the monitor, or None."""
+    jobs = q.get('jobs')
+    if job_list_capped(jobs):
+        return {'idle': False, 'basis': CAPPED_BASIS, 'last_activity': None}
+    if jobs is None or any(job_activity(j.get('status')) != 'finished' for j in jobs):
         statuses = sorted({str(j.get('status') or 'unknown') for j in jobs or []
-                           if str(j.get('status', '')).lower() not in
-                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed')})
+                           if job_activity(j.get('status')) != 'finished'})
         return {'idle': False, 'basis': 'Job status: ' + ', '.join(statuses or ['unknown']), 'last_activity': None}
-    remembered = first_seen if isinstance(first_seen, dict) else {'first_seen': first_seen}
-    times = [(timestamp(remembered.get('first_seen')), 'SM first saw it'),
-             (timestamp(remembered.get('job_activity')), 'job created/last status update observed by SM')]
-    times += [(timestamp(j.get(k)), 'job created/last status update') for j in jobs
-              for k in ('created_at', 'updated_at')]
-    valid = [(t, b) for t, b in times if t is not None]
-    if not valid or any(timestamp(j.get('created_at')) is None or timestamp(j.get('updated_at')) is None for j in jobs):
-        return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
-    t, basis = max(valid)
-    age = max(0, now - t)
-    return {'idle': age > minutes * 60, 'last_activity': t,
-            'basis': f'no job for {int(age // 60)} min, since {basis}'}
+    if not isinstance(watched, dict):
+        return {'idle': False, 'basis': 'SM has not watched this QM yet; idle not established', 'last_activity': None}
+    if not watched.get('continuous'):
+        return {'idle': False, 'basis': "SM's watch was interrupted; idle not established", 'last_activity': None}
+    if watched.get('sig') != job_signature(q):
+        return {'idle': False, 'basis': 'its jobs changed since SM last read them; idle not established',
+                'last_activity': None}
+    w = max(0.0, float(watched.get('watched_s') or 0.0))
+    if w < minutes * 60:
+        return {'idle': False, 'last_activity': None,
+                'basis': f'no job change for {int(w // 60)} min while SM watched; idle after {minutes:g} min'}
+    return {'idle': True, 'last_activity': None,
+            'basis': f'no job change for {int(w // 60)} min while SM watched continuously'}
+
+
+def value_vs_limit(value, limit):
+    """Format a reading so that a breach is visible: never '70 (above limit 70)'."""
+    for digits in (1, 2, 3, 4, 6):
+        v = ('%.*f' % (digits, value)).rstrip('0').rstrip('.')
+        if float(v) != float(limit) or float(value) == float(limit):
+            return v
+    return repr(float(value))
 
 
 # ---------------------------------------------------------------- settings
@@ -511,6 +647,7 @@ def temperature_rows(controller: dict) -> list[dict]:
                      'mapping_verified': verified,
                      'empty': slot is not None and verified and str(slot) not in {str(k) for k in controller.get('fems') or {}} and v == NO_READING,
                      'type': (controller.get('fems') or {}).get(str(slot), (controller.get('fems') or {}).get(slot, '')) if verified else '',
+                     'reads_zero': v is not None and v == NO_READING,
                      "value": None if v is None or v == NO_READING else v})
     # FEM slots in slot order first, then the other sensors by name
     return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
@@ -558,7 +695,9 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
             k = f"temp:{r['key']}"
             out.setdefault(k, {"key": k, "label": f"{r['label']} temperature", "unit": "°C",
                                "direction": "above"})
-        for m in (c.get("metrics") or {}):
+        for m, mv in (c.get("metrics") or {}).items():
+            if mv is None:
+                continue  # no reading: nothing to set a limit on
             k = f"metric:{m}"
             low = m.endswith("_available_gb")
             out.setdefault(k, {"key": k, "label": m.replace("_", " "),
@@ -567,12 +706,21 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
     return sorted(out.values(), key=lambda r: r["key"])
 
 
+def metric_known(value) -> bool:
+    """A controller metric is a proto3 double without presence: 0.0 is also
+    what an unfilled field reads, so only a non-zero value is a known reading."""
+    return value is not None and value != 0.0
+
+
+METRIC_ZERO_TEXT = '0 (SDK cannot tell 0 from unset)'
+
+
 def evaluate_alarms(answer: Optional[dict], thresholds: dict) -> list[dict]:
     fired = []
     meta = {m["key"]: m for m in offered_metrics(answer)}
     for c in (answer or {}).get("controllers") or []:
         values = {f"temp:{r['key']}": r["value"] for r in temperature_rows(c)}
-        values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items()})
+        values.update({f"metric:{k}": v for k, v in (c.get("metrics") or {}).items() if metric_known(v)})
         for k, v in values.items():
             lim = temperature_limit(k[5:], thresholds) if k.startswith('temp:') else thresholds.get(k)
             if lim in (None, "") or v is None:
@@ -692,7 +840,7 @@ def connection_hint(host):
 
 
 def call_failure(name, error):
-    if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'unreachable', 'failed to connect', 'timeout')):
+    if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'connection refused', 'unreachable', 'failed to connect', 'timeout', 'statuscode.unavailable')):
         return f'Server unreachable while reading {name}: {error}'
     if call_unreadable(error):
         return f'Unreadable reply for {name}: {error}'
@@ -742,11 +890,15 @@ def failure_summary(errors):
                 'No data call answered.')
 
 
-def read_admin(url, cluster_name=None):
-    """Only the two documented read routes, no redirects or connection headers."""
+def read_admin(url, cluster_name=None, clock=time.time):
+    """Only the two documented read routes, no redirects or connection headers.
+
+    Each answer's HTTP ``Date`` header measures the OPX clock against this PC
+    (``measure_skew``); the tightest measurement is returned as ``clock``."""
     if not url:
         return {'known': False, 'not_applicable': True, 'reason': 'Admin n/a; no Admin URL configured.'}
     admin_host = None
+    measured = []
     try:
         parsed = urlsplit(url)
         admin_host = parsed.hostname
@@ -755,7 +907,13 @@ def read_admin(url, cluster_name=None):
         opener = urllib.request.build_opener(_NoRedirect)
         answers = []
         for path in ('/api/v2/clusters', '/api/v2/devices/detailed'):
+            t0 = clock()
             with opener.open(urllib.request.Request(url.rstrip('/') + path, method='GET'), timeout=2) as response:
+                t1 = clock()
+                headers = getattr(response, 'headers', None)
+                m = measure_skew(t0, t1, headers.get('Date') if headers is not None else None)
+                if m is not None:
+                    measured.append(m)
                 raw = response.read(1_000_001)
                 if len(raw) > 1_000_000:
                     raise ValueError('admin response too large')
@@ -764,6 +922,7 @@ def read_admin(url, cluster_name=None):
                     raise ValueError('unexpected admin response shape')
                 answers.append(answer)
         clusters, devices = answers
+        clock_out = {'clock': min(measured, key=lambda m: m['uncertainty_s'])} if measured else {}
         selected = [c for c in clusters if c.get('name') == cluster_name] if cluster_name and cluster_name != 'any' else []
         automatic = not selected
         if not selected:
@@ -771,7 +930,7 @@ def read_admin(url, cluster_name=None):
         if len(selected) != 1 and len(clusters) == 1:
             selected = clusters
         if len(selected) != 1:
-            return {'known': False, 'reason': 'Choose an admin cluster: ' + ', '.join(str(c.get('name', 'unnamed')) for c in clusters)}
+            return {'known': False, 'reason': 'Choose an admin cluster: ' + ', '.join(str(c.get('name', 'unnamed')) for c in clusters), **clock_out}
         c = selected[0]
         ds = [d for d in devices if d.get('clusterName') == c.get('name')]
         members = c.get('devices')
@@ -782,9 +941,12 @@ def read_admin(url, cluster_name=None):
                     and all(d.get('status') for d in ds)
                     and {d.get('hostname') for d in members} == {d.get('hostname') for d in ds})
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
-                'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
+                'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster', **clock_out}
     except Exception as exc:
-        return {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        if measured:
+            out['clock'] = min(measured, key=lambda m: m['uncertainty_s'])
+        return out
 
 
 def local_time(value):
@@ -796,6 +958,15 @@ def local_time(value):
     hours, minutes = divmod(abs(offset), 60)
     zone = f"UTC{'+' if offset >= 0 else '-'}{hours}" + (f':{minutes:02d}' if minutes else '')
     return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone})'
+
+
+def opx_time(value):
+    """An OPX-clock timestamp for people: digits only, no PC zone label (the
+    caller says "OPX clock"); the instant is shown in this PC's zone."""
+    t = timestamp(value)
+    if t is None:
+        return 'not reported'
+    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S')
 
 
 def words(value):
@@ -850,8 +1021,19 @@ def health(answer, admin, thresholds, state):
     for key in thresholds:
         if key.startswith('temp:') and key != 'temp:all_fems' and key[5:] not in values:
             unknown.append('a configured temperature input is unavailable')
-    if thresholds.get('temp:all_fems') is not None and not any(k.startswith('FEM ') for k in values):
-        unknown.append('configured FEM readings unavailable')
+    all_metrics = {k: v for c in ans.get('controllers') or [] for k, v in (c.get('metrics') or {}).items()}
+    metric_values = {k: v for k, v in all_metrics.items() if metric_known(v)}
+    for key, lim in thresholds.items():
+        if key.startswith('metric:') and lim not in (None, '') and key[7:] not in metric_values:
+            unknown.append('a configured metric reads 0, which the SDK cannot tell from unset'
+                           if all_metrics.get(key[7:]) == 0.0 else 'a configured metric input is unavailable')
+    if thresholds.get('temp:all_fems') is not None:
+        if not any(k.startswith('FEM ') for k in values):
+            unknown.append('configured FEM readings unavailable')
+        # Every populated slot must have been read; one silent slot is unwatched.
+        for c in ans.get('controllers') or []:
+            if (c.get('fems') or any(_fem_slot(k) is not None for k in (c.get('temperatures') or {})))                     and not temperature_mapping_verified(c):
+                unknown.append(f"{c.get('name') or 'a controller'}: a populated FEM slot has no temperature reading")
     known = known or any(temperature_limit(k, thresholds) is not None for k in values)
     if evaluate_alarms(ans, thresholds):
         bad.append('temperature above limit' if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)) else 'metric outside limit')
@@ -863,7 +1045,7 @@ def health(answer, admin, thresholds, state):
     if unknown or not known:
         return {'color': 'grey', 'reason': unknown[0] if unknown else 'health not assessed: no admin URL / no limits set', 'details': '; '.join(unknown)}
     count = len(ans.get('open_qms') or [])
-    return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
+    return {'color': 'amber' if count else 'green', 'reason': f"{count} open QM{'' if count == 1 else 's'} claim{'s' if count == 1 else ''} resources" if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
 def verdict(answer, health_state, idle_states, state=None, age_s=None):
     if state == 'unconfigured':
@@ -884,7 +1066,7 @@ def _occupancy_verdict(answer, health_state, idle_states):
     if qms is None:
         return {'label': 'PROBLEM', 'reason': 'Open QM list unknown'}
     active = [(q, j) for q in qms for j in q.get('jobs') or []
-              if str(j.get('status', '')).lower() in ('running', 'pending', 'queued')]
+              if job_activity(j.get('status')) == 'active']
     if active:
         q, j = active[0]
         active_qms = {q['id'] for q, _ in active}
@@ -911,8 +1093,12 @@ class Monitor:
     injectable so tests drive it with fake answers."""
 
     def __init__(self, instance, worker_factory: Optional[Callable] = None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, mono: Optional[Callable[[], float]] = None):
         self.instance = Path(instance)
+        # an injected wall clock (tests) also drives the monotonic one
+        self.mono = mono or (time.monotonic if clock is time.time else clock)
+        self.clock_measure: Optional[dict] = None
+        self._watch: dict = {}
         self.worker_factory = worker_factory or (lambda py, t: EnvWorker(py, t))
         self.clock = clock
         self._lock = threading.Lock()
@@ -975,6 +1161,8 @@ class Monitor:
             self.section_times.clear()
             self.section_errors.clear()
             self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
+            self.clock_measure = None
+            self._watch = {}
             self.last_ok_at = None
             self.last_error = None
             self.last_try_at = None
@@ -1053,7 +1241,14 @@ class Monitor:
                 return
             ans = r.get("result") or {}
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
-            self.admin = read_admin(s.get('admin_url'), selected_cluster)
+            self.admin = read_admin(s.get('admin_url'), selected_cluster, clock=self.clock)
+            if isinstance(self.admin.get('clock'), dict):
+                self.clock_measure = {**self.admin['clock'], 'at': self.clock(), 'at_mono': self.mono(),
+                                      'latest': True}
+            elif self.clock_measure:
+                self.clock_measure['latest'] = False  # this admin read gave no clock
+            if ans.get('open_qms') is not None:
+                self._observe_watch(ans['open_qms'])
             fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
             self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
                                    for field, call in fields.items() if ans.get(field) is None and (field != 'jobs' or ans.get('jobs_requested', True))}
@@ -1084,6 +1279,34 @@ class Monitor:
             except OSError as exc:
                 logger.warning("opx monitor: history write failed: %s", exc)
         self.alarms = evaluate_alarms(ans, s.get("thresholds") or {}) if s.get("alarms_armed") else []
+
+    def _watch_gap_s(self):
+        return WATCH_GAP_INTERVALS * max(self.poll_interval(), self.last_poll_interval or 0)
+
+    def _observe_watch(self, open_qms):
+        """A successful open-QM read: extend each QM's continuous watch, or
+        restart it on a job change or after a gap. Monotonic time only."""
+        now = self.mono()
+        gap = self._watch_gap_s()
+        seen = {}
+        for q in open_qms:
+            qid = str(q.get('id'))
+            sig = job_signature(q)
+            w = self._watch.get(qid)
+            if w is None or sig is None or w['sig'] != sig or now - w['last_mono'] > gap or now < w['last_mono']:
+                w = {'since_mono': now, 'sig': sig}
+            w['last_mono'] = now
+            seen[qid] = w
+        self._watch = seen
+
+    def watch_info(self) -> dict:
+        """Per open QM: how long SM has watched it with no job change, and
+        whether that watch is still continuous (no read gap since)."""
+        now = self.mono()
+        gap = self._watch_gap_s()
+        return {qid: {'watched_s': w['last_mono'] - w['since_mono'], 'sig': w['sig'],
+                      'continuous': 0 <= now - w['last_mono'] <= gap and w['sig'] is not None}
+                for qid, w in self._watch.items()}
 
     def want(self, tab=None, job_limit=100):
         """A monitor page asked: keep polling for a few intervals."""
@@ -1165,8 +1388,7 @@ class Monitor:
                 w = self._ensure_worker(s)
                 r = (w.request("close_qm", qm_id=qm_id) if not every
                      else w.request("close_idle" if idle else "close_qms", qm_ids=names,
-                                    **({'first_seen': {r['qm_id']: r for r in self.history().table()
-                                                      if not r.get('job_id')},
+                                    **({'watched': self.watch_info(),
                                         'idle_minutes': s['idle_minutes']} if idle else {})))
             except WorkerError as exc:
                 r = {"ok": False, "error": str(exc)}
@@ -1212,17 +1434,42 @@ class Monitor:
                        jobs_reason=NOT_QM_SERVER, live=False, live_reason=NOT_QM_SERVER)
             return out
         if "list_open_qms" in refused:
-            out.update(close_reason=f"The server refused listing QMs: {refused['list_open_qms']}")
+            out.update(close_reason=call_failure('list_open_qms', refused['list_open_qms']))
         elif self.last_error:
             out.update(close_reason=f"Closing is disabled until a fresh answer ({failure_headline(self.last_error)}).")
         elif ans.get("open_qms") is None or self.status_state_unfresh():
             out.update(close_reason="No answer from the server yet.")
         else:
             out["close"] = True
-        out['live_reason'] = ('The server refused get_devices: ' + refused['get_devices']) if 'get_devices' in refused else 'No device data has answered yet.'
-        out['jobs_reason'] = call_failure('list_open_qms', refused['list_open_qms']) if 'list_open_qms' in refused else 'No job data has answered yet.'
         out['live'] = ans.get('controllers') is not None
         out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
+        # a reason only for what is NOT available; an answered section has none
+        out['live_reason'] = '' if out['live'] else (
+            call_failure('get_devices', refused['get_devices']) if 'get_devices' in refused
+            else 'No device data has answered yet.')
+        out['jobs_reason'] = '' if out['jobs'] else (
+            call_failure('list_open_qms', refused['list_open_qms']) if 'list_open_qms' in refused
+            else 'No job data has answered yet.')
+        return out
+
+    def clock_skew(self) -> Optional[dict]:
+        """The measured (PC - OPX) clock offset, or None when unknown.
+
+        Only a measurement from the admin server's ``Date`` header counts; it
+        is dropped once older than ``SKEW_MAX_AGE_S``, when no admin URL is
+        set, or when the PC clock stepped since (wall age != monotonic age)."""
+        m = self.clock_measure
+        if not m or not self.settings().get('admin_url'):
+            return None
+        mono_age = self.mono() - m['at_mono']
+        wall_age = self.clock() - m['at']
+        if mono_age < 0 or mono_age > SKEW_MAX_AGE_S or abs(wall_age - mono_age) > SKEW_STEP_TOLERANCE_S:
+            return None
+        out = {'skew_s': m['skew_s'], 'uncertainty_s': m['uncertainty_s'], 'at': m['at'],
+               'latest': bool(m.get('latest', True))}
+        # used for display and run links only; dropped when it puts a job in the PC's future
+        if not skew_consistent(out, self.last_answer, self.clock()):
+            return None
         return out
 
     def status_state_unfresh(self):
@@ -1244,10 +1491,13 @@ class Monitor:
             state = "error"
             sentence = self.last_error.rstrip('.') + '.'
             if age is not None:
-                sentence += f" The values below are from {age:.0f} s ago."
-        elif age is None or self.viewer_check_pending:
+                sentence += f" The last good read was {age:.0f} s ago."
+        elif age is None:
             state = "starting"
             sentence = "Checking the server..."
+        elif self.viewer_check_pending:
+            state = "stale"
+            sentence = f"Checking the server again; the last good read was {age:.0f} s ago."
         elif age > STALE_INTERVALS * self.poll_interval():
             state = "stale"
             sentence = f"No fresh answer for {age:.0f} s; the values below are from then."

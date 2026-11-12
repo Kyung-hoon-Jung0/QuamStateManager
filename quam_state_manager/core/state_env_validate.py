@@ -342,11 +342,123 @@ def judge(value: Any, ts: dict) -> tuple[bool, str, str]:
         # non-pointer is the crash class
         if isinstance(value, dict):
             return True, "", ""
+        if isinstance(value, str) and _declares_str(ts):
+            return True, "", ""                 # declared Union[Component, str]
         return False, "type_mismatch", (
             f"expected a {ts.get('class') or 'component'} dict, got "
             f"{_typename(value)} {value!r}")
 
     return True, "", ""
+
+
+def operation_name_problem(state: dict, path: str, name: str,
+                           reads: list | None = None) -> str | None:
+    """Why a pulse NAME stored on a Union[Pulse, str] field will not resolve.
+
+    quam resolves the name at use time with ``Qubit.get_pulse``: exactly one
+    operation of that name over the qubit's ``channels`` (attributes read with
+    follow_references=True, so a pointer channel counts as its target). The
+    rule is ``additions._ops_under``, shared with Generate additions.
+
+    Owner, as quam looks it up:
+      * a qubit macro (``qubits.<q>...``): that qubit;
+      * a pair macro's ``flux_pulse_qubit``: the pair's MOVING qubit
+        (two_qubit_gates.py: ``qubit_control if qubit_pair.moving_qubit ==
+        "control" else qubit_target``; the class default is "control").
+    Any other place is not judged (None). *reads*, when given, receives every
+    path the verdict depended on (a memo keyed on one section must not keep
+    a verdict that read another)."""
+    from quam_state_manager.core.additions import _ops_under, _qubit_of
+    segs = path.split(".")
+    if len(segs) >= 2 and segs[0] == "qubits":
+        owner = ["qubits", segs[1]]
+    elif len(segs) >= 2 and segs[0] == "qubit_pairs" and segs[-1] == "flux_pulse_qubit":
+        pair = (state.get("qubit_pairs") or {}).get(segs[1])
+        if not isinstance(pair, dict):
+            return None
+        role = "control" if pair.get("moving_qubit", "control") == "control" else "target"
+        q = _qubit_of(state, ["qubit_pairs", segs[1], "qubit_" + role],
+                      pair.get("qubit_" + role))
+        if not q:
+            return None
+        owner = ["qubits", q]
+    else:
+        return None
+    if reads is not None:
+        reads.append(".".join(owner))
+    found = _ops_under(state, owner, reads)
+    hits = found.get(name, [])
+    where = ".".join(owner)
+    if not hits:
+        return f"plays an operation named {name!r}, which does not exist on {where}"
+    if len(hits) > 1:
+        return (f"{name!r} is not unique on {where} ({', '.join(hits)}); "
+                "quam's get_pulse refuses an ambiguous name")
+    return None
+
+
+def is_pulse_class(manifest: dict | None, class_str: str | None) -> bool:
+    """True when *class_str* is quam's ``Pulse`` or a subclass of it, read
+    from the probe's class entries (the class itself, its canonical name and
+    its ``bases`` MRO list). A str on a Union[Component, str] field is an
+    OPERATION NAME only for a Pulse arm; any other component's str is not
+    judged here."""
+    if not class_str:
+        return False
+    names = {class_str}
+    entry = _class_entry(manifest or {}, class_str) if manifest else None
+    if isinstance(entry, dict):
+        names.add(str(entry.get("canonical") or ""))
+        names.update(str(b) for b in entry.get("bases") or [])
+    return any(n.rsplit(".", 1)[-1] == "Pulse" for n in names if n)
+
+
+def _declares_str(ts: dict) -> bool:
+    """True when the declared annotation allows a str (Union[Component, str]).
+
+    New probes set ``str_ok``; a cached manifest from an older probe still
+    carries the annotation text in ``raw``, read here so a warm cache agrees.
+    """
+    if ts.get("str_ok"):
+        return True
+    raw = str(ts.get("raw") or "").replace(" ", "")
+    arms = _union_arms(raw)
+    return len(arms) > 1 and any(a in ("str", "<class'str'>") for a in arms)
+
+
+_UNION_HEADS = ("typing.Union[", "Union[", "typing.Optional[", "Optional[")
+
+
+def _split_top(s: str, sep: str) -> list[str]:
+    """Split *s* at *sep* outside any brackets."""
+    out, depth, cur = [], 0, ""
+    for ch in s:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == sep and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return out
+
+
+def _union_arms(s: str) -> list[str]:
+    """The flat arms of a Union / Optional annotation text, nesting in any
+    order (``Optional[Union[Pulse, str]]``, ``Union[Optional[str], Pulse]``,
+    ``Pulse | str | None``); a non-union annotation is one arm. Optional's
+    implicit None is an arm too."""
+    if "|" in s and len(_split_top(s, "|")) > 1:
+        return [a for part in _split_top(s, "|") for a in _union_arms(part)]
+    for head in _UNION_HEADS:
+        if s.startswith(head) and s.endswith("]"):
+            parts = _split_top(s[len(head):-1], ",")
+            arms = [a for part in parts for a in _union_arms(part)]
+            return arms + (["None"] if "Optional[" in head else [])
+    return [s]
 
 
 def _typename(value: Any) -> str:
@@ -392,6 +504,8 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
     # walk's insertion order (a recorded chunk writes only to its own record)
     cur: list = [types]
     parts: list = []
+    chunk_prefix: list = [None]       # dot path of the chunk being recorded
+    chunk_foreign: list = [False]     # it read a path outside itself
 
     def emit(kind: str, severity: str, cls: str | None, field: str | None,
              path: str, detail: str, fix_hint: str = "", code: str = "") -> None:
@@ -448,13 +562,19 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             return
         rec_events[0], rec_types[0] = [], {}
         before = checked_nodes[0]
+        chunk_prefix[0], chunk_foreign[0] = child_path, False
         try:
             walk(v, child_path, child_ctx, 2)
-            _chunks.put(k1, k2, (rec_events[0], rec_types[0],
-                                 checked_nodes[0] - before))
+            # a verdict that read ANOTHER section (a pair's name check reads
+            # the moving qubit) is not covered by this chunk's token: do not
+            # memoize it, so it is recomputed on every analysis
+            if not chunk_foreign[0]:
+                _chunks.put(k1, k2, (rec_events[0], rec_types[0],
+                                     checked_nodes[0] - before))
             parts.append(cur[0]); parts.append(rec_types[0]); cur[0] = {}
         finally:
             rec_events[0], rec_types[0] = None, None
+            chunk_prefix[0] = None
 
     def walk(node: Any, path: str, ctx, depth: int = 0) -> None:
         if isinstance(node, dict):
@@ -462,8 +582,11 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             if isinstance(cls_str, str) and cls_str:
                 entry = _class_entry(manifest, cls_str)
                 if entry is None:
-                    emit("unknown_class", "error", cls_str, None, path,
-                        f"{cls_str} was not probed in the selected env (harvest drift)",
+                    # absent from the env's schema = NOT CHECKED YET (e.g. the
+                    # cache was last probed for another chip), never a verdict
+                    # that the class is unknown or cannot be imported
+                    emit("unknown_class", "warning", cls_str, None, path,
+                        f"{cls_str} has not been checked in the selected env yet",
                         "re-probe the environment")
                 elif not entry.get("importable"):
                     emit("unimportable_class", "error", cls_str, None, path,
@@ -525,6 +648,20 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             if isinstance(v, dict) or is_pointer_str(v):
                 continue                       # containers recurse; pointers pass
             ok, code, msg = judge(v, ts)
+            if (ok and isinstance(v, str) and ts.get("base") == "component"
+                    and is_pulse_class(manifest, ts.get("class"))):
+                reads: list = []
+                why = operation_name_problem(state, kpath, v, reads)
+                pre = chunk_prefix[0]
+                if pre is not None and any(
+                        r != pre and not r.startswith(pre + ".") for r in reads):
+                    chunk_foreign[0] = True
+                if why:
+                    emit("type_mismatch", "warning", cls_str, k, kpath,
+                         f"{leaf_cls}.{k}: {why}",
+                         "name an operation that exists on that channel, or "
+                         "point at the pulse", code="missing_operation")
+                continue
             if not ok:
                 sev = _judge_severity(code, v, ts)
                 emit("type_mismatch", sev, cls_str, k, kpath,

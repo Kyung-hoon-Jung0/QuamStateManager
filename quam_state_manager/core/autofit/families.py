@@ -79,7 +79,11 @@ def resolve_alias_path(path: str, value_of: Callable[[str], Any] | None
                 # the alias's own container, mirroring pointer_resolver's frame
                 base, rest = prefix[:-1], node[3:].split("/")
             elif node.startswith("#../"):
-                base, rest = prefix[:-2], node[4:].split("/")
+                from quam_state_manager.core.pointer_resolver import relative_parts
+                base, rest = relative_parts(node, tuple(prefix))
+                if base is None:
+                    return None
+                base, rest = list(base), list(rest)
             else:
                 return None
             if not rest or any(not s for s in rest):

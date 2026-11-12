@@ -8,7 +8,7 @@
  * Bundle 'agent_setup' (base.html). */
 window.AgentSetup = (function () {
   "use strict";
-  var S = { data: null, root: null, previews: {}, context: null, answers: {} };
+  var S = { data: null, root: null, previews: {}, context: null, answers: {}, evidence: {}, review: {}, popupDone: {}, popupQueue: [] };
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
   // English only, and for the same reason as in agent.js: this value goes
@@ -67,7 +67,8 @@ window.AgentSetup = (function () {
     rows.forEach(function (r, k) {
       if (!keep[k]) { gap = true; return; }
       if (gap) { html.push('<div class="as-gap">…</div>'); gap = false; }
-      html.push('<div class="as-line as-' + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "eq") + '">' + esc(r[0]) + " " + esc(r[1]) + "</div>");
+      // review r4 P3-10: an unchanged line shows no "=" marker (a lone "=" read as a stray character)
+      html.push('<div class="as-line as-' + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "eq") + '">' + esc(r[0] === "=" ? " " : r[0]) + " " + esc(r[1]) + "</div>");
     });
     return '<pre class="as-diff">' + html.join("") + "</pre>";
   }
@@ -84,6 +85,9 @@ window.AgentSetup = (function () {
   // the hardware switch's words follow the SAVED value (render and dryRun share them)
   function dryText(on) { return on ? "Dry run — the agent's runs are simulated, nothing touches the OPX" : "Live — the agent's runs use the OPX"; }
   var MARKS = { claude: "CC", codex: "CX" };
+  // review r3 P2-8: words a first-time user can read for the context files
+  var CTX_WORDS = { "claude:local": "Claude Code (CLAUDE.local.md, not shared)", "claude:shared": "Claude Code (CLAUDE.md)",
+                    "codex:shared": "Codex (AGENTS.md)", "codex:local": "Codex (AGENTS.local.md)" };
   function chk(ok, label, title) {
     return '<li class="asx-chk ' + (ok ? "asx-ok" : "asx-no") + '"' + (title ? ' title="' + esc(title) + '"' : "") + ">"
       + (ok ? "✓" : "○") + " " + esc(label) + "</li>";
@@ -113,7 +117,7 @@ window.AgentSetup = (function () {
     }
     var tested = ((d.record || {}).tested || {})[k];
     var acts = connected
-      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test</button>'
+      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>"
         + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
       : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
     var warn = "";
@@ -134,6 +138,177 @@ window.AgentSetup = (function () {
       + '<div id="as-prev-' + k + '" class="asx-prev"></div></div>';
   }
 
+  /* ---- Step 2 rows (decisions D-1..D-11) ---- */
+  /* ---- Confirm by agent (D-11..D-15, Q-6: it absorbs the old Test) ---- */
+  var ROW_LABEL = { chip_name: "Chip (sm_status)", n_qubits: "Qubits", cwd: "Working folder", config_file: "Config file",
+                    state_path_in_config: "state_path in the config", calibrations_folder_in_config: "calibration_library.folder in the config",
+                    storage_in_config: "storage.location in the config", node_files: "Node files it sees", run_folders: "Run folders it sees" };
+  function short(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    if (Array.isArray(v)) return v.length ? v.slice(0, 5).join(", ") + (v.length > 5 ? " … (" + v.length + ")" : "") : "—";
+    return String(v);
+  }
+  function agentCell(row) {
+    var n = row.of ? " (" + row.matched + " of the " + row.of + " it listed are SM's)" : "";
+    if (row.agent === "echo") return row.key === "cwd" ? "same as SM — SM starts the agent in this folder, so this proves nothing new"
+      : "same as SM — the agent read it through SM, so this proves nothing new";
+    if (row.agent === "agrees") return "agrees" + n;
+    if (row.agent === "disagrees" && row.of) return "disagrees" + n;
+    if (row.agent === "disagrees") return "disagrees — agent saw: " + short(row.agent_value);
+    if (row.agent === "unverified") return "unverified — its citation did not check out" + (row.agent_value ? " (said: " + short(row.agent_value) + ")" : "");
+    if (row.agent === "reported") return "reported: " + short(row.agent_value);
+    return "not reported";
+  }
+  function staleLine(rec, P) {
+    if (!rec || rec.current) return "";
+    var when = rec.at ? new Date(rec.at * 1000).toLocaleTimeString() : "";
+    return '<p class="asx-small ag-err" data-stale="1">Result for project ' + esc((rec.key || {}).project || "none") + " · " + esc(when) + " — run again</p>";
+  }
+  function askFail(rec) {
+    var who = NAMES[rec.backend] || rec.backend;
+    var why = String(rec.error || rec.parse_error || "no answer");
+    // D-14: the CLI's own words; SM does not classify a failure
+    var login = /not logged in|\/login|please log ?in/i.test(why);
+    return '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer" + (rec.elapsed_s ? " (" + esc(rec.elapsed_s) + " s)" : "")
+      + ': <span class="ag-err">' + esc(why) + "</span></p>"
+      + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(rec.backend) + "</code> once and log in there; then press Confirm again. SM never sees your login.</p>" : "")
+      + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+  }
+  function confirmResult(rec, P) {
+    if (!rec) return "";
+    var who = NAMES[rec.backend] || rec.backend;
+    if (rec.failed || !rec.done || rec.parse_error) {
+      if (rec.done && !rec.failed && rec.parse_error) {
+        return staleLine(rec, P) + '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> answered in " + esc(rec.elapsed_s) + " s, but the answer was not in the expected form.</p>"
+          + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+      }
+      return staleLine(rec, P) + askFail(rec);
+    }
+    // review r2 P2-5: a result for another project is never painted green
+    var stale = rec.current === false;
+    // review r3 P2-6: the frame follows the worst row
+    var bad = (rec.rows || []).some(function (r) { return r.agent === "disagrees" || r.agent === "unverified"; });
+    // review r5 P2: green only when EVERY row is an independent agreement; otherwise neutral
+    // review r6 P3: echo rows neither block nor count; every other row must agree, and at least one does
+    var counted = (rec.rows || []).filter(function (r) { return r.agent !== "echo"; });
+    var allAgree = counted.length > 0 && counted.every(function (r) { return r.agent === "agrees"; });
+    var rows = (rec.rows || []).map(function (r) {
+      var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
+      var cls = r.agent === "agrees" && !stale ? "asx-ok" : "asx-no";
+      return '<li class="asx-chk ' + cls + '" data-row="' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">' + esc(ROW_LABEL[r.key] || r.key)
+        + ': <span class="muted">SM: ' + esc(mine) + "</span> · " + esc(agentCell(r)) + "</li>";
+    }).join("");
+    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : bad ? " asx-result-bad" : allAgree ? " asx-result-ok" : "") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
+      + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
+      + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
+      + '<ul class="asx-checks">' + rows + "</ul>"
+      + (rec.evidence_dropped ? '<p class="asx-small muted">' + esc(rec.evidence_dropped) + " extra citations were dropped</p>" : "")
+      + (rec.notes ? '<p class="asx-small muted">agent notes: ' + esc(rec.notes) + "</p>" : "") + "</div>";
+  }
+  function confirmHtml(d) {
+    var clis = d.clis || {};
+    var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
+    var running = (S.asks || {}).running;
+    var btns = ks.map(function (k) {
+      var off = !connectedK(d, k);
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-confirm="' + k + '"' + (running || off ? " disabled" : "")
+        + (off ? ' title="' + esc(NAMES[k]) + ' is not connected (step 1)"' : "")
+        + ' onclick="AgentSetup.confirmBy(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>";
+    }).join("");
+    return '<div class="asx-row" id="as-confirm"><span class="asx-k">Second opinion</span><span class="asx-v asx-grow">'
+      + (ks.length ? btns : '<span class="muted">no agent CLI on this PC</span>') + "</span></div>"
+      + '<p class="asx-small muted asx-indent">The agent reports, read-only, what it sees from its own seat; SM compares it with the rows above and checks every citation. Only when pressed.</p>'
+      + '<div id="as-test">' + (S.confirmMsg || confirmResult((S.asks || {}).confirm, d.paths || {})) + "</div>";
+  }
+  // D-11 / review r2 P2-7: an ask is offered only for an agent that is connected
+  function connectedK(d, k) {
+    var c = (k === "claude" ? (d || {}).claude : (d || {}).codex) || {};
+    return !!c.mcp;
+  }
+  function confirmBy(k) {
+    if (S.asks && S.asks.running) return;
+    S.asks = S.asks || {};
+    S.asks.running = "confirm";
+    S.confirmMsg = '<p class="muted">asking ' + esc(NAMES[k] || k) + " to report what it sees (read-only, up to 2 min)…</p>";
+    render();
+    api("POST", "/api/agent/setup/confirm", { backend: k }).then(function (r) {
+      S.asks.running = null;
+      S.confirmMsg = null;
+      var b = r.body || {};
+      if (r.status !== 200) S.confirmMsg = '<p class="ag-err" role="alert">' + esc(b.error || ("failed (HTTP " + r.status + ")")) + "</p>";
+      else S.asks.confirm = b;
+      load();
+    });
+  }
+  function fileName(P, which) {
+    var f = (P.files || {})[which] || {};
+    return f.path || (which === "root" ? "~/.qualibrate/config.toml" : "projects/<project>/config.toml");
+  }
+  // D-2: the chip names the file a value came from
+  function prov(entry, P) {
+    if (!entry) return "";
+    if (entry.source === "own") return "from project " + P.project + " · " + fileName(P, "project");
+    if (entry.source === "inherited") return "global config · " + fileName(P, "root");
+    if (entry.source === "default") return "qualibrate default";
+    if (entry.source === "empty") return "set empty in " + fileName(P, "project");
+    return "";
+  }
+  function dataProv(P) {
+    return { project: P.storage ? prov(P.storage, P) : "the project's storage", chip: "the chip's extras.data_folder",
+             dataset: "the first dataset folder" }[P.data_source] || "";
+  }
+  function pathRow(id, label, value, provText, extra) {
+    return '<div class="asx-row" id="' + id + '"><span class="asx-k">' + esc(label) + '</span><span class="asx-v asx-grow">'
+      + (value ? '<code class="asx-path">' + esc(value) + "</code>" : '<span class="muted">not found</span>') + (extra || "") + "</span>"
+      + (provText ? '<span class="asx-tag">' + esc(provText) + "</span>" : "") + "</div>";
+  }
+  var CAL_KEY = "[qualibrate.calibration_library] folder";
+  var REASONS = { unset: "is not set", empty: "is set to an empty value", no_config: "cannot be read (no config file)",
+                  unmapped: "cannot be mapped to a folder on this PC", missing: "names a folder that does not exist",
+                  override_missing: "your override names a folder that does not exist" };
+  function calibRow(P, d) {
+    var c = P.calibrations || (d.calibrations_folder ? { folder: d.calibrations_folder, source: "legacy" } : {});
+    var pick = '<input type="hidden" id="as-calroot" value="" onchange="AgentSetup.calibPicked(this)">'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Choose…</button>';
+    var head = '<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">';
+    var legacyDoor = c.legacy_ok ? '<p class="asx-small">previous SM setting: <code class="asx-path">' + esc(c.legacy) + '</code> '
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.useLegacy()">Use it</button></p>' : "";
+    if (!P.project) {
+      // D-5: no project -- an honest line, the legacy value in force if any, and the browse door
+      return head + (c.folder ? '<code class="asx-path">' + esc(c.folder) + "</code>" : '<span class="muted">not set</span>') + pick + "</span>"
+        + (c.folder ? '<span class="asx-tag">previous SM setting</span>' + state("ok", "In use") : state("todo", "Not set")) + "</div>"
+        + '<p class="asx-small asx-indent" id="as-calib-noproj">No QUAlibrate project open — <a href="/?landing=1">open one on the landing page</a>.</p>'
+        + '<span id="as-calib-msg"></span>';
+    }
+    if (c.folder) {
+      var ov = c.source === "override";
+      var e = c.entry || {};
+      var t = ov ? "your override (SM setting)" : prov(e, P);
+      return head + '<code class="asx-path">' + esc(c.folder) + "</code>" + pick
+        + (ov ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.useProject()">Use project value</button>' : "") + "</span>"
+        + '<span class="asx-tag" id="as-calib-prov">' + esc(t) + "</span>" + state("ok", "In use") + "</div>"
+        + (!ov && e.overridden ? '<p class="asx-small muted asx-indent">global config ' + esc(e.overridden) + " — overridden by project</p>" : "")
+        + (ov ? '<p class="asx-small muted asx-indent">A graph refuses to run when the env\'s own calibration library differs from this folder.</p>' : "")
+        + '<span id="as-calib-msg"></span>';
+    }
+    // D-6: amber -- the raw value, the missing key and its file, two explicit doors, nothing picked
+    var e2 = c.entry || {};
+    var file = e2.source === "inherited" ? fileName(P, "root") : fileName(P, "project");
+    return head + '<span class="ag-err" id="as-calib-amber">' + esc(CAL_KEY) + " " + esc(REASONS[c.reason] || "is not usable")
+      + (e2.raw ? ": <code>" + esc(e2.raw) + "</code>" : "") + " — in " + esc(file) + "</span>" + pick + "</span>"
+      + state("todo", "Not set") + "</div>" + legacyDoor + '<span id="as-calib-msg"></span>';
+  }
+  function checksHtml(P) {
+    var cs = P.checks || [];
+    if (!cs.length) return "";
+    return '<div class="asx-row" id="as-checks"><span class="asx-k">SM checks</span><ul class="asx-checks">'
+      + cs.map(function (c) { return '<li class="asx-chk ' + (c.ok ? "asx-ok" : "asx-no") + '" data-check="' + esc(c.key) + '" title="' + esc(c.detail || "") + '">'
+        + (c.ok === true ? "✓" : c.ok === false ? "✗" : "○") + " " + esc(c.label)
+        // a passing check keeps its detail on hover; a failing one says it on the line
+        + (c.ok === true ? "" : ' <span class="muted">' + esc(c.detail || "") + "</span>") + "</li>"; }).join("")
+      + "</ul></div>";
+  }
+
   function render() {
     var d = S.data, root = S.root;
     if (!d || !root) return;
@@ -147,7 +322,7 @@ window.AgentSetup = (function () {
     var ctxDone = d.context && Object.keys(d.context).length > 0 && !ctxUnread.length;
     var testedOk = !!(tested.claude && tested.claude.ok) || !!(tested.codex && tested.codex.ok);
     var envDone = !!d.calibrations_folder && !!j.configured;
-    var steps = [connectedAny, envDone, !!ctxDone, testedOk];
+    var steps = [connectedAny, envDone, !!ctxDone];
     var nDone = steps.filter(Boolean).length;
     var parts = [];
     parts.push('<div class="asx-progress"><span class="asx-bar"><span style="width:' + Math.round(100 * nDone / steps.length) + '%"></span></span>'
@@ -161,42 +336,37 @@ window.AgentSetup = (function () {
       + (anyCli ? "" : '<p class="ag-err">Neither CLI was found on this PC.</p>')
       + '<div class="asx-tiles">' + tile("claude", d) + tile("codex", d) + "</div>", { tag: "optional" }));
 
-    // 2. where runs live
-    var env = [];
-    // R4-AG-1 (UD-5 a): the folder is set HERE, through the same settings door
-    // the hidden Experiment Runner uses (POST /scheduler/settings) -- the
-    // journal row's shape, plus the shared folder browser
-    env.push('<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">'
-      + '<input id="as-calroot" type="text" value="' + esc(d.calibrations_folder || "") + '" placeholder="the folder that holds the calibration nodes">'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Browse…</button>'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.calib()">' + (d.calibrations_folder ? "Save" : "Use this folder") + "</button></span>"
-      + (d.calibrations_folder ? state("ok", "Saved") : state("todo", "Not set")) + '<span id="as-calib-msg"></span></div>');
+    // 2. where runs live -- decisions D-1..D-11: the values come from the open
+    // QUAlibrate project through SM's one resolver, each with where it came
+    // from; an override is chosen in the folder browser only
+    var P = d.paths || {};
+    var env = [calibRow(P, d)];
+    env.push(pathRow("as-storage", "Data folder", P.data_folder, dataProv(P), null));
+    if (P.project) env.push(pathRow("as-statepath", "State path", P.state_path && P.state_path.native, prov(P.state_path, P), null));
     env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
       + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
       + '<span class="asx-dry-text">' + dryText(dry) + "</span></label></span>"
+      + '<span class="asx-tag" title="the Runner\'s global_simulate, one value for this machine">SM setting, this machine</span>'
       + '<span id="as-dryrun-msg"></span></div>');
+    var jVal = j.configured ? j.root : (j.suggested || "");
     env.push('<div class="asx-row" id="as-journal"><span class="asx-k">Journal folder</span><span class="asx-v asx-grow">'
-      + '<input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="a folder beside the lab\'s data">'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseJournal()">Browse…</button>'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Save" : "Use this folder") + "</button></span>"
+      + '<code class="asx-path" id="as-jpath">' + esc(jVal || "not chosen") + "</code>"
+      + '<input type="hidden" id="as-jroot" value="' + esc(jVal) + '" onchange="AgentSetup.journal()">'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseJournal()">Choose…</button>'
+      + (!j.configured && j.suggested ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">Use this folder</button>' : "")
+      + "</span>" + '<span class="asx-tag">' + esc(j.configured ? "your choice (SM setting)" : "beside the data folder") + "</span>"
       + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
       + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
+    env.push(checksHtml(P));
+    env.push(confirmHtml(d));
     parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
 
     // 3. lab context
     parts.push(card("context", 3, "Tell the agent about this device", !!ctxDone,
       (ctxUnread.length ? '<p class="ag-err asx-small">Codex never reads ' + esc(ctxUnread.join(", ")) + ": write the notes again to move them into AGENTS.md.</p>" : "")
-      + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(esc).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
+      + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(function (k) { return esc(CTX_WORDS[k] || k); }).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
       + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "outline asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
         : '<p class="muted asx-small">Set the calibrations folder first (step 2).</p>') + "</div>"));
-
-    // 4. test
-    var testable = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
-    // the card is #as-test-sec: #as-test is the result box inside it (one id, one element)
-    parts.push(card("test-sec", 4, "Check it works", testedOk,
-      '<p class="asx-lead">Asks the agent one read-only question through SM and shows how long it took and what it answered.</p>'
-      + '<div class="asx-tile-acts">' + testable.map(function (k) { return '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test ' + esc(NAMES[k]) + "</button>"; }).join("") + "</div>"
-      + '<div id="as-test">' + (S.lastTest || "") + "</div>"));
 
     // limits -- the PERSON's (docs/252): SM refuses an agent's request to change them
     if (d.chip && S.limits && S.limits.limits) {
@@ -237,8 +407,15 @@ window.AgentSetup = (function () {
       S.limits = r.status === 200 && r.body && r.body.limits ? r.body : null;
     });
   }
+  function loadAsks() {
+    return api("GET", "/api/agent/setup/asks").then(function (r) {
+      if (r.status === 200 && r.body) S.asks = r.body;
+    });
+  }
   function load() {
     var lims = loadLimits();
+    var asks = loadAsks();
+    lims = Promise.all([lims, asks]);
     return api("GET", "/api/agent/setup").then(function (r) {
       if (r.status === 200) { S.data = r.body; return lims.then(render, render); }
       // Say so in the page rather than leaving it empty.
@@ -321,29 +498,37 @@ window.AgentSetup = (function () {
       load();
     });
   }
-  // D-122: an empty field starts the browser at the other folder, else the
-  // open chip's folder -- never at the drive list
-  function browseFrom(id, otherId) {
+  // D-4: a folder is chosen in the folder browser (its own path field takes a
+  // typed or pasted path); the browser starts near the other folder or the chip
+  function browseFrom(id, near) {
     if (!window.openFolderBrowser) return;
-    var el = document.getElementById(id), other = document.getElementById(otherId);
     var chip = document.getElementById("load-path-input");
-    var empty = !(el && el.value.trim());
-    var near = (other && other.value.trim()) || (chip && chip.value.trim());
+    var start = near || (chip && chip.value.trim());
     window.openFolderBrowser(id, "", { autoSubmit: false });
-    if (empty && near && window.navigateBrowser) window.navigateBrowser(near);
+    if (start && window.navigateBrowser) window.navigateBrowser(start);
   }
-  function browseCalib() { browseFrom("as-calroot", "as-jroot"); }
-  function browseJournal() { browseFrom("as-jroot", "as-calroot"); }
-  function calib() {
-    var v = ((document.getElementById("as-calroot") || {}).value || "").trim();
+  function _p() { return (S.data && S.data.paths) || {}; }
+  function browseCalib() { var P = _p(); browseFrom("as-calroot", (P.calibrations || {}).folder || P.data_folder); }
+  function browseJournal() { var P = _p(); browseFrom("as-jroot", (S.data && S.data.journal && S.data.journal.root) || P.data_folder); }
+  function calMsg(r) {
     var msg = document.getElementById("as-calib-msg");
-    if (!v) { if (msg) msg.innerHTML = '<p class="ag-err">Enter or browse to a folder first.</p>'; return; }
-    api("POST", "/scheduler/settings", { calibrations_folder: v }).then(function (r) {
-      var b = r.body || {};
-      if (r.status === 200 && b.ok !== false) { load(); return; }
-      if (msg) msg.innerHTML = '<p class="ag-err">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
-    });
+    var b = r.body || {};
+    if (r.status === 200 && b.ok !== false) { load(); return; }
+    if (msg) msg.innerHTML = '<p class="ag-err" role="alert">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
   }
+  function calibPicked(el) {
+    var v = String((el && el.value) || "").trim();
+    if (!v) return;
+    var P = _p();
+    if (!P.project) {
+      // no project scoped: the legacy machine setting is the only place a folder can live (D-5)
+      api("POST", "/scheduler/settings", { calibrations_folder: v }).then(calMsg);
+      return;
+    }
+    api("POST", "/api/agent/setup/calibrations", { folder: v }).then(calMsg);
+  }
+  function useProject() { api("POST", "/api/agent/setup/calibrations", { clear: true }).then(calMsg); }
+  function useLegacy() { api("POST", "/api/agent/setup/calibrations", { use_legacy: true }).then(calMsg); }
   function dryRun(el) {
     // POST the one key; the reply is shown inline. On a refusal (409 while a
     // queue runs, or anything else) the server's error is shown VERBATIM and
@@ -422,33 +607,231 @@ window.AgentSetup = (function () {
     // path that could not be used.
     try { p.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
   }
+  /* ---- Step 3: the questions, Investigate by agent, the popup (D-16..D-21) ---- */
+  var NS = "unknown";
+  function optLabel(o) { return o === NS ? "not sure" : o; }
+  // review r6 P2: which never-touch list SM enforces right now, and where it comes from
+  function ntInForce() {
+    var f = (S.context || {}).never_touch_in_force || {};
+    var parts = (f.sources || []).map(function (s) {
+      // review r7 P3: a file's list applies to every project and chip that uses this calibrations folder
+      return (s.from === "context_block" ? "the lab-context file " + s.file + " (applies to every project and chip using this calibrations folder)"
+        : "this SM's record (this project and chip only)") + ": " + s.tokens.join(", ");
+    });
+    return '<p class="asx-small muted" id="as-nt-force">' + (parts.length ? "In force now — " + esc(parts.join(" · "))
+      : "In force now: nothing is listed.") + "</p>";
+  }
+  function ctrlHtml(q) {
+    var v = S.answers[q.id];
+    if (q.kind === "choice") {
+      // review r3 P2-5: "(detected)" only for what SM detected; nothing chosen = an empty choice
+      return '<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">'
+        + '<option value=""' + (v === undefined || v === null || v === "" ? " selected" : "") + ">— not answered —</option>"
+        + q.options.map(function (o) {
+        return '<option value="' + esc(o) + '"' + (o === v ? " selected" : "") + ">" + esc(optLabel(o)) + (q.detected !== null && q.detected !== undefined && o === q.detected ? " (SM detected)" : "") + "</option>";
+      }).join("") + "</select>"
+        + (q.id === "flux_source" && q.detected_counts ? ' <span class="muted asx-small" data-counts="1">SM sees: ' + esc(Object.keys(q.detected_counts).map(function (k) { return k + " ×" + q.detected_counts[k]; }).join(", ") || "no bias lines") + "</span>" : "");
+    }
+    if (q.kind === "list") {
+      // free text with the chip's own names offered; any text is accepted (D-20)
+      var list = Array.isArray(v) ? v.join(", ") : String(v || "");
+      return '<input type="text" data-q="' + esc(q.id) + '" list="as-nt-tokens" value="' + esc(list) + '" placeholder="e.g. q3, twpa, qubits.q1.xy" onchange="AgentSetup.answer(this)">'
+        + ntInForce()
+        + '<datalist id="as-nt-tokens">' + (q.tokens || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join("") + "</datalist>";
+    }
+    return '<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";
+  }
+  // decision D-25: SM states only what it checked mechanically -- never whether the
+  // citation SUPPORTS the answer. Facts are neutral (no green, no red cross).
+  function evHtml(e) {
+    var fact;
+    if (e.kind === "state_key") {
+      fact = e.why === "the state key does not exist" ? "SM: state key " + (e.ref || "") + " does not exist"
+        : "SM read state key " + (e.ref || "") + " = " + (e.sm_value === undefined ? "?" : JSON.stringify(e.sm_value))
+          + (e.ok ? " (matches the quote)" : " (the agent quoted something else)");
+    } else if (e.kind === "run") {
+      fact = e.ok ? "SM: run folder exists" : "SM: " + (e.why || "not checked");
+    } else if (!e.ref) {
+      fact = "SM did not check: a path outside the folders an agent may cite";
+    } else {
+      fact = e.ok ? "SM found the quote at " + e.ref + (e.line ? ":" + e.line : "")
+        : "SM: " + (e.why || "not checked") + " (" + e.ref + (e.line ? ":" + e.line : "") + ")";
+    }
+    return '<li class="asx-chk" data-fact="' + (e.ok ? "found" : "not-found") + '">' + esc(fact)
+      + (e.quote ? ' — <code>' + esc(e.quote) + "</code>" : "") + "</li>";
+  }
+  // questions a chip's files rarely answer; say so instead of listing a failure
+  var PERSON_KNOWS = { purcell: 1, squid: 1, data_read: 1, never_touch: 1, notes: 1 };
+  function proposalHtml(a, q) {
+    var st = S.review[a.id] || "proposed";
+    var badge = { proposed: "ui-badge--accent", accepted: "ui-badge--ok", edited: "ui-badge--ok", rejected: "ui-badge--danger" }[st] || "";
+    // review r2 P2-8: once the person answered, the card shows THEIR value
+    var shown = (st === "edited" || st === "accepted") && S.answers[a.id] !== undefined ? S.answers[a.id] : a.value;
+    var val = shown === null || shown === undefined ? "no answer (not sure)" : (Array.isArray(shown) ? shown.join(", ") || "nothing listed" : optLabel(String(shown)));
+    var by = st === "edited" ? "your answer" : "agent says: " + (a.agent_confidence || "unsure");
+    var leans = a.value === null && a.agent_leans !== null && a.agent_leans !== undefined && st === "proposed"
+      ? ' <span class="muted">(leans towards ' + esc(optLabel(String(a.agent_leans))) + ")</span>" : "";
+    return '<article class="ui-item" data-prop="' + esc(a.id) + '" data-status="' + esc(st) + '"><div class="ui-item-head"><span class="ui-badge ' + badge + '">' + esc(st) + "</span>"
+      + '<span class="ui-item-title">' + esc((q && q.question) || a.id) + "</span></div>"
+      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · <span data-agent-says>" + esc(by) + "</span>" + leans + "</p>"
+      + (a.evidence && a.evidence.length ? '<p class="ui-note">What SM checked (the person judges whether it supports the answer):</p><ul class="asx-checks">' + a.evidence.map(evHtml).join("") + "</ul>"
+        : '<p class="ui-note">' + (PERSON_KNOWS[a.id] ? "Usually only you know this." : "No citation to check.") + "</p>")
+      + '<div class="ui-item-foot">'
+      + (a.value !== null && a.value !== undefined ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'accepted\')">Accept</button>' : "")
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'edited\')">Edit</button>'
+      + '<button type="button" class="asx-link" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'rejected\')">Reject</button></div></article>';
+  }
+  // review r4 P2-6: the popup says what SM detected and what the agent leaned towards; nothing is pre-selected
+  function popupFacts(qid, q) {
+    var a = (((S.asks || {}).investigate || {}).answers || []).filter(function (x) { return x.id === qid; })[0] || {};
+    var bits = [];
+    if (q.detected !== null && q.detected !== undefined && q.detected !== "" && !(Array.isArray(q.detected) && !q.detected.length))
+      bits.push("SM detected: " + optLabel(String(q.detected)));
+    if (a.agent_leans !== null && a.agent_leans !== undefined)
+      bits.push("agent leans: " + optLabel(String(a.agent_leans)) + " (" + (a.agent_confidence || "unsure") + ")");
+    if (!bits.length && PERSON_KNOWS[qid]) bits.push("Usually only you know this.");
+    return bits.length ? '<p class="ui-note" data-popup-facts>' + esc(bits.join(" · ")) + "</p>" : "";
+  }
+  function popupHtml(qid) {
+    var q = (S.qById || {})[qid];
+    if (!q) return "";
+    var opts = q.kind === "choice" ? q.options.slice() : [];
+    var body = q.kind === "choice"
+      ? '<div class="as-acts">' + opts.map(function (o) { return '<button type="button" class="btn-sm outline asx-btn-2" data-pick="' + esc(o) + '" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', this.getAttribute(\'data-pick\'))">' + esc(optLabel(o)) + "</button>"; }).join("") + "</div>"
+      : '<p class="ui-note">Answer it in the form above, or:</p><div class="as-acts"><button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', \'' + NS + '\')">not sure</button></div>';
+    return '<div class="ui-dialog ui-dialog--s" role="dialog" id="as-popup" data-q="' + esc(qid) + '" aria-label="' + esc(q.question) + '">'
+      + '<div class="ui-dialog-head"><b>Please answer</b></div>'
+      + '<div class="ui-dialog-body"><p>' + esc(q.question) + "</p>" + popupFacts(qid, q) + body + "</div>"
+      + '<div class="ui-dialog-foot"><button type="button" class="asx-link" onclick="AgentSetup.popupSkip()">Later</button></div></div>';
+  }
+  function investigateHtml() {
+    var rec = (S.asks || {}).investigate;
+    var clis = (S.data && S.data.clis) || {};
+    var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
+    var running = (S.asks || {}).running;
+    var head = '<div class="as-acts" id="as-investigate">' + ks.map(function (k) {
+      var off = !connectedK(S.data, k);
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-investigate="' + k + '"' + (running || off ? " disabled" : "")
+        + (off ? ' title="' + esc(NAMES[k]) + ' is not connected (step 1)"' : "")
+        + ' onclick="AgentSetup.investigate(\'' + k + '\')">Investigate by ' + esc(NAMES[k]) + "</button>";
+    }).join("") + '<span class="asx-small muted">read-only; every answer comes back as a proposal you accept, edit or reject. Nothing is saved until Write.</span></div>';
+    if (S.invMsg) return head + S.invMsg;
+    if (!rec) return head;
+    var out = [head, staleLine(rec)];
+    if (rec.failed || !rec.done) return out.join("") + askFail(rec);
+    if (rec.parse_error) return out.join("") + '<p class="ag-err">the answer was not in the expected form</p>' + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "");
+    out.push('<p class="asx-small muted">' + esc(NAMES[rec.backend] || rec.backend) + " answered in " + esc(rec.elapsed_s) + " s"
+      + (rec.dropped_ids ? " · " + esc(rec.dropped_ids) + " answers outside the questions dropped" : "")
+      + (rec.dropped_values ? " · " + esc(rec.dropped_values) + " values outside the options dropped" : "") + "</p>");
+    if (rec.current !== false) {
+      (rec.answers || []).forEach(function (a) { out.push(proposalHtml(a, (S.qById || {})[a.id])); });
+      var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
+      if (pending.length) out.push(popupHtml(pending[0]));
+    }
+    if (rec.raw) out.push('<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>");
+    if (rec.also_asked && rec.also_asked.length) {
+      out.push('<p class="asx-small muted" id="as-also-asked">The agent also asked (not saved): ' + rec.also_asked.map(esc).join(" · ") + "</p>");
+    }
+    return out.join("");
+  }
+  function renderInvestigate() {
+    var host = document.getElementById("as-inv");
+    if (host) host.innerHTML = investigateHtml();
+  }
+  function setupReview(rec) {
+    S.review = {}; S.popupDone = {};
+    S.popupQueue = rec && rec.current !== false ? (rec.asks || []).filter(function (id) { return (S.qById || {})[id]; }) : [];
+  }
   function loadContext() {
     api("GET", "/api/agent/setup/context").then(function (r) {
       var host = document.getElementById("as-ctx");
       if (!host) return;
       if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
       S.context = r.body;
+      S.qById = {};
+      S.evidence = S.evidence || {};
+      S.review = S.review || {}; S.popupDone = S.popupDone || {};
       var f = r.body.facts || {};
       var html = ['<p class="muted">SM sees: ' + f.n_qubits + " qubits, " + f.n_pairs + " pairs; bias sources " + esc(JSON.stringify(f.bias_modes || {})) + (f.nodes && f.nodes.length ? "; " + f.nodes.length + " node files" : "") + ". It cannot see what follows — please confirm.</p>"];
       // what the lab answered last time comes before what SM detects: writing the context again
       // must never drop a note the lab wrote (measured: "Never retry hardware" vanished on a re-write)
       var saved = r.body.saved || {};
       (r.body.questions || []).forEach(function (q) {
-        S.answers[q.id] = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
-        html.push('<div class="as-q"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>");
-        if (q.kind === "choice") {
-          html.push('<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">' + q.options.map(function (o) { return '<option value="' + esc(o) + '"' + (o === S.answers[q.id] ? " selected" : "") + ">" + esc(o) + (o === q.detected ? " (detected)" : "") + "</option>"; }).join("") + "</select>");
-        } else {
-          html.push('<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(S.answers[q.id] || "") + "</textarea>");
-        }
-        html.push("</div>");
+        S.qById[q.id] = q;
+        // review r5 P2: what SM detected is SHOWN, never saved as the person's answer
+        var start = S.answers[q.id] !== undefined ? S.answers[q.id] : saved[q.id];
+        if (start === null || start === undefined || (Array.isArray(start) && !start.length && q.kind !== "list")) delete S.answers[q.id];
+        else S.answers[q.id] = start;
+        html.push('<div class="as-q" data-qid="' + esc(q.id) + '"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>" + ctrlHtml(q) + "</div>");
       });
-      html.push('<div class="as-acts"><label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> Claude: CLAUDE.local.md (not shared through git)</label> ' +
-        '<span class="muted" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md.">Codex: always AGENTS.md</span> ' +
-        '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> CLAUDE</label> <label class="ag-observer"><input type="checkbox" id="as-ctx-codex" checked> AGENTS</label> ' +
+      // D-23: a result kept for this SM session is re-read with the page
+      var inv = (S.asks || {}).investigate;
+      if (inv && S._invFor !== inv.at) { setupReview(inv); S._invFor = inv.at; }
+      html.push('<div id="as-inv"></div>');
+      // review r4 P3-9: one box per file, each with its own sentence
+      html.push('<div class="as-acts"><span class="muted">Write the notes for:</span> '
+        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> Claude Code</label> '
+        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> as CLAUDE.local.md (kept out of git)</label> '
+        + '<label class="ag-observer" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md."><input type="checkbox" id="as-ctx-codex" checked> Codex (AGENTS.md)</label> ' +
         '<button type="button" class="btn-sm" onclick="AgentSetup.previewContext()">Preview the block</button></div><div id="as-ctx-prev"></div>');
       host.innerHTML = html.join("");
+      renderInvestigate();
     });
+  }
+  function investigate(k) {
+    if (S.asks && S.asks.running) return;
+    S.asks = S.asks || {};
+    S.asks.running = "investigate";
+    S.invMsg = '<p class="muted">asking ' + esc(NAMES[k] || k) + " to look for evidence (read-only, up to 2 min)…</p>";
+    renderInvestigate();
+    api("POST", "/api/agent/setup/investigate", { backend: k }).then(function (r) {
+      S.asks.running = null;
+      S.invMsg = null;
+      var b = r.body || {};
+      if (r.status !== 200) S.invMsg = '<p class="ag-err" role="alert">' + esc(b.error || ("failed (HTTP " + r.status + ")")) + "</p>";
+      else { S.asks.investigate = b; setupReview(b); S._invFor = b.at; }
+      renderInvestigate();
+    });
+  }
+  function setCtrl(id, v) {
+    var el = document.querySelector('#as-ctx [data-q="' + id + '"]');
+    if (!el) return;
+    el.value = Array.isArray(v) ? v.join(", ") : String(v);
+  }
+  // D-21: every proposal starts "proposed"; only Accept or Edit puts it into the answers
+  function review(id, verdict) {
+    var rec = (S.asks || {}).investigate || {};
+    var a = (rec.answers || []).filter(function (x) { return x.id === id; })[0];
+    if (!a) return;
+    S.review[id] = verdict;
+    if (verdict === "accepted" && a.value !== null && a.value !== undefined) {
+      S.answers[id] = a.value;
+      S.evidence[id] = (a.evidence || []).filter(function (e) { return e.ok; }).map(function (e) { return { kind: e.kind, ref: e.ref, line: e.line }; });
+      setCtrl(id, a.value);
+    } else if (verdict === "edited") {
+      if (a.value !== null && a.value !== undefined) { S.answers[id] = a.value; setCtrl(id, a.value); }
+      delete S.evidence[id];                      // the person's own value carries no agent citation
+      var el = document.querySelector('#as-ctx [data-q="' + id + '"]');
+      if (el && el.focus) el.focus();
+    } else {
+      delete S.evidence[id];
+    }
+    renderInvestigate();
+  }
+  function popupPick(id, v) {
+    var q = (S.qById || {})[id];
+    if (q && q.kind === "list") S.answers[id] = v === NS ? [] : v;
+    else S.answers[id] = v;
+    S.popupDone[id] = true;
+    S.review[id] = "edited";
+    delete S.evidence[id];
+    setCtrl(id, S.answers[id]);
+    renderInvestigate();
+  }
+  function popupSkip() {
+    var pending = (S.popupQueue || []).filter(function (id) { return !S.popupDone[id]; });
+    if (pending.length) S.popupDone[pending[0]] = "later";
+    renderInvestigate();
   }
   function saveLimits() {
     var g = function (id) { return String((document.getElementById(id) || {}).value || "").trim(); };
@@ -467,12 +850,23 @@ window.AgentSetup = (function () {
       render();
     });
   }
-  function answer(el) { S.answers[el.getAttribute("data-q")] = el.value; }
+  function answer(el) {
+    var id = el.getAttribute("data-q"), q = (S.qById || {})[id];
+    S.answers[id] = q && q.kind === "list"
+      ? String(el.value || "").split(",").map(function (x) { return x.trim(); }).filter(Boolean) : el.value;
+    delete (S.evidence || {})[id];             // a value the person typed carries no agent citation
+    if (el.value === "" && q && q.kind === "choice") delete S.answers[id];
+    // review r3 P2-7: a proposal card follows what the person types
+    var inv = (S.asks || {}).investigate;
+    if (inv && (inv.answers || []).some(function (a) { return a.id === id; })) { S.review[id] = "edited"; renderInvestigate(); }
+  }
   function ctxBody(apply) {
     var targets = [];
     if ((document.getElementById("as-ctx-claude") || {}).checked) targets.push("claude");
     if ((document.getElementById("as-ctx-codex") || {}).checked) targets.push("codex");
-    return { answers: S.answers, local: !!(document.getElementById("as-ctx-local") || { checked: true }).checked, targets: targets, apply: !!apply };
+    var ev = {};
+    Object.keys(S.evidence || {}).forEach(function (k) { if (S.evidence[k] && S.evidence[k].length) ev[k] = S.evidence[k]; });
+    return { answers: S.answers, evidence: ev, local: !!(document.getElementById("as-ctx-local") || { checked: true }).checked, targets: targets, apply: !!apply };
   }
   function previewContext() {
     api("POST", "/api/agent/setup/context", ctxBody(false)).then(function (r) {
@@ -490,33 +884,7 @@ window.AgentSetup = (function () {
       load();
     });
   }
-  function test(k) {
-    var host = document.getElementById("as-test");
-    if (host) host.innerHTML = '<p class="muted">asking ' + esc(k) + " one read-only question…</p>";
-    api("POST", "/api/agent/setup/test", { backend: k }).then(function (r) {
-      if (!host) return;
-      var b = r.body || {};
-      if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(b.error || "failed") + "</p>"; return; }
-      // docs/288: a failure says it failed (not "answered ... failed"), quotes the
-      // CLI's own words once, and -- only when the CLI itself says it is not
-      // logged in -- the one thing to do about it. No other cause is guessed.
-      var who = NAMES[k] || k;
-      if (b.failed || !b.answer) {
-        var why = String(b.error || b.answer || "no answer");
-        var login = /not logged in|\/login|please log ?in/i.test(why);
-        S.lastTest = '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer"
-          + (b.elapsed_s ? " (" + esc(b.elapsed_s) + " s)" : "") + ': <span class="ag-err">' + esc(why) + "</span></p>"
-          + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(k) + "</code> once and log in there; then press Test again. SM never sees your login.</p>" : "")
-          + "</div>";
-      } else {
-        S.lastTest = '<div class="asx-result asx-result-ok"><p><b>' + esc(who) + "</b> answered in <b>" + esc(b.elapsed_s) + " s</b>"
-          + (b.tools && b.tools.length ? ' <span class="muted">(used ' + esc(b.tools.join(", ")) + ")</span>" : "") + "</p>"
-          + '<blockquote class="as-answer">' + esc(b.answer) + "</blockquote></div>";
-      }
-      host.innerHTML = S.lastTest;
-      load();                                   // the section's ✓ follows the record; the result stays
-    });
-  }
+  function test(k) { return confirmBy(k); }
 
   function init() {
     var root = document.getElementById("as-body");
@@ -529,11 +897,32 @@ window.AgentSetup = (function () {
     S.root = root;
     load();
   }
+  // D-8: a Setup page open in another window re-reads when it regains focus
+  // (the project or chip may have changed there)
+  // Only when the project, chip or folder actually moved: a plain refocus must
+  // never wipe a form the person is filling in (measured in Chrome: the click
+  // that opened the questions focused the window and the re-render erased them).
+  function scopeOf(d) {
+    var P = (d && d.paths) || {};
+    return [P.project || "", d && d.chip || "", (P.calibrations || {}).folder || (d && d.calibrations_folder) || ""].join("|");
+  }
+  function refreshIfMoved() {
+    if (!(S.root && document.body && document.body.contains(S.root)) || !S.data) return;
+    api("GET", "/api/agent/setup").then(function (r) {
+      if (r.status !== 200 || scopeOf(r.body) === scopeOf(S.data)) return;
+      S.answers = {}; S.evidence = {}; S.review = {}; S.popupDone = {}; S.popupQueue = [];
+      // review r3 P2-8: the sidebar and top bar belong to the page; a project switched in
+      // another window reloads the whole page so every part names the same project
+      S.reloadPage();
+    });
+  }
+  S.reloadPage = function () { try { window.location.reload(); } catch (e) { load(); } };
+  window.addEventListener("focus", refreshIfMoved);
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:historyRestore", function () { init(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
-           loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, calib: calib, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           loadContext: loadContext, answer: answer, investigate: investigate, review: review, popupPick: popupPick, popupSkip: popupSkip, previewContext: previewContext, writeContext: writeContext,
+           test: test, confirmBy: confirmBy, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, refreshIfMoved: refreshIfMoved, _state: S };
 })();

@@ -173,6 +173,10 @@ class SMLink:
             h.update(extra)
         h.setdefault("X-SM-Session", bridge_session())        # docs/253: which agent this bridge speaks for
         h.setdefault("X-SM-Bridge-Pid", str(os.getpid()))
+        # decisions D-22 (agents ver180): a read-only bridge says so on EVERY call,
+        # so SM's write doors can refuse it -- a guard the server cannot see is no guard
+        if os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly":
+            h["X-SM-Mode"] = "readonly"
         return h
 
     def get(self, path: str, params: dict | None = None, *, timeout: float | None = None) -> tuple[int, object]:

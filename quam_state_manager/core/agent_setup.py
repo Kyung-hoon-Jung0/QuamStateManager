@@ -499,32 +499,122 @@ def detect_facts(state: dict, wiring: dict | None = None, node_names: list[str] 
         "twpa_seen": "twpa" in text,
         "chip_name": ((state.get("extras") or {}).get("chip_name") if isinstance(state.get("extras"), dict) else None),
         "nodes": sorted(node_names or [])[:80],
+        "top_level": sorted(k for k in state if isinstance(k, str) and not k.startswith("__"))[:40],
     }
     return facts
 
 
+NOT_SURE = "unknown"          # D-18: "not sure" is first-class, saved as `unknown`
+NOT_ANSWERED = "not answered"  # review r3 P2-5: nobody chose a value; never read back as an answer
+
+FLUX_OPTIONS = ["QDAC", "LF-FEM", "both (bias tee)", "none (fixed-frequency)", "mixed", NOT_SURE]
+_MODE_TO_FLUX = {"qdac": "QDAC", "opx": "LF-FEM", "bias_tee": "both (bias tee)", "none": "none (fixed-frequency)"}
+
+
+def detected_flux_source(bias_modes: dict) -> str | None:
+    """D-19: the flux bias SM sees structurally (``qdac.bias_mode`` counts).
+    review r5 P2: no qubits, or nothing recognisable -> no detection (None)."""
+    kinds = {k for k, v in (bias_modes or {}).items() if v and k != "unknown"}
+    if not kinds:
+        return None
+    if len(kinds) > 1:
+        return "mixed"
+    return _MODE_TO_FLUX.get(next(iter(kinds)))
+
+
+def detected_tunable(bias_modes: dict) -> str | None:
+    """review r5 P2: flux-tunable only where SM SEES an LF-FEM flux line on every
+    qubit (mixed where some have one and some have none). A QDAC-biased chip, a
+    chip with no qubits, or an unrecognised shape is no detection."""
+    m = {k: v for k, v in (bias_modes or {}).items() if v}
+    tun = m.get("opx", 0) + m.get("bias_tee", 0)
+    other = sum(v for k, v in m.items() if k not in ("opx", "bias_tee"))
+    if tun and not other:
+        return "flux-tunable"
+    if tun and m.get("none") and not (other - m.get("none", 0)):
+        return "mixed"
+    return None
+
+
+def investigate_hints(state: dict, wiring: dict | None, cal_folder: str | None) -> dict:
+    """review r3 P2-4: where, in THIS chip, each question's answer can be read --
+    concrete state keys for state_get and files in the calibrations folder."""
+    qubits = [q for q, v in (state.get("qubits") or {}).items() if isinstance(v, dict)][:2]
+    pairs = [p for p, v in (state.get("qubit_pairs") or {}).items() if isinstance(v, dict)][:1]
+    wq = ((wiring or {}).get("wiring") or wiring or {}).get("qubits") or {}
+    files = []
+    if cal_folder:
+        try:
+            for p in sorted(Path(cal_folder).iterdir()):
+                if p.is_file() and p.suffix.lower() in (".md", ".txt", ".toml", ".yaml", ".yml") and len(files) < 8:
+                    files.append(str(p))
+        except OSError:
+            pass
+    # review r4 P2-6: LEAF keys only (a dict can never be quoted), incl. the port each line ends on
+    merged = {**(wiring or {}), **state}
+    flux = []
+    for q in qubits:
+        qd = state["qubits"][q]
+        flux.append(f"qubits.{q}.__class__")
+        for k in ("z", "qdac_bias", "flux"):
+            if isinstance(qd.get(k), dict) and "__class__" in qd[k]:
+                flux.append(f"qubits.{q}.{k}.__class__")
+        for k, line in (wq.get(q) or {}).items():
+            if k not in ("z", "qt", "flux") or not isinstance(line, dict):
+                continue
+            for pk, pv in line.items():
+                if isinstance(pv, str) and pv.startswith("#/"):
+                    flux.append(f"wiring.qubits.{q}.{k}.{pk}")
+                    port = pv[2:].strip("/").replace("/", ".")
+                    node = merged
+                    for seg in port.split("."):
+                        node = node.get(seg) if isinstance(node, dict) else None
+                    if isinstance(node, dict) and "__class__" in node:
+                        flux.append(f"{port}.__class__")
+    if isinstance(state.get("qdac"), dict) and "__class__" in state["qdac"]:
+        flux.append("qdac.__class__")
+    reson = [f"qubits.{q}.resonator.__class__" for q in qubits
+             if isinstance(state["qubits"][q].get("resonator"), dict)]
+    coup = [f"qubit_pairs.{p}.coupler" for p in pairs] + [f"qubit_pairs.{p}.__class__" for p in pairs]
+    out = {"tunable": {"state": flux}, "flux_source": {"state": flux}, "coupler": {"state": coup},
+           "purcell": {"state": reson, "files": files}, "squid": {"state": flux[:2], "files": files},
+           "data_read": {"files": files}, "never_touch": {"files": files}, "notes": {"files": files}}
+    return {k: {kk: vv for kk, vv in v.items() if vv} for k, v in out.items() if any(v.values())}
+
+
 def questions(facts: dict) -> list[dict]:
     """The device questions SM cannot answer from the files (docs/173 §2.3-2),
-    each with what SM detected so the person confirms rather than types."""
+    each with what SM detected so the person confirms rather than types.
+    Every choice offers "not sure" (saved as ``unknown``, D-18)."""
     q = []
-    q.append({"id": "tunable", "kind": "choice", "options": ["flux-tunable", "fixed-frequency", "mixed"],
+    q.append({"id": "tunable", "kind": "choice", "options": ["flux-tunable", "fixed-frequency", "mixed", NOT_SURE],
               "question": "Are the qubits flux-tunable?",
-              "detected": ("flux-tunable" if facts.get("flux_tunable_seen") and not facts.get("bias_modes", {}).get("none")
-                           else "fixed-frequency" if not facts.get("flux_tunable_seen") else "mixed"),
+              "detected": detected_tunable(facts.get("bias_modes") or {}),
               "why": "a flux line in the state says a qubit CAN be tuned, not whether the lab parks it"})
-    q.append({"id": "coupler", "kind": "choice", "options": ["tunable coupler", "fixed coupling", "none"],
+    q.append({"id": "flux_source", "kind": "choice", "options": list(FLUX_OPTIONS),
+              "question": "What biases the qubits' flux?",
+              "detected": detected_flux_source(facts.get("bias_modes") or {}),
+              "detected_counts": dict(facts.get("bias_modes") or {}),
+              "why": "SM detected this from the state's bias lines; the counts are shown beside it"})
+    q.append({"id": "coupler", "kind": "choice", "options": ["tunable coupler", "fixed coupling", "none", NOT_SURE],
               "question": "Two-qubit coupling?",
-              "detected": "tunable coupler" if facts.get("couplers_seen") else ("fixed coupling" if facts.get("n_pairs") else "none")})
-    q.append({"id": "purcell", "kind": "choice", "options": ["yes", "no", "unknown"],
+              # review r5 P2: only a coupler VALUE is a detection; its absence is not
+              "detected": "tunable coupler" if facts.get("couplers_seen") else None})
+    q.append({"id": "purcell", "kind": "choice", "options": ["yes", "no", NOT_SURE],
               "question": "Is there a Purcell filter on the readout line?",
-              "detected": "yes" if facts.get("purcell_mentioned") else "unknown",
+              "detected": None,      # review r3 P2-5: a word in the state is not a detection
               "why": "the state rarely says; the agent's readout advice depends on it"})
-    q.append({"id": "squid", "kind": "choice", "options": ["symmetric", "asymmetric", "no SQUID", "unknown"],
-              "question": "SQUID loop: symmetric or asymmetric?", "detected": "unknown",
+    q.append({"id": "squid", "kind": "choice", "options": ["symmetric", "asymmetric", "no SQUID", NOT_SURE],
+              "question": "SQUID loop: symmetric or asymmetric?", "detected": None,
               "why": "decides the flux-vs-frequency shape the agent should expect"})
-    q.append({"id": "data_read", "kind": "choice", "options": ["yes", "no"],
+    q.append({"id": "data_read", "kind": "choice", "options": ["yes", "no", NOT_SURE],
               "question": "May the agent READ the data folder (run figures and node.json) directly?",
-              "detected": "no", "why": "SM already hands it runs through its tools; direct reads are a lab choice"})
+              "detected": None, "why": "SM already hands it runs through its tools; direct reads are a lab choice"})
+    q.append({"id": "never_touch", "kind": "list",
+              "question": "Which elements, fields or qubits must the agent never change?",
+              "detected": [], "tokens": list(facts.get("qubit_ids") or []) + list(facts.get("top_level") or []),
+              "why": "a safety rule comes from a person; SM refuses an agent's write under any of these. A qubit or "
+                     "pair id also covers the ports it is wired to, and a qubit also covers every pair it is in."})
     q.append({"id": "notes", "kind": "text", "question": "Anything else the agent must know about this device or lab?",
               "detected": ""})
     return q
@@ -555,19 +645,43 @@ def saved_answers(instance_path, cal_folder: str | Path | None) -> dict:
     return {}
 
 
+_SRC = re.compile(r"\s*\(source: [^)]*\)")
+
+
+def _unsrc(v: str) -> str:
+    """Strip the "(source: …)" suffix a written answer carries (D-21); an
+    unanswered line reads back as nothing."""
+    v = _SRC.sub("", v).strip()
+    return "" if v in (NOT_ANSWERED, "?") else v
+
+
 def _answers_from_block(block: str) -> dict:
     out: dict = {}
     lines = block.splitlines()
     for i, ln in enumerate(lines):
         if ln.startswith("- Qubits: ") and "; coupling: " in ln:
-            v = ln.split("; coupling: ", 1)[1].strip()
+            t, v = ln[len("- Qubits: "):].split("; coupling: ", 1)
+            t, v = _unsrc(t), _unsrc(v)
+            if t and t != "?":
+                out["tunable"] = t
             if v and v != "?":
                 out["coupler"] = v
         elif ln.startswith("- Purcell filter: ") and "; SQUID: " in ln:
             a, b = ln[len("- Purcell filter: "):].split("; SQUID: ", 1)
-            out["purcell"], out["squid"] = a.strip(), b.strip()
+            for k, v in (("purcell", _unsrc(a)), ("squid", _unsrc(b))):
+                if v:
+                    out[k] = v
+        elif ln.startswith("- Flux bias: "):
+            v = _unsrc(ln[len("- Flux bias: "):])
+            if v and v != "?":
+                out["flux_source"] = v
+        elif ln.startswith("- Never touch: "):
+            v = _unsrc(ln[len("- Never touch: "):])
+            out["never_touch"] = [x.strip() for x in v.split(",") if x.strip()] if v and v != "nothing listed" else []
         elif ln.startswith("- Data folder: ") and "direct reads: " in ln:
-            out["data_read"] = "yes" if ln.rsplit("direct reads: ", 1)[1].startswith("allowed") else "no"
+            tail = ln.rsplit("direct reads: ", 1)[1]
+            if not tail.startswith(NOT_ANSWERED):
+                out["data_read"] = "yes" if tail.startswith("allowed") else (NOT_SURE if tail.startswith("not decided") else "no")
         elif ln == "Notes from the lab:":
             notes = []
             for nl in lines[i + 1:]:
@@ -579,19 +693,42 @@ def _answers_from_block(block: str) -> dict:
     return out
 
 
-def context_block(facts: dict, answers: dict, *, chip: str | None = None, data_folder: str | None = None) -> str:
+def _src(evidence: dict | None, qid: str) -> str:
+    """" (source: file:line)" for an accepted answer with evidence (D-21)."""
+    items = (evidence or {}).get(qid) or []
+    for e in items:
+        if isinstance(e, dict) and e.get("ref"):
+            ref = os.path.basename(str(e["ref"])) if e.get("kind", "file") == "file" else str(e["ref"])
+            return f" (source: {ref}{':' + str(e['line']) if e.get('line') else ''})"
+    return ""
+
+
+def context_block(facts: dict, answers: dict, *, chip: str | None = None, data_folder: str | None = None,
+                  evidence: dict | None = None) -> str:
+    ev = evidence or {}
+    nt = answers.get("never_touch")
+    if isinstance(nt, str):
+        nt = [x.strip() for x in nt.split(",") if x.strip()]
+    nt = [str(x).replace(",", " ").strip() for x in (nt or []) if str(x).strip()]
     lines = [CTX_START,
              f"# Lab context for the calibration agent (written by QUAM State Manager on {datetime.now().strftime('%Y-%m-%d')})",
              "",
              f"- Chip: {chip or facts.get('chip_name') or '?'} — {facts.get('n_qubits', 0)} qubits, {facts.get('n_pairs', 0)} pairs",
-             f"- Qubits: {facts.get('tunable') or answers.get('tunable') or '?'}; coupling: {answers.get('coupler') or '?'}",
-             f"- Purcell filter: {answers.get('purcell') or 'unknown'}; SQUID: {answers.get('squid') or 'unknown'}",
+             f"- Qubits: {facts.get('tunable') or answers.get('tunable') or NOT_ANSWERED}{_src(ev, 'tunable')}; "
+             f"coupling: {answers.get('coupler') or NOT_ANSWERED}{_src(ev, 'coupler')}",
+             f"- Flux bias: {answers.get('flux_source') or NOT_ANSWERED}{_src(ev, 'flux_source')}",
+             f"- Purcell filter: {answers.get('purcell') or NOT_ANSWERED}{_src(ev, 'purcell')}; "
+             f"SQUID: {answers.get('squid') or NOT_ANSWERED}{_src(ev, 'squid')}",
              f"- Bias sources seen in the state: {', '.join(f'{k}×{v}' for k, v in (facts.get('bias_modes') or {}).items()) or 'none'}",
+             f"- Never touch: {', '.join(nt) if nt else 'nothing listed'}{_src(ev, 'never_touch')}",
              ]
     if facts.get("twpa_seen"):
         lines.append("- A TWPA is present")
     if data_folder:
-        lines.append(f"- Data folder: {data_folder} — direct reads: {'allowed' if str(answers.get('data_read')) == 'yes' else 'NOT allowed (use the SM tools)'}")
+        dr = str(answers.get("data_read"))
+        lines.append(f"- Data folder: {data_folder} — direct reads: "
+                     + ("allowed" if dr == "yes" else "not decided (use the SM tools)" if dr == NOT_SURE
+                        else "NOT allowed (use the SM tools)" if dr == "no" else f"{NOT_ANSWERED} (use the SM tools)"))
     if answers.get("notes"):
         lines.append("")
         lines.append("Notes from the lab:")
@@ -600,9 +737,166 @@ def context_block(facts: dict, answers: dict, *, chip: str | None = None, data_f
     lines += ["",
               "Rules: the State Manager (SM) is the only door to the chip's state and to hardware. Read with its tools, "
               "stage writes with state_edit, write with apply_to_live, run nodes only with run_node after a plan the human "
-              "started. Never edit state.json/wiring.json directly, never run `python <node>.py` yourself.",
+              "started. Never edit state.json/wiring.json directly, never run `python <node>.py` yourself. "
+              "Never change anything listed under Never touch.",
               CTX_END]
     return "\n".join(lines) + "\n"
+
+
+def never_touch_hit(path: str, tokens) -> str | None:
+    """The first never-touch token that covers *path*, or None (Q-4).
+    A token with a dot is a path prefix; a bare token (a qubit id, an element
+    name) matches any whole segment of the path."""
+    if not path or not tokens:
+        return None
+    # review r1 P2-7: entity ids are matched case-insensitively ("Q1" covers "q1")
+    lp = str(path).lower()
+    segs = lp.split(".")
+    for t0 in tokens:
+        t0 = str(t0).strip().strip(".")
+        t = t0.lower()
+        if not t:
+            continue
+        if "." in t:
+            # review r4 P1-1: a write to an ANCESTOR replaces or deletes the listed path too
+            if lp == t or lp.startswith(t + ".") or t.startswith(lp + ".") or not lp:
+                return t0
+        elif t in segs or not lp:
+            return t0
+    return None
+
+
+def never_touch_key(project: str | None, chip: str | None) -> str:
+    """review r2 P1-2: a never-touch list belongs to ONE project + chip."""
+    return f"{project or ''}|{chip or ''}"
+
+
+def never_touch_list(instance_path, project: str | None, chip: str | None) -> list[str]:
+    """The person's accepted never-touch list for exactly this project + chip.
+    No entry for that pair -> no rule (another project's list never applies)."""
+    if not chip:
+        return []
+    by = load_record(instance_path).get("never_touch_by") or {}
+    lst = by.get(never_touch_key(project, chip)) if isinstance(by, dict) else None
+    if not isinstance(lst, list):
+        return []
+    return [str(x) for x in lst if str(x).strip()]
+
+
+def expand_never_touch(tokens, merged: dict | None) -> list[str]:
+    """review r4 P2-3: a bare qubit/pair id also covers what that entity POINTS to
+    (its ports and other components reached through absolute pointers), and its
+    own dotted spelling (so a write to an ancestor such as ``qubits`` is caught)."""
+    out = [str(t) for t in tokens or []]
+    if not isinstance(merged, dict):
+        return out
+    roots = []
+    for t in tokens or []:
+        t = str(t).strip()
+        if not t or "." in t:
+            continue
+        # decision D-26: a listed qubit protects every pair that contains it
+        for pk, pv in (merged.get("qubit_pairs") or {}).items():
+            if _pair_has_qubit(pk, pv, ((merged.get("wiring") or {}).get("qubit_pairs") or {}).get(pk), t):
+                out += [f"qubit_pairs.{pk}", f"wiring.qubit_pairs.{pk}"]
+        for coll in ("qubits", "qubit_pairs"):
+            for k, v in (merged.get(coll) or {}).items():
+                if str(k).lower() == t.lower():
+                    out.append(f"{coll}.{k}")
+                    roots.append(v)
+                    w = ((merged.get("wiring") or {}).get(coll) or {}).get(k)
+                    if w is not None:
+                        out.append(f"wiring.{coll}.{k}")
+                        roots.append(w)
+    seen = set(out)
+
+    def walk(node, depth=0):
+        if depth > 12:
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, depth + 1)
+        elif isinstance(node, str) and node.startswith("#/"):
+            p = node[2:].strip("/").replace("/", ".")
+            if p and p not in seen and p.split(".")[0] not in ("qubits", "qubit_pairs"):
+                seen.add(p)
+                out.append(p)
+    for r in roots:
+        walk(r)
+    return out
+
+
+def _pair_has_qubit(pair_key, pair: Any, wiring_pair: Any, qubit: str) -> bool:
+    """Does this pair contain *qubit*? By its references (``#/qubits/<q>`` in the
+    pair or its wiring, any depth) or by the members of its id."""
+    q = str(qubit).lower()
+    target = "/qubits/" + q
+    found = [False]
+
+    def walk(node, depth=0):
+        if found[0] or depth > 8:
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, depth + 1)
+        elif isinstance(node, str) and node.lower().rstrip("/").endswith(target):
+            found[0] = True
+    walk(pair)
+    walk(wiring_pair)
+    if found[0]:
+        return True
+    members = [m.lower() for m in str(pair_key).split("-")]
+    if q in members:
+        return True
+    # short spelling q1-2: the second member borrows the first one's prefix
+    import re as _re
+    m = _re.match(r"^([a-z]+)", members[0]) if members else None
+    return bool(m) and len(members) == 2 and (m.group(1) + members[1]) == q
+
+
+def never_touch_from_blocks(cal_folder) -> list[dict]:
+    """review r7 P2-2: the never-touch list of EVERY context file in the
+    calibrations folder that carries SM's block, one entry per file."""
+    out: list[dict] = []
+    if not cal_folder:
+        return out
+    for p in (context_path(cal_folder, "claude", True), context_path(cal_folder, "claude", False),
+              context_path(cal_folder, "codex"), Path(cal_folder) / CODEX_UNREAD_FILE):
+        try:
+            m = _CTX_BLOCK.search(p.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if m:
+            lst = [str(x) for x in (_answers_from_block(m.group(0)).get("never_touch") or []) if str(x).strip()]
+            if lst:
+                out.append({"file": str(p), "tokens": lst})
+    return out
+
+
+def never_touch_in_force(instance_path, project: str | None, chip: str | None, cal_folder) -> dict:
+    """review r6 P2: the list SM enforces = this instance's record for the
+    project + chip UNION the block in the calibrations folder; with sources."""
+    mine = never_touch_list(instance_path, project, chip)
+    blocks = never_touch_from_blocks(cal_folder)
+    tokens = list(dict.fromkeys(mine + [t for b in blocks for t in b["tokens"]]))
+    sources = []
+    if mine:
+        sources.append({"from": "sm_record", "tokens": mine})
+    sources += [{"from": "context_block", "file": b["file"], "tokens": b["tokens"]} for b in blocks]
+    return {"tokens": tokens, "sources": sources}
+
+
+def save_never_touch(instance_path, project: str | None, chip: str | None, lst: list[str]) -> None:
+    """Write this pair's list; every other pair's list is kept."""
+    by = dict(load_record(instance_path).get("never_touch_by") or {})
+    by[never_touch_key(project, chip)] = list(lst)
+    save_record(instance_path, {"never_touch_by": by})
 
 
 # B-02: Codex reads exactly one project doc per directory, and AGENTS.local.md is not it.

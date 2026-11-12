@@ -131,10 +131,12 @@ class TestContext:
         assert f["bias_modes"] == {"opx": 1, "qdac": 1, "none": 1} and f["flux_tunable_seen"] and f["qdac_seen"]
         qs = st.questions(f)
         ids = [q["id"] for q in qs]
-        assert ids == ["tunable", "coupler", "purcell", "squid", "data_read", "notes"]
+        # agents ver180 D-19/D-20: flux_source and never_touch join the questions
+        assert ids == ["tunable", "flux_source", "coupler", "purcell", "squid", "data_read", "never_touch", "notes"]
         by = {q["id"]: q for q in qs}
-        assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] == "unknown"
-        assert by["data_read"]["detected"] == "no", "direct data reads are opt-in"
+        # review r3 P2-5: SM detects the coupler; it does NOT detect a Purcell filter or a lab's read policy
+        assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] is None
+        assert by["data_read"]["detected"] is None and by["squid"]["detected"] is None
 
     def test_a_null_coupler_field_is_not_a_coupler(self):
         """QA agents round: quam_builder writes `coupler: null` on every pair, and
@@ -144,7 +146,8 @@ class TestContext:
                  "qubit_pairs": {"q1-2": {"coupler": None, "qubit_control": "#/qubits/q1"}}}
         f = st.detect_facts(state, node_names=[])
         assert f["couplers_seen"] is False
-        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] == "fixed coupling"
+        # review r5 P2: no coupler value is NOT a detection -- nothing is claimed
+        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] is None
         state["qubit_pairs"]["q1-2"]["coupler"] = "#/couplers/c12"
         assert st.detect_facts(state, node_names=[])["couplers_seen"] is True, "a pointer to a coupler is one"
 
@@ -787,7 +790,9 @@ class TestRewritingTheContextKeepsTheLabsAnswers:
         # a record for ANOTHER folder never answers for this one
         st.save_record(tmp_path / "inst", {"context": {"folder": str(tmp_path / "other"), "answers": {"notes": "no"}}})
         got = st.saved_answers(tmp_path / "inst", cal)
-        assert got == {"coupler": "fixed coupling", "purcell": "yes", "squid": "asymmetric", "data_read": "yes",
+        # agents ver180 F-12: the Qubits and Never-touch lines read back too (empty list = "nothing listed")
+        assert got == {"tunable": "flux-tunable", "coupler": "fixed coupling", "purcell": "yes", "squid": "asymmetric",
+                       "data_read": "yes", "never_touch": [],
                        "notes": "QA rig: the host is unreachable.\nNever retry hardware."}
         # and the block rebuilt from what was read back carries the same lines
         again = st.context_block(facts, dict(got, tunable="flux-tunable"), chip="X", data_folder="D:/data")

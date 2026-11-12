@@ -6773,6 +6773,153 @@ def chip_name_banner():
     return render_template("_chip_name_banner.html", **_ctx())
 
 
+def _calibrations(ctx: dict | None = None) -> dict[str, Any]:
+    """The calibrations folder in force for *ctx* (default: the active one),
+    through the ONE resolver (core/calibrations.py, decisions D-1): the
+    project's override -> the project's calibration_library.folder -> the
+    legacy scheduler setting only when no project is scoped."""
+    from quam_state_manager.core import calibrations
+    if ctx is None:
+        ctx = _active_ctx()
+    try:
+        legacy = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    except Exception:  # noqa: BLE001
+        legacy = ""
+    return calibrations.resolve(current_app.instance_path, (ctx or {}).get("qualibrate_project"), legacy=legacy)
+
+
+def _never_touch_unchecked(why: str):
+    return jsonify(ok=False, refused="never_touch_unchecked",
+                   error=f"SM could not check the person's never-touch list ({why}); nothing was written",
+                   how="ask the person"), 403
+
+
+def _never_touch_refusal(paths) -> Any:
+    """Q-4 (agents ver180): an AGENT's write (``X-SM-Agent``) under a path the
+    person listed as never-touch is refused with that line. Human requests are
+    untouched. None = allowed. review r3 P2-3: an error FAILS CLOSED for an agent.
+    review r5 P1: "a person" is PROVEN (callers.from_person), never inferred from
+    a missing X-SM-Agent header."""
+    from quam_state_manager.web import callers
+    if callers.from_person():
+        return None
+    from quam_state_manager.core import agent_setup
+    try:
+        ctx = _active_ctx()
+        from quam_state_manager.web import agent_api as _aa
+        tokens = agent_setup.never_touch_in_force(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
+                                                  _aa._chip_key() if _active_path() else None,
+                                                  _calibrations_folder(ctx) or None)["tokens"]
+        if tokens:
+            store = (ctx or {}).get("store")
+            tokens = agent_setup.expand_never_touch(tokens, getattr(store, "merged", None))
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
+    if not tokens:
+        return None
+    for p in paths:
+        hit = agent_setup.never_touch_hit(str(p or ""), tokens)
+        if hit:
+            # review r6 P3: a person whose proof cookie is missing is told how to get it back
+            how = ("leave it; ask the person if it must change" if request.headers.get("X-SM-Agent")
+                   else "if you are a person using SM's own window, reload that window and press again "
+                        "(SM could not prove the press came from it); an agent: leave it and ask the person")
+            return jsonify(ok=False, refused="never_touch", path=p, rule=hit,
+                           error=f"{p} is under '{hit}', which the person listed as never to be changed",
+                           how=how), 403
+    return None
+
+
+_PATH_FIELDS = ("dot_path", "path", "parent_path", "target", "target_path", "src", "dst", "new_path")
+# review r4 P2-4: mutating doors that name no state path by design; an agent request to any
+# OTHER door that yields no path is refused while a never-touch list exists (fail closed)
+_PATH_FREE_DOORS = ("/undo", "/redo", "/state/apply-to-live", "/state/sync")
+_URL_ENTITY = {"/qubit/": "qubits", "/pair/": "qubit_pairs", "/coupler/": "couplers"}
+
+
+def _request_paths() -> list[str]:
+    """Every state path an agent's mutating request names: form + JSON fields,
+    batch rows, a created key, the entity in the URL; each also RESOLVED
+    through pointers, since the write lands at the resolved path."""
+    out: list[str] = []
+    f = request.form
+    for k in _PATH_FIELDS:
+        out += [str(v).strip() for v in f.getlist(k) if v]
+    out += [str(v).strip() for v in f.getlist("paths") if v]
+    if f.get("dot_path") and f.get("key"):
+        out.append(f"{f.get('dot_path').strip()}.{f.get('key').strip()}")
+    for k, root in (("qubit", "qubits"), ("pair", "qubit_pairs"), ("pair_id", "qubit_pairs"),
+                    ("pc_pair", "qubit_pairs")):
+        if f.get(k):
+            out.append(f"{root}.{f.get(k).strip()}")
+    body = request.get_json(silent=True) if request.is_json else None
+    if isinstance(body, dict):
+        for k in _PATH_FIELDS:
+            if isinstance(body.get(k), str):
+                out.append(body[k])
+        for k in ("paths", "updates", "items", "writes"):
+            for v in body.get(k) or []:
+                if isinstance(v, str):
+                    out.append(v)
+                elif isinstance(v, dict):
+                    for kk in ("dot_path", "path"):
+                        if isinstance(v.get(kk), str):
+                            out.append(v[kk])
+    for prefix, root in _URL_ENTITY.items():
+        if request.path.startswith(prefix) and (request.view_args or {}).get("name"):
+            out.append(f"{root}.{request.view_args['name']}")
+    out = [_normalize_dot_path(p) for p in out if p]
+    store = _store() if _context_type() == "quam" else None
+    resolved = []
+    if store is not None:
+        for p in out:
+            try:
+                resolved.append(_resolve_edit_path(store, p))
+            except Exception:  # noqa: BLE001 -- a path that does not exist yet is checked as written
+                pass
+    return out + resolved
+
+
+@bp.before_request
+def _never_touch_agent_guard():
+    """review r3 P2-3: ONE guard for every agent-originated mutating request
+    (no door list to keep in step). Fails closed for an agent."""
+    from quam_state_manager.web import callers
+    if request.method in ("GET", "HEAD", "OPTIONS") or callers.from_person():
+        return None
+    try:
+        paths = _request_paths()
+        if request.path in ("/state/apply-to-live", "/state/sync"):
+            # review r5 P2: an apply pushes the STAGED set -- check every staged path
+            store = _store() if _context_type() == "quam" else None
+            paths = paths + [str(e.dot_path) for e in (getattr(store, "change_log", None) or [])]
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
+    if not paths:
+        if request.path in _PATH_FREE_DOORS:
+            return None
+        try:
+            from quam_state_manager.core import agent_setup
+            from quam_state_manager.web import agent_api as _aa
+            listed = agent_setup.never_touch_in_force(current_app.instance_path,
+                                                      (_active_ctx() or {}).get("qualibrate_project"),
+                                                      _aa._chip_key() if _active_path() else None,
+                                                      _calibrations_folder() or None)["tokens"]
+        except Exception as exc:  # noqa: BLE001
+            return _never_touch_unchecked(type(exc).__name__)
+        return _never_touch_unchecked("this door names no path SM can check") if listed else None
+    return _never_touch_refusal(paths)
+
+
+def _calibrations_folder(ctx: dict | None = None) -> str:
+    """The resolved calibrations folder, or "" (see ``_calibrations``)."""
+    try:
+        return _calibrations(ctx).get("folder") or ""
+    except Exception:  # noqa: BLE001
+        logger.debug("calibrations resolve failed", exc_info=True)
+        return ""
+
+
 def _scope_storage_path(ctx: dict | None) -> str:
     """The project scope's storage (data) folder, or "" -- only when it exists.
 
@@ -7567,7 +7714,7 @@ def _agent_wiring():
     """
     from quam_state_manager.core import agent_setup as A
     try:
-        cal = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or None
+        cal = _calibrations_folder() or None
     except Exception:  # noqa: BLE001
         cal = None
     try:
@@ -12813,10 +12960,22 @@ _PULSE_NAME_RE = add_names.OPERATION_NAME_RE
 _QCLASS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
+def _stale_chip_note():
+    """The inspector's answer to a window rendered for another chip (``?expect_chip=``)."""
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return ('<p class="muted" data-chip-changed>chip changed in another window -- '
+                'reload this page to inspect the chip that is open now.</p>')
+    return None
+
+
 @bp.route("/qubit/<name>")
 def qubit_detail(name: str):
     # ?focus=<dot-path> deep-links straight to a field (scroll + focus + flash)
     # — exposes the existing focus_path plumbing to the data-viewer value chip.
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_qubit_detail(name, focus_path=request.args.get("focus") or None)
 
 
@@ -13530,6 +13689,9 @@ def field_edit():
 
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
+    _nt = _never_touch_refusal([dot_path])
+    if _nt is not None:
+        return _nt
 
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
@@ -13545,6 +13707,10 @@ def field_edit():
         # fires at the resolved write path, and cross-class pointer chains
         # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
+        # review r1 P1-2: never_touch also guards where the write LANDS (a pointer alias)
+        _nt = _never_touch_refusal([target_path])
+        if _nt is not None:
+            return _nt
         # The tree displays pointer text. Relinking must address that leaf,
         # while ordinary value edits retain the established follow behavior.
         if request.form.get("pointer_mode") == "relink":
@@ -15762,7 +15928,7 @@ def _count_refs_into(store, dot_path: str) -> tuple[int, list[dict]]:
         elif isinstance(node, str) and is_pointer(node):
             if segs[:len(target)] == target:
                 return                       # pointers INSIDE the subtree don't count
-            abs_segs = pointer_to_abs(node, segs)
+            abs_segs = pointer_to_abs(node, segs, store.merged)
             if abs_segs and abs_segs[:len(target)] == target:
                 count += 1
                 if len(refs) < 50:
@@ -16754,6 +16920,16 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
+    _nt_paths = [p for (p, _v, _c) in pairs]
+    if request.headers.get("X-SM-Agent"):
+        for _p in list(_nt_paths):
+            try:
+                _nt_paths.append(_resolve_edit_path(modifier.store, _p))   # review r1 P1-2
+            except Exception:  # noqa: BLE001 -- an unresolvable path is reported by the write below
+                pass
+    _nt = _never_touch_refusal(_nt_paths)
+    if _nt is not None:
+        return _nt
 
     # Preflight EVERY identity row before type assignments or any batch write,
     # even for independent batches. A single answer covers all listed rows.
@@ -17286,6 +17462,37 @@ def _pair_bell(p: dict) -> None:
         p["bell_others"] = ", ".join(others)
 
 
+def _pair_map_panel(engine) -> dict:
+    """The chip map's hover-panel rows for every pair (core/pair_map_panel)."""
+    from quam_state_manager.core import pair_map_panel
+    try:
+        return pair_map_panel.all_pair_rows(engine)
+    except Exception:  # noqa: BLE001 -- the panel falls back to the table row
+        logger.exception("building the pair map panel failed")
+        return {}
+
+
+@bp.route("/api/pair-map-panel/<path:name>")
+def api_pair_map_panel(name: str):
+    """One pair's map hover-panel rows, read fresh (the panel re-asks on every open)."""
+    from quam_state_manager.core import pair_map_panel
+    engine = _engine()
+    if not engine:
+        return jsonify({"rows": None, "reason": "no_chip", "error": "No chip is loaded."}), 409
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return jsonify({"rows": None, "reason": "chip_changed",
+                        "error": "Another chip is open now; reload this page."}), 409
+    try:
+        rows = pair_map_panel.all_pair_rows(engine, only=name).get(name)
+    except Exception:  # noqa: BLE001 -- the panel keeps what it showed
+        logger.exception("pair map panel for %r failed", name)
+        return jsonify({"rows": None, "reason": "error", "error": "Could not read the pair."}), 500
+    if rows is None:
+        return jsonify({"rows": None, "reason": "unknown_pair", "error": f"No pair named {name!r}."}), 404
+    return jsonify({"rows": rows})
+
+
 @bp.route("/pairs")
 def pairs():
     engine = _engine()
@@ -17339,6 +17546,8 @@ def pairs():
             page="pairs",
             pairs=page_pairs,
             pair_vocab=pair_vocab,
+            pair_panel=_pair_map_panel(engine),
+            pair_panel_at=time.strftime("%H:%M:%S"),
             cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,
@@ -17351,6 +17560,9 @@ def pairs():
 
 @bp.route("/pair/<name>")
 def pair_detail(name: str):
+    note = _stale_chip_note()
+    if note:
+        return note
     return _render_pair_detail(name, focus_path=request.args.get("focus") or None)
 
 
@@ -27282,7 +27494,7 @@ def _lab_resolve_in_batch(store, pointer: str, wp: str, writes):
     batch deletes resolves to nothing, anything else from the chip."""
     from quam_state_manager.core.pointer_path import pointer_to_abs
     from quam_state_manager.core.pointer_resolver import resolve_pointer
-    t = pointer_to_abs(pointer, wp.split("."))
+    t = pointer_to_abs(pointer, wp.split("."), store.merged)
     if t:
         for w2, v2 in reversed(writes):
             if not isinstance(w2, str) or w2 == wp:
@@ -27655,7 +27867,7 @@ def _lab_contents(merged: dict, seeds: set) -> dict:
             return
         for k, v in items:
             if isinstance(v, str) and v.startswith("#"):
-                t = pointer_to_abs(v, segs + [str(k)])
+                t = pointer_to_abs(v, segs + [str(k)], merged)
                 # a qubit's links INTO other pairs (its z operations that are
                 # other gates' pulses) are not followed: a gate's apply()
                 # plays its own pulses only, and on a 30-qubit chip following
@@ -27715,7 +27927,7 @@ def _walk_path(root, segs):
     return True, cur
 
 
-def _lab_write_seeds(writes) -> set:
+def _lab_write_seeds(writes, root=None) -> set:
     """``(coll, name)`` members the WRITTEN values point into: re-linking
     ``qubit_pairs.p.qubit_control`` to ``#/qubits/q4`` makes the gate play on
     q4, so the 'after' contents must carry q4 (else a pruning artefact, not
@@ -27725,7 +27937,7 @@ def _lab_write_seeds(writes) -> set:
 
     def scan(v, segs):
         if isinstance(v, str) and v.startswith("#"):
-            t = pointer_to_abs(v, list(segs))
+            t = pointer_to_abs(v, list(segs), root)
             if t and len(t) >= 2 and t[0] in _LAB_PRUNED:
                 out.add((t[0], t[1]))
         elif isinstance(v, dict):
@@ -27799,7 +28011,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
             segs = mp.split(".")
             if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
                 seeds.add((segs[0], segs[1]))
-        seeds |= _lab_write_seeds(writes)
+        seeds |= _lab_write_seeds(writes, merged)
         if cfg:
             for p in (list(cfg["paths"]) + [op for op, _f, _k in cfg["cut"]]
                       + list(cfg["orphans"])):
@@ -28066,7 +28278,7 @@ def _lab_cut_ops(contents: dict, keep: set) -> list[str]:
         for k, v in items:
             s2 = segs + [str(k)]
             if isinstance(v, str) and v.startswith("#"):
-                t = pointer_to_abs(v, s2)
+                t = pointer_to_abs(v, s2, contents)
                 if t and len(t) >= 2 and t[0] in _LAB_PRUNED \
                         and t[1] not in (contents.get(t[0]) or {}):
                     for n in range(len(s2) - 1, 0, -1):
@@ -28961,7 +29173,7 @@ def api_pulse_duplicate():
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
 
-        rewritten = rewrite_subtree_pointers(body, path, new_path)
+        rewritten = rewrite_subtree_pointers(body, path, new_path, store.merged)
         try:
             modifier.create_subtree(new_path, rewritten)
         except KeyError:
@@ -29181,14 +29393,14 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
         _writes = [(path, _LAB_DELETE),
-                   (new_path, rewrite_subtree_pointers(body, path, new_path))]
+                   (new_path, rewrite_subtree_pointers(body, path, new_path, store.merged))]
         if retarget:
             for referrer in referrers:
                 try:
                     raw = store.get_value(referrer)
                 except (KeyError, TypeError, ValueError, IndexError):
                     continue
-                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
+                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
         if (retarget and isinstance(body, dict) and body.get("id") == old_name
@@ -29204,7 +29416,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
         except (KeyError, TypeError, ValueError, IndexError):
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
-        rewritten = rewrite_subtree_pointers(body, path, new_path)
+        rewritten = rewrite_subtree_pointers(body, path, new_path, store.merged)
         # One group id for the rename AND its pointer retargets → a single Ctrl+Z
         # undoes the whole rename as one action.
         gid = modifier.new_group_id()
@@ -29221,7 +29433,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                     raw = store.get_value(referrer)
                 except (KeyError, TypeError, ValueError, IndexError):
                     continue
-                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
+                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1
@@ -51933,7 +52145,7 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     route and the Strict gate inside /scheduler/start)."""
     settings = scheduler.load_settings(inst)
     cal = (json_text(data, "calibrations_folder")
-           or str(settings.get("calibrations_folder") or "").strip())
+           or _calibrations_folder())
     env_python = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     target = (json_text(data, "quam_state_path")
               or str(settings.get("quam_state_path") or "").strip())
@@ -52106,7 +52318,7 @@ def scheduler_scan():
     """List nodes/graphs in a folder (hardware-safe ast scan) + the chip roster."""
     folder = (request.args.get("folder") or "").strip()
     if not folder:
-        folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+        folder = _calibrations_folder()
     items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     store = _store() if _context_type() == "quam" else None
     return jsonify({
@@ -52127,7 +52339,7 @@ def scheduler_scan_params():
     inst = _sched_inst()
     settings = scheduler.load_settings(inst)
     data = json_object()
-    folder = json_text(data, "folder") or str(settings.get("calibrations_folder") or "").strip()
+    folder = json_text(data, "folder") or _calibrations_folder()
     env = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     if not folder:
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
@@ -52470,6 +52682,7 @@ def scheduler_start():
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(
             app, inst, folder, item_id, status))
+    scheduler.stamp_calibrations_folder(inst, _calibrations_folder())
     try:
         scheduler.start(inst)
     except scheduler.ForeignRunnerError as exc:
@@ -52586,7 +52799,7 @@ def _autofit_readiness() -> dict:
     ctx = _active_ctx()
     chip_ok = bool(ctx and ctx.get("type") == "quam")
     env, env_source = _autofit_env()
-    folder = settings.get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
     # provider, model and API KEY are a user credential, not a fact about a
     # device. Reading them from a scope would both hide the file the user
@@ -52734,7 +52947,7 @@ def autofit_resolve():
         p = _autofit_plan_from_request(data)
     except af_plan.PlanError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     if not folder:
         return jsonify({"ok": False, "error": "no calibrations folder set — "
                         "configure it on the Experiment Runner page"}), 400
@@ -52930,7 +53143,7 @@ def _autofit_start_real(inst, p, data, auditor):
             return None, {"error": "preflight failed", "reason": "preflight",
                           "preflight": pre}, 409
     # step → file resolution must be complete
-    folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     items = [n.to_dict() for n in
              node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}
