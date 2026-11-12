@@ -131,11 +131,12 @@ window.ComponentMap = (function () {
     var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
     return s.getBoundingClientRect();
   }
-  // Placement. The panel sits beside its entity when a spot there covers no
-  // other map entity; otherwise it docks in ONE place: the map card's top-right
-  // corner, clamped on all four sides to the card, below the Add buttons. The
-  // entity then wears a filled ring. The choice is made once per open: a scroll
-  // or a refresh moves the panel with what it is attached to, never elsewhere.
+  // Placement. The panel floats beside its entity when a spot there covers
+  // nothing on the map; otherwise it is laid out in the map card's reserved side
+  // column (a normal box: full height, scrolls with the page, overlaps nothing,
+  // never shrunk). The entity then wears a filled ring and the panel title names
+  // it. The choice is made once per open: a scroll moves a beside panel with its
+  // entity, never to another place.
   function _entityBox(anchor, body) {
     // a pair's own end stones belong to it: the panel goes clear of all three
     var ends = (anchor.getAttribute("data-link-ends") || "").split(/\s+/).filter(Boolean);
@@ -156,81 +157,85 @@ window.ComponentMap = (function () {
   function _overlap(x, y, w, h, r) {
     return Math.min(x + w, r.right) > Math.max(x, r.left) && Math.min(y + h, r.bottom) > Math.max(y, r.top);
   }
-  // The dock: the card's top-right corner, pushed below any Add button it would
-  // cover, clamped to the card (and the viewport) on all four sides.
-  function _dockSpot(pop, card, ghosts, pad) {
-    var W = window.innerWidth, H = window.innerHeight;
-    var top = Math.max(card.top + pad, pad), bottom = Math.min(card.bottom - pad, H - pad);
-    var left = Math.max(card.left + pad, pad), right = Math.min(card.right - pad, W - pad);
-    pop.style.maxHeight = Math.max(80, Math.floor(bottom - top)) + "px";
-    var b = pop.getBoundingClientRect();
-    var x = Math.max(left, right - b.width), y = top;
-    for (var guard = 0; guard < ghosts.length + 1; guard++) {
-      var hit = null;
-      ghosts.forEach(function (g) { if (!hit && _overlap(x, y, b.width, b.height, g)) hit = g; });
-      if (!hit) break;
-      y = hit.bottom + pad;                      // below the Add button
+  // The reserved side column of a hover map (Qubits / Pairs pages).
+  var SIDE_HINT = "Point at an entity on the map: its values show here when they do not fit beside it.";
+  function _ensureSide(body) {
+    if (!body) return null;
+    var side = body.querySelector(":scope > .cm-dir-side");
+    if (side) return side;
+    side = document.createElement("div");
+    side.className = "cm-dir-side";
+    var hint = document.createElement("p");
+    hint.className = "muted";
+    hint.textContent = SIDE_HINT;
+    side.appendChild(hint);
+    body.appendChild(side);
+    body.classList.add("cm-dir-hasside");
+    return side;
+  }
+  function _toSide(pop, side) {
+    pop.style.left = ""; pop.style.top = ""; pop.style.maxHeight = "";
+    if (pop.parentNode !== side) side.appendChild(pop);
+    var hint = side.querySelector(":scope > .muted");
+    if (hint) hint.hidden = true;
+  }
+  function _toBody(pop) {
+    if (pop.parentNode !== document.body) {
+      var old = pop.parentNode;
+      document.body.appendChild(pop);
+      var hint = old && old.querySelector && old.querySelector(":scope > .muted");
+      if (hint) hint.hidden = false;
     }
-    if (y + b.height > bottom) {                 // too tall below it: shrink, never leave the card
-      pop.style.maxHeight = Math.max(80, Math.floor(bottom - y)) + "px";
-      // a shrunk panel scrolls: its scrollbar widens it, so measure again
-      b = pop.getBoundingClientRect();
-      x = Math.max(left, right - b.width);
-    }
-    return [x, Math.min(y, Math.max(top, bottom - 80))];
   }
   function _placeAvoiding(pop, anchor) {
     var body = anchor.closest(".cmap-body") || document;
     var ent = _entityBox(anchor, body), a = ent.box;
-    var card = (anchor.closest(".cmap") || body).getBoundingClientRect();
-    if (!card.width || !card.height) {             // no laid-out card (a report page): the viewport
-      card = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-    }
-    var gap = 10, pad = 8;
     var mode = pop._placeMode;
     if (mode && mode.anchor === anchor) {
-      // re-place the same way (scroll, resize, a refreshed row): never a new spot
       if (mode.kind === "beside") {
         pop.style.left = Math.round(a.left + mode.dx) + "px";
         pop.style.top = Math.round(a.top + mode.dy) + "px";
-      } else {
-        var d = _dockSpot(pop, card, _ghostBoxes(body), pad);
-        pop.style.left = Math.round(d[0]) + "px"; pop.style.top = Math.round(d[1]) + "px";
       }
       _ring(pop._docked ? anchor : null, a);
       return;
     }
+    var side = _ensureSide(body.classList ? body : null);
+    _toBody(pop);
     pop.style.maxHeight = "";
     var b = pop.getBoundingClientRect();
+    var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
+    // the visible part of the drawing: a beside panel stays inside it
+    var area = (body.querySelector && body.querySelector(".cm-scroll") || body).getBoundingClientRect();
+    if (!area.width || !area.height) area = { left: 0, top: 0, right: W, bottom: H };
     var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
-      return ent.mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
+      return ent.mine.indexOf(e) < 0;            // the Add buttons are obstacles too
     }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
-    var W = window.innerWidth, H = window.innerHeight;
     var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
     var beside = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
                   [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
                   [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
+    var minX = Math.max(area.left, pad), minY = Math.max(area.top, pad);
+    var maxX = Math.min(area.right, W - pad), maxY = Math.min(area.bottom, H - pad);
     var pick = null;
-    var minX = Math.max(card.left, pad), minY = Math.max(card.top, pad);
-    var maxX = Math.min(card.right, W - pad) - b.width, maxY = Math.min(card.bottom, H - pad) - b.height;
     for (var i = 0; i < beside.length && !pick; i++) {
-      // kept inside the card and the viewport, and then it must cover nothing
-      var c = [Math.max(minX, Math.min(beside[i][0], maxX)), Math.max(minY, Math.min(beside[i][1], maxY))];
+      // beside as it stands: whole, inside the drawing and the viewport, covering nothing
+      var c = beside[i];
+      if (c[0] < minX || c[1] < minY || c[0] + b.width > maxX || c[1] + b.height > maxY) continue;
       if (!others.some(function (r) { return _overlap(c[0], c[1], b.width, b.height, r); })) pick = c;
     }
-    var docked = !pick;
-    if (docked) pick = _dockSpot(pop, card, _ghostBoxes(body), pad);
-    pop._docked = docked;
-    pop._graceMs = docked ? 900 : 0;
-    pop._placeMode = docked ? { kind: "dock", anchor: anchor }
-                            : { kind: "beside", anchor: anchor, dx: pick[0] - a.left, dy: pick[1] - a.top };
-    pop.style.left = Math.round(pick[0]) + "px";
-    pop.style.top = Math.round(pick[1]) + "px";
-    _ring(docked ? anchor : null, a);
-  }
-  function _ghostBoxes(body) {
-    return Array.prototype.filter.call(body.querySelectorAll("[data-cm].cm-dir-ghost"), function () { return true; })
-      .map(_boxOf).filter(function (r) { return r.width || r.height; });
+    var docked = !pick || !side;
+    if (docked && side) {
+      _toSide(pop, side);
+    } else {
+      if (!pick) pick = [Math.max(pad, Math.min(beside[0][0], W - b.width - pad)), Math.max(pad, Math.min(beside[0][1], H - b.height - pad))];
+      pop.style.left = Math.round(pick[0]) + "px";
+      pop.style.top = Math.round(pick[1]) + "px";
+    }
+    pop._docked = docked && !!side;
+    pop._graceMs = pop._docked ? 900 : 0;
+    pop._placeMode = pop._docked ? { kind: "side", anchor: anchor }
+                                 : { kind: "beside", anchor: anchor, dx: pick[0] - a.left, dy: pick[1] - a.top };
+    _ring(pop._docked ? anchor : null, a);
   }
 
   // A docked panel sits away from its entity, so the entity wears a filled
@@ -359,8 +364,14 @@ window.ComponentMap = (function () {
 
   // An open panel follows the state: the same events that patch the table
   // (an edit landing, Ctrl+Z / redo, a pull) re-read it, newest answer wins.
+  // One trigger per door: an inspector commit (htmx POST), Ctrl+Z / redo
+  // (cellsReverted), a pull (stateRestored). Triggers inside one window coalesce
+  // into ONE re-read; the fetch itself aborts an older one.
+  var REREAD_MS = 400;
   var _rereadTimer = null;
-  function _rereadOpen() {
+  function _rereadOpen(e) {
+    // a qubit panel follows its table row (the row observer); the doors only re-read pairs
+    if (e && _popEnt && _popEnt.indexOf("pair:") !== 0) return;
     clearTimeout(_rereadTimer);
     _rereadTimer = setTimeout(function () {
       if (!_popEnt || !_pop || _pop.hidden || !_pop.isConnected) return;
@@ -374,17 +385,20 @@ window.ComponentMap = (function () {
         _showPopup({ kind: kind, id: id }, _rowFor(kind, id), _popAnchor);
         if (_popEnt !== key) _popEnt = key;
       }
-    }, 60);
+    }, REREAD_MS);
   }
   if (typeof document !== "undefined") {
-    ["quam:state-changed", "cellsReverted", "stateRestored", "sm:tray-swapped"].forEach(function (name) {
+    ["cellsReverted", "stateRestored"].forEach(function (name) {
       document.addEventListener(name, _rereadOpen);
     });
     // an inspector commit is an htmx POST that fires none of the events above
     document.addEventListener("htmx:afterRequest", function (e) {
       var d = e.detail || {}, cfg = d.requestConfig || {};
       var verb = String(cfg.verb || (d.xhr && d.xhr._smVerb) || "").toLowerCase();
-      if (d.successful && verb && verb !== "get") _rereadOpen();
+      var path = String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || "");
+      // only a value write: an inspector commit or a field edit (not the
+      // Auto-Sync push that follows it, which would be a second re-read)
+      if (d.successful && verb && verb !== "get" && /\/edit(-batch)?(\?|$)|\/field\/edit/.test(path)) _rereadOpen();
     });
   }
   // The open entity's own table row: whatever patches it (an edit, Ctrl+Z, a
@@ -394,7 +408,7 @@ window.ComponentMap = (function () {
     if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }
     var table = row && row.closest && row.closest("table");
     if (!table || !window.MutationObserver) return;
-    _rowObs = new MutationObserver(function () { _rereadOpen(); });
+    _rowObs = new MutationObserver(function () { if (_popEnt && _popEnt.indexOf("qubit:") === 0) _rereadOpen(); });
     _rowObs.observe(table, { childList: true, subtree: true, characterData: true });
   }
 
@@ -414,6 +428,8 @@ window.ComponentMap = (function () {
     var pop = _popupEl();
     pop._closeDetail = function () {
       pop.hidden = true; _popEnt = null; _restoreNativeTitle(); _untether();
+      var sideOf = pop.parentNode && pop.parentNode.classList && pop.parentNode.classList.contains("cm-dir-side") ? pop.parentNode : null;
+      if (sideOf) { var h = sideOf.querySelector(":scope > .muted"); if (h) h.hidden = false; }
       if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
       if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
       _popHl = null;
@@ -556,6 +572,7 @@ window.ComponentMap = (function () {
       return !!e && _hoverFor(_active && _active.root, e.kind);
     } });
     body.addEventListener("click", function (ev) {
+      if (ev.target.closest && ev.target.closest(".cm-popup")) return;   // the side-column panel
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)
       var el = ev.target.closest && ev.target.closest("[data-cm]");
@@ -744,6 +761,7 @@ window.ComponentMap = (function () {
           });
           _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);
+          if (_hoverMode(root)) _ensureSide(body);
           fitUnsized(root, body);
         })
         .catch(function () {

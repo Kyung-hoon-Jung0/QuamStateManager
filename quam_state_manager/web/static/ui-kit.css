@@ -98,6 +98,7 @@
     --ui-lh-btn: 1.2;
     --ui-btn-gap: .3em;
     --ui-focus-w: 2px;
+    --ui-map-side-w: 24rem;   /* the chip map's reserved hover-panel column */
     --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
     --ui-dialog-s: 560px;
@@ -1075,8 +1076,13 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .bulk-cell:focus { border-color: var(--ui-accent); }
 .bulk-row-apply:disabled { visibility: hidden; }
 
-/* Chip map: a hover panel docked away from its entity -- the entity's filled ring
-   (component-map.js _ring) */
+/* Chip map hover panels: the reserved side column of the Qubits / Pairs maps
+   (a panel that does not fit beside its entity is laid out there, whole), and
+   the filled ring on that entity (component-map.js _ensureSide, _ring) */
+.cmap-body.cm-dir-hasside { display: grid; grid-template-columns: minmax(0, 1fr) var(--ui-map-side-w); column-gap: var(--ui-gap-3); align-items: start; }
+.cm-dir-hasside > .cm-scroll, .cm-dir-hasside > .cm-note, .cm-dir-hasside > .cm-dir-legend { grid-column: 1; }
+.cm-dir-hasside > .cm-dir-side { grid-column: 2; grid-row: 1 / span 3; min-width: 0; }
+.cm-dir-side > .cm-popup { position: static; max-height: none; width: auto; max-width: none; min-width: 0; box-shadow: none; }
 .cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
 .cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
 .cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }

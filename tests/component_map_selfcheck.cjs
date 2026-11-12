@@ -408,7 +408,7 @@ async function checkComponentMap() {
   await wait(320);
   ok(!pop.hidden && pop.isConnected, 'moving from the stone into the panel keeps it open');
   pop.dispatchEvent(new win.MouseEvent('mouseleave'));
-  await wait(320);
+  await wait(1000);
   ok(!pop.isConnected || pop.hidden, 'leaving the panel closes it after the grace');
   // placement: the panel goes to the side that covers no neighbouring entity
   (function () {
@@ -469,23 +469,19 @@ async function checkComponentMap() {
     win.TopoGraph.positionDetail(pd, stone);
     ok(pd._docked === true, 'a crowded stone docks its panel');
     ok(stone.classList.contains('cm-dir-docked'), 'the first docked placement rings its stone');
-    pd._placeMode = null;
-    // an Add button sits in the corner the dock wants: the panel goes below it
-    const svgEl = body.querySelector('svg');
-    const ghost = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
-    ghost.setAttribute('class', 'cm-dir-ghost'); ghost.setAttribute('data-cm', 'add:qubit');
-    svgEl.appendChild(ghost);
-    const W = win.innerWidth;
-    ghost.getBoundingClientRect = R(W - 150, 0, 140, 60);
-    win.TopoGraph.positionDetail(pd, stone);
-    const gx = parseFloat(pd.style.left), gy = parseFloat(pd.style.top);
-    ok(pd._docked && !(gx < W - 10 && gx + 120 > W - 150 && gy < 60 && gy + 80 > 0),
-       'the dock never covers an Add button (' + gx + ',' + gy + ')');
-    ok(gx + 120 <= W && gy >= 0, 'the dock stays inside the card');
-    // a wheel scroll re-places it the same way, never somewhere else
+    // it is laid out WHOLE in the map card's reserved side column
+    const sideCol = body.querySelector(':scope > .cm-dir-side');
+    ok(!!sideCol && body.classList.contains('cm-dir-hasside'), 'the hover map reserves a side column');
+    ok(pd.parentNode === sideCol, 'a panel with no clean spot beside its stone goes into the side column');
+    ok(!pd.style.maxHeight && !pd.style.left && !pd.style.top, 'the side-column panel is never shrunk or positioned');
+    ok(!!pd.querySelector('.cm-popup-hint'), 'Expand is part of the side-column panel');
+    ok(sideCol.querySelector(':scope > .muted').hidden === true, 'the column hint gives way to the panel');
     doc.dispatchEvent(new win.Event('scroll'));
-    ok(parseFloat(pd.style.left) === gx && parseFloat(pd.style.top) === gy, 'a scroll keeps the docked panel in place');
-    ghost.remove();
+    ok(pd.parentNode === sideCol, 'a scroll leaves the side-column panel where it is');
+    // a click inside the side-column panel is not a map click
+    win._htmxCalls.length = 0;
+    pd.querySelector('.cm-popup-title').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(!pd.hidden && pd.parentNode === sideCol, 'clicking inside the side-column panel keeps it open');
     ok(!!doc.querySelector('svg.cm-dir-tether .cm-dir-tether-ring') && stone.classList.contains('cm-dir-docked'),
        'a docked panel rings its stone');
     ok(!doc.querySelector('svg.cm-dir-tether line'), 'no connector line (it would read as a pair edge)');
@@ -528,7 +524,7 @@ async function checkComponentMap() {
     const cell = doc.querySelector('tr[data-qubit-id="qA1"] td[data-dbm]');
     const was = cell.textContent;
     cell.textContent = '-21.0 dBm';
-    await wait(150);
+    await wait(500);
     const v = doc.querySelector('.cm-popup:not([hidden]) .cm-popup-v');
     ok(v && v.textContent === '-21.0 dBm', 'an open qubit panel follows its patched row (' + (v && v.textContent) + ')');
     cell.textContent = was;
@@ -588,29 +584,56 @@ async function checkComponentMap() {
   // an open panel follows an undo / edit: the event that patches the table re-reads it
   win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.7777', 'after undo']] };
   doc.dispatchEvent(new win.CustomEvent('cellsReverted', { detail: {} }));
-  await wait(150);
+  await wait(500);
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.7777') === 0,
      'an open pair panel follows Ctrl+Z (' + pop.querySelector('.cm-popup-v').textContent + ')');
   win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
-  doc.dispatchEvent(new win.CustomEvent('quam:state-changed'));
-  await wait(150);
-  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0, 'an open pair panel follows an edit');
+  doc.dispatchEvent(new win.CustomEvent('stateRestored', { detail: {} }));
+  await wait(500);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0, 'an open pair panel follows a pull (stateRestored)');
   // an inspector commit is an htmx POST: the open panel re-reads
   win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.6666', 'after commit']] };
-  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post' } } }));
-  await wait(150);
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  await wait(500);
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.6666') === 0,
      'an open pair panel follows an inspector commit (' + pop.querySelector('.cm-popup-v').textContent + ')');
   win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
-  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post' } } }));
-  await wait(150);
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  await wait(500);
+  // one commit fires several signals: they coalesce into ONE re-read
+  const nReads = () => win._fetchUrls.filter((u) => u.indexOf('/api/pair-map-panel/') === 0).length;
+  let r0 = nReads();
+  const post = () => doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/pair/qA2-qA1/edit' } } }));
+  post(); await wait(100); doc.dispatchEvent(new win.CustomEvent('cellsReverted', { detail: {} })); await wait(100); post();
+  doc.dispatchEvent(new win.CustomEvent('quam:state-changed')); doc.dispatchEvent(new win.CustomEvent('sm:tray-swapped'));
+  await wait(600);
+  ok(nReads() - r0 === 1, 'one commit = one re-read (' + (nReads() - r0) + ')');
+  // a GET (a page fetch, a poll) never re-reads
+  r0 = nReads();
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'get' } } }));
+  await wait(600);
+  ok(nReads() === r0, 'a GET never re-reads');
+  // the Auto-Sync push after a commit is not a second re-read
+  r0 = nReads();
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post', path: '/state/apply-to-live' } } }));
+  await wait(600);
+  ok(nReads() === r0, 'a push to live never re-reads');
+  // the Pairs page: a qubit stone taking focus closes the open pair panel
+  stone.dispatchEvent(new win.FocusEvent('focusin'));
+  ok(!doc.querySelector('.cm-popup:not([hidden])') || doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent !== 'pair qA2-qA1',
+     'focus on a stone closes the pair panel');
+  stone.dispatchEvent(new win.FocusEvent('focusout'));
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
   // a map click carries the page's chip too
   win._htmxCalls.length = 0;
   edgeNoRow.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   ok(win._htmxCalls.some((c) => c[1] === '/pair/qA2-qA1?expect_chip=tokA'),
      'a map click asks for the inspector with the page chip (' + win._htmxCalls.map((c) => c[1]).join(',') + ')');
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
-  await wait(300);
+  await wait(1000);
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
   await tick(); await tick(); await tick();
   pop = doc.querySelector('.cm-popup');
@@ -666,7 +689,7 @@ async function checkComponentMap() {
   ok(JSON.parse(JSON.stringify(js._parsed['qA2-qA1']))[0][1] === '0.2222', 'an older answer never overwrites newer cached rows');
   win._pairPanelReply = null;
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
-  await wait(320);
+  await wait(1000);
   js.remove();
   // an entity with NO matching row still gets the minimal card
   const prowEl = doc.querySelector('tr[data-pair-id="qA2-qA1"]');

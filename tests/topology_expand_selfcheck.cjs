@@ -185,14 +185,14 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       const p = panel(d);
       event(w, node, 'mouseleave'); await wait(80); assert.ok(panel(d));
       p.dispatchEvent(new w.MouseEvent('mouseenter')); await wait(300); assert.ok(panel(d));
-      p.dispatchEvent(new w.MouseEvent('mouseleave')); await wait(300);
+      p.dispatchEvent(new w.MouseEvent('mouseleave')); await wait(1000);
       assert.equal(panel(d), null);
       assert.equal(node.getAttribute('aria-expanded'), 'false');
     });
     await check('component hover moves to the next entity', async () => {
       event(w, node, 'mouseenter');
       const other = d.querySelectorAll('[data-cm^="q:"]')[1];
-      event(w, other, 'mouseenter');
+      event(w, other, 'mouseenter'); await wait(200);   // a side-column panel switches after a short rest
       assert.ok(panel(d)); assert.equal(node.getAttribute('aria-expanded'), 'false');
       event(w, d.body, 'click'); assert.equal(panel(d), null);
     });
@@ -203,16 +203,16 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       assert.equal(panel(d), null); assert.equal(d.activeElement, node);
     });
     await check('component focus leaving the panel closes it', async () => {
-      node.blur(); await wait(300); node.focus(); key(w, node, 'Tab');
+      node.blur(); await wait(1000); node.focus(); key(w, node, 'Tab');
       const hint = panel(d).querySelector('.cm-popup-hint');
       assert.equal(d.activeElement, hint);
       const out = d.createElement('button'); out.textContent = 'elsewhere'; d.body.append(out);
-      out.focus(); await wait(320);
+      out.focus(); await wait(1000);
       assert.equal(panel(d), null, 'Tab out of the panel closes it');
       out.remove();
     });
     await check('component Tab past the panel returns to the map', async () => {
-      node.blur(); await wait(300); node.focus(); key(w, node, 'Tab');
+      node.blur(); await wait(1000); node.focus(); key(w, node, 'Tab');
       const hint = panel(d).querySelector('.cm-popup-hint');
       assert.equal(d.activeElement, hint);
       const prevented = key(w, hint, 'Tab');

@@ -1334,7 +1334,7 @@ window.TopoGraph = (function () {
   // the Add buttons alike, as plain Tab would walk them), then past the map.
   function focusNextAnchor(host, from) {
     var items = Array.prototype.filter.call(host.querySelectorAll(FOCUSABLE), function (el) {
-      return !el.disabled && el.getAttribute('tabindex') !== '-1';
+      return !el.disabled && el.getAttribute('tabindex') !== '-1' && !(detailPanel && detailPanel.contains(el));
     });
     for (var i = items.indexOf(from) + 1; i < items.length; i++) {
       items[i].focus({preventScroll: true});
@@ -1343,6 +1343,8 @@ window.TopoGraph = (function () {
     return focusAfterHost(host);
   }
   function offerDetail(anchor, label, open, host) {
+    // another entity's hover panel gives way to this one's Expand offer
+    if (detailPanel && detailPanel._hoverMode && detailAnchor !== anchor && !closingDetail) closeDetails();
     if (closingDetail || detailPanel) return;
     clearTimeout(detailTimer);
     if (detailButton && detailAnchor === anchor) return;
