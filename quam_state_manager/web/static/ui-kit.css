@@ -225,6 +225,7 @@
     --ui-port-test-pt-row-input-not-type-radio-not-typ-padding: 0.2rem 0.4rem;
     --ui-port-test-pt-res-row-margin: 0.5rem 0;
     --ui-port-test-pt-facts-th-width: 11rem;
+    --ui-port-test-pt-pin-min-width: 9rem;
     --ui-port-popup-actions-btn-sync-font-size: 0.95em;
     --ui-port-popup-actions-btn-sync-padding: 0.15rem 0.6rem;
     --ui-rule-control-1: 1.1rem;
@@ -1180,6 +1181,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .port-test .pt-row label { display: inline-flex; gap: var(--ui-opxmon-space-sm); align-items: center; margin: 0; }
 .port-test .pt-row input:not([type=radio]):not([type=checkbox]), .port-test .pt-row select { width: auto; margin: 0; padding: var(--ui-port-test-pt-row-input-not-type-radio-not-typ-padding); height: auto; }
 .port-test .pt-row legend { font-weight: var(--ui-fw); margin-right: var(--ui-opxmon-space-md); }
+.port-test .pt-pin { min-width: var(--ui-port-test-pt-pin-min-width); }
 .port-test .pt-warn { color: var(--ui-feature-pico-del-color-2); }
 .port-test .pt-ok { color: var(--ui-feature-pico-ins-color); font-weight: var(--ui-fw); }
 .port-test .pt-trace { display: block; background: var(--ui-surface-1); border: var(--ui-compare-float-cf-btn-border); border-radius: var(--ui-fold-nudge); }

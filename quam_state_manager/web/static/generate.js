@@ -1271,19 +1271,10 @@
   // D-25: the chip's own port values for the popup's prefill. null = no chip, keep defaults.
   var portPlayChip = null;
   var PIN_RE = /^con([^/]*)\/([^/]+)\/(\d+)$/;
+  // One reader of a chip port's values, shared with the standalone /port-play page (PortPlay.chipPortOf).
   function chipPortOf(chip, pin) {
-    var m = PIN_RE.exec(String(pin || ""));
-    if (!chip || !m) return null;
-    var ctl = chip.instrument.controllers || {};
-    var fem = ((ctl["con" + m[1]] || ctl[m[1]] || {}).fems || {})[m[2]];
-    if (!fem) return null;
-    var a = ((fem.output_ports || fem.ports || {})[m[3]] || [])[0];
-    if (!a) return null;
-    var v = function (x) { return x == null ? null : x; };
-    if (/^mw/.test(String(fem.type || ""))) {
-      return {band: v(a.band), lo_hz: v(a.lo_frequency), fsp: v(a.full_scale_power_dbm)};
-    }
-    return {output_mode: v(a.output_mode), offset: v(a.offset)};
+    var pp = window.PortPlay;
+    return chip && pp && pp.chipPortOf ? pp.chipPortOf(chip.instrument, pin) : null;
   }
 
   function pinOfCell(c) { return "con" + String(c.getAttribute("data-con")).replace(/^con/, "") + "/" + c.getAttribute("data-slot") + "/" + c.getAttribute("data-port"); }

@@ -846,6 +846,7 @@ _STAGE6_SELECTORS = {
     '.port-test .pt-trace .pt-im',
     '.port-test .pt-trace .pt-re',
     '.port-test .pt-trace path',
+    '.port-test .pt-pin',
     '.port-test .pt-warn',
     '.port-test [hidden]',
     '.pt-choices',

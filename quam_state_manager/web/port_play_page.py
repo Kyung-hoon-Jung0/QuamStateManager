@@ -22,6 +22,8 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 from quam_state_manager.core import config_generator
 from quam_state_manager.web.request_body import json_object
+# exception names that mean "the OPX did not answer": the runner's own list (D-20), one source
+from quam_state_manager.generator.run_port_test import CONNECT_ERRORS as _CONNECT_ERRORS
 
 logger = logging.getLogger(__name__)
 port_play_page_bp = Blueprint("port_play_page", __name__)
@@ -49,6 +51,8 @@ try:
 except Exception as exc:
     print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}))
 """
+
+
 
 
 def _r():
@@ -142,7 +146,8 @@ def port_play_test_connection():
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
     try:
         res = subprocess.run([python, "-I", "-c", _CONNECT_SCRIPT], input=json.dumps(req) + "\n",
-                             capture_output=True, text=True, timeout=CONNECT_TIMEOUT_S,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=CONNECT_TIMEOUT_S,
                              creationflags=flags, env={**os.environ, "PYTHONUTF8": "1"})
     except subprocess.TimeoutExpired:
         return jsonify({"ok": False, "error": f"No answer from {host} within {CONNECT_TIMEOUT_S} s."})
@@ -154,4 +159,9 @@ def port_play_test_connection():
     except (IndexError, ValueError):
         tail = (res.stderr or "").strip().splitlines()[-1:] or ["no output"]
         out = {"ok": False, "error": tail[0]}
+    raw = str(out.get("error") or "")
+    if not out.get("ok") and any(k in raw for k in _CONNECT_ERRORS):
+        # One sentence a person can act on; the raw text stays in `detail` (as the runner does, D-20).
+        where = host + (f" (cluster {req['cluster']})" if req.get("cluster") else "")
+        out = {"ok": False, "error": f"Could not reach the OPX at {where}.", "detail": raw}
     return jsonify(out)

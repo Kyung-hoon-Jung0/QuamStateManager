@@ -121,7 +121,9 @@
   function playsByPin(plan) {
     var map = {};
     (plan.plays || []).forEach(function (p) {
-      if (p && p.con !== undefined) map[String(p.con).replace(/^con/, '') + '/' + p.slot + '/' + p.port] = p;
+      // S2's plan names a play's output as port: [con, slot, port].
+      var at = p && Array.isArray(p.port) ? {con: p.port[0], slot: p.port[1], port: p.port[2]} : p;
+      if (at && at.con !== undefined) map[String(at.con).replace(/^con/, '') + '/' + at.slot + '/' + at.port] = p;
     });
     return map;
   }
@@ -202,6 +204,8 @@
     var action = null, closing = false, sawRunning = false, lastData = null;
     function failure(res) {
       ui.message('');
+      // Nothing runs after a failure: the next press is a plain Play, not a restart.
+      sawRunning = false; $('[data-play]').textContent = 'Play';
       var box = $('[data-error]');
       box.innerHTML = '<div class="ui-notice ui-notice--danger" role="alert"><span class="ui-notice-text"></span></div>' +
         (res.detail && res.detail !== res.error ? '<details class="ui-disclosure"><summary class="ui-disclosure-summary">Details</summary>' +
@@ -373,7 +377,7 @@
       '<label>Auto-stop after (s), whole run<input data-seconds type="number" min="0.1" max="3600" step="0.1" value="300" required></label>' +
       '<label>Instrument max input (dBm), optional<input data-max-in type="number" step="0.1"></label>' +
       '<label>Waveform<select data-waveform><option value="">' + (lf ? 'DC at the offset' : 'CW tone') + ' (default)</option>' +
-      '<option value="edge">Edge: 1000 ns on every 10000 ns</option></select></label>' +
+      '<option value="edge" title="1000 ns on, every 10000 ns">Edge (1 us every 10 us)</option></select></label>' +
       '<label>Simulation length (ns), optional<input data-sim-ns type="number" min="1000" max="200000" step="1"></label></div>' +
       '<div class="ui-callout ui-callout--danger" data-power-warn hidden><p class="ui-callout-text"></p></div></section>' +
       '<section class="ui-item"><div class="ui-item-head"><h4 class="ui-item-title">Safety</h4></div>' +
@@ -561,7 +565,7 @@
       if (!all.some(function (x) { return pinOf(x) === pinOf(o); })) all.push(o);
       var row = document.createElement('tr');
       row.setAttribute('data-row', '');
-      row.innerHTML = '<td class="ui-table-cell"><label>Port<select data-pin></select></label>' +
+      row.innerHTML = '<td class="ui-table-cell"><label>Port<select class="pt-pin" data-pin></select></label>' +
         '<span class="ui-badge ui-badge--accent" data-chip-badge hidden>chip values</span></td>' +
         '<td class="ui-table-cell" data-kind-cell></td><td class="ui-table-cell"><div class="pt-row" data-line></div></td>' +
         '<td class="ui-table-cell"><button type="button" class="btn-sm outline" data-remove aria-label="Remove this port">Remove</button></td>';
@@ -963,7 +967,20 @@
     if (liveHw && window.showToast) window.showToast('Port play stopped \u2014 outputs off.', 'info');
     liveHw = false; setLive(null);
   }
-  window.PortPlay = {open: open, close: close, renderOffsets: renderOffsets, portLabel: portLabel,
+  // D-25: the open chip's own values of one output (from /api/instrument/data's instrument), or null.
+  function chipPortOf(instrument, pin) {
+    var m = /^con([^/]*)\/([^/]+)\/(\d+)$/.exec(String(pin || ''));
+    if (!instrument || !m) return null;
+    var ctl = instrument.controllers || {};
+    var fem = ((ctl['con' + m[1]] || ctl[m[1]] || {}).fems || {})[m[2]];
+    if (!fem) return null;
+    var a = ((fem.output_ports || fem.ports || {})[m[3]] || [])[0];
+    if (!a) return null;
+    var v = function (x) { return x == null ? null : x; };
+    if (/^mw/.test(String(fem.type || ''))) return {band: v(a.band), lo_hz: v(a.lo_frequency), fsp: v(a.full_scale_power_dbm)};
+    return {output_mode: v(a.output_mode), offset: v(a.offset)};
+  }
+  window.PortPlay = {open: open, close: close, renderOffsets: renderOffsets, portLabel: portLabel, chipPortOf: chipPortOf,
     live: function () { return liveSet ? JSON.parse(JSON.stringify(liveSet)) : null; }};
   window.addEventListener('pagehide', function () {
     sequence++; clearTimeout(timer);

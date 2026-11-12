@@ -157,6 +157,11 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(notice && /Could not reach the OPX/.test(notice.textContent), 'D-6 danger notice with the sentence');
   ok(/raw text/.test(p.querySelector('[data-error] .ui-disclosure').textContent), 'D-6 raw text under Details');
   ok(p.querySelector('[data-error] [data-edit-host]'), 'D-6 connect failure links to the host step');
+  replies.run.push({ok: true, id: 'f2'});
+  replies.status = [{state: 'running', id: 'f2', phase: 'connecting'}, {state: 'done', id: 'f2', result: {ok: false, error_kind: 'connect',
+    error: 'Could not reach the OPX at h (cluster c).', detail: 'raw'}}];
+  p.querySelector('[data-play]').click(); await sleep(1300);
+  ok(p.querySelector('[data-play]').textContent === 'Play', 'D-6 a run that failed after running goes back to Play');
   replies.run.push({ok: true, id: 'g1'});
   replies.status = [{state: 'running', id: 'g1', phase: 'running'}];
   p.querySelector('[data-play]').click(); await sleep(40);
@@ -190,8 +195,8 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   p.querySelector('[data-add-port]').click(); pickPin(rowsOf(p)[1], 'con1/1/1');
   const tr = (con, slot, port, kind, member, peak, edge) => Object.assign({con, slot, port, kind, member, peak, n: 4, step: 1,
     first_edge_ns: edge, re: [0, peak, peak, 0]}, kind === 'mw' ? {im: [0, 0, 0, 0]} : {rate: 2e9});
-  const simRes = id => ({state: 'done', id, meta: {plan: {expected_peak: null, plays: [{con: 'con1', slot: 3, port: 5, expected_peak: 0},
-    {con: 'con1', slot: 1, port: 1, expected_peak: 0.1}]}}, result: {ok: true, simulated: true, backend_label: 'Sim',
+  const simRes = id => ({state: 'done', id, meta: {plan: {expected_peak: null, plays: [{port: ['con1', 3, 5], expected_peak: 0},
+    {port: ['con1', 1, 1], expected_peak: 0.1}]}}, result: {ok: true, simulated: true, backend_label: 'Sim',
     traces: {'con1:3-5': tr('con1', 3, 5, 'lf', true, 0.2, 161), 'con1:1-1-1': tr('con1', 1, 1, 'mw', true, 0.1, 0),
       'con1:3-6': tr('con1', 3, 6, 'lf', false, 0, undefined), 'con1:dig:1': {digital: true, re: [0], n: 1}}}});
   replies.run.push({ok: true, id: 's1'}); replies.status = [simRes('s1')];
@@ -208,6 +213,7 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   const simRows = box.querySelectorAll('[data-sim-table] [data-sim-port]');
   ok(simRows.length === 2 && /AO 5/.test(simRows[0].textContent) && /161/.test(simRows[0].textContent), 'D-13 per-port table in set order');
   ok(/-161/.test(simRows[1].textContent) && /0\.1000/.test(simRows[1].textContent), 'D-13 delta to row 1 and expected per port');
+  ok(simRows[0].cells[2].textContent === '0.000' && simRows[1].cells[2].textContent === '0.1000', 'D-16 Expected column from plan.plays[].port');
   ok(/1 other declared output stayed at their offsets/.test(box.querySelector('[data-sim-others]').textContent), 'D-13 non-members in one line');
   ok(!/con1:3-5|con1:1-1-1/.test(box.textContent), 'D-12 sim never shows the raw key');
   replies.run.push({ok: true, id: 's2'}); replies.status = [simRes('s2')];

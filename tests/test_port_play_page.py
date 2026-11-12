@@ -81,6 +81,24 @@ class TestStandalonePage:  # D-27
         r = client.post("/port-play/test-connection", json={"host": "h", "python": "C:/nope/python.exe"})
         assert r.status_code == 400 and not r.get_json()["ok"]
 
+    def test_connection_failure_is_one_sentence_and_survives_non_utf8_stderr(self, client, monkeypatch):
+        """Walk finding: the env's stderr carried a cp949 OS message, the UTF-8 read thread died and
+        the page said "Not connected: no output". The read must not die, and a refusal reads as a sentence."""
+        import subprocess
+        from quam_state_manager.web import port_play_page as ppp
+        seen = {}
+
+        def fake_run(argv, **kw):
+            seen.update(kw)
+            raw = "QmServerDetectionError: Failed to detect to QuantumMachines server. Tried connecting to h:80."
+            return subprocess.CompletedProcess(argv, 0, stdout='{"ok": false, "error": "%s"}' % raw, stderr="")
+        monkeypatch.setattr(ppp.config_generator, "known_interpreter", lambda *a, **k: True)
+        monkeypatch.setattr(ppp.subprocess, "run", fake_run)
+        j = client.post("/port-play/test-connection", json={"host": "h", "cluster": "c", "python": "py"}).get_json()
+        assert j == {"ok": False, "error": "Could not reach the OPX at h (cluster c).",
+                     "detail": "QmServerDetectionError: Failed to detect to QuantumMachines server. Tried connecting to h:80."}
+        assert seen.get("encoding") == "utf-8" and seen.get("errors") == "replace"
+
     def test_sidebar_entry_under_instrument_wiring(self, client):
         html = client.get("/").get_data(as_text=True)
         i, j = html.find('data-nav-key="instrument"'), html.find('data-nav-key="port_play"')
@@ -115,3 +133,11 @@ class TestGenerateReason:  # D-29
     def test_the_app_js_rule_the_host_relies_on_is_there(self):
         js = (ROOT / "web" / "static" / "app.js").read_text(encoding="utf-8")
         assert "t.classList.contains('config-status-host') && status >= 400" in js
+
+
+def test_the_page_prefills_from_the_open_chip():
+    """D-25 on /port-play: the popup's source carries chipPort over the page's own
+    instrument data, through the one shared reader PortPlay.chipPortOf."""
+    from pathlib import Path
+    tpl = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates" / "port_play.html").read_text(encoding="utf-8")
+    assert "chipPort: function (pin) { return window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }" in tpl

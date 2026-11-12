@@ -50,7 +50,9 @@
   var source = {
     spec: function () { net(); return spec; },
     python: function () { return env ? env.value : ''; },
-    changed: function () { /* the chip's spec is not saved from here */ }
+    changed: function () { /* the chip's spec is not saved from here */ },
+    // D-25: the popup prefills from the open chip and says the test is read-only.
+    chipPort: function (pin) { return window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }
   };
   function play(port) { if (window.PortPlay) window.PortPlay.open(port, source); }
   function femType(con, slot) {

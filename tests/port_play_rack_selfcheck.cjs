@@ -24,7 +24,10 @@ w.armPlainResize = () => {};
 w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
 const opened = [];
 // A stand-in popup: S3 only mounts it; the real popup is pinned by its own selfchecks.
-w.PortPlay = {open(port, source) { opened.push({port, source}); }, close() {}, renderOffsets() {}, live: () => null};
+w.eval(fs.readFileSync(path.join(staticDir, 'port-play.js'), 'utf8'));
+const realChipPortOf = w.PortPlay.chipPortOf;   // the one shared reader (D-25), kept real under the stub
+w.PortPlay = {open(port, source) { opened.push({port, source}); }, close() {}, renderOffsets() {}, live: () => null,
+  chipPortOf: realChipPortOf};
 for (const file of ['app.js', 'generate.js']) w.eval(fs.readFileSync(path.join(staticDir, file), 'utf8'));
 const G = w.QuamGen, d = w.document;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -106,7 +109,7 @@ const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', {key: k, 
   chipReply = {wiring: {}, instrument: {controllers: {con1: {fems: {
     '1': {type: 'mw-fem', output_ports: {'1': [{role: 'xy', element: 'q1', label: 'q1.xy', band: 1,
           lo_frequency: 3.5e9, full_scale_power_dbm: 0}]}},
-    '3': {type: 'lf-fem', output_ports: {'2': [{role: 'z', element: 'q1', label: 'q1.z', output_mode: 'amplified'}]}}}}}}};
+    '3': {type: 'lf-fem', output_ports: {'2': [{role: 'z', element: 'q1', label: 'q1.z', output_mode: 'amplified', offset: 0.25}]}}}}}}};
   G.state.mode = 'regenerate';
   G._test.renderChassis();
   await sleep(20);
@@ -116,7 +119,7 @@ const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', {key: k, 
   const cp = opened[opened.length - 1].source.chipPort('con1/1/1');
   ok(cp && cp.lo_hz === 3.5e9 && cp.fsp === 0 && cp.band === 1, 'D-25 MW chip values: ' + JSON.stringify(cp));
   const lf = opened[opened.length - 1].source.chipPort('con1/3/2');
-  ok(lf && lf.output_mode === 'amplified', 'D-25 LF chip values: ' + JSON.stringify(lf));
+  ok(lf && lf.output_mode === 'amplified' && lf.offset === 0.25, 'D-25 LF chip values: ' + JSON.stringify(lf));
 
   console.log('port play rack selfcheck ok (' + n + ' assertions)');
   process.exit(0);
