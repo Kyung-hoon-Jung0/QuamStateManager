@@ -535,18 +535,31 @@ def investigate_hints(state: dict, wiring: dict | None, cal_folder: str | None) 
                     files.append(str(p))
         except OSError:
             pass
+    # review r4 P2-6: LEAF keys only (a dict can never be quoted), incl. the port each line ends on
+    merged = {**(wiring or {}), **state}
     flux = []
     for q in qubits:
         qd = state["qubits"][q]
         flux.append(f"qubits.{q}.__class__")
         for k in ("z", "qdac_bias", "flux"):
-            if k in qd:
-                flux.append(f"qubits.{q}.{k}")
-        if isinstance(wq.get(q), dict):
-            flux += [f"wiring.qubits.{q}.{k}" for k in wq[q] if k in ("z", "qt", "flux")]
-    if "qdac" in state:
-        flux.append("qdac")
-    reson = [f"qubits.{q}.resonator" for q in qubits if "resonator" in state["qubits"][q]]
+            if isinstance(qd.get(k), dict) and "__class__" in qd[k]:
+                flux.append(f"qubits.{q}.{k}.__class__")
+        for k, line in (wq.get(q) or {}).items():
+            if k not in ("z", "qt", "flux") or not isinstance(line, dict):
+                continue
+            for pk, pv in line.items():
+                if isinstance(pv, str) and pv.startswith("#/"):
+                    flux.append(f"wiring.qubits.{q}.{k}.{pk}")
+                    port = pv[2:].strip("/").replace("/", ".")
+                    node = merged
+                    for seg in port.split("."):
+                        node = node.get(seg) if isinstance(node, dict) else None
+                    if isinstance(node, dict) and "__class__" in node:
+                        flux.append(f"{port}.__class__")
+    if isinstance(state.get("qdac"), dict) and "__class__" in state["qdac"]:
+        flux.append("qdac.__class__")
+    reson = [f"qubits.{q}.resonator.__class__" for q in qubits
+             if isinstance(state["qubits"][q].get("resonator"), dict)]
     coup = [f"qubit_pairs.{p}.coupler" for p in pairs] + [f"qubit_pairs.{p}.__class__" for p in pairs]
     out = {"tunable": {"state": flux}, "flux_source": {"state": flux}, "coupler": {"state": coup},
            "purcell": {"state": reson, "files": files}, "squid": {"state": flux[:2], "files": files},
@@ -585,7 +598,8 @@ def questions(facts: dict) -> list[dict]:
     q.append({"id": "never_touch", "kind": "list",
               "question": "Which elements, fields or qubits must the agent never change?",
               "detected": [], "tokens": list(facts.get("qubit_ids") or []) + list(facts.get("top_level") or []),
-              "why": "a safety rule comes from a person; SM refuses an agent's write under any of these"})
+              "why": "a safety rule comes from a person; SM refuses an agent's write under any of these. A qubit or "
+                     "pair id also covers the ports it is wired to; another qubit's pairs are listed separately."})
     q.append({"id": "notes", "kind": "text", "question": "Anything else the agent must know about this device or lab?",
               "detected": ""})
     return q
@@ -729,9 +743,10 @@ def never_touch_hit(path: str, tokens) -> str | None:
         if not t:
             continue
         if "." in t:
-            if lp == t or lp.startswith(t + "."):
+            # review r4 P1-1: a write to an ANCESTOR replaces or deletes the listed path too
+            if lp == t or lp.startswith(t + ".") or t.startswith(lp + ".") or not lp:
                 return t0
-        elif t in segs:
+        elif t in segs or not lp:
             return t0
     return None
 
@@ -751,6 +766,48 @@ def never_touch_list(instance_path, project: str | None, chip: str | None) -> li
     if not isinstance(lst, list):
         return []
     return [str(x) for x in lst if str(x).strip()]
+
+
+def expand_never_touch(tokens, merged: dict | None) -> list[str]:
+    """review r4 P2-3: a bare qubit/pair id also covers what that entity POINTS to
+    (its ports and other components reached through absolute pointers), and its
+    own dotted spelling (so a write to an ancestor such as ``qubits`` is caught)."""
+    out = [str(t) for t in tokens or []]
+    if not isinstance(merged, dict):
+        return out
+    roots = []
+    for t in tokens or []:
+        t = str(t).strip()
+        if not t or "." in t:
+            continue
+        for coll in ("qubits", "qubit_pairs"):
+            for k, v in (merged.get(coll) or {}).items():
+                if str(k).lower() == t.lower():
+                    out.append(f"{coll}.{k}")
+                    roots.append(v)
+                    w = ((merged.get("wiring") or {}).get(coll) or {}).get(k)
+                    if w is not None:
+                        out.append(f"wiring.{coll}.{k}")
+                        roots.append(w)
+    seen = set(out)
+
+    def walk(node, depth=0):
+        if depth > 12:
+            return
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v, depth + 1)
+        elif isinstance(node, str) and node.startswith("#/"):
+            p = node[2:].strip("/").replace("/", ".")
+            if p and p not in seen and p.split(".")[0] not in ("qubits", "qubit_pairs"):
+                seen.add(p)
+                out.append(p)
+    for r in roots:
+        walk(r)
+    return out
 
 
 def save_never_touch(instance_path, project: str | None, chip: str | None, lst: list[str]) -> None:

@@ -1880,8 +1880,12 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         # chip the window happens to show when the driver thread stages minutes later
         from quam_state_manager.core import working_copy as _wc
         _nt = _as.never_touch_list(app.instance_path, ctx.get("qualibrate_project"), _wc.key_for(live))
-    except Exception:  # noqa: BLE001
-        _nt = []
+        if _nt:
+            _nt = _as.expand_never_touch(_nt, getattr(store, "merged", None))
+    except Exception as exc:  # noqa: BLE001 -- review r4 P2-5: an unreadable list stages NOTHING
+        return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
+                "error": f"never_touch: SM could not read the person's never-touch list ({type(exc).__name__}); "
+                         "nothing was written"}
     if _nt:
         hits = [(w["path"], _as.never_touch_hit(w["path"], _nt)) for w in writes]
         hits = [(p_, h) for p_, h in hits if h]

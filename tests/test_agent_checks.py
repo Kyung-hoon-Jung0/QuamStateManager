@@ -69,7 +69,6 @@ class TestParse:
     def test_non_json(self):
         obj, why = ac.parse_answer("I could not do that.")
         assert obj is None and "expected form" in why
-
     @pytest.mark.parametrize("text", [
         # claude: the final Text event of a -p stream-json turn
         'Here is what I see.\n\n```json\n{"seen": {"chip_name": "c1"}}\n```',
@@ -137,18 +136,18 @@ class TestInvestigate:
         assert "brand_new" not in v["asks"] and v["also_asked"] == ["What is the fridge?"]
         assert v["asks"][0] == "notes"
 
-    @pytest.mark.parametrize("ev", [
-        lambda r: _ev(r["cfg"] / "missing.toml", "x"),
-        lambda r: _ev(r["cfg"] / "config.toml", "not there"),
-        lambda r: _ev(r["outside"] / "secret.txt", "the secret line"),
-        lambda r: None,
+    @pytest.mark.parametrize("ev,fact", [
+        (lambda r: _ev(r["cfg"] / "missing.toml", "the missing file line"), "does not exist"),
+        (lambda r: _ev(r["cfg"] / "config.toml", "not there at all"), "not at the cited line"),
+        (lambda r: _ev(r["outside"] / "secret.txt", "the secret line"), "outside"),
     ])
-    def test_failed_or_missing_citation_is_unsure_and_no_guess(self, roots, ev):
-        e = ev(roots)
-        ans = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure", "evidence": [e] if e else []}]}
+    def test_sm_states_facts_and_never_judges(self, roots, ev, fact):
+        """decision D-25: the agent's confidence is the agent's; SM only records what it checked."""
+        ans = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure", "evidence": [ev(roots)]}]}
         v = ac.vet_investigate(ans, QS, roots=roots["list"])
         a = v["answers"][0]
-        assert a["confidence"] == "unsure" and a["value"] is None and "purcell" in v["asks"]
+        assert a["agent_confidence"] == "sure" and a["value"] == "yes" and a["status"] == "proposed"
+        assert "confidence" not in a and a["facts_found"] == 0 and fact in a["evidence"][0]["why"]
         assert "secret" not in json.dumps(v)
 
     def test_value_outside_options_is_dropped(self, roots):
@@ -316,9 +315,10 @@ def test_investigate_route_proposes_and_saves_nothing(pc, monkeypatch):
     rec0 = st.load_record(pc._app.instance_path)
     b = pc.post("/api/agent/setup/investigate", json={"backend": "codex"}).get_json()
     by = {a["id"]: a for a in b["answers"]}
-    assert by["purcell"]["confidence"] == "sure" and by["purcell"]["status"] == "proposed"
-    assert by["squid"]["value"] is None and by["squid"]["confidence"] == "unsure"
-    assert b["dropped_ids"] == 1 and "not_a_question" not in b["asks"] and b["asks"][0] == "squid"
+    assert by["purcell"]["agent_confidence"] == "sure" and by["purcell"]["facts_found"] == 1
+    assert by["purcell"]["status"] == "proposed"
+    assert by["squid"]["agent_confidence"] == "sure" and by["squid"]["facts_found"] == 0
+    assert b["dropped_ids"] == 1 and "not_a_question" not in b["asks"] and "squid" in b["asks"]
     assert "flux_source" in seen["prompt"] and "never_touch" in seen["prompt"]
     assert st.load_record(pc._app.instance_path) == rec0
     assert not (pc._projcal / "CLAUDE.local.md").exists()
@@ -424,17 +424,6 @@ class TestReviewR2:
         f.write_text("x = {\r\nx = 1\r\n}\r\nTrue\r\n", encoding="utf-8")
         for q, ln in (("}", 3), ("True", 4), ("x = 1", 2)):
             assert ac.check_evidence(_ev(f, q, line=ln), roots=roots["list"])["ok"] is False, q
-
-    def test_an_investigate_quote_must_be_about_the_question(self, roots):
-        f = roots["cal"] / "readme.md"
-        f.write_text("line\nthe fridge is cold and quiet today\npurcell filter: yes on every line\n", encoding="utf-8")
-        off = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
-                            "evidence": [_ev(f, "the fridge is cold and quiet today", line=2)]}]}
-        on = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
-                           "evidence": [_ev(f, "purcell filter: yes on every line", line=3)]}]}
-        assert ac.vet_investigate(off, QS, roots=roots["list"])["answers"][0]["confidence"] == "unsure"
-        assert ac.vet_investigate(on, QS, roots=roots["list"])["answers"][0]["confidence"] == "sure"
-
     def test_a_huge_file_is_not_read(self, roots, monkeypatch):
         f = roots["cfg"] / "config.toml"
         monkeypatch.setattr(ac, "MAX_FILE_BYTES", 10)
@@ -485,74 +474,26 @@ def test_config_row_follows_override_and_missing(pc, tmp_path):
     (pc._cdir / "projects" / "p1" / "config.toml").write_text("", encoding="utf-8")
     chk = {c["key"]: c for c in pc.get("/api/agent/setup").get_json()["paths"]["checks"]}
     assert chk["config"]["ok"] is False
-    assert chk["data"]["label"] == "Run folders in the data folder"
+    assert chk["data"]["label"] in ("The data folder holds run folders", "The data folder has no run folders yet", "No data folder")
 
 
 # ---- review r3 fixes
-class TestReviewR3Citations:
-    def _f(self, roots):
-        f = roots["cal"] / "cfg.py"
-        f.write_text("# node config\nFREQ = 5e9  # node frequency\nThe readout line has a Purcell filter\n", encoding="utf-8")
-        return f
-
-    def test_reviewer_probes_are_rejected(self, roots):
-        f = self._f(roots)
-        cases = [{"id": "purcell", "value": "no", "confidence": "sure", "evidence": [_ev(f, "# node config", line=1)]},
-                 {"id": "data_read", "value": "no", "confidence": "sure", "evidence": [_ev(f, "FREQ = 5e9  # node frequency", line=2)]},
-                 {"id": "purcell", "value": "yes", "confidence": "sure",
-                  "evidence": [{"kind": "state_key", "ref": "qubits.q1.id", "quote": "q1"}]}]
-        for a in cases:
-            v = ac.vet_investigate({"answers": [a]}, QS + [{"id": "data_read", "kind": "choice", "options": ["yes", "no", "unknown"]}],
-                                   roots=roots["list"], state_lookup=lambda k: "q1")
-            assert v["answers"][0]["confidence"] == "unsure", a
-
-    def test_honest_answers_still_pass(self, roots):
-        f = self._f(roots)
-        qs = QS + [{"id": "tunable", "kind": "choice", "options": ["flux-tunable", "fixed-frequency"]},
-                   {"id": "coupler", "kind": "choice", "options": ["tunable coupler", "fixed coupling", "none"]},
-                   {"id": "never_touch", "kind": "list"}]
-        rd = roots["cal"] / "README.md"
-        rd.write_text("Do not change qubits.q3 parameters, they are parked\n", encoding="utf-8")
-        state = {"qubits.qA1.__class__": "quam_builder.architecture.superconducting.qubit.flux_tunable_transmon.FluxTunableTransmon",
-                 "qubit_pairs.qA2-qA1.coupler": None}
-        ans = {"answers": [
-            {"id": "purcell", "value": "yes", "confidence": "sure", "evidence": [_ev(f, "The readout line has a Purcell filter", line=3)]},
-            {"id": "tunable", "value": "flux-tunable", "confidence": "sure",
-             "evidence": [{"kind": "state_key", "ref": "qubits.qA1.__class__", "quote": state["qubits.qA1.__class__"]}]},
-            {"id": "coupler", "value": "fixed coupling", "confidence": "sure",
-             "evidence": [{"kind": "state_key", "ref": "qubit_pairs.qA2-qA1.coupler", "quote": "null"}]},
-            {"id": "never_touch", "value": ["qubits.q3"], "confidence": "sure",
-             "evidence": [_ev(rd, "Do not change qubits.q3 parameters, they are parked", line=1)]}]}
-        v = ac.vet_investigate(ans, qs, roots=roots["list"], state_lookup=lambda k: state[k])
-        got = {a["id"]: (a["value"], a["confidence"]) for a in v["answers"]}
-        assert got == {"purcell": ("yes", "sure"), "tunable": ("flux-tunable", "sure"),
-                       "coupler": ("fixed coupling", "sure"), "never_touch": (["qubits.q3"], "sure")}
-
-    def test_a_dropped_list_value_is_not_sure(self, roots):
-        v = ac.vet_investigate({"answers": [{"id": "never_touch", "value": [{"x": 1}], "confidence": "sure", "evidence": []}]},
-                               [{"id": "never_touch", "kind": "list"}], roots=roots["list"])
-        assert v["answers"][0]["confidence"] == "unsure" and v["answers"][0]["value"] is None
-
-    def test_config_file_may_name_both_true_sources(self, roots):
-        mine = [str(roots["cfg"] / "config.toml"), str(roots["cfg"] / "p.toml")]
-        ok = {"seen": {"config_file": [mine[0], mine[1]]}}
-        two = {"seen": {"config_file": f"{mine[0]} and {mine[1]}"}}
-        bad = {"seen": {"config_file": [mine[0], str(roots["outside"] / "x.toml")]}}
-        f = lambda a: {r["key"]: r["agent"] for r in ac.compare_confirm(a, {"config_file": mine}, roots=roots["list"])["rows"]}["config_file"]
-        assert f(ok) == "agrees" and f(two) == "agrees" and f(bad) == "disagrees"
-
-
 def test_hints_name_the_keys_and_the_prompt_carries_them(tmp_path):
     from quam_state_manager.core import agent_setup as st
     state = {"qubits": {"q1": {"__class__": "X", "z": {}, "resonator": {}}}, "qubit_pairs": {"q1-2": {"coupler": None}}}
     cal = tmp_path / "cal"
     cal.mkdir()
     (cal / "README.md").write_text("x", encoding="utf-8")
-    h = st.investigate_hints(state, {"wiring": {"qubits": {"q1": {"z": {}}}}}, str(cal))
-    assert "qubits.q1.z" in h["flux_source"]["state"] and "wiring.qubits.q1.z" in h["flux_source"]["state"]
+    state["ports"] = {"analog_outputs": {"con1": {"5": {"2": {"__class__": "LFFEMAnalogOutputPort"}}}}}
+    state["qubits"]["q1"]["z"] = {"__class__": "FluxLine"}
+    h = st.investigate_hints(state, {"wiring": {"qubits": {"q1": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/2"}}}}}, str(cal))
+    # review r4 P2-6: leaf keys only, incl. the port the flux line ends on
+    assert {"qubits.q1.z.__class__", "wiring.qubits.q1.z.opx_output",
+            "ports.analog_outputs.con1.5.2.__class__"} <= set(h["flux_source"]["state"])
+    assert "qubits.q1.z" not in h["flux_source"]["state"]
     assert "qubit_pairs.q1-2.coupler" in h["coupler"]["state"] and h["purcell"]["files"] == [str(cal / "README.md")]
     p = ac.investigate_prompt(st.questions({}), {"calibrations": str(cal)}, h)
-    assert "qubits.q1.z" in p and "read_first" in p
+    assert "ports.analog_outputs.con1.5.2.__class__" in p and "read_first" in p
 
 
 def test_unanswered_lines_are_not_read_back(tmp_path):
@@ -595,12 +536,105 @@ def test_one_guard_for_every_agent_write(pc, monkeypatch):
     assert (r3.get_json(silent=True) or {}).get("refused") not in ("never_touch", "never_touch_unchecked")
 
 
-def test_a_code_comment_is_no_evidence_but_a_markdown_heading_is(roots):
-    py = roots["cal"] / "notes.py"
-    py.write_text("x = 1\n# purcell filter installed on readout\n", encoding="utf-8")
-    md = roots["cal"] / "notes.md"
-    md.write_text("x\n# purcell filter installed on readout\n", encoding="utf-8")
-    mk = lambda f: {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
-                                 "evidence": [_ev(f, "# purcell filter installed on readout", line=2)]}]}
-    assert ac.vet_investigate(mk(py), QS, roots=roots["list"])["answers"][0]["confidence"] == "unsure"
-    assert ac.vet_investigate(mk(md), QS, roots=roots["list"])["answers"][0]["confidence"] == "sure"
+# ---- review r4 (decision D-25, P1-1, P2)
+class TestD25:
+    def test_unsure_keeps_what_the_agent_leaned_towards(self, roots):
+        v = ac.vet_investigate({"answers": [{"id": "purcell", "value": "no", "confidence": "unsure", "evidence": []}]},
+                               QS, roots=roots["list"])
+        a = v["answers"][0]
+        assert a["value"] is None and a["agent_leans"] == "no" and a["agent_confidence"] == "unsure"
+
+    def test_state_key_fact_shows_the_value_sm_read(self):
+        look = {"qubits.q1.id": "q1"}.__getitem__
+        r = ac.check_evidence({"kind": "state_key", "ref": "qubits.q1.id", "quote": "purcell yes"}, roots=[], state_lookup=look)
+        assert r["ok"] is False and r["sm_value"] == "q1"
+
+    def test_no_word_matching_machinery_left(self):
+        src = Path(ac.__file__).read_text(encoding="utf-8")
+        assert "_quote_about" not in src and "QUESTION_WORDS" not in src
+
+    def test_a_dropped_list_value_is_marked(self, roots):
+        v = ac.vet_investigate({"answers": [{"id": "never_touch", "value": [{"x": 1}], "confidence": "sure", "evidence": []}]},
+                               [{"id": "never_touch", "kind": "list"}], roots=roots["list"])
+        assert v["answers"][0]["value"] is None and v["answers"][0]["value_dropped"] is True
+
+    def test_config_file_is_an_echo(self, roots):
+        mine = [str(roots["cfg"] / "config.toml")]
+        rows = {r["key"]: r["agent"] for r in ac.compare_confirm({"seen": {"config_file": mine[0]}}, {"config_file": mine},
+                                                                  roots=roots["list"])["rows"]}
+        assert rows["config_file"] == "echo"
+
+
+def test_never_touch_covers_ancestors():
+    from quam_state_manager.core import agent_setup as st
+    assert st.never_touch_hit("qubits.qA1", ["qubits.qA1.T1"]) == "qubits.qA1.T1"
+    assert st.never_touch_hit("qubits", ["qubits.qA1.T1"]) == "qubits.qA1.T1"
+    assert st.never_touch_hit("qubits.qA2", ["qubits.qA1.T1"]) is None
+
+
+def test_a_qubit_covers_what_it_is_wired_to():
+    from quam_state_manager.core import agent_setup as st
+    merged = {"qubits": {"qA2": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/2"}}},
+              "wiring": {"qubits": {"qA2": {"z": {"opx_output": "#/ports/analog_outputs/con1/5/3"}}}}}
+    tok = st.expand_never_touch(["qA2"], merged)
+    assert st.never_touch_hit("ports.analog_outputs.con1.5.2.delay", tok)
+    assert st.never_touch_hit("ports.analog_outputs.con1.5.3.delay", tok)
+    assert st.never_touch_hit("qubits", tok)                       # an ancestor write
+    assert st.never_touch_hit("ports.analog_outputs.con1.5.4.delay", tok) is None
+
+
+def test_ancestor_replace_and_delete_are_refused(pc):
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    _write_ctx(pc, {"never_touch": [f"qubits.{q}.T1"]})
+    agent = {"X-SM-Agent": "claude"}
+    r1 = pc.post("/field/delete", data={"dot_path": f"qubits.{q}"}, headers=agent)
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+    r2 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}", "value": "{}"}, headers=agent)
+    assert r2.status_code == 403 and r2.get_json()["refused"] == "never_touch"
+
+
+def test_run_staging_covers_ancestors_and_fails_closed(pc, monkeypatch):
+    from quam_state_manager.web import agent_api
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        live = str(r._active_ctx()["path"])
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    _write_ctx(pc, {"never_touch": [f"qubits.{q}.T1"]})
+    with pc._app.app_context():
+        res = agent_api._stage_writes(pc._app, live, [{"path": f"qubits.{q}", "old": {}, "new": {}}], "g1", "by_claude", None, False)
+    assert res["staged"] == 0 and "never_touch" in res["error"]
+    from quam_state_manager.core import agent_setup as st
+    monkeypatch.setattr(st, "never_touch_list", lambda *a, **k: (_ for _ in ()).throw(OSError("x")))
+    with pc._app.app_context():
+        res = agent_api._stage_writes(pc._app, live, [{"path": f"qubits.{q}.T2", "old": 1, "new": 2}], "g2", "by_claude", None, False)
+    assert res["staged"] == 0 and "could not read" in res["error"]
+
+
+def test_an_agent_door_with_no_checkable_path_is_refused(pc):
+    _write_ctx(pc, {"never_touch": ["qubits"]})
+    agent = {"X-SM-Agent": "claude"}
+    r1 = pc.post("/api/pulse/copy", data={"channel": "xy", "op_name": "x"}, headers=agent)
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch_unchecked"
+    r2 = pc.post("/undo", data={}, headers=agent)               # a path-free door by design
+    assert (r2.get_json(silent=True) or {}).get("refused") != "never_touch_unchecked"
+
+
+def test_a_listed_qubit_protects_its_port_at_both_doors(pc):
+    from quam_state_manager.web import agent_api
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        ctx = r._active_ctx()
+        store, live = ctx["store"], str(ctx["path"])
+        q = sorted(store.state["qubits"])[0]
+        for d in {id(store.state): store.state, id(store.merged): store.merged}.values():
+            d["qubits"][q]["probe_line"] = {"opx_output": "#/probe_ports/p1"}
+            d["probe_ports"] = {"p1": {"delay": 0}}
+    _write_ctx(pc, {"never_touch": [q]})
+    r1 = pc.post("/field/edit", data={"dot_path": "probe_ports.p1.delay", "value": "4"}, headers={"X-SM-Agent": "claude"})
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+    with pc._app.app_context():
+        res = agent_api._stage_writes(pc._app, live, [{"path": "probe_ports.p1.delay", "old": 0, "new": 4}], "g3",
+                                      "by_claude", None, False)
+    assert res["staged"] == 0 and "never_touch" in res["error"]

@@ -49,7 +49,7 @@
   <span class="sync-control-text">{{ _t[0] }}</span>
   {#- v1.5.1 (T1-F4): the chip's declared name (extras.chip_name), its folder on hover -#}
   {% if active_name %}{% set _lbl = active_chip_label() or active_name %}<span class="state-status-name" data-chip-folder="{{ active_name }}" title="{{ _lbl }}{% if _lbl != active_name %} · folder {{ active_name }}{% endif %}">{{ _lbl }}</span>{% endif %}
-  {% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.match == false and not qualibrate_tray.standalone %}<span class="sync-marker sync-marker-elsewhere" title="QUAlibrate's active project writes a different folder; its runs won't show up here as live changes">&#9879; QUAlibrate: other folder</span>{% endif %}
+  {% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.match == false and not qualibrate_tray.standalone %}<span class="sync-marker sync-marker-elsewhere" title="QUAlibrate's active project writes a different folder; its runs won't show up here as live changes">&#9879; QUAlibrate: another project</span>{% endif %}
   {#- v1.5.1: refused recovery checkpoints stay marked until restored or discarded -#}
   {#- v1.5.1 (r6): a checkpoint whose every row SM already holds (the same edit in
       the tray, or the value on the chip) is not "not recovered"; the panel still lists it -#}

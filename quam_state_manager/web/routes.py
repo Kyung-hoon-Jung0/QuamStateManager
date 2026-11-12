@@ -6806,6 +6806,9 @@ def _never_touch_refusal(paths) -> Any:
         from quam_state_manager.web import agent_api as _aa
         tokens = agent_setup.never_touch_list(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
                                               _aa._chip_key() if _active_path() else None)
+        if tokens:
+            store = (ctx or {}).get("store")
+            tokens = agent_setup.expand_never_touch(tokens, getattr(store, "merged", None))
     except Exception as exc:  # noqa: BLE001
         return _never_touch_unchecked(type(exc).__name__)
     if not tokens:
@@ -6820,6 +6823,9 @@ def _never_touch_refusal(paths) -> Any:
 
 
 _PATH_FIELDS = ("dot_path", "path", "parent_path", "target", "target_path", "src", "dst", "new_path")
+# review r4 P2-4: mutating doors that name no state path by design; an agent request to any
+# OTHER door that yields no path is refused while a never-touch list exists (fail closed)
+_PATH_FREE_DOORS = ("/undo", "/redo", "/state/apply-to-live", "/state/sync")
 _URL_ENTITY = {"/qubit/": "qubits", "/pair/": "qubit_pairs", "/coupler/": "couplers"}
 
 
@@ -6834,9 +6840,10 @@ def _request_paths() -> list[str]:
     out += [str(v).strip() for v in f.getlist("paths") if v]
     if f.get("dot_path") and f.get("key"):
         out.append(f"{f.get('dot_path').strip()}.{f.get('key').strip()}")
-    for k in ("qubit", "pair"):
+    for k, root in (("qubit", "qubits"), ("pair", "qubit_pairs"), ("pair_id", "qubit_pairs"),
+                    ("pc_pair", "qubit_pairs")):
         if f.get(k):
-            out.append(f"{'qubits' if k == 'qubit' else 'qubit_pairs'}.{f.get(k).strip()}")
+            out.append(f"{root}.{f.get(k).strip()}")
     body = request.get_json(silent=True) if request.is_json else None
     if isinstance(body, dict):
         for k in _PATH_FIELDS:
@@ -6876,7 +6883,17 @@ def _never_touch_agent_guard():
     except Exception as exc:  # noqa: BLE001
         return _never_touch_unchecked(type(exc).__name__)
     if not paths:
-        return None
+        if request.path in _PATH_FREE_DOORS:
+            return None
+        try:
+            from quam_state_manager.core import agent_setup
+            from quam_state_manager.web import agent_api as _aa
+            listed = agent_setup.never_touch_list(current_app.instance_path,
+                                                  (_active_ctx() or {}).get("qualibrate_project"),
+                                                  _aa._chip_key() if _active_path() else None)
+        except Exception as exc:  # noqa: BLE001
+            return _never_touch_unchecked(type(exc).__name__)
+        return _never_touch_unchecked("this door names no path SM can check") if listed else None
     return _never_touch_refusal(paths)
 
 

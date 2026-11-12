@@ -67,7 +67,8 @@ window.AgentSetup = (function () {
     rows.forEach(function (r, k) {
       if (!keep[k]) { gap = true; return; }
       if (gap) { html.push('<div class="as-gap">…</div>'); gap = false; }
-      html.push('<div class="as-line as-' + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "eq") + '">' + esc(r[0]) + " " + esc(r[1]) + "</div>");
+      // review r4 P3-10: an unchanged line shows no "=" marker (a lone "=" read as a stray character)
+      html.push('<div class="as-line as-' + (r[0] === "+" ? "add" : r[0] === "-" ? "del" : "eq") + '">' + esc(r[0] === "=" ? " " : r[0]) + " " + esc(r[1]) + "</div>");
     });
     return '<pre class="as-diff">' + html.join("") + "</pre>";
   }
@@ -624,26 +625,56 @@ window.AgentSetup = (function () {
     }
     return '<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";
   }
+  // decision D-25: SM states only what it checked mechanically -- never whether the
+  // citation SUPPORTS the answer. Facts are neutral (no green, no red cross).
   function evHtml(e) {
-    var where = e.kind === "state_key" ? "state " + (e.ref || "") : (e.ref ? e.ref + (e.line ? ":" + e.line : "") : "(a path outside the allowed folders)");
-    return '<li class="asx-chk ' + (e.ok ? "asx-ok" : "asx-no") + '">' + (e.ok ? "✓ " : "✗ ") + esc(where)
-      + (e.quote ? ' — <code>' + esc(e.quote) + "</code>" : "") + (e.ok ? "" : ' <span class="muted">(' + esc(e.why || "not checked") + ")</span>") + "</li>";
+    var fact;
+    if (e.kind === "state_key") {
+      fact = e.why === "the state key does not exist" ? "SM: state key " + (e.ref || "") + " does not exist"
+        : "SM read state key " + (e.ref || "") + " = " + (e.sm_value === undefined ? "?" : JSON.stringify(e.sm_value))
+          + (e.ok ? " (matches the quote)" : " (the agent quoted something else)");
+    } else if (e.kind === "run") {
+      fact = e.ok ? "SM: run folder exists" : "SM: " + (e.why || "not checked");
+    } else if (!e.ref) {
+      fact = "SM did not check: a path outside the folders an agent may cite";
+    } else {
+      fact = e.ok ? "SM found the quote at " + e.ref + (e.line ? ":" + e.line : "")
+        : "SM: " + (e.why || "not checked") + " (" + e.ref + (e.line ? ":" + e.line : "") + ")";
+    }
+    return '<li class="asx-chk" data-fact="' + (e.ok ? "found" : "not-found") + '">' + esc(fact)
+      + (e.quote ? ' — <code>' + esc(e.quote) + "</code>" : "") + "</li>";
   }
+  // questions a chip's files rarely answer; say so instead of listing a failure
+  var PERSON_KNOWS = { purcell: 1, squid: 1, data_read: 1, never_touch: 1, notes: 1 };
   function proposalHtml(a, q) {
     var st = S.review[a.id] || "proposed";
     var badge = { proposed: "ui-badge--accent", accepted: "ui-badge--ok", edited: "ui-badge--ok", rejected: "ui-badge--danger" }[st] || "";
     // review r2 P2-8: once the person answered, the card shows THEIR value
     var shown = (st === "edited" || st === "accepted") && S.answers[a.id] !== undefined ? S.answers[a.id] : a.value;
     var val = shown === null || shown === undefined ? "no answer (not sure)" : (Array.isArray(shown) ? shown.join(", ") || "nothing listed" : optLabel(String(shown)));
-    var by = st === "edited" ? "your answer" : a.confidence;
+    var by = st === "edited" ? "your answer" : "agent says: " + (a.agent_confidence || "unsure");
+    var leans = a.value === null && a.agent_leans !== null && a.agent_leans !== undefined && st === "proposed"
+      ? ' <span class="muted">(leans towards ' + esc(optLabel(String(a.agent_leans))) + ")</span>" : "";
     return '<article class="ui-item" data-prop="' + esc(a.id) + '" data-status="' + esc(st) + '"><div class="ui-item-head"><span class="ui-badge ' + badge + '">' + esc(st) + "</span>"
       + '<span class="ui-item-title">' + esc((q && q.question) || a.id) + "</span></div>"
-      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · " + esc(by) + "</p>"
-      + (a.evidence && a.evidence.length ? '<ul class="asx-checks">' + a.evidence.map(evHtml).join("") + "</ul>" : '<p class="ui-note">no citation</p>')
+      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · <span data-agent-says>" + esc(by) + "</span>" + leans + "</p>"
+      + (a.evidence && a.evidence.length ? '<p class="ui-note">What SM checked (the person judges whether it supports the answer):</p><ul class="asx-checks">' + a.evidence.map(evHtml).join("") + "</ul>"
+        : '<p class="ui-note">' + (PERSON_KNOWS[a.id] ? "Usually only you know this." : "No citation to check.") + "</p>")
       + '<div class="ui-item-foot">'
       + (a.value !== null && a.value !== undefined ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'accepted\')">Accept</button>' : "")
       + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'edited\')">Edit</button>'
       + '<button type="button" class="asx-link" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'rejected\')">Reject</button></div></article>';
+  }
+  // review r4 P2-6: the popup says what SM detected and what the agent leaned towards; nothing is pre-selected
+  function popupFacts(qid, q) {
+    var a = (((S.asks || {}).investigate || {}).answers || []).filter(function (x) { return x.id === qid; })[0] || {};
+    var bits = [];
+    if (q.detected !== null && q.detected !== undefined && q.detected !== "" && !(Array.isArray(q.detected) && !q.detected.length))
+      bits.push("SM detected: " + optLabel(String(q.detected)));
+    if (a.agent_leans !== null && a.agent_leans !== undefined)
+      bits.push("agent leans: " + optLabel(String(a.agent_leans)) + " (" + (a.agent_confidence || "unsure") + ")");
+    if (!bits.length && PERSON_KNOWS[qid]) bits.push("Usually only you know this.");
+    return bits.length ? '<p class="ui-note" data-popup-facts>' + esc(bits.join(" · ")) + "</p>" : "";
   }
   function popupHtml(qid) {
     var q = (S.qById || {})[qid];
@@ -653,8 +684,8 @@ window.AgentSetup = (function () {
       ? '<div class="as-acts">' + opts.map(function (o) { return '<button type="button" class="btn-sm outline asx-btn-2" data-pick="' + esc(o) + '" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', this.getAttribute(\'data-pick\'))">' + esc(optLabel(o)) + "</button>"; }).join("") + "</div>"
       : '<p class="ui-note">Answer it in the form above, or:</p><div class="as-acts"><button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.popupPick(\'' + esc(qid) + '\', \'' + NS + '\')">not sure</button></div>';
     return '<div class="ui-dialog ui-dialog--s" role="dialog" id="as-popup" data-q="' + esc(qid) + '" aria-label="' + esc(q.question) + '">'
-      + '<div class="ui-dialog-head"><b>The agent was not sure</b></div>'
-      + '<div class="ui-dialog-body"><p>' + esc(q.question) + "</p>" + body + "</div>"
+      + '<div class="ui-dialog-head"><b>Please answer</b></div>'
+      + '<div class="ui-dialog-body"><p>' + esc(q.question) + "</p>" + popupFacts(qid, q) + body + "</div>"
       + '<div class="ui-dialog-foot"><button type="button" class="asx-link" onclick="AgentSetup.popupSkip()">Later</button></div></div>';
   }
   function investigateHtml() {
@@ -720,9 +751,11 @@ window.AgentSetup = (function () {
       var inv = (S.asks || {}).investigate;
       if (inv && S._invFor !== inv.at) { setupReview(inv); S._invFor = inv.at; }
       html.push('<div id="as-inv"></div>');
-      html.push('<div class="as-acts"><label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> Claude: CLAUDE.local.md (not shared through git)</label> ' +
-        '<span class="muted" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md.">Codex: always AGENTS.md</span> ' +
-        '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> CLAUDE</label> <label class="ag-observer"><input type="checkbox" id="as-ctx-codex" checked> AGENTS</label> ' +
+      // review r4 P3-9: one box per file, each with its own sentence
+      html.push('<div class="as-acts"><span class="muted">Write the notes for:</span> '
+        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> Claude Code</label> '
+        + '<label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> as CLAUDE.local.md (kept out of git)</label> '
+        + '<label class="ag-observer" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md."><input type="checkbox" id="as-ctx-codex" checked> Codex (AGENTS.md)</label> ' +
         '<button type="button" class="btn-sm" onclick="AgentSetup.previewContext()">Preview the block</button></div><div id="as-ctx-prev"></div>');
       host.innerHTML = html.join("");
       renderInvestigate();

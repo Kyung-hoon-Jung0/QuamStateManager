@@ -64,6 +64,6 @@ def test_plain_words_replace_the_jargon():
     assert "baseline of the live-change tracker" not in src
     assert "start of &quot;Live changes since baseline&quot;" in src
     sync = (_TPL / "_sync_control.html").read_text(encoding="utf-8")
-    assert "&#9879; elsewhere</span>" not in sync and "&#9879; QUAlibrate: other folder</span>" in sync
+    assert "&#9879; elsewhere</span>" not in sync and "&#9879; QUAlibrate: another project</span>" in sync  # review r4 P3-8
     chip = (_TPL / "_state_version_chip.html").read_text(encoding="utf-8")
     assert '<span class="state-version-none">live not recorded</span>' in chip

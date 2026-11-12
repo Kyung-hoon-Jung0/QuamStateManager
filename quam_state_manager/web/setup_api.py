@@ -206,10 +206,11 @@ def paths_report() -> dict:
                    "label": "The calibrations folder holds node files",
                    "detail": f"{len(nodes)} node files" if cal.get("folder") else "no calibrations folder"})
     nruns = _count_runs(data)
-    checks.append({"key": "data", "ok": (nruns > 0) if data else None, "label": "Run folders in the data folder",
-                   "detail": (("no run folders yet" if nruns == 0 else
-                               f"{nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders found") if data
-                              else "no data folder")})
+    # review r4 P3-10: one readable sentence either way
+    checks.append({"key": "data", "ok": (nruns > 0) if data else None,
+                   "label": ("The data folder holds run folders" if nruns else "The data folder has no run folders yet")
+                   if data else "No data folder",
+                   "detail": (f"{nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} found" if nruns else "")})
     names = [_config_names((paths or {}).get(k), (paths or {}).get("files"), project)
              for k in ("calibration_library", "storage", "state_path")]
     named = [x for x in names if x is not None]

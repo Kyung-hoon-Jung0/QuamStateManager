@@ -13,8 +13,10 @@ itself and SM decides every row. Nothing here writes anything.
 - ``compare_confirm`` -- SM's value vs the agent's: agrees / disagrees /
   not reported / unverified (D-13). A ``verdict`` key is ignored.
 - ``vet_investigate`` -- answers outside the question schema are dropped and
-  counted; ``asks`` may name only ids SM sent (D-16); an answer whose
-  evidence fails is unsure; every answer starts "proposed" (D-21).
+  counted; ``asks`` may name only ids SM sent (D-16); every answer starts
+  "proposed" (D-21). Decision D-25: SM never judges whether a citation
+  supports an answer -- it records only the facts it checked, and the
+  agent's confidence is reported as the agent's.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ LINE_WINDOW = 1              # the cited line, +-1
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.S | re.I)
 
 # values SM hands the agent itself (sm_status, the cwd SM starts it in): agreement is an echo
-SM_ECHO = ("chip_name", "n_qubits", "cwd")
+SM_ECHO = ("chip_name", "n_qubits", "cwd", "config_file")   # review r4 P3-7: the prompt names the config
 LIST_FIELDS = ("node_files", "run_folders")
 LIST_AGREE_SHARE = 0.8        # review r2 P2-4: most of what the agent lists must be SM's
 CONFIRM_FIELDS = ("chip_name", "n_qubits", "cwd", "config_file", "state_path_in_config",
@@ -172,7 +174,9 @@ def check_evidence(item: Any, *, roots: list[str], exist_roots: list[str] | None
             except ValueError:
                 pass
         ok = compare_equal(val, q) or (isinstance(quote, str) and _ws(str(val)) == _ws(quote))
-        return {**out, "ok": bool(ok), "quote": _clip(quote),
+        # review r4: SM states the value IT read, beside what the agent quoted
+        sm_val = val if isinstance(val, (str, int, float, bool)) or val is None else json.dumps(val)[:200]
+        return {**out, "ok": bool(ok), "quote": _clip(quote), "sm_value": _clip(sm_val) if isinstance(sm_val, str) else sm_val,
                 "why": None if ok else "the state holds a different value"}
     if kind == "run":
         n = native(ref) if isinstance(ref, str) else None
@@ -273,55 +277,6 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
             "notes": str(answer.get("notes"))[:1000] if answer.get("notes") else ""}
 
 
-# words a quote must carry to be ABOUT a question (when it does not carry the value itself)
-QUESTION_WORDS = {
-    "tunable": ("tunable", "flux", "fixed frequency", "z"), "flux_source": ("flux", "qdac", "lf", "fem", "bias", "z"),
-    "coupler": ("coupl*",), "purcell": ("purcell",), "squid": ("squid",),
-    "data_read": ("data folder", "direct read*", "read access"), "never_touch": ("never", "do not touch", "untouchable"),
-    "notes": (),
-}
-
-
-_COMMENT = re.compile(r"^\s*(#|//|;|--|/\*|\*)")
-
-
-def _words(text) -> str:
-    """Split camelCase, snake_case, dotted and slashed spellings into words."""
-    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(text or ""))
-    return " " + re.sub(r"[^a-z0-9+-]+", " ", s.lower()) + " "
-
-
-def _has_word(text_words: str, w: str) -> bool:
-    w = w.lower().strip()
-    if not w:
-        return False
-    if w.endswith("*"):                         # a stem: "coupl*" matches coupler / coupling
-        return re.search(r"(?<![a-z0-9])" + re.escape(w[:-1]), text_words) is not None
-    return re.search(r"(?<![a-z0-9])" + re.escape(" ".join(_words(w).split())) + r"(?![a-z0-9])", text_words) is not None
-
-
-_CODE_SUFFIXES = (".py", ".toml", ".yaml", ".yml", ".ini", ".cfg", ".json", ".js")
-
-
-def _quote_about(quote, qid: str, value, ref=None, file_ref=None) -> bool:
-    """review r3 P1-2: the evidence must be ABOUT this question -- the answer value or a
-    topic word as a whole word (never a substring), never a comment line, and for a
-    state key the key path or its value must carry the topic."""
-    q = str(quote or "")
-    # a comment in CODE is no evidence (a markdown "# heading" is prose, so it counts)
-    if file_ref and str(file_ref).lower().endswith(_CODE_SUFFIXES) and _COMMENT.match(q):
-        return False
-    text = _words(q) + _words(ref or "")
-    vals = value if isinstance(value, list) else [value]
-    for v in vals:
-        if v is not None and str(v).strip() and qid not in ("data_read", "purcell") and _has_word(text, str(v)):
-            return True
-    words = QUESTION_WORDS.get(qid)
-    if not words:
-        return qid == "notes" and bool(q.strip())
-    return any(_has_word(text, w) for w in words)
-
-
 def _quote_has(quote, value) -> bool:
     if not isinstance(quote, str) or not isinstance(value, str) or not value.strip():
         return False
@@ -394,19 +349,16 @@ def vet_investigate(answer: dict, questions: list[dict], *, roots: list[str], ex
                                     for e in (a.get("evidence") or [])][:MAX_EVIDENCE_PER_VALUE + 50])
         ev_dropped += d
         checked = [check_evidence(e, roots=roots, exist_roots=exist_roots, state_lookup=state_lookup) for e in ev_items]
-        # review r2 P1-1: a FILE quote must name the answer or what the question is about
-        checked = [c if not c["ok"] or c.get("kind") not in ("file", "state_key")
-                   or _quote_about(c.get("quote"), a["id"], value, c.get("ref") if c.get("kind") == "state_key" else None,
-                                   c.get("ref") if c.get("kind") == "file" else None)
-                   else {**c, "ok": False, "why": "the citation is not about this question"}
-                   for c in checked]
-        verified = any(c["ok"] for c in checked)
-        sure = str(a.get("confidence") or "").lower() == "sure"
-        if (value is not None and not verified) or value_dropped or value is None:
-            sure = False                                   # D-17 / review r3: uncited, failed or dropped -> unsure
-        if not sure:
-            value = None                                   # D-18: unsure means no guess
-        out.append({"id": a["id"], "value": value, "confidence": "sure" if sure else "unsure",
+        # decision D-25 (review r4): SM never judges whether a citation SUPPORTS an answer -- no
+        # word or topic matching. It states only the facts it proved for each citation (quote
+        # found at file:line / not found; state key exists and holds X). The agent's own
+        # confidence is shown as the agent's, and the person decides; nothing is pre-accepted.
+        agent_conf = "sure" if str(a.get("confidence") or "").lower() == "sure" else "unsure"
+        leans = value
+        if agent_conf == "unsure":
+            value = None                                   # D-18: unsure means no guess on the form
+        out.append({"id": a["id"], "value": value, "agent_confidence": agent_conf, "agent_leans": leans,
+                    "value_dropped": bool(value_dropped), "facts_found": sum(1 for c in checked if c["ok"]),
                     "evidence": checked, "status": "proposed"})
     asks, invented = [], []
     for x in (answer.get("asks") if isinstance(answer.get("asks"), list) else []):
@@ -418,7 +370,7 @@ def vet_investigate(answer: dict, questions: list[dict], *, roots: list[str], ex
             invented.append(str(x.get("question") or xid if isinstance(x, dict) else xid)[:300])
     # every unsure answer becomes a popup question too (D-18)
     for a in out:
-        if a["confidence"] == "unsure" and a["id"] not in asks:
+        if a["value"] is None and a["id"] not in asks:
             asks.append(a["id"])
     return {"answers": out, "asks": asks, "also_asked": invented, "dropped_ids": dropped_ids,
             "dropped_values": dropped_values, "evidence_dropped": ev_dropped}

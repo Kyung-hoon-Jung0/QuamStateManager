@@ -32,10 +32,10 @@ const QS = [
 ];
 let inv = { ok: true, kind: 'investigate', backend: 'claude', done: true, failed: false, elapsed_s: 9, at: 5, current: true,
   answers: [
-    { id: 'purcell', value: 'yes', confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/readme.md', line: 4, quote: 'Purcell filter installed' }] },
-    { id: 'tunable', value: 'flux-tunable', confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'state_key', ref: 'qubits.q1.z', quote: 'x' }] },
-    { id: 'squid', value: null, confidence: 'unsure', status: 'proposed', evidence: [{ ok: false, kind: 'file', ref: null, quote: null, why: 'outside the folders SM lets an agent cite' }] },
-    { id: 'notes', value: 'cool down weekly', confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/n.md', line: 1, quote: 'weekly' }] }
+    { id: 'purcell', value: 'yes', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/readme.md', line: 4, quote: 'Purcell filter installed' }] },
+    { id: 'tunable', value: 'flux-tunable', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'state_key', ref: 'qubits.q1.z', quote: 'x' }] },
+    { id: 'squid', value: null, agent_confidence: 'unsure', agent_leans: 'symmetric', status: 'proposed', evidence: [{ ok: false, kind: 'file', ref: null, quote: null, why: 'outside the folders SM lets an agent cite' }] },
+    { id: 'notes', value: 'cool down weekly', agent_confidence: 'sure', status: 'proposed', evidence: [{ ok: true, kind: 'file', ref: 'D:/lab/cal/n.md', line: 1, quote: 'weekly' }] }
   ],
   asks: ['squid'], also_asked: ['What is the fridge model?'], dropped_ids: 1, dropped_values: 0 };
 let invStored = null;
@@ -84,10 +84,17 @@ const $ = (s) => document.querySelector(s);
   ok(A._state.answers.purcell === 'unknown' && A._state.answers.tunable === 'mixed', 'D-21: nothing enters the answers before Accept/Edit');
   ok(/Purcell filter installed/.test($('[data-prop="purcell"]').textContent) && /readme\.md:4/.test($('[data-prop="purcell"]').textContent), 'D-17/R-7: the quote is shown beside the answer');
   ok(!/Accept/.test($('[data-prop="squid"]').textContent), 'D-18: an unsure answer has no value to accept');
+  // decision D-25: the agent's confidence is labelled as the agent's; SM's facts are neutral
+  ok(/agent says: sure/.test($('[data-prop="purcell"] [data-agent-says]').textContent), 'D-25: the card says "agent says: sure", not a verdict');
+  ok(!document.querySelector('[data-prop] .asx-ok, [data-prop] .asx-no') && document.querySelector('[data-prop="purcell"] [data-fact="found"]')
+     && /SM found the quote at/.test($('[data-prop="purcell"]').textContent), 'D-25: SM states what it checked, with no green or red verdict');
+  ok(/leans towards symmetric/.test($('[data-prop="squid"]').textContent), 'review r4 P2-6: an unsure card says what the agent leaned towards');
   // the popup: only for SM-sent ids, with "not sure"
   const pop = $('#as-popup');
   ok(pop && pop.getAttribute('data-q') === 'squid' && pop.classList.contains('ui-dialog') && Array.from(pop.querySelectorAll('button[data-pick]')).some(b => b.textContent === 'not sure'), 'D-18: the unsure question opens a popup with its options and "not sure"');
   ok(/What is the fridge model\?/.test($('#as-also-asked').textContent) && document.querySelectorAll('#as-popup').length === 1, 'D-16: an invented question is plain text, never a popup');
+  ok(/agent leans: symmetric \(unsure\)/.test(($('#as-popup [data-popup-facts]') || {}).textContent || ''), 'review r4 P2-6: the popup says what the agent leaned towards');
+  ok(!document.querySelector('#as-popup button[data-pick].ui-segmented-on'), 'review r4 P2-6: nothing is pre-selected in the popup');
   ok(/AgentSetup\.popupPick\('squid'/.test(pop.querySelector('button[data-pick="unknown"]').getAttribute('onclick')), 'the popup button is wired to popupPick for that question');
   A.popupPick('squid', 'unknown'); await tick(10);
   ok(A._state.answers.squid === 'unknown' && !$('#as-popup'), 'D-18: "not sure" is saved as unknown and the popup closes');

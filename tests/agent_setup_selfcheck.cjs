@@ -239,7 +239,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // B-02: Codex reads AGENTS.md only -- the UI says so, and a block it never reads is not "written"
   A.loadContext();
   await tick(30);
-  ok(/Codex: always AGENTS\.md/.test(document.getElementById('as-ctx').textContent), 'B-02: the context form says Codex always uses AGENTS.md');
+  ok(/Codex \(AGENTS\.md\)/.test(document.getElementById('as-ctx').textContent), 'B-02: the context form says Codex uses AGENTS.md');
   A.previewContext();
   await tick(30);
   ok(/takes SM's block out of D:\/lab\/cal\/AGENTS\.local\.md/.test(document.getElementById('as-ctx-prev').textContent), 'B-02: the preview names the unread file it moves the block out of');
