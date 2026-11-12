@@ -18,6 +18,23 @@ _NON_STAGING_POSTS = {
     'port_test.port_test_settings',
     'port_test.port_test_password_remove',
     'port_test.port_test_targets_panel',
+    # Port play helpers: a confirm token, a capability answer, a script download,
+    # the stop button (must work during a run), the loopback calibration's draft
+    # entry (returned to the page, no file written) and its confirm/script, and a
+    # read-only QOP connection probe. The loopback RUN itself is in the lock set.
+    'port_test.port_play_confirm',
+    'port_test.port_play_sim_check',
+    'port_test.port_play_script',
+    'port_test.port_play_stop',
+    'port_test.port_play_loopcal_confirm',
+    'port_test.port_play_loopcal_save',
+    'port_test.port_play_loopcal_script',
+    'port_play_page.port_play_test_connection',
+    # Agent Setup: the calibrations-folder override is an instance setting; Confirm
+    # and Investigate ask the agent and record SM's check, never a chip edit.
+    'agent_setup.calibrations_override',
+    'agent_setup.confirm',
+    'agent_setup.investigate',
     # merge-budget: the client latch timed out; this answers 409 and stages nothing.
     'main.auto_sync_retry',
     # FB-10/FB-12 (1.8.0): the add/remove panel's Review step loads the planned result in the

@@ -6,7 +6,12 @@ WEB = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
 
 def test_fit_observer_is_created_once_per_map_body():
     js = (WEB / "static" / "component-map.js").read_text(encoding="utf-8")
-    assert js.count("new MutationObserver") == 1
+    # The fit observer is created once per map body; the hover panel's row
+    # watcher is a second, module-level observer that disconnects before it
+    # is replaced (one live at a time), so it is pinned on its own.
+    assert js.count("new MutationObserver") == 2
+    assert js.count("body._cmapFitObs = new MutationObserver") == 1
+    assert "if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }" in js
     assert "!body._cmapFitObs" in js
     assert "body._cmapFitApply = apply" in js
 

@@ -12964,7 +12964,7 @@ def _stale_chip_note():
     """The inspector's answer to a window rendered for another chip (``?expect_chip=``)."""
     expect = request.args.get("expect_chip") or ""
     if expect and not _chip_token_ok(expect):
-        return ('<p class="muted" data-chip-changed>chip changed in another window -- '
+        return ('<p class="muted" data-chip-changed>chip changed in another window; '
                 'reload this page to inspect the chip that is open now.</p>')
     return None
 
@@ -51839,6 +51839,8 @@ def _sched_bool(value) -> bool:
 # runs (the experiment is driving the chip + OPX). Reads/navigation stay live.
 _SCHEDULER_MUTATOR_ENDPOINTS = {
     "port_test.port_play_run",
+    # the loopback offset calibration drives the OPX like a port play
+    "port_test.port_play_loopcal_run",
     # generic + legacy field editors (all call modifier.set_value)
     "main.field_edit", "main.field_edit_batch",
     # Edit as JSON stages through the batch door, so it holds the run lock too.

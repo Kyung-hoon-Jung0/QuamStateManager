@@ -35,7 +35,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 (async function () {
   await tick(); await tick();
   const doc = win.document;
-  const expand = () => doc.querySelector('.topo-expand');
+  // Expand is either the shared explicit button or, on the Qubits/Pairs hover
+  // panel (0a773867), the panel's own Expand button.
+  const expand = () => doc.querySelector('.topo-expand') ||
+    Array.prototype.find.call(doc.querySelectorAll('.cm-popup-hint'),
+      (b) => b.textContent === 'Expand' && !(b.closest('[hidden]')));
   const hover = (el) => el.dispatchEvent(new win.MouseEvent('mouseenter', { bubbles: false }));
   const ghosts = doc.querySelectorAll('.cm-dir-ghost');
   ok(ghosts.length === 2, 'two add buttons: ' + ghosts.length);
