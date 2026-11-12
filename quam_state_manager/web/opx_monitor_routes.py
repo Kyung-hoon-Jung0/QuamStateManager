@@ -71,19 +71,21 @@ def _run_candidates():
 
 def run_match(job, candidates, reason='', window=90, skew=None):
     """Job times are the OPX clock, run times the PC clock: compare only after
-    correcting by the measured offset; an unknown offset gives no link."""
+    correcting by the MEASURED offset (``{'skew_s', 'uncertainty_s'}``); its
+    uncertainty widens the window, never narrows it. Unknown offset: no link."""
     if reason:
         return {'reason': reason}
     instant = om.timestamp(job.get('created_at'))
     if instant is None:
         return {'reason': 'Job creation time unknown; no estimated link.'}
-    if skew is None:
+    if not isinstance(skew, dict) or skew.get('skew_s') is None:
         return {'reason': 'OPX clock offset unknown; no estimated link.'}
-    instant += skew
-    matches = [r for r in candidates if abs(r['time'] - instant) <= window]
+    instant += skew['skew_s']
+    width = window + abs(skew.get('uncertainty_s') or 0.0)
+    matches = [r for r in candidates if abs(r['time'] - instant) <= width]
     if len(matches) == 1:
-        return {**matches[0], 'reason': 'estimated from times (job and run creation, +/-90 s)'}
-    return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-90 s)'}
+        return {**matches[0], 'reason': f'estimated from times (job and run creation, +/-{width:.0f} s)'}
+    return {'reason': f'{len(matches)} runs at that time; estimated from times (+/-{width:.0f} s)'}
 
 
 def last_job(q):
@@ -92,7 +94,7 @@ def last_job(q):
     if not q['jobs']:
         return 'none observed'
     job = max(q['jobs'], key=lambda j: om.timestamp(j.get('updated_at')) or om.timestamp(j.get('created_at')) or 0)
-    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.local_time(job.get('created_at'))
+    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.opx_time(job.get('created_at')) + ' (OPX clock)'
 
 
 def _view(tab: str) -> dict:
@@ -105,7 +107,7 @@ def _view(tab: str) -> dict:
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
     table = h.table() if h else []
     first = {r['qm_id']: r for r in table if not r.get('job_id')}
-    skew = om.clock_skew(st.get('answer'), table)
+    skew = m.clock_skew()
     srv_now = om.server_now(st.get('answer'), m.clock(), skew)
     idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'], srv_now)
                    for q in (st.get('answer') or {}).get('open_qms') or []}
@@ -114,7 +116,7 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'opx_time': om.opx_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],

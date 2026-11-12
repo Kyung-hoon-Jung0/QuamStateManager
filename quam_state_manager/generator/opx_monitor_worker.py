@@ -70,9 +70,10 @@ def _readings(src, name, refused, what):
             if v is not None:
                 refused[f"{name}.{what}.{k}"] = f"not a number: {str(v)[:80]!r}"
             continue
-        # Metrics are proto3 doubles: an unfilled field reads exactly 0.0, which
-        # cannot be told from a real zero. Report it as no reading (None).
-        out[str(k)] = None if what == "metrics" and f == 0.0 else f
+        # A value the server sent is a reading, 0.0 included (the SDK hands the
+        # metrics only when the message is present, HasField). "Not sent" is a
+        # None from the SDK and is skipped above, never a value.
+        out[str(k)] = f
     return out or None
 
 

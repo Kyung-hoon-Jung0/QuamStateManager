@@ -114,24 +114,42 @@ def server_times(answer):
             for t in (timestamp(j.get('created_at')), timestamp(j.get('updated_at'))) if t is not None]
 
 
-def clock_skew(answer, history_rows):
-    """Upper bound of (this PC's clock - the OPX clock), in seconds, or None.
-
-    A job is first seen by SM after the server created it, so for every job
-    first_seen(PC) - created_at(OPX) >= skew; the smallest such difference is
-    the tightest bound (off by at most the detection delay). No pairing -> None."""
-    created = {str(j.get('id')): timestamp(j.get('created_at')) for j in _answer_jobs(answer)}
-    diffs = [timestamp(r.get('first_seen')) - created[str(r.get('job_id'))]
-             for r in history_rows or [] if r.get('job_id') and created.get(str(r.get('job_id'))) is not None
-             and timestamp(r.get('first_seen')) is not None]
-    return min(diffs) if diffs else None
+#: A clock measurement older than this (monotonic seconds) is not used.
+SKEW_MAX_AGE_S = 600.0
+#: Wall-clock and monotonic ages of one measurement may differ by this much
+#: before the PC clock is taken to have stepped (the measurement is dropped).
+SKEW_STEP_TOLERANCE_S = 2.0
 
 
-def server_now(answer, now, skew):
-    """A lower bound of the OPX clock's present time, or None when nothing bounds it."""
+def measure_skew(t0, t1, date_header):
+    """(this PC's clock - the OPX clock) from one HTTP ``Date`` header.
+
+    The server stamped the header at a PC time between ``t0`` (request sent)
+    and ``t1`` (answer received), with a whole-second value (RFC 9110 5.6.7,
+    IMF-fixdate). Returns ``{'skew_s', 'uncertainty_s'}`` or None when the
+    header is absent or unreadable. uncertainty = round trip + 1 s granularity."""
+    if not date_header or t0 is None or t1 is None or t1 < t0:
+        return None
+    try:
+        from email.utils import parsedate_to_datetime
+        d = parsedate_to_datetime(str(date_header))
+    except (TypeError, ValueError, IndexError):
+        return None
+    if d is None or d.tzinfo is None:
+        return None
+    server = d.timestamp()
+    return {'skew_s': (t0 + t1) / 2.0 - (server + 0.5), 'uncertainty_s': (t1 - t0) + 1.0}
+
+
+def server_now(answer, now, skew=None):
+    """A lower bound of the OPX clock's present time, or None when nothing bounds it.
+
+    ``skew`` is a measured ``{'skew_s', 'uncertainty_s'}`` (or None): the PC
+    reading is corrected by it and moved back by its uncertainty, so the bound
+    can only be early (an age from it can only be short, never more idle)."""
     bounds = server_times(answer)
-    if skew is not None:
-        bounds.append(now - skew)
+    if isinstance(skew, dict) and skew.get('skew_s') is not None:
+        bounds.append(now - skew['skew_s'] - abs(skew.get('uncertainty_s') or 0.0))
     return max(bounds) if bounds else None
 
 
@@ -767,7 +785,7 @@ def connection_hint(host):
 
 
 def call_failure(name, error):
-    if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'unreachable', 'failed to connect', 'timeout')):
+    if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'connection refused', 'unreachable', 'failed to connect', 'timeout', 'statuscode.unavailable')):
         return f'Server unreachable while reading {name}: {error}'
     if call_unreadable(error):
         return f'Unreadable reply for {name}: {error}'
@@ -817,11 +835,15 @@ def failure_summary(errors):
                 'No data call answered.')
 
 
-def read_admin(url, cluster_name=None):
-    """Only the two documented read routes, no redirects or connection headers."""
+def read_admin(url, cluster_name=None, clock=time.time):
+    """Only the two documented read routes, no redirects or connection headers.
+
+    Each answer's HTTP ``Date`` header measures the OPX clock against this PC
+    (``measure_skew``); the tightest measurement is returned as ``clock``."""
     if not url:
         return {'known': False, 'not_applicable': True, 'reason': 'Admin n/a; no Admin URL configured.'}
     admin_host = None
+    measured = []
     try:
         parsed = urlsplit(url)
         admin_host = parsed.hostname
@@ -830,7 +852,13 @@ def read_admin(url, cluster_name=None):
         opener = urllib.request.build_opener(_NoRedirect)
         answers = []
         for path in ('/api/v2/clusters', '/api/v2/devices/detailed'):
+            t0 = clock()
             with opener.open(urllib.request.Request(url.rstrip('/') + path, method='GET'), timeout=2) as response:
+                t1 = clock()
+                headers = getattr(response, 'headers', None)
+                m = measure_skew(t0, t1, headers.get('Date') if headers is not None else None)
+                if m is not None:
+                    measured.append(m)
                 raw = response.read(1_000_001)
                 if len(raw) > 1_000_000:
                     raise ValueError('admin response too large')
@@ -839,6 +867,7 @@ def read_admin(url, cluster_name=None):
                     raise ValueError('unexpected admin response shape')
                 answers.append(answer)
         clusters, devices = answers
+        clock_out = {'clock': min(measured, key=lambda m: m['uncertainty_s'])} if measured else {}
         selected = [c for c in clusters if c.get('name') == cluster_name] if cluster_name and cluster_name != 'any' else []
         automatic = not selected
         if not selected:
@@ -846,7 +875,7 @@ def read_admin(url, cluster_name=None):
         if len(selected) != 1 and len(clusters) == 1:
             selected = clusters
         if len(selected) != 1:
-            return {'known': False, 'reason': 'Choose an admin cluster: ' + ', '.join(str(c.get('name', 'unnamed')) for c in clusters)}
+            return {'known': False, 'reason': 'Choose an admin cluster: ' + ', '.join(str(c.get('name', 'unnamed')) for c in clusters), **clock_out}
         c = selected[0]
         ds = [d for d in devices if d.get('clusterName') == c.get('name')]
         members = c.get('devices')
@@ -857,9 +886,12 @@ def read_admin(url, cluster_name=None):
                     and all(d.get('status') for d in ds)
                     and {d.get('hostname') for d in members} == {d.get('hostname') for d in ds})
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
-                'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster'}
+                'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster', **clock_out}
     except Exception as exc:
-        return {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        if measured:
+            out['clock'] = min(measured, key=lambda m: m['uncertainty_s'])
+        return out
 
 
 def local_time(value):
@@ -871,6 +903,15 @@ def local_time(value):
     hours, minutes = divmod(abs(offset), 60)
     zone = f"UTC{'+' if offset >= 0 else '-'}{hours}" + (f':{minutes:02d}' if minutes else '')
     return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone})'
+
+
+def opx_time(value):
+    """An OPX-clock timestamp for people: digits only, no PC zone label (the
+    caller says "OPX clock"); the instant is shown in this PC's zone."""
+    t = timestamp(value)
+    if t is None:
+        return 'not reported'
+    return datetime.fromtimestamp(t).astimezone().strftime('%Y-%m-%d %H:%M:%S')
 
 
 def words(value):
@@ -948,7 +989,7 @@ def health(answer, admin, thresholds, state):
     if unknown or not known:
         return {'color': 'grey', 'reason': unknown[0] if unknown else 'health not assessed: no admin URL / no limits set', 'details': '; '.join(unknown)}
     count = len(ans.get('open_qms') or [])
-    return {'color': 'amber' if count else 'green', 'reason': f'{count} open QMs claim resources' if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
+    return {'color': 'amber' if count else 'green', 'reason': f"{count} open QM{'' if count == 1 else 's'} claim{'s' if count == 1 else ''} resources" if count else 'admin operational' if admin.get('known') else 'reported temperatures within configured limits'}
 
 def verdict(answer, health_state, idle_states, state=None, age_s=None):
     if state == 'unconfigured':
@@ -996,8 +1037,11 @@ class Monitor:
     injectable so tests drive it with fake answers."""
 
     def __init__(self, instance, worker_factory: Optional[Callable] = None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, mono: Optional[Callable[[], float]] = None):
         self.instance = Path(instance)
+        # an injected wall clock (tests) also drives the monotonic one
+        self.mono = mono or (time.monotonic if clock is time.time else clock)
+        self.clock_measure: Optional[dict] = None
         self.worker_factory = worker_factory or (lambda py, t: EnvWorker(py, t))
         self.clock = clock
         self._lock = threading.Lock()
@@ -1060,6 +1104,7 @@ class Monitor:
             self.section_times.clear()
             self.section_errors.clear()
             self.admin = {'known': False, 'reason': 'Admin input unknown; no fresh admin poll.'}
+            self.clock_measure = None
             self.last_ok_at = None
             self.last_error = None
             self.last_try_at = None
@@ -1138,7 +1183,9 @@ class Monitor:
                 return
             ans = r.get("result") or {}
             selected_cluster = (s.get('target') or {}).get('cluster_name') or ans.get('cluster_name')
-            self.admin = read_admin(s.get('admin_url'), selected_cluster)
+            self.admin = read_admin(s.get('admin_url'), selected_cluster, clock=self.clock)
+            if isinstance(self.admin.get('clock'), dict):
+                self.clock_measure = {**self.admin['clock'], 'at': self.clock(), 'at_mono': self.mono()}
             fields = {'controllers': 'get_devices', 'open_qms': 'list_open_qms', 'jobs': 'get_jobs'}
             self.section_errors = {field: ans.get('refused', {}).get(call, 'No answer')
                                    for field, call in fields.items() if ans.get(field) is None and (field != 'jobs' or ans.get('jobs_requested', True))}
@@ -1298,23 +1345,41 @@ class Monitor:
                        jobs_reason=NOT_QM_SERVER, live=False, live_reason=NOT_QM_SERVER)
             return out
         if "list_open_qms" in refused:
-            out.update(close_reason=f"The server refused listing QMs: {refused['list_open_qms']}")
+            out.update(close_reason=call_failure('list_open_qms', refused['list_open_qms']))
         elif self.last_error:
             out.update(close_reason=f"Closing is disabled until a fresh answer ({failure_headline(self.last_error)}).")
         elif ans.get("open_qms") is None or self.status_state_unfresh():
             out.update(close_reason="No answer from the server yet.")
         else:
             out["close"] = True
-        out['live_reason'] = ('The server refused get_devices: ' + refused['get_devices']) if 'get_devices' in refused else 'No device data has answered yet.'
-        out['jobs_reason'] = call_failure('list_open_qms', refused['list_open_qms']) if 'list_open_qms' in refused else 'No job data has answered yet.'
         out['live'] = ans.get('controllers') is not None
         out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
+        # a reason only for what is NOT available; an answered section has none
+        out['live_reason'] = '' if out['live'] else (
+            call_failure('get_devices', refused['get_devices']) if 'get_devices' in refused
+            else 'No device data has answered yet.')
+        out['jobs_reason'] = '' if out['jobs'] else (
+            call_failure('list_open_qms', refused['list_open_qms']) if 'list_open_qms' in refused
+            else 'No job data has answered yet.')
         return out
 
+    def clock_skew(self) -> Optional[dict]:
+        """The measured (PC - OPX) clock offset, or None when unknown.
+
+        Only a measurement from the admin server's ``Date`` header counts; it
+        is dropped once older than ``SKEW_MAX_AGE_S``, when no admin URL is
+        set, or when the PC clock stepped since (wall age != monotonic age)."""
+        m = self.clock_measure
+        if not m or not self.settings().get('admin_url'):
+            return None
+        mono_age = self.mono() - m['at_mono']
+        wall_age = self.clock() - m['at']
+        if mono_age < 0 or mono_age > SKEW_MAX_AGE_S or abs(wall_age - mono_age) > SKEW_STEP_TOLERANCE_S:
+            return None
+        return {'skew_s': m['skew_s'], 'uncertainty_s': m['uncertainty_s'], 'at': m['at']}
+
     def _server_now(self):
-        h = self.history()
-        table = h.table() if h else []
-        return server_now(self.last_answer, self.clock(), clock_skew(self.last_answer, table))
+        return server_now(self.last_answer, self.clock(), self.clock_skew())
 
     def status_state_unfresh(self):
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()
@@ -1335,7 +1400,7 @@ class Monitor:
             state = "error"
             sentence = self.last_error.rstrip('.') + '.'
             if age is not None:
-                sentence += f" The values below are from {age:.0f} s ago."
+                sentence += f" The last good read was {age:.0f} s ago."
         elif age is None or self.viewer_check_pending:
             state = "starting"
             sentence = "Checking the server..."

@@ -86,6 +86,12 @@ def env(tmp_path):
     return app, m, worker, clock, started
 
 
+def _measured(m, clock, skew, unc=1.0):
+    """A fresh admin Date-header measurement of the OPX clock offset."""
+    s = m.settings(); s['admin_url'] = 'http://sample.invalid'; om.save_settings(m.instance, s)
+    m.clock_measure = {'skew_s': skew, 'uncertainty_s': unc, 'at': clock.t, 'at_mono': m.mono()}
+
+
 def page(app, tab):
     return app.test_client().get(f"/opx-monitor/body?tab={tab}").get_data(as_text=True)
 
@@ -139,7 +145,7 @@ def test_worker_death_is_a_sentence_never_green(env):
     m.poll_once()
     html = page(app, "live")
     assert "ui-opxmon-status--error" in html
-    assert "exited while running" in html and "from 7 s ago" in html
+    assert "exited while running" in html and "last good read was 7 s ago" in html
     assert "Updated" not in html
 
 
@@ -570,7 +576,10 @@ def test_d16_unique_run_only_and_open_chip_scope(env, monkeypatch, tmp_path):
     used = []
     monkeypatch.setattr(main, '_get_or_create_store', lambda p, **kw: used.append(p) or store)
     html = page(app, 'jobs')
-    assert 'probably #7' in html and 'estimated from times' in html and used == [root]
+    assert 'offset from this PC is unknown' in html and 'probably #' not in html  # no measurement yet
+    _measured(m, clock, 0.0)
+    html = page(app, 'jobs')
+    assert 'probably #7' in html and 'estimated from times' in html and set(used) == {root}
     store.runs[8] = SimpleNamespace(created_at=created, run_id=8, folder_path=root / 'run8')
     html = page(app, 'jobs')
     assert '2 runs at that time' in html and 'probably #' not in html
@@ -639,6 +648,7 @@ def test_round2_dom_selfcheck(env, tmp_path, monkeypatch):
     m.poll_once()
     candidates = [{'id': 7, 'url': '/dataset/fake:7', 'time': om.timestamp(a['jobs'][0]['created_at'])}]
     monkeypatch.setattr(routes, '_run_candidates', lambda: (candidates, ''))
+    _measured(m, clock, 0.0)
     pages['unique'] = page(app, 'jobs')
     candidates.append({**candidates[0], 'id': 8, 'url': '/dataset/fake:8'})
     pages['ambiguous'] = page(app, 'jobs')
@@ -699,7 +709,7 @@ def test_d21_all_refused_is_error(env):
     assert m.status()['state'] == 'error'
     assert not m.capabilities()['close'] and not m.capabilities()['live']
     html = page(app, 'live')
-    assert 'as of' in html and 'Updated 0' not in html
+    assert 'last good read at' in html and 'Updated 0' not in html
 
 
 def test_d21_transport_failure_labels_retained_sections(env):
@@ -712,8 +722,8 @@ def test_d21_transport_failure_labels_retained_sections(env):
     assert m.section_times == previous
     assert set(m.section_errors) == {'controllers', 'open_qms', 'jobs'}
     html = page(app, 'live')
-    assert 'Temperatures unavailable (as of' in html
-    assert 'Open QMs unavailable; as of' in html
+    assert 'Temperatures unavailable (last good read at' in html
+    assert 'Open QMs unavailable; last good read at' in html
     assert m.status()['state'] == 'error' and not m.capabilities()['close']
 
 
@@ -778,7 +788,7 @@ def test_d26_format_count_rounding_and_frozen(env):
     m.poll_once()
     html = page(app, 'jobs')
     assert '100 of 313 jobs shown' in html and 'Show more' in html
-    assert html.count('No chip is open') == 1 and 'data-utc=' in html
+    assert html.count('No chip is open') == 1 and '(OPX clock)' in html and 'UTC+' not in html.split('Server jobs')[1]
     assert '.123456Z</span>' not in html
     fs = __import__('datetime').datetime.fromtimestamp(clock.t - 50, __import__('datetime').timezone.utc).isoformat()
     state = om.idle_state({'jobs': []}, {'first_seen': fs}, clock.t, 1)
@@ -909,7 +919,7 @@ def test_round4_alarm_and_failed_calls(env):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong>PROBLEM</strong>' in html
-    assert 'Temperatures unavailable (as of' in html
+    assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     assert 'SSH tunnel' not in html
     assert 'SSH tunnel' not in om.connection_hint('localhost')
@@ -929,7 +939,7 @@ def test_round4_partial_failure_and_admin_failure(env, monkeypatch):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong>PROBLEM</strong>' in html
-    assert 'Temperatures unavailable (as of' in html
+    assert 'Temperatures unavailable (last good read at' in html
     assert 'No temperature readings.' not in html
     def unavailable(*args):
         raise OSError('unreachable')
@@ -1321,7 +1331,7 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     import re as _re
     visible = _re.sub(r'<[^>]*>', ' ', html)
     assert visible.count('127.0.0.1:9510') == 1  # said once, in the status line
-    assert '127.0.0.1:9510. The values below' in visible
+    assert '127.0.0.1:9510. The last good read' in visible
 
 
 def test_every_sensor_unreadable_is_not_called_no_readings(env):
@@ -1348,7 +1358,7 @@ def test_tiles_kept_after_a_failed_read_are_marked_stale(env):
     w.script[:] = [om.WorkerError('No answer within 30 s while reading; the worker was stopped.')]
     m.poll_once()
     html = page(app, 'live')
-    assert 'Temperatures unavailable (as of' in html
+    assert 'Temperatures unavailable (last good read at' in html
     assert 'the values below are stale' in html
     assert 'ui-opxmon-tile--stale' in html and '>stale, as of ' in html
     assert 'permission' not in html
@@ -1409,17 +1419,21 @@ def test_fem_tile_marks_a_queued_job_busy(env):
     assert "ui-opxmon-fem--busy" in html
 
 
-def test_a_zero_metric_is_no_reading_and_a_metric_limit_without_it_is_not_green():
+def test_a_zero_metric_the_server_sent_is_a_real_reading_and_alarms():
     from quam_state_manager.generator import opx_monitor_worker as wk
     refused = {}
-    out = wk._readings({"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0}, "con1", refused, "metrics")
-    assert out == {"memory_available_gb": None, "cpu_utilization_percent": 3.0}
-    assert wk._readings({"FEM 0": 0.0}, "con1", {}, "temperatures") == {"FEM 0": 0.0}
+    out = wk._readings({"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0, "disk_available_gb": None},
+                       "con1", refused, "metrics")
+    assert out == {"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0}
     ans = _one_ctrl({"FEM 0": 45.0, "FEM 1": 50.0}, metrics=out)
+    assert "metric:memory_available_gb" in {x['key'] for x in om.offered_metrics(ans)}
+    alarms = om.evaluate_alarms(ans, {"metric:memory_available_gb": 1.0})
+    assert [a['key'] for a in alarms] == ["metric:memory_available_gb"]
     h = om.health(ans, _NO_ADMIN, {"temp:all_fems": 80.0, "metric:memory_available_gb": 1.0}, 'ok')
+    assert h['color'] == 'red'
+    # a metric the server did not send stays unknown (grey), never a value
+    h = om.health(ans, _NO_ADMIN, {"temp:all_fems": 80.0, "metric:disk_available_gb": 1.0}, 'ok')
     assert h['color'] == 'grey'
-    assert "metric:memory_available_gb" not in {x['key'] for x in om.offered_metrics(ans)}
-
 
 def test_worker_rereads_a_qm_config_when_its_jobs_change():
     from types import SimpleNamespace
@@ -1454,30 +1468,147 @@ def _iso(t):
 
 def test_idle_never_ages_server_times_against_the_pc_clock():
     pc_now = 1_800_000_000.0
-    skew = 80.0  # the OPX clock reads 80 s behind this PC
-    done = pc_now - skew - 100  # the job finished 100 s ago in OPX time
+    skew = {'skew_s': 80.0, 'uncertainty_s': 1.0}  # the OPX clock reads 80 s behind this PC
+    done = pc_now - 80.0 - 100  # the job finished 100 s ago in OPX time
     q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": _iso(done - 5), "updated_at": _iso(done)}]}
     first = {"first_seen": _iso(pc_now - 10_000)}
-    # offset unknown: no idle claim
     st = om.idle_state(q, first, pc_now, 1, None)
     assert st['idle'] is False and 'offset is unknown' in st['basis']
-    # offset known: aged in OPX time -> 100 s, not 180 s
+    # offset measured: aged in OPX time (minus the uncertainty) -> 99 s, not 180 s
     st = om.idle_state(q, first, pc_now, 2, om.server_now({}, pc_now, skew))
     assert st['idle'] is False and 'no job for 1 min' in st['basis']
 
 
-def test_clock_skew_is_bounded_from_first_seen_and_drives_run_match():
+def test_idle_actually_uses_the_measured_skew_and_its_uncertainty():
+    """r2 M3: server_now must be corrected by the measured skew (a PC reading
+    taken raw would age an OPX time 3600 s too long and close a busy QM)."""
+    pc_now = 1_800_000_000.0
+    last = pc_now - 3600 - 30 * 60  # 30 min ago on an OPX clock 1 h behind
+    q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": _iso(last), "updated_at": _iso(last)}]}
+    first = {"first_seen": _iso(pc_now - 99_999)}
+    st = om.idle_state(q, first, pc_now, 60, om.server_now(None, pc_now, {'skew_s': 3600.0, 'uncertainty_s': 1.0}))
+    assert st['idle'] is False and 'no job for 29 min' in st['basis']
+    # the uncertainty goes the cautious way: never more idle
+    assert om.server_now(None, pc_now, {'skew_s': 0.0, 'uncertainty_s': 5.0}) == pc_now - 5.0
+    assert om.server_now(None, pc_now, {'skew_s': 0.0, 'uncertainty_s': -5.0}) == pc_now - 5.0
+    # no measurement: only the OPX's own times bound its clock
+    assert om.server_now({'jobs': [{'created_at': _iso(last)}]}, pc_now, None) == last
+    assert om.server_now(None, pc_now, None) is None
+
+
+def test_skew_is_measured_from_the_admin_date_header():
+    from email.utils import formatdate
+    hdr = formatdate(1_800_000_000, usegmt=True)
+    m = om.measure_skew(1_800_000_080.0, 1_800_000_080.4, hdr)
+    assert abs(m['skew_s'] - 79.7) < 1e-6 and abs(m['uncertainty_s'] - 1.4) < 1e-6
+    assert om.measure_skew(1.0, 2.0, None) is None
+    assert om.measure_skew(1.0, 2.0, 'not a date') is None
+    assert om.measure_skew(2.0, 1.0, hdr) is None
+
+
+def test_read_admin_returns_the_tightest_date_header_measurement(monkeypatch):
+    from pathlib import Path
+    from email.utils import formatdate
+    root = Path(__file__).parent / 'fixtures' / 'opx_monitor'
+    ticks = iter([100.0, 100.5, 200.0, 200.1])
+
+    class Resp:
+        def __init__(self, url, date):
+            self.headers = {'Date': date}
+            name = 'v2_clusters.json' if url.endswith('/clusters') else 'v2_devices_detailed.json'
+            self._raw = (root / name).read_bytes()
+
+        def read(self, n):
+            return self._raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class Opener:
+        def open(self, req, timeout):
+            return Resp(req.full_url, formatdate(110 if req.full_url.endswith('/clusters') else 190, usegmt=True))
+    monkeypatch.setattr(om.urllib.request, 'build_opener', lambda *a: Opener())
+    admin = om.read_admin('http://sample.invalid', clock=lambda: next(ticks))
+    assert admin['clock']['uncertainty_s'] == pytest.approx(1.1)
+    assert admin['clock']['skew_s'] == pytest.approx(200.05 - 190.5)
+
+
+def test_monitor_skew_is_unknown_without_admin_stale_or_after_a_pc_clock_step(env):
+    app, m, w, clock, _ = env
+    mono = {'t': 0.0}
+    m.mono = lambda: mono['t']
+    m.clock_measure = {'skew_s': 80.0, 'uncertainty_s': 1.2, 'at': clock.t, 'at_mono': 0.0}
+    assert m.clock_skew() is None  # no admin URL configured
+    _measured(m, clock, 80.0, 1.2)
+    assert m.clock_skew()['skew_s'] == 80.0
+    clock.t += 30
+    mono['t'] += 30
+    assert m.clock_skew() is not None
+    clock.t -= 3 * 3600  # the PC clock stepped (r2 R3)
+    assert m.clock_skew() is None
+    clock.t += 3 * 3600
+    mono['t'] += om.SKEW_MAX_AGE_S
+    clock.t += om.SKEW_MAX_AGE_S
+    assert m.clock_skew() is None  # too old
+    m.reset()
+    assert m.clock_measure is None
+
+
+def test_r1_late_first_sight_never_links_a_wrong_run(env, monkeypatch):
+    """r2 R1: clocks agree, SM first saw the job 1 h after it was created. The
+    job-first-seen bound said 3600 s and linked run #8; a measurement links #7."""
+    from quam_state_manager.web import opx_monitor_routes as routes
+    app, m, w, clock, _ = env
+    created = clock.t - 3600
+    a = answer()
+    a['open_qms'][0]['jobs'][0]['created_at'] = _iso(created)
+    w.script[:] = [a]
+    m.poll_once()
+    cands = [{'id': 7, 'url': '/d:7', 'time': created + 5}, {'id': 8, 'url': '/d:8', 'time': clock.t}]
+    monkeypatch.setattr(routes, '_run_candidates', lambda: (cands, ''))
+    html = page(app, 'jobs')
+    assert 'probably #' not in html and 'offset unknown' in html and 'about 3600' not in html
+    _measured(m, clock, 0.0, 1.0)
+    html = page(app, 'jobs')
+    assert 'probably #7' in html and 'probably #8' not in html
+    assert 'reads 0 &plusmn; 1 s behind this PC' in html
+
+
+def test_r3_pc_clock_step_never_makes_a_busy_qm_idle(env):
+    """r2 R3: a measurement taken before a PC clock step is dropped, so a QM
+    whose last job was 60 min ago (OPX) is not aged by a 3 h step."""
+    app, m, w, clock, _ = env
+    s = m.settings()
+    s['idle_minutes'] = 120
+    om.save_settings(m.instance, s)
+    mono = {'t': 0.0}
+    m.mono = lambda: mono['t']
+    last = clock.t - 60 * 60
+    a = answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]),))
+    a['open_qms'][0]['jobs'][0].update(created_at=_iso(last), updated_at=_iso(last))
+    a['jobs'] = []
+    w.script[:] = [a]
+    m.poll_once()
+    _measured(m, clock, -3 * 3600.0, 1.0)  # measured while the PC was 3 h slow
+    clock.t += 3 * 3600  # NTP corrects the PC clock; no monotonic time passed
+    assert m.clock_skew() is None
+    assert m._server_now() == last
+    html = page(app, 'cleanup')
+    assert 'OPEN-IDLE' not in html
+
+
+def test_run_match_uncertainty_widens_never_narrows():
     from quam_state_manager.web import opx_monitor_routes as routes
     created = 1_800_000_000.0
-    ans = {"jobs": [{"id": "a", "created_at": _iso(created)}, {"id": "b", "created_at": _iso(created + 50)}]}
-    rows = [{"job_id": "a", "first_seen": _iso(created + 85)}, {"job_id": "b", "first_seen": _iso(created + 50 + 81)}]
-    assert om.clock_skew(ans, rows) == 81.0
-    assert om.clock_skew(ans, []) is None
     job = {"created_at": _iso(created)}
-    run = [{"id": 7, "url": "/x", "time": created + 81 + 60}]  # 60 s after the job in real time
-    assert routes.run_match(job, run, skew=81.0)['id'] == 7
+    run = [{"id": 7, "url": "/x", "time": created + 81 + 100}]
+    assert 'url' not in routes.run_match(job, run, skew={'skew_s': 81.0, 'uncertainty_s': 1.0})
+    assert routes.run_match(job, run, skew={'skew_s': 81.0, 'uncertainty_s': 15.0})['id'] == 7
     assert 'url' not in routes.run_match(job, run, skew=None)
-    assert 'url' not in routes.run_match(job, [{"id": 7, "url": "/x", "time": created - 60}], skew=81.0)
+    assert 'url' not in routes.run_match(job, run, skew={'skew_s': None})
 
 
 def test_close_idle_worker_uses_the_server_clock_bound():
@@ -1564,3 +1695,28 @@ def test_unreachable_server_is_not_called_unavailable_for_this_target(env):
     for tab in ('live', 'jobs'):
         html = page(app, tab)
         assert 'Not available for this target.' not in html
+
+
+def test_r2_live_wording_count_grammar_refusal_and_reasons(env):
+    app, m, w, clock, _ = env
+    # the count is the server's, before truncation to the shown 100
+    a = answer()
+    a['jobs'] = [dict(a['jobs'][0], id=f"j{i}") for i in range(100)]
+    a['jobs_total'] = 1000
+    a['jobs_capped'] = True
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert '100 of at least 1000 jobs shown' in html and 'at least 100 jobs' not in html
+    # an OPX-clock time carries no PC zone label
+    assert 'Created (OPX clock)' in html
+    # one QM, singular
+    assert om.health(answer(temps={'Chassis': 40}), {'known': False, 'not_applicable': True}, {'temp:Chassis': 50}, 'ok')['reason'] == '1 open QM claims resources'
+    # answered sections have no reason
+    cap = m.capabilities()
+    assert cap['live'] and cap['jobs'] and cap['live_reason'] == '' and cap['jobs_reason'] == ''
+    # a refused TCP connection is unreachable, never "the server refused listing QMs"
+    w.script[:] = [answer(refused={'list_open_qms': 'StatusCode.UNAVAILABLE: failed to connect to all addresses; connection refused'})]
+    m.poll_once()
+    cap = m.capabilities()
+    assert cap['close_reason'].startswith('Server unreachable') and 'refused listing' not in cap['close_reason']
