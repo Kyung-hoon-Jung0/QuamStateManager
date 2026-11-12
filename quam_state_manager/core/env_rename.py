@@ -66,7 +66,8 @@ def plan(state, wiring, manifest, selections, reference=None):
                 continue
             updated = value
             for move in moved:
-                rewritten = rewrite_referrer_pointer(value, holder, move["old"], move["new"])
+                rewritten = rewrite_referrer_pointer(value, holder, move["old"], move["new"],
+                                                     {**state_copy, **wiring_copy})
                 if rewritten is not None:
                     updated = rewritten
                     break

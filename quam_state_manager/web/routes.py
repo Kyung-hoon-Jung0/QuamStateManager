@@ -27715,7 +27715,7 @@ def _walk_path(root, segs):
     return True, cur
 
 
-def _lab_write_seeds(writes) -> set:
+def _lab_write_seeds(writes, root=None) -> set:
     """``(coll, name)`` members the WRITTEN values point into: re-linking
     ``qubit_pairs.p.qubit_control`` to ``#/qubits/q4`` makes the gate play on
     q4, so the 'after' contents must carry q4 (else a pruning artefact, not
@@ -27725,7 +27725,7 @@ def _lab_write_seeds(writes) -> set:
 
     def scan(v, segs):
         if isinstance(v, str) and v.startswith("#"):
-            t = pointer_to_abs(v, list(segs))
+            t = pointer_to_abs(v, list(segs), root)
             if t and len(t) >= 2 and t[0] in _LAB_PRUNED:
                 out.add((t[0], t[1]))
         elif isinstance(v, dict):
@@ -27799,7 +27799,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
             segs = mp.split(".")
             if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
                 seeds.add((segs[0], segs[1]))
-        seeds |= _lab_write_seeds(writes)
+        seeds |= _lab_write_seeds(writes, merged)
         if cfg:
             for p in (list(cfg["paths"]) + [op for op, _f, _k in cfg["cut"]]
                       + list(cfg["orphans"])):
@@ -28961,7 +28961,7 @@ def api_pulse_duplicate():
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
 
-        rewritten = rewrite_subtree_pointers(body, path, new_path)
+        rewritten = rewrite_subtree_pointers(body, path, new_path, store.merged)
         try:
             modifier.create_subtree(new_path, rewritten)
         except KeyError:
@@ -29181,14 +29181,14 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
         _writes = [(path, _LAB_DELETE),
-                   (new_path, rewrite_subtree_pointers(body, path, new_path))]
+                   (new_path, rewrite_subtree_pointers(body, path, new_path, store.merged))]
         if retarget:
             for referrer in referrers:
                 try:
                     raw = store.get_value(referrer)
                 except (KeyError, TypeError, ValueError, IndexError):
                     continue
-                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
+                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
         if (retarget and isinstance(body, dict) and body.get("id") == old_name
@@ -29204,7 +29204,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
         except (KeyError, TypeError, ValueError, IndexError):
             return render_template("_status.html", message=f"Not found: {path}",
                                    level="error"), 404
-        rewritten = rewrite_subtree_pointers(body, path, new_path)
+        rewritten = rewrite_subtree_pointers(body, path, new_path, store.merged)
         # One group id for the rename AND its pointer retargets → a single Ctrl+Z
         # undoes the whole rename as one action.
         gid = modifier.new_group_id()
@@ -29221,7 +29221,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                     raw = store.get_value(referrer)
                 except (KeyError, TypeError, ValueError, IndexError):
                     continue
-                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
+                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1

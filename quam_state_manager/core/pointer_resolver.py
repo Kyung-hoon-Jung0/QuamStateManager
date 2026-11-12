@@ -358,9 +358,11 @@ def _landing(root: Any, ptr: str, field_path: tuple[str, ...], hops: int = 16) -
     """The real path a pointer chain lands on (following pointer to pointer)."""
     path = field_path
     for _ in range(hops):
-        if ptr.startswith("#./"):
+        # every form, "#./" aliases included (quam follows them too)
+        t = target_path(root, ptr, path)
+        if t is None:
             return None
-        path = _compute_resolved_path(root, ptr, path)
+        path = tuple(t)
         node = _get(root, list(path))
         if node is _SENTINEL:
             return None
@@ -415,12 +417,21 @@ def target_path(root: Any, pointer: str, holder: tuple[str, ...] | list[str]) ->
     the way changes where ``..`` climbs from), so it needs *root*; without it
     the answer is None (unknown), never a guess from the text."""
     holder = tuple(holder)
+    if pointer.startswith("#./../"):
+        # "#./" is the holding object itself, so "#./../x" is "#../x"
+        pointer = "#" + pointer[3:]
     if pointer.startswith("#/"):
         return [s for s in pointer[2:].split("/") if s != ""]
     if pointer.startswith("#./"):
         if not holder:
             return None
-        return list(holder[:-1]) + [s for s in pointer[3:].split("/") if s != ""]
+        segs = [s for s in pointer[3:].split("/") if s not in ("", ".")]
+        if ".." in segs:
+            # a ".." after a named step: walk the objects, as for "#../"
+            if root is None or len(holder) < 2:
+                return None
+            return _walk_relative(root, "#../" + "/".join([holder[-2], *segs]), holder)
+        return list(holder[:-1]) + segs
     if pointer.startswith("#../"):
         if _has_mid_dotdot(pointer):
             return None if root is None else _walk_relative(root, pointer, holder)

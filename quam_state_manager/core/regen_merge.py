@@ -1356,23 +1356,15 @@ def _port_hw(path: str, ent: dict) -> tuple:
     return (str(con), None if fem is None else str(fem))
 
 
-def _pointer_target(src_path: str, pointer: str) -> str | None:
+def _pointer_target(src_path: str, pointer: str, doc: Any = None) -> str | None:
     """The dot-path a pointer lands on, for the pointer stored at ``src_path``.
 
-    ``#/a/b`` is absolute. ``#./x`` is relative to the object holding the
-    attribute, and each ``../`` climbs one more level (QUAM's own reading).
-    """
-    if pointer.startswith("#/"):
-        return ".".join(s for s in pointer[2:].split("/") if s)
-    base = src_path.split(".")[:-1]              # the object holding the leaf
-    for seg in pointer[1:].split("/"):
-        if seg == "..":
-            if not base:
-                return None
-            base.pop()
-        elif seg and seg != ".":
-            base.append(seg)
-    return ".".join(base)
+    ``pointer_resolver.target_path`` -- the one rule. *doc* lets a mid-path
+    ``..`` be answered (it climbs from the object reached); without it that
+    form is None (unknown)."""
+    from quam_state_manager.core.pointer_resolver import target_path
+    t = target_path(doc, pointer, tuple(s for s in src_path.split(".") if s))
+    return None if t is None else ".".join(t)
 
 
 def _walk_refs(obj: Any, path: str = ""):
@@ -1437,7 +1429,8 @@ def _carryable_ports(old_state: dict, new_state: dict,
                 if isinstance(v, dict) and isinstance(v.get("__class__"), str)
                 and not v["__class__"].startswith(("quam.", "quam_builder."))
                 and new_state.get(k) is None}
-    for src, kind, val in _walk_refs(_merged_doc(old_state, old_wiring)):
+    old_merged = _merged_doc(old_state, old_wiring)
+    for src, kind, val in _walk_refs(old_merged):
         if src.split(".", 1)[0] in lab_tops:
             continue
         inside = src == "ports" or src.startswith("ports.")
@@ -1452,7 +1445,7 @@ def _carryable_ports(old_state: dict, new_state: dict,
                             and str(old_ents[p].get("port_id", p.rsplit(".", 1)[-1]))
                             == str(port))}
             continue
-        target = _pointer_target(src, val)
+        target = _pointer_target(src, val, old_merged)
         if target is None:
             continue
         if not inside:
@@ -1518,7 +1511,7 @@ def _land(doc: dict, dot_path: str, _depth: int = 0) -> str | None:
     segs = [s for s in dot_path.split(".") if s]
     for i, seg in enumerate(segs):
         if is_pointer(node):
-            tgt = _pointer_target(".".join(segs[:i]), node)
+            tgt = _pointer_target(".".join(segs[:i]), node, doc)
             return (None if tgt is None
                     else _land(doc, ".".join([tgt, *segs[i:]]), _depth + 1))
         if isinstance(node, dict) and seg in node:
@@ -1530,7 +1523,7 @@ def _land(doc: dict, dot_path: str, _depth: int = 0) -> str | None:
         else:
             return None
     if is_pointer(node):
-        tgt = _pointer_target(".".join(segs), node)
+        tgt = _pointer_target(".".join(segs), node, doc)
         return None if tgt is None else _land(doc, tgt, _depth + 1)
     return ".".join(segs)
 
@@ -1547,7 +1540,7 @@ def _port_owners(state: dict, wiring: dict | None) -> dict[str, set[str]]:
     for src, kind, val in _walk_refs(state):
         if kind != "pointer" or src.split(".", 1)[0] in ("ports", "wiring"):
             continue
-        tgt = _pointer_target(src, val)
+        tgt = _pointer_target(src, val, doc)
         land = _land(doc, tgt) if tgt is not None else None
         if land is None:
             continue
@@ -1731,7 +1724,7 @@ def _finish_port_values(old, new, merged, ow, nw, sources, stats, protect):
             if _path_value(merged, path) is None:
                 continue
             original_path = src + "." + suffix
-            target = _pointer_target(original_path, val)
+            target = _pointer_target(original_path, val, old_doc)
             landed = _land(old_doc, original_path)
             if landed is None:
                 rebuilt_value = _path_value(new, path)
@@ -2400,15 +2393,11 @@ class _Cycle(Exception):
 
 def _hop(doc: dict, pointer: str, field_path: tuple) -> tuple[Any, tuple]:
     """``_one_hop`` that also returns where it landed (the target's own path)."""
-    if pointer.startswith("#/"):
-        parts = [p for p in pointer[2:].split("/") if p]
-    else:
-        parts = list(field_path[:-1])
-        for seg in pointer[1:].split("/"):
-            if seg == "..":
-                parts = parts[:-1]
-            elif seg and seg != ".":
-                parts.append(seg)
+    from quam_state_manager.core.pointer_resolver import target_path
+    t = target_path(doc, pointer, tuple(field_path))
+    if t is None:
+        return _MISSING, tuple(field_path)
+    parts = list(t)
     node: Any = doc
     for p in parts:
         if isinstance(node, dict) and p in node:

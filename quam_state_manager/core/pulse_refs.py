@@ -59,14 +59,14 @@ def is_ref(value: Any) -> bool:
     return isinstance(value, str) and value.startswith(_PREFIXES)
 
 
-def ref_target(obj_segs, ref: str) -> list[str] | None:
+def ref_target(obj_segs, ref: str, root: Any = None) -> list[str] | None:
     """Absolute segments of *ref* held by the object at *obj_segs* -- the
-    SAME target SM's pointer index records (``pointer_path.pointer_to_abs``),
+    SAME target SM's pointer index records (``pointer_resolver.target_path``),
     so a value read here and the rows the index refreshes on a write never
-    disagree. Each leading ``../`` climbs one level (``pointer_resolver.
-    relative_parts``, quam's own reading); None for anything else."""
+    disagree. *root* lets a mid-path ``..`` be answered; None for anything
+    that cannot be told."""
     from quam_state_manager.core.pointer_path import pointer_to_abs
-    segs = pointer_to_abs(ref, list(obj_segs) + ["_"])
+    segs = pointer_to_abs(ref, list(obj_segs) + ["_"], root)
     if not segs or any(s in ("..", ".") for s in segs):
         return None
     return list(segs)
@@ -111,7 +111,7 @@ def _object_of(merged, holder_segs, ref, seen, depth):
     if key in seen:
         return None
     seen.add(key)
-    t = ref_target(holder_segs, ref)
+    t = ref_target(holder_segs, ref, merged)
     if t is None:
         return None
     real, node = _locate(merged, t, seen, depth)
@@ -237,7 +237,7 @@ def _read(merged, obj_segs, value, origin, lab, seen, depth) -> Read:
     if key in seen:
         return Read(False, None, "unknown", reason=f"{value} goes round in a loop")
     seen = seen | {key}
-    t = ref_target(obj_segs, value)
+    t = ref_target(obj_segs, value, merged)
     if t is None:
         return Read(False, None, "unknown", reason=f"{value} names no target")
     owner_segs, attr = t[:-1], t[-1]

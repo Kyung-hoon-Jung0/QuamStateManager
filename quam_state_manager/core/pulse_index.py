@@ -673,7 +673,8 @@ def _is_inside(target: list[str], prefix: list[str]) -> bool:
     return len(target) >= len(prefix) and target[:len(prefix)] == prefix
 
 
-def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
+def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str,
+                             root: Any = None) -> Any:
     """Deep-copied *value* with self-targeting pointers retargeted to *dst*.
 
     Rule: a pointer whose absolute resolution (in the ORIGINAL location)
@@ -695,7 +696,9 @@ def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
             return [rewrite(v, rel + [str(i)]) for i, v in enumerate(node)]
         if is_pointer(node):
             holder_src = src_segs + rel
-            target = pointer_to_abs(node, holder_src)
+            # *root* = the document holding the ORIGINAL subtree (a mid-path
+            # ".." needs it); without it such a pointer is kept verbatim
+            target = pointer_to_abs(node, holder_src, root)
             if target and _is_inside(target, src_segs):
                 new_target = dst_segs + target[len(src_segs):]
                 holder_dst = dst_segs + rel
@@ -706,7 +709,8 @@ def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
 
 
 def rewrite_referrer_pointer(pointer: str, holder_path: str,
-                             old_target_path: str, new_target_path: str) -> str | None:
+                             old_target_path: str, new_target_path: str,
+                             root: Any = None) -> str | None:
     """New pointer string for a referrer after its target moved.
 
     *pointer* (at *holder_path*) resolves somewhere inside
@@ -716,7 +720,7 @@ def rewrite_referrer_pointer(pointer: str, holder_path: str,
     """
     holder = holder_path.split(".")
     old_segs = old_target_path.split(".")
-    target = pointer_to_abs(pointer, holder)
+    target = pointer_to_abs(pointer, holder, root)
     if not target or not _is_inside(target, old_segs):
         return None
     new_target = new_target_path.split(".") + target[len(old_segs):]

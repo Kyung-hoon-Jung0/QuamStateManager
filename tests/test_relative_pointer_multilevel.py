@@ -214,6 +214,51 @@ def test_a_dotdot_from_a_scalar_does_not_resolve():
     assert resolve_value(st2, "#../v/../d", ("a", "h", "f")) == "#../v/../d"
 
 
+def test_a_self_alias_crossed_mid_path_is_followed():
+    # r = "#./q" names a.q; ".." from a.q climbs to a, so w is a.w (quam: 9)
+    st = {"a": {"r": "#./q", "q": {"w": 1}, "w": 9, "h": {"f": "#../r/../w"}}}
+    leaf = ("a", "h", "f")
+    assert resolve_value(st, "#../r/../w", leaf) == 9
+    assert pointer_to_abs("#../r/../w", list(leaf), st) == ["a", "w"]
+
+
+def test_a_self_ref_that_climbs_is_a_parent_ref():
+    # "#./" is the holding object, so "#./../1/delay" on port 2 is port 1's
+    holder = ["ports", "ao", "con1", "5", "2", "delay"]
+    want = ["ports", "ao", "con1", "5", "1", "delay"]
+    assert pointer_to_abs("#./../1/delay", holder) == want
+    st = {"ports": {"ao": {"con1": {"5": {"1": {"delay": 20}, "2": {"x": {"y": 1}}}}}}}
+    h2 = ["ports", "ao", "con1", "5", "2", "z"]
+    assert pointer_to_abs("#./x/../../1/delay", h2, st) == want
+    assert pointer_to_abs("#./x/../../1/delay", h2) is None
+
+
+_R3 = {"a": {"ref": "#/b/c", "d": 1, "h": {"f": "#../ref/../d"}}, "b": {"c": {}, "d": 2}}
+
+
+def test_regen_and_diagram_walkers_use_the_one_rule():
+    from quam_state_manager.core.regen_merge import _hop, _pointer_target, _land
+    from quam_state_manager.core.diagram_add import _abs_target
+    leaf = ("a", "h", "f")
+    assert _hop(_R3, "#../ref/../d", leaf) == (2, ("b", "d"))
+    assert _pointer_target("a.h.f", "#../ref/../d", _R3) == "b.d"
+    assert _land(_R3, "a.h.f") == "b.d"
+    assert _abs_target("#../ref/../d", leaf, _R3) == ("b", "d")
+    # without the document the answer is unknown, never a text guess (a.d)
+    assert _pointer_target("a.h.f", "#../ref/../d") is None
+    assert _abs_target("#../ref/../d", leaf) == ()
+
+
+def test_rename_rewrites_and_pulse_refs_read_with_the_document():
+    from quam_state_manager.core.pulse_index import rewrite_referrer_pointer
+    from quam_state_manager.core.pulse_refs import read
+    new = rewrite_referrer_pointer("#../ref/../d", "a.h.f", "b.d", "b.e", _R3)
+    assert new is not None and new.endswith("e"), new
+    assert rewrite_referrer_pointer("#../ref/../d", "a.h.f", "b.d", "b.e") is None
+    r = read(_R3, ["a", "h"], "#../ref/../d")
+    assert (r.ok, r.value) == (True, 2), r
+
+
 def test_the_autofit_alias_walk_follows_a_multi_level_alias():
     from quam_state_manager.core.autofit.families import resolve_alias_path
     st = {"qubits": {"q1": {"xy": {"operations": {
