@@ -153,6 +153,35 @@ const ok = (c, m) => { assert(c, m); n++; };
   ok(/Calibrating\.\.\. Iter 2: offset \+0\.001000 V -> DC \+0\.020 mV/.test(p.querySelector('[data-cal-result]').textContent),
      'F8 live iteration: ' + p.querySelector('[data-cal-result]').textContent);
   p.querySelector('[data-close]').click();
+  // U1: a live run shows its live line inside the popup, next to Stop.
+  p = open(3, 5);
+  p.querySelector('[data-hwok]').checked = true;
+  replies.run.push({ok: true, id: 'u1'});
+  replies.status = [{state: 'running', id: 'u1', started_at: Date.now() / 1000, max_s: 300}];
+  p.querySelector('[data-play]').click();
+  await sleep(80);
+  const pl = p.querySelector('[data-popup-live]');
+  ok(pl && !pl.hidden, 'U1 popup live line shown');
+  ok(/stops in [45]:\d\d/.test(pl.textContent) && pl.querySelector('[data-popup-live-members]').textContent.length > 0,
+     'U1 live line text: ' + pl.textContent);
+  // U2: Stop pressed while connecting ends with "Stopped.", no error notice.
+  replies.status = [{state: 'done', id: 'u1', result: {ok: false, error: 'Could not reach the OPX at h.', error_kind: 'connect'}}];
+  p.querySelector('[data-stop]').click();
+  await sleep(80);
+  ok(p.querySelector('[data-message]').textContent === 'Stopped.', 'U2 message: ' + p.querySelector('[data-message]').textContent);
+  ok(p.querySelector('[data-error]').hidden, 'U2 no error notice');
+  ok(pl.hidden, 'U1 live line hidden after the run ends');
+  // U3: coinciding MW traces get one note.
+  const tr = {};
+  for (let i = 1; i <= 3; i++) tr['con2/1/' + i] = {con: 'con2', slot: 1, port: i, kind: 'mw', label: 'MW ' + i, member: true,
+    i: [0, 1, 1, 0], q: [0, 0, 0, 0], rate: 1e9, peak: 1};
+  replies.run.push({ok: true, id: 's3', simulated: true});
+  replies.status = [{state: 'done', id: 's3', meta: {plan: {}}, result: {ok: true, simulated: true, traces: tr}}];
+  p.querySelector('[data-sim]').click();
+  await sleep(80);
+  const ov = p.querySelector('[data-sim-overlap]');
+  ok(ov && /^3 traces overlap; see the table\.$/.test(ov.textContent), 'U3 overlap note: ' + (ov && ov.textContent));
+  p.querySelector('[data-close]').click();
   console.log('port play walk selfcheck ok (' + n + ' assertions)');
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

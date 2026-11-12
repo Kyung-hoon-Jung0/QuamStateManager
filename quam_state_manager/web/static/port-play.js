@@ -114,6 +114,16 @@
       paper_bgcolor: bg || undefined, plot_bgcolor: bg || undefined, font: color ? {color: color} : {},
       xaxis: {title: {text: 'time (ns)'}},
       yaxis: {title: {text: kind === 'mw' ? '|IQ| (fraction of full scale)' : 'voltage (V)'}, range: [lo - pad, hi + pad]}};
+    // Traces that coincide draw on top of each other; say so instead of showing one colour.
+    var seen = {}, overlap = 0;
+    data.forEach(function (d) { var k = JSON.stringify(d.x) + '|' + JSON.stringify(d.y); seen[k] = (seen[k] || 0) + 1; });
+    Object.keys(seen).forEach(function (k) { if (seen[k] > 1) overlap += seen[k]; });
+    if (overlap > 1 && div.parentNode) {
+      var note = document.createElement('p');
+      note.className = 'ui-note'; note.setAttribute('data-sim-overlap', kind);
+      note.textContent = overlap + ' traces overlap; see the table.';
+      div.parentNode.insertBefore(note, div.nextSibling);
+    }
     var plot = function (P) { if (P && P.newPlot) P.newPlot(div, data, layout, {responsive: true, displaylogo: false}); };
     if (window.Plotly) plot(window.Plotly);
     else if (window.requirePlotly) window.requirePlotly().then(plot).catch(function () {});
@@ -201,7 +211,7 @@
   // ---- Run driver ----
   function wirePlay(node, params, ui, lock) {
     var $ = function (s) { return node.querySelector(s); };
-    var action = null, closing = false, sawRunning = false, lastData = null;
+    var action = null, closing = false, sawRunning = false, lastData = null, stopPressed = false;
     function failure(res) {
       ui.message('');
       // Nothing runs after a failure: the next press is a plain Play, not a restart.
@@ -241,7 +251,8 @@
         } else {
           liveHw = false; setLive(null);
           var res = st.result || {};
-          var failed = !res.ok && !res.stopped && res.error;
+          // A Stop pressed while the run was still connecting is a stop, not a failure.
+          var failed = !res.ok && !res.stopped && res.error && !stopPressed;
           if (res.simulated && res.ok) {
             ui.message('Simulation finished: no hardware was driven.');
             showSim(node, res, (st.meta || {}).plan || {}, ui.order());
@@ -264,7 +275,7 @@
       // A simulation drives nothing, so only a hardware press needs the safety box.
       if (kind !== 'sim' && !data.hardware_ok) { ui.refuse('Tick the safety box first.'); return; }
       data = JSON.parse(JSON.stringify(data)); data.action = kind; lastData = data;
-      lock.busy = true; var seq = ++sequence; clearTimeout(timer); closing = false; sawRunning = false;
+      lock.busy = true; var seq = ++sequence; clearTimeout(timer); closing = false; sawRunning = false; stopPressed = false;
       clearSim(node);
       ui.message(kind === 'open' ? 'Opening QM...' : kind === 'sim' ? 'Preparing simulation...' : 'Preparing Play...');
       function start() {
@@ -296,7 +307,7 @@
       stop().then(function () { ui.message('Closing QM...'); poll(sequence); });
     };
     $('[data-stop]').onclick = function () {
-      lock.busy = false; closing = false; stop().then(function () { ui.message('Stopping...'); poll(sequence); });
+      lock.busy = false; closing = false; stopPressed = !!runId; stop().then(function () { ui.message('Stopping...'); poll(sequence); });
     };
     // A value edit while our QM is open: the next Open re-opens with the new value.
     node.addEventListener('input', function (e) {
@@ -414,7 +425,9 @@
       '</div>' +
       '<div class="ui-dialog-foot" data-foot><div class="ui-actions ui-actions--start" data-run-actions>' +
       '<button type="button" class="btn-sm" data-play>Play</button>' +
-      '<button type="button" class="btn-sm outline" data-stop>Stop</button></div>' +
+      '<button type="button" class="btn-sm outline" data-stop>Stop</button>' +
+      '<span class="ui-note" role="status" data-popup-live hidden>LIVE: <span data-popup-live-members></span> ' +
+      '<span data-popup-live-left></span></span></div>' +
       '<div class="ui-actions"><button type="button" class="btn-sm outline" data-script title="The Python program this play would run">Download script</button>' +
       '<button type="button" class="btn-sm outline" data-sim>Simulate (no hardware)</button>' +
       '<button type="button" class="btn-sm outline" data-close>Close</button></div></div></article>';
@@ -819,6 +832,21 @@
     });
     if (lf) wireLf(node, opener, source, openerRow, entry, common, refuse, message, lock);
     $('[data-close]').onclick = close;
+    // The rack LIVE bar sits behind this modal; the popup shows the same live line next to its Stop.
+    var liveTick = null;
+    function paintLive() {
+      var bar = node.querySelector('[data-popup-live]');
+      if (!bar || dialog !== node) { clearInterval(liveTick); liveTick = null; document.removeEventListener('port-play:change', paintLive); return; }
+      var l = window.PortPlay.live();
+      bar.hidden = !l;
+      if (!l) { clearInterval(liveTick); liveTick = null; return; }
+      bar.querySelector('[data-popup-live-members]').textContent = (l.members || []).map(function (m) { return m.label || m.pin || m; }).join(', ');
+      var end = Number(l.started_at) + Number(l.max_s), left = bar.querySelector('[data-popup-live-left]');
+      if (l.started_at === null || !isFinite(end)) left.textContent = '';
+      else { var t = Math.max(0, Math.round(end - Date.now() / 1000)); left.textContent = '· stops in ' + Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); }
+      if (!liveTick) liveTick = setInterval(paintLive, 1000);
+    }
+    document.addEventListener('port-play:change', paintLive);
     node.addEventListener('cancel', function (e) { e.preventDefault(); close(); });
     node.showModal();
     var first = openerRow() || rowList()[0];
