@@ -31,7 +31,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
