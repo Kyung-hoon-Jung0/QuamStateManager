@@ -6796,7 +6796,10 @@ def _never_touch_refusal(paths) -> Any:
         return None
     from quam_state_manager.core import agent_setup
     try:
-        tokens = agent_setup.never_touch_list(current_app.instance_path, _calibrations_folder() or None)
+        ctx = _active_ctx()
+        from quam_state_manager.web import agent_api as _aa
+        tokens = agent_setup.never_touch_list(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
+                                              _aa._chip_key() if _active_path() else None)
     except Exception:  # noqa: BLE001
         return None
     if not tokens:
@@ -6808,6 +6811,43 @@ def _never_touch_refusal(paths) -> Any:
                            error=f"{p} is under '{hit}', which the person listed as never to be changed",
                            how="leave it; ask the person if it must change"), 403
     return None
+
+
+# review r2 P2-3: write doors whose target path rides a form field; an agent's
+# request to any of them is checked against never_touch before the route runs.
+NEVER_TOUCH_DOORS = ("/field/create", "/field/delete", "/pulse/edit", "/api/pulse/create", "/api/pulse/delete",
+                     "/api/pulse/delete-together", "/api/pulse/duplicate", "/api/pulse/copy", "/api/pulse/rename")
+
+
+def _door_paths() -> list[str]:
+    f = request.form
+    out = [str(f.get(k) or "").strip() for k in ("dot_path", "path") if f.get(k)]
+    for v in f.getlist("paths"):
+        if v:
+            out.append(str(v).strip())
+    if f.get("dot_path") and f.get("key"):
+        out.append(f"{f.get('dot_path').strip()}.{f.get('key').strip()}")
+    if f.get("qubit"):
+        out.append(f"qubits.{f.get('qubit').strip()}")
+    body = request.get_json(silent=True) if request.is_json else None
+    if isinstance(body, dict):
+        for k in ("path", "dot_path"):
+            if isinstance(body.get(k), str):
+                out.append(body[k])
+        for k in ("paths", "updates"):
+            for v in body.get(k) or []:
+                if isinstance(v, str):
+                    out.append(v)
+                elif isinstance(v, dict) and isinstance(v.get("dot_path") or v.get("path"), str):
+                    out.append(v.get("dot_path") or v.get("path"))
+    return [p for p in out if p]
+
+
+@bp.before_request
+def _never_touch_door_guard():
+    if request.method != "POST" or request.path not in NEVER_TOUCH_DOORS or not request.headers.get("X-SM-Agent"):
+        return None
+    return _never_touch_refusal(_door_paths())
 
 
 def _calibrations_folder(ctx: dict | None = None) -> str:

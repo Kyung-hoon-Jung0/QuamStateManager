@@ -90,15 +90,17 @@ class TestCompare:
                                          "calibrations_folder_in_config": "D:/lab/cal", "node_files": ["01_a.py"]},
                "evidence": [_ev(roots["cfg"] / "config.toml", 'folder = "E:/nope"', **{"for": "calibrations_folder_in_config"})]}
         rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, self._sm(roots), roots=roots["list"])["rows"]}
-        assert rows["chip_name"] == "agrees" and rows["n_qubits"] == "disagrees"
-        assert rows["cwd"] == "agrees" and rows["node_files"] == "agrees"
+        # review r2 P2-4: values the agent read through SM itself are an echo, not agreement
+        assert rows["chip_name"] == "echo" and rows["n_qubits"] == "disagrees"
+        assert rows["cwd"] == "echo" and rows["node_files"] == "agrees"
         assert rows["calibrations_folder_in_config"] == "unverified"
         assert rows["run_folders"] == "not reported" and rows["config_file"] == "not reported"
 
     def test_run_folders_compare_by_name_whatever_the_path_form(self, roots):
         # measured with the real CLI: it reports "date/run" relative paths, SM holds names
         ans = {"seen": {"run_folders": ["2026-08-31/#1_x", "D:\data\2026-09-06\#9_y"]}}
-        rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, self._sm(roots), roots=roots["list"])["rows"]}
+        sm = {**self._sm(roots), "run_folders": ["#1_x", "#9_y"]}
+        rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, sm, roots=roots["list"])["rows"]}
         assert rows["run_folders"] == "agrees"
 
     def test_verdict_ok_without_evidence_is_never_a_check(self, roots):
@@ -121,8 +123,10 @@ QS = [{"id": "purcell", "kind": "choice", "options": ["yes", "no", "unknown"]},
 
 class TestInvestigate:
     def test_schema_and_asks(self, roots):
+        rd = roots["cal"] / "readme.md"
+        rd.write_text("x\nA Purcell filter sits on the readout line\n", encoding="utf-8")
         ans = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
-                            "evidence": [_ev(roots["cfg"] / "config.toml", 'folder = "D:/lab/cal"')]},
+                            "evidence": [_ev(rd, "A Purcell filter sits on the readout line")]},
                            {"id": "invented", "value": "x"},
                            {"id": "notes", "value": {"nested": 1}, "confidence": "sure"}],
                "asks": [{"id": "notes"}, {"id": "brand_new", "question": "What is the fridge?"}]}
@@ -411,3 +415,74 @@ def test_a_missing_folder_created_later_is_seen(tmp_path):
     assert calibrations.resolve(inst, "p1", cfg_dir=cdir)["folder"] is None
     later.mkdir()
     assert Path(calibrations.resolve(inst, "p1", cfg_dir=cdir)["folder"]) == later
+
+
+# ---- review r2 fixes
+class TestReviewR2:
+    def test_a_whole_short_line_is_not_enough(self, roots):
+        f = roots["cal"] / "short.py"
+        f.write_text("x = {\r\nx = 1\r\n}\r\nTrue\r\n", encoding="utf-8")
+        for q, ln in (("}", 3), ("True", 4), ("x = 1", 2)):
+            assert ac.check_evidence(_ev(f, q, line=ln), roots=roots["list"])["ok"] is False, q
+
+    def test_an_investigate_quote_must_be_about_the_question(self, roots):
+        f = roots["cal"] / "readme.md"
+        f.write_text("line\nthe fridge is cold and quiet today\npurcell filter: yes on every line\n", encoding="utf-8")
+        off = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
+                            "evidence": [_ev(f, "the fridge is cold and quiet today", line=2)]}]}
+        on = {"answers": [{"id": "purcell", "value": "yes", "confidence": "sure",
+                           "evidence": [_ev(f, "purcell filter: yes on every line", line=3)]}]}
+        assert ac.vet_investigate(off, QS, roots=roots["list"])["answers"][0]["confidence"] == "unsure"
+        assert ac.vet_investigate(on, QS, roots=roots["list"])["answers"][0]["confidence"] == "sure"
+
+    def test_a_huge_file_is_not_read(self, roots, monkeypatch):
+        f = roots["cfg"] / "config.toml"
+        monkeypatch.setattr(ac, "MAX_FILE_BYTES", 10)
+        r = ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=2), roots=roots["list"])
+        assert r["ok"] is False and "too large" in r["why"]
+
+    def test_echo_rows_and_list_share(self, roots):
+        sm = {"chip_name": "c1", "n_qubits": 5, "cwd": str(roots["cal"]), "node_files": ["a", "b", "c", "d", "e"]}
+        one = {"seen": {"chip_name": "c1", "n_qubits": 5, "cwd": str(roots["cal"]), "node_files": ["a", "x", "y", "z"]}}
+        rows = {r["key"]: r for r in ac.compare_confirm(one, sm, roots=roots["list"])["rows"]}
+        assert rows["chip_name"]["agent"] == "echo" and rows["n_qubits"]["agent"] == "echo" and rows["cwd"]["agent"] == "echo"
+        assert rows["node_files"]["agent"] == "disagrees" and (rows["node_files"]["matched"], rows["node_files"]["of"]) == (1, 4)
+        most = {"seen": {"node_files": ["a.py", "b", "c", "d", "q"]}}
+        assert {r["key"]: r["agent"] for r in ac.compare_confirm(most, sm, roots=roots["list"])["rows"]}["node_files"] == "agrees"
+
+
+def test_never_touch_is_per_project_and_chip(tmp_path):
+    from quam_state_manager.core import agent_setup as st
+    inst = tmp_path / "i"
+    st.save_never_touch(inst, "A", "chip1", ["q1"])
+    assert st.never_touch_list(inst, "B", "chip1") == []          # another project's rule never applies
+    assert st.never_touch_list(inst, None, "chip1") == []
+    st.save_never_touch(inst, "B", "chip1", [])                    # writing B never clears A
+    assert st.never_touch_list(inst, "A", "chip1") == ["q1"]
+
+
+def test_never_touch_on_create_and_delete(pc):
+    _write_ctx(pc, {"never_touch": ["qubits"]})
+    agent = {"X-SM-Agent": "claude"}
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    r1 = pc.post("/field/delete", data={"dot_path": f"qubits.{q}.T1"}, headers=agent)
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+    r2 = pc.post("/field/create", data={"dot_path": f"qubits.{q}", "key": "probe", "value": "1"}, headers=agent)
+    assert r2.status_code == 403 and r2.get_json()["refused"] == "never_touch"
+    r3 = pc.post("/field/delete", data={"dot_path": f"qubits.{q}.T1"})
+    assert not (r3.status_code == 403 and (r3.get_json(silent=True) or {}).get("refused") == "never_touch")
+
+
+def test_config_row_follows_override_and_missing(pc, tmp_path):
+    mine = tmp_path / "mine2"
+    mine.mkdir()
+    pc.post("/api/agent/setup/calibrations", json={"folder": str(mine)})
+    chk = {c["key"]: c for c in pc.get("/api/agent/setup").get_json()["paths"]["checks"]}
+    assert chk["config"]["ok"] is None and "override" in chk["config"]["detail"]
+    pc.post("/api/agent/setup/calibrations", json={"clear": True})
+    (pc._cdir / "projects" / "p1" / "config.toml").write_text("", encoding="utf-8")
+    chk = {c["key"]: c for c in pc.get("/api/agent/setup").get_json()["paths"]["checks"]}
+    assert chk["config"]["ok"] is False
+    assert chk["data"]["label"] == "Run folders in the data folder"

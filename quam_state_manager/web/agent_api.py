@@ -1876,7 +1876,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
     try:
         from quam_state_manager.core import agent_setup as _as
-        _nt = _as.never_touch_list(app.instance_path, r._calibrations_folder(ctx) or None)
+        _nt = _as.never_touch_list(app.instance_path, ctx.get("qualibrate_project"), _chip_key())
     except Exception:  # noqa: BLE001
         _nt = []
     if _nt:

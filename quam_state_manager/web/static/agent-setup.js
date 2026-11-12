@@ -113,7 +113,7 @@ window.AgentSetup = (function () {
     }
     var tested = ((d.record || {}).tested || {})[k];
     var acts = connected
-      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Confirm</button>'
+      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>"
         + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
       : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
     var warn = "";
@@ -145,7 +145,10 @@ window.AgentSetup = (function () {
     return String(v);
   }
   function agentCell(row) {
-    if (row.agent === "agrees") return "agrees";
+    var n = row.of ? " (" + row.matched + " of the " + row.of + " it listed are SM's)" : "";
+    if (row.agent === "echo") return "same as SM — the agent read it through SM, so this proves nothing new";
+    if (row.agent === "agrees") return "agrees" + n;
+    if (row.agent === "disagrees" && row.of) return "disagrees" + n;
     if (row.agent === "disagrees") return "disagrees — agent saw: " + short(row.agent_value);
     if (row.agent === "unverified") return "unverified — its citation did not check out" + (row.agent_value ? " (said: " + short(row.agent_value) + ")" : "");
     if (row.agent === "reported") return "reported: " + short(row.agent_value);
@@ -176,13 +179,15 @@ window.AgentSetup = (function () {
       }
       return staleLine(rec, P) + askFail(rec);
     }
+    // review r2 P2-5: a result for another project is never painted green
+    var stale = rec.current === false;
     var rows = (rec.rows || []).map(function (r) {
       var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
-      var cls = r.agent === "agrees" ? "asx-ok" : "asx-no";
+      var cls = r.agent === "agrees" && !stale ? "asx-ok" : "asx-no";
       return '<li class="asx-chk ' + cls + '" data-row="' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">' + esc(ROW_LABEL[r.key] || r.key)
         + ': <span class="muted">SM: ' + esc(mine) + "</span> · " + esc(agentCell(r)) + "</li>";
     }).join("");
-    return staleLine(rec, P) + '<div class="asx-result asx-result-ok" id="as-confirm-result"><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
+    return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : " asx-result-ok") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
       + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
       + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
       + '<ul class="asx-checks">' + rows + "</ul>"
@@ -194,13 +199,20 @@ window.AgentSetup = (function () {
     var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
     var running = (S.asks || {}).running;
     var btns = ks.map(function (k) {
-      return '<button type="button" class="btn-sm outline asx-btn-2" data-confirm="' + k + '"' + (running ? " disabled" : "")
+      var off = !connectedK(d, k);
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-confirm="' + k + '"' + (running || off ? " disabled" : "")
+        + (off ? ' title="' + esc(NAMES[k]) + ' is not connected (step 1)"' : "")
         + ' onclick="AgentSetup.confirmBy(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>";
     }).join("");
     return '<div class="asx-row" id="as-confirm"><span class="asx-k">Second opinion</span><span class="asx-v asx-grow">'
       + (ks.length ? btns : '<span class="muted">no agent CLI on this PC</span>') + "</span></div>"
       + '<p class="asx-small muted asx-indent">The agent reports, read-only, what it sees from its own seat; SM compares it with the rows above and checks every citation. Only when pressed.</p>'
       + '<div id="as-test">' + (S.confirmMsg || confirmResult((S.asks || {}).confirm, d.paths || {})) + "</div>";
+  }
+  // D-11 / review r2 P2-7: an ask is offered only for an agent that is connected
+  function connectedK(d, k) {
+    var c = (k === "claude" ? (d || {}).claude : (d || {}).codex) || {};
+    return !!c.mcp;
   }
   function confirmBy(k) {
     if (S.asks && S.asks.running) return;
@@ -611,10 +623,13 @@ window.AgentSetup = (function () {
   function proposalHtml(a, q) {
     var st = S.review[a.id] || "proposed";
     var badge = { proposed: "ui-badge--accent", accepted: "ui-badge--ok", edited: "ui-badge--ok", rejected: "ui-badge--danger" }[st] || "";
-    var val = a.value === null || a.value === undefined ? "no answer (not sure)" : (Array.isArray(a.value) ? a.value.join(", ") : optLabel(String(a.value)));
+    // review r2 P2-8: once the person answered, the card shows THEIR value
+    var shown = (st === "edited" || st === "accepted") && S.answers[a.id] !== undefined ? S.answers[a.id] : a.value;
+    var val = shown === null || shown === undefined ? "no answer (not sure)" : (Array.isArray(shown) ? shown.join(", ") || "nothing listed" : optLabel(String(shown)));
+    var by = st === "edited" ? "your answer" : a.confidence;
     return '<article class="ui-item" data-prop="' + esc(a.id) + '" data-status="' + esc(st) + '"><div class="ui-item-head"><span class="ui-badge ' + badge + '">' + esc(st) + "</span>"
       + '<span class="ui-item-title">' + esc((q && q.question) || a.id) + "</span></div>"
-      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · " + esc(a.confidence) + "</p>"
+      + '<p class="ui-item-body"><b>' + esc(val) + "</b> · " + esc(by) + "</p>"
       + (a.evidence && a.evidence.length ? '<ul class="asx-checks">' + a.evidence.map(evHtml).join("") + "</ul>" : '<p class="ui-note">no citation</p>')
       + '<div class="ui-item-foot">'
       + (a.value !== null && a.value !== undefined ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.review(\'' + esc(a.id) + '\', \'accepted\')">Accept</button>' : "")
@@ -639,7 +654,9 @@ window.AgentSetup = (function () {
     var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
     var running = (S.asks || {}).running;
     var head = '<div class="as-acts" id="as-investigate">' + ks.map(function (k) {
-      return '<button type="button" class="btn-sm outline asx-btn-2" data-investigate="' + k + '"' + (running ? " disabled" : "")
+      var off = !connectedK(S.data, k);
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-investigate="' + k + '"' + (running || off ? " disabled" : "")
+        + (off ? ' title="' + esc(NAMES[k]) + ' is not connected (step 1)"' : "")
         + ' onclick="AgentSetup.investigate(\'' + k + '\')">Investigate by ' + esc(NAMES[k]) + "</button>";
     }).join("") + '<span class="asx-small muted">read-only; every answer comes back as a proposal you accept, edit or reject. Nothing is saved until Write.</span></div>';
     if (S.invMsg) return head + S.invMsg;

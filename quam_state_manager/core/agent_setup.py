@@ -697,16 +697,28 @@ def never_touch_hit(path: str, tokens) -> str | None:
     return None
 
 
-def never_touch_list(instance_path, cal_folder) -> list[str]:
-    """The person's accepted never-touch list, for the folder it was written for."""
-    rec = load_record(instance_path).get("context") or {}
-    lst = rec.get("never_touch")
-    if not isinstance(lst, list) or not lst:
+def never_touch_key(project: str | None, chip: str | None) -> str:
+    """review r2 P1-2: a never-touch list belongs to ONE project + chip."""
+    return f"{project or ''}|{chip or ''}"
+
+
+def never_touch_list(instance_path, project: str | None, chip: str | None) -> list[str]:
+    """The person's accepted never-touch list for exactly this project + chip.
+    No entry for that pair -> no rule (another project's list never applies)."""
+    if not chip:
         return []
-    if cal_folder and rec.get("folder") and os.path.normcase(os.path.abspath(str(rec["folder"]))) != \
-            os.path.normcase(os.path.abspath(str(cal_folder))):
+    by = load_record(instance_path).get("never_touch_by") or {}
+    lst = by.get(never_touch_key(project, chip)) if isinstance(by, dict) else None
+    if not isinstance(lst, list):
         return []
     return [str(x) for x in lst if str(x).strip()]
+
+
+def save_never_touch(instance_path, project: str | None, chip: str | None, lst: list[str]) -> None:
+    """Write this pair's list; every other pair's list is kept."""
+    by = dict(load_record(instance_path).get("never_touch_by") or {})
+    by[never_touch_key(project, chip)] = list(lst)
+    save_record(instance_path, {"never_touch_by": by})
 
 
 # B-02: Codex reads exactly one project doc per directory, and AGENTS.local.md is not it.

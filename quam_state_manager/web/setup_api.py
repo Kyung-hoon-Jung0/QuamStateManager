@@ -151,7 +151,7 @@ def run_folder_names(folder: str | None, limit: int = 50) -> list[str]:
     return out
 
 
-def _config_names(entry: dict | None, files: dict | None) -> bool | None:
+def _config_names(entry: dict | None, files: dict | None, project: str | None = None) -> bool | None:
     """Does the raw config TEXT carry the entry's raw value (catches a value
     SM mapped from something the file does not say)? None = nothing to check."""
     if not entry or entry.get("source") not in ("own", "inherited") or not entry.get("raw"):
@@ -162,10 +162,12 @@ def _config_names(entry: dict | None, files: dict | None) -> bool | None:
     except (OSError, TypeError):
         return False
     raw = str(entry["raw"])
-    if raw in text or raw.replace(chr(92), chr(92) * 2) in text:
-        return True
-    # a value SM substituted from the lazy project template
-    return "${#/qualibrate/project}" in text
+    forms = {raw, raw.replace(chr(92), chr(92) * 2)}
+    if project:
+        # review r2 P2-6: a value SM substituted from the lazy project template -- only that exact spelling
+        t = raw.replace(project, "${#/qualibrate/project}")
+        forms |= {t, t.replace(chr(92), chr(92) * 2)}
+    return any(f in text for f in forms)
 
 
 def paths_report() -> dict:
@@ -204,16 +206,23 @@ def paths_report() -> dict:
                    "label": "The calibrations folder holds node files",
                    "detail": f"{len(nodes)} node files" if cal.get("folder") else "no calibrations folder"})
     nruns = _count_runs(data)
-    checks.append({"key": "data", "ok": (nruns > 0) if data else None, "label": "The data folder holds runs",
-                   "detail": (f"{nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders" if data else "no data folder")})
-    names = [_config_names((paths or {}).get(k), (paths or {}).get("files"))
+    checks.append({"key": "data", "ok": (nruns > 0) if data else None, "label": "Run folders in the data folder",
+                   "detail": (f"holds {nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders" if data
+                              else "no data folder")})
+    names = [_config_names((paths or {}).get(k), (paths or {}).get("files"), project)
              for k in ("calibration_library", "storage", "state_path")]
     named = [x for x in names if x is not None]
-    checks.append({"key": "config", "ok": (all(named) if named else None),
-                   "label": "The config files name these paths",
-                   "detail": ("each value read from its file" if named and all(named)
-                              else "a value SM shows is not written in its file" if named
-                              else "nothing to compare" if project else "no project open")})
+    # review r2 P2-6: the row says what is IN FORCE, not only what the file says
+    if project and cal.get("source") == "override":
+        cfg_ok, cfg_detail = None, "an override is in force: the calibrations folder is not the config's"
+    elif project and not cal.get("folder"):
+        cfg_ok, cfg_detail = False, "the config's calibrations folder is not usable here"
+    elif named:
+        cfg_ok = all(named)
+        cfg_detail = "each value read from its file" if cfg_ok else "a value SM shows is not written in its file"
+    else:
+        cfg_ok, cfg_detail = None, "nothing to compare" if project else "no project open"
+    checks.append({"key": "config", "ok": cfg_ok, "label": "The config files name these paths", "detail": cfg_detail})
     return {"project": project, "calibrations": cal, "data_folder": data, "data_source": data_src,
             "state_path": state_entry, "storage": (paths or {}).get("storage"), "files": (paths or {}).get("files"),
             "config_dir": (paths or {}).get("config_dir") or cal.get("config_dir"),
@@ -529,6 +538,9 @@ def context_post():
         st.save_record(current_app.instance_path, {"context": {"at": time.time(), "folder": cal, "local": local,
                                                                "targets": targets, "answers": answers,
                                                                "answers_evidence": evidence, "never_touch": nt}})
+        if "never_touch" in answers:
+            k = _ask_key()
+            st.save_never_touch(current_app.instance_path, k["project"], k["chip"], nt)
         journal_mod.append(current_app.instance_path, aa._chip_name(),
                            f"lab context written to {', '.join(Path(w['file']).name for w in out['writes'].values())} "
                            f"by {r._request_actor()}", kind="sm")

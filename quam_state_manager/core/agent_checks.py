@@ -28,10 +28,15 @@ from typing import Any, Callable
 MAX_EVIDENCE_PER_VALUE = 3
 MAX_EVIDENCE = 20
 MAX_QUOTE = 400
+MAX_FILE_BYTES = 4 * 1024 * 1024
 MIN_QUOTE_CHARS = 8          # review r1 P1-1: "=" proves nothing
 LINE_WINDOW = 1              # the cited line, +-1
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.S | re.I)
 
+# values SM hands the agent itself (sm_status, the cwd SM starts it in): agreement is an echo
+SM_ECHO = ("chip_name", "n_qubits", "cwd")
+LIST_FIELDS = ("node_files", "run_folders")
+LIST_AGREE_SHARE = 0.8        # review r2 P2-4: most of what the agent lists must be SM's
 CONFIRM_FIELDS = ("chip_name", "n_qubits", "cwd", "config_file", "state_path_in_config",
                   "calibrations_folder_in_config", "storage_in_config", "node_files", "run_folders")
 QUOTE_REQUIRED = ("state_path_in_config", "calibrations_folder_in_config", "storage_in_config")
@@ -183,14 +188,17 @@ def check_evidence(item: Any, *, roots: list[str], exist_roots: list[str] | None
         return {**out, "why": "the file does not exist"}
     if not isinstance(quote, str) or not quote.strip():
         return {**out, "why": "no quote"}
+    # review r2 P2-9: never read a huge file whole; only the cited window matters
     try:
+        if p.stat().st_size > MAX_FILE_BYTES:
+            return {**out, "quote": _clip(quote), "why": "the file is too large to check"}
         text = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {**out, "why": "the file cannot be read"}
     # review r1 P1-1: the quote must be meaningful AND sit at the cited line (+-LINE_WINDOW)
     q = _ws(quote)
     lines = text.splitlines()
-    if len(q.replace(" ", "")) < MIN_QUOTE_CHARS and not any(_ws(ln) == q for ln in lines):
+    if len(q.replace(" ", "")) < MIN_QUOTE_CHARS:      # review r2 P1-1: a whole short line is no exemption
         return {**out, "quote": _clip(quote), "why": "the quote is too short to prove anything"}
     if line is None or line < 1 or line > len(lines):
         return {**out, "quote": _clip(quote), "why": "no valid line number"}
@@ -249,13 +257,35 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
         elif mine in (None, "", []):
             agent = "reported"
         elif _agrees(key, mine, theirs):
-            agent = "agrees"
+            # review r2 P2-4: a value the agent can only have read from SM itself proves nothing
+            agent = "echo" if key in SM_ECHO else "agrees"
         else:
             agent = "disagrees"
-        rows.append({"key": key, "sm": mine, "agent_value": theirs if agent != "not reported" else None,
-                     "agent": agent, "evidence": ev})
+        row = {"key": key, "sm": mine, "agent_value": theirs if agent != "not reported" else None,
+               "agent": agent, "evidence": ev}
+        if key in LIST_FIELDS and isinstance(theirs, list) and isinstance(mine, (list, tuple)):
+            row["matched"], row["of"] = _list_match(mine, theirs)
+        rows.append(row)
     return {"rows": rows, "evidence_dropped": dropped,
             "notes": str(answer.get("notes"))[:1000] if answer.get("notes") else ""}
+
+
+# words a quote must carry to be ABOUT a question (when it does not carry the value itself)
+QUESTION_WORDS = {
+    "tunable": ("tunable", "flux", "fixed"), "flux_source": ("flux", "qdac", "lf-fem", "lffem", "bias"),
+    "coupler": ("coupl",), "purcell": ("purcell",), "squid": ("squid",),
+    "data_read": ("data", "read"), "never_touch": ("never", "touch", "do not", "don't"), "notes": (),
+}
+
+
+def _quote_about(quote, qid: str, value) -> bool:
+    q = str(quote or "").lower()
+    if value is not None and str(value).strip() and str(value).lower() in q:
+        return True
+    words = QUESTION_WORDS.get(qid)
+    if words is None or qid == "notes":
+        return bool(q)
+    return any(w in q for w in words)
 
 
 def _quote_has(quote, value) -> bool:
@@ -267,18 +297,26 @@ def _quote_has(quote, value) -> bool:
     return any(f in quote or f in q for f in forms)
 
 
+def _list_name(x) -> str:
+    # a name, a relative "date/run" path or an absolute one: compare the last component
+    return os.path.splitext(str(x).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])[0]
+
+
+def _list_match(mine, theirs) -> tuple[int, int]:
+    """(how many of the agent's names SM also has, how many the agent listed)."""
+    m = {_list_name(x) for x in mine}
+    t = {_list_name(x) for x in theirs}
+    return len(m & t), len(t)
+
+
 def _agrees(key: str, mine, theirs) -> bool:
     if key in PATH_FIELDS:
         return isinstance(theirs, str) and same_path(mine, theirs)
     if key in ("node_files", "run_folders"):
         if not isinstance(theirs, list) or not isinstance(mine, (list, tuple, set)):
             return False
-        # a name, a relative "date/run" path or an absolute one: compare the last component
-        def _name(x):
-            return os.path.splitext(str(x).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1])[0]
-        m = {_name(x) for x in mine}
-        t = {_name(x) for x in theirs}
-        return bool(m & t)
+        matched, of = _list_match(mine, theirs)
+        return of > 0 and matched >= max(1, LIST_AGREE_SHARE * of)
     if key == "n_qubits":
         try:
             return int(mine) == int(theirs)
@@ -312,6 +350,10 @@ def vet_investigate(answer: dict, questions: list[dict], *, roots: list[str], ex
                                     for e in (a.get("evidence") or [])][:MAX_EVIDENCE_PER_VALUE + 50])
         ev_dropped += d
         checked = [check_evidence(e, roots=roots, exist_roots=exist_roots, state_lookup=state_lookup) for e in ev_items]
+        # review r2 P1-1: a FILE quote must name the answer or what the question is about
+        checked = [c if not c["ok"] or c.get("kind") != "file" or _quote_about(c.get("quote"), a["id"], value)
+                   else {**c, "ok": False, "why": "the quote does not mention the answer or the question"}
+                   for c in checked]
         verified = any(c["ok"] for c in checked)
         sure = str(a.get("confidence") or "").lower() == "sure"
         if value is not None and not verified:

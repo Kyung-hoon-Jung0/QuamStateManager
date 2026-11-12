@@ -77,6 +77,10 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // docs/288: four numbered cards in reading order (+ the limits fold), not nine accordions
   ok(['as-connect', 'as-env', 'as-context'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
      'three cards in order: connect, where runs live, the device (Q-6: the Test card folded into Confirm)');
+  {
+    const cc = document.querySelector('#as-confirm button[data-confirm="claude"]');
+    ok(cc && cc.disabled && /not connected/.test(cc.title), 'review r2 P2-7: Confirm is disabled, with the reason, while the agent is not connected');
+  }
   ok(!document.getElementById('as-test-sec') && document.getElementById('as-confirm') && document.getElementById('as-confirm').closest('#as-env'),
      'Q-6/D-11: Confirm by agent sits in step 2, beside SM\'s checks; no separate Test card');
   // 3b: the dry-run card -- from the payload, always open, wired to the Runner's settings route
@@ -208,6 +212,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
   A.load(); await tick(40);
   ok(/Result for project OTHER/.test((document.querySelector('#as-test [data-stale]') || {}).textContent || ''), 'D-23: a result for another project says so -- run again');
+  ok(document.querySelector('#as-confirm-result[data-stale-card]') && !document.querySelector('#as-confirm-result').classList.contains('asx-result-ok')
+     && !document.querySelector('#as-confirm-result .asx-ok'), 'review r2 P2-5: a stale card is not painted green');
   // D-14: a non-JSON answer is said, with the raw text one click away
   confirmReply = { ok: true, kind: 'confirm', backend: 'codex', done: true, failed: false, elapsed_s: 3, current: true, parse_error: 'the answer was not in the expected form', raw: 'hello' };
   status.clis.codex = { found: true }; A.load(); await tick(40);
