@@ -1373,8 +1373,12 @@ window.TopoGraph = (function () {
       if (isHovered(detailPanel)) return;
       if (act && (detailPanel.contains(act) || act === detailAnchor)) return;
       closeDetails();
-    }, HOVER_GRACE_MS);
+    }, (detailPanel && detailPanel._graceMs) || HOVER_GRACE_MS);
   }
+  // A docked panel (placed away from its anchor, see component-map) is a
+  // longer trip: the pointer may cross other entities on the way, so another
+  // entity takes over only after the pointer rests on it.
+  var SWITCH_DWELL_MS = 150, switchTimer = null;
   function openHoverDetail(anchor, label, open, host) {
     clearTimeout(detailTimer);
     if (closingDetail) return;
@@ -1395,25 +1399,6 @@ window.TopoGraph = (function () {
       panel.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
       panel.addEventListener('mouseleave', function () { if (panel._hoverMode) scheduleHoverClose(); });
       panel.addEventListener('focusin', function () { clearTimeout(detailTimer); });
-      // The panel may lie over another map entity: the pointer reaching that
-      // entity (outside the panel's controls) switches to it, so no neighbour
-      // is ever out of reach.
-      panel.addEventListener('mousemove', function (e) {
-        var host = panel._hoverHost, b = host && host._detailBinding;
-        if (!panel._hoverMode || !b || !document.elementsFromPoint) return;
-        // only the panel's own action keeps the pointer; anything else lets the entity under it win
-        if (e.target.closest && e.target.closest('[data-detail-primary]')) return;
-        var under = document.elementsFromPoint(e.clientX, e.clientY);
-        for (var i = 0; i < under.length; i++) {
-          if (panel.contains(under[i])) continue;
-          var hit = under[i].closest && under[i].closest(b.selector);
-          if (hit && host.contains(hit) && hit !== detailAnchor) {
-            openHoverDetail(hit, b.label(hit), function () { return b.open(hit); }, host);
-            return;
-          }
-          if (hit === detailAnchor) return;
-        }
-      });
       panel.addEventListener('focusout', function (e) {
         if (panel._hoverMode && !(e.relatedTarget && panel.contains(e.relatedTarget))) scheduleHoverClose();
       });
@@ -1441,9 +1426,17 @@ window.TopoGraph = (function () {
         (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); }, host);
       }
       if (e.type === 'mouseenter' || e.type === 'focusin') {
-        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) offer();
+        if (e.relatedTarget && anchor.contains(e.relatedTarget)) return;
+        clearTimeout(switchTimer);
+        if (hover && e.type === 'mouseenter' && detailPanel && detailPanel._hoverMode &&
+            detailPanel._docked && detailAnchor !== anchor) {
+          switchTimer = setTimeout(offer, SWITCH_DWELL_MS);
+        } else offer();
       } else if (e.type === 'mouseleave' || e.type === 'focusout') {
-        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) (hover ? scheduleHoverClose : scheduleDetailHide)();
+        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) {
+          clearTimeout(switchTimer);
+          (hover ? scheduleHoverClose : scheduleDetailHide)();
+        }
       } else if (hover && e.type === 'keydown' && e.key === 'Tab' && !e.shiftKey && detailPanel && detailAnchor === anchor) {
         var first = detailPanel.querySelector('[data-detail-primary]') || detailPanel.querySelector('button');
         if (first) { e.preventDefault(); first.focus(); }

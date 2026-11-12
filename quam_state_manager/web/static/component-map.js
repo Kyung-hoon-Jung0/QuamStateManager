@@ -58,6 +58,7 @@ window.ComponentMap = (function () {
   // Shared TopoGraph controls own its affordance, positioning and dismissal.
   var _pop = null;
   var _popEnt = null;          // "kind:id" of the card currently shown
+  var _popHl = null;          // the entity lit for the open hover panel
   var _popAnchor = null;      // the anchor of the card shown
   var _popTitleEl = null;      // the SVG <title> we emptied while showing it
   var _popTitleText = "";
@@ -108,9 +109,12 @@ window.ComponentMap = (function () {
     var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
     return s.getBoundingClientRect();
   }
-  // Place the panel beside its anchor on the side that covers the fewest
-  // other map entities, so the pointer can still reach a neighbour.
+  // Place the panel where it covers NO map entity: beside its anchor when such
+  // a spot exists, else docked away from it (the viewport edge or outside the
+  // drawing) -- the anchor stays lit, so the panel still reads as its own.
+  // pop._docked tells the hover logic the trip to the panel is a long one.
   function _placeAvoiding(pop, anchor) {
+    pop.style.maxWidth = "";
     var b = pop.getBoundingClientRect();
     var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
     var body = anchor.closest(".cmap-body") || document;
@@ -129,28 +133,68 @@ window.ComponentMap = (function () {
                 right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
     });
     if (!a) a = _boxOf(anchor);
-    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
-      return mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
-    }).map(_boxOf).filter(function (r) { return r.width || r.height; });
-    var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
-    var cands = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
-                 [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
-                 [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
-    var best = null, bestScore = Infinity;
-    cands.forEach(function (c) {
-      var x = Math.max(pad, Math.min(c[0], W - b.width - pad));
-      var y = Math.max(pad, Math.min(c[1], H - b.height - pad));
-      var score = 0;
-      others.concat([a]).forEach(function (r, i) {
-        var w = Math.min(x + b.width, r.right) - Math.max(x, r.left);
-        var h = Math.min(y + b.height, r.bottom) - Math.max(y, r.top);
-        // covering its own anchor is worst: the pointer would lose it
-        if (w > 0 && h > 0) score += w * h * (i === others.length ? 4 : 1) + 1e5;
+    var boxes = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
+      return mine.indexOf(e) < 0;   // the add door's ghosts are controls too
+    }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    function fit(c) {
+      return [Math.max(pad, Math.min(c[0], W - b.width - pad)),
+              Math.max(pad, Math.min(c[1], H - b.height - pad))];
+    }
+    function cover(c) {
+      var n = 0;
+      boxes.forEach(function (r) {
+        var w = Math.min(c[0] + b.width, r.right) - Math.max(c[0], r.left);
+        var h = Math.min(c[1] + b.height, r.bottom) - Math.max(c[1], r.top);
+        if (w > 0 && h > 0) n += w * h + 1e5;
       });
-      if (score < bestScore) { bestScore = score; best = [x, y]; }
-    });
-    pop.style.left = Math.round(best[0]) + "px";
-    pop.style.top = Math.round(best[1]) + "px";
+      return n;
+    }
+    var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
+    var beside = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
+                  [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
+                  [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
+    var m = (anchor.closest(".cmap") || body).getBoundingClientRect();
+    var docks = [[cx, m.bottom + gap], [cx, m.top - b.height - gap],
+                 [m.right + gap, cy], [m.left - b.width - gap, cy]];
+    for (var y = pad; y + b.height <= H - pad; y += 40) {
+      docks.push([pad, y]); docks.push([W - b.width - pad, y]);
+    }
+    var pick = null, docked = false, i, c;
+    for (i = 0; i < beside.length && !pick; i++) { c = fit(beside[i]); if (!cover(c)) pick = c; }
+    if (!pick) {
+      docked = true;
+      for (i = 0; i < docks.length && !pick; i++) { c = fit(docks[i]); if (!cover(c)) pick = c; }
+    }
+    if (!pick) {
+      // a dense map: the free strip beside the drawing (the sidebar side or the
+      // far side), the panel narrowed to fit it
+      var vis = boxes.filter(function (r) { return r.right > 0 && r.left < W && r.bottom > 0 && r.top < H; });
+      var minL = W, maxR = 0;
+      vis.forEach(function (r) { minL = Math.min(minL, r.left); maxR = Math.max(maxR, r.right); });
+      var strips = [[pad, minL - gap - pad], [maxR + gap, W - maxR - gap - pad]];
+      strips.sort(function (u, v) { return v[1] - u[1]; });
+      for (i = 0; i < strips.length && !pick; i++) {
+        if (strips[i][1] < 200) continue;
+        pop.style.maxWidth = Math.floor(strips[i][1]) + "px";
+        b = pop.getBoundingClientRect();
+        var ys = [cy];
+        for (var yy = pad; yy + b.height <= H - pad; yy += 40) ys.push(yy);
+        for (var k = 0; k < ys.length && !pick; k++) {
+          c = fit([strips[i][0], ys[k]]);
+          if (!cover(c)) pick = c;
+        }
+        if (!pick) pop.style.maxWidth = "";
+      }
+      b = pop.getBoundingClientRect();
+    }
+    if (!pick) {
+      var best = Infinity;
+      docks.concat(beside).forEach(function (d) { var q = fit(d), v = cover(q); if (v < best) { best = v; pick = q; } });
+    }
+    pop._docked = docked;
+    pop._graceMs = docked ? 900 : 0;
+    pop.style.left = Math.round(pick[0]) + "px";
+    pop.style.top = Math.round(pick[1]) + "px";
   }
 
   function _servedRowsEl(rows) {
@@ -178,22 +222,76 @@ window.ComponentMap = (function () {
     });
     return sl;
   }
+  // One re-read per open. The page's chip token rides along: another window
+  // may have switched the server to another chip, and a panel must never show
+  // that chip's numbers. Each id keeps the newest answer only.
+  var _pairSeq = 0, _pairApplied = {}, _pairAbort = null;
+  function _panelStatus(pop, text) {
+    var st = pop.querySelector("[data-panel-status]");
+    if (!text) { if (st) st.remove(); return; }
+    if (!st) {
+      st = document.createElement("small");
+      st.className = "muted";
+      st.setAttribute("data-panel-status", "");
+      var rows = pop.querySelector(".cm-popup-rows");
+      pop.insertBefore(st, rows ? rows.nextSibling : pop.querySelector(".cm-popup-hint"));
+    }
+    st.textContent = text;
+  }
   function _refreshPairRows(pop, id, key) {
     if (!window.fetch) return;
-    fetch("/api/pair-map-panel/" + encodeURIComponent(id), { cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        var rows = j && j.rows;
-        if (!rows || !rows.length) return;
-        var el = document.getElementById("cm-pair-panel");
-        if (el && el._parsed) el._parsed[id] = rows;
-        if (_popEnt !== key || !pop.isConnected || pop.hidden) return;
-        var fresh = _servedRowsEl(rows), old = pop.querySelector(".cm-popup-rows");
-        if (old) pop.replaceChild(fresh, old);
-        else pop.insertBefore(fresh, pop.querySelector(".cm-popup-hint"));
-        if (pop._place) pop._place(_popAnchor || pop);
+    var el = document.getElementById("cm-pair-panel");
+    var tok = (el && el.getAttribute("data-chip")) || "";
+    var at = (el && el.getAttribute("data-at")) || "";
+    if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} }
+    var ctl = window.AbortController ? new AbortController() : null;
+    _pairAbort = ctl;
+    var seq = ++_pairSeq;
+    function live() { return _popEnt === key && pop.isConnected && !pop.hidden; }
+    function pageCopy() { return "showing values from page load" + (at ? " at " + at : ""); }
+    // a slow answer only: a quick one never flickers a line in and out
+    var slow = setTimeout(function () { if (live() && seq === _pairSeq) _panelStatus(pop, "refreshing\u2026"); }, 250);
+    fetch("/api/pair-map-panel/" + encodeURIComponent(id) + "?expect_chip=" + encodeURIComponent(tok),
+          { cache: "no-store", signal: ctl ? ctl.signal : undefined })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; })
+          .then(function (j) { return { ok: r.ok, j: j || {} }; });
       })
-      .catch(function () {});
+      .then(function (res) {
+        clearTimeout(slow);
+        var rows = res.ok && res.j.rows;
+        // an older answer never overwrites a newer one in the cache
+        if (rows && rows.length && seq > (_pairApplied[id] || 0)) {
+          _pairApplied[id] = seq;
+          if (el && el._parsed) el._parsed[id] = rows;
+        }
+        // the answer paints whatever panel is showing now, so this guard is
+        // what keeps an older open's answer off a newer panel
+        pop = _pop;
+        if (!live() || seq !== _pairSeq) return;   // a newer open owns the panel
+        if (rows && rows.length) {
+          // unchanged rows stay as they are: a reader may be selecting text in them
+          var js = JSON.stringify(rows);
+          if (js !== pop._rowsJson) {
+            var fresh = _servedRowsEl(rows), old = pop.querySelector(".cm-popup-rows");
+            if (old) pop.replaceChild(fresh, old);
+            else pop.insertBefore(fresh, pop.querySelector(".cm-popup-hint"));
+            pop._rowsJson = js;
+            if (pop._place) pop._place(_popAnchor || pop);
+          }
+          _panelStatus(pop, "");
+        } else if (res.j.reason === "chip_changed") {
+          _panelStatus(pop, "chip changed in another window -- reload; " + pageCopy());
+        } else {
+          _panelStatus(pop, "could not refresh; " + pageCopy());
+        }
+      })
+      .catch(function (err) {
+        clearTimeout(slow);
+        if (err && err.name === "AbortError") return;
+        pop = _pop;
+        if (live() && seq === _pairSeq) _panelStatus(pop, "could not refresh; " + pageCopy());
+      });
   }
 
   function _showPopup(ent, row, el, ev) {
@@ -210,7 +308,12 @@ window.ComponentMap = (function () {
       _popTitleEl = nt; _popTitleText = nt.textContent; nt.textContent = "";
     }
     var pop = _popupEl();
-    pop._closeDetail = function () { pop.hidden = true; _popEnt = null; _restoreNativeTitle(); };
+    pop._closeDetail = function () {
+      pop.hidden = true; _popEnt = null; _restoreNativeTitle();
+      if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
+      if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
+      _popHl = null;
+    };
     while (pop.firstChild) pop.removeChild(pop.firstChild);
     var title = document.createElement("div");
     title.className = "cm-popup-title";
@@ -224,6 +327,7 @@ window.ComponentMap = (function () {
     var served = ent.kind === "pair" ? _pairPanelRows(ent.id) : null;
     // the page's copy shows at once; a fresh read replaces it (edits, undo, sync)
     if (ent.kind === "pair" && document.getElementById("cm-pair-panel")) _refreshPairRows(pop, ent.id, key);
+    pop._rowsJson = served ? JSON.stringify(served) : null;
     if (served) {
       pop.appendChild(_servedRowsEl(served));
     } else if (row) {
@@ -291,6 +395,11 @@ window.ComponentMap = (function () {
     pop.hidden = false;
     _popEnt = key;
     _popAnchor = el;
+    // the anchor stays lit while its panel is open (a docked panel sits away from it)
+    if (_hoverMode(_active && _active.root) && _active.api) {
+      _active.api.highlightEntity(ent.kind, ent.id, true);
+      _popHl = { kind: ent.kind, id: ent.id };
+    }
     pop._place = _hoverMode(_active && _active.root) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;

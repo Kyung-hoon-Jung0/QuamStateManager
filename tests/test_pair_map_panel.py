@@ -93,7 +93,7 @@ def test_pairs_page_ships_the_panel_rows(tmp_path):
     c = app.test_client()
     c.post("/load", data={"folder": str(tmp_path)})
     html = c.get("/pairs", headers={"HX-Request": "true"}).get_data(as_text=True)
-    m = re.search(r'<script type="application/json" id="cm-pair-panel">(.*?)</script>', html, re.S)
+    m = re.search(r'<script type="application/json" id="cm-pair-panel"[^>]*>(.*?)</script>', html, re.S)
     assert m, "the pairs page carries the panel data"
     data = json.loads(m.group(1))
     assert _d(data["q1-2"])["2Q fidelity (Chip Status)"][1] == "0.9570"
@@ -134,7 +134,30 @@ def test_the_panel_route_reads_the_pair_after_an_edit(tmp_path):
     assert r.status_code < 400, r.get_data(as_text=True)[:300]
     after = _d(c.get("/api/pair-map-panel/q1-2").get_json()["rows"])
     assert after["cz_a phase ctrl (turns)"][1] == "0.4242"
-    assert c.get("/api/pair-map-panel/nope").status_code == 404
+    nope = c.get("/api/pair-map-panel/nope")
+    assert nope.status_code == 404 and nope.get_json()["reason"] == "unknown_pair"
+    # the page's chip token: a stale token (another chip opened since) is refused
+    ok = c.get("/api/pair-map-panel/q1-2?expect_chip=" + tok)
+    assert ok.status_code == 200
+    bad = c.get("/api/pair-map-panel/q1-2?expect_chip=not-this-chip")
+    assert bad.status_code == 409 and bad.get_json()["reason"] == "chip_changed"
+    assert bad.get_json()["rows"] is None
+
+
+def test_the_panel_route_without_a_chip_says_so(tmp_path):
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    r = app.test_client().get("/api/pair-map-panel/q1-2")
+    assert r.status_code == 409 and r.get_json()["reason"] == "no_chip"
+
+
+def test_the_pairs_page_carries_its_chip_token(tmp_path):
+    _write(tmp_path)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(tmp_path)}, headers={"Origin": "http://localhost"})
+    tok = c.get("/api/agent/chip").get_json()["chip_token"]
+    html = c.get("/pairs", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert tok and ('data-chip="' + tok + '"') in html
 
 
 def test_two_flux_gate_labels_follow_the_gate_roles_not_moving_qubit(tmp_path):

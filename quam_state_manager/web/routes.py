@@ -17302,13 +17302,19 @@ def api_pair_map_panel(name: str):
     from quam_state_manager.core import pair_map_panel
     engine = _engine()
     if not engine:
-        return jsonify({"rows": None}), 404
+        return jsonify({"rows": None, "reason": "no_chip", "error": "No chip is loaded."}), 409
+    expect = request.args.get("expect_chip") or ""
+    if expect and not _chip_token_ok(expect):
+        return jsonify({"rows": None, "reason": "chip_changed",
+                        "error": "Another chip is open now; reload this page."}), 409
     try:
         rows = pair_map_panel.all_pair_rows(engine, only=name).get(name)
     except Exception:  # noqa: BLE001 -- the panel keeps what it showed
         logger.exception("pair map panel for %r failed", name)
-        rows = None
-    return jsonify({"rows": rows}), (200 if rows is not None else 404)
+        return jsonify({"rows": None, "reason": "error", "error": "Could not read the pair."}), 500
+    if rows is None:
+        return jsonify({"rows": None, "reason": "unknown_pair", "error": f"No pair named {name!r}."}), 404
+    return jsonify({"rows": rows})
 
 
 @bp.route("/pairs")
@@ -17365,6 +17371,7 @@ def pairs():
             pairs=page_pairs,
             pair_vocab=pair_vocab,
             pair_panel=_pair_map_panel(engine),
+            pair_panel_at=time.strftime("%H:%M:%S"),
             cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,

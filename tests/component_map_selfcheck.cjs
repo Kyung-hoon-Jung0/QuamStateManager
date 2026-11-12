@@ -63,8 +63,13 @@ function makeWorld(bodyHtml) {
   win.fetch = function (url) {
     win._fetchUrls.push(String(url));
     if (String(url).indexOf('/api/pair-map-panel/') === 0) {
-      const body = win._pairPanelReply || null;
-      return win.Promise.resolve({ ok: !!body, json: function () { return win.Promise.resolve(body); } });
+      let rep = win._pairPanelReply;
+      if (typeof rep === 'function') rep = rep(String(url));
+      if (rep && rep.reject) return win.Promise.reject(new win.Error('network'));
+      const status = rep && rep.status ? rep.status : (rep ? 200 : 404);
+      const body = rep && rep.body !== undefined ? rep.body : (rep || {});
+      const res = { ok: status < 400, status: status, json: function () { return win.Promise.resolve(body); } };
+      return new win.Promise(function (r) { setTimeout(function () { r(res); }, (rep && rep.delay) || 0); });
     }
     return win.Promise.resolve({ ok: true, json: function () { return win.Promise.resolve(JSON.parse(JSON.stringify(TOPO))); } });
   };
@@ -440,25 +445,28 @@ async function checkComponentMap() {
     saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   })();
-  // a panel lying over a neighbour: the pointer reaching it switches the panel
-  (function () {
+  // a docked panel (no free spot beside the anchor): another entity takes over
+  // only after the pointer rests on it, so the trip to the panel crosses freely
+  await (async function () {
     stone.dispatchEvent(new win.MouseEvent('mouseenter'));
     const pq = doc.querySelector('.cm-popup');
+    pq._docked = true;
     const nbr = body.querySelector('[data-cm="q:qA2"]');
-    const rowEl = pq.querySelector('.cm-popup-row') || pq.querySelector('.cm-popup-title');
-    const saved = doc.elementsFromPoint;
-    doc.elementsFromPoint = () => [rowEl, pq, nbr.firstElementChild || nbr, body];
-    rowEl.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
-    const now = doc.querySelector('.cm-popup:not([hidden])');
-    ok(now && now.querySelector('.cm-popup-title').firstChild.textContent === 'qA2',
-       'moving over a covered neighbour switches the panel to it');
-    // over the panel's own button nothing switches
-    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    nbr.dispatchEvent(new win.MouseEvent('mouseenter'));
+    nbr.dispatchEvent(new win.MouseEvent('mouseleave'));
+    await wait(200);
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA1',
+       'crossing a neighbour on the way to a docked panel does not switch');
+    nbr.dispatchEvent(new win.MouseEvent('mouseenter'));
+    await wait(200);
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA2',
+       'resting on a neighbour switches to it');
+    // moving inside the panel never switches (the panel holds no switching logic)
     const p2 = doc.querySelector('.cm-popup');
-    p2.querySelector('.cm-popup-hint').dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true }));
-    ok(doc.querySelector('.cm-popup .cm-popup-title').firstChild.textContent === 'qA1',
-       'the pointer on Expand never switches away');
-    doc.elementsFromPoint = saved;
+    const v = p2.querySelector('.cm-popup-row') || p2.querySelector('.cm-popup-title');
+    v.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
+    ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA2',
+       'moving inside the panel keeps it');
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   })();
   // Expand -> inspector
@@ -489,6 +497,7 @@ async function checkComponentMap() {
   const edgeNoRow = body.querySelector('[data-cm="p:qA2-qA1"]');
   const js = doc.createElement('script');
   js.type = 'application/json'; js.id = 'cm-pair-panel';
+  js.setAttribute('data-chip', 'tokA'); js.setAttribute('data-at', '12:00:00');
   js.textContent = JSON.stringify({ 'qA2-qA1': [['Best 2Q fidelity', '0.9570', 'cz_x · per gate (IRB)']] });
   doc.body.appendChild(js);
   win._pairPanelReply = null;
@@ -504,9 +513,45 @@ async function checkComponentMap() {
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
   await tick(); await tick(); await tick();
   pop = doc.querySelector('.cm-popup');
-  ok(win._fetchUrls.indexOf('/api/pair-map-panel/qA2-qA1') >= 0, 'opening a pair panel re-reads that pair');
+  ok(win._fetchUrls.some((u) => u.indexOf('/api/pair-map-panel/qA2-qA1?expect_chip=tokA') === 0),
+     'opening a pair panel re-reads that pair with the page chip token (' + win._fetchUrls.join(',') + ')');
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
      'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
+  ok(!pop.querySelector('[data-panel-status]'), 'a landed re-read clears the status line');
+  const statusOf = () => { const t = doc.querySelector('.cm-popup:not([hidden]) [data-panel-status]'); return t ? t.textContent : ''; };
+  const reopen = async (reply, ms) => {
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+    win._pairPanelReply = reply;
+    edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+    await wait(ms || 5);
+    return doc.querySelector('.cm-popup');
+  };
+  // loading
+  pop = await reopen({ delay: 400, body: { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] } }, 300);
+  ok(/refreshing/.test(statusOf()), 'a pending re-read says refreshing (' + statusOf() + ')');
+  await wait(200);
+  // chip switched in another window: page copy, marked, never the other chip's numbers
+  pop = await reopen({ status: 409, body: { rows: null, reason: 'chip_changed' } }, 20);
+  ok(/chip changed in another window/.test(statusOf()) && pop.querySelector('.cm-popup-v').textContent.indexOf('0.98') === 0,
+     'a chip change keeps the page copy and says so (' + statusOf() + ')');
+  // failure: page copy with its time
+  pop = await reopen({ reject: true }, 20);
+  ok(/could not refresh; showing values from page load at 12:00:00/.test(statusOf()),
+     'a failed re-read says so with the page-load time (' + statusOf() + ')');
+  // late answer: an older open's answer neither repaints a newer panel nor overwrites newer cache
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = (u) => ({ delay: 120, body: { rows: [['2Q fidelity (Chip Status)', '0.1111', 'old']] } });
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(5);
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = (u) => ({ delay: 5, body: { rows: [['2Q fidelity (Chip Status)', '0.2222', 'new']] } });
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(200);
+  pop = doc.querySelector('.cm-popup');
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.2222') === 0,
+     'an older late answer does not repaint the newer panel (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  ok(JSON.parse(JSON.stringify(js._parsed['qA2-qA1']))[0][1] === '0.2222', 'an older answer never overwrites newer cached rows');
+  win._pairPanelReply = null;
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
   await wait(320);
   js.remove();
