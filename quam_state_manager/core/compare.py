@@ -445,7 +445,7 @@ def build_snapshot(store: QuamStore, content_hash_: str,
                 continue
             # Container (160–252 per real chip): re-flatten under the key.
             container_ptrs[key] = value
-            target = pointer_to_abs(value, list(tup))
+            target = pointer_to_abs(value, list(tup), merged)
             base_tuple = tuple(target) if target else tup
             is_infra = bool(target) and target[0] in _INFRA_TOPS
             for sub, subval, subtup in _walk(resolved, key, base_tuple):

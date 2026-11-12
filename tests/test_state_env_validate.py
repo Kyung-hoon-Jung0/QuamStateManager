@@ -97,9 +97,10 @@ class TestAnalyzeState:
         recs = [r for r in _findings(state) if r.get("code") == code]
         assert recs and recs[0]["severity"] == "warning", recs
 
-    def test_component_or_str_union_string_stays_warning(self):
+    def test_component_or_str_union_string_is_not_a_finding(self):
         # the probe collapses Union[Component, str] to `component` (raw keeps
         # the Union); quam's str arm accepts any string there, so it LOADS
+        # and a str value is declared legal -- no finding at all
         import copy
         man = copy.deepcopy(MANIFEST)
         man["classes"]["q.Transmon"]["fields"]["gate_pulse"] = {
@@ -110,9 +111,28 @@ class TestAnalyzeState:
             "default_repr": None, "default_is_reference": False,
             "raw": "typing.Union[q.Pulse, str]"}
         state = _state()
-        state["qubits"]["qA1"]["gate_pulse"] = "qA1"
+        # a name quam's get_pulse finds exactly once on the qubit: clean
+        state["qubits"]["qA1"]["xy"]["operations"]["x180"] = {"__class__": "q.Pulse"}
+        state["qubits"]["qA1"]["gate_pulse"] = "x180"
         recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
-        assert recs and recs[0]["severity"] == "warning", recs
+        assert recs == [], recs
+        # a name no operation carries: a warning that names it
+        state["qubits"]["qA1"]["gate_pulse"] = "x18O_typo"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert len(recs) == 1 and recs[0]["severity"] == "warning", recs
+        assert recs[0]["code"] == "missing_operation"
+        assert "'x18O_typo'" in recs[0]["detail"] and "qubits.qA1" in recs[0]["detail"]
+        # the same name on two channels of the qubit: ambiguous, warned
+        state["qubits"]["qA1"]["gate_pulse"] = "x180"
+        dup = copy.deepcopy(state)
+        dup["qubits"]["qA1"]["other_ch"] = {"operations": {"x180": {"__class__": "q.Pulse"}}}
+        recs = [r for r in _findings(dup, man) if r.get("field") == "gate_pulse"]
+        assert len(recs) == 1 and "not unique" in recs[0]["detail"], recs
+        # a plain component field still flags a str
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["type"]["raw"] = "q.Pulse"
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["raw"] = "q.Pulse"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert recs, recs
 
     def test_a_text_number_reaches_the_crash_banner_count(self):
         # the chain the banner reads: analyzer -> diagnostics Finding -> summary

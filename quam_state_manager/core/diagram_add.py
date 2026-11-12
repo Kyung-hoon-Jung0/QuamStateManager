@@ -387,16 +387,13 @@ def _pointers(node: Any, path: tuple, out: list) -> None:
         out.append((path, node))
 
 
-def _abs_target(pointer: str, path: tuple) -> tuple:
-    if pointer.startswith("#/"):
-        return tuple(p for p in pointer[2:].split("/") if p)
-    parts = list(path[:-1])
-    for seg in pointer[1:].split("/"):
-        if seg == "..":
-            parts = parts[:-1]
-        elif seg and seg != ".":
-            parts.append(seg)
-    return tuple(parts)
+def _abs_target(pointer: str, path: tuple, root: Any = None) -> tuple:
+    """Where *pointer* (stored at *path*) lands: ``pointer_resolver.
+    target_path``, the one rule; () when that cannot be told (a mid-path
+    ``..`` needs *root*)."""
+    from quam_state_manager.core.pointer_resolver import target_path
+    t = target_path(root, pointer, tuple(path))
+    return () if t is None else tuple(t)
 
 
 def _foreign(target: tuple, own_q: set, own_p: set) -> bool:
@@ -604,7 +601,7 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
         refs = []
         _pointers(node, base, refs)
         for path, ptr in refs:
-            target = _abs_target(ptr, path)
+            target = _abs_target(ptr, path, merged)
             seen = set()
             while target and target not in seen:
                 if target[0] == "ports":
@@ -624,7 +621,7 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
                     break
                 if not is_pointer(value):
                     break
-                target = _abs_target(value, target)
+                target = _abs_target(value, target, merged)
     con, fem, pid = drive[0], int(drive[1]), int(drive[2])
     cands = drive_candidates(merged, inv, drive_rf, if_hz=d["if_hz"],
                              prefer_band=d["band"], limit=10 ** 6)
@@ -888,7 +885,7 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
     tref: list = []
     _pointers(pairs[tpid], ("qubit_pairs", tpid), tref)
     for path, ptr in tref:
-        tgt = _abs_target(ptr, path)
+        tgt = _abs_target(ptr, path, merged)
         if len(tgt) >= 4 and tgt[0] == "qubits" and tgt[1] in (tc, tt) \
                 and "operations" in tgt:
             i = tgt.index("operations")
@@ -902,7 +899,7 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
             for op, val in ops.items():
                 refs: list = []
                 _pointers(val, ("qubits", m, line, "operations", op), refs)
-                if any(_abs_target(p, path)[:2] == ("qubit_pairs", tpid) for path, p in refs):
+                if any(_abs_target(p, path, merged)[:2] == ("qubit_pairs", tpid) for path, p in refs):
                     add_copy(("qubits", m, line, "operations", op))
     if collisions:
         return {"error": f"Cannot copy member operation {collisions[0]}: "

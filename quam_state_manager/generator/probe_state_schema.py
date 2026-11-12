@@ -175,6 +175,9 @@ def _map_type(tp, raw: str, _depth: int = 0) -> dict:
                 one = dict(non_str[0])
                 one["optional"] = one["optional"] or none_arm
                 one["raw"] = raw
+                # the str arm may also be a plain NAME (quam 0.6:
+                # PulseMacro.pulse = "x180"), so a str value is allowed here
+                one["str_ok"] = True
                 return one
             return _spec("union", union=mapped, optional=none_arm, raw=raw)
 

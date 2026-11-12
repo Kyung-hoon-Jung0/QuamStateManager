@@ -288,8 +288,11 @@ class TestIncrementalReach:
 
     def test_a_qubit_field_reaches_the_pulses_that_point_at_it(self, chip):
         changed = self._edit(chip, "qubits.q3.anharmonicity", -190e6)
-        assert changed == set()  # anharmonicity is not a row column ...
-        # ... but the rows were recomputed and equal cold (asserted in _edit)
+        # the DragCosine pulses read it through "#../../../anharmonicity"
+        # (three levels up from the pulse object, quam's reading), so their
+        # rows change -- and only q3's; rows equal cold (asserted in _edit)
+        assert "qubits.q3.xy.operations.x180_DragCosine" in changed
+        assert not any(p.startswith(("qubits.q1.", "qubits.q2.")) for p in changed)
 
     def test_a_cross_container_pointer_is_reached(self, chip):
         changed = self._edit(chip, "qubits.q1.z.operations.const.amplitude", 0.07)

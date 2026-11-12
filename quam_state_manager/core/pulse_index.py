@@ -92,7 +92,7 @@ def build_reverse_pointer_index(merged: dict, tick=None) -> dict[str, list[str]]
                                         else _walk_ticked(merged, tick)):
         if not is_pointer(value):
             continue
-        target = pointer_to_abs(value, list(path_tuple))
+        target = pointer_to_abs(value, list(path_tuple), merged)
         if not target:
             continue
         index.setdefault(".".join(target), []).append(dot_path)
@@ -648,7 +648,11 @@ def _list_pulses_with(merged: dict, reverse_index, *,
 
 def _flavor(pointer: str) -> str:
     if pointer.startswith("#../"):
-        return "#../"
+        # keep the number of levels the author wrote ("#../../" stays two)
+        body, ups = pointer[1:], 0
+        while body.startswith("../"):
+            ups, body = ups + 1, body[3:]
+        return "#" + "../" * ups
     if pointer.startswith("#./"):
         return "#./"
     return "#/"
@@ -658,8 +662,10 @@ def _derive_pointer(flavor: str, holder: list[str], target: list[str]) -> str:
     """Express *target* from *holder* in *flavor* (absolute fallback)."""
     if flavor == "#./" and len(holder) >= 1 and target[:len(holder) - 1] == holder[:-1]:
         return "#./" + "/".join(target[len(holder) - 1:])
-    if flavor == "#../" and len(holder) >= 2 and target[:len(holder) - 2] == holder[:-2]:
-        return "#../" + "/".join(target[len(holder) - 2:])
+    if flavor.startswith("#../"):
+        keep = len(holder) - 1 - flavor.count("../")
+        if keep >= 0 and target[:keep] == holder[:keep]:
+            return flavor + "/".join(target[keep:])
     return "#/" + "/".join(target)
 
 
@@ -667,7 +673,8 @@ def _is_inside(target: list[str], prefix: list[str]) -> bool:
     return len(target) >= len(prefix) and target[:len(prefix)] == prefix
 
 
-def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
+def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str,
+                             root: Any = None) -> Any:
     """Deep-copied *value* with self-targeting pointers retargeted to *dst*.
 
     Rule: a pointer whose absolute resolution (in the ORIGINAL location)
@@ -689,7 +696,9 @@ def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
             return [rewrite(v, rel + [str(i)]) for i, v in enumerate(node)]
         if is_pointer(node):
             holder_src = src_segs + rel
-            target = pointer_to_abs(node, holder_src)
+            # *root* = the document holding the ORIGINAL subtree (a mid-path
+            # ".." needs it); without it such a pointer is kept verbatim
+            target = pointer_to_abs(node, holder_src, root)
             if target and _is_inside(target, src_segs):
                 new_target = dst_segs + target[len(src_segs):]
                 holder_dst = dst_segs + rel
@@ -700,7 +709,8 @@ def rewrite_subtree_pointers(value: Any, src_path: str, dst_path: str) -> Any:
 
 
 def rewrite_referrer_pointer(pointer: str, holder_path: str,
-                             old_target_path: str, new_target_path: str) -> str | None:
+                             old_target_path: str, new_target_path: str,
+                             root: Any = None) -> str | None:
     """New pointer string for a referrer after its target moved.
 
     *pointer* (at *holder_path*) resolves somewhere inside
@@ -710,7 +720,7 @@ def rewrite_referrer_pointer(pointer: str, holder_path: str,
     """
     holder = holder_path.split(".")
     old_segs = old_target_path.split(".")
-    target = pointer_to_abs(pointer, holder)
+    target = pointer_to_abs(pointer, holder, root)
     if not target or not _is_inside(target, old_segs):
         return None
     new_target = new_target_path.split(".") + target[len(old_segs):]

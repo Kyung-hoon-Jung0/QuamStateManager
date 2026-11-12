@@ -536,7 +536,7 @@ def _chain(merged, watch: LabWatch, op: str, field: str,
     hops = 0
     while is_pointer(raw) and hops < _MAX_HOPS:
         hops += 1
-        target = pointer_to_abs(raw, list(holder))
+        target = pointer_to_abs(raw, list(holder), merged)
         if not target:
             return
         tp = ".".join(target)
