@@ -8,11 +8,18 @@
 <p class="ui-note" data-pp-tell-apart>Port play = live outputs, several ports together, simulation.
    Port test (from a port's hover card on Instrument Wiring) = scripts, pulse trains and loopback for one port.</p>
 
-{% if not pp_has_chip %}
-<p class="ui-note" data-pp-nochip>No chip is open, so there is no rack to play: open a chip, or set up a chassis in
+<p class="ui-note" data-pp-nochip{% if pp_has_chip %} hidden{% endif %}>No chip is open, so there is no rack to play: open a chip, or set up a chassis in
    <a href="/generate?step=3" hx-get="/generate?step=3" hx-target="#table-pane" hx-push-url="true">the Generate config wizard, step 3</a>,
    where Port play plays the draft.</p>
-{% else %}
+<div id="pp-body" data-has-chip="{{ '1' if pp_has_chip else '' }}"{% if not pp_has_chip %} hidden{% endif %}>
+<div class="ui-field-grid" data-pp-source-row hidden>
+  <label>Rack source
+    <select id="pp-source" data-pp-source>
+      {% if pp_has_chip %}<option value="chip">Open chip</option>{% endif %}
+      <option value="draft">Wizard draft (unsaved)</option>
+    </select></label>
+</div>
+<p class="ui-note" data-pp-draft-note hidden>Playing the Generate wizard's unsaved draft chassis. Nothing here changes the draft.</p>
 <section class="ui-item">
   <div class="ui-field-grid">
     <label>Python environment
@@ -39,9 +46,36 @@
   var rack = document.getElementById('port-play-rack');
   if (!rack || rack._ppBound) return;
   rack._ppBound = true;
-  var spec = JSON.parse(document.getElementById('pp-spec').textContent || '{}');
-  var data = JSON.parse(document.getElementById('pp-instrument').textContent || '{}');
+  var chipSpec = JSON.parse(document.getElementById('pp-spec').textContent || '{}');
+  var chipData = JSON.parse(document.getElementById('pp-instrument').textContent || '{}');
+  var body = document.getElementById('pp-body'), hasChip = body.getAttribute('data-has-chip') === '1';
+  var pick = document.getElementById('pp-source'), draft = null, mode = 'chip';
+  var spec = chipSpec, data = chipData;
   var env = document.getElementById('pp-env');
+  function chooseSource() {
+    draft = window.PortPlay && window.PortPlay.wizardDraft ? window.PortPlay.wizardDraft() : null;
+    if (!draft) { mode = 'chip'; }
+    else if (!hasChip) { mode = 'draft'; }
+    else { mode = pick.value === 'draft' ? 'draft' : 'chip'; }
+    body.hidden = !hasChip && !draft;
+    document.querySelector('[data-pp-nochip]').hidden = !body.hidden;
+    document.querySelector('[data-pp-source-row]').hidden = !draft;
+    document.querySelector('[data-pp-draft-note]').hidden = mode !== 'draft';
+    if (pick) pick.value = mode;
+    if (mode === 'draft') {
+      // A copy: the page's host/cluster fields are written into it, never into the stored draft.
+      spec = JSON.parse(JSON.stringify(draft.spec));
+      data = window.PortPlay.rackFromSpec(spec);
+      var n = spec.network || {};
+      document.getElementById('pp-host').value = n.host || '';
+      document.getElementById('pp-cluster').value = n.cluster_name || '';
+    } else {
+      spec = chipSpec; data = chipData;
+      var c = chipSpec.network || {};
+      document.getElementById('pp-host').value = c.host || '';
+      document.getElementById('pp-cluster').value = c.cluster_name || '';
+    }
+  }
   function net() {
     spec.network = spec.network || {};
     spec.network.host = document.getElementById('pp-host').value.trim() || null;
@@ -49,13 +83,13 @@
   }
   var source = {
     spec: function () { net(); return spec; },
-    python: function () { return env ? env.value : ''; },
+    python: function () { return mode === 'draft' && draft && draft.env ? draft.env : (env ? env.value : ''); },
     changed: function () { /* the chip's spec is not saved from here */ },
     // A connection failure points at this page's own Host field.
     editHost: function () { var h = document.getElementById('pp-host'); if (h) { h.focus(); h.select(); } },
     editHostLabel: 'Edit host (Host field above)',
     // D-25: the popup prefills from the open chip and says the test is read-only.
-    chipPort: function (pin) { return window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }
+    chipPort: function (pin) { return mode === 'draft' ? null : window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }
   };
   function play(port) { if (window.PortPlay) window.PortPlay.open(port, source); }
   function femType(con, slot) {
@@ -64,7 +98,8 @@
     return f.type || '';
   }
   function draw() {
-    if (!window.renderInstrumentWiring) return;
+    chooseSource();
+    if (body.hidden || !window.renderInstrumentWiring) return;
     window.renderInstrumentWiring('port-play-rack', data, {}, {wrapFems: true, onPortPlay: play});
     var pin = (rack.getAttribute('data-pin') || '').split('/');
     if (pin.length === 3 && !rack._ppPinned) {
@@ -72,6 +107,7 @@
       play({con: pin[0], slot: pin[1], port: Number(pin[2]), io: 'output', femType: femType(pin[0], pin[1])});
     }
   }
+  if (pick) pick.onchange = function () { if (window.PortPlay && window.PortPlay.close) window.PortPlay.close(); draw(); };
   if (window.Bundles && window.Bundles.need) window.Bundles.need('portplay').then(draw, draw); else draw();
   var btn = document.getElementById('pp-test-conn'), out = document.getElementById('pp-conn-status');
   btn.onclick = function () {
@@ -86,6 +122,6 @@
   };
 })();
 </script>
-{% endif %}
+</div>
 </div>
 {% endblock %}

@@ -176,6 +176,18 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(toasts.some(t => t === 'Port play stopped \u2014 outputs off.'), 'D-13 navigation toast');
   ok(!d.getElementById('port-play-dialog'), 'D-13 swap closes the popup');
   ok(PP.live() === null && changes[changes.length - 1] === null, 'S3 live() null and event after stop');
+  // D-6: a play ended by Stop goes back to Play (a stopped result, and a Stop the runner reports as an error).
+  for (const end of [{ok: false, stopped: true}, {ok: false, error: 'interrupted'}]) {
+    fresh(MW3); p = openAt(1, 3, 'mw'); p.querySelector('[data-hwok]').checked = true;
+    replies.run.push({ok: true, id: 's1'});
+    replies.status = [{state: 'running', id: 's1', phase: 'running'}];
+    p.querySelector('[data-play]').click(); await sleep(40);
+    ok(p.querySelector('[data-play]').textContent === 'Play again', 'D-6 Play again before Stop');
+    replies.status = [{state: 'done', id: 's1', result: end}];
+    p.querySelector('[data-stop]').click(); await sleep(60);
+    ok(p.querySelector('[data-play]').textContent === 'Play', 'D-6 Stop returns the label to Play: ' + JSON.stringify(end));
+    PP.close();
+  }
   // D-26 (S1 half): a verdict goes to source.setCheck when the source has it.
   const checks = [];
   source.setCheck = (pin, v) => checks.push([pin, v]);

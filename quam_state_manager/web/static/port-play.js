@@ -263,6 +263,8 @@
           } else if (failed) {
             failure(res);
           } else {
+            // A play ended by Stop leaves nothing running: the next press is a plain Play.
+            if (res.stopped || stopPressed || closing) { sawRunning = false; $('[data-play]').textContent = 'Play'; }
             ui.message(res.stopped ? 'Stopped.' : closing || action === 'open'
               ? 'QM closed \u2014 outputs returned to 0 V.' : 'Stopped.');
           }
@@ -1034,7 +1036,38 @@
     if (/^mw/.test(String(fem.type || ''))) return {band: v(a.band), lo_hz: v(a.lo_frequency), fsp: v(a.full_scale_power_dbm)};
     return {output_mode: v(a.output_mode), offset: v(a.offset)};
   }
-  window.PortPlay = {open: open, close: close, renderOffsets: renderOffsets, portLabel: portLabel, chipPortOf: chipPortOf,
+
+  // ---- Rack from a build spec (the wizard's step 3 and the /port-play draft source share this) ----
+  // Every FEM configured in spec.instruments, with empty port lists; 8 rows per controller.
+  function rackFromSpec(spec) {
+    var controllers = {};
+    (((spec || {}).instruments || {}).controllers || []).forEach(function (ctrl) {
+      (ctrl.fems || []).forEach(function (fem) {
+        var c = controllers[ctrl.con] || (controllers[ctrl.con] = {});
+        if (!c[fem.slot]) {
+          c[fem.slot] = {type: fem.fem === 'mw' ? 'mw-fem' : 'lf-fem',
+                         output_ports: {}, input_ports: {}, digital_ports: {}};
+        }
+      });
+    });
+    var result = {};
+    Object.keys(controllers).forEach(function (con) { result[con] = {fems: controllers[con], max_output_port: 8}; });
+    return {controllers: result};
+  }
+
+  // The Generate wizard's unsaved draft, read only (never written or removed here).
+  // Same key and version check as the wizard's loadDraft(); anything else is null.
+  var DRAFT_KEY = 'quam_generate_draft', DRAFT_VERSION = 2;
+  function wizardDraft() {
+    var raw = null, d = null;
+    try { raw = window.sessionStorage.getItem(DRAFT_KEY); } catch (e) { return null; }
+    if (!raw) return null;
+    try { d = JSON.parse(raw); } catch (e) { return null; }
+    if (!d || d.v !== DRAFT_VERSION || !d.spec || typeof d.spec !== 'object') return null;
+    return d;
+  }
+
+  window.PortPlay = {open: open, rackFromSpec: rackFromSpec, wizardDraft: wizardDraft, close: close, renderOffsets: renderOffsets, portLabel: portLabel, chipPortOf: chipPortOf,
     live: function () { return liveSet ? JSON.parse(JSON.stringify(liveSet)) : null; }};
   window.addEventListener('pagehide', function () {
     sequence++; clearTimeout(timer);

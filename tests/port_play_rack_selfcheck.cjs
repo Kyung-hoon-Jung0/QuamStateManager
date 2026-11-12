@@ -25,9 +25,9 @@ w.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
 const opened = [];
 // A stand-in popup: S3 only mounts it; the real popup is pinned by its own selfchecks.
 w.eval(fs.readFileSync(path.join(staticDir, 'port-play.js'), 'utf8'));
-const realChipPortOf = w.PortPlay.chipPortOf;   // the one shared reader (D-25), kept real under the stub
+const realChipPortOf = w.PortPlay.chipPortOf, realRackFromSpec = w.PortPlay.rackFromSpec;   // the one shared reader (D-25), kept real under the stub
 w.PortPlay = {open(port, source) { opened.push({port, source}); }, close() {}, renderOffsets() {}, live: () => null,
-  chipPortOf: realChipPortOf};
+  chipPortOf: realChipPortOf, rackFromSpec: realRackFromSpec};
 for (const file of ['app.js', 'generate.js']) w.eval(fs.readFileSync(path.join(staticDir, file), 'utf8'));
 const G = w.QuamGen, d = w.document;
 const sleep = ms => new Promise(r => setTimeout(r, ms));

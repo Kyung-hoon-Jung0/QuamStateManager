@@ -70,7 +70,8 @@ class TestStandalonePage:  # D-27
         assert r.status_code == 200
         html = r.get_data(as_text=True)
         assert "data-pp-nochip" in html and "/generate?step=3" in html
-        assert 'id="port-play-rack"' not in html
+        # The rack stays hidden until a wizard draft offers one (the draft source is client-side).
+        assert re.search(r'<div id="pp-body" data-has-chip=""\s+hidden>', html)
 
     def test_the_instrument_json_is_escaped_for_a_script_block(self, client, chip, monkeypatch):
         """A label holding ``</script>`` must not end the JSON block (tojson, not ``| safe``)."""
@@ -155,4 +156,4 @@ def test_the_page_prefills_from_the_open_chip():
     instrument data, through the one shared reader PortPlay.chipPortOf."""
     from pathlib import Path
     tpl = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates" / "port_play.html").read_text(encoding="utf-8")
-    assert "chipPort: function (pin) { return window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }" in tpl
+    assert "chipPort: function (pin) { return mode === 'draft' ? null : window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }" in tpl

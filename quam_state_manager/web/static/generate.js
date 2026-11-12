@@ -1248,7 +1248,7 @@
       }).catch(function () { /* stay on the spec-built rack */ });
     }
     var chip = regen && portPlayChip ? portPlayChip : null;
-    window.renderInstrumentWiring("gen-port-play-rack", chip ? chip.instrument : buildInstrumentData({}),
+    window.renderInstrumentWiring("gen-port-play-rack", chip ? chip.instrument : window.PortPlay.rackFromSpec(state.spec),
                                   chip ? (chip.wiring || {}) : {}, {
       wrapFems: true, sizeKey: "generate",
       onPortPlay: function (port) {
