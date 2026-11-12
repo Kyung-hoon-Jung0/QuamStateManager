@@ -478,6 +478,10 @@ async function checkComponentMap() {
     ok(doc.body.classList.contains('cm-dir-overlay-on') && /px$/.test(doc.body.style.getPropertyValue('--cm-overlay-h')),
        'an open overlay card lifts the toast lane (body class + its height)');
     ok(!!pd.querySelector('.cm-popup-title .cm-dir-where'), 'the overlay title says where the entity is');
+    { const ti = pd.querySelector('.cm-popup-title'), wh = ti.querySelector('.cm-dir-where');
+      ok(wh.textContent === 'ringed on the map' && ti.firstChild.nextSibling === wh
+         && ti.firstChild.textContent.trim().length > 0,
+         'the overlay title reads "<entity> · ringed on the map", the entity first (' + ti.textContent + ')'); }
     doc.dispatchEvent(new win.Event('scroll'));
     ok(pd.classList.contains('cm-dir-overlay') && !pd.style.left && !pd.style.top, 'a scroll does not move the overlay card');
     // a click inside the overlay card keeps it open
