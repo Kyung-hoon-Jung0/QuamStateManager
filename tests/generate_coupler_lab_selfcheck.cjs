@@ -65,7 +65,9 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
 
   // the pair table for the lab gate: shape + SNZ parameters, no moving qubit, no interaction offset
   const cols = t.cols('cz_coupler_only').map(c => c.field);
-  assert(cols.includes('coupler_pulse_shape') && cols.includes('snz_padding') && cols.includes('cz_amplitude'), cols.join());
+  assert(cols.includes('coupler_pulse_shape') && cols.includes('snz_padding') && cols.includes('coupler_amplitude')
+         && cols.includes('coupler_cz_length'), cols.join());
+  assert(!cols.includes('cz_interaction_duration') && !cols.includes('cz_amplitude'), 'no pre-filled cells: ' + cols.join());
   assert(!cols.includes('moving_qubit') && !cols.includes('coupler_interaction_offset'), cols.join());
   assert(w.document.getElementById('gen-chip-arch').options.length >= 5, 'both coupler options');
   // leaving the layout takes back the root it filled itself

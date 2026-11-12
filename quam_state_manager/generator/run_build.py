@@ -3087,7 +3087,8 @@ def _seed_coupler_only(pair, vals):
     # they reach this gate's pulse; the coupler_* keys (a spec, a Re-generate) win over them
     amplitude = vals.get("coupler_amplitude", vals.get("cz_amplitude", c["amplitude_v"]))
     flat = vals.get("coupler_flat_length")
-    duration = vals.get("cz_interaction_duration")
+    # the wizard's own cell (coupler_cz_length), else a spec's cz_interaction_duration
+    duration = vals.get("coupler_cz_length", vals.get("cz_interaction_duration"))
     if flat is None and duration is not None:
         if shape == "snz":
             warnings.append(

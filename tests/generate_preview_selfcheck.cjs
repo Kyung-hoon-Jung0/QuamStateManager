@@ -103,6 +103,17 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
     ok(GP.describe('pairs', 'q1-q2').qclass === '_FlatTopGaussianPulse', 'C: CZ flattop -> _FlatTopGaussianPulse');
     G.state.spec.populate.pairs['q1-q2'].cz_variant = '';
     ok(GP.describe('pairs', 'q1-q2').qclass === 'SquarePulse', 'C: CZ default (unipolar) -> SquarePulse');
+    // the lab coupler-only CZ previews its coupler pulse (flat-top) or nothing (SNZ), never unipolar
+    const st0 = G.state.pairGate; G.state.pairGate = 'cz_coupler_only';
+    G.state.spec.populate.pairs = { 'q1-q2': {} };
+    d = GP.describe('pairs', 'q1-q2');
+    ok(d && d.qclass === 'FlatTopGaussianPulse' && d.params.length === 76 && d.params.flat_length === 60, 'C: coupler-only default -> flat-top 76 ns');
+    G.state.spec.populate.pairs['q1-q2'] = { coupler_cz_length: 120, coupler_amplitude: 0.15 };
+    d = GP.describe('pairs', 'q1-q2');
+    ok(d && d.params.length === 120 && d.params.amplitude === 0.15, 'C: coupler-only typed length/amp');
+    G.state.spec.populate.pairs['q1-q2'].coupler_pulse_shape = 'snz';
+    ok(GP.describe('pairs', 'q1-q2') === null, 'C: coupler-only SNZ -> no preview');
+    G.state.pairGate = st0;
   }
 
   // ---- CR pair preview ----

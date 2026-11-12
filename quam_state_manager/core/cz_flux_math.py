@@ -225,7 +225,10 @@ def zero_frequencies(
 
     solved for whichever of f_c / f_t is the one being swept.  These are
     exactly ``cz_branch``'s two branch conditions plus the 1Q resonance.
+    ``A`` is the anharmonicity MAGNITUDE (state files store it positive; a
+    negative stored value gives the same targets -- decisions D-18).
     """
+    alpha_c, alpha_t = abs(alpha_c), abs(alpha_t)
     if sweep_role == "control":
         return [
             ("Δ(11−20)=0", f_t + alpha_c),

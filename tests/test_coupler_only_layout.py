@@ -522,6 +522,49 @@ def test_a_coupler_only_pair_moves_no_qubit(tmp_path):
     state["qubit_pairs"]["q1-2"]["moving_qubit"] = "control"
     eng = QueryEngine(_store(tmp_path, state))
     p = eng.get_pair("q1-2")
-    assert p["moving_qubit"] is None and "cz_coupler_only_amplitude" not in p
+    # the stored value as it is (the inspector shows the file), flagged as coupler-only
+    assert p["moving_qubit"] == "control" and p["coupler_only_cz"] is True
+    assert "cz_coupler_only_amplitude" not in p
     edge = next(e for e in eng.get_topology()["edges"] if e["pair_id"] == "q1-2")
     assert edge["moving_qubit"] is None
+
+
+
+def test_the_wizard_length_cell_and_no_prefill(monkeypatch):
+    """The lab gate's table cells are its own fields: no preset fills them (so the lab
+    default applies), and a typed length reaches the pulse (review r3 P2-b/c)."""
+    from quam_state_manager.core import gen_presets
+    allowed = set().union(*[set(v) for v in gen_presets.__dict__.get("_PRESET_FIELDS", {}).values()]) \
+        if isinstance(gen_presets.__dict__.get("_PRESET_FIELDS"), dict) else set()
+    defaults = gen_presets.builtin_standard()
+    pair_defaults = set(_find_pairs_defaults(defaults))
+    assert not ({"coupler_cz_length", "coupler_amplitude", "coupler_pulse_shape"} & (pair_defaults | allowed))
+    rb, pair = _fake_world(monkeypatch)
+    assert rb._seed_coupler_only(pair, {}) == []
+    op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
+    assert (op["length"], op["flat_length"], op["amplitude"]) == (76, 60, 0.1)
+    rb, pair = _fake_world(monkeypatch)
+    assert rb._seed_coupler_only(pair, {"coupler_cz_length": 120, "coupler_amplitude": 0.15}) == []
+    op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
+    assert (op["length"], op["flat_length"], op["amplitude"]) == (120, 104, 0.15)
+    rb, pair = _fake_world(monkeypatch)
+    assert rb._seed_coupler_only(pair, {"coupler_pulse_shape": "snz"}) == [], "no warning for an untyped length"
+
+
+def _find_pairs_defaults(node):
+    if isinstance(node, dict):
+        if "pairs" in node and isinstance(node["pairs"], dict) and "defaults" in node["pairs"]:
+            yield from node["pairs"]["defaults"]
+        for v in node.values():
+            yield from _find_pairs_defaults(v)
+
+
+def test_zero_frequencies_read_the_anharmonicity_magnitude():
+    """State files store the anharmonicity positive (D-18); a negative stored value gives
+    the same CZ targets."""
+    from quam_state_manager.core import cz_flux_math
+    for role in ("control", "target"):
+        pos = cz_flux_math.zero_frequencies(5.0e9, 4.8e9, 200e6, 210e6, role)
+        neg = cz_flux_math.zero_frequencies(5.0e9, 4.8e9, -200e6, -210e6, role)
+        assert pos == neg, role
+    assert cz_flux_math.zero_frequencies(5.0e9, 4.8e9, 200e6, 210e6, "control")[0][1] == 4.8e9 + 200e6

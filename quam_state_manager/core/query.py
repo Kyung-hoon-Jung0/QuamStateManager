@@ -329,8 +329,10 @@ class QueryEngine:
         qt = p.get("qubit_target", "")
         result["qubit_control"] = _pair_qubit_ref(self.store, qc, base + ("qubit_control",))
         result["qubit_target"] = _pair_qubit_ref(self.store, qt, base + ("qubit_target",))
-        # a pair whose CZ plays on the coupler only moves no qubit (review r2 P2-4)
-        result["moving_qubit"] = None if _coupler_only_pair(p) else p.get("moving_qubit")
+        # the stored value as it is (the inspector shows the file); a pair whose CZ plays on
+        # the coupler only moves no qubit, which the Pairs table and the map say (review r3 P2-a)
+        result["moving_qubit"] = p.get("moving_qubit")
+        result["coupler_only_cz"] = _coupler_only_pair(p)
 
         macros = p.get("macros") or {}
         if not isinstance(macros, dict):
