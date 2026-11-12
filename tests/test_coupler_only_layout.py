@@ -314,3 +314,45 @@ def test_topology_gate_details_take_an_inline_coupler_pulse_length(tmp_path):
     edge = next(e for e in QueryEngine(_store(tmp_path, state)).get_topology()["edges"] if e["pair_id"] == "q1-2")
     det = next(d for d in edge["gate_details"] if d["name"] == "cz_coupler_only")
     assert det["length"] == 60 and det["flat_length"] == 44 and det["coupler_amp"] == 0.21
+
+
+# --- the wizard (D-2, B-4) ------------------------------------------------------------------
+
+def test_the_wizard_offers_the_lab_layout():
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run(["node", str(root / "tests/generate_coupler_lab_selfcheck.cjs")],
+                       cwd=root, env=dict(os.environ), capture_output=True, text=True, timeout=120)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "coupler lab selfcheck passed" in r.stdout
+
+
+# --- every extension-mode site has a stated disposition (D-16) ----------------------------
+
+_EXT_SITES = {
+    "quam_state_manager/generator/run_build.py": 7,
+    "quam_state_manager/core/config_generator.py": 4,
+    "quam_state_manager/core/capabilities.py": 4,
+    "quam_state_manager/core/additions.py": 2,
+    "quam_state_manager/core/script_emitter.py": 3,
+    "quam_state_manager/core/regen_spec.py": 1,
+    "quam_state_manager/web/static/generate.js": 13,
+}
+
+
+def test_a_new_extension_mode_site_is_a_decision():
+    """A new `"cz_coupler"` literal is a place that may need the lab mode too:
+    decide it (and update this count) rather than let it slip past."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    got = {f: (root / f).read_text(encoding="utf-8").count('"cz_coupler"') for f in _EXT_SITES}
+    assert got == _EXT_SITES, got
