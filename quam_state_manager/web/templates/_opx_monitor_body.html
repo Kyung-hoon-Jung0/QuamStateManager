@@ -56,15 +56,17 @@
   {%- for q in ans.open_qms or [] %}{% set running = [] %}{% for j in q.jobs or [] %}{% if job_activity(j.status) == 'active' %}{% set _ = running.append(j) %}{% endif %}{% endfor %}
     {%- for p in q.ports or [] %}{% if running %}{% set _ = busy.update({p: q.id}) %}{% elif q.jobs is not none %}{% set _ = held.update({p: q.id}) %}{% endif %}{% endfor %}{% endfor %}
   {% if ans.version %}<p class="ui-opxmon-version">SDK {{ ans.version.get('qm-qua', 'not reported') }} (this PC){% if ans.version.get('QOP') %} / QOP {{ ans.version.get('QOP') }} (server, as read when the monitor connected){% endif %}</p>{% endif %}
-  <table class="ui-table ui-opxmon-table" aria-label="Controllers and FEM slots">
+  {% set fem_stale = st.state != 'ok' %}{% set fem_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' %}
+  {% if fem_stale %}<p class="ui-state ui-state--error ui-opxmon-fem-stale" role="status"><span class="ui-state-key">Not current.</span> FEM slot occupancy at the last good read ({{ fem_age }}); QMs may have opened or closed since.</p>{% endif %}
+  <table class="ui-table ui-opxmon-table{% if fem_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Controllers and FEM slots">
     <thead><tr><th class="ui-table-head">Controller</th><th class="ui-table-head">Type</th><th class="ui-table-head">FEM slots</th></tr></thead>
     <tbody>
     {%- for c in ans.controllers %}
       <tr><td data-label="Controller" class="ui-table-cell">{{ c.name }}</td><td data-label="Type" class="ui-table-cell">{{ c.type or '' }}</td>
         <td data-label="FEM slots" class="ui-table-cell">{% set st_t = slot_temperatures(c) %}{% if c.fems %}{% for slot, kind in c.fems.items() %}{% set k = c.name ~ '/' ~ slot %}{% set tr = st_t.get(slot|string) %}
-          <span class="ui-opxmon-fem{% if k in busy %} ui-opxmon-fem--busy{% elif k in held %} ui-opxmon-fem--held{% endif %}"
-                title="{% if k in busy %}A QM with an active job ({{ busy[k] }}: running, queued or processing) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no active job reported{% elif not occupancy.known %}Occupancy unknown{% else %}No open QM claims this FEM{% endif %}">
-            <span class="ui-opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; active job{% elif k in held %} &middot; claimed by an open QM{% endif %}{% if tr %} <span class="ui-opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} °C{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-note">the server reported no FEMs</span>{% endif %}</td></tr>
+          <span class="ui-opxmon-fem{% if fem_stale %} ui-opxmon-fem--stale{% elif k in busy %} ui-opxmon-fem--busy{% elif k in held %} ui-opxmon-fem--held{% endif %}"
+                title="{% if k in busy %}A QM with an active job ({{ busy[k] }}: running, queued or processing) claims this FEM{% elif k in held %}An open QM ({{ held[k] }}) claims this FEM; no active job reported{% elif not occupancy.known %}Occupancy unknown{% else %}{{ 'No open QM claimed this FEM at the last good read (' ~ fem_age ~ ')' if fem_stale else 'No open QM claims this FEM' }}{% endif %}{% if fem_stale and (k in busy or k in held) %} (at the last good read, {{ fem_age }}){% endif %}">
+            <span class="ui-opxmon-light" aria-hidden="true"></span>{{ slot }} {{ kind }}{% if k in busy %} &middot; active job{% elif k in held %} &middot; claimed by an open QM{% elif fem_stale and occupancy.known %} &middot; none at the last good read{% endif %}{% if tr %} <span class="ui-opxmon-fem-temp" title="sensor '{{ tr.key }}'">{% if tr.value is none %}no sensor{% else %}{{ '%.1f'|format(tr.value) }} °C{% endif %}</span>{% endif %}</span>{% endfor %}{% else %}<span class="ui-note">the server reported no FEMs</span>{% endif %}</td></tr>
     {%- endfor %}
     </tbody>
   </table>

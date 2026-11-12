@@ -1966,3 +1966,22 @@ def test_r5_template_one_decimal_and_one_raw_block():
     for k in ('st.sentence', 'st.health.details', 'cap.jobs_reason', 'cap.live_reason'):
         assert '{{ %s }}' % k not in src
     assert "stale_time(st.section_times.get('controllers'))" in src
+
+
+def test_fem_occupancy_kept_after_a_failed_read_is_marked_not_current(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer()]
+    m.poll_once()
+    fresh = page(app, 'live')
+    assert 'ui-opxmon-fem-stale' not in fresh and 'ui-opxmon-fem--stale' not in fresh
+    assert 'ui-opxmon-fem--busy' in fresh and 'No open QM claims this FEM' in fresh
+    clock.t += 5
+    w.script[:] = [om.WorkerError('No answer within 30 s while reading; the worker was stopped.')]
+    m.poll_once()
+    html = page(app, 'live')
+    assert 'ui-opxmon-fem-stale' in html and 'Not current.' in html
+    assert 'FEM slot occupancy at the last good read (' in html and ' s ago)' in html
+    assert 'ui-opxmon-fem--busy' not in html and 'ui-opxmon-fem--held' not in html
+    assert 'ui-opxmon-fem--stale' in html and 'ui-opxmon-table--stale' in html
+    assert 'No open QM claims this FEM' not in html
+    assert 'none at the last good read' in html
