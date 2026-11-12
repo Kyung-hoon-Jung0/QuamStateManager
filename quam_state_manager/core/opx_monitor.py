@@ -81,27 +81,99 @@ def timestamp(value):
         return None
 
 
-def idle_state(q, first_seen, now, minutes=120):
-    """Conservative activity judgement, including queued jobs and unknown jobs."""
+# Job status strings as the qm SDK reports them (job_api JOB_STATUS_MAPPING):
+# "In queue", "Running", "Processing", "Done", "Canceled", "Error". The SDK also
+# maps its own UNKNOWN state to "Error", so "Error" alone never proves a job ended.
+FINISHED_JOB_STATUSES = ('done', 'completed', 'canceled', 'cancelled', 'failed')
+UNPROVEN_JOB_STATUSES = ('error',)
+
+
+def job_activity(status) -> str:
+    """'finished', 'unknown' (Error: finished or unknown to the server) or 'active'.
+    Any status string not known to be finished counts as active, never idle."""
+    s = str(status or '').strip().lower()
+    if s in FINISHED_JOB_STATUSES:
+        return 'finished'
+    if s in UNPROVEN_JOB_STATUSES:
+        return 'unknown'
+    return 'active'
+
+
+# The server's get_jobs() lists at most this many jobs; a list this long is a cap, not a total.
+JOB_LIST_CAP = 1000
+
+
+def _answer_jobs(answer):
+    ans = answer or {}
+    return list(ans.get('jobs') or []) + [j for q in ans.get('open_qms') or [] for j in q.get('jobs') or []]
+
+
+def server_times(answer):
+    """Every job timestamp in an answer (the OPX's own clock), as POSIX seconds."""
+    return [t for j in _answer_jobs(answer)
+            for t in (timestamp(j.get('created_at')), timestamp(j.get('updated_at'))) if t is not None]
+
+
+def clock_skew(answer, history_rows):
+    """Upper bound of (this PC's clock - the OPX clock), in seconds, or None.
+
+    A job is first seen by SM after the server created it, so for every job
+    first_seen(PC) - created_at(OPX) >= skew; the smallest such difference is
+    the tightest bound (off by at most the detection delay). No pairing -> None."""
+    created = {str(j.get('id')): timestamp(j.get('created_at')) for j in _answer_jobs(answer)}
+    diffs = [timestamp(r.get('first_seen')) - created[str(r.get('job_id'))]
+             for r in history_rows or [] if r.get('job_id') and created.get(str(r.get('job_id'))) is not None
+             and timestamp(r.get('first_seen')) is not None]
+    return min(diffs) if diffs else None
+
+
+def server_now(answer, now, skew):
+    """A lower bound of the OPX clock's present time, or None when nothing bounds it."""
+    bounds = server_times(answer)
+    if skew is not None:
+        bounds.append(now - skew)
+    return max(bounds) if bounds else None
+
+
+def idle_state(q, first_seen, now, minutes=120, server_clock_now=None):
+    """Conservative activity judgement, including queued jobs and unknown jobs.
+
+    PC-clock observations (SM first saw the QM) are aged against the PC clock;
+    server timestamps (job created/updated) only against a lower bound of the
+    server's own clock (``server_clock_now``). The two clocks are never mixed."""
     jobs = q.get('jobs')
-    if jobs is None or any(str(j.get('status', '')).lower() not in
-                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed') for j in jobs):
+    if jobs is None or any(job_activity(j.get('status')) != 'finished' for j in jobs):
         statuses = sorted({str(j.get('status') or 'unknown') for j in jobs or []
-                           if str(j.get('status', '')).lower() not in
-                           ('completed', 'done', 'canceled', 'cancelled', 'error', 'failed')})
+                           if job_activity(j.get('status')) != 'finished'})
         return {'idle': False, 'basis': 'Job status: ' + ', '.join(statuses or ['unknown']), 'last_activity': None}
     remembered = first_seen if isinstance(first_seen, dict) else {'first_seen': first_seen}
-    times = [(timestamp(remembered.get('first_seen')), 'SM first saw it'),
-             (timestamp(remembered.get('job_activity')), 'job created/last status update observed by SM')]
-    times += [(timestamp(j.get(k)), 'job created/last status update') for j in jobs
-              for k in ('created_at', 'updated_at')]
-    valid = [(t, b) for t, b in times if t is not None]
-    if not valid or any(timestamp(j.get('created_at')) is None or timestamp(j.get('updated_at')) is None for j in jobs):
+    if any(timestamp(j.get('created_at')) is None or timestamp(j.get('updated_at')) is None for j in jobs):
         return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
-    t, basis = max(valid)
-    age = max(0, now - t)
-    return {'idle': age > minutes * 60, 'last_activity': t,
+    srv = [t for t in [timestamp(remembered.get('job_activity'))]
+           + [timestamp(j.get(k)) for j in jobs for k in ('created_at', 'updated_at')] if t is not None]
+    ages = []
+    pc_first = timestamp(remembered.get('first_seen'))
+    if pc_first is not None:
+        ages.append((max(0, now - pc_first), 'SM first saw it'))
+    if srv:
+        if server_clock_now is None:
+            return {'idle': False, 'basis': 'last activity unknown: the OPX clock offset is unknown',
+                    'last_activity': None}
+        ages.append((max(0, server_clock_now - max(srv)), 'job created/last status update (OPX clock)'))
+    if not ages:
+        return {'idle': False, 'basis': 'last activity unknown', 'last_activity': None}
+    age, basis = min(ages)
+    return {'idle': age > minutes * 60, 'last_activity': now - age,
             'basis': f'no job for {int(age // 60)} min, since {basis}'}
+
+
+def value_vs_limit(value, limit):
+    """Format a reading so that a breach is visible: never '70 (above limit 70)'."""
+    for digits in (1, 2, 3, 4, 6):
+        v = ('%.*f' % (digits, value)).rstrip('0').rstrip('.')
+        if float(v) != float(limit) or float(value) == float(limit):
+            return v
+    return repr(float(value))
 
 
 # ---------------------------------------------------------------- settings
@@ -511,6 +583,7 @@ def temperature_rows(controller: dict) -> list[dict]:
                      'mapping_verified': verified,
                      'empty': slot is not None and verified and str(slot) not in {str(k) for k in controller.get('fems') or {}} and v == NO_READING,
                      'type': (controller.get('fems') or {}).get(str(slot), (controller.get('fems') or {}).get(slot, '')) if verified else '',
+                     'reads_zero': v is not None and v == NO_READING,
                      "value": None if v is None or v == NO_READING else v})
     # FEM slots in slot order first, then the other sensors by name
     return sorted(rows, key=lambda r: (r["slot"] is None, r["slot"] or 0, str(r["key"])))
@@ -558,7 +631,9 @@ def offered_metrics(answer: Optional[dict]) -> list[dict]:
             k = f"temp:{r['key']}"
             out.setdefault(k, {"key": k, "label": f"{r['label']} temperature", "unit": "°C",
                                "direction": "above"})
-        for m in (c.get("metrics") or {}):
+        for m, mv in (c.get("metrics") or {}).items():
+            if mv is None:
+                continue  # no reading: nothing to set a limit on
             k = f"metric:{m}"
             low = m.endswith("_available_gb")
             out.setdefault(k, {"key": k, "label": m.replace("_", " "),
@@ -850,8 +925,18 @@ def health(answer, admin, thresholds, state):
     for key in thresholds:
         if key.startswith('temp:') and key != 'temp:all_fems' and key[5:] not in values:
             unknown.append('a configured temperature input is unavailable')
-    if thresholds.get('temp:all_fems') is not None and not any(k.startswith('FEM ') for k in values):
-        unknown.append('configured FEM readings unavailable')
+    metric_values = {k: v for c in ans.get('controllers') or [] for k, v in (c.get('metrics') or {}).items()
+                     if v is not None}
+    for key, lim in thresholds.items():
+        if key.startswith('metric:') and lim not in (None, '') and key[7:] not in metric_values:
+            unknown.append('a configured metric input is unavailable')
+    if thresholds.get('temp:all_fems') is not None:
+        if not any(k.startswith('FEM ') for k in values):
+            unknown.append('configured FEM readings unavailable')
+        # Every populated slot must have been read; one silent slot is unwatched.
+        for c in ans.get('controllers') or []:
+            if (c.get('fems') or any(_fem_slot(k) is not None for k in (c.get('temperatures') or {})))                     and not temperature_mapping_verified(c):
+                unknown.append(f"{c.get('name') or 'a controller'}: a populated FEM slot has no temperature reading")
     known = known or any(temperature_limit(k, thresholds) is not None for k in values)
     if evaluate_alarms(ans, thresholds):
         bad.append('temperature above limit' if any(a['key'].startswith('temp:') for a in evaluate_alarms(ans, thresholds)) else 'metric outside limit')
@@ -884,7 +969,7 @@ def _occupancy_verdict(answer, health_state, idle_states):
     if qms is None:
         return {'label': 'PROBLEM', 'reason': 'Open QM list unknown'}
     active = [(q, j) for q in qms for j in q.get('jobs') or []
-              if str(j.get('status', '')).lower() in ('running', 'pending', 'queued')]
+              if job_activity(j.get('status')) == 'active']
     if active:
         q, j = active[0]
         active_qms = {q['id'] for q, _ in active}
@@ -1167,7 +1252,8 @@ class Monitor:
                      else w.request("close_idle" if idle else "close_qms", qm_ids=names,
                                     **({'first_seen': {r['qm_id']: r for r in self.history().table()
                                                       if not r.get('job_id')},
-                                        'idle_minutes': s['idle_minutes']} if idle else {})))
+                                        'idle_minutes': s['idle_minutes'],
+                                        'server_now': self._server_now()} if idle else {})))
             except WorkerError as exc:
                 r = {"ok": False, "error": str(exc)}
                 self._drop_worker(str(exc))
@@ -1224,6 +1310,11 @@ class Monitor:
         out['live'] = ans.get('controllers') is not None
         out['jobs'] = ans.get('open_qms') is not None or ans.get('jobs') is not None
         return out
+
+    def _server_now(self):
+        h = self.history()
+        table = h.table() if h else []
+        return server_now(self.last_answer, self.clock(), clock_skew(self.last_answer, table))
 
     def status_state_unfresh(self):
         return self.viewer_check_pending or self.last_ok_at is None or bool(self.last_error) or self.clock() - self.last_ok_at > STALE_INTERVALS * self.poll_interval()

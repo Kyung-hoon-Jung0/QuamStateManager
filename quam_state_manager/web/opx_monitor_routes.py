@@ -69,12 +69,17 @@ def _run_candidates():
     return candidates, ''
 
 
-def run_match(job, candidates, reason='', window=90):
+def run_match(job, candidates, reason='', window=90, skew=None):
+    """Job times are the OPX clock, run times the PC clock: compare only after
+    correcting by the measured offset; an unknown offset gives no link."""
     if reason:
         return {'reason': reason}
     instant = om.timestamp(job.get('created_at'))
     if instant is None:
         return {'reason': 'Job creation time unknown; no estimated link.'}
+    if skew is None:
+        return {'reason': 'OPX clock offset unknown; no estimated link.'}
+    instant += skew
     matches = [r for r in candidates if abs(r['time'] - instant) <= window]
     if len(matches) == 1:
         return {**matches[0], 'reason': 'estimated from times (job and run creation, +/-90 s)'}
@@ -98,15 +103,18 @@ def _view(tab: str) -> dict:
     t = dict(s.get("target") or {})
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
-    first = {r['qm_id']: r for r in h.table() if not r.get('job_id')} if h else {}
-    idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'])
+    table = h.table() if h else []
+    first = {r['qm_id']: r for r in table if not r.get('job_id')}
+    skew = om.clock_skew(st.get('answer'), table)
+    srv_now = om.server_now(st.get('answer'), m.clock(), skew)
+    idle_states = {q['id']: om.idle_state(q, first.get(q['id']), m.clock(), s['idle_minutes'], srv_now)
                    for q in (st.get('answer') or {}).get('open_qms') or []}
     hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: (om.temperature_limit(r['key'], s['thresholds']) is not None and r['value'] > om.temperature_limit(r['key'], s['thresholds']), r['value']), default=None)
     try:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason) if not run_reason else {},
+    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle']], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
@@ -134,7 +142,13 @@ def opx_monitor_body():
     if tab not in TABS:
         tab = "live"
     monitor().want(tab, request.args.get("limit", 100, type=int))
-    return render_template("_opx_monitor_body.html", **_view(tab))
+    html = render_template("_opx_monitor_body.html", **_view(tab))
+    if request.headers.get("HX-Request"):
+        # keep the top-bar health pill in step with the body it sits above
+        html += ('<div id="ui-opxmon-alarm-slot" hx-swap-oob="innerHTML">'
+                 + render_template("_opx_alarm_badge.html", st=monitor().status(),
+                                   value_vs_limit=om.value_vs_limit) + '</div>')
+    return html
 
 
 @opxmon_bp.route("/opx-monitor/api/status")
@@ -150,11 +164,11 @@ def opx_alarm_badge():
     m = monitor()
     m.ensure_running_if_armed()
     st = m.status()
-    resp = make_response(render_template("_opx_alarm_badge.html", st=st))
+    resp = make_response(render_template("_opx_alarm_badge.html", st=st, value_vs_limit=om.value_vs_limit))
     fresh = m.new_alarm_toasts() if st.get("alarms_armed") else []
     if fresh:
         a = fresh[0]
-        value = f"{a['value']:.1f}".removesuffix('.0')
+        value = om.value_vs_limit(a['value'], a['limit'])
         more = f" (+{len(fresh) - 1} more)" if len(fresh) > 1 else ""
         resp.headers["HX-Trigger"] = json.dumps({"showToast": {
             "message": f"OPX alarm: {a['controller']} {a['label']} = {value} {a['unit']} "

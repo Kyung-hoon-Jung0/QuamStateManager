@@ -25,6 +25,9 @@ import time
 import warnings
 
 
+CONFIG_MAX_AGE_S = 60.0
+
+
 def _out(obj):
     sys.stdout.write(json.dumps(obj, default=str) + "\n")
     sys.stdout.flush()
@@ -67,7 +70,9 @@ def _readings(src, name, refused, what):
             if v is not None:
                 refused[f"{name}.{what}.{k}"] = f"not a number: {str(v)[:80]!r}"
             continue
-        out[str(k)] = f
+        # Metrics are proto3 doubles: an unfilled field reads exactly 0.0, which
+        # cannot be told from a real zero. Report it as no reading (None).
+        out[str(k)] = None if what == "metrics" and f == 0.0 else f
     return out or None
 
 
@@ -145,15 +150,24 @@ class QmmTarget:
             qm = call(f"get_qm({qid})", lambda: self.qmm.get_qm(qid))
             if qm is not None:
                 row['jobs'] = call(f"qm.get_jobs({qid})", lambda: [_job_row(j) for j in qm.get_jobs()])
-                if str(qid) not in cache:
+                # qm.update_config can change the ports a QM claims: re-read the
+                # config when its job set changes and at least every CONFIG_MAX_AGE_S.
+                job_ids = tuple(sorted(str(j.get('id')) for j in row['jobs'] or []))
+                entry = cache.get(str(qid))
+                if (not isinstance(entry, dict) or entry.get('jobs') != job_ids
+                        or time.monotonic() - entry.get('at', 0) > CONFIG_MAX_AGE_S):
+                    cache.pop(str(qid), None)
                     cfg = call(f"qm.get_config({qid})", qm.get_config)
                     if isinstance(cfg, dict):
-                        cache[str(qid)] = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
-                row['ports'] = cache.get(str(qid))
+                        ports = call(f"qm.get_config({qid})", lambda: _used_fems(cfg))
+                        cache[str(qid)] = {'ports': ports, 'jobs': job_ids, 'at': time.monotonic()}
+                row['ports'] = (cache.get(str(qid)) or {}).get('ports')
             qms.append(row)
         ans["open_qms"] = qms if qm_ids is not None else None
         jobs = call("get_jobs", lambda: [_job_row(j) for j in self.qmm.get_jobs()]) if include_jobs else None
         ans["jobs_total"] = len(jobs) if jobs is not None else None
+        # the server lists at most 1000 jobs: a full list is a cap, not a total
+        ans["jobs_capped"] = jobs is not None and len(jobs) >= 1000
         ans["jobs_requested"] = include_jobs
         # newest first: the server lists them oldest first, hundreds deep
         ans["jobs"] = (sorted(jobs, key=lambda r: r["created_at"] or "",
@@ -193,7 +207,7 @@ class QmmTarget:
                 failed[qid] = _err_text(exc)
         return {"closed": closed, "skipped": skipped, "failed": failed}
 
-    def close_idle(self, qm_ids, first_seen, idle_minutes):
+    def close_idle(self, qm_ids, first_seen, idle_minutes, server_now=None):
         # Load the pure activity rule without importing the SM package or qm into SM.
         import importlib.util
         from pathlib import Path
@@ -209,7 +223,7 @@ class QmmTarget:
                     continue
                 qm = self.qmm.get_qm(qid)
                 jobs = [_job_row(j) for j in qm.get_jobs()]
-                state = rules.idle_state({'jobs': jobs}, first_seen.get(qid), time.time(), idle_minutes)
+                state = rules.idle_state({'jobs': jobs}, first_seen.get(qid), time.time(), idle_minutes, server_now)
                 if not state['idle']:
                     skipped.append(qid)
                     reasons[qid] = state['basis']
@@ -279,7 +293,7 @@ def main():
             elif op == "close_qms":
                 res = target.close_qms(list(req.get("qm_ids") or []))
             elif op == 'close_idle':
-                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 120))
+                res = target.close_idle(req.get('qm_ids') or [], req.get('first_seen') or {}, req.get('idle_minutes', 120), req.get('server_now'))
             else:
                 raise ValueError(f"unknown op {op!r}")
             _out({"ok": True, "result": res, "took_s": round(time.time() - t0, 3)})

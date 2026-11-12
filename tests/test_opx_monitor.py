@@ -554,7 +554,8 @@ def test_d16_unique_run_only_and_open_chip_scope(env, monkeypatch, tmp_path):
     from quam_state_manager.web import opx_monitor_routes as routes
     from quam_state_manager.web import routes as main
     app, m, w, clock, _ = env
-    created = '2026-01-01T00:00:00Z'
+    from datetime import datetime, timezone
+    created = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
     a = answer()
     a['open_qms'][0]['jobs'][0]['created_at'] = created
     w.script[:] = [a]
@@ -631,7 +632,9 @@ def test_round2_dom_selfcheck(env, tmp_path, monkeypatch):
     m.poll_once()
     pages['idle'] = page(app, 'cleanup')
     a = answer()
-    a['jobs'][0]['created_at'] = '2026-01-01T00:00:00Z'
+    from datetime import datetime, timezone
+    # created as SM first sees it: the measured OPX clock offset is 0 s
+    a['jobs'][0]['created_at'] = datetime.fromtimestamp(clock.t, timezone.utc).isoformat()
     w.script[:] = [a]
     m.poll_once()
     candidates = [{'id': 7, 'url': '/dataset/fake:7', 'time': om.timestamp(a['jobs'][0]['created_at'])}]
@@ -670,7 +673,7 @@ def test_d13_remembers_activity_after_job_disappears(env):
     w.script[:] = [answer(qms=(("QM-a", [], []),))]
     m.poll_once()
     assert 'Close idle QMs (0)' in page(app, 'cleanup')
-    assert 'job created/last status update observed by SM' in page(app, 'cleanup')
+    assert 'OPX clock offset is unknown' in page(app, 'cleanup')
 
 
 def test_unknown_job_list_is_not_none_or_a_gone_event(env):
@@ -1349,3 +1352,215 @@ def test_tiles_kept_after_a_failed_read_are_marked_stale(env):
     assert 'the values below are stale' in html
     assert 'ui-opxmon-tile--stale' in html and '>stale, as of ' in html
     assert 'permission' not in html
+
+
+# ---- review round 1: the monitor never shows a state it has not proven ----
+
+_NO_ADMIN = {'known': False, 'not_applicable': True, 'reason': 'n/a'}
+
+
+def _one_ctrl(temps, fems=None, metrics=None):
+    return {"controllers": [{"name": "con1", "fems": fems or {"1": "LF", "2": "MW"},
+                             "temperatures": temps, "metrics": metrics}], "open_qms": [], "refused": {}}
+
+
+def test_all_fem_limit_is_not_green_while_a_populated_slot_reads_nothing():
+    h = om.health(_one_ctrl({"FEM 0": 45.0, "FEM 1": 0.0}), _NO_ADMIN, {"temp:all_fems": 80.0}, 'ok')
+    assert h['color'] == 'grey' and 'no temperature reading' in h['reason']
+    h = om.health(_one_ctrl({"FEM 0": 45.0}), _NO_ADMIN, {"temp:all_fems": 80.0}, 'ok')
+    assert h['color'] == 'grey'
+    h = om.health(_one_ctrl({"FEM 0": 45.0, "FEM 1": 50.0}), _NO_ADMIN, {"temp:all_fems": 80.0}, 'ok')
+    assert h['color'] == 'green'
+
+
+@pytest.mark.parametrize("status", ["In queue", "Processing", "Running", "Something new"])
+def test_sdk_active_statuses_are_busy_never_idle(status):
+    q = {"id": "qm-1", "ports": ["con1/1"], "jobs": [{"id": "j1", "status": status,
+         "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:01Z"}]}
+    idle = {"qm-1": om.idle_state(q, "2026-01-01T00:00:00+00:00", 1e10, 120)}
+    assert idle["qm-1"]["idle"] is False
+    assert om.verdict({"open_qms": [q]}, {"color": "amber"}, idle, "ok", 1.0)['label'] == 'BUSY'
+
+
+def test_sdk_error_status_is_not_finished_and_never_idle():
+    # the SDK maps its UNKNOWN job state to "Error"
+    q = {"id": "qm-2", "jobs": [{"id": "j2", "status": "Error", "created_at": "2026-01-01T00:00:00Z",
+         "updated_at": "2026-01-01T00:00:00Z"}]}
+    st = om.idle_state(q, "2026-01-01T00:00:00+00:00", 1e10, 120)
+    assert st['idle'] is False and 'Error' in st['basis']
+    q2 = dict(q, jobs=[dict(q['jobs'][0], status="Done")])
+    assert om.idle_state(q2, "2026-01-01T00:00:00+00:00", 1e10, 120, 1e10)['idle'] is True
+
+
+def test_worker_close_idle_skips_a_qm_whose_job_reads_error():
+    from types import SimpleNamespace
+    qmm = _FakeQmm(["QM-a"])
+    job = SimpleNamespace(id="j", status="Error", time_created=None, time_last_status_update=None)
+    qmm.get_qm = lambda qid: SimpleNamespace(get_jobs=lambda: [job], close=lambda: True)
+    res = _worker_target(qmm).close_idle(["QM-a"], {"QM-a": "2026-01-01T00:00:00+00:00"}, 1)
+    assert res["closed"] == [] and res["skipped"] == ["QM-a"]
+
+
+def test_fem_tile_marks_a_queued_job_busy(env):
+    app, m, w, clock, started = env
+    w.script = [answer(qms=(("QM-a", [("j1", "In queue")], ["con1/1"]),))]
+    m.poll_once()
+    html = page(app, "live")
+    assert "ui-opxmon-fem--busy" in html
+
+
+def test_a_zero_metric_is_no_reading_and_a_metric_limit_without_it_is_not_green():
+    from quam_state_manager.generator import opx_monitor_worker as wk
+    refused = {}
+    out = wk._readings({"memory_available_gb": 0.0, "cpu_utilization_percent": 3.0}, "con1", refused, "metrics")
+    assert out == {"memory_available_gb": None, "cpu_utilization_percent": 3.0}
+    assert wk._readings({"FEM 0": 0.0}, "con1", {}, "temperatures") == {"FEM 0": 0.0}
+    ans = _one_ctrl({"FEM 0": 45.0, "FEM 1": 50.0}, metrics=out)
+    h = om.health(ans, _NO_ADMIN, {"temp:all_fems": 80.0, "metric:memory_available_gb": 1.0}, 'ok')
+    assert h['color'] == 'grey'
+    assert "metric:memory_available_gb" not in {x['key'] for x in om.offered_metrics(ans)}
+
+
+def test_worker_rereads_a_qm_config_when_its_jobs_change():
+    from types import SimpleNamespace
+    calls = []
+    jobs = [[], [SimpleNamespace(id="j1", status="Running", time_created=None, time_last_status_update=None)]]
+    qmm = _FakeQmm(["QM-a"])
+    qmm.version_dict = lambda: {}
+    qmm.cluster_name = "c"
+    qmm.get_devices = lambda: SimpleNamespace(controllers={})
+    qmm.get_jobs = lambda: []
+    state = {"n": 0}
+
+    def get_config():
+        calls.append(1)
+        return {"elements": {}}
+    qmm.get_qm = lambda qid: SimpleNamespace(get_jobs=lambda: jobs[min(state["n"], 1)], get_config=get_config)
+    t = _worker_target(qmm)
+    t._config_cache = {}
+    t.poll(); t.poll()
+    assert len(calls) == 1
+    state["n"] = 1
+    t.poll()
+    assert len(calls) == 2
+
+
+# ---- live audit round 1 ----
+
+def _iso(t):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(t, timezone.utc).isoformat()
+
+
+def test_idle_never_ages_server_times_against_the_pc_clock():
+    pc_now = 1_800_000_000.0
+    skew = 80.0  # the OPX clock reads 80 s behind this PC
+    done = pc_now - skew - 100  # the job finished 100 s ago in OPX time
+    q = {"id": "qm", "jobs": [{"id": "j", "status": "Done", "created_at": _iso(done - 5), "updated_at": _iso(done)}]}
+    first = {"first_seen": _iso(pc_now - 10_000)}
+    # offset unknown: no idle claim
+    st = om.idle_state(q, first, pc_now, 1, None)
+    assert st['idle'] is False and 'offset is unknown' in st['basis']
+    # offset known: aged in OPX time -> 100 s, not 180 s
+    st = om.idle_state(q, first, pc_now, 2, om.server_now({}, pc_now, skew))
+    assert st['idle'] is False and 'no job for 1 min' in st['basis']
+
+
+def test_clock_skew_is_bounded_from_first_seen_and_drives_run_match():
+    from quam_state_manager.web import opx_monitor_routes as routes
+    created = 1_800_000_000.0
+    ans = {"jobs": [{"id": "a", "created_at": _iso(created)}, {"id": "b", "created_at": _iso(created + 50)}]}
+    rows = [{"job_id": "a", "first_seen": _iso(created + 85)}, {"job_id": "b", "first_seen": _iso(created + 50 + 81)}]
+    assert om.clock_skew(ans, rows) == 81.0
+    assert om.clock_skew(ans, []) is None
+    job = {"created_at": _iso(created)}
+    run = [{"id": 7, "url": "/x", "time": created + 81 + 60}]  # 60 s after the job in real time
+    assert routes.run_match(job, run, skew=81.0)['id'] == 7
+    assert 'url' not in routes.run_match(job, run, skew=None)
+    assert 'url' not in routes.run_match(job, [{"id": 7, "url": "/x", "time": created - 60}], skew=81.0)
+
+
+def test_close_idle_worker_uses_the_server_clock_bound():
+    from types import SimpleNamespace
+    from datetime import datetime
+    t = 1_000_000.0
+    job = SimpleNamespace(id="j", status="Done", time_created=None, time_last_status_update=None)
+    qmm = _FakeQmm(["QM-a"])
+    qmm.get_qm = lambda qid: SimpleNamespace(get_jobs=lambda: [job], close=lambda: True)
+    from quam_state_manager.generator import opx_monitor_worker as wk
+    orig = wk._job_row
+    wk._job_row = lambda j: {"id": "j", "status": "Done", "created_at": _iso(t), "updated_at": _iso(t)}
+    try:
+        tgt = _worker_target(qmm)
+        tgt._verified_close = lambda qid, qm: {"closed": [qid], "failed": {}}
+        res = tgt.close_idle(["QM-a"], {"QM-a": _iso(t - 99999)}, 1, None)
+        assert res["closed"] == []
+        res = tgt.close_idle(["QM-a"], {"QM-a": _iso(t - 99999)}, 1, t + 3600)
+        assert res["closed"] == ["QM-a"]
+    finally:
+        wk._job_row = orig
+
+
+def test_a_full_job_list_is_a_cap_not_a_total(env):
+    app, m, w, clock, _ = env
+    a = answer()
+    a['jobs'] = [dict(a['jobs'][0], id=f"j{i}") for i in range(1000)]
+    a['jobs_total'] = 1000
+    w.script[:] = [a]
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert 'of at least 1000 jobs shown' in html and 'at most 1000' in html
+    assert 'of 1000 jobs shown' not in html
+
+
+def test_the_worker_flags_a_capped_job_list():
+    from types import SimpleNamespace
+    qmm = _FakeQmm([])
+    qmm.version_dict = lambda: {}
+    qmm.cluster_name = "c"
+    qmm.get_devices = lambda: SimpleNamespace(controllers={})
+    qmm.get_jobs = lambda: [SimpleNamespace(id=str(i), status="Done") for i in range(1000)]
+    t = _worker_target(qmm)
+    t._config_cache = {}
+    assert t.poll(include_jobs=True)["jobs_capped"] is True
+    qmm.get_jobs = lambda: [SimpleNamespace(id="1", status="Done")]
+    assert t.poll(include_jobs=True)["jobs_capped"] is False
+
+
+def test_a_zero_temperature_reads_as_such(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'FEM 0': 40, 'FEM 1': 41, 'CRPS 1': 0.0})]
+    m.poll_once()
+    assert 'reads 0.0 (no sensor value)' in page(app, 'live')
+
+
+def test_body_carries_the_top_bar_pill_so_they_agree(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    html = app.test_client().get("/opx-monitor/body?tab=live", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert 'id="ui-opxmon-alarm-slot" hx-swap-oob="innerHTML"' in html and 'ui-opxmon-health-dot' in html
+    assert 'hx-swap-oob' not in page(app, 'live')
+
+
+def test_alarm_value_shows_the_breach():
+    assert om.value_vs_limit(70.0387, 70) == '70.04'
+    assert om.value_vs_limit(72.0, 70) == '72'
+    assert om.value_vs_limit(70.0, 70) == '70'
+
+
+def test_history_status_is_labelled_last_seen(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    w.script[:] = [answer(qms=())]
+    m.poll_once()
+    html = page(app, 'history')
+    assert 'Status (last seen)' in html and 'Running (when last seen)' in html
+
+
+def test_unreachable_server_is_not_called_unavailable_for_this_target(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [ConnectionError("refused")]
+    m.poll_once()
+    for tab in ('live', 'jobs'):
+        html = page(app, tab)
+        assert 'Not available for this target.' not in html
