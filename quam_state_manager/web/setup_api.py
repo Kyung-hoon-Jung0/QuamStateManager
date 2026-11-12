@@ -524,30 +524,18 @@ def context_post():
     return jsonify(**out)
 
 
-@setup_bp.route("/test", methods=["POST"])
-def test_call():
-    """A REAL read-only question through the chosen CLI: the elapsed time and
-    the answer verbatim (docs/173 §3.5-5). Never the driving session."""
+def _ask_and_wait(backend: str, prompt: str, timeout_s: float, model=None) -> dict:
+    """ONE read-only ask through the chosen CLI (F-8: ``readonly=True``, the
+    ``-ro`` MCP config), waited for here. Both backends, one shape (D-15)."""
     from quam_state_manager.web import chat_api
-    r = _r()
-    if not r._active_path():
-        return _err("open a chip first", 409)
-    data = json_object()
-    backend = str(data.get("backend") or "claude").lower()
-    if backend not in ab.BACKENDS:
-        return _err("backend must be claude or codex")
     chip = aa._chip_name()
     t0 = time.time()
-    try:
-        from quam_state_manager.core import limits
-        mode = limits.load(current_app.instance_path, aa._chip_key()).get("mode") or "ask-writes"
-        b = chat_api._build_backend(backend, readonly=True, chip=chip, mode=mode, cwd=chat_api._cwd(),
-                                    model=data.get("model"))
-        res = chat_api._manager().ask(chip, b, str(data.get("text") or "Call sm_status and answer in one line: which chip is open and how many qubits does it have?"))
-    except (ValueError, OSError) as exc:
-        return _err(f"could not start {backend}: {exc}", 502)
+    from quam_state_manager.core import limits
+    mode = limits.load(current_app.instance_path, aa._chip_key()).get("mode") or "ask-writes"
+    b = chat_api._build_backend(backend, readonly=True, chip=chip, mode=mode, cwd=chat_api._cwd(), model=model)
+    res = chat_api._manager().ask(chip, b, prompt)
     aid = res["ask_id"]
-    deadline = t0 + float(data.get("timeout_s") or 90)
+    deadline = t0 + float(timeout_s)
     asks = current_app.config.setdefault("agent_asks", {})
     asks.setdefault(aid, [])
     mgr = chat_api._manager()
@@ -562,12 +550,173 @@ def test_call():
     result = next((e for e in reversed(evs) if e.get("hook_event_name") in ("Result", "Error")), None)
     done = any(e.get("hook_event_name") == "Stop" for e in evs)
     elapsed = round(time.time() - t0, 1)
-    out = {"ok": True, "backend": backend, "elapsed_s": elapsed, "done": done,
-           "answer": (texts[-1] if texts else (result or {}).get("summary")) if done else None,
-           "failed": bool(result and result.get("failed")), "error": (result or {}).get("error") if result and result.get("failed") else None,
+    final = (texts[-1] if texts else (result or {}).get("summary")) if done else None
+    out = {"ask_id": aid, "backend": backend, "elapsed_s": elapsed, "done": done, "answer": final,
+           "failed": bool(result and result.get("failed")),
+           "error": (result or {}).get("error") if result and result.get("failed") else None,
            "tools": [e.get("tool_name") for e in evs if e.get("hook_event_name") == "PostToolUse"]}
     if not done:
         out["error"] = f"no answer within {int(deadline - t0)} s"
-    st.save_record(current_app.instance_path, {"tested": {backend: {"at": time.time(), "elapsed_s": elapsed,
-                                                                    "ok": done and not out["failed"]}}})
-    return jsonify(**out)
+    return out
+
+
+@setup_bp.route("/test", methods=["POST"])
+def test_call():
+    """A REAL read-only question through the chosen CLI: the elapsed time and
+    the answer verbatim (docs/173 §3.5-5). Never the driving session."""
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    data = json_object()
+    backend = str(data.get("backend") or "claude").lower()
+    if backend not in ab.BACKENDS:
+        return _err("backend must be claude or codex")
+    try:
+        out = _ask_and_wait(backend, str(data.get("text") or "Call sm_status and answer in one line: which chip is open and how many qubits does it have?"),
+                            float(data.get("timeout_s") or 90), model=data.get("model"))
+    except (ValueError, OSError) as exc:
+        return _err(f"could not start {backend}: {exc}", 502)
+    out.pop("ask_id", None)
+    st.save_record(current_app.instance_path, {"tested": {backend: {"at": time.time(), "elapsed_s": out["elapsed_s"],
+                                                                    "ok": out["done"] and not out["failed"]}}})
+    return jsonify(ok=True, **out)
+
+
+# ------------------------------------------------ Confirm / Investigate by agent
+
+ASK_TIMEOUT_S = 120          # D-15: one timeout for both backends
+ASK_KINDS = ("confirm", "investigate")
+
+
+def _ask_key() -> dict:
+    """What a stored result belongs to (D-23)."""
+    r = _r()
+    ctx = r._active_ctx()
+    return {"project": (ctx or {}).get("qualibrate_project"), "chip": aa._chip_key() if r._active_path() else None,
+            "calibrations": _cal_folder()}
+
+
+def _roots() -> dict:
+    """The folders an agent may cite (D-17)."""
+    r = _r()
+    ctx = r._active_ctx()
+    cal = r._calibrations(ctx)
+    live = (ctx or {}).get("live_path") or (ctx or {}).get("path")
+    return {"calibrations": cal.get("folder"), "config": cal.get("config_dir"),
+            "state": str(live) if live else None, "data": _data_folder()}
+
+
+def _state_lookup():
+    store = _r()._store()
+    if store is None:
+        return None
+    def look(path: str):
+        v = store.get_value(path)
+        return v
+    return look
+
+
+def _store_result(kind: str, rec: dict) -> dict:
+    res = current_app.config.setdefault("setup_ask_results", {})
+    res[kind] = rec
+    return rec
+
+
+def _with_current(rec: dict | None) -> dict | None:
+    if not rec:
+        return None
+    k = _ask_key()
+    from quam_state_manager.core import calibrations
+    same = (rec.get("key", {}).get("project") == k["project"] and rec.get("key", {}).get("chip") == k["chip"]
+            and calibrations._norm(rec.get("key", {}).get("calibrations") or "") == calibrations._norm(k["calibrations"] or ""))
+    return {**rec, "current": bool(same)}
+
+
+def _ask_slot(kind: str):
+    """One ask per page at a time (D-23): a held slot answers 409."""
+    import threading
+    lock = current_app.config.setdefault("setup_ask_lock", threading.Lock())
+    busy = current_app.config.setdefault("setup_ask_busy", {})
+    with lock:
+        if busy.get("kind"):
+            return None
+        busy["kind"] = kind
+        busy["at"] = time.time()
+    return busy
+
+
+def _release(busy: dict) -> None:
+    busy.pop("kind", None)
+
+
+@setup_bp.route("/asks", methods=["GET"])
+def asks_get():
+    res = current_app.config.get("setup_ask_results") or {}
+    busy = current_app.config.get("setup_ask_busy") or {}
+    return jsonify(ok=True, running=busy.get("kind"), **{k: _with_current(res.get(k)) for k in ASK_KINDS})
+
+
+def _sm_values(P: dict) -> dict:
+    from quam_state_manager.web import chat_api
+    store = _r()._store()
+    cal = P.get("calibrations") or {}
+    entry = cal.get("entry") or {}
+    nodes = []
+    if cal.get("folder"):
+        try:
+            from quam_state_manager.core import node_scan
+            nodes = [i.name for i in node_scan.scan_folder(cal["folder"], instance_path=current_app.instance_path)
+                     if i.error is None]
+        except Exception:  # noqa: BLE001
+            nodes = []
+    return {"chip_name": aa._chip_name(), "n_qubits": len((store.state.get("qubits") or {})) if store else None,
+            "cwd": chat_api._cwd(), "config_file": ((P.get("files") or {}).get("root") or {}).get("path"),
+            "state_path_in_config": (P.get("state_path") or {}).get("native"),
+            "calibrations_folder_in_config": entry.get("native"),
+            "storage_in_config": (P.get("storage") or {}).get("native"),
+            "node_files": nodes, "run_folders": run_folder_names(P.get("data_folder"), limit=500)}
+
+
+@setup_bp.route("/confirm", methods=["POST"])
+def confirm():
+    """Confirm by agent (D-11..D-15): SM computes its own values; the agent,
+    read-only, REPORTS what it sees from its seat; SM compares and checks
+    every citation. Writes nothing (D-22)."""
+    from quam_state_manager.core import agent_checks as ac
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    data = json_object()
+    backend = str(data.get("backend") or "claude").lower()
+    if backend not in ab.BACKENDS:
+        return _err("backend must be claude or codex")
+    busy = _ask_slot("confirm")
+    if busy is None:
+        return _err("another agent check is running on this page", 409, busy=True)
+    try:
+        P = paths_report()
+        key = _ask_key()
+        sm = _sm_values(P)
+        try:
+            out = _ask_and_wait(backend, ac.confirm_prompt(P.get("config_dir"), P.get("project")), ASK_TIMEOUT_S,
+                                model=data.get("model"))
+        except (ValueError, OSError) as exc:
+            return _err(f"could not start {backend}: {exc}", 502)
+        rec = {"kind": "confirm", "backend": backend, "at": time.time(), "key": key, "elapsed_s": out["elapsed_s"],
+               "done": out["done"], "failed": out["failed"], "error": out["error"], "tools": out["tools"]}
+        if out["done"] and not out["failed"]:
+            parsed, why = ac.parse_answer(out["answer"])
+            if parsed is None:
+                rec.update(parse_error=why, raw=(out["answer"] or "")[:8000])
+            else:
+                roots = _roots()
+                rec.update(ac.compare_confirm(parsed, sm, roots=[roots["calibrations"], roots["config"], roots["state"]],
+                                              exist_roots=[roots["data"]], state_lookup=_state_lookup()))
+        elif out["answer"]:
+            rec["raw"] = str(out["answer"])[:8000]
+        st.save_record(current_app.instance_path, {"tested": {backend: {"at": time.time(), "elapsed_s": out["elapsed_s"],
+                                                                        "ok": out["done"] and not out["failed"]}}})
+        _store_result("confirm", rec)
+        return jsonify(ok=True, **_with_current(rec))
+    finally:
+        _release(busy)

@@ -113,7 +113,7 @@ window.AgentSetup = (function () {
     }
     var tested = ((d.record || {}).tested || {})[k];
     var acts = connected
-      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test</button>'
+      ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Confirm</button>'
         + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
       : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
     var warn = "";
@@ -135,7 +135,88 @@ window.AgentSetup = (function () {
   }
 
   /* ---- Step 2 rows (decisions D-1..D-11) ---- */
-  function confirmHtml() { return ""; }
+  /* ---- Confirm by agent (D-11..D-15, Q-6: it absorbs the old Test) ---- */
+  var ROW_LABEL = { chip_name: "Chip (sm_status)", n_qubits: "Qubits", cwd: "Working folder", config_file: "Config file",
+                    state_path_in_config: "state_path in the config", calibrations_folder_in_config: "calibration_library.folder in the config",
+                    storage_in_config: "storage.location in the config", node_files: "Node files it sees", run_folders: "Run folders it sees" };
+  function short(v) {
+    if (v === null || v === undefined || v === "") return "—";
+    if (Array.isArray(v)) return v.length ? v.slice(0, 5).join(", ") + (v.length > 5 ? " … (" + v.length + ")" : "") : "—";
+    return String(v);
+  }
+  function agentCell(row) {
+    if (row.agent === "agrees") return "agrees";
+    if (row.agent === "disagrees") return "disagrees — agent saw: " + short(row.agent_value);
+    if (row.agent === "unverified") return "unverified — its citation did not check out" + (row.agent_value ? " (said: " + short(row.agent_value) + ")" : "");
+    if (row.agent === "reported") return "reported: " + short(row.agent_value);
+    return "not reported";
+  }
+  function staleLine(rec, P) {
+    if (!rec || rec.current) return "";
+    var when = rec.at ? new Date(rec.at * 1000).toLocaleTimeString() : "";
+    return '<p class="asx-small ag-err" data-stale="1">Result for project ' + esc((rec.key || {}).project || "none") + " · " + esc(when) + " — run again</p>";
+  }
+  function askFail(rec) {
+    var who = NAMES[rec.backend] || rec.backend;
+    var why = String(rec.error || rec.parse_error || "no answer");
+    // D-14: the CLI's own words; SM does not classify a failure
+    var login = /not logged in|\/login|please log ?in/i.test(why);
+    return '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer" + (rec.elapsed_s ? " (" + esc(rec.elapsed_s) + " s)" : "")
+      + ': <span class="ag-err">' + esc(why) + "</span></p>"
+      + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(rec.backend) + "</code> once and log in there; then press Confirm again. SM never sees your login.</p>" : "")
+      + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+  }
+  function confirmResult(rec, P) {
+    if (!rec) return "";
+    var who = NAMES[rec.backend] || rec.backend;
+    if (rec.failed || !rec.done || rec.parse_error) {
+      if (rec.done && !rec.failed && rec.parse_error) {
+        return staleLine(rec, P) + '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> answered in " + esc(rec.elapsed_s) + " s, but the answer was not in the expected form.</p>"
+          + (rec.raw ? '<details class="asx-tech"><summary>Show the raw answer</summary><pre class="as-diff">' + esc(rec.raw) + "</pre></details>" : "") + "</div>";
+      }
+      return staleLine(rec, P) + askFail(rec);
+    }
+    var rows = (rec.rows || []).map(function (r) {
+      var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
+      var cls = r.agent === "agrees" ? "asx-ok" : "asx-no";
+      return '<li class="asx-chk ' + cls + '" data-row="' + esc(r.key) + '" data-agent="' + esc(r.agent) + '">' + esc(ROW_LABEL[r.key] || r.key)
+        + ': <span class="muted">SM: ' + esc(mine) + "</span> · " + esc(agentCell(r)) + "</li>";
+    }).join("");
+    return staleLine(rec, P) + '<div class="asx-result asx-result-ok" id="as-confirm-result"><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
+      + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
+      + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
+      + '<ul class="asx-checks">' + rows + "</ul>"
+      + (rec.evidence_dropped ? '<p class="asx-small muted">' + esc(rec.evidence_dropped) + " extra citations were dropped</p>" : "")
+      + (rec.notes ? '<p class="asx-small muted">agent notes: ' + esc(rec.notes) + "</p>" : "") + "</div>";
+  }
+  function confirmHtml(d) {
+    var clis = d.clis || {};
+    var ks = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
+    var running = (S.asks || {}).running;
+    var btns = ks.map(function (k) {
+      return '<button type="button" class="btn-sm outline asx-btn-2" data-confirm="' + k + '"' + (running ? " disabled" : "")
+        + ' onclick="AgentSetup.confirmBy(\'' + k + '\')">Confirm by ' + esc(NAMES[k]) + "</button>";
+    }).join("");
+    return '<div class="asx-row" id="as-confirm"><span class="asx-k">Second opinion</span><span class="asx-v asx-grow">'
+      + (ks.length ? btns : '<span class="muted">no agent CLI on this PC</span>') + "</span></div>"
+      + '<p class="asx-small muted asx-indent">The agent reports, read-only, what it sees from its own seat; SM compares it with the rows above and checks every citation. Only when pressed.</p>'
+      + '<div id="as-test">' + (S.confirmMsg || confirmResult((S.asks || {}).confirm, d.paths || {})) + "</div>";
+  }
+  function confirmBy(k) {
+    if (S.asks && S.asks.running) return;
+    S.asks = S.asks || {};
+    S.asks.running = "confirm";
+    S.confirmMsg = '<p class="muted">asking ' + esc(NAMES[k] || k) + " to report what it sees (read-only, up to 2 min)…</p>";
+    render();
+    api("POST", "/api/agent/setup/confirm", { backend: k }).then(function (r) {
+      S.asks.running = null;
+      S.confirmMsg = null;
+      var b = r.body || {};
+      if (r.status !== 200) S.confirmMsg = '<p class="ag-err" role="alert">' + esc(b.error || ("failed (HTTP " + r.status + ")")) + "</p>";
+      else S.asks.confirm = b;
+      load();
+    });
+  }
   function fileName(P, which) {
     var f = (P.files || {})[which] || {};
     return f.path || (which === "root" ? "~/.qualibrate/config.toml" : "projects/<project>/config.toml");
@@ -216,7 +297,7 @@ window.AgentSetup = (function () {
     var ctxDone = d.context && Object.keys(d.context).length > 0 && !ctxUnread.length;
     var testedOk = !!(tested.claude && tested.claude.ok) || !!(tested.codex && tested.codex.ok);
     var envDone = !!d.calibrations_folder && !!j.configured;
-    var steps = [connectedAny, envDone, !!ctxDone, testedOk];
+    var steps = [connectedAny, envDone, !!ctxDone];
     var nDone = steps.filter(Boolean).length;
     var parts = [];
     parts.push('<div class="asx-progress"><span class="asx-bar"><span style="width:' + Math.round(100 * nDone / steps.length) + '%"></span></span>'
@@ -262,14 +343,6 @@ window.AgentSetup = (function () {
       + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "outline asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
         : '<p class="muted asx-small">Set the calibrations folder first (step 2).</p>') + "</div>"));
 
-    // 4. test
-    var testable = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
-    // the card is #as-test-sec: #as-test is the result box inside it (one id, one element)
-    parts.push(card("test-sec", 4, "Check it works", testedOk,
-      '<p class="asx-lead">Asks the agent one read-only question through SM and shows how long it took and what it answered.</p>'
-      + '<div class="asx-tile-acts">' + testable.map(function (k) { return '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test ' + esc(NAMES[k]) + "</button>"; }).join("") + "</div>"
-      + '<div id="as-test">' + (S.lastTest || "") + "</div>"));
-
     // limits -- the PERSON's (docs/252): SM refuses an agent's request to change them
     if (d.chip && S.limits && S.limits.limits) {
       var lim = S.limits.limits, modes = S.limits.modes || ["auto", "ask-writes", "ask-all"];
@@ -309,8 +382,15 @@ window.AgentSetup = (function () {
       S.limits = r.status === 200 && r.body && r.body.limits ? r.body : null;
     });
   }
+  function loadAsks() {
+    return api("GET", "/api/agent/setup/asks").then(function (r) {
+      if (r.status === 200 && r.body) S.asks = r.body;
+    });
+  }
   function load() {
     var lims = loadLimits();
+    var asks = loadAsks();
+    lims = Promise.all([lims, asks]);
     return api("GET", "/api/agent/setup").then(function (r) {
       if (r.status === 200) { S.data = r.body; return lims.then(render, render); }
       // Say so in the page rather than leaving it empty.
@@ -570,33 +650,7 @@ window.AgentSetup = (function () {
       load();
     });
   }
-  function test(k) {
-    var host = document.getElementById("as-test");
-    if (host) host.innerHTML = '<p class="muted">asking ' + esc(k) + " one read-only question…</p>";
-    api("POST", "/api/agent/setup/test", { backend: k }).then(function (r) {
-      if (!host) return;
-      var b = r.body || {};
-      if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(b.error || "failed") + "</p>"; return; }
-      // docs/288: a failure says it failed (not "answered ... failed"), quotes the
-      // CLI's own words once, and -- only when the CLI itself says it is not
-      // logged in -- the one thing to do about it. No other cause is guessed.
-      var who = NAMES[k] || k;
-      if (b.failed || !b.answer) {
-        var why = String(b.error || b.answer || "no answer");
-        var login = /not logged in|\/login|please log ?in/i.test(why);
-        S.lastTest = '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer"
-          + (b.elapsed_s ? " (" + esc(b.elapsed_s) + " s)" : "") + ': <span class="ag-err">' + esc(why) + "</span></p>"
-          + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(k) + "</code> once and log in there; then press Test again. SM never sees your login.</p>" : "")
-          + "</div>";
-      } else {
-        S.lastTest = '<div class="asx-result asx-result-ok"><p><b>' + esc(who) + "</b> answered in <b>" + esc(b.elapsed_s) + " s</b>"
-          + (b.tools && b.tools.length ? ' <span class="muted">(used ' + esc(b.tools.join(", ")) + ")</span>" : "") + "</p>"
-          + '<blockquote class="as-answer">' + esc(b.answer) + "</blockquote></div>";
-      }
-      host.innerHTML = S.lastTest;
-      load();                                   // the section's ✓ follows the record; the result stays
-    });
-  }
+  function test(k) { return confirmBy(k); }
 
   function init() {
     var root = document.getElementById("as-body");
@@ -620,5 +674,5 @@ window.AgentSetup = (function () {
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           test: test, confirmBy: confirmBy, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();

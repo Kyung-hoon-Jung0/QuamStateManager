@@ -29,6 +29,13 @@ const BUSY_ERR = "Can't change global_simulate while the scheduler is running �
 let settingsPersisted = true, settingsBusy = false, settingsDown = false;
 const calls = [];
 let savedCtx = null;
+let lastConfirm = null, lastInvestigate = null;
+let confirmReply = { ok: true, kind: 'confirm', backend: 'claude', done: true, failed: false, elapsed_s: 12.3, at: 1, current: true,
+  key: { project: 'P1' }, tools: ['mcp__sm__sm_status'],
+  rows: [{ key: 'chip_name', sm: 'lab-J', agent: 'agrees', agent_value: 'lab-J' },
+         { key: 'n_qubits', sm: 20, agent: 'disagrees', agent_value: 19 },
+         { key: 'calibrations_folder_in_config', sm: 'D:/lab/cal', agent: 'unverified', agent_value: 'D:/lab/cal' },
+         { key: 'run_folders', sm: ['a'], agent: 'not reported', agent_value: null }] };
 let limitsNow = { mode: 'ask-writes', max_writes_per_plan: 200, human_recent_min: 30, stop_by: '', webhook_url: '', max_delta: { ramsey: 2000000 } }, limitsRefuse = null;
 function S_reset() { const st = window.AgentSetup && window.AgentSetup._state; if (st) st.answers = {}; }
 global.fetch = window.fetch = function (url, opts) {
@@ -54,6 +61,8 @@ global.fetch = window.fetch = function (url, opts) {
     else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
   }
   else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'chipA', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
+  else if (/\/setup\/asks$/.test(url)) resp = { ok: true, running: null, confirm: lastConfirm, investigate: lastInvestigate };
+  else if (/\/setup\/confirm$/.test(url)) { resp = confirmReply; lastConfirm = confirmReply; }
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'lab-J is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
@@ -66,8 +75,10 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await tick(30);
   const body = document.getElementById('as-body');
   // docs/288: four numbered cards in reading order (+ the limits fold), not nine accordions
-  ok(['as-connect', 'as-env', 'as-context', 'as-test-sec'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
-     'four cards in order: connect, where runs live, the device, check it works');
+  ok(['as-connect', 'as-env', 'as-context'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
+     'three cards in order: connect, where runs live, the device (Q-6: the Test card folded into Confirm)');
+  ok(!document.getElementById('as-test-sec') && document.getElementById('as-confirm') && document.getElementById('as-confirm').closest('#as-env'),
+     'Q-6/D-11: Confirm by agent sits in step 2, beside SM\'s checks; no separate Test card');
   // 3b: the dry-run card -- from the payload, always open, wired to the Runner's settings route
   {
     const box = document.getElementById('as-dryrun-box');
@@ -121,7 +132,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(tileC && tileC.classList.contains('asx-tile-todo') && /Not connected/.test(tileC.textContent), 'an unconnected CLI says Not connected');
   ok(/\u25cb SM's tools/.test(tileC.textContent) && !!tileC.querySelector('button[onclick="AgentSetup.preview(\'claude\')"]'), 'says what is missing, with one Connect button');
   ok(/Not installed/.test((document.getElementById('as-connect-codex') || {}).textContent || '') && !document.querySelector('#as-connect-codex button'), 'a CLI not on PATH says Not installed and offers nothing to press');
-  ok(document.getElementById('as-test') !== document.getElementById('as-test-sec') && document.getElementById('as-test-sec').contains(document.getElementById('as-test')), 'the test card and its result box are two elements (one id each)');
+  ok(document.getElementById('as-env').contains(document.getElementById('as-test')), 'the Confirm result box lives in step 2');
   ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal' && /D:\/data\/PJ\/journal/.test(document.getElementById('as-jpath').textContent), 'the journal starts with the suggested folder beside the data, shown read-only');
   // preview -> diff, no write
   calls.length = 0;
@@ -179,28 +190,34 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.writeContext();
   await tick(30);
   ok(calls[0].body.apply === true, 'the write is the second click');
-  // test
+  // Confirm by agent (D-11..D-14, D-23): SM's column beside the agent's; SM decides each row
   calls.length = 0;
-  /* docs/191 A04: the section collapses only when the status says the test is
-     DONE, so a harness whose record is empty keeps it open for the wrong
-     reason -- the first version of the pin below passed against a section that
-     was never eligible to close. Report the success the way the server does. */
-  status.record = status.record || {};
-  status.record.tested = { claude: { ok: true, elapsed_s: 12.3 } };
-  A.test('claude');
-  await tick(30);
-  ok(/answered in 12\.3 s/.test(document.getElementById('as-test').textContent) && /lab-J is open: 20 qubits\./.test(document.getElementById('as-test').textContent), 'the test shows the time and the answer verbatim');
-  /* docs/191 A04: showing it is not the same as the user SEEING it. A
-     successful test is what marks the section done, and `sec` collapses a done
-     section -- so the answer arrived and the section shut over it in the same
-     breath (measured in real Chrome: "asking claude one read-only question…",
-     then a bare "✓ 6. Test" with a real 6.8 s answer inside). While there is a
-     result on screen the section stays open. */
-  const testSec = document.getElementById('as-test-sec');
-  ok(!!testSec && testSec.contains(document.getElementById('as-test')) && /12\.3 s/.test(testSec.textContent),
-     'A04: the answer stays on screen in its card after the status reload');
-  ok(testSec.classList.contains('asx-card-done') && /\u2713/.test(testSec.querySelector('.asx-step').textContent),
-     'A04: and the card is marked done');
+  A.confirmBy('claude');
+  ok(Array.from(document.querySelectorAll('#as-confirm button[data-confirm]')).every(b => b.disabled), 'D-23: one ask at a time -- the buttons are disabled while it runs');
+  await tick(40);
+  ok(calls.some(c => /\/setup\/confirm$/.test(c.url) && c.body.backend === 'claude'), 'Confirm posts one read-only ask for the chosen backend');
+  const res = document.getElementById('as-test');
+  ok(/answered in 12\.3 s/.test(res.textContent), 'Q-6: the ping time is its first row');
+  const rowOf = k => res.querySelector('[data-row="' + k + '"]');
+  ok(/agrees/.test(rowOf('chip_name').textContent) && rowOf('chip_name').classList.contains('asx-ok'), 'D-13: an equal value reads "agrees"');
+  ok(/disagrees — agent saw: 19/.test(rowOf('n_qubits').textContent) && /SM: 20/.test(rowOf('n_qubits').textContent), 'D-13: a different value names what the agent saw, beside SM');
+  ok(/unverified/.test(rowOf('calibrations_folder_in_config').textContent) && rowOf('calibrations_folder_in_config').classList.contains('asx-no'), 'D-13: a failed citation is unverified, never agrees');
+  ok(/not reported/.test(rowOf('run_folders').textContent), 'D-13: a missing value reads "not reported"');
+  ok(!document.querySelector('#as-test [data-stale]'), 'D-23: a result for this project reads as current');
+  // D-23: a result for another project is shown as stale
+  lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
+  A.load(); await tick(40);
+  ok(/Result for project OTHER/.test((document.querySelector('#as-test [data-stale]') || {}).textContent || ''), 'D-23: a result for another project says so -- run again');
+  // D-14: a non-JSON answer is said, with the raw text one click away
+  confirmReply = { ok: true, kind: 'confirm', backend: 'codex', done: true, failed: false, elapsed_s: 3, current: true, parse_error: 'the answer was not in the expected form', raw: 'hello' };
+  status.clis.codex = { found: true }; A.load(); await tick(40);
+  A.confirmBy('codex'); await tick(40);
+  ok(/not in the expected form/.test(res.ownerDocument.getElementById('as-test').textContent) && document.querySelector('#as-test details pre'), 'D-14: a non-JSON answer says so and keeps the raw text expandable');
+  confirmReply = { ok: true, kind: 'confirm', backend: 'claude', done: true, failed: true, elapsed_s: 2, current: true, error: 'Not logged in · Please run /login' };
+  A.confirmBy('claude'); await tick(40);
+  ok(/did not answer/.test(document.getElementById('as-test').textContent) && /Not logged in/.test(document.getElementById('as-test').textContent), 'D-14: a failure is in the CLI\'s own words');
+  status.clis.codex = { found: false };
+  A.load(); await tick(30);
   // a re-write starts from what the lab answered last time, never from the detected values alone
   savedCtx = { tunable: 'fixed-frequency', notes: 'Never retry hardware.' };
   S_reset();
