@@ -4,6 +4,7 @@ The pages read the cached answer of ``core.opx_monitor.Monitor``; a page GET
 asks the poller to keep going for a few intervals and never waits on the OPX.
 Clean-up and settings are POSTs (the app's origin guard applies)."""
 from __future__ import annotations
+import math
 
 import json
 import logging
@@ -20,6 +21,15 @@ opxmon_bp = Blueprint("opx_monitor", __name__)
 TABS = ("live", "jobs", "history", "cleanup", "settings")
 TAB_LABELS = {"live": "Live", "jobs": "Jobs", "history": "History", "cleanup": "Clean up",
               "settings": "Monitor settings"}
+
+
+def _idle_minutes(raw, old):
+    """The form's idle minutes as a number; a blank or bad value keeps the old one."""
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return float(old)
+    return v if math.isfinite(v) else float(old)
 
 
 def monitor() -> om.Monitor:
@@ -109,6 +119,9 @@ def _view(tab: str) -> dict:
     watched = m.watch_info()
     idle_states = {q['id']: om.idle_state(q, watched.get(str(q['id'])), s['idle_minutes'])
                    for q in (st.get('answer') or {}).get('open_qms') or []}
+    if st['state'] != 'ok':
+        age = ('%.0f s ago' % st['age_s']) if st.get('age_s') is not None else 'at an unknown time'
+        idle_states = {k: om.stale_idle_state(v, age) for k, v in idle_states.items()}
     hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: (om.temperature_limit(r['key'], s['thresholds']) is not None and r['value'] > om.temperature_limit(r['key'], s['thresholds']), r['value']), default=None)
     try:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
@@ -212,7 +225,7 @@ def opx_monitor_save_settings():
             return _settings_reply(f"The limit for {k[4:]} is not a number.", error=True)
         th[k[4:]] = val
     new = {"target": target, "python": py, "interval_s": om.clamp_interval(f.get("interval_s")),
-           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": f.get("idle_minutes", s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
+           "admin_url": (f.get("admin_url") or "").strip(), "idle_minutes": _idle_minutes(f.get("idle_minutes"), s["idle_minutes"]), "thresholds": th, "alarms_armed": _form_bool("alarms_armed")}
     changed_conn = (new["target"] != s.get("target")) or (new["python"] != s.get("python")) or new["admin_url"] != s.get("admin_url")
     om.save_settings(m.instance, new)
     hdr_txt = f.get("headers")

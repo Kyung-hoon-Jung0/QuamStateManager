@@ -146,11 +146,29 @@ def measure_skew(t0, t1, date_header):
 WATCH_GAP_INTERVALS = 3
 
 
+def job_list_capped(jobs):
+    """True when a job list is as long as the server ever returns: newer jobs
+    may be missing from it, whichever ones the server chose to keep."""
+    return isinstance(jobs, list) and len(jobs) >= JOB_LIST_CAP
+
+
+CAPPED_BASIS = (f'job list capped at {JOB_LIST_CAP} by the server; SM cannot see new jobs, '
+                'so activity cannot be judged (never idle)')
+
+
+def stale_idle_state(state, age_text):
+    """The same verdict worded for a page whose last poll failed: never idle."""
+    basis = state['basis'].replace(' while SM watched continuously', ' while SM watched')
+    return {'idle': False, 'last_activity': None,
+            'basis': f'watch interrupted; as of the last good read ({age_text}): {basis}'}
+
+
 def job_signature(q):
     """What "no job change" is judged on: every (job id, status) of a QM, sorted.
-    None when the QM's job list is unknown."""
+    None when the QM's job list is unknown or at the server cap (a capped
+    list may not show new jobs, so "no change" cannot be judged on it)."""
     jobs = q.get('jobs')
-    if jobs is None:
+    if jobs is None or job_list_capped(jobs):
         return None
     return sorted([str(j.get('id')), str(j.get('status'))] for j in jobs)
 
@@ -192,6 +210,8 @@ def idle_state(q, watched, minutes=120):
 
     ``watched`` is ``{'watched_s', 'continuous', 'sig'}`` from the monitor, or None."""
     jobs = q.get('jobs')
+    if job_list_capped(jobs):
+        return {'idle': False, 'basis': CAPPED_BASIS, 'last_activity': None}
     if jobs is None or any(job_activity(j.get('status')) != 'finished' for j in jobs):
         statuses = sorted({str(j.get('status') or 'unknown') for j in jobs or []
                            if job_activity(j.get('status')) != 'finished'})

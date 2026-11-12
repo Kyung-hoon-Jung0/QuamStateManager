@@ -6,6 +6,7 @@ case (fault injection reads the rendered sentence, not internal state)."""
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -1384,7 +1385,7 @@ def test_tiles_kept_after_a_failed_read_are_marked_stale(env):
     html = page(app, 'live')
     assert 'Temperatures unavailable (last good read at' in html
     assert 'the values below are stale' in html
-    assert 'ui-opxmon-tile--stale' in html and '>stale, as of ' in html
+    assert 'ui-opxmon-tile--stale' in html and '>last good read at ' in html
     assert 'permission' not in html
 
 
@@ -1773,7 +1774,7 @@ def test_returning_viewer_keeps_the_age_on_slot_cards(env):
     m.poll_once(); clock.t += 77
     html = page(app, 'live')
     assert 'Waiting for the first server answer' not in html
-    assert 'ui-opxmon-tile--stale' in html and 'stale, as of' in html
+    assert 'ui-opxmon-tile--stale' in html and 'last good read at' in html
 
 
 def test_metric_zero_is_shown_as_cannot_tell(env):
@@ -1874,3 +1875,64 @@ def test_r2_live_wording_count_grammar_refusal_and_reasons(env):
     m.poll_once()
     cap = m.capabilities()
     assert cap['close_reason'].startswith('Server unreachable') and 'refused listing' not in cap['close_reason']
+
+
+def test_r4_capped_per_qm_job_list_is_never_idle(env):
+    """A QM job list at the server cap may hide new jobs: activity unknown."""
+    from types import SimpleNamespace
+    app, m, w, clock, _ = env
+    capped = [("j%04d" % i, "Done") for i in range(om.JOB_LIST_CAP)]
+    w.script[:] = [answer(qms=(("QM-a", capped, ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 30 * 300)
+    q = m.last_answer['open_qms'][0]
+    assert om.job_signature(q) is None
+    st = om.idle_state(q, m.watch_info()['QM-a'], 120)
+    assert not st['idle'] and 'capped' in st['basis']
+    forced = {'watched_s': 99_999, 'continuous': True, 'sig': sorted([j, 'Done'] for j, _ in capped)}
+    assert not om.idle_state(q, forced, 1)['idle']  # even with a matching watch
+    assert 'Close idle QMs (0)' in page(app, 'cleanup')
+    assert 'capped at 1000' in page(app, 'jobs')
+    qmm = _FakeQmm(['QM-a'])
+    qm = _FakeQM(qmm.closed, 'QM-a')
+    qm.get_jobs = lambda: [SimpleNamespace(id=j, status='Done') for j, _ in capped]
+    qmm.get_qm = lambda qid: qm
+    res = _worker_target(qmm).close_idle(['QM-a'], {'QM-a': forced}, 1)
+    assert res['closed'] == [] and not qmm.closed and 'capped' in res['skip_reasons']['QM-a']
+
+
+def test_r4_failed_poll_words_the_jobs_row_from_the_last_good_read(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 30 * 300)
+    assert 'watched continuously &middot; idle' in page(app, 'jobs')
+    w.script[:] = [om.WorkerError('connection refused')]
+    clock.t += 300
+    m.poll_once()
+    html = page(app, 'jobs')
+    assert 'watched continuously' not in html and '&middot; idle' not in html
+    assert 'watch interrupted; as of the last good read' in html
+
+
+def test_r4_stale_slot_card_says_last_good_read_without_zone(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(temps={'FEM 0': 50})]
+    m.poll_once()
+    w.script[:] = [om.WorkerError('connection refused')]
+    clock.t += 5
+    m.poll_once()
+    html = page(app, 'live')
+    small = re.findall(r'<small>([^<]*last good read at[^<]*)</small>', html)
+    assert small and all('UTC' not in s and 'as of' not in s for s in small)
+
+
+def test_r4_settings_store_idle_minutes_as_a_number(env):
+    app, m, *_ = env
+    c = app.test_client()
+    c.post("/opx-monitor/settings", data={"kind": "qmm", "host": "h", "port": "80", "python": "",
+                                          "interval_s": "5", "idle_minutes": "0.25"}, headers=ORIGIN)
+    import os
+    with open(os.path.join(app.instance_path, 'opx_monitor', 'settings.json'), encoding='utf-8') as fh:
+        stored = json.load(fh)
+    assert stored['idle_minutes'] == 0.25 and isinstance(stored['idle_minutes'], float)
