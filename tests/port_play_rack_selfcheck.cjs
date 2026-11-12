@@ -49,7 +49,9 @@ const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', {key: k, 
   ok(cells().length === 16, 'D-23 16 playable cells, got ' + cells().length);
   ok(cells().every(c => c.getAttribute('tabindex') === '0' && c.getAttribute('role') === 'button'), 'D-23 tabindex+role');
   const first = rack().querySelector('.iw-port[data-play="1"][data-slot="1"][data-port="1"]');
-  ok(first.getAttribute('aria-label') === 'con1 FEM 1 OUT 1', 'D-23 aria-label: ' + first.getAttribute('aria-label'));
+  ok(first.getAttribute('aria-label') === 'con1 FEM 1 OUT 1 (MW)', 'D-23 aria-label: ' + first.getAttribute('aria-label'));
+  const lfCell = rack().querySelector('.iw-port[data-play="1"][data-slot="3"][data-port="2"]');
+  ok(lfCell.getAttribute('aria-label') === 'con1 FEM 3 AO 2 (LF)', 'D-12 LF aria-label says AO: ' + lfCell.getAttribute('aria-label'));
   const nums = Array.from(rack().querySelectorAll('.iw-port-num')).map(t => t.textContent);
   ok(nums.length === 16, 'D-23 16 numbers, got ' + nums.length);
   ok(nums.join(',') === '1,2,3,4,5,6,7,8,1,2,3,4,5,6,7,8', 'D-23 numbers in order: ' + nums.join(','));
@@ -75,12 +77,12 @@ const key = (el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', {key: k, 
 
   // D-24: a running set rings its members and shows the LIVE bar with time left and Stop all.
   const now = Date.now() / 1000;
-  w.PortPlay.live = () => ({id: 'run9', members: [{pin: 'con1/1/2'}, {pin: 'con1/3/4', label: 'con1 · FEM 3 · AO 4 (LF)'}],
+  w.PortPlay.live = () => ({id: 'run9', members: [{pin: 'con1/1/2'}, {pin: 'con1/3/4'}],
                             started_at: now, max_s: 90});
   d.dispatchEvent(new w.Event('port-play:change'));
   const bar = d.getElementById('gen-port-play-live');
   ok(!bar.hidden, 'D-24 LIVE bar shown while running');
-  ok(/con1 · FEM 1 · OUT 2/.test(bar.textContent) && /AO 4 \(LF\)/.test(bar.textContent), 'D-24 bar names members: ' + bar.textContent);
+  ok(/con1 · FEM 1 · OUT 2 \(MW\)/.test(bar.textContent) && /con1 · FEM 3 · AO 4 \(LF\)/.test(bar.textContent), 'D-24/D-12 bar fallback labels name AO for LF: ' + bar.textContent);
   ok(/stops in 1:(30|29)/.test(bar.textContent), 'D-24 stops in m:ss: ' + bar.textContent);
   const live = cells().filter(c => c.classList.contains('iw-port-live')).map(c => c.getAttribute('data-slot') + '/' + c.getAttribute('data-port'));
   ok(live.join(',') === '1/2,3/4', 'D-24 rings on members only: ' + live);

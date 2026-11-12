@@ -529,7 +529,7 @@ class Runs:
                "recovery": _read(run["work"] / "_recovery.json"), "meta": run["meta"],
                "elapsed_s": round(time.time() - run["started"], 1),
                "stopping": run["stop_at"] is not None, "stop_why": run.get("stop_why"),
-               "unknown_qm_state": unknown}
+               "unknown_qm_state": unknown, "deadline_at": st.get("deadline_at")}
         progress = loopcal_progress(run["work"])
         if progress is not None:
             out["progress"] = progress

@@ -33,7 +33,7 @@
 <div id="port-play-rack" data-pin="{{ pp_pin }}"></div>
 <div id="port-play-offsets"></div>
 <script type="application/json" id="pp-spec">{{ (pp_spec or {}) | tojson }}</script>
-<script type="application/json" id="pp-instrument">{{ pp_instrument_json | safe }}</script>
+<script type="application/json" id="pp-instrument">{{ (pp_instrument or {}) | tojson }}</script>
 <script>
 (function () {
   var rack = document.getElementById('port-play-rack');
@@ -51,6 +51,9 @@
     spec: function () { net(); return spec; },
     python: function () { return env ? env.value : ''; },
     changed: function () { /* the chip's spec is not saved from here */ },
+    // A connection failure points at this page's own Host field.
+    editHost: function () { var h = document.getElementById('pp-host'); if (h) { h.focus(); h.select(); } },
+    editHostLabel: 'Edit host (Host field above)',
     // D-25: the popup prefills from the open chip and says the test is read-only.
     chipPort: function (pin) { return window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }
   };

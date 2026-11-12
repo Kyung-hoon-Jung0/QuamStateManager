@@ -1286,7 +1286,15 @@
   }
   function portPlayLabel(pin) {
     var m = PIN_RE.exec(String(pin));
-    return m ? "con" + m[1] + " · FEM " + m[2] + " · OUT " + m[3] : String(pin);
+    if (!m) return String(pin);
+    // One port notation (D-12): the FEM kind decides AO n (LF) or OUT n (MW).
+    var kind = null;
+    (((state.spec || {}).instruments || {}).controllers || []).forEach(function (c) {
+      if (String(c.con).replace(/^con/, "") !== m[1]) return;
+      (c.fems || []).forEach(function (f) { if (String(f.slot) === m[2]) kind = f.fem; });
+    });
+    return "con" + m[1] + " · FEM " + m[2] + " · " + (kind === "mw" ? "OUT " : "AO ") + m[3] +
+      (kind === "mw" ? " (MW)" : kind === "lf" ? " (LF)" : "");
   }
 
   // D-24 + D-26: the running set rings its ports; a checked port shows its verdict.

@@ -206,8 +206,8 @@ def _busy_message(manager, owner) -> str:
     ports = _plan_ports(plan) if str(plan.get("config_name") or "").startswith("port-play") else []
     if not ports:
         return "Busy: another port test is running. Stop it there first."
-    where = "this window" if cur.get("play_owner") == owner else "another window"
-    return f"Busy: a port play is running on {', '.join(ports)} ({where}). Stop it there first."
+    # This window's own running play never reaches here: /port-play/run stops it and asks again.
+    return f"Busy: a port play is running on {', '.join(ports)} (another window). Stop it there first."
 
 
 def _multi_binding(data, extra) -> str:
@@ -298,14 +298,14 @@ def port_play_run():
         waveform, sim_ns = _play_options(data)
         python = _r()._build_python(data)
         if not python:
-            raise pt.PortTestError("Select a Python environment in step 1.")
+            raise pt.PortTestError("Select a Python environment (wizard step 1, or the Python environment field on Port play).")
         network = spec.get("network") or {}
         host = network.get("host")
         local = {"host": host, "cluster": network.get("cluster_name"), "port": network.get("port")}
         if action == "sim":
             saas = _saas_credentials()
             if not host and not saas:
-                raise pt.PortTestError("Simulate needs a QOP host in step 2 (its simulator) or "
+                raise pt.PortTestError("Simulate needs a QOP host (wizard step 2, or the Host field on Port play) for its simulator, or "
                                        "QM-SaaS credentials (Settings, or SAAS_EMAIL / SAAS_PASSWORD / "
                                        "SAAS_HOST in SM's environment).")
             req = {"mode": "sim", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
@@ -319,7 +319,7 @@ def port_play_run():
                                      "max_s": seconds})
             return jsonify(ok=True, simulated=True, **started)
         if not host:
-            raise pt.PortTestError("Enter the network host in step 2.")
+            raise pt.PortTestError("Enter the QOP host (wizard step 2, or the Host field on Port play).")
         req = {"mode": "opx", "max_s": seconds, "_port_play_generation": generation, "_play_owner": owner,
                "target": local}
         plan = dict(plan, open_only=action == "open")
@@ -338,7 +338,7 @@ def port_play_sim_check():
     host = str(net.get("host") or "").strip() or None
     saas = _saas_credentials() is not None
     reason = None if (host or saas) else (
-        "Simulate needs a QOP host in step 2 (its simulator) or QM-SaaS credentials "
+        "Simulate needs a QOP host (wizard step 2, or the Host field on Port play) for its simulator, or QM-SaaS credentials "
         "(Settings, or SAAS_EMAIL / SAAS_PASSWORD / SAAS_HOST in SM's environment).")
     return jsonify(ok=True, local_host=host, saas=saas, reason=reason)
 
@@ -481,11 +481,11 @@ def port_play_loopcal_run():
             raise pt.PortTestError("This port is not an LF-FEM output of the step-3 allocation.") from None
         python = _r()._build_python(data)
         if not python:
-            raise pt.PortTestError("Select a Python environment in step 1.")
+            raise pt.PortTestError("Select a Python environment (wizard step 1, or the Python environment field on Port play).")
         network = spec.get("network") or {}
         host = network.get("host")
         if not host:
-            raise pt.PortTestError("Enter the network host in step 2.")
+            raise pt.PortTestError("Enter the QOP host (wizard step 2, or the Host field on Port play).")
         job = {"host": host, "port": network.get("port") or None,
                "cluster_name": network.get("cluster_name") or None, "controllers": controllers,
                "con": args["con"], "fem": args["fem"], "ao": args["ao"], "ai": args["ai"],
@@ -716,8 +716,12 @@ def port_test_status():
     if st.get("state") == "running":
         # D-21: what a countdown needs (the watchdog's own bound).
         cur = manager.current or {}
-        st["started_at"] = cur.get("started")
         st["max_s"] = (st.get("meta") or {}).get("max_s")
+        # The countdown runs from the runner's own deadline (set once the QM is open);
+        # before that nothing is driven yet, so no countdown is shown.
+        deadline = st.get("deadline_at")
+        st["started_at"] = (float(deadline) - float(st["max_s"])
+                            if isinstance(deadline, (int, float)) and isinstance(st["max_s"], (int, float)) else None)
     res = st.get("result")
     if isinstance(res, dict) and not res.get("ok") and res.get("error"):
         # D-20: always both fields, whatever runner wrote the result.

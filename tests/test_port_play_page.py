@@ -72,6 +72,21 @@ class TestStandalonePage:  # D-27
         assert "data-pp-nochip" in html and "/generate?step=3" in html
         assert 'id="port-play-rack"' not in html
 
+    def test_the_instrument_json_is_escaped_for_a_script_block(self, client, chip, monkeypatch):
+        """A label holding ``</script>`` must not end the JSON block (tojson, not ``| safe``)."""
+        import re
+        from quam_state_manager.core import query
+        orig = query.QueryEngine.get_instrument_wiring
+        def evil(self):
+            data = orig(self)
+            data["label"] = "</script><b>x"
+            return data
+        monkeypatch.setattr(query.QueryEngine, "get_instrument_wiring", evil)
+        client.post("/load", data={"folder": str(chip)})
+        html = client.get("/port-play").get_data(as_text=True)
+        block = re.search(r'<script type="application/json" id="pp-instrument">(.*?)</script>', html, re.S).group(1)
+        assert json.loads(block)["label"] == "</script><b>x"
+
     def test_the_pin_reaches_the_rack(self, client, chip):
         client.post("/load", data={"folder": str(chip)})
         html = client.get("/port-play?pin=con1/3/1").get_data(as_text=True)

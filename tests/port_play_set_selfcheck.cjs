@@ -195,11 +195,11 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   p.querySelector('[data-add-port]').click(); pickPin(rowsOf(p)[1], 'con1/1/1');
   const tr = (con, slot, port, kind, member, peak, edge) => Object.assign({con, slot, port, kind, member, peak, n: 4, step: 1,
     first_edge_ns: edge, re: [0, peak, peak, 0]}, kind === 'mw' ? {im: [0, 0, 0, 0]} : {rate: 2e9});
-  const simRes = id => ({state: 'done', id, meta: {plan: {expected_peak: null, plays: [{port: ['con1', 3, 5], expected_peak: 0},
+  const simRes = (id, wf) => ({state: 'done', id, meta: {plan: {waveform: wf, expected_peak: null, plays: [{port: ['con1', 3, 5], expected_peak: 0},
     {port: ['con1', 1, 1], expected_peak: 0.1}]}}, result: {ok: true, simulated: true, backend_label: 'Sim',
     traces: {'con1:3-5': tr('con1', 3, 5, 'lf', true, 0.2, 161), 'con1:1-1-1': tr('con1', 1, 1, 'mw', true, 0.1, 0),
       'con1:3-6': tr('con1', 3, 6, 'lf', false, 0, undefined), 'con1:dig:1': {digital: true, re: [0], n: 1}}}});
-  replies.run.push({ok: true, id: 's1'}); replies.status = [simRes('s1')];
+  replies.run.push({ok: true, id: 's1'}); replies.status = [simRes('s1', 'edge')];
   plots.length = 0;
   p.querySelector('[data-sim]').click(); await sleep(40);
   const box = p.querySelector('[data-sim-result]');
@@ -214,10 +214,13 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(simRows.length === 2 && /AO 5/.test(simRows[0].textContent) && /161/.test(simRows[0].textContent), 'D-13 per-port table in set order');
   ok(/-161/.test(simRows[1].textContent) && /0\.1000/.test(simRows[1].textContent), 'D-13 delta to row 1 and expected per port');
   ok(simRows[0].cells[2].textContent === '0.000' && simRows[1].cells[2].textContent === '0.1000', 'D-16 Expected column from plan.plays[].port');
-  ok(/1 other declared output stayed at their offsets/.test(box.querySelector('[data-sim-others]').textContent), 'D-13 non-members in one line');
+  ok(/1 other declared output stayed at 0 V/.test(box.querySelector('[data-sim-others]').textContent), 'D-13 non-members in one line');
   ok(!/con1:3-5|con1:1-1-1/.test(box.textContent), 'D-12 sim never shows the raw key');
   replies.run.push({ok: true, id: 's2'}); replies.status = [simRes('s2')];
   p.querySelector('[data-sim]').click(); await sleep(40);
+  const cwHead = box.querySelector('[data-sim-table] thead').textContent, cwRow = box.querySelector('[data-sim-table] [data-sim-port]');
+  ok(!/First edge|Delta to row/.test(cwHead) && cwRow.cells.length === 3 && !/161/.test(box.querySelector('[data-sim-table]').textContent),
+     'P1-1 a cw/dc set shows no first-edge or delta columns');
   const prev = p.querySelector('[data-sim-prev]');
   ok(!prev.hidden && !prev.open && prev.querySelector('[data-sim-table]') && !box.hidden && box.querySelector('[data-sim-table]'), 'D-8 both simulations on the page, older collapsed');
   PP.close();
@@ -254,6 +257,61 @@ const MW3 = [{slot: 1, fem: 'mw'}, {slot: 2, fem: 'mw'}, {slot: 3, fem: 'lf'}];
   ok(p.querySelector('[data-sim]').disabled && p.querySelector('[data-sim]').title === 'Simulate needs a QOP host in step 2.' &&
      !p.querySelector('[data-sim-reason]').hidden, 'D-19 Simulate disabled with the reason');
   PP.close(); delete replies.simCheck;
+
+  // P2-3: a closed popup's run id does not reach the next popup's Stop.
+  fresh(MW3); p = openAt(3, 5, 'lf');
+  p.querySelector('[data-hwok]').checked = true;
+  replies.run.push({ok: true, id: 'old1'}); replies.status = [{state: 'running', id: 'old1', phase: 'running'}];
+  p.querySelector('[data-play]').click(); await sleep(30);
+  PP.close(); await sleep(5);
+  replies.status = [{state: 'none'}];
+  p = openAt(3, 5, 'lf');
+  const stopsBefore = calls.filter(c => /\/port-play\/stop$/.test(c.url)).length;
+  p.querySelector('[data-stop]').click(); await sleep(10);
+  ok(calls.filter(c => /\/port-play\/stop$/.test(c.url)).length === stopsBefore, 'P2-3 Stop in a fresh popup posts no stale id');
+  PP.close();
+
+  // P2-4: a saved row whose FEM changed kind is dropped with a sentence, never a TypeError.
+  fresh(MW3);
+  w.sessionStorage.setItem('quam_gen_port_play_set', JSON.stringify({rows: [
+    {pin: 'con1/3/5', kind: 'lf', values: {offset: '0.1', mode: 'direct'}},
+    {pin: 'con1/1/4', kind: 'lf', values: {offset: '0.2', mode: 'direct'}}], seconds: '300'}));
+  p = openAt(3, 5, 'lf');
+  ok(rowsOf(p).length === 1 && /Not restored: con1 \u00b7 FEM 1 \u00b7 OUT 4 \(MW\)/.test(p.querySelector('[data-message]').textContent), 'P2-4 stale-kind row dropped with a sentence');
+  p.querySelector('[data-hwok]').checked = true;
+  replies.run.push({ok: true, id: 'k1'}); replies.status = [{state: 'none'}];
+  p.querySelector('[data-play]').click(); await sleep(10);
+  ok(!('extra' in confirmBody()), 'P2-4 the play still builds (no TypeError)');
+  PP.close();
+
+  // P2-11: Next during a live hardware play says it stopped.
+  fresh(MW3); p = openAt(3, 5, 'lf');
+  p.querySelector('[data-hwok]').checked = true;
+  replies.run.push({ok: true, id: 'lv1'}); replies.status = [{state: 'running', id: 'lv1', phase: 'running'}];
+  p.querySelector('[data-play]').click(); await sleep(30);
+  p.querySelector('[data-next]').click(); await sleep(5);
+  p = d.getElementById('port-play-dialog');
+  ok(/previous play was stopped/.test(p.querySelector('[data-message]').textContent), 'P2-11 Next while live says it stopped');
+  replies.status = [{state: 'none'}];
+  PP.close();
+
+  // P2-12 + P2-2: an existing verdict is shown; a connect failure links to the door's own host field.
+  source.setCheck = () => {}; source.check = pin => pin === 'con1/1/2' ? {verdict: 'bad', note: 'no tone'} : null;
+  fresh(MW3); p = openAt(1, 2, 'mw');
+  ok(/Saved verdict: \u2717 Fails \u2014 no tone/.test(p.querySelector('[data-check-current]').textContent), 'P2-12 existing verdict shown');
+  PP.close(); delete source.setCheck; delete source.check;
+  let hostFocused = 0;
+  source.editHost = () => { hostFocused++; }; source.editHostLabel = 'Edit host (Host field above)';
+  fresh(MW3); p = openAt(3, 5, 'lf');
+  p.querySelector('[data-hwok]').checked = true;
+  replies.run.push({ok: true, id: 'c1'});
+  replies.status = [{state: 'done', id: 'c1', result: {ok: false, error: 'Could not reach the OPX at h.', error_kind: 'connect', detail: 'x'}}];
+  p.querySelector('[data-play]').click(); await sleep(30);
+  const link = p.querySelector('[data-edit-host]');
+  ok(link && link.textContent === 'Edit host (Host field above)', 'P2-2 link names the page host field');
+  link.click();
+  ok(hostFocused === 1, 'P2-2 link reaches the page host field');
+  delete source.editHost; delete source.editHostLabel; replies.status = [{state: 'none'}];
   console.log('port play set selfcheck ok (' + n + ' assertions)');
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

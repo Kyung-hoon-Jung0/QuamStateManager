@@ -108,14 +108,14 @@ def port_play_page():
     r = _r()
     store = r._store()
     ctx = r._active_ctx()
-    spec, instrument_json, error = None, '{"controllers": {}}', None
+    spec, instrument, error = None, {"controllers": {}}, None
     if store:
         spec = chip_spec(store)
         if spec is None:
             error = "This chip's wiring could not be read as a rack, so nothing can be played from it."
         engine = r._engine()
         try:
-            instrument_json = json.dumps(engine.get_instrument_wiring()) if engine else instrument_json
+            instrument = engine.get_instrument_wiring() if engine else instrument
         except Exception as exc:  # noqa: BLE001 - shown, never an empty rack
             logger.exception("port play page: instrument wiring failed")
             error = str(exc) or exc.__class__.__name__
@@ -123,7 +123,7 @@ def port_play_page():
     net = (spec or {}).get("network") or {}
     tpl_ctx = dict(
         page="port_play", pp_has_chip=bool(store), pp_spec=spec, pp_error=error,
-        pp_instrument_json=instrument_json, pp_wiring_json=r._wiring_json() if store else "{}",
+        pp_instrument=instrument, pp_wiring_json=r._wiring_json() if store else "{}",
         pp_python=python, pp_env_source=source, pp_envs=_envs(),
         pp_host=net.get("host") or "", pp_cluster=net.get("cluster_name") or "",
         pp_pin=(request.args.get("pin") or "").strip(),

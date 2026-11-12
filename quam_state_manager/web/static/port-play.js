@@ -23,6 +23,8 @@
   // Close always stops (decisions R1); the set itself is remembered (D-5).
   function close() {
     stop().catch(function () {});
+    // The stop request already carries the id; the next popup starts with no run of its own.
+    runId = null;
     if (dialog) dialog.remove();
     dialog = null; liveHw = false; setLive(null);
   }
@@ -160,10 +162,12 @@
         html += '<div data-sim-fig="' + kind + '"></div>';
     });
     var plays = playsByPin(plan), single = (plan.plays || []).length === 0;
-    var edge0 = members.length ? Number(members[0].t.first_edge_ns) : NaN;
+    // A held level has no edge to time: only an edge play measures a first edge (D-18).
+    var timed = plan.waveform === 'edge';
+    var edge0 = timed && members.length ? Number(members[0].t.first_edge_ns) : NaN;
     if (members.length) {
       html += '<table class="ui-table" data-sim-table><thead><tr>' +
-        ['Port', 'Peak', 'Expected', 'First edge (ns)', 'Delta to row 1 (ns)'].map(function (h) {
+        ['Port', 'Peak', 'Expected'].concat(timed ? ['First edge (ns)', 'Delta to row 1 (ns)'] : []).map(function (h) {
           return '<th class="ui-table-head">' + h + '</th>'; }).join('') + '</tr></thead><tbody>';
       members.forEach(function (i) {
         var k = String(i.t.con).replace(/^con/, '') + '/' + i.t.slot + '/' + i.t.port;
@@ -172,8 +176,8 @@
         html += '<tr data-sim-port><td class="ui-table-cell">' + esc(i.label) + '</td>' +
           '<td class="ui-table-cell ui-table-num">' + fmt(i.t.peak) + '</td>' +
           '<td class="ui-table-cell ui-table-num">' + fmt(exp) + '</td>' +
-          '<td class="ui-table-cell ui-table-num">' + (Number.isFinite(edge) && i.t.first_edge_ns !== undefined ? edge : '\u2014') + '</td>' +
-          '<td class="ui-table-cell ui-table-num">' + (Number.isFinite(edge) && Number.isFinite(edge0) && i.t.first_edge_ns !== undefined ? edge - edge0 : '\u2014') + '</td></tr>';
+          (timed ? '<td class="ui-table-cell ui-table-num">' + (Number.isFinite(edge) && i.t.first_edge_ns !== undefined ? edge : '\u2014') + '</td>' +
+          '<td class="ui-table-cell ui-table-num">' + (Number.isFinite(edge) && Number.isFinite(edge0) && i.t.first_edge_ns !== undefined ? edge - edge0 : '\u2014') + '</td>' : '') + '</tr>';
       });
       html += '</tbody></table>';
     }
@@ -181,7 +185,7 @@
       var mx = 0;
       others.forEach(function (i) { ysOf(i).forEach(function (v) { if (Math.abs(v) > mx) mx = Math.abs(v); }); });
       html += '<details class="ui-disclosure" data-sim-others><summary class="ui-disclosure-summary">' + others.length +
-        ' other declared output' + (others.length === 1 ? '' : 's') + ' stayed at their offsets (max |x| ' + mx.toPrecision(3) +
+        ' other declared output' + (others.length === 1 ? '' : 's') + ' stayed at 0 V (max |x| ' + mx.toPrecision(3) +
         ')</summary><div class="ui-disclosure-body"><p class="ui-note">' +
         others.map(function (i) { return esc(i.label); }).join(', ') + '</p></div></details>';
     }
@@ -224,7 +228,7 @@
       if (box.querySelector('[data-error-detail]')) box.querySelector('[data-error-detail]').textContent = res.detail;
       if (res.error_kind === 'connect') {
         var a = document.createElement('a');
-        a.href = '#'; a.setAttribute('data-edit-host', ''); a.textContent = 'Edit host (step 2)';
+        a.href = '#'; a.setAttribute('data-edit-host', ''); a.textContent = ui.editHostLabel || 'Edit host (step 2)';
         a.onclick = function (e) {
           e.preventDefault(); close();
           if (ui.editHost) ui.editHost();
@@ -709,18 +713,25 @@
     // Restore a remembered set when this output is one of its members.
     var stored = null;
     try { stored = JSON.parse(readStore('sessionStorage', SET_KEY) || 'null'); } catch (e) { stored = null; }
-    var valid = outputsOf(source.spec()).map(pinOf);
-    if (stored && Array.isArray(stored.rows) && stored.rows.some(function (r) { return r.pin === ownPin; })) {
+    var kindOf = {}, dropped = [];
+    outputsOf(source.spec()).forEach(function (o) { kindOf[pinOf(o)] = o.kind; });
+    if (stored && Array.isArray(stored.rows) && stored.rows.some(function (r) { return r && r.pin === ownPin; })) {
       stored.rows.forEach(function (r) {
-        if (valid.indexOf(r.pin) < 0 && r.pin !== ownPin) return;
+        if (!r || typeof r.pin !== 'string') return;
         var parts = r.pin.split('/');
-        addRow({con: parts[0], slot: Number(parts[1]), port: Number(parts[2]), kind: r.kind}, r.values, false);
+        var now = r.pin === ownPin ? opener.kind : kindOf[r.pin];
+        if (!now) return;
+        // A row saved for another kind of FEM (re-allocated since) is not replayed with its old fields.
+        if (r.kind !== now) { dropped.push(portLabel({con: parts[0], slot: Number(parts[1]), port: Number(parts[2]), kind: now})); return; }
+        addRow({con: parts[0], slot: Number(parts[1]), port: Number(parts[2]), kind: now}, r.values, false);
       });
+      if (!rowList().length) addRow(opener);
       if (stored.seconds) $('[data-seconds]').value = stored.seconds;
     } else {
       addRow(opener);
     }
     changed();
+    if (dropped.length) message('Not restored: ' + dropped.join(', ') + ' (the FEM kind changed since the set was saved).');
 
     // ---- Request: the first row is the main entry, the rest are `extra` (D-2) ----
     function entry(row, withDelay) {
@@ -778,7 +789,7 @@
       if (entries.length > 1) data.extra = entries.slice(1);
       return data;
     }
-    var ui = {message: message, refuse: refuse, editHost: source.editHost,
+    var ui = {message: message, refuse: refuse, editHost: source.editHost, editHostLabel: source.editHostLabel,
       order: function () { return chosen().map(function (p) { return p.replace(/^con/, ''); }); },
       members: function () { return rowList().map(function (r) { return {pin: r.querySelector('[data-pin]').value, label: portLabel(rowPort(r))}; }); }};
     var lock = {busy: false};
@@ -813,7 +824,11 @@
       var all = outputsOf(source.spec()), at = all.map(pinOf).indexOf(ownPin);
       if (at < 0 || !all.length) return;
       var o = all[(at + d + all.length) % all.length];
+      // Moving to another output closes this popup, and closing always stops: say so.
+      var wasLive = !!(runId && liveSet);
       open({con: o.con, slot: o.slot, port: o.port, femType: o.kind}, source);
+      if (wasLive && dialog) dialog.querySelector('[data-message]').textContent =
+        'The previous play was stopped: moving to another output stops every output.';
     }
     $('[data-prev]').onclick = function () { step(-1); };
     $('[data-next]').onclick = function () { step(1); };
@@ -824,6 +839,17 @@
     });
 
     // D-26 (S1 half): a verdict for the opener port, stored by the source (degrades when absent).
+    // D-26 readback: an existing verdict for this port is shown, not only the rack colour.
+    var had = null;
+    try { had = source.check ? source.check(ownPin) : null; } catch (e) { had = null; }
+    if (had && $('[data-check]')) {
+      var said = document.createElement('p');
+      said.className = 'ui-note'; said.setAttribute('data-check-current', '');
+      said.textContent = 'Saved verdict: ' + (had.verdict === 'ok' ? '✓ Works' : had.verdict === 'bad' ? '✗ Fails' : String(had.verdict)) +
+        (had.note ? ' — ' + had.note : '') + '.';
+      $('[data-check]').parentNode.insertBefore(said, $('[data-check]'));
+      if (had.note) $('[data-check-note]').value = had.note;
+    }
     node.querySelectorAll('[data-verdict]').forEach(function (btn) {
       btn.onclick = function () {
         try { source.setCheck(ownPin, {verdict: btn.getAttribute('data-verdict'), note: $('[data-check-note]').value}); message('Verdict saved for ' + portLabel(opener) + '.'); }

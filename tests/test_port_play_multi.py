@@ -49,7 +49,7 @@ def test_two_lf_ports(spec):
     outs = lambda c: cfg['controllers'][c]['fems']['3']['analog_outputs']
     assert outs('con1')['1']['offset'] == .1
     assert outs('con2')['7'] == dict(outs('con2')['7'], offset=-.3, output_mode='amplified')
-    assert outs('con1')['2']['offset'] == 0.05  # a saved offset elsewhere is kept
+    assert outs('con1')['2']['offset'] == 0.0  # a saved offset outside the play is not driven
     assert cfg['elements']['sm_port_play']['singleInput']['port'] == ('con1', 3, 1)
     assert cfg['elements']['sm_port_play_2']['singleInput']['port'] == ('con2', 3, 7)
     assert cfg['elements']['sm_port_play_2']['operations'] == {'dc': 'sm_port_play_2.pulse'}
@@ -279,6 +279,14 @@ def test_d18_edge_waveform_and_first_edge(spec):
     script = pt.render_script(cfg, plan)
     ast.parse(script)
     assert 'wait(PERIOD_NS // 4, *[_el for _el, _op in PLAYS])' in script
+    # The header names the edge waveform and its real period, not a marker-triggered pulse train.
+    assert 'edge waveform' in script and 'scope trigger' not in script and 'marker port' not in script
+    assert f'one edge every {pt.DEFAULT_PERIOD_NS} ns' in script and f'PERIOD_NS = {plan["period_ns"]}' in script
+    # The page countdown reads the runner's own deadline.
+    assert 'record(deadline_at=time.time() + max_s)' in script
+    with pytest.raises(pt.PortTestError, match='< 0.5'):
+        pt.apply_edge(*pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .5), mw(['con1', 1, 4])]))
+    pt.apply_edge(*pt.build_wizard_multi(spec, [lf(['con1', 3, 1], -.49), mw(['con1', 1, 4])]))
     with pytest.raises(pt.PortTestError, match='direct'):
         pt.apply_edge(*pt.build_wizard_multi(spec, [lf(['con1', 3, 1], .2, 'amplified'), mw(['con1', 1, 4])]))
     # The runner's first edge on a simulated LF trace delayed by the LF port delay.
@@ -362,6 +370,10 @@ def test_d20_connection_failure_is_a_sentence():
     out = r.classify(QmServerDetectionError('failed to detect'), {'host': '10.0.0.5', 'cluster': 'c1'})
     assert out == {'error_kind': 'connect', 'error': 'Could not reach the OPX at 10.0.0.5 (cluster c1).',
                    'detail': 'QmServerDetectionError: failed to detect'}
+    saas = r.classify(TimeoutError('slow'), {'local': None, 'saas': {'host': 'saas.example', 'email': 'e'}})
+    assert saas['error_kind'] == 'connect' and 'OPX' not in saas['error'] and 'QM-SaaS simulator' in saas['error']
+    assert 'OPX' not in r.classify(TimeoutError('x'), {'host': 'saas.example', 'email': 'e'}, 'saas')['error']
+    assert 'OPX' in r.classify(TimeoutError('x'), {'local': {'host': '10.0.0.5'}, 'saas': {'host': 's'}})['error']
     other = r.classify(ValueError('bad'), {'host': 'h'})
     assert other['error_kind'] == 'other' and other['detail'] == 'ValueError: bad'
 
@@ -372,7 +384,12 @@ def test_d21_status_countdown_and_script_export(spec, tmp_path, monkeypatch):
     monkeypatch.setattr(manager, 'status', lambda rid=None: {'state': 'running', 'id': 'r1', 'meta': {'max_s': 12.0}})
     manager.current = {'id': 'r1', 'started': 1234.5}
     st = client.get('/port-test/status').json
-    assert st['started_at'] == 1234.5 and st['max_s'] == 12.0
+    # Still connecting: the process start is not when the outputs start driving.
+    assert st['started_at'] is None and st['max_s'] == 12.0
+    monkeypatch.setattr(manager, 'status', lambda rid=None: {'state': 'running', 'id': 'r1', 'meta': {'max_s': 12.0},
+                                                             'deadline_at': 2000.0})
+    st = client.get('/port-test/status').json
+    assert st['started_at'] == 1988.0, 'countdown measured from the runner deadline'
     body = dict(spec=spec, con='con1', slot=3, port=1, offset=.1, max_s=12,
                 extra=[{'kind': 'mw', 'con': 'con1', 'slot': 1, 'port': 4, 'band': 2, 'lo_hz': 6e9,
                         'if_hz': 5e7, 'full_scale_power_dbm': 1, 'amp': .3},

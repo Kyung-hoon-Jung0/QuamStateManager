@@ -17353,7 +17353,10 @@ function _armPlayCell(cell, portInfo, onPortPlay) {
     cell.setAttribute('tabindex', '0');
     cell.setAttribute('role', 'button');
     cell.setAttribute('data-play', '1');
-    cell.setAttribute('aria-label', 'con' + String(portInfo.con).replace(/^con/, '') + ' FEM ' + portInfo.slot + ' OUT ' + portInfo.port);
+    // One port notation (D-12): an LF output is AO n (LF), an MW output is OUT n (MW).
+    var _mw = /^mw/.test(String(portInfo.femType || ''));
+    cell.setAttribute('aria-label', 'con' + String(portInfo.con).replace(/^con/, '') + ' FEM ' + portInfo.slot + ' ' +
+        (_mw ? 'OUT ' : 'AO ') + portInfo.port + (_mw ? ' (MW)' : ' (LF)'));
     cell.style.cursor = 'pointer';
     cell.addEventListener('click', function(e) {
         if (e.target && e.target.closest && e.target.closest('button')) return;

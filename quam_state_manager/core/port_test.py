@@ -68,9 +68,13 @@ def input_pin(pin) -> tuple | None:
     return con_name(m.group(1)), int(m.group(2)), int(m.group(3))
 
 
-def controllers_from_spec(spec: dict) -> dict:
+def controllers_from_spec(spec: dict, outputs_at_zero: bool = False) -> dict:
     """Element-free OPX1000 allocation from wizard step 3, with the saved
-    port offsets (``spec.port_offsets``) applied to their ports."""
+    port offsets (``spec.port_offsets``) applied to their ports.
+
+    ``outputs_at_zero=True`` (every port play): saved OUTPUT offsets are not
+    applied, so an output outside the play idles at 0 V while the QM is open;
+    only the play's own members drive. Saved input offsets still apply."""
     controllers = {}
     for ctrl in spec.get("instruments", {}).get("controllers", []):
         con = con_name(ctrl["con"])
@@ -98,6 +102,8 @@ def controllers_from_spec(spec: dict) -> dict:
             if math.isfinite(value) and abs(value) <= AI_OFFSET_LIMIT and int(saved.get("gain_db") or 0) == 0:
                 inp["offset"] = value
             continue
+        if outputs_at_zero:
+            continue
         try:
             con, slot, port = pin.split("/")
             out = controllers[con_name(con)]["fems"][str(int(slot))]["analog_outputs"][str(int(port))]
@@ -111,7 +117,7 @@ def controllers_from_spec(spec: dict) -> dict:
 
 
 def build_wizard_dc(spec: dict, port: list, offset: float, output_mode="direct"):
-    cfg = {"controllers": controllers_from_spec(spec)}
+    cfg = {"controllers": controllers_from_spec(spec, outputs_at_zero=True)}
     info = dc_port(cfg, port)
     con, slot, number = info["port"]
     cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]["offset"] = 0.0
@@ -255,10 +261,9 @@ def mw_port(config: dict, port: list) -> list:
 def build_wizard_mw(spec: dict, port: list, band, lo_hz, if_hz, fsp, amp) -> tuple[dict, dict]:
     """CW tone on one MW-FEM output of the wizard allocation.
 
-    Only the played MW port is declared; every other port keeps what
-    ``controllers_from_spec`` gives it (LF ports at their saved offsets,
-    MW ports undeclared)."""
-    cfg = {"version": 1, "controllers": controllers_from_spec(spec)}
+    Only the played MW port is declared; every other port idles at 0 V
+    (LF outputs at offset 0, MW ports undeclared)."""
+    cfg = {"version": 1, "controllers": controllers_from_spec(spec, outputs_at_zero=True)}
     if len(port) == 3:
         port = [con_name(port[0]), port[1], port[2]]
     con, slot, number = mw_port(cfg, port)
@@ -377,7 +382,7 @@ def build_wizard_multi(spec: dict, entries: list) -> tuple[dict, dict]:
         raise PortTestError(f"More outputs than this allocation has ({limit}).")
     if len(entries) == 1:
         return _single(spec, entries[0])
-    cfg = {"version": 1, "controllers": controllers_from_spec(spec),
+    cfg = {"version": 1, "controllers": controllers_from_spec(spec, outputs_at_zero=True),
            "elements": {}, "pulses": {}, "waveforms": {}}
     singles, seen, mw_bands, plays, notes = [], {}, {}, [], []
     for i, entry in enumerate(entries, start=1):
@@ -471,6 +476,10 @@ def apply_edge(cfg: dict, plan: dict) -> tuple[dict, dict]:
             raise PortTestError(f"{con}/{slot}/{number}: the edge waveform needs direct output mode.")
         out = cfg["controllers"][con]["fems"][str(slot)]["analog_outputs"][str(number)]
         level = float(play.get("offset") or 0.0)
+        # A waveform sample must stay below full scale (the sample range is half-open at
+        # +0.5), so the edge level is held strictly inside the direct-mode |offset| bound.
+        if not abs(level) < 0.5:
+            raise PortTestError(f"{con}/{slot}/{number}: the edge waveform needs |offset| < 0.5 V.")
         out["offset"] = 0.0
         pulse = cfg["pulses"][cfg["elements"][play["element"]]["operations"][play["operation"]]]
         cfg["waveforms"][pulse["waveforms"]["single"]]["sample"] = level
@@ -850,12 +859,15 @@ def _fmt_port(p) -> str:
     return "/".join(str(x) for x in (p or [])) or "?"
 
 
-_TITLES = {"dc": "DC offset", "cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC"}
+_TITLES = {"dc": "DC offset", "cw": "CW tone", "pulse": "pulse train with a scope trigger", "loopback": "loopback raw ADC",
+           "edge": "edge waveform"}
 _USE = {
     "dc": "Oscilloscope: zero waveform plus the selected port offset. Runs until Stop or the time limit.",
     "cw": "Spectrum analyser: a tone at the RF frequency below, at the power below. Runs until Stop (Ctrl+C).",
     "pulse": "Oscilloscope: trigger on the marker port; each pulse has the length and peak below, "
              "repeated every PERIOD_NS. Runs until Stop (Ctrl+C).",
+    "edge": f"Oscilloscope: every port plays a {CW_PULSE_NS} ns square pulse at its level, then waits PERIOD_NS ns, "
+            f"so one edge every {DEFAULT_PERIOD_NS} ns on every port. Runs until Stop (Ctrl+C).",
     "loopback": "Cable the output port to the input port. The script plays the readout SHOTS times and "
                 "plots the averaged raw ADC trace (time of flight, amplitude).",
 }
@@ -868,9 +880,10 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "", run_program: b
     output sits at its configured offset while a QM with that config is open
     (QM docs Guides/output_idle_values.md), and closing the QM returns it to 0 V."""
     when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    _kind = "edge" if plan.get("waveform") == "edge" else plan["test"]
     rf = plan.get("rf")
     lines = [
-        f"Port test: {_TITLES[plan['test']]} on {plan['source_element']} "
+        f"Port test: {_TITLES[_kind]} on {plan['source_element']} "
         f"({plan['basis']} basis).",
         f"Generated by QUAM State Manager at {when}" + (f" from {chip_label}." if chip_label else "."),
         "",
@@ -883,7 +896,7 @@ def render_script(cfg: dict, plan: dict, *, chip_label: str = "", run_program: b
         + (f" -> {plan['expected_dbm']:.2f} dBm (P = FSP + 20*log10|amp|, FSP "
            f"{plan['full_scale_power_dbm']} dBm)" if plan.get("expected_dbm") is not None else ""),
         "",
-        _USE[plan["test"]],
+        _USE[_kind],
         "",
         "WARNING: a CW tone or pulse train on a line into a fridge heats it and drives the qubits.",
         "Disconnect the line or make sure this is intended before running on hardware.",
@@ -1127,6 +1140,8 @@ def run_on_hardware(qmm, should_stop=lambda: False, max_s=120.0, log=print,
     cleanup = _Cleanup(qm, record)
     finished = threading.Event()
     deadline = time.monotonic() + max_s
+    # The countdown on the page reads this wall-clock end, not the process start.
+    record(deadline_at=time.time() + max_s)
     def guard():
         # Stop / parent death / deadline halt the job even while the main
         # thread waits inside an SDK call.

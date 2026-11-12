@@ -231,12 +231,17 @@ def close_matching_main(script, work):
         return 1
 
 
-def classify(exc, target) -> dict:
+def classify(exc, target, mode=None) -> dict:
     """The user's sentence for a failure, with the raw text in ``detail`` (D-20)."""
     raw = f"{type(exc).__name__}: {exc}"
     names = {c.__name__ for c in type(exc).__mro__}
     if names & set(CONNECT_ERRORS) or isinstance(exc, (TimeoutError, ConnectionError)):
         t = target or {}
+        saas = t.get("saas") if isinstance(t.get("saas"), dict) else (t if mode == "saas" else None)
+        if saas is not None and not isinstance(t.get("local"), dict):
+            # Only the cloud simulator was tried: no OPX was ever involved.
+            where = f" at {saas['host']}" if saas.get("host") else ""
+            return {"error_kind": "connect", "error": f"Could not reach the QM-SaaS simulator{where}.", "detail": raw}
         if not t.get("host") and isinstance(t.get("local"), dict):
             t = t["local"]
         where = str(t.get("host") or "the configured host")
@@ -345,7 +350,7 @@ def main() -> int:
         else:
             result = {"ok": False, "error": f"unknown mode {mode!r}"}
     except Exception as exc:  # noqa: BLE001 - every failure is the user's answer
-        result = {"ok": False, **classify(exc, req.get("target")),
+        result = {"ok": False, **classify(exc, req.get("target"), req.get("mode")),
                   "traceback": traceback.format_exc()[-3000:]}
         if (work / "stop").exists() or (parent_gone is not None and parent_gone.is_set()):
             # The user's stop ended it: whatever the SDK raised on the way out is not the answer.
