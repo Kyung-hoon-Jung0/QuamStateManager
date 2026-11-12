@@ -77,6 +77,21 @@ def _fem_type(category: str) -> str | None:
     return None
 
 
+def _lab_coupler_gate(pair: dict) -> dict | None:
+    """The CouplerCZGate macro a lab-layout pair plays: the one its ``cz`` alias
+    points at, else ``cz_coupler_only``. Matched by class name, not module (the
+    class is the lab's own). None for any other pair."""
+    if str(pair.get("__class__", "")).endswith(".FixedFrequencyTunableCouplerPair"):
+        return None
+    macros = pair.get("macros") or {}
+    alias = macros.get("cz")
+    name = alias.split("/")[-1] if isinstance(alias, str) and alias.startswith("#./") else "cz_coupler_only"
+    m = macros.get(name)
+    if isinstance(m, dict) and str(m.get("__class__", "")).endswith(".CouplerCZGate"):
+        return m
+    return None
+
+
 def _detect_pair_gate(state: dict) -> tuple[str, bool]:
     """Return ``(dominant_gate, mixed)``. Families: cz_tunable / cz_fixed / cr."""
     families: list[str] = []
@@ -88,6 +103,11 @@ def _detect_pair_gate(state: dict) -> tuple[str, bool]:
         has_cr = (isinstance(pair.get("cross_resonance"), dict) and pair["cross_resonance"])
         if str(pair.get("__class__", "")).endswith(".FixedFrequencyTunableCouplerPair"):
             families.append("cz_coupler")
+        elif has_coupler and _lab_coupler_gate(pair) is not None:
+            # the lab layout of the coupler-only CZ (decisions D-11): the stock
+            # pair with a coupler and a CouplerCZGate macro; read before the
+            # generic CZ branch, which would call it cz_tunable
+            families.append("cz_coupler_only")
         elif "cr" in macro_names or has_cr:
             families.append("cr")
         elif "cz" in macro_names or has_coupler:
@@ -97,6 +117,36 @@ def _detect_pair_gate(state: dict) -> tuple[str, bool]:
     counts = {f: families.count(f) for f in set(families)}
     dominant = max(counts, key=counts.get)
     return dominant, len(counts) > 1
+
+
+def _read_lab_coupler_cz(pairv: dict, macro: dict, coupler: dict, root: dict) -> None:
+    """The lab layout's per-pair values, in the keys its build seeds from
+    (decisions D-8, D-11): the macro's spectator phases and duration, the
+    coupler's settle time, and the CZ pulse's shape and parameters."""
+    spect = macro.get("spectator_qubits_phase_shift")
+    if isinstance(spect, dict) and spect:
+        pairv["spectator_qubits_phase_shift"] = {str(k): v for k, v in spect.items() if _num(v)}
+    if _num(macro.get("duration")):
+        pairv["cz_duration_cycles"] = macro["duration"]
+    if _num(coupler.get("settle_time")):
+        pairv["coupler_settle_time"] = coupler["settle_time"]
+    pulse = macro.get("coupler_flux_pulse")
+    if isinstance(pulse, str) and pulse.startswith("#/"):
+        pulse = _resolve_ptr(root, pulse)
+    if not isinstance(pulse, dict):
+        return
+    snz = str(pulse.get("__class__", "")).endswith(".SNZTwoFluxPulse")
+    pairv["coupler_pulse_shape"] = "snz" if snz else "flattop"
+    if _num(pulse.get("amplitude")):
+        pairv["coupler_amplitude"] = pulse["amplitude"]
+    if _num(pulse.get("flat_length")):
+        pairv["coupler_flat_length"] = pulse["flat_length"]
+    if snz:
+        if _num(pulse.get("padding")):
+            pairv["snz_padding"] = pulse["padding"]
+        for key in ("t_phi", "b_over_a"):
+            if _num(pulse.get(key)):
+                pairv[key] = pulse[key]
 
 
 def _resolve_ptr(root: dict, ptr: Any, _depth: int = 0) -> Any:
@@ -347,6 +397,8 @@ def _extract_populate(state: dict, root: dict) -> dict:
                 for key in ("decouple_offset", "interaction_offset"):
                     if _num(coupler.get(key)):
                         pairv["coupler_" + key] = coupler[key]
+                if _lab_coupler_gate(pair) is m:
+                    _read_lab_coupler_cz(pairv, m, coupler, root)
             # QA regenerate-r2-09: a modern chip keeps the pulse on the
             # moving qubit's z and the macro POINTS at it. Unread, a
             # re-oriented pair was seeded at the default amplitude.
@@ -868,6 +920,13 @@ def reconstruct_spec(state: dict, wiring: dict) -> ReconstructedSpec:
                           "channel": {"kind": "mw_fem", "con": iso[1], "slot": iso[2], "out_port": iso[3]}})
 
     pair_gate, mixed = _detect_pair_gate(state)
+    if pair_gate == "cz_coupler_only":
+        _zq = sorted(q for q, qd in (state.get("qubits") or {}).items()
+                     if isinstance(qd, dict) and isinstance(qd.get("z"), dict))
+        if _zq:
+            notes.append("this chip has coupler-only CZ pairs AND qubits with a flux line ("
+                         + ", ".join(_zq) + "); the coupler-only CZ layout builds qubits without "
+                         "one, so a rebuild in that mode drops those lines -- check before building")
     if mixed:
         notes.append(f"chip uses multiple gate families; rebuilt with '{pair_gate}', "
                      "per-pair variants preserved by the merge graft.")

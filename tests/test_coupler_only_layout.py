@@ -203,3 +203,65 @@ def test_the_extension_recipe_carries_none_of_it():
 def test_additions_name_the_lab_macro():
     from quam_state_manager.core import additions
     assert additions.builder_gate_names(_spec(), ["q1", "q2"]) == ["cz_coupler_only", "cz"]
+
+
+# --- re-generate (D-11) --------------------------------------------------------------------
+
+def _lab_state(snz=True, z_on=()):
+    key = "cz_coupler_only_pulse_q1_q2"
+    pulse = ({"__class__": "quam_config.two_flux_gate.SNZTwoFluxPulse", "amplitude": 0.21, "flat_length": 44,
+              "padding": 3, "t_phi": 1, "b_over_a": 0.4, "id": key} if snz else
+             {"__class__": "quam_builder.common.pulses.FlatTopGaussianPulse", "amplitude": 0.21,
+              "flat_length": 44, "length": 60, "id": key})
+    qubits = {q: {"id": q, "z": None,
+                  "__class__": "quam_builder.architecture.superconducting.qubit.flux_tunable_transmon."
+                               "FluxTunableTransmon"} for q in ("q1", "q2")}
+    for q in z_on:
+        qubits[q]["z"] = {"id": q + ".z"}
+    return {
+        "__class__": "quam_config.my_quam.Quam",
+        "qubits": qubits,
+        "qubit_pairs": {"q1-2": {
+            "__class__": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair."
+                         "FluxTunableTransmonPair",
+            "id": "q1-2", "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
+            "coupler": {"id": "coupler_q1_q2", "flux_point": "off", "decouple_offset": 0.03, "settle_time": 16,
+                        "operations": {key: pulse}},
+            "macros": {"cz_coupler_only": {
+                "__class__": "quam_config.coupler_cz_gate.CouplerCZGate",
+                "coupler_flux_pulse": "#/qubit_pairs/q1-2/coupler/operations/" + key,
+                "phase_shift_control": 0.11, "phase_shift_target": 0.22,
+                "spectator_qubits_phase_shift": {"q3": 0.05}, "duration": 15},
+                "cz": "#./cz_coupler_only"}}},
+    }
+
+
+def _reconstruct(state):
+    from quam_state_manager.core import regen_spec
+    rec = regen_spec.reconstruct_spec(state, {"wiring": {}})
+    return rec
+
+
+def test_a_lab_layout_chip_reads_back_as_its_family():
+    rec = _reconstruct(_lab_state())
+    spec = rec.spec
+    assert spec["pair_gate"] == "cz_coupler_only"
+    assert spec["quam_class"] == "quam_config.my_quam.Quam"
+    pv = next(iter(spec["populate"]["pairs"].values()))
+    assert pv["coupler_pulse_shape"] == "snz" and pv["coupler_amplitude"] == 0.21
+    assert pv["coupler_flat_length"] == 44 and pv["snz_padding"] == 3
+    assert pv["t_phi"] == 1 and pv["b_over_a"] == 0.4
+    assert pv["spectator_qubits_phase_shift"] == {"q3": 0.05} and pv["cz_duration_cycles"] == 15
+    assert pv["phase_shift_control"] == 0.11 and pv["phase_shift_target"] == 0.22
+    assert pv["coupler_decouple_offset"] == 0.03 and pv["coupler_settle_time"] == 16
+
+
+def test_a_flat_top_lab_chip_reads_its_shape():
+    pv = next(iter(_reconstruct(_lab_state(snz=False)).spec["populate"]["pairs"].values()))
+    assert pv["coupler_pulse_shape"] == "flattop" and "snz_padding" not in pv
+
+
+def test_a_mixed_chip_says_so():
+    rec = _reconstruct(_lab_state(z_on=("q1",)))
+    assert rec.spec["pair_gate"] == "cz_coupler_only"
+    assert any("qubits with a flux line (q1)" in n for n in rec.notes), rec.notes
