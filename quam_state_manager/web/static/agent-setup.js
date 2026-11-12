@@ -189,7 +189,9 @@ window.AgentSetup = (function () {
     // review r3 P2-6: the frame follows the worst row
     var bad = (rec.rows || []).some(function (r) { return r.agent === "disagrees" || r.agent === "unverified"; });
     // review r5 P2: green only when EVERY row is an independent agreement; otherwise neutral
-    var allAgree = (rec.rows || []).length > 0 && (rec.rows || []).every(function (r) { return r.agent === "agrees"; });
+    // review r6 P3: echo rows neither block nor count; every other row must agree, and at least one does
+    var counted = (rec.rows || []).filter(function (r) { return r.agent !== "echo"; });
+    var allAgree = counted.length > 0 && counted.every(function (r) { return r.agent === "agrees"; });
     var rows = (rec.rows || []).map(function (r) {
       var mine = r.sm === null || r.sm === undefined || (Array.isArray(r.sm) && !r.sm.length) ? "—" : short(r.sm);
       var cls = r.agent === "agrees" && !stale ? "asx-ok" : "asx-no";
@@ -608,6 +610,15 @@ window.AgentSetup = (function () {
   /* ---- Step 3: the questions, Investigate by agent, the popup (D-16..D-21) ---- */
   var NS = "unknown";
   function optLabel(o) { return o === NS ? "not sure" : o; }
+  // review r6 P2: which never-touch list SM enforces right now, and where it comes from
+  function ntInForce() {
+    var f = (S.context || {}).never_touch_in_force || {};
+    var parts = (f.sources || []).map(function (s) {
+      return (s.from === "context_block" ? "the lab-context file " + s.file : "this SM's record") + ": " + s.tokens.join(", ");
+    });
+    return '<p class="asx-small muted" id="as-nt-force">' + (parts.length ? "In force now — " + esc(parts.join(" · "))
+      : "In force now: nothing is listed.") + "</p>";
+  }
   function ctrlHtml(q) {
     var v = S.answers[q.id];
     if (q.kind === "choice") {
@@ -623,6 +634,7 @@ window.AgentSetup = (function () {
       // free text with the chip's own names offered; any text is accepted (D-20)
       var list = Array.isArray(v) ? v.join(", ") : String(v || "");
       return '<input type="text" data-q="' + esc(q.id) + '" list="as-nt-tokens" value="' + esc(list) + '" placeholder="e.g. q3, twpa, qubits.q1.xy" onchange="AgentSetup.answer(this)">'
+        + ntInForce()
         + '<datalist id="as-nt-tokens">' + (q.tokens || []).map(function (t) { return '<option value="' + esc(t) + '">'; }).join("") + "</datalist>";
     }
     return '<textarea data-q="' + esc(q.id) + '" rows="3" onchange="AgentSetup.answer(this)">' + esc(v || "") + "</textarea>";

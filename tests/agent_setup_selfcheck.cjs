@@ -215,10 +215,16 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
   A.confirmBy('claude'); await tick(40);
   { const c = document.getElementById('as-confirm-result');
-    ok(c && !c.classList.contains('asx-result-ok') && !c.classList.contains('asx-result-bad'), 'review r5 P2: an echo row keeps the card neutral'); }
+    ok(c && c.classList.contains('asx-result-ok'), 'review r6 P3: echo rows neither block nor count'); }
   confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
   A.confirmBy('claude'); await tick(40);
   ok(document.getElementById('as-confirm-result').classList.contains('asx-result-ok'), 'review r5 P2: all independent agreements -> green');
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }, { key: 'run_folders', sm: ['a'], agent: 'disagrees', agent_value: ['a', 'b'], matched: 1, of: 2 }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-bad'), 'review r6 P3: a partial list row is not agreement');
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-ok'), 'review r6 P3: echo rows do not block green');
   // D-23: a result for another project is shown as stale
   lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
   A.load(); await tick(40);

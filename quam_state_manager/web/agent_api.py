@@ -1879,7 +1879,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         # review r3 P1-1: the RUN's own chip (its live path, captured at start) -- never the
         # chip the window happens to show when the driver thread stages minutes later
         from quam_state_manager.core import working_copy as _wc
-        _nt = _as.never_touch_list(app.instance_path, ctx.get("qualibrate_project"), _wc.key_for(live))
+        _nt = _as.never_touch_in_force(app.instance_path, ctx.get("qualibrate_project"), _wc.key_for(live),
+                                       r._calibrations_folder(ctx) or None)["tokens"]
         if _nt:
             _nt = _as.expand_never_touch(_nt, getattr(store, "merged", None))
     except Exception as exc:  # noqa: BLE001 -- review r4 P2-5: an unreadable list stages NOTHING

@@ -499,7 +499,10 @@ def context_get():
         except Exception:  # noqa: BLE001
             nodes = []
     facts = st.detect_facts(store.state, store.wiring, nodes)
+    k = _ask_key()
+    nt_force = st.never_touch_in_force(current_app.instance_path, k["project"], k["chip"], cal)
     return jsonify(ok=True, facts=facts, questions=st.questions(facts), calibrations_folder=cal,
+                   never_touch_in_force=nt_force,
                    data_folder=_data_folder(), written=st.context_written(cal), chip=aa._chip_name(),
                    saved=st.saved_answers(current_app.instance_path, cal))
 

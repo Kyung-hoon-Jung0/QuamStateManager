@@ -436,7 +436,7 @@ class TestReviewR2:
         rows = {r["key"]: r for r in ac.compare_confirm(one, sm, roots=roots["list"])["rows"]}
         assert rows["chip_name"]["agent"] == "echo" and rows["n_qubits"]["agent"] == "echo" and rows["cwd"]["agent"] == "echo"
         assert rows["node_files"]["agent"] == "disagrees" and (rows["node_files"]["matched"], rows["node_files"]["of"]) == (1, 4)
-        most = {"seen": {"node_files": ["a.py", "b", "c", "d", "q"]}}
+        most = {"seen": {"node_files": ["a.py", "b", "c", "d"]}}
         assert {r["key"]: r["agent"] for r in ac.compare_confirm(most, sm, roots=roots["list"])["rows"]}["node_files"] == "agrees"
 
 
@@ -695,3 +695,42 @@ def test_an_agent_apply_with_a_listed_path_staged_is_refused(pc):
     _write_ctx(pc, {"never_touch": [q]})
     r1 = pc.post("/state/apply-to-live", data={}, headers={"X-SM-Agent": "claude"})
     assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+
+
+# ---- review r6
+def test_a_block_list_is_enforced_on_a_fresh_instance(pc):
+    """review r6 P2: the lab-context block in the calibrations folder is the folder's shared truth."""
+    from quam_state_manager.core import agent_setup as st
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    block = st.context_block({"n_qubits": 1}, {"never_touch": [q]}, chip="c")
+    (pc._projcal / "CLAUDE.local.md").write_text("lab\n\n" + block, encoding="utf-8")
+    assert st.never_touch_list(pc._app.instance_path, "p1", "x") == []          # nothing in this SM's record
+    r1 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"}, headers={"X-SM-Agent": "claude"})
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch"
+    f = pc.get("/api/agent/setup/context").get_json()["never_touch_in_force"]
+    assert f["tokens"] == [q] and f["sources"][0]["from"] == "context_block"
+
+
+def test_a_list_row_agrees_only_at_full_match(roots):
+    sm = {"node_files": ["a", "b", "c", "d", "e"]}
+    most = {"seen": {"node_files": ["a", "b", "c", "d", "q"]}}
+    all_ = {"seen": {"node_files": ["a", "b", "c"]}}
+    f = lambda a: {r["key"]: r["agent"] for r in ac.compare_confirm(a, sm, roots=roots["list"])["rows"]}["node_files"]
+    assert f(most) == "disagrees" and f(all_) == "agrees"
+
+
+def test_a_person_without_proof_is_told_to_reload(pc):
+    from quam_state_manager.web import callers
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        q = sorted(r._active_ctx()["store"].state["qubits"])[0]
+    _write_ctx(pc, {"never_touch": [q]})
+    pc._app.config["PROVE_CALLERS"] = True
+    pc._app.config["SM_PERSON_SECRET"] = "s3cret"
+    try:
+        r1 = pc.post("/field/edit", data={"dot_path": f"qubits.{q}.T1", "value": "2e-5"})
+        assert "reload that window" in r1.get_json()["how"]
+    finally:
+        pc._app.config.pop("PROVE_CALLERS", None)

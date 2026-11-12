@@ -6807,8 +6807,9 @@ def _never_touch_refusal(paths) -> Any:
     try:
         ctx = _active_ctx()
         from quam_state_manager.web import agent_api as _aa
-        tokens = agent_setup.never_touch_list(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
-                                              _aa._chip_key() if _active_path() else None)
+        tokens = agent_setup.never_touch_in_force(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
+                                                  _aa._chip_key() if _active_path() else None,
+                                                  _calibrations_folder(ctx) or None)["tokens"]
         if tokens:
             store = (ctx or {}).get("store")
             tokens = agent_setup.expand_never_touch(tokens, getattr(store, "merged", None))
@@ -6819,9 +6820,13 @@ def _never_touch_refusal(paths) -> Any:
     for p in paths:
         hit = agent_setup.never_touch_hit(str(p or ""), tokens)
         if hit:
+            # review r6 P3: a person whose proof cookie is missing is told how to get it back
+            how = ("leave it; ask the person if it must change" if request.headers.get("X-SM-Agent")
+                   else "if you are a person using SM's own window, reload that window and press again "
+                        "(SM could not prove the press came from it); an agent: leave it and ask the person")
             return jsonify(ok=False, refused="never_touch", path=p, rule=hit,
                            error=f"{p} is under '{hit}', which the person listed as never to be changed",
-                           how="leave it; ask the person if it must change"), 403
+                           how=how), 403
     return None
 
 
@@ -6896,9 +6901,10 @@ def _never_touch_agent_guard():
         try:
             from quam_state_manager.core import agent_setup
             from quam_state_manager.web import agent_api as _aa
-            listed = agent_setup.never_touch_list(current_app.instance_path,
-                                                  (_active_ctx() or {}).get("qualibrate_project"),
-                                                  _aa._chip_key() if _active_path() else None)
+            listed = agent_setup.never_touch_in_force(current_app.instance_path,
+                                                      (_active_ctx() or {}).get("qualibrate_project"),
+                                                      _aa._chip_key() if _active_path() else None,
+                                                      _calibrations_folder() or None)["tokens"]
         except Exception as exc:  # noqa: BLE001
             return _never_touch_unchecked(type(exc).__name__)
         return _never_touch_unchecked("this door names no path SM can check") if listed else None

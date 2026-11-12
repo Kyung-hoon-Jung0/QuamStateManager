@@ -860,6 +860,37 @@ def _pair_has_qubit(pair_key, pair: Any, wiring_pair: Any, qubit: str) -> bool:
     return bool(m) and len(members) == 2 and (m.group(1) + members[1]) == q
 
 
+def never_touch_from_block(cal_folder) -> tuple[list[str], str | None]:
+    """The never-touch list written in the lab-context block of the calibrations
+    folder (the folder's shared truth) and the file it came from."""
+    if not cal_folder:
+        return [], None
+    for p in (context_path(cal_folder, "claude", True), context_path(cal_folder, "claude", False),
+              context_path(cal_folder, "codex")):
+        try:
+            m = _CTX_BLOCK.search(p.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if m:
+            lst = _answers_from_block(m.group(0)).get("never_touch") or []
+            return [str(x) for x in lst if str(x).strip()], str(p)
+    return [], None
+
+
+def never_touch_in_force(instance_path, project: str | None, chip: str | None, cal_folder) -> dict:
+    """review r6 P2: the list SM enforces = this instance's record for the
+    project + chip UNION the block in the calibrations folder; with sources."""
+    mine = never_touch_list(instance_path, project, chip)
+    block, block_file = never_touch_from_block(cal_folder)
+    tokens = list(dict.fromkeys(mine + block))
+    sources = []
+    if mine:
+        sources.append({"from": "sm_record", "tokens": mine})
+    if block:
+        sources.append({"from": "context_block", "file": block_file, "tokens": block})
+    return {"tokens": tokens, "sources": sources}
+
+
 def save_never_touch(instance_path, project: str | None, chip: str | None, lst: list[str]) -> None:
     """Write this pair's list; every other pair's list is kept."""
     by = dict(load_record(instance_path).get("never_touch_by") or {})

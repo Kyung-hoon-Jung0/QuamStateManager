@@ -38,7 +38,7 @@ _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.S | re.I)
 # values SM hands the agent itself (sm_status, the cwd SM starts it in): agreement is an echo
 SM_ECHO = ("chip_name", "n_qubits", "cwd", "config_file")   # review r4 P3-7: the prompt names the config
 LIST_FIELDS = ("node_files", "run_folders")
-LIST_AGREE_SHARE = 0.8        # review r2 P2-4: most of what the agent lists must be SM's
+LIST_AGREE_SHARE = 1.0        # review r6 P3: a list row agrees only when ALL it lists is SM's
 CONFIRM_FIELDS = ("chip_name", "n_qubits", "cwd", "config_file", "state_path_in_config",
                   "calibrations_folder_in_config", "storage_in_config", "node_files", "run_folders")
 QUOTE_REQUIRED = ("state_path_in_config", "calibrations_folder_in_config", "storage_in_config")

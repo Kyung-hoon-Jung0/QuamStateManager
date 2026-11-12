@@ -48,7 +48,8 @@ global.fetch = window.fetch = function (url, opts) {
   if (/\/api\/agent\/setup$/.test(url)) resp = status;
   else if (/\/setup\/asks$/.test(url)) resp = { ok: true, running: null, confirm: null, investigate: invStored };
   else if (/\/setup\/investigate$/.test(url)) { resp = inv; invStored = inv; }
-  else if (/\/setup\/context$/.test(url) && method === 'GET') resp = { ok: true, facts: { n_qubits: 4, n_pairs: 3, bias_modes: { opx: 4 } }, questions: QS, saved: {} };
+  else if (/\/setup\/context$/.test(url) && method === 'GET') resp = { ok: true, facts: { n_qubits: 4, n_pairs: 3, bias_modes: { opx: 4 } }, questions: QS, saved: {},
+    never_touch_in_force: { tokens: ['qA1'], sources: [{ from: 'context_block', file: 'D:/lab/cal/CLAUDE.local.md', tokens: ['qA1'] }] } };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, previews: {}, writes: {} };
   else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true };
   return Promise.resolve({ status: 200, json: () => Promise.resolve(JSON.parse(JSON.stringify(resp))) });
@@ -71,6 +72,7 @@ const $ = (s) => document.querySelector(s);
   // D-20: never_touch is free text with the chip's names offered
   const nt = $('#as-ctx input[data-q="never_touch"]');
   ok(nt && nt.getAttribute('list') === 'as-nt-tokens' && document.querySelectorAll('#as-nt-tokens option').length === 3, 'D-20: never_touch offers the chip names as autocomplete');
+  ok(/In force now — the lab-context file D:\/lab\/cal\/CLAUDE\.local\.md: qA1/.test(($('#as-nt-force') || {}).textContent || ''), 'review r6 P2: the box says which list is in force and from where');
   // investigate
   A.investigate('codex');
   ok(Array.from(document.querySelectorAll('#as-investigate button')).every(b => b.disabled) || /asking Codex/.test($('#as-inv').textContent), 'D-23: one ask at a time');
