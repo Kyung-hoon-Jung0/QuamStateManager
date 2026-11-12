@@ -582,8 +582,11 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             if isinstance(cls_str, str) and cls_str:
                 entry = _class_entry(manifest, cls_str)
                 if entry is None:
-                    emit("unknown_class", "error", cls_str, None, path,
-                        f"{cls_str} was not probed in the selected env (harvest drift)",
+                    # absent from the env's schema = NOT CHECKED YET (e.g. the
+                    # cache was last probed for another chip), never a verdict
+                    # that the class is unknown or cannot be imported
+                    emit("unknown_class", "warning", cls_str, None, path,
+                        f"{cls_str} has not been checked in the selected env yet",
                         "re-probe the environment")
                 elif not entry.get("importable"):
                     emit("unimportable_class", "error", cls_str, None, path,
