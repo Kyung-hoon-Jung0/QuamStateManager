@@ -98,8 +98,9 @@ window.ComponentMap = (function () {
     return rows && rows.length ? rows : null;
   }
 
-  // Hover panels (Qubits / Pairs pages only): a map whose click does something
-  // else -- a pick filter, the add door's ghosts -- keeps the explicit Expand.
+  // Hover panels (Qubits / Pairs pages only): a stone or edge opens the hover
+  // panel, whose own Expand opens the inspector -- even with the add door on.
+  // A pick-filter map (Pulses) keeps its own click and gets no hover panel.
   function _hoverMode(root) {
     if (!root || root.getAttribute("data-cm-pick") === "1") return false;
     var hl = root.getAttribute("data-highlight") || "";
