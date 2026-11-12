@@ -103,7 +103,21 @@ def walk(node, path, acc):
     return acc
 
 def state(folder):
-    return json.load(open(os.path.join(folder, "state.json"), encoding="utf-8"))
+    st = json.load(open(os.path.join(folder, "state.json"), encoding="utf-8"))
+    wp = os.path.join(folder, "wiring.json")
+    if os.path.exists(wp):   # pointers reach into wiring + network: read them as quam merges them
+        st = dict(st, **{k: v for k, v in json.load(open(wp, encoding="utf-8")).items() if k not in st})
+    return st
+
+def coupler_port(st, coupler):
+    """the coupler's output port object, following a "#/..." pointer into the state"""
+    node = coupler.get("opx_output")
+    while isinstance(node, str) and node.startswith("#/"):
+        cur = st
+        for part in node[2:].split("/"):
+            cur = cur[part] if isinstance(cur, dict) else cur[int(part)]
+        node = cur
+    return node if isinstance(node, dict) else {}
 
 def shape(st):
     """classes + key sets of the objects the layout is about, keyed without pulse names"""
@@ -115,6 +129,8 @@ def shape(st):
           "couplers": sorted({p["coupler"].get("__class__") for p in st["qubit_pairs"].values()}),
           "coupler_ids": sorted(p["coupler"].get("id") for p in st["qubit_pairs"].values()),
           "coupler_keys": sorted(set().union(*[set(p["coupler"]) for p in st["qubit_pairs"].values()])),
+          "coupler_port_keys": sorted(set().union(*[set(coupler_port(st, p["coupler"]))
+                                                    for p in st["qubit_pairs"].values()])),
           "macro_classes": sorted({(k, m.get("__class__") if isinstance(m, dict) else "alias:" + m)
                                    for p in st["qubit_pairs"].values() for k, m in p["macros"].items()}),
           "macro_keys": sorted(set().union(*[set(m) for p in st["qubit_pairs"].values()
@@ -188,7 +204,8 @@ def test_the_lab_layout_builds_loads_and_plays(tmp_path):
     outcome = _build(_spec(), built)
     res = _check(tmp_path, built)
     sb, sr = res["shape_built"], res["shape_ref"]
-    for key in ("root", "qubits", "qubit_z", "pairs", "couplers", "coupler_ids", "coupler_keys", "macro_classes", "macro_keys"):
+    for key in ("root", "qubits", "qubit_z", "pairs", "pair_keys", "couplers", "coupler_ids", "coupler_keys",
+                "coupler_port_keys", "macro_classes", "macro_keys"):
         assert sb[key] == sr[key], (key, sb[key], sr[key])
     # the fixture is flat-top on every pair: the built flat-top pulse has the same full class,
     # and the SNZ pair carries the lab's own SNZ class
@@ -196,6 +213,7 @@ def test_the_lab_layout_builds_loads_and_plays(tmp_path):
     assert sb["cz_pulse_classes"] == ["quam_builder.common.pulses.FlatTopGaussianPulse",
                                       "quam_config.two_flux_gate.SNZTwoFluxPulse"], sb["cz_pulse_classes"]
     assert sb["qubit_z"] == ["None"]
+    assert sb["coupler_port_keys"], "the coupler port was found (a pointer that resolves to nothing proves nothing)"
     assert not res["ext_strings"]
     assert res["root_class"] == LAB_ROOT
     assert res["coupler_elements"] == ["coupler_q1_q2", "coupler_q2_q3"] and res["z_elements"] == []
