@@ -848,7 +848,56 @@
       });
   }
 
+  // The lab code folder of the selected env (stored by SM per env; the server
+  // puts it first on PYTHONPATH for the probe and the build).
+  function loadLabCodeDir(python) {
+    var input = document.getElementById("gen-lab-code-dir");
+    var status = document.getElementById("gen-lab-code-dir-status");
+    state.labCodeDir = null;
+    if (input) input.value = "";
+    if (status) status.textContent = "";
+    if (!python) return;
+    fetch("/generate/lab-code-dir?python=" + encodeURIComponent(python))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (state.env !== python) return;
+        state.labCodeDir = (res && res.folder) || null;
+        if (input) input.value = state.labCodeDir || "";
+      }).catch(function () { /* the field stays blank; Check and save still works */ });
+  }
+
+  function saveLabCodeDir() {
+    var input = document.getElementById("gen-lab-code-dir");
+    var status = document.getElementById("gen-lab-code-dir-status");
+    var python = state.env;
+    if (!python) {
+      if (status) status.textContent = "Choose a Python environment first.";
+      return;
+    }
+    var folder = input ? input.value.trim() : "";
+    if (status) status.textContent = folder ? "Checking that quam_config imports from it…" : "Clearing…";
+    return fetch("/generate/lab-code-dir", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ python: python, folder: folder })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (state.env !== python) return;
+      if (res && res.ok) {
+        state.labCodeDir = res.folder || null;
+        if (status) status.textContent = res.folder
+          ? "✓ quam_config imports from " + res.quam_config_file
+          : "Cleared: this environment's own packages are used.";
+        _couplerCzEnv = null;          // the probe runs again with the new path
+        syncLineTypeToggles();
+      } else if (status) {
+        status.textContent = "✗ " + ((res && res.error) || "could not check this folder");
+      }
+    }).catch(function () {
+      if (status) status.textContent = "✗ could not check this folder";
+    });
+  }
+
   function applySelection(python) {
+    if (state.env !== python) loadLabCodeDir(python);
     state.env = python;
     _allocAutoBlocked = false;   // a new env deserves a fresh auto attempt
     var list = document.getElementById("gen-env-list");
@@ -2920,8 +2969,8 @@
   var _couplerCzLabAvailable = false;
   var _labRoot = null;
   var COUPLER_CZ_LAB_BLOCKER = "needs your lab's quam_config.coupler_cz_gate.CouplerCZGate in this environment: "
-    + "install your lab's quam_config checkout into it (pip install -e <checkout>), or start the State Manager "
-    + "with that checkout on PYTHONPATH -- the State Manager has no path setting of its own for it";
+    + "set the Lab code folder in step 1 to your lab's quam_config checkout, "
+    + "or install that checkout into the environment (pip install -e <checkout>)";
   function couplerCzLabBlocker() {
     if (!state.env) return "choose a Python environment first — your lab's coupler gate is checked in it";
     if (_couplerCzCheck === "checking") return "checking this environment for your lab's coupler gate…";
@@ -10449,6 +10498,7 @@
 
     var rows = [
       ["Environment", state.env || "(none selected — step 1)"],
+      ["Lab code folder", state.labCodeDir || "(none — the environment's own packages)"],
       ["Network", (sp.network.host || "?") +
         " · cluster " + (sp.network.cluster_name || "?") +
         // QA F10: the port that will be written, shown before Generate
@@ -13709,6 +13759,7 @@
     init: init,
     reloadEnvs: loadEnvs,
     useCustomEnv: useCustomEnv,
+    saveLabCodeDir: saveLabCodeDir,
     // docs/135: force the full conda scan past the mtime-keyed memo.
     rescanEnvs: function (btn) {
       var list = document.getElementById("gen-env-list");

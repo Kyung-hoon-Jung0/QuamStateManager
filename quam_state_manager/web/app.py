@@ -1176,6 +1176,14 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         threading.Thread(target=_warm_envs, name="sm-env-warm",
                          daemon=True).start()
 
+    # the per-env lab code folders every generator subprocess reads
+    try:
+        from quam_state_manager.core import config_generator as _cg_dirs
+        _cg_dirs.load_lab_code_dirs(app.instance_path)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("lab code folders not loaded", exc_info=True)
+
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)
     # w7 liveedit (RAM P5): compile every template off the request path. A
