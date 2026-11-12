@@ -329,7 +329,8 @@ class QueryEngine:
         qt = p.get("qubit_target", "")
         result["qubit_control"] = _pair_qubit_ref(self.store, qc, base + ("qubit_control",))
         result["qubit_target"] = _pair_qubit_ref(self.store, qt, base + ("qubit_target",))
-        result["moving_qubit"] = p.get("moving_qubit")
+        # a pair whose CZ plays on the coupler only moves no qubit (review r2 P2-4)
+        result["moving_qubit"] = None if _coupler_only_pair(p) else p.get("moving_qubit")
 
         macros = p.get("macros") or {}
         if not isinstance(macros, dict):
@@ -365,7 +366,9 @@ class QueryEngine:
             fpq = gate.get("flux_pulse_qubit") or {}
             fpq_base = base + ("macros", gate_name, "flux_pulse_qubit")
             fpq, fpq_base = _deref_pulse_ref(self.store, fpq, fpq_base)
-            result[f"{prefix}_amplitude"] = fpq.get("amplitude")
+            if fpq or not gate.get("coupler_flux_pulse"):
+                # a coupler-only CZ has no qubit pulse: no qubit amplitude row for it (review r2 P2-4)
+                result[f"{prefix}_amplitude"] = fpq.get("amplitude")
             result[f"{prefix}_length"] = _resolve(self.store, fpq.get("length"), fpq_base + ("length",))
 
             if "flat_length" in fpq:
@@ -950,6 +953,7 @@ class QueryEngine:
                 # because an override is exactly the case worth seeing.
                 "moving_qubit": (p.get("moving_qubit")
                                  if p.get("moving_qubit") in ("control", "target")
+                                 and not _coupler_only_pair(p)
                                  else None),
                 "cz_fidelity": best_fidelity,
                 "fidelity_source": fidelity_source,
@@ -1970,6 +1974,14 @@ def _deref_pulse_ref(
                 return resolved, tuple(val[2:].split("/"))
             return resolved, path_tuple
     return {}, path_tuple
+
+
+def _coupler_only_pair(pair: Any) -> bool:
+    """True when every CZ macro of *pair* plays on the coupler only (a
+    ``coupler_flux_pulse`` and no ``flux_pulse_qubit``): no qubit moves."""
+    macros = (pair or {}).get("macros") if isinstance(pair, dict) else None
+    gates = [g for g in (macros or {}).values() if isinstance(g, dict)]
+    return bool(gates) and any(g.get("coupler_flux_pulse") for g in gates)         and not any(g.get("flux_pulse_qubit") for g in gates)
 
 
 def _num_or_none(v: Any) -> bool:

@@ -2919,7 +2919,9 @@
   // The lab layout: the lab's own gate class, and the lab root to pre-fill (D-2).
   var _couplerCzLabAvailable = false;
   var _labRoot = null;
-  var COUPLER_CZ_LAB_BLOCKER = "needs your lab's quam_config.coupler_cz_gate.CouplerCZGate in this environment (put that quam_config package on its path)";
+  var COUPLER_CZ_LAB_BLOCKER = "needs your lab's quam_config.coupler_cz_gate.CouplerCZGate in this environment: "
+    + "install your lab's quam_config checkout into it (pip install -e <checkout>), or start the State Manager "
+    + "with that checkout on PYTHONPATH -- the State Manager has no path setting of its own for it";
   function couplerCzLabBlocker() {
     if (!state.env) return "choose a Python environment first — your lab's coupler gate is checked in it";
     if (_couplerCzCheck === "checking") return "checking this environment for your lab's coupler gate…";
@@ -6583,6 +6585,18 @@
       options: ["", "auto", "manual"] },
     { field: "coupler_interaction_offset", label: "coupler off", dim: "volt" }
   ];
+  // The lab coupler-only CZ (cz_coupler_only): the pulse shape, its length and
+  // amplitude, and the SNZ shape's own parameters. No moving qubit, no
+  // interaction offset: this gate plays on the coupler only (review r2 P2-3/4).
+  var POP_COUPLER_ONLY_PAIR_COLS = [
+    { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"] },
+    { field: "cz_interaction_duration", label: "CZ dur", dim: "time" },
+    { field: "cz_amplitude", label: "CZ amp", dim: "volt" },
+    { field: "snz_padding", label: "SNZ padding", dim: "time" },
+    { field: "t_phi", label: "SNZ t_phi" },
+    { field: "b_over_a", label: "SNZ b/a" },
+    { field: "cz_order", label: "order", kind: "select", options: ["", "auto", "manual"] }
+  ];
   var POP_CR_PAIR_COLS = [
     { field: "cr_drive_amplitude", label: "CR drive amp" },
     { field: "cr_cancel_amplitude", label: "CR cancel amp" },
@@ -6621,7 +6635,8 @@
         ? POP_CR_PAIR_COLS.concat(POP_ZZ_PAIR_COLS)
         : POP_CR_PAIR_COLS;
     }
-    if (gate === "cz_coupler" || gate === "cz_coupler_only") return POP_CZ_PAIR_COLS.filter(function (c) { return c.field !== "moving_qubit" && c.field !== "cz_variant"; });
+    if (gate === "cz_coupler_only") return POP_COUPLER_ONLY_PAIR_COLS;
+    if (gate === "cz_coupler") return POP_CZ_PAIR_COLS.filter(function (c) { return c.field !== "moving_qubit" && c.field !== "cz_variant"; });
     if (gate === "cz_tunable") return POP_CZ_PAIR_COLS;
     return POP_CZ_PAIR_COLS.filter(function (c) {
       return c.field !== "coupler_interaction_offset";

@@ -317,3 +317,37 @@ def test_planted_faults_are_named(tmp_path, monkeypatch, fault):
     spec["quam_class"] = "quam_config.no_such_module.Quam"
     outcome = run_generator(PY, "build", spec, tmp_path / "o", timeout=900)
     assert not outcome.get("ok") and "does not import here" in str(outcome)
+
+
+def test_the_wizard_pair_values_reach_the_built_chip_and_the_recipe(tmp_path):
+    """The wizard's pair table writes cz_amplitude / cz_interaction_duration: the built chip
+    and the exported recipe carry them on the lab pulse, and what cannot be applied is
+    said in the build result (review r2 P1)."""
+    spec = _spec()
+    spec["populate"] = {"pairs": {"q1-q2": {"cz_amplitude": 0.15, "cz_interaction_duration": 120},
+                                  "q2-q3": {"coupler_pulse_shape": "snz", "cz_amplitude": 0.15,
+                                            "cz_interaction_duration": 120}}}
+    out_a = tmp_path / "a"
+    outcome = _build(spec, out_a)
+    state = json.loads((out_a / "state.json").read_text(encoding="utf-8"))
+    ft = state["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_coupler_only_pulse_q1_q2"]
+    assert (ft["amplitude"], ft["length"], ft["flat_length"]) == (0.15, 120, 104)
+    snz = state["qubit_pairs"]["q2-3"]["coupler"]["operations"]["cz_coupler_only_pulse_q2_q3"]
+    assert snz["amplitude"] == 0.15
+    warns = " ".join((outcome.get("result") or {}).get("warnings") or [])
+    assert "q2-3: CZ dur (120 ns) was not applied" in warns, warns
+    result = outcome.get("result") or {}
+    bundle = script_emitter.emit_bundle(spec, result.get("allocation") or {}, result.get("versions") or {},
+                                        "lab", stamp="2026-01-01")
+    sdir = tmp_path / "scripts"
+    script_emitter.write_bundle(sdir, bundle)
+    out_b = tmp_path / "b"
+    out_b.mkdir()
+    for script in ("01_make_wiring.py", "02_build_machine.py"):
+        r = subprocess.run([PY, str(sdir / script), str(out_b)], capture_output=True, text=True,
+                           encoding="utf-8", cwd=str(sdir), timeout=900)
+        assert r.returncode == 0, f"{script}: {r.stdout[-2000:]}\n{r.stderr[-4000:]}"
+        if script.startswith("02"):
+            assert "was not applied" in r.stderr, r.stderr[-2000:]
+    b = json.loads((out_b / "state.json").read_text(encoding="utf-8"))
+    assert b["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_coupler_only_pulse_q1_q2"] == ft

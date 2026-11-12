@@ -3082,8 +3082,21 @@ def _seed_coupler_only(pair, vals):
     control, target = pair.qubit_control.name, pair.qubit_target.name
     key = _coupler_only_pulse_key(control, target)
     shape = str(vals.get("coupler_pulse_shape") or "flattop").lower()
-    amplitude = vals.get("coupler_amplitude", c["amplitude_v"])
-    flat = int(vals.get("coupler_flat_length", c["flat_ns"]))
+    warnings = []
+    # the wizard's pair table writes cz_amplitude / cz_interaction_duration (review r2 P1):
+    # they reach this gate's pulse; the coupler_* keys (a spec, a Re-generate) win over them
+    amplitude = vals.get("coupler_amplitude", vals.get("cz_amplitude", c["amplitude_v"]))
+    flat = vals.get("coupler_flat_length")
+    duration = vals.get("cz_interaction_duration")
+    if flat is None and duration is not None:
+        if shape == "snz":
+            warnings.append(
+                f"{pair.name}: CZ dur ({duration} ns) was not applied -- an SNZ pulse's length follows "
+                f"from its flat length and padding; the flat length is {c['flat_ns']} ns (set it on the "
+                "Pulses page)")
+        else:
+            flat = max(0, int(duration) - 2 * c["rise_ns"])
+    flat = int(c["flat_ns"] if flat is None else flat)
     if shape == "snz":
         snz_cls = getattr(importlib.import_module(c["snz_module"]), c["snz_class"])
         extra = {k: vals[k] for k in ("t_phi", "b_over_a") if vals.get(k) is not None}
@@ -3099,6 +3112,9 @@ def _seed_coupler_only(pair, vals):
         if pulse_cls is None:
             raise RuntimeError("cz_coupler_only (flat-top) requires FlatTopGaussianPulse in this environment")
         length = int(math.ceil((flat + 2 * c["rise_ns"]) / 4) * 4)
+        if duration is not None and vals.get("coupler_flat_length") is None and length != int(duration):
+            warnings.append(f"{pair.name}: CZ dur {duration} ns rounded up to {length} ns (whole 4 ns, "
+                            f"{c['rise_ns']} ns rise on each side)")
         coupler.operations[key] = pulse_cls(amplitude=amplitude, flat_length=flat, length=length, id=key)
 
     gate_cls = getattr(importlib.import_module(c["gate_module"]), c["gate_class"])
@@ -3110,6 +3126,7 @@ def _seed_coupler_only(pair, vals):
         spectator_qubits_phase_shift=dict(spect),
         duration=vals.get("cz_duration_cycles"))
     pair.macros[c["alias_key"]] = "#./" + c["macro_key"]
+    return warnings
 
 
 def _finalize_coupler_only(machine, spec):
@@ -3126,7 +3143,7 @@ def _finalize_coupler_only(machine, spec):
         if getattr(pair, "coupler", None) is None:
             warnings.append(f"{quam_id}: no coupler line, so no coupler-only CZ was seeded")
             continue
-        _seed_coupler_only(pair, norm_pairs.get(quam_id) or {})
+        warnings.extend(_seed_coupler_only(pair, norm_pairs.get(quam_id) or {}))
     if unmatched:
         warnings.append("populate rows for pairs this build did not make were ignored: "
                         + ", ".join(sorted(str(k) for k in unmatched)))

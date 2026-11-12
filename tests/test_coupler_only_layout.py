@@ -445,3 +445,83 @@ def test_the_capability_cache_sees_a_changed_lab_file(tmp_path, monkeypatch):
     (lab / "coupler_cz_gate.py").write_text("class CouplerCZGate: pass\n", encoding="utf-8")
     assert not cg._lab_files_unchanged(sig), "a lab file that appeared is a miss"
     assert not cg._lab_files_unchanged(None), "an entry that never recorded the lab files is a miss"
+
+
+# --- the wizard's pair values reach the lab gate (review r2 P1) ----------------------------
+
+class _Ref:
+    def __init__(self, ref):
+        self._ref = ref
+
+    def get_reference(self):
+        return self._ref
+
+
+def _fake_world(monkeypatch):
+    """The lab layout's seeding against stand-in classes (no QM stack)."""
+    import types
+
+    from quam_state_manager.generator import run_build as rb
+
+    class Pulse(_Ref):
+        def __init__(self, **kw):
+            super().__init__("#/qubit_pairs/q1-2/coupler/operations/" + kw["id"])
+            self.kw = kw
+
+    class Gate:
+        def __init__(self, **kw):
+            self.kw = kw
+
+    mods = {"quam_builder.common.pulses": types.SimpleNamespace(FlatTopGaussianPulse=Pulse),
+            "quam_config.two_flux_gate": types.SimpleNamespace(SNZTwoFluxPulse=Pulse),
+            "quam_config.coupler_cz_gate": types.SimpleNamespace(CouplerCZGate=Gate)}
+    import importlib
+    real = importlib.import_module
+    monkeypatch.setattr("importlib.import_module", lambda name, *a, **k: mods[name] if name in mods else real(name, *a, **k))
+    port = types.SimpleNamespace()
+    coupler = types.SimpleNamespace(opx_output=port, operations={})
+    pair = types.SimpleNamespace(name="q1-2", coupler=coupler, macros={},
+                                 qubit_control=types.SimpleNamespace(name="q1"),
+                                 qubit_target=types.SimpleNamespace(name="q2"))
+    return rb, pair
+
+
+def test_the_wizard_amp_and_duration_reach_the_lab_pulse(monkeypatch):
+    rb, pair = _fake_world(monkeypatch)
+    warns = rb._seed_coupler_only(pair, {"cz_amplitude": 0.15, "cz_interaction_duration": 120})
+    op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
+    assert op["amplitude"] == 0.15 and op["length"] == 120 and op["flat_length"] == 104
+    assert warns == []
+    assert pair.coupler.opx_output.upsampling_mode == "pulse" and pair.coupler.flux_point == "off"
+
+
+def test_a_duration_that_cannot_be_kept_is_said(monkeypatch):
+    rb, pair = _fake_world(monkeypatch)
+    warns = rb._seed_coupler_only(pair, {"cz_interaction_duration": 122})
+    assert pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw["length"] == 124
+    assert any("rounded up to 124" in w for w in warns), warns
+    rb, pair = _fake_world(monkeypatch)
+    warns = rb._seed_coupler_only(pair, {"coupler_pulse_shape": "snz", "cz_interaction_duration": 120,
+                                         "cz_amplitude": 0.15})
+    op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
+    assert op["amplitude"] == 0.15 and op["flat_length"] == 60
+    assert any("was not applied" in w for w in warns), warns
+
+
+def test_explicit_coupler_values_win(monkeypatch):
+    rb, pair = _fake_world(monkeypatch)
+    rb._seed_coupler_only(pair, {"cz_amplitude": 0.15, "coupler_amplitude": 0.2,
+                                 "cz_interaction_duration": 120, "coupler_flat_length": 44})
+    op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
+    assert op["amplitude"] == 0.2 and op["flat_length"] == 44
+
+
+def test_a_coupler_only_pair_moves_no_qubit(tmp_path):
+    from quam_state_manager.core.query import QueryEngine
+    state = _lab_state(snz=False)
+    state["qubit_pairs"]["q1-2"]["moving_qubit"] = "control"
+    eng = QueryEngine(_store(tmp_path, state))
+    p = eng.get_pair("q1-2")
+    assert p["moving_qubit"] is None and "cz_coupler_only_amplitude" not in p
+    edge = next(e for e in eng.get_topology()["edges"] if e["pair_id"] == "q1-2")
+    assert edge["moving_qubit"] is None

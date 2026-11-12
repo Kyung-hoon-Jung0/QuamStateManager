@@ -11,7 +11,7 @@ try { ({JSDOM} = require('jsdom')); } catch (_) { process.exit(2); }
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'quam_state_manager/web/templates/_generate.html'), 'utf8');
 let js = fs.readFileSync(path.join(root, 'quam_state_manager/web/static/generate.js'), 'utf8');
-js = js.replace('_test: {', '_test: { sync: syncLineTypeToggles, derive: deriveLines, guards: stepGuards, arch: applyChipArch,');
+js = js.replace('_test: {', '_test: { sync: syncLineTypeToggles, derive: deriveLines, guards: stepGuards, arch: applyChipArch, cols: pairPopCols,');
 const dom = new JSDOM('<body>' + html + '</body>', {runScripts: 'outside-only', url: 'http://localhost/'});
 const w = dom.window;
 w.NumberInput = {fit() {}, attach() {}, format() {}, strip(s) { return String(s || ''); }};
@@ -63,6 +63,11 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   assert(w.document.getElementById('gen-chip-arch-note').textContent.includes('cz_coupler_only'),
          'the note says what the chip holds');
 
+  // the pair table for the lab gate: shape + SNZ parameters, no moving qubit, no interaction offset
+  const cols = t.cols('cz_coupler_only').map(c => c.field);
+  assert(cols.includes('coupler_pulse_shape') && cols.includes('snz_padding') && cols.includes('cz_amplitude'), cols.join());
+  assert(!cols.includes('moving_qubit') && !cols.includes('coupler_interaction_offset'), cols.join());
+  assert(w.document.getElementById('gen-chip-arch').options.length >= 5, 'both coupler options');
   // leaving the layout takes back the root it filled itself
   t.arch('flux_tunable_coupler');
   assert.strictEqual(s.spec.quam_class, undefined, 'an auto-filled root is taken back');
