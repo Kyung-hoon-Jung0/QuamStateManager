@@ -475,6 +475,9 @@ async function checkComponentMap() {
     ok(pd.classList.contains('cm-dir-overlay'), 'a panel with no clean spot beside its stone is the corner overlay card');
     ok(!pd.style.maxHeight && !pd.style.left && !pd.style.top, 'the overlay card is placed by CSS, never shrunk inline');
     ok(!!pd.querySelector('.cm-popup-hint'), 'Expand is part of the overlay card');
+    ok(doc.body.classList.contains('cm-dir-overlay-on') && /px$/.test(doc.body.style.getPropertyValue('--cm-overlay-h')),
+       'an open overlay card lifts the toast lane (body class + its height)');
+    ok(!!pd.querySelector('.cm-popup-title .cm-dir-where'), 'the overlay title says where the entity is');
     doc.dispatchEvent(new win.Event('scroll'));
     ok(pd.classList.contains('cm-dir-overlay') && !pd.style.left && !pd.style.top, 'a scroll does not move the overlay card');
     // a click inside the overlay card keeps it open
@@ -488,6 +491,8 @@ async function checkComponentMap() {
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
     ok(!doc.querySelector('svg.cm-dir-tether') && !stone.classList.contains('cm-dir-docked'),
        'closing the panel removes the ring and the line');
+    ok(!doc.body.classList.contains('cm-dir-overlay-on') && !doc.body.style.getPropertyValue('--cm-overlay-h'),
+       'closing the overlay card drops the toast lift');
     cmRoot.setAttribute('data-highlight', 'qubits');
     delete pp.getBoundingClientRect;
     saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });

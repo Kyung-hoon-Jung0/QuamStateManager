@@ -1081,6 +1081,10 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
    view), and that entity wears a filled ring (component-map.js _placeAvoiding, _ring) */
 .cm-popup.cm-dir-overlay { left: auto; top: auto; right: var(--ui-gap-3); bottom: var(--ui-gap-3); max-height: calc(100vh - var(--ui-topbar-h) - var(--ui-gap-4)); overflow: auto; }
 .cm-dir-overlay > .cm-popup-hint { position: sticky; bottom: 0; }
+/* the toast lane stays above an open overlay card (its height in --cm-overlay-h), and
+   above the undo trail when that is open too */
+body.cm-dir-overlay-on #status-bar { bottom: calc(var(--ui-gap-3) + max(var(--cm-overlay-h, 0px), var(--undo-trail-h, 0px)) + var(--ui-gap-2)); }
+.cm-popup-title > .cm-dir-where { margin-left: var(--ui-gap-2); font-weight: var(--ui-fw-normal); }
 .cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
 .cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
 .cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }

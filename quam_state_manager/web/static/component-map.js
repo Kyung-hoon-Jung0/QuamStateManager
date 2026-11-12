@@ -157,6 +157,28 @@ window.ComponentMap = (function () {
   function _overlap(x, y, w, h, r) {
     return Math.min(x + w, r.right) > Math.max(x, r.left) && Math.min(y + h, r.bottom) > Math.max(y, r.top);
   }
+  // While the overlay card is open the toast lane sits above it (a body class,
+  // like ag-composer-on / undo-trail-on; never :has()), and its title says where
+  // the entity is.
+  function _overlayOn(pop) {
+    var b = document.body;
+    if (!pop) {
+      b.classList.remove("cm-dir-overlay-on");
+      b.style.removeProperty("--cm-overlay-h");
+      var w0 = document.querySelector(".cm-popup .cm-dir-where");
+      if (w0) w0.remove();
+      return;
+    }
+    b.classList.add("cm-dir-overlay-on");
+    b.style.setProperty("--cm-overlay-h", Math.ceil(pop.getBoundingClientRect().height) + "px");
+    var t = pop.querySelector(".cm-popup-title");
+    if (t && !t.querySelector(".cm-dir-where")) {
+      var w = document.createElement("small");
+      w.className = "muted cm-dir-where";
+      w.textContent = "ringed on the map";
+      t.insertBefore(w, t.firstChild.nextSibling);
+    }
+  }
   function _placeAvoiding(pop, anchor) {
     var body = anchor.closest(".cmap-body") || document;
     var ent = _entityBox(anchor, body), a = ent.box;
@@ -197,6 +219,7 @@ window.ComponentMap = (function () {
       // the overlay card: CSS places it (bottom-right, fixed); no inline geometry
       pop.style.left = ""; pop.style.top = "";
       pop.classList.add("cm-dir-overlay");
+      _overlayOn(pop);
     } else {
       pop.style.left = Math.round(pick[0]) + "px";
       pop.style.top = Math.round(pick[1]) + "px";
@@ -399,6 +422,7 @@ window.ComponentMap = (function () {
     pop._closeDetail = function () {
       pop.hidden = true; _popEnt = null; _restoreNativeTitle(); _untether();
       pop.classList.remove("cm-dir-overlay");
+      _overlayOn(null);
       if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
       if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
       _popHl = null;
