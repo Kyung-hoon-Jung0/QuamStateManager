@@ -28,7 +28,7 @@ def test_only_the_played_mw_port_is_configured(spec):
     baseline = copy.deepcopy(spec)
     cfg, plan = _mw(spec)
     assert spec == baseline
-    ref = pt.controllers_from_spec(spec)
+    ref = pt.controllers_from_spec(spec, outputs_at_zero=True)
     for con, ctrl in cfg['controllers'].items():
         for slot, fem in ctrl['fems'].items():
             if (con, slot) == ('con2', '1'):
@@ -36,7 +36,7 @@ def test_only_the_played_mw_port_is_configured(spec):
                     'band': 2, 'upconverter_frequency': 6e9, 'full_scale_power_dbm': 1, 'sampling_rate': 1e9}}
             else:
                 assert fem == ref[con]['fems'][slot], (con, slot)
-    assert cfg['controllers']['con1']['fems']['3']['analog_outputs']['2']['offset'] == 0.05
+    assert cfg['controllers']['con1']['fems']['3']['analog_outputs']['2']['offset'] == 0.0  # a saved offset outside the play is not driven
     el = cfg['elements']['sm_port_play']
     assert el['MWInput']['port'] == ('con2', 1, 4) and el['intermediate_frequency'] == 50e6
     wf = cfg['pulses'][el['operations']['cw']]['waveforms']
