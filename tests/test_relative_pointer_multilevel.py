@@ -233,6 +233,15 @@ def test_a_self_ref_that_climbs_is_a_parent_ref():
     assert pointer_to_abs("#./x/../../1/delay", h2) is None
 
 
+def test_store_revs_and_one_hop_walk_a_self_ref_through_objects():
+    from quam_state_manager.core.regen_merge import _one_hop
+    st = {"a": {"h": {"ref": "#/b/c", "f": "#./ref/../d", "d": 1}}, "b": {"c": {}, "d": 2}}
+    leaf = ("a", "h", "f")
+    assert store_revs.pointer_target_segs(list(leaf), "#./ref/../d", st) == ["b", "d"]
+    assert store_revs.pointer_target_segs(list(leaf), "#./ref/../d") is None
+    assert _one_hop(st, "#./ref/../d", leaf) == 2
+
+
 _R3 = {"a": {"ref": "#/b/c", "d": 1, "h": {"f": "#../ref/../d"}}, "b": {"c": {}, "d": 2}}
 
 

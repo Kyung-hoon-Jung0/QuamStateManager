@@ -300,19 +300,11 @@ def _one_hop(doc: dict, pointer: str, field_path: tuple[str, ...]) -> Any:
     merge decides pointer by pointer, so only a direct literal is ever trusted."""
     if pointer.startswith("#/"):
         parts = [p for p in pointer[2:].split("/") if p]
-    elif pointer.startswith("#../"):
+    else:
         from quam_state_manager.core.pointer_resolver import target_path
         parts = target_path(doc, pointer, tuple(field_path))
         if parts is None:
             return _MISSING
-    else:
-        base = list(field_path[:-1])
-        for seg in pointer[1:].split("/"):
-            if seg == "..":
-                base = base[:-1]
-            elif seg and seg != ".":
-                base.append(seg)
-        parts = base
     node: Any = doc
     for p in parts:
         if isinstance(node, dict) and p in node:

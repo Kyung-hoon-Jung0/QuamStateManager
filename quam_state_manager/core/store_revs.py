@@ -301,24 +301,10 @@ def pointer_target_segs(holder: list[str], ptr: str, root: Any = None) -> list[s
     mid-path ``..`` be answered)."""
     if ptr.startswith("#/"):
         return [x for x in ptr[2:].split("/")]
-    if ptr.startswith("#./"):
-        base, rest = holder[:-1], ptr[3:]
-    elif ptr.startswith("#../"):
+    if ptr.startswith(("#./", "#../")):
         from quam_state_manager.core.pointer_resolver import target_path
         return target_path(root, ptr, tuple(holder))
-    else:
-        return None
-    out = list(base)
-    for seg in rest.split("/"):
-        if seg == "..":
-            if not out:
-                return None
-            out.pop()
-        elif seg in ("", "."):
-            continue
-        else:
-            out.append(seg)
-    return out
+    return None
 
 
 def _build_edges(merged: dict) -> dict[tuple[str, str], set]:
