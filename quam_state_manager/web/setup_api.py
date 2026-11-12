@@ -689,15 +689,19 @@ def _sm_values(P: dict) -> dict:
     store = _r()._store()
     cal = P.get("calibrations") or {}
     entry = cal.get("entry") or {}
-    nodes = []
+    nodes, node_aliases = [], []
     if cal.get("folder"):
         try:
             from quam_state_manager.core import node_scan
-            nodes = [i.name for i in node_scan.scan_folder(cal["folder"], instance_path=current_app.instance_path)
+            items = [i for i in node_scan.scan_folder(cal["folder"], instance_path=current_app.instance_path)
                      if i.error is None]
+            nodes = [i.name for i in items]
+            # review r7 P2-1: a node is known by its declared name AND its file name
+            node_aliases = [[i.name, Path(i.file).stem] for i in items]
         except Exception:  # noqa: BLE001
             nodes = []
     return {"chip_name": aa._chip_name(), "n_qubits": len((store.state.get("qubits") or {})) if store else None,
+            "node_aliases": node_aliases,
             "cwd": chat_api._cwd(),
             "config_file": [f.get("path") for f in ((P.get("files") or {}).get("root") or {},
                                                     (P.get("files") or {}).get("project") or {}) if f.get("exists")],

@@ -614,7 +614,9 @@ window.AgentSetup = (function () {
   function ntInForce() {
     var f = (S.context || {}).never_touch_in_force || {};
     var parts = (f.sources || []).map(function (s) {
-      return (s.from === "context_block" ? "the lab-context file " + s.file : "this SM's record") + ": " + s.tokens.join(", ");
+      // review r7 P3: a file's list applies to every project and chip that uses this calibrations folder
+      return (s.from === "context_block" ? "the lab-context file " + s.file + " (applies to every project and chip using this calibrations folder)"
+        : "this SM's record (this project and chip only)") + ": " + s.tokens.join(", ");
     });
     return '<p class="asx-small muted" id="as-nt-force">' + (parts.length ? "In force now — " + esc(parts.join(" · "))
       : "In force now: nothing is listed.") + "</p>";

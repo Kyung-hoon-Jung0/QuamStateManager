@@ -72,7 +72,7 @@ const $ = (s) => document.querySelector(s);
   // D-20: never_touch is free text with the chip's names offered
   const nt = $('#as-ctx input[data-q="never_touch"]');
   ok(nt && nt.getAttribute('list') === 'as-nt-tokens' && document.querySelectorAll('#as-nt-tokens option').length === 3, 'D-20: never_touch offers the chip names as autocomplete');
-  ok(/In force now — the lab-context file D:\/lab\/cal\/CLAUDE\.local\.md: qA1/.test(($('#as-nt-force') || {}).textContent || ''), 'review r6 P2: the box says which list is in force and from where');
+  ok(/In force now — the lab-context file D:\/lab\/cal\/CLAUDE\.local\.md \(applies to every project and chip using this calibrations folder\): qA1/.test(($('#as-nt-force') || {}).textContent || ''), 'review r6 P2: the box says which list is in force and from where');
   // investigate
   A.investigate('codex');
   ok(Array.from(document.querySelectorAll('#as-investigate button')).every(b => b.disabled) || /asking Codex/.test($('#as-inv').textContent), 'D-23: one ask at a time');

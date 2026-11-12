@@ -860,34 +860,35 @@ def _pair_has_qubit(pair_key, pair: Any, wiring_pair: Any, qubit: str) -> bool:
     return bool(m) and len(members) == 2 and (m.group(1) + members[1]) == q
 
 
-def never_touch_from_block(cal_folder) -> tuple[list[str], str | None]:
-    """The never-touch list written in the lab-context block of the calibrations
-    folder (the folder's shared truth) and the file it came from."""
+def never_touch_from_blocks(cal_folder) -> list[dict]:
+    """review r7 P2-2: the never-touch list of EVERY context file in the
+    calibrations folder that carries SM's block, one entry per file."""
+    out: list[dict] = []
     if not cal_folder:
-        return [], None
+        return out
     for p in (context_path(cal_folder, "claude", True), context_path(cal_folder, "claude", False),
-              context_path(cal_folder, "codex")):
+              context_path(cal_folder, "codex"), Path(cal_folder) / CODEX_UNREAD_FILE):
         try:
             m = _CTX_BLOCK.search(p.read_text(encoding="utf-8"))
         except OSError:
             continue
         if m:
-            lst = _answers_from_block(m.group(0)).get("never_touch") or []
-            return [str(x) for x in lst if str(x).strip()], str(p)
-    return [], None
+            lst = [str(x) for x in (_answers_from_block(m.group(0)).get("never_touch") or []) if str(x).strip()]
+            if lst:
+                out.append({"file": str(p), "tokens": lst})
+    return out
 
 
 def never_touch_in_force(instance_path, project: str | None, chip: str | None, cal_folder) -> dict:
     """review r6 P2: the list SM enforces = this instance's record for the
     project + chip UNION the block in the calibrations folder; with sources."""
     mine = never_touch_list(instance_path, project, chip)
-    block, block_file = never_touch_from_block(cal_folder)
-    tokens = list(dict.fromkeys(mine + block))
+    blocks = never_touch_from_blocks(cal_folder)
+    tokens = list(dict.fromkeys(mine + [t for b in blocks for t in b["tokens"]]))
     sources = []
     if mine:
         sources.append({"from": "sm_record", "tokens": mine})
-    if block:
-        sources.append({"from": "context_block", "file": block_file, "tokens": block})
+    sources += [{"from": "context_block", "file": b["file"], "tokens": b["tokens"]} for b in blocks]
     return {"tokens": tokens, "sources": sources}
 
 

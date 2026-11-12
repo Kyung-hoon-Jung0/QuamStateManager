@@ -734,3 +734,22 @@ def test_a_person_without_proof_is_told_to_reload(pc):
         assert "reload that window" in r1.get_json()["how"]
     finally:
         pc._app.config.pop("PROVE_CALLERS", None)
+
+
+# ---- review r7
+def test_node_files_match_by_declared_or_file_name(roots):
+    sm = {"node_files": ["00a_twpa_calibration", "05_power_rabi"],
+          "node_aliases": [["00a_twpa_calibration", "04_twpa_calibration"], ["05_power_rabi", "05_power_rabi"]]}
+    for listed in (["04_twpa_calibration.py", "05_power_rabi.py"], ["00a_twpa_calibration", "05_power_rabi"]):
+        rows = {r["key"]: r for r in ac.compare_confirm({"seen": {"node_files": listed}}, sm, roots=roots["list"])["rows"]}
+        assert rows["node_files"]["agent"] == "agrees" and rows["node_files"]["matched"] == 2, listed
+
+
+def test_every_context_file_list_is_enforced(tmp_path):
+    from quam_state_manager.core import agent_setup as st
+    cal = tmp_path / "cal"
+    cal.mkdir()
+    (cal / "CLAUDE.local.md").write_text(st.context_block({"n_qubits": 1}, {"never_touch": ["qA1"]}), encoding="utf-8")
+    (cal / "AGENTS.md").write_text(st.context_block({"n_qubits": 1}, {"never_touch": ["qA2"]}), encoding="utf-8")
+    f = st.never_touch_in_force(tmp_path / "i", "p", "c", str(cal))
+    assert set(f["tokens"]) == {"qA1", "qA2"} and len([s for s in f["sources"] if s["from"] == "context_block"]) == 2

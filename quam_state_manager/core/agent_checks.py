@@ -263,7 +263,7 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
             agent = "unverified"
         elif mine in (None, "", []):
             agent = "reported"
-        elif _agrees(key, mine, theirs):
+        elif _agrees(key, _with_aliases(key, mine, sm), theirs):
             # review r2 P2-4: a value the agent can only have read from SM itself proves nothing
             agent = "echo" if key in SM_ECHO else "agrees"
         else:
@@ -271,7 +271,7 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
         row = {"key": key, "sm": mine, "agent_value": theirs if agent != "not reported" else None,
                "agent": agent, "evidence": ev}
         if key in LIST_FIELDS and isinstance(theirs, list) and isinstance(mine, (list, tuple)):
-            row["matched"], row["of"] = _list_match(mine, theirs)
+            row["matched"], row["of"] = _list_match(_with_aliases(key, mine, sm), theirs)
         rows.append(row)
     return {"rows": rows, "evidence_dropped": dropped,
             "notes": str(answer.get("notes"))[:1000] if answer.get("notes") else ""}
@@ -284,6 +284,14 @@ def _quote_has(quote, value) -> bool:
     forms = {v, v.replace("\\", "\\\\"), v.replace("\\", "/"), v.replace("/", "\\")}
     q = quote.replace("\\\\", "\\")
     return any(f in quote or f in q for f in forms)
+
+
+def _with_aliases(key: str, mine, sm: dict):
+    """review r7 P2-1: node files match by declared name OR file name."""
+    if key != "node_files" or not isinstance(mine, (list, tuple)):
+        return mine
+    extra = [n for pair in (sm.get("node_aliases") or []) for n in pair if n]
+    return list(mine) + extra
 
 
 def _list_name(x) -> str:
