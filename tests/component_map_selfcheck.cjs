@@ -518,6 +518,18 @@ async function checkComponentMap() {
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
      'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
   ok(!pop.querySelector('[data-panel-status]'), 'a landed re-read clears the status line');
+  // an unchanged answer leaves the rows in place (a reader may be selecting in them)
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  const rowsBefore = doc.querySelector('.cm-popup .cm-popup-rows');
+  doc.querySelector('.cm-popup')._rowsJson = JSON.stringify(win._pairPanelReply.rows);
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  const rowsOpen = doc.querySelector('.cm-popup .cm-popup-rows');
+  await tick(); await tick(); await tick();
+  ok(doc.querySelector('.cm-popup .cm-popup-rows') === rowsOpen && rowsOpen,
+     'an unchanged re-read keeps the same rows element');
   const statusOf = () => { const t = doc.querySelector('.cm-popup:not([hidden]) [data-panel-status]'); return t ? t.textContent : ''; };
   const reopen = async (reply, ms) => {
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
