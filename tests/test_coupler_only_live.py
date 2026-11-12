@@ -335,7 +335,7 @@ def test_the_wizard_pair_values_reach_the_built_chip_and_the_recipe(tmp_path):
     snz = state["qubit_pairs"]["q2-3"]["coupler"]["operations"]["cz_coupler_only_pulse_q2_q3"]
     assert snz["amplitude"] == 0.15
     warns = " ".join((outcome.get("result") or {}).get("warnings") or [])
-    assert "q2-3: CZ dur (120 ns) was not applied" in warns, warns
+    assert "q2-3: CZ length (120 ns) was not applied" in warns, warns
     result = outcome.get("result") or {}
     bundle = script_emitter.emit_bundle(spec, result.get("allocation") or {}, result.get("versions") or {},
                                         "lab", stamp="2026-01-01")

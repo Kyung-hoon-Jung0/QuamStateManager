@@ -499,13 +499,13 @@ def test_a_duration_that_cannot_be_kept_is_said(monkeypatch):
     rb, pair = _fake_world(monkeypatch)
     warns = rb._seed_coupler_only(pair, {"cz_interaction_duration": 122})
     assert pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw["length"] == 124
-    assert any("rounded up to 124" in w for w in warns), warns
+    assert any("CZ length" in w and "rounded up to 124" in w for w in warns), warns
     rb, pair = _fake_world(monkeypatch)
     warns = rb._seed_coupler_only(pair, {"coupler_pulse_shape": "snz", "cz_interaction_duration": 120,
                                          "cz_amplitude": 0.15})
     op = pair.coupler.operations["cz_coupler_only_pulse_q1_q2"].kw
     assert op["amplitude"] == 0.15 and op["flat_length"] == 60
-    assert any("was not applied" in w for w in warns), warns
+    assert any("CZ length (" in w and "was not applied" in w for w in warns), warns
 
 
 def test_explicit_coupler_values_win(monkeypatch):

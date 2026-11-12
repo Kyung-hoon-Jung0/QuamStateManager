@@ -67,6 +67,10 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   const cols = t.cols('cz_coupler_only').map(c => c.field);
   assert(cols.includes('coupler_pulse_shape') && cols.includes('snz_padding') && cols.includes('coupler_amplitude')
          && cols.includes('coupler_cz_length'), cols.join());
+  const byField = Object.fromEntries(t.cols('cz_coupler_only').map(c => [c.field, c]));
+  assert.strictEqual(byField.coupler_cz_length.placeholder, '76 (lab default)', 'blank length shows the lab default as a hint');
+  assert.strictEqual(byField.coupler_amplitude.placeholder, '0.1 (lab default)', 'blank amp shows the lab default as a hint');
+  assert(/input\.placeholder = col\.placeholder;/.test(js) && !/input\.value\s*=\s*col\.placeholder/.test(js), 'the cell carries it as a placeholder, never a value');
   assert(!cols.includes('cz_interaction_duration') && !cols.includes('cz_amplitude'), 'no pre-filled cells: ' + cols.join());
   assert(!cols.includes('moving_qubit') && !cols.includes('coupler_interaction_offset'), cols.join());
   assert(w.document.getElementById('gen-chip-arch').options.length >= 5, 'both coupler options');

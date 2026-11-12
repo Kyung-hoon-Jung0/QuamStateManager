@@ -3092,7 +3092,7 @@ def _seed_coupler_only(pair, vals):
     if flat is None and duration is not None:
         if shape == "snz":
             warnings.append(
-                f"{pair.name}: CZ dur ({duration} ns) was not applied -- an SNZ pulse's length follows "
+                f"{pair.name}: CZ length ({duration} ns) was not applied -- an SNZ pulse's length follows "
                 f"from its flat length and padding; the flat length is {c['flat_ns']} ns (set it on the "
                 "Pulses page)")
         else:
@@ -3114,7 +3114,7 @@ def _seed_coupler_only(pair, vals):
             raise RuntimeError("cz_coupler_only (flat-top) requires FlatTopGaussianPulse in this environment")
         length = int(math.ceil((flat + 2 * c["rise_ns"]) / 4) * 4)
         if duration is not None and vals.get("coupler_flat_length") is None and length != int(duration):
-            warnings.append(f"{pair.name}: CZ dur {duration} ns rounded up to {length} ns (whole 4 ns, "
+            warnings.append(f"{pair.name}: CZ length {duration} ns rounded up to {length} ns (whole 4 ns, "
                             f"{c['rise_ns']} ns rise on each side)")
         coupler.operations[key] = pulse_cls(amplitude=amplitude, flat_length=flat, length=length, id=key)
 

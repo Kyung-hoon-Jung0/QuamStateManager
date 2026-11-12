@@ -6591,8 +6591,8 @@
   var POP_COUPLER_ONLY_PAIR_COLS = [
     { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"] },
     // the gate's own fields (no preset default fills them): blank = the lab defaults (D-8)
-    { field: "coupler_cz_length", label: "CZ length", dim: "time" },
-    { field: "coupler_amplitude", label: "CZ amp", dim: "volt" },
+    { field: "coupler_cz_length", label: "CZ length", dim: "time", placeholder: "76 (lab default)" },
+    { field: "coupler_amplitude", label: "CZ amp", dim: "volt", placeholder: "0.1 (lab default)" },
     { field: "snz_padding", label: "SNZ padding", dim: "time" },
     { field: "t_phi", label: "SNZ t_phi" },
     { field: "b_over_a", label: "SNZ b/a" },
@@ -7037,6 +7037,8 @@
             + "amplitudes)" : "");
     }
     input.className = "gen-pop-in";
+    // a blank cell takes a default the build applies: say it as a hint, never a value
+    if (col.placeholder) input.placeholder = col.placeholder;
     // data-* identity so applyLoAssignments() can find the LO cells.
     input.dataset.group = group;
     input.dataset.rid = rid;
