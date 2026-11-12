@@ -312,7 +312,20 @@ def _relative_parts(pointer: str, current_path: tuple[str, ...]):
     keep = len(current_path) - 1 - ups
     if keep < 0:
         return None, None
-    return current_path[:keep], (body.split("/") if body else [])
+    base = list(current_path[:keep])
+    rest: list[str] = []
+    # a ".." later in the path climbs too (quam normalises the whole path)
+    for seg in (body.split("/") if body else []):
+        if seg == "..":
+            if rest:
+                rest.pop()
+            elif base:
+                base.pop()
+            else:
+                return None, None
+        elif seg != ".":
+            rest.append(seg)
+    return tuple(base), rest
 
 
 #: Public name: every module that interprets ``#../`` uses this one rule.

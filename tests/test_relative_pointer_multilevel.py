@@ -74,3 +74,47 @@ def test_a_warm_cache_without_str_ok_reads_the_annotation():
              "raw": "typing.Union[x.Pulse, typing.List[str]]"}
     assert judge("x180", other)[0] is False
     assert judge("x180", {"base": "component", "raw": "x.Pulse"})[0] is False
+
+
+def test_a_dotdot_in_the_middle_climbs_too():
+    # holder object x; ../../ -> q1; b/../gate_fidelity -> q1.gate_fidelity
+    p = "#../../b/../gate_fidelity/averaged"
+    assert relative_parts(p, LEAF) == (("qubits", "q1"), ["gate_fidelity", "averaged"])
+    assert resolve_value(_state(), p, LEAF) == 0.9878
+    assert pointer_to_abs(p, list(LEAF)) == ["qubits", "q1", "gate_fidelity", "averaged"]
+
+
+def test_store_revs_and_regen_merge_share_the_rule():
+    from quam_state_manager.core.regen_merge import _one_hop
+    p = "#../../gate_fidelity/averaged"
+    assert _one_hop(_state(), p, LEAF) == 0.9878
+    assert _one_hop(_state(), "#../../b/../gate_fidelity/averaged", LEAF) == 0.9878
+    assert store_revs.pointer_target_segs(list(LEAF), "#../../b/../gate_fidelity/averaged") \
+        == ["qubits", "q1", "gate_fidelity", "averaged"]
+
+
+def test_the_autofit_alias_walk_follows_a_multi_level_alias():
+    from quam_state_manager.core.autofit.families import resolve_alias_path
+    st = {"qubits": {"q1": {"xy": {"operations": {
+        "x180_D": {"amplitude": 0.1}}},
+        "macros": {"x": {"op": "#../../xy/operations/x180_D"}}}}}
+
+    def value_of(dot):
+        node = st
+        for s in dot.split("."):
+            node = node[s]
+        return node
+
+    got = resolve_alias_path("qubits.q1.macros.x.op.amplitude", value_of)
+    assert got == "qubits.q1.xy.operations.x180_D.amplitude"
+
+
+def test_a_copied_pulse_keeps_the_authors_level_count():
+    from quam_state_manager.core.pulse_index import _derive_pointer, _flavor
+    holder = ["qubits", "q2", "macros", "x", "fidelity"]
+    target = ["qubits", "q2", "gate_fidelity", "averaged"]
+    f = _flavor("#../../gate_fidelity/averaged")
+    assert f == "#../../"
+    assert _derive_pointer(f, holder, target) == "#../../gate_fidelity/averaged"
+    # one level still reads as before
+    assert _derive_pointer("#../", holder, ["qubits", "q2", "macros", "y"]) == "#../y"

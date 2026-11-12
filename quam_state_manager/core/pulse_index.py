@@ -648,7 +648,11 @@ def _list_pulses_with(merged: dict, reverse_index, *,
 
 def _flavor(pointer: str) -> str:
     if pointer.startswith("#../"):
-        return "#../"
+        # keep the number of levels the author wrote ("#../../" stays two)
+        body, ups = pointer[1:], 0
+        while body.startswith("../"):
+            ups, body = ups + 1, body[3:]
+        return "#" + "../" * ups
     if pointer.startswith("#./"):
         return "#./"
     return "#/"
@@ -658,8 +662,10 @@ def _derive_pointer(flavor: str, holder: list[str], target: list[str]) -> str:
     """Express *target* from *holder* in *flavor* (absolute fallback)."""
     if flavor == "#./" and len(holder) >= 1 and target[:len(holder) - 1] == holder[:-1]:
         return "#./" + "/".join(target[len(holder) - 1:])
-    if flavor == "#../" and len(holder) >= 2 and target[:len(holder) - 2] == holder[:-2]:
-        return "#../" + "/".join(target[len(holder) - 2:])
+    if flavor.startswith("#../"):
+        keep = len(holder) - 1 - flavor.count("../")
+        if keep >= 0 and target[:keep] == holder[:keep]:
+            return flavor + "/".join(target[keep:])
     return "#/" + "/".join(target)
 
 

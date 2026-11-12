@@ -302,7 +302,9 @@ def pointer_target_segs(holder: list[str], ptr: str) -> list[str] | None:
     if ptr.startswith("#./"):
         base, rest = holder[:-1], ptr[3:]
     elif ptr.startswith("#../"):
-        base, rest = holder[:-2], ptr[4:]
+        from quam_state_manager.core.pointer_resolver import relative_parts
+        b, r = relative_parts(ptr, tuple(holder))
+        return None if b is None else list(b) + [s for s in r if s]
     else:
         return None
     out = list(base)

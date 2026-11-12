@@ -351,6 +351,43 @@ def judge(value: Any, ts: dict) -> tuple[bool, str, str]:
     return True, "", ""
 
 
+def operation_name_problem(state: dict, path: str, name: str) -> str | None:
+    """Why a pulse NAME stored on a Union[Pulse, str] field will not resolve.
+
+    quam resolves the name at use time with ``get_pulse``: exactly one
+    operation of that name on the owning qubit's channels (the rule
+    ``additions._ref_problem`` applies to Generate additions). A qubit macro
+    is owned by ``qubits.<q>``; a pair macro may play on either qubit or the
+    coupler. An owner SM cannot tell is not judged (None)."""
+    from quam_state_manager.core.additions import _ops_under
+    segs = path.split(".")
+    if len(segs) >= 2 and segs[0] == "qubits":
+        owners = [["qubits", segs[1]]]
+    elif len(segs) >= 2 and segs[0] == "qubit_pairs":
+        pair = (state.get("qubit_pairs") or {}).get(segs[1])
+        if not isinstance(pair, dict):
+            return None
+        owners = []
+        for role in ("qubit_control", "qubit_target"):
+            ref = pair.get(role)
+            if isinstance(ref, str) and ref.startswith("#/qubits/"):
+                owners.append(["qubits", ref[len("#/qubits/"):].split("/")[0]])
+        if isinstance(pair.get("coupler"), dict):
+            owners.append(["qubit_pairs", segs[1], "coupler"])
+        if not owners:
+            return None
+    else:
+        return None
+    hits = [h for op in owners for h in _ops_under(state, op).get(name, [])]
+    where = " or ".join(".".join(o) for o in owners)
+    if not hits:
+        return f"plays an operation named {name!r}, which does not exist on {where}"
+    if len(owners) == 1 and len(hits) > 1:
+        return (f"{name!r} is not unique on {where} ({', '.join(hits)}); "
+                "quam's get_pulse refuses an ambiguous name")
+    return None
+
+
 def _declares_str(ts: dict) -> bool:
     """True when the declared annotation allows a str (Union[Component, str]).
 
@@ -543,6 +580,14 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             if isinstance(v, dict) or is_pointer_str(v):
                 continue                       # containers recurse; pointers pass
             ok, code, msg = judge(v, ts)
+            if ok and isinstance(v, str) and ts.get("base") == "component":
+                why = operation_name_problem(state, kpath, v)
+                if why:
+                    emit("type_mismatch", "warning", cls_str, k, kpath,
+                         f"{leaf_cls}.{k}: {why}",
+                         "name an operation that exists on that channel, or "
+                         "point at the pulse", code="missing_operation")
+                continue
             if not ok:
                 sev = _judge_severity(code, v, ts)
                 emit("type_mismatch", sev, cls_str, k, kpath,

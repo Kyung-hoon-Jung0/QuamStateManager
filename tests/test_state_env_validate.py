@@ -111,9 +111,23 @@ class TestAnalyzeState:
             "default_repr": None, "default_is_reference": False,
             "raw": "typing.Union[q.Pulse, str]"}
         state = _state()
-        state["qubits"]["qA1"]["gate_pulse"] = "qA1"
+        # a name quam's get_pulse finds exactly once on the qubit: clean
+        state["qubits"]["qA1"]["xy"]["operations"]["x180"] = {"__class__": "q.Pulse"}
+        state["qubits"]["qA1"]["gate_pulse"] = "x180"
         recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
         assert recs == [], recs
+        # a name no operation carries: a warning that names it
+        state["qubits"]["qA1"]["gate_pulse"] = "x18O_typo"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert len(recs) == 1 and recs[0]["severity"] == "warning", recs
+        assert recs[0]["code"] == "missing_operation"
+        assert "'x18O_typo'" in recs[0]["detail"] and "qubits.qA1" in recs[0]["detail"]
+        # the same name on two channels of the qubit: ambiguous, warned
+        state["qubits"]["qA1"]["gate_pulse"] = "x180"
+        dup = copy.deepcopy(state)
+        dup["qubits"]["qA1"]["other_ch"] = {"operations": {"x180": {"__class__": "q.Pulse"}}}
+        recs = [r for r in _findings(dup, man) if r.get("field") == "gate_pulse"]
+        assert len(recs) == 1 and "not unique" in recs[0]["detail"], recs
         # a plain component field still flags a str
         man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["type"]["raw"] = "q.Pulse"
         man["classes"]["q.Transmon"]["fields"]["gate_pulse"]["raw"] = "q.Pulse"
