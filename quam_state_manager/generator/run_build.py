@@ -2989,6 +2989,142 @@ def _require_coupler_extension(spec: dict) -> None:
                            "(pip install <path to extensions/qsm_quam_ext>)") from exc
 
 
+# The lab layout of the coupler-only CZ (pair_gate "cz_coupler_only"). A copy of
+# core/coupler_cz_layout.py (this script runs in the env, without the package);
+# pinned equal by tests/test_coupler_only_layout.py.
+_COUPLER_ONLY = {
+    "mode": "cz_coupler_only",
+    "macro_key": "cz_coupler_only",
+    "alias_key": "cz",
+    "gate_module": "quam_config.coupler_cz_gate",
+    "gate_class": "CouplerCZGate",
+    "snz_module": "quam_config.two_flux_gate",
+    "snz_class": "SNZTwoFluxPulse",
+    "amplitude_v": 0.1,
+    "flat_ns": 60,
+    "rise_ns": 8,
+    "snz_padding_ns": 2,
+    "sampling_rate": 1e9,
+    "upsampling_mode": "pulse",
+    "output_mode": "amplified",
+    "flux_point": "off",
+}
+
+
+def _coupler_only_pulse_key(control, target):
+    return f"cz_coupler_only_pulse_{control}_{target}"
+
+
+def _coupler_only_shapes(spec):
+    pops = ((spec or {}).get("populate") or {}).get("pairs") or {}
+    shapes = {str((v or {}).get("coupler_pulse_shape") or "flattop").lower()
+              for v in pops.values() if isinstance(v, dict)}
+    if not shapes or len(pops) < len((spec or {}).get("qubit_pairs") or []):
+        shapes.add("flattop")
+    return shapes
+
+
+def _require_lab_coupler_gate(spec):
+    """The lab layout needs the lab's gate (and SNZ class when a pair asks for it)
+    before anything is written (decisions D-6)."""
+    if spec.get("pair_gate") != _COUPLER_ONLY["mode"]:
+        return
+    need = [(_COUPLER_ONLY["gate_module"], _COUPLER_ONLY["gate_class"])]
+    if "snz" in _coupler_only_shapes(spec):
+        need.append((_COUPLER_ONLY["snz_module"], _COUPLER_ONLY["snz_class"]))
+    for mod_name, cls_name in need:
+        try:
+            if getattr(importlib.import_module(mod_name), cls_name, None) is None:
+                raise ImportError(f"{mod_name} has no {cls_name}")
+        except ImportError as exc:
+            raise RuntimeError(
+                f"cz_coupler_only needs {mod_name}.{cls_name} in this environment "
+                "(put your lab's quam_config package on its path)") from exc
+
+
+def _coupler_only_root(quam_cls, declared_root, warnings):
+    """The lab layout's root: flux-tunable, never a fallback (decisions D-3, Q-6)."""
+    from quam_builder.architecture.superconducting.qpu import FluxTunableQuam
+
+    if not issubclass(quam_cls, FluxTunableQuam):
+        raise RuntimeError("cz_coupler_only requires a flux-tunable root (its qubits are "
+                           "flux-tunable transmons with no flux line); got " + quam_cls.__name__)
+    if quam_cls.__module__.startswith("quam_builder."):
+        warnings.append(
+            f"{quam_cls.__name__} is a stock root: its set_all_fluxes reads every qubit's flux "
+            "line, so initialize_qpu raises on this chip, whose qubits have none. Use your "
+            "lab's own root (one that skips qubits without a flux line).")
+
+
+def _seed_coupler_only(pair, vals):
+    """Seed the lab layout's coupler-only CZ on one pair (decisions D-8): the
+    coupler port and parking, the pulse on the coupler, the lab gate under
+    ``cz_coupler_only`` and the ``cz`` alias."""
+    c = _COUPLER_ONLY
+    coupler = getattr(pair, "coupler", None)
+    if coupler is None:
+        raise RuntimeError(f"{pair.name}: no coupler, a coupler-only CZ cannot be created")
+    port = coupler.opx_output
+    port.output_mode = vals.get("coupler_output_mode") or c["output_mode"]
+    port.sampling_rate = c["sampling_rate"]
+    port.upsampling_mode = c["upsampling_mode"]
+    coupler.flux_point = c["flux_point"]
+    coupler.decouple_offset = vals.get("coupler_decouple_offset", 0.0)
+    if vals.get("coupler_interaction_offset") is not None:
+        coupler.interaction_offset = vals["coupler_interaction_offset"]
+    if vals.get("coupler_settle_time") is not None:
+        coupler.settle_time = vals["coupler_settle_time"]
+
+    control, target = pair.qubit_control.name, pair.qubit_target.name
+    key = _coupler_only_pulse_key(control, target)
+    shape = str(vals.get("coupler_pulse_shape") or "flattop").lower()
+    amplitude = vals.get("coupler_amplitude", c["amplitude_v"])
+    flat = int(vals.get("coupler_flat_length", c["flat_ns"]))
+    if shape == "snz":
+        snz_cls = getattr(importlib.import_module(c["snz_module"]), c["snz_class"])
+        extra = {k: vals[k] for k in ("t_phi", "b_over_a") if vals.get(k) is not None}
+        coupler.operations[key] = snz_cls(
+            amplitude=amplitude, flat_length=flat,
+            padding=int(vals.get("snz_padding", c["snz_padding_ns"])), id=key, **extra)
+    else:
+        pulse_cls = _pulse_class("FlatTopGaussianPulse")
+        if pulse_cls is None:
+            raise RuntimeError("cz_coupler_only (flat-top) requires FlatTopGaussianPulse in this environment")
+        length = int(math.ceil((flat + 2 * c["rise_ns"]) / 4) * 4)
+        coupler.operations[key] = pulse_cls(amplitude=amplitude, flat_length=flat, length=length, id=key)
+
+    gate_cls = getattr(importlib.import_module(c["gate_module"]), c["gate_class"])
+    spect = vals.get("spectator_qubits_phase_shift") or {}
+    pair.macros[c["macro_key"]] = gate_cls(
+        coupler_flux_pulse=coupler.operations[key].get_reference(),
+        phase_shift_control=vals.get("phase_shift_control", 0.0),
+        phase_shift_target=vals.get("phase_shift_target", 0.0),
+        spectator_qubits_phase_shift=dict(spect),
+        duration=vals.get("cz_duration_cycles"))
+    pair.macros[c["alias_key"]] = "#./" + c["macro_key"]
+
+
+def _finalize_coupler_only(machine, spec):
+    """Seed the lab layout's CZ on every pair the build made from a coupler line.
+
+    Kept apart from _finalize_pair_gates so the other modes' code (and the
+    exported recipes that copy it verbatim) stays byte-for-byte (decisions C-1).
+    Per-pair values match by the same rule as the other modes."""
+    qpairs = getattr(machine, "qubit_pairs", None) or {}
+    populate_pairs = ((spec.get("populate") or {}).get("pairs")) or {}
+    norm_pairs, unmatched = _match_populate_pairs(populate_pairs, list(qpairs.keys()))
+    warnings = []
+    for quam_id, pair in list(qpairs.items()):
+        if getattr(pair, "coupler", None) is None:
+            warnings.append(f"{quam_id}: no coupler line, so no coupler-only CZ was seeded")
+            continue
+        _seed_coupler_only(pair, norm_pairs.get(quam_id) or {})
+    if unmatched:
+        warnings.append("populate rows for pairs this build did not make were ignored: "
+                        + ", ".join(sorted(str(k) for k in unmatched)))
+    return warnings
+
+
 def _seed_coupler_cz(pair, vals):
     """Seed the coupler operation and pointer macro (GATE-ID)."""
     from qsm_quam_ext import CouplerCZGate
@@ -3185,6 +3321,7 @@ def run_allocate(spec: dict) -> dict:
     same *instruments* pool, so what the wizard draws is what gets built.
     """
     _require_coupler_extension(spec)
+    _require_lab_coupler_gate(spec)
 
     instruments = build_instruments(spec)
     connectivity, warnings = allocate_full(spec, instruments)
@@ -3239,6 +3376,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
     )
 
     _require_coupler_extension(spec)
+    _require_lab_coupler_gate(spec)
 
     instruments = build_instruments(spec)
     connectivity, warnings = allocate_full(spec, instruments)
@@ -3284,6 +3422,10 @@ def run_build(spec: dict, out_dir: Path) -> dict:
             _mod, _cls = declared_root.rsplit(".", 1)
             quam_cls = getattr(importlib.import_module(_mod), _cls)
         except Exception as exc:  # noqa: BLE001 — degrade to the derived class
+            if spec.get("pair_gate") == _COUPLER_ONLY["mode"]:
+                # the lab layout never lands on a fallback root (decisions Q-6)
+                raise RuntimeError(f"cz_coupler_only: the declared root {declared_root} does not "
+                                   f"import here ({type(exc).__name__}: {exc})") from exc
             warnings.append(
                 f"This chip's own QPU root class ({declared_root}) is not "
                 f"importable here ({type(exc).__name__}) — rebuilding onto "
@@ -3293,6 +3435,8 @@ def run_build(spec: dict, out_dir: Path) -> dict:
 
     if spec.get("pair_gate") == "cz_coupler" and not issubclass(quam_cls, FixedFrequencyQuam):
         raise RuntimeError("cz_coupler requires a FixedFrequencyQuam root")
+    if spec.get("pair_gate") == _COUPLER_ONLY["mode"]:
+        _coupler_only_root(quam_cls, declared_root, warnings)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     state_path = out_dir / "state.json"
@@ -3341,6 +3485,8 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         warnings.extend(_apply_dual_upconverters(machine, spec))
         if pair_gate in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
             warnings.extend(_finalize_pair_gates(machine, spec, pair_gate))
+        elif pair_gate == _COUPLER_ONLY["mode"]:
+            warnings.extend(_finalize_coupler_only(machine, spec))
         _apply_coupler_models(machine, spec.get("populate") or {})
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)

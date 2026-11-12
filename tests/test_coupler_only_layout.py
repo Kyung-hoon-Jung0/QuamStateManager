@@ -130,3 +130,39 @@ def test_a_declared_root_the_probe_never_saw_is_allowed():
 def test_no_probe_is_not_a_negative():
     out = cap.qpu_root_check(_spec(), {})
     assert out["blocker"] is None and out["chosen"] is None
+
+
+# --- the build subprocess copy (D-15) --------------------------------------------------
+
+def test_the_build_copy_matches_the_names():
+    from quam_state_manager.generator import run_build as rb
+    c = rb._COUPLER_ONLY
+    assert (c["mode"], c["macro_key"], c["alias_key"]) == (ccl.MODE, ccl.MACRO_KEY, ccl.ALIAS_KEY)
+    assert (c["gate_module"], c["gate_class"]) == (ccl.LAB_GATE_MODULE, ccl.LAB_GATE_CLASS)
+    assert (c["snz_module"], c["snz_class"]) == (ccl.LAB_SNZ_MODULE, ccl.LAB_SNZ_CLASS)
+    assert (c["amplitude_v"], c["flat_ns"], c["rise_ns"], c["snz_padding_ns"]) == (
+        ccl.DEFAULT_AMPLITUDE_V, ccl.DEFAULT_FLAT_NS, ccl.DEFAULT_RISE_NS, ccl.DEFAULT_SNZ_PADDING_NS)
+    assert (c["sampling_rate"], c["upsampling_mode"], c["output_mode"], c["flux_point"]) == (
+        ccl.COUPLER_SAMPLING_RATE, ccl.COUPLER_UPSAMPLING_MODE, ccl.COUPLER_OUTPUT_MODE, ccl.COUPLER_FLUX_POINT)
+    assert rb._coupler_only_pulse_key("q1", "q2") == ccl.pulse_key("q1", "q2")
+    for spec in (_spec(), _spec(shape="snz"), _spec(shape="flattop"),
+                 dict(_spec(shape="snz"), qubit_pairs=[["q1", "q2"], ["q2", "q3"]])):
+        assert rb._coupler_only_shapes(spec) == ccl.pair_shapes(spec)
+
+
+def test_the_build_refuses_before_writing_without_the_lab_gate(monkeypatch):
+    import importlib
+
+    import pytest
+
+    from quam_state_manager.generator import run_build as rb
+    real = importlib.import_module
+
+    def fake(name, *a, **k):
+        if name.startswith("quam_config"):
+            raise ImportError("no " + name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(rb.importlib, "import_module", fake)
+    with pytest.raises(RuntimeError, match="cz_coupler_only needs quam_config.coupler_cz_gate"):
+        rb._require_lab_coupler_gate(_spec())
+    rb._require_lab_coupler_gate(dict(_spec(), pair_gate="cz_coupler"))   # the ext mode is not asked
