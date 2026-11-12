@@ -84,6 +84,18 @@ window.ComponentMap = (function () {
   // stale. One module-level guard each closes both cases for every mount.
 
 
+  var _ABSENT = { "-": 1, "—": 1, "–": 1, "?": 1 };
+  // Pairs page: rows served by the page (core/pair_map_panel), one per pair.
+  function _pairPanelRows(id) {
+    var el = document.getElementById("cm-pair-panel");
+    if (!el) return null;
+    if (el._parsed === undefined) {
+      try { el._parsed = JSON.parse(el.textContent || "{}"); } catch (e) { el._parsed = null; }
+    }
+    var rows = el._parsed && el._parsed[id];
+    return rows && rows.length ? rows : null;
+  }
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -109,7 +121,31 @@ window.ComponentMap = (function () {
     close.addEventListener("click", function () { window.TopoGraph.closeDetails(); });
     title.appendChild(close);
     pop.appendChild(title);
-    if (row) {
+    var served = ent.kind === "pair" ? _pairPanelRows(ent.id) : null;
+    if (served) {
+      var sl = document.createElement("div");
+      sl.className = "cm-popup-rows";
+      served.forEach(function (rw) {
+        var r = document.createElement("div");
+        r.className = "cm-popup-row";
+        var k = document.createElement("span");
+        k.className = "cm-popup-k";
+        k.textContent = rw[0];
+        var v = document.createElement("span");
+        v.className = "cm-popup-v";
+        v.textContent = rw[1];
+        if (rw[2]) {
+          var n = document.createElement("small");
+          n.className = "muted";
+          n.textContent = rw[2];
+          v.appendChild(document.createElement("br"));
+          v.appendChild(n);
+        }
+        r.appendChild(k); r.appendChild(v);
+        sl.appendChild(r);
+      });
+      pop.appendChild(sl);
+    } else if (row) {
       var table = row.closest("table");
       var ths = table ? table.querySelectorAll("thead th") : [];
       var dl = document.createElement("div");
@@ -125,6 +161,12 @@ window.ComponentMap = (function () {
         var val = (row.cells[i].textContent || "").trim();
         hcur += span;
         if (i === 0 || !val) continue;   // col 0 repeats the title
+        // absent values have no row; an active entity needs no "Active" row
+        if (_ABSENT[val] || (/^active$/i.test(label) && val === "✓")) continue;
+        if (/^grid$/i.test(label)) continue;  // the map already shows where it sits
+        // a value that already carries its unit does not repeat it in the label
+        var um = /\s*\(([^()]+)\)\s*$/.exec(label);
+        if (um && val.slice(-um[1].length - 1) === " " + um[1]) label = label.slice(0, um.index);
         var r = document.createElement("div");
         r.className = "cm-popup-row";
         if (label) {
@@ -144,12 +186,13 @@ window.ComponentMap = (function () {
     var hint = document.createElement("button");
     hint.type = "button";
     hint.className = "cm-popup-hint";
+    hint.setAttribute("data-detail-primary", "");
     // A pick mount may name its own action (data-cm-pick-hint); the Pulses page keeps its words.
     var root0 = _active && _active.root;
     var pickHint = _isPick() && root0.getAttribute("data-cm-pick-hint");
     hint.title = pickHint ? pickHint : _isPick() ? "click to show only its pulses"
-                                 : "click to open in the inspector";
-    hint.textContent = pickHint ? pickHint : _isPick() ? "Show pulses" : "Open inspector";
+                                 : "open in the inspector";
+    hint.textContent = pickHint ? pickHint : _isPick() ? "Show pulses" : "Expand";
     hint.addEventListener("click", function (e) {
       e.stopPropagation();
       var pick = _isPick();
@@ -205,7 +248,7 @@ window.ComponentMap = (function () {
     }, function (el) {
       var ent = _parseCm(el);
       return _showPopup(ent, _rowFor(ent.kind, ent.id), el);
-    });
+    }, { hover: true });
     body.addEventListener("click", function (ev) {
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)

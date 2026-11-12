@@ -17286,6 +17286,16 @@ def _pair_bell(p: dict) -> None:
         p["bell_others"] = ", ".join(others)
 
 
+def _pair_map_panel(engine) -> dict:
+    """The chip map's hover-panel rows for every pair (core/pair_map_panel)."""
+    from quam_state_manager.core import pair_map_panel
+    try:
+        return pair_map_panel.all_pair_rows(engine)
+    except Exception:  # noqa: BLE001 -- the panel falls back to the table row
+        logger.exception("building the pair map panel failed")
+        return {}
+
+
 @bp.route("/pairs")
 def pairs():
     engine = _engine()
@@ -17339,6 +17349,7 @@ def pairs():
             page="pairs",
             pairs=page_pairs,
             pair_vocab=pair_vocab,
+            pair_panel=_pair_map_panel(engine),
             cz_ops=_pair_cz_plan_ops(store),
             current_page=page,
             total_pages=total_pages,

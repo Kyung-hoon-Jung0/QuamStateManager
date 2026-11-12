@@ -1274,6 +1274,10 @@ window.TopoGraph = (function () {
     if (detailPanel) {
       var panel = detailPanel;
       detailPanel = null;
+      // A hover panel holding focus hands it back to its anchor.
+      if (panel._hoverMode && anchor && anchor.isConnected && panel.contains(document.activeElement)) {
+        anchor.focus({preventScroll: true});
+      }
       if (panel._closeDetail) panel._closeDetail();
       panel.remove();
     }
@@ -1352,8 +1356,51 @@ window.TopoGraph = (function () {
     document.body.appendChild(button);
     positionDetail(button, anchor);
   }
-  function bindDetails(host, selector, label, open) {
-    host._detailBinding = {selector: selector, label: label, open: open};
+  // Hover mode (opts.hover): the panel itself is the hover surface -- no
+  // Expand step. It is non-modal (focus stays where it is), survives the
+  // move from the anchor into the panel by a grace delay, and closes when
+  // the pointer or focus leaves both.
+  var HOVER_GRACE_MS = 240;
+  function isHovered(el) {
+    try { return !!(el && el.matches && el.matches(':hover')); } catch (e) { return false; }
+  }
+  function scheduleHoverClose() {
+    clearTimeout(detailTimer);
+    detailTimer = setTimeout(function () {
+      if (!detailPanel || !detailPanel._hoverMode) return;
+      var act = document.activeElement;
+      if (isHovered(detailPanel)) return;
+      if (act && (detailPanel.contains(act) || act === detailAnchor)) return;
+      closeDetails();
+    }, HOVER_GRACE_MS);
+  }
+  function openHoverDetail(anchor, label, open) {
+    clearTimeout(detailTimer);
+    if (closingDetail) return;
+    if (detailPanel && detailAnchor === anchor) return;
+    if (detailPanel || detailButton) closeDetails();
+    var panel = open(anchor);
+    if (!panel) return;
+    detailPanel = panel; detailAnchor = anchor;
+    panel._hoverMode = true;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'false');
+    panel.setAttribute('aria-label', label + ' details');
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    anchor.setAttribute('aria-expanded', 'true');
+    if (!panel._hoverBound) {
+      panel._hoverBound = true;
+      panel.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
+      panel.addEventListener('mouseleave', function () { if (panel._hoverMode) scheduleHoverClose(); });
+      panel.addEventListener('focusin', function () { clearTimeout(detailTimer); });
+      panel.addEventListener('focusout', function (e) {
+        if (panel._hoverMode && !(e.relatedTarget && panel.contains(e.relatedTarget))) scheduleHoverClose();
+      });
+    }
+    positionDetail(panel, anchor);
+  }
+  function bindDetails(host, selector, label, open, opts) {
+    host._detailBinding = {selector: selector, label: label, open: open, hover: !!(opts && opts.hover)};
     host.querySelectorAll(selector).forEach(function (anchor) {
       anchor.setAttribute('aria-label', label(anchor));
       Array.prototype.forEach.call(anchor.children, function (child) {
@@ -1368,11 +1415,17 @@ window.TopoGraph = (function () {
       var binding = host._detailBinding;
       var anchor = e.target.closest && e.target.closest(binding.selector);
       if (!anchor || !host.contains(anchor)) return;
-      function offer() { offerDetail(anchor, binding.label(anchor), function () { return binding.open(anchor); }); }
+      var hover = binding.hover;
+      function offer() {
+        (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); });
+      }
       if (e.type === 'mouseenter' || e.type === 'focusin') {
         if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) offer();
       } else if (e.type === 'mouseleave' || e.type === 'focusout') {
-        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) scheduleDetailHide();
+        if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) (hover ? scheduleHoverClose : scheduleDetailHide)();
+      } else if (hover && e.type === 'keydown' && e.key === 'Tab' && !e.shiftKey && detailPanel && detailAnchor === anchor) {
+        var first = detailPanel.querySelector('[data-detail-primary]') || detailPanel.querySelector('button');
+        if (first) { e.preventDefault(); first.focus(); }
       } else if (e.type === 'pointerdown') {
         touchAnchor = e.pointerType === 'touch' ? anchor : null;
       } else if (e.type === 'click') {
@@ -1390,7 +1443,8 @@ window.TopoGraph = (function () {
   // Page-wide closers; absent when the module is loaded without a DOM.
   if (typeof document !== 'undefined') {
   document.addEventListener('click', function (e) {
-    if (detailPanel && !detailPanel.contains(e.target)) closeDetails();
+    if (detailPanel && !detailPanel.contains(e.target) &&
+        !(detailPanel._hoverMode && detailAnchor && detailAnchor.contains(e.target))) closeDetails();
     else if (detailButton && e.target !== detailButton &&
              !(detailAnchor && detailAnchor.contains(e.target))) closeDetails();
   });

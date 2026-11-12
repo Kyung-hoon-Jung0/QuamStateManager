@@ -330,9 +330,9 @@ const PANE_HTML =
   '<div id="table-pane">'
   + '<details class="cmap" id="component-map" data-highlight="pairs" open>'
   + '<summary>Chip layout</summary><div class="cmap-body"></div></details>'
-  + '<table><thead><tr><th>ID</th><th>P(RO) <span class="unit phys-unit-label">(dBm)</span></th></tr></thead><tbody>'
-  + '<tr data-pair-id="qA2-qA1"><td>pair row</td><td colspan="1">x</td></tr>'
-  + '<tr data-qubit-id="qA1"><td>qubit row</td><td data-dbm="-20">-20.0 dBm</td></tr>'
+  + '<table><thead><tr><th>ID</th><th>P(RO) <span class="unit phys-unit-label">(dBm)</span></th><th>T1</th><th>Grid</th></tr></thead><tbody>'
+  + '<tr data-pair-id="qA2-qA1"><td>pair row</td><td colspan="1">x</td><td></td><td></td></tr>'
+  + '<tr data-qubit-id="qA1"><td>qubit row</td><td data-dbm="-20">-20.0 dBm</td><td>-</td><td>0,1</td></tr>'
   + '</tbody></table>'
   + '</div><div id="inspector-pane"></div>';
 
@@ -370,33 +370,82 @@ async function checkComponentMap() {
   ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }),
      'clicking a map entity opens its inspector');
 
-  // v1.5.2: hover card -> explicit Expand, so maps stay visible.
-  // docs/109 (3): the hover card — the entity's table row as a floating
-  // summary (audit: mutation-testing showed the popup had ZERO coverage).
+  // ver1.8: hovering shows the panel at once; its Expand button opens the
+  // inspector. The panel survives the move into it (grace) and closes on leave.
+  const wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  win._htmxCalls.length = 0;
   stone.dispatchEvent(new win.MouseEvent('mouseover', { bubbles: true }));
   stone.dispatchEvent(new win.MouseEvent('mouseenter'));
-  ok(!doc.querySelector('.cm-popup:not([hidden])'), 'hover offers no detail panel');
-  doc.querySelector('.topo-expand').click();
   let pop = doc.querySelector('.cm-popup');
-  ok(!!pop && !pop.hidden, 'hovering a stone shows the summary card');
+  ok(!!pop && !pop.hidden, 'hovering a stone shows the panel at once');
+  ok(!doc.querySelector('.topo-expand'), 'no separate Expand offer before the panel');
+  ok(pop.getAttribute('aria-modal') === 'false', 'the hover panel is non-modal');
   ok(pop.querySelector('.cm-popup-title').firstChild.textContent === 'qA1',
      'the card is titled with the entity id');
   const rows = pop.querySelectorAll('.cm-popup-row');
   ok(rows.length === 1 && rows[0].querySelector('.cm-popup-k').textContent.indexOf('P(RO)') === 0
      && rows[0].querySelector('.cm-popup-v').textContent === '-20.0 dBm',
-     'the card pairs the row cells with their thead labels (col 0 skipped)');
+     'the card pairs cells with their thead labels; absent "-" and Grid rows are hidden ('
+     + rows.length + ')');
+  const hint = pop.querySelector('.cm-popup-hint');
+  ok(rows[0].querySelector('.cm-popup-k').textContent.trim() === 'P(RO)', 'a unit the value carries is not repeated in the label (' + rows[0].querySelector('.cm-popup-k').textContent + ')');
+  ok(hint && hint.textContent === 'Expand', 'the panel button reads Expand');
+  // leave the stone, enter the panel within the grace: it stays
+  stone.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(60);
+  pop.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await wait(320);
+  ok(!pop.hidden && pop.isConnected, 'moving from the stone into the panel keeps it open');
+  pop.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(320);
+  ok(!pop.isConnected || pop.hidden, 'leaving the panel closes it after the grace');
+  // Expand -> inspector
+  stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+  pop = doc.querySelector('.cm-popup');
+  pop.querySelector('.cm-popup-hint').click();
+  ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }), 'Expand opens the inspector');
+  ok(!doc.querySelector('.cm-popup:not([hidden])'), 'Expand closes the panel');
+  // keyboard: focus shows it, Tab moves into it, Escape closes
+  stone.dispatchEvent(new win.FocusEvent('focusin'));
+  pop = doc.querySelector('.cm-popup');
+  ok(!!pop && !pop.hidden, 'keyboard focus on a stone shows the panel');
+  stone.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
+  ok(doc.activeElement === pop.querySelector('.cm-popup-hint'), 'Tab from the stone reaches Expand');
+  doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  ok(!doc.querySelector('.cm-popup:not([hidden])') || !pop.isConnected, 'Escape closes the panel');
+  // touch: a tap shows the panel, it does not open the inspector
+  win._htmxCalls.length = 0;
+  stone.dispatchEvent(new win.MouseEvent('pointerdown', { bubbles: true }));
+  const pd = new win.Event('pointerdown', { bubbles: true }); pd.pointerType = 'touch';
+  stone.dispatchEvent(pd);
+  stone.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true }));
+  pop = doc.querySelector('.cm-popup');
+  ok(!!pop && !pop.hidden && win._htmxCalls.length === 0, 'a touch tap shows the panel only');
   doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
-  ok(pop.hidden, 'outside click closes the card');
-  // an entity with NO matching row still gets the minimal card
+  ok(!pop.isConnected || pop.hidden, 'outside click closes the card');
+  // a pair served by the page uses the page's rows (core/pair_map_panel)
   const edgeNoRow = body.querySelector('[data-cm="p:qA2-qA1"]');
+  const js = doc.createElement('script');
+  js.type = 'application/json'; js.id = 'cm-pair-panel';
+  js.textContent = JSON.stringify({ 'qA2-qA1': [['Best 2Q fidelity', '0.9570', 'cz_x · per gate (IRB)']] });
+  doc.body.appendChild(js);
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  pop = doc.querySelector('.cm-popup');
+  const prs = pop.querySelectorAll('.cm-popup-row');
+  ok(!pop.hidden && prs.length === 1 && prs[0].querySelector('.cm-popup-v').textContent.indexOf('0.9570') === 0
+     && prs[0].textContent.indexOf('per gate (IRB)') > 0, 'a pair panel shows the served rows with their kind');
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
+  await wait(320);
+  js.remove();
+  // an entity with NO matching row still gets the minimal card
   const prowEl = doc.querySelector('tr[data-pair-id="qA2-qA1"]');
   prowEl.parentNode.removeChild(prowEl);
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
-  doc.querySelector('.topo-expand').click();
   pop = doc.querySelector('.cm-popup');
   ok(!pop.hidden && pop.querySelector('.cm-popup-title').firstChild.textContent === 'pair qA2-qA1'
      && pop.querySelectorAll('.cm-popup-row').length === 0,
      'a row-less entity gets the minimal title-only card');
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
 
   // HTMX swap: replace the pane content, re-mount — binding still single
   const pane = doc.getElementById('table-pane');
