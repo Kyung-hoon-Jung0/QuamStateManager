@@ -265,3 +265,52 @@ def test_a_mixed_chip_says_so():
     rec = _reconstruct(_lab_state(z_on=("q1",)))
     assert rec.spec["pair_gate"] == "cz_coupler_only"
     assert any("qubits with a flux line (q1)" in n for n in rec.notes), rec.notes
+
+
+# --- pages and diagnostics (D-13, D-14) ----------------------------------------------------
+
+def _store(tmp_path, state):
+    import json
+
+    from quam_state_manager.core.loader import QuamStore
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+    return QuamStore(tmp_path)
+
+
+def test_the_pair_page_reads_the_coupler_pulse(tmp_path):
+    from quam_state_manager.core.query import QueryEngine
+    eng = QueryEngine(_store(tmp_path, _lab_state(snz=False)))
+    p = eng.get_pair("q1-2")
+    assert p["cz_coupler_only_coupler_amplitude"] == 0.21
+    assert p["cz_coupler_only_length"] == 60 and p["cz_coupler_only_flat_length"] == 44
+    assert p["cz_coupler_only_phase_shift_control"] == 0.11
+    edge = next(e for e in eng.get_topology()["edges"] if e["pair_id"] == "q1-2")
+    det = next(d for d in edge["gate_details"] if d["name"] == "cz_coupler_only")
+    assert det["phase_ctrl"] == 0.11   # raw macros: a pointer-valued pulse is read by the pair page
+
+
+def test_a_flux_gate_keeps_its_own_lengths(tmp_path):
+    from quam_state_manager.core.query import QueryEngine
+    state = _lab_state(snz=False)
+    gate = state["qubit_pairs"]["q1-2"]["macros"]["cz_coupler_only"]
+    gate["flux_pulse_qubit"] = {"amplitude": 0.3, "length": 40}
+    p = QueryEngine(_store(tmp_path, state)).get_pair("q1-2")
+    assert p["cz_coupler_only_length"] == 40 and p["cz_coupler_only_amplitude"] == 0.3
+
+
+def test_qubits_without_a_flux_line_are_not_a_finding(tmp_path):
+    from quam_state_manager.core import diagnostics
+    findings = diagnostics.lint_state(_store(tmp_path, _lab_state())) or []
+    about_z = [f for f in findings if ".z" in str(getattr(f, "path", "")) or " z " in str(getattr(f, "message", ""))]
+    assert not about_z, about_z
+
+
+def test_topology_gate_details_take_an_inline_coupler_pulse_length(tmp_path):
+    from quam_state_manager.core.query import QueryEngine
+    state = _lab_state(snz=False)
+    gate = state["qubit_pairs"]["q1-2"]["macros"]["cz_coupler_only"]
+    gate["coupler_flux_pulse"] = {"amplitude": 0.21, "length": 60, "flat_length": 44}
+    edge = next(e for e in QueryEngine(_store(tmp_path, state)).get_topology()["edges"] if e["pair_id"] == "q1-2")
+    det = next(d for d in edge["gate_details"] if d["name"] == "cz_coupler_only")
+    assert det["length"] == 60 and det["flat_length"] == 44 and det["coupler_amp"] == 0.21

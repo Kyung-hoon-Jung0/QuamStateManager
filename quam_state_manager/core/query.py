@@ -376,6 +376,12 @@ class QueryEngine:
             cfp_base = base + ("macros", gate_name, "coupler_flux_pulse")
             cfp, _cfp_base = _deref_pulse_ref(self.store, cfp, cfp_base)
             result[f"{prefix}_coupler_amplitude"] = cfp.get("amplitude")
+            if not gate.get("flux_pulse_qubit") and cfp:
+                # a coupler-only CZ plays on the coupler: its length is that
+                # pulse's own (decisions D-14), never another gate's
+                result[f"{prefix}_length"] = _resolve(self.store, cfp.get("length"), _cfp_base + ("length",))
+                if "flat_length" in cfp:
+                    result[f"{prefix}_flat_length"] = cfp.get("flat_length")
 
             result[f"{prefix}_phase_shift_control"] = gate.get("phase_shift_control")
             result[f"{prefix}_phase_shift_target"] = gate.get("phase_shift_target")
@@ -1859,8 +1865,10 @@ def _extract_gate_details(macros: dict) -> list[dict]:
         c_amp = _num(coupler_pulse.get("amplitude"))
         if c_amp is not None:
             entry["coupler_amp"] = c_amp
-        length = _num(flux.get("length"))
-        flat_length = _num(flux.get("flat_length"))
+        # a coupler-only CZ (no qubit flux pulse) takes its lengths from the coupler pulse
+        timing = flux if flux else coupler_pulse
+        length = _num(timing.get("length"))
+        flat_length = _num(timing.get("flat_length"))
         if length is not None:
             entry["length"] = length
         if flat_length is not None:
