@@ -1,0 +1,127 @@
+{% if not pp_partial %}{% extends "base.html" %}{% endif %}
+{% block table_content %}
+<div id="port-play-page">
+<div class="table-header-row ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Port play</h2>
+    <button type="button" class="btn-sync" hx-get="/instrument" hx-target="#table-pane" hx-push-url="true">&larr; Instrument Wiring</button>
+</div>
+<p class="ui-note" data-pp-tell-apart>Port play = live outputs, several ports together, simulation.
+   Port test (from a port's hover card on Instrument Wiring) = scripts, pulse trains and loopback for one port.</p>
+
+<p class="ui-note" data-pp-nochip{% if pp_has_chip %} hidden{% endif %}>No chip is open, so there is no rack to play: open a chip, or set up a chassis in
+   <a href="/generate?step=3" hx-get="/generate?step=3" hx-target="#table-pane" hx-push-url="true">the Generate config wizard, step 3</a>,
+   where Port play plays the draft.</p>
+<div id="pp-body" data-has-chip="{{ '1' if pp_has_chip else '' }}"{% if not pp_has_chip %} hidden{% endif %}>
+<div class="ui-field-grid" data-pp-source-row hidden>
+  <label>Rack source
+    <select id="pp-source" data-pp-source>
+      {% if pp_has_chip %}<option value="chip">Open chip</option>{% endif %}
+      <option value="draft">Wizard draft (unsaved)</option>
+    </select></label>
+</div>
+<p class="ui-note" data-pp-draft-note hidden>Playing the Generate wizard's unsaved draft chassis. Nothing here changes the draft.</p>
+<section class="ui-item">
+  <div class="ui-field-grid">
+    <label>Python environment
+      <select id="pp-env" data-pp-env>
+        {% if not pp_python %}<option value="">Choose an environment</option>{% endif %}
+        {% for e in pp_envs %}<option value="{{ e.python }}" {% if e.python == pp_python %}selected{% endif %}>{{ e.name }}</option>{% endfor %}
+        {% if pp_python and pp_python not in pp_envs | map(attribute='python') | list %}<option value="{{ pp_python }}" selected>{{ pp_python }}</option>{% endif %}
+      </select></label>
+    <label>Host<input id="pp-host" type="text" value="{{ pp_host }}" placeholder="QOP host address"></label>
+    <label>Cluster<input id="pp-cluster" type="text" value="{{ pp_cluster }}" placeholder="cluster name (optional)"></label>
+  </div>
+  <p class="ui-note">{% if pp_env_source == "project" %}The environment this project remembers.{% elif pp_env_source == "selected" %}The app's selected environment (this project remembers none).{% else %}No environment chosen yet.{% endif %}
+     Test connection opens one connection to the host and reads its version; it opens no QM and plays nothing.</p>
+  <div class="ui-actions ui-actions--start"><button type="button" class="btn-sm outline" id="pp-test-conn">Test connection</button></div>
+  <p class="ui-note" role="status" id="pp-conn-status"></p>
+</section>
+{% if pp_error %}<p class="ui-note pt-warn">{{ pp_error }}</p>{% endif %}
+<div id="port-play-rack" data-pin="{{ pp_pin }}"></div>
+<div id="port-play-offsets"></div>
+<script type="application/json" id="pp-spec">{{ (pp_spec or {}) | tojson }}</script>
+<script type="application/json" id="pp-instrument">{{ (pp_instrument or {}) | tojson }}</script>
+<script>
+(function () {
+  var rack = document.getElementById('port-play-rack');
+  if (!rack || rack._ppBound) return;
+  rack._ppBound = true;
+  var chipSpec = JSON.parse(document.getElementById('pp-spec').textContent || '{}');
+  var chipData = JSON.parse(document.getElementById('pp-instrument').textContent || '{}');
+  var body = document.getElementById('pp-body'), hasChip = body.getAttribute('data-has-chip') === '1';
+  var pick = document.getElementById('pp-source'), draft = null, mode = 'chip';
+  var spec = chipSpec, data = chipData;
+  var env = document.getElementById('pp-env');
+  function chooseSource() {
+    draft = window.PortPlay && window.PortPlay.wizardDraft ? window.PortPlay.wizardDraft() : null;
+    if (!draft) { mode = 'chip'; }
+    else if (!hasChip) { mode = 'draft'; }
+    else { mode = pick.value === 'draft' ? 'draft' : 'chip'; }
+    body.hidden = !hasChip && !draft;
+    document.querySelector('[data-pp-nochip]').hidden = !body.hidden;
+    document.querySelector('[data-pp-source-row]').hidden = !draft;
+    document.querySelector('[data-pp-draft-note]').hidden = mode !== 'draft';
+    if (pick) pick.value = mode;
+    if (mode === 'draft') {
+      // A copy: the page's host/cluster fields are written into it, never into the stored draft.
+      spec = JSON.parse(JSON.stringify(draft.spec));
+      data = window.PortPlay.rackFromSpec(spec);
+      var n = spec.network || {};
+      document.getElementById('pp-host').value = n.host || '';
+      document.getElementById('pp-cluster').value = n.cluster_name || '';
+    } else {
+      spec = chipSpec; data = chipData;
+      var c = chipSpec.network || {};
+      document.getElementById('pp-host').value = c.host || '';
+      document.getElementById('pp-cluster').value = c.cluster_name || '';
+    }
+  }
+  function net() {
+    spec.network = spec.network || {};
+    spec.network.host = document.getElementById('pp-host').value.trim() || null;
+    spec.network.cluster_name = document.getElementById('pp-cluster').value.trim() || null;
+  }
+  var source = {
+    spec: function () { net(); return spec; },
+    python: function () { return mode === 'draft' && draft && draft.env ? draft.env : (env ? env.value : ''); },
+    changed: function () { /* the chip's spec is not saved from here */ },
+    // A connection failure points at this page's own Host field.
+    editHost: function () { var h = document.getElementById('pp-host'); if (h) { h.focus(); h.select(); } },
+    editHostLabel: 'Edit host (Host field above)',
+    // D-25: the popup prefills from the open chip and says the test is read-only.
+    chipPort: function (pin) { return mode === 'draft' ? null : window.PortPlay && window.PortPlay.chipPortOf ? window.PortPlay.chipPortOf(data, pin) : null; }
+  };
+  function play(port) { if (window.PortPlay) window.PortPlay.open(port, source); }
+  function femType(con, slot) {
+    var c = (data.controllers || {})[con] || {};
+    var f = (c.fems || {})[slot] || (c.fems || {})[String(slot)] || {};
+    return f.type || '';
+  }
+  function draw() {
+    chooseSource();
+    if (body.hidden || !window.renderInstrumentWiring) return;
+    window.renderInstrumentWiring('port-play-rack', data, {}, {wrapFems: true, onPortPlay: play});
+    var pin = (rack.getAttribute('data-pin') || '').split('/');
+    if (pin.length === 3 && !rack._ppPinned) {
+      rack._ppPinned = true;
+      play({con: pin[0], slot: pin[1], port: Number(pin[2]), io: 'output', femType: femType(pin[0], pin[1])});
+    }
+  }
+  if (pick) pick.onchange = function () { if (window.PortPlay && window.PortPlay.close) window.PortPlay.close(); draw(); };
+  if (window.Bundles && window.Bundles.need) window.Bundles.need('portplay').then(draw, draw); else draw();
+  var btn = document.getElementById('pp-test-conn'), out = document.getElementById('pp-conn-status');
+  btn.onclick = function () {
+    out.textContent = 'Connecting...';
+    fetch('/port-play/test-connection', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({host: document.getElementById('pp-host').value.trim(),
+                            cluster: document.getElementById('pp-cluster').value.trim(),
+                            python: source.python()})})
+      .then(function (r) { return r.json(); })
+      .then(function (j) { out.textContent = j.ok ? ('Connected' + (j.version ? ' (QOP ' + j.version + ')' : '') + '.') : ('Not connected: ' + (j.error || 'unknown error')); })
+      .catch(function (e) { out.textContent = 'Not connected: ' + e; });
+  };
+})();
+</script>
+</div>
+</div>
+{% endblock %}

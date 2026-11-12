@@ -1184,6 +1184,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # FB-12 port test: template scripts per element/port, download or run
     from quam_state_manager.web.port_test_routes import port_test_bp, resume_runs
     app.register_blueprint(port_test_bp)
+    # Standalone Port play page (rack + popup over the open chip)
+    from quam_state_manager.web.port_play_page import port_play_page_bp
+    app.register_blueprint(port_play_page_bp)
     if not testing:
         # A hardware run an earlier SM left with its QM maybe open is closed at
         # start, not only once someone opens the port-test page.

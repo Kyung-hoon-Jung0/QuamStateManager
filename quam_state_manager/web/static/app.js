@@ -9256,6 +9256,7 @@ window.Bundles = (function () {
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
         [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
+        [/^\/port-play(\/|$|\?)/, ["portplay"]],
         [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],
@@ -17254,6 +17255,9 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.setAttribute('data-port', portInfo.port);
         cell.setAttribute('data-io', portInfo.io);
     }
+    // Port play D-23: a playable output is a keyboard/click target of its own.
+    var playable = !!(onPortPlay && portInfo && portInfo.io === 'output' &&
+                      (portInfo.femType === 'lf-fem' || portInfo.femType === 'mw-fem'));
     if (assignments.length === 0) {
         var emptyC = _svgEl('circle');
         var iw2 = UI_CONFIG.instrumentWiring;
@@ -17263,6 +17267,13 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
             ? {cx: cx, cy: cy, r: r, fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1.5}
             : {cx: cx, cy: cy, r: Math.max(4, Math.round(r * 0.4)), fill: iw2.unassignedFill, stroke: iw2.unassignedStroke, 'stroke-width': 1});
         cell.appendChild(emptyC);
+        if (playable) {
+            // D-23: an unused OUT circle shows its number, so a sweep can name it.
+            var num = _svgText(cx, cy, String(portInfo.port), Math.max(8, Math.round(r * 0.7)), '600', iw2.unassignedStroke, 'middle');
+            num.setAttribute('class', 'iw-port-num');
+            num.setAttribute('dominant-baseline', 'central');
+            cell.appendChild(num);
+        }
     } else if (assignments.length === 1) {
         _appendPortCircle(cell, cx, cy, r, roleColors, assignments[0], rawWiring, editable, onPortHover);
     } else {
@@ -17313,7 +17324,8 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.appendChild(grip);
     }
     }
-    if (onPortPlay && portInfo && portInfo.io === 'output' && (portInfo.femType === 'lf-fem' || portInfo.femType === 'mw-fem')) {
+    if (playable) {
+        _armPlayCell(cell, portInfo, onPortPlay);
         var playAnchor = _svgEl('foreignObject');
         // Sit ON the port circle: below it, the next row's cell is painted on top
         // and steals the pointer, so the button vanished on approach.
@@ -17332,6 +17344,45 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.appendChild(playAnchor);
     }
     svg.appendChild(cell);
+}
+
+/* Port play D-23: a playable port cell holds focus itself. Enter/Space or a click
+   on the cell opens the popup; Up/Down step through the FEM's playable outputs,
+   Home/End jump to its first/last. */
+function _armPlayCell(cell, portInfo, onPortPlay) {
+    cell.setAttribute('tabindex', '0');
+    cell.setAttribute('role', 'button');
+    cell.setAttribute('data-play', '1');
+    // One port notation (D-12): an LF output is AO n (LF), an MW output is OUT n (MW).
+    var _mw = /^mw/.test(String(portInfo.femType || ''));
+    cell.setAttribute('aria-label', 'con' + String(portInfo.con).replace(/^con/, '') + ' FEM ' + portInfo.slot + ' ' +
+        (_mw ? 'OUT ' : 'AO ') + portInfo.port + (_mw ? ' (MW)' : ' (LF)'));
+    cell.style.cursor = 'pointer';
+    cell.addEventListener('click', function(e) {
+        if (e.target && e.target.closest && e.target.closest('button')) return;
+        onPortPlay(portInfo);
+    });
+    cell.addEventListener('keydown', function(e) {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        var k = e.key;
+        if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
+            e.preventDefault();
+            onPortPlay(portInfo);
+            return;
+        }
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(k) < 0) return;
+        var svg = cell.ownerSVGElement || cell.parentNode;
+        if (!svg) return;
+        var peers = Array.prototype.filter.call(svg.querySelectorAll('.iw-port[data-play="1"]'), function(c) {
+            return c.getAttribute('data-con') === String(portInfo.con) && c.getAttribute('data-slot') === String(portInfo.slot);
+        }).sort(function(a, b) { return Number(a.getAttribute('data-port')) - Number(b.getAttribute('data-port')); });
+        var at = peers.indexOf(cell);
+        if (at < 0 || !peers.length) return;
+        var to = k === 'Home' ? 0 : k === 'End' ? peers.length - 1
+               : (k === 'ArrowUp' || k === 'ArrowLeft') ? Math.max(0, at - 1) : Math.min(peers.length - 1, at + 1);
+        e.preventDefault();
+        if (peers[to].focus) peers[to].focus();
+    });
 }
 
 /* v1.5.1 (U P2-20): the Instrument Wiring colour legend. One swatch per role

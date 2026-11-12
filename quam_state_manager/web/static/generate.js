@@ -974,6 +974,8 @@
     inst.octaves.forEach(function (o, i) { o.index = i + 1; });
   }
 
+  //: chassis count of a wizard with no spec or draft (a fresh install has one OPX1000)
+  var DEFAULT_CHASSIS = 1;
   function setChassisCount(n) {
     n = Math.max(0, Math.min(20, isNaN(n) ? 0 : n));
     var ctrls = instruments().controllers;
@@ -1220,27 +1222,163 @@
     if (opts && opts.restoreFocus) restoreSlotFocus();
   }
 
+  var PORT_PLAY_OPEN_KEY = "quam_gen_port_play_open", portPlayRestored = null;
   function renderPortPlay() {
     var toggle = document.getElementById("gen-port-play-toggle");
     var panel = document.getElementById("gen-port-play-panel");
     if (!toggle || !panel || !window.PortPlay) return;
+    if (portPlayRestored !== panel) {
+      // The panel's open state survives a reload or re-mount (per-viewer convenience only).
+      portPlayRestored = panel;
+      try { if (localStorage.getItem(PORT_PLAY_OPEN_KEY) === "1") panel.hidden = false; } catch (e) { /* storage blocked */ }
+    }
+    toggle.setAttribute("aria-expanded", String(!panel.hidden));
     toggle.onclick = function () {
       panel.hidden = !panel.hidden;
-      toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      try { localStorage.setItem(PORT_PLAY_OPEN_KEY, panel.hidden ? "0" : "1"); } catch (e) { /* storage blocked */ }
       renderPortPlay();
     };
-    if (panel.hidden) return;
-    window.renderInstrumentWiring("gen-port-play-rack", buildInstrumentData({}), {}, {
+    if (panel.hidden) { stopLiveTick(); return; }
+    var regen = state.mode === "regenerate";
+    if (regen && portPlayChip === null) {
+      // D-25: in Modify mode the rack shows the open chip's own wiring and values.
+      portPlayChip = false;
+      fetch("/api/instrument/data").then(function (r) { return r.json(); }).then(function (j) {
+        if (j && j.instrument && j.instrument.controllers) { portPlayChip = j; renderPortPlay(); }
+      }).catch(function () { /* stay on the spec-built rack */ });
+    }
+    var chip = regen && portPlayChip ? portPlayChip : null;
+    window.renderInstrumentWiring("gen-port-play-rack", chip ? chip.instrument : window.PortPlay.rackFromSpec(state.spec),
+                                  chip ? (chip.wiring || {}) : {}, {
       wrapFems: true, sizeKey: "generate",
       onPortPlay: function (port) {
         window.PortPlay.open(port, {
           spec: function () { return state.spec; },
           python: function () { return state.env; },
-          changed: function () { saveDraft(); renderPortPlay(); }
+          changed: function () { saveDraft(); renderPortPlay(); },
+          chipPort: function (pin) { return chipPortOf(chip, pin); },
+          check: function (pin) { return (state.spec.port_checks || {})[pin] || null; },
+          setCheck: function (pin, v) { setPortCheck(pin, v); }
         });
       }
     });
     window.PortPlay.renderOffsets(state.spec, function () { saveDraft(); renderPortPlay(); });
+    decoratePortPlayRack();
+    renderPortChecks();
+    renderPortPlayLive();
+  }
+
+  // D-25: the chip's own port values for the popup's prefill. null = no chip, keep defaults.
+  var portPlayChip = null;
+  var PIN_RE = /^con([^/]*)\/([^/]+)\/(\d+)$/;
+  // One reader of a chip port's values, shared with the standalone /port-play page (PortPlay.chipPortOf).
+  function chipPortOf(chip, pin) {
+    var pp = window.PortPlay;
+    return chip && pp && pp.chipPortOf ? pp.chipPortOf(chip.instrument, pin) : null;
+  }
+
+  function pinOfCell(c) { return "con" + String(c.getAttribute("data-con")).replace(/^con/, "") + "/" + c.getAttribute("data-slot") + "/" + c.getAttribute("data-port"); }
+  function livePorts() {
+    // Contract with the popup (S1): PortPlay.live() -> {id, members: [{pin, label}], started_at, max_s} or null.
+    var pp = window.PortPlay;
+    var l = pp && typeof pp.live === "function" ? pp.live() : null;
+    return l && l.id && l.members && l.members.length ? l : null;
+  }
+  function portPlayLabel(pin) {
+    var m = PIN_RE.exec(String(pin));
+    if (!m) return String(pin);
+    // One port notation (D-12): the FEM kind decides AO n (LF) or OUT n (MW).
+    var kind = null;
+    (((state.spec || {}).instruments || {}).controllers || []).forEach(function (c) {
+      if (String(c.con).replace(/^con/, "") !== m[1]) return;
+      (c.fems || []).forEach(function (f) { if (String(f.slot) === m[2]) kind = f.fem; });
+    });
+    return "con" + m[1] + " · FEM " + m[2] + " · " + (kind === "mw" ? "OUT " : "AO ") + m[3] +
+      (kind === "mw" ? " (MW)" : kind === "lf" ? " (LF)" : "");
+  }
+
+  // D-24 + D-26: the running set rings its ports; a checked port shows its verdict.
+  function decoratePortPlayRack() {
+    var host = document.getElementById("gen-port-play-rack");
+    if (!host) return;
+    var live = livePorts(), pins = {};
+    (live ? live.members : []).forEach(function (m) { pins[m.pin || m] = true; });
+    var checks = state.spec.port_checks || {};
+    Array.prototype.forEach.call(host.querySelectorAll('.iw-port[data-play="1"]'), function (c) {
+      var pin = pinOfCell(c), ck = checks[pin];
+      c.classList.toggle("iw-port-live", !!pins[pin]);
+      c.classList.toggle("iw-port-ok", !!ck && ck.verdict === "ok");
+      c.classList.toggle("iw-port-bad", !!ck && ck.verdict === "bad");
+    });
+  }
+
+  var liveTick = null;
+  function stopLiveTick() { if (liveTick) { clearInterval(liveTick); liveTick = null; } }
+  function renderPortPlayLive() {
+    var bar = document.getElementById("gen-port-play-live");
+    if (!bar) return;
+    var live = livePorts();
+    bar.hidden = !live;
+    if (!live) { stopLiveTick(); return; }
+    bar.querySelector("[data-live-members]").textContent = live.members.map(function (m) {
+      return m.label || portPlayLabel(m.pin || m);
+    }).join(", ");
+    var left = bar.querySelector("[data-live-left]");
+    function paint() {
+      var l = livePorts();
+      if (!l) { renderPortPlayLive(); decoratePortPlayRack(); return; }
+      var end = Number(l.started_at) + Number(l.max_s);
+      if (!isFinite(end)) { left.textContent = ""; return; }
+      var s = Math.max(0, Math.round(end - Date.now() / 1000));
+      left.textContent = "stops in " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+    }
+    paint();
+    if (!liveTick) liveTick = setInterval(paint, 1000);
+    bar.querySelector("[data-live-stop]").onclick = function () {
+      var l = livePorts();
+      if (!l) return;
+      fetch("/port-play/stop", {method: "POST", headers: {"Content-Type": "application/json"},
+                                body: JSON.stringify({id: l.id})}).catch(function () { /* the popup's own poll reports */ });
+    };
+  }
+  document.addEventListener("port-play:change", function () { decoratePortPlayRack(); renderPortPlayLive(); });
+
+  // D-26: per-port verdict + note, kept in the draft spec.
+  function setPortCheck(pin, v) {
+    if (!pin) return;
+    var checks = state.spec.port_checks = state.spec.port_checks || {};
+    if (!v || !v.verdict) { delete checks[pin]; }
+    else { checks[pin] = {verdict: v.verdict === "ok" ? "ok" : "bad", note: String(v.note || ""), at: new Date().toISOString()}; }
+    saveDraft();
+    renderPortPlay();
+  }
+  function portChecksCsv() {
+    var checks = state.spec.port_checks || {};
+    var q = function (v) { v = String(v == null ? "" : v); return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    return ["port,verdict,note,checked_at"].concat(Object.keys(checks).sort().map(function (pin) {
+      var c = checks[pin];
+      return [pin, c.verdict, c.note, c.at].map(q).join(",");
+    })).join("\n") + "\n";
+  }
+  function renderPortChecks() {
+    var table = document.getElementById("gen-port-checks-table"), body = document.getElementById("gen-port-checks");
+    var copy = document.getElementById("gen-port-checks-copy");
+    if (!table || !body) return;
+    var checks = state.spec.port_checks || {}, pins = Object.keys(checks).sort();
+    table.hidden = !pins.length;
+    body.innerHTML = "";
+    pins.forEach(function (pin) {
+      var c = checks[pin], tr = document.createElement("tr");
+      [portPlayLabel(pin), c.verdict === "ok" ? "✓" : "✗", c.note, c.at].forEach(function (t) {
+        var td = document.createElement("td"); td.textContent = t || ""; tr.appendChild(td);
+      });
+      body.appendChild(tr);
+    });
+    if (copy) copy.onclick = function () {
+      var text = portChecksCsv(), msg = document.getElementById("gen-port-offsets-message");
+      var done = function () { if (msg) msg.textContent = "Copied " + pins.length + " port checks as CSV."; };
+      try { navigator.clipboard.writeText(text).then(done, done); } catch (e) { done(); }
+    };
   }
 
   // Left/Right move the highlight across all OPX1000 slots; Up/Down cycle the
@@ -1315,9 +1453,9 @@
       });
     }
 
-    // Start with 5 OPX1000 chassis the first time the wizard opens.
+    // A wizard with no chassis yet (no spec, no draft) starts with one OPX1000.
     if (!instruments().controllers.length) {
-      setChassisCount(5);
+      setChassisCount(DEFAULT_CHASSIS);
     }
     if (countInput) countInput.value = instruments().controllers.length;
 
@@ -12650,12 +12788,12 @@
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) archSel.value = state.chipArch;
     var cc = document.getElementById("gen-chassis-count");
-    if (cc) cc.value = 5;
+    if (cc) cc.value = DEFAULT_CHASSIS;
     var qc = document.getElementById("gen-qubit-count");
     if (qc) qc.value = 0;
     var mux = document.getElementById("gen-mux-size");
     if (mux) mux.value = 6;
-    setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
+    setChassisCount(DEFAULT_CHASSIS);   // re-seed the starting rack (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
     _regenStepBase = null;         // docs/241: a plain wizard resets to fresh
     goToStep(1);
@@ -12838,7 +12976,7 @@
     } else if (step === 3) {
       state.spec.instruments = fresh.instruments;
       state.allocation = null;
-      setChassisCount(5);          // the wizard's own starting rack
+      setChassisCount(DEFAULT_CHASSIS);   // the wizard's own starting rack
     } else if (step === 4) {
       state.naming = { preset: "one_based", prefix: "q", start: 1 };
       state.namesTouched = false;
@@ -13501,6 +13639,9 @@
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
       markConflictPorts: markConflictPorts,
+      setPortCheck: function (p, v) { setPortCheck(p, v); },
+      portChecksCsv: function () { return portChecksCsv(); },
+      chipPortOf: chipPortOf,
       renderConflicts: renderConflicts,
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,

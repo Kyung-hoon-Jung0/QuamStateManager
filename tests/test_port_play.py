@@ -148,12 +148,19 @@ def test_play_stop_needs_own_id(tmp_path, monkeypatch):
     assert stopped == [('r1', 'the page was left')]
 
 
-def test_other_ports_keep_saved_offsets(spec):
+def test_outputs_outside_the_play_idle_at_zero(spec):
+    """Safety: a saved offset on a port NOT in the play is not driven during the play."""
     spec['port_offsets'] = {'con2/3/6': {'offset': .2, 'output_mode': 'amplified'},
                             'con2/3/5': {'offset': .4, 'output_mode': 'direct'}}
     cfg, _ = pt.build_wizard_dc(spec, ['con2', 3, 5], .1, 'direct')
     outs = cfg['controllers']['con2']['fems']['3']['analog_outputs']
-    assert outs['6']['offset'] == .2 and outs['6']['output_mode'] == 'amplified'
+    assert outs['6']['offset'] == 0.0
+    for c, _p in (pt.build_wizard_multi(spec, [{'kind': 'lf', 'port': ['con2', 3, 7], 'offset': .1},
+                                               {'kind': 'lf', 'port': ['con2', 3, 8], 'offset': .1}]),):
+        lf_outs = c['controllers']['con2']['fems']['3']['analog_outputs']
+        assert lf_outs['6']['offset'] == 0.0 and lf_outs['5']['offset'] == 0.0
+    # The saved offsets still exist for everything that is not a play (loopback, build).
+    assert pt.controllers_from_spec(spec)['con2']['fems']['3']['analog_outputs']['6']['offset'] == .2
     assert outs['5']['offset'] == .1  # the typed value wins on the played port
     assert outs['7']['offset'] == 0.0
 
