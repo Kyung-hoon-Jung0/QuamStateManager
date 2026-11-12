@@ -157,6 +157,43 @@ def test_a_pair_verdict_is_not_memoised_past_a_change_on_the_qubit():
     assert len(got) == 1 and got[0]["code"] == "missing_operation", got
 
 
+def test_an_old_cache_reads_nested_optional_and_union_in_any_order():
+    from quam_state_manager.core.state_env_validate import _declares_str
+    for raw in ("typing.Optional[typing.Union[quam.Pulse, str]]",
+                "typing.Union[typing.Optional[str], quam.Pulse]",
+                "Optional[Union[quam.Pulse, <class 'str'>]]",
+                "quam.Pulse | str | None"):
+        assert _declares_str({"base": "component", "raw": raw}), raw
+    for raw in ("typing.Optional[typing.Union[quam.Pulse, typing.List[str]]]",
+                "typing.Optional[quam.Pulse]", "quam.Pulse"):
+        assert not _declares_str({"base": "component", "raw": raw}), raw
+
+
+def test_only_a_pulse_arm_makes_a_str_an_operation_name():
+    import copy
+    from quam_state_manager.core import state_env_validate as sev
+    from tests.test_type_policy import MANIFEST, _state, _ts, _field
+    man = copy.deepcopy(MANIFEST)
+    man["classes"]["q.Other"] = {"importable": True, "canonical": "q.Other",
+                                 "bases": ["q.Base"], "is_dataclass": True,
+                                 "error": None, "fields": {}}
+    man["classes"]["lab.MyPulse"] = {"importable": True, "canonical": "lab.MyPulse",
+                                     "bases": ["quam.components.pulses.Pulse"],
+                                     "is_dataclass": True, "error": None, "fields": {}}
+    flds = man["classes"]["q.Transmon"]["fields"]
+    for name, cls in (("ref_other", "q.Other"), ("ref_lab", "lab.MyPulse")):
+        flds[name] = _field(_ts("component", **{"class": cls},
+                                raw=f"typing.Union[{cls}, str]"))
+    st = _state()
+    st["qubits"]["qA1"]["ref_other"] = "not_an_op"
+    st["qubits"]["qA1"]["ref_lab"] = "not_an_op"
+    got = {f["field"]: f for f in sev.analyze_state(st, man)["findings"]
+           if f.get("field") in ("ref_other", "ref_lab")}
+    assert "ref_other" not in got, got                       # not a Pulse arm
+    assert got["ref_lab"]["code"] == "missing_operation"      # a Pulse subclass
+    assert sev.is_pulse_class(man, "lab.MyPulse") and not sev.is_pulse_class(man, "q.Other")
+
+
 def test_a_warm_cache_without_str_ok_reads_the_annotation():
     old = {"base": "component", "class": "quam.components.pulses.Pulse",
            "raw": "typing.Union[quam.components.pulses.Pulse, str]"}

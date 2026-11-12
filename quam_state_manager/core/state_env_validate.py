@@ -397,6 +397,22 @@ def operation_name_problem(state: dict, path: str, name: str,
     return None
 
 
+def is_pulse_class(manifest: dict | None, class_str: str | None) -> bool:
+    """True when *class_str* is quam's ``Pulse`` or a subclass of it, read
+    from the probe's class entries (the class itself, its canonical name and
+    its ``bases`` MRO list). A str on a Union[Component, str] field is an
+    OPERATION NAME only for a Pulse arm; any other component's str is not
+    judged here."""
+    if not class_str:
+        return False
+    names = {class_str}
+    entry = _class_entry(manifest or {}, class_str) if manifest else None
+    if isinstance(entry, dict):
+        names.add(str(entry.get("canonical") or ""))
+        names.update(str(b) for b in entry.get("bases") or [])
+    return any(n.rsplit(".", 1)[-1] == "Pulse" for n in names if n)
+
+
 def _declares_str(ts: dict) -> bool:
     """True when the declared annotation allows a str (Union[Component, str]).
 
@@ -406,11 +422,43 @@ def _declares_str(ts: dict) -> bool:
     if ts.get("str_ok"):
         return True
     raw = str(ts.get("raw") or "").replace(" ", "")
-    if not (raw.startswith(("typing.Union[", "Union[", "Optional[", "typing.Optional["))
-            or "|" in raw):
-        return False
-    inner = raw[raw.find("[") + 1:raw.rfind("]")] if "[" in raw else raw
-    return any(a in ("str", "<class'str'>") for a in inner.replace("|", ",").split(","))
+    arms = _union_arms(raw)
+    return len(arms) > 1 and any(a in ("str", "<class'str'>") for a in arms)
+
+
+_UNION_HEADS = ("typing.Union[", "Union[", "typing.Optional[", "Optional[")
+
+
+def _split_top(s: str, sep: str) -> list[str]:
+    """Split *s* at *sep* outside any brackets."""
+    out, depth, cur = [], 0, ""
+    for ch in s:
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if ch == sep and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    out.append(cur)
+    return out
+
+
+def _union_arms(s: str) -> list[str]:
+    """The flat arms of a Union / Optional annotation text, nesting in any
+    order (``Optional[Union[Pulse, str]]``, ``Union[Optional[str], Pulse]``,
+    ``Pulse | str | None``); a non-union annotation is one arm. Optional's
+    implicit None is an arm too."""
+    if "|" in s and len(_split_top(s, "|")) > 1:
+        return [a for part in _split_top(s, "|") for a in _union_arms(part)]
+    for head in _UNION_HEADS:
+        if s.startswith(head) and s.endswith("]"):
+            parts = _split_top(s[len(head):-1], ",")
+            arms = [a for part in parts for a in _union_arms(part)]
+            return arms + (["None"] if "Optional[" in head else [])
+    return [s]
 
 
 def _typename(value: Any) -> str:
@@ -597,7 +645,8 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None,
             if isinstance(v, dict) or is_pointer_str(v):
                 continue                       # containers recurse; pointers pass
             ok, code, msg = judge(v, ts)
-            if ok and isinstance(v, str) and ts.get("base") == "component":
+            if (ok and isinstance(v, str) and ts.get("base") == "component"
+                    and is_pulse_class(manifest, ts.get("class"))):
                 reads: list = []
                 why = operation_name_problem(state, kpath, v, reads)
                 pre = chunk_prefix[0]
