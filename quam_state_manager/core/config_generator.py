@@ -598,7 +598,7 @@ def validate_spec(spec) -> list[str]:
         ln.get("line") for ln in lines if isinstance(ln, dict)
     }
     if ("coupler" in line_types_present and "flux" not in line_types_present
-            and spec.get("pair_gate") != "cz_coupler"):
+            and spec.get("pair_gate") not in ("cz_coupler", "cz_coupler_only")):
         errors.append(
             "coupler lines need qubit flux lines (flux-tunable qubits): a tunable-"
             "coupler CZ plays on the qubit z line. For fixed-frequency qubits use "
@@ -609,15 +609,22 @@ def validate_spec(spec) -> list[str]:
     # run_build dispatches the 2Q-gate family on this; an unknown value silently
     # builds a chip with no 2Q macros, so validate it here.
     pair_gate = spec.get("pair_gate")
-    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable", "cz_coupler"):
+    if pair_gate not in (None, "", "cr", "cz_fixed", "cz_tunable", "cz_coupler", "cz_coupler_only"):
         errors.append(
             f"pair_gate: unknown value {pair_gate!r} "
-            f"(expected 'cr', 'cz_fixed', 'cz_tunable', or 'cz_coupler')"
+            f"(expected 'cr', 'cz_fixed', 'cz_tunable', 'cz_coupler', or 'cz_coupler_only')"
         )
 
     if pair_gate == "cz_coupler" and any(ln.get("line") == "flux" for ln in lines):
         errors.append("cz_coupler requires no qubit z line")
-    if pair_gate in ("cz_coupler", "cz_tunable"):
+    if pair_gate == "cz_coupler_only" and any(ln.get("line") == "flux" for ln in lines):
+        errors.append("cz_coupler_only requires no qubit z line (its qubits keep z empty)")
+    if pair_gate == "cz_coupler_only":
+        for pv in (((spec.get("populate") or {}).get("pairs")) or {}).values():
+            shape = (pv or {}).get("coupler_pulse_shape") if isinstance(pv, dict) else None
+            if shape not in (None, "", "flattop", "snz"):
+                errors.append(f"coupler_pulse_shape: unknown value {shape!r} (expected 'flattop' or 'snz')")
+    if pair_gate in ("cz_coupler", "cz_tunable", "cz_coupler_only"):
         # the builder makes a tunable-coupler pair FROM its coupler line: a
         # pair without one is silently left out of the built chip
         for pair in spec.get("qubit_pairs") or []:

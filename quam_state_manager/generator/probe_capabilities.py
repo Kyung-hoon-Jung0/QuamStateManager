@@ -119,6 +119,9 @@ CATALOG: dict[str, dict] = {
     "pulses.square": {"module": _PULSES, "attr": "SquarePulse"},
     # -- two-qubit gate macros --------------------------------------------
     "pair.coupler_cz": {"module": "qsm_quam_ext", "attr": "CouplerCZGate"},
+    # the lab layout's own classes (quam_config on the env's path), decisions D-6
+    "pair.coupler_cz_lab": {"module": "quam_config.coupler_cz_gate", "attr": "CouplerCZGate"},
+    "pulse.snz_two_flux": {"module": "quam_config.two_flux_gate", "attr": "SNZTwoFluxPulse"},
     "pair.cz_gate": {"module": _TWO_Q_FTC, "attr": "CZGate"},
     "pair.cz_parametric": {"module": _TWO_Q_FTC, "attr": "ParametricCZGate"},
     "pair.fixed_pair": {"module": "quam_builder.architecture.superconducting.qubit_pair.flux_tunable_transmon_pair",

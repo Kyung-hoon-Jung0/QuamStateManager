@@ -87,6 +87,9 @@ def observe():
 def test_the_ext_layout_is_unchanged():
     want = json.loads(GOLDEN.read_text(encoding="utf-8"))
     got = observe()
+    # rows for capabilities added later are new inventory entries, not a change to this layout
+    known = {r["id"] for r in want["assess"]["inventory"]}
+    got["assess"]["inventory"] = [r for r in got["assess"]["inventory"] if r["id"] in known]
     for key in want:
         assert got[key] == want[key], key
 
