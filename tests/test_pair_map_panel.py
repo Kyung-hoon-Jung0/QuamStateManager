@@ -118,3 +118,35 @@ def test_a_pointed_pulse_is_labelled_by_the_line_it_lives_on():
     from quam_state_manager.core.pair_map_panel import _pulse_qubit
     assert _pulse_qubit(("qubits", "q7", "z", "operations", "cz"), "q1") == "q7"
     assert _pulse_qubit(("qubit_pairs", "q1-2", "macros"), "q1") == "q1"
+
+
+def test_the_panel_route_reads_the_pair_after_an_edit(tmp_path):
+    _write(tmp_path)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    h = {"Origin": "http://localhost"}
+    c.post("/load", data={"folder": str(tmp_path)}, headers=h)
+    before = _d(c.get("/api/pair-map-panel/q1-2").get_json()["rows"])
+    assert before["cz_a phase ctrl (turns)"][1] == "0.1337"
+    tok = c.get("/api/agent/chip").get_json()["chip_token"]
+    r = c.post("/field/edit", data={"dot_path": "qubit_pairs.q1-2.macros.cz_a.phase_shift_control",
+                                     "value": "0.4242", "expect_chip": tok}, headers=h)
+    assert r.status_code < 400, r.get_data(as_text=True)[:300]
+    after = _d(c.get("/api/pair-map-panel/q1-2").get_json()["rows"])
+    assert after["cz_a phase ctrl (turns)"][1] == "0.4242"
+    assert c.get("/api/pair-map-panel/nope").status_code == 404
+
+
+def test_two_flux_gate_labels_follow_the_gate_roles_not_moving_qubit(tmp_path):
+    st = _state()
+    st["qubit_pairs"]["q1-2"]["moving_qubit"] = "target"
+    st["qubit_pairs"]["q1-2"]["macros"]["cz_a"].update({
+        "flux_pulse_qubit": {"amplitude": 0.31, "flat_length": 60},
+        "flux_pulse_target": {"amplitude": 0.17, "flat_length": 64}})
+    (tmp_path / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (tmp_path / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}), encoding="utf-8")
+    rows = all_pair_rows(QueryEngine(QuamStore(tmp_path)))["q1-2"]
+    r = _d(rows)
+    assert r["cz_a amp (q1)"][1] == "0.310000"      # flux_pulse_qubit -> control
+    assert r["cz_a amp (q2)"][1] == "0.170000"      # flux_pulse_target -> target
+    assert "Moving" not in r

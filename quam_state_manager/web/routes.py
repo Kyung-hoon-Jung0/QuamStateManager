@@ -17296,6 +17296,21 @@ def _pair_map_panel(engine) -> dict:
         return {}
 
 
+@bp.route("/api/pair-map-panel/<path:name>")
+def api_pair_map_panel(name: str):
+    """One pair's map hover-panel rows, read fresh (the panel re-asks on every open)."""
+    from quam_state_manager.core import pair_map_panel
+    engine = _engine()
+    if not engine:
+        return jsonify({"rows": None}), 404
+    try:
+        rows = pair_map_panel.all_pair_rows(engine, only=name).get(name)
+    except Exception:  # noqa: BLE001 -- the panel keeps what it showed
+        logger.exception("pair map panel for %r failed", name)
+        rows = None
+    return jsonify({"rows": rows}), (200 if rows is not None else 404)
+
+
 @bp.route("/pairs")
 def pairs():
     engine = _engine()

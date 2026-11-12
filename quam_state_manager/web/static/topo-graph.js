@@ -1375,7 +1375,7 @@ window.TopoGraph = (function () {
       closeDetails();
     }, HOVER_GRACE_MS);
   }
-  function openHoverDetail(anchor, label, open) {
+  function openHoverDetail(anchor, label, open, host) {
     clearTimeout(detailTimer);
     if (closingDetail) return;
     if (detailPanel && detailAnchor === anchor) return;
@@ -1384,6 +1384,7 @@ window.TopoGraph = (function () {
     if (!panel) return;
     detailPanel = panel; detailAnchor = anchor;
     panel._hoverMode = true;
+    panel._hoverHost = host || null;
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'false');
     panel.setAttribute('aria-label', label + ' details');
@@ -1394,6 +1395,25 @@ window.TopoGraph = (function () {
       panel.addEventListener('mouseenter', function () { clearTimeout(detailTimer); });
       panel.addEventListener('mouseleave', function () { if (panel._hoverMode) scheduleHoverClose(); });
       panel.addEventListener('focusin', function () { clearTimeout(detailTimer); });
+      // The panel may lie over another map entity: the pointer reaching that
+      // entity (outside the panel's controls) switches to it, so no neighbour
+      // is ever out of reach.
+      panel.addEventListener('mousemove', function (e) {
+        var host = panel._hoverHost, b = host && host._detailBinding;
+        if (!panel._hoverMode || !b || !document.elementsFromPoint) return;
+        // only the panel's own action keeps the pointer; anything else lets the entity under it win
+        if (e.target.closest && e.target.closest('[data-detail-primary]')) return;
+        var under = document.elementsFromPoint(e.clientX, e.clientY);
+        for (var i = 0; i < under.length; i++) {
+          if (panel.contains(under[i])) continue;
+          var hit = under[i].closest && under[i].closest(b.selector);
+          if (hit && host.contains(hit) && hit !== detailAnchor) {
+            openHoverDetail(hit, b.label(hit), function () { return b.open(hit); }, host);
+            return;
+          }
+          if (hit === detailAnchor) return;
+        }
+      });
       panel.addEventListener('focusout', function (e) {
         if (panel._hoverMode && !(e.relatedTarget && panel.contains(e.relatedTarget))) scheduleHoverClose();
       });
@@ -1418,7 +1438,7 @@ window.TopoGraph = (function () {
       if (!anchor || !host.contains(anchor)) return;
       var hover = binding.hover;
       function offer() {
-        (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); });
+        (hover ? openHoverDetail : offerDetail)(anchor, binding.label(anchor), function () { return binding.open(anchor); }, host);
       }
       if (e.type === 'mouseenter' || e.type === 'focusin') {
         if (!e.relatedTarget || !anchor.contains(e.relatedTarget)) offer();

@@ -58,6 +58,7 @@ window.ComponentMap = (function () {
   // Shared TopoGraph controls own its affordance, positioning and dismissal.
   var _pop = null;
   var _popEnt = null;          // "kind:id" of the card currently shown
+  var _popAnchor = null;      // the anchor of the card shown
   var _popTitleEl = null;      // the SVG <title> we emptied while showing it
   var _popTitleText = "";
   function _popupEl() {
@@ -152,6 +153,49 @@ window.ComponentMap = (function () {
     pop.style.top = Math.round(best[1]) + "px";
   }
 
+  function _servedRowsEl(rows) {
+    var sl = document.createElement("div");
+    sl.className = "cm-popup-rows";
+    sl.setAttribute("data-served", "");
+    rows.forEach(function (rw) {
+      var r = document.createElement("div");
+      r.className = "cm-popup-row";
+      var k = document.createElement("span");
+      k.className = "cm-popup-k";
+      k.textContent = rw[0];
+      var v = document.createElement("span");
+      v.className = "cm-popup-v";
+      v.textContent = rw[1];
+      if (rw[2]) {
+        var n = document.createElement("small");
+        n.className = "muted";
+        n.textContent = rw[2];
+        v.appendChild(document.createElement("br"));
+        v.appendChild(n);
+      }
+      r.appendChild(k); r.appendChild(v);
+      sl.appendChild(r);
+    });
+    return sl;
+  }
+  function _refreshPairRows(pop, id, key) {
+    if (!window.fetch) return;
+    fetch("/api/pair-map-panel/" + encodeURIComponent(id), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var rows = j && j.rows;
+        if (!rows || !rows.length) return;
+        var el = document.getElementById("cm-pair-panel");
+        if (el && el._parsed) el._parsed[id] = rows;
+        if (_popEnt !== key || !pop.isConnected || pop.hidden) return;
+        var fresh = _servedRowsEl(rows), old = pop.querySelector(".cm-popup-rows");
+        if (old) pop.replaceChild(fresh, old);
+        else pop.insertBefore(fresh, pop.querySelector(".cm-popup-hint"));
+        if (pop._place) pop._place(_popAnchor || pop);
+      })
+      .catch(function () {});
+  }
+
   function _showPopup(ent, row, el, ev) {
     var key = ent.kind + ":" + ent.id;
     if (_popEnt === key) return;   // same entity — no rebuild/reposition churn
@@ -178,29 +222,10 @@ window.ComponentMap = (function () {
     title.appendChild(close);
     pop.appendChild(title);
     var served = ent.kind === "pair" ? _pairPanelRows(ent.id) : null;
+    // the page's copy shows at once; a fresh read replaces it (edits, undo, sync)
+    if (ent.kind === "pair" && document.getElementById("cm-pair-panel")) _refreshPairRows(pop, ent.id, key);
     if (served) {
-      var sl = document.createElement("div");
-      sl.className = "cm-popup-rows";
-      served.forEach(function (rw) {
-        var r = document.createElement("div");
-        r.className = "cm-popup-row";
-        var k = document.createElement("span");
-        k.className = "cm-popup-k";
-        k.textContent = rw[0];
-        var v = document.createElement("span");
-        v.className = "cm-popup-v";
-        v.textContent = rw[1];
-        if (rw[2]) {
-          var n = document.createElement("small");
-          n.className = "muted";
-          n.textContent = rw[2];
-          v.appendChild(document.createElement("br"));
-          v.appendChild(n);
-        }
-        r.appendChild(k); r.appendChild(v);
-        sl.appendChild(r);
-      });
-      pop.appendChild(sl);
+      pop.appendChild(_servedRowsEl(served));
     } else if (row) {
       var table = row.closest("table");
       var ths = table ? table.querySelectorAll("thead th") : [];
@@ -265,6 +290,7 @@ window.ComponentMap = (function () {
     if ((window.htmx || _isPick()) && (!pickHint || ent.kind === "pair")) pop.appendChild(hint);
     pop.hidden = false;
     _popEnt = key;
+    _popAnchor = el;
     pop._place = _hoverMode(_active && _active.root) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;

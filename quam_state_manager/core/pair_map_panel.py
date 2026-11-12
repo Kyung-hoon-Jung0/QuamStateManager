@@ -59,8 +59,9 @@ def _pulse_qubit(path: tuple, fallback: str | None) -> str | None:
 
 
 def flux_movers(engine, pair_name: str, gate: str, pair: dict) -> list[tuple[str | None, dict]]:
-    """``[(qubit, pulse dict), ...]`` for a gate's flux pulse(s): ``flux_pulse_qubit`` on the
-    moving qubit and, on a two-mover gate, ``flux_pulse_target`` on the other qubit.
+    """``[(qubit, pulse dict), ...]`` for a gate's flux pulse(s). A two-flux gate plays
+    ``flux_pulse_qubit`` on the control and ``flux_pulse_target`` on the target (its own roles,
+    whatever ``moving_qubit`` says); a single-flux gate plays ``flux_pulse_qubit`` on the mover.
     Pointers are followed as ``get_pair`` follows them (``query._deref_pulse_ref``)."""
     from quam_state_manager.core.query import _deref_pulse_ref
     raw = (engine.store.merged.get("qubit_pairs", {}).get(pair_name) or {})
@@ -68,10 +69,13 @@ def flux_movers(engine, pair_name: str, gate: str, pair: dict) -> list[tuple[str
     if not isinstance(macro, dict):
         return []
     ctrl, tgt = pair.get("qubit_control"), pair.get("qubit_target")
-    mover = tgt if pair.get("moving_qubit") == "target" else ctrl
-    other = ctrl if mover == tgt else tgt
+    two = bool(macro.get("flux_pulse_target"))
+    if two:
+        first = ctrl
+    else:
+        first = tgt if pair.get("moving_qubit") == "target" else ctrl
     out = []
-    for field, fb in (("flux_pulse_qubit", mover), ("flux_pulse_target", other)):
+    for field, fb in (("flux_pulse_qubit", first), ("flux_pulse_target", tgt)):
         val = macro.get(field)
         if not val:
             continue
@@ -117,7 +121,8 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
                     "derived from the SRB run there; not read here"])
 
     mv = edge.get("moving_qubit") or pair.get("moving_qubit")
-    if mv in ("control", "target"):
+    # a two-flux gate moves both qubits by its own roles; moving_qubit does not apply
+    if mv in ("control", "target") and not (movers and len(movers) > 1):
         q = pair.get("qubit_control" if mv == "control" else "qubit_target")
         out.append(["Moving", f"{mv} ({q})" if q else mv, ""])
 
@@ -165,8 +170,8 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
     return out
 
 
-def all_pair_rows(engine) -> dict[str, list[list[str]]]:
-    """Panel rows for every pair of the chip, keyed by pair id."""
+def all_pair_rows(engine, only: str | None = None) -> dict[str, list[list[str]]]:
+    """Panel rows for every pair of the chip (or just ``only``), keyed by pair id."""
     topo = engine.get_topology()
     edges = {e.get("pair_id"): e for e in topo.get("edges") or []}
     f01: dict[str, Any] = {}
@@ -175,6 +180,8 @@ def all_pair_rows(engine) -> dict[str, list[list[str]]]:
             f01[n.get("id")] = n["f_01"]
     out = {}
     for name in engine.store.qubit_pair_names:
+        if only is not None and name != only:
+            continue
         try:
             pair = engine.get_pair(name)
         except Exception:  # noqa: BLE001 -- the table shows it as an error row

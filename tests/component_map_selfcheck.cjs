@@ -62,6 +62,10 @@ function makeWorld(bodyHtml) {
   win._fetchUrls = [];
   win.fetch = function (url) {
     win._fetchUrls.push(String(url));
+    if (String(url).indexOf('/api/pair-map-panel/') === 0) {
+      const body = win._pairPanelReply || null;
+      return win.Promise.resolve({ ok: !!body, json: function () { return win.Promise.resolve(body); } });
+    }
     return win.Promise.resolve({ ok: true, json: function () { return win.Promise.resolve(JSON.parse(JSON.stringify(TOPO))); } });
   };
   new win.Function(TOPO_JS + '\n;\n' + CMAP_JS).call(win);
@@ -436,6 +440,27 @@ async function checkComponentMap() {
     saved.forEach((p) => { p[0].getBoundingClientRect = p[1]; });
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   })();
+  // a panel lying over a neighbour: the pointer reaching it switches the panel
+  (function () {
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const pq = doc.querySelector('.cm-popup');
+    const nbr = body.querySelector('[data-cm="q:qA2"]');
+    const rowEl = pq.querySelector('.cm-popup-row') || pq.querySelector('.cm-popup-title');
+    const saved = doc.elementsFromPoint;
+    doc.elementsFromPoint = () => [rowEl, pq, nbr.firstElementChild || nbr, body];
+    rowEl.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
+    const now = doc.querySelector('.cm-popup:not([hidden])');
+    ok(now && now.querySelector('.cm-popup-title').firstChild.textContent === 'qA2',
+       'moving over a covered neighbour switches the panel to it');
+    // over the panel's own button nothing switches
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const p2 = doc.querySelector('.cm-popup');
+    p2.querySelector('.cm-popup-hint').dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true }));
+    ok(doc.querySelector('.cm-popup .cm-popup-title').firstChild.textContent === 'qA1',
+       'the pointer on Expand never switches away');
+    doc.elementsFromPoint = saved;
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
   // Expand -> inspector
   stone.dispatchEvent(new win.MouseEvent('mouseenter'));
   pop = doc.querySelector('.cm-popup');
@@ -466,11 +491,22 @@ async function checkComponentMap() {
   js.type = 'application/json'; js.id = 'cm-pair-panel';
   js.textContent = JSON.stringify({ 'qA2-qA1': [['Best 2Q fidelity', '0.9570', 'cz_x · per gate (IRB)']] });
   doc.body.appendChild(js);
+  win._pairPanelReply = null;
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
   pop = doc.querySelector('.cm-popup');
   const prs = pop.querySelectorAll('.cm-popup-row');
   ok(!pop.hidden && prs.length === 1 && prs[0].querySelector('.cm-popup-v').textContent.indexOf('0.9570') === 0
      && prs[0].textContent.indexOf('per gate (IRB)') > 0, 'a pair panel shows the served rows with their kind');
+  // an edit since the page loaded: the panel re-reads the pair and shows the new value
+  doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  win._fetchUrls.length = 0;
+  edgeNoRow.dispatchEvent(new win.MouseEvent('mouseenter'));
+  await tick(); await tick(); await tick();
+  pop = doc.querySelector('.cm-popup');
+  ok(win._fetchUrls.indexOf('/api/pair-map-panel/qA2-qA1') >= 0, 'opening a pair panel re-reads that pair');
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0,
+     'the re-read value replaces the page copy (got ' + pop.querySelector('.cm-popup-v').textContent + ')');
   edgeNoRow.dispatchEvent(new win.MouseEvent('mouseleave'));
   await wait(320);
   js.remove();
