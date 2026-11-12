@@ -423,11 +423,22 @@ async function checkComponentMap() {
     stone.dispatchEvent(new win.MouseEvent('mouseenter'));
     const pp = doc.querySelector('.cm-popup');
     pp.getBoundingClientRect = R(0, 0, 120, 80);
+    pp._placeMode = null;   // place afresh with the stubbed geometry
     win.TopoGraph.positionDetail(pp, stone);
     const x = parseFloat(pp.style.left), y = parseFloat(pp.style.top);
     const hitsNb = x < 400 && x + 120 > 360 && y < 350 && y + 80 > 290;
     const hitsSelf = x < 340 && x + 120 > 300 && y < 340 && y + 80 > 300;
     ok(!hitsNb && !hitsSelf, 'the panel avoids its neighbour and its own stone (' + x + ',' + y + ')');
+    box(stone).getBoundingClientRect = R(300, 260, 40, 40);     // the map scrolled 40 px
+    box(nb).getBoundingClientRect = R(360, 250, 40, 60);
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(parseFloat(pp.style.left) === x && parseFloat(pp.style.top) === y - 40,
+       'a scroll moves a beside panel with its stone, same side (' + pp.style.left + ',' + pp.style.top + ')');
+    // after the scroll something now sits where the panel is: it still does not jump elsewhere
+    box(nb).getBoundingClientRect = R(x, y - 40, 120, 80);
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(parseFloat(pp.style.left) === x && parseFloat(pp.style.top) === y - 40,
+       'a scroll never re-chooses the spot (' + pp.style.left + ',' + pp.style.top + ')');
     // a pair: clear of the edge AND its two end stones
     cmRoot.setAttribute('data-highlight', 'pairs');
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
@@ -438,6 +449,7 @@ async function checkComponentMap() {
     ed.dispatchEvent(new win.MouseEvent('mouseenter'));
     const pe = doc.querySelector('.cm-popup');
     pe.getBoundingClientRect = R(0, 0, 200, 80);
+    pe._placeMode = null;   // place afresh with the stubbed geometry
     win.TopoGraph.positionDetail(pe, ed);
     const px = parseFloat(pe.style.left), py = parseFloat(pe.style.top);
     const overlaps = (l, t, w, h) => px < l + w && px + 200 > l && py < t + h && py + 80 > t;
@@ -453,10 +465,30 @@ async function checkComponentMap() {
     stone.dispatchEvent(new win.MouseEvent('mouseenter'));
     const pd = doc.querySelector('.cm-popup');
     pd.getBoundingClientRect = R(0, 0, 120, 80);
+    pd._placeMode = null;   // place afresh with the stubbed geometry
     win.TopoGraph.positionDetail(pd, stone);
     ok(pd._docked === true, 'a crowded stone docks its panel');
-    ok(!!doc.querySelector('svg.cm-dir-tether line.cm-dir-tether-line') && stone.classList.contains('cm-dir-docked'),
-       'a docked panel is tied to its stone by a ring and a line');
+    ok(stone.classList.contains('cm-dir-docked'), 'the first docked placement rings its stone');
+    pd._placeMode = null;
+    // an Add button sits in the corner the dock wants: the panel goes below it
+    const svgEl = body.querySelector('svg');
+    const ghost = doc.createElementNS('http://www.w3.org/2000/svg', 'g');
+    ghost.setAttribute('class', 'cm-dir-ghost'); ghost.setAttribute('data-cm', 'add:qubit');
+    svgEl.appendChild(ghost);
+    const W = win.innerWidth;
+    ghost.getBoundingClientRect = R(W - 150, 0, 140, 60);
+    win.TopoGraph.positionDetail(pd, stone);
+    const gx = parseFloat(pd.style.left), gy = parseFloat(pd.style.top);
+    ok(pd._docked && !(gx < W - 10 && gx + 120 > W - 150 && gy < 60 && gy + 80 > 0),
+       'the dock never covers an Add button (' + gx + ',' + gy + ')');
+    ok(gx + 120 <= W && gy >= 0, 'the dock stays inside the card');
+    // a wheel scroll re-places it the same way, never somewhere else
+    doc.dispatchEvent(new win.Event('scroll'));
+    ok(parseFloat(pd.style.left) === gx && parseFloat(pd.style.top) === gy, 'a scroll keeps the docked panel in place');
+    ghost.remove();
+    ok(!!doc.querySelector('svg.cm-dir-tether .cm-dir-tether-ring') && stone.classList.contains('cm-dir-docked'),
+       'a docked panel rings its stone');
+    ok(!doc.querySelector('svg.cm-dir-tether line'), 'no connector line (it would read as a pair edge)');
     delete pd.getBoundingClientRect;
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
     ok(!doc.querySelector('svg.cm-dir-tether') && !stone.classList.contains('cm-dir-docked'),
@@ -488,6 +520,19 @@ async function checkComponentMap() {
     v.dispatchEvent(new win.MouseEvent('mousemove', { bubbles: true, clientX: 10, clientY: 10 }));
     ok(doc.querySelector('.cm-popup:not([hidden]) .cm-popup-title').firstChild.textContent === 'qA2',
        'moving inside the panel keeps it');
+    doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
+  })();
+  // the qubit panel reads its table row: a patched row patches the open panel
+  await (async function () {
+    stone.dispatchEvent(new win.MouseEvent('mouseenter'));
+    const cell = doc.querySelector('tr[data-qubit-id="qA1"] td[data-dbm]');
+    const was = cell.textContent;
+    cell.textContent = '-21.0 dBm';
+    await wait(150);
+    const v = doc.querySelector('.cm-popup:not([hidden]) .cm-popup-v');
+    ok(v && v.textContent === '-21.0 dBm', 'an open qubit panel follows its patched row (' + (v && v.textContent) + ')');
+    cell.textContent = was;
+    await wait(150);
     doc.body.dispatchEvent(new win.MouseEvent('click', {bubbles: true}));
   })();
   // Expand -> inspector
@@ -550,6 +595,15 @@ async function checkComponentMap() {
   doc.dispatchEvent(new win.CustomEvent('quam:state-changed'));
   await wait(150);
   ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.9811') === 0, 'an open pair panel follows an edit');
+  // an inspector commit is an htmx POST: the open panel re-reads
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.6666', 'after commit']] };
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post' } } }));
+  await wait(150);
+  ok(pop.querySelector('.cm-popup-v').textContent.indexOf('0.6666') === 0,
+     'an open pair panel follows an inspector commit (' + pop.querySelector('.cm-popup-v').textContent + ')');
+  win._pairPanelReply = { rows: [['2Q fidelity (Chip Status)', '0.9811', '']] };
+  doc.dispatchEvent(new win.CustomEvent('htmx:afterRequest', { detail: { successful: true, requestConfig: { verb: 'post' } } }));
+  await wait(150);
   // a map click carries the page's chip too
   win._htmxCalls.length = 0;
   edgeNoRow.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));

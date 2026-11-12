@@ -243,35 +243,38 @@ function panel(d) { return d.querySelector('.topo-card-popup, .topo-pair-popup, 
       assert.ok(d.querySelector('.topo-expand'));
       event(w, d.body, 'click');
     });
-    await check('keyboard on the Expand offer walks the same kind, then leaves the map, never <body>', async () => {
+    await check('keyboard on the Expand offer walks the map in document order', async () => {
       const edges = Array.from(d.querySelectorAll('[data-cm^="p:"]'));
       if (edges.length < 2) return;
       edges[0].focus(); key(w, edges[0], 'Tab');
       const btn = d.querySelector('.topo-expand');
       assert.ok(btn && d.activeElement === btn, 'Tab from the edge reaches its Expand offer');
       assert.ok(key(w, btn, 'Tab'), 'Tab from the offer is handled');
-      assert.equal(d.activeElement, edges[1], 'focus lands on the next pair edge');
-      // the last edge: Tab leaves the map to the next focusable after it
-      const last = edges[edges.length - 1];
-      last.focus(); key(w, last, 'Tab');
-      const b2 = d.querySelector('.topo-expand');
-      key(w, b2, 'Tab');
-      const host = d.querySelector('#component-map');
-      assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement),
-                'after the last edge focus is past the map, not <body> (' + d.activeElement.tagName + ')');
-      assert.ok(host.compareDocumentPosition(d.activeElement) & 4, 'the focus target follows the map');
+      const hostEl = d.querySelector('#component-map');
+      const order = Array.from(hostEl.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'));
+      assert.equal(d.activeElement, order[order.indexOf(edges[0]) + 1],
+                   'focus lands on the next map item in document order (' + (d.activeElement.getAttribute('data-cm') || d.activeElement.tagName) + ')');
+      // every map item in document order, then past the map (never <body>)
       d.activeElement.blur(); await wait(300);
+      d.body.dispatchEvent(new w.MouseEvent('click', {bubbles: true}));
+      d.activeElement.blur && d.activeElement.blur();
     });
-    await check('hover panel: Tab from the last stone leaves the map, never <body>', async () => {
-      const stones = Array.from(d.querySelectorAll('[data-cm^="q:"]'));
-      const last = stones[stones.length - 1];
-      last.focus(); key(w, last, 'Tab');
-      const hint = panel(d) && panel(d).querySelector('.cm-popup-hint');
-      assert.ok(hint && d.activeElement === hint);
-      key(w, hint, 'Tab');
+    await check('Tab from the last map entity leaves the map, never <body>', async () => {
       const host = d.querySelector('#component-map');
-      assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement) && !d.activeElement.closest('.cm-popup'),
-                'focus is past the map (' + d.activeElement.tagName + '.' + d.activeElement.className + ')');
+      const order = Array.from(host.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'));
+      const anchors = order.filter((el) => el.matches('[data-cm]:not(.cm-dir-ghost)'));
+      const last = anchors[anchors.length - 1];
+      last.focus(); key(w, last, 'Tab');
+      const btn = (panel(d) && panel(d).querySelector('.cm-popup-hint')) || d.querySelector('.topo-expand');
+      assert.ok(btn && d.activeElement === btn, 'Tab from the last entity reaches its button');
+      key(w, btn, 'Tab');
+      const after = order[order.indexOf(last) + 1];
+      if (after) assert.equal(d.activeElement, after, 'then the next map item');
+      else {
+        assert.ok(d.activeElement !== d.body && !host.contains(d.activeElement) && !d.activeElement.closest('.cm-popup'),
+                  'past the map, not <body> (' + d.activeElement.tagName + ')');
+        assert.ok(host.compareDocumentPosition(d.activeElement) & 4, 'the focus target follows the map');
+      }
       d.activeElement.blur(); await wait(300);
     });
     await check('component X closes; navigation tears it down', async () => {

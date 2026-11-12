@@ -131,15 +131,12 @@ window.ComponentMap = (function () {
     var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
     return s.getBoundingClientRect();
   }
-  // Place the panel where it covers NO map entity: beside its anchor when such
-  // a spot exists, else docked away from it (the viewport edge or outside the
-  // drawing) -- the anchor stays lit, so the panel still reads as its own.
-  // pop._docked tells the hover logic the trip to the panel is a long one.
-  function _placeAvoiding(pop, anchor) {
-    pop.style.maxWidth = "";
-    var b = pop.getBoundingClientRect();
-    var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
-    var body = anchor.closest(".cmap-body") || document;
+  // Placement. The panel sits beside its entity when a spot there covers no
+  // other map entity; otherwise it docks in ONE place: the map card's top-right
+  // corner, clamped on all four sides to the card, below the Add buttons. The
+  // entity then wears a filled ring. The choice is made once per open: a scroll
+  // or a refresh moves the panel with what it is attached to, never elsewhere.
+  function _entityBox(anchor, body) {
     // a pair's own end stones belong to it: the panel goes clear of all three
     var ends = (anchor.getAttribute("data-link-ends") || "").split(/\s+/).filter(Boolean);
     var mine = [anchor];
@@ -154,116 +151,102 @@ window.ComponentMap = (function () {
       a = a ? { left: Math.min(a.left, r.left), top: Math.min(a.top, r.top),
                 right: Math.max(a.right, r.right), bottom: Math.max(a.bottom, r.bottom) } : r;
     });
-    if (!a) a = _boxOf(anchor);
-    // the add door's ghost buttons are not map content (a panel beside its anchor
-    // may sit by them) but a docked panel never covers them
-    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
-      return mine.indexOf(e) < 0;
-    });
-    function rects(list) {
-      return list.map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    return { box: a || _boxOf(anchor), mine: mine };
+  }
+  function _overlap(x, y, w, h, r) {
+    return Math.min(x + w, r.right) > Math.max(x, r.left) && Math.min(y + h, r.bottom) > Math.max(y, r.top);
+  }
+  // The dock: the card's top-right corner, pushed below any Add button it would
+  // cover, clamped to the card (and the viewport) on all four sides.
+  function _dockSpot(pop, card, ghosts, pad) {
+    var W = window.innerWidth, H = window.innerHeight;
+    var top = Math.max(card.top + pad, pad), bottom = Math.min(card.bottom - pad, H - pad);
+    var left = Math.max(card.left + pad, pad), right = Math.min(card.right - pad, W - pad);
+    pop.style.maxHeight = Math.max(80, Math.floor(bottom - top)) + "px";
+    var b = pop.getBoundingClientRect();
+    var x = Math.max(left, right - b.width), y = top;
+    for (var guard = 0; guard < ghosts.length + 1; guard++) {
+      var hit = null;
+      ghosts.forEach(function (g) { if (!hit && _overlap(x, y, b.width, b.height, g)) hit = g; });
+      if (!hit) break;
+      y = hit.bottom + pad;                      // below the Add button
     }
-    var mapBoxes = rects(others.filter(function (e) { return !e.classList.contains("cm-dir-ghost"); }));
-    var dockBoxes = rects(others);
-    var boxes = mapBoxes;
-    // the panel stays inside the map card's columns and below its top edge:
-    // never over the sidebar nav or the banners above the card
+    if (y + b.height > bottom) {                 // too tall below it: shrink, never leave the card
+      pop.style.maxHeight = Math.max(80, Math.floor(bottom - y)) + "px";
+      // a shrunk panel scrolls: its scrollbar widens it, so measure again
+      b = pop.getBoundingClientRect();
+      x = Math.max(left, right - b.width);
+    }
+    return [x, Math.min(y, Math.max(top, bottom - 80))];
+  }
+  function _placeAvoiding(pop, anchor) {
+    var body = anchor.closest(".cmap-body") || document;
+    var ent = _entityBox(anchor, body), a = ent.box;
     var card = (anchor.closest(".cmap") || body).getBoundingClientRect();
-    var minX = Math.max(pad, card.left), minY = Math.max(pad, card.top);
-    function fit(c) {
-      return [Math.max(minX, Math.min(c[0], W - b.width - pad)),
-              Math.max(minY, Math.min(c[1], H - b.height - pad))];
+    if (!card.width || !card.height) {             // no laid-out card (a report page): the viewport
+      card = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
     }
-    function cover(c) {
-      var n = 0;
-      boxes.forEach(function (r) {
-        var w = Math.min(c[0] + b.width, r.right) - Math.max(c[0], r.left);
-        var h = Math.min(c[1] + b.height, r.bottom) - Math.max(c[1], r.top);
-        if (w > 0 && h > 0) n += w * h + 1e5;
-      });
-      return n;
+    var gap = 10, pad = 8;
+    var mode = pop._placeMode;
+    if (mode && mode.anchor === anchor) {
+      // re-place the same way (scroll, resize, a refreshed row): never a new spot
+      if (mode.kind === "beside") {
+        pop.style.left = Math.round(a.left + mode.dx) + "px";
+        pop.style.top = Math.round(a.top + mode.dy) + "px";
+      } else {
+        var d = _dockSpot(pop, card, _ghostBoxes(body), pad);
+        pop.style.left = Math.round(d[0]) + "px"; pop.style.top = Math.round(d[1]) + "px";
+      }
+      _ring(pop._docked ? anchor : null, a);
+      return;
     }
+    pop.style.maxHeight = "";
+    var b = pop.getBoundingClientRect();
+    var others = Array.prototype.filter.call(body.querySelectorAll("[data-cm]"), function (e) {
+      return ent.mine.indexOf(e) < 0 && !e.classList.contains("cm-dir-ghost");
+    }).map(_boxOf).filter(function (r) { return r.width || r.height; }).concat([a]);
+    var W = window.innerWidth, H = window.innerHeight;
     var cx = (a.left + a.right - b.width) / 2, cy = (a.top + a.bottom - b.height) / 2;
     var beside = [[a.right + gap, cy], [a.left - b.width - gap, cy], [cx, a.bottom + gap],
                   [cx, a.top - b.height - gap], [a.right + gap, a.top], [a.left - b.width - gap, a.top],
                   [a.right + gap, a.bottom - b.height], [a.left - b.width - gap, a.bottom - b.height]];
-    var m = card;
-    var docks = [[cx, m.bottom + gap], [m.right + gap, cy]];
-    // nearest first: a dock spot closer to the anchor wins
-    var ys0 = [];
-    for (var y = minY; y + b.height <= H - pad; y += 40) ys0.push(y);
-    ys0.sort(function (u, v) { return Math.abs(u - cy) - Math.abs(v - cy); });
-    ys0.forEach(function (yv) { docks.push([W - b.width - pad, yv]); });
-    var pick = null, docked = false, i, c;
-    for (i = 0; i < beside.length && !pick; i++) { c = fit(beside[i]); if (!cover(c)) pick = c; }
-    if (!pick) {
-      docked = true;
-      boxes = dockBoxes;
-      // the nearest free spot around the anchor (a grid search, nearest first)
-      var near = [], step = 24, ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
-      for (var gx = minX; gx + b.width <= W - pad; gx += step) {
-        for (var gy = minY; gy + b.height <= H - pad; gy += step) {
-          var ddx = Math.max(gx - ax, 0, ax - (gx + b.width)), ddy = Math.max(gy - ay, 0, ay - (gy + b.height));
-          near.push([ddx * ddx + ddy * ddy, gx, gy]);
-        }
-      }
-      near.sort(function (u, v) { return u[0] - v[0]; });
-      for (i = 0; i < near.length && !pick; i++) { c = [near[i][1], near[i][2]]; if (!cover(c)) pick = c; }
-      for (i = 0; i < docks.length && !pick; i++) { c = fit(docks[i]); if (!cover(c)) pick = c; }
+    var pick = null;
+    var minX = Math.max(card.left, pad), minY = Math.max(card.top, pad);
+    var maxX = Math.min(card.right, W - pad) - b.width, maxY = Math.min(card.bottom, H - pad) - b.height;
+    for (var i = 0; i < beside.length && !pick; i++) {
+      // kept inside the card and the viewport, and then it must cover nothing
+      var c = [Math.max(minX, Math.min(beside[i][0], maxX)), Math.max(minY, Math.min(beside[i][1], maxY))];
+      if (!others.some(function (r) { return _overlap(c[0], c[1], b.width, b.height, r); })) pick = c;
     }
-    if (!pick) {
-      // a dense map: the free strip beside the drawing (the sidebar side or the
-      // far side), the panel narrowed to fit it
-      var vis = boxes.filter(function (r) { return r.right > 0 && r.left < W && r.bottom > 0 && r.top < H; });
-      var minL = W, maxR = 0;
-      vis.forEach(function (r) { minL = Math.min(minL, r.left); maxR = Math.max(maxR, r.right); });
-      // inside the card: the side nearer the anchor first, the right side on a tie
-      var right = Math.min(W - pad, card.right - pad);
-      var strips = [[maxR + gap, right - maxR - gap], [Math.max(minX, card.left + pad), minL - gap - Math.max(minX, card.left + pad)]];
-      var dR = Math.abs(maxR - (a.left + a.right) / 2), dL = Math.abs((a.left + a.right) / 2 - minL);
-      if (dL < dR) strips.reverse();
-      for (i = 0; i < strips.length && !pick; i++) {
-        if (strips[i][1] < 200) continue;
-        pop.style.maxWidth = Math.floor(strips[i][1]) + "px";
-        b = pop.getBoundingClientRect();
-        var ys = [cy];
-        for (var yy = minY; yy + b.height <= H - pad; yy += 40) ys.push(yy);
-        ys.sort(function (u, v) { return Math.abs(u - cy) - Math.abs(v - cy); });
-        for (var k = 0; k < ys.length && !pick; k++) {
-          c = fit([strips[i][0], ys[k]]);
-          if (!cover(c)) pick = c;
-        }
-        if (!pick) pop.style.maxWidth = "";
-      }
-      b = pop.getBoundingClientRect();
-    }
-    if (!pick) {
-      var best = Infinity;
-      docks.concat(beside).forEach(function (d) { var q = fit(d), v = cover(q); if (v < best) { best = v; pick = q; } });
-    }
+    var docked = !pick;
+    if (docked) pick = _dockSpot(pop, card, _ghostBoxes(body), pad);
     pop._docked = docked;
     pop._graceMs = docked ? 900 : 0;
+    pop._placeMode = docked ? { kind: "dock", anchor: anchor }
+                            : { kind: "beside", anchor: anchor, dx: pick[0] - a.left, dy: pick[1] - a.top };
     pop.style.left = Math.round(pick[0]) + "px";
     pop.style.top = Math.round(pick[1]) + "px";
-    _tether(docked ? anchor : null, a, pop);
+    _ring(docked ? anchor : null, a);
+  }
+  function _ghostBoxes(body) {
+    return Array.prototype.filter.call(body.querySelectorAll("[data-cm].cm-dir-ghost"), function () { return true; })
+      .map(_boxOf).filter(function (r) { return r.width || r.height; });
   }
 
-  // A docked panel sits away from its entity: the entity gets a filled ring and
-  // a thin line runs from it to the panel. Both go when the panel closes.
+  // A docked panel sits away from its entity, so the entity wears a filled
+  // ring (no connector: a line on the map reads as a pair edge). It goes when
+  // the panel closes.
   var SVGNS = "http://www.w3.org/2000/svg";
   var _tetherEl = null, _tetherAnchor = null;
   function _untether() {
     if (_tetherEl) { _tetherEl.remove(); _tetherEl = null; }
     if (_tetherAnchor) { _tetherAnchor.classList.remove("cm-dir-docked"); _tetherAnchor = null; }
   }
-  function _tether(anchor, a, pop) {
+  function _ring(anchor, a) {
     _untether();
     if (!anchor) return;
     anchor.classList.add("cm-dir-docked");
     _tetherAnchor = anchor;
-    var p = pop.getBoundingClientRect();
-    var ax = (a.left + a.right) / 2, ay = (a.top + a.bottom) / 2;
-    var px = Math.max(p.left, Math.min(ax, p.right)), py = Math.max(p.top, Math.min(ay, p.bottom));
     var svg = document.createElementNS(SVGNS, "svg");
     svg.setAttribute("class", "cm-dir-tether");
     svg.setAttribute("aria-hidden", "true");
@@ -272,11 +255,7 @@ window.ComponentMap = (function () {
     ring.setAttribute("x", a.left - 4); ring.setAttribute("y", a.top - 4);
     ring.setAttribute("width", (a.right - a.left) + 8); ring.setAttribute("height", (a.bottom - a.top) + 8);
     ring.setAttribute("rx", 8);
-    var line = document.createElementNS(SVGNS, "line");
-    line.setAttribute("class", "cm-dir-tether-line");
-    line.setAttribute("x1", ax); line.setAttribute("y1", ay);
-    line.setAttribute("x2", px); line.setAttribute("y2", py);
-    svg.appendChild(ring); svg.appendChild(line);
+    svg.appendChild(ring);
     document.body.appendChild(svg);
     _tetherEl = svg;
   }
@@ -401,6 +380,22 @@ window.ComponentMap = (function () {
     ["quam:state-changed", "cellsReverted", "stateRestored", "sm:tray-swapped"].forEach(function (name) {
       document.addEventListener(name, _rereadOpen);
     });
+    // an inspector commit is an htmx POST that fires none of the events above
+    document.addEventListener("htmx:afterRequest", function (e) {
+      var d = e.detail || {}, cfg = d.requestConfig || {};
+      var verb = String(cfg.verb || (d.xhr && d.xhr._smVerb) || "").toLowerCase();
+      if (d.successful && verb && verb !== "get") _rereadOpen();
+    });
+  }
+  // The open entity's own table row: whatever patches it (an edit, Ctrl+Z, a
+  // pull) patches the panel too -- read AFTER the row changed, never before.
+  var _rowObs = null;
+  function _watchRow(row) {
+    if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }
+    var table = row && row.closest && row.closest("table");
+    if (!table || !window.MutationObserver) return;
+    _rowObs = new MutationObserver(function () { _rereadOpen(); });
+    _rowObs.observe(table, { childList: true, subtree: true, characterData: true });
   }
 
   function _showPopup(ent, row, el, ev) {
@@ -422,6 +417,7 @@ window.ComponentMap = (function () {
       if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
       if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
       _popHl = null;
+      if (_rowObs) { _rowObs.disconnect(); _rowObs = null; }
     };
     while (pop.firstChild) pop.removeChild(pop.firstChild);
     var title = document.createElement("div");
@@ -508,11 +504,13 @@ window.ComponentMap = (function () {
     pop.hidden = false;
     _popEnt = key;
     _popAnchor = el;
+    if (_hoverFor(_active && _active.root, ent.kind)) _watchRow(row);
     // the anchor stays lit while its panel is open (a docked panel sits away from it)
     if (_hoverFor(_active && _active.root, ent.kind) && _active.api) {
       _active.api.highlightEntity(ent.kind, ent.id, true);
       _popHl = { kind: ent.kind, id: ent.id };
     }
+    pop._placeMode = null;
     pop._place = _hoverFor(_active && _active.root, ent.kind) ? function (a) { _placeAvoiding(pop, a); } : null;
     window.TopoGraph.positionDetail(pop, el);
     return pop;

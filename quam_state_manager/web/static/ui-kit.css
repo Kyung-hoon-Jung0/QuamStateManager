@@ -1075,11 +1075,10 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .bulk-cell:focus { border-color: var(--ui-accent); }
 .bulk-row-apply:disabled { visibility: hidden; }
 
-/* Chip map: a hover panel docked away from its entity -- the entity's filled ring and a
-   thin line from it to the panel (component-map.js _tether) */
+/* Chip map: a hover panel docked away from its entity -- the entity's filled ring
+   (component-map.js _ring) */
 .cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
 .cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
-.cm-dir-tether .cm-dir-tether-line { stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
 .cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }
 .cm-svg .cm-dir-docked .cm-edge-line { stroke: var(--ui-accent); }
 

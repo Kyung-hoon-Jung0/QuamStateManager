@@ -1315,13 +1315,8 @@ window.TopoGraph = (function () {
       if (anchor.isConnected) anchor.focus({preventScroll: true});
     };
   }
-  // Keyboard walk over a map: the next entity of the same kind, and after the
-  // last one the first focusable element after the map (never <body>).
-  function anchorKind(el) {
-    var cm = el.getAttribute('data-cm');
-    if (cm) return cm.split(':')[0];
-    return el.hasAttribute('data-hero-pair') ? 'hero-pair' : 'hero-qubit';
-  }
+  // Keyboard walk over a map: after the last map item, the first focusable
+  // element after the map (never <body>).
   var FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
   function focusAfterHost(host) {
     var all = document.querySelectorAll(FOCUSABLE);
@@ -1335,15 +1330,16 @@ window.TopoGraph = (function () {
     }
     return false;
   }
+  // The next focusable item of the map in document order (stones, edges and
+  // the Add buttons alike, as plain Tab would walk them), then past the map.
   function focusNextAnchor(host, from) {
-    var b = host && host._detailBinding;
-    if (!b) return false;
-    var kind = anchorKind(from);
-    var same = Array.prototype.filter.call(host.querySelectorAll(b.selector), function (el) {
-      return anchorKind(el) === kind;
+    var items = Array.prototype.filter.call(host.querySelectorAll(FOCUSABLE), function (el) {
+      return !el.disabled && el.getAttribute('tabindex') !== '-1';
     });
-    var next = same[same.indexOf(from) + 1];
-    if (next) { next.focus({preventScroll: true}); return true; }
+    for (var i = items.indexOf(from) + 1; i < items.length; i++) {
+      items[i].focus({preventScroll: true});
+      if (document.activeElement === items[i]) return true;
+    }
     return focusAfterHost(host);
   }
   function offerDetail(anchor, label, open, host) {
