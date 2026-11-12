@@ -131,12 +131,12 @@ window.ComponentMap = (function () {
     var s = el.querySelector(".cm-stone") || el.querySelector(".cm-edge-hit, .cm-hit") || el;
     return s.getBoundingClientRect();
   }
-  // Placement. The panel floats beside its entity when a spot there covers
-  // nothing on the map; otherwise it is laid out in the map card's reserved side
-  // column (a normal box: full height, scrolls with the page, overlaps nothing,
-  // never shrunk). The entity then wears a filled ring and the panel title names
-  // it. The choice is made once per open: a scroll moves a beside panel with its
-  // entity, never to another place.
+  // Placement. The panel floats beside its entity when a whole spot inside the
+  // drawing covers nothing on the map; otherwise it is an overlay card fixed to
+  // the viewport's bottom-right corner (it never moves on scroll, scrolls inside
+  // itself when tall, and keeps Expand in view). The entity then wears a filled
+  // ring and the panel title names it. The map keeps its full size, and the panel
+  // never moves in the DOM, so the keyboard order is untouched.
   function _entityBox(anchor, body) {
     // a pair's own end stones belong to it: the panel goes clear of all three
     var ends = (anchor.getAttribute("data-link-ends") || "").split(/\s+/).filter(Boolean);
@@ -157,36 +157,6 @@ window.ComponentMap = (function () {
   function _overlap(x, y, w, h, r) {
     return Math.min(x + w, r.right) > Math.max(x, r.left) && Math.min(y + h, r.bottom) > Math.max(y, r.top);
   }
-  // The reserved side column of a hover map (Qubits / Pairs pages).
-  var SIDE_HINT = "Point at an entity on the map: its values show here when they do not fit beside it.";
-  function _ensureSide(body) {
-    if (!body) return null;
-    var side = body.querySelector(":scope > .cm-dir-side");
-    if (side) return side;
-    side = document.createElement("div");
-    side.className = "cm-dir-side";
-    var hint = document.createElement("p");
-    hint.className = "muted";
-    hint.textContent = SIDE_HINT;
-    side.appendChild(hint);
-    body.appendChild(side);
-    body.classList.add("cm-dir-hasside");
-    return side;
-  }
-  function _toSide(pop, side) {
-    pop.style.left = ""; pop.style.top = ""; pop.style.maxHeight = "";
-    if (pop.parentNode !== side) side.appendChild(pop);
-    var hint = side.querySelector(":scope > .muted");
-    if (hint) hint.hidden = true;
-  }
-  function _toBody(pop) {
-    if (pop.parentNode !== document.body) {
-      var old = pop.parentNode;
-      document.body.appendChild(pop);
-      var hint = old && old.querySelector && old.querySelector(":scope > .muted");
-      if (hint) hint.hidden = false;
-    }
-  }
   function _placeAvoiding(pop, anchor) {
     var body = anchor.closest(".cmap-body") || document;
     var ent = _entityBox(anchor, body), a = ent.box;
@@ -199,8 +169,7 @@ window.ComponentMap = (function () {
       _ring(pop._docked ? anchor : null, a);
       return;
     }
-    var side = _ensureSide(body.classList ? body : null);
-    _toBody(pop);
+    pop.classList.remove("cm-dir-overlay");
     pop.style.maxHeight = "";
     var b = pop.getBoundingClientRect();
     var gap = 10, pad = 8, W = window.innerWidth, H = window.innerHeight;
@@ -223,17 +192,18 @@ window.ComponentMap = (function () {
       if (c[0] < minX || c[1] < minY || c[0] + b.width > maxX || c[1] + b.height > maxY) continue;
       if (!others.some(function (r) { return _overlap(c[0], c[1], b.width, b.height, r); })) pick = c;
     }
-    var docked = !pick || !side;
-    if (docked && side) {
-      _toSide(pop, side);
+    var docked = !pick;
+    if (docked) {
+      // the overlay card: CSS places it (bottom-right, fixed); no inline geometry
+      pop.style.left = ""; pop.style.top = "";
+      pop.classList.add("cm-dir-overlay");
     } else {
-      if (!pick) pick = [Math.max(pad, Math.min(beside[0][0], W - b.width - pad)), Math.max(pad, Math.min(beside[0][1], H - b.height - pad))];
       pop.style.left = Math.round(pick[0]) + "px";
       pop.style.top = Math.round(pick[1]) + "px";
     }
-    pop._docked = docked && !!side;
-    pop._graceMs = pop._docked ? 900 : 0;
-    pop._placeMode = pop._docked ? { kind: "side", anchor: anchor }
+    pop._docked = docked;
+    pop._graceMs = docked ? 900 : 0;
+    pop._placeMode = docked ? { kind: "overlay", anchor: anchor }
                                  : { kind: "beside", anchor: anchor, dx: pick[0] - a.left, dy: pick[1] - a.top };
     _ring(pop._docked ? anchor : null, a);
   }
@@ -428,8 +398,7 @@ window.ComponentMap = (function () {
     var pop = _popupEl();
     pop._closeDetail = function () {
       pop.hidden = true; _popEnt = null; _restoreNativeTitle(); _untether();
-      var sideOf = pop.parentNode && pop.parentNode.classList && pop.parentNode.classList.contains("cm-dir-side") ? pop.parentNode : null;
-      if (sideOf) { var h = sideOf.querySelector(":scope > .muted"); if (h) h.hidden = false; }
+      pop.classList.remove("cm-dir-overlay");
       if (_pairAbort) { try { _pairAbort.abort(); } catch (e) {} _pairAbort = null; }
       if (_popHl && _active && _active.api) _active.api.highlightEntity(_popHl.kind, _popHl.id, false);
       _popHl = null;
@@ -572,7 +541,6 @@ window.ComponentMap = (function () {
       return !!e && _hoverFor(_active && _active.root, e.kind);
     } });
     body.addEventListener("click", function (ev) {
-      if (ev.target.closest && ev.target.closest(".cm-popup")) return;   // the side-column panel
       _hidePopup();
       if (_isPick()) return;    // the page owns this click (docs/166)
       var el = ev.target.closest && ev.target.closest("[data-cm]");
@@ -761,7 +729,6 @@ window.ComponentMap = (function () {
           });
           _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);
-          if (_hoverMode(root)) _ensureSide(body);
           fitUnsized(root, body);
         })
         .catch(function () {

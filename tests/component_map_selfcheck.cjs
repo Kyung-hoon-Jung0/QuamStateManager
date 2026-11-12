@@ -469,19 +469,18 @@ async function checkComponentMap() {
     win.TopoGraph.positionDetail(pd, stone);
     ok(pd._docked === true, 'a crowded stone docks its panel');
     ok(stone.classList.contains('cm-dir-docked'), 'the first docked placement rings its stone');
-    // it is laid out WHOLE in the map card's reserved side column
-    const sideCol = body.querySelector(':scope > .cm-dir-side');
-    ok(!!sideCol && body.classList.contains('cm-dir-hasside'), 'the hover map reserves a side column');
-    ok(pd.parentNode === sideCol, 'a panel with no clean spot beside its stone goes into the side column');
-    ok(!pd.style.maxHeight && !pd.style.left && !pd.style.top, 'the side-column panel is never shrunk or positioned');
-    ok(!!pd.querySelector('.cm-popup-hint'), 'Expand is part of the side-column panel');
-    ok(sideCol.querySelector(':scope > .muted').hidden === true, 'the column hint gives way to the panel');
+    // the fallback is an overlay card fixed to the viewport corner: never moved in the DOM
+    ok(!body.querySelector('.cm-dir-side') && !body.classList.contains('cm-dir-hasside'), 'no side column: the map keeps its size');
+    ok(pd.parentNode === doc.body, 'the panel stays where it was in the DOM (keyboard order)');
+    ok(pd.classList.contains('cm-dir-overlay'), 'a panel with no clean spot beside its stone is the corner overlay card');
+    ok(!pd.style.maxHeight && !pd.style.left && !pd.style.top, 'the overlay card is placed by CSS, never shrunk inline');
+    ok(!!pd.querySelector('.cm-popup-hint'), 'Expand is part of the overlay card');
     doc.dispatchEvent(new win.Event('scroll'));
-    ok(pd.parentNode === sideCol, 'a scroll leaves the side-column panel where it is');
-    // a click inside the side-column panel is not a map click
+    ok(pd.classList.contains('cm-dir-overlay') && !pd.style.left && !pd.style.top, 'a scroll does not move the overlay card');
+    // a click inside the overlay card keeps it open
     win._htmxCalls.length = 0;
     pd.querySelector('.cm-popup-title').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
-    ok(!pd.hidden && pd.parentNode === sideCol, 'clicking inside the side-column panel keeps it open');
+    ok(!pd.hidden && pd.classList.contains('cm-dir-overlay'), 'clicking inside the overlay card keeps it open');
     ok(!!doc.querySelector('svg.cm-dir-tether .cm-dir-tether-ring') && stone.classList.contains('cm-dir-docked'),
        'a docked panel rings its stone');
     ok(!doc.querySelector('svg.cm-dir-tether line'), 'no connector line (it would read as a pair edge)');

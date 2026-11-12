@@ -98,7 +98,7 @@
     --ui-lh-btn: 1.2;
     --ui-btn-gap: .3em;
     --ui-focus-w: 2px;
-    --ui-map-side-w: 24rem;   /* the chip map's reserved hover-panel column */
+    --ui-topbar-h: var(--topbar-height, 48px);   /* app.js publishes the measured height */
     --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
     --ui-dialog-s: 560px;
@@ -1076,13 +1076,11 @@ html:not(.diag-on) .tmap-legend .tmap-legend-diag { display: none; }
 .bulk-cell:focus { border-color: var(--ui-accent); }
 .bulk-row-apply:disabled { visibility: hidden; }
 
-/* Chip map hover panels: the reserved side column of the Qubits / Pairs maps
-   (a panel that does not fit beside its entity is laid out there, whole), and
-   the filled ring on that entity (component-map.js _ensureSide, _ring) */
-.cmap-body.cm-dir-hasside { display: grid; grid-template-columns: minmax(0, 1fr) var(--ui-map-side-w); column-gap: var(--ui-gap-3); align-items: start; }
-.cm-dir-hasside > .cm-scroll, .cm-dir-hasside > .cm-note, .cm-dir-hasside > .cm-dir-legend { grid-column: 1; }
-.cm-dir-hasside > .cm-dir-side { grid-column: 2; grid-row: 1 / span 3; min-width: 0; }
-.cm-dir-side > .cm-popup { position: static; max-height: none; width: auto; max-width: none; min-width: 0; box-shadow: none; }
+/* Chip map hover panels: a panel with no clean spot beside its entity is an overlay
+   card fixed to the viewport's bottom-right (scrolls inside itself, Expand sticky in
+   view), and that entity wears a filled ring (component-map.js _placeAvoiding, _ring) */
+.cm-popup.cm-dir-overlay { left: auto; top: auto; right: var(--ui-gap-3); bottom: var(--ui-gap-3); max-height: calc(100vh - var(--ui-topbar-h) - var(--ui-gap-4)); overflow: auto; }
+.cm-dir-overlay > .cm-popup-hint { position: sticky; bottom: 0; }
 .cm-dir-tether { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; z-index: 3999; }
 .cm-dir-tether .cm-dir-tether-ring { fill: var(--ui-accent-bg); fill-opacity: 0.35; stroke: var(--ui-accent); stroke-width: var(--ui-focus-w); }
 .cm-svg .cm-dir-docked .cm-stone { stroke: var(--ui-accent); stroke-width: var(--ui-fold-stroke); }
