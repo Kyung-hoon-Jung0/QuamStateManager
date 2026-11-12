@@ -2999,6 +2999,7 @@ _COUPLER_ONLY = {
     "gate_module": "quam_config.coupler_cz_gate",
     "gate_class": "CouplerCZGate",
     "snz_module": "quam_config.two_flux_gate",
+    "flattop_module": "quam_builder.common.pulses",
     "snz_class": "SNZTwoFluxPulse",
     "amplitude_v": 0.1,
     "flat_ns": 60,
@@ -3090,7 +3091,11 @@ def _seed_coupler_only(pair, vals):
             amplitude=amplitude, flat_length=flat,
             padding=int(vals.get("snz_padding", c["snz_padding_ns"])), id=key, **extra)
     else:
-        pulse_cls = _pulse_class("FlatTopGaussianPulse")
+        # the lab writes quam_builder's own FlatTopGaussianPulse; the other homes only as a fallback
+        try:
+            pulse_cls = getattr(importlib.import_module(c["flattop_module"]), "FlatTopGaussianPulse")
+        except (ImportError, AttributeError):
+            pulse_cls = _pulse_class("FlatTopGaussianPulse")
         if pulse_cls is None:
             raise RuntimeError("cz_coupler_only (flat-top) requires FlatTopGaussianPulse in this environment")
         length = int(math.ceil((flat + 2 * c["rise_ns"]) / 4) * 4)

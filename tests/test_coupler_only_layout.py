@@ -120,6 +120,16 @@ def test_a_declared_root_that_does_not_import_is_refused():
     assert out["blocker"] and "does not import" in out["blocker"]
 
 
+def test_a_declared_stock_root_is_allowed_with_the_warning():
+    spec = _spec()
+    spec["quam_class"] = STOCK_FLUX["path"]
+    out = cap.qpu_root_check(spec, _manifest())
+    assert out["blocker"] is None and out["chosen"] == STOCK_FLUX["path"]
+    assert out["warning"] and "initialize_qpu" in out["warning"]
+    spec["quam_class"] = LAB_ROOT["path"]
+    assert cap.qpu_root_check(spec, _manifest())["warning"] is None
+
+
 def test_a_declared_root_the_probe_never_saw_is_allowed():
     spec = _spec()
     spec["quam_class"] = "somewhere.else.Quam"
@@ -338,21 +348,100 @@ def test_the_wizard_offers_the_lab_layout():
 
 # --- every extension-mode site has a stated disposition (D-16) ----------------------------
 
+# (file, the def/var the literal sits in) -> how many "cz_coupler" literals there. A site
+# that moves to another function, or a new one, fails here until it is decided.
 _EXT_SITES = {
-    "quam_state_manager/generator/run_build.py": 7,
-    "quam_state_manager/core/config_generator.py": 4,
-    "quam_state_manager/core/capabilities.py": 4,
-    "quam_state_manager/core/additions.py": 2,
-    "quam_state_manager/core/script_emitter.py": 3,
-    "quam_state_manager/core/regen_spec.py": 1,
-    "quam_state_manager/web/static/generate.js": 13,
+    ("quam_state_manager/generator/run_build.py", "_require_coupler_extension"): 1,
+    ("quam_state_manager/generator/run_build.py", "_seed_coupler_cz"): 1,
+    ("quam_state_manager/generator/run_build.py", "_finalize_pair_gates"): 1,
+    ("quam_state_manager/generator/run_build.py", "run_build"): 4,
+    ("quam_state_manager/core/config_generator.py", "validate_spec"): 4,
+    ("quam_state_manager/core/capabilities.py", "required_capabilities"): 2,
+    ("quam_state_manager/core/capabilities.py", "assess"): 1,
+    ("quam_state_manager/core/capabilities.py", "qpu_root_check"): 1,
+    ("quam_state_manager/core/additions.py", "builder_gate_names"): 2,
+    ("quam_state_manager/core/script_emitter.py", "_is_flux_tunable"): 1,
+    ("quam_state_manager/core/script_emitter.py", "_emit_wiring"): 1,
+    ("quam_state_manager/core/regen_spec.py", "_detect_pair_gate"): 1,
 }
 
 
-def test_a_new_extension_mode_site_is_a_decision():
-    """A new `"cz_coupler"` literal is a place that may need the lab mode too:
-    decide it (and update this count) rather than let it slip past."""
+def _sites(path):
+    """``{enclosing top-level def: literal count}`` for one Python file."""
+    import ast
     from pathlib import Path
-    root = Path(__file__).resolve().parents[1]
-    got = {f: (root / f).read_text(encoding="utf-8").count('"cz_coupler"') for f in _EXT_SITES}
-    assert got == _EXT_SITES, got
+    src = (Path(__file__).resolve().parents[1] / path).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    out = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            n = sum(1 for sub in ast.walk(node)
+                    if isinstance(sub, ast.Constant) and sub.value == "cz_coupler")
+            if n:
+                out[node.name] = n
+    return out
+
+
+def test_a_new_extension_mode_site_is_a_decision():
+    """A `"cz_coupler"` literal in a function not listed here is a place that may need the
+    lab mode too: decide it (and list it) rather than let it slip past."""
+    files = sorted({f for f, _ in _EXT_SITES})
+    got = {(f, fn): n for f in files for fn, n in _sites(f).items()}
+    assert got == _EXT_SITES, sorted(set(got.items()) ^ set(_EXT_SITES.items()))
+
+
+def test_an_snz_alias_length_is_never_shown_as_text(tmp_path):
+    """A lab SNZ pulse stores `length` as a quam alias; the page shows the computed
+    length or a blank, never the pointer string (review P1-2)."""
+    from quam_state_manager.core.query import QueryEngine
+    state = _lab_state(snz=True)
+    op = state["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_coupler_only_pulse_q1_q2"]
+    op["length"] = "#./inferred_length"
+    p = QueryEngine(_store(tmp_path, state)).get_pair("q1-2")
+    assert p["cz_coupler_only_length"] is None or isinstance(p["cz_coupler_only_length"], int), p["cz_coupler_only_length"]
+
+
+def test_a_flat_top_alias_length_is_computed(tmp_path):
+    from quam_state_manager.core.query import QueryEngine
+    state = _lab_state(snz=False)
+    op = state["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_coupler_only_pulse_q1_q2"]
+    op["length"] = "#./inferred_length"
+    p = QueryEngine(_store(tmp_path, state)).get_pair("q1-2")
+    assert not isinstance(p["cz_coupler_only_length"], str)
+
+
+def test_topology_reads_the_coupler_pulse_through_its_pointer(tmp_path):
+    """A built chip refers to the coupler operation; Chip Status reads it through that
+    reference, for the lab layout and the extension layout alike (review P2-3)."""
+    from quam_state_manager.core.query import QueryEngine
+    for macro_key in ("cz_coupler_only", "cz_coupler"):
+        state = _lab_state(snz=False)
+        macros = state["qubit_pairs"]["q1-2"]["macros"]
+        if macro_key == "cz_coupler":
+            macros["cz_coupler"] = macros.pop("cz_coupler_only")
+            macros["cz"] = "#./cz_coupler"
+        d = tmp_path / macro_key
+        d.mkdir()
+        edge = next(e for e in QueryEngine(_store(d, state)).get_topology()["edges"] if e["pair_id"] == "q1-2")
+        det = next(x for x in edge["gate_details"] if x["name"] == macro_key)
+        assert det["coupler_amp"] == 0.21 and det["length"] == 60 and det["flat_length"] == 44, det
+
+
+def test_the_capability_cache_sees_a_changed_lab_file(tmp_path, monkeypatch):
+    """An editable lab package changes files without a version bump: a moved lab file,
+    or a lab file that appears, is a cache miss (review P2-7)."""
+    import time
+
+    from quam_state_manager.core import config_generator as cg
+    from quam_state_manager.generator import probe_capabilities as pc
+    lab = tmp_path / "quam_config"
+    lab.mkdir()
+    (lab / "__init__.py").write_text("", encoding="utf-8")
+    sig = {str(lab): pc.file_sig(str(lab)), str(lab / "__init__.py"): pc.file_sig(str(lab / "__init__.py")),
+           str(lab / "coupler_cz_gate.py"): pc.file_sig(str(lab / "coupler_cz_gate.py"))}
+    assert sig[str(lab / "coupler_cz_gate.py")] is None
+    assert cg._lab_files_unchanged(sig)
+    time.sleep(0.02)
+    (lab / "coupler_cz_gate.py").write_text("class CouplerCZGate: pass\n", encoding="utf-8")
+    assert not cg._lab_files_unchanged(sig), "a lab file that appeared is a miss"
+    assert not cg._lab_files_unchanged(None), "an entry that never recorded the lab files is a miss"

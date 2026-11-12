@@ -29,6 +29,7 @@ LAB_GATE_MODULE = "quam_config.coupler_cz_gate"
 LAB_GATE_CLASS = "CouplerCZGate"
 LAB_SNZ_MODULE = "quam_config.two_flux_gate"
 LAB_SNZ_CLASS = "SNZTwoFluxPulse"
+FLATTOP_MODULE = "quam_builder.common.pulses"   # the flat-top class the lab writes
 
 # The pulse shapes a pair may ask for (populate.pairs[<pair>].coupler_pulse_shape).
 SHAPE_FLATTOP = "flattop"

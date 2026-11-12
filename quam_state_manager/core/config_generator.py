@@ -1764,8 +1764,13 @@ def probe_capabilities(python_path: str, instance_path=None, *,
         roots_ok = ("qpu_roots" in man and all(
             "fixed_root" in r for r in (man.get("qpu_roots") or [])
             if isinstance(r, dict) and r.get("importable")))
+        # review P2-7: the lab package files decide the lab layout's classes, and an
+        # editable install changes them with no version bump -- a moved file (or an
+        # older entry that never recorded them, or another PYTHONPATH) is a MISS
+        lab_ok = ("lab_files" in man and _lab_files_unchanged(man.get("lab_files"))
+                  and isinstance(entry, dict) and entry.get("pythonpath") == os.environ.get("PYTHONPATH"))
         if (isinstance(entry, dict) and entry.get("versions") == versions
-                and roots_ok):
+                and roots_ok and lab_ok):
             return {"ok": True, "cached": True, "error": None,
                     "capabilities": man.get("capabilities") or {},
                     "versions": man.get("versions") or versions,
@@ -1797,16 +1802,34 @@ def probe_capabilities(python_path: str, instance_path=None, *,
 
     manifest = {"capabilities": parsed.get("capabilities") or {},
                 "versions": parsed.get("versions") or versions,
-                "qpu_roots": parsed.get("qpu_roots") or []}
+                "qpu_roots": parsed.get("qpu_roots") or [],
+                "lab_files": parsed.get("lab_files") or {}}
     result.update(ok=True, capabilities=manifest["capabilities"],
                   versions=manifest["versions"],
                   qpu_roots=manifest["qpu_roots"])
 
     if instance_path is not None:                       # cache only successes
         cache = _load_capability_cache(instance_path)
-        cache[python_path] = {"versions": versions, "manifest": manifest}
+        cache[python_path] = {"versions": versions, "manifest": manifest,
+                              "pythonpath": os.environ.get("PYTHONPATH")}
         _save_capability_cache(instance_path, cache)
     return result
+
+
+def _lab_files_unchanged(recorded) -> bool:
+    """Every lab file the probe recorded still has the same ``[mtime_ns, size]``
+    (or is still absent)."""
+    if not isinstance(recorded, dict):
+        return False
+    for path, sig in recorded.items():
+        try:
+            st = os.stat(path)
+            now = [st.st_mtime_ns, st.st_size]
+        except OSError:
+            now = None
+        if now != sig:
+            return False
+    return True
 
 
 def _load_capability_cache(instance_path) -> dict[str, dict]:

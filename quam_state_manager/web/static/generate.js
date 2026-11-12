@@ -2879,7 +2879,7 @@
   }
 
   var ARCH_LABEL = {
-    fixed_tunable_coupler: "Fixed-frequency qubits + tunable coupler",
+    fixed_tunable_coupler: "Fixed-frequency qubits + tunable coupler (QSM extension gate)",
     fixed_tunable_coupler_lab: "Fixed-frequency qubits + tunable coupler (your lab's gate)",
     flux_tunable_coupler: "Flux-tunable qubits + tunable coupler",
     flux_tunable_fixed_coupler: "Flux-tunable qubits + fixed coupler",
@@ -2967,6 +2967,12 @@
         });
         _labRoot = labRoots.length ? labRoots[0].path : null;
         if (state.chipArch === "fixed_tunable_coupler_lab") syncLabRoot(state.chipArch);
+        // D-2: on a NEW chip that nobody set, the lab's gate is the coupler-only default
+        if (_couplerCzLabAvailable && !state.archPicked && state.mode !== "regenerate"
+            && state.chipArch === "fixed_tunable_coupler") {
+          _couplerCzCheck = "done";
+          applyChipArch("fixed_tunable_coupler_lab");
+        }
         _couplerCzCheck = "done";
         syncLineTypeToggles();
       }).catch(function () {
@@ -3452,7 +3458,7 @@
     var archSel = document.getElementById("gen-chip-arch");
     if (archSel) {
       archSel.value = state.chipArch;
-      archSel.addEventListener("change", function () { applyChipArch(archSel.value); });
+      archSel.addEventListener("change", function () { state.archPicked = true; applyChipArch(archSel.value); });
     }
 
     // Qubit naming scheme controls (renderNamingUi paints them from state).
@@ -12626,6 +12632,7 @@
   // Copy a loaded draft into `state`, filling any spec keys it lacks against
   // freshSpec() (defensive across minor shape changes within a version).
   function applyDraft(d) {
+    state.archPicked = true;      // a draft or a re-generate keeps its own architecture (D-2)
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: a draft restore replaces content
     var spec = d.spec || {}, fresh = freshSpec();
     Object.keys(fresh).forEach(function (k) {

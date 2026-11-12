@@ -118,7 +118,11 @@ def shape(st):
           "macro_classes": sorted({(k, m.get("__class__") if isinstance(m, dict) else "alias:" + m)
                                    for p in st["qubit_pairs"].values() for k, m in p["macros"].items()}),
           "macro_keys": sorted(set().union(*[set(m) for p in st["qubit_pairs"].values()
-                                             for m in p["macros"].values() if isinstance(m, dict)]))}
+                                             for m in p["macros"].values() if isinstance(m, dict)])),
+          # the full __class__ of each coupler-only CZ pulse (a name alone hides another home)
+          "cz_pulse_classes": sorted({op.get("__class__") for p in st["qubit_pairs"].values()
+                                      for k, op in (p["coupler"].get("operations") or {}).items()
+                                      if k.startswith("cz_coupler_only_pulse_")})}
     return sh
 
 b_state, r_state = state(built), state(fixture)
@@ -186,6 +190,11 @@ def test_the_lab_layout_builds_loads_and_plays(tmp_path):
     sb, sr = res["shape_built"], res["shape_ref"]
     for key in ("root", "qubits", "qubit_z", "pairs", "couplers", "coupler_ids", "coupler_keys", "macro_classes", "macro_keys"):
         assert sb[key] == sr[key], (key, sb[key], sr[key])
+    # the fixture is flat-top on every pair: the built flat-top pulse has the same full class,
+    # and the SNZ pair carries the lab's own SNZ class
+    assert sr["cz_pulse_classes"] == ["quam_builder.common.pulses.FlatTopGaussianPulse"], sr["cz_pulse_classes"]
+    assert sb["cz_pulse_classes"] == ["quam_builder.common.pulses.FlatTopGaussianPulse",
+                                      "quam_config.two_flux_gate.SNZTwoFluxPulse"], sb["cz_pulse_classes"]
     assert sb["qubit_z"] == ["None"]
     assert not res["ext_strings"]
     assert res["root_class"] == LAB_ROOT
@@ -199,26 +208,65 @@ def test_the_lab_layout_builds_loads_and_plays(tmp_path):
                                                          "check": res}, indent=1), encoding="utf-8")
 
 
+def _regenerate(src, out):
+    from quam_state_manager.core.regenerate import run_regenerate
+    state = json.loads((src / "state.json").read_text(encoding="utf-8"))
+    wiring = json.loads((src / "wiring.json").read_text(encoding="utf-8"))
+    rec = regen_spec.reconstruct_spec(state, wiring)
+    outcome = run_regenerate(PY, src, rec.spec, out, timeout=900, scripts_enabled=False)
+    assert outcome.get("ok"), json.dumps(outcome, default=str)[-4000:]
+    return rec.spec, outcome
+
+
+def _leaves(node, path="", out=None):
+    out = {} if out is None else out
+    if isinstance(node, dict):
+        for k, v in node.items():
+            _leaves(v, path + "/" + str(k), out)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            _leaves(v, path + "/" + str(i), out)
+    else:
+        out[path] = node
+    return out
+
+
 def test_regenerate_carries_the_lab_values(tmp_path):
+    """Re-generate (reconstruct -> build -> merge) of a lab-layout chip with non-default
+    values gives back the same chip, leaf for leaf."""
     built = tmp_path / "built"
     _build(_spec(), built)
-    state = json.loads((built / "state.json").read_text(encoding="utf-8"))
-    wiring = json.loads((built / "wiring.json").read_text(encoding="utf-8"))
-    rec = regen_spec.reconstruct_spec(state, wiring)
-    spec2 = rec.spec
+    spec2, outcome = _regenerate(built, tmp_path / "rebuilt")
     assert spec2["pair_gate"] == "cz_coupler_only" and spec2["quam_class"] == LAB_ROOT
-    rebuilt = tmp_path / "rebuilt"
-    _build(spec2, rebuilt)
-    s2 = json.loads((rebuilt / "state.json").read_text(encoding="utf-8"))
-    for pid in ("q1-2", "q2-3"):
-        a, b = state["qubit_pairs"][pid], s2["qubit_pairs"][pid]
-        assert a["macros"]["cz_coupler_only"] == b["macros"]["cz_coupler_only"], pid
-        assert a["coupler"]["operations"] == b["coupler"]["operations"], pid
-        for k in ("flux_point", "decouple_offset", "settle_time"):
-            assert a["coupler"].get(k) == b["coupler"].get(k), (pid, k)
-    m12 = s2["qubit_pairs"]["q1-2"]["macros"]["cz_coupler_only"]
+    for name in ("state.json", "wiring.json"):
+        a = _leaves(json.loads((built / name).read_text(encoding="utf-8")))
+        b = _leaves(json.loads((tmp_path / "rebuilt" / name).read_text(encoding="utf-8")))
+        diff = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+        assert not diff, (name, diff[:20])
+    m12 = json.loads((tmp_path / "rebuilt" / "state.json").read_text(encoding="utf-8"))["qubit_pairs"]["q1-2"]["macros"]["cz_coupler_only"]
     assert m12["spectator_qubits_phase_shift"] == {"q3": 0.05} and m12["duration"] == 21
-    assert m12["phase_shift_control"] == 0.11
+
+
+def test_regenerate_keeps_the_extension_family(tmp_path, monkeypatch):
+    """An extension-layout chip re-generates as `cz_coupler` on its own root and pair
+    class, with nothing lost (needs `qsm_quam_ext` importable in the env)."""
+    ext = Path(__file__).resolve().parents[1] / "extensions" / "qsm_quam_ext"
+    monkeypatch.setenv("PYTHONPATH", str(ext) + os.pathsep + os.environ["PYTHONPATH"])
+    spec = _spec(quam_class=None)
+    spec["pair_gate"] = "cz_coupler"
+    spec["populate"] = {"pairs": {"q1-q2": {"cz_interaction_duration": 120, "coupler_amplitude": 0.2,
+                                            "phase_shift_control": 0.1}}}
+    built = tmp_path / "built"
+    _build(spec, built)
+    spec2, outcome = _regenerate(built, tmp_path / "rebuilt")
+    assert spec2["pair_gate"] == "cz_coupler"
+    a_state = json.loads((built / "state.json").read_text(encoding="utf-8"))
+    b_state = json.loads((tmp_path / "rebuilt" / "state.json").read_text(encoding="utf-8"))
+    assert b_state["__class__"] == a_state["__class__"]
+    assert {p["__class__"] for p in b_state["qubit_pairs"].values()} == {"qsm_quam_ext.FixedFrequencyTunableCouplerPair"}
+    a, b = _leaves(a_state), _leaves(b_state)
+    diff = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+    assert not diff, diff[:20]
 
 
 def test_the_exported_recipe_writes_the_same_state(tmp_path):

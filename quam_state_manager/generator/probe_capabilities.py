@@ -387,7 +387,41 @@ def detect() -> dict:
         roots = [{"path": "", "importable": False,
                   "detail": f"probe error: {type(exc).__name__}: {exc}"}]
     return {"versions": _library_versions(), "capabilities": caps,
-            "qpu_roots": roots}
+            "qpu_roots": roots, "lab_files": lab_files()}
+
+
+# The lab package files the lab layout depends on (decisions D-17, review P2-7):
+# an editable install changes them without a version bump, so the cached
+# manifest is valid only while these stay as they were.
+LAB_PACKAGE = "quam_config"
+LAB_FILES = ("__init__.py", "my_quam.py", "coupler_cz_gate.py", "two_flux_gate.py")
+
+
+def file_sig(path):
+    """``[mtime_ns, size]`` of *path*, or None when it does not exist."""
+    import os
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return [st.st_mtime_ns, st.st_size]
+
+
+def lab_files() -> dict:
+    """``{path: file_sig}`` of the lab package folder(s) and its layout files."""
+    import importlib.util
+    import os
+    try:
+        spec = importlib.util.find_spec(LAB_PACKAGE)
+    except Exception:  # noqa: BLE001 -- no lab package is a valid answer
+        spec = None
+    out = {}
+    for folder in list(getattr(spec, "submodule_search_locations", None) or []):
+        out[folder] = file_sig(folder)
+        for name in LAB_FILES:
+            path = os.path.join(folder, name)
+            out[path] = file_sig(path)
+    return out
 
 
 def main() -> int:

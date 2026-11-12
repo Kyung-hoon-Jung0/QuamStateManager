@@ -77,6 +77,25 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   // the extension layout is unchanged
   t.arch('fixed_tunable_coupler');
   assert.strictEqual(s.spec.pair_gate, 'cz_coupler');
+  // the two options say which gate and macro they build
+  const ext = w.document.querySelector('#gen-chip-arch option[value="fixed_tunable_coupler"]');
+  assert(ext.textContent.includes('QSM extension gate (cz_coupler)'), ext.textContent);
+  assert(opt.textContent.includes("your lab's gate (cz_coupler_only)"), opt.textContent);
+
+  // D-2: a NEW chip on the coupler-only architecture gets the lab's gate when the env has both
+  s.archPicked = false; s.mode = 'generate';
+  t.arch('fixed_tunable_coupler');
+  s.env = 'env-with-both';
+  t.sync();
+  await tick();
+  assert.strictEqual(s.spec.pair_gate, 'cz_coupler_only', 'a new chip defaults to the lab gate');
+  // a chip somebody set (a pick, a draft, a re-generate) keeps its own
+  s.archPicked = true;
+  t.arch('fixed_tunable_coupler');
+  s.env = 'env-with-both-again';
+  t.sync();
+  await tick();
+  assert.strictEqual(s.spec.pair_gate, 'cz_coupler', 'a set chip keeps the extension gate');
   dom.window.close();
   console.log('coupler lab selfcheck passed');
 })().catch(e => { console.error(e); dom.window.close(); process.exitCode = 1; });
