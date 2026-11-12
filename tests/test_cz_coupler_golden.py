@@ -97,3 +97,40 @@ def test_the_ext_layout_is_unchanged():
 if __name__ == "__main__" and "--capture" in sys.argv:
     GOLDEN.write_text(json.dumps(observe(), indent=1, sort_keys=True), encoding="utf-8")
     print("captured", GOLDEN)
+
+
+def test_the_ext_layout_builds_byte_identical_to_the_reference_checkout(tmp_path):
+    """The env layer of T-1: the same `cz_coupler` spec, built by this tree and by a
+    checkout of the reference commit, gives byte-identical state.json / wiring.json.
+
+    Needs ``SM_LAB_ENV_PYTHON`` (a QM env that can import ``qsm_quam_ext``, e.g. with
+    ``extensions/qsm_quam_ext`` on PYTHONPATH) and ``SM_REFERENCE_CHECKOUT_DIR`` (the
+    reference checkout's root). A skip is not a pass: run it before merging.
+    """
+    import os
+    import subprocess
+
+    import pytest
+    py, ref = os.environ.get("SM_LAB_ENV_PYTHON"), os.environ.get("SM_REFERENCE_CHECKOUT_DIR")
+    if not (py and ref):
+        pytest.skip("SM_LAB_ENV_PYTHON / SM_REFERENCE_CHECKOUT_DIR not set")
+    spec = _spec()
+    spec["network"] = {"host": "127.0.0.1", "cluster_name": "c", "port": None}
+    spec["instruments"] = {"controllers": [{"con": 1, "fems": [{"slot": 1, "fem": "mw"}, {"slot": 2, "fem": "lf"}]}],
+                           "opx_plus": [], "octaves": []}
+    spec["lines"] = [dict(ln, channel=None) for ln in spec["lines"]]
+    here = Path(__file__).resolve().parents[1]
+    outs = {}
+    for tag, rootdir in (("this", here), ("ref", Path(ref))):
+        work = tmp_path / tag
+        work.mkdir()
+        (work / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+        out = work / "out"
+        r = subprocess.run([py, str(rootdir / "quam_state_manager/generator/run_build.py"), "--mode", "build",
+                            "--spec", str(work / "spec.json"), "--out", str(out)],
+                           capture_output=True, text=True, encoding="utf-8", timeout=900)
+        res = json.loads((work / "_result.json").read_text(encoding="utf-8"))
+        assert res.get("status") == "ok", (tag, res.get("error"), r.stderr[-3000:])
+        outs[tag] = out
+    for name in ("state.json", "wiring.json"):
+        assert (outs["this"] / name).read_bytes() == (outs["ref"] / name).read_bytes(), name
