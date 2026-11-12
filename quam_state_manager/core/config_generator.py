@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -1244,6 +1245,12 @@ def _env_signature(python_path: str) -> str | None:
         except OSError:
             continue
         parts.append(hashlib.sha1("|".join(names).encode("utf-8")).hexdigest()[:16])
+    # A lab code folder changes what this interpreter imports, so every cache
+    # keyed on this signature (catalogue, lab worker, replot) misses when it moves.
+    # Absent folder: the signature is unchanged from before the setting existed.
+    lab = get_lab_code_dir(python_path)
+    if lab:
+        parts.append("lab=" + os.path.normcase(lab))
     return "|".join(parts)
 
 
@@ -1368,19 +1375,20 @@ def set_selected_env(instance_path, python_path: str) -> None:
     Fit-Auditor's ``fit_audit_source_root``), so a whole-file overwrite here would
     silently drop them when the user re-picks an env.
     """
-    path = _settings_path(instance_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if not isinstance(data, dict):
+    with _SETTINGS_LOCK:
+        path = _settings_path(instance_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (ValueError, OSError):
             data = {}
-    except (ValueError, OSError):
-        data = {}
-    data["selected_env_python"] = python_path
-    # Atomic (tmp + fsync + replace), never a plain write_text: this file is a
-    # SHARED read-modify-write target (fit_audit_source_root lives here too) —
-    # a torn/partial write would silently drop the other keys.
-    safe_io.atomic_write_json(path, data)
+        data["selected_env_python"] = python_path
+        # Atomic (tmp + fsync + replace), never a plain write_text: this file is a
+        # SHARED read-modify-write target (fit_audit_source_root lives here too) —
+        # a torn/partial write would silently drop the other keys.
+        safe_io.atomic_write_json(path, data)
 
 
 # --- per-env lab code folder ------------------------------------------------
@@ -1390,6 +1398,9 @@ def set_selected_env(instance_path, python_path: str) -> None:
 # FIRST on PYTHONPATH for every generator subprocess of that interpreter.
 
 _LAB_DIRS: dict[str, str] = {}
+# One lock for every read-modify-write of config_generator.json (env select and
+# lab folder POSTs can arrive together; the second write must not drop a key).
+_SETTINGS_LOCK = threading.RLock()
 
 
 def _env_key(python_path) -> str:
@@ -1417,23 +1428,24 @@ def get_lab_code_dir(python_path) -> str | None:
 
 def set_lab_code_dir(instance_path, python_path: str, folder: str | None) -> None:
     """Store (or, with an empty *folder*, clear) the folder for one interpreter."""
-    path = _settings_path(instance_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if not isinstance(data, dict):
+    with _SETTINGS_LOCK:
+        path = _settings_path(instance_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            if not isinstance(data, dict):
+                data = {}
+        except (ValueError, OSError):
             data = {}
-    except (ValueError, OSError):
-        data = {}
-    dirs = data.get("lab_code_dirs") if isinstance(data.get("lab_code_dirs"), dict) else {}
-    dirs = {k: v for k, v in dirs.items() if _env_key(k) != _env_key(python_path)}
-    if folder:
-        dirs[python_path] = folder
-        _LAB_DIRS[_env_key(python_path)] = folder
-    else:
-        _LAB_DIRS.pop(_env_key(python_path), None)
-    data["lab_code_dirs"] = dirs
-    safe_io.atomic_write_json(path, data)
+        dirs = data.get("lab_code_dirs") if isinstance(data.get("lab_code_dirs"), dict) else {}
+        dirs = {k: v for k, v in dirs.items() if _env_key(k) != _env_key(python_path)}
+        if folder:
+            dirs[python_path] = folder
+            _LAB_DIRS[_env_key(python_path)] = folder
+        else:
+            _LAB_DIRS.pop(_env_key(python_path), None)
+        data["lab_code_dirs"] = dirs
+        safe_io.atomic_write_json(path, data)
 
 
 def effective_pythonpath(python_path, folder: str | None = None) -> str | None:
@@ -1446,14 +1458,32 @@ def effective_pythonpath(python_path, folder: str | None = None) -> str | None:
     return lab + (os.pathsep + base if base else "")
 
 
+def normalize_lab_code_dir(folder) -> tuple[str | None, str | None]:
+    """``(absolute folder, None)`` or ``(None, error)``. ``~`` is expanded; a
+    relative path is refused, because each subprocess runs in its own working
+    directory and the same text would name a different folder there."""
+    text = folder.strip() if isinstance(folder, str) else ""
+    if not text:
+        return None, "No folder given."
+    text = os.path.expanduser(text)
+    if not os.path.isabs(text):
+        return None, f"Give the full path of the folder (this is relative): {folder}"
+    return os.path.normpath(text), None
+
+
 _QUAM_CONFIG_FILE = "import quam_config; print('QUAM_CONFIG_FILE=' + str(quam_config.__file__))"
 
 
 def check_lab_code_dir(python_path: str, folder: str) -> dict:
     """``{ok, quam_config_file, error}``: the folder exists and ``quam_config``
     imports from it in *python_path* (with the folder first on PYTHONPATH)."""
-    out = {"ok": False, "quam_config_file": None, "error": None}
-    if not folder or not os.path.isdir(folder):
+    out = {"ok": False, "quam_config_file": None, "error": None, "folder": None}
+    folder, err = normalize_lab_code_dir(folder)
+    if err:
+        out["error"] = err
+        return out
+    out["folder"] = folder
+    if not os.path.isdir(folder):
         out["error"] = f"No such folder: {folder}"
         return out
     env = dict(os.environ, PYTHONPATH=effective_pythonpath(python_path, folder) or "")
@@ -1471,6 +1501,11 @@ def check_lab_code_dir(python_path: str, folder: str) -> dict:
         out["error"] = "quam_config does not import from this folder: " + (tail[-1] if tail else "no output")
         return out
     found = line.split("=", 1)[1]
+    if found == "None":
+        # a namespace package: the folder holds quam_config/ without __init__.py
+        out["error"] = ("quam_config in this folder has no __init__.py, so Python reads it as a "
+                        "namespace package; add an __init__.py to its quam_config folder")
+        return out
     out["quam_config_file"] = found
     root = os.path.normcase(os.path.abspath(folder))
     try:

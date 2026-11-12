@@ -59,7 +59,7 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   await g.saveLabCodeDir();
   await tick(); await tick();
   const post = calls.filter(c => c.url === '/generate/lab-code-dir').pop();
-  assert.deepStrictEqual(post.body, {python: 'env-b', folder: 'C:/other'}, 'posts this env and folder');
+  assert.deepStrictEqual(post.body, {python: 'env-b', folder: 'C:/other', clear: false}, 'posts this env and folder');
   assert(status.textContent.includes('C:/other/quam_config/__init__.py'), status.textContent);
   assert.strictEqual(s.labCodeDir, 'C:/other');
   assert(calls.filter(c => c.url === '/generate/capabilities').length > nCaps, 'the probe runs again');
@@ -71,6 +71,38 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   await tick();
   assert(status.textContent.includes('No such folder: C:/nothing'), status.textContent);
   assert.strictEqual(s.labCodeDir, 'C:/other', 'a refused folder is not taken');
+
+  // emptying a field that showed the folder asks the server to clear it
+  input.value = '';
+  postAnswer = {ok: true, folder: null};
+  await g.saveLabCodeDir();
+  await tick();
+  assert.strictEqual(calls.filter(c => c.url === '/generate/lab-code-dir').pop().body.clear, true,
+    'an emptied field that showed the folder clears it');
+  input.value = 'C:/other';
+  postAnswer = {ok: true, folder: 'C:/other', quam_config_file: 'C:/other/quam_config/__init__.py'};
+  await g.saveLabCodeDir();
+  await tick();
+
+  // a draft restore: state.env is already the env, the field never loaded
+  s.env = 'env-a';
+  s.labCodeDirFor = null;
+  input.value = '';
+  t.select('env-a');
+  await tick(); await tick();
+  assert.strictEqual(input.value, 'C:/lab/checkout', 'a draft restore still loads the folder');
+  // a blank field that never showed the folder never clears it
+  s.labCodeDirFor = null;
+  input.value = '';
+  postAnswer = {ok: true, unchanged: true, folder: 'C:/lab/checkout'};
+  await g.saveLabCodeDir();
+  await tick();
+  assert.strictEqual(calls.filter(c => c.url === '/generate/lab-code-dir').pop().body.clear, false,
+    'a field that never showed the folder does not ask to clear');
+  assert.strictEqual(input.value, 'C:/lab/checkout', 'the kept folder is shown again');
+  stored['env-b'] = 'C:/other';
+  t.select('env-b');
+  await tick(); await tick();
 
   // the review step names the folder
   s.spec.qubits = ['q1'];

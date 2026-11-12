@@ -227,6 +227,13 @@ def save_pulse_modules(instance_path, modules: list[str]) -> list[str]:
     return clean
 
 
+def _lab_code_dir(python_path):
+    """The lab code folder the probe of *python_path* runs with: a cache entry
+    probed under another folder (or none) imported other lab classes."""
+    from quam_state_manager.core.config_generator import get_lab_code_dir
+    return get_lab_code_dir(python_path)
+
+
 def _entry_fresh(entry: dict, modules: list[str]) -> bool:
     """A cache entry answers for *modules* only when it imported EXACTLY them
     and none of the lab files it read has changed since. A superset is a miss
@@ -289,6 +296,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     if instance_path is not None and not force:
         if (isinstance(entry, dict) and entry.get("versions") == versions
                 and entry.get("format") == SCHEMA_FORMAT
+                and entry.get("lab_code_dir") == _lab_code_dir(python_path)
                 and _entry_fresh(entry, modules)):
             cached_classes = entry.get("classes") or {}
             if set(requested) <= set(cached_classes):
@@ -365,6 +373,7 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 "versions": versions,
                 "library_versions": parsed.get("versions") or {},
                 "signature": _env_signature(python_path),
+                "lab_code_dir": _lab_code_dir(python_path),
                 "classes": classes,
                 "pulse_roster": roster,
                 "pulse_modules": parsed.get("pulse_modules") or {},

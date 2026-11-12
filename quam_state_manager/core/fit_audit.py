@@ -137,18 +137,19 @@ def get_audit_source_root(instance_path) -> str | None:
 def set_audit_source_root(instance_path, source_root: str) -> None:
     """Persist the audit source-root under ``instance/`` (merged into the settings)."""
     from quam_state_manager.core import safe_io
-    from quam_state_manager.core.config_generator import _settings_path
-    path = _settings_path(instance_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (ValueError, OSError):
-        data = {}
-    data["fit_audit_source_root"] = source_root or ""
-    # Atomic, never a plain write_text: the settings file is a SHARED
-    # read-modify-write target (selected_env_python lives here too) — a
-    # torn/partial write would silently drop the other keys.
-    safe_io.atomic_write_json(path, data)
+    from quam_state_manager.core.config_generator import _SETTINGS_LOCK, _settings_path
+    with _SETTINGS_LOCK:
+        path = _settings_path(instance_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (ValueError, OSError):
+            data = {}
+        data["fit_audit_source_root"] = source_root or ""
+        # Atomic, never a plain write_text: the settings file is a SHARED
+        # read-modify-write target (selected_env_python lives here too) — a
+        # torn/partial write would silently drop the other keys.
+        safe_io.atomic_write_json(path, data)
 
 
 def validate_source_root(source_root: str | None) -> tuple[bool, str]:

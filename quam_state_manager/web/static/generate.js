@@ -854,6 +854,7 @@
     var input = document.getElementById("gen-lab-code-dir");
     var status = document.getElementById("gen-lab-code-dir-status");
     state.labCodeDir = null;
+    state.labCodeDirFor = null;
     if (input) input.value = "";
     if (status) status.textContent = "";
     if (!python) return;
@@ -862,6 +863,7 @@
       .then(function (res) {
         if (state.env !== python) return;
         state.labCodeDir = (res && res.folder) || null;
+        state.labCodeDirFor = python;
         if (input) input.value = state.labCodeDir || "";
       }).catch(function () { /* the field stays blank; Check and save still works */ });
   }
@@ -875,14 +877,25 @@
       return;
     }
     var folder = input ? input.value.trim() : "";
+    // an empty field clears the stored folder only when it showed that folder
+    var clear = !folder && state.labCodeDirFor === python && !!state.labCodeDir;
     if (status) status.textContent = folder ? "Checking that quam_config imports from it…" : "Clearing…";
     return fetch("/generate/lab-code-dir", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ python: python, folder: folder })
+      body: JSON.stringify({ python: python, folder: folder, clear: clear })
     }).then(function (r) { return r.json(); }).then(function (res) {
       if (state.env !== python) return;
-      if (res && res.ok) {
+      if (res && res.ok && res.unchanged) {
         state.labCodeDir = res.folder || null;
+        state.labCodeDirFor = python;
+        if (input) input.value = state.labCodeDir || "";
+        if (status) status.textContent = res.folder
+          ? "Kept the stored folder; empty the field and press again to clear it."
+          : "No folder is set for this environment.";
+      } else if (res && res.ok) {
+        state.labCodeDir = res.folder || null;
+        state.labCodeDirFor = python;
+        if (input && res.folder) input.value = res.folder;
         if (status) status.textContent = res.folder
           ? "✓ quam_config imports from " + res.quam_config_file
           : "Cleared: this environment's own packages are used.";
@@ -897,7 +910,9 @@
   }
 
   function applySelection(python) {
-    if (state.env !== python) loadLabCodeDir(python);
+    // load on a new env AND on a draft restore (state.env already set, the
+    // field never loaded): the folder is per env, read once per env
+    if (state.env !== python || state.labCodeDirFor !== python) loadLabCodeDir(python);
     state.env = python;
     _allocAutoBlocked = false;   // a new env deserves a fresh auto attempt
     var list = document.getElementById("gen-env-list");

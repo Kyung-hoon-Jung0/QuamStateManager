@@ -48710,12 +48710,19 @@ def generate_lab_code_dir():
     folder = data.get("folder")
     folder = folder.strip() if isinstance(folder, str) else ""
     if not folder:
+        # clear only on an explicit request (the field showed a folder and the
+        # user emptied it); a blank field that never loaded keeps the folder
+        if data.get("clear") is not True:
+            return jsonify({"ok": True, "unchanged": True,
+                            "folder": config_generator.get_lab_code_dir(python_path),
+                            "quam_config_file": None})
         config_generator.set_lab_code_dir(current_app.instance_path, python_path, None)
         return jsonify({"ok": True, "folder": None, "quam_config_file": None})
     check = config_generator.check_lab_code_dir(python_path, folder)
     if not check["ok"]:
         return jsonify({"ok": False, "folder": folder, "error": check["error"],
                         "quam_config_file": check["quam_config_file"]}), 400
+    folder = check["folder"]
     config_generator.set_lab_code_dir(current_app.instance_path, python_path, folder)
     return jsonify({"ok": True, "folder": folder, "quam_config_file": check["quam_config_file"]})
 

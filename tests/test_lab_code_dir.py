@@ -117,7 +117,17 @@ def test_the_route_checks_stores_and_clears(tmp_path, monkeypatch):
     assert r.status_code == 400 and "No such folder" in r.get_json()["error"]
     assert cg.get_lab_code_dir(sys.executable) == lab, "a refused folder keeps the stored one"
     r = c.post("/generate/lab-code-dir", json={"python": sys.executable, "folder": ""}, headers=h)
+    assert r.status_code == 200 and r.get_json()["unchanged"], "a blank field without clear keeps it"
+    assert cg.get_lab_code_dir(sys.executable) == lab
+    r = c.post("/generate/lab-code-dir", json={"python": sys.executable, "folder": "", "clear": True},
+               headers=h)
     assert r.status_code == 200 and cg.get_lab_code_dir(sys.executable) is None
+    r = c.post("/generate/lab-code-dir", json={"python": sys.executable, "folder": "lab"}, headers=h)
+    assert r.status_code == 400 and "full path" in r.get_json()["error"]
+    assert cg.get_lab_code_dir(sys.executable) is None, "a relative folder is never stored"
+    r = c.post("/generate/lab-code-dir", json={"python": sys.executable,
+                                                 "folder": lab + os.sep + "." + os.sep}, headers=h)
+    assert r.status_code == 200 and cg.get_lab_code_dir(sys.executable) == os.path.normpath(lab)
 
 
 def test_the_wizard_side():
@@ -130,3 +140,103 @@ def test_the_wizard_side():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "lab code dir selfcheck passed" in r.stdout
+
+
+def test_relative_and_home_paths(monkeypatch, tmp_path):
+    assert cg.normalize_lab_code_dir("lab")[0] is None
+    assert "full path" in cg.normalize_lab_code_dir("lab")[1]
+    assert cg.check_lab_code_dir(sys.executable, "lab")["error"].startswith("Give the full path")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    got, err = cg.normalize_lab_code_dir("~/lab")
+    assert err is None and got == os.path.normpath(str(tmp_path / "lab"))
+
+
+def test_a_namespace_quam_config_is_named(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    (tmp_path / "lab" / "quam_config").mkdir(parents=True)
+    got = cg.check_lab_code_dir(sys.executable, str(tmp_path / "lab"))
+    assert not got["ok"] and "__init__.py" in got["error"] and "None" not in got["error"], got
+
+
+def test_the_schema_cache_misses_when_the_folder_moves(tmp_path, monkeypatch):
+    from quam_state_manager.core import state_env_schema as ses
+    inst = tmp_path / "inst"
+    inst.mkdir()
+    py = sys.executable
+    monkeypatch.setattr(ses, "_env_versions", lambda p: {"quam": "1"}, raising=False)
+    ran = []
+
+    def fake(argv, work_dir, timeout, outcome, **kw):
+        ran.append(argv)
+        outcome.update(ok=True, result={"classes": {"a.B": {"fields": {}}}, "pulse_roster": {}})
+        return outcome
+
+    monkeypatch.setattr(ses, "_run_script_outcome", fake)
+    assert ses.probe_state_schema(py, ["a.B"], inst)["ok"]
+    assert ses.probe_state_schema(py, ["a.B"], inst)["cached"] is True
+    n = len(ran)
+    cg._LAB_DIRS[cg._env_key(py)] = str(tmp_path)
+    assert ses.probe_state_schema(py, ["a.B"], inst)["cached"] is False and len(ran) > n
+    assert ses.probe_state_schema(py, ["a.B"], inst)["cached"] is True
+
+
+def test_the_env_signature_carries_the_folder(tmp_path):
+    py = sys.executable
+    before = cg._env_signature(py)
+    cg._LAB_DIRS[cg._env_key(py)] = str(tmp_path)
+    assert cg._env_signature(py) != before, "catalogue, worker and replot caches key on it"
+    cg._LAB_DIRS.clear()
+    assert cg._env_signature(py) == before, "no folder: the signature is the old one"
+
+
+def test_lab_worker_children_get_the_folder(monkeypatch, tmp_path):
+    from quam_state_manager.core import lab_worker
+    monkeypatch.setenv("PYTHONPATH", "X")
+    kw = {"env": {"A": "1"}}
+    lab_worker._lab_env(["py"], kw)
+    assert kw == {"env": {"A": "1"}}, "no folder: untouched"
+    cg._LAB_DIRS[cg._env_key("py")] = "L"
+    kw = {"env": {"A": "1", "PYTHONPATH": "X"}}
+    lab_worker._lab_env(["py"], kw)
+    assert kw["env"]["PYTHONPATH"] == "L" + os.pathsep + "X" and kw["env"]["A"] == "1"
+    kw = {}
+    lab_worker._lab_env(["py"], kw)
+    assert kw["env"]["PYTHONPATH"].startswith("L" + os.pathsep)
+
+
+def test_a_warm_worker_is_stale_after_a_folder_change():
+    from quam_state_manager.core import lab_worker
+
+    class Proc:
+        def poll(self):
+            return None
+
+    w = lab_worker.Worker.__new__(lab_worker.Worker)
+    w.proc, w.python_path, w.signature = Proc(), "py", (lambda p: "s")
+    w.env_sig, w.environ, w.sources, w.lab_dir = "s", dict(os.environ), {}, None
+    assert w.fresh()
+    cg._LAB_DIRS[cg._env_key("py")] = "L"
+    assert not w.fresh(), "an idle worker started before the folder was set is retired"
+
+
+def test_concurrent_settings_writes_keep_both_keys(tmp_path, monkeypatch):
+    import threading
+    import time
+    from quam_state_manager.core import safe_io
+    inst = tmp_path / "inst"
+    real = safe_io.atomic_write_json
+
+    def slow(path, data):
+        time.sleep(0.05)
+        return real(path, data)
+
+    monkeypatch.setattr(safe_io, "atomic_write_json", slow)
+    ts = [threading.Thread(target=cg.set_selected_env, args=(inst, "C:/py.exe")),
+          threading.Thread(target=cg.set_lab_code_dir, args=(inst, "C:/py.exe", "C:/lab"))]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    data = json.loads((inst / cg._SETTINGS_FILENAME).read_text(encoding="utf-8"))
+    assert data.get("selected_env_python") == "C:/py.exe" and data.get("lab_code_dirs"), data
