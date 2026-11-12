@@ -681,16 +681,19 @@ def never_touch_hit(path: str, tokens) -> str | None:
     name) matches any whole segment of the path."""
     if not path or not tokens:
         return None
-    segs = str(path).split(".")
-    for t in tokens:
-        t = str(t).strip().strip(".")
+    # review r1 P2-7: entity ids are matched case-insensitively ("Q1" covers "q1")
+    lp = str(path).lower()
+    segs = lp.split(".")
+    for t0 in tokens:
+        t0 = str(t0).strip().strip(".")
+        t = t0.lower()
         if not t:
             continue
         if "." in t:
-            if path == t or path.startswith(t + "."):
-                return t
+            if lp == t or lp.startswith(t + "."):
+                return t0
         elif t in segs:
-            return t
+            return t0
     return None
 
 

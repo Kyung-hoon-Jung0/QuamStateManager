@@ -28,6 +28,8 @@ from typing import Any, Callable
 MAX_EVIDENCE_PER_VALUE = 3
 MAX_EVIDENCE = 20
 MAX_QUOTE = 400
+MIN_QUOTE_CHARS = 8          # review r1 P1-1: "=" proves nothing
+LINE_WINDOW = 1              # the cited line, +-1
 _FENCE = re.compile(r"```(?:json)?\s*\n(.*?)```", re.S | re.I)
 
 CONFIRM_FIELDS = ("chip_name", "n_qubits", "cwd", "config_file", "state_path_in_config",
@@ -185,8 +187,17 @@ def check_evidence(item: Any, *, roots: list[str], exist_roots: list[str] | None
         text = p.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {**out, "why": "the file cannot be read"}
-    ok = _ws(quote) in _ws(text)
-    return {**out, "ok": ok, "quote": _clip(quote), "why": None if ok else "the quote is not in the file"}
+    # review r1 P1-1: the quote must be meaningful AND sit at the cited line (+-LINE_WINDOW)
+    q = _ws(quote)
+    lines = text.splitlines()
+    if len(q.replace(" ", "")) < MIN_QUOTE_CHARS and not any(_ws(ln) == q for ln in lines):
+        return {**out, "quote": _clip(quote), "why": "the quote is too short to prove anything"}
+    if line is None or line < 1 or line > len(lines):
+        return {**out, "quote": _clip(quote), "why": "no valid line number"}
+    lo, hi = max(0, line - 1 - LINE_WINDOW), min(len(lines), line + LINE_WINDOW)
+    ok = q in _ws("\n".join(lines[lo:hi]))
+    return {**out, "ok": ok, "quote": _clip(quote),
+            "why": None if ok else "the quote is not at the cited line"}
 
 
 def _clip(q: Any) -> str | None:
@@ -227,6 +238,10 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
         mine = sm.get(key)
         theirs = seen.get(key)
         ev = [c for c in checked if c.get("for") == key]
+        if key in QUOTE_REQUIRED:
+            # review r1 P1-1: the quote must carry the value the agent reports
+            ev = [c if not c["ok"] or _quote_has(c.get("quote"), theirs)
+                  else {**c, "ok": False, "why": "the quote does not contain the reported value"} for c in ev]
         if theirs in (None, "", []):
             agent = "not reported"
         elif key in QUOTE_REQUIRED and not any(c["ok"] for c in ev):
@@ -241,6 +256,15 @@ def compare_confirm(answer: dict, sm: dict, *, roots: list[str], exist_roots: li
                      "agent": agent, "evidence": ev})
     return {"rows": rows, "evidence_dropped": dropped,
             "notes": str(answer.get("notes"))[:1000] if answer.get("notes") else ""}
+
+
+def _quote_has(quote, value) -> bool:
+    if not isinstance(quote, str) or not isinstance(value, str) or not value.strip():
+        return False
+    v = value.strip()
+    forms = {v, v.replace("\\", "\\\\"), v.replace("\\", "/"), v.replace("/", "\\")}
+    q = quote.replace("\\\\", "\\")
+    return any(f in quote or f in q for f in forms)
 
 
 def _agrees(key: str, mine, theirs) -> bool:

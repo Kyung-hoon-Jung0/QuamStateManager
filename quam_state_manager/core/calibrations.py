@@ -105,10 +105,13 @@ def resolve(inst, project: str | None, *, legacy: str | None = None, cfg_dir=Non
     if hit is not None and _is_dir(hit.get("folder")) == bool(hit.get("folder")):
         return dict(hit)
     out = _resolve_uncached(inst, project, cdir, legacy, legacy_ok)
-    with _LOCK:
-        if len(_MEMO) > 64:
-            _MEMO.clear()
-        _MEMO[key] = out
+    if out.get("folder"):
+        # review r1 P2-4: a None result is never kept -- creating the missing folder
+        # must turn the row green on the next read, not on the next config edit
+        with _LOCK:
+            if len(_MEMO) > 64:
+                _MEMO.clear()
+            _MEMO[key] = out
     return dict(out)
 
 

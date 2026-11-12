@@ -13594,6 +13594,10 @@ def field_edit():
         # fires at the resolved write path, and cross-class pointer chains
         # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
+        # review r1 P1-2: never_touch also guards where the write LANDS (a pointer alias)
+        _nt = _never_touch_refusal([target_path])
+        if _nt is not None:
+            return _nt
         # The tree displays pointer text. Relinking must address that leaf,
         # while ordinary value edits retain the established follow behavior.
         if request.form.get("pointer_mode") == "relink":
@@ -16803,7 +16807,14 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
-    _nt = _never_touch_refusal([p for (p, _v, _c) in pairs])
+    _nt_paths = [p for (p, _v, _c) in pairs]
+    if request.headers.get("X-SM-Agent"):
+        for _p in list(_nt_paths):
+            try:
+                _nt_paths.append(_resolve_edit_path(modifier.store, _p))   # review r1 P1-2
+            except Exception:  # noqa: BLE001 -- an unresolvable path is reported by the write below
+                pass
+    _nt = _never_touch_refusal(_nt_paths)
     if _nt is not None:
         return _nt
 

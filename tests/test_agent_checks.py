@@ -36,7 +36,7 @@ class TestEvidence:
 
     def test_absent_quote_fails(self, roots):
         r = ac.check_evidence(_ev(roots["cfg"] / "config.toml", 'folder = "E:/other"'), roots=roots["list"])
-        assert r["ok"] is False and "not in the file" in r["why"]
+        assert r["ok"] is False and "not at the cited line" in r["why"]
 
     def test_missing_file_fails(self, roots):
         r = ac.check_evidence(_ev(roots["cfg"] / "nope.toml", "x"), roots=roots["list"])
@@ -338,3 +338,76 @@ def test_agent_investigate_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 20, r.stdout
+
+
+# ---- review r1 fixes
+class TestReviewR1:
+    def test_a_short_quote_proves_nothing(self, roots):
+        r = ac.check_evidence(_ev(roots["cfg"] / "config.toml", "="), roots=roots["list"])
+        assert r["ok"] is False and "too short" in r["why"]
+
+    def test_the_quote_must_be_at_the_cited_line(self, roots):
+        f = roots["cfg"] / "config.toml"
+        assert ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=99), roots=roots["list"])["ok"] is False
+        assert ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=None), roots=roots["list"])["ok"] is False
+        assert ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=1), roots=roots["list"])["ok"] is True  # +-1
+
+    def test_a_real_line_number_elsewhere_fails(self, roots):
+        f = roots["cfg"] / "long.toml"
+        f.write_text('a = 1\nb = 2\nc = 3\nd = 4\nfolder = "D:/lab/cal"\n', encoding="utf-8")
+        assert ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=1), roots=roots["list"])["ok"] is False
+        assert ac.check_evidence(_ev(f, 'folder = "D:/lab/cal"', line=5), roots=roots["list"])["ok"] is True
+
+    def test_confirm_quote_must_carry_the_reported_value(self, roots):
+        # the quote is real and at its line, but names another folder than the agent reports
+        ans = {"seen": {"calibrations_folder_in_config": "D:/lab/other"},
+               "evidence": [_ev(roots["cfg"] / "config.toml", 'folder = "D:/lab/cal"', **{"for": "calibrations_folder_in_config"})]}
+        rows = {r["key"]: r["agent"] for r in ac.compare_confirm(ans, {"calibrations_folder_in_config": "D:/lab/other"},
+                                                                  roots=roots["list"])["rows"]}
+        assert rows["calibrations_folder_in_config"] == "unverified"
+
+    def test_never_touch_ignores_case(self):
+        from quam_state_manager.core import agent_setup as st
+        assert st.never_touch_hit("qubits.q1.xy", ["Q1"]) == "Q1"
+        assert st.never_touch_hit("Qubits.Q2.xy.RF", ["qubits.q2.xy"]) == "qubits.q2.xy"
+
+
+def test_never_touch_follows_a_pointer_alias(pc):
+    """review r1 P1-2: the write lands at the resolved path -- an alias must not bypass the rule."""
+    import json as _j
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        chip = Path(r._active_ctx()["path"])
+    st_ = _j.loads((chip / "state.json").read_text(encoding="utf-8"))
+    q1 = q2 = sorted(st_["qubits"])[0]
+    field = next(k for k, v in st_["qubits"][q2].items() if isinstance(v, (int, float)) and not isinstance(v, bool))
+    st_["qubits"][q1]["alias_probe"] = f"#/qubits/{q2}/{field}"
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        store = r._active_ctx()["store"]
+        for d in {id(store.state): store.state, id(store.merged): store.merged}.values():
+            d["qubits"][q1]["alias_probe"] = f"#/qubits/{q2}/{field}"
+    alias, target = f"qubits.{q1}.alias_probe", f"qubits.{q2}.{field}"
+    with pc._app.app_context():
+        from quam_state_manager.web import routes as r
+        assert r._resolve_edit_path(r._active_ctx()["store"], alias) == target
+    _write_ctx(pc, {"never_touch": [target]})     # a dotted path rule; the alias path is outside it
+    assert pc.post("/field/edit", data={"dot_path": f"qubits.{q1}.alias_probe", "value": "1"},
+                   headers={"X-SM-Agent": "claude"}).status_code == 403
+    agent = {"X-SM-Agent": "claude"}
+    r1 = pc.post("/field/edit", data={"dot_path": alias, "value": "1"}, headers=agent)
+    assert r1.status_code == 403 and r1.get_json()["refused"] == "never_touch", r1.get_json()
+    r2 = pc.post("/field/edit-batch", json={"updates": [{"dot_path": alias, "value": 1}]}, headers=agent)
+    assert r2.status_code == 403 and r2.get_json()["refused"] == "never_touch"
+
+
+def test_a_missing_folder_created_later_is_seen(tmp_path):
+    from quam_state_manager.core import calibrations
+    from tests.test_calibrations_resolver import _cfg
+    later = tmp_path / "later"
+    cdir = _cfg(tmp_path, own_folder=later)
+    inst = tmp_path / "inst"
+    inst.mkdir()
+    assert calibrations.resolve(inst, "p1", cfg_dir=cdir)["folder"] is None
+    later.mkdir()
+    assert Path(calibrations.resolve(inst, "p1", cfg_dir=cdir)["folder"]) == later
