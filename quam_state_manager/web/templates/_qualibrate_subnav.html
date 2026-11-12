@@ -17,10 +17,10 @@
         <input type="hidden" name="project" value="{{ p.name }}">
         <button type="submit" class="qualibrate-project-row{% if p.active %} qualibrate-project-active{% endif %}"
                 title="Open in SM: load {{ p.state_path.raw or '(no state path)' }}{% if not p.state_path.exists %} — MISSING{% endif %}">
-            <span class="qualibrate-project-dot">{{ '●' if p.active else '○' }}</span>
+            <span class="qualibrate-project-dot" title="{{ 'the active project in QUAlibrate (config.toml); [SM] marks the one open in SM' if p.active else 'not the active project in QUAlibrate' }}">{{ '●' if p.active else '○' }}</span>
             <span class="qualibrate-project-name">{{ p.name }}</span>
             {% if not p.state_path.exists %}<span class="qualibrate-project-warn" title="state_path missing or empty">&#9888;</span>{% endif %}
-            {% if p.loaded_in_sm %}<span class="qualibrate-project-loaded" title="currently loaded in the State Manager">[SM]</span>{% endif %}
+            {% if p.loaded_in_sm %}<span class="qualibrate-project-loaded" title="open in SM">[SM]</span>{% endif %}
         </button>
     </form>
 </li>

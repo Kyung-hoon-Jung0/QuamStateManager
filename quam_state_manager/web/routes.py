@@ -6773,6 +6773,153 @@ def chip_name_banner():
     return render_template("_chip_name_banner.html", **_ctx())
 
 
+def _calibrations(ctx: dict | None = None) -> dict[str, Any]:
+    """The calibrations folder in force for *ctx* (default: the active one),
+    through the ONE resolver (core/calibrations.py, decisions D-1): the
+    project's override -> the project's calibration_library.folder -> the
+    legacy scheduler setting only when no project is scoped."""
+    from quam_state_manager.core import calibrations
+    if ctx is None:
+        ctx = _active_ctx()
+    try:
+        legacy = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    except Exception:  # noqa: BLE001
+        legacy = ""
+    return calibrations.resolve(current_app.instance_path, (ctx or {}).get("qualibrate_project"), legacy=legacy)
+
+
+def _never_touch_unchecked(why: str):
+    return jsonify(ok=False, refused="never_touch_unchecked",
+                   error=f"SM could not check the person's never-touch list ({why}); nothing was written",
+                   how="ask the person"), 403
+
+
+def _never_touch_refusal(paths) -> Any:
+    """Q-4 (agents ver180): an AGENT's write (``X-SM-Agent``) under a path the
+    person listed as never-touch is refused with that line. Human requests are
+    untouched. None = allowed. review r3 P2-3: an error FAILS CLOSED for an agent.
+    review r5 P1: "a person" is PROVEN (callers.from_person), never inferred from
+    a missing X-SM-Agent header."""
+    from quam_state_manager.web import callers
+    if callers.from_person():
+        return None
+    from quam_state_manager.core import agent_setup
+    try:
+        ctx = _active_ctx()
+        from quam_state_manager.web import agent_api as _aa
+        tokens = agent_setup.never_touch_in_force(current_app.instance_path, (ctx or {}).get("qualibrate_project"),
+                                                  _aa._chip_key() if _active_path() else None,
+                                                  _calibrations_folder(ctx) or None)["tokens"]
+        if tokens:
+            store = (ctx or {}).get("store")
+            tokens = agent_setup.expand_never_touch(tokens, getattr(store, "merged", None))
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
+    if not tokens:
+        return None
+    for p in paths:
+        hit = agent_setup.never_touch_hit(str(p or ""), tokens)
+        if hit:
+            # review r6 P3: a person whose proof cookie is missing is told how to get it back
+            how = ("leave it; ask the person if it must change" if request.headers.get("X-SM-Agent")
+                   else "if you are a person using SM's own window, reload that window and press again "
+                        "(SM could not prove the press came from it); an agent: leave it and ask the person")
+            return jsonify(ok=False, refused="never_touch", path=p, rule=hit,
+                           error=f"{p} is under '{hit}', which the person listed as never to be changed",
+                           how=how), 403
+    return None
+
+
+_PATH_FIELDS = ("dot_path", "path", "parent_path", "target", "target_path", "src", "dst", "new_path")
+# review r4 P2-4: mutating doors that name no state path by design; an agent request to any
+# OTHER door that yields no path is refused while a never-touch list exists (fail closed)
+_PATH_FREE_DOORS = ("/undo", "/redo", "/state/apply-to-live", "/state/sync")
+_URL_ENTITY = {"/qubit/": "qubits", "/pair/": "qubit_pairs", "/coupler/": "couplers"}
+
+
+def _request_paths() -> list[str]:
+    """Every state path an agent's mutating request names: form + JSON fields,
+    batch rows, a created key, the entity in the URL; each also RESOLVED
+    through pointers, since the write lands at the resolved path."""
+    out: list[str] = []
+    f = request.form
+    for k in _PATH_FIELDS:
+        out += [str(v).strip() for v in f.getlist(k) if v]
+    out += [str(v).strip() for v in f.getlist("paths") if v]
+    if f.get("dot_path") and f.get("key"):
+        out.append(f"{f.get('dot_path').strip()}.{f.get('key').strip()}")
+    for k, root in (("qubit", "qubits"), ("pair", "qubit_pairs"), ("pair_id", "qubit_pairs"),
+                    ("pc_pair", "qubit_pairs")):
+        if f.get(k):
+            out.append(f"{root}.{f.get(k).strip()}")
+    body = request.get_json(silent=True) if request.is_json else None
+    if isinstance(body, dict):
+        for k in _PATH_FIELDS:
+            if isinstance(body.get(k), str):
+                out.append(body[k])
+        for k in ("paths", "updates", "items", "writes"):
+            for v in body.get(k) or []:
+                if isinstance(v, str):
+                    out.append(v)
+                elif isinstance(v, dict):
+                    for kk in ("dot_path", "path"):
+                        if isinstance(v.get(kk), str):
+                            out.append(v[kk])
+    for prefix, root in _URL_ENTITY.items():
+        if request.path.startswith(prefix) and (request.view_args or {}).get("name"):
+            out.append(f"{root}.{request.view_args['name']}")
+    out = [_normalize_dot_path(p) for p in out if p]
+    store = _store() if _context_type() == "quam" else None
+    resolved = []
+    if store is not None:
+        for p in out:
+            try:
+                resolved.append(_resolve_edit_path(store, p))
+            except Exception:  # noqa: BLE001 -- a path that does not exist yet is checked as written
+                pass
+    return out + resolved
+
+
+@bp.before_request
+def _never_touch_agent_guard():
+    """review r3 P2-3: ONE guard for every agent-originated mutating request
+    (no door list to keep in step). Fails closed for an agent."""
+    from quam_state_manager.web import callers
+    if request.method in ("GET", "HEAD", "OPTIONS") or callers.from_person():
+        return None
+    try:
+        paths = _request_paths()
+        if request.path in ("/state/apply-to-live", "/state/sync"):
+            # review r5 P2: an apply pushes the STAGED set -- check every staged path
+            store = _store() if _context_type() == "quam" else None
+            paths = paths + [str(e.dot_path) for e in (getattr(store, "change_log", None) or [])]
+    except Exception as exc:  # noqa: BLE001
+        return _never_touch_unchecked(type(exc).__name__)
+    if not paths:
+        if request.path in _PATH_FREE_DOORS:
+            return None
+        try:
+            from quam_state_manager.core import agent_setup
+            from quam_state_manager.web import agent_api as _aa
+            listed = agent_setup.never_touch_in_force(current_app.instance_path,
+                                                      (_active_ctx() or {}).get("qualibrate_project"),
+                                                      _aa._chip_key() if _active_path() else None,
+                                                      _calibrations_folder() or None)["tokens"]
+        except Exception as exc:  # noqa: BLE001
+            return _never_touch_unchecked(type(exc).__name__)
+        return _never_touch_unchecked("this door names no path SM can check") if listed else None
+    return _never_touch_refusal(paths)
+
+
+def _calibrations_folder(ctx: dict | None = None) -> str:
+    """The resolved calibrations folder, or "" (see ``_calibrations``)."""
+    try:
+        return _calibrations(ctx).get("folder") or ""
+    except Exception:  # noqa: BLE001
+        logger.debug("calibrations resolve failed", exc_info=True)
+        return ""
+
+
 def _scope_storage_path(ctx: dict | None) -> str:
     """The project scope's storage (data) folder, or "" -- only when it exists.
 
@@ -7567,7 +7714,7 @@ def _agent_wiring():
     """
     from quam_state_manager.core import agent_setup as A
     try:
-        cal = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or None
+        cal = _calibrations_folder() or None
     except Exception:  # noqa: BLE001
         cal = None
     try:
@@ -13542,6 +13689,9 @@ def field_edit():
 
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
+    _nt = _never_touch_refusal([dot_path])
+    if _nt is not None:
+        return _nt
 
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
@@ -13557,6 +13707,10 @@ def field_edit():
         # fires at the resolved write path, and cross-class pointer chains
         # (z-op pulse field → pair-macro child) can change the expected type.
         target_path = _resolve_edit_path(modifier.store, dot_path)
+        # review r1 P1-2: never_touch also guards where the write LANDS (a pointer alias)
+        _nt = _never_touch_refusal([target_path])
+        if _nt is not None:
+            return _nt
         # The tree displays pointer text. Relinking must address that leaf,
         # while ordinary value edits retain the established follow behavior.
         if request.form.get("pointer_mode") == "relink":
@@ -16766,6 +16920,16 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     pairs = [(p, v, c) for (p, v, c) in pairs if p]
     if not pairs:
         return jsonify(ok=False, error="No updates supplied"), 400
+    _nt_paths = [p for (p, _v, _c) in pairs]
+    if request.headers.get("X-SM-Agent"):
+        for _p in list(_nt_paths):
+            try:
+                _nt_paths.append(_resolve_edit_path(modifier.store, _p))   # review r1 P1-2
+            except Exception:  # noqa: BLE001 -- an unresolvable path is reported by the write below
+                pass
+    _nt = _never_touch_refusal(_nt_paths)
+    if _nt is not None:
+        return _nt
 
     # Preflight EVERY identity row before type assignments or any batch write,
     # even for independent batches. A single answer covers all listed rows.
@@ -51981,7 +52145,7 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     route and the Strict gate inside /scheduler/start)."""
     settings = scheduler.load_settings(inst)
     cal = (json_text(data, "calibrations_folder")
-           or str(settings.get("calibrations_folder") or "").strip())
+           or _calibrations_folder())
     env_python = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     target = (json_text(data, "quam_state_path")
               or str(settings.get("quam_state_path") or "").strip())
@@ -52154,7 +52318,7 @@ def scheduler_scan():
     """List nodes/graphs in a folder (hardware-safe ast scan) + the chip roster."""
     folder = (request.args.get("folder") or "").strip()
     if not folder:
-        folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+        folder = _calibrations_folder()
     items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     store = _store() if _context_type() == "quam" else None
     return jsonify({
@@ -52175,7 +52339,7 @@ def scheduler_scan_params():
     inst = _sched_inst()
     settings = scheduler.load_settings(inst)
     data = json_object()
-    folder = json_text(data, "folder") or str(settings.get("calibrations_folder") or "").strip()
+    folder = json_text(data, "folder") or _calibrations_folder()
     env = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     if not folder:
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
@@ -52518,6 +52682,7 @@ def scheduler_start():
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(
             app, inst, folder, item_id, status))
+    scheduler.stamp_calibrations_folder(inst, _calibrations_folder())
     try:
         scheduler.start(inst)
     except scheduler.ForeignRunnerError as exc:
@@ -52634,7 +52799,7 @@ def _autofit_readiness() -> dict:
     ctx = _active_ctx()
     chip_ok = bool(ctx and ctx.get("type") == "quam")
     env, env_source = _autofit_env()
-    folder = settings.get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
     # provider, model and API KEY are a user credential, not a fact about a
     # device. Reading them from a scope would both hide the file the user
@@ -52782,7 +52947,7 @@ def autofit_resolve():
         p = _autofit_plan_from_request(data)
     except af_plan.PlanError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     if not folder:
         return jsonify({"ok": False, "error": "no calibrations folder set — "
                         "configure it on the Experiment Runner page"}), 400
@@ -52978,7 +53143,7 @@ def _autofit_start_real(inst, p, data, auditor):
             return None, {"error": "preflight failed", "reason": "preflight",
                           "preflight": pre}, 409
     # step → file resolution must be complete
-    folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     items = [n.to_dict() for n in
              node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}

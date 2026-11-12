@@ -25,7 +25,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from flask import Flask, current_app, request
+from flask import Flask, current_app, jsonify, request
 from markupsafe import Markup, escape
 
 from quam_state_manager.core import dir_sample
@@ -182,6 +182,30 @@ def _host_allowlist_check():
             f"localhost / 127.0.0.1; to reach it under another name, start it "
             f"with --host <name> or list the name in {ALLOWED_HOSTS_ENV}.",
             403, {"Content-Type": "text/plain; charset=utf-8"})
+
+
+# decisions D-22 (agents ver180): the write doors a bridge can reach. A request
+# carrying ``X-SM-Mode: readonly`` (a read-only ask's bridge) is refused at
+# EVERY mutating method; this tuple is the inventory a test pins against the
+# bridge's own POST paths, so a new door cannot be missed silently.
+READONLY_REFUSED_DOORS = (
+    "/field/edit", "/field/edit-batch", "/state/apply-to-live", "/state/sync", "/undo", "/redo",
+    "/api/agent/run-node", "/api/agent/plans", "/api/agent/approvals", "/api/agent/journal",
+    "/api/agent/note", "/api/agent/take-live", "/api/agent/undo-mine",
+    "/api/agent/generate/propose", "/api/agent/generate/propose-card", "/scheduler/settings",
+)
+
+
+def _readonly_mode_check():
+    """403 ``readonly_ask`` for any mutating request from a read-only bridge.
+    A request without the header is unchanged (a terminal agent still stages)."""
+    if request.method in _SAFE_METHODS:
+        return None
+    if (request.headers.get("X-SM-Mode") or "").strip().lower() != "readonly":
+        return None
+    return jsonify(ok=False, refused="readonly_ask",
+                   error="this is a read-only ask: SM refuses every write from it",
+                   how="answer from what you can read; the person writes"), 403
 
 
 def _csrf_origin_check():
@@ -964,6 +988,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # the origin check (its Origin names the same rebound host).
     app.config["SM_ALLOWED_HOSTS"] = _env_allowed_hosts()
     app.before_request(_host_allowlist_check)
+    app.before_request(_readonly_mode_check)
     app.before_request(_csrf_origin_check)
     app.before_request(_record_own_port)
     app.after_request(_add_security_headers)

@@ -1873,6 +1873,27 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "error": f"the tray holds {len(store.change_log)} staged edit(s); apply or discard them in the window "
                          "first, then approve"}
     staged, unstaged = [], []
+    # Q-4 (agents ver180): a path the person listed as never-touch is never staged for an agent
+    try:
+        from quam_state_manager.core import agent_setup as _as
+        # review r3 P1-1: the RUN's own chip (its live path, captured at start) -- never the
+        # chip the window happens to show when the driver thread stages minutes later
+        from quam_state_manager.core import working_copy as _wc
+        _nt = _as.never_touch_in_force(app.instance_path, ctx.get("qualibrate_project"), _wc.key_for(live),
+                                       r._calibrations_folder(ctx) or None)["tokens"]
+        if _nt:
+            _nt = _as.expand_never_touch(_nt, getattr(store, "merged", None))
+    except Exception as exc:  # noqa: BLE001 -- review r4 P2-5: an unreadable list stages NOTHING
+        return {"group_id": gid, "staged": 0, "applied": False, "unstaged": [],
+                "error": f"never_touch: SM could not read the person's never-touch list ({type(exc).__name__}); "
+                         "nothing was written"}
+    if _nt:
+        hits = [(w["path"], _as.never_touch_hit(w["path"], _nt)) for w in writes]
+        hits = [(p_, h) for p_, h in hits if h]
+        if hits:
+            return {"group_id": gid, "staged": 0, "applied": False,
+                    "unstaged": [{"path": p_, "why": f"never_touch: under '{h}', listed by the person"} for p_, h in hits[:50]],
+                    "error": "never_touch: the run wrote paths the person listed as never to be changed; nothing was written"}
     if any(w.get("capture_error") for w in writes):
         return {"group_id": gid, "staged": 0, "applied": False,
                 "unstaged": [{"path": w["path"], "why": w["capture_error"]}
@@ -2000,6 +2021,12 @@ def _run_settings(settings: dict, ctx: dict, inst) -> dict:
     """The runner settings an agent run obeys. With no env_python of its own, the run uses the
     env the person chose for this chip's project (project_env), else the app's selected env --
     the same env the window opened the chip with, never a guess."""
+    # decisions D-1 / Q-2: the folder in force for THIS chip's project, through the one
+    # resolver, stamped into what the run obeys (never written back to the shared setting)
+    try:
+        settings = {**settings, "calibrations_folder": _r()._calibrations_folder(ctx) or ""}
+    except Exception:  # noqa: BLE001
+        settings = {**settings, "calibrations_folder": ""}
     if settings.get("env_python"):
         return settings
     from quam_state_manager.core import project_env
@@ -3118,7 +3145,7 @@ def plans_add():
         # review R2-16: the node name is checked NOW, not after a real session spun up
         try:
             from quam_state_manager.core import scheduler
-            folder = scheduler.load_settings(r._sched_inst()).get("calibrations_folder")
+            folder = r._calibrations_folder() or None
         except Exception:  # noqa: BLE001
             folder = None
         with _SCAN_LOCK:
@@ -3182,7 +3209,7 @@ def _plan_steps_refusal(inst, norm: list[dict], steps: list, store):
     failed only after Start). The step keeps the folder's own spelling."""
     from quam_state_manager.core import agent_runs, run_terms, scheduler
     try:
-        folder = scheduler.load_settings(_r()._sched_inst()).get("calibrations_folder")
+        folder = _r()._calibrations_folder() or None
     except Exception:  # noqa: BLE001
         folder = None
     if not folder:

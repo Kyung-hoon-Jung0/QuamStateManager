@@ -29,6 +29,13 @@ const BUSY_ERR = "Can't change global_simulate while the scheduler is running �
 let settingsPersisted = true, settingsBusy = false, settingsDown = false;
 const calls = [];
 let savedCtx = null;
+let lastConfirm = null, lastInvestigate = null;
+let confirmReply = { ok: true, kind: 'confirm', backend: 'claude', done: true, failed: false, elapsed_s: 12.3, at: 1, current: true,
+  key: { project: 'P1' }, tools: ['mcp__sm__sm_status'],
+  rows: [{ key: 'chip_name', sm: 'lab-J', agent: 'agrees', agent_value: 'lab-J' },
+         { key: 'n_qubits', sm: 20, agent: 'disagrees', agent_value: 19 },
+         { key: 'calibrations_folder_in_config', sm: 'D:/lab/cal', agent: 'unverified', agent_value: 'D:/lab/cal' },
+         { key: 'run_folders', sm: ['a'], agent: 'not reported', agent_value: null }] };
 let limitsNow = { mode: 'ask-writes', max_writes_per_plan: 200, human_recent_min: 30, stop_by: '', webhook_url: '', max_delta: { ramsey: 2000000 } }, limitsRefuse = null;
 function S_reset() { const st = window.AgentSetup && window.AgentSetup._state; if (st) st.answers = {}; }
 global.fetch = window.fetch = function (url, opts) {
@@ -48,11 +55,14 @@ global.fetch = window.fetch = function (url, opts) {
   else if (/\/setup\/connect/.test(url)) resp = { ok: true, applied: true, writes: { mcp: { file: 'H/.claude.json', backup: 'H/.claude.json.sm-backup-1' } } };
   else if (/\/setup\/context$/.test(url) && (!opts || opts.method === 'GET')) resp = { ok: true, facts: { n_qubits: 20, n_pairs: 30, bias_modes: { opx: 9 }, nodes: ['05_power_rabi'] }, questions: [{ id: 'tunable', kind: 'choice', options: ['flux-tunable', 'fixed-frequency', 'mixed'], question: 'Are the qubits flux-tunable?', detected: 'mixed', why: 'x' }, { id: 'notes', kind: 'text', question: 'Anything else?', detected: '' }], saved: savedCtx || undefined };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true }, codex: { file: 'D:/lab/cal/AGENTS.md', exists: true, before: 'lab\n', after: 'lab\n\nB', changed: true, moves_from: 'D:/lab/cal/AGENTS.local.md' } }, writes: {} };
+  else if (/\/setup\/calibrations$/.test(url)) resp = { ok: true };
   else if (/\/api\/agent\/limits$/.test(url) && method === 'POST') {
     if (limitsRefuse) { code = 403; resp = { ok: false, refused: 'no_window_proof', error: limitsRefuse }; }
     else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
   }
   else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'chipA', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
+  else if (/\/setup\/asks$/.test(url)) resp = { ok: true, running: null, confirm: lastConfirm, investigate: lastInvestigate };
+  else if (/\/setup\/confirm$/.test(url)) { resp = confirmReply; lastConfirm = confirmReply; }
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'lab-J is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
@@ -65,8 +75,14 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await tick(30);
   const body = document.getElementById('as-body');
   // docs/288: four numbered cards in reading order (+ the limits fold), not nine accordions
-  ok(['as-connect', 'as-env', 'as-context', 'as-test-sec'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
-     'four cards in order: connect, where runs live, the device, check it works');
+  ok(['as-connect', 'as-env', 'as-context'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
+     'three cards in order: connect, where runs live, the device (Q-6: the Test card folded into Confirm)');
+  {
+    const cc = document.querySelector('#as-confirm button[data-confirm="claude"]');
+    ok(cc && cc.disabled && /not connected/.test(cc.title), 'review r2 P2-7: Confirm is disabled, with the reason, while the agent is not connected');
+  }
+  ok(!document.getElementById('as-test-sec') && document.getElementById('as-confirm') && document.getElementById('as-confirm').closest('#as-env'),
+     'Q-6/D-11: Confirm by agent sits in step 2, beside SM\'s checks; no separate Test card');
   // 3b: the dry-run card -- from the payload, always open, wired to the Runner's settings route
   {
     const box = document.getElementById('as-dryrun-box');
@@ -120,8 +136,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(tileC && tileC.classList.contains('asx-tile-todo') && /Not connected/.test(tileC.textContent), 'an unconnected CLI says Not connected');
   ok(/\u25cb SM's tools/.test(tileC.textContent) && !!tileC.querySelector('button[onclick="AgentSetup.preview(\'claude\')"]'), 'says what is missing, with one Connect button');
   ok(/Not installed/.test((document.getElementById('as-connect-codex') || {}).textContent || '') && !document.querySelector('#as-connect-codex button'), 'a CLI not on PATH says Not installed and offers nothing to press');
-  ok(document.getElementById('as-test') !== document.getElementById('as-test-sec') && document.getElementById('as-test-sec').contains(document.getElementById('as-test')), 'the test card and its result box are two elements (one id each)');
-  ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal', 'the journal input starts with the suggested folder beside the data');
+  ok(document.getElementById('as-env').contains(document.getElementById('as-test')), 'the Confirm result box lives in step 2');
+  ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal' && /D:\/data\/PJ\/journal/.test(document.getElementById('as-jpath').textContent), 'the journal starts with the suggested folder beside the data, shown read-only');
   // preview -> diff, no write
   calls.length = 0;
   A.preview('claude');
@@ -166,7 +182,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.loadContext();
   await tick(30);
   const sel = document.querySelector('#as-ctx select[data-q="tunable"]');
-  ok(sel && sel.value === 'mixed' && /\(detected\)/.test(sel.options[2].textContent), 'the detected answer is preselected and marked');
+  ok(sel && sel.value === '' && /\(SM detected\)/.test(Array.from(sel.options).filter(o => o.value === 'mixed')[0].textContent) && sel.options[0].value === '',
+     'review r5 P2: the detected answer is marked but NOT chosen; "not answered" stays selected');
   sel.value = 'flux-tunable'; A.answer(sel);
   const ta = document.querySelector('#as-ctx textarea[data-q="notes"]'); ta.value = 'cooldown 9'; A.answer(ta);
   calls.length = 0;
@@ -178,28 +195,52 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.writeContext();
   await tick(30);
   ok(calls[0].body.apply === true, 'the write is the second click');
-  // test
+  // Confirm by agent (D-11..D-14, D-23): SM's column beside the agent's; SM decides each row
   calls.length = 0;
-  /* docs/191 A04: the section collapses only when the status says the test is
-     DONE, so a harness whose record is empty keeps it open for the wrong
-     reason -- the first version of the pin below passed against a section that
-     was never eligible to close. Report the success the way the server does. */
-  status.record = status.record || {};
-  status.record.tested = { claude: { ok: true, elapsed_s: 12.3 } };
-  A.test('claude');
-  await tick(30);
-  ok(/answered in 12\.3 s/.test(document.getElementById('as-test').textContent) && /lab-J is open: 20 qubits\./.test(document.getElementById('as-test').textContent), 'the test shows the time and the answer verbatim');
-  /* docs/191 A04: showing it is not the same as the user SEEING it. A
-     successful test is what marks the section done, and `sec` collapses a done
-     section -- so the answer arrived and the section shut over it in the same
-     breath (measured in real Chrome: "asking claude one read-only question…",
-     then a bare "✓ 6. Test" with a real 6.8 s answer inside). While there is a
-     result on screen the section stays open. */
-  const testSec = document.getElementById('as-test-sec');
-  ok(!!testSec && testSec.contains(document.getElementById('as-test')) && /12\.3 s/.test(testSec.textContent),
-     'A04: the answer stays on screen in its card after the status reload');
-  ok(testSec.classList.contains('asx-card-done') && /\u2713/.test(testSec.querySelector('.asx-step').textContent),
-     'A04: and the card is marked done');
+  A.confirmBy('claude');
+  ok(Array.from(document.querySelectorAll('#as-confirm button[data-confirm]')).every(b => b.disabled), 'D-23: one ask at a time -- the buttons are disabled while it runs');
+  await tick(40);
+  ok(calls.some(c => /\/setup\/confirm$/.test(c.url) && c.body.backend === 'claude'), 'Confirm posts one read-only ask for the chosen backend');
+  const res = document.getElementById('as-test');
+  ok(/answered in 12\.3 s/.test(res.textContent), 'Q-6: the ping time is its first row');
+  const rowOf = k => res.querySelector('[data-row="' + k + '"]');
+  ok(/agrees/.test(rowOf('chip_name').textContent) && rowOf('chip_name').classList.contains('asx-ok'), 'D-13: an equal value reads "agrees"');
+  ok(/disagrees — agent saw: 19/.test(rowOf('n_qubits').textContent) && /SM: 20/.test(rowOf('n_qubits').textContent), 'D-13: a different value names what the agent saw, beside SM');
+  ok(/unverified/.test(rowOf('calibrations_folder_in_config').textContent) && rowOf('calibrations_folder_in_config').classList.contains('asx-no'), 'D-13: a failed citation is unverified, never agrees');
+  ok(/not reported/.test(rowOf('run_folders').textContent), 'D-13: a missing value reads "not reported"');
+  ok(!document.querySelector('#as-test [data-stale]'), 'D-23: a result for this project reads as current');
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-bad') && !document.getElementById('as-confirm-result').classList.contains('asx-result-ok'),
+     'review r3 P2-6: a card with a disagreeing row is not green');
+  // review r5 P2: rows that prove nothing new keep the card neutral -- green only when every row agrees
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  { const c = document.getElementById('as-confirm-result');
+    ok(c && c.classList.contains('asx-result-ok'), 'review r6 P3: echo rows neither block nor count'); }
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-ok'), 'review r5 P2: all independent agreements -> green');
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }, { key: 'run_folders', sm: ['a'], agent: 'disagrees', agent_value: ['a', 'b'], matched: 1, of: 2 }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-bad'), 'review r6 P3: a partial list row is not agreement');
+  confirmReply = Object.assign({}, confirmReply, { rows: [{ key: 'chip_name', sm: 'c', agent: 'echo', agent_value: 'c' }, { key: 'storage_in_config', sm: 'D:/d', agent: 'agrees', agent_value: 'D:/d' }] });
+  A.confirmBy('claude'); await tick(40);
+  ok(document.getElementById('as-confirm-result').classList.contains('asx-result-ok'), 'review r6 P3: echo rows do not block green');
+  // D-23: a result for another project is shown as stale
+  lastConfirm = Object.assign({}, confirmReply, { current: false, key: { project: 'OTHER' } });
+  A.load(); await tick(40);
+  ok(/Result for project OTHER/.test((document.querySelector('#as-test [data-stale]') || {}).textContent || ''), 'D-23: a result for another project says so -- run again');
+  ok(document.querySelector('#as-confirm-result[data-stale-card]') && !document.querySelector('#as-confirm-result').classList.contains('asx-result-ok')
+     && !document.querySelector('#as-confirm-result .asx-ok'), 'review r2 P2-5: a stale card is not painted green');
+  // D-14: a non-JSON answer is said, with the raw text one click away
+  confirmReply = { ok: true, kind: 'confirm', backend: 'codex', done: true, failed: false, elapsed_s: 3, current: true, parse_error: 'the answer was not in the expected form', raw: 'hello' };
+  status.clis.codex = { found: true }; A.load(); await tick(40);
+  A.confirmBy('codex'); await tick(40);
+  ok(/not in the expected form/.test(res.ownerDocument.getElementById('as-test').textContent) && document.querySelector('#as-test details pre'), 'D-14: a non-JSON answer says so and keeps the raw text expandable');
+  confirmReply = { ok: true, kind: 'confirm', backend: 'claude', done: true, failed: true, elapsed_s: 2, current: true, error: 'Not logged in · Please run /login' };
+  A.confirmBy('claude'); await tick(40);
+  ok(/did not answer/.test(document.getElementById('as-test').textContent) && /Not logged in/.test(document.getElementById('as-test').textContent), 'D-14: a failure is in the CLI\'s own words');
+  status.clis.codex = { found: false };
+  A.load(); await tick(30);
   // a re-write starts from what the lab answered last time, never from the detected values alone
   savedCtx = { tunable: 'fixed-frequency', notes: 'Never retry hardware.' };
   S_reset();
@@ -213,7 +254,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // B-02: Codex reads AGENTS.md only -- the UI says so, and a block it never reads is not "written"
   A.loadContext();
   await tick(30);
-  ok(/Codex: always AGENTS\.md/.test(document.getElementById('as-ctx').textContent), 'B-02: the context form says Codex always uses AGENTS.md');
+  ok(/Codex \(AGENTS\.md\)/.test(document.getElementById('as-ctx').textContent), 'B-02: the context form says Codex uses AGENTS.md');
   A.previewContext();
   await tick(30);
   ok(/takes SM's block out of D:\/lab\/cal\/AGENTS\.local\.md/.test(document.getElementById('as-ctx-prev').textContent), 'B-02: the preview names the unread file it moves the block out of');
@@ -256,30 +297,63 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/Not saved: changing the limits needs a press in the SM window/.test(document.getElementById('as-lim-msg').textContent),
      "a refusal is said beside the button, in the server's words");
   limitsRefuse = null;
-  // R4-AG-1 (UD-5 a): the calibrations folder is set in the card, not on the hidden Runner page
+  // agents ver180 D-1..D-6: the folder comes from the project; an override is browse-only
   {
     const row = document.getElementById('as-calib');
-    ok(row && row.closest('#as-env') && !row.querySelector('a[href="/scheduler"]') && !/Experiment Runner/.test(document.getElementById('as-env').textContent),
-       'AG-1: the folder row lives in step 2 and no longer links to the hidden Experiment Runner');
+    ok(row && row.closest('#as-env') && !/Experiment Runner/.test(document.getElementById('as-env').textContent),
+       'D-1: the folder row lives in step 2 and names no hidden page');
     const inp = document.getElementById('as-calroot');
-    ok(inp && inp.value === 'D:/lab/cal', 'AG-1: the field starts from the saved folder');
+    ok(inp && inp.type === 'hidden', 'D-4: no typed box as the main path (the pick lands in a hidden field)');
+    ok(!document.querySelector('#as-env input[type="text"]'), 'D-4: no text input anywhere in step 2');
+    ok(/D:\/lab\/cal/.test(row.textContent) && /previous SM setting/.test(row.textContent) && document.getElementById('as-calib-noproj'),
+       'D-5: with no project the legacy value shows as "previous SM setting" with the open-a-project line');
     let browsed = null; window.openFolderBrowser = function (id, kind, o) { browsed = [id, o && o.autoSubmit]; };
-    ok(!!row.querySelector('button[onclick="AgentSetup.browseCalib()"]'), 'AG-1: a Browse button is in the row'); A.browseCalib();
-    ok(browsed && browsed[0] === 'as-calroot' && browsed[1] === false, 'AG-1: Browse opens the shared folder browser on that field, fill-only');
-    inp.value = '  D:/lab/cal2 ';
+    A.browseCalib();
+    ok(browsed && browsed[0] === 'as-calroot' && browsed[1] === false, 'D-4: Choose opens the shared folder browser, fill-only');
+    inp.value = 'D:/lab/cal2';
     const n0 = calls.length;
-    A.calib(); await tick(40);
-    const p = calls.slice(n0).find(c => c.method === 'POST' && /\/scheduler\/settings$/.test(c.url));
-    ok(p && JSON.stringify(p.body) === '{"calibrations_folder":"D:/lab/cal2"}', 'AG-1: Use this folder POSTs exactly {calibrations_folder} through the existing settings door');
-    ok(calls.slice(n0).some(c => /\/api\/agent\/setup$/.test(c.url)), 'AG-1: a saved folder re-reads the setup status');
-    settingsBusy = true;
-    A.calib(); await tick(40);
-    ok(/scheduler is running/.test((document.getElementById('as-calib-msg') || {}).textContent || ''), 'AG-1: a refusal is said in the row, in the server words');
-    settingsBusy = false;
-    document.getElementById('as-calroot').value = '';
-    const n1 = calls.length; A.calib(); await tick(20);
-    ok(calls.length === n1 && /folder first/.test(document.getElementById('as-calib-msg').textContent), 'AG-1: an empty field posts nothing and says why');
+    A.calibPicked(inp); await tick(40);
+    const p0 = calls.slice(n0).find(c => c.method === 'POST' && /\/scheduler\/settings$/.test(c.url));
+    ok(p0 && JSON.stringify(p0.body) === '{"calibrations_folder":"D:/lab/cal2"}', 'D-5: with no project a pick goes to the legacy setting');
+    status.paths = { project: 'P1', calibrations: { folder: 'D:/lab/projcal', source: 'project', entry: { source: 'own', raw: 'D:/lab/projcal' } },
+                     files: { project: { path: 'Q/projects/P1/config.toml' }, root: { path: 'Q/config.toml' } },
+                     data_folder: 'D:/data/P1', data_source: 'project', storage: { source: 'inherited' },
+                     state_path: { native: 'D:/chips/c1', source: 'own' },
+                     checks: [{ key: 'state', ok: true, label: 'The project state path is the open chip' }, { key: 'nodes', ok: false, label: 'The calibrations folder holds node files' }] };
+    A.load(); await tick(40);
+    const row2 = document.getElementById('as-calib');
+    ok(/D:\/lab\/projcal/.test(row2.textContent) && /from project P1 · Q\/projects\/P1\/config\.toml/.test(document.getElementById('as-calib-prov').textContent),
+       'D-2: the project value with a chip naming its file');
+    ok(/global config · Q\/config\.toml/.test(document.getElementById('as-storage').textContent), 'D-2/D-9: the data folder names the global config');
+    ok(document.querySelector('#as-checks [data-check="state"]').textContent.indexOf('✓') === 0
+       && document.querySelector('#as-checks [data-check="nodes"]').textContent.indexOf('✗') === 0, "D-11: SM's own checks render at once");
+    const n1 = calls.length;
+    const inp2 = document.getElementById('as-calroot'); inp2.value = 'D:/lab/mine';
+    A.calibPicked(inp2); await tick(40);
+    const p1 = calls.slice(n1).find(c => c.method === 'POST');
+    ok(p1 && /\/api\/agent\/setup\/calibrations$/.test(p1.url) && p1.body.folder === 'D:/lab/mine'
+       && !calls.slice(n1).some(c => /\/scheduler\/settings$/.test(c.url) && c.method === 'POST'),
+       'D-3: with a project a pick is an override, never the shared scheduler setting');
+    status.paths.calibrations = { folder: 'D:/lab/mine', source: 'override' };
+    A.load(); await tick(40);
+    ok(/your override \(SM setting\)/.test(document.getElementById('as-calib-prov').textContent)
+       && document.querySelector('#as-calib button[onclick="AgentSetup.useProject()"]'), 'D-4: an override says so and offers "Use project value"');
+    const n2 = calls.length; A.useProject(); await tick(40);
+    ok(calls.slice(n2).some(c => /\/setup\/calibrations$/.test(c.url) && c.body.clear === true), 'D-4: Use project value clears the override');
+    status.paths.calibrations = { folder: null, reason: 'unset', legacy: 'D:/lab/cal', legacy_ok: true, entry: { source: 'default', raw: null } };
+    A.load(); await tick(40);
+    const amber = document.getElementById('as-calib-amber');
+    ok(amber && /calibration_library\] folder is not set/.test(amber.textContent) && /Q\/projects\/P1\/config\.toml/.test(amber.textContent), 'D-6: the amber row names the key and its file');
+    ok(document.querySelector('#as-calib button[onclick="AgentSetup.browseCalib()"]') && document.querySelector('button[onclick="AgentSetup.useLegacy()"]'),
+       'D-6: two doors -- browse, and "previous SM setting · Use it"');
+    ok(!/In use/.test(document.getElementById('as-calib').textContent), 'D-6: nothing is picked for the person');
+    const n3 = calls.length; A.useLegacy(); await tick(40);
+    ok(calls.slice(n3).some(c => /\/setup\/calibrations$/.test(c.url) && c.body.use_legacy === true), 'D-6: Use it is one explicit click');
+    delete status.paths;
   }
+  status.context = { 'claude:local': 'x', 'codex:shared': 'y' }; A.load(); await tick(40);
+  ok(/Written for Claude Code \(CLAUDE\.local\.md, not shared\) and Codex \(AGENTS\.md\)/.test(document.getElementById('as-context').textContent),
+     'review r3 P2-8: the written-for line uses words, not claude:local / codex:shared');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();
