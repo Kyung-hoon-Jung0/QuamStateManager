@@ -5,6 +5,8 @@ asks the poller to keep going for a few intervals and never waits on the OPX.
 Clean-up and settings are POSTs (the app's origin guard applies)."""
 from __future__ import annotations
 import math
+import re
+import datetime as _dt
 
 import json
 import logging
@@ -107,6 +109,35 @@ def last_job(q):
     return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.opx_time(job.get('created_at')) + ' (OPX clock)'
 
 
+_RAW_ERROR = re.compile(r':\s+[A-Za-z_][\w.]*(?:Error|Exception):.*?(?=\. The last good read|$)', re.S)
+
+
+def plain_error(text):
+    """The plain sentence without the raw exception text (shown once in Technical details)."""
+    return _RAW_ERROR.sub('', text) if isinstance(text, str) else text
+
+
+def raw_error(st):
+    """The first raw exception text on the page, or None."""
+    cap = st.get('capabilities') or {}
+    for text in ((st.get('health') or {}).get('details'), st.get('sentence'), cap.get('live_reason'), cap.get('jobs_reason'), cap.get('close_reason')):
+        m = _RAW_ERROR.search(text) if isinstance(text, str) else None
+        if m:
+            return m.group(0).lstrip(': ').strip()
+    return None
+
+
+def stale_time(value):
+    """A last-good-read time: HH:MM:SS today, the full date and zone otherwise."""
+    full = om.local_time(value)
+    t = om.timestamp(value)
+    if t is None:
+        return full
+    if _dt.datetime.fromtimestamp(t).date() == _dt.date.today():
+        return full.split(' ')[1]
+    return full
+
+
 def _view(tab: str) -> dict:
     m = monitor()
     st = m.status()
@@ -127,7 +158,7 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'opx_time': om.opx_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],

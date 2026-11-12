@@ -935,7 +935,7 @@ def test_round4_alarm_and_failed_calls(env):
     m.poll_once()
     html = page(app, 'live')
     assert '<strong>PROBLEM</strong>' in html
-    assert 'Above limit: FEM 0 60 °C' in html
+    assert 'Above limit: FEM 0 60.0 °C' in html
     assert 'limit 50 °C' in html
     assert 'Hottest: Chassis' not in html
     w.script[:] = [om.WorkerError('read failed')]
@@ -1049,7 +1049,7 @@ def test_round5_display_formatting(env):
     m.poll_once()
     html = page(app, 'live')
     assert 'limit 50 °C' in html and '50.0 °C' not in html
-    assert '60 °C' in html and '60.0 °C' not in html
+    assert '60.0 °C' in html
     assert re.search(r'Idle minutes <input\b[^>]*name="idle_minutes"[^>]*value="120"', page(app, 'settings'))
     assert re.search(r'\(UTC[+-]\d{1,2}(?::\d{2})?\)$', om.local_time('2026-11-02T20:25:40Z'))
     badge = app.test_client().get('/opx-monitor/alarm-badge').get_data(as_text=True)
@@ -1355,8 +1355,9 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     html = page(app, 'live')
     import re as _re
     visible = _re.sub(r'<[^>]*>', ' ', html)
-    assert visible.count('127.0.0.1:9510') == 1  # said once, in the status line
-    assert '127.0.0.1:9510. The last good read' in visible
+    assert visible.count('127.0.0.1:9510') == 1  # said once, in Technical details
+    assert visible.count('ConnectionError: Failed to connect to QOP at 127.0.0.1:9510') == 1
+    assert 'Technical details' in visible and 'could not connect. The last good read' in visible
 
 
 def test_every_sensor_unreadable_is_not_called_no_readings(env):
@@ -1936,3 +1937,32 @@ def test_r4_settings_store_idle_minutes_as_a_number(env):
     with open(os.path.join(app.instance_path, 'opx_monitor', 'settings.json'), encoding='utf-8') as fh:
         stored = json.load(fh)
     assert stored['idle_minutes'] == 0.25 and isinstance(stored['idle_minutes'], float)
+
+
+def test_r5_stale_time_shows_date_when_not_today():
+    import datetime as dt
+    from quam_state_manager.web import opx_monitor_routes as routes
+    now = dt.datetime.now().astimezone()
+    assert re.fullmatch(r'\d\d:\d\d:\d\d', routes.stale_time(now.isoformat()))
+    old = (now - dt.timedelta(days=3)).isoformat()
+    assert routes.stale_time(old).startswith((now - dt.timedelta(days=3)).strftime('%Y-%m-%d '))
+
+
+def test_r5_raw_error_shown_once_and_sentence_plain():
+    from quam_state_manager.web import opx_monitor_routes as routes
+    raw = ('Server unreachable while reading get_devices: QMConnectionError: failed to connect; '
+           'status: StatusCode.UNAVAILABLE. The last good read was 580 s ago.')
+    assert routes.plain_error(raw) == 'Server unreachable while reading get_devices. The last good read was 580 s ago.'
+    st = {'health': {'details': raw}, 'sentence': raw, 'capabilities': {'jobs_reason': raw}}
+    assert routes.raw_error(st).startswith('QMConnectionError: failed to connect')
+    assert routes.raw_error({'health': {}, 'sentence': 'ok', 'capabilities': {}}) is None
+
+
+def test_r5_template_one_decimal_and_one_raw_block():
+    from pathlib import Path
+    src = Path('quam_state_manager/web/templates/_opx_monitor_body.html').read_text(encoding='utf-8')
+    assert "'%.1f'|format(hottest.value) }}" in src and "format(r.value)).removesuffix" not in src
+    assert src.count('ui-opxmon-raw-error') == 1
+    for k in ('st.sentence', 'st.health.details', 'cap.jobs_reason', 'cap.live_reason'):
+        assert '{{ %s }}' % k not in src
+    assert "stale_time(st.section_times.get('controllers'))" in src
