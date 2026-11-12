@@ -134,6 +134,75 @@ window.AgentSetup = (function () {
       + '<div id="as-prev-' + k + '" class="asx-prev"></div></div>';
   }
 
+  /* ---- Step 2 rows (decisions D-1..D-11) ---- */
+  function confirmHtml() { return ""; }
+  function fileName(P, which) {
+    var f = (P.files || {})[which] || {};
+    return f.path || (which === "root" ? "~/.qualibrate/config.toml" : "projects/<project>/config.toml");
+  }
+  // D-2: the chip names the file a value came from
+  function prov(entry, P) {
+    if (!entry) return "";
+    if (entry.source === "own") return "from project " + P.project + " · " + fileName(P, "project");
+    if (entry.source === "inherited") return "global config · " + fileName(P, "root");
+    if (entry.source === "default") return "qualibrate default";
+    if (entry.source === "empty") return "set empty in " + fileName(P, "project");
+    return "";
+  }
+  function dataProv(P) {
+    return { project: P.storage ? prov(P.storage, P) : "the project's storage", chip: "the chip's extras.data_folder",
+             dataset: "the first dataset folder" }[P.data_source] || "";
+  }
+  function pathRow(id, label, value, provText, extra) {
+    return '<div class="asx-row" id="' + id + '"><span class="asx-k">' + esc(label) + '</span><span class="asx-v asx-grow">'
+      + (value ? '<code class="asx-path">' + esc(value) + "</code>" : '<span class="muted">not found</span>') + (extra || "") + "</span>"
+      + (provText ? '<span class="asx-tag">' + esc(provText) + "</span>" : "") + "</div>";
+  }
+  var CAL_KEY = "[qualibrate.calibration_library] folder";
+  var REASONS = { unset: "is not set", empty: "is set to an empty value", no_config: "cannot be read (no config file)",
+                  unmapped: "cannot be mapped to a folder on this PC", missing: "names a folder that does not exist",
+                  override_missing: "your override names a folder that does not exist" };
+  function calibRow(P, d) {
+    var c = P.calibrations || (d.calibrations_folder ? { folder: d.calibrations_folder, source: "legacy" } : {});
+    var pick = '<input type="hidden" id="as-calroot" value="" onchange="AgentSetup.calibPicked(this)">'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Choose…</button>';
+    var head = '<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">';
+    var legacyDoor = c.legacy_ok ? '<p class="asx-small">previous SM setting: <code class="asx-path">' + esc(c.legacy) + '</code> '
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.useLegacy()">Use it</button></p>' : "";
+    if (!P.project) {
+      // D-5: no project -- an honest line, the legacy value in force if any, and the browse door
+      return head + (c.folder ? '<code class="asx-path">' + esc(c.folder) + "</code>" : '<span class="muted">not set</span>') + pick + "</span>"
+        + (c.folder ? '<span class="asx-tag">previous SM setting</span>' + state("ok", "In use") : state("todo", "Not set")) + "</div>"
+        + '<p class="asx-small asx-indent" id="as-calib-noproj">No QUAlibrate project open — <a href="/?landing=1">open one on the landing page</a>.</p>'
+        + '<span id="as-calib-msg"></span>';
+    }
+    if (c.folder) {
+      var ov = c.source === "override";
+      var e = c.entry || {};
+      var t = ov ? "your override (SM setting)" : prov(e, P);
+      return head + '<code class="asx-path">' + esc(c.folder) + "</code>" + pick
+        + (ov ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.useProject()">Use project value</button>' : "") + "</span>"
+        + '<span class="asx-tag" id="as-calib-prov">' + esc(t) + "</span>" + state("ok", "In use") + "</div>"
+        + (!ov && e.overridden ? '<p class="asx-small muted asx-indent">global config ' + esc(e.overridden) + " — overridden by project</p>" : "")
+        + (ov ? '<p class="asx-small muted asx-indent">A graph refuses to run when the env\'s own calibration library differs from this folder.</p>' : "")
+        + '<span id="as-calib-msg"></span>';
+    }
+    // D-6: amber -- the raw value, the missing key and its file, two explicit doors, nothing picked
+    var e2 = c.entry || {};
+    var file = e2.source === "inherited" ? fileName(P, "root") : fileName(P, "project");
+    return head + '<span class="ag-err" id="as-calib-amber">' + esc(CAL_KEY) + " " + esc(REASONS[c.reason] || "is not usable")
+      + (e2.raw ? ": <code>" + esc(e2.raw) + "</code>" : "") + " — in " + esc(file) + "</span>" + pick + "</span>"
+      + state("todo", "Not set") + "</div>" + legacyDoor + '<span id="as-calib-msg"></span>';
+  }
+  function checksHtml(P) {
+    var cs = P.checks || [];
+    if (!cs.length) return "";
+    return '<div class="asx-row" id="as-checks"><span class="asx-k">SM checks</span><ul class="asx-checks">'
+      + cs.map(function (c) { return '<li class="asx-chk ' + (c.ok ? "asx-ok" : "asx-no") + '" data-check="' + esc(c.key) + '" title="' + esc(c.detail || "") + '">'
+        + (c.ok === true ? "✓" : c.ok === false ? "✗" : "○") + " " + esc(c.label) + ' <span class="muted">' + esc(c.detail || "") + "</span></li>"; }).join("")
+      + "</ul></div>";
+  }
+
   function render() {
     var d = S.data, root = S.root;
     if (!d || !root) return;
@@ -161,26 +230,29 @@ window.AgentSetup = (function () {
       + (anyCli ? "" : '<p class="ag-err">Neither CLI was found on this PC.</p>')
       + '<div class="asx-tiles">' + tile("claude", d) + tile("codex", d) + "</div>", { tag: "optional" }));
 
-    // 2. where runs live
-    var env = [];
-    // R4-AG-1 (UD-5 a): the folder is set HERE, through the same settings door
-    // the hidden Experiment Runner uses (POST /scheduler/settings) -- the
-    // journal row's shape, plus the shared folder browser
-    env.push('<div class="asx-row" id="as-calib"><span class="asx-k">Calibrations folder</span><span class="asx-v asx-grow">'
-      + '<input id="as-calroot" type="text" value="' + esc(d.calibrations_folder || "") + '" placeholder="the folder that holds the calibration nodes">'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseCalib()">Browse…</button>'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.calib()">' + (d.calibrations_folder ? "Save" : "Use this folder") + "</button></span>"
-      + (d.calibrations_folder ? state("ok", "Saved") : state("todo", "Not set")) + '<span id="as-calib-msg"></span></div>');
+    // 2. where runs live -- decisions D-1..D-11: the values come from the open
+    // QUAlibrate project through SM's one resolver, each with where it came
+    // from; an override is chosen in the folder browser only
+    var P = d.paths || {};
+    var env = [calibRow(P, d)];
+    env.push(pathRow("as-storage", "Data folder", P.data_folder, dataProv(P), null));
+    if (P.project) env.push(pathRow("as-statepath", "State path", P.state_path && P.state_path.native, prov(P.state_path, P), null));
     env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
       + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
       + '<span class="asx-dry-text">' + dryText(dry) + "</span></label></span>"
+      + '<span class="asx-tag" title="the Runner\'s global_simulate, one value for this machine">SM setting, this machine</span>'
       + '<span id="as-dryrun-msg"></span></div>');
+    var jVal = j.configured ? j.root : (j.suggested || "");
     env.push('<div class="asx-row" id="as-journal"><span class="asx-k">Journal folder</span><span class="asx-v asx-grow">'
-      + '<input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="a folder beside the lab\'s data">'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseJournal()">Browse…</button>'
-      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Save" : "Use this folder") + "</button></span>"
+      + '<code class="asx-path" id="as-jpath">' + esc(jVal || "not chosen") + "</code>"
+      + '<input type="hidden" id="as-jroot" value="' + esc(jVal) + '" onchange="AgentSetup.journal()">'
+      + '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.browseJournal()">Choose…</button>'
+      + (!j.configured && j.suggested ? '<button type="button" class="btn-sm outline asx-btn-2" onclick="AgentSetup.journal()">Use this folder</button>' : "")
+      + "</span>" + '<span class="asx-tag">' + esc(j.configured ? "your choice (SM setting)" : "beside the data folder") + "</span>"
       + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
       + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
+    env.push(checksHtml(P));
+    env.push(confirmHtml(d));
     parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
 
     // 3. lab context
@@ -321,29 +393,37 @@ window.AgentSetup = (function () {
       load();
     });
   }
-  // D-122: an empty field starts the browser at the other folder, else the
-  // open chip's folder -- never at the drive list
-  function browseFrom(id, otherId) {
+  // D-4: a folder is chosen in the folder browser (its own path field takes a
+  // typed or pasted path); the browser starts near the other folder or the chip
+  function browseFrom(id, near) {
     if (!window.openFolderBrowser) return;
-    var el = document.getElementById(id), other = document.getElementById(otherId);
     var chip = document.getElementById("load-path-input");
-    var empty = !(el && el.value.trim());
-    var near = (other && other.value.trim()) || (chip && chip.value.trim());
+    var start = near || (chip && chip.value.trim());
     window.openFolderBrowser(id, "", { autoSubmit: false });
-    if (empty && near && window.navigateBrowser) window.navigateBrowser(near);
+    if (start && window.navigateBrowser) window.navigateBrowser(start);
   }
-  function browseCalib() { browseFrom("as-calroot", "as-jroot"); }
-  function browseJournal() { browseFrom("as-jroot", "as-calroot"); }
-  function calib() {
-    var v = ((document.getElementById("as-calroot") || {}).value || "").trim();
+  function _p() { return (S.data && S.data.paths) || {}; }
+  function browseCalib() { var P = _p(); browseFrom("as-calroot", (P.calibrations || {}).folder || P.data_folder); }
+  function browseJournal() { var P = _p(); browseFrom("as-jroot", (S.data && S.data.journal && S.data.journal.root) || P.data_folder); }
+  function calMsg(r) {
     var msg = document.getElementById("as-calib-msg");
-    if (!v) { if (msg) msg.innerHTML = '<p class="ag-err">Enter or browse to a folder first.</p>'; return; }
-    api("POST", "/scheduler/settings", { calibrations_folder: v }).then(function (r) {
-      var b = r.body || {};
-      if (r.status === 200 && b.ok !== false) { load(); return; }
-      if (msg) msg.innerHTML = '<p class="ag-err">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
-    });
+    var b = r.body || {};
+    if (r.status === 200 && b.ok !== false) { load(); return; }
+    if (msg) msg.innerHTML = '<p class="ag-err" role="alert">' + esc(b.error || ("not saved (HTTP " + r.status + ")")) + "</p>";
   }
+  function calibPicked(el) {
+    var v = String((el && el.value) || "").trim();
+    if (!v) return;
+    var P = _p();
+    if (!P.project) {
+      // no project scoped: the legacy machine setting is the only place a folder can live (D-5)
+      api("POST", "/scheduler/settings", { calibrations_folder: v }).then(calMsg);
+      return;
+    }
+    api("POST", "/api/agent/setup/calibrations", { folder: v }).then(calMsg);
+  }
+  function useProject() { api("POST", "/api/agent/setup/calibrations", { clear: true }).then(calMsg); }
+  function useLegacy() { api("POST", "/api/agent/setup/calibrations", { use_legacy: true }).then(calMsg); }
   function dryRun(el) {
     // POST the one key; the reply is shown inline. On a refusal (409 while a
     // queue runs, or anything else) the server's error is shown VERBATIM and
@@ -529,11 +609,16 @@ window.AgentSetup = (function () {
     S.root = root;
     load();
   }
+  // D-8: a Setup page open in another window re-reads when it regains focus
+  // (the project or chip may have changed there)
+  window.addEventListener("focus", function () {
+    if (S.root && document.body && document.body.contains(S.root)) load();
+  });
   document.addEventListener("htmx:afterSwap", function () { init(); });
   document.addEventListener("htmx:historyRestore", function () { init(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, calib: calib, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
+           test: test, dryRun: dryRun, calibPicked: calibPicked, useProject: useProject, useLegacy: useLegacy, browseCalib: browseCalib, browseJournal: browseJournal, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();

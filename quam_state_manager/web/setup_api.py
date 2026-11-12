@@ -8,6 +8,7 @@ live check is ``/test``: a real read-only question, timed, answer verbatim.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -46,12 +47,8 @@ def _repo_root() -> str:
 
 
 def _cal_folder() -> str | None:
-    try:
-        from quam_state_manager.core import scheduler
-        f = scheduler.load_settings(_r()._sched_inst()).get("calibrations_folder") or ""
-        return str(f) if f and Path(f).is_dir() else None
-    except Exception:  # noqa: BLE001
-        return None
+    f = _r()._calibrations_folder()
+    return str(f) if f and Path(f).is_dir() else None
 
 
 def _global_simulate() -> bool:
@@ -67,29 +64,160 @@ def _global_simulate() -> bool:
         return True
 
 
-def _data_folder() -> str | None:
-    """The chip's declared data folder (extras.data_folder) else the first
-    active dataset root -- the journal's default home is beside it."""
+def _data_folder_src() -> tuple[str | None, str | None]:
+    """ONE data folder for the whole page (decisions D-9): the project's
+    storage (``routes._scope_storage_path``) -> the chip's declared
+    ``extras.data_folder`` -> the first active dataset root."""
     r = _r()
+    try:
+        p = r._scope_storage_path(r._active_ctx())
+        if p and Path(p).is_dir():
+            return str(p), "project"
+    except Exception:  # noqa: BLE001
+        logger.debug("project storage read failed", exc_info=True)
     store = r._store()
     if store is None:
-        return None
+        return None, None
     try:
         from quam_state_manager.core.history import extras_data_folder
         from quam_state_manager.core import qualibrate_config as qc
         for raw in extras_data_folder(store.state):
-            p = Path(qc._to_native(raw)) if hasattr(qc, "_to_native") else Path(raw)
-            if p.is_dir():
-                return str(p)
+            n = qc.native_path(raw)
+            if n and n.is_dir():
+                return str(n), "chip"
     except Exception:  # noqa: BLE001
         logger.debug("extras.data_folder read failed", exc_info=True)
     try:
         for f in r._dataset_candidate_folders(fast=True):
             if Path(f).is_dir():
-                return str(f)
+                return str(f), "dataset"
     except Exception:  # noqa: BLE001
         pass
-    return None
+    return None, None
+
+
+def _data_folder() -> str | None:
+    return _data_folder_src()[0]
+
+
+def _same_path(a, b) -> bool:
+    if not a or not b:
+        return False
+    from quam_state_manager.core import calibrations
+    return calibrations._norm(a) == calibrations._norm(b)
+
+
+RUN_COUNT_CAP = 2000
+
+
+def _count_runs(folder: str | None, cap: int = RUN_COUNT_CAP) -> int:
+    """How many run folders (a ``node.json`` in it) sit under *folder*, up to
+    three levels deep (project/date/run), capped -- a check, not an index."""
+    if not folder or not Path(folder).is_dir():
+        return 0
+    n = 0
+    stack = [(Path(folder), 0)]
+    while stack and n < cap:
+        d, depth = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if e.name == "node.json" and e.is_file():
+                        n += 1
+                    elif depth < 3 and e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                        stack.append((Path(e.path), depth + 1))
+        except OSError:
+            continue
+    return n
+
+
+def run_folder_names(folder: str | None, limit: int = 50) -> list[str]:
+    """Names of run folders under *folder* (for comparing the agent's report)."""
+    out: list[str] = []
+    if not folder or not Path(folder).is_dir():
+        return out
+    stack = [(Path(folder), 0)]
+    while stack and len(out) < limit:
+        d, depth = stack.pop()
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if e.name == "node.json" and e.is_file():
+                        out.append(Path(d).name)
+                    elif depth < 3 and e.is_dir(follow_symlinks=False) and not e.name.startswith("."):
+                        stack.append((Path(e.path), depth + 1))
+        except OSError:
+            continue
+    return out
+
+
+def _config_names(entry: dict | None, files: dict | None) -> bool | None:
+    """Does the raw config TEXT carry the entry's raw value (catches a value
+    SM mapped from something the file does not say)? None = nothing to check."""
+    if not entry or entry.get("source") not in ("own", "inherited") or not entry.get("raw"):
+        return None
+    f = ((files or {}).get("project" if entry["source"] == "own" else "root") or {}).get("path")
+    try:
+        text = Path(f).read_text(encoding="utf-8")
+    except (OSError, TypeError):
+        return False
+    raw = str(entry["raw"])
+    if raw in text or raw.replace(chr(92), chr(92) * 2) in text:
+        return True
+    # a value SM substituted from the lazy project template
+    return "${#/qualibrate/project}" in text
+
+
+def paths_report() -> dict:
+    """Step 2's rows, their provenance, and SM's own four checks (D-1..D-11)."""
+    r = _r()
+    ctx = r._active_ctx()
+    project = (ctx or {}).get("qualibrate_project")
+    cal = r._calibrations(ctx)
+    data, data_src = _data_folder_src()
+    paths = None
+    if project:
+        try:
+            from quam_state_manager.core import qualibrate_config as qc
+            paths = qc.project_paths(project)
+        except Exception:  # noqa: BLE001
+            paths = None
+    live = (ctx or {}).get("live_path") or (ctx or {}).get("path")
+    state_entry = (paths or {}).get("state_path")
+    checks = []
+    if state_entry and state_entry.get("native"):
+        checks.append({"key": "state", "ok": _same_path(state_entry["native"], live),
+                       "label": "The project's state path is the open chip",
+                       "detail": f"project: {state_entry['native']} · open: {live}"})
+    else:
+        checks.append({"key": "state", "ok": None, "label": "The project's state path is the open chip",
+                       "detail": "no project state_path to compare" if project else "no project open"})
+    nodes: list[str] = []
+    if cal.get("folder"):
+        try:
+            from quam_state_manager.core import node_scan
+            nodes = [i.name for i in node_scan.scan_folder(cal["folder"], instance_path=current_app.instance_path)
+                     if i.error is None]
+        except Exception:  # noqa: BLE001
+            nodes = []
+    checks.append({"key": "nodes", "ok": bool(nodes) if cal.get("folder") else None,
+                   "label": "The calibrations folder holds node files",
+                   "detail": f"{len(nodes)} node files" if cal.get("folder") else "no calibrations folder"})
+    nruns = _count_runs(data)
+    checks.append({"key": "data", "ok": (nruns > 0) if data else None, "label": "The data folder holds runs",
+                   "detail": (f"{nruns}{'+' if nruns >= RUN_COUNT_CAP else ''} run folders" if data else "no data folder")})
+    names = [_config_names((paths or {}).get(k), (paths or {}).get("files"))
+             for k in ("calibration_library", "storage", "state_path")]
+    named = [x for x in names if x is not None]
+    checks.append({"key": "config", "ok": (all(named) if named else None),
+                   "label": "The config files name these paths",
+                   "detail": ("each value read from its file" if named and all(named)
+                              else "a value SM shows is not written in its file" if named
+                              else "nothing to compare" if project else "no project open")})
+    return {"project": project, "calibrations": cal, "data_folder": data, "data_source": data_src,
+            "state_path": state_entry, "storage": (paths or {}).get("storage"), "files": (paths or {}).get("files"),
+            "config_dir": (paths or {}).get("config_dir") or cal.get("config_dir"),
+            "live_path": str(live) if live else None, "checks": checks, "nodes": nodes[:20]}
 
 
 def _python() -> str:
@@ -131,6 +259,11 @@ def setup_status():
                     "suggested": str(Path(_data_folder()) / "journal") if _data_folder() else None,
                     "claude_says": journal_mod.settings(inst).get("claude_says")}
     s["data_folder"] = _data_folder()
+    try:
+        s["paths"] = paths_report()
+    except Exception:  # noqa: BLE001
+        logger.warning("setup paths report failed", exc_info=True)
+        s["paths"] = None
     s["global_simulate"] = _global_simulate()
     s["chip"] = aa._chip_name() if _r()._active_path() else None
     s["hook_command"] = st.hook_command(_python(), str(inst) if _custom_instance(inst) else None)
@@ -277,6 +410,37 @@ def disconnect():
     if chip:
         journal_mod.append(inst, chip, f"{backend} disconnected from SM by {_r()._request_actor()}", kind="sm")
     return jsonify(**out)
+
+
+@setup_bp.route("/calibrations", methods=["POST"])
+def calibrations_override():
+    """Set or clear the person's calibrations-folder override for the scoped
+    project (decisions D-3/D-4/D-6). ``folder`` = a folder chosen in the
+    folder browser; ``use_legacy`` = take the previous SM setting (one
+    click); ``clear`` = use the project value again. Never writes
+    ``~/.qualibrate`` and never the scheduler setting."""
+    from quam_state_manager.core import calibrations
+    r = _r()
+    ctx = r._active_ctx()
+    project = (ctx or {}).get("qualibrate_project")
+    data = json_object()
+    if not project:
+        return _err("no QUAlibrate project is open — open one on the landing page", 409)
+    cal = r._calibrations(ctx)
+    cdir = cal.get("config_dir") or ""
+    if data.get("clear"):
+        calibrations.set_override(current_app.instance_path, project, cdir, None, by=r._request_actor())
+        return jsonify(ok=True, calibrations=r._calibrations(ctx))
+    if data.get("use_legacy"):
+        folder = cal.get("legacy") if cal.get("legacy_ok") else None
+        if not folder:
+            return _err("there is no previous SM setting to use", 409)
+    else:
+        folder = json_text(data, "folder")
+    if not folder or not Path(folder).expanduser().is_absolute() or not Path(folder).is_dir():
+        return _err(f"not an existing folder: {folder or '(empty)'}")
+    calibrations.set_override(current_app.instance_path, project, cdir, str(Path(folder)), by=r._request_actor())
+    return jsonify(ok=True, calibrations=r._calibrations(ctx))
 
 
 @setup_bp.route("/journal", methods=["POST"])

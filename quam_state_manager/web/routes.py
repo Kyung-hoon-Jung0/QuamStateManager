@@ -6773,6 +6773,30 @@ def chip_name_banner():
     return render_template("_chip_name_banner.html", **_ctx())
 
 
+def _calibrations(ctx: dict | None = None) -> dict[str, Any]:
+    """The calibrations folder in force for *ctx* (default: the active one),
+    through the ONE resolver (core/calibrations.py, decisions D-1): the
+    project's override -> the project's calibration_library.folder -> the
+    legacy scheduler setting only when no project is scoped."""
+    from quam_state_manager.core import calibrations
+    if ctx is None:
+        ctx = _active_ctx()
+    try:
+        legacy = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    except Exception:  # noqa: BLE001
+        legacy = ""
+    return calibrations.resolve(current_app.instance_path, (ctx or {}).get("qualibrate_project"), legacy=legacy)
+
+
+def _calibrations_folder(ctx: dict | None = None) -> str:
+    """The resolved calibrations folder, or "" (see ``_calibrations``)."""
+    try:
+        return _calibrations(ctx).get("folder") or ""
+    except Exception:  # noqa: BLE001
+        logger.debug("calibrations resolve failed", exc_info=True)
+        return ""
+
+
 def _scope_storage_path(ctx: dict | None) -> str:
     """The project scope's storage (data) folder, or "" -- only when it exists.
 
@@ -7567,7 +7591,7 @@ def _agent_wiring():
     """
     from quam_state_manager.core import agent_setup as A
     try:
-        cal = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or None
+        cal = _calibrations_folder() or None
     except Exception:  # noqa: BLE001
         cal = None
     try:
@@ -51933,7 +51957,7 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     route and the Strict gate inside /scheduler/start)."""
     settings = scheduler.load_settings(inst)
     cal = (json_text(data, "calibrations_folder")
-           or str(settings.get("calibrations_folder") or "").strip())
+           or _calibrations_folder())
     env_python = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     target = (json_text(data, "quam_state_path")
               or str(settings.get("quam_state_path") or "").strip())
@@ -52106,7 +52130,7 @@ def scheduler_scan():
     """List nodes/graphs in a folder (hardware-safe ast scan) + the chip roster."""
     folder = (request.args.get("folder") or "").strip()
     if not folder:
-        folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+        folder = _calibrations_folder()
     items = [n.to_dict() for n in node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     store = _store() if _context_type() == "quam" else None
     return jsonify({
@@ -52127,7 +52151,7 @@ def scheduler_scan_params():
     inst = _sched_inst()
     settings = scheduler.load_settings(inst)
     data = json_object()
-    folder = json_text(data, "folder") or str(settings.get("calibrations_folder") or "").strip()
+    folder = json_text(data, "folder") or _calibrations_folder()
     env = json_text(data, "env_python") or str(settings.get("env_python") or "").strip()
     if not folder:
         return jsonify({"ok": False, "error": "No calibrations folder set."}), 400
@@ -52470,6 +52494,7 @@ def scheduler_start():
     scheduler.set_refresh_hook(
         lambda folder, item_id, status: _scheduler_refresh_hook(
             app, inst, folder, item_id, status))
+    scheduler.stamp_calibrations_folder(inst, _calibrations_folder())
     try:
         scheduler.start(inst)
     except scheduler.ForeignRunnerError as exc:
@@ -52586,7 +52611,7 @@ def _autofit_readiness() -> dict:
     ctx = _active_ctx()
     chip_ok = bool(ctx and ctx.get("type") == "quam")
     env, env_source = _autofit_env()
-    folder = settings.get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     # Instance-level, NOT the per-chip scope (docs/80 Part 4 audit): the LLM
     # provider, model and API KEY are a user credential, not a fact about a
     # device. Reading them from a scope would both hide the file the user
@@ -52734,7 +52759,7 @@ def autofit_resolve():
         p = _autofit_plan_from_request(data)
     except af_plan.PlanError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-    folder = scheduler.load_settings(_sched_inst()).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     if not folder:
         return jsonify({"ok": False, "error": "no calibrations folder set — "
                         "configure it on the Experiment Runner page"}), 400
@@ -52930,7 +52955,7 @@ def _autofit_start_real(inst, p, data, auditor):
             return None, {"error": "preflight failed", "reason": "preflight",
                           "preflight": pre}, 409
     # step → file resolution must be complete
-    folder = scheduler.load_settings(inst).get("calibrations_folder") or ""
+    folder = _calibrations_folder()
     items = [n.to_dict() for n in
              node_scan.scan_folder(folder, instance_path=current_app.instance_path)] if folder else []
     files = [{"name": i.get("name"), "path": i.get("file") or i.get("path")}

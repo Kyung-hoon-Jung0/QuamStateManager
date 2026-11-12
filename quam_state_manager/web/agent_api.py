@@ -2000,6 +2000,12 @@ def _run_settings(settings: dict, ctx: dict, inst) -> dict:
     """The runner settings an agent run obeys. With no env_python of its own, the run uses the
     env the person chose for this chip's project (project_env), else the app's selected env --
     the same env the window opened the chip with, never a guess."""
+    # decisions D-1 / Q-2: the folder in force for THIS chip's project, through the one
+    # resolver, stamped into what the run obeys (never written back to the shared setting)
+    try:
+        settings = {**settings, "calibrations_folder": _r()._calibrations_folder(ctx) or ""}
+    except Exception:  # noqa: BLE001
+        settings = {**settings, "calibrations_folder": ""}
     if settings.get("env_python"):
         return settings
     from quam_state_manager.core import project_env
@@ -3118,7 +3124,7 @@ def plans_add():
         # review R2-16: the node name is checked NOW, not after a real session spun up
         try:
             from quam_state_manager.core import scheduler
-            folder = scheduler.load_settings(r._sched_inst()).get("calibrations_folder")
+            folder = r._calibrations_folder() or None
         except Exception:  # noqa: BLE001
             folder = None
         with _SCAN_LOCK:
@@ -3182,7 +3188,7 @@ def _plan_steps_refusal(inst, norm: list[dict], steps: list, store):
     failed only after Start). The step keeps the folder's own spelling."""
     from quam_state_manager.core import agent_runs, run_terms, scheduler
     try:
-        folder = scheduler.load_settings(_r()._sched_inst()).get("calibrations_folder")
+        folder = _r()._calibrations_folder() or None
     except Exception:  # noqa: BLE001
         folder = None
     if not folder:

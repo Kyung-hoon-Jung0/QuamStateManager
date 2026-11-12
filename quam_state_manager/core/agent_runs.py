@@ -196,7 +196,9 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
                 "how": "no Python environment is chosen for this chip: the human picks one on the landing page "
                        "(the project's env picker, then Open) and you call run_node again"}
     if not settings.get("calibrations_folder"):
-        return {"refused": "no_calibrations_folder", "how": "set the calibrations folder in Experiment Runner settings"}
+        return {"refused": "no_calibrations_folder",
+                "how": "no calibrations folder: open a QUAlibrate project whose config sets "
+                       "`calibration_library.folder`, or choose one in Agent → Setup"}
     if node_info is None:
         # A-20 (docs/254): every name, not the first 40 of 187, and the closest ones first
         from quam_state_manager.core import run_terms
@@ -836,10 +838,12 @@ class Registry:
                 "param_overrides": dict(req.params or {}),
                 "label": f"agent: {node_info.name} ({req.actor})", "state_path": str(live),
                 "env_python": settings.get("env_python") or None,
+                "calibrations_folder": settings.get("calibrations_folder") or None,
                 "baseline_path": str(before),  # docs/174: normalize the diff baseline
             }, targets=list(req.targets))
             item_id = item["id"]
             meta["item_id"] = item_id
+            scheduler.stamp_calibrations_folder(scope, settings.get("calibrations_folder"))
             try:
                 scheduler.start(scope)
             except scheduler.ForeignRunnerError as exc:

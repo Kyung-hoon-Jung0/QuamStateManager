@@ -48,6 +48,7 @@ global.fetch = window.fetch = function (url, opts) {
   else if (/\/setup\/connect/.test(url)) resp = { ok: true, applied: true, writes: { mcp: { file: 'H/.claude.json', backup: 'H/.claude.json.sm-backup-1' } } };
   else if (/\/setup\/context$/.test(url) && (!opts || opts.method === 'GET')) resp = { ok: true, facts: { n_qubits: 20, n_pairs: 30, bias_modes: { opx: 9 }, nodes: ['05_power_rabi'] }, questions: [{ id: 'tunable', kind: 'choice', options: ['flux-tunable', 'fixed-frequency', 'mixed'], question: 'Are the qubits flux-tunable?', detected: 'mixed', why: 'x' }, { id: 'notes', kind: 'text', question: 'Anything else?', detected: '' }], saved: savedCtx || undefined };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true }, codex: { file: 'D:/lab/cal/AGENTS.md', exists: true, before: 'lab\n', after: 'lab\n\nB', changed: true, moves_from: 'D:/lab/cal/AGENTS.local.md' } }, writes: {} };
+  else if (/\/setup\/calibrations$/.test(url)) resp = { ok: true };
   else if (/\/api\/agent\/limits$/.test(url) && method === 'POST') {
     if (limitsRefuse) { code = 403; resp = { ok: false, refused: 'no_window_proof', error: limitsRefuse }; }
     else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
@@ -121,7 +122,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/\u25cb SM's tools/.test(tileC.textContent) && !!tileC.querySelector('button[onclick="AgentSetup.preview(\'claude\')"]'), 'says what is missing, with one Connect button');
   ok(/Not installed/.test((document.getElementById('as-connect-codex') || {}).textContent || '') && !document.querySelector('#as-connect-codex button'), 'a CLI not on PATH says Not installed and offers nothing to press');
   ok(document.getElementById('as-test') !== document.getElementById('as-test-sec') && document.getElementById('as-test-sec').contains(document.getElementById('as-test')), 'the test card and its result box are two elements (one id each)');
-  ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal', 'the journal input starts with the suggested folder beside the data');
+  ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal' && /D:\/data\/PJ\/journal/.test(document.getElementById('as-jpath').textContent), 'the journal starts with the suggested folder beside the data, shown read-only');
   // preview -> diff, no write
   calls.length = 0;
   A.preview('claude');
@@ -256,29 +257,59 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/Not saved: changing the limits needs a press in the SM window/.test(document.getElementById('as-lim-msg').textContent),
      "a refusal is said beside the button, in the server's words");
   limitsRefuse = null;
-  // R4-AG-1 (UD-5 a): the calibrations folder is set in the card, not on the hidden Runner page
+  // agents ver180 D-1..D-6: the folder comes from the project; an override is browse-only
   {
     const row = document.getElementById('as-calib');
-    ok(row && row.closest('#as-env') && !row.querySelector('a[href="/scheduler"]') && !/Experiment Runner/.test(document.getElementById('as-env').textContent),
-       'AG-1: the folder row lives in step 2 and no longer links to the hidden Experiment Runner');
+    ok(row && row.closest('#as-env') && !/Experiment Runner/.test(document.getElementById('as-env').textContent),
+       'D-1: the folder row lives in step 2 and names no hidden page');
     const inp = document.getElementById('as-calroot');
-    ok(inp && inp.value === 'D:/lab/cal', 'AG-1: the field starts from the saved folder');
+    ok(inp && inp.type === 'hidden', 'D-4: no typed box as the main path (the pick lands in a hidden field)');
+    ok(!document.querySelector('#as-env input[type="text"]'), 'D-4: no text input anywhere in step 2');
+    ok(/D:\/lab\/cal/.test(row.textContent) && /previous SM setting/.test(row.textContent) && document.getElementById('as-calib-noproj'),
+       'D-5: with no project the legacy value shows as "previous SM setting" with the open-a-project line');
     let browsed = null; window.openFolderBrowser = function (id, kind, o) { browsed = [id, o && o.autoSubmit]; };
-    ok(!!row.querySelector('button[onclick="AgentSetup.browseCalib()"]'), 'AG-1: a Browse button is in the row'); A.browseCalib();
-    ok(browsed && browsed[0] === 'as-calroot' && browsed[1] === false, 'AG-1: Browse opens the shared folder browser on that field, fill-only');
-    inp.value = '  D:/lab/cal2 ';
+    A.browseCalib();
+    ok(browsed && browsed[0] === 'as-calroot' && browsed[1] === false, 'D-4: Choose opens the shared folder browser, fill-only');
+    inp.value = 'D:/lab/cal2';
     const n0 = calls.length;
-    A.calib(); await tick(40);
-    const p = calls.slice(n0).find(c => c.method === 'POST' && /\/scheduler\/settings$/.test(c.url));
-    ok(p && JSON.stringify(p.body) === '{"calibrations_folder":"D:/lab/cal2"}', 'AG-1: Use this folder POSTs exactly {calibrations_folder} through the existing settings door');
-    ok(calls.slice(n0).some(c => /\/api\/agent\/setup$/.test(c.url)), 'AG-1: a saved folder re-reads the setup status');
-    settingsBusy = true;
-    A.calib(); await tick(40);
-    ok(/scheduler is running/.test((document.getElementById('as-calib-msg') || {}).textContent || ''), 'AG-1: a refusal is said in the row, in the server words');
-    settingsBusy = false;
-    document.getElementById('as-calroot').value = '';
-    const n1 = calls.length; A.calib(); await tick(20);
-    ok(calls.length === n1 && /folder first/.test(document.getElementById('as-calib-msg').textContent), 'AG-1: an empty field posts nothing and says why');
+    A.calibPicked(inp); await tick(40);
+    const p0 = calls.slice(n0).find(c => c.method === 'POST' && /\/scheduler\/settings$/.test(c.url));
+    ok(p0 && JSON.stringify(p0.body) === '{"calibrations_folder":"D:/lab/cal2"}', 'D-5: with no project a pick goes to the legacy setting');
+    status.paths = { project: 'P1', calibrations: { folder: 'D:/lab/projcal', source: 'project', entry: { source: 'own', raw: 'D:/lab/projcal' } },
+                     files: { project: { path: 'Q/projects/P1/config.toml' }, root: { path: 'Q/config.toml' } },
+                     data_folder: 'D:/data/P1', data_source: 'project', storage: { source: 'inherited' },
+                     state_path: { native: 'D:/chips/c1', source: 'own' },
+                     checks: [{ key: 'state', ok: true, label: 'The project state path is the open chip' }, { key: 'nodes', ok: false, label: 'The calibrations folder holds node files' }] };
+    A.load(); await tick(40);
+    const row2 = document.getElementById('as-calib');
+    ok(/D:\/lab\/projcal/.test(row2.textContent) && /from project P1 · Q\/projects\/P1\/config\.toml/.test(document.getElementById('as-calib-prov').textContent),
+       'D-2: the project value with a chip naming its file');
+    ok(/global config · Q\/config\.toml/.test(document.getElementById('as-storage').textContent), 'D-2/D-9: the data folder names the global config');
+    ok(document.querySelector('#as-checks [data-check="state"]').textContent.indexOf('✓') === 0
+       && document.querySelector('#as-checks [data-check="nodes"]').textContent.indexOf('✗') === 0, "D-11: SM's own checks render at once");
+    const n1 = calls.length;
+    const inp2 = document.getElementById('as-calroot'); inp2.value = 'D:/lab/mine';
+    A.calibPicked(inp2); await tick(40);
+    const p1 = calls.slice(n1).find(c => c.method === 'POST');
+    ok(p1 && /\/api\/agent\/setup\/calibrations$/.test(p1.url) && p1.body.folder === 'D:/lab/mine'
+       && !calls.slice(n1).some(c => /\/scheduler\/settings$/.test(c.url) && c.method === 'POST'),
+       'D-3: with a project a pick is an override, never the shared scheduler setting');
+    status.paths.calibrations = { folder: 'D:/lab/mine', source: 'override' };
+    A.load(); await tick(40);
+    ok(/your override \(SM setting\)/.test(document.getElementById('as-calib-prov').textContent)
+       && document.querySelector('#as-calib button[onclick="AgentSetup.useProject()"]'), 'D-4: an override says so and offers "Use project value"');
+    const n2 = calls.length; A.useProject(); await tick(40);
+    ok(calls.slice(n2).some(c => /\/setup\/calibrations$/.test(c.url) && c.body.clear === true), 'D-4: Use project value clears the override');
+    status.paths.calibrations = { folder: null, reason: 'unset', legacy: 'D:/lab/cal', legacy_ok: true, entry: { source: 'default', raw: null } };
+    A.load(); await tick(40);
+    const amber = document.getElementById('as-calib-amber');
+    ok(amber && /calibration_library\] folder is not set/.test(amber.textContent) && /Q\/projects\/P1\/config\.toml/.test(amber.textContent), 'D-6: the amber row names the key and its file');
+    ok(document.querySelector('#as-calib button[onclick="AgentSetup.browseCalib()"]') && document.querySelector('button[onclick="AgentSetup.useLegacy()"]'),
+       'D-6: two doors -- browse, and "previous SM setting · Use it"');
+    ok(!/In use/.test(document.getElementById('as-calib').textContent), 'D-6: nothing is picked for the person');
+    const n3 = calls.length; A.useLegacy(); await tick(40);
+    ok(calls.slice(n3).some(c => /\/setup\/calibrations$/.test(c.url) && c.body.use_legacy === true), 'D-6: Use it is one explicit click');
+    delete status.paths;
   }
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

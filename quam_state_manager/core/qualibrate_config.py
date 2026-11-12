@@ -493,6 +493,62 @@ def project_storage(project: str, cfg_dir: Path | None = None) -> dict[str, Any]
     }
 
 
+def project_paths(project: str, cfg_dir: Path | None = None) -> dict[str, Any]:
+    """ONE project's three paths with their provenance, READ-ONLY.
+
+    The per-project twin of ``list_projects()``'s entry (same ``{raw,
+    native, exists, source}`` per value, source ∈ own/inherited/default/
+    empty), without the N-project sweep. ``files`` names the two TOMLs the
+    values can come from and whether each could be read, so a page can say
+    which file to edit. ``calibration_library`` has no computed default:
+    ``default`` there means UNSET."""
+    cfg_dir = Path(cfg_dir) if cfg_dir else _config_dir()
+    root_path = root_config_path(cfg_dir)
+    overlay_path = cfg_dir / "projects" / project / "config.toml"
+    root_cfg = _load_toml_retry(root_path)
+    overlay = _load_toml_retry(overlay_path)
+    eff = _deep_merge(root_cfg, overlay)
+
+    def _get(node: Any, section: tuple[str, ...]) -> Any:
+        for s in section:
+            node = node.get(s) if isinstance(node, dict) else None
+        return node
+
+    def _entry(section: tuple[str, ...], key: str) -> dict:
+        node_o, node_e, node_r = _get(overlay, section), _get(eff, section), _get(root_cfg, section)
+        own = isinstance(node_o, dict) and key in node_o
+        raw = node_e.get(key) if isinstance(node_e, dict) else None
+        if isinstance(raw, str):
+            raw = raw.replace(_PROJECT_TEMPLATE, project)
+        source = ("empty" if own and raw == "" else "own" if own
+                  else "inherited" if raw not in (None, "") else "default")
+        root_raw = node_r.get(key) if isinstance(node_r, dict) else None
+        native = native_path(raw)
+        return {"raw": raw, "native": str(native) if native else None,
+                "exists": bool(native and native.exists()),
+                "is_dir": bool(native and native.is_dir()), "source": source,
+                # D-7: the global value an overlay replaced, shown as "overridden by project"
+                "overridden": root_raw if own and root_raw not in (None, "") and root_raw != raw else None}
+
+    storage = _entry(("qualibrate", "storage"), "location")
+    if storage["raw"] in (None, ""):
+        loc, _ = _storage_location(eff, project, cfg_dir)
+        native = native_path(loc)
+        storage = {**storage, "raw": loc, "native": str(native) if native else None,
+                   "exists": bool(native and native.exists()),
+                   "is_dir": bool(native and native.is_dir()), "source": "default"}
+    return {
+        "project": project,
+        "config_dir": str(cfg_dir),
+        "files": {"root": {"path": str(root_path), "exists": root_path.is_file(), "read": bool(root_cfg)},
+                  "project": {"path": str(overlay_path), "exists": overlay_path.is_file(),
+                              "read": bool(overlay) or (overlay_path.is_file() and overlay_path.stat().st_size == 0)}},
+        "state_path": _entry(("quam",), "state_path"),
+        "storage": storage,
+        "calibration_library": _entry(("qualibrate", "calibration_library"), "folder"),
+    }
+
+
 def active_project(cfg_dir: Path | None = None) -> str | None:
     """The root config's ``[qualibrate].project``, or None."""
     cfg_dir = cfg_dir or _config_dir()
