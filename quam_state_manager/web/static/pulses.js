@@ -147,7 +147,7 @@ window.PulsesPage = (function () {
        OWN `generate_config()` output, so it cannot disagree with the hardware.
        It is labelled as such, never passed off as the synthesized preview. */
     var TRANSCRIPTION_LABEL = 'SM\'s transcription of the lab class (as the CZ gate plan draws it)'
-        + ' — not quam\'s synthesis, not your own code';
+        + ' \u2014 not quam\'s synthesis, not your own code';
     function groundTruthInto(root, sec, gen, done) {
         fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(sec.path))
             .then(function (r) { return r.json(); })
