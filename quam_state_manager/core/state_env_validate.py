@@ -96,10 +96,42 @@ def is_pointer_str(value: Any) -> bool:
 # manifest lookups
 # ---------------------------------------------------------------------------
 
+def _catalog_classes(manifest: dict) -> dict:
+    """The SAME env's full class catalogue (docs/141 4h), ``{class path: entry}``.
+
+    A manifest is probed for the chip's class inventory at the time it was
+    attached; a class written into the chip later (a builder creating a new
+    pulse) is absent from it until the next probe. The catalogue of every class
+    the env offers answers for it meanwhile. Read lazily through
+    ``catalog_env`` = ``[python path, instance path]`` (request-path cache read,
+    never a probe; stale or cold reads as empty), or a ``catalog`` dict."""
+    cat = manifest.get("catalog")
+    if isinstance(cat, dict):
+        return cat
+    ref = manifest.get("catalog_env")
+    if not (isinstance(ref, (list, tuple)) and len(ref) == 2 and all(ref)):
+        return {}
+    try:
+        from quam_state_manager.core import state_env_schema as _ses
+        cat = _ses.catalog_for_env(ref[0], ref[1])
+    except Exception:  # noqa: BLE001 -- a cold or broken cache means "not checked"
+        cat = None
+    return cat if isinstance(cat, dict) else {}
+
+
 def _class_entry(manifest: dict, class_str: str) -> dict | None:
     """Exact class-path lookup, then unique-leaf fallback (class-move
     portability: quam-0.6.0 relocated pulse classes; the stored path may be a
-    generation older than the env's defining home)."""
+    generation older than the env's defining home), then the same env's
+    catalogue for a class the manifest was not probed for (:func:`_catalog_classes`)."""
+    entry = _manifest_class_entry(manifest, class_str)
+    if entry is not None:
+        return entry
+    entry = _catalog_classes(manifest).get(class_str)
+    return entry if isinstance(entry, dict) else None
+
+
+def _manifest_class_entry(manifest: dict, class_str: str) -> dict | None:
     classes = manifest.get("classes") or {}
     entry = classes.get(class_str)
     if isinstance(entry, dict):
@@ -770,7 +802,9 @@ def _manifest_key(manifest: dict | None) -> tuple:
     # survived a successful probe until an unrelated edit bumped the seq).
     return (tuple(sorted((str(k), str(x)) for k, x in v.items()))
             + (str(manifest.get("verdict_sig") or ""),)
-            + (tuple(sorted(manifest.get("classes") or ())),))
+            + (tuple(sorted(manifest.get("classes") or ())),)
+            # a catalogue landing answers classes the probe did not
+            + (tuple(sorted(_catalog_classes(manifest))),))
 
 
 def analysis_for_store(store, manifest: dict | None, *,

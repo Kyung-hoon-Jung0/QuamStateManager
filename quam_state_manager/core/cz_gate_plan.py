@@ -885,6 +885,147 @@ def _pulse_label(doc, path, pulse):
     return pulse if isinstance(pulse, str) and pulse and not pulse.startswith("#") else None
 
 
+#: a gate slot on a pair macro: the pulse the gate hands to a channel by name
+SLOT_PATH = re.compile(r"^(qubit_pairs\.([^.]+)\.macros\.([^.]+))\."
+                       r"(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse)$")
+
+
+def _raw_at(doc, path):
+    """The value stored at *path*, no pointer followed (None when absent)."""
+    node = doc
+    for seg in path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return None
+        node = node[seg]
+    return node
+
+
+def slot_played_op(doc, slot_path):
+    """Dot path of the channel op a macro slot's OWN pulse copy is played as, else None.
+
+    quam_builder 0.6.0 ``two_qubit_gates.py``: ``get_pulse_name`` returns
+    ``pulse.id`` when it is set (l.19-24); ``CZGate.flux_pulse_qubit_label`` hands a
+    pulse object to it (l.188-197) and ``apply()`` calls
+    ``moving_qubit.z.play(self.flux_pulse_qubit_label, ...)`` (l.249-250); the
+    coupler slot is the same through ``coupler_flux_pulse_label`` (l.200-206,
+    l.257). quam's ``Channel.play`` then looks the NAME up in its own
+    ``operations`` (quam ``components/channels.py`` l.436, l.490). So a slot that
+    stores a whole pulse dict with an ``id`` plays the channel op of that name,
+    never the dict itself.
+
+    None when the slot is a pointer or a label string (those name the op directly
+    and draw as before), when the copy has no id, when the playing channel or the
+    named op is missing, or when the named op resolves back to the slot itself.
+    The playing qubit follows :func:`operations`: ``moving_qubit`` for a CZGate,
+    the control for a two-flux gate's ``flux_pulse_qubit``, the target for its
+    ``flux_pulse_target`` [derived from the gate classes, as operations() does].
+    """
+    m = SLOT_PATH.match(slot_path or "")
+    if not m:
+        return None
+    macro_path, slot = m.group(1), m.group(4)
+    pair_path = "qubit_pairs." + m.group(2)
+    if not isinstance(_raw_at(doc, slot_path), dict):
+        return None
+    label = current(doc, slot_path + ".id")
+    if not isinstance(label, str) or not label or label.startswith("#"):
+        return None
+    if slot == "coupler_flux_pulse":
+        host = read(doc, pair_path + ".coupler").get("holder_path")
+        ops = host + ".operations." + label if host else None
+    else:
+        macro = current(doc, macro_path, {})
+        if slot == "flux_pulse_target":
+            role = "target"
+        elif isinstance(macro, dict) and "flux_pulse_target" in macro:
+            role = "control"
+        else:
+            role = current(doc, pair_path + ".moving_qubit")
+        if role not in ("control", "target"):
+            return None
+        qubit = read(doc, pair_path + ".qubit_" + role).get("holder_path")
+        ops = qubit + ".z.operations." + label if qubit else None
+    if not ops:
+        return None
+    target = read(doc, ops)
+    if not target.get("has_current") or not isinstance(target.get("current"), dict):
+        return None
+    holder = target.get("holder_path") or ops
+    return None if holder == slot_path else holder
+
+
+#: fields that name or place a pulse, never shape its waveform
+_NON_SHAPE_FIELDS = ("id", "length", "digital_marker", "__class__")
+
+
+def slot_copy_differences(doc, copy_path, played_path):
+    """``[(what, copy value, played value)]`` where the macro's copy and the op it
+    plays differ: the class, the length in ns (read as :func:`pulse_length_ns`
+    reads it) and every waveform field, each resolved the way the drawing reads
+    it. Empty when they agree [derived]."""
+    from .waveform_synth import resolved_lab_pulse
+    a = resolved_lab_pulse(doc, copy_path) or {}
+    b = resolved_lab_pulse(doc, played_path) or {}
+    out = []
+    ca, cb = (str(x.get("__class__", "")).split(".")[-1] for x in (a, b))
+    if ca != cb:
+        out.append(("class", ca or "?", cb or "?"))
+    la, lb = pulse_length_ns(doc, copy_path)[0], pulse_length_ns(doc, played_path)[0]
+    if la != lb:
+        out.append(("length", f"{la} ns" if la is not None else "unknown",
+                    f"{lb} ns" if lb is not None else "unknown"))
+    for key in sorted(set(a) | set(b)):
+        if key in _NON_SHAPE_FIELDS:
+            continue
+        va, vb = a.get(key), b.get(key)
+        if va != vb:
+            out.append((key, va, vb))
+    return out
+
+
+def slot_copy_note(doc, copy_path, played_path, skip=()):
+    """One sentence naming both pulses when the copy is not what plays, else None.
+    *skip* leaves out differences another note already states."""
+    diffs = [d for d in slot_copy_differences(doc, copy_path, played_path) if d[0] not in skip]
+    if not diffs:
+        return None
+    return ("the gate plays " + played_path + " (named by this copy's id), not the macro's own copy "
+            + copy_path + ": " + "; ".join(f"{what} {p} played vs {c} in the copy" for what, c, p in diffs))
+
+
+#: an edge sample above this fraction of the peak is reported [derived, product rule]
+EDGE_STEP_FRACTION = 0.10
+#: an edge this close to the peak is a deliberate step (a square or flat-top edge), not
+#: a shaped edge cut short [derived]
+EDGE_SQUARE_FRACTION = 0.90
+
+
+def edge_step_note(samples):
+    """A note when a SHAPED pulse starts or ends far from 0 V, else None.
+
+    The output idles at 0 V before and after the pulse, so a first or last sample
+    of e.g. 46 mV on a 200 mV pulse is a step at both edges (a Gaussian edge cut
+    short by too little padding). A square edge (first/last sample at least 90 %
+    of the peak) is the pulse's own shape and is not reported [derived].
+    """
+    vals = [float(v) for v in (samples or []) if isinstance(v, (int, float)) and math.isfinite(v)]
+    if len(vals) < 2:
+        return None
+    peak = max(abs(v) for v in vals)
+    if peak <= 0:
+        return None
+    first, last = vals[0], vals[-1]
+    frac = max(abs(first), abs(last)) / peak
+    if frac <= EDGE_STEP_FRACTION or frac >= EDGE_SQUARE_FRACTION:
+        return None
+
+    def mv(v):
+        return f"{v * 1e3:+.1f} mV"
+    return (f"the pulse starts at {mv(first)} and ends at {mv(last)} ({frac:.0%} of the "
+            f"{peak * 1e3:.1f} mV peak): the output steps from 0 V at the edges; "
+            "more padding brings the edges down")
+
+
 def _coupler_line(doc, pair_path, macro_path, notes):
     """Resolve the label on the playing element, without a frequency model."""
     source = macro_path + ".coupler_flux_pulse"
@@ -1146,6 +1287,15 @@ def operations(doc, conversions=None, unavailable=None):
                     pulse_path = read(doc, pulse_path)["holder_path"]
                 # the path the channel plays (the label on the qubit), else the resolved holder
                 played_pulse_path = info["path"] + ".z.operations." + label if isinstance(label, str) else pulse_path
+                # a macro that stores its own pulse copy plays the op its id
+                # names; the plan draws that op, and says so when the copy differs
+                # (the amplitude has its own note below)
+                slot_path = path + "." + field if field else None
+                if (slot_path and not missing_pulse and isinstance(label, str) and pulse_path
+                        and pulse_path != slot_path and isinstance(_raw_at(doc, slot_path), dict)):
+                    copy_note = slot_copy_note(doc, slot_path, pulse_path, skip=("amplitude",))
+                    if copy_note:
+                        notes.append(f"{info['name']}: {copy_note}")
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 if amp_path:
                     amp_path = read(doc, amp_path).get("holder_path") or amp_path

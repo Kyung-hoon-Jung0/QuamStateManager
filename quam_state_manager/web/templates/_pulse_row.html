@@ -40,6 +40,10 @@
                     placeholder holds the sparkline's box so the row does not
                     change height -- or the column width -- when it lands. -#}
                 <span class="pulse-spark-pending" aria-hidden="true"></span>
+                {%- elif r.spark_svg and r.spark_played -%}
+                {#- the gate plays the channel op this copy's id names -#}
+                <span data-spark-played="1" title="Macro pulse and played op differ: {{ r.spark_played }}">{{
+                    r.spark_svg | safe }}</span>
                 {%- elif r.spark_svg and r.spark_from_lab -%}
                 {#- docs/218: drawn by the class's OWN code at the pulse's
                     current values -- never older than the fields, unlike a

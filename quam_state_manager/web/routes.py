@@ -24070,6 +24070,73 @@ def _pulse_plot_traces(payload: dict) -> dict:
     }
 
 
+#: a pulse that plays on a flux line: a qubit's z op, a coupler op, a gate slot
+_FLUX_PULSE_PATH = re.compile(
+    r"^(qubits\.[^.]+\.z\.operations\.[^.]+"
+    r"|qubit_pairs\.[^.]+\.coupler\.operations\.[^.]+"
+    r"|qubit_pairs\.[^.]+\.macros\.[^.]+\.(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse))$")
+
+
+def _flux_plot(plot: dict, path: str, payload: dict) -> dict:
+    """a flux pulse's plot says when its shaped edges start far from 0 V
+    (``cz_gate_plan.edge_step_note``); every other plot is returned as it is."""
+    if plot.get("ok") and _FLUX_PULSE_PATH.match(path or ""):
+        from quam_state_manager.core import cz_gate_plan as czp
+        plot["edge_note"] = czp.edge_step_note(payload.get("i"))
+    return plot
+
+
+def _slot_played_view(store, path: str) -> tuple:
+    """``(played op path, note)`` when *path* is a pair macro's slot whose
+    own pulse copy is NOT what the gate plays (the gate plays the channel op its
+    id names, ``cz_gate_plan.slot_played_op``), else ``(None, None)``. A slot
+    copy that equals the op it plays has no note and draws as itself."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    if not path or not czp.SLOT_PATH.match(path):
+        return None, None
+    with store._lock:
+        doc = store.merged
+        played = czp.slot_played_op(doc, path)
+        note = czp.slot_copy_note(doc, path, played) if played else None
+    return (played, note) if note else (None, None)
+
+
+class _OverlayStore:
+    """A read-only view of a store whose one pulse dict carries uncommitted
+    values: the dicts on the way to it are shallow copies, nothing is written."""
+
+    get_value = QuamStore.get_value
+
+    def __init__(self, store, path: str, values: dict):
+        self._lock = store._lock
+        with store._lock:
+            root = dict(store.merged)
+            node = root
+            for seg in path.split("."):
+                child = node.get(seg) if isinstance(node, dict) else None
+                if not isinstance(child, dict):
+                    break
+                node[seg] = node = dict(child)
+            else:
+                node.update(values)
+        self.merged = root
+
+
+def _synth_played(store, path: str, params: dict):
+    """The played op's synthesis for a slot copy, with the copy's typed
+    *params* written onto an overlay so references from the played op into the
+    copy read them; ``(payload, played path, note)`` or ``(None, None, None)``."""
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    played, note = _slot_played_view(store, path)
+    if not played:
+        return None, None, None
+    src = _OverlayStore(store, path, params) if params else store
+    payload = synth_for_operation(src, played)
+    if not payload.get("ok"):
+        return None, None, None
+    return payload, played, note
+
+
 def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
     """The pulse rows a set of changed dot paths can have altered: each
     path's own operation plus every operation whose pointer resolves into
@@ -24253,8 +24320,14 @@ def pulse_row():
         # The lab's own class: its own code drew this (docs/189, docs/218).
         _pulse_fallback_spark(store, path, row)
     else:
-        row["spark_svg"] = pulse_index.sparkline(
-            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+        played, _played_path, played_note = _synth_played(store, path, {})
+        if played is not None:
+            # the op the gate plays, as the table draws it
+            row["spark_svg"] = sparkline_svg(played)
+            row["spark_played"] = played_note
+        else:
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
     if vt_ver is None:
         return render_template("_pulse_row.html", r=row)
     resp = make_response(render_template("_pulse_row.html", r=row))
@@ -24555,6 +24628,13 @@ def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
                 if path not in unknown_paths:
                     _pulse_fallback_spark(store, path, row)
                     unknown_paths.append(path)
+                continue
+            # a gate slot's own copy draws the op the gate plays; drawn
+            # fresh, since the row memo knows nothing of the played op's inputs
+            played, _played_path, played_note = _synth_played(store, path, {})
+            if played is not None:
+                row["spark_svg"] = sparkline_svg(played)
+                row["spark_played"] = played_note
                 continue
             row["spark_svg"] = pulse_index.sparkline(
                 path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
@@ -25350,6 +25430,10 @@ def cz_plan_data():
             traj.append(None)
             continue
         playback_known = not ln["duration_unknown"]
+        # a shaped flux edge far from 0 V is a step the plot alone hides
+        edge = czp.edge_step_note(samples)
+        if edge:
+            notes.append(f"{ln['name']}: {edge}")
         if played is not None:
             if payload.get("kind") == "constant":
                 from quam_state_manager.core.waveform_synth import MAX_SAMPLES
@@ -26087,8 +26171,20 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             plot = _pulse_plot_traces(tp)
             plot_source = "transcription"
             synth_error = None
+    # a gate slot's own copy that is not what the gate plays draws the
+    # op it plays, and says which two pulses differ and how
+    played, played_path, played_note = _synth_played(store, path, {})
+    if played is not None:
+        plot = _flux_plot(_pulse_plot_traces(played), path, played)
+        plot_source = "played"
+        synth_error = None
+    elif plot_source == "synth":
+        plot = _flux_plot(plot, path, payload)
 
     return {
+        "played_path": played_path,
+        "played_note": played_note,
+        "edge_note": (plot or {}).get("edge_note"),
         "path": path,
         "actual_path": actual_path,
         "row": row,
@@ -26481,9 +26577,12 @@ def api_pulse_synth():
                     r = pulse_refs.read(store.merged, [], v)
                     if r.ok:
                         params[k] = r.value
+    played_path = played_note = None
     try:
         if path:
-            payload = synth_for_operation(store, path, overrides=params)
+            # a gate slot's own copy draws as the op the gate plays
+            played, played_path, played_note = _synth_played(store, path, params)
+            payload = played or synth_for_operation(store, path, overrides=params)
         else:
             payload = synthesize(qclass, params)
     except Exception as exc:  # noqa: BLE001 -- never a 500 on this route
@@ -26491,6 +26590,8 @@ def api_pulse_synth():
         payload = {"ok": False, "error": f"synthesis failed: {exc}"}
 
     return jsonify({
+        "played_path": played_path,
+        "played_note": played_note,
         "ok": payload.get("ok", False),
         "error": payload.get("error"),
         "param_errors": payload.get("param_errors") or {},
@@ -26506,7 +26607,7 @@ def api_pulse_synth():
         # payload and stopped here, so the page drew a curve with gaps in it
         # and said nothing about them.
         "warnings": payload.get("warnings") or [],
-        "plot": _pulse_plot_traces(payload),
+        "plot": _flux_plot(_pulse_plot_traces(payload), path, payload),
     })
 
 

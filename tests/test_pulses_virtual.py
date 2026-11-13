@@ -352,7 +352,9 @@ def test_every_row_key_the_template_reads_is_in_the_memo_signature():
            / "templates" / "_pulse_row.html").read_text(encoding="utf-8")
     read = set(re.findall(r"\br\.([A-Za-z_]+)", tpl))
     lazy_only_absent = {"spark_svg", "spark_from_lab", "spark_from_config", "spark_at",
-                        "spark_from_transcription"}
+                        "spark_from_transcription",
+                        # read only inside the thumbnail cell, like the flags above
+                        "spark_played"}
     missing = read - set(routes._PULSE_ROW_KEYS) - lazy_only_absent
     assert not missing, missing
     assert read >= {"path", "length", "amplitude", "used_by"}

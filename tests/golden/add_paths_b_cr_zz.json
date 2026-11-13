@@ -977,7 +977,7 @@
      "channels": [
       "z"
      ],
-     "doc": "Di Carlo bipolar flux pulse with B-samples",
+     "doc": "Di Carlo bipolar flux pulse: +A flat, idle gap, -A flat; tphi_eff sets the gap and the one-sample B level beside it (B = A at an even tphi_eff)",
      "group": "Flux / Bipolar",
      "iq": "optional",
      "label": "SNZ (sudden net-zero)",

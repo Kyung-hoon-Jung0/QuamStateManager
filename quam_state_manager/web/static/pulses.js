@@ -38,6 +38,9 @@ window.PulsesPage = (function () {
     var _previewCache = new Map();       // base key + body -> plot
     var COMMITTED_REFRESH_MS = 120;
     var _plotCache = new Map();          // committed key -> plot payload (insertion-ordered)
+    // the pulse whose Verify vs config is ON. A regenerated config
+    // re-runs the comparison for it, even when the detail was re-rendered meanwhile.
+    var _verifyWanted = null;
 
     function sectionsOf(root) { return (root && root._sections) || []; }
     function sectionOf(root, el) {
@@ -528,6 +531,7 @@ window.PulsesPage = (function () {
             });
         }
 
+        if (root) showEdgeNote(root, secs);
         if (secs.length) {
             var many = secs.length > 1;
             secs.forEach(function (sec) {
@@ -553,7 +557,9 @@ window.PulsesPage = (function () {
         var layout = {
             margin: { l: 50, r: 10, t: 10 + legendRoom, b: 40 },
             xaxis: { title: 'time (ns)', zeroline: false },
-            yaxis: { title: 'amplitude (V)', zeroline: true },
+            // 0 V is always on the axis -- the output idles there, so an
+            // edge that starts at 46 mV must read as a step, not as the floor
+            yaxis: { title: 'amplitude (V)', zeroline: true, rangemode: 'tozero' },
             showlegend: data.length > 1,
             // ABOVE the plot: under it the legend sat on the "time (ns)" title
             // (measured with three pulses in view -- a 1,019px band across the
@@ -571,6 +577,20 @@ window.PulsesPage = (function () {
         }
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
+    }
+
+    /* the server's edge note for the curve on screen (the preview while
+       one is drawn, else the committed plot), one line for every section. */
+    function showEdgeNote(root, secs) {
+        var el = root.querySelector('.pulse-plot-bar [data-edge-note]');
+        if (!el) return;
+        var notes = secs.map(function (sec) {
+            var plot = (sec.previewPlot && sec.previewPlot.ok) ? sec.previewPlot : sec.committedPlot;
+            var note = plot && plot.ok ? plot.edge_note : '';
+            return note ? (secs.length > 1 ? sec.label + ': ' : '') + note : '';
+        }).filter(Boolean);
+        el.textContent = notes.join(' \u00b7 ');
+        el.hidden = !notes.length;
     }
 
     function showSynthErr(root, msg) {
@@ -1101,6 +1121,7 @@ window.PulsesPage = (function () {
 
         if (root._verifyPlot) {  // second click toggles the overlay off
             root._verifyPlot = null;
+            _verifyWanted = null;
             renderPulsePlot('pulse-detail-plot');
             verifyNote(root, '');
             return;
@@ -1108,6 +1129,7 @@ window.PulsesPage = (function () {
 
         verifyNote(root, 'fetching ground truth…');
         var path = root.getAttribute('data-pulse-path');
+        _verifyWanted = path;
         fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(path))
             .then(function (r) { return r.json(); })
             .then(function (data) {
@@ -1159,9 +1181,27 @@ window.PulsesPage = (function () {
             .catch(function () { verifyNote(root, 'ground-truth fetch failed', 'warn'); });
     }
 
+    /* after a regenerate, the comparison runs again on the detail
+       that is on screen NOW (a re-render meanwhile replaced the old root) --
+       never toggled off by a stale overlay, never left blank. */
+    function rerunVerify(path) {
+        var cur = detailRoot();
+        if (!cur || cur.getAttribute('data-pulse-path') !== path) return;
+        cur._verifyPlot = null;   // force a fresh fetch
+        _verifyWanted = path;
+        verifyPulse(null);
+    }
+    document.addEventListener('configRegenerated', function () {
+        var cur = detailRoot();
+        if (cur && _verifyWanted && cur.getAttribute('data-pulse-path') === _verifyWanted) {
+            rerunVerify(_verifyWanted);
+        }
+    });
+
     function regenerateThenVerify(btn) {
         var root = detailRoot();
         if (!root) return;
+        var path = root.getAttribute('data-pulse-path');
         btn.disabled = true;
         verifyNote(root, 'regenerating config… (this runs the QM stack in a subprocess)');
         fetch('/config/regenerate', { method: 'POST' })
@@ -1172,8 +1212,9 @@ window.PulsesPage = (function () {
             })
             .then(function (res) {
                 btn.disabled = false;   // docs/190 F08: a failure must leave a retry
+                if (res.ok) { rerunVerify(path); return; }
                 if (!document.body.contains(root)) return;
-                if (!res.ok) {
+                {
                     // docs/190 F10: the server renders its own honest failure
                     // (lead line + exception + collapsible traceback) -- show
                     // THAT, not a 300-char flattening of it, and offer the env
@@ -1190,10 +1231,7 @@ window.PulsesPage = (function () {
                     // the failure re-renders _config_status.html, whose 'Last good'
                     // is a ts_local span: hidden until localized (QA generate-r2-27)
                     if (window.applyLocalTimes) window.applyLocalTimes(root);
-                    return;
                 }
-                root._verifyPlot = null;  // force a fresh fetch
-                verifyPulse(btn);
             })
             .catch(function () {
                 btn.disabled = false;
