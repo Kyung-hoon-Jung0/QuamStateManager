@@ -21316,6 +21316,38 @@ def _trend_excluded_note(whys: list[str]) -> str:
             f"({', '.join(parts)}).")
 
 
+def _trend_invalid_elsewhere_note(charts: list[dict], invalid: frozenset) -> str:
+    """N4: a run tag matches a point by its dataset uid (data folder key +
+    run id). Runs tagged invalid in a data folder that NONE of the drawn
+    points come from (tags set on a copy of the folder the ledger reads)
+    match nothing, and the view says so. They are never matched by run
+    number alone: run ids are unique only within one data folder, so a
+    same-numbered run elsewhere may be another measurement."""
+    if not invalid:
+        return ""
+    src = set()
+    for c in charts:
+        for r in c.get("series") or ():
+            for info in (r.get("attr") or {}).values():
+                uid = _trend_point_run_uid(info)
+                if uid and ":" in uid:
+                    src.add(uid.rsplit(":", 1)[0])
+    if not src:
+        return ""
+    other = sorted(u for u in invalid if u.rsplit(":", 1)[0] not in src)
+    if not other:
+        return ""
+    n = len(other)
+    return (f"{n} run{'' if n == 1 else 's'} tagged {_INVALID_TAG_WORD} "
+            f"{'is' if n == 1 else 'are'} in a data folder these charts' runs do not "
+            f"come from, so {'its' if n == 1 else 'their'} values are not left out here. "
+            "A tag counts for the run in its own folder only (a run number repeats across "
+            "folders); tag the run in the folder the chart reads.")
+
+
+_INVALID_TAG_WORD = '"invalid"'
+
+
 def _invalid_run_uids() -> frozenset:
     """Dataset uids of every run tagged ``INVALID_TAG`` in a loaded data
     folder (the Datasets tag store): Trends leaves their values out."""
@@ -22434,6 +22466,7 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         metric_note = (f"At most {_TRENDS_MAX_METRICS} qubit metrics are charted at once "
                        f"\u2014 {', '.join(_names)} {'was' if len(_names) == 1 else 'were'} "
                        f"not added. Deselect one to make room.")
+    invalid_note = _trend_invalid_elsewhere_note(charts, invalid)
     if series_trimmed:
         trim_note = ((trim_note + " ") if trim_note else "") + (
             f"Showing the first {_TRENDS_MAX_SERIES} lines — "
@@ -22474,6 +22507,7 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
                            trim_note=trim_note, metric_note=metric_note,
+                           invalid_note=invalid_note,
                            n_excluded=sum(c.get("n_excluded") or 0 for c in charts),
                            snapshots=tbl.snapshot_count(),
                            hub_notes=tbl.notes,

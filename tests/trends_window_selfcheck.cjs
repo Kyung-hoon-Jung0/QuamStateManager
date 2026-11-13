@@ -58,10 +58,14 @@ const noteOf = (L) => ((L.annotations || []).find(a => /^held to /.test(a.text))
   const a = s.layouts.T1.xaxis, b = s.layouts.gate_fidelity_avg.xaxis;
   ok(Array.isArray(a.range) && a.autorange === false && Array.isArray(b.range) && b.autorange === false,
      'both charts open on a set range');
-  ok(a.range.join() === b.range.join(), 'ONE window for the view: ' + a.range + ' vs ' + b.range);
+  // F6: ONE window for the view (its right edge shared by every chart); a
+  // chart whose first point comes well after the window opens starts there
+  ok(a.range[1] === b.range[1], 'ONE right edge for the view: ' + a.range + ' vs ' + b.range);
+  ok(ms(b.range[0]) > ms(a.range[0]) && ms(b.range[0]) <= ms('2026-10-03T12:00:00'),
+     'F6: the late chart starts at its own first point, inside the window: ' + b.range);
   ok(ms(a.range[0]) < ms('2026-08-01T03:00:00') && ms(a.range[1]) > ms('2026-10-08T04:00:00'),
      'the window holds every point of every chart, the held one included: ' + a.range);
-  ok(ms(b.range[1]) - ms(b.range[0]) > 60 * 86400e3,
+  ok(ms(b.range[1]) - ms(b.range[0]) > 5 * 86400e3,
      'the three-point chart is no longer an hour wide: ' + b.range);
   ok(!hasNote(s.layouts.T1) && !hasNote(s.layouts.gate_fidelity_avg),
      'nothing runs past the window, so no chart says "held to"');
@@ -90,16 +94,46 @@ const noteOf = (L) => ((L.annotations || []).find(a => /^held to /.test(a.text))
   ]);
   const L = s.layouts;
   const r = L.T1.xaxis.range;
-  ok(r && L.gate_fidelity_avg.xaxis.range.join() === r.join() && L.f_01.xaxis.range.join() === r.join(),
+  ok(r && L.gate_fidelity_avg.xaxis.range[1] === r[1] && L.f_01.xaxis.range.join() === r.join(),
      'the focused window is shared: ' + [r, L.gate_fidelity_avg.xaxis.range, L.f_01.xaxis.range].join(' | '));
+  ok(ms(L.gate_fidelity_avg.xaxis.range[0]) > ms(r[0]),
+     'F6: a chart whose changes are all late in the window starts at its own: ' + L.gate_fidelity_avg.xaxis.range);
   ok(ms(r[0]) < ms('2026-08-09T03:00:00') && ms(r[1]) > ms('2026-08-09T20:10:00') && ms(r[1]) < ms('2026-08-11T00:00:00'),
      'it spans the change points of every chart, not the held tail: ' + r);
   ok(noteOf(L.T1) === 'held to 2026-10-08 \u2192', 'T1 says its own date: ' + noteOf(L.T1));
   ok(noteOf(L.gate_fidelity_avg) === 'held to 2026-10-07 \u2192',
      'the fidelity chart says ITS own date, so the note stays true: ' + noteOf(L.gate_fidelity_avg));
   ok(!hasNote(L.f_01), 'a chart with nothing past the window says nothing');
-  ok(L.x180_amplitude.xaxis.range.join() === r.join() && !hasNote(L.x180_amplitude),
+  ok(L.x180_amplitude.xaxis.range[1] === r[1] && !hasNote(L.x180_amplitude),
      'a chart whose held point is inside the window says nothing either');
+}
+
+// F (F6): the shared window is the same object it was -- every chart's
+// right edge, and the earliest chart still opens on its left edge; only a
+// chart starting more than a quarter into it starts at its own first point.
+{
+  const s = boot(grid(['T1', 'irb']));
+  const charts = [
+    {metric: 'T1', kind: 'qubit', unit: 's', series: [{entity: 'q1',
+      points: [['20261112_210000', 3e-5], ['20261113_120000', 2e-5]]}]},
+    {metric: 'irb', kind: 'qubit', unit: '', series: [{entity: 'q1',
+      points: [['20261113_054000', 0.95], ['20261113_110000', 0.93]]}]},
+  ];
+  const win = s.w.ChipTrends._viewWindow(JSON.parse(JSON.stringify(charts)), []);
+  s.w.ChipTrends.render(charts);
+  const a = s.layouts.T1.xaxis.range, b = s.layouts.irb.xaxis.range;
+  ok(a.join() === win.range.join(), 'the earliest chart opens on the window itself: ' + a + ' vs ' + win.range);
+  ok(b[1] === win.range[1], 'the late chart shares the right edge: ' + b);
+  ok(ms(b[0]) > ms(win.range[0]) + 0.25 * (ms(win.range[1]) - ms(win.range[0]))
+     && ms(b[0]) < ms('2026-11-13T05:40:00'),
+     'F6: the late chart starts just before its first point: ' + b);
+  // a chart that starts a little later stays aligned
+  const s2 = boot(grid(['T1', 'irb']));
+  const near = JSON.parse(JSON.stringify(charts));
+  near[1].series[0].points[0][0] = '20261112_230000';
+  s2.w.ChipTrends.render(near);
+  ok(s2.layouts.irb.xaxis.range.join() === s2.layouts.T1.xaxis.range.join(),
+     'a chart starting a little later keeps the shared window');
 }
 
 // C: a chart whose ids do not parse stays on its category axis and does not
@@ -168,7 +202,7 @@ const noteOf = (L) => ((L.annotations || []).find(a => /^held to /.test(a.text))
   const rl = s.relayouts.filter(x => x[0] === 'T1');
   ok(rl.length === 1, 'the kept chart moves its axis once: ' + JSON.stringify(s.relayouts));
   const r = rl[0][1]['xaxis.range'];
-  ok(r.join() === s.layouts.f_01.xaxis.range.join() && r.join() !== first,
+  ok(r[1] === s.layouts.f_01.xaxis.range[1] && r.join() !== first,
      'onto the window the new chart opens on: ' + r + ' vs ' + s.layouts.f_01.xaxis.range);
   ok(rl[0][1]['xaxis.autorange'] === false && Array.isArray(rl[0][1].annotations), 'range set, notes rewritten');
   Promise.resolve().then(() => new Promise(res => setTimeout(res, 0))).then(() => {
