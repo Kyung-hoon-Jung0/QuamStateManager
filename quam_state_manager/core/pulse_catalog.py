@@ -347,7 +347,12 @@ _SPECS: tuple[PulseSpec, ...] = (
             _AXIS_ANGLE_OPT, _ID, _DIGITAL_MARKER,
         ),
         length_mode="inferred",
-        group="Flux / Bipolar", doc="Di Carlo bipolar flux pulse with B-samples",
+        group="Flux / Bipolar",
+        # from the class's own fields and docstring (quam_builder
+        # SNZPulse): there is no B field; B/A and the gap follow t_phi_eff, and
+        # B equals A when t_phi_eff is an even integer
+        doc=("Di Carlo bipolar flux pulse: +A flat, idle gap, -A flat; tphi_eff sets "
+             "the gap and the one-sample B level beside it (B = A at an even tphi_eff)"),
     ),
     PulseSpec(
         key="GaussianFilteredSquarePulse",

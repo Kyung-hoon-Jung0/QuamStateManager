@@ -767,7 +767,7 @@
         var shownFiltered = traces.some(function (t) { return t._czpFiltered; });
         if (ampCount) over.yaxis3 = { title: { text: shownFiltered ? 'Z amp (mV): dotted commanded, dashed after filters'
                                                                    : 'Z amp, commanded (mV)' }, overlaying: 'y2', side: 'right',
-                                      anchor: 'x', zeroline: true, showgrid: false };
+                                      anchor: 'x', zeroline: true, showgrid: false, rangemode: 'tozero' };
         var L = layout(over);
         var f0 = (d.qubits || []).map(function (q) { return q && q.summary ? q.summary.f01_hz : null; });
         var view = deltaRange(delta, panel.levels,

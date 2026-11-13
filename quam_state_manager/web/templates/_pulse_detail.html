@@ -183,7 +183,10 @@
        classes it mirrors; for a lab's own class (e.g. an SNZ two-flux CZ pulse)
        the curve is the lab's own generate_config() output, and passing that
        off as "synthesized" would be a lie about which code drew it. #}
-    {% if plot_source == 'lab' %}
+    {% if plot_source == 'played' %}
+    {# the gate plays the channel op this copy's id names, not the copy #}
+    <span class="pulse-plot-label muted">the op the gate plays: <code>{{ played_path }}</code></span>
+    {% elif plot_source == 'lab' %}
     <span class="pulse-plot-label muted">drawn by the class&#39;s own code
         (<code>calculate_waveform()</code> in the selected env) at the current
         field values{% if lab_warnings %} &mdash; it said: {{ lab_warnings | join('; ') }}{% endif %}</span>
@@ -204,6 +207,10 @@
     <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
+    {# AFTER the synth-error span, which pulses.js finds as the
+       first .pulse-synth-err of this bar #}
+    {% if played_note %}<span class="pulse-synth-err" data-played-note="1">Macro pulse and played op differ: {{ played_note }}</span>{% endif %}
+    <span class="pulse-synth-err" data-edge-note="1" {% if not edge_note %}hidden{% endif %}>{{ edge_note or '' }}</span>
     {% if synth_unknown_class and truth_status != 'ok' and plot_source not in ('lab', 'transcription') %}
     <span class="pulse-plot-cta"{% if needs_lab %} data-lab-pending="1"{% endif %}>{% if truth_status == 'absent' %}Generate this
         chip&#39;s config and the lab&#39;s own waveform is plotted here.
