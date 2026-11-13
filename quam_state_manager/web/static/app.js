@@ -5416,8 +5416,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 if (!data.tray_html) _banner();
                 if (expectChip) return;          // the automatic merge never opens the panel
-                // the user's own press hit a collision: answer it where the
+                // the user's own press hit a collision: say so, naming the
+                // fields (nothing was written, and the panel alone may read
+                // as "live has not changed"), then answer it where the
                 // choice lives (the panel re-reads with the fields to pick)
+                if (window.showToast) {
+                    var _cp = (data.paths || []).slice(0, 4).join(", ");
+                    window.showToast((data.message || "Nothing was applied: the live chip changed a field you also edited.")
+                                     + (_cp ? " Fields: " + _cp + ((data.count || 0) > 4 ? ", …" : "") : ""),
+                                     "warning", -1);
+                }
                 window.openReview({ force: true });
                 return;
             }
@@ -14545,9 +14553,13 @@ window.clearDetailPanelSearch = function(btnEl) {
         fetch("/field/refs?dot_path=" + encodeURIComponent(m.path))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                var _bn = (d.ok && Array.isArray(d.by_name)) ? d.by_name.length : 0;
                 label.textContent = label.textContent.replace("refs: …", d.ok
                     ? d.total + " pointer ref" + (d.total === 1 ? "" : "s")
+                      + (_bn ? ", " + _bn + " gate slot" + (_bn === 1 ? "" : "s")
+                               + " play" + (_bn === 1 ? "s" : "") + " an op here by name" : "")
                     : "refs: unknown");
+                if (_bn) label.title = d.by_name.join(", ");
             }).catch(function () {
                 label.textContent = label.textContent.replace("refs: …", "refs: unknown");
             });

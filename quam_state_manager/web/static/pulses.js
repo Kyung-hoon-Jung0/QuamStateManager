@@ -1362,10 +1362,16 @@ window.PulsesPage = (function () {
                 params: createCollectParams(root)
             }, function (data) {
                 if (!document.body.contains(root)) return;
+                var plotEl = document.getElementById('pulse-create-plot');
                 if (data.ok && data.plot && data.plot.ok) {
+                    if (plotEl) plotEl.classList.remove('pulse-plot-empty');
                     renderPulsePlot('pulse-create-plot', data.plot);
                     showSynthErr(root, '');
                 } else {
+                    // the last good curve belongs to other values: never
+                    // leave it under an error about these ones
+                    if (plotEl && window.Plotly) { try { window.Plotly.purge(plotEl); } catch (e) {} }
+                    if (plotEl) plotEl.classList.add('pulse-plot-empty');
                     showSynthErr(root, data.error
                         || firstParamError(data.param_errors));
                 }

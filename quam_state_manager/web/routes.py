@@ -16064,7 +16064,10 @@ def field_refs():
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
     total, refs = _count_refs_into(store, dot_path)
-    return jsonify(ok=True, total=total, refs=refs)
+    # gate slots that play an op under this path BY NAME: no pointer names
+    # them, and the delete door refuses on them (the same finder)
+    return jsonify(ok=True, total=total, refs=refs,
+                   by_name=_by_name_cut(store, [dot_path]))
 
 
 def _exc_text(e: Exception) -> str:
@@ -17184,6 +17187,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # writes nothing at all (400, every row named); an independent batch
     # skips just the refused rows.
     _lab_skip: set = set()
+    _row_msg: dict = {}
     _lab_writes, _lab_idx = [], []
     # SM's own catalog pulse classes: every written row is judged by the
     # class's own rules (in-process), not only the rows a lab pulse sees
@@ -17251,6 +17255,12 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     if _lab:
         _lab_msg = _lab_refusal_text(_lab[0])
         _lab_skip = {_lab_idx[k] for k in _lab[1]} | _syn_extra
+        # independent rows say their own pulse's reason (the combined text
+        # stays the top-level message)
+        if _syn:
+            for _k, _m in (getattr(_syn, "per_index", None) or {}).items():
+                if 0 <= _k < len(_syn_idx):
+                    _row_msg[_syn_idx[_k]] = _m
         if not independent:
             _lab_rel()
             _one = _lab_writes[_lab[1][0]] if len(_lab[1]) == 1 else None
@@ -17345,7 +17355,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 continue
             if _row_n in _lab_skip:      # independent mode only (see above)
                 results.append({"dot_path": dot_path, "applied": False,
-                                "lab_refused": True, "error": _lab_msg})
+                                "lab_refused": True,
+                                "error": _row_msg.get(_row_n, _lab_msg)})
                 ok_overall = False
                 continue
             try:
@@ -17588,6 +17599,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
                    modified=_modified_delta(),
                    group_id=_batch_gid if applied_entries else None,
+                   # an independent batch's skipped rows: the combined refusal
+                   # (each row's own error names its own pulse)
+                   **({"message": _lab_msg} if _lab_skip else {}),
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
@@ -28140,6 +28154,17 @@ def _synth_owner(merged, segs, bodies):
     return None
 
 
+class _Refusal(tuple):
+    """A ``(message, refused_write_indices)`` refusal that also carries
+    ``per_index``: write index -> the sentence about that write's own pulse
+    (the combined message names every refused pulse)."""
+
+    def __new__(cls, pair, per_index=None):
+        obj = super().__new__(cls, pair)
+        obj.per_index = dict(per_index or {})
+        return obj
+
+
 def _synth_write_refusal(store, writes):
     """``(message, refused_write_indices)`` when a write would leave a pulse
     unusable on the chip; else None. Two rules (``waveform_synth.
@@ -28263,12 +28288,20 @@ def _synth_write_refusal(store, writes):
             # every pulse a rule breaks is refused (an independent batch skips
             # each one's rows); one pulse keeps the single-pulse sentence
             idx = sorted(set().union(*(idx_of.get(op) or set() for _t, op in found)))
+            # each refused write's own sentence: the pulse(s) IT lands in
+            per_index: dict[int, str] = {}
+            for i in idx:
+                mine = [t for t, op in found if i in (idx_of.get(op) or ())]
+                per_index[i] = (f"{_SYNTH_REFUSAL_LEAD}: {mine[0]}, so every node would fail."
+                                if len(mine) == 1 else
+                                f"{_SYNTH_REFUSAL_LEAD} ({len(mine)} pulses): "
+                                + "; ".join(mine) + ". Every node would fail.")
             if len(found) == 1:
-                return (f"{_SYNTH_REFUSAL_LEAD}: {found[0][0]}, so every node "
-                        "would fail.", idx)
-            return (f"{_SYNTH_REFUSAL_LEAD} ({len(found)} pulses): "
-                    + "; ".join(t for t, _op in found)
-                    + ". Every node would fail.", idx)
+                return _Refusal((f"{_SYNTH_REFUSAL_LEAD}: {found[0][0]}, so every node "
+                                 "would fail.", idx), per_index)
+            return _Refusal((f"{_SYNTH_REFUSAL_LEAD} ({len(found)} pulses): "
+                             + "; ".join(t for t, _op in found)
+                             + ". Every node would fail.", idx), per_index)
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("pulse rule check failed", exc_info=True)
     return None
@@ -29909,8 +29942,12 @@ def api_pulse_delete():
         note += f" — {len(referrers)} reference(s) now dangle"
     if by_name:
         note += (f" \u2014 {len(by_name)} gate slot(s) now play a name that no"
-                 f" longer exists: {', '.join(by_name)}")
-    detail = render_template("_status.html", message=note, level="success")
+                 f" longer exists: {', '.join(by_name)} (applying that gate"
+                 f" now fails; see Diagnostics)")
+    # a forced delete that left a dangling pointer or a gate playing a
+    # missing name is not a plain success: it says so as a warning
+    detail = render_template("_status.html", message=note,
+                             level="warning" if (referrers or by_name) else "success")
     return _lab_toast(_pulse_mutation_response(detail))
 
 

@@ -14,6 +14,7 @@
   <p class="ui-callout-text">{{ s.name }} copies {{ s.template }}'s gates{% if s.member_ops %} and adds {{ s.member_ops | length }} member operations they play{% endif %}{% if s.flux %}; coupler output {{ s.flux | join("/") }}, flux offsets 0{% endif %}; measured fidelities start empty; phase corrections start at 0{% if s.phase_cleared %} ({{ s.phase_cleared | length }} of {{ s.template }}'s were not copied){% endif %}.</p>
   {% if s.copied_amplitudes %}<div class="ui-callout-text" data-cm-add-copied-amps><span class="ui-badge ui-badge--warn">not calibrated</span> {{ s.copied_amplitudes | length }} amplitude{{ 's' if s.copied_amplitudes | length != 1 }} copied from {{ s.template }}, not calibrated for this pair (starting values):
     {% for a in s.copied_amplitudes %}<div><span class="ui-path">{{ a.path }}</span> {{ a.value | tojson }}</div>{% endfor %}</div>{% endif %}
+  {% for u in s.unplayable or [] %}<p class="ui-callout-text" data-cm-add-unplayable><span class="ui-badge ui-badge--warn">check</span> CZ gate plan: {{ u }}</p>{% endfor %}
   {% endif %}
 </div>
 <details class="ui-disclosure">

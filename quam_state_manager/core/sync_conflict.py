@@ -139,6 +139,42 @@ def originals_from_change_log(change_log: Iterable[Any]) -> dict[str, Any]:
     return out
 
 
+def _leaf_items(value: Any, rel: tuple[str, ...] = ()):
+    """``(rel segments, leaf)`` for every non-container leaf under *value*."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _leaf_items(v, rel + (str(k),))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _leaf_items(v, rel + (str(i),))
+    else:
+        yield rel, value
+
+
+def _live_container_equals(path: str, orig: Any,
+                           live_by_path: Mapping[str, Any]) -> bool:
+    """Does the live chip hold exactly *orig* at *path*, read from the
+    entries beneath it?
+
+    Used when the live leaf entry at *path* is ABSENT although the key is
+    there: the working copy holds a scalar at *path* while the live chip
+    holds a container, and the leaf diff reports each live element beneath
+    it. Every live entry below the path must equal *orig* at that place and
+    every leaf of *orig* must be among them; anything else is a real change.
+    """
+    if not isinstance(orig, (dict, list)) or not orig:
+        return False
+    prefix = path + "."
+    below = {lp[len(prefix):]: lv for lp, lv in live_by_path.items()
+             if lp.startswith(prefix)}
+    if not below:
+        return False
+    for rel, lv in below.items():
+        if lv is ABSENT or _value_at(orig, rel.split(".")) != lv:
+            return False
+    return all(".".join(rel) in below for rel, _leaf in _leaf_items(orig) if rel)
+
+
 def _subtree_paths(change_log: Iterable[Any]) -> dict[str, str]:
     """Paths recorded as a whole created/deleted subtree, not a single leaf,
     mapped to ``"created"`` / ``"deleted"`` (the FIRST entry per path wins,
@@ -240,6 +276,14 @@ def classify(
             # an edit inside a subtree the user CREATED: the live chip has
             # never had it (the subtree's own check above covers anyone
             # else writing there)
+            continue
+        if (path in live_by_path and live_by_path[path] is ABSENT
+                and _live_container_equals(path, orig, live_by_path)):
+            # The leaf diff flattens containers: an edit that turned a list
+            # (a port's filter taps) into a scalar shows the path as
+            # "removed" with every live element "added" beneath it. The live
+            # chip still holds the list the edit started from, so only the
+            # user moved this field.
             continue
         if path in live_by_path and live_by_path[path] != orig:
             # The live chip moved away from what this edit started at, so the

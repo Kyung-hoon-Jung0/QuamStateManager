@@ -527,7 +527,42 @@ function p16() {
   ok(drag.disabled === true, 'P18: DRAG disabled on z');
   ok(typeSel2.value !== 'DragCosinePulse', 'P18: the selection moves off the disabled class');
   ch.remove();
-  p19();
+  p20();
+}
+
+// P20: a create preview that answers an error hides the last curve (it was
+// drawn from other values) instead of leaving it under the error line.
+function p20() {
+  var typeSel3 = doc.getElementById('pulse-create-type');
+  typeSel3.value = 'SquarePulse';
+  P.createTypeChanged(typeSel3);
+  var plot = doc.getElementById('pulse-create-plot');
+  var purged = 0, drawn = 0;
+  win.Plotly = { purge: function () { purged++; }, react: function () { drawn++; return win.Promise.resolve(); },
+                 newPlot: function () { drawn++; return win.Promise.resolve(); } };
+  var answer = { ok: false, error: 'flat_length must be even', param_errors: {} };
+  win.fetch = function () {
+    return win.Promise.resolve({ json: function () { return win.Promise.resolve(answer); } });
+  };
+  plot.classList.remove('pulse-plot-empty');
+  var field = doc.querySelector('#pulse-create-fields input');
+  ok(!!field, 'P20: the form has a field to type into');
+  field.value = '45.5';
+  field.dispatchEvent(new win.Event('input', { bubbles: true }));
+  setTimeout(function () {
+    var err = root.querySelector('.pulse-plot-bar .pulse-synth-err');
+    ok(err && !err.hidden && /must be even/.test(err.textContent), 'P20: the error is shown');
+    ok(plot.classList.contains('pulse-plot-empty') && purged >= 1,
+       'P20: the stale curve is hidden under the error (purged ' + purged + ')');
+    answer = { ok: true, plot: { ok: true, traces: [{ name: 'I', x: [0, 1], y: [0, 1] }] }, param_errors: {} };
+    field.value = '46.5';
+    field.dispatchEvent(new win.Event('input', { bubbles: true }));
+    setTimeout(function () {
+      ok(!plot.classList.contains('pulse-plot-empty'), 'P20: a good answer shows the curve again');
+      ok(err.hidden, 'P20: ...and clears the error');
+      p19();
+    }, 30);
+  }, 30);
 }
 
 // P19: a rebuild requested while the form was clean, whose answer lands

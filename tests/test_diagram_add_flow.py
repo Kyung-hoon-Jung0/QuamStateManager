@@ -319,3 +319,36 @@ def test_the_remove_panel_lists_extras_that_name_it(app_env):
     st.merged["qubit_pairs"]["q1-q2"]["extras"] = {"q1-q2-q5": 1}
     html = c.get("/diagram-remove/panel?kind=qubit&id=q5").get_data(as_text=True)
     assert "data-cm-rm-mention" in html and "qubit_pairs.q1-q2.extras.q1-q2-q5" in html
+
+
+def _template_plays_a_missing_name(s, _w):
+    """Every pair gate slot plays, by name, an operation no member has."""
+    for p in s["qubit_pairs"].values():
+        for mac in (p.get("macros") or {}).values():
+            if isinstance(mac, dict) and isinstance(mac.get("flux_pulse_qubit"), dict):
+                mac["flux_pulse_qubit"]["id"] = "cz_gone_pulse"
+
+
+class TestPairUnplayable:
+    def test_a_clean_template_gives_no_line(self):
+        _s, _w, m = _chip()
+        p = da.plan_pair(m, "q20", "q11")
+        assert not p.get("error"), p
+        assert p["summary"]["unplayable"] == []
+
+    def test_the_plan_s_own_refusal_is_named_for_the_new_pair(self):
+        _s, _w, m = _chip(edit=_template_plays_a_missing_name)
+        p = da.plan_pair(m, "q20", "q11")
+        assert not p.get("error"), p
+        u = p["summary"]["unplayable"]
+        assert u and all("not playable" in x and "cz_gone_pulse" in x for x in u), u
+        assert m["qubit_pairs"].get(p["summary"]["name"]) is None  # never written
+
+
+@pytest.mark.parametrize("app_env", [_template_plays_a_missing_name], indirect=True)
+def test_the_pair_review_says_a_copied_gate_is_not_playable(app_env):
+    c = app_env["c"]
+    r = c.post("/diagram-add/stage", data={"kind": "pair", "control": "q20", "target": "q11",
+                                           "dry": "1", "expect_chip": _token(c)})
+    html = r.get_data(as_text=True)
+    assert "data-cm-add-unplayable" in html and "not playable" in html
