@@ -464,13 +464,6 @@ window.TopoGraph = (function () {
         return text;
       });
     }
-    // Every pill on one map has the footprint of the widest one, letters
-    // centred, so the two ends of an edge balance (a 'C M H' / 'T L' pair
-    // made the grid read as tilted).
-    var mapChars = 1;
-    (edges || []).forEach(function (e) {
-      if (e) roleTexts(e).forEach(function (t) { mapChars = Math.max(mapChars, t.length); });
-    });
     var done = {};
     (edges || []).forEach(function (e) {
       if (!opts.roles || !e || e.source == null || e.target == null || e.source === e.target) return;
@@ -487,27 +480,44 @@ window.TopoGraph = (function () {
       var radius = opts.stoneRadius != null ? opts.stoneRadius : Math.round(CELL * 0.30);
       var texts = roleTexts(e);
       [['C', a, 1, e.source, texts[0]], ['T', b, -1, e.target, texts[1]]].forEach(function (end) {
-        var text = end[4];
-        // Size the pill to the room on its half of the edge: it clears the
-        // stone and the midpoint (coupler ring or a short exposed line), and
-        // only shrinks (never below the floor) where that room is short.
+        // The pill hugs its stone: its letters sit on an arc just outside the
+        // rim, centred on the edge. A level edge reads them top to bottom, a
+        // steep edge left to right, so the letters never lie along the line.
+        var letters = end[4].split(' ');
+        var n = letters.length;
         var gap = opts.stoneGap || 2;
-        var room = len / 2 - radius - gap - (e.has_coupler ? couplerR(radius) + 2 : 8);
-        var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, w, he, reach;
+        var base = Math.atan2(uy * end[2], ux * end[2]);
+        var fe = fs, minF = opts.roleMinFont || PILL_MIN_FONT, he, ra, step;
+        // At most a 110-degree arc: shrink the font (never below the floor)
+        // rather than wrap the letters round the stone.
         for (;;) {
-          w = mapChars * fe * 0.52 + fe * 0.6; he = fe + 5;
-          reach = Math.abs(ux) * w / 2 + Math.abs(uy) * he / 2;
-          if (2 * reach <= room || fe <= minF) break;
+          he = fe + 5; ra = radius + gap + he / 2; step = (fe * 1.15) / ra;
+          if ((n - 1) * step <= 110 * Math.PI / 180 || fe <= minF) break;
           fe = Math.max(minF, fe - 0.5);
         }
-        var inset = radius + gap + reach;   // clear of the stone outline
-        var x = end[1].x + ux * end[2] * inset, y = end[1].y + uy * end[2] * inset;
+        var pts = [];
+        for (var k = 0; k < n; k++) {
+          var t = base + (k - (n - 1) / 2) * step;
+          pts.push({x: r1(end[1].x + Math.cos(t) * ra), y: r1(end[1].y + Math.sin(t) * ra), t: t});
+        }
+        var steep = Math.abs(uy) > Math.abs(ux);
+        var order = pts.slice().sort(function (p, q) { return steep ? p.x - q.x : p.y - q.y; });
+        var t0 = base - (n - 1) / 2 * step, t1 = base + (n - 1) / 2 * step;
+        var ax0 = r1(end[1].x + Math.cos(t0) * ra), ay0 = r1(end[1].y + Math.sin(t0) * ra);
+        var ax1 = r1(end[1].x + Math.cos(t1) * ra), ay1 = r1(end[1].y + Math.sin(t1) * ra);
+        var arc = n > 1 ? 'M' + ax0 + ' ' + ay0 + 'A' + r1(ra) + ' ' + r1(ra) + ' 0 0 1 ' + ax1 + ' ' + ay1
+                        : 'M' + ax0 + ' ' + ay0 + 'l0.01 0';
         svg += '<g class="cm-role cm-role-' + end[0].toLowerCase() + '" data-cm-pair="' + esc(key)
-          + '" data-cm-at="' + esc(end[3]) + '"><rect class="cm-role-dot" x="' + (x - w / 2)
-          + '" y="' + (y - he / 2) + '" width="' + w + '" height="' + he + '" rx="' + he / 2 + '"/>'
-          + '<text class="cm-role-txt" x="' + x + '" y="' + y + '" font-size="' + fe
-          + '" text-anchor="middle" dominant-baseline="central">'
-          + text.split('\u00b7').join('<tspan class="cm-dir-gap" aria-hidden="true">\u00b7</tspan>') + '</text></g>';
+          + '" data-cm-at="' + esc(end[3]) + '"><path class="cm-dir-role-edge" d="' + arc
+          + '" stroke-width="' + (he + 2) + '"/><path class="cm-dir-role-band" d="' + arc
+          + '" stroke-width="' + he + '"/>';
+        letters.forEach(function (ch, idx) {
+          var pt = order[idx];
+          svg += '<text class="cm-role-txt' + (ch === '\u00b7' ? ' cm-dir-gap' : '') + '" x="' + pt.x + '" y="' + pt.y
+            + '" font-size="' + fe + '" text-anchor="middle" dominant-baseline="central"'
+            + (ch === '\u00b7' ? ' aria-hidden="true"' : '') + '>' + esc(ch) + '</text>';
+        });
+        svg += '</g>';
       });
     });
     return svg;

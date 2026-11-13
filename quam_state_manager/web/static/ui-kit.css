@@ -956,6 +956,8 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
 .cm-dir-legend .cm-role-txt { fill: var(--ui-text-2); }
 /* A non-moving end keeps the M slot as a faint dot, so every pill has equal slots. */
 .cm-dir-gap { fill: var(--ui-text-3); font-weight: var(--ui-fw-normal); }
+.cm-dir-role-edge { fill: none; stroke: var(--ui-border-strong); stroke-linecap: round; }
+.cm-dir-role-band { fill: none; stroke: var(--ui-surface-1); stroke-linecap: round; }
 .cm-dir-legend {
     display: flex; align-items: center; gap: var(--ui-gap-2); flex-wrap: wrap;
     font-size: var(--ui-fs-sm); color: var(--ui-text-2); margin-top: var(--ui-gap-2);

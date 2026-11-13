@@ -292,7 +292,7 @@ function part5() {
   ok(evals[0] && /95\.1/.test(evals[0].textContent), '2Q RB: the printed value is the best StandardRB');
   // docs/126: the value text draws AFTER the role markers (they used to cover
   // it dead-center on the real chip), and the markers half-overlap the stones
-  const role = hero.querySelector('.cm-role rect');
+  const role = hero.querySelector('.cm-role path.cm-dir-role-band');
   ok(role && (evals[0].compareDocumentPosition(role) & 2) !== 0,
      'edge values draw ON TOP of the C/T/M markers');
   // per-gate toggle: two gates ship StandardRB → the pulse bar renders,
@@ -685,15 +685,22 @@ function edgeLabelsBesideTheBar() {
   }
   checkLabels();
   ok(!hero.querySelector('.cm-freq, .cm-role circle, .cm-dir-m'), 'D1/D5: no frequency arrow or old moving dots');
-  ok(hero.querySelectorAll('svg .cm-role text').length === topo.edges.length * 2 && Array.from(hero.querySelectorAll('svg .cm-role text')).every(t=>/[HL]$/.test(t.textContent)), 'D3: H/L present in hero Qubit freq view');
+  { // one role group per pair end; each reads as a role sequence ending in H or L
+    const ends = Array.from(hero.querySelectorAll('svg .cm-role'));
+    const read = g => Array.from(g.querySelectorAll('text.cm-role-txt')).map(t => t.textContent).join(' ');
+    ok(ends.length === topo.edges.length * 2 && ends.every(g => / [HL]$/.test(read(g))), 'D3: H/L present in hero Qubit freq view');
+  }
   ok(/C control.*T target.*M moving qubit.*H higher f01.*L lower f01/.test(hero.querySelector('.topo-hero-legend').textContent), 'D6: hero has shared complete legend');
   hero.querySelectorAll('svg .cm-role').forEach(pill => {
-    const text = pill.querySelector('text'), rect = pill.querySelector('rect');
-    ok(num(text, 'font-size') >= 6 && num(text, 'font-size') <= 8 && num(rect, 'height') <= 13, 'D4: hero pill size capped despite 132px cells');
+    const letters = Array.from(pill.querySelectorAll('text.cm-role-txt')), band = pill.querySelector('path.cm-dir-role-band');
+    ok(letters.length > 0 && letters.every(t => num(t, 'font-size') >= 6 && num(t, 'font-size') <= 8) && num(band, 'stroke-width') <= 13, 'D4: hero pill size capped despite 132px cells');
     const node = hero.querySelector('[data-hero-qubit="'+pill.getAttribute('data-cm-at')+'"]');
     const [cx,cy] = node.getAttribute('transform').match(/[-\d.]+/g).map(Number);
-    const nearest = (x,y) => Math.hypot(x-Math.max(num(rect,'x'),Math.min(x,num(rect,'x')+num(rect,'width'))), y-Math.max(num(rect,'y'),Math.min(y,num(rect,'y')+num(rect,'height'))));
-    ok(nearest(cx,cy) > num(node.querySelector('circle'),'r'), 'D2/D4: hero pill clears actual stone radius');
+    // every letter's centre clears the drawn stone by the gap (2) and sits on one arc
+    const dists = letters.map(t => Math.hypot(num(t,'x') - cx, num(t,'y') - cy));
+    const sr = num(node.querySelector('circle'),'r');
+    ok(dists.every(dd => dd >= sr + 2 - 0.15), 'D2/D4: hero pill clears actual stone radius (' + dists.map(v=>v.toFixed(1)) + ' vs r ' + sr + ')');
+    ok(Math.max(...dists) - Math.min(...dists) <= 0.15, 'arc: hero letters of an end lie at one distance from the stone');
     const badge = hero.querySelector('.topo-pair-badge[data-hero-pair="'+pill.getAttribute('data-cm-pair')+'"]');
     ok(!badge.querySelector('circle'), 'D9: no retained midpoint marker beside hero pill');
   });
