@@ -119,6 +119,28 @@ def replot_capability(run, instance_path) -> dict:
     return {"available": True, "reason": "", "util": util, "env": env}
 
 
+_NO_ENV_HINT = ("Without a QM environment SM shows this run's saved images only; "
+                "choose one in Generate Config to redraw its figures from the "
+                "experiment's own plotting code.")
+
+
+def reproduction_hint(capability: dict, figures) -> str:
+    """The line the Interactive tab shows when the run cannot be reproduced.
+
+    Empty while SM draws at least one figure of its own for the run (the tab
+    works without an environment then, so a line about one is noise). When
+    nothing would be drawn, it says what the user gets without an environment,
+    or the capability's own reason for the other gaps.
+    """
+    if not capability or capability.get("available"):
+        return ""
+    if any(f.get("available") and not f.get("static") for f in (figures or [])):
+        return ""
+    if not capability.get("env"):
+        return _NO_ENV_HINT
+    return capability.get("reason") or ""
+
+
 _PLOT_WORKER = None
 
 

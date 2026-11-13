@@ -69,10 +69,14 @@ def _is_error_amp(name: str) -> bool:
 def _figure_for(name: str):
     """(base, required-fit-vars, title) for the node."""
     import re as _re
-    if _re.search(r"(?:^|_)(?:21b|35a)_", name):
+    if _re.search(r"(?:^|_)(?:21b|35a)_", name) or (
+            "phase_compensation" in name and _is_error_amp(name)):
         return "phase_vs_operations", _REQUIRED_VARS["phase_vs_operations"], \
             "CZ phase compensation (error-amplified)"
-    if _re.search(r"(?:^|_)(?:21|35)[a-z]?_", name):
+    if _re.search(r"(?:^|_)(?:21|35)[a-z]?_", name) or "phase_compensation" in name:
+        # Another lab numbers the same node 34a; the name still says what it is
+        # (and its saved figure is ``raw_and_fit``), so it is not a
+        # conditional-phase run that "lacks phase_diff".
         return "raw_and_fit", _REQUIRED_VARS["raw_and_fit"], "CZ phase compensation"
     # 2Q_20/20b save their plot as ``phase_figure`` — match it so we replace it.
     if _is_error_amp(name):
@@ -85,6 +89,8 @@ def menu(bundle):
     name = _name(bundle)
     base, needs, title = _figure_for(name)
     missing = [v for v in needs if v not in bundle.fit_vars]
+    if base == "raw_and_fit":
+        missing = _raw_and_fit_missing(bundle.fit_vars)
     have = not missing
     pairs = pairs_of(bundle)
     multi = len(pairs) > 1
@@ -111,7 +117,47 @@ def menu(bundle):
 def _missing_vars(fit, base) -> list[str]:
     """Build-time twin of the menu gate (defence for direct build calls)."""
     have = (fit or {}).get("vars", {})
+    if base == "raw_and_fit":
+        return _raw_and_fit_missing(have)
     return [v for v in _REQUIRED_VARS[base] if v not in have]
+
+
+def _raw_and_fit_missing(have) -> list[str]:
+    """What raw_and_fit cannot draw without. The measured points are either
+    ``state_<role>`` or, in the generation that saves raw quadratures,
+    ``I_<role>``; the fitted curves are always required."""
+    out = [v for v in ("fitted_control", "fitted_target") if v not in have]
+    for role in ("control", "target"):
+        if f"state_{role}" not in have and f"I_{role}" not in have:
+            out.append(f"state_{role}")
+    return out
+
+
+def _measured(fit, role, pidx):
+    """(points, y-label) the node fitted ``fitted_<role>`` to.
+
+    ``state_<role>`` when saved. Otherwise ``I_<role>``; when it carries a
+    ``control_target`` axis (which qubit was prepared), the entry labelled
+    with the role's initial (``c`` / ``t``) is taken.
+    [derived] On a run of this generation the fitted curve's mean equals the
+    mean of exactly that entry (residual mean ~1e-20 for both roles, the
+    stationarity condition of a least-squares fit with a free offset), and of
+    no other entry or quadrature (all differ by >= 1e-5): checked on a real run,
+    pinned by tests/test_interactive_gen_variants.py.
+    """
+    if f"state_{role}" in fit["vars"]:
+        return np.asarray(pslice(fit, f"state_{role}", pidx)[0], dtype=float), \
+            "Measured state"
+    arr, dims = pslice(fit, f"I_{role}", pidx)
+    arr = np.asarray(arr, dtype=float)
+    if "control_target" in dims and arr.ndim > 1:
+        ax = dims.index("control_target")
+        labels = [str(x) for x in (fit.get("coords", {}).get("control_target") or [])]
+        idx = labels.index(role[0]) if role[0] in labels else None
+        if idx is None:
+            return None, ""
+        arr = np.take(arr, idx, axis=ax)
+    return arr.reshape(-1), "I quadrature [V]"
 
 
 def build(bundle, key):
@@ -139,12 +185,17 @@ def _raw_and_fit(bundle, key, pname):
     def arr(v):
         return np.asarray(pslice(fit, v, pidx)[0], dtype=float)
 
-    data = [pb.scatter(frame, arr("state_control"), name="control", color=_CONTROL, size=7),
+    mc, ylabel = _measured(fit, "control", pidx)
+    mt, _yl = _measured(fit, "target", pidx)
+    if mc is None or mt is None:
+        return FigureSpec(key=key, title="CZ phase compensation", available=False,
+                          reason="no c / t entry on the control_target axis")
+    data = [pb.scatter(frame, mc, name="control", color=_CONTROL, size=7),
             pb.line(frame, arr("fitted_control"), name="control fit", color=_CONTROL),
-            pb.scatter(frame, arr("state_target"), name="target", color=_TARGET, size=7),
+            pb.scatter(frame, mt, name="target", color=_TARGET, size=7),
             pb.line(frame, arr("fitted_target"), name="target fit", color=_TARGET)]
     layout = {"xaxis": {"title": {"text": "x90 frame rotation [rad/2π]"}},
-              "yaxis": {"title": {"text": "Measured state"}},
+              "yaxis": {"title": {"text": ylabel}},
               "hovermode": "closest", "margin": _M}
     return FigureSpec(key=key, title="CZ phase compensation (raw + fit)", kind="1d",
                       figure={"data": data, "layout": layout})
