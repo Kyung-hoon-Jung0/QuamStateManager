@@ -231,6 +231,43 @@ class TestPulseLength:
                                              "value": "8"}).status_code == 200
 
 
+class TestEveryBrokenPulseIsRefused:
+    """An independent batch skips the rows of EVERY pulse a rule breaks,
+    not only the first one found; an atomic batch writes nothing."""
+
+    def _batch(self, client, independent):
+        return client.post("/field/edit-batch", json={
+            "independent": independent, "updates": [
+                {"dot_path": f"{Z}.broken.amplitude", "value": "0.3"},
+                {"dot_path": f"{Z}.snz.flat_length", "value": "45"},
+                {"dot_path": f"{Z}.flat.length", "value": "42"}]})
+
+    def test_independent_writes_the_valid_row_and_refuses_both(self, client):
+        body = self._batch(client, True).get_json()
+        res = {x["dot_path"]: x for x in body["results"]}
+        assert res[f"{Z}.broken.amplitude"]["applied"] is True
+        assert res[f"{Z}.snz.flat_length"].get("lab_refused") is True
+        assert res[f"{Z}.flat.length"].get("lab_refused") is True
+        assert _peek(client, f"{Z}.broken.amplitude") == 0.3
+        assert _peek(client, f"{Z}.snz.flat_length") == 20
+        assert _peek(client, f"{Z}.flat.length") == 40
+        msg = res[f"{Z}.flat.length"]["error"]
+        assert "2 pulses" in msg and f"{Z}.snz" in msg and f"{Z}.flat" in msg
+
+    def test_atomic_writes_nothing_and_names_both(self, client):
+        r = self._batch(client, False)
+        assert r.status_code == 400
+        flags = [x["lab_refused"] for x in r.get_json()["results"]]
+        assert flags == [False, True, True]
+        assert _peek(client, f"{Z}.broken.amplitude") == 0.1
+
+    def test_one_broken_pulse_keeps_the_single_sentence(self, client):
+        r = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": f"{Z}.flat.length", "value": "42"}]})
+        err = r.get_json()["error"]
+        assert "pulses)" not in err and f"{Z}.flat" in err
+
+
 class TestPulseLengthDiagnostics:
     def _found(self, st):
         from quam_state_manager.core import diagnostics

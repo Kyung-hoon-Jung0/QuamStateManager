@@ -28222,6 +28222,7 @@ def _synth_write_refusal(store, writes):
         jobs = [(op, {"body": b}) for op, b in bodies.items()]
         jobs += [(op, {"overrides": ov}) for op, ov in overrides.items()]
         qop = None
+        found: list[tuple[str, str]] = []     # (sentence without the lead, op)
         for op, kw in jobs:
             if qop is None:
                 with store._lock:
@@ -28239,10 +28240,18 @@ def _synth_write_refusal(store, writes):
             why = ("quam's generate_config() would raise for the whole chip"
                    if after.get("rule_violation") else
                    "QOP would refuse every program on the chip")
-            return (f"{_SYNTH_REFUSAL_LEAD}: {leaf} at {op}"
-                    + (f" ({fields})" if fields else "")
-                    + f" -- {problem}. {why}, so every node would fail.",
-                    sorted(idx_of.get(op) or ()))
+            found.append((f"{leaf} at {op}" + (f" ({fields})" if fields else "")
+                          + f" -- {problem}. {why}", op))
+        if found:
+            # every pulse a rule breaks is refused (an independent batch skips
+            # each one's rows); one pulse keeps the single-pulse sentence
+            idx = sorted(set().union(*(idx_of.get(op) or set() for _t, op in found)))
+            if len(found) == 1:
+                return (f"{_SYNTH_REFUSAL_LEAD}: {found[0][0]}, so every node "
+                        "would fail.", idx)
+            return (f"{_SYNTH_REFUSAL_LEAD} ({len(found)} pulses): "
+                    + "; ".join(t for t, _op in found)
+                    + ". Every node would fail.", idx)
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("pulse rule check failed", exc_info=True)
     return None
