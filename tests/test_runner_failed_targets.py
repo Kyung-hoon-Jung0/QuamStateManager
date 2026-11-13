@@ -71,16 +71,27 @@ def _inst(chip):
         return routes._sched_inst()
 
 
-def _run_hook(chip, monkeypatch, tmp_path, outcomes, patches, *, item_info=None, name="05_qubit_spec"):
+_ITEM_START = "2026-11-13T10:00:00+00:00"
+_ITEM_END = "2026-11-13T10:05:00+00:00"
+
+
+def _run_hook(chip, monkeypatch, tmp_path, outcomes, patches, *, item_info=None,
+              name="05_qubit_spec", run_created="2026-11-13T19:01:00+09:00"):
     from quam_state_manager.web import routes
     inst = _inst(chip)
     info = {"name": name, "kind": "node"}
     info.update(item_info or {})
     it = scheduler.add_item(inst, info, ["q1", "q2"])
+    with scheduler._QLOCK:      # the worker stamps these around the node's run
+        st = scheduler.load_queue(inst)
+        q = scheduler._find(st, it["id"])
+        q["started_at"], q["ended_at"], q["status"] = _ITEM_START, _ITEM_END, "done"
+        scheduler.save_queue(inst, st)
     run_dir = tmp_path / "run7"
     run_dir.mkdir()
     (run_dir / "node.json").write_text(json.dumps({"patches": patches}), encoding="utf-8")
-    run = SimpleNamespace(outcomes=outcomes, folder_path=run_dir, experiment_name=name, run_id=7)
+    run = SimpleNamespace(outcomes=outcomes, folder_path=run_dir, experiment_name=name, run_id=7,
+                          created_at=run_created, run_start=None, instant_us=None)
     monkeypatch.setattr(routes, "_latest_run_info",
                         lambda: (run, {"uid": "u7", "run_id": 7, "name": name}))
     monkeypatch.setattr(routes, "_active_dataset_stores", lambda: [])
@@ -99,6 +110,24 @@ class TestTheHookRecordsFailedTargets:
         assert [w["dotted"] for w in item["failed_writes"]] == ["qubits.q1.f_01"]
         assert "qubits.q1.f_01" in item["outcome_note"] and "q2" not in item["outcome_note"]
         assert item["failed_folder"] == str(chip.live)
+
+    def test_a_run_inside_the_window_edge_slack_counts(self, chip, monkeypatch, tmp_path):
+        # 3 s before the item's start: clock granularity, still this item's run
+        inst, item = _run_hook(chip, monkeypatch, tmp_path, {"q1": "failed"},
+                               [_patch("q1", "f_01", 1, 2)],
+                               run_created="2026-11-13T09:59:57+00:00")
+        assert item["failed_targets"] == ["q1"]
+
+    @pytest.mark.parametrize("created", ["2026-11-13T09:58:00+00:00",   # before the item ran
+                                         "2026-11-13T19:06:00+09:00",   # after it ended
+                                         None])                          # unknown: fail closed
+    def test_a_same_named_run_outside_the_window_is_not_this_items(
+            self, chip, monkeypatch, tmp_path, created):
+        inst, item = _run_hook(chip, monkeypatch, tmp_path, {"q1": "failed"},
+                               [_patch("q1", "f_01", 1, 2)], run_created=created)
+        assert "failed_targets" not in item and item["outcome_note"] is None
+        r = chip.c.post(f"/scheduler/item/{item['id']}/revert-failed", json={})
+        assert r.status_code == 409
 
     def test_all_successful_leaves_the_item_as_today(self, chip, monkeypatch, tmp_path):
         inst, item = _run_hook(chip, monkeypatch, tmp_path,

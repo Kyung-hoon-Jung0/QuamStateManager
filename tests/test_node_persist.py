@@ -196,3 +196,34 @@ class TestPersistNodeState:
         assert "not a container" in report["unstaged"][0]["why"]
         assert report["unstaged"][0]["new"] == "synthetic"
         assert json.loads(p.read_text()) == {"a": 1}
+
+
+def test_a_real_quam_save_lands_at_the_named_folder_not_the_env_default(rex, tmp_path, monkeypatch):
+    """With real quam: QUAM_STATE_PATH names one folder, the runner's
+    state_path another. The save must land at state_path and write nothing
+    to the env-var folder (a pathless save would go there)."""
+    quam_core = pytest.importorskip("quam.core")
+    from types import SimpleNamespace
+
+    @quam_core.quam_dataclass
+    class _TinyRoot(quam_core.QuamRoot):
+        value: int = 7
+
+    env_dir = tmp_path / "env_default"
+    env_dir.mkdir()
+    state_dir = tmp_path / "targeted"
+    state_dir.mkdir()
+    monkeypatch.setenv("QUAM_STATE_PATH", str(env_dir))
+    rex._STATE_CAPTURE_WARNING = None
+    machine = _TinyRoot()
+    machine.value = 9        # a non-default value, so the save must write it
+    rex._persist_node_state({"node": SimpleNamespace(machine=machine, state_updates={})},
+                            str(state_dir), None)
+    assert rex._STATE_CAPTURE_WARNING is None, rex._STATE_CAPTURE_WARNING
+    written = sorted(p.name for p in state_dir.iterdir() if p.suffix == ".json")
+    assert written, "nothing was saved at state_path"
+    body = {}
+    for name in written:
+        body.update(json.loads((state_dir / name).read_text(encoding="utf-8")))
+    assert body.get("value") == 9
+    assert list(env_dir.iterdir()) == []

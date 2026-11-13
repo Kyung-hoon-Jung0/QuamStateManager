@@ -53863,6 +53863,45 @@ def _fit_results_for_ref(ref: dict) -> dict | None:
     return None
 
 
+_RUN_WINDOW_SLACK_S = 5.0   # clock granularity between the runner and the node
+
+
+def _as_utc(stamp) -> datetime | None:
+    """An ISO time string as an aware UTC datetime; a naive one is this
+    machine's local time (the runner and its node share the PC). None when
+    it does not parse."""
+    if not isinstance(stamp, str) or not stamp.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(stamp.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.astimezone()
+    return dt.astimezone(timezone.utc)
+
+
+def _run_in_item_window(run, item) -> bool:
+    """True only when the run STARTED inside this queue item's own run window
+    (item started_at <= run start <= item ended_at, with a small slack). A
+    same-named run started elsewhere (another GUI, another window) outside
+    that window is not this item's run. Unknown times fail closed."""
+    lo, hi = _as_utc(item.get("started_at")), _as_utc(item.get("ended_at"))
+    start = None
+    for stamp in (getattr(run, "created_at", None), getattr(run, "run_start", None)):
+        start = _as_utc(stamp)
+        if start is not None:
+            break
+    if start is None:
+        us = getattr(run, "instant_us", None)
+        if isinstance(us, int):
+            start = datetime.fromtimestamp(us / 1e6, tz=timezone.utc)
+    if lo is None or hi is None or start is None:
+        return False
+    slack = _RUN_WINDOW_SLACK_S
+    return (lo.timestamp() - slack) <= start.timestamp() <= (hi.timestamp() + slack)
+
+
 def _failed_target_info(run) -> dict | None:
     """``scheduler.failed_target_writes`` for one dataset run: its per-target
     outcomes and the state patches its node.json recorded. None when the run
@@ -53978,7 +54017,8 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
                     run = latest[0] if latest else None
                     if (item is not None and not item.get("state_path")
                             and run is not None
-                            and _names_match(item.get("name"), run.experiment_name)):
+                            and _names_match(item.get("name"), run.experiment_name)
+                            and _run_in_item_window(run, item)):
                         info = _failed_target_info(run)
                         if info is not None:
                             scheduler.set_item_failed_targets(
