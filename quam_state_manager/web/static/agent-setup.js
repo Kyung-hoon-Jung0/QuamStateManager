@@ -159,9 +159,15 @@ window.AgentSetup = (function () {
     if (row.agent === "reported") return "reported: " + short(row.agent_value);
     return "not reported";
   }
+  // One time format for the whole UI (SnapTime.display), never the browser locale.
+  function atText(sec) {
+    var d = new Date(sec * 1000);
+    return window.SnapTime && window.SnapTime.display ? window.SnapTime.display(d, true)
+      : d.toISOString().replace("T", " ").slice(0, 19) + " (UTC)";
+  }
   function staleLine(rec, P) {
     if (!rec || rec.current) return "";
-    var when = rec.at ? new Date(rec.at * 1000).toLocaleTimeString() : "";
+    var when = rec.at ? atText(rec.at) : "";
     return '<p class="asx-small ag-err" data-stale="1">Result for project ' + esc((rec.key || {}).project || "none") + " · " + esc(when) + " — run again</p>";
   }
   function askFail(rec) {
@@ -200,7 +206,7 @@ window.AgentSetup = (function () {
     }).join("");
     return staleLine(rec, P) + '<div class="asx-result' + (stale ? "" : bad ? " asx-result-bad" : allAgree ? " asx-result-ok" : "") + '" id="as-confirm-result"' + (stale ? ' data-stale-card="1"' : "") + '><p><b>' + esc(who) + "</b> answered in <b>" + esc(rec.elapsed_s) + " s</b>"
       + (rec.tools && rec.tools.length ? ' <span class="muted">(used ' + esc(rec.tools.join(", ")) + ")</span>" : "")
-      + ' <span class="muted">· ' + esc(new Date((rec.at || 0) * 1000).toLocaleTimeString()) + "</span></p>"
+      + ' <span class="muted">· ' + esc(atText(rec.at || 0)) + "</span></p>"
       + '<ul class="asx-checks">' + rows + "</ul>"
       + (rec.evidence_dropped ? '<p class="asx-small muted">' + esc(rec.evidence_dropped) + " extra citations were dropped</p>" : "")
       + (rec.notes ? '<p class="asx-small muted">agent notes: ' + esc(rec.notes) + "</p>" : "") + "</div>";

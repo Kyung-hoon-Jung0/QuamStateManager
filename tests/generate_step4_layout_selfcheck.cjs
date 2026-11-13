@@ -227,7 +227,7 @@ function buildTo4(win, opts) {
   const win = makeWorld();
   const G = buildTo4(win);
   const radios = win.document.querySelectorAll('#gen-arch-radios input[type="radio"]');
-  ok(radios.length === 4, 'L6: four architecture radios rendered');
+  ok(radios.length === 5, 'L6: five architecture radios rendered (lab coupler-only layout added, 161359f5)');
   const a4 = win.document.querySelector('#gen-arch-radios input[value="fixed_tunable_coupler"]');
   ok(a4 && a4.disabled, 'L6: A4 disabled until extension availability is established');
   ok(win.document.getElementById('gen-chip-arch').hidden === true,
@@ -252,11 +252,12 @@ function buildTo4(win, opts) {
   sel.dispatchEvent(new win.Event('change', { bubbles: true }));
   ok(checked() && checked().value === 'flux_tunable_fixed_coupler',
     'L6: anchor-driven change mirrors back into the radios');
-  // MW-only hardware: the two flux-tunable options render disabled.
+  // MW-only hardware: every option that needs an LF-FEM flux line renders disabled
+  // (two flux-tunable qubit layouts + the two coupler-only layouts).
   const win2 = makeWorld();
   buildTo4(win2, { mwOnly: true });
   const off = win2.document.querySelectorAll('#gen-arch-radios input:disabled');
-  ok(off.length === 3, 'L6: all three flux architectures disabled without an LF-FEM (got ' +
+  ok(off.length === 4, 'L6: all four flux architectures disabled without an LF-FEM (got ' +
     off.length + ')');
 })();
 

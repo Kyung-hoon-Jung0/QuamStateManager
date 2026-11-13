@@ -1106,6 +1106,7 @@ DOOR_SITES = {
     ("core/hub.py", "record_direct_save", "save"): (1, "the CLI's LIVE save, journalled write-ahead around it"),
     ("generator/run_build.py", "run_build", "save"): (1, "a NEW chip folder (Generate's output)"),
     ("generator/run_experiment.py", "_persist_node_state", "save"): (1, "the run's scratch copy (docs/245)"),
+    ("generator/run_loopback_cal.py", "build_program", "save"): (2, "QUA stream saves inside the program (adc traces), never a chip write"),
     ("web/agent_api.py", "_take_back_saved", "save"): (1, "working copy (a refused approval put back)"),
     ("web/routes.py", "_press_save", "save"): (1, "working copy, before an apply door"),
     ("web/routes.py", "_rollback_walk_step", "save"): (1, "working copy (a refused walk step put back)"),
