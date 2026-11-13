@@ -302,6 +302,8 @@ class TestTheEditBatchDeleteDoor:
         assert r.status_code == 409, r.data[:300]
         j = r.get_json()
         assert j["error_kind"] == "by_name" and j["by_name"] == [HOLDER]
+        # the batch door has no confirm step of its own: it names the token
+        assert "force=1" in j["error"] and "confirm step" not in j["error"]
         assert _store(client).get_value(f"{OP}.length") == 40
 
     def test_the_qubit_itself_is_refused_too(self, client):

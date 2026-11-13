@@ -17117,7 +17117,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                       if v is _BATCH_DELETE and n not in _ps_skip]
         _by_name = _by_name_cut(modifier.store, _del_paths) if _del_paths else []
         if _by_name and str(_pj.get("force") or request.form.get("force") or "") != "1":
-            return _by_name_refused_json(_by_name)
+            return _by_name_refused_json(
+                _by_name, how="Send the batch again with force=1 to delete anyway.")
 
     # docs/20 r12-B: an FSP edit never silently changes amplitudes. D-44: an
     # unacked batch commits now and the offer follows (X-SM-Fsp-Changed);
@@ -28819,7 +28820,8 @@ def _by_name_cut(store, paths) -> list[str]:
     return [h for h in cut if h not in lab_holders]
 
 
-def _by_name_refused_json(holders: list[str]):
+def _by_name_refused_json(holders: list[str], *,
+                          how: str = "Use the confirm step to delete anyway."):
     """The 409 a JSON delete door answers when a gate slot plays a deleted op
     by name: the Pulses delete door's own sentence, plus the holders; the
     caller's ``force=1`` deletes anyway."""
@@ -28827,7 +28829,7 @@ def _by_name_refused_json(holders: list[str]):
     named = [f"{h} ({BY_NAME_LABEL})" for h in holders]
     return jsonify(ok=False, error_kind="by_name", by_name=holders,
                    error=("Refusing to delete: referenced by " + ", ".join(named)
-                          + ". Use the confirm step to delete anyway.")), 409
+                          + ". " + how)), 409
 
 
 def _lab_delete_asks(store, path: str) -> bool:
