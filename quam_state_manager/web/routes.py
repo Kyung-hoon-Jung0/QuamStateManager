@@ -7481,6 +7481,80 @@ def _build_cr_zz_sections(name: str, store: QuamStore) -> list[dict]:
     return sections
 
 
+def _display_prop(key: str, value: Any, dot_path: str | None) -> dict:
+    """A read-only inspector row (a derived or summarised value, never an edit box)."""
+    return {"key": key, "value": value, "raw": value, "dot_path": dot_path,
+            "is_pointer": False, "is_self_ref": False, "dangling": False,
+            "editable": False}
+
+
+# pulse fields the CZ section already lists in its fixed order
+_CZ_KNOWN_PULSE_FIELDS = ("amplitude", "length", "flat_length", "smoothing_length")
+
+
+def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
+                        pair_obj: dict) -> dict:
+    """What a CZ macro's ``flux_pulse_qubit`` really is, for the pair inspector.
+
+    ``class_name`` (last segment of ``__class__``), ``shape`` (peak / length of a
+    sample-array pulse, :func:`pulse_catalog.waveform_shape`, else None) and
+    ``extra_props``: one row per further field the pulse dict holds (arrays
+    summarised as "N samples, peak X", nulls and nested dicts left out)."""
+    from quam_state_manager.core.pulse_catalog import summarize_samples, waveform_shape
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    out = {"class_name": None, "shape": None, "extra_props": []}
+    gate = ((pair_obj.get("macros") or {}).get(gate_name)) if isinstance(pair_obj, dict) else None
+    if not isinstance(gate, dict):
+        return out
+    base = ("qubit_pairs", name, "macros", gate_name, "flux_pulse_qubit")
+    pulse, pbase = _query_mod._deref_pulse_ref(store, gate.get("flux_pulse_qubit"), base)
+    if not isinstance(pulse, dict) or not pulse:
+        return out
+    pulse = {k: _query_mod._resolve(store, v, pbase + (k,)) for k, v in pulse.items()}
+    qclass = pulse.get("__class__")
+    if isinstance(qclass, str) and qclass:
+        out["class_name"] = qclass.split(".")[-1]
+    # the sample period comes from the port that plays the pulse (the moving qubit's z)
+    role = pair_obj.get("moving_qubit")
+    rate = None
+    ref = pair_obj.get("qubit_" + role) if role in ("control", "target") else None
+    if isinstance(ref, str) and ref.startswith("#/"):
+        try:
+            ft = resolve_field_target(store.merged, ref[2:].replace("/", ".")
+                                      + ".z.opx_output.sampling_rate")
+            rate = ft.get("resolved_value") if ft.get("resolvable") else None
+        except Exception:  # noqa: BLE001 -- an unresolvable port means the 1 GSa/s default
+            rate = None
+    out["shape"] = waveform_shape(pulse, sampling_rate=rate)
+    alias = ".".join(base)
+    for field, value in pulse.items():
+        if field == "__class__" or field in _CZ_KNOWN_PULSE_FIELDS or value is None:
+            continue
+        key = f"{gate_name}_{field}"
+        dot_path = f"{alias}.{field}"
+        if isinstance(value, (list, tuple)):
+            out["extra_props"].append(_display_prop(
+                key, summarize_samples(value) or f"[{len(value)} items]", dot_path))
+            continue
+        if isinstance(value, dict):
+            continue
+        raw = value
+        try:
+            raw = store.get_value(dot_path)
+        except (KeyError, TypeError):
+            pass
+        ptr = is_pointer(raw)
+        self_ref = is_self_ref(raw) if ptr else False
+        out["extra_props"].append({
+            "key": key, "value": value, "raw": raw, "dot_path": dot_path,
+            "is_pointer": ptr and not self_ref, "is_self_ref": self_ref,
+            "dangling": ptr and not self_ref and value == raw,
+            "editable": (field != "id" and isinstance(value, (int, float, str))
+                         and not isinstance(value, bool) and not self_ref),
+        })
+    return out
+
+
 def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore) -> list[dict]:
     """Build pointer-aware, sectioned property list for pair detail template."""
     sections: list[dict] = []
@@ -7585,7 +7659,15 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
         # its row edits the key it was read from, and says which key that is
         _gfid = (macros.get(gate_name) or {}).get("fidelity") if isinstance(macros.get(gate_name), dict) else None
         _pg = pair_gate_fidelity(_gfid)
+        flux = _cz_flux_pulse_view(store, name, gate_name, pair_obj)
+        if flux["class_name"]:
+            section["props"].append(_display_prop(
+                f"{prefix}_pulse_class", flux["class_name"],
+                f"qubit_pairs.{name}.macros.{gate_name}.flux_pulse_qubit.__class__"))
         for field_suffix, dot_suffix in _CZ_GATE_FIELDS:
+            if field_suffix == "coupler_amplitude":
+                # every other field the flux pulse actually holds, after the known ones
+                section["props"].extend(flux["extra_props"])
             key = f"{prefix}_{field_suffix}"
             if key not in pair_data:
                 continue
@@ -7598,6 +7680,14 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                                       + (f" ({_pg['basis']})" if len(_pg["keys"]) > 1 else "")),
                             "conflict": gate_conflict_text(_pg["conflict"])}
             dot_path = f"qubit_pairs.{name}.{dot_suffix.format(gate=gate_name)}"
+            shape = flux["shape"]
+            if shape is not None and field_suffix in ("amplitude", "length"):
+                # a sample-array pulse stores neither field: show what the samples say, read-only
+                section["props"].append(_display_prop(key, (
+                    f"{shape['peak']:.6g} ({shape['label']})" if field_suffix == "amplitude" else
+                    f"{shape['length_ns']:g} ns ({shape['samples']} samples x "
+                    f"{shape['sample_period_ns']:g} ns)"), None))
+                continue
 
             raw_value = resolved_value
             ptr = False
