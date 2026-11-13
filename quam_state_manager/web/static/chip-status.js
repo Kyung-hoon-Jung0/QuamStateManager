@@ -816,6 +816,16 @@ window.ChipStatus._pickGateRows = function (topo) {
     });
     return topo;
 };
+// gl-mxs: the rows a pair's ONE 2Q number is chosen from. A pair whose `cz`
+// alias names a macro (the server's query.pair_operational_gate, shipped as
+// e.op_gate) plays that macro, so its rows alone; with no alias every macro's
+// rows, and the best of them wins as before. Explicit per-macro views (a gate
+// picked in the map, the per-gate panels, the popup list) read every row.
+window.ChipStatus._opRows = function (e) {
+    var rows = (e && e.gate_fidelities) || [];
+    if (!e || !e.op_gate) return rows;
+    return rows.filter(function (gf) { return gf && gf.gate === e.op_gate; });
+};
 // "2 IRB values on this pair: InterleavedRB 0.9073, IRB 0.9434", or ''.
 window.ChipStatus._gfConflictText = function (gf) {
     var c = gf && gf.gate_conflict;
@@ -1009,7 +1019,8 @@ window.ChipStatus.mount = function (opts) {
     function _edgeBest2Q(e, match, gate) {
         if (!e.gate_fidelities) return null;
         var best = null;
-        e.gate_fidelities.forEach(function(gf) {
+        var rows = (gate && gate !== 'best') ? e.gate_fidelities : window.ChipStatus._opRows(e);
+        rows.forEach(function(gf) {
             if (!match(gf.metric)) return;
             if (gate && gate !== 'best' && gf.gate !== gate) return;
             var v = typeof gf.value === 'number' ? gf.value
@@ -1022,7 +1033,8 @@ window.ChipStatus.mount = function (opts) {
     function _edgeBestDerived(e, gate) {
         if (!e.gate_fidelities) return null;
         var best = null;
-        e.gate_fidelities.forEach(function (gf) {
+        var rows = (gate && gate !== 'best') ? e.gate_fidelities : window.ChipStatus._opRows(e);
+        rows.forEach(function (gf) {
             if (gf.level !== 'clifford') return;
             if (gate && gate !== 'best' && gf.gate !== gate) return;
             var v = gf.derived_gate_fidelity;
@@ -1067,7 +1079,7 @@ window.ChipStatus.mount = function (opts) {
         var v = src ? src.val(e, 'best') : null, gate = null;
         if (v == null) return null;
         if (src.key === 'bell_state' || src.key === 'cr_channel') return e.best_gate || null;
-        (e.gate_fidelities || []).forEach(function(gf) {
+        window.ChipStatus._opRows(e).forEach(function(gf) {
             var gv = src.key === 'rb2q_standard_gate' ? gf.derived_gate_fidelity
                    : (src.match(gf.metric) ? gf.value : null);
             if (gate == null && gv === v) gate = gf.gate;
@@ -1425,7 +1437,7 @@ window.ChipStatus.mount = function (opts) {
                 // can quote two different pulses of one pair -- every entry
                 // carries the pulse it came from, and the hover names it.
                 var best = null, worst = null, bestGate = null, worstGate = null, bestGf = null;
-                e.gate_fidelities.forEach(function(gf) {
+                window.ChipStatus._opRows(e).forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     if (gf.physical === false) dropped++;
                     var v = typeof gf.value === 'number' ? gf.value
@@ -1475,7 +1487,7 @@ window.ChipStatus.mount = function (opts) {
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
                 var best = null, bestGate = null;
-                e.gate_fidelities.forEach(function(gf) {
+                window.ChipStatus._opRows(e).forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     var v = typeof gf[field] === 'number' ? gf[field] : null;
                     if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; }
@@ -1628,7 +1640,7 @@ window.ChipStatus.mount = function (opts) {
             // cz_SNZ's divisor on a two-pulse pair. `anyDiv` (any row of the
             // pair) is kept only for a pulse with no SRB run of its own.
             var bestF = null, bestGate = null, bestRowDiv = null, divByGate = {}, anyDiv = null;
-            e.gate_fidelities.forEach(function(gf) {
+            window.ChipStatus._opRows(e).forEach(function(gf) {
                 var gd = typeof gf.average_gates_per_clifford === 'number' ? gf.average_gates_per_clifford : null;
                 if (isIRB(gf.metric)) {
                     var v = typeof gf.value === 'number' ? gf.value

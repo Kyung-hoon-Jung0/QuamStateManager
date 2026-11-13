@@ -647,6 +647,27 @@ def evaluate_target(run, fam: Family, target: str, *,
     return v
 
 
+def node_targets(run, fam: Family | None) -> list[str]:
+    """The targets the NODE judged, which are the ones a verdict is about.
+
+    A pair node's run lists its pairs AND their member qubits (``qubits`` is
+    the union a run touched). Judging a member qubit of a pair node invents a
+    failure: the node reports no outcome and no fit for it, so G1 read it as
+    "the node marked this target failed" on a run whose pair succeeded. So a
+    pair run is judged per pair whenever the family is a pair family or the
+    node's outcomes name only pairs. Every other run keeps qubits + pairs.
+    """
+    qubits = [str(q) for q in (_attr(run, "qubits", None) or [])]
+    pairs = [str(p) for p in (_attr(run, "qubit_pairs", None) or [])]
+    if pairs:
+        outcomes = _attr(run, "outcomes", None) or {}
+        names = set(outcomes) if isinstance(outcomes, dict) else set()
+        if (getattr(fam, "kind", None) == "qubit_pairs"
+                or (names and names <= set(pairs))):
+            return pairs
+    return qubits + pairs
+
+
 def evaluate_run(run, fam: Family, targets: list[str], *,
                  current_value_of: Callable[[str], Any],
                  pre_update_value_of: Callable[[str], Any] | None = None,

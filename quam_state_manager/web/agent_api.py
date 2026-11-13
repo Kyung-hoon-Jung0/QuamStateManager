@@ -658,7 +658,7 @@ def check_fit(run_id: int):
                        outcomes=_jsonable(run.get("outcomes")))
     run_obj = dict(run)
     run_obj["folder_path"] = Path(run["folder_path"])
-    targets = list(run.get("qubits") or []) + list(run.get("qubit_pairs") or [])
+    targets = gates.node_targets(run, fam)
 
     def current_value_of(dotted: str):
         if not store:

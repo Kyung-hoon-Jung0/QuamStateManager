@@ -1227,19 +1227,38 @@ _ALIASES = {
 }
 
 
+def _name_matches(norm: str, prefix: str) -> bool:
+    """True when ``prefix`` names the same node as ``norm``.
+
+    A match is the whole name, or the prefix followed by ``_`` and a suffix
+    that does not start with a digit. A plain ``startswith`` read
+    ``chevron_11_20`` as the ``chevron`` alias (so as ``chevron_11_02``, a
+    different transition with different fit keys), and would read ``t1x`` as
+    ``t1``. A numeric next token is another numbered variant of the node,
+    never the same node.
+    """
+    if norm == prefix:
+        return True
+    if not norm.startswith(prefix + "_"):
+        return False
+    rest = norm[len(prefix) + 1:]
+    return bool(rest) and not rest[0].isdigit()
+
+
 def family_for(node_name: str) -> Family | None:
-    """Longest-prefix family match over the normalized node name."""
+    """Longest-prefix family match over the normalized node name, on a token
+    boundary (``_name_matches``)."""
     norm = normalize_node_name(node_name)
     best: tuple[str, Family] | None = None
     for key, fam in FAMILIES.items():
         nk = normalize_node_name(key)
-        if norm.startswith(nk) and (best is None or len(nk) > len(best[0])):
+        if _name_matches(norm, nk) and (best is None or len(nk) > len(best[0])):
             best = (nk, fam)
     if best:
         return best[1]
     for alias, target in _ALIASES.items():
         na = normalize_node_name(alias)
-        if norm.startswith(na):
+        if _name_matches(norm, na):
             return FAMILIES[target]
     return None
 
