@@ -624,7 +624,11 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
             return None                                  # pip install / env gone
         classes = entry.get("classes") or {}
         if not set(requested) <= set(classes):
-            return None                                  # new chip classes unprobed
+            # a class the probe has not covered yet may be in the
+            # same env's catalogue (validated on the same signature + format)
+            cat = catalog_for_env(python_path, instance_path) or {}
+            if not set(requested) <= set(classes) | set(cat):
+                return None                              # new chip classes unprobed
         if not _entry_fresh(entry, load_pulse_modules(instance_path)):
             return None                                  # a lab file changed / a module was named
         manifest = _decorate({"classes": classes,
@@ -633,6 +637,7 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
         manifest["versions"] = _served_versions(entry, entry.get("versions") or {})
         manifest["pulse_modules"] = entry.get("pulse_modules") or {}
         manifest["sources"] = entry.get("sources") or {}
+        manifest["catalog_env"] = [python_path, str(instance_path)]
         return manifest
 
     res = probe_state_schema(python_path, requested, instance_path,
@@ -643,4 +648,6 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
             "pulse_modules": res.get("pulse_modules") or {},
             "sources": res.get("sources") or {},
             "by_leaf": res["by_leaf"], "missing_classes": res["missing_classes"],
-            "versions": res["versions"]}
+            "versions": res["versions"],
+            # a class added to the chip later is looked up here
+            "catalog_env": [python_path, str(instance_path)]}

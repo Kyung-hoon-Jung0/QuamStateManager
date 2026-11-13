@@ -9,6 +9,15 @@ interactive heatmap and adds the ``state_control`` companion.
 View-only: the optimum is a jointly-fit (amplitude, duration) pair on a qubit
 *pair*, not a single clickable scalar. Unlike the 1Q recipes this keys figures by
 ``qubit_pair`` (e.g. ``qA2-qA1``), so it slices that axis rather than ``qubit``.
+
+A second node generation names the two qubits by ROLE instead: the qubit whose
+flux is pulsed (``state_moving`` over amplitude x time, or ``state_mover`` over
+``flux_dv`` x ``pulse_duration`` with a ``prep`` axis) and the one that is not
+(``state_stationary`` / ``state_static``). Those runs save their figures as
+``moving_qubit`` / ``stationary_qubit``, so the tiles take those bases. They
+stay view-only: the click contract above names the ``cz_unipolar`` /
+``cz_flattop`` macros of the first generation, which a role-named run does not
+prove it writes.
 """
 from __future__ import annotations
 
@@ -28,57 +37,130 @@ _FIGS = (
 )
 
 
+# Role-named generation: (figure base, candidate variables, title). The first
+# candidate the run holds is drawn.
+_ROLE_FIGS = (
+    ("moving_qubit", ("state_moving", "state_mover"), "CZ Chevron \u2014 moving qubit"),
+    ("stationary_qubit", ("state_stationary", "state_static"),
+     "CZ Chevron \u2014 stationary qubit"),
+)
+_TITLES = {var: title for _b, var, title in _FIGS}
+_TITLES.update({var: title for _b, vs, title in _ROLE_FIGS for var in vs})
+# (x coordinate, y coordinate, x label, y label when no amp_full) per layout.
+_AXES = (
+    ("time", "amplitude", "Pulse duration [ns]", "Flux amplitude prefactor"),
+    ("pulse_duration", "flux_dv", "Pulse duration [ns]", "Mover flux excursion [V]"),
+)
+
+
+def _have_vars(bundle) -> set:
+    return set(bundle.fit_vars) | set(bundle.raw_vars)
+
+
+def _role_named(have) -> bool:
+    """A role-named run: none of the first generation's variables, one of the
+    role-named ones."""
+    if any(v in have for _b, v, _t in _FIGS):
+        return False
+    return any(v in have for _b, vs, _t in _ROLE_FIGS for v in vs)
+
+
 def menu(bundle):
     pairs = pairs_of(bundle)
     multi = len(pairs) > 1
+    have_vars = _have_vars(bundle)
+    role = _role_named(have_vars)
     specs = []
     for p in pairs:
         suffix = f" — {p}" if multi else ""
+        if role:
+            for base, cands, title in _ROLE_FIGS:
+                var = next((v for v in cands if v in have_vars), None)
+                specs.append(FigureSpec(
+                    figure_key(base, p), title + suffix, "2d", available=var is not None,
+                    reason="" if var else "no " + " or ".join(cands)))
+            continue
         for base, var, title in _FIGS:
-            have = var in bundle.fit_vars or var in bundle.raw_vars
+            have = var in have_vars
+            reason = ""
+            if not have:
+                # Say every name the recipe looks for, not only the first one.
+                alts = [v for b2, vs, _t in _ROLE_FIGS for v in vs
+                        if (b2 == "moving_qubit") == (var == "state_target")]
+                reason = "no " + " / ".join([var] + alts)
             specs.append(FigureSpec(figure_key(base, p), title + suffix, "2d",
-                                    available=have, reason="" if have else f"no {var}"))
+                                    available=have, reason=reason))
     return specs
 
 
 def build(bundle, key):
     base, pname = split_key(key)
-    var = next((v for b, v, _ in _FIGS if b == base), base)
+    role = next((cands for b, cands, _t in _ROLE_FIGS if b == base), None)
+    cands = role if role else (next((v for b, v, _ in _FIGS if b == base), base),)
     # Prefer ds_fit, but the chevron arrays also live in ds_raw — use whichever has them.
-    src = None
-    for cand in (bundle.fit, bundle.raw):
-        if cand and var in cand.get("vars", {}):
-            src = cand
+    src = var = None
+    for cand_var in cands:
+        for cand in (bundle.fit, bundle.raw):
+            if cand and cand_var in cand.get("vars", {}):
+                src, var = cand, cand_var
+                break
+        if src is not None:
             break
     if src is None:
-        return FigureSpec(key=key, title="CZ Chevron", available=False, reason=f"no {var}")
-    return _chevron(bundle, key, pname, src, var, pair_index(src, pname))
+        return FigureSpec(key=key, title="CZ Chevron", available=False,
+                          reason="no " + " or ".join(cands))
+    return _chevron(bundle, key, pname, src, var, pair_index(src, pname),
+                    role_named=bool(role))
 
 
-def _chevron(bundle, key, pname, src, var, pidx):
+def _chevron(bundle, key, pname, src, var, pidx, role_named=False):
     z, dims = pslice(src, var, pidx)
     z = np.asarray(z, dtype=float)
-    time = np.asarray(src["coords"].get("time", []), dtype=float)
+    coords = src.get("coords", {})
+    xname, yname, xlabel, ylabel = next(
+        (a for a in _AXES if a[0] in dims and a[1] in dims), _AXES[0])
+    notes = []
+    # Any further axis (the role-named generation's ``prep``): one slice, said.
+    for i in range(len(dims) - 1, -1, -1):
+        d = dims[i]
+        if d in (xname, yname) or z.ndim <= 2:
+            continue
+        if z.shape[i] > 1:
+            lab = (coords.get(d) or [None])[0]
+            notes.append(f"Showing {d} = {lab} (first of {z.shape[i]}).")
+        z = np.take(z, 0, axis=i)
+        dims = dims[:i] + dims[i + 1:]
+    time = np.asarray(coords.get(xname, []), dtype=float)
     # y = the actual flux-pulse amplitude in V (amp_full); fall back to the swept
     # prefactor coord if that per-point mapping isn't stored.
     if "amp_full" in src.get("vars", {}):
         y = np.asarray(pslice(src, "amp_full", pidx)[0], dtype=float)
         ylabel = "Flux pulse amplitude [V]"
     else:
-        y = np.asarray(src["coords"].get("amplitude", []), dtype=float)
-        ylabel = "Flux amplitude prefactor"
-    if dims and dims[0] == "time":  # orient z as [y=amplitude, x=time]
+        y = np.asarray(coords.get(yname, []), dtype=float)
+    if dims and dims[0] == xname:  # orient z as [y=amplitude, x=time]
         z = z.T
     data = [pb.heatmap(time, y, z, colorbar_title=var)]
     cz_len, cz_amp = _scalar(src, "cz_len", pidx), _scalar(src, "cz_amp", pidx)
-    if None not in (cz_len, cz_amp) and np.isfinite(cz_len) and np.isfinite(cz_amp):
+    # The role-named generation reports a failed fit in fit_results; its star
+    # is then not drawn (the first generation keeps its figure unchanged).
+    failed = role_named and ((bundle.fit_results or {}).get(pname) or {}).get("success") is False
+    if failed and cz_len is not None:
+        notes.append("No fitted point: the node marked this fit as failed.")
+    if (not failed and None not in (cz_len, cz_amp)
+            and np.isfinite(cz_len) and np.isfinite(cz_amp)):
         data.append({"x": [cz_len], "y": [cz_amp], "type": "scatter", "mode": "markers",
                      "name": "fitted", "marker": {"color": pb.FIT_COLOR, "size": 14,
                                                    "symbol": "star", "line": {"color": "#fff", "width": 1}}})
-    title = "CZ Chevron — " + ("target state" if var == "state_target" else "control state")
-    layout = {"xaxis": {"title": {"text": "Pulse duration [ns]"}},
+    title = _TITLES.get(var, "CZ Chevron")
+    layout = {"xaxis": {"title": {"text": xlabel}},
               "yaxis": {"title": {"text": ylabel}},
               "hovermode": "closest", "margin": {"l": 70, "r": 30, "t": 50, "b": 50}}
+    if notes:
+        layout["annotations"] = [pb.note(notes)]
+    if role_named:
+        return FigureSpec(key=key, title=title, kind="2d",
+                          figure={"data": data, "layout": layout})
     # CONTRACT-FAITHFUL click (node 31 writes 5 fields from one (t, amp) point):
     # both CZ macro amplitudes = clicked y (V, absolute amp_full axis only) and
     # the three lengths = ceil(t/4)*4 (+20 for the flattop envelope) — the exact

@@ -72,4 +72,13 @@ assert(mount.includes('window.PlotTheme.houseData(d.data)'), 'mount must adapt d
 assert(mount.includes('_plotlyRender(inner, themedData,'), 'mount must render adapted data');
 assert(mount.includes('inner._houseSourceData = d.data'), 'mount must preserve source palette for toggles');
 assert(mount.includes('inner._houseSourceLayout = d.layout'), 'mount must preserve annotation colors');
+// audit recheck: a fit note ("fit-note", plotbuild.note) takes the ui-kit callout look,
+// OPAQUE -- its translucent grey was unreadable over a dark heatmap
+const noteOut = theme.houseLayout({ annotations: [{ name: 'fit-note', text: 'No fitted point',
+    bgcolor: 'rgba(127,127,127,0.35)', font: { size: 11 } }, { text: 'other' }] }).annotations;
+assert.notStrictEqual(noteOut[0].bgcolor, 'rgba(127,127,127,0.35)', 'the fit note is re-grounded');
+assert(!/rgba\([^)]*,\s*0?\.\d+\)/.test(noteOut[0].bgcolor), 'the fit note ground is opaque: ' + noteOut[0].bgcolor);
+assert(noteOut[0].bordercolor && noteOut[0].borderwidth === 1 && noteOut[0].font.color, 'callout strip + text colour');
+assert.strictEqual(noteOut[0].font.size, 11, 'the font size is kept');
+assert.strictEqual(noteOut[1].bgcolor, undefined, 'other annotations are untouched');
 console.log('artist colors: all passed');

@@ -840,7 +840,7 @@ window.TopoGraph = (function () {
     // twice the default size; the pairs page keeps the stones and enlarges the
     // pair edges and their text instead.
     var HL = String(opts.highlight || "");
-    var R = Math.round(CELL * (HL === "qubits" ? 0.58 : 0.30));
+    var R = Math.round(CELL * (opts.stoneScale || (HL === "qubits" ? 0.58 : 0.30)));
     // D-94: only the SPACING grows (x DIR_SPACING); stones keep their size,
     // so the gap between two stones has room for a label and an arrow.
     var SP = Math.round(CELL * DIR_SPACING * (HL === "qubits" ? 1.4 : 1));   // larger stones keep their gap
@@ -978,6 +978,8 @@ window.TopoGraph = (function () {
     var idFont = Math.round((CELL * 10.5 / 64) * 10) / 10;
     idFont = Math.max(DIR_MIN_FONT, Math.round(idFont * 0.88 * 10) / 10);   // D-98
     if (HL === "qubits") idFont = Math.round(idFont * 1.6 * 10) / 10;
+    // a larger stone (a pick map) gets its id at the same share of the stone
+    if (opts.stoneScale) idFont = Math.round(idFont * (opts.stoneScale / 0.30) * 10) / 10;
     // Chain emphasis (docs/93 F3): with opts.emphasisChain set (the page's
     // active chain filter), matching stones read as selected and the rest
     // drop to context — composes with the page highlight, purely additive.

@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.9.2 (unreleased)
+
+- One per-gate CZ fidelity per macro (InterleavedRB / IRB) on every page, with the key it came from and a mark when the pair holds two different values; an unphysical value is shown as such rather than dropped. Health and Diagnostics count the same warnings.
+- CZ macros whose flux pulse stores samples (waveform pulses) show their class, peak and length on the Pairs inspector and in the CZ gate plan; the inspector lists every field a pulse holds.
+- Pair detuning too large for volts reads in Hz on every surface; Chip Status shows the played readout RF frequency with the resonator f_01 beside it when they differ.
+
+## v1.9.1 (unreleased)
+
+- Chip maps: the Add qubit / Add pair buttons sit in a row above the map; a pair end's role letters hug the stone on an arc.
+- The environment card names a lab code folder change.
 ## v1.9.0 (unreleased)
 
 - Generate and Re-generate build a lab's coupler-only CZ layout (its own root, z-less qubits, the lab's coupler gate) beside the existing extension layout.

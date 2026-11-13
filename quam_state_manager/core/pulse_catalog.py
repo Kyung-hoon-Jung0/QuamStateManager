@@ -347,7 +347,12 @@ _SPECS: tuple[PulseSpec, ...] = (
             _AXIS_ANGLE_OPT, _ID, _DIGITAL_MARKER,
         ),
         length_mode="inferred",
-        group="Flux / Bipolar", doc="Di Carlo bipolar flux pulse with B-samples",
+        group="Flux / Bipolar",
+        # from the class's own fields and docstring (quam_builder
+        # SNZPulse): there is no B field; B/A and the gap follow t_phi_eff, and
+        # B equals A when t_phi_eff is an even integer
+        doc=("Di Carlo bipolar flux pulse: +A flat, idle gap, -A flat; tphi_eff sets "
+             "the gap and the one-sample B level beside it (B = A at an even tphi_eff)"),
     ),
     PulseSpec(
         key="GaussianFilteredSquarePulse",
@@ -1336,3 +1341,67 @@ def resolve_length(spec: PulseSpec | None, params: dict[str, Any]) -> int | None
         # resolve upstream — nothing more we can do here
         return None
     return None
+
+
+#: SM's sample convention: one stored sample per nanosecond (a 1 GSa/s port,
+#: the QM default for an output's ``sampling_rate``). A port that states
+#: ``sampling_rate`` 2e9 plays its samples 0.5 ns apart.
+DEFAULT_SAMPLE_PERIOD_NS = 1.0
+
+WAVEFORM_PEAK_LABEL = "peak of waveform"
+
+
+def sample_period_ns(sampling_rate: Any = None) -> float:
+    """Nanoseconds between two stored samples on a port with *sampling_rate* (Sa/s).
+
+    Absent, non-numeric or non-positive rates fall back to 1 GSa/s (1 ns)."""
+    if isinstance(sampling_rate, bool) or not isinstance(sampling_rate, (int, float)):
+        return DEFAULT_SAMPLE_PERIOD_NS
+    rate = float(sampling_rate)
+    if not math.isfinite(rate) or rate <= 0:
+        return DEFAULT_SAMPLE_PERIOD_NS
+    return 1e9 / rate
+
+
+def _samples(values: Any) -> list[float] | None:
+    if not isinstance(values, (list, tuple)) or not values:
+        return None
+    out = []
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v)):
+            return None
+        out.append(float(v))
+    return out
+
+
+def waveform_shape(pulse: Any, *, sampling_rate: Any = None) -> dict[str, Any] | None:
+    """Peak and length of a pulse stored as sample arrays (``waveform_I``), else None.
+
+    A WaveformPulse has no ``amplitude`` field: its amplitude is the largest
+    sample magnitude. ``peak`` keeps that sample's sign (a negative unipolar
+    pulse moves the qubit the other way); with a ``waveform_Q`` array the peak is
+    the largest |I + jQ| and carries no sign. ``length_ns`` = samples x sample
+    period of the playing port (:func:`sample_period_ns`).
+    """
+    if not isinstance(pulse, dict):
+        return None
+    wf_i = _samples(pulse.get("waveform_I"))
+    if wf_i is None:
+        return None
+    wf_q = _samples(pulse.get("waveform_Q"))
+    if wf_q is not None and len(wf_q) == len(wf_i):
+        peak = max(math.hypot(i, q) for i, q in zip(wf_i, wf_q))
+    else:
+        peak = max(wf_i, key=abs)
+    period = sample_period_ns(sampling_rate)
+    return {"peak": peak, "peak_abs": abs(peak), "samples": len(wf_i),
+            "sample_period_ns": period, "length_ns": len(wf_i) * period,
+            "label": WAVEFORM_PEAK_LABEL}
+
+
+def summarize_samples(values: Any) -> str | None:
+    """``"N samples, peak X"`` for a numeric sample array, else None."""
+    s = _samples(values)
+    if s is None:
+        return None
+    return f"{len(s)} samples, peak {max(s, key=abs):.6g}"

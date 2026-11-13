@@ -432,3 +432,24 @@ class TestUsedByNaturalOrder:
         rows = {r["path"]: r for r in list_pulses(shared)}
         assert rows["qubits.q1.resonator.operations.readout"]["used_by"] \
             == self.EXPECTED
+
+
+def test_a_sample_array_pulse_shows_its_waveform_peak_as_amplitude():
+    """Audit recheck: the Pulses list showed amplitude "-" for a WaveformPulse
+    the CZ gate plan shows as its peak. The row carries the same peak
+    (pulse_catalog.waveform_shape) and the cell labels it "peak"."""
+    from pathlib import Path
+    merged = {"qubits": {"q1": {"z": {"operations": {
+        "cz_wave": {"__class__": "quam.components.pulses.WaveformPulse",
+                    "waveform_I": [0.0, 0.05, 0.1909, 0.12, 0.0]},
+        "cz_alias": "#./cz_wave",
+        "flat": {"__class__": "quam.components.pulses.SquarePulse", "amplitude": 0.2, "length": 40}}}}}}
+    rows = {r["path"]: r for r in list_pulses(merged)}
+    wave = rows["qubits.q1.z.operations.cz_wave"]
+    assert wave["amplitude"] is None and wave["amplitude_peak"] == pytest.approx(0.1909)
+    assert rows["qubits.q1.z.operations.cz_alias"]["amplitude_peak"] == pytest.approx(0.1909)
+    assert "amplitude_peak" not in rows["qubits.q1.z.operations.flat"]
+    tpl = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+           / "_pulse_row.html").read_text(encoding="utf-8")
+    cell = tpl[tpl.index('data-amp-peak="1"') - 200: tpl.index('data-amp-peak="1"') + 300]
+    assert "r.amplitude_peak" in cell and ">peak</small>" in cell

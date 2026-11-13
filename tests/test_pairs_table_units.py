@@ -15,10 +15,10 @@ def test_a_volt_sized_detuning_renders_in_volts():
     assert text == units.qty_filter(0.0123, "pair_detuning")
 
 
-def test_a_frequency_sized_detuning_is_raw_and_flagged():
+def test_a_frequency_sized_detuning_is_in_hz_units_and_flagged():
     text, doubt = units.pair_detuning_cell(540739600.0281938)
     assert doubt
-    assert "540739600" in text
+    assert text == "540.740 MHz"
 
 
 def test_none_and_bool_are_not_flagged():

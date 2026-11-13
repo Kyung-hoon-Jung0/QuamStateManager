@@ -73,7 +73,7 @@ const PAGE = '<!DOCTYPE html><html><body>'
 
 function node(id, loc) {
   return { id: id, grid_location: loc, T1: 12e-6, T2ramsey: 15e-6, f_01: 5.1e9,
-           readout_frequency: 7.2e9, x180_amplitude: 0.12, x90_amplitude: 0.06,
+           readout_frequency: 7.2e9, readout_rf_frequency: 7.2e9, readout_rf_source: 'RF_frequency', x180_amplitude: 0.12, x90_amplitude: 0.06,
            gate_fidelity_avg: 0.998, assignment_fidelity: 0.95 };
 }
 function edge(a, b) {

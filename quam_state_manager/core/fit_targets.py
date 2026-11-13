@@ -203,3 +203,113 @@ def resolve_fit_targets(run, names=None) -> dict[str, dict[str, dict[str, Any]]]
         if rows:
             out[str(qname)] = rows
     return out
+
+
+# Fitted values a node does not write as-is but folds into a state field with a
+# known rule: (fit key, written attribute, rule). The CZ phase-compensation node
+# stores ``(old - fit) % 1`` (see the module docstring). [derived] -- checked
+# against a real run's recorded state change (old 0.0, fit 0.5953376949413515,
+# written 0.40466230505864853) and pinned by tests/test_fit_written_by_run.py.
+_FOLDED_WRITES = {
+    "control_phase_correction": ("phase_shift_control", "(old - fit) mod 1"),
+    "target_phase_correction": ("phase_shift_target", "(old - fit) mod 1"),
+}
+
+
+def _dot_path(raw: Any) -> str | None:
+    """A recorded write's path as a state dot path (``#/a/b`` / ``/quam/a/b``)."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    p = raw
+    for head in ("#/", "/quam/", "/"):
+        if p.startswith(head):
+            p = p[len(head):]
+            break
+    return p.replace("/", ".") if p else None
+
+
+def recorded_writes(folder) -> list[dict[str, Any]]:
+    """The writes a run's ``node.json`` records: ``[{"path", "old", "new"}]``.
+
+    Two spellings exist: the ``patches`` list (``{"op", "path", "value", "old"}``)
+    and ``state_changes.changes`` (``{"key", "old", "new"}``). ``state_updates.json``
+    is deliberately not read: it holds proposals, not writes.
+    """
+    from pathlib import Path
+
+    from quam_state_manager.core import safe_io
+    try:
+        node = safe_io.read_json(Path(folder) / "node.json")
+    except (OSError, ValueError):
+        return []
+    if not isinstance(node, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    patches = node.get("patches")
+    for p in patches if isinstance(patches, list) else ():
+        if isinstance(p, dict) and p.get("op", "replace") in ("replace", "add"):
+            path = _dot_path(p.get("path"))
+            if path:
+                out.append({"path": path, "old": p.get("old"), "new": p.get("value")})
+    sc = node.get("state_changes")
+    changes = sc.get("changes") if isinstance(sc, dict) else None
+    for c in changes if isinstance(changes, list) else ():
+        if isinstance(c, dict):
+            path = _dot_path(c.get("key"))
+            if path:
+                out.append({"path": path, "old": c.get("old"), "new": c.get("new")})
+    return out
+
+
+def _same(a: Any, b: Any) -> bool:
+    return _pushable(a) and _pushable(b) and math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-15)
+
+
+def written_by_run(run, names=None) -> dict[str, dict[str, dict[str, Any]]]:
+    """Fitted values the run itself recorded writing into the state.
+
+    ``{qname: {fit_key: {"path", "new", "basis"}}}`` for a fit value the run's
+    own ``node.json`` records as written: the same number under a path that
+    names this entity and this key (``basis`` "same value"), or a value folded
+    by the node's known rule (``_FOLDED_WRITES``; ``basis`` names the rule).
+    It is what the Results tab says instead of "copy-only" for such a value.
+    ``names`` as in :func:`resolve_fit_targets`: a path the loaded chip cannot
+    spell is left out rather than guessed.
+    """
+    folder = _attr(run, "folder_path", None)
+    if not folder:
+        return {}
+    writes = recorded_writes(folder)
+    if not writes:
+        return {}
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for qname, qres in (_attr(run, "fit_results", None) or {}).items():
+        if not isinstance(qres, dict):
+            continue
+        mine = [w for w in writes if str(qname) in w["path"].split(".")]
+        rows: dict[str, dict[str, Any]] = {}
+        for fit_key, val in qres.items():
+            if not _pushable(val):
+                continue
+            hit = None
+            folded = _FOLDED_WRITES.get(fit_key)
+            for w in mine:
+                segs = w["path"].split(".")
+                if fit_key in segs and _same(w["new"], val):
+                    hit = (w, "same value")
+                    break
+                if (folded and segs[-1] == folded[0] and _pushable(w["old"])
+                        and _same(w["new"], (w["old"] - val) % 1.0)):
+                    hit = (w, folded[1])
+                    break
+            if hit is None:
+                continue
+            path = hit[0]["path"]
+            if names is not None and not names.identity:
+                path = names.target(path)
+                if path is None:
+                    continue
+            rows[fit_key] = {"path": path, "new": hit[0]["new"], "basis": hit[1]}
+        if rows:
+            out[str(qname)] = rows
+    return out

@@ -121,7 +121,10 @@ def summarize(findings: list[Finding]) -> dict:
         # stops. `total` still counts it and the page still lists it.
         if getattr(f, "acknowledged", None):
             out["acknowledged"] += 1
-        elif getattr(f, "advisory", False):
+        elif getattr(f, "advisory", False) or f.severity == "recommendation":
+            # a "recommendation"-severity finding is an optional nudge too:
+            # counted with the advisories, never as a warning (the page's
+            # pills, this summary and the Chip Status Health tile agree)
             out["advisory"] += 1
         elif f.severity in out:
             out[f.severity] += 1
@@ -237,6 +240,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("waveforms", [
         ("error", "Sample within DAC range", "Every synthesized pulse sample stays inside its output's range (MW ±1, LF direct ±0.5 V / amplified ±2.5 V) — a sample outside it makes generate_config() reject the whole config."),
         ("error", "Valid pulse parameters", "Pulse parameters produce a real waveform (e.g. not sigma = 0 or a DRAG anharmonicity of 0)."),
+        ("error", "Pulse length QOP accepts", "A channel operation's config length (an inferred one as its class rounds it) is a multiple of 4 ns and at least 4 ns (16 ns before QOP 3.3; 4 assumed when the chip declares no QOP version) — otherwise QOP refuses every program on the chip although generate_config() passes."),
     ]),
     ("references", [
         ("error", "Pointers resolve", "Every QUAM JSON pointer (#/, #../, #./) resolves to a real target."),
@@ -425,6 +429,13 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
                     else _waveform_findings(store))
 
     findings.extend(_gate_pulse_id_findings(root))
+    findings.extend(_gate_by_name_missing_findings(root))
+    # one pulse length, one row: the QOP-aware waveform_length row (error)
+    # replaces the plain spec row on the same field
+    by_len = {f.jump_path for f in findings if f.category == "waveform_length"}
+    if by_len:
+        findings = [f for f in findings
+                    if not (f.category == "value_spec_length" and f.location in by_len)]
     return _ordered(findings)
 
 
@@ -444,6 +455,26 @@ def _gate_pulse_id_findings(root):
         fix={"action": "fill_gate_ids", "label": f"Fill {n} ids",
              "edits": fill_edits(root),
              "confirm": f"Stage {n} pulse IDs using their operation keys?"})]
+
+
+def _gate_by_name_missing_findings(root):
+    """A pair-gate slot that plays an operation BY NAME (its inline pulse's
+    ``id``, or a plain name) on a channel that has no operation of that name:
+    quam_builder's CZGate plays ``z.play(get_pulse_name(pulse))``, so the
+    gate's apply() fails although generate_config() passes."""
+    from .gate_pulse_ids import named_slot_missing
+    try:
+        missing = named_slot_missing(root)
+    except Exception:  # noqa: BLE001 -- a lint never crashes
+        return []
+    return [Finding(
+        severity="warning", category="cz.gate_plays_missing_name",
+        location=holder,
+        message=f"gate slot plays operation {name!r} by name, which does not exist",
+        detail=("No operation of that name on " + ", ".join(chans)
+                + ": the gate plays the slot by name, so running it fails "
+                "(generate_config() still passes)."),
+        jump_path=holder) for holder, name, chans in missing]
 
 
 def _spec_findings(root: dict, store=None) -> list[Finding]:
@@ -1773,7 +1804,8 @@ def _is_constant_pulse(row: dict) -> bool:
     return qc.endswith("SquarePulse") or qc.endswith("SquareReadoutPulse")
 
 
-def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
+def _pulse_peak(store, row: dict, payload: dict | None = None
+                ) -> tuple[float | None, str | None]:
     """``(peak_abs_sample, hard_error)``. ``peak`` None ⇒ not evaluable (skip).
 
     Constant (Square / SquareReadout) pulses: the config sample IS the resolved
@@ -1790,10 +1822,11 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
             return abs(float(amp)), None
         return None, None
 
-    try:
-        payload = waveform_synth.synth_for_operation(store, row["path"])
-    except Exception:  # pragma: no cover - synth must never crash a lint
-        return None, None
+    if payload is None:
+        try:
+            payload = waveform_synth.synth_for_operation(store, row["path"])
+        except Exception:  # pragma: no cover - synth must never crash a lint
+            return None, None
 
     if payload.get("class_match") == "leaf":
         # The class matched the catalog by NAME only — a foreign module path
@@ -1893,12 +1926,34 @@ def _waveform_findings_ex(store, only: tuple[str, str] | None = None
         return False, []
 
     findings: list[Finding] = []
+    qop = spec_constraints.qop_version_of(root)
     for row in rows:
         if row.get("is_alias"):
             continue  # the alias target row is checked on its own
         path = row.get("path") or ""
 
-        peak, hard_error = _pulse_peak(store, row)
+        try:
+            payload = waveform_synth.synth_for_operation(store, path)
+        except Exception:  # pragma: no cover - synth must never crash a lint
+            payload = None
+        # QOP refuses EVERY program when a config pulse length is not
+        # a multiple of 4 ns or is under its minimum, although generate_config()
+        # passes -- the same rule the write doors refuse by
+        # (spec_constraints.pulse_length_problem); an inferred length is
+        # judged as its class rounds it
+        too = (spec_constraints.pulse_length_problem(
+            waveform_synth.config_length(payload), qop) if payload else None)
+        if too and _reaches_config(root, path):
+            body = _get_by_dotpath(root, path)
+            stores_len = isinstance(body, dict) and "length" in body
+            findings.append(Finding(
+                "error", "waveform_length", path,
+                f"pulse {too}",
+                detail=f"config length {waveform_synth.config_length(payload)!r}",
+                jump_path=f"{path}.length" if stores_len else path,
+            ))
+
+        peak, hard_error = _pulse_peak(store, row, payload)
         if hard_error:
             if _reaches_config(root, path):
                 findings.append(Finding(
@@ -2008,7 +2063,10 @@ def _waveform_findings_cached(store) -> list[Finding]:
         return prev[2]                  # the same object: nothing moved
     per: dict = {}
     dirty: set | None = None          # None = everything
-    if prev is not None and prev[0][0] == seq_now[0]:
+    # the pulse-length rule depends on the chip's QOP version, which no
+    # owner's closure reaches: a change to it recomputes every owner
+    qop = spec_constraints.qop_version_of(root)
+    if prev is not None and prev[0][0] == seq_now[0] and r.memo.get("wf_qop", qop) == qop:
         ev = store_revs.changes_since(store, prev[0][1])
         paths = store_revs.plain_paths(ev) if ev is not None else None
         if paths is not None:
@@ -2033,6 +2091,7 @@ def _waveform_findings_cached(store) -> list[Finding]:
         # (the cold behaviour, kept exactly)
         out = []
     r.memo["wf"] = (seq_now, per, out)
+    r.memo["wf_qop"] = qop
     return out
 
 

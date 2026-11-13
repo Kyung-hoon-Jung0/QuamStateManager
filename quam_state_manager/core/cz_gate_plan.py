@@ -35,8 +35,14 @@ import re
 import numpy as np
 
 from quam_state_manager.core import value_history, cz_flux_math
+from quam_state_manager.core.pulse_catalog import waveform_shape
 
 QUAD_LABEL = "quad-term estimate"
+#: validities that put an answer outside where its conversion was measured
+OUT_OF_RANGE = ("outside the quadratic range", "beyond the fitted arc's measured range",
+                "quad-term extrapolated estimate")
+#: two tiers disagreeing by more than this are both shown (B)
+TIER_DISAGREE_HZ = 1e6
 MODEL_LABEL = "lab flux model"
 OTHER_SPOT_LABEL = "lab flux model, about the other sweet spot [derived]"
 
@@ -118,6 +124,10 @@ def model_of(qubit):
     for k in ("model_r2", "a_half_v", "f_opposite_hz", "quad_small_hz_per_v2"):
         m[k] = number(raw.get(k))
     m["created_at"] = raw.get("created_at") if isinstance(raw.get("created_at"), str) else None
+    # provenance only (the node that wrote the fit and its run index), never a number used
+    for k in ("node", "snapshot"):
+        v = raw.get(k)
+        m[k] = str(v) if isinstance(v, (str, int)) and not isinstance(v, bool) and str(v) not in ("", "0") else None
     # the lab writes f_opposite_hz = null when the opposite spot is at or below 0 Hz
     m["f_opposite_stored"] = "f_opposite_hz" in raw
     if m["phi0_v"] <= 0 or not 0 <= m["d"] < 1 or m["amp_min_v"] >= m["amp_max_v"]:
@@ -369,7 +379,9 @@ class Conversion:
         res = {"amplitude_v": a, "frequency_hz": None, "kind": None, "quad_hz": None,
                "model_hz": None, "error_hz": None, "validity": None, "reason": None}
         if self.f01 is None or a is None:
-            res["reason"] = "f_01 or the operation amplitude is missing"
+            res["reason"] = ("f_01 and the operation amplitude are missing" if self.f01 is None and a is None
+                             else "f_01 is missing" if self.f01 is None
+                             else "the operation amplitude is missing")
             return res
         if a == 0:
             res.update(frequency_hz=self.f01, kind="idle f_01", validity="idle")
@@ -459,9 +471,52 @@ class Conversion:
         return {"frequency_hz": clean(main), "quad_hz": clean(quad),
                 "model_hz": clean(model) if model is not None else None}
 
+    def provenance(self, kind=None):
+        """Which conversion a frequency came from, in words (B: model provenance).
+
+        *kind* is a point's ``kind``; None names the tier the plan uses by default."""
+        m = self.model
+        uses_model = (kind == self.model_kind) if kind is not None else (
+            self.anchor is not None and self.rejection is None)
+        if uses_model and m is not None:
+            run = (f"run #{m['snapshot']}" if m.get("snapshot") else
+                   f"stored {m['created_at']}" if m.get("created_at") else "run unknown")
+            node = f"node {m['node']}, " if m.get("node") else ""
+            return f"fitted flux model ({node}{run})"
+        return "quad estimate from f_01 and freq_vs_flux_01_quad_term"
+
+    def parking(self):
+        """The parking offset the pulse amplitude rides on (A: the voltage axis's zero).
+
+        Both lab nodes that write the conversion measure with the pulse played on top of
+        the parking (initialize_qpu, then z.play) and move joint_offset onto the fitted
+        vertex (17a: ``q.z.joint_offset += flux_offset``; 20c anchors a = 0 at the parking).
+        So f_01 and the quad term are about the parking point and V is the pulse amplitude
+        relative to it: the offset is shown, never added [derived; numerical check in
+        tests/test_cz_plan_d3_d7.py]. That holds only when the parking IS the vertex the
+        quad term was fitted about, so the note says it assumes so, and says the quad
+        tier ignores the offset when the parking is another flux point or nothing shows
+        the parking is a sweet spot (wording only: no number changes)."""
+        z = self.qubit.get("z") or {}
+        point = z.get("flux_point")
+        field = {"min": "min_offset", "independent": "independent_offset"}.get(point, "joint_offset")
+        volts = number(z.get(field))
+        note = ("the pulse amplitude is measured from the parking point; the parking offset is not "
+                "added. This assumes the qubit is parked at the vertex the quad term was fitted about")
+        off_vertex = None
+        if point in ("min", "independent"):
+            off_vertex = (f"the qubit parks at z.{field} (flux_point {point}), not at the joint_offset "
+                          "vertex the quad term was fitted about")
+        elif self.frame.get("sign") is None:
+            off_vertex = f"nothing shows the parking is a sweet spot ({self.frame.get('reason')})"
+        if off_vertex:
+            note += "; " + off_vertex + ": the quad tier ignores any distance between the two"
+        return {"field": "z." + field, "volts": volts, "note": note, "off_vertex": off_vertex is not None}
+
     def summary(self):
         m = self.model
         return {"f01_hz": self.f01, "quad_hz_per_v2": self.quad_raw, "sign": self.sign,
+                "provenance": self.provenance(), "parking": self.parking(),
                 "frame": self.frame, "notes": self.notes, "model_kind": self.model_kind,
                 "model_rejection": self.rejection, "curvature": self.curvature, "range": self.range,
                 "model": ({"created_at": m["created_at"], "r2": m["model_r2"],
@@ -523,6 +578,11 @@ def chip_map(rows, conversions, op_name=None):
     first CZ operation. A refused frequency is listed, never drawn."""
     qubits = {}
     for path, conv in conversions.items():
+        # a column is a qubit of the chip: a pair member whose pointer dangles is held
+        # at the pair's own field (``qubit_pairs.<p>.qubit_target``) and is no column
+        # (it drew a stray "qubit_target" header past the last real one)
+        if not path.startswith("qubits."):
+            continue
         name = path.split(".")[-1]
         q = conv.qubit or {}
         defects, safe = tls_bands(q), safe_intervals(q)
@@ -698,7 +758,14 @@ def _amplitude_view(doc, line):
         return
     played = line.get("played_pulse_path") or path
     levels = line["lobes"] or [{"name": "first lobe", "amplitude_v": amplitude}]
-    if len(levels) > 1:
+    leaf_note = None
+    if line.get("amplitude_source"):
+        # the amplitude IS a stored sample (the waveform's peak): volts on an LF port as it stands
+        channel = channel_of(doc, played + ".amplitude")
+        physical = channel is not None and _port_kind(doc, channel)[0] == "lf"
+        values = [amplitude]
+        levels = [{"name": line["amplitude_source"], "amplitude_v": amplitude}]
+    elif len(levels) > 1:
         channel = channel_of(doc, played + ".amplitude")
         rotated = number((resolved_tree(doc, path) or {}).get("axis_angle"))
         physical = channel is not None and _port_kind(doc, channel)[0] == "lf" and not rotated
@@ -707,13 +774,99 @@ def _amplitude_view(doc, line):
         annotation = amp_annotation(doc, played + ".amplitude", amplitude)
         physical = annotation is not None and annotation["kind"] == "lf"
         values = [amplitude * (annotation["peak"] if physical else 1.0)]
+        if not physical:
+            leaf_note = _leaf_unit_peak(doc, played)
+            if leaf_note:
+                physical, values = True, [amplitude]
     fmt = signed_volts if physical else _signed_stored
     line["amp_text"] = fmt(values[0])
     line["amp_sort"] = abs(values[0])
     line["amp_title"] = path + "; " + "; ".join(
         level["name"] + " " + fmt(value) for level, value in zip(levels, values))
+    if leaf_note:
+        line["amp_title"] += "; " + leaf_note
     if not physical:
         line["amp_title"] += "; stored amplitude: LF port or waveform peak cannot be resolved"
+
+
+def _leaf_unit_peak(doc, played):
+    """A note when *played* is a lab class known only by its leaf name whose peak IS its
+    amplitude on an LF port, else None.
+
+    The strict peak lookup (physical_units.pulse_peak) refuses a class matched by name
+    only. The CZ plan already draws such a pulse from that same transcription (the
+    frequency-in-time figure), so where the transcription's unit peak is exactly +1 on a
+    real waveform the amplitude reads as volts as it stands; any other peak stays stored.
+    """
+    from .physical_units import pulse_peak, channel_of, _port_kind
+    channel = channel_of(doc, played + ".amplitude")
+    if channel is None or _port_kind(doc, channel)[0] != "lf":
+        return None
+    pk = pulse_peak(doc, played + ".amplitude", allow_leaf=True)
+    if not pk.get("leaf") or pk["ratio"] is None or not pk["real"] or pk["sign"] * pk["ratio"] != 1.0:
+        return None
+    cls = str(current(doc, played + ".__class__", "")).split(".")[-1]
+    return (f"volts: the peak equals the amplitude in SM's transcription of {cls}"
+            " (matched by class name; the waveform the frequency-in-time figure draws)")
+
+
+#: QuamMacro's default ``duration``: a runtime property, not a stored number
+INFERRED_DURATION = "#./inferred_duration"
+
+
+def pulse_length_ns(doc, pulse_path, slot="flux_pulse_qubit"):
+    """``(length in ns, how)`` of the pulse at *pulse_path*, else ``(None, why)``.
+
+    The pulse's ``length`` read the way the waveform preview reads it: a stored number,
+    the class's ``inferred_length`` (pulse_catalog.resolve_length, the transcription the
+    preview draws with), or a sample array's own count. A quam pulse length is in ns:
+    quam_builder's CZGate.inferred_duration converts it with ``* 1e-9`` to seconds.
+    """
+    from .pulse_catalog import infer_spec_ex, resolve_length
+    from .waveform_synth import resolved_lab_pulse
+    pulse = resolved_lab_pulse(doc, pulse_path) if pulse_path else None
+    if not isinstance(pulse, dict):
+        return None, "pulse not found"
+    spec, _how = infer_spec_ex(pulse, context_slot=slot)
+    if spec is None:
+        return None, "pulse class unknown"
+    n = resolve_length(spec, {k: v for k, v in pulse.items() if k != "__class__"})
+    if n is None or isinstance(n, bool) or n <= 0:
+        return None, "pulse length cannot be resolved"
+    raw = pulse.get("length")
+    if spec.length_mode == "derived":
+        how = "waveform samples"
+    elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        how = "stored length"
+    else:
+        how = "inferred_length of " + spec.key
+    return int(n), how
+
+
+def inferred_gate_duration(doc, lines, coupler=None):
+    """``(ns, note)`` for a CZGate macro whose ``duration`` is ``#./inferred_duration``.
+
+    quam_builder's CZGate.inferred_duration is the longest pulse the gate plays: the
+    moving qubit's flux pulse, each spectator pulse and the coupler pulse, by ``length``
+    (two_qubit_gates.py, CZGate.inferred_duration). One unresolved length leaves the
+    duration unknown, ``(None, None)``: a maximum over a partial set could understate it.
+    """
+    played = [(ln["name"], ln["pulse_path"], "flux_pulse_qubit") for ln in lines if ln.get("pulse_field")]
+    if coupler:
+        if coupler.get("refusal"):
+            return None, None
+        played.append((coupler["name"], coupler["pulse_path"], "coupler_flux_pulse"))
+    parts = []
+    for name, path, slot in played:
+        n, how = pulse_length_ns(doc, path, slot)
+        if n is None:
+            return None, None
+        parts.append((n, f"{name} {path.split('.')[-1]} {n:g} ns ({how})"))
+    if not parts:
+        return None, None
+    ns = max(n for n, _ in parts)
+    return ns, (f"{ns:g} ns inferred the way the gate infers it, the longest pulse it plays: "
+                + "; ".join(text for _, text in parts))
 
 
 def _pulse_label(doc, path, pulse):
@@ -730,6 +883,147 @@ def _pulse_label(doc, path, pulse):
         holder = read(doc, path).get("holder_path") or ""
         return holder.split(".")[-1] or None
     return pulse if isinstance(pulse, str) and pulse and not pulse.startswith("#") else None
+
+
+#: a gate slot on a pair macro: the pulse the gate hands to a channel by name
+SLOT_PATH = re.compile(r"^(qubit_pairs\.([^.]+)\.macros\.([^.]+))\."
+                       r"(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse)$")
+
+
+def _raw_at(doc, path):
+    """The value stored at *path*, no pointer followed (None when absent)."""
+    node = doc
+    for seg in path.split("."):
+        if not isinstance(node, dict) or seg not in node:
+            return None
+        node = node[seg]
+    return node
+
+
+def slot_played_op(doc, slot_path):
+    """Dot path of the channel op a macro slot's OWN pulse copy is played as, else None.
+
+    quam_builder 0.6.0 ``two_qubit_gates.py``: ``get_pulse_name`` returns
+    ``pulse.id`` when it is set (l.19-24); ``CZGate.flux_pulse_qubit_label`` hands a
+    pulse object to it (l.188-197) and ``apply()`` calls
+    ``moving_qubit.z.play(self.flux_pulse_qubit_label, ...)`` (l.249-250); the
+    coupler slot is the same through ``coupler_flux_pulse_label`` (l.200-206,
+    l.257). quam's ``Channel.play`` then looks the NAME up in its own
+    ``operations`` (quam ``components/channels.py`` l.436, l.490). So a slot that
+    stores a whole pulse dict with an ``id`` plays the channel op of that name,
+    never the dict itself.
+
+    None when the slot is a pointer or a label string (those name the op directly
+    and draw as before), when the copy has no id, when the playing channel or the
+    named op is missing, or when the named op resolves back to the slot itself.
+    The playing qubit follows :func:`operations`: ``moving_qubit`` for a CZGate,
+    the control for a two-flux gate's ``flux_pulse_qubit``, the target for its
+    ``flux_pulse_target`` [derived from the gate classes, as operations() does].
+    """
+    m = SLOT_PATH.match(slot_path or "")
+    if not m:
+        return None
+    macro_path, slot = m.group(1), m.group(4)
+    pair_path = "qubit_pairs." + m.group(2)
+    if not isinstance(_raw_at(doc, slot_path), dict):
+        return None
+    label = current(doc, slot_path + ".id")
+    if not isinstance(label, str) or not label or label.startswith("#"):
+        return None
+    if slot == "coupler_flux_pulse":
+        host = read(doc, pair_path + ".coupler").get("holder_path")
+        ops = host + ".operations." + label if host else None
+    else:
+        macro = current(doc, macro_path, {})
+        if slot == "flux_pulse_target":
+            role = "target"
+        elif isinstance(macro, dict) and "flux_pulse_target" in macro:
+            role = "control"
+        else:
+            role = current(doc, pair_path + ".moving_qubit")
+        if role not in ("control", "target"):
+            return None
+        qubit = read(doc, pair_path + ".qubit_" + role).get("holder_path")
+        ops = qubit + ".z.operations." + label if qubit else None
+    if not ops:
+        return None
+    target = read(doc, ops)
+    if not target.get("has_current") or not isinstance(target.get("current"), dict):
+        return None
+    holder = target.get("holder_path") or ops
+    return None if holder == slot_path else holder
+
+
+#: fields that name or place a pulse, never shape its waveform
+_NON_SHAPE_FIELDS = ("id", "length", "digital_marker", "__class__")
+
+
+def slot_copy_differences(doc, copy_path, played_path):
+    """``[(what, copy value, played value)]`` where the macro's copy and the op it
+    plays differ: the class, the length in ns (read as :func:`pulse_length_ns`
+    reads it) and every waveform field, each resolved the way the drawing reads
+    it. Empty when they agree [derived]."""
+    from .waveform_synth import resolved_lab_pulse
+    a = resolved_lab_pulse(doc, copy_path) or {}
+    b = resolved_lab_pulse(doc, played_path) or {}
+    out = []
+    ca, cb = (str(x.get("__class__", "")).split(".")[-1] for x in (a, b))
+    if ca != cb:
+        out.append(("class", ca or "?", cb or "?"))
+    la, lb = pulse_length_ns(doc, copy_path)[0], pulse_length_ns(doc, played_path)[0]
+    if la != lb:
+        out.append(("length", f"{la} ns" if la is not None else "unknown",
+                    f"{lb} ns" if lb is not None else "unknown"))
+    for key in sorted(set(a) | set(b)):
+        if key in _NON_SHAPE_FIELDS:
+            continue
+        va, vb = a.get(key), b.get(key)
+        if va != vb:
+            out.append((key, va, vb))
+    return out
+
+
+def slot_copy_note(doc, copy_path, played_path, skip=()):
+    """One sentence naming both pulses when the copy is not what plays, else None.
+    *skip* leaves out differences another note already states."""
+    diffs = [d for d in slot_copy_differences(doc, copy_path, played_path) if d[0] not in skip]
+    if not diffs:
+        return None
+    return ("the gate plays " + played_path + " (named by this copy's id), not the macro's own copy "
+            + copy_path + ": " + "; ".join(f"{what} {p} played vs {c} in the copy" for what, c, p in diffs))
+
+
+#: an edge sample above this fraction of the peak is reported [derived, product rule]
+EDGE_STEP_FRACTION = 0.10
+#: an edge this close to the peak is a deliberate step (a square or flat-top edge), not
+#: a shaped edge cut short [derived]
+EDGE_SQUARE_FRACTION = 0.90
+
+
+def edge_step_note(samples):
+    """A note when a SHAPED pulse starts or ends far from 0 V, else None.
+
+    The output idles at 0 V before and after the pulse, so a first or last sample
+    of e.g. 46 mV on a 200 mV pulse is a step at both edges (a Gaussian edge cut
+    short by too little padding). A square edge (first/last sample at least 90 %
+    of the peak) is the pulse's own shape and is not reported [derived].
+    """
+    vals = [float(v) for v in (samples or []) if isinstance(v, (int, float)) and math.isfinite(v)]
+    if len(vals) < 2:
+        return None
+    peak = max(abs(v) for v in vals)
+    if peak <= 0:
+        return None
+    first, last = vals[0], vals[-1]
+    frac = max(abs(first), abs(last)) / peak
+    if frac <= EDGE_STEP_FRACTION or frac >= EDGE_SQUARE_FRACTION:
+        return None
+
+    def mv(v):
+        return f"{v * 1e3:+.1f} mV"
+    return (f"the pulse starts at {mv(first)} and ends at {mv(last)} ({frac:.0%} of the "
+            f"{peak * 1e3:.1f} mV peak): the output steps from 0 V at the edges; "
+            "more padding brings the edges down")
 
 
 def _coupler_line(doc, pair_path, macro_path, notes):
@@ -907,6 +1201,14 @@ def operations(doc, conversions=None, unavailable=None):
         rows.pair_members[pair_name] = (roles["control"]["path"], roles["target"]["path"])
         pair_refusal = ("pair roles resolve to the same qubit" if roles["control"]["path"]
                         and roles["control"]["path"] == roles["target"]["path"] else None)
+        if pair_refusal is None:
+            # a role pointer that names no qubit: say that, not "f_01 is missing"
+            for role in ("control", "target"):
+                if not isinstance(current(doc, roles[role]["path"], None) if roles[role]["path"] else None, dict):
+                    raw = current(doc, pp + ".qubit_" + role, None)
+                    pair_refusal = (f"qubit_{role} points at {raw!s}, which names no qubit on this chip"
+                                    if raw is not None else f"qubit_{role} is not set")
+                    break
         plan = resolved_tree(doc, pp + ".extras.cz_plan")
         moving = current(doc, pp + ".moving_qubit")
         for name in mapping(pp + ".macros"):
@@ -985,6 +1287,15 @@ def operations(doc, conversions=None, unavailable=None):
                     pulse_path = read(doc, pulse_path)["holder_path"]
                 # the path the channel plays (the label on the qubit), else the resolved holder
                 played_pulse_path = info["path"] + ".z.operations." + label if isinstance(label, str) else pulse_path
+                # a macro that stores its own pulse copy plays the op its id
+                # names; the plan draws that op, and says so when the copy differs
+                # (the amplitude has its own note below)
+                slot_path = path + "." + field if field else None
+                if (slot_path and not missing_pulse and isinstance(label, str) and pulse_path
+                        and pulse_path != slot_path and isinstance(_raw_at(doc, slot_path), dict)):
+                    copy_note = slot_copy_note(doc, slot_path, pulse_path, skip=("amplitude",))
+                    if copy_note:
+                        notes.append(f"{info['name']}: {copy_note}")
                 amp_path = pulse_path + ".amplitude" if pulse_path else None
                 if amp_path:
                     amp_path = read(doc, amp_path).get("holder_path") or amp_path
@@ -993,9 +1304,16 @@ def operations(doc, conversions=None, unavailable=None):
                     amp_path = None
                     notes.append(missing_pulse)
                 amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
-                if amp_path and amp is None and not refusal:
-                    notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
+                shape = None
+                if amp_path and amp is None and not refusal:
+                    # a sample-array pulse has no amplitude field: its peak sample is the amplitude
+                    shape = waveform_shape(resolved_tree(doc, pulse_path) if pulse_path else None,
+                                           sampling_rate=current(doc, info["path"] + ".z.opx_output.sampling_rate"))
+                    if shape is not None:
+                        amp = shape["peak"]
+                    else:
+                        notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
@@ -1010,6 +1328,10 @@ def operations(doc, conversions=None, unavailable=None):
                               "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
                                               if pulse_path and isinstance(pulse, dict) else None),
                               "amplitude_v": amp, "point": pt})
+                if shape:
+                    # only a sample-array pulse carries these; every other line keeps its shape
+                    lines[-1].update(amplitude_source=shape["label"], waveform_samples=shape["samples"],
+                                     waveform_length_ns=shape["length_ns"])
             for ln in lines:
                 ln["lobes"] = []
                 if not ln["pulse_field"] or ln["refusal"]:
@@ -1033,12 +1355,43 @@ def operations(doc, conversions=None, unavailable=None):
                     ln["point"] = {"frequency_hz": None, "reason": str(exc)}
             for ln in lines:
                 _amplitude_view(doc, ln)
+            two_flux_lengths = None
             if kind == "two-flux" and raw_duration is None:
                 from .waveform_synth import lab_waveform, resolved_lab_pulse
                 samples = [lab_waveform(resolved_lab_pulse(doc, ln["pulse_path"])) for ln in lines]
                 if all(s is not None for s in samples):
                     duration_ns = max(map(len, samples))
                     duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
+                    line_lengths = {ln["role"]: len(s) for ln, s in zip(lines, samples)}
+                    for ln, s in zip(lines, samples):
+                        ln["played_length_ns"] = len(s)
+                    # D7: the two-flux gate inherits CZGate.inferred_duration, which reads
+                    # the flux_pulse_qubit label (the CONTROL pulse in a two-flux gate) on
+                    # the pair's moving qubit: the macro's own duration is the control
+                    # pulse's length, never the target's [derived from the two classes]
+                    macro_duration = line_lengths.get("control") if moving == "control" else None
+                    two_flux_lengths = {"control": line_lengths.get("control"), "target": line_lengths.get("target"),
+                                        "macro_duration_ns": macro_duration}
+                    if len(set(line_lengths.values())) > 1:
+                        names = {ln["role"]: ln["name"] for ln in lines}
+                        mismatch = (f"control {names['control']} {line_lengths['control']} ns vs target "
+                                    f"{names['target']} {line_lengths['target']} ns: the two pulses differ in "
+                                    "length, so their lobes are misaligned")
+                        notes.append(mismatch)
+                        two_flux_lengths["mismatch"] = mismatch
+                    duration_note = (f"{duration_ns:g} ns played span (control {line_lengths['control']:g} ns, "
+                                     f"target {line_lengths['target']:g} ns, flat length, edges and padding); "
+                                     + (f"the macro's own duration is {macro_duration:g} ns (the control pulse)"
+                                        if macro_duration is not None else
+                                        "the macro's own duration reads the control pulse label on the moving "
+                                        "qubit, which is not the control here"))
+            if raw_duration is None and duration_ns is None:
+                # a sample-array pulse states its own length: samples x sample period
+                lens = [ln["waveform_length_ns"] for ln in lines
+                        if ln.get("moves") and ln.get("waveform_length_ns") is not None]
+                if lens:
+                    duration_ns = max(lens)
+                    duration_note = f"{duration_ns:g} ns from the stored waveform samples"
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
@@ -1058,7 +1411,19 @@ def operations(doc, conversions=None, unavailable=None):
                                            resonances(*frequencies, *alphas))
             known = [r for r in lobe_resonances if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
+            if nearest is not None:
+                # one phrase for table, card and the Pulses hover (cz_flux_math)
+                movers = [ln["role"] for ln in lines if ln.get("moves")]
+                nearest = {**nearest, "words": cz_flux_math.resonance_offset_words(
+                    nearest["name"], nearest["distance_hz"], movers[0] if len(movers) == 1 else None)}
             coupler = _coupler_line(doc, pp, path, notes)
+            if (duration_ns is None and raw_duration is None and cls == "CZGate"
+                    and kind in ("single mover", "single mover + spectator")
+                    and macro.get("duration", INFERRED_DURATION) == INFERRED_DURATION
+                    and not any(ln["refusal"] for ln in lines)):
+                inferred, inferred_note = inferred_gate_duration(doc, lines, coupler)
+                if inferred is not None:
+                    duration_ns, duration_note = inferred, inferred_note
             if coupler:
                 shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown: " + coupler.get("amp_reason", "")
                 coupler_note = "a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift"
@@ -1098,6 +1463,7 @@ def operations(doc, conversions=None, unavailable=None):
                 "idle_detuning_hz": None if pair_refusal else (lambda a, b: a - b if a is not None and b is not None else None)(
                     number(roles["control"]["qubit"].get("f_01")), number(roles["target"]["qubit"].get("f_01"))),
                 "duration_ns": duration_ns, "duration_note": duration_note,
+                **({"two_flux_lengths": two_flux_lengths} if two_flux_lengths else {}),
                 "phases": {k: number(current(doc, path + ".phase_shift_" + k)) for k in ("control", "target")},
                 "fidelity": _fidelity(resolved_tree(doc, path + ".fidelity")),
                 "plan": None if pair_refusal else _plan(plan, lines, duration_ns),
@@ -1163,6 +1529,17 @@ def time_panel(row, trajectory, summaries):
         series.append([(t["frequency_hz"][i] if i < len(t["frequency_hz"]) else
                         None if t.get("playback_known") is False else idle) if t else
                        None if ln["moves"] else idle for i in range(n)])
+    # D5: the signed commanded Z amplitude of each moving line, sample for sample the
+    # waveform its frequency trace was computed from (0 V at idle after the pulse when
+    # the playback is known); a line that does not move has no trace (None).
+    amplitude = []
+    for ln, t in zip(row["lines"], trajectory):
+        if not t or not ln["moves"] or t.get("amplitude_v") is None:
+            amplitude.append(None)
+            continue
+        samples = list(t["amplitude_v"])
+        amplitude.append([samples[i] if i < len(samples) else
+                          None if t.get("playback_known") is False else 0.0 for i in range(n)])
     delta = [(fc - ft) / 1e6 if fc is not None and ft is not None else None
              for fc, ft in zip(*series)] if series else []
     levels = cz_flux_math.resonances(None, None,
@@ -1181,6 +1558,7 @@ def time_panel(row, trajectory, summaries):
         if count:
             dwell.append(f"{level['name']} {count} ns")
     return {"time_ns": list(range(n)), "series_hz": series, "detuning_mhz": delta,
+            "amplitude_v": amplitude,
             "dwell": "; ".join(dwell), "levels": displayed_levels}
 
 
@@ -1213,6 +1591,24 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
                          + answer
                          + f" | stored {mv(stored)} | stored minus required {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
+    conv = conversions.get(mover["qubit_path"]) if mover else None
+    if result.get("ok") and conv is not None:
+        # B: say which conversion answered, flag an out-of-range answer, and show both tiers
+        # when they disagree by more than 1 MHz at the required amplitude
+        used = result.get("tier")
+        result["conversion"] = (conv.provenance(conv.model_kind) if used == "model" else
+                                conv.provenance("quad") if used == "quad" else
+                                conv.provenance(conv.point(required).get("kind")))
+        result["validity_warning"] = result.get("validity") in OUT_OF_RANGE
+        both = conv.point(required)
+        if both.get("quad_hz") is not None and both.get("model_hz") is not None                 and abs(both["quad_hz"] - both["model_hz"]) > TIER_DISAGREE_HZ:
+            result["tiers_disagree"] = (f"at this amplitude the quad estimate gives {both['quad_hz'] / 1e9:.4f} GHz "
+                                        f"and the fitted model {both['model_hz'] / 1e9:.4f} GHz")
+        result["summary"] += " | " + result["conversion"]
+        if result["validity_warning"]:
+            result["summary"] += " | " + result["validity"]
+        if result.get("tiers_disagree"):
+            result["summary"] += " | " + result["tiers_disagree"]
     # The stored point may sit on a different resonance than the one the target names
     # (e.g. on iSWAP while aiming at |11>-|20>): an amplitude difference alone hides that.
     aimed = [r for r in result.get("distances") or [] if r.get("distance_hz") is not None]
@@ -1346,11 +1742,21 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                 validity = ("quad-term extrapolated estimate" if point.get("quad_kind") == "quad-term extrapolated estimate"
                             else point["validity"])
         path = read(doc, ln["amplitude_path"]).get("holder_path")
+        stage_refusal = None
         if not path or number(current(doc, path)) is None:
-            raise ValueError("pulse amplitude cannot be resolved")
+            if not ln.get("amplitude_source"):
+                raise ValueError("pulse amplitude cannot be resolved")
+            # a sample-array pulse has no amplitude field: the required amplitude
+            # needs only f_01, alpha and the conversion, so it is still answered;
+            # only the write has nowhere to go
+            path = None
+            stage_refusal = ("this pulse stores samples, not an amplitude: "
+                             "rescale its waveform to stage the required peak")
         port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
         bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
-        peak = pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+        # the samples' own peak IS the played amplitude, so its ratio is 1
+        peak = (pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+                if path else 1.0)
         if bound is not None and peak is not None and abs(amplitude * peak) > bound:
             mode = "amplified" if "amplified" in label else "direct"
             raise ValueError(f"{amplitude:g} V exceeds the {mode} LF output range (±{bound:g} V)")
@@ -1364,7 +1770,8 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
+        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if stage_refusal else 'stored amplitude'})",
+                       amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,
                 "line": ln["role"], "target_detuning_hz": target_detuning,
@@ -1372,7 +1779,8 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                 "distances": resonances(*frequencies, ac, at), "validity": validity,
                 "quad_v": quad_v, "model_v": model_v,
                 "rel_diff": abs(quad_v - model_v) / abs(model_v) if quad_v is not None and model_v else None,
-                "notes": notes, "path": path}
+                "notes": notes + ([stage_refusal] if stage_refusal else []), "path": path,
+                "stage_refusal": stage_refusal}
     except ValueError as exc:
         result = {"ok": False, "reason": str(exc), "notes": notes,
                   "tier": locals().get("selected", tier)}
@@ -1386,10 +1794,17 @@ def _fidelity(raw):
     if not isinstance(raw, dict):
         return {}
     out = {}
-    for k in ("StandardRB", "InterleavedRB"):
-        v = number(raw.get(k))
-        if v is not None:
-            out[k] = {"value": v, "load_id": raw.get(k + "_load_id")}
+    v = number(raw.get("StandardRB"))
+    if v is not None:
+        out["StandardRB"] = {"value": v, "load_id": raw.get("StandardRB_load_id")}
+    # the per-gate number is the ONE every surface shows (query.pair_gate_fidelity):
+    # a lab alias `IRB` counts, and two keys that disagree are reported, never maxed
+    from quam_state_manager.core.query import pair_gate_fidelity
+    pg = pair_gate_fidelity(raw)
+    if pg is not None:
+        out["InterleavedRB"] = {"value": pg["value"], "load_id": raw.get(pg["key"] + "_load_id"),
+                                "key": pg["key"], "physical": pg["physical"],
+                                "conflict": [[k, x] for k, x in pg["conflict"]]}
     # an IRB run's own load id is sometimes stored only beside the RB one
     return out
 

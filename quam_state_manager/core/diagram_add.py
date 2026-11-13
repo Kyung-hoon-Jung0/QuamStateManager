@@ -294,8 +294,64 @@ def drive_candidates(merged: dict, inv: dict, rf: float | None, *,
     return out[:limit] if limit else out
 
 
+def _taps(v) -> int | None:
+    return len(v) if isinstance(v, list) and v else None
+
+
+# Per-line settings a freed LF output keeps after its line is removed (a
+# removal keeps port settings on purpose). Crosstalk is deliberately not one:
+# it is the port's compensation against its neighbours, not the old line's.
+_LINE_FILTER_KEYS = ("feedforward_filter", "feedback_filter", "exponential_filter",
+                     "high_pass_filter", "exponential_dc_gain")
+
+
+def port_carry(decl: dict | None) -> list[str]:
+    """What a declared LF output still carries from the line that used it
+    before: distortion filters and a delay. A new line on that port would play
+    through them. Empty when the port is clean."""
+    if not isinstance(decl, dict):
+        return []
+    out = []
+    flt = decl.get("filter") if isinstance(decl.get("filter"), dict) else {}
+    n = _taps(decl.get("feedforward_filter")) or _taps(flt.get("feedforward"))
+    if n:
+        out.append(f"FIR {n} taps")
+    n = _taps(decl.get("feedback_filter")) or _taps(flt.get("feedback"))
+    if n:
+        out.append(f"IIR feedback {n} taps")
+    n = _taps(decl.get("exponential_filter"))
+    if n:
+        out.append(f"{n} exponential term{'s' if n != 1 else ''}")
+    if _num(decl.get("high_pass_filter")) is not None:
+        out.append(f"high-pass filter {decl['high_pass_filter']:g} ns")
+    if _num(decl.get("exponential_dc_gain")) is not None:
+        out.append(f"exponential DC gain {decl['exponential_dc_gain']:g}")
+    if _num(decl.get("delay")):
+        out.append(f"delay {decl['delay']:g} ns")
+    return out
+
+
+def port_clears(decl: dict | None) -> list[tuple[str, Any]]:
+    """``(key, clean value)`` for every distortion filter :func:`port_carry`
+    names: the value a new port starts with (:func:`_new_port`: None). The
+    delay is never cleared: it aligns the line with the others, including the
+    latency of the port crosstalk that is always kept, so zeroing it would
+    silently shift the line's timing; the review asks for a recalibration."""
+    if not isinstance(decl, dict):
+        return []
+    out = []
+    for k, v in decl.items():
+        if k in _LINE_FILTER_KEYS and v is not None and v != []:
+            out.append((k, None))
+        elif k == "filter" and isinstance(v, dict) and any(_taps(x) for x in v.values()):
+            out.append((k, None))
+    return out
+
+
 def flux_candidates(inv: dict, *, limit: int = 12) -> list[dict]:
-    """Free LF-FEM analog outputs."""
+    """Free LF-FEM analog outputs. A declared output that still carries a
+    previous line's filters / delay says so in ``why`` / ``carries`` and
+    sorts after every clean one, so a clean free port is the default."""
     out = []
     for (con, fem), typ in inv["fems"].items():
         if typ != "lf":
@@ -304,11 +360,64 @@ def flux_candidates(inv: dict, *, limit: int = 12) -> list[dict]:
             if ("analog_outputs", con, fem, pid) in inv["used"]:
                 continue
             decl = _port(inv["ports"], "analog_outputs", con, fem, pid)
+            carries = port_carry(decl)
+            why = "new port" if decl is None else "declared"
+            if carries:
+                why += ", still carries " + ", ".join(carries) + " from a previous line"
             out.append({"con": con, "fem": fem, "port": pid, "new": decl is None,
-                        "label": f"{con} slot {fem} out {pid}",
-                        "why": "declared" if decl else "new port"})
-    out.sort(key=lambda c: (0 if not c["new"] else 1, natural_key(c["con"]), c["fem"], c["port"]))
+                        "carries": carries,
+                        "label": f"{con} slot {fem} out {pid}", "why": why})
+    out.sort(key=lambda c: (2 if c["carries"] else 0 if not c["new"] else 1,
+                            natural_key(c["con"]), c["fem"], c["port"]))
     return out[:limit] if limit else out
+
+
+def _flux_port_sets(inv: dict, port: tuple, choice: str | None):
+    """``(sets, info)`` for a picked LF output: when it still carries a
+    previous line's settings, ``clear`` (the default: the port is reused for a
+    different element) resets them and ``keep`` leaves them; ``info`` is None
+    for a clean or new port."""
+    con, fem, pid = port[0], int(port[1]), int(port[2])
+    decl = _port(inv["ports"], "analog_outputs", con, fem, pid)
+    carries = port_carry(decl)
+    if not carries:
+        return [], None
+    keep = choice == "keep"
+    sets = [] if keep else [(f"ports.analog_outputs.{con}.{fem}.{pid}.{k}", v)
+                            for k, v in port_clears(decl)]
+    delay = _num(decl.get("delay")) or None
+    return sets, {"port": f"{con} slot {fem} out {pid}", "carries": carries,
+                  "filters": [c for c in carries if not c.startswith("delay ")],
+                  "delay_kept": delay,
+                  "choice": "keep" if keep else "clear"}
+
+
+# ------------------------------------------------------------ active lists
+
+def active_state(merged: dict, list_key: str, template: str | None) -> dict:
+    """Whether a new entity starts active, following its template.
+
+    ``mode``: ``absent`` (no list: every entity counts as active, nothing is
+    written), ``empty`` (an empty list, which SM reads as "everything active",
+    see cr_semantics.is_active and query.py: the new one is active without a
+    write, and writing it would make it the ONLY listed one), or ``listed``
+    (the person chooses; the default is the template's own membership)."""
+    lst = merged.get(list_key)
+    if not isinstance(lst, list) or not lst:
+        return {"list": list_key, "mode": "absent" if not isinstance(lst, list) else "empty",
+                "default": True, "editable": False, "template_active": True}
+    on = template in lst
+    return {"list": list_key, "mode": "listed", "default": on, "editable": True,
+            "template_active": on}
+
+
+def _active_sets(merged: dict, info: dict, name: str, active: bool | None):
+    """``(sets, summary)``: the list write for the chosen active state."""
+    want = info["default"] if (active is None or not info["editable"]) else bool(active)
+    sets = []
+    if info["editable"] and want:
+        sets.append((info["list"], list(merged[info["list"]]) + [name]))
+    return sets, dict(info, active=want, written=bool(sets))
 
 
 def _new_port(inv: dict, kind: str, con: str, fem: int, pid: int, **sets) -> dict | None:
@@ -563,6 +672,7 @@ def qubit_defaults(merged: dict, feedline: str | None = None) -> dict:
         "grid": propose_grid(merged, fl["members"]),
         "drive_rf": drive, "readout_rf": read, "readout_note": read_note, "if_hz": if_hz,
         "has_flux": isinstance(t.get("z"), dict) and _wire_port(merged, tpl, "z") is not None,
+        "active": active_state(merged, "active_qubit_names", tpl),
         "fem": (tp[1], tp[2]) if tp else None,
         "band": ((_port(merged.get("ports") or {}, tp[0], tp[1], tp[2], tp[3]) or {}).get("band")
                  if tp else None),
@@ -574,13 +684,17 @@ _NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
                flux: tuple | None, drive_rf: float, readout_rf: float | None,
-               inv: dict | None = None) -> dict:
+               inv: dict | None = None, active: bool | None = None,
+               port_filters: str | None = None) -> dict:
     """``{"creates": [(dot_path, value)], "sets": [(dot_path, value)],
     "summary": {...}}`` or ``{"error": str}``.
 
     ``drive`` / ``flux`` are ``(con, fem, port)``. Every write is a CREATE of
-    a path that does not exist, except ``active_qubit_names``, which gets the
-    new name appended (the list itself is the one existing value touched)."""
+    a path that does not exist, except ``active_qubit_names`` (the new name
+    appended, only when the new qubit is to be active: ``active`` None follows
+    the template, see :func:`active_state`) and, when the picked flux output
+    still carries a previous line's filters, those settings reset
+    (``port_filters`` "clear", the default; "keep" leaves them)."""
     inv = inv or inventory(merged)
     d = qubit_defaults(merged, feedline)
     if d.get("error"):
@@ -709,10 +823,11 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
                 return {"error": "No LF output port on this chip to shape a new one on."}
             creates.append((f"ports.analog_outputs.{fcon}.{ffem}.{fpid}", port))
     creates = _with_parents(merged, creates)
-    sets = []
-    act = merged.get("active_qubit_names")
-    if isinstance(act, list):
-        sets.append(("active_qubit_names", list(act) + [name]))
+    sets, act_info = _active_sets(merged, d["active"], name, active)
+    flux_info = None
+    if flux is not None and d["has_flux"]:
+        clears, flux_info = _flux_port_sets(inv, flux, port_filters)
+        sets += clears
     return {
         "creates": creates, "sets": sets,
         "summary": {"kind": "qubit", "name": name, "template": tpl,
@@ -721,7 +836,8 @@ def plan_qubit(merged: dict, *, name: str, feedline: str, drive: tuple,
                     "drive_port": [con, fem, pid], "drive_rf": drive_rf,
                     "flux": (f"{flux[0]} slot {int(flux[1])} out {int(flux[2])}"
                              if flux is not None and d["has_flux"] else None),
-                    "dropped": dropped, "notes": notes,
+                    "dropped": dropped, "notes": notes, "active": act_info,
+                    "flux_carry": flux_info,
                     "new_ports": [p for p, _ in creates if p.startswith("ports.")]},
     }
 
@@ -774,8 +890,11 @@ def pick_pair_template(merged: dict, a: str, b: str) -> str | None:
         if not isinstance(p, dict):
             continue
         m = _pair_membership(p, merged)
-        if m and not any(qdac.bias_mode(merged["qubits"][q]) in ("qdac", "bias_tee")
-                         for q in m):
+        qs = merged.get("qubits") or {}
+        # a pair naming a qubit the chip does not have (a dangling pointer) is
+        # no template; it must not stop every other pair from being added
+        if m and all(isinstance(qs.get(q), dict) for q in m) and not any(
+                qdac.bias_mode(qs[q]) in ("qdac", "bias_tee") for q in m):
             ok.append((pid, m))
     for pid, m in ok:
         if a in m or b in m:
@@ -783,7 +902,39 @@ def pick_pair_template(merged: dict, a: str, b: str) -> str | None:
     return ok[0][0] if ok else None
 
 
-def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -> dict:
+# A CZ macro's phase corrections are measured per pair: a copy starts at the
+# gate class's own default, 0.0 (quam_builder's CZGate declares
+# ``phase_shift_control: float = 0.0`` and ``phase_shift_target``; [derived]
+# for other gate classes, which use the same field names).
+_PHASE_PREFIX = "phase_shift"
+
+
+def _clear_phase_shifts(node: Any, path: str, out: list) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            sub = f"{path}.{k}"
+            if str(k).startswith(_PHASE_PREFIX) and _num(v) is not None:
+                if v != 0:
+                    out.append({"path": sub, "value": v})
+                node[k] = 0.0
+            else:
+                _clear_phase_shifts(v, sub, out)
+
+
+def _amplitudes(node: Any, path: str, out: list) -> None:
+    """Numeric ``amplitude`` leaves of a copied subtree (a pointer reads a
+    value that is listed where it lives)."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            sub = f"{path}.{k}"
+            if k == "amplitude" and _num(v) is not None:
+                out.append({"path": sub, "value": v})
+            else:
+                _amplitudes(v, sub, out)
+
+
+def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None,
+              active: bool | None = None, port_filters: str | None = None) -> dict:
     qs = merged.get("qubits") or {}
     if control == target or control not in qs or target not in qs:
         return {"error": "Pick two different qubits of this chip."}
@@ -811,6 +962,9 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
     if "id" in pair:
         pair["id"] = new_pid
     _clear_measured(pair)
+    phase_cleared: list = []
+    _clear_phase_shifts(pair, f"qubit_pairs.{new_pid}", phase_cleared)
+    act_info = active_state(merged, "active_qubit_pair_names", tpid)
     if isinstance(pair.get("coupler"), dict):
         for key in _OFFSET_KEYS & pair["coupler"].keys():
             pair["coupler"][key] = 0
@@ -838,7 +992,9 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
         if flux is None:
             return {"error": "Pick a free LF-FEM coupler output.", "needs_flux": True,
                     "summary": {"name": new_pid, "template": tpid,
-                                "control": control, "target": target}}
+                                "control": control, "target": target,
+                                "active": dict(act_info, active=act_info["default"],
+                                               written=False)}}
         pick = next((c for c in candidates if (c["con"], c["fem"], c["port"]) == flux), None)
         if pick is None:
             return {"error": "The coupler port is not a free LF-FEM output."}
@@ -904,19 +1060,68 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None) -
     if collisions:
         return {"error": f"Cannot copy member operation {collisions[0]}: "
                          "it already exists and may belong to the template pair."}
+    amps: list = []
+    for path, val in creates:
+        _amplitudes(val, path, amps)
     creates = _with_parents(merged, creates)
-    sets = []
-    act = merged.get("active_qubit_pair_names")
-    if isinstance(act, list):
-        sets.append(("active_qubit_pair_names", list(act) + [new_pid]))
+    sets, act_summary = _active_sets(merged, act_info, new_pid, active)
+    flux_info = None
+    if has_flux and flux is not None:
+        clears, flux_info = _flux_port_sets(inv, flux, port_filters)
+        sets += clears
+    unplayable = pair_unplayable(merged, creates, new_pid)
     return {"creates": creates, "sets": sets,
             "summary": {"kind": "pair", "name": new_pid, "template": tpid,
+                        "unplayable": unplayable,
                         "control": control, "target": target,
-                        "flux": flux,
+                        "flux": flux, "active": act_summary, "flux_carry": flux_info,
+                        "phase_cleared": phase_cleared, "copied_amplitudes": amps,
                         "member_ops": [p for p, _ in creates if p.startswith("qubits.")]}}
 
 
+def _with_writes(merged: dict, creates: list) -> dict:
+    """*merged* with each ``(dot path, value)`` of *creates* written, copying
+    only the dicts on the way (the original is never touched)."""
+    doc = dict(merged)
+    for path, val in creates:
+        keys = path.split(".")
+        node = doc
+        for k in keys[:-1]:
+            nxt = node.get(k)
+            nxt = dict(nxt) if isinstance(nxt, dict) else {}
+            node[k] = nxt
+            node = nxt
+        node[keys[-1]] = val
+    return doc
+
+
+def pair_unplayable(merged: dict, creates: list, pair_id: str) -> list[str]:
+    """``"<gate>: <reason>"`` for every CZ gate of *pair_id* the CZ gate plan
+    refuses as not playable once *creates* are written -- the plan's own
+    check (``cz_gate_plan.operations``), run on the chip as it would be."""
+    from . import cz_gate_plan as czp
+    try:
+        rows, _c = czp.operations(_with_writes(merged, creates))
+    except Exception:  # noqa: BLE001 -- a review line is never worth an error
+        return []
+    out = []
+    for row in rows:
+        if row.get("pair") != pair_id:
+            continue
+        reasons = [ln.get("refusal") for ln in row.get("lines") or []]
+        reasons.append((row.get("coupler") or {}).get("refusal"))
+        for r in reasons:
+            if isinstance(r, str) and r.startswith("not playable"):
+                line = f"{row.get('operation')}: {r}"
+                if line not in out:
+                    out.append(line)
+    return out
+
+
 # ------------------------------------------------------------------ review
+
+_ACTIVE_LISTS = ("active_qubit_names", "active_qubit_pair_names")
+
 
 def review_rows(plan: dict, limit: int = 400) -> list[dict]:
     """The change, leaf by leaf, for the review panel: only what the plan
@@ -934,5 +1139,8 @@ def review_rows(plan: dict, limit: int = 400) -> list[dict]:
         for p, v in leaves(val, path):
             rows.append({"path": p, "value": v, "op": "new"})
     for path, val in plan.get("sets", []):
-        rows.append({"path": path, "value": val[-1:], "op": "append"})
+        if path in _ACTIVE_LISTS:
+            rows.append({"path": path, "value": val[-1:], "op": "append"})
+        else:
+            rows.append({"path": path, "value": val, "op": "clear"})
     return rows[:limit] if limit else rows

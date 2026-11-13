@@ -665,14 +665,18 @@ class TestAnOpTheGatePlaysByNameIsOnItsRoute:
         assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
         r = c.post("/api/pulse/delete", data={"path": OP_C, "force": "1"})
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
-        r = c.post("/api/pulse/rename", data={"path": OP_C, "new_name": "czl_renamed"})
-        assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         r = c.post("/api/pulse/delete", data={"path": OP_T})
         assert r.status_code == 409 and f"{G}.flux_pulse_target.id".encode() in r.data
         r = c.post("/api/pulse/delete", data={"path": OP_T, "force": "1"})
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         ops = _v(c, "qubits.q1.z.operations")
         assert "czl_q1" in ops and "czl_renamed" not in ops
+        # a rename now takes the slot's id along (asked of the gate
+        # AS a whole -- the gate still finds its op), so it goes through
+        r = c.post("/api/pulse/rename", data={"path": OP_C, "new_name": "czl_renamed"})
+        assert r.status_code == 200, r.data[:300]
+        assert _v(c, f"{G}.flux_pulse_qubit.id") == "czl_renamed"
+        assert "czl_renamed" in _v(c, "qubits.q1.z.operations")
         assert "czl_q2t" in _v(c, "qubits.q2.z.operations")
         # an op no gate plays still renames and deletes freely
         st = _store(c)
@@ -1067,9 +1071,15 @@ class TestASpectatorPulseIsOnTheRoute:
         r = c.post("/api/pulse/delete", data={"path": "qubits.q3.z.operations.park",
                                               "force": "1"})
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
+        # a rename takes the spectator slot's id along, so the gate
+        # still finds its op and the rename goes through
         r = c.post("/api/pulse/rename", data={"path": "qubits.q3.z.operations.park",
                                               "new_name": "park2"})
-        assert r.status_code == 400, r.data[:300]
+        assert r.status_code == 200, r.data[:300]
+        assert _v(c, f"{G}.spectator_qubits_control.q3.id") == "park2"
+        r = c.post("/undo")
+        assert r.status_code == 200
+        assert _v(c, f"{G}.spectator_qubits_control.q3.id") == "park"
         # re-linking the spectator to a qubit without that op is refused too
         r = c.post("/field/edit", data={"dot_path": f"{G}.spectator_qubits.q3",
                                         "value": "#/qubits/q2"})

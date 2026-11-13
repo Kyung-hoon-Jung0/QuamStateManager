@@ -563,7 +563,7 @@ _SNAP_DIFFS = _ramcache.KeyedMemo("history.snapshot_pair_diff", max_entries=64,
 
 
 def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = None,
-                        b_hash: str | None = None) -> list[DiffEntry]:
+                        b_hash: str | None = None, keep_class: bool = False) -> list[DiffEntry]:
     """``Differ().diff(a, b)`` for two snapshot folders -- the same merged
     documents a ``QuamStore`` builds -- with the parses served by the content
     cache and the result kept per pair. ``b_pair``: the ``doc_cache.PairRead``
@@ -574,6 +574,9 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
     def compute():
         from quam_state_manager.core import diff_cache, rename_lineage
         from quam_state_manager.core.differ import _DEFAULT_IGNORE, _leaf_key
+        # keep_class: a run diff shows a CLASS change (a SquarePulse that
+        # became a WaveformPulse is a difference, docs/136)
+        _ign = set() if keep_class else _DEFAULT_IGNORE
         # docs/296: a side saved before a Re-generate rename is compared in
         # the other side's names (never kept in the shared content cache,
         # whose key is the raw bytes)
@@ -581,7 +584,7 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
         if moved[0][0] is not pa.state or moved[1][0] is not pb.state:
             ents = _differ.diff(QuamStore.from_dicts(*moved[0]), QuamStore.from_dicts(*moved[1]),
                                 ignore_keys=set())
-            return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
+            return [e for e in ents if _leaf_key(e.dot_path) not in _ign]
         # content hashes known (a capture): the drift poll may have taken
         # exactly this diff already (diff_cache)
         shared = diff_cache.lookup(a_hash, b_hash, _DEFAULT_IGNORE)
@@ -589,7 +592,7 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
             shared = diff_cache.lookup(
                 a_hash, diff_cache.raw_key(b_pair.state_digest, b_pair.wiring_digest),
                 _DEFAULT_IGNORE)
-        if shared is not None:
+        if shared is not None and not keep_class:
             return shared
         # from_dicts merges exactly as QuamStore(folder) does (deep merge on a
         # state/wiring key collision) without touching the shared dicts. The
@@ -600,24 +603,25 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
         if (a_hash and b_hash and diff_cache.merges_alike(pa.state, pa.wiring)
                 and diff_cache.merges_alike(pb.state, pb.wiring)):
             diff_cache.remember(a_hash, b_hash, ents)
-        return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
+        return [e for e in ents if _leaf_key(e.dot_path) not in _ign]
     try:
         # one armored read of each pair: the digests are the token, and the
         # same bytes are what compute() parses (lazily, from doc_cache.PARSED)
         pa = doc_cache.read_pair(a, mode="hash")
         pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="hash")
     except (OSError, ValueError):
-        return _differ.diff(a, b)
+        return _differ.diff(a, b, ignore_keys=(set() if keep_class else None))
     tok = (pa.state_digest, pa.wiring_digest, pb.state_digest, pb.wiring_digest)
-    return list(_SNAP_DIFFS.get((str(a), str(b)), tok, compute))
+    return list(_SNAP_DIFFS.get((str(a), str(b), bool(keep_class)), tok, compute))
 
 
-def diff_state_folders(a: str | Path, b: str | Path) -> list[DiffEntry]:
+def diff_state_folders(a: str | Path, b: str | Path, *,
+                       keep_class: bool = False) -> list[DiffEntry]:
     """``Differ().diff(a, b)`` for two write-once ``quam_state`` folders (a run's
     saved state, a snapshot): the same entries, served from RAM on a repeat
     while neither folder's bytes changed (SHA-256 of all four files, checked
-    on every call)."""
-    return _diff_snapshot_dirs(Path(a), Path(b))
+    on every call). ``keep_class``: report ``__class__`` leaves too."""
+    return _diff_snapshot_dirs(Path(a), Path(b), keep_class=keep_class)
 
 
 def _chip_decisions_file(instance_path: str | Path) -> Path:

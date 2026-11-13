@@ -56,6 +56,7 @@ from quam_state_manager.core.hub_store import (
     _NEW,
     CHIP_UNCERTAIN,
     NODE_UNREADABLE,
+    PROOF_RULE,
     OPS,
     OVERLAPS_SM_WRITE,
     REVERTS_TO_EARLIER,
@@ -377,6 +378,8 @@ class ChipSync:
         self.identity: dict | None = None
         #: v1.3.0 A9: (ledger id, identity) the ledger's seed was last made equal to
         self.seed_checked: tuple | None = None
+        #: the bound ledger still has runs to prove again under PROOF_RULE
+        self.reprove_due = False
         self.ledger_id: str | None = None
         self.active = True
         self.full_wanted = True
@@ -609,6 +612,11 @@ class ChipSync:
                         if store.meta("chip_identity") != want:
                             hub_build.reseed(store, self.identity)
                 self.seed_checked = (lid, want)
+        # a ledger proved under an older rule (state_changes did not count as
+        # a recorded write): every run is proved again, once per file -- in
+        # budgeted steps of run_slice, never here (a whole archive in one
+        # write transaction held the writer lock for many seconds)
+        self.reprove_due = store.meta("proof_rule") != PROOF_RULE
         for rs in list(self.roots.values()):
             if rs.root_id is None:
                 self._register(store, rs)
@@ -737,6 +745,13 @@ class ChipSync:
             finally:
                 self.in_hand -= 1
             steps += 1
+        if self.reprove_due and not self.unread and not self.ready_cands and not late():
+            # the proof-rule walk: a few events per slice, resumable, after new
+            # runs are in (those are proved under the current rule already)
+            if reprove_some(store, lambda: ((should_yield is not None and should_yield())
+                                            or _late(deadline)))[1]:
+                self.reprove_due = False
+            steps += 1
         while self.sweep and not self.unread and not self.ready_cands and not late():
             rs, rel = self.sweep.pop()
             self.in_hand += 1
@@ -793,7 +808,9 @@ class ChipSync:
             for rs in list(self.roots.values()):
                 rs.adopting = False         # its runs are in: matched from now on
         self.last_slice_ms = (time.perf_counter() - t0) * 1000.0
-        return more
+        # the proof-rule walk keeps the slices coming but never holds the
+        # ledger in "building": a part-way ledger only lacks some proofs
+        return more or self.reprove_due
 
     def _archive_setup(self) -> None:
         """S10 walk: an archived chip's build reads, once, the data roots of
@@ -1946,6 +1963,89 @@ def _reprove(store, ev, node: dict) -> None:
                            [(int(r.path in proven), ev["eid"], r.path) for r in rows])
 
 
+#: meta key: ``"<PROOF_RULE>|<eid>"`` -- the last run event the proof-rule
+#: walk has looked at (a cursor written under another rule means start over)
+PROOF_CURSOR = "proof_rule_cursor"
+_REPROVE_SQL = ("SELECT * FROM events WHERE kind='run' AND state_ref IS NOT NULL AND n_changes > 0 "
+                "AND eid > ? ORDER BY eid LIMIT 1")
+
+
+def _proof_cursor(store) -> int:
+    rule, _, eid = (store.meta(PROOF_CURSOR) or "").rpartition("|")
+    if rule != PROOF_RULE:
+        return 0
+    try:
+        return int(eid)
+    except ValueError:
+        return 0
+
+
+def _reprove_one(store, ev) -> bool:
+    """Prove one run event's rows again from its folder's node.json. A folder
+    that is gone or unreadable, or an event whose proof raises, keeps its old
+    proofs (logged); never raises. The caller holds the write transaction."""
+    folder = Path(ev["state_ref"] or "")
+    try:
+        if not folder.is_dir():
+            return False
+        node, err = hub_build.read_node(folder)
+    except Exception:  # noqa: BLE001 -- an unreadable folder keeps its proofs
+        return False
+    if err is not None:
+        return False
+    store.conn.execute("SAVEPOINT reprove_one")
+    try:
+        _reprove(store, ev, node)
+    except Exception:  # noqa: BLE001 -- one event never stops the walk
+        store.conn.execute("ROLLBACK TO reprove_one")
+        store.conn.execute("RELEASE reprove_one")
+        logger.warning("hub sync: re-proving run event %s failed; its old proofs stay",
+                       ev["eid"], exc_info=True)
+        return False
+    store.conn.execute("RELEASE reprove_one")
+    return True
+
+
+def reprove_some(store, late: Callable[[], bool] | None = None) -> tuple[int, bool]:
+    """One step of the proof-rule walk: run events past the stored cursor, in
+    event order, each proved again by :func:`_reprove_one`, in ONE write
+    transaction that ends once *late* says so (at least one event per call)
+    and commits the cursor. When the walk reaches the end the ledger records
+    :data:`hub_store.PROOF_RULE` and the cursor is dropped. Returns (events
+    looked at, finished). Each event's proof reads only its own run, so the
+    result does not depend on where the steps fall."""
+    n, finished = 0, False
+    with txn(store):
+        cur = _proof_cursor(store)
+        while not (n and late is not None and late()):
+            ev = store.conn.execute(_REPROVE_SQL, (cur,)).fetchone()
+            if ev is None:
+                store.set_meta("proof_rule", PROOF_RULE)
+                store.conn.execute("DELETE FROM meta WHERE k=?", (PROOF_CURSOR,))
+                finished = True
+                break
+            cur = ev["eid"]
+            _reprove_one(store, ev)
+            n += 1
+        if not finished:
+            store.set_meta(PROOF_CURSOR, f"{PROOF_RULE}|{cur}")
+    return n, finished
+
+
+def reprove_all(store) -> int:
+    """Prove every run event's rows again in one pass (offline tools and
+    tests; the projector walks with :func:`reprove_some`) and record the
+    rule. Returns the runs proved. The caller holds the write transaction."""
+    n = 0
+    rows = store.conn.execute(
+        "SELECT * FROM events WHERE kind='run' AND state_ref IS NOT NULL AND n_changes > 0 ORDER BY eid").fetchall()
+    for ev in rows:
+        n += _reprove_one(store, ev)
+    store.set_meta("proof_rule", PROOF_RULE)
+    store.conn.execute("DELETE FROM meta WHERE k=?", (PROOF_CURSOR,))
+    return n
+
+
 def _update_run_meta(store, ev, cand: Cand, hint) -> None:
     run = cand.run
     fields = hub_build.event_fields(run, root_id=ev["root_id"], rel=cand.rel, hint=hint,
@@ -2157,7 +2257,7 @@ def periodic(now: float | None = None) -> int:
         # every LISTING_EVERY_S
         if not cs.syncable or not cs.active:
             continue
-        if cs.has_work():
+        if cs.has_work() or cs.reprove_due:
             if not _queued(cs):
                 _kick(cs)
                 n += 1

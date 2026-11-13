@@ -69,10 +69,14 @@ def _is_error_amp(name: str) -> bool:
 def _figure_for(name: str):
     """(base, required-fit-vars, title) for the node."""
     import re as _re
-    if _re.search(r"(?:^|_)(?:21b|35a)_", name):
+    if _re.search(r"(?:^|_)(?:21b|35a)_", name) or (
+            "phase_compensation" in name and _is_error_amp(name)):
         return "phase_vs_operations", _REQUIRED_VARS["phase_vs_operations"], \
             "CZ phase compensation (error-amplified)"
-    if _re.search(r"(?:^|_)(?:21|35)[a-z]?_", name):
+    if _re.search(r"(?:^|_)(?:21|35)[a-z]?_", name) or "phase_compensation" in name:
+        # Another lab numbers the same node 34a; the name still says what it is
+        # (and its saved figure is ``raw_and_fit``), so it is not a
+        # conditional-phase run that "lacks phase_diff".
         return "raw_and_fit", _REQUIRED_VARS["raw_and_fit"], "CZ phase compensation"
     # 2Q_20/20b save their plot as ``phase_figure`` — match it so we replace it.
     if _is_error_amp(name):
@@ -85,6 +89,8 @@ def menu(bundle):
     name = _name(bundle)
     base, needs, title = _figure_for(name)
     missing = [v for v in needs if v not in bundle.fit_vars]
+    if base == "raw_and_fit":
+        missing = _raw_and_fit_missing(bundle.fit_vars)
     have = not missing
     pairs = pairs_of(bundle)
     multi = len(pairs) > 1
@@ -111,7 +117,93 @@ def menu(bundle):
 def _missing_vars(fit, base) -> list[str]:
     """Build-time twin of the menu gate (defence for direct build calls)."""
     have = (fit or {}).get("vars", {})
+    if base == "raw_and_fit":
+        return _raw_and_fit_missing(have)
     return [v for v in _REQUIRED_VARS[base] if v not in have]
+
+
+def _raw_and_fit_missing(have) -> list[str]:
+    """What raw_and_fit cannot draw without. The measured points are either
+    ``state_<role>`` or, in the generation that saves raw quadratures,
+    ``I_<role>``; the fitted curves are always required."""
+    out = [v for v in ("fitted_control", "fitted_target") if v not in have]
+    for role in ("control", "target"):
+        if f"state_{role}" not in have and f"I_{role}" not in have:
+            out.append(f"state_{role}")
+    return out
+
+
+#: [derived] the entry a least-squares fit with a free offset was made to has
+#: the fit's own mean (residual ~1e-20 on a real run); any other entry differs
+#: by >= 1e-5 V there. Relative to the fitted curve's scale (its span, or its
+#: mean when that is larger)
+_MEAN_RTOL = 1e-3
+
+
+def _measured(fit, role, pidx):
+    """(points, y-label) the node fitted ``fitted_<role>`` to.
+
+    ``state_<role>`` when saved. Otherwise ``I_<role>``; when it carries a
+    ``control_target`` axis (which qubit was prepared), the entry labelled
+    with the role's initial (``c`` / ``t``) is taken.
+    [derived] On a run of this generation the fitted curve's mean equals the
+    mean of exactly that entry (residual mean ~1e-20 for both roles, the
+    stationarity condition of a least-squares fit with a free offset), and of
+    no other entry or quadrature (all differ by >= 1e-5): checked on a real run,
+    pinned by tests/test_interactive_gen_variants.py. Checked per run, not
+    assumed: an entry whose mean is not the fitted curve's mean (within
+    :data:`_MEAN_RTOL` of the curve's scale) is not drawn, and the second
+    element names why.
+    """
+    if f"state_{role}" in fit["vars"]:
+        return np.asarray(pslice(fit, f"state_{role}", pidx)[0], dtype=float), \
+            "Measured state"
+    arr, dims = pslice(fit, f"I_{role}", pidx)
+    arr = np.asarray(arr, dtype=float)
+    if "control_target" in dims and arr.ndim > 1:
+        ax = dims.index("control_target")
+        labels = [str(x) for x in (fit.get("coords", {}).get("control_target") or [])]
+        idx = labels.index(role[0]) if role[0] in labels else None
+        if idx is None:
+            return None, ""
+        arr = np.take(arr, idx, axis=ax)
+        if f"fitted_{role}" in fit["vars"]:
+            fitted = np.asarray(pslice(fit, f"fitted_{role}", pidx)[0], dtype=float).reshape(-1)
+            pts = arr.reshape(-1)
+            if fitted.size != pts.size or not (np.all(np.isfinite(fitted)) and np.all(np.isfinite(pts))):
+                return None, f"the {role} entry does not match the {role} fit's samples"
+            scale = max(float(np.ptp(fitted)), abs(float(np.mean(fitted))))
+            if abs(float(np.mean(pts)) - float(np.mean(fitted))) > _MEAN_RTOL * scale:
+                return None, (f"the '{role[0]}' entry of I_{role} is not the points its fit was made to"
+                              " (their means differ)")
+    return arr.reshape(-1), "I quadrature [V]"
+
+
+def _fitted_phase_shift(fit, role, pidx, frame, fitted):
+    """The frame at which the node's fitted ``<role>`` curve peaks, from its
+    ``fitted_<role>_phase``, or None.
+
+    [derived] The saved fit is a cosine in the frame whose maximum sits at
+    ``(1 - fitted_phase) mod 1``; that is the phase shift the node proposes
+    (a real run: 1 - 0.59534 = 0.40466 = its ``phase_shift_control`` patch).
+    Checked per run, not assumed: the mark is drawn only when the fitted
+    curve's own sampled maximum lies within one frame step of it, so a
+    generation with another phase convention gets no mark rather than a
+    wrong one."""
+    if f"fitted_{role}_phase" not in (fit.get("vars") or {}):
+        return None
+    ph = pair_scalar(fit, f"fitted_{role}_phase", pidx)
+    fitted = np.asarray(fitted, dtype=float).reshape(-1)
+    if ph is None or not np.isfinite(ph) or frame.size < 2 or fitted.size != frame.size \
+            or not np.all(np.isfinite(fitted)):
+        return None
+    shift = float((1.0 - ph) % 1.0)
+    step = float(np.min(np.abs(np.diff(frame))))
+    peak = float(frame[int(np.argmax(fitted))])
+    d = abs(peak - shift)
+    if min(d, 1.0 - d) > step + 1e-12:
+        return None
+    return shift
 
 
 def build(bundle, key):
@@ -139,12 +231,31 @@ def _raw_and_fit(bundle, key, pname):
     def arr(v):
         return np.asarray(pslice(fit, v, pidx)[0], dtype=float)
 
-    data = [pb.scatter(frame, arr("state_control"), name="control", color=_CONTROL, size=7),
+    mc, ylabel = _measured(fit, "control", pidx)
+    mt, _yl = _measured(fit, "target", pidx)
+    if mc is None or mt is None:
+        why = [y for m, y in ((mc, ylabel), (mt, _yl)) if m is None and y]
+        return FigureSpec(key=key, title="CZ phase compensation", available=False,
+                          reason="; ".join(why) or "no c / t entry on the control_target axis")
+    data = [pb.scatter(frame, mc, name="control", color=_CONTROL, size=7),
             pb.line(frame, arr("fitted_control"), name="control fit", color=_CONTROL),
-            pb.scatter(frame, arr("state_target"), name="target", color=_TARGET, size=7),
+            pb.scatter(frame, mt, name="target", color=_TARGET, size=7),
             pb.line(frame, arr("fitted_target"), name="target fit", color=_TARGET)]
+    shapes, annotations = [], []
+    for role, color in (("control", _CONTROL), ("target", _TARGET)):
+        shift = _fitted_phase_shift(fit, role, pidx, frame, arr(f"fitted_{role}"))
+        if shift is None:
+            continue
+        shapes.append(pb.vline(shift, color=color, dash="dash"))
+        annotations.append({"x": shift, "xref": "x", "y": 1.0 if role == "control" else 0.93,
+                            "yref": "paper", "yanchor": "bottom", "showarrow": False,
+                            "text": f"{role} fit phase shift {shift:.3f}",
+                            "font": {"size": 11, "color": color}})
     layout = {"xaxis": {"title": {"text": "x90 frame rotation [rad/2π]"}},
-              "yaxis": {"title": {"text": "Measured state"}},
+              "yaxis": {"title": {"text": ylabel}},
+              # four colour-coded traces: the legend names which is control / target
+              "showlegend": True,
+              "shapes": shapes, "annotations": annotations,
               "hovermode": "closest", "margin": _M}
     return FigureSpec(key=key, title="CZ phase compensation (raw + fit)", kind="1d",
                       figure={"data": data, "layout": layout})

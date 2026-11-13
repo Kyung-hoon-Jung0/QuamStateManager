@@ -37,7 +37,7 @@
         <div class="prevdiff-badges">
             {% if summary.added %}<span class="diff-badge diff-added">+{{ summary.added }} added</span>{% endif %}
             {% if summary.removed %}<span class="diff-badge diff-removed">&minus;{{ summary.removed }} removed</span>{% endif %}
-            {% if summary.modified %}<span class="diff-badge diff-modified">{{ summary.modified }} changed</span>{% endif %}
+            {% if summary.modified %}<span class="diff-badge diff-modified">{{ summary.modified }} changed{% if summary.class_changed %} ({{ summary.class_changed }} class{{ 'es' if summary.class_changed != 1 }}){% endif %}</span>{% endif %}
             {% if not summary.total %}<span class="muted">No differences</span>{% endif %}
         </div>
     </div>

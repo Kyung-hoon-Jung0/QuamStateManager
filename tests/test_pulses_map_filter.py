@@ -180,5 +180,8 @@ class TestTheDrawingIsAControl:
         assert re.search(
             r'\.cmap\[data-cm-pick="1"\] \.cm-picked \.cm-id \{[^}]*var\(--pico-primary-inverse\)',
             css), "a filled stone needs its id in the inverse colour"
-        assert re.search(
-            r'\.cmap\[data-cm-pick="1"\] \.cm-picked \.cm-edge-line \{[^}]*stroke-width: 5px', css),             "a picked PAIR is an edge, not a stone"
+        picked = re.search(
+            r'\.cmap\[data-cm-pick="1"\] \.cm-picked \.cm-edge-line \{[^}]*stroke-width: (\d+)px', css)
+        resting = re.search(
+            r'\.cmap\[data-cm-pick="1"\] \.cm-edge-line \{[^}]*stroke-width: (\d+)px', css)
+        assert picked and resting and int(picked.group(1)) > int(resting.group(1)),             "a picked PAIR is an edge, not a stone: it is drawn wider than a resting one"

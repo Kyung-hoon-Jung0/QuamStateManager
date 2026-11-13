@@ -663,7 +663,7 @@
 .ui-tree-drafts { margin-block: var(--ui-gap-1); color: var(--ui-warn-text); border-color: var(--ui-warn-border); }
 
 /* Chip Status Trends: one tooltip for marks drawn on the same spot */
-.ui-trends-cotip { position: fixed; z-index: 300; pointer-events: none; max-width: 28rem;
+.ui-trends-cotip { position: fixed; z-index: 300; pointer-events: none; width: max-content; max-width: 28rem;
     padding: var(--ui-opxmon-tile-padding) calc(2 * var(--ui-opxmon-tile-padding));
     background: var(--ui-surface-1); color: var(--ui-text); border: var(--ui-bw) solid var(--ui-border);
     border-radius: var(--ui-r-sm); box-shadow: var(--ui-shadow); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }

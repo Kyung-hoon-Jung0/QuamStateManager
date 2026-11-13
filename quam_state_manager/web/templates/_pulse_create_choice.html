@@ -9,7 +9,7 @@
     <button type="button" role="tab" data-create-kind="pulse"
             aria-selected="{{ 'true' if _k == 'pulse' else 'false' }}"
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'pulse' }}"
-            hx-get="/pulse/new?kind=pulse" hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-get="/pulse/new?kind=pulse" hx-include="#pulses-owner-pick" hx-target="#inspector-pane" hx-swap="innerHTML"
             title="A new pulse of any class this chip's environment offers, on a qubit channel, a pair channel or an empty gate slot">New pulse</button>
     <button type="button" role="tab" data-create-kind="copy"
             aria-selected="{{ 'true' if _k == 'copy' else 'false' }}"

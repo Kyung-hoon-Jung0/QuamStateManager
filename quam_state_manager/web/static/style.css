@@ -1485,6 +1485,8 @@ html.calc-window body { display: flex; background: var(--pico-background-color);
     overflow: hidden; border-right: none;
     opacity: 0; pointer-events: none;
 }
+.app-layout.sidebar-narrow:not(.sidebar-collapsed) #sidebar { /* F13: narrow-window overlay (app.js SidebarNarrow) */
+    position: fixed; left: 0; top: var(--topbar-height); bottom: 0; z-index: 90; max-width: 85vw; background: var(--pico-background-color); }
 
 /* Sidebar resize handle (item 9): a thin draggable strip between the sidebar
    and the main content. The accent line shows on hover / while dragging. */
@@ -1498,7 +1500,7 @@ html.calc-window body { display: flex; background: var(--pico-background-color);
 }
 .sidebar-resizer:hover::after,
 body.sidebar-resizing .sidebar-resizer::after { opacity: 1; background: var(--pico-primary); width: 2px; }
-.sidebar-collapsed .sidebar-resizer { display: none; }
+.sidebar-collapsed .sidebar-resizer, .sidebar-narrow .sidebar-resizer { display: none; }
 body.sidebar-resizing { cursor: col-resize; user-select: none; }
 /* Override Pico's large height/padding on <summary> — sidebar + inspector */
 #sidebar details > summary,
@@ -2137,14 +2139,13 @@ body:not(.exp-list-compact) #exp-density-full {
 /* Compact experiment-list mode: one truncated row per entry.
    DEFAULT since queue #8 (base.html renders body.exp-list-compact; the sidebar "rows" control takes it off).
    Class lives on <body> so it survives HTMX re-swaps of #sidebar-tree. */
-body.exp-list-compact .tree-entry-label { align-items: center; }
-body.exp-list-compact .tree-entry-label input[type=checkbox] { margin: 0; }
+body.exp-list-compact .tree-entry-label { align-items: center; } body.exp-list-compact .tree-entry-label input[type=checkbox] { margin: 0; }
 body.exp-list-compact .tree-entry-click {
     display: inline-flex; flex-wrap: nowrap; align-items: center;
     gap: var(--tree-entry-row-gap);
 }
 body.exp-list-compact .entry-name {
-    flex: 0 1 auto;
+    flex: 0 1 auto; display: flex; min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2155,6 +2156,7 @@ body.exp-list-compact .entry-name {
    compact rows wrapped at them (measured 51–73 px rows where one 32 px line
    was promised). A display:none wbr makes no box and no opportunity. */
 body.exp-list-compact .entry-name wbr { display: none; }
+.entry-name-head { overflow: hidden; text-overflow: ellipsis; } /* compact: only the middle ellipsizes; lead + tail (run_name) keep min-width:auto */
 
 .compare-form { margin-top: .3rem; }
 .btn-compare, .btn-trend {
@@ -12162,8 +12164,6 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .agent-pill-mode { font-size: .68rem; opacity: .7; border-left: 1px solid var(--pico-muted-border-color); padding-left: .35rem; flex: 0 0 auto; }
 .agent-pill-mode[hidden] { display: none; }
 .agent-pill-res { font-size: .7rem; opacity: .75; flex: 0 0 auto; }
-@media (max-width: 1400px) { .agent-pill-res { display: none; } }
-@media (max-width: 1150px) { .agent-pill-mode { display: none; } }
 @media (max-width: 1000px) { .agent-pill-link { max-width: 11rem; } }
 /* ...and the bar itself never pushes past the window: the LEFT group shrinks and
    wraps inside its own row (the right group keeps its place -- wrapping the nav
@@ -13930,7 +13930,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    The drawing is the shared component-page one; only the Pulses mount sets
    data-cm-pick, so every other page's map is untouched. */
 .cm-edge-hit { stroke: transparent; stroke-width: 16px; fill: none; pointer-events: stroke; }
-.cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; }
+.cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; stroke-width: 24px; }
 /* Centred and modest: this map sits above a 500-row table, so it is a control
    rather than the page's subject. */
 .cmap[data-cm-pick="1"] .cmap-body { display: flex; justify-content: center; }
@@ -13959,12 +13959,11 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     fill: color-mix(in srgb, var(--pico-primary) 10%, var(--pico-background-color));
 }
 .cmap[data-cm-pick="1"] .cm-edge-line {
-    stroke: color-mix(in srgb, var(--pico-primary) 55%, var(--pico-muted-border-color));
-    stroke-width: 2.5px; opacity: 1;
+    stroke: var(--pico-primary); stroke-width: 5px; opacity: 0.85;
 }
 .cmap[data-cm-pick="1"] [data-cm] { cursor: pointer; }
 .cmap[data-cm-pick="1"] [data-cm]:hover .cm-stone { filter: brightness(1.35); }
-.cmap[data-cm-pick="1"] [data-cm]:hover .cm-edge-line { stroke-width: 4px; }
+.cmap[data-cm-pick="1"] [data-cm]:hover .cm-edge-line { stroke-width: 8px; opacity: 1; }
 .cmap[data-cm-pick="1"] .cmap-hint {
     margin: 0 0 0.5rem; font-size: 0.86em; color: var(--pico-muted-color);
 }
@@ -13973,7 +13972,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 }
 .cmap[data-cm-pick="1"] .cm-picked .cm-id { fill: var(--pico-primary-inverse); }
 .cmap[data-cm-pick="1"] .cm-picked .cm-edge-line {
-    stroke: var(--pico-primary); stroke-width: 5px;
+    stroke: var(--pico-primary); stroke-width: 9px; opacity: 1;
 }
 .pulse-owner-chip {
     display: inline-flex; align-items: center; gap: 0.4rem;

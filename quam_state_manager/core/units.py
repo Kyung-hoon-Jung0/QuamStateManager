@@ -195,7 +195,9 @@ def _resolve_field(field: str) -> tuple[Optional[str], Optional[str]]:
         # base it is not stored in. Display goes through name_unit instead.
         return (None, None)
     if "frequency" in f:
-        if any(tok in f for tok in ("intermediate", "anharm", "detun", "chi")):
+        # a frequency SHIFT (``GEF_frequency_shift``, ~1 MHz) is a small offset,
+        # not an absolute frequency: GHz read it as "-0.0007 GHz"
+        if any(tok in f for tok in ("intermediate", "anharm", "detun", "chi", "shift")):
             return ("freq", "MHz")
         return ("freq", "GHz")
     # amplitudes / everything else: dimensionless or unknown -> no conversion.
@@ -233,6 +235,8 @@ def format_quantity(value: Any, field: str) -> Optional[tuple[str, str]]:
     dimension, fixed = _resolve_field(field)
     if not _is_number(value):
         return None
+    if field == "pair_detuning" and pair_detuning_inferred(value):
+        return _inferred_hz(value)
     if dimension is None:
         declared = name_unit(field)
         if not declared:
@@ -385,6 +389,12 @@ def qty_filter(value: Any, field: str, mode: str = "num") -> str:
     - ``"unit"`` -> the unit label only, else ``""``
     """
     fq = format_quantity(value, field)
+    if field == "pair_detuning" and pair_detuning_inferred(value):
+        # the one shared fallback: a frequency-sized pair detuning is never
+        # printed as volts, and the full form says the unit was inferred
+        if mode == "unit":
+            return fq[1]
+        return pair_detuning_display(value) if mode == "full" else f"{fq[0]} {fq[1]}"
     if mode == "unit":
         return fq[1] if fq else ""
     if value is None:
@@ -592,20 +602,40 @@ def stored_value_unit(field: str, value: Any) -> str:
     return unit
 
 
-def pair_detuning_cell(value: Any) -> tuple[str, bool]:
-    """``(text, unit_doubtful)`` for a pair's ``detuning`` table cell.
+PAIR_DETUNING_INFERRED_NOTE = "unit inferred as Hz: too large for V"
 
-    A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts;
-    a larger one renders raw (no scaling, no unit) with the doubt flag set.
+
+def pair_detuning_inferred(value: Any) -> bool:
+    """True when a pair ``detuning`` is too large to be volts and is shown in
+    Hz instead (:func:`stored_value_unit`'s fallback)."""
+    return stored_value_unit("pair_detuning", value) == "Hz"
+
+
+def _inferred_hz(value: float) -> tuple[str, str]:
+    """``(number, unit)`` of a frequency-sized pair detuning, scaled by
+    magnitude with three decimals (``509318255.43`` -> ``("509.318", "MHz")``)."""
+    factor, suffix, _ = _pick_tier("freq", abs(value))
+    return f"{value * factor:.3f}", suffix
+
+
+def pair_detuning_cell(value: Any) -> tuple[str, bool]:
+    """``(text, unit_inferred)`` for a pair's ``detuning`` table cell.
+
+    A number within ``PLAUSIBLE_VOLT_MAX`` renders through ``qty`` in volts
+    (the header carries the unit); a larger one renders in Hz units with its
+    unit in the text and the inferred flag set.
     """
-    if stored_value_unit("pair_detuning", value) == "Hz":
-        return repr(value), True
+    if pair_detuning_inferred(value):
+        num, unit = _inferred_hz(value)
+        return f"{num} {unit}", True
     return qty_filter(value, "pair_detuning"), False
 
 
 def pair_detuning_display(value: Any) -> str:
-    """Full text using the same stored-unit rule as the Datasets popup."""
-    unit = stored_value_unit("pair_detuning", value)
-    if unit == "Hz":
-        return f"{value!r} Hz (treated as Hz: too large for V)"
+    """Full text, the same rule on every pair-detuning surface (inspector,
+    report, Chip Status popup, CLI): volts when plausible, else Hz units with
+    the stored number and the inferred-unit note."""
+    if pair_detuning_inferred(value):
+        num, unit = _inferred_hz(value)
+        return f"{num} {unit} (stored {value!r}, {PAIR_DETUNING_INFERRED_NOTE})"
     return qty_filter(value, "pair_detuning", "full") or qty_filter(value, "pair_detuning")

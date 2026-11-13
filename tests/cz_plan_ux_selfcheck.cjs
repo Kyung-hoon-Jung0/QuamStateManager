@@ -24,8 +24,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     w.eval(source('cz-plan.js'));w.CzPlan.mount();await wait(40);
     const flux=()=>renders.filter(x=>x.id==='czp-flux').at(-1);
     const higherName=[...f.data.qubits].sort((a,b)=>b.summary.f01_hz-a.summary.f01_hz)[0].name;
-    const visibleSummary=f.solve.summary.replace(/\(= .*? of H per node 30\)/,
-        '(= \u2212anharmonicity of '+higherName+', the higher qubit)')+' (?)';
+    // audit recheck: said once -- the validity only as the badge, the tier only in the conversion clause
+    let onceSummary=f.solve.summary;
+    if(f.solve.validity_warning&&f.solve.validity) onceSummary=onceSummary.split(' | '+f.solve.validity).join('');
+    if(f.solve.conversion&&f.solve.tier) onceSummary=onceSummary.split(' ('+f.solve.tier+') | ').join(' | ');
+    const visibleSummary=onceSummary.replace(/\(= .*? of H per node 30\)/,
+        '(= \u2212anharmonicity of '+higherName+', the higher qubit)')
+        // B: an out-of-range answer carries its validity badge right after the amplitude
+        .replace(f.solve.validity_warning ? ' | stored ' : /$^/, ' \u26a0 '+f.solve.validity+' | stored ')+' (?)';
     if(item===1){
         // D-1: the chip frequency map first, then the pair table, then the one-pair detail
         const F=w.Node.DOCUMENT_POSITION_FOLLOWING, box=d.querySelector('.czp-map-box'), table=d.getElementById('czp-table');
@@ -47,9 +53,17 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             assert(flux().traces.some(t=>(t.name||'').startsWith(ln.name+' · ') && t.name.endsWith(ln.point.validity)));
             assert(d.querySelector('#czp-card').textContent.includes(ln.point.validity));
         }
+        // audit recheck: the parking note wraps one qubit per line and the top margin makes room
+        const parks=f.data.qubits.filter(q=>q.summary&&q.summary.parking);
+        assert(parks.length,'the fixture names a parking offset');
+        const park=flux().layout.annotations.find(a=>a._czpParking);
+        assert.strictEqual(park.text.split('<br>').length,parks.length+1,'one line per qubit');
+        assert(flux().layout.margin.t>=44+14*parks.length,'the margin holds every line');
     }
     if(item===3){
         const match=d.getElementById('czp-match');assert.strictEqual(match.textContent,visibleSummary);
+        if(f.solve.validity) assert(match.textContent.split(f.solve.validity).length-1<=1,'the validity is said once');
+        if(f.solve.conversion) assert(!match.textContent.includes('('+f.solve.tier+')'),'the conversion clause names the tier');
         for(const key of ['target_detuning_hz','amplitude_v','stored_amplitude_v','difference_v','tier','line'])
             assert.strictEqual(match.getAttribute('data-'+key.replaceAll('_','-')),String(f.solve[key]));
         const blob=JSON.parse(d.getElementById('cz-operating-points').textContent);
@@ -64,11 +78,22 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     }
     if(item===5){
         const time=renders.find(x=>x.id==='czp-time');assert.deepStrictEqual(Array.from(time.layout.yaxis2.domain),[0,1]);
-        assert(time.traces.every(t=>t.yaxis==='y2'));
+        // D5 adds the signed commanded Z amplitude of each moving line on y3; the rest stays on y2
+        assert(time.traces.every(t=>t.yaxis==='y2'||t.yaxis==='y3'));
+        assert(time.traces.some(t=>t.yaxis==='y3')&&time.layout.yaxis3.overlaying==='y2','signed Z amplitude drawn');
         const box=d.getElementById('czp-frequency-box');assert(!box.open&&!renders.some(x=>x.id==='czp-frequency'));
         box.open=true;box.dispatchEvent(new w.Event('toggle'));await wait(10);
         assert(renders.some(x=>x.id==='czp-frequency'&&x.traces.length>=2));
         assert.deepStrictEqual(Array.from(time.traces[0].y),f.data.time_panel.detuning_mhz);
+        // C: the output-after-filters toggle redraws the figure from the route's filtered trace
+        const tg=d.getElementById('czp-filtered-toggle');assert(tg,'the filter toggle exists');
+        const before=renders.filter(x=>x.id==='czp-time').length;
+        tg.checked=true;tg.dispatchEvent(new w.Event('change'));await wait(20);
+        const redrawn=renders.filter(x=>x.id==='czp-time');assert(redrawn.length>before,'the toggle redraws');
+        const el=d.getElementById('czp-time'), last=redrawn.at(-1);
+        const want=(f.data.trajectory||[]).filter(t=>t&&t.filtered&&t.filtered.v).length;
+        assert.strictEqual(last.traces.filter(t=>t._czpFiltered).length,want);
+        assert(want||el.getAttribute('data-filtered-notes').length>0,'no trace means a stated reason');
     }
     if(item===6){
         const badge=d.querySelector('.czp-no-quad');assert.strictEqual(badge.textContent,'no quad term');
@@ -83,12 +108,14 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     }
     if(item===7){
         const card=d.getElementById('czp-card'), hover=Array.from(card.querySelectorAll('.czp-help-hover'));
-        assert(hover.some(e=>e.title.includes('runtime property')),'duration explanation retained on hover');
+        // the fixture's gate now has an inferred duration; its derivation is the hover text
+        assert(hover.some(e=>e.title.includes('inferred the way the gate infers it')),'duration explanation retained on hover');
         assert(hover.some(e=>e.title.includes('first recorded')||e.title.includes('history')),'history explanation retained on hover');
         assert(hover.some(e=>e.title.includes('limit ')),'validity limit retained on hover');
         assert(hover.some(e=>e.title.includes('excursion ')&&e.title.includes('frequency frame reference')));
         assert(card.textContent.includes('Defects touched during the gate: none')&&!card.textContent.includes('excursion '));
-        assert(card.textContent.includes('Durationunknown')&&!card.textContent.includes('runtime property'));
+        // the gate's duration is inferred now (its longest played pulse), never the runtime-property sentence
+        assert(/Duration\d+ ns/.test(card.textContent)&&!card.textContent.includes('runtime property'));
         assert(!card.textContent.includes('(limit '));
     }
     if(item===8){
@@ -105,7 +132,8 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
         env.dom.window.close();
     }
     if(item===9){
-        const time=renders.find(x=>x.id==='czp-time'), trace=time.traces.at(-1);
+        // the Delta trace is the last one on y2 (D5 appends the signed Z amplitude on y3)
+        const time=renders.find(x=>x.id==='czp-time'), trace=time.traces.filter(t=>t.yaxis==='y2').at(-1);
         assert.deepStrictEqual(Array.from(trace.y),f.data.time_panel.detuning_mhz);
         assert(trace.y.includes(-210),'the trace lies exactly on the leakage resonance');
         assert(trace.line.width>=4 && /^#[0-9a-f]{6}$/i.test(trace.line.color));

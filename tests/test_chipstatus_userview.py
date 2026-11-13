@@ -55,9 +55,10 @@ def _node(js):
 
 class TestBars:
     def test_bar_label_keeps_significant_figures(self):
-        out = _node(_fn(CS, "fmtBarLabel") + ";console.log([fmtBarLabel(0.03929,'x'),"
-                    "fmtBarLabel(123.456,'x'),fmtBarLabel(5.7056,'f_01')].join('|'))")
-        assert out == "0.03929|123.5|5.7056"
+        out = _node(_fn(CS, "_isGHzKey") + ";" + _fn(CS, "fmtBarLabel") + ";console.log([fmtBarLabel(0.03929,'x'),"
+                    "fmtBarLabel(123.456,'x'),fmtBarLabel(5.7056,'f_01'),"
+                    "fmtBarLabel(7.61027,'readout_rf_frequency')].join('|'))")
+        assert out == "0.03929|123.5|5.7056|7.6103"
 
     def test_bar_colour_is_the_map_colour(self):
         body = _fn(CS, "_barFill")

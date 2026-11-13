@@ -197,7 +197,8 @@ def _unit_peak_cached(spec_key: str, frozen: tuple) -> tuple:
     return _unit_peak_raw(spec_key, params)
 
 
-def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None) -> dict:
+def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None,
+               *, allow_leaf: bool = False) -> dict:
     """The waveform peak per unit amplitude of the pulse behind *amp_path*.
 
     Returns ``{"ratio": r | None, "sign": +1/-1, "real": bool, "reads": [...],
@@ -208,8 +209,13 @@ def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None) -> di
     answer depends on: the pulse dict itself (its ``__class__`` and every
     shape field) and the target of every pointer-valued shape field (RAM P6:
     a grid re-annotates a cell when a read path moves).
+
+    *allow_leaf* (default off) also accepts a class matched by its leaf NAME only
+    (``resolve_qclass`` ``"leaf"``: a lab's own class sharing a transcribed class's
+    name), and then adds ``"leaf": True`` to the answer. Such a ratio is a claim about
+    the transcription, not the lab's code, so a caller must say which it used.
     """
-    from .pulse_catalog import spec_at_known_home
+    from .pulse_catalog import spec_at_known_home, resolve_qclass
     out: dict = {"ratio": None, "sign": 1, "real": True, "reads": [], "why": None}
     ppath, node = _pulse_dict(merged, amp_path, alias_path)
     if node is None:
@@ -221,6 +227,12 @@ def pulse_peak(merged: dict, amp_path: str, alias_path: str | None = None) -> di
         out["why"] = "the pulse declares no __class__"
         return out
     spec = spec_at_known_home(qclass)
+    if spec is None and allow_leaf:
+        spec, how = resolve_qclass(qclass)
+        if how != "leaf":
+            spec = None
+        elif spec is not None:
+            out["leaf"] = True
     if spec is None:
         out["why"] = f"pulse class {_class_label(qclass)} is not one SM can synthesize"
         return out

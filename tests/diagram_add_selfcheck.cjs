@@ -302,6 +302,19 @@ const urls = (win) => win._ajax.map((a) => a[1]);
       'non-structural undo does not refresh the map page: ' + JSON.stringify(urls(w)));
   }
 
+  // ── a failed panel request says so in the panel ─────────────────────────
+  {
+    const w = world(true);
+    await tick(); await tick();
+    const panel = w.document.getElementById('cm-add-panel');
+    panel.innerHTML = '<p data-cm-add-hint>Now click the target qubit</p>';
+    w.document.dispatchEvent(new w.CustomEvent('htmx:responseError',
+      { detail: { target: panel, xhr: { status: 500 } } }));
+    ok(!!panel.querySelector('[data-cm-add-error]') && /500/.test(panel.textContent),
+       'a server error replaces the hint with a message: ' + panel.textContent);
+    ok(!panel.querySelector('[data-cm-add-hint]'), 'the stale hint is gone');
+  }
+
   if (fails) { console.error(fails + ' of ' + n + ' checks failed'); process.exit(1); }
   console.log('all checks passed (' + n + ' assertions)');
 })();

@@ -363,7 +363,11 @@ window.ChipStatus.jumpGuard = (function () {
     var last = null, WINDOW_MS = 8000, CAP_MS = 60000, armedPane = null;
     function live() {
         var now = Date.now();
-        return !!last && now - last.act <= WINDOW_MS && now - last.at <= CAP_MS;
+        // F13: a page OPENED on a section (?view=) holds its jump until the
+        // reader moves or the cap runs out: at a narrow width the sections
+        // above Trends lay out and fill in for longer than the window, with
+        // pauses between the landings, and the page was left on Overview
+        return !!last && (last.deep || now - last.act <= WINDOW_MS) && now - last.at <= CAP_MS;
     }
     /* QA F-20 (review): an offset INSIDE a section that has not got its content
        yet (Trends is a 51 px placeholder until its fetch lands) points past the
@@ -463,6 +467,8 @@ window.ChipStatus.jumpGuard = (function () {
                      foff: (typeof foff === 'number') ? foff : null };
             arm(pane);
         },
+        // F13: the live jump came from the page's own ?view= (see live())
+        deepen: function () { if (last) last.deep = true; },
         below: BELOW,
         cancel: cancel,
         baseView: baseView,
@@ -796,12 +802,35 @@ window.ChipStatus.calAgeRunTitle = function (n, age) {
     return 'last moved in ' + who + ' ' + age + ' (change ledger; the run is not named as its writer)';
 };
 
+// ONE per-gate fidelity per pulse (query.pair_gate_fidelity). A macro holding
+// two per-gate keys (InterleavedRB and a lab alias IRB) ships both rows, and
+// the server stamps `gate_pick` on them; every surface on this page shows one
+// number per pulse, so the rows the resolver did not pick leave the list here,
+// once, before any builder reads it. The full list stays on `_gfAll`.
+window.ChipStatus._pickGateRows = function (topo) {
+    ((topo && topo.edges) || []).forEach(function (e) {
+        if (!e || !Array.isArray(e.gate_fidelities) || e._gfAll) return;
+        if (!e.gate_fidelities.some(function (gf) { return gf && gf.gate_pick === false; })) return;
+        e._gfAll = e.gate_fidelities;
+        e.gate_fidelities = e.gate_fidelities.filter(function (gf) { return !gf || gf.gate_pick !== false; });
+    });
+    return topo;
+};
+// "2 IRB values on this pair: InterleavedRB 0.9073, IRB 0.9434", or ''.
+window.ChipStatus._gfConflictText = function (gf) {
+    var c = gf && gf.gate_conflict;
+    if (!Array.isArray(c) || c.length < 2) return '';
+    return c.length + ' IRB values on this pair: ' + c.map(function (x) {
+        return x[0] + ' ' + Number(x[1]).toFixed(4); }).join(', ');
+};
+
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
     var topo = opts.topo || {nodes: [], edges: []};
     // What this render was built from, so liveDetection's refresh can tell a
     // real topology change from a mutation that moved nothing on this page.
     window.ChipStatus._renderedSig = window.ChipStatus._topoSig(topo);
+    window.ChipStatus._pickGateRows(topo);
     // SA-F9 (g): the chip's change ledger was still being read (a Take live
     // rebuilds it), so the calibration ages are missing or a pull old -- ask
     // again until it answers, instead of showing "no timestamps" until a reload.
@@ -1220,11 +1249,15 @@ window.ChipStatus.mount = function (opts) {
         return { bg: _rgbCss(mix), fg: _rgbCss(ink),
                  cr: Math.round(Math.max(c0, c1) * 100) / 100 };
     }
+    // the panels whose values are frequencies shown in GHz
+    function _isGHzKey(key) {
+        return key === 'f_01' || key === 'readout_frequency' || key === 'readout_rf_frequency';
+    }
     // the one unit a panel's values are shown in (the title carries it once)
     function _tmapUnit(key) {
         if (/^T1$|^T2/.test(key)) return '\u00b5s';
         if (/fidelity/.test(key) || /^2q:/.test(key)) return '%';
-        if (key === 'f_01' || key === 'readout_frequency') return 'GHz';
+        if (_isGHzKey(key)) return 'GHz';
         if (key === 'anharmonicity') return 'MHz';
         return '';
     }
@@ -1233,7 +1266,7 @@ window.ChipStatus.mount = function (opts) {
         if (/^2q:/.test(key)) return (v * 100).toFixed(2);
         if (/^T1$|^T2/.test(key)) return (v * 1e6).toFixed(1);
         if (/fidelity/.test(key)) return (v * 100).toFixed(2);
-        if (key === 'f_01' || key === 'readout_frequency') return (v / 1e9).toFixed(4);
+        if (_isGHzKey(key)) return (v / 1e9).toFixed(4);
         if (key === 'anharmonicity') return (v / 1e6).toFixed(1);
         return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
     }
@@ -1333,7 +1366,12 @@ window.ChipStatus.mount = function (opts) {
     ];
 
     // Combined (all) — used by metric panels and heatmap
-    var ALL_CARD_PROPS = PRIMARY_CARD_PROPS.concat(SECONDARY_CARD_PROPS);
+    // the Frequencies panel's played readout RF (query._played_readout);
+    // a panel value, not a qubit-card row
+    var PANEL_ONLY_PROPS = [
+        {key:'readout_rf_frequency', fmtFn:function(v){return fmt(v,'GHz');}},
+    ];
+    var ALL_CARD_PROPS = PRIMARY_CARD_PROPS.concat(SECONDARY_CARD_PROPS, PANEL_ONLY_PROPS);
 
     // Filter each group to properties with at least 1 non-null value
     var PRIMARY_PROPS = PRIMARY_CARD_PROPS.filter(function(p) {
@@ -1346,7 +1384,7 @@ window.ChipStatus.mount = function (opts) {
 
     // Pre-compute aggregates per property
     var propAggs = {};
-    CARD_PROPS.forEach(function(p) {
+    CARD_PROPS.concat(PANEL_ONLY_PROPS).forEach(function(p) {
         propAggs[p.key] = computeAggregates(topo.nodes.map(function(n) { return _mv(n, p.key); }));
     });
 
@@ -1386,13 +1424,13 @@ window.ChipStatus.mount = function (opts) {
                 // QA F-04: each tile takes its OWN per-pair best, so two tiles
                 // can quote two different pulses of one pair -- every entry
                 // carries the pulse it came from, and the hover names it.
-                var best = null, worst = null, bestGate = null, worstGate = null;
+                var best = null, worst = null, bestGate = null, worstGate = null, bestGf = null;
                 e.gate_fidelities.forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     if (gf.physical === false) dropped++;
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; }
+                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; bestGf = gf; }
                     // the server dropped `value` and kept the number in
                     // `raw_value` (query._gate_fidelity_row) -- a fidelity
                     // outside (0,1]. It is never a candidate for `best`, but
@@ -1402,7 +1440,9 @@ window.ChipStatus.mount = function (opts) {
                           : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
                     if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) { worst = r; worstGate = gf.gate; }
                 });
-                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate });
+                // the key the value was read from + a disagreement of its pulse
+                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate,
+                                             src: bestGf.metric, conflict: window.ChipStatus._gfConflictText(bestGf) });
                 else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true, gate: worstGate });
             });
             out.excluded = dropped;
@@ -2139,8 +2179,13 @@ window.ChipStatus.mount = function (opts) {
                         + ' from it; see Diagnostics"';
             // QA F-04: the pulse this pair's number came from, in its own span
             // so the value's text stays exactly the formatted number.
+            // the key the number came from in the title; a pulse whose
+            // two per-gate keys disagree says so in the row itself
             var gate = (typeof x.gate === 'string' && x.gate)
-                ? '<span class="ov-hover-gate">' + _esc(x.gate) + '</span>' : '';
+                ? '<span class="ov-hover-gate"' + (x.src ? ' title="from ' + _esc(x.src)
+                      + (x.conflict ? ' \u00b7 ' + _esc(x.conflict) : '') + '"' : '') + '>' + _esc(x.gate)
+                  + (x.conflict ? ' <span class="ui-badge ui-badge--warn" data-fid-conflict="1">\u26a0 from '
+                      + _esc(x.src) + '</span>' : '') + '</span>' : '';
             return '<span class="ov-hover-item">' + dot
                  + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
                  + '<span class="ov-hover-val' + vCls + '"' + vTit + '>'
@@ -2635,6 +2680,8 @@ window.ChipStatus.mount = function (opts) {
                 }
                 if (gf.level === 'clifford') name += ' <span class="topo-popup-kind">per Clifford</span>';
                 else if (gf.level === 'gate') name += ' <span class="topo-popup-kind">per gate</span>';
+                var _gfc = ((window.ChipStatus || {})._gfConflictText || function () { return ''; })(gf);
+                if (_gfc) name += ' <span class="ui-badge ui-badge--warn" data-fid-conflict="1" title="' + _esc(_gfc) + '">\u26a0</span>';
                 var shown = pct(v);
                 // docs/138 — the per-GATE number this Clifford fit implies. The
                 // run computed it (epc / average_gates_per_clifford) and stored
@@ -2787,6 +2834,20 @@ window.ChipStatus.mount = function (opts) {
         // precedent as the `_cols_v2` visibility flip (docs/85): bump the key
         // so a corrected default reaches everyone, and a choice made AFTER
         // seeing the honest label survives from then on.
+        // The hero's readout note for one stone: {sub, title} when the played
+        // RF and the resonator f_01 differ at the shown precision, or when the
+        // value IS f_01 (no RF_frequency); null when they agree.
+        function _heroRoNote(n) {
+            if (n.readout_rf_source === 'f_01') {
+                return { sub: 'f_01 (no RF)', title: 'no RF_frequency: showing resonator f_01' };
+            }
+            var f = n.readout_frequency, rf = n.readout_rf_frequency;
+            if (typeof f === 'number' && typeof rf === 'number' && fmt(f, 'GHz') !== fmt(rf, 'GHz')) {
+                return { sub: 'f_01 ' + fmt(f, 'GHz'),
+                         title: 'played RF ' + fmt(rf, 'GHz') + ' · resonator f_01 ' + fmt(f, 'GHz') };
+            }
+            return null;
+        }
         var HERO_KEY = 'quam_topo_hero_metric_v2';
         var ZOOM_KEY = 'quam_topo_hero_zoom';
         // docs/126 ② — the metric patches ARE the map's controls: clicking one
@@ -2805,14 +2866,25 @@ window.ChipStatus.mount = function (opts) {
               // the two stones' frequency difference — Δf, the number the
               // docs/93 chevron only encodes as an inequality.
               edgeDelta: { key: 'f_01', label: 'Δf' } },
+            // the readout patch shows the PLAYED RF
+            // (readout_rf_frequency), as the Frequencies panel does; the
+            // resonator f_01 joins the stone's sub-line and hover only where
+            // the two differ at the shown precision (one value when equal).
+            { key: 'readout_rf_frequency', label: 'Readout freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              subFn: function(n) { var t = _heroRoNote(n); return t ? t.sub : null; },
+              titleFn: function(n) { var t = _heroRoNote(n); return t ? t.title : ''; } },
+            // a topology that carries no played RF at all keeps the f_01 patch
             { key: 'readout_frequency',   label: 'Readout freq',
-              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              onlyIfMissing: 'readout_rf_frequency' },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity_gef', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
             { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
         ].filter(function(m) {
+            if (m.onlyIfMissing && topo.nodes.some(function(n) { return _mv(n, m.onlyIfMissing) != null; })) return false;
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
 
@@ -2852,6 +2924,11 @@ window.ChipStatus.mount = function (opts) {
         // The retired mixed-source patch: a remembered choice of it keeps
         // a 2Q view, on the default 2Q patch.
         if (current === 'cz_fidelity') current = DEFAULT_2Q;
+        // a remembered f_01 readout patch now means the played-RF patch
+        if (current === 'readout_frequency'
+                && METRICS.some(function(m) { return m.key === 'readout_rf_frequency'; })) {
+            current = 'readout_rf_frequency';
+        }
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
 
         // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
@@ -2933,9 +3010,10 @@ window.ChipStatus.mount = function (opts) {
                 var sv = _mv(n, m.subKey);
                 if (sv != null) sub = m.subFmt(sv);
             }
+            if (m.subFn && v != null) sub = m.subFn(n);
             return { fill: c2.bg, fg: c2.fg, text: v == null ? '—' : m.fmtFn(v),
                      sub: sub,
-                     title: v == null ? 'no data' : '' };
+                     title: v == null ? 'no data' : (m.titleFn ? m.titleFn(n) : '') };
         }
 
         // docs/120 item 11: the hero is now the ONLY chip map on this page, so
@@ -3315,7 +3393,8 @@ window.ChipStatus.mount = function (opts) {
                 // A metric with a sub-value shifts the whole stone to a
                 // three-line layout (uniform per METRIC, so ids line up
                 // across the map even where one qubit's sub is missing).
-                var subMode = !!mCur.subKey;
+                var subMode = !!mCur.subKey
+                    || (!!mCur.subFn && topo.nodes.some(function(nn) { return _mv(nn, mCur.key) != null && mCur.subFn(nn); }));
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" data-link-id="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'
@@ -3697,11 +3776,22 @@ window.ChipStatus.mount = function (opts) {
                 if (!rbType) return;
                 var val = typeof gf.value === 'number' ? gf.value
                         : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
+                // a fidelity outside (0, 1] (the server moved it to
+                // `raw_value`) is SHOWN, marked unphysical, with its raw number --
+                // never as a percentage, never in the stats, never dropped (the
+                // printable report's rule, docs/188).
+                var bad = false;
+                if (val == null && gf.physical === false) {
+                    val = typeof gf.raw_value === 'number' ? gf.raw_value
+                        : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
+                    bad = val != null;
+                }
                 if (val == null) return;
                 if (!rbData[rbType]) rbData[rbType] = {};
                 if (!rbData[rbType][gf.gate]) rbData[rbType][gf.gate] = [];
                 rbData[rbType][gf.gate].push({
-                    pair_id: e.pair_id, source: e.source, target: e.target, value: val,
+                    pair_id: e.pair_id, source: e.source, target: e.target, value: val, bad: bad,
+                    src: gf.metric, conflict: window.ChipStatus._gfConflictText(gf),
                     err: typeof gf.err === 'number' ? gf.err : null,
                     run: typeof gf.load_id === 'number' ? gf.load_id : null,
                     inferredRun: gf.load_id == null ? gf.inferred_load_id : null
@@ -3810,7 +3900,16 @@ window.ChipStatus.mount = function (opts) {
                 var pairs = gates[gateName];
                 if (!pairs.length) return;
 
-                var vals = pairs.map(function(p) { return p.value; });
+                var vals = pairs.filter(function(p) { return !p.bad; }).map(function(p) { return p.value; });
+                var nBad = pairs.length - vals.length;
+                // the unphysical cell text: the raw number, never a percentage
+                var _badCell = function (p) { return p.value.toFixed(4) + ' \u26a0'; };
+                var _badTip = function (p, gl) { return _esc(p.pair_id) + ' \u2014 ' + gl + ': ' + p.value.toFixed(4)
+                    + ' unphysical (a fidelity outside 0..1, likely a failed fit) \u00b7 from ' + _esc(p.src || '')
+                    + ' \u00b7 not in the stats or the colours \u00b7 click to inspect'; };
+                // the key every value was read from; a disagreement of two keys
+                var _srcTip = function (p) { return (p.src ? ' \u00b7 from ' + _esc(p.src) : '')
+                    + (p.conflict ? ' \u00b7 \u26a0 ' + _esc(p.conflict) : ''); };
                 // Physical-gate BEFORE aggregating — a broken RB fit (>1 or ≤0) must
                 // not pollute the stat line avg/min/max, skew the colour range, or
                 // enter the outlier median/MAD that other pairs are judged against.
@@ -3854,6 +3953,8 @@ window.ChipStatus.mount = function (opts) {
                     + 'avg ' + (agg.avg * 100).toFixed(2) + '% <span>med ' + (agg.median * 100).toFixed(2)
                     + '%</span> <span>min ' + (agg.min * 100).toFixed(2) + '%</span> <span>max ' + (agg.max * 100).toFixed(2)
                     + '%</span> <span>(' + agg.count + '/' + topo.edges.length + ' pairs)</span>'
+                    + (nBad ? ' <span class="ui-badge ui-badge--warn" data-fid-unphysical="' + nBad + '">\u26a0 ' + nBad
+                        + ' unphysical (outside 0..1), shown raw, not in the stats</span>' : '')
                     + '</div>';
 
                 // ── Side-by-side: grid (left) + bar chart (right) ────
@@ -3886,13 +3987,17 @@ window.ChipStatus.mount = function (opts) {
                             sectionHtml += '<div class="heatmap-cell heatmap-cell-none tmap-pill" data-pair="' + pidE + '" title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" style="' + pos + '"><span class="heatmap-cell-value">\u2014</span></div>';
                             return;
                         }
+                        if (p.bad) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none tmap-pill" data-pair="' + pidE + '" data-fid-unphysical="1" title="' + _badTip(p, gateLabel) + '" style="' + pos + '"><span class="heatmap-cell-value">' + _badCell(p) + '</span></div>';
+                            return;
+                        }
                         var ht = _tOf(p.value), paint = _tmapPaint(interpolateColor(ht, stops), _surf9);
                         var physOk = p.value > 0 && p.value <= 1.0000001;
                         var vd = physOk ? _verdict(p.value, thresholds['cz_fidelity']) : null;
                         var isOut = scorer && physOk && scorer.isOutlier(p.value);
                         sectionHtml += '<div class="heatmap-cell tmap-pill tmap-painted' + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" data-heat-t="' + ht.toFixed(6) + '" data-tmap-cr="' + paint.cr + '"'
-                            + ' title="' + pidE + ' (' + _esc(e.source) + ' \u2192 ' + _esc(e.target) + ') \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + (p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '') + ' ' + rbKind + (p.run != null ? ' \u00b7 run #' + p.run : '') + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '') + ' \u00b7 click to inspect"'
-                            + ' style="' + pos + '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';"><span class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '</span></div>';
+                            + ' title="' + pidE + ' (' + _esc(e.source) + ' \u2192 ' + _esc(e.target) + ') \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + (p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '') + ' ' + rbKind + (p.run != null ? ' \u00b7 run #' + p.run : '') + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '') + _srcTip(p) + ' \u00b7 click to inspect"'
+                            + ' style="' + pos + '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';"><span class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + (p.conflict ? ' \u26a0' : '') + '</span></div>';
                     });
                 } else {
                     // Pair topology grid
@@ -3932,6 +4037,13 @@ window.ChipStatus.mount = function (opts) {
                                 + '<div class="heatmap-cell-value">—</div></div>';
                             return;
                         }
+                        if (p.bad) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none" data-pair="' + pidE + '" data-fid-unphysical="1" '
+                                + 'title="' + _badTip(p, gateLabel) + '" style="' + posStyle + '">'
+                                + '<div class="heatmap-cell-name">' + pidE + '</div>'
+                                + '<div class="heatmap-cell-value">' + _badCell(p) + '</div></div>';
+                            return;
+                        }
                         var ht = _tOf(p.value);
                         var bg = interpolateColor(ht, stops), fg = textColorForBg(bg);
                         var _physOk = p.value > 0 && p.value <= 1.0000001;
@@ -3940,11 +4052,11 @@ window.ChipStatus.mount = function (opts) {
                         var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
                         var _runTip = p.run != null ? ' \u00b7 run #' + p.run : (p.inferredRun != null ? ' \u00b7 run #' + p.inferredRun + ': inferred source, not proven' : '');
                         sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
-                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
+                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + _srcTip(p) + ' \u00b7 click to inspect" '
                             + 'data-heat-t="' + ht.toFixed(6) + '" '
                             + 'style="' + posStyle + 'background-color:' + bg + ';color:' + fg + ';">'
                             + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                            + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%</div></div>';
+                            + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%' + (p.conflict ? ' \u26a0' : '') + '</div></div>';
                     });
                 }
                 sectionHtml += '</div>'; // close grid
@@ -3956,7 +4068,9 @@ window.ChipStatus.mount = function (opts) {
 
                 // Defer the bar chart: data is pure JS, but height needs the
                 // grid's offsetHeight, only measurable after the single write.
-                var sorted = pairs.slice().sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
+                // an unphysical value is in the grid (marked), never a bar: a 153% bar
+                // would stretch the axis every real pair is read against
+                var sorted = pairs.filter(function(p) { return !p.bad; }).sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
                 var barColors = sorted.map(function(p) {
                     return interpolateColor(_tOf(p.value), _barColorScale);
                 });
@@ -4773,7 +4887,7 @@ window.ChipStatus.mount = function (opts) {
             {key:'T2ramsey',          title:'T2 Ramsey (\u00b5s)',      group:'coherence'},
             {key:'T2echo',            title:'T2 Echo (\u00b5s)',        group:'coherence'},
             {key:'f_01',              title:'Qubit Frequency f\u2080\u2081', group:'frequency'},
-            {key:'readout_frequency', title:'Readout Frequency',        group:'frequency'},
+            {key:'readout_rf_frequency', title:'Readout Frequency, played RF', group:'frequency'},
             {key:'anharmonicity',     title:'Anharmonicity',            group:'frequency'},
             {key:'x180_amplitude',    title:'x180 Amplitude',           group:'calibration'},
             {key:'x90_amplitude',     title:'x90 Amplitude',            group:'calibration'},
@@ -4791,7 +4905,7 @@ window.ChipStatus.mount = function (opts) {
         // Bar labels use already-converted display values (μs, GHz, %, etc.)
         function fmtBarLabel(v, key) {
             if (key === 'T1' || key === 'T2ramsey' || key === 'T2echo') return (v).toFixed(1);
-            if (key === 'f_01' || key === 'readout_frequency') return (v).toFixed(4);
+            if (_isGHzKey(key)) return (v).toFixed(4);
             if (key === 'anharmonicity') return (v).toFixed(1);
             // same significant figures as the map's own labels (0.03929, not 0.04)
             if (typeof v === 'number') return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
@@ -4858,6 +4972,31 @@ window.ChipStatus.mount = function (opts) {
             panels.push({ key: def.key, group: def.group, built: false, cells: topo.nodes.length, make: function () {
             // (body unchanged, made when the panel is built: the palette is the one on screen then)
             var secId = 'mp-' + def.key.replace(/[^a-zA-Z0-9]/g, '-');
+            // the played-RF panel names, per qubit, the resonator's
+            // f_01 where it differs (at the shown precision) and a qubit whose
+            // resonator has no RF_frequency (its value is f_01, said so)
+            function _roNote(n) {
+                if (def.key !== 'readout_rf_frequency') return '';
+                if (n.readout_rf_source === 'f_01') return ' \u00b7 no RF_frequency: showing resonator f_01';
+                var f = n.readout_frequency, rf = n.readout_rf_frequency;
+                if (typeof f === 'number' && typeof rf === 'number' && fmt(f, 'GHz') !== fmt(rf, 'GHz')) {
+                    return ' \u00b7 resonator f_01 ' + fmt(f, 'GHz');
+                }
+                return '';
+            }
+            function _roLines() {
+                if (def.key !== 'readout_rf_frequency') return '';
+                var diff = [], fb = [];
+                topo.nodes.forEach(function (n) {
+                    if (!_roNote(n)) return;
+                    if (n.readout_rf_source === 'f_01') fb.push(_esc(n.id));
+                    else diff.push(_esc(n.id) + ': resonator f_01 ' + fmt(n.readout_frequency, 'GHz'));
+                });
+                var out = '';
+                if (diff.length) out += '<p class="muted topo-metric-novalue" data-ro-f01="1">' + diff.join(' \u00b7 ') + '</p>';
+                if (fb.length) out += '<p class="muted topo-metric-novalue" data-ro-fallback="1">no RF_frequency, showing resonator f_01: ' + fb.join(', ') + '</p>';
+                return out;
+            }
             var stops = dCfg.colorScale;
             var range = agg.max - agg.min || 1;
             // Outliers off the same gated values (`vals`). For metrics with a
@@ -4893,6 +5032,8 @@ window.ChipStatus.mount = function (opts) {
                     + (def.source ? '; fills once a run writes it' : '') + ')</p>';
             }
 
+            sectionHtml += _roLines();
+
             // ── Side-by-side: grid (left) + bar chart (right) ────────
             var chartId = secId + '-chart';
             if (_tmap) sectionHtml += _tmapLegend(def.key, agg, stops);
@@ -4921,7 +5062,7 @@ window.ChipStatus.mount = function (opts) {
                         + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '');
                     var paint = ht != null ? _tmapPaint(interpolateColor(ht, stops), _surf9) : null;
                     if (paint) cls += ' tmap-painted';
-                    var tip = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                    var tip = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured') + _roNote(n)
                         + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '')
                         + (isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
                         + ' \u00b7 click to inspect';
@@ -4966,7 +5107,7 @@ window.ChipStatus.mount = function (opts) {
                     var noneCls = (v == null) ? ' heatmap-cell-none' : '';
                     var _isOut = scorer && v != null && scorer.isOutlier(v);
                     var outlCls = _isOut ? ' topo-outlier' : '';
-                    var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                    var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured') + _roNote(n)
                         + (_isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
                         + ' \u00b7 click to inspect';
                     var _vAttr = (typeof v === 'number') ? ' data-heat-v="' + v + '"' : '';
@@ -5005,7 +5146,7 @@ window.ChipStatus.mount = function (opts) {
                 var xTitle = _tmapTitle(def.title, def.key);   // the unit, as the map title carries it
                 if (def.key === 'T1' || def.key === 'T2ramsey' || def.key === 'T2echo') {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) * 1e6; });
-                } else if (def.key === 'f_01' || def.key === 'readout_frequency') {
+                } else if (_isGHzKey(def.key)) {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) / 1e9; });
                 } else if (def.key === 'anharmonicity') {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) / 1e6; });
@@ -5035,7 +5176,8 @@ window.ChipStatus.mount = function (opts) {
                         textfont: {size: 11},
                         type: 'bar', orientation: 'h',
                         marker: {color: barColors, line: {color: '#fff', width: 1}},
-                        hovertemplate: '%{y}: %{text}<extra></extra>',
+                        customdata: sorted.map(function(n) { return _roNote(n); }),
+                        hovertemplate: '%{y}: %{text}%{customdata}<extra></extra>',
                         cliponaxis: false
                     }],
                     layout: {
@@ -6010,6 +6152,7 @@ window.ChipStatus.mount = function (opts) {
         var diagTotal = diagErr + diagWarn;
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
                 'href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" ' +
+                'title="The errors and warnings the Diagnostics page counts; its recommendations and suggestions are not issues" ' +
                 'style="text-decoration:none">' +
                 '<div class="tile-val">' + (diagTotal || '✓') + '</div>' +
                 '<div class="tile-label">structural issues</div>' +
@@ -6693,6 +6836,7 @@ window.ChipStatus.mount = function (opts) {
         _restoreChipScroll(_hs);           // QA F-20: Back / reload of THIS entry
     } else if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
+        window.ChipStatus.jumpGuard.deepen();
     } else {
         // a fresh page with no deep view has no live jump: a jump made on the
         // previous visit must not re-anchor (or light the spy) on this one
@@ -7489,6 +7633,22 @@ window.ChipTrends = (function () {
             go();
         }
     }
+    /* F1/F2: values outside the physical range (or from a run tagged
+       "invalid") are left out of every line and axis; this per-viewer switch
+       draws them as hollow marks, still outside the axis range. Off unless
+       the viewer turned it on (remembered in this browser only). */
+    var EXCL_KEY = 'quam_trends_show_excluded';
+    function _showExcluded() {
+        try { return window.localStorage.getItem(EXCL_KEY) === '1'; }
+        catch (e) { return false; }
+    }
+    function setShowExcluded(on) {
+        try { window.localStorage.setItem(EXCL_KEY, on ? '1' : '0'); } catch (e) { /* private window */ }
+        var el = document.getElementById('topo-trends-data');
+        var charts = null;
+        try { charts = el ? JSON.parse(el.textContent || '[]') : null; } catch (e) { charts = null; }
+        if (charts) render(charts);
+    }
     function setCols(n) {
         n = _applyCols(n);
         try { window.localStorage.setItem(COLS_KEY, String(n)); } catch (e) { /* private window */ }
@@ -7741,9 +7901,42 @@ window.ChipTrends = (function () {
         win.key = win.range.join('/') + (win.focus ? '/focus' : '');
         return win;
     }
-    function _applyWindow(layout, series, win) {
+    /* F6: the view's ONE window stays the frame every chart shares (its
+       right edge, the "now" marks, the held-to note), but a chart whose
+       first drawn point comes well after the window opens starts its axis
+       there: a chart of three late changes no longer opens on an empty
+       left half. The window itself is not changed. */
+    var OWN_START_MIN = 0.25;
+    function _ownStart(series, win, marks) {
+        var lo = Infinity;
+        // a rename mark is part of what the chart shows
+        (marks || []).forEach(function (m) {
+            var t = _ms(m.x);
+            if (isFinite(t) && t < lo) lo = t;
+        });
+        series.forEach(function (s) {
+            s.points.forEach(function (p) {
+                if (typeof p[1] !== 'number' || !isFinite(p[1])) return;
+                var t = _ms(_iso(p[0]));
+                if (isFinite(t) && t < lo) lo = t;
+            });
+            (s.left_out || []).forEach(function (r) {
+                var t = _ms(_iso(r[0]));
+                if (isFinite(t) && t < lo) lo = t;
+            });
+        });
+        if (!isFinite(lo) || lo <= win.lo) return null;
+        var pad = Math.max((win.hi - lo) * 0.04, HOUR_MS / 4);
+        var start = lo - pad;
+        // only when it frees a real part of the axis (a quarter): a chart
+        // starting a little later stays aligned with the ones above it
+        return (start - win.lo > (win.hi - win.lo) * OWN_START_MIN) ? start : null;
+    }
+    function _applyWindow(layout, series, win, marks) {
         if (!win) return;
         layout.xaxis.range = win.range.slice();
+        var own = _ownStart(series, win, marks);
+        if (own !== null) layout.xaxis.range[0] = _naive(own);
         layout.xaxis.autorange = false;
         if (!win.focus) return;
         var heldHi = -Infinity, lateHi = -Infinity, lateN = 0;
@@ -7827,9 +8020,10 @@ window.ChipTrends = (function () {
     /* "#34 · Res spec" for a run; the why-sentence otherwise. Never both, and
        never a fabricated run number: a chip with no run provenance at all (a
        freshly-generated one) shows only why, which is the true answer. */
-    function _provLine(info) {
+    function _provLine(info, omitSub) {
         if (!info) return '';
-        return _esc(info.label) + (info.sub ? '<br>' + _esc(info.sub) : '')
+        var sub = (info.sub && info.sub !== omitSub) ? info.sub : '';
+        return _esc(info.label) + (sub ? '<br>' + _esc(sub) : '')
              + (info.flag_text && info.flag_text.length ? '<br>' + _esc(info.flag_text.join('; ')) : '');
     }
     /* S10 C5: the captured-only hover line (the snapshot writer check's "captured with
@@ -7937,6 +8131,58 @@ window.ChipTrends = (function () {
             if (t.meta === 'now') t.x = [win.range[1]];
         });
     }
+    var EXCL_WORDS = { unphysical: 'outside the physical range',
+                       invalid: 'from a run marked invalid' };
+    /* N1: an excluded value leaves a GAP over the run that carried it -- but
+       the value before it was held right up to that run. With the step line
+       (shape hv) a null cuts the segment that LEADS into it too, so the held
+       value vanished for hours (a value saved at 07:19 drew nothing until the
+       next valid point at 12:04). A bridge point repeats the held value at
+       the excluded run's time, so the step ends there and the gap covers the
+       excluded interval only. Only points the server lists as excluded are
+       bridged: any other null keeps its old meaning. */
+    function _bridgePts(s) {
+        var ex = s.excluded || [];
+        if (!ex.length) return s.points;
+        var exKey = {};
+        ex.forEach(function (r) { if (r && r[0] != null) exKey[String(r[0])] = 1; });
+        var out = [], prev = null;
+        s.points.forEach(function (p) {
+            var y = p[1];
+            if ((y === null || y === undefined) && prev !== null && exKey[String(p[0])]) {
+                var b = [p[0], prev];
+                b.bridge = true;
+                out.push(b);
+            }
+            out.push(p);
+            prev = (typeof y === 'number' && isFinite(y)) ? y : null;
+        });
+        return out;
+    }
+    // P3: every value of the line was excluded (and nothing else of it drawn)
+    function _allExcluded(s) {
+        if (!s.excluded || !s.excluded.length) return false;
+        if (s.left_out && s.left_out.length) return false;
+        if (typeof s.now === 'number' && isFinite(s.now)) return false;
+        return !s.points.some(function (p) { return typeof p[1] === 'number' && isFinite(p[1]); });
+    }
+    /* F13: how many rows a horizontal legend of these names takes in a
+       figure this wide (Plotly's item: a 40 px swatch + ~7 px per character
+       at the 12 px legend font). An unknown width (0) is one row. */
+    var LEGEND_ROW_PX = 19, LEGEND_FREE_ROWS = 2;
+    function _legendRows(names, width, title) {
+        if (!width || !names.length) return names.length ? 1 : 0;
+        var avail = Math.max(120, width - 24);
+        var rows = 1, used = title ? (String(title).length + 2) * 7 : 0;
+        names.forEach(function (n) {
+            var w = 40 + 7 * String(n == null ? '' : n).length;
+            if (used > 0 && used + w > avail) { rows++; used = 0; }
+            used += w;
+        });
+        return rows;
+    }
+    // F7: past this many lines a chart starts its unchanged ones hidden
+    var FLAT_HIDE_MIN = 8;
     var NOW_NOTE = 'current value differs from the newest recorded run value';
     var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
         + 'chip yet, or a change made outside SM since the last run.';
@@ -8099,9 +8345,17 @@ window.ChipTrends = (function () {
         });
         var r = host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
         var off = (xa._offset || 0), offy = (ya._offset || 0);
-        tip.style.left = Math.round(r.left + off + px + 14) + 'px';
-        tip.style.top = Math.round(r.top + offy + py + 14) + 'px';
+        // F5: placed right of / below the pointer, and FLIPPED to its left /
+        // above when that would run past the window -- a fixed box near the
+        // right edge used to shrink to a 70 px column that wrapped every value
+        var ax0 = r.left + off + px, ay0 = r.top + offy + py;
+        tip.style.left = Math.round(ax0 + 14) + 'px';
+        tip.style.top = Math.round(ay0 + 14) + 'px';
         tip.hidden = false;
+        var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+        var tw = tip.offsetWidth || 0, th = tip.offsetHeight || 0;
+        if (vw && tw && ax0 + 14 + tw > vw - 8) tip.style.left = Math.max(8, Math.round(ax0 - 14 - tw)) + 'px';
+        if (vh && th && ay0 + 14 + th > vh - 8) tip.style.top = Math.max(8, Math.round(ay0 - 14 - th)) + 'px';
         host.classList.add('trends-cotip-on'); _cotipPlotlyLabel(host, 'none');
     }
     window._trendsCoincident = _coincident;
@@ -8173,7 +8427,7 @@ window.ChipTrends = (function () {
             return a && a.xref === 'paper' && a.xanchor === 'left' && a.yanchor === 'bottom';
         });
         var lx = { xaxis: {}, annotations: _markNotes(marks || []).concat(own) };
-        _applyWindow(lx, series, cWin);
+        _applyWindow(lx, series, cWin, marks);
         var upd = { 'xaxis.range': lx.xaxis.range, 'xaxis.autorange': false,
                     annotations: lx.annotations };
         var initial = function () {
@@ -8223,6 +8477,9 @@ window.ChipTrends = (function () {
             });
         }
         var _tzNow = _tzKey();
+        var _showEx = _showExcluded();
+        var _exBox = document.getElementById('topo-trends-show-excluded');
+        if (_exBox) _exBox.checked = _showEx;
         // v1.3.0 A3: the view's ONE time window, decided before any chart draws
         var _marks = _renameMarks();
         var win = _viewWindow(charts, _marks);
@@ -8357,19 +8614,71 @@ window.ChipTrends = (function () {
             var _yr = _flat || ((isFinite(_lo) && isFinite(_hi) && _hi > _lo)
                 ? [_lo - (_hi - _lo) * 0.08, _hi + (_hi - _lo) * 0.08] : null);
             var _clipped = false;
+            // F4: a provenance sub-line every point of this chart shares
+            // ("writer not proven") is said once, in the chart's key, not on
+            // every hover
+            var _subs = {}, _nSub = 0;
+            c.series.forEach(function (s4) {
+                s4.points.forEach(function (p) {
+                    var ov4 = s4.attr && s4.attr[String(p[0])];
+                    if (!ov4) return;
+                    _nSub++;
+                    _subs[ov4.sub || ''] = (_subs[ov4.sub || ''] || 0) + 1;
+                });
+            });
+            var _subKeys = Object.keys(_subs);
+            var commonSub = (_nSub > 1 && _subKeys.length === 1 && _subKeys[0]) ? _subKeys[0] : null;
+            // F7: a chart of many lines whose values never moved -- the
+            // unchanged ones start hidden (one click on a legend name shows
+            // one), so the lines that DID move can be read
+            var _flatOf = function (s5) {
+                var v0 = null, n5 = 0;
+                for (var i5 = 0; i5 < s5.points.length; i5++) {
+                    var y5 = s5.points[i5][1];
+                    if (typeof y5 !== 'number' || !isFinite(y5)) continue;
+                    if (n5 && y5 !== v0) return false;
+                    v0 = y5; n5++;
+                }
+                return n5 > 0 && !(s5.left_out && s5.left_out.length);
+            };
+            var _hideFlat = c.series.length > FLAT_HIDE_MIN ? c.series.map(_flatOf) : null;
+            if (_hideFlat && _hideFlat.every(Boolean)) _hideFlat = null;   // nothing moved: show all
+            var _nHidden = _hideFlat ? _hideFlat.filter(Boolean).length : 0;
+            // F6: one pair's lines all named "<pair> \u00b7 <macro>" -- the
+            // pair is said once, as the legend's title
+            var _pfx = null;
+            if (c.series.length > 1) {
+                c.series.forEach(function (s6) {
+                    var at = String(s6.entity).indexOf(' \u00b7 ');
+                    var pf = at > 0 ? String(s6.entity).slice(0, at) : '';
+                    _pfx = (_pfx === null) ? pf : (_pfx === pf ? _pfx : '');
+                });
+            }
+            var _shortName = function (e) {
+                return _pfx ? String(e).slice(_pfx.length + 3) : e;
+            };
+            // P3: a line whose every value was excluded draws nothing; it
+            // leaves the legend (a bold name with no line read as a bug) and
+            // the chart key names it instead
+            var _allExcl = c.series.map(_allExcluded);
+            var _allExclNames = c.series.filter(function (s7, i7) { return _allExcl[i7]; })
+                .map(function (s7) { return _shortName(s7.entity); });
             var traces = c.series.map(function (s, si) {
                 var held = (s.held && Object.keys(s.held).length) ? s.held : null;
+                // N1: the drawn points, a held value carried up to an excluded run
+                var pts = _bridgePts(s);
+                var bridged = pts.length !== s.points.length;
                 var tr = {
-                    x: s.points.map(function (p) {
+                    x: pts.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
-                    y: s.points.map(function (p) { return _scaled(p[1], cScale); }),
+                    y: pts.map(function (p) { return _scaled(p[1], cScale); }),
                     // docs/301 F10: the value as the hover says it, with its unit
-                    text: s.points.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit, cDigits); }),
+                    text: pts.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit, cDigits); }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
-                    customdata: s.points.map(function (p) { return p[0]; }),
+                    customdata: pts.map(function (p) { return p[0]; }),
                     mode: (longest > 120 && !held) ? 'lines' : 'lines+markers',
-                    type: dense ? 'scattergl' : 'scatter', name: s.entity,
+                    type: dense ? 'scattergl' : 'scatter', name: _shortName(s.entity),
                     // docs/301 (F8): a stored value HOLDS until the next change --
                     // a step, as the value drawer draws the same series; a slope
                     // between two change points showed a drift that never happened
@@ -8381,20 +8690,27 @@ window.ChipTrends = (function () {
                     // the local time on the line above it
                     hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}<extra></extra>',
                 };
-                if (held) {
+                if (held || bridged) {
                     // A HELD point is the last value carried to the newest
                     // snapshot (docs/208): hollow, and on a dense line the
                     // only marker drawn, so it never reads as a measurement.
+                    // A bridge point (N1) only ends the held step: no mark.
                     tr.marker = {
-                        size: s.points.map(function (p) {
-                            return held[p[0]] ? 7 : (longest > 120 ? 0 : 5); }),
-                        symbol: s.points.map(function (p) {
-                            return held[p[0]] ? 'circle-open' : 'circle'; }),
+                        size: pts.map(function (p) {
+                            if (p.bridge) return 0;
+                            return (held && held[p[0]]) ? 7 : (longest > 120 ? 0 : 5); }),
+                        symbol: pts.map(function (p) {
+                            return (held && held[p[0]] && !p.bridge) ? 'circle-open' : 'circle'; }),
                     };
                 }
                 // [snapshot id, provenance line, click hint] — joined in
                 // BROWSER memory, so the wire still carries 2-tuples.
-                tr.customdata = s.points.map(function (p) {
+                tr.customdata = pts.map(function (p) {
+                    if (p.bridge) {
+                        // not a measurement: the value held until the run
+                        // whose value was left out of the line
+                        return ['', 'held until the next run (its value is excluded)', '', null];
+                    }
                     if (held && held[p[0]]) {
                         // Not a measurement: no snapshot id (a click does
                         // nothing), no run, and the time it was last SET.
@@ -8407,7 +8723,7 @@ window.ChipTrends = (function () {
                     // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        var pointData = [p[0], _provLine(ov),
+                        var pointData = [p[0], _provLine(ov, commonSub),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && (ov.saved_uid || ov.first_uid)) || null];
                         if (!ov.uid && ov.inferred_uid) pointData.push(ov.inferred_uid);
@@ -8423,6 +8739,8 @@ window.ChipTrends = (function () {
                 // the line, its left-out values and its "now" mark are one
                 // entity: one legend entry toggles them together, one colour
                 tr.legendgroup = 'ent:' + s.entity;
+                if (_hideFlat && _hideFlat[si]) tr.visible = 'legendonly';
+                if (_allExcl[si]) tr.showlegend = false;
                 var col = colorway ? colorway[si % colorway.length] : undefined;
                 if (col) {
                     tr.line.color = col;
@@ -8464,11 +8782,43 @@ window.ChipTrends = (function () {
                         }),
                         mode: 'markers', type: 'scatter', name: s.entity,
                         legendgroup: 'ent:' + s.entity, showlegend: false,
-                        meta: 'left_out', cliponaxis: false,
+                        meta: 'left_out', cliponaxis: false, opacity: 0.6,
                         marker: { symbol: edge.map(function (e) {
                                       return e.dir > 0 ? 'triangle-up-open'
                                           : (e.dir < 0 ? 'triangle-down-open' : 'circle-open'); }),
                                   size: 9, color: col,
+                                  line: { width: 1.5, color: col } },
+                        hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
+                            + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
+                    });
+                }
+                // F1/F2: the values left out of the line (unphysical, or
+                // from a run marked invalid) -- drawn only on request, as a
+                // hollow x, never into the axis range (an outlier beyond the
+                // line's range sits on its edge, its hover the real value)
+                var ex = (s.excluded || []).filter(function (r) {
+                    return r[0] != null && typeof r[1] === 'number' && isFinite(r[1]);
+                });
+                if (_showEx && ex.length && axisType === 'date') {
+                    var exEdge = ex.map(function (r) { return _edgeY(_scaled(r[1], cScale), _yr); });
+                    extraTraces.push({
+                        x: ex.map(function (r) { return _iso(r[0]); }),
+                        y: exEdge.map(function (e) { return e.y; }),
+                        text: ex.map(function (r, i) {
+                            return _hoverValue(_scaled(r[1], cScale), c.unit, cDigits)
+                                + (exEdge[i].dir ? ' (off the scale ' + (exEdge[i].dir > 0 ? 'above' : 'below') + ')' : '');
+                        }),
+                        customdata: ex.map(function (r) {
+                            var ov = s.attr && s.attr[String(r[0])];
+                            return [r[0], 'excluded: ' + (EXCL_WORDS[r[2]] || r[2])
+                                        + (ov ? '<br>' + _provLine(ov, commonSub) : ''),
+                                    ov ? _hintLine(ov) : '', (ov && ov.uid) || null,
+                                    (ov && !ov.uid && (ov.saved_uid || ov.first_uid)) || null];
+                        }),
+                        mode: 'markers', type: 'scatter', name: _shortName(s.entity),
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'excluded', cliponaxis: false,
+                        marker: { symbol: 'x-thin-open', size: 9, color: col,
                                   line: { width: 1.5, color: col } },
                         hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
                             + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
@@ -8537,6 +8887,7 @@ window.ChipTrends = (function () {
                 }
                 return tr;
             });
+            var _exShown = extraTraces.some(function (t) { return t.meta === 'excluded'; });
             var nowSeries = extraTraces.filter(function (t) { return t.meta === 'now'; })
                 .map(function (t) { return t.name; });
             traces = traces.concat(extraTraces);
@@ -8567,8 +8918,8 @@ window.ChipTrends = (function () {
                          tickformat: _numFmt.tickformat,
                          exponentformat: _numFmt.exponentformat,
                          automargin: true,
-                         range: (_clipped ? _yr : _flat) || undefined,
-                         autorange: (_clipped || _flat) ? false : true },
+                         range: ((_clipped || (_exShown && _yr)) ? _yr : _flat) || undefined,
+                         autorange: (_clipped || _flat || (_exShown && _yr)) ? false : true },
                 // a marker under the pointer is the one picked: never the
                 // nearest point in x across every series (overlapping marks)
                 hovermode: 'closest', hoverdistance: 12,
@@ -8589,7 +8940,18 @@ window.ChipTrends = (function () {
                     + (_clipped ? ' (△▽: off the scale, on its edge)' : ''));
             }
             if (extraTraces.some(function (t) { return t.meta === 'late'; })) {
-                keyLines.push('◇ newest value, changed after the runs shown (right edge)');
+                keyLines.push('\u25c7 newest value, changed after the runs shown (right edge)');
+            }
+            if (_exShown) {
+                keyLines.push('\u00d7 excluded: outside the physical range or from a run marked invalid (not in the axis range)');
+            }
+            if (commonSub) keyLines.push('every point: ' + _esc(commonSub));
+            if (_allExclNames.length) {
+                keyLines.push('no line (every value excluded): ' + _allExclNames.map(_esc).join(', '));
+            }
+            if (_nHidden) {
+                keyLines.push(_nHidden + ' unchanged line' + (_nHidden === 1 ? '' : 's')
+                    + ' hidden \u2014 click a name in the legend to show it');
             }
             if (keyLines.length) {
                 layout.annotations = (layout.annotations || []).concat([{
@@ -8625,7 +8987,16 @@ window.ChipTrends = (function () {
                 });
                 layout.annotations = _markNotes(marks).concat(layout.annotations || []);
             }
-            _applyWindow(layout, c.series, cWin);
+            if (_pfx) layout.legend.title = { text: _esc(_pfx) + ':', side: 'left' };
+            // F13: at a narrow width the horizontal legend wraps into many
+            // rows; the figure grows by them so the plot keeps its height
+            var _legRows = _legendRows(traces.filter(function (t) {
+                return t.showlegend !== false; }).map(function (t) { return t.name; }),
+                host.clientWidth || 0, _pfx);
+            if (_legRows > LEGEND_FREE_ROWS) {
+                layout.height += (_legRows - LEGEND_FREE_ROWS) * LEGEND_ROW_PX;
+            }
+            _applyWindow(layout, c.series, cWin, marks);
             _nowAtEdge(traces, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
@@ -8663,6 +9034,8 @@ window.ChipTrends = (function () {
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
+             setShowExcluded: setShowExcluded,
+             _viewWindow: _viewWindow, _legendRows: _legendRows,
              storedQuery: storedQuery, hold: hold, busy: busy };
 })();
 

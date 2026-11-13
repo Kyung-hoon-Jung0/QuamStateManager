@@ -178,7 +178,9 @@ def test_every_operation_and_alias_with_its_pulse_on_the_right_qubit():
         assert [ln["amplitude_v"] for ln in r["lines"]] == [.1, 0.0]
         assert r["lines"][0]["point"]["frequency_hz"] == pytest.approx(5e9 - 80e6)
         assert r["lines"][1]["point"]["frequency_hz"] == 4e9
-    assert rows[0]["fidelity"]["InterleavedRB"] == {"value": .99, "load_id": 7}
+    # the per-gate entry is query.pair_gate_fidelity's: it also names its key
+    assert rows[0]["fidelity"]["InterleavedRB"] == {"value": .99, "load_id": 7, "key": "InterleavedRB",
+                                                    "physical": True, "conflict": []}
     assert rows[0]["detuning_hz"] == pytest.approx(5e9 - 80e6 - 4e9)
 
 

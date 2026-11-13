@@ -204,7 +204,16 @@ window.UndoTrail = (function () {
         }, 0);
     }
     document.addEventListener('htmx:afterSwap', function (evt) {
-        if (evt && evt.target && evt.target.id === 'table-pane') navigated();
+        var id = evt && evt.target && evt.target.id;
+        if (id === 'table-pane') navigated();
+        // opening the add / remove panel is a new task: the trail sat
+        // over the removal review and hid its text. It hides as x does (the
+        // steps stay; the next Ctrl+Z brings it back).
+        else if ((id === 'cm-rm-slot' || id === 'cm-add-panel') && _panel && !_panel.hidden
+                 && evt.target.firstElementChild) {
+            _panel.hidden = true;
+            liftToasts();
+        }
     });
     /* Back/Forward swaps the whole body from htmx's snapshot, which can hold
        a COPY of this panel: markup without its listeners, its x dead. Only
@@ -224,7 +233,12 @@ window.UndoTrail = (function () {
         var entries = (d.entries || []).filter(function (e) { return e && e.dot_path; }).map(function (e) {
             // a list's old_value_disp is the grid's cut preview (docs/159); the
             // trail names the real value
-            var val = e.deleted ? '(deleted)'
+            // the flags are the CHANGE's (undo) or its inverse (redo):
+            // `deleted` = the step brought the path back, `created` = the step
+            // took it away. "(deleted)" on a re-created entry read as if the
+            // undo had deleted it.
+            var val = e.deleted ? '(re-created)'
+                : e.created ? '(removed)'
                 : (e.old_kind === 'list' && e.old_value_json != null) ? e.old_value_json
                 : (e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
             // walk G19: a server step names the value it left, when it knows it

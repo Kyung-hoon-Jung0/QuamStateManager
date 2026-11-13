@@ -477,6 +477,27 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             evt.detail.isError = false;
         }
     }
+    // the Gaussian CZ form answers a refusal (400) or a Replace offer
+    // / another pair's op (409) with its own status body; without this the
+    // panel kept the previous pair's green "Created ..." line.
+    if (t.id === 'gcz-result' && (status === 400 || status === 409)) {
+        evt.detail.shouldSwap = true;
+        evt.detail.isError = false;
+    }
+});
+
+/* a new Gaussian CZ request clears the previous answer first, so a
+   success line never stands beside a request it does not describe. */
+document.addEventListener('htmx:beforeRequest', function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (!elt || elt.id !== 'gcz-form') return;
+    var slot = document.getElementById('gcz-result');
+    if (slot) slot.innerHTML = '';
+    // The Replace button adds overwrite=1 for ONE request; the parameters are
+    // already collected here, so drop it before a later submit (another pair)
+    // could carry it and replace without being asked.
+    Array.prototype.slice.call(elt.querySelectorAll('input[name="overwrite"]'))
+        .forEach(function (i) { i.parentNode.removeChild(i); });
 });
 
 /* v1.5.1 (SA-F2): a live write that failed answers 409 + X-SM-Error-Code
@@ -510,6 +531,8 @@ document.addEventListener('htmx:responseError', function(evt) {
     var _tabChipEarly = (xhr && xhr.getResponseHeader) ? xhr.getResponseHeader("X-SM-Chip-Mismatch") : null;
     if (!_tabChipEarly && t && t.classList && t.classList.contains('config-status-host')) return;
     if (!_tabChipEarly && t && t.id === 'state-history-detail') return;
+    if (!_tabChipEarly && t && t.id === 'gcz-result' && xhr
+        && (xhr.status === 400 || xhr.status === 409)) return;
     // docs/190 F06: a refused Ctrl+Z (the log moved under another window)
     // refreshes this window's tray so the next press declares what it sees.
     if (xhr && xhr.status === 409 && xhr.getResponseHeader
@@ -2886,12 +2909,14 @@ function _applyThemeToPlotly(theme) {
     }
 }
 
-/** Select a registered theme and refresh the current figures. */
-window.setTheme = function(newTheme) {
+/** Select a registered theme and refresh the current figures. `persist`
+ *  false applies it without recording a choice (the OS preference is
+ *  followed only while the user has not chosen; audit 2026-11-13). */
+window.setTheme = function(newTheme, persist) {
     var themes = window.SM_THEMES || ['light', 'dark', 'qm'];
     if (themes.indexOf(newTheme) < 0) return;
     document.documentElement.setAttribute('data-theme', newTheme);
-    try { localStorage.setItem('quam_theme', newTheme); } catch(e) {}
+    if (persist !== false) { try { localStorage.setItem('quam_theme', newTheme); } catch(e) {} }
     document.querySelectorAll('[data-theme-choice]').forEach(function(btn) {
         var active = btn.getAttribute('data-theme-choice') === newTheme;
         btn.classList.toggle('settings-opt-active', active);
@@ -2931,6 +2956,18 @@ window.toggleTheme = function() {
             btn.setAttribute('aria-pressed', String(active));
         });
     });
+    // With no stored choice (and no ?theme=) the boot follows the OS colour
+    // scheme; a change of that preference re-resolves live. A stored choice
+    // always wins, so this never overrides what the user picked.
+    var mq = null;
+    try { mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null; } catch(e) {}
+    function onScheme() {
+        if (!window.resolveSMTheme || (window.smThemeChosen && window.smThemeChosen())) return;
+        var next = window.resolveSMTheme();
+        if (next !== document.documentElement.getAttribute('data-theme')) window.setTheme(next, false);
+    }
+    if (mq && mq.addEventListener) mq.addEventListener('change', onScheme);
+    else if (mq && mq.addListener) mq.addListener(onScheme);
 })();
 
 /* ------------------------------------------------------------------ */
@@ -2946,16 +2983,73 @@ window.toggleSidebar = function() {
     var layout = document.querySelector(".app-layout");
     if (!layout) return;
     var collapsed = layout.classList.toggle("sidebar-collapsed");
+    var narrow = layout.classList.contains("sidebar-narrow");
     if (!collapsed && window.SidebarReveal && window.requestAnimationFrame) {
         window.requestAnimationFrame(function () { window.SidebarReveal.reveal(); });
     }
     // QA F17: mirrored on <html> -- the top bar is not inside .app-layout, and
     // its Settings/Calculator fallback must show only while this is collapsed.
     document.documentElement.classList.toggle("sidebar-is-collapsed", collapsed);
+    // A narrow window's overlay open/close is not the user's wide-window choice.
+    if (narrow) return;
     try {
         localStorage.setItem("quam_sidebar_collapsed", collapsed ? "1" : "0");
     } catch(e) {}
 };
+
+/* F13 (audit 2026-11-13): at a narrow window the open sidebar left the page a
+   ~90 px column. Below NARROW the layout collapses the sidebar on its own --
+   never written to quam_sidebar_collapsed, so a wide window keeps the user's
+   own choice -- and the toggle opens it as an overlay above the page (CSS:
+   .app-layout.sidebar-narrow). A click outside it, a nav link inside it, or
+   Escape closes the overlay again. */
+window.SidebarNarrow = (function () {
+    var NARROW = '(max-width: 767px)';
+    var mq = null;
+    function layout() { return document.querySelector('.app-layout'); }
+    function stored() {
+        try { return localStorage.getItem('quam_sidebar_collapsed') === '1'; } catch (e) { return false; }
+    }
+    function setCollapsed(l, c) {
+        l.classList.toggle('sidebar-collapsed', c);
+        document.documentElement.classList.toggle('sidebar-is-collapsed', c);
+    }
+    function isOpen(l) {
+        return !!(l && l.classList.contains('sidebar-narrow') && !l.classList.contains('sidebar-collapsed'));
+    }
+    function sync() {
+        var l = layout();
+        if (!l || !mq) return;
+        var narrow = !!mq.matches;
+        if (narrow === l.classList.contains('sidebar-narrow')) return;
+        l.classList.toggle('sidebar-narrow', narrow);
+        setCollapsed(l, narrow ? true : stored());
+    }
+    function close() { var l = layout(); if (isOpen(l)) setCollapsed(l, true); }
+    function init() {
+        try { mq = window.matchMedia ? window.matchMedia(NARROW) : null; } catch (e) { mq = null; }
+        if (!mq) return;
+        if (mq.addEventListener) mq.addEventListener('change', sync);
+        else if (mq.addListener) mq.addListener(sync);
+        sync();
+        document.addEventListener('click', function (ev) {
+            if (!isOpen(layout())) return;
+            var t = ev.target;
+            if (!t || !t.closest) return;
+            if (t.closest('#sidebar')) { if (t.closest('.sidebar-nav a[href]')) close(); return; }
+            if (t.closest('.sidebar-toggle, .chrome-reveal')) return;
+            close();
+        });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'Escape' || ev.defaultPrevented || !isOpen(layout())) return;
+            if (window.smModalOpen && window.smModalOpen()) return;
+            close();
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+    return { sync: sync, close: close, query: NARROW };
+})();
 
 /* docs/126 cycled THREE states (sidebar → +top bar → restore). Customer
    feedback (2026-08-27): "don't make us press it twice" — ONE press now
@@ -2969,6 +3063,12 @@ window.cycleChrome = function() {
     var layout = document.querySelector(".app-layout");
     var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
     var tbHidden = document.documentElement.classList.contains("topbar-hidden");
+    // F13: at a narrow window the button opens/closes the sidebar overlay
+    // (the bar is the only way back to it, so it is never hidden here).
+    if (layout && layout.classList.contains("sidebar-narrow")) {
+        if (tbHidden) window.toggleTopbar(); else window.toggleSidebar();
+        return;
+    }
     var collapseAll = !(sbCollapsed && tbHidden);
     if (sbCollapsed !== collapseAll) window.toggleSidebar();
     if (tbHidden !== collapseAll) window.toggleTopbar();
@@ -5316,8 +5416,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 if (!data.tray_html) _banner();
                 if (expectChip) return;          // the automatic merge never opens the panel
-                // the user's own press hit a collision: answer it where the
+                // the user's own press hit a collision: say so, naming the
+                // fields (nothing was written, and the panel alone may read
+                // as "live has not changed"), then answer it where the
                 // choice lives (the panel re-reads with the fields to pick)
+                if (window.showToast) {
+                    var _cp = (data.paths || []).slice(0, 4).join(", ");
+                    window.showToast((data.message || "Nothing was applied: the live chip changed a field you also edited.")
+                                     + (_cp ? " Fields: " + _cp + ((data.count || 0) > 4 ? ", …" : "") : ""),
+                                     "warning", -1);
+                }
                 window.openReview({ force: true });
                 return;
             }
@@ -9254,8 +9362,12 @@ window.Bundles = (function () {
     var PATHS = [
         [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
+        // the Pulses page and the CZ gate plan draw the shared chip map
+        // (base.html page_bundles: pulses/czplan + components); without the
+        // components bundle a sidebar navigation left it on "Loading..."
+        [/^\/pulses(\/|$|\?)/, ["components"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
-        [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
+        [/^\/cz-plan(\/|$|\?)/, ["czplan", "components"]],
         [/^\/port-play(\/|$|\?)/, ["portplay"]],
         [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
@@ -12661,6 +12773,27 @@ window.clearDetailPanelSearch = function(btnEl) {
        and the ops cannot go first (the gate plays them). The refusal names
        them (lab_delete_also) and offers the one way: all of them, in ONE
        batch (one Ctrl+Z), which the server checks again as a whole. */
+    /* A delete refused because a gate slot plays an op under it BY NAME
+       (error_kind "by_name"): one confirm control beside the refusal text,
+       re-posting the same delete with force=1. */
+    function _appendForceDeleteBtn(el, onForce) {
+        if (!el || el.querySelector("[data-force-delete]")) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-sm outline";
+        b.setAttribute("data-force-delete", "1");
+        b.textContent = "Delete anyway";
+        b.title = "The gate will play a name that no longer exists (one Ctrl+Z undoes it)";
+        b.onclick = function (e) {
+            e.stopPropagation();
+            b.disabled = true;
+            var p = onForce();
+            if (p && p.then) p.then(function () { b.disabled = false; },
+                                    function () { b.disabled = false; });
+        };
+        el.appendChild(b);
+    }
+
     function _appendCascadeBtn(el, path, also, label) {
         if (!el || el.querySelector(".tree-cascade-btn")) return;
         var b = document.createElement("button");
@@ -14420,17 +14553,22 @@ window.clearDetailPanelSearch = function(btnEl) {
         fetch("/field/refs?dot_path=" + encodeURIComponent(m.path))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                var _bn = (d.ok && Array.isArray(d.by_name)) ? d.by_name.length : 0;
                 label.textContent = label.textContent.replace("refs: …", d.ok
                     ? d.total + " pointer ref" + (d.total === 1 ? "" : "s")
+                      + (_bn ? ", " + _bn + " gate slot" + (_bn === 1 ? "" : "s")
+                               + " play" + (_bn === 1 ? "s" : "") + " an op here by name" : "")
                     : "refs: unknown");
+                if (_bn) label.title = d.by_name.join(", ");
             }).catch(function () {
                 label.textContent = label.textContent.replace("refs: …", "refs: unknown");
             });
-        actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
+        function _postDelete(force) {
             var body = new URLSearchParams();
             body.append("dot_path", m.path);
             body.append("expect_chip", window.__chipToken || "");
-            _smFetch("/field/delete", { method: "POST",
+            if (force) body.append("force", "1");
+            return _smFetch("/field/delete", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json(); })
@@ -14438,6 +14576,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    // a gate slot plays an op under this path BY NAME: the
+                    // refusal says which; the confirm re-posts with force=1
+                    if (d.error_kind === "by_name" && !force) {
+                        _appendForceDeleteBtn(_ec, function () { return _postDelete(true); });
+                    }
                     if (d.pulses_page) _appendPulsesLink(_ec, d.pulses_page, "Open the Pulses page");
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
                         // w9/pulsegate: a set holding a pulse goes on the
@@ -14470,6 +14613,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (window._diagChanged) window._diagChanged();
             })
             .catch(function (e) { _showEditError(row, _netFail(e)); actionsSpan.remove(); });
+        }
+        actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
+            _postDelete(false);
         }));
         actionsSpan.appendChild(_mkBtn("Cancel", "keep", "", function () {
             actionsSpan.remove();
@@ -31445,7 +31591,9 @@ window.GateInspector = (function() {
         var role = el.getAttribute('data-role') || 'control';
         el.innerHTML = '<p class="muted" style="text-align:center;padding:2em">Loading detuning plot…</p>';
 
-        fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/plot?moving=' + role)
+        var gateOp = el.getAttribute('data-op');
+        fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/plot?moving=' + role
+              + (gateOp ? '&op=' + encodeURIComponent(gateOp) : ''))
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (d.error) {

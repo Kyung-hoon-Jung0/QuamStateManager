@@ -113,7 +113,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     assert "window.Bundles = (function () {" in app_js
     for token in ('["grid"]', '["pulses"]', '["generate"]', '["wiring"]', '["chipstatus", "components"]',
                   '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]',
-                  '["journal"]', '["opxmon"]', '["agent_setup"]', '["zline"]', '["czplan"]', '["cm6"]', '["portplay"]'):
+                  '["journal"]', '["opxmon"]', '["agent_setup"]', '["zline"]', '["czplan", "components"]', '["cm6"]', '["portplay"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
     assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"
@@ -150,3 +150,27 @@ def test_the_loader_executes_under_jsdom():
                          encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok bundles_selfcheck" in res.stdout and " 0 failed" in res.stdout
+
+
+def test_an_htmx_navigation_loads_every_bundle_a_full_load_of_that_page_ships(client):
+    """The Pulses page and the CZ gate plan draw the shared chip map: base.html
+    ships them the components bundle, so the loader's URL map must ask for it
+    too, or a sidebar navigation leaves the map on "Loading chip layout..."."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    man = _manifest(client.get("/explorer").get_data(as_text=True))
+    app_js = (_STATIC / "app.js").read_text(encoding="utf-8")
+    i = app_js.index("var PATHS = [")
+    j = app_js.index("];", i)
+    script = (app_js[i:j + 2] + "\nconst out = {};\n"
+              + "for (const p of ['/pulses', '/cz-plan']) { out[p] = [];"
+              + " PATHS.forEach(function (pr) { if (pr[0].test(p)) pr[1].forEach(function (n) {"
+              + " if (out[p].indexOf(n) < 0) out[p].push(n); }); }); }\n"
+              + "console.log(JSON.stringify(out));")
+    got = json.loads(subprocess.run([node, "-e", script], capture_output=True, text=True,
+                                     check=True).stdout)
+    assert set(man["pages"]["pulses"]) <= set(got["/pulses"]), got
+    assert set(man["pages"]["czplan"]) <= set(got["/cz-plan"]), got

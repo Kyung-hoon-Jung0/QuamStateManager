@@ -484,7 +484,11 @@ world.push((function () {
     const cd = host(win).data[0].customdata;
     ok(cd[1][3] === null && cd[1][4] === 'a1b2c3d4:3',
        '7j the saving run rides in its own slot, never as the writer uid: ' + JSON.stringify(cd[1]));
-    ok(/saved in #3 25_T1/.test(cd[1][1]) && /writer not proven/.test(cd[1][1])
+    // F4: "writer not proven" is on every point here, so the chart's key
+    // says it once and the hovers do not repeat it
+    const keyTxt = ((host(win).layout || {}).annotations || []).map(function (a) { return a.text || ''; }).join(' ');
+    ok(/saved in #3 25_T1/.test(cd[1][1]) && !/writer not proven/.test(cd[1][1])
+       && /every point: writer not proven/.test(keyTxt)
        && /click to open the run that saved it \(not proven to have measured it\)/.test(cd[1][2]),
        '7k ...and the hover says what a click opens: ' + JSON.stringify(cd[1][2]));
     win._htmxCalls.length = 0;

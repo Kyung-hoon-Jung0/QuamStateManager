@@ -114,11 +114,22 @@ def test_no_coupler_table_identity(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     table = re.search(r'<table id="czp-table".*?</table>', html, re.S)[0]
     # S2 adds inspectable frequency spans and an accessibility label; the
-    # CZ7 UX-6 changes missing-model badges and pair grouping; pin the revised markup.
+    # CZ7 UX-6 changes missing-model badges and pair grouping; the IRB cell names the key
+    # its value came from (title="from InterleavedRB"); pin the revised markup.
     table = re.sub(r' aria-label="[^"]*"', '', table)
     table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
     table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
-    assert hashlib.sha256(table.encode()).hexdigest() == "fc51539bfaedf8e6ad6289da9e2b674b9e91eb8295f6dc64264189e64991de0f"
+    # Recheck wording item: the Nearest resonance cell shows ONE phrase ("mover 17.3 MHz
+    # below |11>-|20>") with the name and the signed distance moved into its title; fold it
+    # back to the previous markup so every other byte stays pinned.
+    table, n_words = re.subn(
+        r'<span class="czp-nowrap" data-near-words="1" title="([^":]*): &Delta; ([^ "]+) MHz from[^"]*">[^<]*</span>'
+        r'((?: <small class="muted">[^<]*</small>)?)',
+        r'<span class="czp-nowrap">\1</span>\3 <small class="muted czp-nowrap">\2 MHz</small>', table)
+    assert n_words, "the phrase cell is rendered"
+    # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
+    # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
+    assert hashlib.sha256(table.encode()).hexdigest() == "092cee50afde2f1d8f24ee7e5cf4945cdd4050ce8fd09592a5ff008fbd8f9ffe"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):

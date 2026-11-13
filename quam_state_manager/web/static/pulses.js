@@ -38,6 +38,9 @@ window.PulsesPage = (function () {
     var _previewCache = new Map();       // base key + body -> plot
     var COMMITTED_REFRESH_MS = 120;
     var _plotCache = new Map();          // committed key -> plot payload (insertion-ordered)
+    // the pulse whose Verify vs config is ON. A regenerated config
+    // re-runs the comparison for it, even when the detail was re-rendered meanwhile.
+    var _verifyWanted = null;
 
     function sectionsOf(root) { return (root && root._sections) || []; }
     function sectionOf(root, el) {
@@ -146,6 +149,8 @@ window.PulsesPage = (function () {
        waveform is worse than no waveform. The generated config is the lab's
        OWN `generate_config()` output, so it cannot disagree with the hardware.
        It is labelled as such, never passed off as the synthesized preview. */
+    var TRANSCRIPTION_LABEL = 'SM\'s transcription of the lab class (as the CZ gate plan draws it)'
+        + ' \u2014 not quam\'s synthesis, not your own code';
     function groundTruthInto(root, sec, gen, done) {
         fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(sec.path))
             .then(function (r) { return r.json(); })
@@ -160,6 +165,17 @@ window.PulsesPage = (function () {
                     cacheCommitted(sec, data.plot);
                     setPlotLabel(root, 'waveform from the generated config'
                         + ' \u2014 this class is the lab\'s own, so its own code drew it');
+                    publishSynthErr(root);
+                } else if (data && data.transcription && data.transcription.ok) {
+                    /* No config waveform, but SM transcribed this lab class for
+                       the CZ gate plan: the same samples, labelled as SM's
+                       transcription -- never as the lab's own code. */
+                    sec.committedPlot = data.transcription;
+                    sec.fromConfig = false;
+                    sec.synthErr = '';
+                    if (sec.index === 0) root._committedPlot = data.transcription;
+                    cacheCommitted(sec, data.transcription);
+                    setPlotLabel(root, TRANSCRIPTION_LABEL);
                     publishSynthErr(root);
                 } else {
                     /* No config yet is not a dead end: the button that
@@ -515,6 +531,7 @@ window.PulsesPage = (function () {
             });
         }
 
+        if (root) showEdgeNote(root, secs);
         if (secs.length) {
             var many = secs.length > 1;
             secs.forEach(function (sec) {
@@ -540,7 +557,9 @@ window.PulsesPage = (function () {
         var layout = {
             margin: { l: 50, r: 10, t: 10 + legendRoom, b: 40 },
             xaxis: { title: 'time (ns)', zeroline: false },
-            yaxis: { title: 'amplitude (V)', zeroline: true },
+            // 0 V is always on the axis -- the output idles there, so an
+            // edge that starts at 46 mV must read as a step, not as the floor
+            yaxis: { title: 'amplitude (V)', zeroline: true, rangemode: 'tozero' },
             showlegend: data.length > 1,
             // ABOVE the plot: under it the legend sat on the "time (ns)" title
             // (measured with three pulses in view -- a 1,019px band across the
@@ -558,6 +577,20 @@ window.PulsesPage = (function () {
         }
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
+    }
+
+    /* the server's edge note for the curve on screen (the preview while
+       one is drawn, else the committed plot), one line for every section. */
+    function showEdgeNote(root, secs) {
+        var el = root.querySelector('.pulse-plot-bar [data-edge-note]');
+        if (!el) return;
+        var notes = secs.map(function (sec) {
+            var plot = (sec.previewPlot && sec.previewPlot.ok) ? sec.previewPlot : sec.committedPlot;
+            var note = plot && plot.ok ? plot.edge_note : '';
+            return note ? (secs.length > 1 ? sec.label + ': ' : '') + note : '';
+        }).filter(Boolean);
+        el.textContent = notes.join(' \u00b7 ');
+        el.hidden = !notes.length;
     }
 
     function showSynthErr(root, msg) {
@@ -1088,6 +1121,7 @@ window.PulsesPage = (function () {
 
         if (root._verifyPlot) {  // second click toggles the overlay off
             root._verifyPlot = null;
+            _verifyWanted = null;
             renderPulsePlot('pulse-detail-plot');
             verifyNote(root, '');
             return;
@@ -1095,6 +1129,7 @@ window.PulsesPage = (function () {
 
         verifyNote(root, 'fetching ground truth…');
         var path = root.getAttribute('data-pulse-path');
+        _verifyWanted = path;
         fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(path))
             .then(function (r) { return r.json(); })
             .then(function (data) {
@@ -1146,9 +1181,27 @@ window.PulsesPage = (function () {
             .catch(function () { verifyNote(root, 'ground-truth fetch failed', 'warn'); });
     }
 
+    /* after a regenerate, the comparison runs again on the detail
+       that is on screen NOW (a re-render meanwhile replaced the old root) --
+       never toggled off by a stale overlay, never left blank. */
+    function rerunVerify(path) {
+        var cur = detailRoot();
+        if (!cur || cur.getAttribute('data-pulse-path') !== path) return;
+        cur._verifyPlot = null;   // force a fresh fetch
+        _verifyWanted = path;
+        verifyPulse(null);
+    }
+    document.addEventListener('configRegenerated', function () {
+        var cur = detailRoot();
+        if (cur && _verifyWanted && cur.getAttribute('data-pulse-path') === _verifyWanted) {
+            rerunVerify(_verifyWanted);
+        }
+    });
+
     function regenerateThenVerify(btn) {
         var root = detailRoot();
         if (!root) return;
+        var path = root.getAttribute('data-pulse-path');
         btn.disabled = true;
         verifyNote(root, 'regenerating config… (this runs the QM stack in a subprocess)');
         fetch('/config/regenerate', { method: 'POST' })
@@ -1159,8 +1212,9 @@ window.PulsesPage = (function () {
             })
             .then(function (res) {
                 btn.disabled = false;   // docs/190 F08: a failure must leave a retry
+                if (res.ok) { rerunVerify(path); return; }
                 if (!document.body.contains(root)) return;
-                if (!res.ok) {
+                {
                     // docs/190 F10: the server renders its own honest failure
                     // (lead line + exception + collapsible traceback) -- show
                     // THAT, not a 300-char flattening of it, and offer the env
@@ -1177,10 +1231,7 @@ window.PulsesPage = (function () {
                     // the failure re-renders _config_status.html, whose 'Last good'
                     // is a ts_local span: hidden until localized (QA generate-r2-27)
                     if (window.applyLocalTimes) window.applyLocalTimes(root);
-                    return;
                 }
-                root._verifyPlot = null;  // force a fresh fetch
-                verifyPulse(btn);
             })
             .catch(function () {
                 btn.disabled = false;
@@ -1252,9 +1303,45 @@ window.PulsesPage = (function () {
             }
             label.appendChild(span);
             label.appendChild(input);
+            if (_qubitDefault(p.name)) {
+                input.setAttribute('data-qubit-default', p.name);
+                if (p.default !== null && p.default !== undefined) {
+                    input.setAttribute('data-catalog-default', input.value);
+                }
+                var note = document.createElement('span');
+                note.className = 'muted';
+                note.setAttribute('data-field-note', '');
+                label.appendChild(note);
+                _applyQubitDefault(input);
+            }
             fs.appendChild(label);
         });
         wrap.appendChild(fs);
+    }
+
+    /* a field whose default depends on the target qubit (a DRAG
+       pulse's anharmonicity points at that qubit's own value). The server
+       decides the value (pulse-qubit-defaults-data); a field the user typed
+       into keeps what they typed. */
+    function _selectedQubit() {
+        var root = createRoot();
+        var sel = root && root.querySelector('select[name="qubit"]');
+        return sel ? sel.value : '';
+    }
+    function _qubitDefault(name) {
+        var root = createRoot();
+        var all = (root && root._qubitDefaults) || {};
+        var q = all[_selectedQubit()];
+        return (q && q[name]) || null;
+    }
+    function _applyQubitDefault(input) {
+        if (input.getAttribute('data-user-typed') === '1') return;
+        var d = _qubitDefault(input.getAttribute('data-qubit-default'));
+        if (!d) return;
+        input.value = d.value != null ? String(d.value)
+            : (input.getAttribute('data-catalog-default') || '');
+        var note = input.parentNode && input.parentNode.querySelector('[data-field-note]');
+        if (note) note.textContent = d.note || '';
     }
 
     function createCollectParams(root) {
@@ -1275,10 +1362,16 @@ window.PulsesPage = (function () {
                 params: createCollectParams(root)
             }, function (data) {
                 if (!document.body.contains(root)) return;
+                var plotEl = document.getElementById('pulse-create-plot');
                 if (data.ok && data.plot && data.plot.ok) {
+                    if (plotEl) plotEl.classList.remove('pulse-plot-empty');
                     renderPulsePlot('pulse-create-plot', data.plot);
                     showSynthErr(root, '');
                 } else {
+                    // the last good curve belongs to other values: never
+                    // leave it under an error about these ones
+                    if (plotEl && window.Plotly) { try { window.Plotly.purge(plotEl); } catch (e) {} }
+                    if (plotEl) plotEl.classList.add('pulse-plot-empty');
                     showSynthErr(root, data.error
                         || firstParamError(data.param_errors));
                 }
@@ -1783,6 +1876,7 @@ window.PulsesPage = (function () {
         root._pulsesInit = true;
         root._catalog = parseEmbeddedJson('pulse-catalog-data') || {};
         root._existing = parseEmbeddedJson('pulse-existing-data') || {};
+        root._qubitDefaults = parseEmbeddedJson('pulse-qubit-defaults-data') || {};
         root._pairs = parseEmbeddedJson('pulse-pairs-data') || {};
         root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
         root._pairsInfo = parseEmbeddedJson('pulse-pairs-info-data') || {};
@@ -1822,7 +1916,18 @@ window.PulsesPage = (function () {
             });
         }
 
+        root.addEventListener('change', function (evt) {
+            var t = evt.target;
+            if (!(t && t.matches && t.matches('select[name="qubit"]'))) return;
+            root.querySelectorAll('#pulse-create-fields input[data-qubit-default]')
+                .forEach(_applyQubitDefault);
+            schedulCreatePreview(root);
+        });
         root.addEventListener('input', function (evt) {
+            if (evt.target && evt.target.hasAttribute
+                    && evt.target.hasAttribute('data-qubit-default')) {
+                evt.target.setAttribute('data-user-typed', '1');
+            }
             if (_createEditMarksDirty(evt)) root._dirty = true;
             if (evt.target.closest && evt.target.closest('#pulse-create-fields')) {
                 schedulCreatePreview(root);

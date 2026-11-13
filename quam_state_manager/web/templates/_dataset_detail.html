@@ -76,10 +76,10 @@
        inlined, which would break on tags containing quotes. #}
     <div class="col-tags ds-detail-tags" id="ds-detail-tags" data-run-id="{{ uid }}">
         {% for t in run.tags if t != 'favorite' %}
-        <span class="tag-badge" data-tag="{{ t }}" title="Click to remove">{{ t }}</span>
+        <span class="tag-badge" data-tag="{{ t }}" title="{% if t == invalid_tag %}This run is marked invalid: Chip Status Trends leaves the values it carried out of its lines. {% endif %}Click to remove">{{ t }}</span>
         {% endfor %}
         <button class="tag-add-btn" onclick="openTagPicker('{{ uid }}', this)"
-                title="Add a tag">+</button>
+                title="Add a tag. The tag &quot;{{ invalid_tag }}&quot; marks the run invalid: Chip Status Trends then leaves the values it carried out of its lines.">+</button>
     </div>
 </div>
 {% endset %}
@@ -423,7 +423,12 @@
                                 title="Show {{ tgt.path }} in Live state edit (Json tree view) (raw JSON tree)"
                                 data-fit-path="{{ tgt.path }}"
                                 onclick="goToFitState(this)">Go to state</button>{% elif tgt and tgt.refused %}<span
-                                class="fit-copy-only fit-refused muted">{{ tgt.refused }}</span>{% else %}<span
+                                class="fit-copy-only fit-refused muted">{{ tgt.refused }}</span>{% elif ((fit_written or {}).get(qname) or {}).get(key) %}{% set wr = fit_written[qname][key] %}<span
+                                class="fit-copy-only muted"
+                                title="This run recorded writing {{ wr.new }} to {{ wr.path }} ({{ 'the same value' if wr.basis == 'same value' else 'by the node rule ' ~ wr.basis }}, from its node.json state changes). It is not offered as Apply here; Go to state shows the field.">written by this run</span><button type="button" class="btn-sm outline fit-goto-btn"
+                                title="Show {{ wr.path }} in Live state edit (Json tree view) (raw JSON tree)"
+                                data-fit-path="{{ wr.path }}"
+                                onclick="goToFitState(this)">Go to state</button>{% else %}<span
                                 class="fit-copy-only muted"
                                 title="This fitted value isn't mapped to a chip state field — it's a diagnostic / derived result (or its target operation isn't recorded in this run), so it can be read or copied but not auto-applied. Copy it manually if you need it.">copy-only</span>{% endif %}
                     </td>

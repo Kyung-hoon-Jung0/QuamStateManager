@@ -469,6 +469,9 @@ function discard(w, detail) {
     ok(S.confirms.length === 0 && opened.length === 1 && opened[0].force === true,
        'D5 a collision asks no confirm: it opens the sync panel, where each field is picked');
     ok(S.sync.length === 1, 'D6 nothing is re-posted');
+    ok(S.toasts.some(function (t) { return t.l === 'warning' && /changed 1 field/.test(t.m)
+                                       && /qubits\.q1\.T2ramsey/.test(t.m); }),
+       'D6b a collision is never silent: a warning names the message and the fields');
     ok(trayGets().length === 1 && trayGets()[0].opts.target === '#pending-tray',
        'D7 the status control is re-rendered in place (it names the collision)');
     ok(!w._applyInFlight, 'D8 the latch is released');
@@ -487,13 +490,14 @@ function discard(w, detail) {
        'D10 ...never force=1 / ack_unseen=1 / a blanket ack_collision: ' + retry);
 
     // the automatic merge (expectChip) never answers for the user
-    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; opened.length = 0;
+    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; opened.length = 0; S.toasts.length = 0;
     S.syncQueue = [COLL]; S.confirmAnswer = true;
     w.doStateSync('apply', false, false, 'CHIP-A');
     await sleep(40);
     ok(S.confirms.length === 0 && S.sync.length === 1, 'D11 the automatic merge shows no dialog and does not retry');
     ok(trayGets().length === 1 && opened.length === 0,
        'D12 ...it re-renders the control and opens nothing (the user was not pressing)');
+    ok(S.toasts.length === 0, 'D12b ...and raises no toast');
 
     // (review) the server now returns this on the real automatic path, with
     // the conflict tray re-rendered without "Auto-Sync is resolving this"

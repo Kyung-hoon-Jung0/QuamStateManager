@@ -365,7 +365,14 @@ class QuamStore:
             resolved = self.resolve_pointer(parent, path_tuple)
         except Exception:  # noqa: BLE001 - never let classification crash a load
             return False
-        return resolved != parent and isinstance(resolved, dict)
+        if resolved == parent or not isinstance(resolved, dict):
+            return False
+        # A parent whose every value is an object is a COLLECTION (qubits,
+        # qubit_pairs, operations): an absent member is a missing object, never
+        # an optional field omitted at its default.
+        if resolved and all(isinstance(v, dict) for v in resolved.values()):
+            return False
+        return True
 
     def validate_pointers(self) -> list[PointerWarning]:
         """Run pointer validation on demand and return the warnings.

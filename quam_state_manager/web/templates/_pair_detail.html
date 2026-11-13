@@ -37,7 +37,7 @@
                     {% if p.is_self_ref %}
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
-                        {% set _stored = _ukey | unit_hint %}
+                        {# a frequency-sized pair detuning is stored in (inferred) Hz, not V: units.pair_detuning_inferred #}{% set _stored = 'Hz' if (_ukey == 'pair_detuning' and p.value | pair_detuning_inferred) else (_ukey | unit_hint) %}
                         <form class="inline-edit fh-host" hx-post="/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
                               {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
                                  new Function, which this app's CSP forbids, and htmx
@@ -86,6 +86,10 @@
                         {{ p.value }}
                         {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
                     {% endif %}
+                    {# one per-gate fidelity per macro (query.pair_gate_fidelity); the
+                       key it came from is in the dot path above, and two keys that
+                       disagree are said out loud #}
+                    {% if p.fid_note and p.fid_note.conflict %}<span class="ui-badge ui-badge--warn" data-fid-conflict="1" title="{{ p.fid_note.conflict }} &#10;shown: {{ p.fid_note.title }}">&#9888; {{ p.fid_note.title }}</span>{% endif %}
                 </td>
             </tr>
             {% endfor %}

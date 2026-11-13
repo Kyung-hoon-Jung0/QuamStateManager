@@ -10,6 +10,24 @@
   {%- else %}<div class="ui-option ui-option--empty" aria-disabled="true">{{ empty }}</div>{% endfor %}
 </div>
 {%- endmacro %}
+{# a new entity starts active only as its template is; the box says
+   what it writes. An absent or empty list is never written (both read as
+   "everything active"; writing an empty one would leave only the new name). #}
+{% macro active_row(a, template, word) -%}
+<tr data-cm-add-active-row><th class="ui-table-head" scope="row">Active</th>
+    <td class="ui-table-cell">{% if a.editable %}<input type="hidden" name="active" value="0">{% endif %}<label class="ui-check"><input type="checkbox" name="active" value="1" data-cm-add-active{% if a.default %} checked{% endif %}{% if not a.editable %} disabled{% endif %}> joins {{ a.list }}</label></td>
+    <td class="ui-table-cell ui-table-muted">{% if a.mode == 'listed' %}starts as {{ template }} is ({{ 'active' if a.template_active else 'not active' }}){% elif a.mode == 'empty' %}{{ a.list }} is empty, which counts every {{ word }} as active: nothing is written (adding the name would leave it the only active one){% else %}this chip has no {{ a.list }}: every {{ word }} counts as active, nothing is written{% endif %}</td></tr>
+{%- endmacro %}
+{# a freed LF output keeps its previous line's filters and delay;
+   the choice for a picked port that carries them (default clear). #}
+{% macro filters_row(cands) -%}
+{% if cands | selectattr('carries') | list %}
+<tr data-cm-add-filters-row><th class="ui-table-head" scope="row">Previous line's filters</th>
+    <td class="ui-table-cell"><select name="port_filters" aria-label="Filters a reused port still carries" data-cm-add-filters>
+      <option value="clear" selected>clear the FIR / IIR filters</option><option value="keep">keep them</option></select></td>
+    <td class="ui-table-cell ui-table-muted">only for a picked port that still carries a previous line's FIR / IIR filters (named in its list entry); clearing resets them to a new port's values. A delay is always kept: recalibrate the z-line delay for the new element</td></tr>
+{% endif %}
+{%- endmacro %}
 <div class="ui-item" id="cm-add-box" data-cm-box data-kind="{{ kind }}">
   <div class="ui-item-head">
     <span class="ui-badge ui-badge--accent">Add {{ kind }}</span>
@@ -37,6 +55,7 @@
       <tr><th class="ui-table-head" scope="row">Readout frequency (Hz)</th>
           <td class="ui-table-cell"><input name="readout_rf" inputmode="decimal" value="{{ '%.0f' | format(d.readout_rf) if d.readout_rf is not none else '' }}" aria-label="Readout frequency in Hz"></td>
           <td class="ui-table-cell ui-table-muted">{% if d.readout_note %}<span class="ui-badge ui-badge--warn">{{ d.readout_note }}</span>{% else %}the next free slot on this feedline, within its LO's IF window{% endif %}</td></tr>
+      {{ active_row(d.active, d.template, 'qubit') }}
     </table>
     {% if true %}
     <div class="cm-rack-wrap">
@@ -51,7 +70,8 @@
       {% if d.has_flux %}
       <tr><th class="ui-table-head" scope="row">Flux output</th>
           <td class="ui-table-cell">{{ port_list('flux', flux, 'z', 'Flux output', 'no free LF-FEM output') }}</td>
-          <td class="ui-table-cell ui-table-muted">free LF-FEM outputs</td></tr>
+          <td class="ui-table-cell ui-table-muted">free LF-FEM outputs; a clean one first</td></tr>
+      {{ filters_row(flux) }}
       {% endif %}
     </table>
   {% else %}
@@ -61,6 +81,7 @@
     <input type="hidden" name="control" value="{{ plan.summary.control }}">
     <input type="hidden" name="target" value="{{ plan.summary.target }}">
     <p class="ui-note">New pair <span class="ui-chip">{{ plan.summary.name }}</span>: control {{ plan.summary.control }}, target {{ plan.summary.target }}, shaped like {{ plan.summary.template }}.</p>
+    <table class="ui-table">{{ active_row(plan.summary.active, plan.summary.template, 'pair') }}</table>
     {% if plan.needs_flux %}
     {% if true %}
     <div class="cm-rack-wrap">
@@ -71,7 +92,8 @@
     <div class="ui-field"><span class="ui-field-label">Coupler output</span>
       {{ port_list('flux', flux, 'coupler', 'Coupler output', 'no free LF-FEM output') }}
     </div>
-    <p class="ui-note">Free LF-FEM outputs; coupler flux offsets start at 0.</p>
+    <p class="ui-note">Free LF-FEM outputs, a clean one first; coupler flux offsets start at 0.</p>
+    <table class="ui-table">{{ filters_row(flux) }}</table>
     {% endif %}
     {% endif %}
   {% endif %}

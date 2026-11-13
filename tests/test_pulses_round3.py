@@ -221,7 +221,7 @@ class TestForkedRedoSaysWhy:
         client.post("/pulse/edit", data={
             "path": "qubits.qA1.xy.operations.x180",
             "dot_path": "qubits.qA1.xy.operations.x180.length",
-            "mode": "value", "value": "123"})
+            "mode": "value", "value": "124"})  # a multiple of 4
         r = client.post("/undo")
         assert r.status_code == 200, r.data[:200]
 
@@ -231,7 +231,7 @@ class TestForkedRedoSaysWhy:
         client.post("/pulse/edit", data={
             "path": "qubits.qA1.z.operations.const",
             "dot_path": "qubits.qA1.z.operations.const.length",
-            "mode": "value", "value": "321"})
+            "mode": "value", "value": "320"})
 
     def test_a_forked_redo_names_the_reason(self, client):
         self._edit_and_undo(client)

@@ -700,6 +700,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["qty"] = _units.qty_filter
     app.jinja_env.filters["pair_detuning_cell"] = _units.pair_detuning_cell
     app.jinja_env.filters["pair_detuning_display"] = _units.pair_detuning_display
+    app.jinja_env.filters["pair_detuning_inferred"] = _units.pair_detuning_inferred
     # `unit_hint` — the SI base unit a field is *stored* in (s / Hz / ns / V),
     # for "you are editing raw <unit>" hints on inspector edit inputs. '' when
     # the field has no known unit.
@@ -855,6 +856,37 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         return Markup("_<wbr>".join(escape(p) for p in parts))
     app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
+    def _run_name_filter(name) -> Markup:
+        """A sidebar run name as LEAD / HEAD / TAIL spans (audit 2026-11-13):
+        the lead is the first two ``_`` parts (the node number and its first
+        word, ``34a_cz_``) and never shrinks; the tail is the last part
+        (1..12 characters), widened to the last two parts when the last one
+        is under 4 characters (``rb_dsp``, ``11_20``) so it carries the
+        distinguishing word; the head is what lies between and is the only
+        piece a compact row ellipsizes (``34a_cz_...compensation``, never a
+        one-character head glued to the tail). Every piece carries the
+        ``soft_breaks`` joints, so the full rows render as before;
+        textContent is the plain name."""
+        text = str(name if name is not None else "")
+        parts = text.split("_")
+        if len(parts) < 3 or not parts[0]:
+            return Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(text)
+        lead = "_".join(parts[:2]) + "_"
+        rest = parts[2:]
+        tail = ""
+        if 0 < len(rest[-1]) <= 12:
+            tail = rest.pop()
+            if len(tail) < 4 and rest and rest[-1] and len(rest[-1]) + 1 + len(tail) <= 16:
+                tail = rest.pop() + "_" + tail
+        head = "_".join(rest) + ("_" if rest and tail else "")
+        out = Markup('<span class="entry-name-lead">%s</span>') % _soft_breaks_filter(lead)
+        if head:
+            out += Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(head)
+        if tail:
+            out += Markup('<span class="entry-name-tail">%s</span>') % _soft_breaks_filter(tail)
+        return out
+    app.jinja_env.filters["run_name"] = _run_name_filter
+
     def _format_ts_filter(ts) -> str:
         """Render a timestamp as plain ``YYYY-MM-DD HH:MM:SS UTC`` (attribute
         sites: hx-confirm, title). docs/244: read through ``core.timefmt`` --
@@ -942,6 +974,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # S10 walk (round 4): one name per list of saved values that are not the
     # chip's history (hub_witness.WORDS), on every surface
     app.jinja_env.globals["witness_words"] = _WITNESS_WORDS
+    # the reserved run tag Chip Status Trends honours (core.dataset.INVALID_TAG)
+    from quam_state_manager.core.dataset import INVALID_TAG as _INVALID_TAG
+    app.jinja_env.globals["invalid_tag"] = _INVALID_TAG
 
     # Diagnostics-list grouping: map a Finding category → display domain, and the
     # ordered domain list. Single source of truth in core.diagnostics, so every

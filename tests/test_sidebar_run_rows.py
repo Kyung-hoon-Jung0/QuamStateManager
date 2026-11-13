@@ -59,7 +59,8 @@ class TestSoftBreaks:
         assert "<b>" not in out
 
     def test_the_tree_macro_uses_it_and_the_title_stays_plain(self, tmp_path):
-        assert "{{ entry.experiment_name | soft_breaks }}" in _MACROS
+        # run_name (audit 2026-11-13) = soft_breaks on a head + a last-part tail
+        assert "{{ entry.experiment_name | run_name }}" in _MACROS
         assert 'title="{{ entry.experiment_name }}"' in _MACROS
         # rendered: the visible text carries <wbr>, the title attribute does not
         app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
@@ -73,7 +74,9 @@ class TestSoftBreaks:
                 "{% from '_sidebar_tree_macros.html' import entry_rows %}{{ entry_rows([entry]) }}",
                 entry=entry)
         assert 'title="18b_xy_coupler_delay"' in html
-        assert ">18b_<wbr>xy_<wbr>coupler_<wbr>delay</span>" in html
+        assert ('<span class="entry-name-lead">18b_<wbr>xy_<wbr></span>'
+                '<span class="entry-name-head">coupler_<wbr></span>'
+                '<span class="entry-name-tail">delay</span>') in html
         assert '<span class="run-id">#42</span>' in html
 
 

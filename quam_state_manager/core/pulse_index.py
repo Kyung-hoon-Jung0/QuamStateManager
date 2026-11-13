@@ -203,6 +203,50 @@ def build_op_referrers(reverse_index: dict[str, list[str]],
     return {k: sorted(v, key=natural_key) for k, v in out.items()}
 
 
+def _add_by_name_referrers(merged: dict, op_referrers: dict[str, list[str]]) -> None:
+    """a pair-gate slot that plays an op BY NAME (its inline pulse's
+    ``id``) is a user of that op like a pointer is -- the row's used_by
+    carries it, labelled. Refreshed the way pointer users are: a write at
+    such a slot is never a value-only step (:func:`is_by_name_holder`), so
+    the rows rebuild cold."""
+    from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL, named_slot_plays
+    extra: dict[str, set] = {}
+    for op, holder, _slot in named_slot_plays(merged):
+        extra.setdefault(op, set()).add(f"{holder} ({BY_NAME_LABEL})")
+    for op, hs in extra.items():
+        op_referrers[op] = list(op_referrers.get(op, [])) + sorted(hs, key=natural_key)
+
+
+def is_by_name_holder(path: str) -> bool:
+    """Could a write at *path* change which op a pair-gate slot plays by
+    name? A slot's own value (a plain name), a slot pulse's ``id``, a
+    spectator entry / its ``id``, or a pair field that decides which channel
+    the slots play on (``moving_qubit``, ``qubit_control``, ``qubit_target``,
+    ``coupler``, a macro's ``spectator_qubits``). Other gate fields (phase
+    shifts, extras) are not."""
+    segs = path.split(".") if isinstance(path, str) else []
+    if len(segs) >= 3 and segs[0] == "qubit_pairs" and segs[2] in _BY_NAME_HOSTS:
+        return True          # which channel the slots play on (or a whole pair)
+    if len(segs) == 2 and segs[0] == "qubit_pairs":
+        return True
+    if len(segs) < 5 or segs[0] != "qubit_pairs" or segs[2] != "macros":
+        return False
+    if segs[4] == "spectator_qubits":
+        return True          # which qubit a spectator entry plays on
+    if segs[4] == "spectator_qubits_control":
+        return len(segs) == 6 or (len(segs) == 7 and segs[6] == "id")
+    if len(segs) == 5:
+        return segs[4] not in ("id", "__class__") and segs[4] in _BY_NAME_SLOTS
+    return len(segs) == 6 and segs[5] == "id"
+
+
+#: pair fields that decide on which channel a slot plays its name
+_BY_NAME_HOSTS = ("moving_qubit", "qubit_control", "qubit_target", "coupler")
+
+#: slot names whose plain string value is an op name a gate plays
+_BY_NAME_SLOTS = GATE_SLOTS + ("flux_pulse_high", "flux_pulse_low")
+
+
 # ---------------------------------------------------------------------------
 # Enumeration
 # ---------------------------------------------------------------------------
@@ -291,6 +335,15 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
                                           owner=owner, channel=channel, op_name=op_name, gate=gate,
                                           reverse_index=reverse_index, op_referrers=op_referrers)
                     row["length"] = trow.get("length")
+            if row["amplitude"] is None:
+                # an alias of a sample-array pulse shows its target's waveform peak
+                tbody = merged
+                for seg in target["resolved_path"].split("."):
+                    tbody = tbody.get(seg) if isinstance(tbody, dict) else None
+                from quam_state_manager.core.pulse_catalog import waveform_shape
+                shape = waveform_shape(tbody) if isinstance(tbody, dict) else None
+                if shape is not None:
+                    row["amplitude_peak"] = shape["peak"]
         else:
             row["alias_target"] = body  # dangling — show the raw pointer
         row["summary"] = f"alias → {row['alias_target']}"
@@ -356,6 +409,14 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
                              "drawn this pulse at its current values yet")
     amp = resolved.get("amplitude")
     row["amplitude"] = amp if isinstance(amp, (int, float)) and not isinstance(amp, bool) else None
+    if row["amplitude"] is None:
+        # a sample-array pulse (WaveformPulse) has no amplitude field: its
+        # amplitude is the waveform's peak, the same number the CZ gate plan
+        # shows (pulse_catalog.waveform_shape, one source), labelled "peak"
+        from quam_state_manager.core.pulse_catalog import waveform_shape
+        shape = waveform_shape(resolved)
+        if shape is not None:
+            row["amplitude_peak"] = shape["peak"]
 
     if spec is not None:
         axis_angle = resolved.get("axis_angle")
@@ -624,6 +685,8 @@ def _list_pulses_with(merged: dict, reverse_index, *,
     op_referrers = (build_op_referrers(
         reverse_index, frozenset(p for p, _b, _k in found) or None)
         if reverse_index is not None else None)
+    if op_referrers is not None:
+        _add_by_name_referrers(merged, op_referrers)
     rows = []
     for i, (p, b, kw) in enumerate(pending):
         if tick is not None and not i % _TICK_ROWS:
@@ -857,7 +920,8 @@ class PulseIndex:
             return not self._drop_hint
         mut_since = getattr(self.store, "mutations_since", None)
         steps = mut_since(self._seq) if mut_since is not None else None
-        if steps and all(vo and isinstance(p, str) for _, p, vo in steps):
+        if steps and all(vo and isinstance(p, str) and not is_by_name_holder(p)
+                         for _, p, vo in steps):
             if self._apply_value_steps([p for _, p, _ in steps], seq):
                 self._drop_hint = False
                 return True
@@ -1018,6 +1082,16 @@ class PulseIndex:
             if self._warm():
                 return list(self._pos)
         return None
+
+    def rows_seeing_if_warm(self, paths) -> set[str] | None:
+        """Op paths of every row that can see a write at any of *paths* (the
+        written pulse itself, and every pulse pointing into it, transitively);
+        None when only a cold rebuild could say. Never builds: a write guard
+        must not make an ordinary edit wait on a whole-chip walk."""
+        with self.store._lock:
+            if not self._warm():
+                return None
+            return self._rows_seeing(list(paths))
 
     def known_paths(self):
         """Every pulse op path, as an O(1) membership container."""

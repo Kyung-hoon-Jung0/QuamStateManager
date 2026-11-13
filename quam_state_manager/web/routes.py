@@ -128,7 +128,7 @@ from quam_state_manager.core.pointer_resolver import (
     is_pointer, is_self_ref, pointer_target_name,
 )
 from quam_state_manager.core.pulse_index import PulseIndex
-from quam_state_manager.core.query import QueryEngine
+from quam_state_manager.core.query import QueryEngine, gate_conflict_text, pair_gate_fidelity
 from quam_state_manager.core import query as _query_mod
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
@@ -7481,6 +7481,83 @@ def _build_cr_zz_sections(name: str, store: QuamStore) -> list[dict]:
     return sections
 
 
+def _display_prop(key: str, value: Any, dot_path: str | None) -> dict:
+    """A read-only inspector row (a derived or summarised value, never an edit box)."""
+    return {"key": key, "value": value, "raw": value, "dot_path": dot_path,
+            "is_pointer": False, "is_self_ref": False, "dangling": False,
+            "editable": False}
+
+
+# pulse fields the CZ section already lists in its fixed order
+_CZ_KNOWN_PULSE_FIELDS = ("amplitude", "length", "flat_length", "smoothing_length")
+
+
+def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
+                        pair_obj: dict, field: str = "flux_pulse_qubit") -> dict:
+    """What a CZ macro's ``flux_pulse_qubit`` really is, for the pair inspector.
+
+    ``class_name`` (last segment of ``__class__``), ``shape`` (peak / length of a
+    sample-array pulse, :func:`pulse_catalog.waveform_shape`, else None) and
+    ``extra_props``: one row per further field the pulse dict holds (arrays
+    summarised as "N samples, peak X", nulls and nested dicts left out)."""
+    from quam_state_manager.core.pulse_catalog import summarize_samples, waveform_shape
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    out = {"class_name": None, "shape": None, "extra_props": []}
+    gate = ((pair_obj.get("macros") or {}).get(gate_name)) if isinstance(pair_obj, dict) else None
+    if not isinstance(gate, dict):
+        return out
+    # ``flux_pulse_target`` is the second line of a both-movers gate: it has no
+    # fixed rows above it, so every field it holds is listed, under "<gate>_target_".
+    second = field == "flux_pulse_target"
+    base = ("qubit_pairs", name, "macros", gate_name, field)
+    pulse, pbase = _query_mod._deref_pulse_ref(store, gate.get(field), base)
+    if not isinstance(pulse, dict) or not pulse:
+        return out
+    pulse = {k: _query_mod._resolve(store, v, pbase + (k,)) for k, v in pulse.items()}
+    qclass = pulse.get("__class__")
+    if isinstance(qclass, str) and qclass:
+        out["class_name"] = qclass.split(".")[-1]
+    # the sample period comes from the port that plays the pulse (the moving qubit's z)
+    role = "target" if second else pair_obj.get("moving_qubit")
+    rate = None
+    ref = pair_obj.get("qubit_" + role) if role in ("control", "target") else None
+    if isinstance(ref, str) and ref.startswith("#/"):
+        try:
+            ft = resolve_field_target(store.merged, ref[2:].replace("/", ".")
+                                      + ".z.opx_output.sampling_rate")
+            rate = ft.get("resolved_value") if ft.get("resolvable") else None
+        except Exception:  # noqa: BLE001 -- an unresolvable port means the 1 GSa/s default
+            rate = None
+    out["shape"] = waveform_shape(pulse, sampling_rate=rate)
+    alias = ".".join(base)
+    for field, value in pulse.items():
+        if field == "__class__" or value is None or (field in _CZ_KNOWN_PULSE_FIELDS and not second):
+            continue
+        key = f"{gate_name}_target_{field}" if second else f"{gate_name}_{field}"
+        dot_path = f"{alias}.{field}"
+        if isinstance(value, (list, tuple)):
+            out["extra_props"].append(_display_prop(
+                key, summarize_samples(value) or f"[{len(value)} items]", dot_path))
+            continue
+        if isinstance(value, dict):
+            continue
+        raw = value
+        try:
+            raw = store.get_value(dot_path)
+        except (KeyError, TypeError):
+            pass
+        ptr = is_pointer(raw)
+        self_ref = is_self_ref(raw) if ptr else False
+        out["extra_props"].append({
+            "key": key, "value": value, "raw": raw, "dot_path": dot_path,
+            "is_pointer": ptr and not self_ref, "is_self_ref": self_ref,
+            "dangling": ptr and not self_ref and value == raw,
+            "editable": (field != "id" and isinstance(value, (int, float, str))
+                         and not isinstance(value, bool) and not self_ref),
+        })
+    return out
+
+
 def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore) -> list[dict]:
     """Build pointer-aware, sectioned property list for pair detail template."""
     sections: list[dict] = []
@@ -7581,12 +7658,39 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 
         section_label = _humanize_gate_name(gate_name)
         section = {"name": section_label, "props": []}
+        # the ONE per-gate fidelity of this macro (query.pair_gate_fidelity):
+        # its row edits the key it was read from, and says which key that is
+        _gfid = (macros.get(gate_name) or {}).get("fidelity") if isinstance(macros.get(gate_name), dict) else None
+        _pg = pair_gate_fidelity(_gfid)
+        flux = _cz_flux_pulse_view(store, name, gate_name, pair_obj)
+        if flux["class_name"]:
+            section["props"].append(_display_prop(
+                f"{prefix}_pulse_class", flux["class_name"],
+                f"qubit_pairs.{name}.macros.{gate_name}.flux_pulse_qubit.__class__"))
         for field_suffix, dot_suffix in _CZ_GATE_FIELDS:
+            if field_suffix == "coupler_amplitude":
+                # every other field the flux pulse actually holds, after the known ones
+                section["props"].extend(flux["extra_props"])
             key = f"{prefix}_{field_suffix}"
             if key not in pair_data:
                 continue
             resolved_value = pair_data[key]
+            fid_note = None
+            if field_suffix == "interleaved_rb" and _pg:
+                dot_suffix = "macros.{gate}.fidelity." + _pg["key"]
+                fid_note = {"key": _pg["key"],
+                            "title": (f"from {_pg['key']}"
+                                      + (f" ({_pg['basis']})" if len(_pg["keys"]) > 1 else "")),
+                            "conflict": gate_conflict_text(_pg["conflict"])}
             dot_path = f"qubit_pairs.{name}.{dot_suffix.format(gate=gate_name)}"
+            shape = flux["shape"]
+            if shape is not None and field_suffix in ("amplitude", "length"):
+                # a sample-array pulse stores neither field: show what the samples say, read-only
+                section["props"].append(_display_prop(key, (
+                    f"{shape['peak']:.6g} ({shape['label']})" if field_suffix == "amplitude" else
+                    f"{shape['length_ns']:g} ns ({shape['samples']} samples x "
+                    f"{shape['sample_period_ns']:g} ns)"), None))
+                continue
 
             raw_value = resolved_value
             ptr = False
@@ -7628,7 +7732,18 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                 "is_self_ref": self_ref,
                 "dangling": dangling,
                 "editable": editable,
+                "fid_note": fid_note,
             })
+
+        # a both-movers gate: the second qubit's flux pulse, every field it holds
+        _gm = macros.get(gate_name)
+        if isinstance(_gm, dict) and isinstance(_gm.get("flux_pulse_target"), (dict, str)):
+            second = _cz_flux_pulse_view(store, name, gate_name, pair_obj, field="flux_pulse_target")
+            if second["class_name"]:
+                section["props"].append(_display_prop(
+                    f"{prefix}_target_pulse_class", second["class_name"],
+                    f"qubit_pairs.{name}.macros.{gate_name}.flux_pulse_target.__class__"))
+            section["props"].extend(second["extra_props"])
 
         if section["props"]:
             sections.append(section)
@@ -15949,7 +16064,10 @@ def field_refs():
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
     total, refs = _count_refs_into(store, dot_path)
-    return jsonify(ok=True, total=total, refs=refs)
+    # gate slots that play an op under this path BY NAME: no pointer names
+    # them, and the delete door refuses on them (the same finder)
+    return jsonify(ok=True, total=total, refs=refs,
+                   by_name=_by_name_cut(store, [dot_path]))
 
 
 def _exc_text(e: Exception) -> str:
@@ -16135,6 +16253,12 @@ def field_delete():
     if _psc is not None:
         return _pulse_structure_refused(_psc)
 
+    # a channel (or qubit) delete that takes an op a pair-gate slot
+    # plays BY NAME with it -- refused naming the slot, as the Pulses door
+    by_name = _by_name_cut(modifier.store, [dot_path])
+    if by_name and request.form.get("force") != "1":
+        return _by_name_refused_json(by_name)
+
     dangling, _ = _count_refs_into(modifier.store, dot_path)
     # a removed field of a pulse a lab GATE plays falls back to the class
     # default -- one half of a coupled pair can then disagree with the other
@@ -16162,6 +16286,9 @@ def field_delete():
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
+    if by_name:
+        _lab_notes.append(f"{len(by_name)} gate slot(s) now play a name that no"
+                          f" longer exists: {', '.join(by_name)}")
     return jsonify(ok=True, tray_html=_tray_html(), removed_leaves=removed,
                    dangling_refs=dangling,
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
@@ -16980,6 +17107,19 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                          if n in _ps_skip else {})}
                      for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
+    # a delete row (a channel, a qubit, a whole container) that takes an op a
+    # pair-gate slot plays BY NAME, while the slot stays: refused as the Json
+    # Tree's /field/delete, naming the slot; force=1 deletes anyway. A slot
+    # deleted in the same batch loses nothing. The Delete-together door asked
+    # this already (with its own force).
+    if not pulse_door:
+        _del_paths = [dp for n, (dp, v, _c) in enumerate(pairs)
+                      if v is _BATCH_DELETE and n not in _ps_skip]
+        _by_name = _by_name_cut(modifier.store, _del_paths) if _del_paths else []
+        if _by_name and str(_pj.get("force") or request.form.get("force") or "") != "1":
+            return _by_name_refused_json(
+                _by_name, how="Send the batch again with force=1 to delete anyway.")
+
     # docs/20 r12-B: an FSP edit never silently changes amplitudes. D-44: an
     # unacked batch commits now and the offer follows (X-SM-Fsp-Changed);
     # fsp_ack=comp still sends FSP + compensated amps in ONE group (one
@@ -17048,7 +17188,23 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # writes nothing at all (400, every row named); an independent batch
     # skips just the refused rows.
     _lab_skip: set = set()
+    _row_msg: dict = {}
     _lab_writes, _lab_idx = [], []
+    # SM's own catalog pulse classes: every written row is judged by the
+    # class's own rules (in-process), not only the rows a lab pulse sees
+    _syn_writes, _syn_idx = [], []
+    for _n, (_dp, _rv, _c) in enumerate(pairs):
+        if _n in _ps_skip or _rv is _BATCH_DELETE:
+            continue
+        try:
+            _tgt = _resolve_edit_path(modifier.store, _dp)
+            _pv = (_parse_for_target(modifier.store, _tgt, _rv)
+                   if isinstance(_rv, str) else _rv)
+        except Exception:  # noqa: BLE001 -- the row loop reports it
+            continue
+        _syn_writes.append((_tgt, _pv))
+        _syn_idx.append(_n)
+    _syn = _synth_write_refusal(modifier.store, _syn_writes) if _syn_writes else None
     from quam_state_manager.core import lab_watch as _lw
     try:
         _watch = _lw.watch_for(modifier.store)
@@ -17085,14 +17241,27 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     _lab_rel = _lab_hold(modifier.store, [w for w, _v in _lab_writes])
     _lab_info: dict = {}
     try:
-        _lab = (_lab_write_refusal(modifier.store, _lab_writes, info=_lab_info)
-                if _lab_writes else None)
+        _lab = (_lab_write_refusal(modifier.store, _lab_writes, info=_lab_info,
+                                   synth=False)
+                if _lab_writes and not (_syn and not independent) else None)
     except BaseException:
         _lab_rel()
         raise
+    _syn_extra: set = set()
+    if _syn:
+        if _lab and independent:
+            _syn_extra = {_syn_idx[k] for k in _syn[1]}
+        else:
+            _lab, _lab_writes, _lab_idx = _syn, _syn_writes, _syn_idx
     if _lab:
         _lab_msg = _lab_refusal_text(_lab[0])
-        _lab_skip = {_lab_idx[k] for k in _lab[1]}
+        _lab_skip = {_lab_idx[k] for k in _lab[1]} | _syn_extra
+        # independent rows say their own pulse's reason (the combined text
+        # stays the top-level message)
+        if _syn:
+            for _k, _m in (getattr(_syn, "per_index", None) or {}).items():
+                if 0 <= _k < len(_syn_idx):
+                    _row_msg[_syn_idx[_k]] = _m
         if not independent:
             _lab_rel()
             _one = _lab_writes[_lab[1][0]] if len(_lab[1]) == 1 else None
@@ -17187,7 +17356,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 continue
             if _row_n in _lab_skip:      # independent mode only (see above)
                 results.append({"dot_path": dot_path, "applied": False,
-                                "lab_refused": True, "error": _lab_msg})
+                                "lab_refused": True,
+                                "error": _row_msg.get(_row_n, _lab_msg)})
                 ok_overall = False
                 continue
             try:
@@ -17430,6 +17600,9 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
                    modified=_modified_delta(),
                    group_id=_batch_gid if applied_entries else None,
+                   # an independent batch's skipped rows: the combined refusal
+                   # (each row's own error names its own pulse)
+                   **({"message": _lab_msg} if _lab_skip else {}),
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
@@ -17643,6 +17816,28 @@ def pair_gate_inspector_plot(name: str):
 
     if "error" in sweep:
         return jsonify({"error": sweep["error"]}), 422
+
+    # ?op=<gate>: the plot was opened from that gate's flux pulse, so its CZ
+    # operating point is marked -- the amplitude and frequency the CZ gate
+    # plan computes for the moving line (one source, never recomputed here)
+    gate = (request.args.get("op") or "").strip()
+    if gate:
+        try:
+            rows, _convs, _un = _cz_plan_ops(store)
+        except Exception:  # noqa: BLE001 -- the plot still answers without it
+            rows = []
+        row = next((r for r in rows if r["pair"] == name and r["operation"] == gate), None)
+        ln = next((ln for ln in (row or {}).get("lines") or []
+                   if ln.get("role") == role and ln.get("moves") and not ln.get("refusal")), None)
+        if ln is not None:
+            gate_inspector.add_gate_point(
+                sweep, qa, qb, gate=gate, amplitude_v=ln.get("amplitude_v"),
+                frequency_hz=(ln.get("point") or {}).get("frequency_hz"),
+                lobes=ln.get("lobes"))
+        if "gate_point" not in sweep:
+            sweep.setdefault("notes", []).append(
+                f"{gate}: no operating point for the {role} qubit in the CZ gate plan "
+                "(see Chip Status > CZ gate plan for why).")
 
     figure = gate_inspector.build_plotly_figure(sweep, moving_role=role)
     return jsonify(figure)
@@ -19084,7 +19279,8 @@ def _report_build_pulses(rc: _ReportCtx) -> str:
         raise RuntimeError("the pulse index is not available")
     rows = [dict(r) for r in pulse_index.rows()]
     _pulse_draw_sparks(rc.store, pulse_index, rows)
-    lab = [bool(r.get("spark_from_lab") or r.get("spark_from_config")) for r in rows]
+    lab = [bool(r.get("spark_from_lab") or r.get("spark_from_config")
+                or r.get("spark_from_transcription")) for r in rows]
     defs, refs = _cr.dedupe_sparks([None if l else r.get("spark_svg")
                                     for r, l in zip(rows, lab)])
     distinct = defs.count("<symbol ")
@@ -19093,6 +19289,9 @@ def _report_build_pulses(rc: _ReportCtx) -> str:
         if r.get("is_alias"):
             tgt = (r.get("alias_target") or "?").rsplit(".", 1)[-1]
             wave = f'<span class="rep-note">&rarr; {e(tgt)}</span>'
+        elif is_lab and r.get("spark_svg") and r.get("spark_from_transcription"):
+            wave = ('<span class="pulse-spark-lab" title="SM\'s transcription of the lab class '
+                    f'(as the CZ gate plan draws it)">{r["spark_svg"]}</span>')
         elif is_lab and r.get("spark_svg"):
             wave = f'<span class="pulse-spark-lab" title="Drawn by the class\'s own code">{r["spark_svg"]}</span>'
         elif ref:
@@ -20895,6 +21094,192 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
     return out
 
 
+#: The Trends path of the ONE resolved 2Q gate fidelity per pair: what the
+#: Overview tile and the topology edge show (query.pair_gate_fidelity per gate
+#: macro, the best physical macro per pair), recomputed at every recorded
+#: change of its inputs. Not a state leaf: the raw per-key families
+#: (``InterleavedRB``, ``IRB``) stay charted as recorded.
+_TREND_2Q_RESOLVED = "qubit_pairs.*.gate_fidelity_resolved"
+_TREND_2Q_RESOLVED_FAM = "gate_fidelity_resolved"
+_TREND_2Q_RESOLVED_LABEL = "2Q gate fidelity (resolved)"
+
+
+def _trend_axis_order(key) -> tuple:
+    """Sort key of a Trends axis key: a ledger key ``<UTC stamp>_e<eid>``
+    sorts by stamp then by the NUMBER of the event (``e9`` before ``e10``);
+    a snapshot id sorts as text."""
+    k = str(key)
+    stamp, sep, eid = k.rpartition("_e")
+    if sep and eid.isdigit():
+        return (stamp, int(eid))
+    return (k, -1)
+
+
+def _resolved_2q_at(fids: dict) -> tuple[float, str, str] | None:
+    """``(value, source, basis)`` of one pair from its macros' fidelity blocks
+    (``{gate: block}``): pair_gate_fidelity per macro, then the macro with
+    the largest PHYSICAL value -- the rule ``QueryEngine.get_topology`` uses
+    for the edge and the Overview tile uses per pair. None when no macro has
+    a physical per-gate value."""
+    best = None
+    for gate in sorted(fids):
+        r = pair_gate_fidelity(fids[gate])
+        if r is None or not r.get("physical"):
+            continue
+        if best is None or r["value"] > best[0]:
+            best = (r["value"], f"{gate}.{r['key']}", r.get("basis") or "")
+    return best
+
+
+def _unphysical_2q_at(fids: dict):
+    """The largest per-gate value of a pair whose macros carry values but no
+    PHYSICAL one (:func:`_resolved_2q_at` is None there): the value the
+    resolved line leaves out, so the chart can count it. None when no macro
+    carries a numeric value."""
+    vals = [r["value"] for r in (pair_gate_fidelity(fids[g]) for g in sorted(fids))
+            if r is not None and not r.get("physical") and _vh_numeric(r.get("value")) is not None]
+    return max(vals) if vals else None
+
+
+def _trend_has_gate_key(hm, path: Path, tbl=None) -> bool:
+    """Does any pair's gate macro record a per-gate fidelity key
+    (query.rb_level "gate": ``InterleavedRB``, ``IRB``, ...)?"""
+    from quam_state_manager.core.query import rb_level
+    match = (tbl.leaf_matching_paths if tbl is not None
+             else (lambda pat: hm.leaf_matching_paths(path, pat)))
+    try:
+        for pat in ("qubit_pairs.*.macros.*.fidelity.*",
+                    "qubit_pairs.*.macros.*.fidelity.*.*"):
+            if any(rb_level(dp.split(".")[5]) == "gate" for dp in match(pat)):
+                return True
+    except Exception:  # noqa: BLE001 -- no resolved badge then
+        logger.debug("gate-key scan failed", exc_info=True)
+    return False
+
+
+def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> list[dict]:
+    """One line per pair: the resolved 2Q gate fidelity (``_TREND_2Q_RESOLVED``).
+
+    Each pair's gate-macro fidelity blocks are rebuilt from the recorded
+    in-force values of their leaves (the per-gate values and the run-id fields
+    pair_gate_fidelity reads; a per-key time recorded as text only where the
+    history holds that path) at every point any of them changed, and the
+    resolver judges the rebuilt block. Where no time or run id is recorded the
+    resolver's own last rule applies (key order). A point is kept where the
+    resolved value or its source changes, the last one is held to the newest
+    event, and each point's hover names its source key (``<gate>.<key>``).
+    """
+    from quam_state_manager.core.query import rb_level
+    pairs = list(pairs or [])
+    if not pairs:
+        return []
+    match = (tbl.leaf_matching_paths if tbl is not None
+             else (lambda pat: hm.leaf_matching_paths(path, pat)))
+    cand = (list(match("qubit_pairs.*.macros.*.fidelity.*"))
+            + list(match("qubit_pairs.*.macros.*.fidelity.*.*")))
+    known = set(getattr(tbl, "paths", ()) or ()) if tbl is not None else set()
+    by_pair: dict[str, list[str]] = {}
+    for dp in cand:
+        parts = dp.split(".")
+        if parts[1] in pairs:
+            by_pair.setdefault(parts[1], []).append(dp)
+    # a gate key's time recorded as text is not a NUMERIC path; ask for it
+    # where the history holds it at all
+    for dps in by_pair.values():
+        for dp in list(dps):
+            parts = dp.split(".")
+            if rb_level(parts[5]) != "gate":
+                continue
+            base = ".".join(parts[:6])
+            for extra in (base + "_updated_at", base + ".updated_at"):
+                if extra in known and extra not in dps:
+                    dps.append(extra)
+    by_pair = {p: dps for p, dps in by_pair.items()
+               if any(rb_level(d.split(".")[5]) == "gate" for d in dps)}
+    if not by_pair:
+        return []
+    allp = [d for dps in by_pair.values() for d in dps]
+    got = (tbl.leaf_series_many(allp, hold_to_newest=True) if tbl is not None
+           else hm.leaf_field_series_many(path, allp, hold_to_newest=True))
+    out: list[dict] = []
+    for p in pairs:
+        dps = by_pair.get(p)
+        if not dps:
+            continue
+        rows, held_keys, newest = {}, set(), None
+        for dp in dps:
+            rs = [r for r in (got.get(dp) or []) if r and r[0] is not None]
+            # a held endpoint (7-tuple) is the newest event, not a change
+            if rs and len(rs[-1]) > 6:
+                held_keys.add(rs[-1][0])
+                newest = rs[-1][0]
+                rs = rs[:-1]
+            rows[dp] = rs
+        keys = sorted({r[0] for rs in rows.values() for r in rs}, key=_trend_axis_order)
+        cursor = {dp: -1 for dp in dps}
+        pts, attr, last, bad_pts = [], {}, None, []
+        for k in keys:
+            ko = _trend_axis_order(k)
+            fids: dict[str, dict] = {}
+            set_at: dict[str, Any] = {}
+            for dp in dps:
+                rs = rows[dp]
+                i = cursor[dp]
+                while i + 1 < len(rs) and _trend_axis_order(rs[i + 1][0]) <= ko:
+                    i += 1
+                cursor[dp] = i
+                if i < 0 or rs[i][1] is None:
+                    continue
+                parts = dp.split(".")
+                block = fids.setdefault(parts[3], {})
+                src = parts[3] + "." + parts[5]
+                if len(parts) == 6:
+                    block[parts[5]] = rs[i][1]
+                    set_at[src] = (dp, rs[i][0])
+                else:
+                    sub = block.get(parts[5])
+                    if not isinstance(sub, dict):
+                        sub = block[parts[5]] = {}
+                    sub[parts[6]] = rs[i][1]
+                    set_at.setdefault(src, (dp, rs[i][0]))
+            res = _resolved_2q_at(fids)
+            bad = None if res else _unphysical_2q_at(fids)
+            now = (res[0], res[1]) if res else (("unphysical", bad) if bad is not None else None)
+            if now == last:
+                continue
+            last = now
+            pts.append((k, res[0] if res else None))
+            if bad is not None:
+                # every macro unphysical: a gap the "N left out" note counts
+                bad_pts.append([k, bad, "unphysical"])
+            if res:
+                why = "source " + res[1] + (f" ({res[2]})" if res[2] else "")
+                info = {}
+                if tbl is not None and res[1] in set_at:
+                    sdp, skey = set_at[res[1]]
+                    info = dict((tbl.attrs.get(sdp) or {}).get(skey) or {})
+                info["sub"] = why + (" · " + info["sub"] if info.get("sub") else "")
+                info.setdefault("label", why)
+                attr[k] = info
+        if not any(v is not None for _, v in pts):
+            continue
+        ser = {"metric": _TREND_2Q_RESOLVED_FAM, "entity": p, "kind": "pair",
+               "points": pts,
+               "sources": [(attr.get(k) or {}).get("sub", "").split(" · ")[0]
+                           for k, _ in pts]}
+        if bad_pts:
+            ser["excluded"] = bad_pts
+        if newest and pts[-1][0] != newest and pts[-1][1] is not None:
+            ser["held"] = {newest: pts[-1][0]}
+            attr[newest] = dict(attr.get(pts[-1][0]) or {})
+            pts.append((newest, pts[-1][1]))
+            ser["sources"].append(ser["sources"][-1])
+        if tbl is not None:
+            ser["attr"] = attr
+        out.append(ser)
+    return out
+
+
 def _trend_witness_fields(ser: dict, left_out, now) -> None:
     """What a trend line shows beside its in-force values (only when there
     is something to show, so a plain series ships as before):
@@ -20914,6 +21299,158 @@ def _trend_witness_fields(ser: dict, left_out, now) -> None:
         ser["now"] = now
 
 
+def _trend_value_physical(metric: str, kind: str, value) -> bool:
+    """Is one Trends value physically possible? The Overview's own rule
+    (``chip_health``): a curated qubit metric by its key (fidelities in
+    ``(0, 1]``, coherence times > 0), a pair family whose leaf carries a
+    fidelity (``_is_fidelity_tail``, the resolved series included) by the
+    fidelity bound. Anything else only has to be a finite number, which a
+    plotted value already is."""
+    v = _vh_numeric(value)
+    if v is None:
+        return True
+    if kind == "pair" and (metric == _TREND_2Q_RESOLVED_FAM or _is_fidelity_tail(metric)):
+        return chip_health.physical_fidelity(v)
+    return chip_health.physicality(metric, v)
+
+
+def _trend_point_run_uid(info) -> str | None:
+    """The dataset uid of the run a ledger point came from: its proven
+    writer, else the run whose saved state carried it, else the run the
+    ledger starts with (a link only: see :func:`_trend_point_measured_uid`)."""
+    if not isinstance(info, dict):
+        return None
+    return info.get("uid") or info.get("saved_uid") or info.get("first_uid") or None
+
+
+def _trend_point_measured_uid(info) -> str | None:
+    """The run a point's value is FROM, for the invalid-run rule: its proven
+    writer, else the run whose saved state carried it. Never ``first_uid``:
+    a value first seen in the run the ledger starts with was not measured by
+    that run, so tagging that run invalid must not take every series' start
+    value out."""
+    if not isinstance(info, dict):
+        return None
+    return info.get("uid") or info.get("saved_uid") or None
+
+
+def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int:
+    """Take the values a Trends line must not draw out of it: a value outside
+    its physical range (:func:`_trend_value_physical`) or a value from a run
+    tagged ``INVALID_TAG`` (*invalid*: dataset uids). Each leaves a GAP in the
+    line (the chip did hold it, so the line never bridges it) and is listed
+    in ``ser["excluded"]`` as ``[key, value, why]``, which the client draws
+    as a hollow mark only on request and never into the axis range. A held
+    endpoint carrying an excluded value goes with it. Returns the count."""
+    attr = ser.get("attr") or {}
+    held = ser.get("held") or {}
+    # a builder may have counted gaps of its own already (the resolved 2Q
+    # line's points where every macro is unphysical)
+    out: list[list] = list(ser.get("excluded") or ())
+    pts = []
+    prev_why = None
+    for k, v in ser.get("points") or []:
+        why = None
+        if v is not None:
+            if held.get(k):
+                why = prev_why
+            elif not _trend_value_physical(metric, kind, v):
+                why = "unphysical"
+            elif invalid and _trend_point_measured_uid(attr.get(str(k))) in invalid:
+                why = "invalid"
+            if why and not held.get(k):
+                out.append([k, v, why])
+            if not held.get(k):
+                prev_why = why
+        pts.append((k, None) if why else (k, v))
+    lo_keep = []
+    for r in ser.get("left_out") or []:
+        why = None
+        if not _trend_value_physical(metric, kind, r[1]):
+            why = "unphysical"
+        elif invalid and ((len(r) > 7 and r[7]) or (len(r) > 8 and r[8])
+                          or _trend_point_measured_uid(attr.get(str(r[0])))) in invalid:
+            why = "invalid"
+        if why:
+            out.append([r[0], r[1], why])
+        else:
+            lo_keep.append(r)
+    now_bad = (ser.get("now") is not None
+               and not _trend_value_physical(metric, kind, ser["now"]))
+    if not out and not now_bad:
+        return 0
+    ser["points"] = pts
+    if lo_keep:
+        ser["left_out"] = lo_keep
+    else:
+        ser.pop("left_out", None)
+    if now_bad:
+        out.append([pts[-1][0] if pts else None, ser.pop("now"), "unphysical"])
+    ser["excluded"] = out
+    return len(out)
+
+
+def _trend_excluded_note(whys: list[str]) -> str:
+    """One line per chart: how many values were left out, and why."""
+    if not whys:
+        return ""
+    parts = []
+    for why, words in (("unphysical", "outside the physical range"),
+                       ("invalid", "from a run marked invalid")):
+        n = whys.count(why)
+        if n:
+            parts.append(f"{n} {words}")
+    n = len(whys)
+    return (f"{n} value{'' if n == 1 else 's'} left out of the line and the axis "
+            f"({', '.join(parts)}).")
+
+
+def _trend_invalid_elsewhere_note(charts: list[dict], invalid: frozenset) -> str:
+    """N4: a run tag matches a point by its dataset uid (data folder key +
+    run id). Runs tagged invalid in a data folder that NONE of the drawn
+    points come from (tags set on a copy of the folder the ledger reads)
+    match nothing, and the view says so. They are never matched by run
+    number alone: run ids are unique only within one data folder, so a
+    same-numbered run elsewhere may be another measurement."""
+    if not invalid:
+        return ""
+    src = set()
+    for c in charts:
+        for r in c.get("series") or ():
+            for info in (r.get("attr") or {}).values():
+                uid = _trend_point_run_uid(info)
+                if uid and ":" in uid:
+                    src.add(uid.rsplit(":", 1)[0])
+    if not src:
+        return ""
+    other = sorted(u for u in invalid if u.rsplit(":", 1)[0] not in src)
+    if not other:
+        return ""
+    n = len(other)
+    return (f"{n} run{'' if n == 1 else 's'} tagged {_INVALID_TAG_WORD} "
+            f"{'is' if n == 1 else 'are'} in a data folder these charts' runs do not "
+            f"come from, so {'its' if n == 1 else 'their'} values are not left out here. "
+            "A tag counts for the run in its own folder only (a run number repeats across "
+            "folders); tag the run in the folder the chart reads.")
+
+
+_INVALID_TAG_WORD = '"invalid"'
+
+
+def _invalid_run_uids() -> frozenset:
+    """Dataset uids of every run tagged ``INVALID_TAG`` in a loaded data
+    folder (the Datasets tag store): Trends leaves their values out."""
+    from quam_state_manager.core.dataset import INVALID_TAG
+    out = set()
+    try:
+        for fol in _active_dataset_stores(fast=True, rescan=False):
+            for rid in fol["store"].runs_with_tag(INVALID_TAG):
+                out.add(f"{fol['key']}:{rid}")
+    except Exception:  # noqa: BLE001 -- no store, no flag: nothing is excluded
+        logger.debug("invalid-run lookup failed", exc_info=True)
+    return frozenset(out)
+
+
 # The family grouping is done IN SQL (`leaf_index.path_families`), never by
 # folding a LIMITed row list. The old shape pulled 4,000 leaf rows and counted
 # the families inside them, so the badge row's "· N pairs" — the only claim a
@@ -20923,6 +21460,7 @@ def _trend_witness_fields(ser: dict, left_out, now) -> None:
 # display choice; a cap that silently changes a count is a wrong number.
 _TREND_IRB = "qubit_pairs.*.macros.*.fidelity.InterleavedRB"
 _TRENDS_MAX_FAMILIES = 8        # charted at once; see the trim note
+_TRENDS_MAX_METRICS = 8         # qubit metric chips pressed at once; see metric_note
 
 
 # The Overview's 2Q vocabulary, as WHOLE-SEGMENT tests over a family tail.
@@ -21034,7 +21572,12 @@ def _trend_rb_segment(tail: str) -> tuple[int, str] | None:
 
     segs = [s for s in str(tail or "").split(".") if s]
     for i in range(len(segs) - 1, -1, -1):
-        lvl = rb_level(segs[i])
+        name = segs[i]
+        # a node's `<RB key>_details` block repeats that experiment's numbers
+        # (StandardRB_details.fidelity is per Clifford like StandardRB itself)
+        if name.lower().endswith("_details"):
+            name = name[:-len("_details")]
+        lvl = rb_level(name)
         if lvl and lvl in _TREND_2Q_LEVEL_LABELS:
             return i, lvl
     return None
@@ -21411,7 +21954,10 @@ def _trend_pair_chips_uncached(hm, path: Path, active: list[str], tbl=None) -> t
     rows.sort(key=lambda f: (not _is_fidelity_tail(f["label"]),
                              f["path"] != _TREND_IRB))
     fams = [f for f in rows
-            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])]
+            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])
+            # a node's `<RB key>_details` block repeats its experiment's numbers:
+            # it is folded into the parent family (still reachable by the search)
+            and not any(seg.lower().endswith("_details") for seg in f["label"].split("."))]
     # What the Overview REPORTS comes before what was SET. Ranked by change
     # points alone, a chip with five CZ variants filled the whole row with
     # phase-shift knobs and pushed its own RB numbers off the end — which is
@@ -21648,9 +22194,14 @@ def topology_trends():
         # docs/298: a TYPED path also asks the chip's state whether it names a
         # leaf (outside the table's facts): such a fragment is recomputed on
         # every edit; any other is served again while its facts hold
+        # runs tagged invalid in the Datasets tag store: their values leave
+        # the lines, so a tag change is part of what the fragment depends on
+        invalid = _invalid_run_uids()
         return ledger_table.part(
-            ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
-            lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
+            ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs),
+             tuple(sorted(invalid))),
+            lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table,
+                                          invalid=invalid),
             narrow=not (request.args.get("path") or "").strip())
     except _ramcache.Warming:
         return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
@@ -21738,7 +22289,7 @@ def _hub_surface_wait(ans, surface):
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
-                          pairs: list[str], tbl) -> str:
+                          pairs: list[str], tbl, invalid: frozenset = frozenset()) -> str:
     """The body of :func:`topology_trends` (the section fragment), read from
     the chip's change ledger table (``hub_status.LedgerTable``)."""
     # S10 C5: the volatile-list and fallback-label params -> none, only the ledger table renders this.
@@ -21773,6 +22324,18 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # the charts, so both can be named out of ONE label map below.
     pair_chips, pair_chips_more = (
         _trend_pair_chips(hm, path, extras, tbl) if pairs else ([], 0))
+    # The resolved 2Q gate fidelity (the Overview tile's number) leads the
+    # 2Q row on a chip that records any per-gate key; the raw key families
+    # keep their own badges.
+    if pairs and _trend_has_gate_key(hm, path, tbl):
+        pair_chips = [{"path": _TREND_2Q_RESOLVED, "fam": _TREND_2Q_RESOLVED_FAM,
+                       "label": _TREND_2Q_RESOLVED_LABEL, "n": len(pairs),
+                       "active": _TREND_2Q_RESOLVED in extras}] + [
+            c for c in pair_chips if c.get("path") != _TREND_2Q_RESOLVED]
+        # the row keeps its cap: the last badge makes room and is counted
+        if len(pair_chips) > _TREND_2Q_MAX_CHIPS:
+            pair_chips_more += len(pair_chips) - _TREND_2Q_MAX_CHIPS
+            pair_chips = pair_chips[:_TREND_2Q_MAX_CHIPS]
     # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
     # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
@@ -21794,18 +22357,26 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                      "x180_amplitude", "readout_amplitude"]
         have = _trend_metrics_with_data(hm, path, curated, tbl)
         sel = [m for m in preferred if m in have][:3] or preferred[:3]
+        # the default 2Q trend is the RESOLVED gate fidelity (what the
+        # Overview tile shows), where the raw IRB family used to be
         if any(c["path"] == _TREND_IRB for c in pair_chips):
-            extras.append(_TREND_IRB)
+            extras.append(_TREND_2Q_RESOLVED if any(
+                c["path"] == _TREND_2Q_RESOLVED for c in pair_chips) else _TREND_IRB)
             for c in pair_chips:
                 c["active"] = c["path"] in extras
-    sel = [m for m in sel if m in curated][:8]
+    sel = [m for m in sel if m in curated]
+    # A pressed chip past the cap is NAMED, never dropped in silence: the
+    # chip stays unpressed and the row says why (the pair row's trim note).
+    metrics_trimmed = sel[_TRENDS_MAX_METRICS:]
+    sel = sel[:_TRENDS_MAX_METRICS]
 
     series = _trend_series_curated(hm, path, sel, tbl) if sel else []
     for _s in series:
         _s.setdefault("kind", "qubit")
     extra_series_by_path: dict[str, list[dict]] = {}
     for _p in extras:
-        _es = _trend_series_leaf(hm, path, _p, qubits, pairs, tbl)
+        _es = (_trend_series_resolved_2q(hm, path, pairs, tbl) if _p == _TREND_2Q_RESOLVED
+               else _trend_series_leaf(hm, path, _p, qubits, pairs, tbl))
         extra_series_by_path[_p] = _es
         series += _es
 
@@ -21827,6 +22398,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         _seen_series.add(_k)
         _deduped.append(_s)
     series = _deduped
+    # The Overview's validity rule, per point: an unphysical value or one from
+    # a run marked invalid leaves the line (a gap) and the axis range
+    for _s in series:
+        _trend_exclude(_s, _s.get("metric") or "", _s.get("kind") or "", invalid)
 
     series_trimmed = 0
     if len(series) > _TRENDS_MAX_SERIES:
@@ -21846,7 +22421,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
 
     def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
         unit, scale = _trend_display_unit(metric)
+        _why = [e[2] for r in rows for e in r.get("excluded") or ()]
         return {"metric": metric, "kind": kind, "series": rows,
+                "n_excluded": len(_why),
+                "excluded_note": _trend_excluded_note(_why),
                 "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": unit,
                 "scale": scale,
                 "label": _trend_pair_label(metric) if kind == "pair" else "",
@@ -21917,14 +22495,23 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     for c in charts:
         if c.get("kind") == "pair" and c["metric"] in _pair_labels:
             c["label"] = _pair_labels[c["metric"]]
+        if c.get("kind") == "pair" and c["metric"] == _TREND_2Q_RESOLVED_FAM:
+            c["label"] = _TREND_2Q_RESOLVED_LABEL
         if c.get("kind") == "pair":
             # the y axis says what the chart title says, never the raw key
             c["ytitle"] = c.get("label") or _trend_axis_title(c["metric"])
+    for c in pair_chips:
+        if c.get("path") == _TREND_2Q_RESOLVED:
+            c["label"] = _TREND_2Q_RESOLVED_LABEL
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.
     for c in charts:
         rows = c.get("series") or []
+        if c.get("n_excluded"):
+            # the excluded points ARE the recorded values: the chart keeps
+            # them (drawn on request) and its note says what was left out
+            continue
         if rows and not any(
                 _vh_numeric(p[1]) is not None for r in rows for p in r.get("points") or []):
             # docs/283: values were recorded, none of them a finite number
@@ -21965,6 +22552,13 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                      f"families — {_first}{_rest} "
                      f"{'was' if families_trimmed == 1 else 'were'} left off. "
                      f"Deselect one to make room.")
+    metric_note = ""
+    if metrics_trimmed:
+        _names = [_TREND_LABEL_OVERRIDES.get(m) or _trend_metric_label(m) for m in metrics_trimmed]
+        metric_note = (f"At most {_TRENDS_MAX_METRICS} qubit metrics are charted at once "
+                       f"\u2014 {', '.join(_names)} {'was' if len(_names) == 1 else 'were'} "
+                       f"not added. Deselect one to make room.")
+    invalid_note = _trend_invalid_elsewhere_note(charts, invalid)
     if series_trimmed:
         trim_note = ((trim_note + " ") if trim_note else "") + (
             f"Showing the first {_TRENDS_MAX_SERIES} lines — "
@@ -22004,7 +22598,9 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
-                           trim_note=trim_note,
+                           trim_note=trim_note, metric_note=metric_note,
+                           invalid_note=invalid_note,
+                           n_excluded=sum(c.get("n_excluded") or 0 for c in charts),
                            snapshots=tbl.snapshot_count(),
                            hub_notes=tbl.notes,
                            hub_mode="ledger")
@@ -23471,6 +24067,19 @@ def _pulse_component_overlays(store, path: str) -> list[dict]:
     return out
 
 
+def _pulse_transcription(store, path):
+    """``waveform_synth.lab_transcription_payload`` over the open chip, or None."""
+    from quam_state_manager.core.waveform_synth import lab_transcription_payload
+    if store is None or not isinstance(path, str):
+        return None
+    try:
+        with store._lock:
+            return lab_transcription_payload(store.merged, path)
+    except Exception:  # noqa: BLE001 -- a preview never fails the page
+        logger.debug("transcription lookup failed for %s", path, exc_info=True)
+        return None
+
+
 def _pulse_plot_traces(payload: dict) -> dict:
     """Plot-ready trace dict from a synth payload (decimated for display)."""
     if not payload.get("ok"):
@@ -23495,6 +24104,73 @@ def _pulse_plot_traces(payload: dict) -> dict:
         "decimated": decimated,
         "warnings": payload.get("warnings") or [],
     }
+
+
+#: a pulse that plays on a flux line: a qubit's z op, a coupler op, a gate slot
+_FLUX_PULSE_PATH = re.compile(
+    r"^(qubits\.[^.]+\.z\.operations\.[^.]+"
+    r"|qubit_pairs\.[^.]+\.coupler\.operations\.[^.]+"
+    r"|qubit_pairs\.[^.]+\.macros\.[^.]+\.(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse))$")
+
+
+def _flux_plot(plot: dict, path: str, payload: dict) -> dict:
+    """a flux pulse's plot says when its shaped edges start far from 0 V
+    (``cz_gate_plan.edge_step_note``); every other plot is returned as it is."""
+    if plot.get("ok") and _FLUX_PULSE_PATH.match(path or ""):
+        from quam_state_manager.core import cz_gate_plan as czp
+        plot["edge_note"] = czp.edge_step_note(payload.get("i"))
+    return plot
+
+
+def _slot_played_view(store, path: str) -> tuple:
+    """``(played op path, note)`` when *path* is a pair macro's slot whose
+    own pulse copy is NOT what the gate plays (the gate plays the channel op its
+    id names, ``cz_gate_plan.slot_played_op``), else ``(None, None)``. A slot
+    copy that equals the op it plays has no note and draws as itself."""
+    from quam_state_manager.core import cz_gate_plan as czp
+    if not path or not czp.SLOT_PATH.match(path):
+        return None, None
+    with store._lock:
+        doc = store.merged
+        played = czp.slot_played_op(doc, path)
+        note = czp.slot_copy_note(doc, path, played) if played else None
+    return (played, note) if note else (None, None)
+
+
+class _OverlayStore:
+    """A read-only view of a store whose one pulse dict carries uncommitted
+    values: the dicts on the way to it are shallow copies, nothing is written."""
+
+    get_value = QuamStore.get_value
+
+    def __init__(self, store, path: str, values: dict):
+        self._lock = store._lock
+        with store._lock:
+            root = dict(store.merged)
+            node = root
+            for seg in path.split("."):
+                child = node.get(seg) if isinstance(node, dict) else None
+                if not isinstance(child, dict):
+                    break
+                node[seg] = node = dict(child)
+            else:
+                node.update(values)
+        self.merged = root
+
+
+def _synth_played(store, path: str, params: dict):
+    """The played op's synthesis for a slot copy, with the copy's typed
+    *params* written onto an overlay so references from the played op into the
+    copy read them; ``(payload, played path, note)`` or ``(None, None, None)``."""
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    played, note = _slot_played_view(store, path)
+    if not played:
+        return None, None, None
+    src = _OverlayStore(store, path, params) if params else store
+    payload = synth_for_operation(src, played)
+    if not payload.get("ok"):
+        return None, None, None
+    return payload, played, note
 
 
 def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
@@ -23680,8 +24356,14 @@ def pulse_row():
         # The lab's own class: its own code drew this (docs/189, docs/218).
         _pulse_fallback_spark(store, path, row)
     else:
-        row["spark_svg"] = pulse_index.sparkline(
-            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+        played, _played_path, played_note = _synth_played(store, path, {})
+        if played is not None:
+            # the op the gate plays, as the table draws it
+            row["spark_svg"] = sparkline_svg(played)
+            row["spark_played"] = played_note
+        else:
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
     if vt_ver is None:
         return render_template("_pulse_row.html", r=row)
     resp = make_response(render_template("_pulse_row.html", r=row))
@@ -23749,7 +24431,8 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "op_name", "alias_target", "iq", "readout", "found", "location",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
-                   "used_by", "length_why", "length_from_lab", "length_from_config")
+                   "amplitude_peak", "used_by", "length_why", "length_from_lab", "length_from_config",
+                   "length_from_transcription")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
@@ -23981,6 +24664,13 @@ def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
                 if path not in unknown_paths:
                     _pulse_fallback_spark(store, path, row)
                     unknown_paths.append(path)
+                continue
+            # a gate slot's own copy draws the op the gate plays; drawn
+            # fresh, since the row memo knows nothing of the played op's inputs
+            played, _played_path, played_note = _synth_played(store, path, {})
+            if played is not None:
+                row["spark_svg"] = sparkline_svg(played)
+                row["spark_played"] = played_note
                 continue
             row["spark_svg"] = pulse_index.sparkline(
                 path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
@@ -24315,6 +25005,9 @@ def _cz_plan_table(rows) -> list[dict]:
             "coupler": r.get("coupler"),
             "amp_sort": first.get("amp_sort"),
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
+            # which key that per-gate value came from + a disagreement, if any
+            "irb_key": (r["fidelity"].get("InterleavedRB") or {}).get("key"),
+            "irb_conflict": gate_conflict_text((r["fidelity"].get("InterleavedRB") or {}).get("conflict") or []),
         })
     return out
 
@@ -24773,6 +25466,10 @@ def cz_plan_data():
             traj.append(None)
             continue
         playback_known = not ln["duration_unknown"]
+        # a shaped flux edge far from 0 V is a step the plot alone hides
+        edge = czp.edge_step_note(samples)
+        if edge:
+            notes.append(f"{ln['name']}: {edge}")
         if played is not None:
             if payload.get("kind") == "constant":
                 from quam_state_manager.core.waveform_synth import MAX_SAMPLES
@@ -24787,6 +25484,10 @@ def cz_plan_data():
         elif ln["duration_unknown"]:
             notes.append(f"{ln['name']}: drawn waveform is the nominal one; played duration is unknown")
         traj.append({"amplitude_v": samples, "playback_known": playback_known, **conv.trajectory(samples)})
+        # C: the same samples through the port's own exponential/FIR filters, by the
+        # Z-line distortion page's model (one source); drawn only on the toggle
+        traj[-1]["filtered"] = _cz_filtered_output(store, ln["qubit_path"] + ".z", samples,
+                                                   "cascade" if request.args.get("filter_model") == "cascade" else "sum")
     # A14 S4: which figure each note explains -- the chip's unreadable entries go to
     # the status line, the operation's own notes (routing, pair refusal, unreadable
     # amplitude, coupler shift) concern both figures, everything the waveform loop
@@ -24816,6 +25517,37 @@ def cz_plan_data():
                    time_panel=czp.time_panel(row, traj, [q["summary"] for q in qubits]), notes=notes, info=info,
                    notes_figure=notes_figure, info_figure=info_figure, unavailable=unavailable,
                    calibration=card, pair_ops=others, amax_v=amax, gate_loss=gate_loss)
+
+
+def _cz_filtered_output(store, channel_path: str, samples, model: str = "sum") -> dict:
+    """One moving line's commanded samples through its LF port's output filters.
+
+    The Z-line distortion page's own path (``_zline_snapshot`` + ``_zline_analyze`` +
+    ``zline_filters.pulse_response``), so the two pages can never draw different
+    outputs for one pulse. Returns ``{"t_ns", "v", "model", "port_path", "notes"}`` on
+    the filters' 0.5 ns grid (DC offset excluded, as on that page), or ``{"note"}``
+    saying why there is nothing to draw."""
+    try:
+        from quam_state_manager.core import zline_filters as zf
+    except ImportError:
+        return {"note": "the output-filter model is not available in this install"}
+    snap = _zline_snapshot(store, channel_path)
+    if snap["port"] is None:
+        return {"note": "; ".join(n["text"] for n in snap["notes"]) or "no LF port"}
+    pf, notes, verdicts = _zline_analyze(snap["port_path"], snap["port"])
+    if pf is None:
+        return {"note": "; ".join(n["text"] for n in notes) or "the port's filters cannot be read"}
+    if not (pf.has_iir or pf.has_fir):
+        return {"note": "the port has no output filters: the output is the commanded waveform"}
+    if zf.model_blocked(verdicts.get(model, [])):
+        return {"note": f"the {zf.MODEL_LABEL[model]} is unstable for this port's filters"}
+    try:
+        r = zf.pulse_response(pf, samples, pad_before_ns=0.0, pad_after_ns=40.0, model=model)
+    except Exception as exc:  # noqa: BLE001 -- an advisory trace, never a 500
+        return {"note": f"SM could not compute the filtered output ({type(exc).__name__}: {exc})"}
+    return {"t_ns": r["t_ns"], "v": r["both"], "model": model, "model_label": zf.MODEL_LABEL[model],
+            "port_path": snap["port_path"], "peak_v": r["peak"],
+            "notes": [n["text"] for n in r["notes"]]}
 
 
 def _cz_warning_groups(row: dict, warnings: list[dict]) -> list[dict]:
@@ -25215,7 +25947,10 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         except (KeyError, TypeError, ValueError):
             gi_ctx = None
     if gi_ctx is not None:
-        gi_ctx = dict(gi_ctx, read_only=True)
+        gate = gate_inspector.gate_for_pulse(store, main["actual_path"])
+        if gate is None and main["actual_path"] != path:
+            gate = gate_inspector.gate_for_pulse(store, path)
+        gi_ctx = dict(gi_ctx, read_only=True, gate=gate)
 
     return render_template(
         "_pulse_detail.html",
@@ -25420,6 +26155,11 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                       else used_by_target)
     # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
     played_by_name = _lab_named_players(store, actual_path)
+    # any gate slot that plays it by name (a quam CZGate's inline
+    # flux pulse whose id is this op's name) -- a lab gate already listed
+    # above is not listed twice
+    named_slots = [h for h in _slot_named_players(store, actual_path)
+                   if h not in played_by_name]
     # w9/labwarm: the delete step says "Checking with your lab code..." beside
     # its disabled button -- only when the delete is asked of the lab at all
     delete_lab_check = _lab_delete_asks(store, path)
@@ -25462,8 +26202,30 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             plot = {"ok": True, "traces": truth["traces"]}
             plot_source = "config"
             synth_error = None      # answered; the label carries the provenance
+    if unknown_class and plot_source is None:
+        # Neither the class's own code nor a generated config answered: the CZ
+        # gate plan's transcription of this lab class (the same samples the plan
+        # draws) is shown, labelled as SM's transcription -- never as quam's
+        # synthesis. A later lab drawing (`needs_lab`) still replaces it.
+        tp = _pulse_transcription(store, actual_path)
+        if tp is not None and tp.get("ok"):
+            plot = _pulse_plot_traces(tp)
+            plot_source = "transcription"
+            synth_error = None
+    # a gate slot's own copy that is not what the gate plays draws the
+    # op it plays, and says which two pulses differ and how
+    played, played_path, played_note = _synth_played(store, path, {})
+    if played is not None:
+        plot = _flux_plot(_pulse_plot_traces(played), path, played)
+        plot_source = "played"
+        synth_error = None
+    elif plot_source == "synth":
+        plot = _flux_plot(plot, path, payload)
 
     return {
+        "played_path": played_path,
+        "played_note": played_note,
+        "edge_note": (plot or {}).get("edge_note"),
         "path": path,
         "actual_path": actual_path,
         "row": row,
@@ -25483,6 +26245,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
         "played_by_name": played_by_name,
+        "named_slots": named_slots,
         "delete_lab_check": delete_lab_check,
         # w9/labwarm: the lab worker's state AT RENDER -- the first word the
         # lab indicators say before their own status poll answers (a busy
@@ -25847,9 +26610,21 @@ def api_pulse_synth():
     # The contract in the docstring is load-bearing: the client keeps its last
     # good plot on ok=False, but a 500 has no body to keep -- and the stress
     # round of 2026-09-16 reached one with a plain "inf" typed into a field.
+    if not path and store is not None:
+        from quam_state_manager.core import pulse_refs
+        params = dict(params)
+        with store._lock:
+            for k, v in list(params.items()):
+                if isinstance(v, str) and v.startswith("#/"):
+                    r = pulse_refs.read(store.merged, [], v)
+                    if r.ok:
+                        params[k] = r.value
+    played_path = played_note = None
     try:
         if path:
-            payload = synth_for_operation(store, path, overrides=params)
+            # a gate slot's own copy draws as the op the gate plays
+            played, played_path, played_note = _synth_played(store, path, params)
+            payload = played or synth_for_operation(store, path, overrides=params)
         else:
             payload = synthesize(qclass, params)
     except Exception as exc:  # noqa: BLE001 -- never a 500 on this route
@@ -25857,6 +26632,8 @@ def api_pulse_synth():
         payload = {"ok": False, "error": f"synthesis failed: {exc}"}
 
     return jsonify({
+        "played_path": played_path,
+        "played_note": played_note,
         "ok": payload.get("ok", False),
         "error": payload.get("error"),
         "param_errors": payload.get("param_errors") or {},
@@ -25872,7 +26649,7 @@ def api_pulse_synth():
         # payload and stopped here, so the page drew a curve with gaps in it
         # and said nothing about them.
         "warnings": payload.get("warnings") or [],
-        "plot": _pulse_plot_traces(payload),
+        "plot": _flux_plot(_pulse_plot_traces(payload), path, payload),
     })
 
 
@@ -26509,10 +27286,15 @@ def pulse_create_form():
     # so the form opens already targeted at that qubit + channel).
     sel_qubit = request.args.get("qubit", "").strip()
     sel_channel = request.args.get("channel", "").strip()
+    # "+ New pulse" on a Pulses page filtered to one qubit (the map
+    # pick) opens on that qubit, not on the first one of the chip.
+    if not sel_qubit:
+        sel_qubit = request.args.get("owner", "").strip()
     return render_template(
         "_pulse_create.html",
         groups=groups,
         qubit_names=qubit_names,
+        qubit_defaults_json=json.dumps(_qubit_param_defaults(store.merged)),
         pairs_map=pairs_map,
         pair_channels_map=pair_channels_map,
         has_xy_detuned=has_xy_detuned,
@@ -26872,14 +27654,21 @@ def api_pulse_gaussian_cz():
             result = gaussian_cz.plan(store.merged, pair_id,
                                       padding_length=padding,
                                       qubit_filter_mhz=q_mhz,
-                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids)
+                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids,
+                                      # the single-pair door names every
+                                      # op after THIS pair, so a moving qubit
+                                      # shared by two pairs never shares an op.
+                                      own_names=suffix_ids is None)
             if "error" in result:
+                # Another pair owns the op: a refusal naming that pair, with
+                # no Replace (it would rewire the other pair's gate).
+                code = 409 if result.get("conflict") else 400
                 return render_template("_status.html", message=result["error"],
-                                       level="error"), 400
+                                       level="error"), code
             if result["existing"] and request.form.get("overwrite") != "1":
                 body = render_template(
                     "_status.html", level="warning",
-                    message=("Already present on this pair: "
+                    message=(f"Already present on pair {pair_id}: "
                              + ", ".join(p.split(".")[-1] for p in result["existing"])
                              + " — create again to replace them (the old subtrees "
                                "are removed in the same undo group)."))
@@ -26933,7 +27722,8 @@ def api_pulse_gaussian_cz():
                  f"{src['flat_length']}"
                  + (", coupler included" if src["has_coupler"] else "")
                  + ") — staged in the working state; review, then Apply to "
-                   "live."))
+                   "live."
+                 + ("".join(f" {n}." for n in (src.get("notes") or [])))))
     resp = make_response(msg + "\n" + _tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return _lab_toast(resp)
@@ -27276,9 +28066,265 @@ def _pair_addition_verdicts(store, pairs, rule, manifest=None):
                            lab_check=lambda writes, **kw: _lab_write_refusal(store, writes, **kw))
 
 
+#: the first words of every :func:`_synth_write_refusal` message (the doors'
+#: refusal text tells it apart from a lab class's own refusal by them)
+_SYNTH_REFUSAL_LEAD = "This pulse would not run"
+
+
+def _qubit_param_defaults(merged: dict) -> dict:
+    """Per-qubit create-form defaults: ``{qubit: {param: {"value", "note"}}}``.
+
+    a DRAG pulse's ``anharmonicity`` on a real chip points at the
+    qubit's own value (``#/qubits/<q>/anharmonicity``, a lab convention for
+    its sign), while the catalog default is a fixed -220 MHz -- a new pulse
+    got the wrong Q sign. The default is the target the qubit's existing DRAG
+    pulses point at (as an absolute pointer), else the qubit's own
+    ``anharmonicity`` when it stores one, else none (the form keeps the
+    catalog value and says it is a placeholder)."""
+    from quam_state_manager.core import pulse_refs
+    from quam_state_manager.core.pulse_catalog import resolve_qclass
+    from quam_state_manager.core.pulse_index import PULSE_CHANNELS
+    drag = ("DragGaussianPulse", "DragCosinePulse")
+    out: dict = {}
+    for q, qd in (merged.get("qubits") or {}).items():
+        if not isinstance(qd, dict):
+            continue
+        ptr = None
+        for ch in PULSE_CHANNELS:
+            chan = qd.get(ch)
+            ops = chan.get("operations") if isinstance(chan, dict) else None
+            for name, body in (ops.items() if isinstance(ops, dict) else ()):
+                qc = body.get("__class__") if isinstance(body, dict) else None
+                spec = resolve_qclass(qc)[0] if isinstance(qc, str) else None
+                v = body.get("anharmonicity") if spec is not None else None
+                if spec is None or spec.key not in drag or not pulse_refs.is_ref(v):
+                    continue
+                r = pulse_refs.read(merged, ["qubits", q, ch, "operations", name], v)
+                if (r.ok and r.target and isinstance(r.value, (int, float))
+                        and not isinstance(r.value, bool)):
+                    ptr = "#/" + r.target.replace(".", "/")
+                    break
+            if ptr:
+                break
+        own = qd.get("anharmonicity")
+        if ptr:
+            out[q] = {"anharmonicity": {
+                "value": ptr, "note": "the value this qubit's DRAG pulses use"}}
+        elif isinstance(own, (int, float)) and not isinstance(own, bool):
+            out[q] = {"anharmonicity": {
+                "value": f"#/qubits/{q}/anharmonicity",
+                "note": "this qubit's own anharmonicity"}}
+        else:
+            out[q] = {"anharmonicity": {
+                "value": None,
+                "note": "placeholder: this qubit stores no anharmonicity — set it"}}
+    return out
+
+
+def _synth_judged_class(qclass) -> bool:
+    """A pulse class, SM's catalog's (its own rules are checked in-process)
+    or a lab's (only the config-level length rule is checked here; its own
+    code is :func:`_lab_write_refusal`'s)."""
+    from quam_state_manager.core.pulse_catalog import is_pulse_class, resolve_qclass
+    return (isinstance(qclass, str) and bool(qclass)
+            and (resolve_qclass(qclass)[0] is not None or is_pulse_class(qclass)))
+
+
+def _synth_owner(merged, segs, bodies):
+    """``(op path, body)`` of the deepest catalog-class pulse dict a write at
+    *segs* lands inside (a body this batch already rewrote wins), else None."""
+    nodes = [merged]
+    cur = merged
+    for seg in segs[:-1]:
+        if isinstance(cur, dict):
+            cur = cur.get(seg, _MISSING)
+        elif isinstance(cur, list) and seg.isdigit() and int(seg) < len(cur):
+            cur = cur[int(seg)]
+        else:
+            cur = _MISSING
+        if cur is _MISSING:
+            break
+        nodes.append(cur)
+    for n in range(len(segs) - 1, 0, -1):
+        op = ".".join(segs[:n])
+        if op in bodies:
+            return op, bodies[op]
+        node = nodes[n] if n < len(nodes) else None
+        if isinstance(node, dict) and _synth_judged_class(node.get("__class__")):
+            return op, node
+    return None
+
+
+class _Refusal(tuple):
+    """A ``(message, refused_write_indices)`` refusal that also carries
+    ``per_index``: write index -> the sentence about that write's own pulse
+    (the combined message names every refused pulse)."""
+
+    def __new__(cls, pair, per_index=None):
+        obj = super().__new__(cls, pair)
+        obj.per_index = dict(per_index or {})
+        return obj
+
+
+def _synth_write_refusal(store, writes):
+    """``(message, refused_write_indices)`` when a write would leave a pulse
+    unusable on the chip; else None. Two rules (``waveform_synth.
+    pulse_write_problem``, shared with Diagnostics):
+
+    * a class SM synthesizes in-process (quam / quam_builder: the catalog)
+      has its OWN rules -- the ``raise`` its ``waveform_function`` makes,
+      e.g. an odd ``SNZPulse.flat_length``, which makes quam's
+      ``generate_config()`` raise for the whole chip;
+    * for every pulse class (a lab's too), the config length must be a
+      multiple of 4 ns and at least the QOP's minimum
+      (``spec_constraints.pulse_length_problem``): QOP 3.7.3 refuses every
+      program otherwise ("Pulse length must be a multiple of 4") although
+      generate_config() passes. An inferred length is judged as its class
+      rounds it.
+
+    *writes* is :func:`_lab_write_refusal`'s ``[(write_path, value)]``. Each
+    pulse a write lands inside (or a whole new pulse dict written at a path)
+    is drawn as it would be after the batch by the Pulses preview's own
+    :func:`waveform_synth.synth_for_operation` (references read the same
+    way); a pulse whose field POINTS at a written path is drawn with that
+    field overridden, when the chip's pulse index is warm (a guard never makes
+    an edit wait on a whole-chip walk).
+
+    Never refused for an unknown class, an unresolved pointer, a missing
+    parameter or anything else that only means SM cannot draw the pulse --
+    and only when the write makes the pulse break a rule (a pulse already
+    breaking it with the same message, e.g. an unrelated field edited, is
+    not refused). A lab class's own code is not judged here; a delete never
+    is. A check that fails never blocks."""
+    from quam_state_manager.core import pulse_refs, spec_constraints, waveform_synth
+    try:
+        bodies: dict[str, Any] = {}
+        fields_of: dict[str, list] = {}
+        idx_of: dict[str, set] = {}
+        literal: dict[str, tuple] = {}
+        with store._lock:
+            merged = store.merged
+            for idx, (wp, val) in enumerate(writes):
+                if not isinstance(wp, str) or not wp or val is _LAB_DELETE:
+                    continue
+                segs = wp.split(".")
+                if isinstance(val, dict) and _synth_judged_class(val.get("__class__")):
+                    bodies[wp] = copy.deepcopy(val)
+                    fields_of.setdefault(wp, [])
+                    idx_of.setdefault(wp, set()).add(idx)
+                    continue
+                if not (isinstance(val, (dict, list))
+                        or (isinstance(val, str) and is_pointer(val.strip()))):
+                    literal[wp] = (idx, val)
+                got = _synth_owner(merged, segs, bodies)
+                if got is None:
+                    continue
+                op, node = got
+                rel = segs[len(op.split(".")):]
+                body = node if op in bodies else copy.deepcopy(node)
+                if not _set_nested(body, rel, copy.deepcopy(val)):
+                    continue
+                bodies[op] = body
+                fields_of.setdefault(op, []).append(".".join(rel))
+                idx_of.setdefault(op, set()).add(idx)
+        overrides: dict[str, dict] = {}
+        try:
+            ctx = _active_ctx()
+            index = ctx.get("pulse_index") if ctx else None
+        except Exception:  # noqa: BLE001 -- outside a request: no index
+            index = None
+        if literal and index is not None and index.store is store:
+            roots = index.rows_seeing_if_warm(list(literal)) or ()
+            with store._lock:
+                for op in roots:
+                    if op in bodies:
+                        continue
+                    try:
+                        node = store.get_value(op)
+                    except (KeyError, TypeError, ValueError, IndexError):
+                        continue
+                    if not (isinstance(node, dict)
+                            and _synth_judged_class(node.get("__class__"))):
+                        continue
+                    osegs = op.split(".")
+                    for fname, fval in node.items():
+                        if fname == "__class__" or not pulse_refs.is_ref(fval):
+                            continue
+                        r = pulse_refs.read(store.merged, osegs, fval)
+                        hit = literal.get(r.target) if r.target else None
+                        if hit is None:
+                            continue
+                        overrides.setdefault(op, {})[fname] = hit[1]
+                        fields_of.setdefault(op, []).append(fname)
+                        idx_of.setdefault(op, set()).add(hit[0])
+        jobs = [(op, {"body": b}) for op, b in bodies.items()]
+        jobs += [(op, {"overrides": ov}) for op, ov in overrides.items()]
+        qop = None
+        found: list[tuple[str, str]] = []     # (sentence without the lead, op)
+        for op, kw in jobs:
+            if qop is None:
+                with store._lock:
+                    qop = spec_constraints.qop_version_of(store.merged) or ""
+            after = waveform_synth.synth_for_operation(store, op, **kw)
+            problem = waveform_synth.pulse_write_problem(after, qop or None)
+            if not problem:
+                continue
+            if not after.get("rule_violation") and not _synth_reaches_config(store, op):
+                # the length rule is QOP's for a CONFIG pulse; a pulse
+                # generate_config() never builds (a gate macro's own object
+                # reached only by field pointers) is not sent to QOP
+                continue
+            before = waveform_synth.synth_for_operation(store, op)
+            if waveform_synth.pulse_write_problem(before, qop or None) == problem:
+                continue
+            qclass = str(after.get("qclass") or "")
+            leaf = qclass.rsplit(".", 1)[-1] or "pulse"
+            fields = ", ".join(f for f in fields_of.get(op) or () if f)
+            why = ("quam's generate_config() would raise for the whole chip"
+                   if after.get("rule_violation") else
+                   "QOP would refuse every program on the chip")
+            found.append((f"{leaf} at {op}" + (f" ({fields})" if fields else "")
+                          + f" — {problem}. {why}", op))
+        if found:
+            # every pulse a rule breaks is refused (an independent batch skips
+            # each one's rows); one pulse keeps the single-pulse sentence
+            idx = sorted(set().union(*(idx_of.get(op) or set() for _t, op in found)))
+            # each refused write's own sentence: the pulse(s) IT lands in
+            per_index: dict[int, str] = {}
+            for i in idx:
+                mine = [t for t, op in found if i in (idx_of.get(op) or ())]
+                per_index[i] = (f"{_SYNTH_REFUSAL_LEAD}: {mine[0]}, so every node would fail."
+                                if len(mine) == 1 else
+                                f"{_SYNTH_REFUSAL_LEAD} ({len(mine)} pulses): "
+                                + "; ".join(mine) + ". Every node would fail.")
+            if len(found) == 1:
+                return _Refusal((f"{_SYNTH_REFUSAL_LEAD}: {found[0][0]}, so every node "
+                                 "would fail.", idx), per_index)
+            return _Refusal((f"{_SYNTH_REFUSAL_LEAD} ({len(found)} pulses): "
+                             + "; ".join(t for t, _op in found)
+                             + ". Every node would fail.", idx), per_index)
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("pulse rule check failed", exc_info=True)
+    return None
+
+
+def _synth_reaches_config(store, op: str) -> bool:
+    """Diagnostics' own rule (``diagnostics._reaches_config``): the pulse at
+    *op* is built by ``generate_config()`` -- it sits in a channel's
+    ``operations`` (a path test, so a whole pulse written there counts) or an
+    operation points at it. A check that cannot run answers True."""
+    from quam_state_manager.core.diagnostics import _reaches_config
+    try:
+        with store._lock:
+            return _reaches_config(store.merged, op)
+    except Exception:  # noqa: BLE001 -- unknown: keep the guard
+        return True
+
+
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
                        info: dict | None = None,
-                       fills_slot: str | bool | None = None):
+                       fills_slot: str | bool | None = None,
+                       synth: bool = True):
     """``(message, refused_write_indices)`` when a LAB class's own code
     rejects what *writes* (``[(write_path, value)]``, the paths the values
     actually land at; value ``_LAB_DELETE`` = the key is removed) would make of
@@ -27324,6 +28370,12 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
     cannot be resolved) never blocks: the write goes through, and the note
     says it was NOT checked."""
     from quam_state_manager.core import lab_watch
+    if synth:
+        # SM's own catalog classes: their rules are known in-process (one
+        # guard, every door that asks this one)
+        got = _synth_write_refusal(store, writes)
+        if got:
+            return got
     if info is None:
         info = {}
     notes = info.setdefault("notes", [])
@@ -27728,6 +28780,56 @@ def _lab_named_players(store, path: str) -> list[str]:
         if op == path or op.startswith(pre):
             out |= holders
     return sorted(out)
+
+
+def _slot_named_players(store, path: str) -> list[str]:
+    """The pair-gate slot holders (``<slot>.id``, or a plain-name slot) that
+    play the channel op at *path* BY NAME: quam_builder's CZGate
+    plays ``moving_qubit.z.play(get_pulse_name(pulse))``, the pulse's ``id``
+    -- no pointer names the op, so ``used_by`` cannot see it. Any gate class,
+    not only a lab's own (``_lab_named_players``)."""
+    from quam_state_manager.core.gate_pulse_ids import named_slot_players
+    try:
+        return named_slot_players(store.merged, path)
+    except Exception:  # noqa: BLE001 -- a reader, never a 500
+        logger.exception("named slot scan failed for %s", path)
+        return []
+
+
+def _by_name_cut(store, paths) -> list[str]:
+    """Slot holders a delete of *paths* leaves playing a missing name (the
+    same finder, ``gate_pulse_ids.named_slot_plays``, as every door). A
+    holder of a LAB gate is left to the lab check (``lab_watch.named_by``),
+    which asks the gate's own code and offers what must go with it -- the
+    same split as the Pulses delete door's ``played`` list."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.gate_pulse_ids import named_slots_cut
+    try:
+        with store._lock:
+            cut = named_slots_cut(store.merged, list(paths))
+    except Exception:  # noqa: BLE001 -- a reader, never a 500
+        logger.exception("named slot scan failed for %s", list(paths)[:5])
+        return []
+    if not cut:
+        return []
+    try:
+        watch = lab_watch.watch_for(store)
+        lab_holders = set().union(*watch.named_by.values()) if watch.named_by else set()
+    except Exception:  # noqa: BLE001 -- no watch: every holder is ours
+        lab_holders = set()
+    return [h for h in cut if h not in lab_holders]
+
+
+def _by_name_refused_json(holders: list[str], *,
+                          how: str = "Use the confirm step to delete anyway."):
+    """The 409 a JSON delete door answers when a gate slot plays a deleted op
+    by name: the Pulses delete door's own sentence, plus the holders; the
+    caller's ``force=1`` deletes anyway."""
+    from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL
+    named = [f"{h} ({BY_NAME_LABEL})" for h in holders]
+    return jsonify(ok=False, error_kind="by_name", by_name=holders,
+                   error=("Refusing to delete: referenced by " + ", ".join(named)
+                          + ". " + how)), 409
 
 
 def _lab_delete_asks(store, path: str) -> bool:
@@ -28445,6 +29547,8 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 
 
 def _lab_refusal_text(message: str, action: str = "value") -> str:
+    if message.startswith(_SYNTH_REFUSAL_LEAD):
+        return f"Nothing was written — {message}"
     if message.startswith("your chip's generate_config()"):
         return (f"Your chip's own generate_config() refused this{' delete' if action == 'delete' else ''} (run in the "
                 f"selected environment) — nothing was changed: {message}")
@@ -28737,6 +29841,11 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     # node would stop compiling. Refuse it here, where it is one pulse.
     if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
         return _iq_on_single_refusal(chan_label)
+    # a pulse its own class rejects (an odd SNZPulse.flat_length) is never
+    # staged: once applied, generate_config() would raise for the whole chip
+    _syn = _synth_write_refusal(store, [(dot_path, template)])
+    if _syn:
+        return _lab_edit_refused(_syn[0])
     if slot_fill is not None:
         from flask import g
         _info = getattr(g, "lab_info", None)
@@ -28744,7 +29853,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             _info = g.lab_info = {"notes": []}
         _lab = _lab_write_refusal(store, [(slot_fill[2], template),
                                           (slot_fill[0], slot_fill[1])],
-                                  info=_info,
+                                  info=_info, synth=False,
                                   fills_slot=slot_fill[0].rsplit(".", 1)[0])
         if _lab:
             return _lab_edit_refused(_lab[0])
@@ -28808,11 +29917,15 @@ def api_pulse_delete():
         # an inbound pointer between the used_by check and the pop.
         with store._lock:
             referrers = pulse_index.used_by(path)
-            if (referrers or played) and not force:
+            by_name = [h for h in _slot_named_players(store, path)
+                       if h not in played]
+            if (referrers or played or by_name) and not force:
+                from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL
+                named = [f"{h} ({BY_NAME_LABEL})" for h in by_name]
                 return render_template(
                     "_status.html",
                     message=("Refusing to delete: referenced by "
-                             + ", ".join(referrers + played)
+                             + ", ".join(referrers + played + named)
                              + ". Use the confirm step to delete anyway."),
                     level="error"), 409
             try:
@@ -28829,7 +29942,14 @@ def api_pulse_delete():
     note = f"Deleted {path.rsplit('.', 1)[-1]}"
     if referrers:
         note += f" — {len(referrers)} reference(s) now dangle"
-    detail = render_template("_status.html", message=note, level="success")
+    if by_name:
+        note += (f" \u2014 {len(by_name)} gate slot(s) now play a name that no"
+                 f" longer exists: {', '.join(by_name)} (applying that gate"
+                 f" now fails; see Diagnostics)")
+    # a forced delete that left a dangling pointer or a gate playing a
+    # missing name is not a plain success: it says so as a warning
+    detail = render_template("_status.html", message=note,
+                             level="warning" if (referrers or by_name) else "success")
     return _lab_toast(_pulse_mutation_response(detail))
 
 
@@ -29015,6 +30135,10 @@ def api_pulse_delete_together():
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
             "(Live state edit (Json tree view)).")), 400
+    # an op a gate slot OUTSIDE the set plays by name
+    by_name = _by_name_cut(modifier.store, paths)
+    if by_name and str(pj.get("force") or "") != "1":
+        return _by_name_refused_json(by_name)
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
                "expect_chip": pj.get("expect_chip") or "",
@@ -29403,6 +30527,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
+            # a gate slot that plays the op BY NAME follows it too
+            for holder in _slot_named_players(store, path):
+                _writes.append((holder, new_name))
         if (retarget and isinstance(body, dict) and body.get("id") == old_name
                 and any(p == path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
             _writes.append((new_path + ".id", new_name))
@@ -29411,6 +30538,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
         return _lab_edit_refused(_lab[0])
     with store._lock:
         referrers = pulse_index.used_by(path)
+        # read BEFORE the rename moves the op (the scan matches the
+        # op by its current path)
+        by_name = _slot_named_players(store, path)
         try:
             body = store.get_value(path)
         except (KeyError, TypeError, ValueError, IndexError):
@@ -29437,6 +30567,15 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1
+            # the same group: one Ctrl+Z restores the op AND each slot's name
+            for holder in by_name:
+                try:
+                    cur = store.get_value(holder)
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                if cur == old_name:
+                    modifier.set_value(holder, new_name, group_id=gid)
+                    retargeted += 1
         if (isinstance(body, dict) and body.get("id") == old_name
                 and any(p == new_path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
             modifier.set_value(new_path + ".id", new_name, group_id=gid)
@@ -29446,8 +30585,8 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
     note = f"Renamed {old_name} → {new_name}"
     if retargeted:
         note += f" · {retargeted} reference(s) re-pointed"
-    elif referrers and not retarget:
-        note += f" · {len(referrers)} reference(s) now dangle"
+    elif (referrers or by_name) and not retarget:
+        note += f" \u00b7 {len(referrers) + len(by_name)} reference(s) now dangle"
     return _lab_toast(_pulse_mutation_response(_render_pulse_detail(
         new_path, status_msg=note)))
 
@@ -29677,6 +30816,17 @@ def _pulse_fallback_spark(store, path, row) -> None:
         # NOT older than the chip's content (a stale one is no answer)
         row["length"] = cfg_len
         row["length_from_config"] = True
+    if row["spark_svg"]:
+        return
+    # last: the CZ gate plan's transcription of the lab class, titled as
+    # SM's transcription (dashed like every non-SM-synthesized thumbnail)
+    tp = _pulse_transcription(store, path)
+    if tp is not None and tp.get("ok"):
+        row["spark_svg"] = sparkline_svg(tp)
+        row["spark_from_transcription"] = bool(row["spark_svg"])
+        if row.get("length") is None:
+            row["length"] = tp["length"]
+            row["length_from_transcription"] = True
 
 
 def _pulse_row_lab_length(row, rec) -> None:
@@ -29907,6 +31057,37 @@ def api_pulse_ground_truth():
     store = _store()
     path = request.args.get("path", "").strip()
     found = _pulse_truth_lookup(store, path)
+    status = found["status"]
+    if status not in ("ok", "no-state", "bad-path"):
+        # no config waveform: the CZ gate plan's transcription of a lab class,
+        # under its OWN key -- it is SM's transcription, not ground truth
+        tp = _pulse_transcription(store, _pulse_alias_target(store, path))
+        if tp is not None and tp.get("ok"):
+            resp, code = api_pulse_ground_truth_inner(found, path)
+            body = resp.get_json()
+            body["transcription"] = _pulse_plot_traces(tp)
+            return jsonify(body), code
+    return api_pulse_ground_truth_inner(found, path)
+
+
+def _pulse_alias_target(store, path):
+    """*path*, or the pulse an alias operation (``"#./other"``) names."""
+    try:
+        with store._lock:
+            raw = store.get_value(path)
+            if isinstance(raw, str) and raw.startswith(("#/", "#./", "#../")):
+                from quam_state_manager.core.pointer_path import resolve_field_target
+                t = resolve_field_target(store.merged, path)
+                if t.get("resolvable"):
+                    return t["resolved_path"]
+    except (KeyError, TypeError, ValueError, IndexError):
+        pass
+    return path
+
+
+def api_pulse_ground_truth_inner(found, path):
+    """The ground-truth answer for one :func:`_pulse_truth_lookup` result."""
+    store = _store()
     status = found["status"]
 
     if status == "no-state":
@@ -36652,10 +37833,15 @@ def export_csv():
         return _export_grid_csv(body or {})
 
     entity = request.args.get("entity") or "qubits"
-    props = request.args.getlist("props") or [
+    # a bare pairs export gets pair columns (the Pairs table's CZ export), never
+    # the qubit summary's, which a pair row does not have
+    props = request.args.getlist("props") or ([
+        "qubit_control", "qubit_target", "is_active", "moving_qubit",
+        "bell_fidelity", "detuning",
+    ] if entity == "pairs" else [
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
-    ]
+    ])
     from quam_state_manager.core import units as _units
     if entity == "pairs":
         rows = _export_pair_rows(engine, props)
@@ -36675,14 +37861,63 @@ def export_csv():
     for p in props:
         u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
+    unit_cols = {}
+    if entity == "pairs":
+        rows, unit_cols = _pair_detuning_export_units(rows, props, heads, units)
     if entity != "pairs" and request.args.get("view") == "qubits":
         rows = _export_table_values(_store(), rows, props)
     from quam_state_manager.core.pointer_resolver import is_pointer
     rows = [{"id": r.get("id"),
              **{heads[p]: (_export_pointer_value(_store(), _EXPORT_PROP_PATHS.get(p, "").format(
                  qid=r.get("id")) or None, r.get(p), units[p]) if is_pointer(r.get(p)) else r.get(p))
-                for p in props}} for r in rows]
-    return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+                for p in props},
+             **{c: r.get(c, "") for c in unit_cols.values()}} for r in rows]
+    cols = ["id"]
+    for p in props:
+        cols.append(heads[p])
+        if p in unit_cols:
+            cols.append(unit_cols[p])
+    return _csv_download(cols, rows, name)
+
+
+def _pair_detuning_export_units(rows: list[dict], props: list, heads: dict,
+                                units: dict) -> tuple[list[dict], dict]:
+    """The Pairs CSV's ``detuning`` column under the shared unit fallback
+    (``units.stored_value_unit``): a column never mixes V and Hz.
+
+    * every numeric value plausible volts: ``detuning [V]``, as before;
+    * every numeric value judged Hz: ``detuning [Hz]`` (the stored numbers are
+      the Hz values);
+    * both kinds on one chip: the header names no unit, each cell keeps its
+      stored number and a ``detuning_unit`` column beside it names the unit
+      of that row.
+
+    Returns ``(rows, {prop: unit column header})`` -- the second is empty
+    unless the mixed case added a unit column. Rows are copied, not mutated.
+    """
+    from quam_state_manager.core import units as _units
+    unit_cols = {}
+    for p in props:
+        if _units.pair_field_key(p) != "pair_detuning":
+            continue
+        kinds = {_units.stored_value_unit("pair_detuning", r.get(p)) for r in rows
+                 if isinstance(r.get(p), (int, float)) and not isinstance(r.get(p), bool)}
+        if kinds == {"Hz"}:
+            units[p] = "Hz"
+            heads[p] = f"{p} [Hz]"
+        elif len(kinds) > 1:
+            units[p] = ""
+            heads[p] = p
+            col = unit_cols[p] = f"{p}_unit"
+            out = []
+            for r in rows:
+                r = dict(r)
+                v = r.get(p)
+                r[col] = (_units.stored_value_unit("pair_detuning", v)
+                          if isinstance(v, (int, float)) and not isinstance(v, bool) else "")
+                out.append(r)
+            rows = out
+    return rows, unit_cols
 
 
 #: v1.5.1 (r6, P2-15): where a Qubits / Resonators table property is stored
@@ -46654,6 +47889,7 @@ def dataset_detail(uid):
         return render_template("_status.html",
                                message=f"Run #{run_id} not found", level="error"), 404
     from quam_state_manager.core.fit_targets import resolve_fit_targets
+    from quam_state_manager.core.fit_targets import written_by_run as _fit_written_by_run
     # Stamp the run's OWN chip identity so an "Apply fitted value" can be checked
     # against the loaded chip — a run's fit must not be silently written onto a
     # different chip that merely reuses the same qubit names (audit #1).
@@ -46688,6 +47924,7 @@ def dataset_detail(uid):
                            via_saved=request.args.get("via") == "saved",
                            via_inferred=request.args.get("via") == "inferred",
                            fit_targets=resolve_fit_targets(run, names=run_names_),
+                           fit_written=_fit_written_by_run(run, run_names_),
                            fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
@@ -46899,7 +48136,7 @@ def dataset_interactive(uid):
                 ' takes clicks</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
-                           reproduction_hint=capability["reason"])
+                           reproduction_hint=replot.reproduction_hint(capability, figures))
 
 
 @bp.route("/dataset/<uid>/interactive/status")
@@ -47385,8 +48622,15 @@ def dataset_prev_state_diff(uid):
     # w7/livewrite (P4): run folders are write-once -- a repeat (the stepper,
     # re-opening the tab) is served from RAM, keyed on all four files' stats
     from quam_state_manager.core.history import diff_state_folders
-    entries = diff_state_folders(prev_path, cur_path)
+    # a pulse whose CLASS changed between two runs (SquarePulse -> WaveformPulse)
+    # is a difference: its __class__ row is counted and listed FIRST, above the
+    # add/remove rows the new field set brings with it
+    entries = diff_state_folders(prev_path, cur_path, keep_class=True)
+    entries = sorted(entries, key=lambda e: e.dot_path.rsplit(".", 1)[-1] != "__class__")
     summary = Differ.summary(entries)
+    summary["class_changed"] = sum(
+        1 for e in entries
+        if e.change_type == "modified" and e.dot_path.rsplit(".", 1)[-1] == "__class__")
 
     # Stepper bounds: walk the comparison run older/newer. r16 ④: the old
     # clamp refused any vs ≥ run_id, which made "newer ›" DISABLED on every

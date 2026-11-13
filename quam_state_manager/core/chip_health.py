@@ -127,6 +127,8 @@ METRIC_META: dict[str, dict[str, Any]] = {
                     "blurb": "Qubit-state-dependent shift of the readout resonator — sets readout contrast."},
     "readout_frequency": {"label": "Readout frequency", "abbr": "f_ro", "direction": "neutral",
                     "blurb": "Resonator frequency used to read the qubit out."},
+    "readout_rf_frequency": {"label": "Readout frequency (played RF)", "abbr": "f_ro RF", "direction": "neutral",
+                    "blurb": "The frequency the readout resonator actually plays: its RF_frequency, resolved through pointers (f_01 when it has none)."},
     # pulse calibration — informational (set by calibration, no spec direction)
     "x180_amplitude": {"label": "x180 amplitude",   "abbr": "x180",  "direction": "neutral",
                     "blurb": "Drive amplitude of the π (x180) pulse."},

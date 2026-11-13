@@ -18,6 +18,10 @@ from quam_state_manager.core.hub_rules import _hash_scalar, _segment
 
 SCHEMA_VERSION = 1
 RULE_VERSION = "269-1"
+#: which records prove a run wrote a value (``hub_build._proven``). A ledger
+#: proved under another rule has its runs proved again once
+#: (``hub_sync.reprove_all``); the ledger itself stays compatible.
+PROOF_RULE = "patches+state_changes"
 CHECKPOINT_INTERVAL = 250
 REVERTS_TO_EARLIER = 1
 TIME_ASSUMED = 2
@@ -409,6 +413,8 @@ class HubStore:
                     # docs/275: the identity of THIS file; RAM caches built from a
                     # ledger are dropped when the file is replaced or rebuilt
                     self.set_meta("ledger_id", os.urandom(8).hex())
+                    # a new ledger proves every run under the current rule
+                    self.set_meta("proof_rule", PROOF_RULE)
                 self.conn.commit()
             except BaseException:
                 self.conn.rollback()

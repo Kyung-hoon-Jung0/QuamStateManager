@@ -976,7 +976,7 @@
      "channels": [
       "z"
      ],
-     "doc": "Di Carlo bipolar flux pulse with B-samples",
+     "doc": "Di Carlo bipolar flux pulse: +A flat, idle gap, -A flat; tphi_eff sets the gap and the one-sample B level beside it (B = A at an even tphi_eff)",
      "group": "Flux / Bipolar",
      "iq": "optional",
      "label": "SNZ (sudden net-zero)",
@@ -1341,6 +1341,20 @@
     }
    },
    "json:pulse-qdac-only-data": {},
+   "json:pulse-qubit-defaults-data": {
+    "q1": {
+     "anharmonicity": {
+      "note": "this qubit's own anharmonicity",
+      "value": "#/qubits/q1/anharmonicity"
+     }
+    },
+    "q2": {
+     "anharmonicity": {
+      "note": "this qubit's own anharmonicity",
+      "value": "#/qubits/q2/anharmonicity"
+     }
+    }
+   },
    "pair": [
     "q1-2"
    ],
@@ -1565,7 +1579,7 @@
        "axis_angle": null,
        "digital_marker": null,
        "gaussian_filter_frequency_mhz": 20.0,
-       "id": "cz_gaussian_unipolar_pulse",
+       "id": "cz_gaussian_unipolar_pulse_q1_q2",
        "length": "#./inferred_length",
        "padding_length": 20,
        "pulse_length": 60,
@@ -1582,7 +1596,7 @@
     ],
     [
      "create_subtree",
-     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse_q1_q2",
      {
       "__class__": "quam_builder.common.pulses.GaussianFilteredSquarePulse",
       "amplitude": "#/qubit_pairs/q1-2/macros/cz_gaussian_unipolar/flux_pulse_qubit/amplitude",
@@ -1613,7 +1627,7 @@
        "axis_angle": null,
        "digital_marker": null,
        "gaussian_filter_frequency_mhz": 20.0,
-       "id": "cz_gaussian_bipolar_pulse",
+       "id": "cz_gaussian_bipolar_pulse_q1_q2",
        "length": "#./inferred_length",
        "padding_length": 20,
        "pulse_length": 60,
@@ -1630,7 +1644,7 @@
     ],
     [
      "create_subtree",
-     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse_q1_q2",
      {
       "__class__": "quam_builder.architecture.superconducting.components.pulses.GaussianFilteredSymmetricBipolarPulse",
       "amplitude": "#/qubit_pairs/q1-2/macros/cz_gaussian_bipolar/flux_pulse_qubit/amplitude",
@@ -1653,7 +1667,7 @@
    "data": {
     "pair_id": "q1-2"
    },
-   "message": "Already present on this pair: cz_gaussian_unipolar, cz_gaussian_unipolar_pulse, cz_gaussian_bipolar, cz_gaussian_bipolar_pulse — create again to replace them (the old subtrees are removed in the same undo group). × Replace existing",
+   "message": "Already present on pair q1-2: cz_gaussian_unipolar, cz_gaussian_unipolar_pulse_q1_q2, cz_gaussian_bipolar, cz_gaussian_bipolar_pulse_q1_q2 — create again to replace them (the old subtrees are removed in the same undo group). × Replace existing",
    "ops": [],
    "status": 409,
    "url": "/api/pulse/gaussian-cz"
@@ -1673,7 +1687,7 @@
     ],
     [
      "delete_subtree",
-     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse_q1_q2",
      null,
      "g0"
     ],
@@ -1685,7 +1699,7 @@
     ],
     [
      "delete_subtree",
-     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse_q1_q2",
      null,
      "g0"
     ],
@@ -1705,7 +1719,7 @@
        "axis_angle": null,
        "digital_marker": null,
        "gaussian_filter_frequency_mhz": 20.0,
-       "id": "cz_gaussian_unipolar_pulse",
+       "id": "cz_gaussian_unipolar_pulse_q1_q2",
        "length": "#./inferred_length",
        "padding_length": 16,
        "pulse_length": 60,
@@ -1722,7 +1736,7 @@
     ],
     [
      "create_subtree",
-     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_unipolar_pulse_q1_q2",
      {
       "__class__": "quam_builder.common.pulses.GaussianFilteredSquarePulse",
       "amplitude": "#/qubit_pairs/q1-2/macros/cz_gaussian_unipolar/flux_pulse_qubit/amplitude",
@@ -1753,7 +1767,7 @@
        "axis_angle": null,
        "digital_marker": null,
        "gaussian_filter_frequency_mhz": 20.0,
-       "id": "cz_gaussian_bipolar_pulse",
+       "id": "cz_gaussian_bipolar_pulse_q1_q2",
        "length": "#./inferred_length",
        "padding_length": 16,
        "pulse_length": 60,
@@ -1770,7 +1784,7 @@
     ],
     [
      "create_subtree",
-     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse",
+     "qubits.q2.z.operations.cz_gaussian_bipolar_pulse_q1_q2",
      {
       "__class__": "quam_builder.architecture.superconducting.components.pulses.GaussianFilteredSymmetricBipolarPulse",
       "amplitude": "#/qubit_pairs/q1-2/macros/cz_gaussian_bipolar/flux_pulse_qubit/amplitude",

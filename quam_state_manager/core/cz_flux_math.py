@@ -203,6 +203,27 @@ def spot_separation(spots):
     return abs(spots["fit"]["f_hz"] - spots["other"]["f_hz"])
 
 
+def resonance_offset_words(name, distance_hz, mover_role=None):
+    """ONE phrase for an operating point's distance from a resonance, used by
+    the CZ gate plan (table and card) and the Pulses operating-point hover:
+    ``"mover 17.3 MHz below |11>-|20>"`` -- the sign as a word, the size as a
+    number. *distance_hz* is :func:`resonances`' ``Delta - condition`` with
+    Delta = f_c - f_t; the mover's own offset is that with the sign of
+    dDelta/df_mover (+1 for the control, -1 for the target). With no single
+    moving qubit the phrase speaks of Delta itself. None when unknown."""
+    if distance_hz is None or name is None:
+        return None
+    if mover_role == "control":
+        who, off = "mover", distance_hz
+    elif mover_role == "target":
+        who, off = "mover", -distance_hz
+    else:
+        who, off = "\u0394", distance_hz
+    if abs(off) < 5e4:
+        return f"{who} on {name}"
+    return f"{who} {abs(off) / 1e6:.1f} MHz {'above' if off > 0 else 'below'} {name}"
+
+
 def resonances(fc, ft, alpha_c, alpha_t):
     """The three |11>-manifold conditions on Delta = f_c - f_t Hamiltonian cross-check: S7 C-RES."""
     delta = fc - ft if fc is not None and ft is not None else None

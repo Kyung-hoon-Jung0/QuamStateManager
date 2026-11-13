@@ -60,7 +60,7 @@
 {%- if _st == 'mine' and not working_dirty %}
 <button type="button" class="sync-control-act btn-apply-live"
         onclick="doStateSync('apply')"
-        title="Writes your {{ _n }} edit{{ 's' if _n != 1 }} to the live chip. Nothing is lost: live is backed up first (↺ Revert last apply)">&#8593; Apply {{ _n }}</button>
+        title="Writes your {{ _n }} edit{{ 's' if _n != 1 }} to the live chip. Nothing is lost: live is backed up first (&#8634; Revert last apply). Shortcut: Ctrl+Enter">&#8593; Apply {{ _n }}</button>
 {%- elif _st in ('staged', 'mine') %}
 {#- a saved / staged working state is pushed WHOLE, never pull-merged: the
     pull-first merge would put the live chip under the saved edits (the
@@ -78,11 +78,11 @@
         hx-vals='{"seen_changes": "{{ change_count | default(_n) }}", "seen_sig": "{{ change_sig | default('') }}"}'
         data-after-request="clearUndo"
         onclick="SyncPanel.arm(this, event)"
-        title="Writes this staged version over the live chip (unchanged since you synced, backed up first). Press twice: the second press (Confirm) writes it">&#8593; Apply</button>
+        title="Writes this staged version over the live chip (unchanged since you synced, backed up first). Press twice: the second press (Confirm) writes it. Shortcut: Ctrl+Enter">&#8593; Apply</button>
 {%- elif _sv and _sv.action == 'merge' and _st not in ('archive', 'unreadable') %}
 <button type="button" class="sync-control-act btn-apply-live"
         onclick="doStateSync('apply', false, false, null, {keepApplied: true})"
-        title="Keeps your applied values while taking the live changes">&#8644; Pull &amp; apply</button>
+        title="Keeps your applied values while taking the live changes. Shortcut: Ctrl+Enter">&#8644; Pull &amp; apply</button>
 {%- elif _st == 'live' %}
 <button type="button" class="sync-control-act sync-act-take"
         onclick="doStateSync('discard')"
@@ -90,7 +90,7 @@
 {%- elif _st == 'both' and _n and not working_dirty %}
 <button type="button" class="sync-control-act btn-apply-live"
         onclick="doStateSync('apply')"
-        title="Takes the live chip's {{ _ln }} change{{ 's' if _ln != 1 }}, then writes your {{ _n }} edit{{ 's' if _n != 1 }} on top. No field is in both">&#8644; Pull &amp; apply</button>
+        title="Takes the live chip's {{ _ln }} change{{ 's' if _ln != 1 }}, then writes your {{ _n }} edit{{ 's' if _n != 1 }} on top. No field is in both. Shortcut: Ctrl+Enter">&#8644; Pull &amp; apply</button>
 {%- elif _st in ('both', 'collide', 'refused') %}
 <button type="button" class="sync-control-act sync-act-resolve"
         onclick="openReview()"
