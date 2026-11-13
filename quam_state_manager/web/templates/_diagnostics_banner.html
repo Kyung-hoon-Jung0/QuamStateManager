@@ -8,12 +8,20 @@
    (one edited amplitude two pulses read is two), and its example is the first
    of them, not a fixed waveform line. Load is never blocked; this is a
    non-modal, dismissible alert. #}
-<div class="topo-change-banner diag-error-banner ui-notice ui-notice--danger" id="diagnostics-banner" role="alert"
+{%- set _nc = n_crash if n_crash is defined else diag_summary.error -%}
+{%- set _nd = n_dangling if n_dangling is defined else 0 -%}
+<div class="topo-change-banner diag-error-banner ui-notice {{ 'ui-notice--danger' if _nc > 0 else 'ui-notice--warn' }}" id="diagnostics-banner" role="alert"
      data-diag-sig="{{ diag_sig or (diag_summary.error ~ ':' ~ (active_name or 'this chip')) }}">
     <span class="ui-notice-icon" aria-hidden="true">&#9888;</span>
     <span class="topo-change-banner-text ui-notice-text"{% if first_error %} title="e.g. {{ first_error.location }}: {{ first_error_msg | truncate(140) }}"{% endif %}>
-        <b class="ui-notice-key">{{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }} would crash a node run.</b>
+        {%- if _nc > 0 %}
+        <b class="ui-notice-key">{{ _nc }} error{{ 's' if _nc != 1 }} would crash a node run.</b>
         Fix before running an experiment.
+        {%- endif %}
+        {%- if _nd > 0 %}
+        <b class="ui-notice-key">{{ _nd }} dangling pointer{{ 's' if _nd != 1 }}.</b>
+        A node that reads {{ 'one of these fields' if _nd != 1 else 'this field' }} gets the raw pointer text or fails; nodes that never read {{ 'them' if _nd != 1 else 'it' }} are unaffected.
+        {%- endif %}
     </span>
     <div class="ui-actions">
     <button type="button" class="topo-change-banner-btn btn-sm"

@@ -164,11 +164,40 @@ def _effective_config() -> dict:
     return out
 
 
+_LAB_MODULES = ("quam_config", "calibration_utils")
+
+
+def _import_origins() -> dict:
+    """Where each lab module WOULD import from in this interpreter.
+
+    ``importlib.util.find_spec`` on a top-level name locates the module
+    without executing it. A package reports its folder (the first
+    ``submodule_search_locations`` entry), a plain module its file; None when
+    the name does not resolve.
+    """
+    import importlib.util
+    out: dict = {}
+    for name in _LAB_MODULES:
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):
+            spec = None
+        origin = None
+        if spec is not None:
+            locs = list(spec.submodule_search_locations or [])
+            origin = locs[0] if locs else spec.origin
+        out[name] = str(origin) if origin else None
+    return out
+
+
 def run_report_config() -> dict:
     """The parts of the result envelope the report-config step provides."""
+    import os
     return {
         "config": _effective_config(),
         "editable_install": _editable_install(),
+        "import_origins": _import_origins(),
+        "pythonpath": os.environ.get("PYTHONPATH"),
     }
 
 

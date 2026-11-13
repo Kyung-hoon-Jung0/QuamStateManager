@@ -549,6 +549,27 @@ def project_paths(project: str, cfg_dir: Path | None = None) -> dict[str, Any]:
     }
 
 
+def raise_error_missing_reference(cfg_dir: Path | None = None) -> bool | None:
+    """The merged ``[quam] raise_error_missing_reference`` value, or None.
+
+    Read-only, like everything in this module. The active project's
+    effective config (root deep-merged with the overlay) wins; with no
+    project the root file is read. None means the key is not set anywhere
+    (quam then uses its own default, ``False``; quam/config/models/quam.py)
+    or the value is not a boolean.
+    """
+    cfg_dir = cfg_dir or _config_dir()
+    root_cfg = _load_toml_retry(root_config_path(cfg_dir))
+    project = (root_cfg.get("qualibrate") or {}).get("project")
+    eff = (effective_config(str(project), root_cfg=root_cfg, cfg_dir=cfg_dir)
+           if project else root_cfg)
+    quam_cfg = eff.get("quam") if isinstance(eff, dict) else None
+    if not isinstance(quam_cfg, dict):
+        return None
+    val = quam_cfg.get("raise_error_missing_reference")
+    return val if isinstance(val, bool) else None
+
+
 def active_project(cfg_dir: Path | None = None) -> str | None:
     """The root config's ``[qualibrate].project``, or None."""
     cfg_dir = cfg_dir or _config_dir()

@@ -27,6 +27,14 @@
    data-env-state="{{ _env.state }}"
    title="{% if _env.state == 'none' %}No Python environment is selected — your lab's classes cannot be checked. Choose one on the Projects page.{% else %}Python environment in use: {{ _env.python }}{% if _env.state == 'remembered' %} — remembered for {{ _env.project }}{% elif _env.state == 'suggested' %} — suggested for {{ _env.project }}, not confirmed yet: confirm or change it on the Projects page{% elif _env.state == 'differs' %} — {{ _env.project }} remembers another environment; open the Projects page to switch{% endif %}{% endif %}">{% if _env.state == 'none' %}no env{% else %}env&nbsp;{{ _env.label }}{% if _env.state == 'suggested' %}&nbsp;<span class="project-env-note">(suggested — confirm)</span>{% elif _env.state == 'differs' %}&nbsp;<span class="project-env-note">(not the project&#39;s)</span>{% endif %}{% endif %}</a>
 {%- endif %}
+{#- An inherited PYTHONPATH entry holds the project's lab modules from another
+    tree. Node runs put the project's folder first, so the project's code is
+    used, but other tools started from this shell would import the other one. -#}
+{%- set _sh = qualibrate_tray.pythonpath_shadows if qualibrate_tray.pythonpath_shadows is defined else None %}
+{%- if _sh %}
+<span class="project-env-badge project-env-badge-warn" data-pythonpath-shadow="1"
+      title="PYTHONPATH holds another copy of the project's lab code: {% for e in _sh.entries %}{{ e.entry }} ({{ e.modules | join(', ') }}){% if not loop.last %}; {% endif %}{% endfor %}. The project's code is in {{ _sh.root }}; node runs put that folder first. Remove the other entry from PYTHONPATH.">other lab code on PYTHONPATH: {{ _sh.entries[0].entry }} vs {{ _sh.root }}</span>
+{%- endif %}
 </div>
 {%- endif -%}
 </div>

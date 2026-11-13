@@ -780,7 +780,7 @@ _CAPABILITY_CACHE_FILENAME = "config_generator_capability_cache.json"
 _PROBE_WORKERS = 4
 
 
-def _run_command(args, timeout: int = 60):
+def _run_command(args, timeout: int = 60, project_root: str | None = None):
     """Run a subprocess; return ``(returncode, stdout, stderr)``.
 
     Isolated in one function so tests can monkeypatch it without spawning
@@ -797,10 +797,12 @@ def _run_command(args, timeout: int = 60):
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     # A lab code folder set for this interpreter goes first on its PYTHONPATH
-    # (the capability probe, allocate, build and re-generate all spawn here).
-    child_path = effective_pythonpath(args[0]) if args else None
-    if child_path != os.environ.get("PYTHONPATH"):
-        kwargs["env"] = dict(os.environ, PYTHONPATH=child_path or "")
+    # (the capability probe, allocate, build and re-generate all spawn here);
+    # a project code root, when given, goes before it (child_env -- the SAME
+    # helper the Experiment Runner's node spawn uses).
+    env = child_env(args[0], project_root) if args else None
+    if env is not None:
+        kwargs["env"] = env
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=timeout, **kwargs
@@ -1455,6 +1457,115 @@ def effective_pythonpath(python_path, folder: str | None = None) -> str | None:
     if not lab:
         return base
     return lab + (os.pathsep + base if base else "")
+
+
+# The lab modules a calibration node imports by name. Where they resolve from
+# must be the selected QUALIBRATE project's own tree (the calibrations folder
+# or the nearest ancestor that holds them).
+LAB_MODULES = ("quam_config", "calibration_utils")
+_ROOT_WALK_UP = 6
+
+
+def _holds_lab_module(folder) -> list[str]:
+    """The LAB_MODULES that *folder* holds as a package or a module file."""
+    out = []
+    if not folder:
+        return out
+    for name in LAB_MODULES:
+        try:
+            base = os.path.join(str(folder), name)
+            if os.path.isdir(base) or os.path.isfile(base + ".py"):
+                out.append(name)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def project_code_root(calibrations_folder) -> str | None:
+    """The folder of the selected project that holds its lab modules.
+
+    The calibrations folder itself, or its nearest ancestor (a few levels up)
+    that holds ``quam_config`` / ``calibration_utils``. None when no such
+    folder exists or *calibrations_folder* is unset -- the caller then keeps
+    the inherited environment unchanged.
+    """
+    if not calibrations_folder:
+        return None
+    try:
+        cur = os.path.abspath(str(calibrations_folder))
+    except (OSError, ValueError):
+        return None
+    for _ in range(_ROOT_WALK_UP + 1):
+        if _holds_lab_module(cur):
+            return cur
+        parent = os.path.dirname(cur)
+        if not parent or parent == cur:
+            break
+        cur = parent
+    return None
+
+
+def _split_pp(value) -> list[str]:
+    return [e for e in str(value or "").split(os.pathsep) if e]
+
+
+def _same_dir(a, b) -> bool:
+    try:
+        return (os.path.normcase(os.path.abspath(a))
+                == os.path.normcase(os.path.abspath(b)))
+    except (OSError, ValueError):
+        return False
+
+
+def child_pythonpath(python_path, project_root: str | None = None) -> str | None:
+    """The PYTHONPATH every lab-code child of *python_path* runs with.
+
+    The project's code root FIRST (so a stale inherited entry holding the
+    same modules cannot win), then the lab code folder stored for this
+    interpreter and the inherited entries, each once, in that order.
+    Without a project root this is exactly :func:`effective_pythonpath`.
+    """
+    base = effective_pythonpath(python_path)
+    if not project_root:
+        return base
+    rest = [e for e in _split_pp(base) if not _same_dir(e, project_root)]
+    return os.pathsep.join([str(project_root)] + rest)
+
+
+def child_env(python_path, project_root: str | None = None) -> dict | None:
+    """The environment for a lab-code child (the report-config check AND the
+    node run use this one helper, so both import the same tree). None means
+    "inherit this process's environment unchanged"."""
+    pp = child_pythonpath(python_path, project_root)
+    if pp == os.environ.get("PYTHONPATH"):
+        return None
+    return dict(os.environ, PYTHONPATH=pp or "")
+
+
+def shadowing_pythonpath_entries(project_root: str | None,
+                                 pythonpath: str | None = None) -> list[dict]:
+    """Inherited PYTHONPATH entries that hold the project's lab modules from
+    ANOTHER tree: ``[{"entry", "modules"}]``. Empty when there is no project
+    root. Stats only (no import), cheap enough for a page render.
+    """
+    if not project_root:
+        return []
+    raw = os.environ.get("PYTHONPATH") if pythonpath is None else pythonpath
+    out = []
+    for e in _split_pp(raw):
+        if _same_dir(e, project_root):
+            continue
+        try:
+            inside = os.path.normcase(os.path.abspath(e)).startswith(
+                os.path.normcase(os.path.abspath(project_root)) + os.sep)
+        except (OSError, ValueError):
+            inside = False
+        if inside:
+            continue
+        mods = _holds_lab_module(e)
+        if mods:
+            out.append({"entry": e, "modules": mods})
+    return out
 
 
 def normalize_lab_code_dir(folder) -> tuple[str | None, str | None]:
