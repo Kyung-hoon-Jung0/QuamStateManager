@@ -1366,7 +1366,7 @@ window.ChipStatus.mount = function (opts) {
     ];
 
     // Combined (all) — used by metric panels and heatmap
-    // gl-f4h: the Frequencies panel's played readout RF (query._played_readout);
+    // the Frequencies panel's played readout RF (query._played_readout);
     // a panel value, not a qubit-card row
     var PANEL_ONLY_PROPS = [
         {key:'readout_rf_frequency', fmtFn:function(v){return fmt(v,'GHz');}},
@@ -2179,7 +2179,7 @@ window.ChipStatus.mount = function (opts) {
                         + ' from it; see Diagnostics"';
             // QA F-04: the pulse this pair's number came from, in its own span
             // so the value's text stays exactly the formatted number.
-            // gl-1h8: the key the number came from in the title; a pulse whose
+            // the key the number came from in the title; a pulse whose
             // two per-gate keys disagree says so in the row itself
             var gate = (typeof x.gate === 'string' && x.gate)
                 ? '<span class="ov-hover-gate"' + (x.src ? ' title="from ' + _esc(x.src)
@@ -2866,7 +2866,7 @@ window.ChipStatus.mount = function (opts) {
               // the two stones' frequency difference — Δf, the number the
               // docs/93 chevron only encodes as an inequality.
               edgeDelta: { key: 'f_01', label: 'Δf' } },
-            // gl-f4h follow-up: the readout patch shows the PLAYED RF
+            // the readout patch shows the PLAYED RF
             // (readout_rf_frequency), as the Frequencies panel does; the
             // resonator f_01 joins the stone's sub-line and hover only where
             // the two differ at the shown precision (one value when equal).
@@ -3776,7 +3776,7 @@ window.ChipStatus.mount = function (opts) {
                 if (!rbType) return;
                 var val = typeof gf.value === 'number' ? gf.value
                         : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                // gl-6ot: a fidelity outside (0, 1] (the server moved it to
+                // a fidelity outside (0, 1] (the server moved it to
                 // `raw_value`) is SHOWN, marked unphysical, with its raw number --
                 // never as a percentage, never in the stats, never dropped (the
                 // printable report's rule, docs/188).
@@ -4972,7 +4972,7 @@ window.ChipStatus.mount = function (opts) {
             panels.push({ key: def.key, group: def.group, built: false, cells: topo.nodes.length, make: function () {
             // (body unchanged, made when the panel is built: the palette is the one on screen then)
             var secId = 'mp-' + def.key.replace(/[^a-zA-Z0-9]/g, '-');
-            // gl-f4h: the played-RF panel names, per qubit, the resonator's
+            // the played-RF panel names, per qubit, the resonator's
             // f_01 where it differs (at the shown precision) and a qubit whose
             // resonator has no RF_frequency (its value is f_01, said so)
             function _roNote(n) {

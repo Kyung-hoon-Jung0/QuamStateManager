@@ -477,7 +477,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             evt.detail.isError = false;
         }
     }
-    // gl-2o5: the Gaussian CZ form answers a refusal (400) or a Replace offer
+    // the Gaussian CZ form answers a refusal (400) or a Replace offer
     // / another pair's op (409) with its own status body; without this the
     // panel kept the previous pair's green "Created ..." line.
     if (t.id === 'gcz-result' && (status === 400 || status === 409)) {
@@ -486,7 +486,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     }
 });
 
-/* gl-2o5: a new Gaussian CZ request clears the previous answer first, so a
+/* a new Gaussian CZ request clears the previous answer first, so a
    success line never stands beside a request it does not describe. */
 document.addEventListener('htmx:beforeRequest', function (evt) {
     var elt = evt.detail && evt.detail.elt;

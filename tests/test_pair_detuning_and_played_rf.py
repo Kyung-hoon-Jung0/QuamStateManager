@@ -1,13 +1,13 @@
 """Two unit defects on the pair and readout surfaces.
 
-gl-6na: a pair ``detuning`` too large to be volts (a frequency stored in a
+a pair ``detuning`` too large to be volts (a frequency stored in a
 volt field) printed as "509318255.4322 V" in the pair inspector. Every pair
 detuning surface now goes through the one fallback in ``core.units``
 (``pair_detuning_inferred`` / ``pair_detuning_display``): Hz units, the stored
 number, and a note that the unit was inferred. A plausible volt value renders
 exactly as before.
 
-gl-f4h: Chip Status > Frequencies showed ``resonator.f_01`` although the
+Chip Status > Frequencies showed ``resonator.f_01`` although the
 resonator plays its ``RF_frequency`` (reached through pointers). The topology
 node carries ``readout_rf_frequency`` (the played value, else f_01 with the
 source named) and the panel reads it; ``readout_frequency`` keeps holding
@@ -61,7 +61,7 @@ def _detuning_row(html: str) -> str:
     return html.split('value="qubit_pairs.q1-2.detuning"', 1)[1].split("</tr>", 1)[0]
 
 
-# --- gl-6na: the shared fallback -------------------------------------------
+# --- the shared fallback -------------------------------------------
 
 def test_the_shared_fallback_renders_hz_units_with_the_inferred_note():
     assert units.pair_detuning_inferred(BIG)
@@ -133,7 +133,7 @@ def test_the_pair_grid_labels_the_pairs_own_detuning_in_volts():
     assert macro["unit"] == "Hz"
 
 
-# --- gl-f4h: the played readout frequency ------------------------------------
+# --- the played readout frequency ------------------------------------
 
 def _node(c, q):
     from quam_state_manager.web import routes

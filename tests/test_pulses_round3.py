@@ -221,7 +221,7 @@ class TestForkedRedoSaysWhy:
         client.post("/pulse/edit", data={
             "path": "qubits.qA1.xy.operations.x180",
             "dot_path": "qubits.qA1.xy.operations.x180.length",
-            "mode": "value", "value": "124"})  # a multiple of 4 (gl-tmz)
+            "mode": "value", "value": "124"})  # a multiple of 4
         r = client.post("/undo")
         assert r.status_code == 200, r.data[:200]
 

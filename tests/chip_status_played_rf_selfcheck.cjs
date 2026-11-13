@@ -1,4 +1,4 @@
-/* gl-f4h: Chip Status > Frequencies shows the readout frequency the
+/* Chip Status > Frequencies shows the readout frequency the
  * resonator PLAYS (its RF_frequency, resolved), not resonator.f_01.
  *
  * Pins (the REAL app.js + topo-graph.js + chip-status.js under jsdom):

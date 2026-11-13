@@ -131,7 +131,7 @@ ok(window.UndoTrail.steps().length === 8 && panel().querySelectorAll('.undo-trai
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q5.T1', value: '1', from: '2' }] } }));
     ok(p.style.left === '' && p.style.right === '', 'with the corner clear the panel docks right again');
 }
-// gl-5y8 (1): a structural step names what happened to the path. An undo
+// a structural step names what happened to the path. An undo
 // of a removal (deleted=true) re-creates it; an undo of an add (created=true)
 // removes it. Neither may read "(deleted)" on an entry that is back.
 d.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: { message: 'Undone: qubits.q9',
@@ -143,7 +143,7 @@ d.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: { message: 'Un
      'a re-created entry reads "(re-created)", never "(deleted)"');
   ok(!rows[0].querySelector('.undo-trail-from'), 'a re-created entry shows no struck-through value');
   ok(/\(removed\)/.test(rows[1].textContent), 'an entry the step took away reads "(removed)"'); }
-// gl-5y8 (2): the add / remove panel opening hides the trail (it covered the
+// the add / remove panel opening hides the trail (it covered the
 // removal review); the next step brings it back
 { const slot = d.createElement('div'); slot.id = 'cm-rm-slot'; d.body.appendChild(slot);
   slot.innerHTML = '<div>remove panel</div>';

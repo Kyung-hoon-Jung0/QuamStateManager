@@ -1915,7 +1915,7 @@ def _waveform_findings_ex(store, only: tuple[str, str] | None = None
             payload = waveform_synth.synth_for_operation(store, path)
         except Exception:  # pragma: no cover - synth must never crash a lint
             payload = None
-        # gl-tmz: QOP refuses EVERY program when a config pulse length is not
+        # QOP refuses EVERY program when a config pulse length is not
         # a multiple of 4 ns or is under its minimum, although generate_config()
         # passes -- the same rule the write doors refuse by
         # (spec_constraints.pulse_length_problem); an inferred length is

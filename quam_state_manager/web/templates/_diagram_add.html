@@ -10,7 +10,7 @@
   {%- else %}<div class="ui-option ui-option--empty" aria-disabled="true">{{ empty }}</div>{% endfor %}
 </div>
 {%- endmacro %}
-{# gl-8n7: a new entity starts active only as its template is; the box says
+{# a new entity starts active only as its template is; the box says
    what it writes. An absent or empty list is never written (both read as
    "everything active"; writing an empty one would leave only the new name). #}
 {% macro active_row(a, template, word) -%}
@@ -18,7 +18,7 @@
     <td class="ui-table-cell">{% if a.editable %}<input type="hidden" name="active" value="0">{% endif %}<label class="ui-check"><input type="checkbox" name="active" value="1" data-cm-add-active{% if a.default %} checked{% endif %}{% if not a.editable %} disabled{% endif %}> joins {{ a.list }}</label></td>
     <td class="ui-table-cell ui-table-muted">{% if a.mode == 'listed' %}starts as {{ template }} is ({{ 'active' if a.template_active else 'not active' }}){% elif a.mode == 'empty' %}{{ a.list }} is empty, which counts every {{ word }} as active: nothing is written (adding the name would leave it the only active one){% else %}this chip has no {{ a.list }}: every {{ word }} counts as active, nothing is written{% endif %}</td></tr>
 {%- endmacro %}
-{# gl-gcr: a freed LF output keeps its previous line's filters and delay;
+{# a freed LF output keeps its previous line's filters and delay;
    the choice for a picked port that carries them (default clear). #}
 {% macro filters_row(cands) -%}
 {% if cands | selectattr('carries') | list %}

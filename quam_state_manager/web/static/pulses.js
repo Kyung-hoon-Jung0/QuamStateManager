@@ -1319,7 +1319,7 @@ window.PulsesPage = (function () {
         wrap.appendChild(fs);
     }
 
-    /* gl-tmz P2: a field whose default depends on the target qubit (a DRAG
+    /* a field whose default depends on the target qubit (a DRAG
        pulse's anharmonicity points at that qubit's own value). The server
        decides the value (pulse-qubit-defaults-data); a field the user typed
        into keeps what they typed. */

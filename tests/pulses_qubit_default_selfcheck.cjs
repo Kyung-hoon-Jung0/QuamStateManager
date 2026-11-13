@@ -1,4 +1,4 @@
-// gl-tmz P2: a create-form field whose default depends on the target qubit.
+// a create-form field whose default depends on the target qubit.
 // A DRAG pulse's anharmonicity is pre-filled with the value the server names
 // for the selected qubit (the pointer its DRAG pulses use, or its own
 // anharmonicity), follows a qubit change, never overwrites what the user

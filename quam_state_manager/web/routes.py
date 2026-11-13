@@ -27244,7 +27244,7 @@ def pulse_create_form():
     # so the form opens already targeted at that qubit + channel).
     sel_qubit = request.args.get("qubit", "").strip()
     sel_channel = request.args.get("channel", "").strip()
-    # gl-5y8: "+ New pulse" on a Pulses page filtered to one qubit (the map
+    # "+ New pulse" on a Pulses page filtered to one qubit (the map
     # pick) opens on that qubit, not on the first one of the chip.
     if not sel_qubit:
         sel_qubit = request.args.get("owner", "").strip()
@@ -27613,7 +27613,7 @@ def api_pulse_gaussian_cz():
                                       padding_length=padding,
                                       qubit_filter_mhz=q_mhz,
                                       coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids,
-                                      # gl-cad: the single-pair door names every
+                                      # the single-pair door names every
                                       # op after THIS pair, so a moving qubit
                                       # shared by two pairs never shares an op.
                                       own_names=suffix_ids is None)
@@ -28032,7 +28032,7 @@ _SYNTH_REFUSAL_LEAD = "This pulse would not run"
 def _qubit_param_defaults(merged: dict) -> dict:
     """Per-qubit create-form defaults: ``{qubit: {param: {"value", "note"}}}``.
 
-    gl-tmz P2: a DRAG pulse's ``anharmonicity`` on a real chip points at the
+    a DRAG pulse's ``anharmonicity`` on a real chip points at the
     qubit's own value (``#/qubits/<q>/anharmonicity``, a lab convention for
     its sign), while the catalog default is a fixed -220 MHz -- a new pulse
     got the wrong Q sign. The default is the target the qubit's existing DRAG

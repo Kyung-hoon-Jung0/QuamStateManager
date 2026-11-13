@@ -516,7 +516,7 @@ class TestValueSpec:
         s = _healthy_state()
         s["qubits"]["q1"]["xy"] = {"operations": {"x180": {"length": 18}}}
         cats = _cats(diagnostics.lint_state(_store(state=s)))
-        # gl-tmz: the QOP-aware row (an error: QOP refuses every program)
+        # the QOP-aware row (an error: QOP refuses every program)
         # replaces the plain spec row on the same field -- one row, not two
         assert "waveform_length" in cats and "value_spec_length" not in cats
 

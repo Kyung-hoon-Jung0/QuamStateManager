@@ -392,7 +392,7 @@ def test_suffix_none_preserves_legacy_names_and_invalid_pair_ids_refuse():
     assert "error" in gaussian_cz.plan(_chip(), "q1-2", suffix_ids=("q2", "q1"))
 
 
-# -- gl-cad / gl-2o5: two pairs sharing a moving qubit ----------------------
+# -- / two pairs sharing a moving qubit ----------------------
 
 def _shared_mover_chip():
     """q1-2 and q1-3 both move q1 (the control): one z line, two gates."""
@@ -551,7 +551,7 @@ class TestSharedMovingQubit:
                 f"#/qubit_pairs/q1-2/macros/{g}/flux_pulse_qubit/amplitude")
 
     def test_the_panel_renders_the_refusal(self, env, tmp_path):
-        """gl-2o5 under the real bundled htmx + app.js: a 409 renders in the
+        """under the real bundled htmx + app.js: a 409 renders in the
         panel, the previous success line is cleared at request start, and a
         Replace's overwrite=1 is sent once only (gcz_panel_fragcheck.cjs)."""
         import subprocess

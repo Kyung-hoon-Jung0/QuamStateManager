@@ -166,7 +166,7 @@ class TestFieldEdit:
 
 
 # ---------------------------------------------------------------------------
-# gl-tmz: a config pulse length QOP refuses (not a multiple of 4 ns, or under
+# a config pulse length QOP refuses (not a multiple of 4 ns, or under
 # the QOP minimum) -- generate_config() passes, then QOP refuses every program
 # ---------------------------------------------------------------------------
 
@@ -253,7 +253,7 @@ class TestPulseLengthDiagnostics:
 
 
 # ---------------------------------------------------------------------------
-# gl-tmz P2: a new DRAG pulse's anharmonicity defaults to the qubit's own
+# a new DRAG pulse's anharmonicity defaults to the qubit's own
 # ---------------------------------------------------------------------------
 
 def _drag_state() -> dict:

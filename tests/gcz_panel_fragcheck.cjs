@@ -1,4 +1,4 @@
-/* gl-2o5 -- the Gaussian CZ form's answer panel, in the REAL htmx.min.js +
+/* -- the Gaussian CZ form's answer panel, in the REAL htmx.min.js +
  * REAL app.js under jsdom, against the HTML the real routes render (written
  * by tests/test_gaussian_cz.py::TestSharedMovingQubit::
  * test_the_panel_renders_the_refusal).

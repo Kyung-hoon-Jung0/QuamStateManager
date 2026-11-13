@@ -1,5 +1,5 @@
-"""One per-gate fidelity per CZ macro, the same on every surface (gl-1h8), an
-unphysical one shown rather than dropped (gl-6ot), and one count of issues.
+"""One per-gate fidelity per CZ macro, the same on every surface, an
+unphysical one shown rather than dropped, and one count of issues.
 
 A macro's fidelity block can carry two keys that are both per-gate
 (``InterleavedRB`` and a lab alias ``IRB``) and that disagree. Before this the

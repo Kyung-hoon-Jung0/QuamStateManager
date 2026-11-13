@@ -1,4 +1,4 @@
-/* gl-1h8 + gl-6ot -- one per-gate fidelity per pulse, and an unphysical one shown.
+/* + -- one per-gate fidelity per pulse, and an unphysical one shown.
  *
  * A macro can hold two per-gate keys (InterleavedRB and a lab alias IRB) that
  * disagree. The server's resolver (query.pair_gate_fidelity) picks one and
