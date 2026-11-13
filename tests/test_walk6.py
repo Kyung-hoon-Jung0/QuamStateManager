@@ -126,7 +126,7 @@ def test_w6_5_pair_detuning_unit(chip):
     assert stored_unit_label("pair_detuning") == "V"
     html = chip[0].get("/chip-status/report").get_data(as_text=True)
     assert "<th>Detuning</th>" in html
-    assert "400000000.0 Hz (treated as Hz: too large for V)" in html
+    assert "400.000 MHz (stored 400000000.0, unit inferred as Hz: too large for V)" in html
     assert "400000000.0 V" not in html
     assert "unit doubtful" not in html
 

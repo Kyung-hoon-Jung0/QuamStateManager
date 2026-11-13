@@ -37,7 +37,7 @@
                     {% if p.is_self_ref %}
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
-                        {% set _stored = _ukey | unit_hint %}
+                        {# a frequency-sized pair detuning is stored in (inferred) Hz, not V: units.pair_detuning_inferred #}{% set _stored = 'Hz' if (_ukey == 'pair_detuning' and p.value | pair_detuning_inferred) else (_ukey | unit_hint) %}
                         <form class="inline-edit fh-host" hx-post="/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
                               {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
                                  new Function, which this app's CSP forbids, and htmx

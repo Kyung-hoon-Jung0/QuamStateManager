@@ -243,6 +243,9 @@ def _format_cell(value, field: str | None = None) -> str:
     # Humanize known physical fields (T1->µs, f_01->GHz, …) for the Rich tables.
     # --json paths bypass this and stay raw SI for scripting.
     if field is not None and isinstance(value, (int, float)) and not isinstance(value, bool):
+        if field == "pair_detuning":
+            # the shared volt / inferred-Hz rule, note included
+            return units.pair_detuning_display(value)
         fq = units.format_quantity(value, field)
         if fq is not None:
             return f"{fq[0]} {fq[1]}"

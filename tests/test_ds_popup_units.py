@@ -82,12 +82,14 @@ def test_report_and_peek_agree_on_pair_detuning_unit(tmp_path, value, unit):
     assert response.status_code == 200
     html = response.get_data(as_text=True)
     # Read the actual report cell, including its unit, rather than a helper's result.
-    match = re.search(r"<td>(-?[\d.]+) (V|Hz)(?: \([^<]*\))?</td>", html)
+    match = re.search(r"<td>(-?[\d.]+) (V|Hz|kHz|MHz|GHz)(?: \([^<]*\))?</td>", html)
     assert match, html
-    assert match[2] == peek["units"].get(path) == unit
-    assert float(match[1]) == pytest.approx(value, abs=0.00005)
+    scale = {"V": 1.0, "Hz": 1.0, "kHz": 1e3, "MHz": 1e6, "GHz": 1e9}[match[2]]
+    shown_unit = "V" if match[2] == "V" else "Hz"
+    assert shown_unit == peek["units"].get(path) == unit
+    assert float(match[1]) * scale == pytest.approx(value, abs=0.00005 if unit == "V" else 0.5e-3 * scale)
     if unit == "Hz":
-        assert "treated as Hz: too large for V" in match[0]
+        assert "unit inferred as Hz: too large for V" in match[0]
 
 
 def _write(path, dims, arrays):
