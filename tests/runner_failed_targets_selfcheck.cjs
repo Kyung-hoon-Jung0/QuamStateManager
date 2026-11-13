@@ -11,7 +11,7 @@ const { JSDOM } = require("jsdom");
     { url: "http://localhost/scheduler", runScripts: "outside-only", pretendToBeVisual: true });
   try {
     const w = dom.window;
-    const note = "1 of 2 targets failed -- q1: still wrote qubits.q1.f_01 (5 -> 6) to the chip";
+    const note = "1 of 2 targets failed — q1: still wrote qubits.q1.f_01 (5 -> 6) to the chip";
     const posts = [];
     const failed = { id: "a", name: "node", kind: "node", status: "done", enabled: true,
       failed_targets: ["q1"], n_targets: 2, outcome_note: note,

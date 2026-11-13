@@ -1630,7 +1630,7 @@ def failed_targets_note(info: dict) -> str:
         ws = by_t.get(t)
         parts.append(f"{t}: still wrote {', '.join(ws)} to the chip" if ws
                      else f"{t}: wrote nothing")
-    note = f"{k} of {n} targets failed -- " + "; ".join(parts)
+    note = f"{k} of {n} targets failed — " + "; ".join(parts)
     untied = info.get("untied") or []
     if untied:
         shown = ", ".join(untied[:5])
