@@ -122,7 +122,7 @@
         <span class="bulk-dirty-count" id="bulk-dirty-count" aria-live="polite"></span>
         {% if rows %}
         <button type="button" class="btn-sm outline" id="bulk-apply-all" onclick="BulkEdit.applyAll()" disabled
-                title="Apply these edits to the working state (the live chip stays untouched — review in the tray, then apply to live).">Apply all</button>
+                title="Apply these edits to the working state (the live chip stays untouched &mdash; review in the tray, then apply to live). Shortcut: Ctrl+Enter.">Apply all</button>
         {% if chip_origin != 'dataset_archive' %}
         <button type="button" class="btn-sm btn-apply-live" id="bulk-apply-sync" onclick="BulkEdit.applyAll(true)" disabled
                 title="One click — apply these edits to the live chip now (writes state.json / wiring.json), skipping the review step."><span aria-hidden="true">&#9889;</span> Apply to live now</button>

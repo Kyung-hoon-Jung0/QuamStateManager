@@ -2886,12 +2886,14 @@ function _applyThemeToPlotly(theme) {
     }
 }
 
-/** Select a registered theme and refresh the current figures. */
-window.setTheme = function(newTheme) {
+/** Select a registered theme and refresh the current figures. `persist`
+ *  false applies it without recording a choice (the OS preference is
+ *  followed only while the user has not chosen; audit 2026-11-13). */
+window.setTheme = function(newTheme, persist) {
     var themes = window.SM_THEMES || ['light', 'dark', 'qm'];
     if (themes.indexOf(newTheme) < 0) return;
     document.documentElement.setAttribute('data-theme', newTheme);
-    try { localStorage.setItem('quam_theme', newTheme); } catch(e) {}
+    if (persist !== false) { try { localStorage.setItem('quam_theme', newTheme); } catch(e) {} }
     document.querySelectorAll('[data-theme-choice]').forEach(function(btn) {
         var active = btn.getAttribute('data-theme-choice') === newTheme;
         btn.classList.toggle('settings-opt-active', active);
@@ -2931,6 +2933,18 @@ window.toggleTheme = function() {
             btn.setAttribute('aria-pressed', String(active));
         });
     });
+    // With no stored choice (and no ?theme=) the boot follows the OS colour
+    // scheme; a change of that preference re-resolves live. A stored choice
+    // always wins, so this never overrides what the user picked.
+    var mq = null;
+    try { mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null; } catch(e) {}
+    function onScheme() {
+        if (!window.resolveSMTheme || (window.smThemeChosen && window.smThemeChosen())) return;
+        var next = window.resolveSMTheme();
+        if (next !== document.documentElement.getAttribute('data-theme')) window.setTheme(next, false);
+    }
+    if (mq && mq.addEventListener) mq.addEventListener('change', onScheme);
+    else if (mq && mq.addListener) mq.addListener(onScheme);
 })();
 
 /* ------------------------------------------------------------------ */
@@ -2946,16 +2960,73 @@ window.toggleSidebar = function() {
     var layout = document.querySelector(".app-layout");
     if (!layout) return;
     var collapsed = layout.classList.toggle("sidebar-collapsed");
+    var narrow = layout.classList.contains("sidebar-narrow");
     if (!collapsed && window.SidebarReveal && window.requestAnimationFrame) {
         window.requestAnimationFrame(function () { window.SidebarReveal.reveal(); });
     }
     // QA F17: mirrored on <html> -- the top bar is not inside .app-layout, and
     // its Settings/Calculator fallback must show only while this is collapsed.
     document.documentElement.classList.toggle("sidebar-is-collapsed", collapsed);
+    // A narrow window's overlay open/close is not the user's wide-window choice.
+    if (narrow) return;
     try {
         localStorage.setItem("quam_sidebar_collapsed", collapsed ? "1" : "0");
     } catch(e) {}
 };
+
+/* F13 (audit 2026-11-13): at a narrow window the open sidebar left the page a
+   ~90 px column. Below NARROW the layout collapses the sidebar on its own --
+   never written to quam_sidebar_collapsed, so a wide window keeps the user's
+   own choice -- and the toggle opens it as an overlay above the page (CSS:
+   .app-layout.sidebar-narrow). A click outside it, a nav link inside it, or
+   Escape closes the overlay again. */
+window.SidebarNarrow = (function () {
+    var NARROW = '(max-width: 767px)';
+    var mq = null;
+    function layout() { return document.querySelector('.app-layout'); }
+    function stored() {
+        try { return localStorage.getItem('quam_sidebar_collapsed') === '1'; } catch (e) { return false; }
+    }
+    function setCollapsed(l, c) {
+        l.classList.toggle('sidebar-collapsed', c);
+        document.documentElement.classList.toggle('sidebar-is-collapsed', c);
+    }
+    function isOpen(l) {
+        return !!(l && l.classList.contains('sidebar-narrow') && !l.classList.contains('sidebar-collapsed'));
+    }
+    function sync() {
+        var l = layout();
+        if (!l || !mq) return;
+        var narrow = !!mq.matches;
+        if (narrow === l.classList.contains('sidebar-narrow')) return;
+        l.classList.toggle('sidebar-narrow', narrow);
+        setCollapsed(l, narrow ? true : stored());
+    }
+    function close() { var l = layout(); if (isOpen(l)) setCollapsed(l, true); }
+    function init() {
+        try { mq = window.matchMedia ? window.matchMedia(NARROW) : null; } catch (e) { mq = null; }
+        if (!mq) return;
+        if (mq.addEventListener) mq.addEventListener('change', sync);
+        else if (mq.addListener) mq.addListener(sync);
+        sync();
+        document.addEventListener('click', function (ev) {
+            if (!isOpen(layout())) return;
+            var t = ev.target;
+            if (!t || !t.closest) return;
+            if (t.closest('#sidebar')) { if (t.closest('.sidebar-nav a[href]')) close(); return; }
+            if (t.closest('.sidebar-toggle, .chrome-reveal')) return;
+            close();
+        });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key !== 'Escape' || ev.defaultPrevented || !isOpen(layout())) return;
+            if (window.smModalOpen && window.smModalOpen()) return;
+            close();
+        });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+    return { sync: sync, close: close, query: NARROW };
+})();
 
 /* docs/126 cycled THREE states (sidebar → +top bar → restore). Customer
    feedback (2026-08-27): "don't make us press it twice" — ONE press now
@@ -2969,6 +3040,12 @@ window.cycleChrome = function() {
     var layout = document.querySelector(".app-layout");
     var sbCollapsed = !!(layout && layout.classList.contains("sidebar-collapsed"));
     var tbHidden = document.documentElement.classList.contains("topbar-hidden");
+    // F13: at a narrow window the button opens/closes the sidebar overlay
+    // (the bar is the only way back to it, so it is never hidden here).
+    if (layout && layout.classList.contains("sidebar-narrow")) {
+        if (tbHidden) window.toggleTopbar(); else window.toggleSidebar();
+        return;
+    }
     var collapseAll = !(sbCollapsed && tbHidden);
     if (sbCollapsed !== collapseAll) window.toggleSidebar();
     if (tbHidden !== collapseAll) window.toggleTopbar();

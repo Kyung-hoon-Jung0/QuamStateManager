@@ -856,6 +856,25 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         return Markup("_<wbr>".join(escape(p) for p in parts))
     app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
+    def _run_name_filter(name) -> Markup:
+        """A sidebar run name as a HEAD and a TAIL span (audit 2026-11-13):
+        the tail is the last ``_`` part (1..12 characters), the head the rest.
+        Compact rows ellipsize only the head, so runs whose names differ only
+        at the end (``31_chevron_11_20`` / ``31_chevron_12_21``) stay apart.
+        Both pieces carry the ``soft_breaks`` joints, so the full rows render
+        exactly as before; textContent is the plain name."""
+        text = str(name if name is not None else "")
+        head, sep, tail = text.rpartition("_")
+        if not sep or not head or not (0 < len(tail) <= 12):
+            head, tail = text, ""
+        else:
+            head = head + sep
+        out = Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(head)
+        if tail:
+            out += Markup("<span>%s</span>") % _soft_breaks_filter(tail)
+        return out
+    app.jinja_env.filters["run_name"] = _run_name_filter
+
     def _format_ts_filter(ts) -> str:
         """Render a timestamp as plain ``YYYY-MM-DD HH:MM:SS UTC`` (attribute
         sites: hx-confirm, title). docs/244: read through ``core.timefmt`` --
