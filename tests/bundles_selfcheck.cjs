@@ -51,7 +51,10 @@ ok(B.loaded(["pulses", "grid"]) === false, "loaded() over a list is all-or-nothi
 const fp = (p) => B.forPath(p).join(",");
 ok(fp("/bulk") === "grid" && fp("/bulk?q=x") === "grid" && fp("/bulk/rows") === "grid", "/bulk -> grid");
 ok(fp("/bulkx") === "", "a prefix that is not the route matches nothing");
-ok(fp("/pulses") === "pulses" && fp("/pulse/detail?path=q1") === "pulses" && fp("/pulse/new/env-strip") === "pulses", "/pulse/* -> pulses");
+ok(fp("/pulses") === "pulses,components" && fp("/pulse/detail?path=q1") === "pulses" && fp("/pulse/new/env-strip") === "pulses", "/pulse/* -> pulses");
+// the Pulses page and the CZ gate plan draw the shared chip map: an htmx
+// navigation must load the components bundle, as a full page load does
+ok(fp("/pulses?rows=1") === "pulses,components" && fp("/cz-plan") === "czplan,components", "/pulses and /cz-plan -> + components (chip map)");
 ok(fp("/topology") === "chipstatus,components" && fp("/wiring") === "chipstatus,components", "/topology (+ its /wiring alias) -> chip status + components");
 ok(fp("/qubits") === "components" && fp("/pairs") === "components" && fp("/resonators") === "components" && fp("/flux") === "components"
    && fp("/couplers") === "components" && fp("/qdac") === "components", "component pages");

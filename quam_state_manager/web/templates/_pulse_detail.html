@@ -34,7 +34,11 @@
     {# docs/218 adaptive pulses: the waveform may now come from the class's
        OWN code (drawn in the selected env) or from the generated config; the
        label over the plot names which, so this sentence claims neither. #}
-    {% if plot_source in ('config', 'lab') or needs_lab %}
+    {% if plot_source == 'transcription' %}
+    <code>{{ qclass or '(none)' }}</code> is your lab&#39;s own pulse class. The
+    curve below is SM&#39;s transcription of it (the one the CZ gate plan
+    draws), not your own code &mdash; it can lag behind a change to your module.
+    {% elif plot_source in ('config', 'lab') or needs_lab %}
     <code>{{ qclass or '(none)' }}</code> is your lab&#39;s own pulse class. SM
     has no copy of its waveform code, so the curve below is drawn by your own
     code &mdash; the label above the plot says whether that is the class
@@ -183,6 +187,10 @@
     <span class="pulse-plot-label muted">drawn by the class&#39;s own code
         (<code>calculate_waveform()</code> in the selected env) at the current
         field values{% if lab_warnings %} &mdash; it said: {{ lab_warnings | join('; ') }}{% endif %}</span>
+    {% elif plot_source == 'transcription' %}
+    <span class="pulse-plot-label muted">SM&#39;s transcription of the lab class
+        (as the CZ gate plan draws it) &mdash; not quam&#39;s synthesis, not
+        your own code</span>
     {% elif plot_source == 'config' %}
     <span class="pulse-plot-label muted">waveform from the generated config
         &mdash; this pulse class is the lab&#39;s own, so its own code drew it{%
@@ -196,7 +204,7 @@
     <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
-    {% if synth_unknown_class and truth_status != 'ok' and plot_source != 'lab' %}
+    {% if synth_unknown_class and truth_status != 'ok' and plot_source not in ('lab', 'transcription') %}
     <span class="pulse-plot-cta"{% if needs_lab %} data-lab-pending="1"{% endif %}>{% if truth_status == 'absent' %}Generate this
         chip&#39;s config and the lab&#39;s own waveform is plotted here.
         <button type="button" class="btn-sm"
@@ -258,7 +266,7 @@
     <summary class="section-header">Operating point · {{ gi.pair_name }}</summary>
     {% with pair_name=gi.pair_name, control_name=gi.control_name, target_name=gi.target_name,
             moving_role=gi.moving_role, current_moving=gi.current_moving,
-            error=gi.error, warnings=gi.warnings, read_only=True %}
+            error=gi.error, warnings=gi.warnings, read_only=True, gate=gi.gate %}
     {% include '_pair_gate_inspector.html' %}
     {% endwith %}
 </details>

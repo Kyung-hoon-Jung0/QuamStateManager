@@ -9331,8 +9331,12 @@ window.Bundles = (function () {
     var PATHS = [
         [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
+        // the Pulses page and the CZ gate plan draw the shared chip map
+        // (base.html page_bundles: pulses/czplan + components); without the
+        // components bundle a sidebar navigation left it on "Loading..."
+        [/^\/pulses(\/|$|\?)/, ["components"]],
         [/^\/zline(\/|$|\?)/, ["zline"]],
-        [/^\/cz-plan(\/|$|\?)/, ["czplan"]],
+        [/^\/cz-plan(\/|$|\?)/, ["czplan", "components"]],
         [/^\/port-play(\/|$|\?)/, ["portplay"]],
         [/^\/explorer(\/|$|\?)/, ["cm6"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
@@ -31522,7 +31526,9 @@ window.GateInspector = (function() {
         var role = el.getAttribute('data-role') || 'control';
         el.innerHTML = '<p class="muted" style="text-align:center;padding:2em">Loading detuning plot…</p>';
 
-        fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/plot?moving=' + role)
+        var gateOp = el.getAttribute('data-op');
+        fetch('/pair/' + encodeURIComponent(pair) + '/gate-inspector/plot?moving=' + role
+              + (gateOp ? '&op=' + encodeURIComponent(gateOp) : ''))
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (d.error) {

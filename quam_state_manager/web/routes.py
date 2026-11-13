@@ -17759,6 +17759,27 @@ def pair_gate_inspector_plot(name: str):
     if "error" in sweep:
         return jsonify({"error": sweep["error"]}), 422
 
+    # ?op=<gate>: the plot was opened from that gate's flux pulse, so its CZ
+    # operating point is marked -- the amplitude and frequency the CZ gate
+    # plan computes for the moving line (one source, never recomputed here)
+    gate = (request.args.get("op") or "").strip()
+    if gate:
+        try:
+            rows, _convs, _un = _cz_plan_ops(store)
+        except Exception:  # noqa: BLE001 -- the plot still answers without it
+            rows = []
+        row = next((r for r in rows if r["pair"] == name and r["operation"] == gate), None)
+        ln = next((ln for ln in (row or {}).get("lines") or []
+                   if ln.get("role") == role and ln.get("moves") and not ln.get("refusal")), None)
+        if ln is not None:
+            gate_inspector.add_gate_point(
+                sweep, qa, qb, gate=gate, amplitude_v=ln.get("amplitude_v"),
+                frequency_hz=(ln.get("point") or {}).get("frequency_hz"))
+        if "gate_point" not in sweep:
+            sweep.setdefault("notes", []).append(
+                f"{gate}: no operating point for the {role} qubit in the CZ gate plan "
+                "(see Chip Status > CZ gate plan for why).")
+
     figure = gate_inspector.build_plotly_figure(sweep, moving_role=role)
     return jsonify(figure)
 
@@ -19199,7 +19220,8 @@ def _report_build_pulses(rc: _ReportCtx) -> str:
         raise RuntimeError("the pulse index is not available")
     rows = [dict(r) for r in pulse_index.rows()]
     _pulse_draw_sparks(rc.store, pulse_index, rows)
-    lab = [bool(r.get("spark_from_lab") or r.get("spark_from_config")) for r in rows]
+    lab = [bool(r.get("spark_from_lab") or r.get("spark_from_config")
+                or r.get("spark_from_transcription")) for r in rows]
     defs, refs = _cr.dedupe_sparks([None if l else r.get("spark_svg")
                                     for r, l in zip(rows, lab)])
     distinct = defs.count("<symbol ")
@@ -19208,6 +19230,9 @@ def _report_build_pulses(rc: _ReportCtx) -> str:
         if r.get("is_alias"):
             tgt = (r.get("alias_target") or "?").rsplit(".", 1)[-1]
             wave = f'<span class="rep-note">&rarr; {e(tgt)}</span>'
+        elif is_lab and r.get("spark_svg") and r.get("spark_from_transcription"):
+            wave = ('<span class="pulse-spark-lab" title="SM\'s transcription of the lab class '
+                    f'(as the CZ gate plan draws it)">{r["spark_svg"]}</span>')
         elif is_lab and r.get("spark_svg"):
             wave = f'<span class="pulse-spark-lab" title="Drawn by the class\'s own code">{r["spark_svg"]}</span>'
         elif ref:
@@ -23916,6 +23941,19 @@ def _pulse_component_overlays(store, path: str) -> list[dict]:
     return out
 
 
+def _pulse_transcription(store, path):
+    """``waveform_synth.lab_transcription_payload`` over the open chip, or None."""
+    from quam_state_manager.core.waveform_synth import lab_transcription_payload
+    if store is None or not isinstance(path, str):
+        return None
+    try:
+        with store._lock:
+            return lab_transcription_payload(store.merged, path)
+    except Exception:  # noqa: BLE001 -- a preview never fails the page
+        logger.debug("transcription lookup failed for %s", path, exc_info=True)
+        return None
+
+
 def _pulse_plot_traces(payload: dict) -> dict:
     """Plot-ready trace dict from a synth payload (decimated for display)."""
     if not payload.get("ok"):
@@ -24194,7 +24232,8 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "op_name", "alias_target", "iq", "readout", "found", "location",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
-                   "used_by", "length_why", "length_from_lab", "length_from_config")
+                   "used_by", "length_why", "length_from_lab", "length_from_config",
+                   "length_from_transcription")
 
 
 def _pulse_vt_sig(row: dict) -> tuple:
@@ -25698,7 +25737,10 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         except (KeyError, TypeError, ValueError):
             gi_ctx = None
     if gi_ctx is not None:
-        gi_ctx = dict(gi_ctx, read_only=True)
+        gate = gate_inspector.gate_for_pulse(store, main["actual_path"])
+        if gate is None and main["actual_path"] != path:
+            gate = gate_inspector.gate_for_pulse(store, path)
+        gi_ctx = dict(gi_ctx, read_only=True, gate=gate)
 
     return render_template(
         "_pulse_detail.html",
@@ -25945,6 +25987,16 @@ def _pulse_section_ctx(store, pulse_index, path: str):
             plot = {"ok": True, "traces": truth["traces"]}
             plot_source = "config"
             synth_error = None      # answered; the label carries the provenance
+    if unknown_class and plot_source is None:
+        # Neither the class's own code nor a generated config answered: the CZ
+        # gate plan's transcription of this lab class (the same samples the plan
+        # draws) is shown, labelled as SM's transcription -- never as quam's
+        # synthesis. A later lab drawing (`needs_lab`) still replaces it.
+        tp = _pulse_transcription(store, actual_path)
+        if tp is not None and tp.get("ok"):
+            plot = _pulse_plot_traces(tp)
+            plot_source = "transcription"
+            synth_error = None
 
     return {
         "path": path,
@@ -30160,6 +30212,17 @@ def _pulse_fallback_spark(store, path, row) -> None:
         # NOT older than the chip's content (a stale one is no answer)
         row["length"] = cfg_len
         row["length_from_config"] = True
+    if row["spark_svg"]:
+        return
+    # last: the CZ gate plan's transcription of the lab class, titled as
+    # SM's transcription (dashed like every non-SM-synthesized thumbnail)
+    tp = _pulse_transcription(store, path)
+    if tp is not None and tp.get("ok"):
+        row["spark_svg"] = sparkline_svg(tp)
+        row["spark_from_transcription"] = bool(row["spark_svg"])
+        if row.get("length") is None:
+            row["length"] = tp["length"]
+            row["length_from_transcription"] = True
 
 
 def _pulse_row_lab_length(row, rec) -> None:
@@ -30390,6 +30453,37 @@ def api_pulse_ground_truth():
     store = _store()
     path = request.args.get("path", "").strip()
     found = _pulse_truth_lookup(store, path)
+    status = found["status"]
+    if status not in ("ok", "no-state", "bad-path"):
+        # no config waveform: the CZ gate plan's transcription of a lab class,
+        # under its OWN key -- it is SM's transcription, not ground truth
+        tp = _pulse_transcription(store, _pulse_alias_target(store, path))
+        if tp is not None and tp.get("ok"):
+            resp, code = api_pulse_ground_truth_inner(found, path)
+            body = resp.get_json()
+            body["transcription"] = _pulse_plot_traces(tp)
+            return jsonify(body), code
+    return api_pulse_ground_truth_inner(found, path)
+
+
+def _pulse_alias_target(store, path):
+    """*path*, or the pulse an alias operation (``"#./other"``) names."""
+    try:
+        with store._lock:
+            raw = store.get_value(path)
+            if isinstance(raw, str) and raw.startswith(("#/", "#./", "#../")):
+                from quam_state_manager.core.pointer_path import resolve_field_target
+                t = resolve_field_target(store.merged, path)
+                if t.get("resolvable"):
+                    return t["resolved_path"]
+    except (KeyError, TypeError, ValueError, IndexError):
+        pass
+    return path
+
+
+def api_pulse_ground_truth_inner(found, path):
+    """The ground-truth answer for one :func:`_pulse_truth_lookup` result."""
+    store = _store()
     status = found["status"]
 
     if status == "no-state":
@@ -47924,8 +48018,15 @@ def dataset_prev_state_diff(uid):
     # w7/livewrite (P4): run folders are write-once -- a repeat (the stepper,
     # re-opening the tab) is served from RAM, keyed on all four files' stats
     from quam_state_manager.core.history import diff_state_folders
-    entries = diff_state_folders(prev_path, cur_path)
+    # a pulse whose CLASS changed between two runs (SquarePulse -> WaveformPulse)
+    # is a difference: its __class__ row is counted and listed FIRST, above the
+    # add/remove rows the new field set brings with it
+    entries = diff_state_folders(prev_path, cur_path, keep_class=True)
+    entries = sorted(entries, key=lambda e: e.dot_path.rsplit(".", 1)[-1] != "__class__")
     summary = Differ.summary(entries)
+    summary["class_changed"] = sum(
+        1 for e in entries
+        if e.change_type == "modified" and e.dot_path.rsplit(".", 1)[-1] == "__class__")
 
     # Stepper bounds: walk the comparison run older/newer. r16 ④: the old
     # clamp refused any vs ≥ run_id, which made "newer ›" DISABLED on every

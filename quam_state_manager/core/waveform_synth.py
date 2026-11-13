@@ -320,8 +320,9 @@ def _snz_two_flux_length(p):
     return int(math.ceil(raw / 4) * 4)
 
 
-#: lab pulse classes SM has transcribed for the CZ gate plan's frequency-in-time only -- NOT
-#: catalog entries: the Pulses page keeps drawing a lab class with the lab's own code
+#: lab pulse classes SM has transcribed for the CZ gate plan -- NOT catalog entries: the
+#: Pulses page draws a lab class with the lab's own code (or its generated config) first,
+#: and this transcription only when neither is available, labelled as SM's transcription
 LAB_WAVEFORMS = {"SNZTwoFluxPulse": (_snz_two_flux, _snz_two_flux_length)}
 
 # Defaults of the transcribed class, shared with pulse reference resolution.
@@ -386,6 +387,29 @@ def lab_waveform(pulse: dict, reasons: list | None = None) -> list | None:
             reasons.append(f"not drawn: {exc}")
         return None
     return samples
+
+
+def lab_transcription_payload(doc, path: str) -> dict | None:
+    """The CZ gate plan's own transcription of a lab pulse class, as a synth
+    payload for the Pulses page -- the SAME ``resolved_lab_pulse`` +
+    ``lab_waveform`` the plan draws, never a second copy. None when the class
+    at *path* is not one SM transcribed; ``ok: False`` with the reason when it
+    is but these fields cannot be drawn. The caller labels it as SM's
+    transcription, never as quam's synthesis or the lab's own code.
+    """
+    pulse = resolved_lab_pulse(doc, path)
+    if not isinstance(pulse, dict):
+        return None
+    leaf = str(pulse.get("__class__", "")).rsplit(".", 1)[-1]
+    if leaf not in LAB_WAVEFORMS:
+        return None
+    reasons: list = []
+    samples = lab_waveform(pulse, reasons)
+    if samples is None:
+        return {"ok": False, "error": "; ".join(reasons) or "not drawn", "qclass": leaf}
+    return {"ok": True, "kind": "arbitrary", "iq": False, "x_ns": list(range(len(samples))),
+            "i": samples, "q": None, "length": len(samples), "qclass": leaf,
+            "warnings": [], "error": None, "param_errors": {}}
 
 
 def _square(p):
