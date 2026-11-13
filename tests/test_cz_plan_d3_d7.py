@@ -6,6 +6,7 @@ Fixtures are shaped like real chip copies (a pair whose CZ macros carry their ow
 copies and the qubit's operations point into them) with generic names.
 """
 import json
+import os
 import math
 import re
 from pathlib import Path
@@ -157,8 +158,9 @@ def test_d4_an_unresolvable_length_leaves_the_duration_unknown():
     assert row["duration_ns"] is None
 
 
-REAL = [Path(r"D:/work_laptop/study/2026-11-13_sm-handson-audit/cz/states_orig_backup"),
-        Path(r"D:/work_laptop/study/2026-11-13_sm-handson-audit/cz/states")]
+#: real chip copies live outside the repo: SM_REAL_CZ_COPIES names the untouched folder
+#: first, then the live-edited one (os.pathsep-separated); unset means skip
+REAL = [Path(p) for p in os.environ.get("SM_REAL_CZ_COPIES", "").split(os.pathsep) if p]
 #: the durations the audit read off the played samples of the measured pair, per copy and
 #: operation, on the untouched copies (the first folder; the others are edited live, so they
 #: are checked against their own samples only)
