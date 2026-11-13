@@ -31,6 +31,7 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -77,7 +78,12 @@ def request_driver(headers, actor: str, remote_addr: str | None, rec: dict | Non
             pid = int(str(headers.get("X-SM-Bridge-Pid") or "0")) or None
         except ValueError:
             pid = None
-    return {"kind": "terminal", "id": sid, "actor": actor, "pid": pid}
+    out = {"kind": "terminal", "id": sid, "actor": actor, "pid": pid}
+    if str(headers.get("X-SM-Oneshot") or "").strip() == "1":
+        out["oneshot"] = True                    # it exits after this call: a gone proposer is expected
+    if sid and str(headers.get("X-SM-Stable-Id") or "").strip() == "1":
+        out["stable"] = True                     # the id is the CLI session's: it survives a bridge restart
+    return out
 
 
 def public(d: dict | None) -> dict | None:
@@ -90,14 +96,40 @@ def public(d: dict | None) -> dict | None:
     else:
         out["id"] = d.get("id")
         out["pid"] = d.get("pid")
+        for k in ("oneshot", "stable"):
+            if d.get(k):
+                out[k] = True
     return out
 
 
+def _successor(recorded: dict, caller: dict) -> bool:
+    """A live terminal bridge stands in for the recorded one: an MCP client may spawn a fresh
+    bridge (new PID, and a new id unless the CLI session supplies one) for every call. It is the
+    same CLI (actor), the recorded bridge is known to have exited, the caller is alive, and the two
+    do not carry two different CLI-session ids."""
+    if recorded.get("kind") != "terminal" or caller.get("kind") != "terminal":
+        return False
+    if recorded.get("actor") != caller.get("actor") or not recorded.get("pid") or not caller.get("pid"):
+        return False
+    if recorded.get("stable") and caller.get("stable") and recorded.get("id") != caller.get("id"):
+        return False                             # two CLI sessions, each with its own identity
+    return not agent_session.pid_alive(recorded.get("pid")) and agent_session.pid_alive(caller.get("pid"))
+
+
+def may_claim(proposer: dict | None, caller: dict | None) -> bool:
+    """A restarted terminal agent takes back the draft plan it proposed (same chip: plans are per
+    chip; same CLI): the caller is a successor of the recorded proposer and carries another id."""
+    if not proposer or not caller:
+        return False
+    return caller.get("id") != proposer.get("id") and _successor(proposer, caller)
+
+
 def same(a: dict | None, b: dict | None) -> bool:
+    """Is ``b`` (a request's driver) the agent recorded as ``a``?"""
     if not a or not b or a.get("kind") != b.get("kind"):
         return False
     if a.get("id") or b.get("id"):
-        return a.get("id") == b.get("id")
+        return a.get("id") == b.get("id") or _successor(a, b)
     return a.get("actor") == b.get("actor")      # neither sent an id: known by the CLI name only
 
 
@@ -110,12 +142,59 @@ def describe(d: dict | None) -> str:
     return f"{who} in a terminal" + (f" (bridge PID {d['pid']})" if d.get("pid") else "")
 
 
-def terminal_alive(d: dict | None) -> bool:
-    """A terminal driver is gone only when SM KNOWS its process exited (a
-    loopback bridge that sent its PID). No PID = cannot tell = still there."""
+# How long a terminal agent counts as present on a chip after its last request to SM, once the
+# bridge SM recorded has exited (a fresh bridge per call leaves no long-lived PID to watch).
+SEEN_WINDOW_S = 600.0
+_SEEN: dict = {}                                 # (chip key, actor) -> {"at", "ids": {id: at}, "busy"}
+_SEEN_LOCK = threading.Lock()
+
+
+def note_seen(key: str | None, d: dict | None, *, busy: int = 0, now: float | None = None) -> None:
+    """A terminal agent's request reached SM for chip ``key`` (process-local bookkeeping).
+    ``busy`` is +1 when a request starts and -1 when it ends, so a long held request (run_wait)
+    keeps its agent present for as long as it is held."""
+    if not key or not d or d.get("kind") != "terminal" or not d.get("actor"):
+        return
+    t = time.time() if now is None else now
+    with _SEEN_LOCK:
+        e = _SEEN.setdefault((key, d.get("actor")), {"at": 0.0, "ids": {}, "busy": 0})
+        e["at"] = t
+        if d.get("id"):
+            e["ids"][d["id"]] = t
+            if len(e["ids"]) > 64:
+                for old in sorted(e["ids"], key=e["ids"].get)[:-32]:
+                    e["ids"].pop(old, None)
+        e["busy"] = max(0, e["busy"] + busy)
+
+
+def seen_recently(key: str | None, d: dict | None, *, window: float | None = None,
+                  now: float | None = None) -> bool:
+    """Has this terminal agent (its CLI session when the id is stable, else any bridge of the
+    same CLI) talked to SM about chip ``key`` within ``window`` seconds (SEEN_WINDOW_S), or is a
+    request of it still in flight?"""
+    if not key or not d or d.get("kind") != "terminal":
+        return False
+    window = SEEN_WINDOW_S if window is None else window
+    t = time.time() if now is None else now
+    with _SEEN_LOCK:
+        e = _SEEN.get((key, d.get("actor")))
+        if not e:
+            return False
+        if d.get("stable") and d.get("id"):
+            at = e["ids"].get(d["id"])
+            return at is not None and (e["busy"] > 0 or t - at <= window)
+        return e["busy"] > 0 or t - e["at"] <= window
+
+
+def terminal_alive(d: dict | None, key: str | None = None) -> bool:
+    """A terminal driver is gone only when SM KNOWS its process exited (a loopback bridge that
+    sent its PID) and, given the chip ``key``, no bridge standing for it has talked to SM about
+    that chip within SEEN_WINDOW_S. No PID = cannot tell = still there."""
     if not d or d.get("kind") != "terminal":
         return False
-    return not d.get("pid") or agent_session.pid_alive(d.get("pid"))
+    if not d.get("pid") or agent_session.pid_alive(d.get("pid")):
+        return True
+    return seen_recently(key, d)
 
 
 # ------------------------------------------------------------------ the grant
@@ -255,7 +334,7 @@ def _invalid(instance_path, key: str, rec: dict | None, *,
     if d.get("kind") == "app" and mine and not app_open(d.get("id")):
         return (f"SM's in-app {d.get('backend') or 'agent'} session that drove plan `{g.get('title')}` is gone",
                 "driver_gone")
-    if d.get("kind") == "terminal" and not terminal_alive(d):
+    if d.get("kind") == "terminal" and not terminal_alive(d, key):
         return (f"{d.get('actor') or 'the agent'} that drove plan `{g.get('title')}` is gone "
                 f"(its SM bridge, PID {d.get('pid')}, exited)"), "driver_gone"
     return None, None

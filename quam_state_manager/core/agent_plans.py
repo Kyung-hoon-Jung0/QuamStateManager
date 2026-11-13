@@ -274,6 +274,12 @@ def approval_settled(instance_path, chip: str, plan_id: str | None, approval_id:
                 if applied:
                     st["applied"] = True
                 hit = True
+        ref = rec.get("refusal") or {}
+        if ref.get("code") == "awaiting_approval" and (
+                approval_id in (ref.get("approvals") or [])
+                or (not ref.get("approvals") and ref.get("needs") in (None, "writes"))):
+            rec["refusal"] = None                # the wait it said is over (approved or rejected)
+            hit = True
         if not hit:
             return None
         if rec.get("summary") is not None:

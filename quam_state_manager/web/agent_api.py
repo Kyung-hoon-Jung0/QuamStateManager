@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
+from flask import g as flask_g
 from quam_state_manager.web.request_body import json_object, json_text
 
 from quam_state_manager.core import journal as journal_mod
@@ -57,6 +58,40 @@ def _ascii_actor(s: str) -> str:
 logger = logging.getLogger(__name__)
 
 agent_bp = Blueprint("agent", __name__, url_prefix="/api/agent")
+
+
+def _seen_driver():
+    """The terminal agent behind this request and the open chip's key, or (None, None). Cheap:
+    no session file read (SM's in-app bridge ids start with ``app-``)."""
+    sid = str(request.headers.get("X-SM-Session") or "")
+    if not request.headers.get("X-SM-Agent") or not sid or sid.startswith("app-"):
+        return None, None
+    try:
+        from quam_state_manager.core import agent_grant
+        if not _r()._active_path():
+            return None, None
+        return agent_grant.request_driver(request.headers, _r()._request_actor(), request.remote_addr, None), _chip_key()
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+@agent_bp.before_request
+def _note_terminal_in():
+    """A terminal agent touching the chip counts as present (agent_grant.SEEN_WINDOW_S); a held
+    request (run_wait) keeps it present while it is held."""
+    d, key = _seen_driver()
+    if d is not None:
+        from quam_state_manager.core import agent_grant
+        agent_grant.note_seen(key, d, busy=1)
+        flask_g.sm_seen = (key, d)
+
+
+@agent_bp.teardown_request
+def _note_terminal_out(_exc=None):
+    seen = flask_g.pop("sm_seen", None)
+    if seen is not None:
+        from quam_state_manager.core import agent_grant
+        agent_grant.note_seen(seen[0], seen[1], busy=-1)
 
 _EVENT_RING = 800
 _events_lock = threading.Lock()
@@ -2339,6 +2374,13 @@ def run_node():
                            how="one node at a time on one chip; call run_wait on that key"), 409
         if ap is not None:
             approvals.mark_used(inst, chip, ap["id"], meta["key"])   # review R1-M2: consumed once
+    if plan and plan.get("refusal"):
+        # a step that started answers any earlier refusal: the card stops showing it
+        try:
+            agent_plans.update(inst, chip, plan["id"], refusal=None)
+            _bump()
+        except Exception:  # noqa: BLE001
+            logger.debug("plan refusal clear failed", exc_info=True)
     from quam_state_manager.core import agent_grant
     reg._set(meta, driver=agent_grant.public(driver))   # docs/253: which agent's run this is, on its record
     try:
@@ -2383,6 +2425,11 @@ def _plan_refused(inst, chip, name, plan, req, refusal: dict, *, driver: dict | 
         return
     code = str(refusal.get("refused") or "")
     note = {"code": code, "how": str(refusal.get("how") or "")[:400], "step": req.step, "at": time.time()}
+    if refusal.get("needs"):
+        note["needs"] = str(refusal["needs"])
+    blocking = [a.get("id") for a in refusal.get("approvals") or [] if isinstance(a, dict) and a.get("id")]
+    if blocking:
+        note["approvals"] = blocking            # the cards whose decision settles this refusal
     try:
         agent_plans.update(inst, chip, plan["id"], refusal=note)
         if code in _PLAN_ENDING_REFUSALS:
@@ -2640,6 +2687,9 @@ def approvals_decide(aid: str, verb: str):
         rec = approvals.decide(inst, chip, aid, status="approved" if verb == "approve" else "rejected", who=actor,
                                note=data.get("note"), writes=writes)
     out["approval"] = approvals.summary(rec)
+    held_step = held_refused = None
+    if rec.get("kind") == "writes" and rec.get("plan_id"):
+        held_step, held_refused = _held_writes_steps(inst, chip, rec)
     if rec.get("kind") == "writes":
         try:
             from quam_state_manager.core import agent_plans
@@ -2667,6 +2717,14 @@ def approvals_decide(aid: str, verb: str):
     else:
         journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from {_card_source(rec)}"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
+    if rec.get("kind") == "writes" and rec.get("plan_id"):
+        # the driving in-app session was refused (or told to wait) on these writes and ended its
+        # turn: it hears the decision, as an allowed run is heard (a terminal driver reads approvals)
+        applied = bool(verb == "approve" and (out.get("stage") or {}).get("applied"))
+        out["agent_told"] = _tell_agent(chip, _held_writes_message(rec, actor, applied, held_step, held_refused),
+                                        plan_id=rec.get("plan_id"))
+        if not out["agent_told"]:
+            out["told_note"] = _not_told_note(rec)
     _bump()
     _wake()
     return jsonify(**out)
@@ -2687,6 +2745,46 @@ def _allow_run_message(rec: dict, actor: str) -> str:
             f"(approval {rec.get('id')}). Call run_node now with exactly these arguments (and your reason): "
             f"{json.dumps(call, default=str)}. The approval covers this node, these targets and these params only; "
             "anything else is a new request.")
+
+
+def _held_writes_steps(inst, chip, rec: dict) -> tuple:
+    """For a writes approval of a plan, read BEFORE it settles: the step whose run proposed the
+    writes, and the step a run_node was refused on while they waited (None when neither is known)."""
+    from quam_state_manager.core import agent_plans
+    try:
+        plan = agent_plans.get(inst, chip, rec.get("plan_id")) or {}
+    except Exception:  # noqa: BLE001
+        return rec.get("step"), None
+    step = rec.get("step")
+    if step is None:
+        step = next((s.get("i") for s in plan.get("steps") or [] if s.get("approval") == rec.get("id")), None)
+    ref = plan.get("refusal") or {}
+    refused = None
+    if ref.get("code") == "awaiting_approval" and (rec.get("id") in (ref.get("approvals") or [])
+                                                   or not ref.get("approvals")):
+        refused = ref.get("step")
+    return step, refused
+
+
+def _held_writes_message(rec: dict, actor: str, applied: bool, step, refused) -> str:
+    """What the driving in-app session hears when a person decides a plan step's held writes."""
+    which = f"step {step}" if step is not None else "a step"
+    where = f" of plan {rec.get('plan_id')}"
+    n = len(rec.get("writes") or [])
+    if applied:
+        out = (f"The human ({actor}) approved the {n} held write(s) from {which}{where} (approval {rec.get('id')}); "
+               "they were applied to the chip.")
+        if refused is not None:
+            out += (f" run_node was refused on step {refused} while they waited: call run_node for step {refused} "
+                    "again now, exactly as the card shows it, and continue the plan.")
+        else:
+            out += " Continue the plan with its next pending step."
+        return out
+    out = (f"The human ({actor}) rejected the {n} held write(s) from {which}{where} (approval {rec.get('id')}); "
+           "nothing was written. Do not run that step again unless the human asks you to.")
+    if refused is not None and refused != step:
+        out += f" Step {refused}, refused while they waited, needs the human too: tell them, and do not retry it on your own."
+    return out
 
 
 def _edited_text(rec: dict) -> str:
@@ -2740,6 +2838,8 @@ def _not_told_note(rec: dict) -> str:
     if not g or (rec.get("plan_id") and g.get("plan_id") != rec.get("plan_id")):
         return f"its plan is not armed now, so no agent runs it (approval {aid})"
     d = g.get("driver") or {}
+    if d.get("kind") == "terminal" and rec.get("kind") == "writes":
+        return f"the plan is driven by {agent_grant.describe(d)}, which reads this decision itself (approval {aid})"
     if d.get("kind") == "terminal":
         return f"the plan is driven by {agent_grant.describe(d)}, which runs it with approval {aid}"
     return f"SM's in-app session that drives the plan is not open; approval {aid} waits for it"
@@ -3116,10 +3216,29 @@ def plan_get(pid: str):
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
-    rec = agent_plans.get(current_app.instance_path, _chip_key(), pid)
+    inst, chip = current_app.instance_path, _chip_key()
+    rec = agent_plans.get(inst, chip, pid)
     if rec is None:
         return _err("unknown plan", 404)
-    return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True))
+    claimed = False
+    if rec.get("status") == "draft" and r._request_actor().startswith("by_"):
+        # a terminal agent whose bridge restarted takes back the draft it proposed (same chip, same
+        # CLI); without this, its own plan could only ever be driven by SM's in-app agent
+        from quam_state_manager.core import agent_grant, agent_session
+        caller = _request_driver(agent_session.load(inst, chip))
+        if agent_grant.may_claim(rec.get("proposer"), caller):
+            was = rec.get("proposer")
+            rec = agent_plans.update(inst, chip, pid, proposer=agent_grant.public(caller)) or rec
+            claimed = True
+            journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}`: {agent_grant.describe(caller)} "
+                                                   f"took it back ({agent_grant.describe(was)} had exited)", kind="sm")
+            _bump()
+            _wake()
+    out = {"ok": True, "plan": _plan_view(rec, with_may_change=True)}
+    if claimed:
+        out["claimed"] = True
+        out["how"] = "you proposed this plan before your bridge restarted; you drive it again once a person presses Start"
+    return jsonify(**out)
 
 
 @agent_bp.route("/plans", methods=["POST"])
@@ -3194,10 +3313,16 @@ def plans_add():
     _bump()
     _wake()
     how = "the card is on the human's screen; nothing runs until a person presses Start. "
-    if (proposer or {}).get("kind") == "terminal":
-        how += ("When it is started you drive it -- SM's in-app agent will not: call plan_status with this plan_id "
-                "until its status is running, then run_node step by step with plan_id and step, each exactly as the "
-                "card shows it (node, targets, params).")
+    if (proposer or {}).get("kind") == "terminal" and (proposer or {}).get("oneshot"):
+        how += ("This call is a one-shot (it exits after answering), so when the plan is started SM's in-app agent "
+                "drives it, not you.")
+    elif (proposer or {}).get("kind") == "terminal":
+        how += ("If you are still here when it is started (this bridge still runs, or a call of yours reached SM "
+                f"for this chip within the last {int(agent_grant.SEEN_WINDOW_S // 60)} minutes), you drive it and "
+                "SM's in-app agent does not: call plan_status with this plan_id until its status is running, then "
+                "run_node step by step with plan_id and step, each exactly as the card shows it (node, targets, "
+                "params). If you have gone by then, nothing runs: the person is asked whether SM's in-app agent "
+                "drives it instead. After a restart, call plan_status with this plan_id to take the plan back.")
     else:
         how += "When told to go, call run_node step by step with plan_id and step."
     return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True), how=how)
@@ -3319,6 +3444,22 @@ def _plan_start_locked(pid, actor, inst, chip, name):
                                     f"{json.dumps(d['now'], default=str)}" for d in differs[:6])
                         + "): look at it again, then Start", 409, refused="envelope_changed", differs=differs,
                         envelope=env)
+    # A terminal agent's plan is never handed to another driver silently: when its proposer is known
+    # to have exited, the person chooses (Start again with driver "app"), unless the proposer was a
+    # one-shot call, which always exits after proposing and so always meant the in-app agent.
+    from quam_state_manager.core import agent_grant
+    # Present = its recorded bridge still runs, or a bridge of the same CLI (of the same CLI session
+    # when the bridge reports one) talked to SM about this chip within agent_grant.SEEN_WINDOW_S: an
+    # MCP client may spawn a fresh bridge for every call, so the recorded PID alone is always dead.
+    prop0 = rec.get("proposer") or {}
+    # a one-shot proposer exits after proposing, so its own last request never counts as presence
+    proposer_here = agent_grant.terminal_alive(prop0, None if prop0.get("oneshot") else chip)
+    if (prop0.get("kind") == "terminal" and not proposer_here and not prop0.get("oneshot")
+            and data.get("driver") != "app"):
+        return _err(f"{agent_grant.describe(prop0)}, which proposed this plan, has exited. Nothing was started: "
+                    "let SM's in-app agent drive it, or wait for the terminal agent to come back and take it "
+                    "(it calls plan_status with this plan_id)", 409, refused="proposer_gone",
+                    proposer=agent_grant.public(prop0))
     # review R1-M4: the mode is the PLAN's -- never written into the chip's Limits
     # the snapshot the plan can be reverted to
     pre_ts = None
@@ -3343,8 +3484,10 @@ def _plan_start_locked(pid, actor, inst, chip, name):
     from quam_state_manager.core import agent_grant
     snap = f", snapshot {pre_ts}" if pre_ts else ""
     prop = rec.get("proposer") or {}
-    if prop.get("kind") == "terminal" and agent_grant.terminal_alive(prop):
+    if prop.get("kind") == "terminal" and proposer_here:
         driver = {k: prop.get(k) for k in ("kind", "id", "actor", "pid")}
+        if prop.get("stable"):
+            driver["stable"] = True              # the CLI session's id: only its own bridges stand for it
         g = agent_grant.arm_plan(inst, chip, plan=rec, actor=actor, driver=driver, name=name, mode=mode)
         rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=g["at"],
                                  pre_ts=pre_ts, mode=mode, driver=agent_grant.public(driver),

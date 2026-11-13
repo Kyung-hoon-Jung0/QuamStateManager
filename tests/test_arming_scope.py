@@ -105,6 +105,15 @@ def fake_run(monkeypatch):
     return fr
 
 
+@pytest.fixture(autouse=True)
+def _fresh_presence():
+    """Terminal presence is process-local bookkeeping: no test sees another's."""
+    from quam_state_manager.core import agent_grant
+    agent_grant._SEEN.clear()
+    yield
+    agent_grant._SEEN.clear()
+
+
 def _key(c):
     return c.get("/api/agent/chip").get_json()["chip_key"]
 
@@ -319,8 +328,10 @@ class TestTheGrantEndsWithTheSession:
         assert "disarmed (plan `/run 05_power_rabi qA1`)" in line, line
         assert not _armed(c)
 
-    def test_the_driving_processs_exit_disarms(self, c, inst):
-        """A terminal agent's bridge that is gone drives nothing."""
+    def test_the_driving_processs_exit_disarms(self, c, inst, monkeypatch):
+        """A terminal agent's bridge that is gone, with no call of that CLI within the presence
+        window, drives nothing."""
+        from quam_state_manager.core import agent_grant
         dead = _dead_pid()
         h = {**TERM, "X-SM-Bridge-Pid": str(os.getpid())}
         pid = c.post("/api/agent/plans", json={"title": "t", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
@@ -332,6 +343,8 @@ class TestTheGrantEndsWithTheSession:
         g = dict(rec["grant"])
         g["driver"] = dict(g["driver"], pid=dead)
         agent_session.save(str(inst), k, grant=g)
+        assert _armed(c), "its CLI called SM just now: still present"
+        monkeypatch.setattr(agent_grant, "SEEN_WINDOW_S", -1.0)
         assert not _armed(c), "the strip's next read notices the driver is gone"
         assert "disarmed" in _journal(c, inst) and f"PID {dead}" in _journal(c, inst)
 
@@ -401,16 +414,132 @@ class TestOneDriver:
         assert r["ok"] and r["result"]["status"] == "done", r
         assert "driven by by_claude in a terminal" in _journal(c, inst)
 
-    def test_a_gone_proposer_hands_the_plan_to_the_in_app_agent(self, c, inst):
-        """The proposer exited before Start (claude -p ends after plan_propose):
-        SM's in-app agent drives it, and the journal says so."""
+    def test_a_gone_proposer_is_asked_about_never_handed_over(self, c, inst, fake_run, monkeypatch):
+        """A terminal agent's bridge exited before Start and nothing of that CLI has talked to SM
+        within the window: SM used to hand the plan to its in-app agent without asking, so another
+        agent ran hardware on a card the terminal proposed. Start now refuses (proposer_gone) and
+        changes nothing; the person's explicit choice, driver "app", lets the in-app agent drive."""
+        from quam_state_manager.core import agent_grant
+        monkeypatch.setattr(agent_grant, "SEEN_WINDOW_S", -1.0)     # its last call is long past
         h = {**TERM, "X-SM-Bridge-Pid": str(_dead_pid())}
         pid = c.post("/api/agent/plans", json={"title": "orphan", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
                      headers=h).get_json()["plan"]["id"]
-        d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
+        r = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN)
+        d = r.get_json()
+        assert r.status_code == 409 and d["refused"] == "proposer_gone", d
+        assert "has exited" in d["error"] and d["proposer"]["kind"] == "terminal", d
+        assert not _armed(c), "nothing was armed"
+        assert c.get(f"/api/agent/plans/{pid}").get_json()["plan"]["status"] == "draft"
+        cards = c.get("/api/agent/chat/cards").get_json()["cards"]
+        assert not any(k["kind"] == "user" and k["text"].startswith("[Start] plan") for k in cards), \
+            "the in-app agent was not told to run it"
+        assert fake_run.calls == []
+        d = c.post(f"/api/agent/plans/{pid}/start", json={"driver": "app"}, headers=HUMAN).get_json()
         assert d["ok"] and d["session_started"] is True and d["driver"]["kind"] == "app", d
         assert "has exited" in _journal(c, inst)
         assert _run(c, h, plan_id=pid, step=0).get_json()["refused"] == "not_the_driver"
+
+    def test_a_one_shot_proposer_still_hands_the_plan_to_the_in_app_agent(self, c, inst):
+        """``claude -p`` exits after plan_propose by design; its bridge says so (X-SM-Oneshot),
+        the propose answer says the in-app agent drives it, and Start hands it over as before."""
+        h = {**TERM, "X-SM-Bridge-Pid": str(_dead_pid()), "X-SM-Oneshot": "1"}
+        r = c.post("/api/agent/plans", json={"title": "one shot", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                   headers=h).get_json()
+        assert "one-shot" in r["how"] and "you drive it" not in r["how"], r["how"]
+        d = c.post(f"/api/agent/plans/{r['plan']['id']}/start", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["session_started"] is True and d["driver"]["kind"] == "app", d
+        assert "has exited" in _journal(c, inst)
+
+    def test_the_propose_answer_names_the_exit_case(self, c):
+        h = {**TERM, "X-SM-Bridge-Pid": str(os.getpid())}
+        how = c.post("/api/agent/plans", json={"title": "t", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=h).get_json()["how"]
+        assert "still here when it is started" in how and "within the last 10 minutes" in how, how
+        assert "If you have gone by then, nothing runs" in how, how
+        assert "SM's in-app agent drives it instead" in how and "plan_status" in how, how
+
+    def test_a_restarted_terminal_agent_takes_its_plan_back(self, c, inst, fake_run, monkeypatch):
+        """A new bridge of the same CLI on the same chip reclaims the draft its earlier bridge
+        proposed (plan_status), and then drives it after Start -- even past the window."""
+        from quam_state_manager.core import agent_grant
+        gone = {**TERM, "X-SM-Bridge-Pid": str(_dead_pid())}
+        pid = c.post("/api/agent/plans", json={"title": "reclaim", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=gone).get_json()["plan"]["id"]
+        new = {"X-SM-Agent": "claude", "X-SM-Session": "t-terminal02", "X-SM-Bridge-Pid": str(os.getpid())}
+        d = c.get(f"/api/agent/plans/{pid}", headers=new).get_json()
+        assert d["claimed"] is True and d["plan"]["proposer"]["id"] == "t-terminal02", d
+        assert "took it back" in _journal(c, inst)
+        monkeypatch.setattr(agent_grant, "SEEN_WINDOW_S", -1.0)     # the live claimant alone carries it now
+        d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["session_started"] is False and d["driver"]["kind"] == "terminal", d
+        r = _run(c, new, plan_id=pid, step=0).get_json()
+        assert r["ok"] and r["result"]["status"] == "done", r
+
+    def test_another_cli_or_a_live_proposer_is_never_claimed(self, c, inst, monkeypatch):
+        from quam_state_manager.core import agent_grant
+        monkeypatch.setattr(agent_grant, "SEEN_WINDOW_S", -1.0)
+        gone = {**TERM, "X-SM-Bridge-Pid": str(_dead_pid())}
+        pid = c.post("/api/agent/plans", json={"title": "mine", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=gone).get_json()["plan"]["id"]
+        codex = {"X-SM-Agent": "codex", "X-SM-Session": "t-codex01", "X-SM-Bridge-Pid": str(os.getpid())}
+        d = c.get(f"/api/agent/plans/{pid}", headers=codex).get_json()
+        assert "claimed" not in d and d["plan"]["proposer"]["id"] == "t-terminal01", d
+        assert c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).status_code == 409
+        live = {**TERM, "X-SM-Bridge-Pid": str(os.getpid())}
+        pid2 = c.post("/api/agent/plans", json={"title": "live", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                      headers=live).get_json()["plan"]["id"]
+        other = {"X-SM-Agent": "claude", "X-SM-Session": "t-terminal03", "X-SM-Bridge-Pid": str(os.getpid())}
+        d = c.get(f"/api/agent/plans/{pid2}", headers=other).get_json()
+        assert "claimed" not in d and d["plan"]["proposer"]["id"] == "t-terminal01", d
+
+    def test_a_fresh_bridge_for_every_call_still_drives_its_plan(self, c, inst, fake_run):
+        """An MCP client may spawn a new bridge process (new PID, new per-process id) for every
+        call, so the proposer's recorded bridge is always dead at Start. Its CLI touched the chip
+        just now, so it is present: Start gives it the plan, and a later bridge of the same CLI
+        runs the step (and the grant is not ended for a dead recorded PID)."""
+        b1 = {"X-SM-Agent": "claude", "X-SM-Session": "t-call0001", "X-SM-Bridge-Pid": str(_dead_pid())}
+        pid = c.post("/api/agent/plans", json={"title": "per call", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=b1).get_json()["plan"]["id"]
+        b2 = {"X-SM-Agent": "claude", "X-SM-Session": "t-call0002", "X-SM-Bridge-Pid": str(_dead_pid())}
+        assert c.get(f"/api/agent/plans/{pid}", headers=b2).status_code == 200      # plan_status, bridge gone after
+        d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["session_started"] is False and d["driver"]["kind"] == "terminal", d
+        assert _armed(c), "a dead recorded PID with a recent call does not end the grant"
+        codex = {"X-SM-Agent": "codex", "X-SM-Session": "t-call0004", "X-SM-Bridge-Pid": str(os.getpid())}
+        assert _run(c, codex, plan_id=pid, step=0).get_json()["refused"] == "not_the_driver", \
+            "another CLI never stands in"
+        b3 = {"X-SM-Agent": "claude", "X-SM-Session": "t-call0003", "X-SM-Bridge-Pid": str(os.getpid())}
+        r = _run(c, b3, plan_id=pid, step=0).get_json()
+        assert r["ok"] and r["result"]["status"] == "done", r
+
+    def test_two_cli_sessions_with_their_own_ids_are_two_agents(self, c, inst, fake_run):
+        """When the bridge reports its CLI session (X-SM-Stable-Id), only bridges of THAT session
+        stand for it: another session of the same CLI is another agent."""
+        mine = {"X-SM-Agent": "claude", "X-SM-Session": "t-cli-aaaa", "X-SM-Stable-Id": "1",
+                "X-SM-Bridge-Pid": str(_dead_pid())}
+        pid = c.post("/api/agent/plans", json={"title": "stable", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=mine).get_json()["plan"]["id"]
+        d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["driver"]["kind"] == "terminal" and d["driver"]["stable"] is True, d
+        theirs = {"X-SM-Agent": "claude", "X-SM-Session": "t-cli-bbbb", "X-SM-Stable-Id": "1",
+                  "X-SM-Bridge-Pid": str(os.getpid())}
+        assert _run(c, theirs, plan_id=pid, step=0).get_json()["refused"] == "not_the_driver"
+        again = {**mine, "X-SM-Bridge-Pid": str(os.getpid())}
+        r = _run(c, again, plan_id=pid, step=0).get_json()
+        assert r["ok"] and r["result"]["status"] == "done", r
+
+    def test_presence_is_a_window_and_a_held_request(self):
+        from quam_state_manager.core import agent_grant
+        d = {"kind": "terminal", "id": "t-x", "actor": "by_claude", "pid": None}
+        agent_grant.note_seen("k-window", d, now=1000.0)
+        assert agent_grant.seen_recently("k-window", d, now=1000.0 + agent_grant.SEEN_WINDOW_S - 1)
+        assert not agent_grant.seen_recently("k-window", d, now=1000.0 + agent_grant.SEEN_WINDOW_S + 1)
+        assert not agent_grant.seen_recently("k-other", d, now=1001.0), "per chip"
+        assert not agent_grant.seen_recently("k-window", {**d, "actor": "by_codex"}, now=1001.0), "per CLI"
+        agent_grant.note_seen("k-window", d, busy=1, now=1000.0)
+        assert agent_grant.seen_recently("k-window", d, now=99999.0), "a held request keeps it present"
+        agent_grant.note_seen("k-window", d, busy=-1, now=1000.0)
+        assert not agent_grant.seen_recently("k-window", d, now=99999.0)
 
     def test_the_in_app_secret_is_never_served(self, c, inst):
         """The in-app driver is told apart by a value only its own bridge holds;
@@ -502,7 +631,141 @@ class TestToldOnlyTheDriver:
         assert rec["status"] == "approved" and rec["used_by_run"] == r["key"], "a spent Allow stays what it was"
 
 
+class _FakeConversation:
+    ended = None
+    backend = type("B", (), {"name": "claude", "one_turn_per_process": False})()
+
+    def alive(self):
+        return True
+
+
+class _FakeChatManager:
+    """Stands in for the chip's in-app conversation: records every message SM sends it."""
+
+    def __init__(self):
+        self.sent = []
+        self.cur = _FakeConversation()
+
+    def get(self, key):
+        return self.cur
+
+    def send(self, key, msg):
+        self.sent.append(msg)
+        return {}
+
+
+class TestHeldWritesWakeTheDriver:
+    """A step's held writes decided on their card: the in-app driver ended its turn waiting for
+    exactly that, and nothing told it; the card kept "run refused ... waiting for a person's
+    approval" for the rest of the plan."""
+
+    @pytest.fixture
+    def world(self, c, inst, monkeypatch, synth_folder):
+        from quam_state_manager.core import agent_grant, approvals
+        from quam_state_manager.web import agent_api
+        mgr = _FakeChatManager()
+        monkeypatch.setattr(chat_api, "_manager", lambda: mgr)
+        monkeypatch.setattr(agent_api, "_app_open", lambda secret: True)
+        key = _key(c)
+        plan = agent_plans.add(str(inst), key, title="held", mode="ask-writes", created_by="by_claude",
+                               steps=[{"node": "05_power_rabi", "targets": ["qA1"]},
+                                      {"node": "05_power_rabi", "targets": ["qA1"]}])
+        driver = {"kind": "app", "id": "app-fake01", "actor": "by_claude", "backend": "claude"}
+        g = agent_grant.arm_plan(str(inst), key, plan=plan, actor="human", driver=driver, name=_name(c), mode="ask-writes")
+        agent_session.save(str(inst), key, app_session="app-fake01", backend="claude")
+        agent_plans.update(str(inst), key, plan["id"], status="running", started_at=g["at"],
+                           driver=agent_grant.public(driver))
+        state = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        old_t1 = state["qubits"]["qA1"]["T1"]
+        ap = approvals.add(str(inst), key, kind="writes", node="05_power_rabi", targets=["qA1"],
+                           writes=[{"path": "qubits.qA1.T1", "old": old_t1, "new": 3.3e-5}],
+                           reason="r", why_held="mode ask-writes", actor="by_claude", plan_id=plan["id"], step=0)
+        agent_plans.step_update(str(inst), key, plan["id"], 0, status="done", approval=ap["id"])
+        # the driver asks for step 1 while step 0's writes wait: refused, and the card says so
+        r = _run(c, {"X-SM-Agent": "claude", "X-SM-Session": "app-fake01"}, plan_id=plan["id"], step=1)
+        assert r.status_code == 409 and r.get_json()["refused"] == "awaiting_approval", r.get_json()
+        ref = agent_plans.get(str(inst), key, plan["id"])["refusal"]
+        assert ref["code"] == "awaiting_approval" and ref["approvals"] == [ap["id"]] and ref["step"] == 1, ref
+        return {"mgr": mgr, "pid": plan["id"], "aid": ap["id"], "key": key}
+
+    def test_an_approve_tells_the_driver_and_clears_the_refusal(self, c, inst, world, fake_run):
+        d = c.post(f"/api/agent/approvals/{world['aid']}/approve", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is True, d
+        assert len(world["mgr"].sent) == 1, world["mgr"].sent
+        msg = world["mgr"].sent[0]
+        assert "approved" in msg and "applied" in msg and world["aid"] in msg and "step 0" in msg, msg
+        assert "call run_node for step 1 again" in msg, msg
+        assert not agent_plans.get(str(inst), world["key"], world["pid"]).get("refusal"), "the stale line goes"
+        r = _run(c, {"X-SM-Agent": "claude", "X-SM-Session": "app-fake01"}, plan_id=world["pid"], step=1).get_json()
+        assert r["ok"], r
+
+    def test_a_reject_tells_the_driver_not_to_retry(self, c, inst, world):
+        d = c.post(f"/api/agent/approvals/{world['aid']}/reject", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is True, d
+        msg = world["mgr"].sent[-1]
+        assert "rejected" in msg and "nothing was written" in msg and world["aid"] in msg, msg
+        assert "Do not run that step again unless the human asks" in msg, msg
+        assert not agent_plans.get(str(inst), world["key"], world["pid"]).get("refusal")
+
+    def test_a_started_step_clears_any_refusal(self, c, inst, world, fake_run):
+        from quam_state_manager.core import approvals
+        approvals.decide(str(inst), world["key"], world["aid"], status="rejected", who="human")  # out of band
+        assert agent_plans.get(str(inst), world["key"], world["pid"])["refusal"], "nothing settled it on the card"
+        r = _run(c, {"X-SM-Agent": "claude", "X-SM-Session": "app-fake01"}, plan_id=world["pid"], step=1).get_json()
+        assert r["ok"], r
+        assert not agent_plans.get(str(inst), world["key"], world["pid"]).get("refusal")
+
+    def test_a_terminal_driver_reads_the_decision_itself(self, c, inst, monkeypatch):
+        from quam_state_manager.core import approvals
+        mgr = _FakeChatManager()
+        monkeypatch.setattr(chat_api, "_manager", lambda: mgr)
+        h = {**TERM, "X-SM-Bridge-Pid": str(os.getpid())}
+        pid = c.post("/api/agent/plans", json={"title": "t", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]},
+                     headers=h).get_json()["plan"]["id"]
+        assert c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()["ok"]
+        ap = approvals.add(str(inst), _key(c), kind="writes", node="05_power_rabi", targets=["qA1"],
+                           writes=[{"path": "qubits.qA1.T1", "old": 1.0, "new": 2.0}],
+                           reason="r", why_held="mode ask-writes", actor="by_claude", plan_id=pid, step=0)
+        d = c.post(f"/api/agent/approvals/{ap['id']}/reject", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is False and mgr.sent == [], d
+        assert "in a terminal" in d["told_note"] and "reads this decision itself" in d["told_note"], d
+
+    def test_a_plan_with_no_refusal_keeps_none(self, c, inst):
+        key = _key(c)
+        plan = agent_plans.add(str(inst), key, title="quiet", mode="ask-writes", created_by="by_claude",
+                               steps=[{"node": "05_power_rabi", "targets": ["qA1"]}])
+        agent_plans.step_update(str(inst), key, plan["id"], 0, approval="ap-x")
+        agent_plans.approval_settled(str(inst), key, plan["id"], "ap-x", applied=True)
+        assert agent_plans.get(str(inst), key, plan["id"]).get("refusal") is None
+        other = agent_plans.add(str(inst), key, title="other wait", mode="ask-all", created_by="by_claude",
+                                steps=[{"node": "05_power_rabi", "targets": ["qA1"]}])
+        note = {"code": "awaiting_approval", "needs": "run", "step": 0, "how": "x", "at": 1.0}
+        agent_plans.update(str(inst), key, other["id"], refusal=note)
+        assert agent_plans.approval_settled(str(inst), key, other["id"], "ap-y", applied=True) is None
+        assert agent_plans.get(str(inst), key, other["id"])["refusal"] == note, "a run wait is not a writes wait"
+
+
 class TestTheBridgeSaysWhoseItIs:
+    def test_a_bridge_reports_its_cli_session_and_a_one_shot(self, monkeypatch):
+        """Every bridge of one CLI session carries the same id (so a fresh bridge per call is the
+        same agent), says the id is stable, and a ``claude -p`` call says it is a one-shot."""
+        from quam_state_manager.core import agent_link
+        monkeypatch.setattr(agent_link, "BRIDGE_SESSION", None)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "abc-123")
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+        h = agent_link.SMLink("http://127.0.0.1:1", agent_id="claude")._headers()
+        assert h["X-SM-Session"] == "t-cli-abc-123" and h["X-SM-Stable-Id"] == "1" and h["X-SM-Oneshot"] == "1", h
+        monkeypatch.setattr(agent_link, "BRIDGE_SESSION", None)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+        h = agent_link.SMLink("http://127.0.0.1:1", agent_id="claude")._headers()
+        assert h["X-SM-Session"].startswith("t-") and not h["X-SM-Session"].startswith("t-cli-"), h
+        assert "X-SM-Stable-Id" not in h and "X-SM-Oneshot" not in h, h
+        monkeypatch.setattr(agent_link, "BRIDGE_SESSION", "app-xyz")      # SM's in-app session
+        monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+        h = agent_link.SMLink("http://127.0.0.1:1", agent_id="claude")._headers()
+        assert h["X-SM-Session"] == "app-xyz" and "X-SM-Oneshot" not in h and "X-SM-Stable-Id" not in h, h
+
     def test_a_terminal_bridge_names_itself_and_its_process(self, monkeypatch):
         from quam_state_manager.core import agent_link
         monkeypatch.setattr(agent_link, "BRIDGE_SESSION", None)
@@ -598,3 +861,19 @@ class TestStopBy:
             assert seen == [(pid, f"plan `/run 05_power_rabi qA1` was cancelled by human:user-a")], seen
         finally:
             agent_grant.ON_END.pop()
+
+
+def test_the_card_asks_who_drives_a_plan_whose_proposer_left():
+    """agent.js under jsdom: proposer_gone puts one sentence and two buttons on the card,
+    "Let the in-app agent drive" re-POSTs Start with driver "app", a cleared refusal leaves."""
+    import shutil
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run([node, str(root / "tests" / "agent_proposer_gone_selfcheck.cjs")], capture_output=True,
+                       text=True, encoding="utf-8", timeout=120, cwd=str(root))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 12, r.stdout
