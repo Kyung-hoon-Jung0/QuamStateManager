@@ -80,3 +80,48 @@ def test_only_nonfinite_bell_values_render_empty(tmp_path, nonfinite):
     c = _client(tmp_path, {"cz_unipolar": _cz(bell=nonfinite), "cz_flattop": _cz(bell=nonfinite)})
     cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
     assert re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", cell)) == "-", cell
+
+
+# gl-9ab: the pair's `cz` alias decides the headline (query.pair_operational_gate),
+# the same rule as the topology edge; with no alias the rule above is unchanged.
+
+def _text(cell):
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cell))
+
+
+def test_the_cz_alias_decides_even_when_it_names_the_worse_macro(tmp_path):
+    c = _client(tmp_path, {"cz": "#./cz_unipolar", "cz_unipolar": _cz(bell=0.1595),
+                           "cz_bipolar": _cz(bell=0.9821)})
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert "0.1595" in _text(cell) and "cz_unipolar" in _text(cell), cell
+    assert "0.9821" not in _text(cell), cell       # only in the title's "also" list
+    assert "cz_bipolar 0.9821" in cell, cell
+
+
+def test_an_absolute_alias_overrides_cz_flattop(tmp_path):
+    c = _client(tmp_path, {"cz": "#/qubit_pairs/q1-2/macros/cz_unipolar",
+                           "cz_flattop": _cz(bell=0.99), "cz_unipolar": _cz(bell=0.80)})
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert "0.8000" in _text(cell) and "0.9900" not in _text(cell), cell
+
+
+def test_an_alias_to_a_macro_without_bell_is_a_dash(tmp_path):
+    c = _client(tmp_path, {"cz": "#./cz_unipolar", "cz_unipolar": _cz(),
+                           "cz_bipolar": _cz(bell=0.98)})
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", cell)) == "-", cell
+
+
+def test_no_alias_still_takes_the_best_macro(tmp_path):
+    c = _client(tmp_path, {"cz_unipolar": _cz(bell=0.1595), "cz_bipolar": _cz(bell=0.9821)})
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert "0.9821" in _text(cell) and "cz_bipolar" in _text(cell), cell
+    assert "0.1595" not in _text(cell), cell
+
+
+def test_the_pairs_export_follows_the_alias(tmp_path):
+    c = _client(tmp_path, {"cz": "#./cz_unipolar", "cz_unipolar": _cz(bell=0.1595),
+                           "cz_bipolar": _cz(bell=0.9821)})
+    body = c.get("/export?entity=pairs&props=bell_fidelity&props=bell_gate").get_data(as_text=True)
+    assert "0.1595" in body and "cz_unipolar" in body, body
+    assert "0.9821" not in body, body

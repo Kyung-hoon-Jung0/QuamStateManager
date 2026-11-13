@@ -17624,19 +17624,42 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
 # ======================================================================
 
 
-def _pair_bell(p: dict) -> None:
-    """docs/301 (F21): the one Bell fidelity a Pairs row shows -- cz_flattop's
+def _pair_op_gate(store, pair_name: str) -> str | None:
+    """The macro the pair's ``cz`` alias names (query.pair_operational_gate),
+    read from the raw pair object, or None."""
+    from quam_state_manager.core.query import pair_operational_gate
+    pobj = ((store.merged.get("qubit_pairs") or {}).get(pair_name)
+            if store is not None else None)
+    if not isinstance(pobj, dict):
+        return None
+    return pair_operational_gate(pair_name, pobj.get("macros"))
+
+
+def _pair_bell(p: dict, op_gate: str | None = None) -> None:
+    """docs/301 (F21): the one Bell fidelity a Pairs row shows, with the gate
+    named (``bell_gate``) and the others listed.
+
+    gl-9ab: when the pair's ``cz`` alias names a macro (``op_gate``, from
+    query.pair_operational_gate) the row shows THAT macro's value, whatever it
+    is -- the same rule as the topology edge. Without an alias: cz_flattop's
     when that gate states one (as before), else the highest any CZ macro
-    states, with the gate named (``bell_gate``) and the others listed."""
+    states."""
     if p.get("_error"):
         return
     found = [(k[: -len("_bell_fidelity")], v) for k, v in p.items()
              if k.endswith("_bell_fidelity") and isinstance(v, (int, float))
              and not isinstance(v, bool) and math.isfinite(v)]
     flat = p.get("cz_flattop_bell_fidelity")
+    if op_gate:
+        value = p.get(f"{op_gate}_bell_fidelity")
+        if isinstance(value, float) and not math.isfinite(value):
+            value = None
+        # the alias decides; a macro without a Bell value shows "-" (the
+        # other macros stay listed in the cell's title)
+        gate = op_gate
     # cz_flattop's own value is shown whatever it holds (a text value is shown
     # quoted, as before) -- only a non-finite number gives way (review)
-    if flat is not None and not (isinstance(flat, float) and not math.isfinite(flat)):
+    elif flat is not None and not (isinstance(flat, float) and not math.isfinite(flat)):
         gate, value = "cz_flattop", flat
     elif found:
         gate, value = max(found, key=lambda kv: kv[1])
@@ -17701,7 +17724,7 @@ def pairs():
                               "_error": f"{type(exc).__name__}: {exc}"})
 
     for p in pair_data:
-        _pair_bell(p)
+        _pair_bell(p, _pair_op_gate(store, p.get("id")))
 
     # CR chips get CR-native columns (drive levers, 2Q fidelity, effective IF,
     # active badge) and adjacency ordering so the two DIRECTIONS of a physical
@@ -38024,7 +38047,7 @@ def _export_pair_rows(engine, props: list) -> list[dict]:
     for name in (store.qubit_pair_names if store else []):
         try:
             p = engine.get_pair(name)
-            _pair_bell(p)
+            _pair_bell(p, _pair_op_gate(store, name))
         except Exception:  # noqa: BLE001 -- the table shows such a pair as an error row
             continue
         rows.append({"id": name, **{k: p.get(k) for k in props}})

@@ -721,6 +721,20 @@ window.AgentPanel = (function () {
     S.mounts.forEach(function (m) { renderPlan(m, p, true); });
   }
 
+  /* gl-ck9: a run's held writes read as the approval record holds them NOW
+     (r.approval_state, from the server), never as they were when the run ended. */
+  function writesSummary(r, res) {
+    var n = res.writes.length;
+    if (res.applied) return n + " write(s) applied to the chip";
+    if (!res.approval) return n + " write(s) not staged";
+    var a = r.approval_state || {};
+    var by = a.decided_by ? " by " + a.decided_by : "";
+    if (a.status === "approved") return (a.n_writes != null ? a.n_writes : n) + " write(s) approved" + by + " and applied to the chip";
+    if (a.status === "rejected") return n + " write(s) rejected" + by + ", not written";
+    if (a.status === "expired") return n + " write(s) expired without a decision, not written";
+    return n + " write(s) waiting for approval";
+  }
+
   function renderRun(m, r, force) {
     var el = cardFor(m, "run", r.key, r.since);
     if (!el) return;
@@ -735,7 +749,7 @@ window.AgentPanel = (function () {
       (r.driver && r.driver.kind === "terminal" ? ' <span class="muted ag-via" title="' + esc(driverText(r.driver)) + '">via terminal</span>' : "");
     var writes = "";
     if (res.writes && res.writes.length) {
-      writes = '<details class="ag-writes"><summary>' + res.writes.length + " write(s) " + (res.applied ? "applied to the chip" : (res.approval ? "waiting for approval" : "not staged")) + "</summary><div class=\"ag-tbl\"><table>" +
+      writes = '<details class="ag-writes"><summary>' + writesSummary(r, res) + "</summary><div class=\"ag-tbl\"><table>" +
         res.writes.slice(0, 40).map(function (w) {
           var t = fmtRow([w.old, w.new], w.display);       // docs/272: old and new in one unit, one precision
           return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td title=\"" + esc("stored: " + rawText(w.old) + " → " + rawText(w.new)) + "\">" + esc(t[0]) + " → " + esc(t[1]) + "</td></tr>";
