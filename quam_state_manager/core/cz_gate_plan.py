@@ -35,6 +35,7 @@ import re
 import numpy as np
 
 from quam_state_manager.core import value_history, cz_flux_math
+from quam_state_manager.core.pulse_catalog import waveform_shape
 
 QUAD_LABEL = "quad-term estimate"
 MODEL_LABEL = "lab flux model"
@@ -369,7 +370,9 @@ class Conversion:
         res = {"amplitude_v": a, "frequency_hz": None, "kind": None, "quad_hz": None,
                "model_hz": None, "error_hz": None, "validity": None, "reason": None}
         if self.f01 is None or a is None:
-            res["reason"] = "f_01 or the operation amplitude is missing"
+            res["reason"] = ("f_01 and the operation amplitude are missing" if self.f01 is None and a is None
+                             else "f_01 is missing" if self.f01 is None
+                             else "the operation amplitude is missing")
             return res
         if a == 0:
             res.update(frequency_hz=self.f01, kind="idle f_01", validity="idle")
@@ -698,7 +701,13 @@ def _amplitude_view(doc, line):
         return
     played = line.get("played_pulse_path") or path
     levels = line["lobes"] or [{"name": "first lobe", "amplitude_v": amplitude}]
-    if len(levels) > 1:
+    if line.get("amplitude_source"):
+        # the amplitude IS a stored sample (the waveform's peak): volts on an LF port as it stands
+        channel = channel_of(doc, played + ".amplitude")
+        physical = channel is not None and _port_kind(doc, channel)[0] == "lf"
+        values = [amplitude]
+        levels = [{"name": line["amplitude_source"], "amplitude_v": amplitude}]
+    elif len(levels) > 1:
         channel = channel_of(doc, played + ".amplitude")
         rotated = number((resolved_tree(doc, path) or {}).get("axis_angle"))
         physical = channel is not None and _port_kind(doc, channel)[0] == "lf" and not rotated
@@ -993,9 +1002,16 @@ def operations(doc, conversions=None, unavailable=None):
                     amp_path = None
                     notes.append(missing_pulse)
                 amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
-                if amp_path and amp is None and not refusal:
-                    notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
+                shape = None
+                if amp_path and amp is None and not refusal:
+                    # a sample-array pulse has no amplitude field: its peak sample is the amplitude
+                    shape = waveform_shape(resolved_tree(doc, pulse_path) if pulse_path else None,
+                                           sampling_rate=current(doc, info["path"] + ".z.opx_output.sampling_rate"))
+                    if shape is not None:
+                        amp = shape["peak"]
+                    else:
+                        notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
@@ -1009,7 +1025,10 @@ def operations(doc, conversions=None, unavailable=None):
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
                               "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
                                               if pulse_path and isinstance(pulse, dict) else None),
-                              "amplitude_v": amp, "point": pt})
+                              "amplitude_v": amp, "point": pt,
+                              "amplitude_source": shape["label"] if shape else None,
+                              "waveform_samples": shape["samples"] if shape else None,
+                              "waveform_length_ns": shape["length_ns"] if shape else None})
             for ln in lines:
                 ln["lobes"] = []
                 if not ln["pulse_field"] or ln["refusal"]:
