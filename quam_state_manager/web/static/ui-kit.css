@@ -969,10 +969,9 @@ textarea:focus-visible { outline: var(--ui-focus-w) solid var(--ui-accent); outl
 .cmap[data-cm-pick="1"] .cm-dir-label,
 .cmap[data-cm-pick="1"] .cm-dir-legend { display: none; }
 /* the add door (core/diagram_add.py): two dashed ghost stones and the pair pick */
-.cm-dir-ghost { cursor: pointer; }
-.cm-dir-ghost .cm-dir-ghost-stone { fill: var(--ui-surface-1); stroke: var(--ui-accent); stroke-width: 2px; stroke-dasharray: 5 4; }
-.cm-dir-ghost .cm-dir-ghost-text { fill: var(--ui-accent); font-weight: var(--ui-fw); }
-.cm-dir-ghost:hover .cm-dir-ghost-stone, .cm-dir-ghost:focus-visible .cm-dir-ghost-stone { fill: var(--ui-accent-bg); stroke-dasharray: none; }
+.cm-dir-add-bar { display: flex; flex-wrap: wrap; gap: var(--ui-gap-1); margin: 0 0 var(--ui-gap-1); }
+.cm-dir-add-bar .cm-dir-ghost { width: auto; margin: 0; }
+.cm-dir-add-bar .cm-dir-ghost.cm-dir-ghost--armed { background: var(--ui-accent-bg); }
 .cm-node.cm-dir-addsel .cm-stone { stroke: var(--ui-accent); stroke-width: 4px; opacity: 1; }
 
 /* Chip Status metric panels as the chip map (D-96) */
@@ -1148,7 +1147,6 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .iw-port.cm-lit-sel[data-cm-lit-role="z"] circle, .iw-port.cm-lit-hover[data-cm-lit-role="z"] circle { stroke: var(--ui-feature-role-z-color) !important; }
 .iw-port.cm-lit-sel[data-cm-lit-role="coupler"] circle, .iw-port.cm-lit-hover[data-cm-lit-role="coupler"] circle { stroke: var(--ui-feature-role-coupler-color) !important; }
 .iw-port.cm-lit-sel, .iw-port.cm-lit-hover { filter: var(--ui-iw-port-cm-lit-sel-iw-port-cm-lit-hover-filter); }
-.cm-dir-ghost.cm-dir-ghost--armed .cm-dir-ghost-stone { fill: var(--ui-accent-bg); stroke-dasharray: none; stroke-width: var(--ui-bw-strip); }
 .cm-add-hint { display: flex; align-items: center; gap: var(--ui-cm-add-hint-gap); flex-wrap: wrap; }
 .cm-check-error { white-space: pre-wrap; max-height: var(--ui-opxmon-field-width); overflow: auto; font-size: var(--ui-fs-sm); }
 .cm-readback-table { margin-bottom: var(--ui-gap-2); }

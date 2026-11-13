@@ -6,6 +6,14 @@ let JSDOM;
 try { ({ JSDOM } = require('jsdom')); }
 catch (e) { console.error('SKIP: jsdom not installed'); process.exit(2); }
 
+// The field list is the Python one (core COUPLER_MODEL_FIELDS); the pytest
+// driver tests/test_generate_coupler_model.py passes it in. Run through it.
+if (!process.env.COUPLER_MODEL_FIELDS) {
+  console.error('COUPLER_MODEL_FIELDS is not set: run this through ' +
+                'pytest tests/test_generate_coupler_model.py::test_populate_coupler_model_selfcheck');
+  process.exit(1);
+}
+
 process.on('uncaughtException', function (e) {
   console.error('UNCAUGHT:', (e && e.stack) || e); process.exit(1);
 });

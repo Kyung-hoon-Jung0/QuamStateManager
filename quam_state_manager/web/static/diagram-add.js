@@ -465,7 +465,7 @@ window.DiagramAdd = (function () {
     }
     if (ev.key !== "Enter" && ev.key !== " ") return;
     var g = ev.target && ev.target.closest && ev.target.closest(".cm-dir-ghost");
-    if (!g) return;
+    if (!g || g.tagName === "BUTTON") return;   // a native button clicks itself
     ev.preventDefault();
     onMapClick(g);
   });

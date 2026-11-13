@@ -87,12 +87,22 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     ok(ghosts[0].getAttribute('data-cm') === 'add:qubit' && ghosts[1].getAttribute('data-cm') === 'add:pair',
        'the ghosts are add:qubit and add:pair');
     const svg = w.document.querySelector('svg.cm-svg');
-    const gx = +ghosts[0].querySelector('circle').getAttribute('cx');
+    const bar = w.document.querySelector('.cm-dir-add-bar');
+    ok(bar && ghosts[0].parentNode === bar && ghosts[1].parentNode === bar, 'both add buttons live in one bar');
+    ok(!svg.contains(ghosts[0]) && !svg.contains(ghosts[1]), 'the add buttons are not drawn inside the map');
+    ok(bar.compareDocumentPosition(svg) & w.Node.DOCUMENT_POSITION_FOLLOWING, 'the add bar sits above the map');
+    ok(ghosts[0].tagName === 'BUTTON' && ghosts[1].tagName === 'BUTTON', 'the add controls are native buttons');
     let maxStone = 0;
     w.document.querySelectorAll('.cm-stone').forEach((c) => { maxStone = Math.max(maxStone, +c.getAttribute('cx')); });
-    ok(gx > maxStone, 'the ghost column sits right of every stone');
-    ok(+svg.getAttribute('width') > gx, 'the svg grew to hold the ghost column');
+    ok(+svg.getAttribute('width') < maxStone + 2 * 200, 'the svg holds no extra add column');
     ok(w.document.querySelectorAll('.cm-stone').length === 3, 'the qubit stones are unchanged');
+    // A native button turns Enter into its own click; the key handler must not
+    // ALSO act, or "+ Add pair" would arm and un-arm on one press.
+    ghosts[1].dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    ok(!w.document.querySelector('[data-cm-add-hint]'), 'keydown Enter on the button is left to the button');
+    click(w, ghosts[1]);
+    ok(!!w.document.querySelector('[data-cm-add-hint]') && ghosts[1].getAttribute('aria-pressed') === 'true',
+       'one click arms + pair once');
   }
 
   // ── "+": open the qubit panel; a stone picks its feedline ───────────────
@@ -102,7 +112,7 @@ const urls = (win) => win._ajax.map((a) => a[1]);
     click(w, stone(w, 'q1'));
     ok(urls(w)[0] === '/qubit/q1', 'disarmed: a stone opens the inspector (' + urls(w)[0] + ')');
     w._ajax.length = 0;
-    click(w, w.document.querySelector('[data-cm="add:qubit"] circle'));
+    click(w, w.document.querySelector('[data-cm="add:qubit"]'));
     ok(urls(w).length === 1 && urls(w)[0] === '/diagram-add/panel?kind=qubit', 'the + opens the qubit panel');
     click(w, stone(w, 'q3'));
     ok(urls(w)[1] === '/diagram-add/panel?kind=qubit&feedline_of=q3', 'a stone moves the add to its feedline: ' + urls(w)[1]);
@@ -119,7 +129,7 @@ const urls = (win) => win._ajax.map((a) => a[1]);
   {
     const w = world(true);
     await tick(); await tick();
-    click(w, w.document.querySelector('[data-cm="add:pair"] circle'));
+    click(w, w.document.querySelector('[data-cm="add:pair"]'));
     ok(urls(w).length === 0, 'arming the pair pick sends nothing');
     ok(/control qubit/.test(w.document.getElementById('cm-add-panel').textContent), 'the panel says what to click');
     click(w, stone(w, 'q3'));

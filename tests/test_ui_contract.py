@@ -746,7 +746,6 @@ _STAGE6_SELECTORS = {
     '.cm-add-hint',
     '.cm-check',
     '.cm-check-error',
-    '.cm-dir-ghost.cm-dir-ghost--armed .cm-dir-ghost-stone',
     '.cm-lg',
     '.cm-lg-freed',
     '.cm-lg-hover',
