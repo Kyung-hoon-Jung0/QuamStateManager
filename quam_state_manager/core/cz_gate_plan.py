@@ -1049,6 +1049,14 @@ def operations(doc, conversions=None, unavailable=None):
         rows.pair_members[pair_name] = (roles["control"]["path"], roles["target"]["path"])
         pair_refusal = ("pair roles resolve to the same qubit" if roles["control"]["path"]
                         and roles["control"]["path"] == roles["target"]["path"] else None)
+        if pair_refusal is None:
+            # a role pointer that names no qubit: say that, not "f_01 is missing"
+            for role in ("control", "target"):
+                if not isinstance(current(doc, roles[role]["path"], None) if roles[role]["path"] else None, dict):
+                    raw = current(doc, pp + ".qubit_" + role, None)
+                    pair_refusal = (f"qubit_{role} points at {raw!s}, which names no qubit on this chip"
+                                    if raw is not None else f"qubit_{role} is not set")
+                    break
         plan = resolved_tree(doc, pp + ".extras.cz_plan")
         moving = current(doc, pp + ".moving_qubit")
         for name in mapping(pp + ".macros"):
