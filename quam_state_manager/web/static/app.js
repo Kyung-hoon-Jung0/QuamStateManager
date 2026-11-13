@@ -12765,6 +12765,27 @@ window.clearDetailPanelSearch = function(btnEl) {
        and the ops cannot go first (the gate plays them). The refusal names
        them (lab_delete_also) and offers the one way: all of them, in ONE
        batch (one Ctrl+Z), which the server checks again as a whole. */
+    /* A delete refused because a gate slot plays an op under it BY NAME
+       (error_kind "by_name"): one confirm control beside the refusal text,
+       re-posting the same delete with force=1. */
+    function _appendForceDeleteBtn(el, onForce) {
+        if (!el || el.querySelector("[data-force-delete]")) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-sm outline";
+        b.setAttribute("data-force-delete", "1");
+        b.textContent = "Delete anyway";
+        b.title = "The gate will play a name that no longer exists (one Ctrl+Z undoes it)";
+        b.onclick = function (e) {
+            e.stopPropagation();
+            b.disabled = true;
+            var p = onForce();
+            if (p && p.then) p.then(function () { b.disabled = false; },
+                                    function () { b.disabled = false; });
+        };
+        el.appendChild(b);
+    }
+
     function _appendCascadeBtn(el, path, also, label) {
         if (!el || el.querySelector(".tree-cascade-btn")) return;
         var b = document.createElement("button");
@@ -14530,11 +14551,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             }).catch(function () {
                 label.textContent = label.textContent.replace("refs: …", "refs: unknown");
             });
-        actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
+        function _postDelete(force) {
             var body = new URLSearchParams();
             body.append("dot_path", m.path);
             body.append("expect_chip", window.__chipToken || "");
-            _smFetch("/field/delete", { method: "POST",
+            if (force) body.append("force", "1");
+            return _smFetch("/field/delete", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json(); })
@@ -14542,6 +14564,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    // a gate slot plays an op under this path BY NAME: the
+                    // refusal says which; the confirm re-posts with force=1
+                    if (d.error_kind === "by_name" && !force) {
+                        _appendForceDeleteBtn(_ec, function () { return _postDelete(true); });
+                    }
                     if (d.pulses_page) _appendPulsesLink(_ec, d.pulses_page, "Open the Pulses page");
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
                         // w9/pulsegate: a set holding a pulse goes on the
@@ -14574,6 +14601,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (window._diagChanged) window._diagChanged();
             })
             .catch(function (e) { _showEditError(row, _netFail(e)); actionsSpan.remove(); });
+        }
+        actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
+            _postDelete(false);
         }));
         actionsSpan.appendChild(_mkBtn("Cancel", "keep", "", function () {
             actionsSpan.remove();

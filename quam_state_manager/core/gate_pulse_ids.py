@@ -131,14 +131,12 @@ def _slot_name(value, slot_path):
     return None, None
 
 
-def named_slot_plays(merged):
-    """Yield ``(op_path, holder_path, slot_path)`` for every pair-gate slot
-    that plays a channel operation BY NAME, on the channel the gate plays
-    that slot on: ``flux_pulse_qubit`` on the moving qubit's ``z``,
-    ``flux_pulse_target`` on the other qubit's ``z``, ``coupler_flux_pulse``
-    on the pair's coupler, a ``spectator_qubits_control`` entry on that
-    spectator's ``z``, and any other id-carrying slot on one of those. An op
-    of the same name on any other channel is not played by the slot."""
+def _named_slot_targets(merged):
+    """Yield ``(channels, holder, name, slot_path, strict)`` for every
+    pair-gate slot that names an operation (see :func:`named_slot_plays`).
+    ``strict``: the gate plays this slot on exactly these channels, so the
+    name must exist on one of them (any other id-carrying slot may be played
+    on any of the pair's channels, or not at all)."""
     pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
     if not isinstance(pairs, dict):
         return
@@ -173,17 +171,42 @@ def named_slot_plays(merged):
                         host = (_resolved_dict_path(merged, f"{mp}.spectator_qubits.{qk}")
                                 if isinstance(spec, dict) and qk in spec else None)
                         if name and host:
-                            yield from _ops_named(merged, [f"{host}.z"], name, holder, sp)
+                            yield [f"{host}.z"], holder, name, sp, True
                     continue
                 if slot in chans:
-                    hosts = chans[slot]
+                    hosts, strict = chans[slot], True
                 elif isinstance(value, dict):
-                    hosts = anywhere          # another id-carrying pulse slot
+                    hosts, strict = anywhere, False   # another id-carrying pulse slot
                 else:
                     continue                  # a plain field (phase, extras...)
                 holder, name = _slot_name(value, f"{mp}.{slot}")
                 if name:
-                    yield from _ops_named(merged, hosts, name, holder, f"{mp}.{slot}")
+                    yield hosts, holder, name, f"{mp}.{slot}", strict
+
+
+def named_slot_plays(merged):
+    """Yield ``(op_path, holder_path, slot_path)`` for every pair-gate slot
+    that plays a channel operation BY NAME, on the channel the gate plays
+    that slot on: ``flux_pulse_qubit`` on the moving qubit's ``z``,
+    ``flux_pulse_target`` on the other qubit's ``z``, ``coupler_flux_pulse``
+    on the pair's coupler, a ``spectator_qubits_control`` entry on that
+    spectator's ``z``, and any other id-carrying slot on one of those. An op
+    of the same name on any other channel is not played by the slot."""
+    for hosts, holder, name, slot_path, _strict in _named_slot_targets(merged):
+        yield from _ops_named(merged, hosts, name, holder, slot_path)
+
+
+def named_slot_missing(merged) -> list[tuple[str, str, list[str]]]:
+    """``(holder, name, channels)`` for every slot the gate plays BY NAME on
+    known channels where no operation of that name exists: the gate's
+    ``apply()`` would look the name up and fail (``generate_config()`` still
+    passes, so nothing else says so)."""
+    out = []
+    for hosts, holder, name, _sp, strict in _named_slot_targets(merged):
+        if strict and hosts and not any(True for _ in _ops_named(
+                merged, hosts, name, holder, _sp)):
+            out.append((holder, name, list(hosts)))
+    return out
 
 
 def _ops_named(merged, channels, name, holder, slot_path):

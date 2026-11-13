@@ -429,6 +429,7 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
                     else _waveform_findings(store))
 
     findings.extend(_gate_pulse_id_findings(root))
+    findings.extend(_gate_by_name_missing_findings(root))
     # one pulse length, one row: the QOP-aware waveform_length row (error)
     # replaces the plain spec row on the same field
     by_len = {f.jump_path for f in findings if f.category == "waveform_length"}
@@ -454,6 +455,26 @@ def _gate_pulse_id_findings(root):
         fix={"action": "fill_gate_ids", "label": f"Fill {n} ids",
              "edits": fill_edits(root),
              "confirm": f"Stage {n} pulse IDs using their operation keys?"})]
+
+
+def _gate_by_name_missing_findings(root):
+    """A pair-gate slot that plays an operation BY NAME (its inline pulse's
+    ``id``, or a plain name) on a channel that has no operation of that name:
+    quam_builder's CZGate plays ``z.play(get_pulse_name(pulse))``, so the
+    gate's apply() fails although generate_config() passes."""
+    from .gate_pulse_ids import named_slot_missing
+    try:
+        missing = named_slot_missing(root)
+    except Exception:  # noqa: BLE001 -- a lint never crashes
+        return []
+    return [Finding(
+        severity="warning", category="cz.gate_plays_missing_name",
+        location=holder,
+        message=f"gate slot plays operation {name!r} by name, which does not exist",
+        detail=("No operation of that name on " + ", ".join(chans)
+                + ": the gate plays the slot by name, so running it fails "
+                "(generate_config() still passes)."),
+        jump_path=holder) for holder, name, chans in missing]
 
 
 def _spec_findings(root: dict, store=None) -> list[Finding]:

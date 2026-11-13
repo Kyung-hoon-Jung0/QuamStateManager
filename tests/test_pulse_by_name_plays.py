@@ -261,3 +261,99 @@ class TestTheRowCountFollowsTheSlot:
         from quam_state_manager.core.pulse_index import is_by_name_holder
         assert not is_by_name_holder("qubit_pairs.q1-q2.macros.cz_flat.phase_shift_control")
         assert is_by_name_holder(HOLDER)
+
+
+class TestTheEditBatchDeleteDoor:
+    """/field/edit-batch delete rows are judged like /field/delete: a
+    container delete that takes an op a slot plays by name is refused."""
+
+    def _post(self, client, paths, **extra):
+        return client.post("/field/edit-batch", json={
+            "updates": [{"dot_path": p, "delete": True} for p in paths], **extra})
+
+    def test_a_channel_delete_is_refused_and_nothing_written(self, client):
+        r = self._post(client, ["qubits.q1.z"])
+        assert r.status_code == 409, r.data[:300]
+        j = r.get_json()
+        assert j["error_kind"] == "by_name" and j["by_name"] == [HOLDER]
+        assert _store(client).get_value(f"{OP}.length") == 40
+
+    def test_the_qubit_itself_is_refused_too(self, client):
+        r = self._post(client, ["qubits.q1"])
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "by_name"
+
+    def test_independent_mode_is_refused_too(self, client):
+        r = self._post(client, ["qubits.q1.z"], independent=True)
+        assert r.status_code == 409
+        assert _store(client).get_value(f"{OP}.length") == 40
+
+    def test_forced_it_deletes_and_one_undo_restores(self, client):
+        r = self._post(client, ["qubits.q1.z", "qubits.q2.xy"], force="1")
+        assert r.status_code == 200, r.data[:300]
+        with pytest.raises(Exception):
+            _store(client).get_value(f"{OP}.length")
+        assert client.post("/undo").status_code == 200
+        st = _store(client)
+        assert st.get_value(f"{OP}.length") == 40
+        assert st.get_value("qubits.q2.xy") == {"operations": {}}
+
+    def test_the_slot_owner_deleted_with_it_is_not_refused(self, client):
+        r = self._post(client, ["qubits.q1.z", "qubit_pairs.q1-q2"])
+        assert (r.get_json() or {}).get("error_kind") != "by_name", r.data[:300]
+
+    def test_an_unrelated_container_is_unchanged(self, client):
+        r = self._post(client, ["qubits.q2.z"])
+        assert r.status_code == 200, r.data[:300]
+
+
+class TestTheDiagnosticsFinding:
+    def _found(self, st):
+        from quam_state_manager.core import diagnostics
+        from quam_state_manager.core.loader import QuamStore
+        return [f for f in diagnostics.lint_state(QuamStore.from_dicts(st, _wiring()))
+                if f.category == "cz.gate_plays_missing_name"]
+
+    def test_a_slot_naming_a_missing_op_is_found(self):
+        st = _state()
+        del st["qubits"]["q1"]["z"]["operations"]["cz_flat_q2"]
+        found = self._found(st)
+        assert [f.jump_path for f in found] == [HOLDER]
+        assert "cz_flat_q2" in found[0].message
+
+    def test_the_name_on_another_qubit_does_not_count(self):
+        st = _state()
+        del st["qubits"]["q1"]["z"]["operations"]["cz_flat_q2"]
+        assert "cz_flat_q2" in st["qubits"]["q2"]["z"]["operations"]
+        assert len(self._found(st)) == 1
+
+    def test_a_chip_whose_slots_resolve_has_none(self):
+        assert self._found(_state()) == []
+
+
+class TestTheRowCountFollowsTheChannel:
+    """A pair field that moves the slot to another channel (moving_qubit and
+    friends) is a value write too, and the by-name count must follow it."""
+
+    def _pi(self, client):
+        ctx = next(iter(client._app.config["contexts"].values()))
+        from quam_state_manager.core.pulse_index import PulseIndex
+        pi = ctx.get("pulse_index") or PulseIndex(ctx["store"])
+        ctx["pulse_index"] = pi
+        return ctx, pi
+
+    def test_a_moving_qubit_edit_moves_the_count(self, client):
+        ctx, pi = self._pi(client)
+        q2 = "qubits.q2.z.operations.cz_flat_q2"
+        assert pi.row(OP)["used_by"] == [f"{HOLDER} ({BY_NAME_LABEL})"]
+        assert pi.row(q2)["used_by"] == []
+        ctx["modifier"].set_value("qubit_pairs.q1-q2.moving_qubit", "target")
+        assert pi.row(OP)["used_by"] == []
+        assert pi.row(q2)["used_by"] == [f"{HOLDER} ({BY_NAME_LABEL})"]
+
+    def test_the_channel_fields_are_holders(self):
+        from quam_state_manager.core.pulse_index import is_by_name_holder
+        for p in ("qubit_pairs.q1-q2.moving_qubit", "qubit_pairs.q1-q2.qubit_control",
+                  "qubit_pairs.q1-q2.coupler",
+                  "qubit_pairs.q1-q2.macros.cz_flat.spectator_qubits.q3"):
+            assert is_by_name_holder(p), p
+        assert not is_by_name_holder("qubit_pairs.q1-q2.extras.note")

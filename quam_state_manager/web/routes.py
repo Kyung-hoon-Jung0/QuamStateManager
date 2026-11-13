@@ -17104,6 +17104,18 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                          if n in _ps_skip else {})}
                      for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
+    # a delete row (a channel, a qubit, a whole container) that takes an op a
+    # pair-gate slot plays BY NAME, while the slot stays: refused as the Json
+    # Tree's /field/delete, naming the slot; force=1 deletes anyway. A slot
+    # deleted in the same batch loses nothing. The Delete-together door asked
+    # this already (with its own force).
+    if not pulse_door:
+        _del_paths = [dp for n, (dp, v, _c) in enumerate(pairs)
+                      if v is _BATCH_DELETE and n not in _ps_skip]
+        _by_name = _by_name_cut(modifier.store, _del_paths) if _del_paths else []
+        if _by_name and str(_pj.get("force") or request.form.get("force") or "") != "1":
+            return _by_name_refused_json(_by_name)
+
     # docs/20 r12-B: an FSP edit never silently changes amplitudes. D-44: an
     # unacked batch commits now and the offer follows (X-SM-Fsp-Changed);
     # fsp_ack=comp still sends FSP + compensated amps in ONE group (one
@@ -28222,6 +28234,7 @@ def _synth_write_refusal(store, writes):
         jobs = [(op, {"body": b}) for op, b in bodies.items()]
         jobs += [(op, {"overrides": ov}) for op, ov in overrides.items()]
         qop = None
+        found: list[tuple[str, str]] = []     # (sentence without the lead, op)
         for op, kw in jobs:
             if qop is None:
                 with store._lock:
@@ -28229,6 +28242,11 @@ def _synth_write_refusal(store, writes):
             after = waveform_synth.synth_for_operation(store, op, **kw)
             problem = waveform_synth.pulse_write_problem(after, qop or None)
             if not problem:
+                continue
+            if not after.get("rule_violation") and not _synth_reaches_config(store, op):
+                # the length rule is QOP's for a CONFIG pulse; a pulse
+                # generate_config() never builds (a gate macro's own object
+                # reached only by field pointers) is not sent to QOP
                 continue
             before = waveform_synth.synth_for_operation(store, op)
             if waveform_synth.pulse_write_problem(before, qop or None) == problem:
@@ -28239,13 +28257,34 @@ def _synth_write_refusal(store, writes):
             why = ("quam's generate_config() would raise for the whole chip"
                    if after.get("rule_violation") else
                    "QOP would refuse every program on the chip")
-            return (f"{_SYNTH_REFUSAL_LEAD}: {leaf} at {op}"
-                    + (f" ({fields})" if fields else "")
-                    + f" -- {problem}. {why}, so every node would fail.",
-                    sorted(idx_of.get(op) or ()))
+            found.append((f"{leaf} at {op}" + (f" ({fields})" if fields else "")
+                          + f" -- {problem}. {why}", op))
+        if found:
+            # every pulse a rule breaks is refused (an independent batch skips
+            # each one's rows); one pulse keeps the single-pulse sentence
+            idx = sorted(set().union(*(idx_of.get(op) or set() for _t, op in found)))
+            if len(found) == 1:
+                return (f"{_SYNTH_REFUSAL_LEAD}: {found[0][0]}, so every node "
+                        "would fail.", idx)
+            return (f"{_SYNTH_REFUSAL_LEAD} ({len(found)} pulses): "
+                    + "; ".join(t for t, _op in found)
+                    + ". Every node would fail.", idx)
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("pulse rule check failed", exc_info=True)
     return None
+
+
+def _synth_reaches_config(store, op: str) -> bool:
+    """Diagnostics' own rule (``diagnostics._reaches_config``): the pulse at
+    *op* is built by ``generate_config()`` -- it sits in a channel's
+    ``operations`` (a path test, so a whole pulse written there counts) or an
+    operation points at it. A check that cannot run answers True."""
+    from quam_state_manager.core.diagnostics import _reaches_config
+    try:
+        with store._lock:
+            return _reaches_config(store.merged, op)
+    except Exception:  # noqa: BLE001 -- unknown: keep the guard
+        return True
 
 
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
