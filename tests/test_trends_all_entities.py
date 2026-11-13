@@ -956,6 +956,16 @@ class TestReviewRound3:
             assert not _is_fidelity_tail(tail), tail
             assert not _trend_is_gate_fidelity(tail), tail
 
+    def test_an_rb_details_block_is_read_as_its_rb_experiment(self):
+        """A node's `<RB key>_details` block repeats the experiment's numbers:
+        StandardRB_details.fidelity is per Clifford, so it never wears the
+        2Q gate fidelity label; InterleavedRB_details.fidelity is per gate."""
+        from quam_state_manager.web.routes import _trend_is_gate_fidelity, _trend_rb_segment
+        assert not _trend_is_gate_fidelity("macros.cz.fidelity.StandardRB_details.fidelity")
+        assert _trend_rb_segment("macros.cz.fidelity.StandardRB_details.fidelity")[1] == "clifford"
+        assert _trend_is_gate_fidelity("macros.cz.fidelity.InterleavedRB_details.fidelity")
+        assert _trend_rb_segment("macros.cz.fidelity.InterleavedRB_details.fidelity")[1] == "gate"
+
     def test_the_vocabulary_comes_from_query_s_own_maps(self):
         """ONE vocabulary in the codebase. `query.fidelity_field_kind` is what
         `_extract_pair_gate_fidelities` skips run ids with, and it is what the

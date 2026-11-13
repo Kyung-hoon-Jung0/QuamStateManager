@@ -21319,7 +21319,12 @@ def _trend_rb_segment(tail: str) -> tuple[int, str] | None:
 
     segs = [s for s in str(tail or "").split(".") if s]
     for i in range(len(segs) - 1, -1, -1):
-        lvl = rb_level(segs[i])
+        name = segs[i]
+        # a node's `<RB key>_details` block repeats that experiment's numbers
+        # (StandardRB_details.fidelity is per Clifford like StandardRB itself)
+        if name.lower().endswith("_details"):
+            name = name[:-len("_details")]
+        lvl = rb_level(name)
         if lvl and lvl in _TREND_2Q_LEVEL_LABELS:
             return i, lvl
     return None
