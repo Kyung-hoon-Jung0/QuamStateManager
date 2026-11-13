@@ -41,6 +41,7 @@ QUBIT_SOURCES: dict[str, tuple[tuple[str, ...], ...]] = {
     "f_01": (("f_01",),),
     "anharmonicity": (("anharmonicity",),),
     "readout_frequency": (("resonator", "f_01"),),
+    "readout_rf_frequency": (("resonator", "RF_frequency"),),
     "x180_amplitude": (("xy", "operations", "x180_DragCosine", "amplitude"),),
     "x90_amplitude": (("xy", "operations", "x90_DragCosine", "amplitude"),),
     "readout_amplitude": (("resonator", "operations", "readout", "amplitude"),),

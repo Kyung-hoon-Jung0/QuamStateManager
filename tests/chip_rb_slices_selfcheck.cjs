@@ -82,7 +82,7 @@ function bigNode(id, loc, i) {
   const n = node(id, loc), f = 1 + ((i * 7) % 13) / 100;
   Object.assign(n, { T1: 12e-6 * f, T2ramsey: 15e-6 * f, T2echo: 20e-6 * f, gate_fidelity_avg: 0.998 - i / 1e4,
     gate_fidelity_x180: 0.997 - i / 1e4, gate_fidelity_x90: 0.996 - i / 1e4, assignment_fidelity: 0.95 - i / 1e3,
-    ro_fidelity_g: 0.97 - i / 1e3, ro_fidelity_e: 0.93 - i / 1e3, f_01: 5.1e9 * f, readout_frequency: 7.2e9 * f,
+    ro_fidelity_g: 0.97 - i / 1e3, ro_fidelity_e: 0.93 - i / 1e3, f_01: 5.1e9 * f, readout_frequency: 7.2e9 * f, readout_rf_frequency: 7.2e9 * f, readout_rf_source: 'RF_frequency',
     anharmonicity: -200e6 * f, x180_amplitude: 0.12 * f, x90_amplitude: 0.06 * f, readout_amplitude: 0.03 * f });
   return n;
 }

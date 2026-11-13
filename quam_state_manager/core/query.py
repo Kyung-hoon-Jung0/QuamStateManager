@@ -35,7 +35,8 @@ _OPX1000_FEM_OUTPUTS = {"lf-fem": 8, "mw-fem": 8}
 # record (physicality / verdict / recency / provenance) without re-deriving it.
 _NODE_METRIC_KEYS = (
     "f_01", "f_12", "anharmonicity", "chi", "T1", "T2ramsey", "T2echo",
-    "readout_frequency", "x180_amplitude", "x180_length", "x180_alpha",
+    "readout_frequency", "readout_rf_frequency",
+    "x180_amplitude", "x180_length", "x180_alpha",
     "x90_amplitude", "saturation_amplitude", "readout_amplitude",
     "readout_length", "readout_threshold", "assignment_fidelity",
     "assignment_fidelity_gef",
@@ -67,6 +68,28 @@ def _rejected_metric_keys(readout: Any) -> set[str]:
         if isinstance(cm, list) and cm and not _valid_confusion_matrix(cm):
             out.update(keys)
     return out
+
+
+def _played_readout(store, rr: dict, name: str) -> dict:
+    """The frequency a qubit's resonator PLAYS, for the Chip Status
+    Frequencies panel: its ``RF_frequency`` resolved through pointers, else
+    ``f_01`` (the source names which). ``readout_frequency`` keeps holding
+    ``resonator.f_01`` because history, trends and exports are keyed on it;
+    this is a separate key so none of those move. The RF is read the way
+    quam computes it (``cr_semantics.channel_effective_rf_if``: a literal or
+    pointer, or the inferred alias as LO + IF), the read the Resonators page
+    already shows."""
+    from quam_state_manager.core import cr_semantics
+    try:
+        rf, _if = cr_semantics.channel_effective_rf_if(store, rr, ("qubits", name, "resonator"))
+    except Exception:  # noqa: BLE001 -- a panel value degrades to f_01, never the topology
+        rf = None
+    if _is_num(rf):
+        return {"readout_rf_frequency": rf, "readout_rf_source": "RF_frequency"}
+    f01 = _resolve(store, rr.get("f_01"), ("qubits", name, "resonator", "f_01"))
+    if _is_num(f01):
+        return {"readout_rf_frequency": f01, "readout_rf_source": "f_01"}
+    return {"readout_rf_frequency": None, "readout_rf_source": None}
 
 
 def _make_metric_record(key, resolved_value, *, updated_at=None, provenance=None,
@@ -763,6 +786,7 @@ class QueryEngine:
                 "T2ramsey": q.get("T2ramsey"),
                 "T2echo": q.get("T2echo"),
                 "readout_frequency": _resolve(self.store, rr.get("f_01"), ("qubits", name, "resonator", "f_01")),
+                **_played_readout(self.store, rr, name),
                 "x180_amplitude": _resolve(self.store, x180.get("amplitude"), ("qubits", name, "xy", "operations", "x180_DragCosine", "amplitude")),
                 "x180_length": _resolve(self.store, x180.get("length"), ("qubits", name, "xy", "operations", "x180_DragCosine", "length")),
                 "x180_alpha": _resolve(self.store, x180.get("alpha"), ("qubits", name, "xy", "operations", "x180_DragCosine", "alpha")),

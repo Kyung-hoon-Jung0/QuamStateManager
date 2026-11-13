@@ -1243,11 +1243,15 @@ window.ChipStatus.mount = function (opts) {
         return { bg: _rgbCss(mix), fg: _rgbCss(ink),
                  cr: Math.round(Math.max(c0, c1) * 100) / 100 };
     }
+    // the panels whose values are frequencies shown in GHz
+    function _isGHzKey(key) {
+        return key === 'f_01' || key === 'readout_frequency' || key === 'readout_rf_frequency';
+    }
     // the one unit a panel's values are shown in (the title carries it once)
     function _tmapUnit(key) {
         if (/^T1$|^T2/.test(key)) return '\u00b5s';
         if (/fidelity/.test(key) || /^2q:/.test(key)) return '%';
-        if (key === 'f_01' || key === 'readout_frequency') return 'GHz';
+        if (_isGHzKey(key)) return 'GHz';
         if (key === 'anharmonicity') return 'MHz';
         return '';
     }
@@ -1256,7 +1260,7 @@ window.ChipStatus.mount = function (opts) {
         if (/^2q:/.test(key)) return (v * 100).toFixed(2);
         if (/^T1$|^T2/.test(key)) return (v * 1e6).toFixed(1);
         if (/fidelity/.test(key)) return (v * 100).toFixed(2);
-        if (key === 'f_01' || key === 'readout_frequency') return (v / 1e9).toFixed(4);
+        if (_isGHzKey(key)) return (v / 1e9).toFixed(4);
         if (key === 'anharmonicity') return (v / 1e6).toFixed(1);
         return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
     }
@@ -1356,7 +1360,12 @@ window.ChipStatus.mount = function (opts) {
     ];
 
     // Combined (all) — used by metric panels and heatmap
-    var ALL_CARD_PROPS = PRIMARY_CARD_PROPS.concat(SECONDARY_CARD_PROPS);
+    // gl-f4h: the Frequencies panel's played readout RF (query._played_readout);
+    // a panel value, not a qubit-card row
+    var PANEL_ONLY_PROPS = [
+        {key:'readout_rf_frequency', fmtFn:function(v){return fmt(v,'GHz');}},
+    ];
+    var ALL_CARD_PROPS = PRIMARY_CARD_PROPS.concat(SECONDARY_CARD_PROPS, PANEL_ONLY_PROPS);
 
     // Filter each group to properties with at least 1 non-null value
     var PRIMARY_PROPS = PRIMARY_CARD_PROPS.filter(function(p) {
@@ -4840,7 +4849,7 @@ window.ChipStatus.mount = function (opts) {
             {key:'T2ramsey',          title:'T2 Ramsey (\u00b5s)',      group:'coherence'},
             {key:'T2echo',            title:'T2 Echo (\u00b5s)',        group:'coherence'},
             {key:'f_01',              title:'Qubit Frequency f\u2080\u2081', group:'frequency'},
-            {key:'readout_frequency', title:'Readout Frequency',        group:'frequency'},
+            {key:'readout_rf_frequency', title:'Readout Frequency, played RF', group:'frequency'},
             {key:'anharmonicity',     title:'Anharmonicity',            group:'frequency'},
             {key:'x180_amplitude',    title:'x180 Amplitude',           group:'calibration'},
             {key:'x90_amplitude',     title:'x90 Amplitude',            group:'calibration'},
@@ -4858,7 +4867,7 @@ window.ChipStatus.mount = function (opts) {
         // Bar labels use already-converted display values (μs, GHz, %, etc.)
         function fmtBarLabel(v, key) {
             if (key === 'T1' || key === 'T2ramsey' || key === 'T2echo') return (v).toFixed(1);
-            if (key === 'f_01' || key === 'readout_frequency') return (v).toFixed(4);
+            if (_isGHzKey(key)) return (v).toFixed(4);
             if (key === 'anharmonicity') return (v).toFixed(1);
             // same significant figures as the map's own labels (0.03929, not 0.04)
             if (typeof v === 'number') return Math.abs(v) >= 100 ? v.toFixed(1) : v.toPrecision(4);
@@ -4925,6 +4934,31 @@ window.ChipStatus.mount = function (opts) {
             panels.push({ key: def.key, group: def.group, built: false, cells: topo.nodes.length, make: function () {
             // (body unchanged, made when the panel is built: the palette is the one on screen then)
             var secId = 'mp-' + def.key.replace(/[^a-zA-Z0-9]/g, '-');
+            // gl-f4h: the played-RF panel names, per qubit, the resonator's
+            // f_01 where it differs (at the shown precision) and a qubit whose
+            // resonator has no RF_frequency (its value is f_01, said so)
+            function _roNote(n) {
+                if (def.key !== 'readout_rf_frequency') return '';
+                if (n.readout_rf_source === 'f_01') return ' \u00b7 no RF_frequency: showing resonator f_01';
+                var f = n.readout_frequency, rf = n.readout_rf_frequency;
+                if (typeof f === 'number' && typeof rf === 'number' && fmt(f, 'GHz') !== fmt(rf, 'GHz')) {
+                    return ' \u00b7 resonator f_01 ' + fmt(f, 'GHz');
+                }
+                return '';
+            }
+            function _roLines() {
+                if (def.key !== 'readout_rf_frequency') return '';
+                var diff = [], fb = [];
+                topo.nodes.forEach(function (n) {
+                    if (!_roNote(n)) return;
+                    if (n.readout_rf_source === 'f_01') fb.push(_esc(n.id));
+                    else diff.push(_esc(n.id) + ': resonator f_01 ' + fmt(n.readout_frequency, 'GHz'));
+                });
+                var out = '';
+                if (diff.length) out += '<p class="muted topo-metric-novalue" data-ro-f01="1">' + diff.join(' \u00b7 ') + '</p>';
+                if (fb.length) out += '<p class="muted topo-metric-novalue" data-ro-fallback="1">no RF_frequency, showing resonator f_01: ' + fb.join(', ') + '</p>';
+                return out;
+            }
             var stops = dCfg.colorScale;
             var range = agg.max - agg.min || 1;
             // Outliers off the same gated values (`vals`). For metrics with a
@@ -4960,6 +4994,8 @@ window.ChipStatus.mount = function (opts) {
                     + (def.source ? '; fills once a run writes it' : '') + ')</p>';
             }
 
+            sectionHtml += _roLines();
+
             // ── Side-by-side: grid (left) + bar chart (right) ────────
             var chartId = secId + '-chart';
             if (_tmap) sectionHtml += _tmapLegend(def.key, agg, stops);
@@ -4988,7 +5024,7 @@ window.ChipStatus.mount = function (opts) {
                         + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '');
                     var paint = ht != null ? _tmapPaint(interpolateColor(ht, stops), _surf9) : null;
                     if (paint) cls += ' tmap-painted';
-                    var tip = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                    var tip = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured') + _roNote(n)
                         + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '')
                         + (isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
                         + ' \u00b7 click to inspect';
@@ -5033,7 +5069,7 @@ window.ChipStatus.mount = function (opts) {
                     var noneCls = (v == null) ? ' heatmap-cell-none' : '';
                     var _isOut = scorer && v != null && scorer.isOutlier(v);
                     var outlCls = _isOut ? ' topo-outlier' : '';
-                    var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured')
+                    var _t1 = nidE + ' \u2014 ' + def.title + ': ' + (v != null ? prop.fmtFn(v) : 'not measured') + _roNote(n)
                         + (_isOut ? ' \u00b7 \u26a0 outlier (' + scorer.score(v).toFixed(1) + '\u00d7 MAD from chip median ' + prop.fmtFn(scorer.median) + ')' : '')
                         + ' \u00b7 click to inspect';
                     var _vAttr = (typeof v === 'number') ? ' data-heat-v="' + v + '"' : '';
@@ -5072,7 +5108,7 @@ window.ChipStatus.mount = function (opts) {
                 var xTitle = _tmapTitle(def.title, def.key);   // the unit, as the map title carries it
                 if (def.key === 'T1' || def.key === 'T2ramsey' || def.key === 'T2echo') {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) * 1e6; });
-                } else if (def.key === 'f_01' || def.key === 'readout_frequency') {
+                } else if (_isGHzKey(def.key)) {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) / 1e9; });
                 } else if (def.key === 'anharmonicity') {
                     displayVals = sorted.map(function(n) { return _mv(n, def.key) / 1e6; });
@@ -5102,7 +5138,8 @@ window.ChipStatus.mount = function (opts) {
                         textfont: {size: 11},
                         type: 'bar', orientation: 'h',
                         marker: {color: barColors, line: {color: '#fff', width: 1}},
-                        hovertemplate: '%{y}: %{text}<extra></extra>',
+                        customdata: sorted.map(function(n) { return _roNote(n); }),
+                        hovertemplate: '%{y}: %{text}%{customdata}<extra></extra>',
                         cliponaxis: false
                     }],
                     layout: {

@@ -217,8 +217,17 @@ def _leaf(pair_id: str, real_segs: list[str], tmpl_segs: list[str], value: Any,
         "value": value,
         "headline": leaf_name in _HEADLINE_LEAVES and kind == "edit",
         "label": _label_of(tmpl_segs, group),
-        "unit": _unit_of(leaf_name, value),
+        # the pair's OWN `detuning` is a flux amplitude in volts (its class
+        # declares it; units.pair_field_key), unlike a macro's Hz detuning
+        "unit": (_pair_own_detuning_unit()
+                 if root == "qubit_pairs" and real_segs == ["detuning"]
+                 else _unit_of(leaf_name, value)),
     }
+
+
+def _pair_own_detuning_unit() -> str:
+    from quam_state_manager.core import units as _units
+    return _units.stored_unit_label("pair_detuning")
 
 
 def _port_leaves(pair_id: str, real_segs: list[str], tmpl_segs: list[str],

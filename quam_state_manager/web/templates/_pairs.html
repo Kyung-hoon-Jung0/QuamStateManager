@@ -147,7 +147,7 @@
             {% else %}-{% endif %}
         </td>
         {%- set _dt = p.detuning | pair_detuning_cell %}
-        <td>{% if _dt[1] %}<span class="muted" data-unit-doubt="1" title="Stored detuning = {{ _dt[0] }}: too large to be volts, so the stored unit is unknown. Shown raw.">{{ _dt[0] }} (raw, unit?)</span>{% else %}{{ _dt[0] }}{% endif %}</td>
+        <td>{% if _dt[1] %}<span class="muted" data-unit-doubt="1" title="{{ p.detuning | pair_detuning_display }}">{{ _dt[0] }} (unit inferred)</span>{% else %}{{ _dt[0] }}{% endif %}</td>
     </tr>
     {% endif %}
     {% endfor %}
