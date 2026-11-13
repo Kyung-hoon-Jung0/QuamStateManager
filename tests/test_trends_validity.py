@@ -91,7 +91,8 @@ class TestRoute:
         url = "/topology/trends?metrics=&paths=" + IRB
         ch = _chart(c.get(url).get_data(as_text=True), "macros.cz.fidelity.IRB")
         assert ch["n_excluded"] == 0
-        monkeypatch.setattr(routes, "_trend_point_run_uid", lambda info: "k:1")
+        # the invalid-run rule reads the measured run (never first_uid)
+        monkeypatch.setattr(routes, "_trend_point_measured_uid", lambda info: "k:1")
         monkeypatch.setattr(routes, "_invalid_run_uids", lambda: frozenset({"k:1"}))
         ch2 = _chart(c.get(url).get_data(as_text=True), "macros.cz.fidelity.IRB")
         assert ch2["n_excluded"] > 0
@@ -156,3 +157,51 @@ class TestInvalidElsewhere:
         body = c.get("/topology/trends?metrics=&paths=" + IRB).get_data(as_text=True)
         assert "data-trends-invalid-elsewhere" in body
         assert _chart(body, "macros.cz.fidelity.IRB")["n_excluded"] == 0
+
+
+class TestFirstSeenIsNotMeasured:
+    """A value first seen in the run the ledger starts with was not measured
+    by that run: tagging that run invalid leaves the start value in."""
+
+    def test_a_first_seen_value_is_not_excluded_by_its_runs_tag(self):
+        ser = {"points": [("a", 0.95), ("b", 0.97)],
+               "attr": {"a": {"first_uid": "k:1"}, "b": {"uid": "k:2"}}}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset({"k:1"}))
+        assert ser["points"] == [("a", 0.95), ("b", 0.97)] and "excluded" not in ser
+
+    def test_its_writer_or_saver_still_is(self):
+        ser = {"points": [("a", 0.95), ("b", 0.97)],
+               "attr": {"a": {"first_uid": "k:1", "saved_uid": "k:1"}, "b": {"uid": "k:2"}}}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset({"k:1", "k:2"}))
+        assert ser["excluded"] == [["a", 0.95, "invalid"], ["b", 0.97, "invalid"]]
+
+    def test_the_link_still_names_the_first_run(self):
+        assert routes._trend_point_run_uid({"first_uid": "k:1"}) == "k:1"
+
+
+class _Tbl:
+    """A ledger table stand-in: the leaf rows the resolved 2Q line reads."""
+
+    def __init__(self, rows):
+        self.rows, self.paths, self.attrs = rows, list(rows), {}
+
+    def leaf_matching_paths(self, pat):
+        import fnmatch
+        return [p for p in self.rows if fnmatch.fnmatchcase(p, pat)
+                and p.count(".") == pat.count(".")]
+
+    def leaf_series_many(self, paths, hold_to_newest=True):
+        return {p: self.rows[p] for p in paths if p in self.rows}
+
+
+class TestResolvedAllUnphysicalIsCounted:
+    def test_a_point_where_every_macro_is_unphysical_is_counted(self):
+        dp = "qubit_pairs.qA-qB.macros.cz.fidelity.InterleavedRB"
+        tbl = _Tbl({dp: [("k1", 0.95), ("k2", 1.4), ("k3", 0.96)]})
+        out = routes._trend_series_resolved_2q(None, None, ["qA-qB"], tbl=tbl)
+        assert len(out) == 1
+        ser = out[0]
+        assert [v for _, v in ser["points"]] == [0.95, None, 0.96]
+        n = routes._trend_exclude(ser, ser["metric"], "pair", frozenset())
+        assert n == 1 and ser["excluded"] == [["k2", 1.4, "unphysical"]]
+        assert routes._trend_excluded_note([e[2] for e in ser["excluded"]]).startswith("1 value left out")

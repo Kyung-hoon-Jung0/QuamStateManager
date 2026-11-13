@@ -133,6 +133,13 @@ def _raw_and_fit_missing(have) -> list[str]:
     return out
 
 
+#: [derived] the entry a least-squares fit with a free offset was made to has
+#: the fit's own mean (residual ~1e-20 on a real run); any other entry differs
+#: by >= 1e-5 V there. Relative to the fitted curve's scale (its span, or its
+#: mean when that is larger)
+_MEAN_RTOL = 1e-3
+
+
 def _measured(fit, role, pidx):
     """(points, y-label) the node fitted ``fitted_<role>`` to.
 
@@ -143,7 +150,10 @@ def _measured(fit, role, pidx):
     mean of exactly that entry (residual mean ~1e-20 for both roles, the
     stationarity condition of a least-squares fit with a free offset), and of
     no other entry or quadrature (all differ by >= 1e-5): checked on a real run,
-    pinned by tests/test_interactive_gen_variants.py.
+    pinned by tests/test_interactive_gen_variants.py. Checked per run, not
+    assumed: an entry whose mean is not the fitted curve's mean (within
+    :data:`_MEAN_RTOL` of the curve's scale) is not drawn, and the second
+    element names why.
     """
     if f"state_{role}" in fit["vars"]:
         return np.asarray(pslice(fit, f"state_{role}", pidx)[0], dtype=float), \
@@ -157,6 +167,15 @@ def _measured(fit, role, pidx):
         if idx is None:
             return None, ""
         arr = np.take(arr, idx, axis=ax)
+        if f"fitted_{role}" in fit["vars"]:
+            fitted = np.asarray(pslice(fit, f"fitted_{role}", pidx)[0], dtype=float).reshape(-1)
+            pts = arr.reshape(-1)
+            if fitted.size != pts.size or not (np.all(np.isfinite(fitted)) and np.all(np.isfinite(pts))):
+                return None, f"the {role} entry does not match the {role} fit's samples"
+            scale = max(float(np.ptp(fitted)), abs(float(np.mean(fitted))))
+            if abs(float(np.mean(pts)) - float(np.mean(fitted))) > _MEAN_RTOL * scale:
+                return None, (f"the '{role[0]}' entry of I_{role} is not the points its fit was made to"
+                              " (their means differ)")
     return arr.reshape(-1), "I quadrature [V]"
 
 
@@ -215,8 +234,9 @@ def _raw_and_fit(bundle, key, pname):
     mc, ylabel = _measured(fit, "control", pidx)
     mt, _yl = _measured(fit, "target", pidx)
     if mc is None or mt is None:
+        why = [y for m, y in ((mc, ylabel), (mt, _yl)) if m is None and y]
         return FigureSpec(key=key, title="CZ phase compensation", available=False,
-                          reason="no c / t entry on the control_target axis")
+                          reason="; ".join(why) or "no c / t entry on the control_target axis")
     data = [pb.scatter(frame, mc, name="control", color=_CONTROL, size=7),
             pb.line(frame, arr("fitted_control"), name="control fit", color=_CONTROL),
             pb.scatter(frame, mt, name="target", color=_TARGET, size=7),

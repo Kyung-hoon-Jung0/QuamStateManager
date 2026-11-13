@@ -156,8 +156,11 @@ def _comp_run(tmp_path, node="34a_cz_phase_compensation", labels=(b"c", b"t")):
     rng = np.random.default_rng(3)
     fc = 1e-4 * np.cos(2 * np.pi * frame)
     ft = 1e-4 * np.sin(2 * np.pi * frame) - 5e-4
-    ic = np.stack([fc + rng.normal(0, 1e-5, n), 1.1 * fc + 3e-6], axis=-1)
-    it = np.stack([1.1 * ft + 2e-6, ft + rng.normal(0, 1e-5, n)], axis=-1)
+    # the fitted entry's noise has zero mean: a least-squares fit with a free
+    # offset has its points' mean (what the runtime check compares)
+    nc, nt = rng.normal(0, 1e-5, n), rng.normal(0, 1e-5, n)
+    ic = np.stack([fc + nc - nc.mean(), 1.1 * fc + 3e-6], axis=-1)
+    it = np.stack([1.1 * ft + 2e-6, ft + nt - nt.mean()], axis=-1)
     dims3 = ("qubit_pair", "frame", "control_target")
     fit = {"I_control": (dims3, ic[None]), "Q_control": (dims3, (ic * 0 + 6e-4)[None]),
            "I_target": (dims3, it[None]), "Q_target": (dims3, (it * 0 - 1e-4)[None]),
@@ -187,6 +190,19 @@ def test_raw_quadratures_without_role_labels_are_not_guessed(tmp_path):
     run, *_ = _comp_run(tmp_path, labels=(b"x", b"y"))
     fig = _build(run, f"raw_and_fit::{PAIR}")
     assert fig is None or not fig.get("data")
+
+
+def test_an_entry_whose_mean_is_not_its_fits_is_not_drawn(tmp_path, monkeypatch):
+    """Labels swapped: the 'c' entry is not the points fitted_control was made
+    to, so no measured points are drawn, and the reason says why."""
+    from quam_state_manager.core.interactive_plots.recipes import cz_phase
+    specs, real = [], cz_phase.build
+    monkeypatch.setattr(cz_phase, "build", lambda b, k: specs.append(real(b, k)) or specs[-1])
+    run, *_ = _comp_run(tmp_path, labels=(b"t", b"c"))
+    fig = _build(run, f"raw_and_fit::{PAIR}")
+    assert fig is None or not fig.get("data")
+    assert specs and not specs[-1].available
+    assert "not the points its fit was made to" in specs[-1].reason
 
 
 def test_error_amplified_compensation_name_keeps_its_own_figure():

@@ -493,14 +493,25 @@ class Conversion:
         vertex (17a: ``q.z.joint_offset += flux_offset``; 20c anchors a = 0 at the parking).
         So f_01 and the quad term are about the parking point and V is the pulse amplitude
         relative to it: the offset is shown, never added [derived; numerical check in
-        tests/test_cz_plan_d3_d7.py]."""
+        tests/test_cz_plan_d3_d7.py]. That holds only when the parking IS the vertex the
+        quad term was fitted about, so the note says it assumes so, and says the quad
+        tier ignores the offset when the parking is another flux point or nothing shows
+        the parking is a sweet spot (wording only: no number changes)."""
         z = self.qubit.get("z") or {}
         point = z.get("flux_point")
         field = {"min": "min_offset", "independent": "independent_offset"}.get(point, "joint_offset")
         volts = number(z.get(field))
-        return {"field": "z." + field, "volts": volts,
-                "note": ("the pulse amplitude is measured from the parking point, where f_01 and the "
-                         "quad term were fitted; the parking offset is not added")}
+        note = ("the pulse amplitude is measured from the parking point; the parking offset is not "
+                "added. This assumes the qubit is parked at the vertex the quad term was fitted about")
+        off_vertex = None
+        if point in ("min", "independent"):
+            off_vertex = (f"the qubit parks at z.{field} (flux_point {point}), not at the joint_offset "
+                          "vertex the quad term was fitted about")
+        elif self.frame.get("sign") is None:
+            off_vertex = f"nothing shows the parking is a sweet spot ({self.frame.get('reason')})"
+        if off_vertex:
+            note += "; " + off_vertex + ": the quad tier ignores any distance between the two"
+        return {"field": "z." + field, "volts": volts, "note": note, "off_vertex": off_vertex is not None}
 
     def summary(self):
         m = self.model

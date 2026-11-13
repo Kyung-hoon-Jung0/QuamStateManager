@@ -21073,6 +21073,16 @@ def _resolved_2q_at(fids: dict) -> tuple[float, str, str] | None:
     return best
 
 
+def _unphysical_2q_at(fids: dict):
+    """The largest per-gate value of a pair whose macros carry values but no
+    PHYSICAL one (:func:`_resolved_2q_at` is None there): the value the
+    resolved line leaves out, so the chart can count it. None when no macro
+    carries a numeric value."""
+    vals = [r["value"] for r in (pair_gate_fidelity(fids[g]) for g in sorted(fids))
+            if r is not None and not r.get("physical") and _vh_numeric(r.get("value")) is not None]
+    return max(vals) if vals else None
+
+
 def _trend_has_gate_key(hm, path: Path, tbl=None) -> bool:
     """Does any pair's gate macro record a per-gate fidelity key
     (query.rb_level "gate": ``InterleavedRB``, ``IRB``, ...)?"""
@@ -21149,7 +21159,7 @@ def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> lis
             rows[dp] = rs
         keys = sorted({r[0] for rs in rows.values() for r in rs}, key=_trend_axis_order)
         cursor = {dp: -1 for dp in dps}
-        pts, attr, last = [], {}, None
+        pts, attr, last, bad_pts = [], {}, None, []
         for k in keys:
             ko = _trend_axis_order(k)
             fids: dict[str, dict] = {}
@@ -21175,11 +21185,15 @@ def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> lis
                     sub[parts[6]] = rs[i][1]
                     set_at.setdefault(src, (dp, rs[i][0]))
             res = _resolved_2q_at(fids)
-            now = (res[0], res[1]) if res else None
+            bad = None if res else _unphysical_2q_at(fids)
+            now = (res[0], res[1]) if res else (("unphysical", bad) if bad is not None else None)
             if now == last:
                 continue
             last = now
             pts.append((k, res[0] if res else None))
+            if bad is not None:
+                # every macro unphysical: a gap the "N left out" note counts
+                bad_pts.append([k, bad, "unphysical"])
             if res:
                 why = "source " + res[1] + (f" ({res[2]})" if res[2] else "")
                 info = {}
@@ -21195,6 +21209,8 @@ def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> lis
                "points": pts,
                "sources": [(attr.get(k) or {}).get("sub", "").split(" · ")[0]
                            for k, _ in pts]}
+        if bad_pts:
+            ser["excluded"] = bad_pts
         if newest and pts[-1][0] != newest and pts[-1][1] is not None:
             ser["held"] = {newest: pts[-1][0]}
             attr[newest] = dict(attr.get(pts[-1][0]) or {})
@@ -21242,10 +21258,22 @@ def _trend_value_physical(metric: str, kind: str, value) -> bool:
 
 def _trend_point_run_uid(info) -> str | None:
     """The dataset uid of the run a ledger point came from: its proven
-    writer, else the run whose saved state carried it."""
+    writer, else the run whose saved state carried it, else the run the
+    ledger starts with (a link only: see :func:`_trend_point_measured_uid`)."""
     if not isinstance(info, dict):
         return None
     return info.get("uid") or info.get("saved_uid") or info.get("first_uid") or None
+
+
+def _trend_point_measured_uid(info) -> str | None:
+    """The run a point's value is FROM, for the invalid-run rule: its proven
+    writer, else the run whose saved state carried it. Never ``first_uid``:
+    a value first seen in the run the ledger starts with was not measured by
+    that run, so tagging that run invalid must not take every series' start
+    value out."""
+    if not isinstance(info, dict):
+        return None
+    return info.get("uid") or info.get("saved_uid") or None
 
 
 def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int:
@@ -21258,7 +21286,9 @@ def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int
     endpoint carrying an excluded value goes with it. Returns the count."""
     attr = ser.get("attr") or {}
     held = ser.get("held") or {}
-    out: list[list] = []
+    # a builder may have counted gaps of its own already (the resolved 2Q
+    # line's points where every macro is unphysical)
+    out: list[list] = list(ser.get("excluded") or ())
     pts = []
     prev_why = None
     for k, v in ser.get("points") or []:
@@ -21268,7 +21298,7 @@ def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int
                 why = prev_why
             elif not _trend_value_physical(metric, kind, v):
                 why = "unphysical"
-            elif invalid and _trend_point_run_uid(attr.get(str(k))) in invalid:
+            elif invalid and _trend_point_measured_uid(attr.get(str(k))) in invalid:
                 why = "invalid"
             if why and not held.get(k):
                 out.append([k, v, why])
@@ -21281,7 +21311,7 @@ def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int
         if not _trend_value_physical(metric, kind, r[1]):
             why = "unphysical"
         elif invalid and ((len(r) > 7 and r[7]) or (len(r) > 8 and r[8])
-                          or _trend_point_run_uid(attr.get(str(r[0])))) in invalid:
+                          or _trend_point_measured_uid(attr.get(str(r[0])))) in invalid:
             why = "invalid"
         if why:
             out.append([r[0], r[1], why])
