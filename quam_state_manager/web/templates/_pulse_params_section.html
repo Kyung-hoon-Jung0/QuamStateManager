@@ -148,7 +148,7 @@
         {% endfor %}
         </tbody>
     </table>
-    {% if sec.used_by %}
-    <p class="muted pulse-sec-usedby">Used by {% for ref in sec.used_by %}<code class="dot-path">{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}</p>
+    {% if sec.used_by or sec.named_slots %}
+    <p class="muted pulse-sec-usedby">Used by {% for ref in sec.used_by %}<code class="dot-path">{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}{% if sec.used_by and sec.named_slots %}, {% endif %}{% for ref in sec.named_slots or [] %}<code class="dot-path">{{ ref }}</code> (plays by name){{ ", " if not loop.last }}{% endfor %}</p>
     {% endif %}
 </details>

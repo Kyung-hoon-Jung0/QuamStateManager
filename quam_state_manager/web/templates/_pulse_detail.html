@@ -113,7 +113,8 @@
                aria-label="New operation name">
         <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
             <input type="checkbox" name="retarget" value="1" checked> re-point
-            {{ used_by | length }} reference(s){% if played_by_name %}
+            {{ (used_by | length) + (named_slots | default([]) | length) }} reference(s){% if named_slots %}
+            (incl. {% for ref in named_slots %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} &mdash; plays by name){% endif %}{% if played_by_name %}
             (played by name by {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} &mdash; a rename is asked of that gate){% endif %}
         </label>
         <button class="btn-sm" type="submit">Rename</button>
@@ -151,12 +152,19 @@
         &mdash; your gate looks this operation up by its name, so deleting or
         renaming it is asked of the gate's own <code>apply()</code> first.</p>
     {% endif %}
+    {% if named_slots %}
+    <p><strong>Warning:</strong> plays by name:
+        {% for ref in named_slots %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
+        &mdash; the gate plays this operation by its name; deleting it leaves
+        the gate playing a name that no longer exists (it fails when the gate
+        is applied).</p>
+    {% endif %}
     {% if delete_used_by %}
     <p><strong>Warning:</strong> referenced by
         {% for ref in delete_used_by %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
         &mdash; deleting leaves dangling pointers (and
         <code>generate_config()</code> will fail on them).</p>
-    {% elif not played_by_name %}
+    {% elif not played_by_name and not named_slots %}
     <p>No other operation references this {{ 'alias' if alias_chain else 'pulse' }}.</p>
     {% endif %}
     <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
