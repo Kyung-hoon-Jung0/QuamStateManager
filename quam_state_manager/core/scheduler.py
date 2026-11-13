@@ -823,7 +823,8 @@ def build_preflight(ctx: dict) -> dict:
     #    (find_spec in the node's own env, same PYTHONPATH as the node run --
     #    config_generator.child_env); the editable-install metadata is only
     #    the fallback when no origin could be measured.
-    label5 = "Calibrations folder matches the env's editable install"
+    label5 = ("Lab code (quam_config, calibration_utils) imports from the "
+              "selected project's folder")
     root = (ctx["project_code_root"] if "project_code_root" in ctx
             else config_generator.project_code_root(cal))
     origins = ctx.get("import_origins") or {}

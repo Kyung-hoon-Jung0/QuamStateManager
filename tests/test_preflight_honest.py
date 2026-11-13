@@ -211,7 +211,8 @@ def two_trees(tmp_path, monkeypatch):
     project = tmp_path / "project_tree"
     cal = project / "calibrations" / "1Q"
     cal.mkdir(parents=True)
-    other = _tree(tmp_path / "other_tree", "quam_config", "calibration_utils")
+    (project / "pyproject.toml").write_text("", encoding="utf-8")   # the tree's top
+    other =_tree(tmp_path / "other_tree", "quam_config", "calibration_utils")
     monkeypatch.setenv("PYTHONPATH", str(other))
     monkeypatch.setattr(config_generator, "_LAB_DIRS", {})
     return project, cal, other
@@ -306,6 +307,44 @@ def test_the_node_spawn_gets_the_check_childs_pythonpath(two_trees, monkeypatch,
     assert seen["node"] == seen["check"]
     assert seen["node"].split(os.pathsep)[0] == str(project)
     assert str(other) in seen["node"].split(os.pathsep)
+
+
+class TestTheWalkStaysInsideTheProject:
+    def test_an_unrelated_grandparent_is_never_the_root(self, tmp_path):
+        outer = _tree(tmp_path / "outer", "quam_config")       # unrelated
+        project = outer / "lab_repo"
+        cal = project / "calibrations" / "1Q"
+        cal.mkdir(parents=True)
+        (project / ".git").mkdir()                             # the project's top
+        assert config_generator.project_code_root(str(cal)) is None
+        ctx = {"calibrations_folder": str(cal),
+               "import_origins": {"quam_config": str(outer / "quam_config")},
+               "editable_install_path": None, "diagnostics_errors": 0,
+               "pythonpath_shadows": []}
+        c = _check(scheduler.build_preflight(ctx), "folder_install")
+        assert c["status"] == "fail"
+        assert str(cal) in c["detail"] and str(outer / "quam_config") in c["detail"]
+
+    def test_the_project_top_itself_is_searched(self, tmp_path):
+        project = _tree(tmp_path / "lab_repo", "quam_config")
+        (project / "pyproject.toml").write_text("", encoding="utf-8")
+        cal = project / "calibrations" / "1Q"
+        cal.mkdir(parents=True)
+        assert config_generator.project_code_root(str(cal)) == str(project)
+
+    def test_without_a_project_top_only_the_folder_counts(self, tmp_path):
+        parent = _tree(tmp_path / "loose", "quam_config")
+        cal = parent / "cal"
+        cal.mkdir()
+        assert config_generator.project_code_root(str(cal)) is None
+        _tree(cal, "calibration_utils")
+        assert config_generator.project_code_root(str(cal)) == str(cal)
+
+
+def test_the_label_says_what_is_checked(tmp_path):
+    c = _check(scheduler.build_preflight(_good_ctx(tmp_path)), "folder_install")
+    assert c["label"] == ("Lab code (quam_config, calibration_utils) imports from "
+                          "the selected project's folder")
 
 
 def test_the_sidebar_badge_names_both_trees(two_trees, tmp_path):

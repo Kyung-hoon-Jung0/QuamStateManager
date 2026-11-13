@@ -1481,27 +1481,55 @@ def _holds_lab_module(folder) -> list[str]:
     return out
 
 
+# A folder holding one of these is the top of the project's code tree: the
+# walk-up never looks above it, so an unrelated parent folder that happens to
+# hold a quam_config is never taken for the project's.
+_TREE_MARKERS = (".git", "pyproject.toml", "setup.py", "setup.cfg")
+
+
+def _is_tree_top(folder) -> bool:
+    for m in _TREE_MARKERS:
+        try:
+            if os.path.exists(os.path.join(str(folder), m)):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def project_code_root(calibrations_folder) -> str | None:
     """The folder of the selected project that holds its lab modules.
 
-    The calibrations folder itself, or its nearest ancestor (a few levels up)
-    that holds ``quam_config`` / ``calibration_utils``. None when no such
-    folder exists or *calibrations_folder* is unset -- the caller then keeps
-    the inherited environment unchanged.
+    The calibrations folder itself, or its nearest ancestor that holds
+    ``quam_config`` / ``calibration_utils`` -- searched only WITHIN the
+    project: up to and including the first folder that marks the top of a
+    code tree (``.git``, ``pyproject.toml``, ``setup.py``, ``setup.cfg``),
+    never a drive root, at most a few levels. With no such marker on the way
+    up only the calibrations folder itself counts. None when nothing inside
+    the project holds the modules or *calibrations_folder* is unset -- the
+    caller then keeps the inherited environment and the pre-flight check
+    names the calibrations folder.
     """
     if not calibrations_folder:
         return None
     try:
-        cur = os.path.abspath(str(calibrations_folder))
+        start = os.path.abspath(str(calibrations_folder))
     except (OSError, ValueError):
         return None
+    chain, cur = [], start
     for _ in range(_ROOT_WALK_UP + 1):
-        if _holds_lab_module(cur):
-            return cur
         parent = os.path.dirname(cur)
         if not parent or parent == cur:
+            break                      # cur is a drive root: never searched
+        chain.append(cur)
+        if _is_tree_top(cur):
             break
         cur = parent
+    if not chain or not _is_tree_top(chain[-1]):
+        chain = chain[:1]              # no project top found: the folder only
+    for folder in chain:
+        if _holds_lab_module(folder):
+            return folder
     return None
 
 
