@@ -751,6 +751,9 @@ window.ComponentMap = (function () {
             // docs/93 F3: the page's active chain filter lights its qubits
             emphasisChain: root.getAttribute("data-chain") || "",
             ghost: root.getAttribute("data-cm-add") === "1",
+            // a pick map (Pulses, CZ plan) is a control: its stones are the
+            // targets, so they are drawn larger at the same spacing
+            stoneScale: root.getAttribute("data-cm-pick") === "1" ? 0.42 : undefined,
           });
           _renderFeedLegend(body, highlight, mine.api);
           _bindMapEvents(body);

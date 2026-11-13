@@ -13930,7 +13930,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    The drawing is the shared component-page one; only the Pulses mount sets
    data-cm-pick, so every other page's map is untouched. */
 .cm-edge-hit { stroke: transparent; stroke-width: 16px; fill: none; pointer-events: stroke; }
-.cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; }
+.cmap[data-cm-pick="1"] .cm-edge-hit { pointer-events: stroke; stroke-width: 24px; }
 /* Centred and modest: this map sits above a 500-row table, so it is a control
    rather than the page's subject. */
 .cmap[data-cm-pick="1"] .cmap-body { display: flex; justify-content: center; }
@@ -13959,12 +13959,11 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     fill: color-mix(in srgb, var(--pico-primary) 10%, var(--pico-background-color));
 }
 .cmap[data-cm-pick="1"] .cm-edge-line {
-    stroke: color-mix(in srgb, var(--pico-primary) 55%, var(--pico-muted-border-color));
-    stroke-width: 2.5px; opacity: 1;
+    stroke: var(--pico-primary); stroke-width: 5px; opacity: 0.85;
 }
 .cmap[data-cm-pick="1"] [data-cm] { cursor: pointer; }
 .cmap[data-cm-pick="1"] [data-cm]:hover .cm-stone { filter: brightness(1.35); }
-.cmap[data-cm-pick="1"] [data-cm]:hover .cm-edge-line { stroke-width: 4px; }
+.cmap[data-cm-pick="1"] [data-cm]:hover .cm-edge-line { stroke-width: 8px; opacity: 1; }
 .cmap[data-cm-pick="1"] .cmap-hint {
     margin: 0 0 0.5rem; font-size: 0.86em; color: var(--pico-muted-color);
 }
@@ -13973,7 +13972,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 }
 .cmap[data-cm-pick="1"] .cm-picked .cm-id { fill: var(--pico-primary-inverse); }
 .cmap[data-cm-pick="1"] .cm-picked .cm-edge-line {
-    stroke: var(--pico-primary); stroke-width: 5px;
+    stroke: var(--pico-primary); stroke-width: 9px; opacity: 1;
 }
 .pulse-owner-chip {
     display: inline-flex; align-items: center; gap: 0.4rem;
