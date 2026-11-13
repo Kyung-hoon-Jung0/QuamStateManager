@@ -27445,14 +27445,21 @@ def api_pulse_gaussian_cz():
             result = gaussian_cz.plan(store.merged, pair_id,
                                       padding_length=padding,
                                       qubit_filter_mhz=q_mhz,
-                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids)
+                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids,
+                                      # gl-cad: the single-pair door names every
+                                      # op after THIS pair, so a moving qubit
+                                      # shared by two pairs never shares an op.
+                                      own_names=suffix_ids is None)
             if "error" in result:
+                # Another pair owns the op: a refusal naming that pair, with
+                # no Replace (it would rewire the other pair's gate).
+                code = 409 if result.get("conflict") else 400
                 return render_template("_status.html", message=result["error"],
-                                       level="error"), 400
+                                       level="error"), code
             if result["existing"] and request.form.get("overwrite") != "1":
                 body = render_template(
                     "_status.html", level="warning",
-                    message=("Already present on this pair: "
+                    message=(f"Already present on pair {pair_id}: "
                              + ", ".join(p.split(".")[-1] for p in result["existing"])
                              + " — create again to replace them (the old subtrees "
                                "are removed in the same undo group)."))
@@ -27506,7 +27513,8 @@ def api_pulse_gaussian_cz():
                  f"{src['flat_length']}"
                  + (", coupler included" if src["has_coupler"] else "")
                  + ") — staged in the working state; review, then Apply to "
-                   "live."))
+                   "live."
+                 + ("".join(f" {n}." for n in (src.get("notes") or [])))))
     resp = make_response(msg + "\n" + _tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     return _lab_toast(resp)
