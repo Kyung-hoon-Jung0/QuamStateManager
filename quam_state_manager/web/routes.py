@@ -53773,6 +53773,32 @@ def scheduler_queue_mutate(action: str):
     return jsonify({"ok": True, "state": _sched_state()})
 
 
+def _revert_value_text(v) -> str:
+    """A value in a revert note: a float to 6 significant digits, never its full repr."""
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    return json.dumps(v) if isinstance(v, str) else str(v)
+
+
+def _revert_refusal_text(c: dict) -> str:
+    """gl-aat: why one value was not reverted, in plain words. The machine
+    fields (``code``, ``reason``) stay as the writer reported them."""
+    code = c.get("code")
+    if code == "changed":
+        now = f" (now {_revert_value_text(c['current'])})" if "current" in c else ""
+        return "the live value changed since the run" + now
+    if code == "vanished":
+        return "the value is no longer on the chip"
+    if code == "non_revertible":
+        return "this kind of write cannot be put back automatically"
+    reason = str(c.get("reason") or "")
+    if reason.startswith("CAS lost"):
+        return "the live value changed while reverting, so nothing was reverted"
+    if reason.startswith("save failed"):
+        return "the chip could not be saved" + reason[len("save failed"):]
+    return reason
+
+
 @bp.route("/scheduler/item/<item_id>/revert-failed", methods=["POST"])
 def scheduler_revert_failed(item_id: str):
     """Put back exactly the values a finished node wrote for the targets it
@@ -53817,6 +53843,15 @@ def scheduler_revert_failed(item_id: str):
     blind = [{"path": w.get("dotted") or w.get("path"), "reason":
               "the run did not record the value this write replaced"}
              for w in writes if not w.get("has_old", True)]
+    # gl-aat: a second press puts back only what is left; a value already
+    # reverted would otherwise be refused as changed (it now holds its old value).
+    prev = item.get("failed_revert") or {}
+    if isinstance(prev.get("remaining"), list):
+        left = set(prev["remaining"])
+        writes = [w for w in writes if (w.get("dotted") or w.get("path")) in left]
+        blind = [b for b in blind if b["path"] in left]
+        if not writes:
+            return jsonify({"ok": False, "error": "nothing is left to revert"}), 409
     patches = [{"op": w.get("op", "replace"), "path": w.get("path"),
                 "value": w.get("value"), "old": w.get("old")}
                for w in writes if w.get("has_old", True)]
@@ -53828,14 +53863,22 @@ def scheduler_revert_failed(item_id: str):
     refused = blind + list(out.conflicts or [])
     if not out.ok and out.error and out.error not in ("nothing revertible", "CAS conflict"):
         refused.append({"path": None, "reason": out.error})
+    refused = [dict(c, text=_revert_refusal_text(c)) for c in refused]
+    # what a later press could still put back: not reverted, and not refused
+    # for that value itself (a refusal naming no path stopped the whole revert)
+    done = {r["path"] for r in reverted}
+    stuck = {c.get("path") for c in refused if c.get("path")}
+    remaining = [p for p in ((w.get("dotted") or w.get("path")) for w in writes)
+                 if p not in done and p not in stuck]
     parts = []
     if reverted:
         parts.append(f"reverted {len(reverted)}: " + ", ".join(r["path"] for r in reverted))
     if refused:
-        parts.append(f"refused {len(refused)}: " + "; ".join(
-            f"{c.get('path') or 'all'} ({c.get('reason')})" for c in refused))
+        parts.append(f"not reverted {len(refused)}: " + "; ".join(
+            (f"{c['path']}: " if c.get("path") else "") + c["text"] for c in refused))
     message = " — ".join(parts) or "nothing to revert"
     result = {"ok": bool(out.ok and reverted), "reverted": reverted, "refused": refused,
+              "remaining": remaining,
               "message": message, "at": datetime.now(timezone.utc).isoformat()}
     scheduler.set_item_failed_revert(inst, item_id, result)
     if reverted:

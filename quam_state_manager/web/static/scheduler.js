@@ -604,13 +604,19 @@
         rmsg.textContent = "Revert: " + rv.message;
         nameCell.appendChild(rmsg);
       }
-      if (nWrites && !(rv && rv.ok && !(rv.refused || []).length)) {
+      // gl-aat: after a revert the button names only what a press can still put
+      // back (rv.remaining), and is gone when nothing is left
+      var nLeft = rv && Array.isArray(rv.remaining) ? rv.remaining.length : null;
+      var offer = nLeft !== null ? nLeft > 0 : (nWrites && !(rv && rv.ok && !(rv.refused || []).length));
+      if (offer) {
         var rb = document.createElement("button");
         rb.type = "button";
         rb.className = "btn-sm outline";
         rb.setAttribute("data-act", "revert-failed");
-        rb.textContent = "Revert the " + nWrites + " value" + (nWrites === 1 ? "" : "s")
-          + " written for the failed target" + (nFailed === 1 ? "" : "s");
+        rb.textContent = nLeft !== null
+          ? "Revert the " + nLeft + " remaining value" + (nLeft === 1 ? "" : "s")
+          : "Revert the " + nWrites + " value" + (nWrites === 1 ? "" : "s")
+            + " written for the failed target" + (nFailed === 1 ? "" : "s");
         rb.title = "Put back each listed value; a value changed since the run is refused and named";
         nameCell.appendChild(rb);
       }
