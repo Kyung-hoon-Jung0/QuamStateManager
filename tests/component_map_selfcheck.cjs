@@ -39,6 +39,19 @@ const CMAP_JS = read('component-map.js');
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
 
+// A role end (C M H / T . L) is one <g class="cm-role"> holding an arc band
+// (two <path>s, stroke-width = band height) and ONE <text> per letter on an
+// arc just outside its stone. Its reading is the letters in document order.
+const roleLetters = (g) => Array.from(g.querySelectorAll('text.cm-role-txt'));
+const roleStr = (g) => roleLetters(g).map((t) => t.textContent).join(' ');
+const roleBand = (g) => g.querySelector('path.cm-dir-role-band');
+const roleBandH = (g) => +roleBand(g).getAttribute('stroke-width');
+const letterXY = (t) => ({ x: +t.getAttribute('x'), y: +t.getAttribute('y') });
+// Distance of every letter centre from a stone centre.
+const letterDists = (g, cx, cy) => roleLetters(g).map((t) => Math.hypot(+t.getAttribute('x') - cx, +t.getAttribute('y') - cy));
+// The rounding the renderer applies to each coordinate (r1: 0.1 px).
+const ARC_TOL = 0.15;
+
 const TOPO = {
   nodes: [
     // f_01: qA2 is 200 MHz ABOVE qA1 -> the qA2-qA1 edge gets a chevron whose
@@ -95,8 +108,10 @@ function checkRenderLayout() {
   ok(m.querySelectorAll('.cm-dir-arrow, .cm-dir-m').length === 0, 'no control -> target arrow and no moving ring left');
   {
     const pills = m.querySelectorAll('.cm-role');
-    ok(pills.length === 4 && Array.from(pills).every(p => p.querySelectorAll('rect').length === 1 && !p.querySelector('circle')), 'D2: one rounded pill per end, no separate circles');
-    ok(m.querySelector('.cm-role-c[data-cm-pair="qA1-qA3"] text').textContent === 'C M', 'D2: moving role inside its end pill');
+    ok(pills.length === 4 && Array.from(pills).every(p => p.querySelectorAll('path.cm-dir-role-band').length === 1
+        && p.querySelectorAll('path.cm-dir-role-edge').length === 1 && !p.querySelector('circle, rect')),
+       'D2: one rounded arc band per end, no separate circles');
+    ok(roleStr(m.querySelector('.cm-role-c[data-cm-pair="qA1-qA3"]')) === 'C M', 'D2: moving role inside its end pill');
     const legend = m.querySelector('.cm-dir-legend').textContent;
     ok(/C control.*T target.*M moving qubit.*H higher f01.*L lower f01/.test(legend), 'D6: shared five-letter legend');
   }
@@ -113,7 +128,8 @@ function checkRenderLayout() {
   // drawn is a number. Values still live in the table beside the map.
   const texts = m.querySelectorAll('svg text');
   const idSet = { qA1: 1, qA2: 1, qA3: 1 };
-  const roleSet = { 'C': 1, 'T': 1, 'C H': 1, 'C L': 1, 'T H': 1, 'T L': 1, 'C M': 1, 'T M': 1, 'C \u00b7': 1, 'T \u00b7': 1, 'C M H': 1, 'C M L': 1, 'T M H': 1, 'T M L': 1, 'C \u00b7 H': 1, 'C \u00b7 L': 1, 'T \u00b7 H': 1, 'T \u00b7 L': 1 };
+  // Each role letter is its own <text> inside its end's .cm-role group.
+  const roleSet = { 'C': 1, 'T': 1, 'M': 1, 'H': 1, 'L': 1, '\u00b7': 1 };
   // P1-11 (UX round): each pair edge carries its pair id -- an id, like the
   // qubit ids, never a value (the Pairs page named pairs only in a hover title)
   const pairSet = { 'qA2-qA1': 1, 'qA1-qA3': 1 };
@@ -129,7 +145,7 @@ function checkRenderLayout() {
     const stacked = t.parentElement.matches('g.cm-dir-stack') && !!idSet[t.textContent];
     const s = stacked ? t.parentElement.getAttribute('data-pair-id') : t.textContent;
     const isId = idSet[s] && cls === 'cm-id';
-    const isRole = roleSet[s] && cls.indexOf('cm-role-txt') !== -1;
+    const isRole = roleSet[s] && cls.split(' ').indexOf('cm-role-txt') !== -1 && t.parentElement.matches('g.cm-role');
     const isPair = pairSet[s] && (cls === 'cm-pair-label cm-dir-label' || stacked);
     if (!isId && !isRole && !isPair) onlyIdsOrRoles = false;
     if (/[0-9]/.test(s) && !idSet[s] && !isPair) anyNumeric = true;
@@ -142,6 +158,9 @@ function checkRenderLayout() {
   ok(st && Array.prototype.map.call(st.querySelectorAll('text'), function (x) { return x.textContent; }).join(' ') === 'qA3 qA1' && st.querySelectorAll('line.cm-dir-connector').length === 1,
      'a vertical edge groups two ids top-first with an SVG connector: ' + (st && st.textContent));
   ok(onlyIdsOrRoles, 'every rendered text is a qubit id, a pair id or a C/T/M role letter');
+  const endSet = { 'C': 1, 'T': 1, 'C H': 1, 'C L': 1, 'T H': 1, 'T L': 1, 'C M': 1, 'T M': 1, 'C ·': 1, 'T ·': 1 };
+  ok(Array.from(m.querySelectorAll('.cm-role')).every(g => endSet[roleStr(g)]),
+     'every role end reads as one role sequence: ' + Array.from(m.querySelectorAll('.cm-role')).map(roleStr).join('|'));
   ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
 
   // emphasis never changes content: same drawing under a different highlight
@@ -162,8 +181,8 @@ function checkRenderLayout() {
   ok(m2.querySelector('.cm-dir-label').getAttribute('font-size') === '10.8', 'default page: pair label 10.8px');
   const rfs = (d) => +d.querySelector('.cm-role-txt').getAttribute('font-size');
   ok(rfs(m) > rfs(m2), 'pairs page: role pills larger than the default: ' + [rfs(m), rfs(m2)]);
-  const qr = mq.querySelector('.cm-role-dot'), qs = mq.querySelector('.cm-stone');
-  ok(qr && qs, 'qubits page still draws role pills');
+  const qr = mq.querySelector('.cm-role path.cm-dir-role-band'), qs = mq.querySelector('.cm-stone');
+  ok(qr && qs && mq.querySelectorAll('.cm-role text.cm-role-txt').length > 0, 'qubits page still draws role pills');
   // At the cell the component pages mount (120), the qubits page's pills are the largest.
   const mk120 = (hl) => { const d = win.document.createElement('div'); win.document.body.appendChild(d);
     win.TopoGraph.renderLayout(d, { nodes: TOPO.nodes, edges: TOPO.edges, highlight: hl, cell: 120 }); return d; };
@@ -191,15 +210,15 @@ function checkRenderLayout() {
     {roles:true, cell:120, px:id=>({x:id === TOPO.nodes[0].id ? 0 : 180,y:0})}) + '</svg>';
   const heroFont = +heroRoles.querySelector('.cm-role-txt').getAttribute('font-size');
   // pairpill: floors for the enlarged pill and the thicker pair line.
-  ok(heroFont >= 7.5 && +heroRoles.querySelector('.cm-role-dot').getAttribute('height') >= 12,
+  ok(heroFont >= 7.5 && roleBandH(heroRoles.querySelector('.cm-role')) >= 12,
     'pairpill: hero pill font >= 7.5 and height >= 12 where room allows');
   ok(Array.from(mBig.querySelectorAll('.cm-role-txt')).some(t=>+t.getAttribute('font-size') >= 11),
     'pairpill: component-map pill font reaches >= 11 where room allows');
   { const mm = /^\.cm-edge-line \{[^}]*stroke-width: ([0-9.]+)/m.exec(read('style.css'));
     ok(mm && +mm[1] >= 8, "pairpill: pair edge line stroke >= 8"); }
   { const byPair = {};
-    mBig.querySelectorAll('.cm-role').forEach(g => (byPair[g.getAttribute('data-cm-pair')] ||= []).push(+g.querySelector('rect').getAttribute('width')));
-    ok(new Set(Object.values(byPair).flat()).size === 1, 'pairpill: every pill on a map has one width');
+    mBig.querySelectorAll('.cm-role').forEach(g => (byPair[g.getAttribute('data-cm-pair')] ||= []).push(roleBandH(g)));
+    ok(new Set(Object.values(byPair).flat()).size === 1, 'pairpill: every pill on a map has one band height');
     ok(/\.cm-dir\.cm-hl-pairs \.cm-res, \.cm-dir\.cm-hl-qubits \.cm-res,\s*\.cm-dir\.cm-hl-pairs \.cm-feed, \.cm-dir\.cm-hl-qubits \.cm-feed,\s*\.cm-dir\.cm-hl-pairs \.cm-flux, \.cm-dir\.cm-hl-qubits \.cm-flux \{ display: none; \}/.test(read('ui-kit.css')), 'pairpill: off-centre readout ring hidden on pair/qubit maps'); }
   for (const map of [m, mBig]) {
     ok(Array.from(map.querySelectorAll('.cm-role-txt')).every(t=>
@@ -208,10 +227,11 @@ function checkRenderLayout() {
     ok(Array.from(map.querySelectorAll('.cm-role')).every(role=>{
       const stone = Array.from(map.querySelectorAll('[data-cm]')).find(s=>
         s.getAttribute('data-cm') === 'q:' + role.getAttribute('data-cm-at')).querySelector('.cm-stone');
-      const rect = role.querySelector('rect'), n=(el,a)=>+el.getAttribute(a);
-      const dx=Math.max(n(rect,'x')-n(stone,'cx'),0,n(stone,'cx')-n(rect,'x')-n(rect,'width'));
-      const dy=Math.max(n(rect,'y')-n(stone,'cy'),0,n(stone,'cy')-n(rect,'y')-n(rect,'height'));
-      return Math.hypot(dx,dy) >= n(stone,'r') + 1.9;
+      const n=(el,a)=>+el.getAttribute(a);
+      // every letter's centre clears the rim by the gap plus half the band
+      // (the band's inner edge stays outside the stone)
+      return letterDists(role, n(stone,'cx'), n(stone,'cy')).every(dd =>
+        dd - roleBandH(role) / 2 >= n(stone,'r') + 1.9);
     }), 'D8: enlarged component pills clear their stones');
   }
 
@@ -222,17 +242,19 @@ function checkRenderLayout() {
     const edge = {pair_id:'a-b',source:'a',target:'b',moving_qubit:'control'};
     function draw(fa, fb, cell=132, e=edge) {
       host.innerHTML = '<svg>' + TG.pairGlyphs([{id:'a',f_01:fa},{id:'b',f_01:fb}], [e], {px,cell,stoneRadius:37,roles:true}) + '</svg>';
-      return Array.from(host.querySelectorAll('.cm-role text')).map(t=>t.textContent).join('|');
+      return Array.from(host.querySelectorAll('.cm-role')).map(roleStr).join('|');
     }
+    const endOf = (cls) => host.querySelector('.cm-role-' + cls);
     ok(!m.querySelector('.cm-freq, .cm-dir-freq-head') && !read('ui-kit.css').includes('--ui-freq-arrow'), 'D1: orange arrow and unused token removed');
     ok(draw(5e9+1,5e9) === 'C M H|T \u00b7 L', 'D3: even a 1 Hz difference shows both H and L');
     ok(draw(5e9,5e9+1) === 'C M L|T \u00b7 H', 'D3: reversed frequency order');
     {
       draw(5e9+1,5e9);
-      const gap = host.querySelectorAll('.cm-role-t text tspan.cm-dir-gap');
-      ok(gap.length === 1 && gap[0].textContent === '\u00b7' && !host.querySelector('.cm-role-c tspan'), 'P1: non-moving end has a dot in the M slot, moving end has none');
-      const ws = Array.from(host.querySelectorAll('.cm-role rect')).map(r => r.getAttribute('width'));
-      ok(ws.length === 2 && ws[0] === ws[1], 'P1: both pills share one width');
+      const gap = host.querySelectorAll('.cm-role-t text.cm-dir-gap');
+      ok(gap.length === 1 && gap[0].textContent === '\u00b7' && !host.querySelector('.cm-role-c .cm-dir-gap'), 'P1: non-moving end has a dot in the M slot, moving end has none');
+      const ws = Array.from(host.querySelectorAll('.cm-role')).map(roleBandH);
+      const ns = Array.from(host.querySelectorAll('.cm-role')).map(g => roleLetters(g).length);
+      ok(ws.length === 2 && ws[0] === ws[1] && ns[0] === ns[1], 'P1: both pills share one band height and letter count');
       const css = read('ui-kit.css');
       ok(/\.cm-dir-gap \{ fill: var\(--ui-text-3\)/.test(css), 'P1: dot uses the muted ui-kit token');
     }
@@ -240,20 +262,45 @@ function checkRenderLayout() {
       ok(draw(5e9,value) === 'C M|T \u00b7', 'D3: equal or nonnumeric frequency omits H/L: '+value);
     }
     draw(5.1e9,5e9);
-    const rects = Array.from(host.querySelectorAll('rect'));
-    const left = +rects[0].getAttribute('x') + +rects[0].getAttribute('width');
-    const right = +rects[1].getAttribute('x');
-    ok(left < 66-4 && right > 66+4 && left + 12 < right, 'D4/D5: line and midpoint metric dot have room between pills');
-    ok(+rects[0].getAttribute('x') > 37 && right + +rects[1].getAttribute('width') < 132-37, 'D2: pills just outside stones');
+    {
+      const c = endOf('c'), t = endOf('t'), hc = roleBandH(c), ht = roleBandH(t);
+      const left = Math.max(...roleLetters(c).map(l => letterXY(l).x)) + hc / 2;
+      const right = Math.min(...roleLetters(t).map(l => letterXY(l).x)) - ht / 2;
+      ok(left < 66-4 && right > 66+4 && left + 12 < right, 'D4/D5: line and midpoint metric dot have room between pills');
+      // D2: every letter's centre sits outside the rim by the gap plus half the band.
+      const dc = letterDists(c, 0, 0), dt = letterDists(t, 132, 0);
+      ok(dc.every(dd => dd - hc / 2 >= 37 + 2 - ARC_TOL) && dt.every(dd => dd - ht / 2 >= 37 + 2 - ARC_TOL),
+         'D2: pills just outside stones (letter radii ' + dc.map(v => v.toFixed(1)) + ' / ' + dt.map(v => v.toFixed(1)) + ')');
+      // ON the arc: every letter of an end is the same distance from its stone centre.
+      ok(Math.max(...dc) - Math.min(...dc) <= ARC_TOL && Math.max(...dt) - Math.min(...dt) <= ARC_TOL,
+         'arc: every letter of an end lies at one distance from its stone centre');
+      // Level edge: the letters read top to bottom, centred on the edge.
+      for (const g of [c, t]) {
+        const ys = roleLetters(g).map(l => letterXY(l).y);
+        ok(ys.every((y, k) => k === 0 || y > ys[k - 1]), 'level edge: letters\' y increase in reading order (' + roleStr(g) + ': ' + ys + ')');
+        ok(Math.abs(ys.reduce((a, b) => a + b, 0) / ys.length) <= ARC_TOL, 'level edge: letters centred on the edge direction');
+      }
+      ok(roleLetters(c).every(l => letterXY(l).x > 0) && roleLetters(t).every(l => letterXY(l).x < 132),
+         'each end sits on the edge side of its own stone');
+    }
     const size = host.querySelector('text').getAttribute('font-size');
     draw(5.1e9,5e9,528);
     ok(host.querySelector('text').getAttribute('font-size') === size && +size <= 8, 'D4: pill font capped for large cells');
     ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:'target'}) === 'C \u00b7 H|T M L', 'D2: target moving role stays at target');
     ok(draw(5.1e9,5e9,132,{...edge,moving_qubit:null}) === 'C H|T L', 'no known mover: no M slot and no dot');
-    draw(5.1e9,5e9,132,edge); ok(/class="cm-dir-gap" aria-hidden="true"/.test(host.innerHTML), 'dot tspan carries aria-hidden');
+    draw(5.1e9,5e9,132,edge);
+    { const dot = host.querySelector('text.cm-dir-gap');
+      ok(dot && dot.getAttribute('aria-hidden') === 'true', 'dot text carries aria-hidden'); }
     draw(5.1e9,5e9,132,{...edge,target:'c'});
-    const t = host.querySelector('text');
-    ok(+t.getAttribute('x') === 0 && +t.getAttribute('y') > 37, 'D2: vertical pill on line outside stone');
+    {
+      const c = endOf('c'), hc = roleBandH(c), pts = roleLetters(c).map(letterXY);
+      ok(pts.every(p => p.y > 37) && Math.abs(pts.reduce((a, p) => a + p.x, 0) / pts.length) <= ARC_TOL,
+         'D2: vertical pill on line outside stone');
+      ok(pts.every((p, k) => k === 0 || p.x > pts[k - 1].x), 'steep edge: letters\' x increase in reading order (' + roleStr(c) + ': ' + pts.map(p => p.x) + ')');
+      const dc = letterDists(c, 0, 0);
+      ok(dc.every(dd => dd - hc / 2 >= 37 + 2 - ARC_TOL) && Math.max(...dc) - Math.min(...dc) <= ARC_TOL,
+         'steep edge: letters on one arc just outside the stone');
+    }
   }
 
   // F4 (docs/93): feedline slots assigned in SPATIAL order (screen top first),

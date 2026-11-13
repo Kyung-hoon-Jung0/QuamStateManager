@@ -91,17 +91,22 @@ ok(doc.getElementById('topo-html-wrap') === null, 'A2: no card-diagram host');
 ok(doc.querySelectorAll('.topo-node-card').length === 0, 'A3: no property cards');
 
 /* ── B. the pair information the cards carried is on the hero now ────── */
-ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\b[HL]\b/.test(g.textContent)).length === 4,
+// Each role end draws one <text> per letter; its reading is them in order.
+const roleStr = g => Array.from(g.querySelectorAll('text.cm-role-txt'), t => t.textContent).join(' ');
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\b[HL]\b/.test(roleStr(g))).length === 4,
   'B1: high and low frequency labels on both pair endpoints');
 ok(hero.querySelectorAll('.cm-role-c').length === 2, 'B2: a C marker per pair');
 ok(hero.querySelectorAll('.cm-role-t').length === 2, 'B3: a T marker per pair');
-ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 2, 'B4: an M marker per pair');
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(roleStr(g))).length === 2, 'B4: an M marker per pair');
 
 /* M is a ROLE, so it coincides with C or T — never a third position. It must
    sit next to the end that actually moves, which differs per pair here. */
 function markerXY(sel, nth) {
   const roles = Array.from(hero.querySelectorAll(sel === '.cm-role-m' ? '.cm-role' : sel));
-  const c = (sel === '.cm-role-m' ? roles.filter(g => /\bM\b/.test(g.textContent)) : roles)[nth].querySelector('text');
+  const g = (sel === '.cm-role-m' ? roles.filter(g => /\bM\b/.test(roleStr(g))) : roles)[nth];
+  // the marker's own letter on the arc
+  const want = sel === '.cm-role-m' ? 'M' : sel === '.cm-role-c' ? 'C' : 'T';
+  const c = Array.from(g.querySelectorAll('text.cm-role-txt')).find(t => t.textContent === want);
   return { x: parseFloat(c.getAttribute('x')), y: parseFloat(c.getAttribute('y')) };
 }
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
@@ -137,7 +142,7 @@ function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
     return w;
   })();
   const h2 = w2.document.getElementById('topo-hero');
-  ok(Array.from(h2.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 0,
+  ok(Array.from(h2.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(roleStr(g))).length === 0,
     'B7: no moving_qubit recorded => no M is invented from the frequencies');
   ok(h2.querySelectorAll('.cm-role-c').length === 2,
     'B8: ...but C/T still render — the roles are known');

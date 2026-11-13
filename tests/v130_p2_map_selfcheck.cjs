@@ -25,7 +25,10 @@ for (const highlight of ['pairs', 'flux', 'resonators']) {
   win.TopoGraph.renderLayout(mount, { nodes, edges, highlight });
   const edge = mount.querySelector('.cm-edge');
   // map tidy: roles are the shared C / T / M badges; the orange frequency arrow is the one arrow
-  const pill = mount.querySelector('.cm-role rect'), moving = Array.from(mount.querySelectorAll('.cm-role text')).find(t => / M(?: |$)/.test(t.textContent));
+  // a role end: an arc band plus one <text> per letter
+  const pill = mount.querySelector('.cm-role path.cm-dir-role-band');
+  const moving = Array.from(mount.querySelectorAll('.cm-role')).find(g =>
+    / M(?: |$)/.test(Array.from(g.querySelectorAll('text.cm-role-txt'), t => t.textContent).join(' ')));
   assert.ok(edge && pill && moving, highlight + ': pair line, the frequency arrow and the M badge are drawn'); n++;
   assert.equal(mount.querySelectorAll('.cm-dir-arrow, .cm-dir-m').length, 0, highlight + ': no blue arrow, no open ring'); n++;
   const lastStone = mount.querySelectorAll('.cm-stone'); 
@@ -33,12 +36,14 @@ for (const highlight of ['pairs', 'flux', 'resonators']) {
   const marks = mount.querySelectorAll('.cm-node .cm-flux, .cm-node .cm-res');
   assert.ok(marks.length === 4, highlight + ': both stones carry a flux stub and a resonator mark'); n++;
   const stones = Array.from(mount.querySelectorAll('.cm-stone')).map(c => [+c.getAttribute('cx'), +c.getAttribute('cy'), +c.getAttribute('r')]);
-  for (const rect of mount.querySelectorAll('.cm-role rect')) {
-    const x = +rect.getAttribute('x'), y = +rect.getAttribute('y');
-    const w = +rect.getAttribute('width'), h = +rect.getAttribute('height');
-    for (const [cx,cy,r] of stones) {
-      const nx = Math.max(x,Math.min(cx,x+w)), ny = Math.max(y,Math.min(cy,y+h));
-      assert.ok(Math.hypot(nx-cx,ny-cy) > r, highlight + ': the pill clears every stone'); n++;
+  for (const role of mount.querySelectorAll('.cm-role')) {
+    const band = +role.querySelector('path.cm-dir-role-band').getAttribute('stroke-width');
+    for (const t of role.querySelectorAll('text.cm-role-txt')) {
+      const x = +t.getAttribute('x'), y = +t.getAttribute('y');
+      for (const [cx,cy,r] of stones) {
+        // the band under each letter (half its height either side) stays outside every stone
+        assert.ok(Math.hypot(x-cx,y-cy) - band / 2 > r, highlight + ': the pill clears every stone'); n++;
+      }
     }
   }
   for (const node of mount.querySelectorAll('.cm-node')) {

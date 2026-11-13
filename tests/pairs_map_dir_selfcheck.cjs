@@ -38,6 +38,16 @@ function bboxOf(el) {
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
     return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
   }
+  if (tag === 'path') {
+    // The role arc: the browser's bbox of a path is its geometry without the
+    // stroke. Take the arc's end points and, for a 3-letter arc, its bulge is
+    // inside the letters' own boxes, so the end points are a fair stand-in.
+    const v = (el.getAttribute('d') || '').match(/-?\d+(?:\.\d+)?/g) || [];
+    const n = v.map(Number), pts = [[n[0], n[1]]];
+    if (/A/.test(el.getAttribute('d') || '') && n.length >= 9) pts.push([n[7], n[8]]);
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+  }
   if (tag === 'text' || tag === 'tspan') {
     const f = num(el, 'font-size') || num(el.parentElement, 'font-size') || 12, w = (el.textContent || '').length * 0.6 * f;
     return { x: num(el, 'x') - w / 2, y: num(el, 'y') - f / 2, width: w, height: f };
@@ -88,7 +98,7 @@ const svg = m.querySelector('svg.cm-svg');
 ok(!!svg && svg.classList.contains('cm-dir'), 'the map carries the direction drawing (cm-dir)');
 ok(m.querySelectorAll('.cm-dir-arrow').length === 0 && svg.querySelectorAll('.cm-role-c').length === edges.length, 'map tidy: no blue arrow; one C badge per pair edge (' + edges.length + ')');
 ok(m.querySelectorAll('.cm-dir-label').length === edges.length, 'one along-the-edge label per pair edge');
-ok(m.querySelectorAll('.cm-dir-m').length === 0 && Array.from(svg.querySelectorAll('.cm-role text')).filter(t => / M(?: |$)/.test(t.textContent)).length === edges.filter((x) => x.moving_qubit).length, 'one M badge per edge that declares a moving qubit, no ring');
+ok(m.querySelectorAll('.cm-dir-m').length === 0 && Array.from(svg.querySelectorAll('.cm-role')).filter(g => / M(?: |$)/.test(Array.from(g.querySelectorAll('text.cm-role-txt'), t => t.textContent).join(' '))).length === edges.filter((x) => x.moving_qubit).length, 'one M badge per edge that declares a moving qubit, no ring');
 
 const placed = Array.from(m.querySelectorAll('.cm-dir-label')).every((t) => t.hasAttribute('data-px') &&
   (t.hasAttribute('data-stack') || t.hasAttribute('transform') || +t.getAttribute('data-ang') === 0));

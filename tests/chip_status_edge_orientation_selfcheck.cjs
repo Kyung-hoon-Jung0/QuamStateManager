@@ -105,11 +105,19 @@ function markerAt(letter, pairId, qubitId) {
   // ambiguous question on any chip with a chain running through it.
   const g = hero.querySelector((letter === 'm' ? '.cm-role' : '.cm-role-' + letter)
     + '[data-cm-pair="' + pairId + '"][data-cm-at="' + qubitId + '"]');
-  if (!g || (letter === 'm' && !/\bM\b/.test(g.textContent))) return null;
-  const text = g.querySelector('text');
+  if (!g || (letter === 'm' && !/\bM\b/.test(roleStr(g)))) return null;
+  // The marker's own letter (each letter is its own <text> on the arc).
+  const want = letter.toUpperCase();
+  const text = Array.from(g.querySelectorAll('text.cm-role-txt')).find(t => t.textContent === want);
+  if (!text) return null;
   return { x: parseFloat(text.getAttribute('x')), y: parseFloat(text.getAttribute('y')) };
 }
 function d(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+// A role end draws one <text> per letter on an arc round its stone; its
+// reading is the letters in document order, joined as the old pill read.
+function roleStr(g) {
+  return Array.from(g.querySelectorAll('text.cm-role-txt')).map(t => t.textContent).join(' ');
+}
 
 ok(hero.querySelectorAll('.cm-role-c').length === 3,
    'a C marker for every rendered edge, got ' + hero.querySelectorAll('.cm-role-c').length);
@@ -136,9 +144,13 @@ ok(hero.querySelectorAll('.cm-role-t').length === 3,
 // M marks the qubit whose flux moves -- one per pair that declares it, and the
 // coupler pair declares none, so exactly two. It is a ROLE, so it always
 // coincides with that pair's C or T rather than being a third position.
-ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(g.textContent)).length === 2,
+ok(Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(roleStr(g))).length === 2,
    'an M only where moving_qubit is recorded, got '
-   + hero.querySelectorAll('.cm-role-m').length);
+   + Array.from(hero.querySelectorAll('.cm-role')).filter(g => /\bM\b/.test(roleStr(g))).length);
+// One role group per pair end, and nothing else drawn as a separate marker.
+ok(hero.querySelectorAll('.cm-role').length === 6
+   && !hero.querySelector('.cm-role circle, .cm-role rect'),
+   'one role group per pair end (no stray separate circles)');
 ok(!!markerAt('m', 'qA2-qA1', 'qA2'),
    'moving_qubit="control" on qA2-qA1 puts M at qA2 (its control)');
 ok(!!markerAt('m', 'qA1-qA3', 'qA3'),
