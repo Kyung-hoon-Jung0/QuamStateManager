@@ -51,16 +51,11 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
   });
   hover(doc.querySelector('[data-cm="q:q1"]'));
   ok(!!expand(), 'a qubit stone still offers Expand');
-  const lines = (g) => Array.prototype.map.call(g.querySelectorAll('tspan'), (t) => t.textContent).join('/');
-  ok(lines(ghosts[0]) === 'Add/qubit', 'qubit button reads Add / qubit: ' + lines(ghosts[0]));
-  ok(lines(ghosts[1]) === 'Add/pair', 'pair button reads Add / pair: ' + lines(ghosts[1]));
-  const fs0 = ghosts[0].querySelector('text').getAttribute('font-size');
-  const fs1 = ghosts[1].querySelector('text').getAttribute('font-size');
-  ok(fs0 && fs0 === fs1, 'both buttons use one font size: ' + fs0 + ' vs ' + fs1);
-  ok(ghosts[0].querySelector('circle').getAttribute('r') === ghosts[1].querySelector('circle').getAttribute('r'), 'same button size');
-  ok(ghosts[0].getAttribute('aria-label') === 'Add qubit' && ghosts[1].getAttribute('aria-label') === 'Add pair',
-     'aria-labels: ' + ghosts[0].getAttribute('aria-label') + ' / ' + ghosts[1].getAttribute('aria-label'));
-  ok(ghosts[0].getAttribute('tabindex') === '0' && ghosts[1].getAttribute('role') === 'button', 'keyboard focusable buttons');
+  ok(ghosts[0].textContent === '+ Add qubit' && ghosts[1].textContent === '+ Add pair',
+     'button labels: ' + ghosts[0].textContent + ' / ' + ghosts[1].textContent);
+  ok(ghosts[0].className === ghosts[1].className, 'both buttons share one style');
+  ok(ghosts[0].tagName === 'BUTTON' && ghosts[1].tagName === 'BUTTON', 'native, keyboard-reachable buttons');
+  ok(!doc.querySelector('svg.cm-svg .cm-dir-ghost'), 'the add buttons sit outside the map drawing');
   console.log((fails ? 'FAILED ' : 'ok ') + (n - fails) + '/' + n);
   process.exit(fails ? 1 : 0);
 })();
