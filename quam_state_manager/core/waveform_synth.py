@@ -1325,6 +1325,31 @@ def synth_for_operation(store, op_path: str, *,
     return payload
 
 
+def config_length(payload: dict):
+    """The length (ns) the config entry of a :func:`synth_for_operation`
+    payload's pulse carries: the synthesized one (an inferred length its class
+    already rounded up), else the stored length as read. None when neither is
+    a finite number."""
+    for v in (payload.get("length"),
+              (payload.get("resolved_params") or {}).get("length")):
+        if (isinstance(v, (int, float)) and not isinstance(v, bool)
+                and math.isfinite(v)):
+            return v
+    return None
+
+
+def pulse_write_problem(payload: dict, qop_version=None) -> str | None:
+    """What makes the pulse of a :func:`synth_for_operation` payload unusable
+    on the chip, or None: its class's OWN rule (a :class:`PulseRuleError`, for
+    a class matched by more than its bare name), else a config length QOP
+    refuses (``spec_constraints.pulse_length_problem``). Never "SM cannot
+    draw this". The write guard and Diagnostics both ask this one function."""
+    from quam_state_manager.core.spec_constraints import pulse_length_problem
+    if payload.get("rule_violation") and payload.get("class_match") != "leaf":
+        return str(payload.get("error") or "")
+    return pulse_length_problem(config_length(payload), qop_version)
+
+
 def _name_unread_references(payload: dict, pointer_fields: dict) -> None:
     """A field synthesis refused because its reference could not be read
     says WHY (core/pulse_refs), not only that it is a pointer -- e.g. "its

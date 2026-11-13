@@ -26442,6 +26442,15 @@ def api_pulse_synth():
     # The contract in the docstring is load-bearing: the client keeps its last
     # good plot on ok=False, but a 500 has no body to keep -- and the stress
     # round of 2026-09-16 reached one with a plain "inf" typed into a field.
+    if not path and store is not None:
+        from quam_state_manager.core import pulse_refs
+        params = dict(params)
+        with store._lock:
+            for k, v in list(params.items()):
+                if isinstance(v, str) and v.startswith("#/"):
+                    r = pulse_refs.read(store.merged, [], v)
+                    if r.ok:
+                        params[k] = r.value
     try:
         if path:
             payload = synth_for_operation(store, path, overrides=params)
@@ -27108,6 +27117,7 @@ def pulse_create_form():
         "_pulse_create.html",
         groups=groups,
         qubit_names=qubit_names,
+        qubit_defaults_json=json.dumps(_qubit_param_defaults(store.merged)),
         pairs_map=pairs_map,
         pair_channels_map=pair_channels_map,
         has_xy_detuned=has_xy_detuned,
@@ -27873,14 +27883,66 @@ def _pair_addition_verdicts(store, pairs, rule, manifest=None):
 
 #: the first words of every :func:`_synth_write_refusal` message (the doors'
 #: refusal text tells it apart from a lab class's own refusal by them)
-_SYNTH_REFUSAL_LEAD = "The pulse class's own rule rejects this"
+_SYNTH_REFUSAL_LEAD = "This pulse would not run"
+
+
+def _qubit_param_defaults(merged: dict) -> dict:
+    """Per-qubit create-form defaults: ``{qubit: {param: {"value", "note"}}}``.
+
+    gl-tmz P2: a DRAG pulse's ``anharmonicity`` on a real chip points at the
+    qubit's own value (``#/qubits/<q>/anharmonicity``, a lab convention for
+    its sign), while the catalog default is a fixed -220 MHz -- a new pulse
+    got the wrong Q sign. The default is the target the qubit's existing DRAG
+    pulses point at (as an absolute pointer), else the qubit's own
+    ``anharmonicity`` when it stores one, else none (the form keeps the
+    catalog value and says it is a placeholder)."""
+    from quam_state_manager.core import pulse_refs
+    from quam_state_manager.core.pulse_catalog import resolve_qclass
+    from quam_state_manager.core.pulse_index import PULSE_CHANNELS
+    drag = ("DragGaussianPulse", "DragCosinePulse")
+    out: dict = {}
+    for q, qd in (merged.get("qubits") or {}).items():
+        if not isinstance(qd, dict):
+            continue
+        ptr = None
+        for ch in PULSE_CHANNELS:
+            chan = qd.get(ch)
+            ops = chan.get("operations") if isinstance(chan, dict) else None
+            for name, body in (ops.items() if isinstance(ops, dict) else ()):
+                qc = body.get("__class__") if isinstance(body, dict) else None
+                spec = resolve_qclass(qc)[0] if isinstance(qc, str) else None
+                v = body.get("anharmonicity") if spec is not None else None
+                if spec is None or spec.key not in drag or not pulse_refs.is_ref(v):
+                    continue
+                r = pulse_refs.read(merged, ["qubits", q, ch, "operations", name], v)
+                if (r.ok and r.target and isinstance(r.value, (int, float))
+                        and not isinstance(r.value, bool)):
+                    ptr = "#/" + r.target.replace(".", "/")
+                    break
+            if ptr:
+                break
+        own = qd.get("anharmonicity")
+        if ptr:
+            out[q] = {"anharmonicity": {
+                "value": ptr, "note": "the value this qubit's DRAG pulses use"}}
+        elif isinstance(own, (int, float)) and not isinstance(own, bool):
+            out[q] = {"anharmonicity": {
+                "value": f"#/qubits/{q}/anharmonicity",
+                "note": "this qubit's own anharmonicity"}}
+        else:
+            out[q] = {"anharmonicity": {
+                "value": None,
+                "note": "placeholder: this qubit stores no anharmonicity -- set it"}}
+    return out
 
 
 def _synth_judged_class(qclass) -> bool:
-    """A pulse class SM synthesizes in-process (its catalog: quam and
-    quam_builder classes). A lab class is :func:`_lab_write_refusal`'s."""
-    from quam_state_manager.core.pulse_catalog import resolve_qclass
-    return isinstance(qclass, str) and bool(qclass) and resolve_qclass(qclass)[0] is not None
+    """A pulse class, SM's catalog's (its own rules are checked in-process)
+    or a lab's (only the config-level length rule is checked here; its own
+    code is :func:`_lab_write_refusal`'s)."""
+    from quam_state_manager.core.pulse_catalog import is_pulse_class, resolve_qclass
+    return (isinstance(qclass, str) and bool(qclass)
+            and (resolve_qclass(qclass)[0] is not None or is_pulse_class(qclass)))
 
 
 def _synth_owner(merged, segs, bodies):
@@ -27910,10 +27972,19 @@ def _synth_owner(merged, segs, bodies):
 
 def _synth_write_refusal(store, writes):
     """``(message, refused_write_indices)`` when a write would leave a pulse
-    of a class SM synthesizes in-process (quam / quam_builder: the catalog)
-    breaking one of that class's OWN rules -- the ``raise`` its
-    ``waveform_function`` makes, e.g. an odd ``SNZPulse.flat_length``, which
-    makes quam's ``generate_config()`` raise for the whole chip; else None.
+    unusable on the chip; else None. Two rules (``waveform_synth.
+    pulse_write_problem``, shared with Diagnostics):
+
+    * a class SM synthesizes in-process (quam / quam_builder: the catalog)
+      has its OWN rules -- the ``raise`` its ``waveform_function`` makes,
+      e.g. an odd ``SNZPulse.flat_length``, which makes quam's
+      ``generate_config()`` raise for the whole chip;
+    * for every pulse class (a lab's too), the config length must be a
+      multiple of 4 ns and at least the QOP's minimum
+      (``spec_constraints.pulse_length_problem``): QOP 3.7.3 refuses every
+      program otherwise ("Pulse length must be a multiple of 4") although
+      generate_config() passes. An inferred length is judged as its class
+      rounds it.
 
     *writes* is :func:`_lab_write_refusal`'s ``[(write_path, value)]``. Each
     pulse a write lands inside (or a whole new pulse dict written at a path)
@@ -27923,14 +27994,13 @@ def _synth_write_refusal(store, writes):
     field overridden, when the chip's pulse index is warm (a guard never makes
     an edit wait on a whole-chip walk).
 
-    Only a :class:`waveform_synth.PulseRuleError` refuses -- never an
-    unknown class, an unresolved pointer, a missing parameter or anything
-    else that only means SM cannot draw the pulse -- and only when the write
-    makes the pulse break the rule (a pulse already breaking it with the
-    same message, e.g. an unrelated field edited, is not refused). Lab
-    classes are not judged here; a delete never is. A check that fails
-    never blocks."""
-    from quam_state_manager.core import pulse_refs, waveform_synth
+    Never refused for an unknown class, an unresolved pointer, a missing
+    parameter or anything else that only means SM cannot draw the pulse --
+    and only when the write makes the pulse break a rule (a pulse already
+    breaking it with the same message, e.g. an unrelated field edited, is
+    not refused). A lab class's own code is not judged here; a delete never
+    is. A check that fails never blocks."""
+    from quam_state_manager.core import pulse_refs, spec_constraints, waveform_synth
     try:
         bodies: dict[str, Any] = {}
         fields_of: dict[str, list] = {}
@@ -27993,20 +28063,27 @@ def _synth_write_refusal(store, writes):
                         idx_of.setdefault(op, set()).add(hit[0])
         jobs = [(op, {"body": b}) for op, b in bodies.items()]
         jobs += [(op, {"overrides": ov}) for op, ov in overrides.items()]
+        qop = None
         for op, kw in jobs:
+            if qop is None:
+                with store._lock:
+                    qop = spec_constraints.qop_version_of(store.merged) or ""
             after = waveform_synth.synth_for_operation(store, op, **kw)
-            if not after.get("rule_violation"):
+            problem = waveform_synth.pulse_write_problem(after, qop or None)
+            if not problem:
                 continue
             before = waveform_synth.synth_for_operation(store, op)
-            if before.get("rule_violation") and before.get("error") == after.get("error"):
+            if waveform_synth.pulse_write_problem(before, qop or None) == problem:
                 continue
             qclass = str(after.get("qclass") or "")
             leaf = qclass.rsplit(".", 1)[-1] or "pulse"
             fields = ", ".join(f for f in fields_of.get(op) or () if f)
+            why = ("quam's generate_config() would raise for the whole chip"
+                   if after.get("rule_violation") else
+                   "QOP would refuse every program on the chip")
             return (f"{_SYNTH_REFUSAL_LEAD}: {leaf} at {op}"
                     + (f" ({fields})" if fields else "")
-                    + f" -- {after.get('error')} quam's generate_config() "
-                    "would raise for the whole chip, so every node would fail.",
+                    + f" -- {problem}. {why}, so every node would fail.",
                     sorted(idx_of.get(op) or ()))
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("pulse rule check failed", exc_info=True)

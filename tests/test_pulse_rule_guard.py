@@ -54,17 +54,21 @@ def _state() -> dict:
     }
 
 
-@pytest.fixture
-def client(tmp_path: Path):
+def _load(tmp_path: Path, state: dict):
     folder = tmp_path / "chip"
-    folder.mkdir()
-    (folder / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    folder.mkdir(parents=True)
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}),
                                         encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
     c = app.test_client()
     c.post("/load", data={"folder": str(folder)})
     return c
+
+
+@pytest.fixture
+def client(tmp_path: Path):
+    return _load(tmp_path, _state())
 
 
 def _peek(c, path):
@@ -159,3 +163,154 @@ class TestFieldEdit:
         r = client.post("/field/edit", data={"dot_path": f"{Z}.broken.flat_length",
                                               "value": "47"})
         assert r.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# gl-tmz: a config pulse length QOP refuses (not a multiple of 4 ns, or under
+# the QOP minimum) -- generate_config() passes, then QOP refuses every program
+# ---------------------------------------------------------------------------
+
+def _create_square(c, length):
+    return c.post("/api/pulse/create", data={
+        "target_kind": "qubit", "qubit": "q1", "channel": "z",
+        "op_name": "sq_new", "pulse_type": "SquarePulse",
+        "amplitude": "0.05", "length": str(length)})
+
+
+class TestPulseLength:
+    def test_the_rule(self):
+        from quam_state_manager.core.spec_constraints import pulse_length_problem
+        assert "multiple of 4" in pulse_length_problem(42)
+        assert pulse_length_problem(44) is None
+        assert pulse_length_problem(4) is None             # QOP >= 3.3 / unknown
+        assert "16 ns minimum" in pulse_length_problem(8, "3.2.1")
+        assert pulse_length_problem(8, "3.3") is None
+        assert "no QOP version" in pulse_length_problem(0)
+        assert pulse_length_problem("#./inferred_length") is None
+
+    def test_create_refuses_a_length_not_a_multiple_of_4(self, client):
+        r = _create_square(client, 42)
+        assert r.status_code == 400 and b"multiple of 4" in r.data
+        assert client.get(f"/field/peek?dot_path={Z}.sq_new").get_json()[
+            "values"].get(f"{Z}.sq_new") is None
+        assert _create_square(client, 44).status_code == 200
+
+    def test_an_inferred_length_is_judged_rounded(self, client):
+        # 22 + 2 + 2 = 26 raw, rounded to 28 by the class: accepted
+        assert _create(client, 22).status_code == 200
+
+    def test_field_edit_refuses_a_length_not_a_multiple_of_4(self, client):
+        r = client.post("/field/edit", data={"dot_path": f"{Z}.flat.length",
+                                              "value": "42"})
+        assert r.status_code == 400 and "multiple of 4" in r.get_json()["error"]
+        assert _peek(client, f"{Z}.flat.length") == 40
+        assert client.post("/field/edit", data={
+            "dot_path": f"{Z}.flat.length", "value": "44"}).status_code == 200
+
+    def test_edit_batch_refuses_a_length_not_a_multiple_of_4(self, client):
+        r = client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": f"{Z}.flat.length", "value": "42"}]})
+        assert r.status_code == 400 and "multiple of 4" in r.get_json()["error"]
+
+    def test_a_lab_class_with_a_stored_length_is_judged_too(self, client):
+        # the rule is the QOP's, not the class's: a class SM cannot draw is
+        # still refused a length QOP refuses (its own rules stay unjudged)
+        r = client.post("/field/edit", data={"dot_path": f"{Z}.mystery.length",
+                                              "value": "42"})
+        assert r.status_code == 400
+
+    def test_the_minimum_follows_the_chip_qop_version(self, tmp_path):
+        st = _state()
+        st["extras"] = {"qop_version": "3.2.0"}
+        c = _load(tmp_path / "a", st)
+        r = c.post("/field/edit", data={"dot_path": f"{Z}.flat.length", "value": "8"})
+        assert r.status_code == 400 and "16 ns minimum" in r.get_json()["error"]
+        st["extras"] = {"qop_version": "3.7.3"}
+        c2 = _load(tmp_path / "b", st)
+        assert c2.post("/field/edit", data={"dot_path": f"{Z}.flat.length",
+                                             "value": "8"}).status_code == 200
+
+
+class TestPulseLengthDiagnostics:
+    def _found(self, st):
+        from quam_state_manager.core import diagnostics
+        from quam_state_manager.core.loader import QuamStore
+        return [f for f in diagnostics.lint_state(QuamStore.from_dicts(st, {}))
+                if f.category == "waveform_length"]
+
+    def test_one_finding_per_pulse_jumping_to_the_length(self):
+        st = _state()
+        ops = st["qubits"]["q1"]["z"]["operations"]
+        ops["flat"]["length"] = 42
+        ops["mystery"]["length"] = 42
+        found = self._found(st)
+        assert sorted(f.jump_path for f in found) == [
+            f"{Z}.flat.length", f"{Z}.mystery.length"]
+        assert all(f.severity == "error" for f in found)
+
+    def test_a_clean_chip_has_none(self):
+        assert self._found(_state()) == []
+
+
+# ---------------------------------------------------------------------------
+# gl-tmz P2: a new DRAG pulse's anharmonicity defaults to the qubit's own
+# ---------------------------------------------------------------------------
+
+def _drag_state() -> dict:
+    st = _state()
+    q1 = st["qubits"]["q1"]
+    q1["anharmonicity"] = 210e6
+    q1["anh_drive"] = 190e6
+    q1["xy"] = {"operations": {
+        "x180": {"__class__": QC + "DragCosinePulse", "length": 40,
+                 "amplitude": 0.1, "alpha": 0.0, "axis_angle": 0.0,
+                 "anharmonicity": "#/qubits/q1/anh_drive"},
+        "x90": {"__class__": QC + "DragCosinePulse", "length": 40,
+                "amplitude": 0.05, "alpha": 0.0, "axis_angle": 0.0,
+                "anharmonicity": "#../x180/anharmonicity"}}}
+    st["qubits"]["q2"] = {"id": "q2", "anharmonicity": 200e6,
+                          "xy": {"operations": {}}}
+    st["qubits"]["q3"] = {"id": "q3", "xy": {"operations": {}}}
+    return st
+
+
+class TestDragDefault:
+    def test_the_form_names_each_qubits_value(self, tmp_path):
+        import re
+        c = _load(tmp_path, _drag_state())
+        html = c.get("/pulse/new").data.decode()
+        m = re.search(r'id="pulse-qubit-defaults-data"[^>]*>(.*?)</script>', html, re.S)
+        got = json.loads(m.group(1))
+        assert got["q1"]["anharmonicity"]["value"] == "#/qubits/q1/anh_drive"
+        assert got["q2"]["anharmonicity"]["value"] == "#/qubits/q2/anharmonicity"
+        assert got["q3"]["anharmonicity"]["value"] is None
+        assert "placeholder" in got["q3"]["anharmonicity"]["note"]
+
+    def test_the_default_creates_and_previews(self, tmp_path):
+        c = _load(tmp_path, _drag_state())
+        prev = c.post("/api/pulse/synth", json={
+            "qclass": "DragCosinePulse", "params": {
+                "length": "40", "amplitude": "0.1", "alpha": "0.1", "axis_angle": "0",
+                "anharmonicity": "#/qubits/q2/anharmonicity"}}).get_json()
+        assert prev["ok"] is True, prev
+        r = c.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q2", "channel": "xy",
+            "op_name": "x180", "pulse_type": "DragCosinePulse", "length": "40",
+            "amplitude": "0.1", "alpha": "0.1", "axis_angle": "0",
+            "anharmonicity": "#/qubits/q2/anharmonicity"})
+        assert r.status_code == 200, r.data[:300]
+        assert _peek(c, "qubits.q2.xy.operations.x180.anharmonicity") == "#/qubits/q2/anharmonicity"
+
+    def test_the_form_script_selfcheck(self):
+        import os
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node not installed")
+        here = Path(__file__).parent
+        r = subprocess.run([node, str(here / "pulses_qubit_default_selfcheck.cjs")],
+                           capture_output=True, text=True, env=dict(os.environ))
+        if r.returncode == 2 and "jsdom not installed" in r.stderr:
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, r.stdout + r.stderr
