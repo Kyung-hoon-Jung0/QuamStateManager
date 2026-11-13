@@ -208,6 +208,12 @@ class TestDelete:
 
 
 class TestTheJsonTreeDeleteDoor:
+    def test_the_confirm_count_names_the_by_name_play(self, client):
+        j = client.get("/field/refs?dot_path=qubits.q1.z").get_json()
+        assert j["ok"] and j["by_name"] == [HOLDER]
+        j = client.get("/field/refs?dot_path=qubits.q2.z").get_json()
+        assert j["by_name"] == []
+
     def test_a_channel_delete_that_takes_the_op_is_refused_naming_the_slot(self, client):
         r = client.post("/field/delete", data={"dot_path": "qubits.q1.z"})
         assert r.status_code == 409, r.data[:300]

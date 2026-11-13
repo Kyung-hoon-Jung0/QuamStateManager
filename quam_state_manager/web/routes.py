@@ -16064,7 +16064,10 @@ def field_refs():
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
     total, refs = _count_refs_into(store, dot_path)
-    return jsonify(ok=True, total=total, refs=refs)
+    # gate slots that play an op under this path BY NAME: no pointer names
+    # them, and the delete door refuses on them (the same finder)
+    return jsonify(ok=True, total=total, refs=refs,
+                   by_name=_by_name_cut(store, [dot_path]))
 
 
 def _exc_text(e: Exception) -> str:

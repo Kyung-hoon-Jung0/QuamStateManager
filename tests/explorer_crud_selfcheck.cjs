@@ -224,6 +224,27 @@ function nodeAt(container, p) {
       'C4: an open sibling subtree stays open too');
   }
 
+  // C4b: the confirm counts gate slots that play an op under the path BY
+  // NAME (the same holders the delete door refuses on), not only pointers.
+  {
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/field/refs') === 0) return jsonResp({ ok: true, total: 0, refs: [],
+        by_name: ['qubit_pairs.q1-q2.macros.cz.flux_pulse_qubit.id'] });
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-del').click();
+    await tick(20);
+    const lbl = dictNode.querySelector('.tree-del-confirm');
+    ok(!!lbl && /0 pointer refs, 1 gate slot plays an op here by name/.test(lbl.textContent),
+      'C4b: the confirm names the by-name play: ' + (lbl && lbl.textContent));
+    ok(!!lbl && /flux_pulse_qubit\.id/.test(lbl.title || ''), 'C4b: ...and which slot, on hover');
+  }
+
   // C5: type picker 409 env-conflict → confirm → override.
   {
     let posts = 0;

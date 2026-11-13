@@ -14553,9 +14553,13 @@ window.clearDetailPanelSearch = function(btnEl) {
         fetch("/field/refs?dot_path=" + encodeURIComponent(m.path))
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                var _bn = (d.ok && Array.isArray(d.by_name)) ? d.by_name.length : 0;
                 label.textContent = label.textContent.replace("refs: …", d.ok
                     ? d.total + " pointer ref" + (d.total === 1 ? "" : "s")
+                      + (_bn ? ", " + _bn + " gate slot" + (_bn === 1 ? "" : "s")
+                               + " play" + (_bn === 1 ? "s" : "") + " an op here by name" : "")
                     : "refs: unknown");
+                if (_bn) label.title = d.by_name.join(", ");
             }).catch(function () {
                 label.textContent = label.textContent.replace("refs: …", "refs: unknown");
             });
