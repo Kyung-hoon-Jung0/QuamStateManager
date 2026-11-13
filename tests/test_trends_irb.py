@@ -157,15 +157,22 @@ def test_search_enter_matches_and_unknown(irb_client):
     assert "Nothing recorded for" not in body
 
 
+RESOLVED = "qubit_pairs.*.gate_fidelity_resolved"
+
+
 def test_default_irb_pressed_and_explicit_off_sticks(irb_client):
+    # the default 2Q trend is the RESOLVED gate fidelity; the raw IRB family
+    # keeps its badge, unpressed
     body = irb_client.get("/topology/trends").get_data(as_text=True)
-    assert any(c["metric"] == "macros.*.fidelity.InterleavedRB" and c["series"] for c in _charts(body))
+    assert any(c["metric"] == "gate_fidelity_resolved" and c["series"] for c in _charts(body))
     assert 'data-trend-path="' + IRB + '"' in body
     import re
-    assert re.search('data-trend-path="' + re.escape(IRB) + '"[^>]*aria-pressed="true"', body)
+    assert re.search('data-trend-path="' + re.escape(RESOLVED) + '"[^>]*aria-pressed="true"', body)
+    assert not re.search('data-trend-path="' + re.escape(IRB) + '"[^>]*aria-pressed="true"', body)
     for query in ("metrics=", "paths="):
         body = irb_client.get("/topology/trends?" + query).get_data(as_text=True)
-        assert not any(c["metric"] == "macros.*.fidelity.InterleavedRB" for c in _charts(body))
+        assert not any(c["metric"] in ("gate_fidelity_resolved", "macros.*.fidelity.InterleavedRB")
+                       for c in _charts(body))
 
 
 def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):

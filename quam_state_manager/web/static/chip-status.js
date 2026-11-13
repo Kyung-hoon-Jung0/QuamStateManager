@@ -1378,7 +1378,7 @@ window.ChipStatus.mount = function (opts) {
 
     // Pre-compute aggregates per property
     var propAggs = {};
-    CARD_PROPS.forEach(function(p) {
+    CARD_PROPS.concat(PANEL_ONLY_PROPS).forEach(function(p) {
         propAggs[p.key] = computeAggregates(topo.nodes.map(function(n) { return _mv(n, p.key); }));
     });
 
@@ -2828,6 +2828,20 @@ window.ChipStatus.mount = function (opts) {
         // precedent as the `_cols_v2` visibility flip (docs/85): bump the key
         // so a corrected default reaches everyone, and a choice made AFTER
         // seeing the honest label survives from then on.
+        // The hero's readout note for one stone: {sub, title} when the played
+        // RF and the resonator f_01 differ at the shown precision, or when the
+        // value IS f_01 (no RF_frequency); null when they agree.
+        function _heroRoNote(n) {
+            if (n.readout_rf_source === 'f_01') {
+                return { sub: 'f_01 (no RF)', title: 'no RF_frequency: showing resonator f_01' };
+            }
+            var f = n.readout_frequency, rf = n.readout_rf_frequency;
+            if (typeof f === 'number' && typeof rf === 'number' && fmt(f, 'GHz') !== fmt(rf, 'GHz')) {
+                return { sub: 'f_01 ' + fmt(f, 'GHz'),
+                         title: 'played RF ' + fmt(rf, 'GHz') + ' · resonator f_01 ' + fmt(f, 'GHz') };
+            }
+            return null;
+        }
         var HERO_KEY = 'quam_topo_hero_metric_v2';
         var ZOOM_KEY = 'quam_topo_hero_zoom';
         // docs/126 ② — the metric patches ARE the map's controls: clicking one
@@ -2846,14 +2860,25 @@ window.ChipStatus.mount = function (opts) {
               // the two stones' frequency difference — Δf, the number the
               // docs/93 chevron only encodes as an inequality.
               edgeDelta: { key: 'f_01', label: 'Δf' } },
+            // gl-f4h follow-up: the readout patch shows the PLAYED RF
+            // (readout_rf_frequency), as the Frequencies panel does; the
+            // resonator f_01 joins the stone's sub-line and hover only where
+            // the two differ at the shown precision (one value when equal).
+            { key: 'readout_rf_frequency', label: 'Readout freq',
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              subFn: function(n) { var t = _heroRoNote(n); return t ? t.sub : null; },
+              titleFn: function(n) { var t = _heroRoNote(n); return t ? t.title : ''; } },
+            // a topology that carries no played RF at all keeps the f_01 patch
             { key: 'readout_frequency',   label: 'Readout freq',
-              fmtFn: function(v) { return fmt(v, 'GHz'); } },
+              fmtFn: function(v) { return fmt(v, 'GHz'); },
+              onlyIfMissing: 'readout_rf_frequency' },
             { key: 'gate_fidelity_avg',   fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'assignment_fidelity_gef', fmtFn: function(v) { return fmtPct(v, 2) + '%'; } },
             { key: 'T1',                  fmtFn: function(v) { return fmt(v, 'us'); } },
             { key: 'T2echo',              fmtFn: function(v) { return fmt(v, 'us'); } },
         ].filter(function(m) {
+            if (m.onlyIfMissing && topo.nodes.some(function(n) { return _mv(n, m.onlyIfMissing) != null; })) return false;
             return topo.nodes.some(function(n) { return _mv(n, m.key) != null; });
         });
 
@@ -2893,6 +2918,11 @@ window.ChipStatus.mount = function (opts) {
         // The retired mixed-source patch: a remembered choice of it keeps
         // a 2Q view, on the default 2Q patch.
         if (current === 'cz_fidelity') current = DEFAULT_2Q;
+        // a remembered f_01 readout patch now means the played-RF patch
+        if (current === 'readout_frequency'
+                && METRICS.some(function(m) { return m.key === 'readout_rf_frequency'; })) {
+            current = 'readout_rf_frequency';
+        }
         if (!METRICS.some(function(m) { return m.key === current; })) current = METRICS[0].key;
 
         // Map zoom — a multiplier over the pane-fit width (docs/126 ②: "make
@@ -2974,9 +3004,10 @@ window.ChipStatus.mount = function (opts) {
                 var sv = _mv(n, m.subKey);
                 if (sv != null) sub = m.subFmt(sv);
             }
+            if (m.subFn && v != null) sub = m.subFn(n);
             return { fill: c2.bg, fg: c2.fg, text: v == null ? '—' : m.fmtFn(v),
                      sub: sub,
-                     title: v == null ? 'no data' : '' };
+                     title: v == null ? 'no data' : (m.titleFn ? m.titleFn(n) : '') };
         }
 
         // docs/120 item 11: the hero is now the ONLY chip map on this page, so
@@ -3356,7 +3387,8 @@ window.ChipStatus.mount = function (opts) {
                 // A metric with a sub-value shifts the whole stone to a
                 // three-line layout (uniform per METRIC, so ids line up
                 // across the map even where one qubit's sub is missing).
-                var subMode = !!mCur.subKey;
+                var subMode = !!mCur.subKey
+                    || (!!mCur.subFn && topo.nodes.some(function(nn) { return _mv(nn, mCur.key) != null && mCur.subFn(nn); }));
                 svg += '<g class="topo-hero-node' + (pt.cls ? ' ' + pt.cls : '') + '" data-hero-qubit="' + _esc(n.id)
                      + '" data-link-id="' + _esc(n.id)
                      + '" transform="translate(' + (cx(p) + o.dx) + ',' + (cy(p) + o.dy) + ')" tabindex="0">'

@@ -8,6 +8,11 @@
  *      secondary line and in that qubit's tooltip;
  *  R4  a qubit whose RF equals f_01 gets no secondary line (no clutter);
  *  R5  a qubit with no RF_frequency (source f_01) is named as a fallback.
+ *  H1  the hero map's "Readout freq" patch is keyed readout_rf_frequency, and a
+ *      remembered `readout_frequency` choice lands on it;
+ *  H2  a stone shows the played RF; where f_01 differs it rides the sub-line
+ *      and the hover; RF == f_01 shows one value (no sub, no f_01 in hover);
+ *  H3  a stone with no RF_frequency says it shows f_01.
  *
  * Run: node tests/chip_status_played_rf_selfcheck.cjs
  *      (driven by tests/test_pair_detuning_and_played_rf.py)
@@ -64,6 +69,7 @@ const topo = {
   edges: [],
   summary: {},
 };
+try { win.localStorage.setItem('quam_topo_hero_metric_v2', 'readout_frequency'); } catch (e) {}
 win.ChipStatus.mount({ topo: topo, rawWiring: {}, diagFindings: [], metricMeta: {},
                        defaultThresholds: {} });
 
@@ -96,6 +102,23 @@ setTimeout(function () {
   ok(fb && /no RF_frequency/.test(fb.textContent) && fb.textContent.indexOf('qc') >= 0,
     'R5: qc is named as an f_01 fallback -- ' + (fb && fb.textContent));
   ok((cell('qc').getAttribute('title') || '').indexOf('no RF_frequency') >= 0, 'R5: qc tooltip says so');
+
+  const hero = doc.getElementById('topo-hero');
+  const stone = (q) => hero && hero.querySelector('.topo-hero-node[data-hero-qubit="' + q + '"]');
+  const txt = (q, cls) => { const g = stone(q); const t = g && g.querySelector('.' + cls); return t ? t.textContent : null; };
+  const hov = (q) => { const g = stone(q); const t = g && g.querySelector('title'); return t ? t.textContent : ''; };
+  ok(!!stone('qa'), 'H1: the hero map rendered stones');
+  ok(txt('qa', 'topo-hero-val') === '7.6103 GHz' || /^7\.6103/.test(txt('qa', 'topo-hero-val') || ''),
+    'H1/H2: a remembered readout_frequency choice shows the played RF -- ' + txt('qa', 'topo-hero-val'));
+  ok(/f_01 7\.6266/.test(txt('qa', 'topo-hero-sub') || ''), 'H2: qa sub-line names f_01 -- ' + txt('qa', 'topo-hero-sub'));
+  ok(/resonator f_01 7\.6266 GHz/.test(hov('qa')), 'H2: qa hover names f_01 -- ' + hov('qa'));
+  ok(txt('qb', 'topo-hero-sub') == null && hov('qb').indexOf('f_01') < 0,
+    'H2: qb (RF == f_01) shows one value -- sub=' + txt('qb', 'topo-hero-sub') + ' hover=' + hov('qb'));
+  ok(/no RF_frequency/.test(hov('qc')), 'H3: qc hover says it shows f_01 -- ' + hov('qc'));
+  const patch = hero && Array.prototype.find.call(hero.querySelectorAll('[data-hero-metric]'),
+    (b) => /Readout freq/.test(b.textContent));
+  ok(patch && patch.getAttribute('data-hero-metric') === 'readout_rf_frequency',
+    'H1: the Readout freq patch is keyed readout_rf_frequency -- ' + (patch && patch.getAttribute('data-hero-metric')));
 
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_played_rf_selfcheck ok (' + asserts + ' assertions)'));
