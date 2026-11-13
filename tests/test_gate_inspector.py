@@ -656,3 +656,26 @@ def test_the_client_forwards_the_gate_to_the_plot():
     body = js[i:i + 900]
     assert "el.getAttribute('data-op')" in body
     assert "'&op=' + encodeURIComponent(gateOp)" in body
+
+
+class TestGatePointSigns:
+    """The operating point's level difference and the CZ plan's mover offset."""
+
+    def _gp(self, f_mover, alpha_sign, moving="control"):
+        from quam_state_manager.core.gate_inspector import add_gate_point
+        c = {"f_01": 5.0e9, "anharmonicity": alpha_sign * 211.4e6}
+        t = {"f_01": 4.8e9, "anharmonicity": alpha_sign * 217.6e6}
+        sweep = {"sweep_role": moving, "x_kind": "voltage", "idle_voltage": 0.0}
+        return add_gate_point(sweep, c, t, gate="cz", amplitude_v=0.19,
+                              frequency_hz=f_mover)["gate_point"]
+
+    def test_either_alpha_sign_gives_the_same_point(self):
+        a, b = self._gp(4.9942e9, +1), self._gp(4.9942e9, -1)
+        assert a["y"] == b["y"] and a["detuning_label"] == b["detuning_label"]
+
+    def test_the_mover_offset_matches_the_plan_convention(self):
+        # mover 17.2 MHz below the |11>-|20> resonance at f_t + |alpha_c|
+        gp = self._gp(4.8e9 + 211.4e6 - 17.2e6, +1)
+        assert "20" in gp["detuning_label"]
+        assert gp["y"] == pytest.approx(17.2e6)
+        assert gp["mover_offset_hz"] == pytest.approx(-17.2e6)

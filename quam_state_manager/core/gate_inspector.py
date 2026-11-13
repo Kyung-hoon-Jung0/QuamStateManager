@@ -323,7 +323,8 @@ def build_plotly_figure(
                 + (f"V = {gp['voltage']:.4f} V (idle + {gp['amplitude_v']:+.4f} V)<br>"
                    if gp["voltage"] is not None else "")
                 + f"f\u2080\u2081 = {gp['frequency'] * hz_to_mhz:.1f} MHz<br>"
-                + f"{gp['detuning_label']} = {gp['y'] * hz_to_mhz:+.1f} MHz"
+                + f"{gp['detuning_label']} = {gp['y'] * hz_to_mhz:+.1f} MHz<br>"
+                + f"mover {gp['mover_offset_hz'] * hz_to_mhz:+.1f} MHz from that resonance (as on the CZ gate plan)"
                 "<extra></extra>"
             ),
             "showlegend": True,
@@ -477,10 +478,15 @@ def add_gate_point(sweep: dict[str, Any], control: dict[str, Any], target: dict[
     moving_is_control = sweep.get("sweep_role", "control") == "control"
     f_c = frequency_hz if moving_is_control else control["f_01"]
     f_t = target["f_01"] if moving_is_control else frequency_hz
-    a_c, a_t = control["anharmonicity"], target["anharmonicity"]
+    # labs store alpha with either sign; the levels need its size (as the CZ plan does)
+    a_c, a_t = abs(control["anharmonicity"]), abs(target["anharmonicity"])
     dets = {"\u0394(|11\u27e9\u2212|20\u27e9)": f_t - f_c + a_c, "\u0394(|11\u27e9\u2212|02\u27e9)": f_c - f_t + a_t,
             "\u0394(|10\u27e9\u2212|01\u27e9)": f_c - f_t}
     label, y = min(dets.items(), key=lambda kv: abs(kv[1]))
+    # d(level difference)/d(mover frequency) is +1 or -1 per level: the mover's
+    # offset from the resonance is that sign times the difference
+    dsign = {"Δ(|11⟩−|20⟩)": -1, "Δ(|11⟩−|02⟩)": 1,
+             "Δ(|10⟩−|01⟩)": 1}[label] * (1 if moving_is_control else -1)
     v_idle = sweep.get("idle_voltage")
     voltage = (v_idle + amplitude_v
                if sweep.get("x_kind") == "voltage" and v_idle is not None and amplitude_v is not None
@@ -491,6 +497,9 @@ def add_gate_point(sweep: dict[str, Any], control: dict[str, Any], target: dict[
         "gate": gate, "x": voltage if voltage is not None else frequency_hz,
         "voltage": voltage, "amplitude_v": amplitude_v, "frequency": frequency_hz,
         "y": y, "detuning_label": label,
+        # the CZ plan's phrasing of the same point: how far the moving qubit sits
+        # from the resonance it aims at
+        "mover_offset_hz": dsign * y,
     }
     return sweep
 
