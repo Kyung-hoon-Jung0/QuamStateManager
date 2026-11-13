@@ -16250,6 +16250,12 @@ def field_delete():
     if _psc is not None:
         return _pulse_structure_refused(_psc)
 
+    # gl-0mj: a channel (or qubit) delete that takes an op a pair-gate slot
+    # plays BY NAME with it -- refused naming the slot, as the Pulses door
+    by_name = _by_name_cut(modifier.store, [dot_path])
+    if by_name and request.form.get("force") != "1":
+        return _by_name_refused_json(by_name)
+
     dangling, _ = _count_refs_into(modifier.store, dot_path)
     # a removed field of a pulse a lab GATE plays falls back to the class
     # default -- one half of a coupled pair can then disagree with the other
@@ -16277,6 +16283,9 @@ def field_delete():
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
+    if by_name:
+        _lab_notes.append(f"{len(by_name)} gate slot(s) now play a name that no"
+                          f" longer exists: {', '.join(by_name)}")
     return jsonify(ok=True, tray_html=_tray_html(), removed_leaves=removed,
                    dangling_refs=dangling,
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
@@ -26119,6 +26128,11 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                       else used_by_target)
     # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
     played_by_name = _lab_named_players(store, actual_path)
+    # gl-0mj: any gate slot that plays it by name (a quam CZGate's inline
+    # flux pulse whose id is this op's name) -- a lab gate already listed
+    # above is not listed twice
+    named_slots = [h for h in _slot_named_players(store, actual_path)
+                   if h not in played_by_name]
     # w9/labwarm: the delete step says "Checking with your lab code..." beside
     # its disabled button -- only when the delete is asked of the lab at all
     delete_lab_check = _lab_delete_asks(store, path)
@@ -26204,6 +26218,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
         "played_by_name": played_by_name,
+        "named_slots": named_slots,
         "delete_lab_check": delete_lab_check,
         # w9/labwarm: the lab worker's state AT RENDER -- the first word the
         # lab indicators say before their own status poll answers (a busy
@@ -28694,6 +28709,55 @@ def _lab_named_players(store, path: str) -> list[str]:
     return sorted(out)
 
 
+def _slot_named_players(store, path: str) -> list[str]:
+    """The pair-gate slot holders (``<slot>.id``, or a plain-name slot) that
+    play the channel op at *path* BY NAME (gl-0mj): quam_builder's CZGate
+    plays ``moving_qubit.z.play(get_pulse_name(pulse))``, the pulse's ``id``
+    -- no pointer names the op, so ``used_by`` cannot see it. Any gate class,
+    not only a lab's own (``_lab_named_players``)."""
+    from quam_state_manager.core.gate_pulse_ids import named_slot_players
+    try:
+        return named_slot_players(store.merged, path)
+    except Exception:  # noqa: BLE001 -- a reader, never a 500
+        logger.exception("named slot scan failed for %s", path)
+        return []
+
+
+def _by_name_cut(store, paths) -> list[str]:
+    """Slot holders a delete of *paths* leaves playing a missing name (the
+    same finder, ``gate_pulse_ids.named_slot_plays``, as every door). A
+    holder of a LAB gate is left to the lab check (``lab_watch.named_by``),
+    which asks the gate's own code and offers what must go with it -- the
+    same split as the Pulses delete door's ``played`` list."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.gate_pulse_ids import named_slots_cut
+    try:
+        with store._lock:
+            cut = named_slots_cut(store.merged, list(paths))
+    except Exception:  # noqa: BLE001 -- a reader, never a 500
+        logger.exception("named slot scan failed for %s", list(paths)[:5])
+        return []
+    if not cut:
+        return []
+    try:
+        watch = lab_watch.watch_for(store)
+        lab_holders = set().union(*watch.named_by.values()) if watch.named_by else set()
+    except Exception:  # noqa: BLE001 -- no watch: every holder is ours
+        lab_holders = set()
+    return [h for h in cut if h not in lab_holders]
+
+
+def _by_name_refused_json(holders: list[str]):
+    """The 409 a JSON delete door answers when a gate slot plays a deleted op
+    by name: the Pulses delete door's own sentence, plus the holders; the
+    caller's ``force=1`` deletes anyway."""
+    from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL
+    named = [f"{h} ({BY_NAME_LABEL})" for h in holders]
+    return jsonify(ok=False, error_kind="by_name", by_name=holders,
+                   error=("Refusing to delete: referenced by " + ", ".join(named)
+                          + ". Use the confirm step to delete anyway.")), 409
+
+
 def _lab_delete_asks(store, path: str) -> bool:
     """Would ``/api/pulse/delete`` of *path* be asked of the lab's own code?
     The delete branch of :func:`_lab_write_refusal`: a lab gate the delete
@@ -29779,11 +29843,15 @@ def api_pulse_delete():
         # an inbound pointer between the used_by check and the pop.
         with store._lock:
             referrers = pulse_index.used_by(path)
-            if (referrers or played) and not force:
+            by_name = [h for h in _slot_named_players(store, path)
+                       if h not in played]
+            if (referrers or played or by_name) and not force:
+                from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL
+                named = [f"{h} ({BY_NAME_LABEL})" for h in by_name]
                 return render_template(
                     "_status.html",
                     message=("Refusing to delete: referenced by "
-                             + ", ".join(referrers + played)
+                             + ", ".join(referrers + played + named)
                              + ". Use the confirm step to delete anyway."),
                     level="error"), 409
             try:
@@ -29800,6 +29868,9 @@ def api_pulse_delete():
     note = f"Deleted {path.rsplit('.', 1)[-1]}"
     if referrers:
         note += f" — {len(referrers)} reference(s) now dangle"
+    if by_name:
+        note += (f" \u2014 {len(by_name)} gate slot(s) now play a name that no"
+                 f" longer exists: {', '.join(by_name)}")
     detail = render_template("_status.html", message=note, level="success")
     return _lab_toast(_pulse_mutation_response(detail))
 
@@ -29986,6 +30057,10 @@ def api_pulse_delete_together():
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
             "(Live state edit (Json tree view)).")), 400
+    # gl-0mj: an op a gate slot OUTSIDE the set plays by name
+    by_name = _by_name_cut(modifier.store, paths)
+    if by_name and str(pj.get("force") or "") != "1":
+        return _by_name_refused_json(by_name)
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
                "expect_chip": pj.get("expect_chip") or "",
@@ -30374,6 +30449,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
+            # gl-0mj: a gate slot that plays the op BY NAME follows it too
+            for holder in _slot_named_players(store, path):
+                _writes.append((holder, new_name))
         if (retarget and isinstance(body, dict) and body.get("id") == old_name
                 and any(p == path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
             _writes.append((new_path + ".id", new_name))
@@ -30382,6 +30460,9 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
         return _lab_edit_refused(_lab[0])
     with store._lock:
         referrers = pulse_index.used_by(path)
+        # gl-0mj: read BEFORE the rename moves the op (the scan matches the
+        # op by its current path)
+        by_name = _slot_named_players(store, path)
         try:
             body = store.get_value(path)
         except (KeyError, TypeError, ValueError, IndexError):
@@ -30408,6 +30489,15 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 if new_ptr and new_ptr != raw:
                     modifier.set_value(referrer, new_ptr, group_id=gid)
                     retargeted += 1
+            # the same group: one Ctrl+Z restores the op AND each slot's name
+            for holder in by_name:
+                try:
+                    cur = store.get_value(holder)
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                if cur == old_name:
+                    modifier.set_value(holder, new_name, group_id=gid)
+                    retargeted += 1
         if (isinstance(body, dict) and body.get("id") == old_name
                 and any(p == new_path for p, _k, _s, _b in gate_pulse_targets(store.merged))):
             modifier.set_value(new_path + ".id", new_name, group_id=gid)
@@ -30417,8 +30507,8 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
     note = f"Renamed {old_name} → {new_name}"
     if retargeted:
         note += f" · {retargeted} reference(s) re-pointed"
-    elif referrers and not retarget:
-        note += f" · {len(referrers)} reference(s) now dangle"
+    elif (referrers or by_name) and not retarget:
+        note += f" \u00b7 {len(referrers) + len(by_name)} reference(s) now dangle"
     return _lab_toast(_pulse_mutation_response(_render_pulse_detail(
         new_path, status_msg=note)))
 
