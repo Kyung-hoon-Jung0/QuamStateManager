@@ -41,7 +41,10 @@
     {# 2026-09-27 (user): one create button, not two. The Gaussian CZ builder
        and "copy a pulse to another channel" are choices INSIDE this flow
        (_pulse_create_choice.html); /pulse/gaussian-cz still answers old links. #}
+    {# gl-5y8: the form opens on the qubit the page is filtered to (the
+       owner pick rides along as ?owner=). #}
     <button class="btn-sm pulse-new-btn" hx-get="/pulse/new"
+            hx-include="#pulses-owner-pick"
             hx-target="#inspector-pane" hx-swap="innerHTML"
             hx-indicator="#inspector-pane"
             title="Create a pulse: a new one of any class, a copy of an existing pulse on another channel, or a Gaussian CZ pair from a calibrated cz_flattop">+ New pulse</button>

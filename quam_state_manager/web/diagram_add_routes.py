@@ -139,6 +139,19 @@ def diagram_add_ports():
     return jsonify({"drive": drive, "flux": flux})
 
 
+def _active_arg():
+    """The add panel's "active" checkbox: a hidden ``0`` precedes the box, so
+    the last value is the choice; absent (an older form, a script) follows
+    the template (:func:`core.diagram_add.active_state`)."""
+    vals = request.values.getlist("active")
+    return (vals[-1] == "1") if vals else None
+
+
+def _filters_arg():
+    v = (request.values.get("port_filters") or "").strip()
+    return v if v in ("keep", "clear") else None
+
+
 def _plan_from_form(store):
     m = store.merged
     kind = request.form.get("kind", "qubit")
@@ -149,7 +162,8 @@ def _plan_from_form(store):
                 else dr.plan_remove_qubit(m, ent, also))
     if kind == "pair":
         return da.plan_pair(m, request.form.get("control", ""), request.form.get("target", ""),
-                            flux=_port_arg("flux"), inv=_inv(store))
+                            flux=_port_arg("flux"), inv=_inv(store),
+                            active=_active_arg(), port_filters=_filters_arg())
     drive = _port_arg("drive")
     if drive is None:
         return {"error": "Pick a drive output."}
@@ -159,7 +173,34 @@ def _plan_from_form(store):
     return da.plan_qubit(m, name=(request.form.get("name") or "").strip(),
                          feedline=request.form.get("feedline") or "",
                          drive=drive, flux=_port_arg("flux"), drive_rf=rf,
-                         readout_rf=_hz("readout_rf"), inv=_inv(store))
+                         readout_rf=_hz("readout_rf"), inv=_inv(store),
+                         active=_active_arg(), port_filters=_filters_arg())
+
+
+def delay_kept_line(delay) -> str:
+    """The one sentence for a reused port's delay (kept, never cleared)."""
+    return (f"delay {delay:g} ns kept \u2014 recalibrate this line's timing "
+            "(z-line delay) for the new element.")
+
+
+def _choices_line(s: dict) -> str:
+    """The choices the stage made, said in its result line: whether the new
+    entity joined the active list, and what happened to a reused port's
+    filters."""
+    out = []
+    a = s.get("active") or {}
+    if a.get("mode") == "listed":
+        out.append(f"{s['name']} {'joined' if a.get('written') else 'did not join'} "
+                   f"{a['list']}.")
+    fc = s.get("flux_carry")
+    if fc:
+        if fc["filters"]:
+            out.append(f"Port {fc['port']}: its previous line's filters "
+                       f"({', '.join(fc['filters'])}) were "
+                       + ("kept." if fc["choice"] == "keep" else "cleared."))
+        if fc["delay_kept"] is not None:
+            out.append(delay_kept_line(fc["delay_kept"]))
+    return (" ".join(out) + " ") if out else ""
 
 
 @bp.route("/diagram-add/stage", methods=["POST"])
@@ -239,7 +280,8 @@ def diagram_add_stage():
     msg = render_template(
         "_status.html", level="success",
         message=(f"Added {what} to the working copy ({len(plan['creates'])} new "
-                 "subtrees). " + DR.next_step() + " Ctrl+Z takes it all back."))
+                 "subtrees). " + _choices_line(s) + DR.next_step()
+                 + " Ctrl+Z takes it all back."))
     resp = make_response(msg + "\n" + R._tray_oob())
     resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
     # after the swap: the page refresh carries this result line over

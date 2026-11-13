@@ -24,6 +24,7 @@ Pure: functions read ``merged`` and return data; they never write.
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any
 
 from quam_state_manager.core.diagram_add import (
@@ -183,6 +184,8 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str, also=()) -> d
         else:
             blockers.append({"path": ".".join(path), "pointer": ptr})
     silent = _silent_changes(merged, list_sets, keyed, ids)
+    mentions = _extras_mentions(merged, ids, roots_all + keyed,
+                                {d["path"] for d in dangle})
 
     # ports the removal leaves unused (the port configuration itself is kept)
     before = _ports_of({k: v for k, v in merged.items() if k != "ports"})
@@ -210,6 +213,7 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str, also=()) -> d
             "freed": freed,
             "silent": silent,
             "extras_dangle": dangle,
+            "extras_mention": mentions,
         },
         "blockers": blockers,
     }
@@ -220,6 +224,53 @@ def _plan(merged: dict, rq: set, rp: set, *, kind: str, name: str, also=()) -> d
                          f"{b['pointer']}, which would no longer exist{more}. Change or "
                          "delete that value first.")
     return plan
+
+
+def _extras_mentions(merged: dict, ids: set, roots, dangle_paths: set) -> list[dict]:
+    """Free-form ``extras`` entries outside the removed subtrees whose KEY or
+    text value names a removed id as a whole token (``q1`` never matches
+    ``q10``). Never rewritten (they are the user's own record); listed so the
+    removal review says they remain. Pointers already reported as dangling
+    are not repeated."""
+    if not ids:
+        return []
+    alt = "|".join(re.escape(i) for i in sorted(ids, key=len, reverse=True))
+    tok = re.compile(r"(?<![A-Za-z0-9_])(?:" + alt + r")(?![A-Za-z0-9_])")
+    out: list[dict] = []
+
+    def scan(node: Any, path: tuple):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                sub = path + (str(k),)
+                if _under(sub, roots):
+                    continue
+                if tok.search(str(k)):
+                    out.append({"path": ".".join(sub), "where": "key"})
+                    continue
+                scan(v, sub)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                scan(v, path + (str(i),))
+        elif isinstance(node, str) and tok.search(node) and ".".join(path) not in dangle_paths:
+            out.append({"path": ".".join(path), "where": "value"})
+
+    def find(node: Any, path: tuple):
+        if _under(path, roots):
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                sub = path + (str(k),)
+                if str(k) == _FREE_FORM:
+                    if not _under(sub, roots):
+                        scan(v, sub)
+                else:
+                    find(v, sub)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                find(v, path + (str(i),))
+
+    find(merged, ())
+    return out
 
 
 def _entity_ids(merged: dict) -> set:

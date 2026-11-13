@@ -1,20 +1,26 @@
 {# Only the change: every leaf the plan creates, nothing that already exists. #}
 <div class="ui-callout ui-callout--note">
-  <p class="ui-callout-title">{{ plan.creates | length }} new subtrees, {{ rows | length }} new values{% if plan.sets %}, and {{ plan.sets | length }} name list{{ 's' if plan.sets | length != 1 }} extended{% endif %}. No existing value changes.</p>
   {% set s = plan.summary %}
+  {% set n_lists = rows | selectattr('op', 'equalto', 'append') | list | length %}
+  {% set n_clear = rows | selectattr('op', 'equalto', 'clear') | list | length %}
+  <p class="ui-callout-title">{{ plan.creates | length }} new subtrees, {{ rows | length - n_lists - n_clear }} new values{% if n_lists %}, and {{ n_lists }} name list{{ 's' if n_lists != 1 }} extended{% endif %}{% if n_clear %}, {{ n_clear }} port setting{{ 's' if n_clear != 1 }} cleared{% endif %}.{% if not n_clear %} No existing value changes.{% endif %}</p>
+  {% if s.active %}<p class="ui-callout-text" data-cm-add-active-note>{% if s.active.mode == 'listed' %}{{ s.name }} {{ 'joins' if s.active.written else 'does not join' }} {{ s.active.list }}{% if s.active.written != s.active.template_active %} (its template {{ s.template }} is {{ 'active' if s.active.template_active else 'not active' }}){% endif %}.{% else %}{{ s.active.list }} is {{ 'empty' if s.active.mode == 'empty' else 'absent' }}: {{ s.name }} counts as active and the list is not written.{% endif %}</p>{% endif %}
+  {% if s.flux_carry %}<p class="ui-callout-text" data-cm-add-carry-note><span class="ui-badge ui-badge--warn">check</span> {{ s.flux_carry.port }} still carries {{ s.flux_carry.carries | join(', ') }} from a previous line.{% if s.flux_carry.filters %} Filters ({{ s.flux_carry.filters | join(', ') }}): {{ 'kept, so the new line plays through them' if s.flux_carry.choice == 'keep' else "cleared to a new port's values" }}.{% endif %}{% if s.flux_carry.delay_kept is not none %} <span data-cm-add-delay-kept>delay {{ '%g' | format(s.flux_carry.delay_kept) }} ns kept &mdash; recalibrate this line's timing (z-line delay) for the new element.</span>{% endif %}</p>{% endif %}
   {% if s.kind == 'qubit' %}
   <p class="ui-callout-text">{{ s.name }}: drive {{ s.drive }}{% if s.drive_lo %} (LO {{ '%.4g' | format(s.drive_lo / 1e9) }} GHz, band {{ s.drive_band }}){% endif %}{% if s.flux %}, flux {{ s.flux }}{% endif %}{% if s.grid %}, grid {{ s.grid }}{% endif %}. Values not typed here start as {{ s.template }}'s; measured ones (T1, T2, fidelities, confusion) start empty.</p>
   {% if s.dropped %}<p class="ui-callout-text">Left out {{ s.dropped | length }} operation{{ 's' if s.dropped | length != 1 }} of {{ s.template }} that belong to its pairs or other qubits.</p>{% endif %}
   {% for n in s.notes or [] %}<p class="ui-callout-text"><span class="ui-badge ui-badge--warn">check</span> {{ n }}</p>{% endfor %}
   {% else %}
-  <p class="ui-callout-text">{{ s.name }} copies {{ s.template }}'s gates{% if s.member_ops %} and adds {{ s.member_ops | length }} member operations they play{% endif %}{% if s.flux %}; coupler output {{ s.flux | join("/") }}, flux offsets 0{% endif %}; measured fidelities start empty.</p>
+  <p class="ui-callout-text">{{ s.name }} copies {{ s.template }}'s gates{% if s.member_ops %} and adds {{ s.member_ops | length }} member operations they play{% endif %}{% if s.flux %}; coupler output {{ s.flux | join("/") }}, flux offsets 0{% endif %}; measured fidelities start empty; phase corrections start at 0{% if s.phase_cleared %} ({{ s.phase_cleared | length }} of {{ s.template }}'s were not copied){% endif %}.</p>
+  {% if s.copied_amplitudes %}<div class="ui-callout-text" data-cm-add-copied-amps><span class="ui-badge ui-badge--warn">not calibrated</span> {{ s.copied_amplitudes | length }} amplitude{{ 's' if s.copied_amplitudes | length != 1 }} copied from {{ s.template }}, not calibrated for this pair (starting values):
+    {% for a in s.copied_amplitudes %}<div><span class="ui-path">{{ a.path }}</span> {{ a.value | tojson }}</div>{% endfor %}</div>{% endif %}
   {% endif %}
 </div>
 <details class="ui-disclosure">
   <summary class="ui-disclosure-summary">Every new value <span class="ui-count">{{ rows | length }}</span></summary>
   <div class="ui-disclosure-body">
     <table class="ui-table">
-      {% for r in rows %}<tr><td class="ui-table-cell"><span class="ui-path">{{ r.path }}</span></td><td class="ui-table-cell">{{ r.value | tojson }}</td></tr>{% endfor %}
+      {% for r in rows %}<tr><td class="ui-table-cell"><span class="ui-path">{{ r.path }}</span></td><td class="ui-table-cell">{% if r.op == 'clear' %}becomes {% endif %}{{ r.value | tojson }}</td></tr>{% endfor %}
     </table>
   </div>
 </details>
