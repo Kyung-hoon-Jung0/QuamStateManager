@@ -1,17 +1,27 @@
 {# Theme + readability boot, applied BEFORE first paint (no FOUC). ONE source
    for every full document SM serves (docs/156): base.html and the standalone
    /calc-window, so a window opened from a page looks like that page.
-   QM is the default; users who explicitly chose 'light' or 'dark' have it persisted in
-   localStorage. #}
+   A ?theme= override wins, then the user's stored choice (localStorage); with
+   neither, the OS colour scheme decides: light -> 'light', otherwise the QM
+   default (audit 2026-11-13; app.js follows a live change of that preference). #}
     <script>
       (function() {
         window.SM_THEMES = ['light', 'dark', 'qm'];
-        window.resolveSMTheme = function() {
+        function chosen() {
           var saved = null, qp = null;
           try { saved = localStorage.getItem('quam_theme'); } catch(e) {}
           try { qp = new URLSearchParams(location.search).get('theme'); } catch(e) {}
           return window.SM_THEMES.indexOf(qp) >= 0 ? qp
-            : (window.SM_THEMES.indexOf(saved) >= 0 ? saved : 'qm');
+            : (window.SM_THEMES.indexOf(saved) >= 0 ? saved : null);
+        }
+        window.smThemeChosen = function() { return chosen() !== null; };
+        window.resolveSMTheme = function() {
+          var c = chosen();
+          if (c) return c;
+          try {
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+          } catch(e) {}
+          return 'qm';
         };
         var theme = window.resolveSMTheme();
         document.documentElement.setAttribute('data-theme', theme);
