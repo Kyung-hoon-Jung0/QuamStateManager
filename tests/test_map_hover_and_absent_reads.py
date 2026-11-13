@@ -93,3 +93,15 @@ def test_a_bare_angle_bracket_in_a_title_survives_and_an_unshared_axis_borrows_n
     out = _hover_guides(fig)["data"]
     assert out[0]["hovertemplate"].startswith("occupancy < 1 > 0: %{x}<br>f01 [GHz]: %{y}")
     assert out[1]["hovertemplate"].startswith("x: %{x}<br>y: %{y}")
+
+
+def test_a_verdict_glyph_is_spaced_from_its_number():
+    # the hover panel reads the cell's text: "✓ 0.9984", never "✓0.9984"
+    import re
+    from pathlib import Path
+    tdir = Path(__file__).resolve().parents[1] / "quam_state_manager/web/templates"
+    for name in ("_qubits.html", "_pairs.html"):
+        src = (tdir / name).read_text(encoding="utf-8")
+        glyphs = re.findall(r'<span class="cell-glyph" aria-hidden="true">(&#\d+;)( ?)</span>\{\{', src)
+        assert glyphs, name
+        assert all(sp == " " for _, sp in glyphs), name

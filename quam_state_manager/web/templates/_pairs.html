@@ -75,11 +75,11 @@
                matches Chip Status's gated edge for the SAME value #}
             <span class="muted" aria-label="Likely failed fit" title="Outside (0, 1] — likely a failed fit; excluded from health colouring">&#9888; {{ "%.4f" | format(p.pair_fidelity) }}</span>
             {% elif p.pair_fidelity >= 0.95 %}
-            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003; </span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
             {% elif p.pair_fidelity >= 0.85 %}
-            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888; </span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
             {% else %}
-            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
+            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007; </span>{{ "%.4f" | format(p.pair_fidelity) }}</span>
             {% endif %}
             {% if p.get('pair_fidelity_source') == 'channel' %}<small class="muted">(bell)</small>{% endif %}
             {% else %}-{% endif %}
@@ -137,11 +137,11 @@
             {% if _bf is not number %}
             <span class="muted" title="Stored as text — see Diagnostics">&quot;{{ _bf }}&quot;</span>
             {% elif _bf >= 0.95 %}
-            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(_bf) }}</span>
+            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003; </span>{{ "%.4f" | format(_bf) }}</span>
             {% elif _bf >= 0.85 %}
-            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(_bf) }}</span>
+            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888; </span>{{ "%.4f" | format(_bf) }}</span>
             {% else %}
-            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(_bf) }}</span>
+            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007; </span>{{ "%.4f" | format(_bf) }}</span>
             {% endif %}
             {% if p.get('bell_gate') and p.bell_gate != 'cz_flattop' %}<small class="muted">{{ p.bell_gate }}</small>{% endif %}
             {% else %}-{% endif %}

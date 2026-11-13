@@ -954,10 +954,15 @@ def local_time(value):
     if t is None:
         return 'not reported'
     local = datetime.fromtimestamp(t).astimezone()
+    return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone_text(local)})'
+
+
+def zone_text(local=None):
+    """The PC zone label every monitor time uses, e.g. 'UTC+9'."""
+    local = local if local is not None else datetime.now().astimezone()
     offset = int(local.utcoffset().total_seconds() // 60)
     hours, minutes = divmod(abs(offset), 60)
-    zone = f"UTC{'+' if offset >= 0 else '-'}{hours}" + (f':{minutes:02d}' if minutes else '')
-    return local.strftime('%Y-%m-%d %H:%M:%S') + f' ({zone})'
+    return f"UTC{'+' if offset >= 0 else '-'}{hours}" + (f':{minutes:02d}' if minutes else '')
 
 
 def opx_time(value):

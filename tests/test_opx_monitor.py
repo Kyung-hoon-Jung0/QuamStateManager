@@ -812,7 +812,7 @@ def test_d26_format_count_rounding_and_frozen(env):
     m.poll_once()
     html = page(app, 'jobs')
     assert '100 of 313 jobs shown' in html and 'Show more' in html
-    assert html.count('No chip is open') == 1 and '(OPX clock)' in html and 'UTC+' not in html.split('Server jobs')[1]
+    assert html.count('No chip is open') == 1 and '(OPX clock' in html and '(UTC' not in html.split('Server jobs')[1]
     assert '.123456Z</span>' not in html
     state = om.idle_state({'jobs': []}, _w({'jobs': []}, 50), 1)
     assert not state['idle'] and state['basis'].startswith('no job change for 0 min')
@@ -1864,8 +1864,12 @@ def test_r2_live_wording_count_grammar_refusal_and_reasons(env):
     m.poll_once()
     html = page(app, 'jobs')
     assert '100 of at least 1000 jobs shown' in html and 'at least 100 jobs' not in html
-    # an OPX-clock time carries no PC zone label
-    assert 'Created (OPX clock)' in html
+    # the job table names the PC zone its OPX-clock times are shown in, with
+    # the same zone text the stale lines use (one helper)
+    zone = om.zone_text()
+    assert f'Created (OPX clock, shown in {zone})' in html
+    assert f'Last update (OPX clock, shown in {zone})' in html
+    assert om.local_time(om.datetime.now(om.timezone.utc).isoformat()).endswith(f'({zone})')
     # one QM, singular
     assert om.health(answer(temps={'Chassis': 40}), {'known': False, 'not_applicable': True}, {'temp:Chassis': 50}, 'ok')['reason'] == '1 open QM claims resources'
     # answered sections have no reason

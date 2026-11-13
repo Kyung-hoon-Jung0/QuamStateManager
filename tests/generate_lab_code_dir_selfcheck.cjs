@@ -71,6 +71,8 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   await tick();
   assert(status.textContent.includes('No such folder: C:/nothing'), status.textContent);
   assert.strictEqual(s.labCodeDir, 'C:/other', 'a refused folder is not taken');
+  assert(status.textContent.includes('not saved; still using C:/other'),
+    'a refusal says the old folder is still in use: ' + status.textContent);
 
   // emptying a field that showed the folder asks the server to clear it
   input.value = '';
@@ -109,6 +111,26 @@ const tick = () => new Promise(resolve => w.setTimeout(resolve, 0));
   t.review();
   const review = w.document.getElementById('gen-review').textContent;
   assert(review.includes('Lab code folder') && review.includes('C:/other'), 'review shows it');
+
+  // a reload on Review: the table renders before the folder fetch lands,
+  // then the cell follows the fetch
+  let release;
+  const realFetch = w.fetch;
+  w.fetch = function (url, opts) {
+    if (url.startsWith('/generate/lab-code-dir?python=')) {
+      return new Promise(res => { release = () => res({json: () => Promise.resolve({folder: 'C:/late'})}); });
+    }
+    return realFetch(url, opts);
+  };
+  s.labCodeDirFor = null;
+  t.select('env-b');
+  t.review();
+  assert(w.document.getElementById('gen-review').textContent.includes('(none'), 'blank before the fetch');
+  release();
+  await tick(); await tick(); await tick();
+  assert(w.document.getElementById('gen-review').textContent.includes('C:/late'),
+    'Review is repainted when the folder fetch lands');
+  w.fetch = realFetch;
 
   // the lab gate's disabled reason points at the field
   s.spec.qubit_pairs = [['q1', 'q2']];

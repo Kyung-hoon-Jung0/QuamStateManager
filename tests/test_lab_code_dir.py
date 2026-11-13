@@ -142,6 +142,18 @@ def test_the_wizard_side():
     assert "lab code dir selfcheck passed" in r.stdout
 
 
+def test_the_env_pick_is_deterministic():
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run(["node", str(root / "tests/generate_env_pick_selfcheck.cjs")],
+                       cwd=root, env=dict(os.environ), capture_output=True, text=True, timeout=120)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "env pick selfcheck passed" in r.stdout
+
+
 def test_relative_and_home_paths(monkeypatch, tmp_path):
     assert cg.normalize_lab_code_dir("lab")[0] is None
     assert "full path" in cg.normalize_lab_code_dir("lab")[1]
