@@ -857,21 +857,33 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
     def _run_name_filter(name) -> Markup:
-        """A sidebar run name as a HEAD and a TAIL span (audit 2026-11-13):
-        the tail is the last ``_`` part (1..12 characters), the head the rest.
-        Compact rows ellipsize only the head, so runs whose names differ only
-        at the end (``31_chevron_11_20`` / ``31_chevron_12_21``) stay apart.
-        Both pieces carry the ``soft_breaks`` joints, so the full rows render
-        exactly as before; textContent is the plain name."""
+        """A sidebar run name as LEAD / HEAD / TAIL spans (audit 2026-11-13):
+        the lead is the first two ``_`` parts (the node number and its first
+        word, ``34a_cz_``) and never shrinks; the tail is the last part
+        (1..12 characters), widened to the last two parts when the last one
+        is under 4 characters (``rb_dsp``, ``11_20``) so it carries the
+        distinguishing word; the head is what lies between and is the only
+        piece a compact row ellipsizes (``34a_cz_...compensation``, never a
+        one-character head glued to the tail). Every piece carries the
+        ``soft_breaks`` joints, so the full rows render as before;
+        textContent is the plain name."""
         text = str(name if name is not None else "")
-        head, sep, tail = text.rpartition("_")
-        if not sep or not head or not (0 < len(tail) <= 12):
-            head, tail = text, ""
-        else:
-            head = head + sep
-        out = Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(head)
+        parts = text.split("_")
+        if len(parts) < 3 or not parts[0]:
+            return Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(text)
+        lead = "_".join(parts[:2]) + "_"
+        rest = parts[2:]
+        tail = ""
+        if 0 < len(rest[-1]) <= 12:
+            tail = rest.pop()
+            if len(tail) < 4 and rest and rest[-1] and len(rest[-1]) + 1 + len(tail) <= 16:
+                tail = rest.pop() + "_" + tail
+        head = "_".join(rest) + ("_" if rest and tail else "")
+        out = Markup('<span class="entry-name-lead">%s</span>') % _soft_breaks_filter(lead)
+        if head:
+            out += Markup('<span class="entry-name-head">%s</span>') % _soft_breaks_filter(head)
         if tail:
-            out += Markup("<span>%s</span>") % _soft_breaks_filter(tail)
+            out += Markup('<span class="entry-name-tail">%s</span>') % _soft_breaks_filter(tail)
         return out
     app.jinja_env.filters["run_name"] = _run_name_filter
 
