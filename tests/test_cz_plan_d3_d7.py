@@ -304,6 +304,29 @@ def test_a_the_amplitude_is_measured_from_the_parking_point():
     assert abs(added - true) > 1.5e6                     # the size a wrong rule would cost
     park = conv.summary()["parking"]
     assert park["field"] == "z.joint_offset" and park["volts"] == 0.0005 and "not added" in park["note"]
+    assert "assumes the qubit is parked at the vertex" in park["note"]
+    assert park["off_vertex"] is False and "ignores" not in park["note"]
+
+
+@pytest.mark.parametrize("point,field", [("min", "min_offset"), ("independent", "independent_offset")])
+def test_a_an_off_vertex_parking_says_the_quad_tier_ignores_it(point, field):
+    """The quad term is fitted about the joint vertex; a qubit parked at another flux
+    point gets a note saying so, and the frequency is unchanged (wording only)."""
+    state, wiring = lab_chip()
+    z = state["qubits"]["q1"]["z"]
+    z["flux_point"], z[field] = point, 0.003
+    conv = C.Conversion(C.qubit_at(merged(state, wiring), "qubits.q1"))
+    park = conv.summary()["parking"]
+    assert park["field"] == "z." + field and park["volts"] == 0.003 and park["off_vertex"] is True
+    assert f"parks at z.{field} (flux_point {point})" in park["note"]
+    assert "the quad tier ignores any distance between the two" in park["note"]
+
+
+def test_a_no_sweet_spot_evidence_says_the_quad_tier_ignores_the_offset():
+    state, wiring = lab_chip()
+    state["qubits"]["q1"].setdefault("extras", {})["at_sweet_spot"] = False
+    park = C.Conversion(C.qubit_at(merged(state, wiring), "qubits.q1")).summary()["parking"]
+    assert park["off_vertex"] is True and "nothing shows the parking is a sweet spot" in park["note"]
 
 
 def test_a_the_flux_plot_names_the_parking():
