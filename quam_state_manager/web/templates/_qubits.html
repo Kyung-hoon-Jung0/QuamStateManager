@@ -104,11 +104,11 @@
                 <span class="muted" title="Stored as text — see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ q.gate_fidelity_avg }}&quot;</span>
                 {% elif q.gate_fidelity_avg is not none %}
                 {% if q.gate_fidelity_avg >= 0.99 %}
-                <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
+                <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003; </span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
                 {% elif q.gate_fidelity_avg >= 0.95 %}
-                <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
+                <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888; </span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
                 {% else %}
-                <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
+                <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007; </span>{{ "%.4f" | format(q.gate_fidelity_avg) }}</span>
                 {% endif %}
                 {% else %}-{% endif %}
             </td>

@@ -637,6 +637,8 @@
     if (empty) empty.hidden = true;
 
     var pending = envs.length;
+    _envOrder = envs.map(function (e) { return e.python; });
+    _envRemembered = (state.mode !== "regenerate" && data.selected) ? data.selected : null;
     envs.forEach(function (env) {
       var row = document.createElement("div");
       row.className = "gen-env-row";
@@ -659,6 +661,7 @@
       row.addEventListener("click", function () { selectEnv(env.python); });
       list.appendChild(row);
       probeEnv(env.python, row.querySelector(".gen-env-status"), function () {
+        _envOrderedPick();
         pending -= 1;
         if (pending === 0) checkAnyUsable();
       });
@@ -699,13 +702,7 @@
     // and nothing is selected yet, pick the first usable env (belt-and-braces
     // behind probeEnv's first-usable hook, which normally fires first).
     // CLIENT-SIDE only — see the probeEnv hook for why no POST happens here.
-    if (!state.env && !_envAutoPicked && !_envUserClaimed) {
-      var row = okStatus.closest(".gen-env-row");
-      if (row && row.dataset.python) {
-        _envAutoPicked = true;
-        applySelection(row.dataset.python);
-      }
-    }
+    _envOrderedPick();
   }
 
   // docs/134: one-shot latch so the first-usable auto-select below fires once
@@ -827,10 +824,8 @@
           // explicitly; a build persists it at that explicit act (runBuild);
           // a user click persists exactly as before. _envUserClaimed: a click
           // in flight owns the choice — never hop the radio off it.
-          if (!state.env && !_envAutoPicked && !_envUserClaimed) {
-            _envAutoPicked = true;
-            applySelection(python);
-          }
+          // The pick itself is _envOrderedPick (renderEnvList's done hook):
+          // discovery order, never whichever probe answered first.
         } else if (info && info.missing && info.missing.length) {
           _envMissing[python] = info.missing.slice();   // QA generate-r2-18
           statusEl.dataset.state = "bad";
@@ -848,7 +843,122 @@
       });
   }
 
+  // Deterministic auto-pick: the remembered env when it probes usable, else
+  // the first usable env in DISCOVERY order -- an env is picked only once
+  // every env listed before it has answered, so probe timing cannot change
+  // the choice between page loads.
+  var _envOrder = [];
+  var _envRemembered = null;
+  function _envOrderedPick() {
+    if (_envUserClaimed) return;
+    var list = document.getElementById("gen-env-list");
+    if (!list) return;
+    function stateOf(py) {
+      var found = null;
+      list.querySelectorAll(".gen-env-row").forEach(function (r) {
+        if (r.dataset.python === py) found = r.querySelector(".gen-env-status");
+      });
+      return found ? found.dataset.state : null;
+    }
+    if (_envRemembered) {
+      var rs = stateOf(_envRemembered);
+      if (rs === "checking") return;            // wait for the remembered one
+      if (rs === "ok") return;                  // remembered and usable: keep it
+      if (state.env === _envRemembered) state.env = null;   // unusable: fall back
+      _envRemembered = null;
+    }
+    if (state.env) return;                      // a chosen or restored env stands
+    for (var i = 0; i < _envOrder.length; i++) {
+      var st = stateOf(_envOrder[i]);
+      if (st === "checking") return;            // an earlier env has not answered
+      if (st === "ok") { _envAutoPicked = true; applySelection(_envOrder[i]); return; }
+    }
+  }
+
+  // The lab code folder of the selected env (stored by SM per env; the server
+  // puts it first on PYTHONPATH for the probe and the build).
+  function loadLabCodeDir(python) {
+    var input = document.getElementById("gen-lab-code-dir");
+    var status = document.getElementById("gen-lab-code-dir-status");
+    state.labCodeDir = null;
+    state.labCodeDirFor = null;
+    if (input) input.value = "";
+    if (status) status.textContent = "";
+    if (!python) return;
+    fetch("/generate/lab-code-dir?python=" + encodeURIComponent(python))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (state.env !== python) return;
+        state.labCodeDir = (res && res.folder) || null;
+        state.labCodeDirFor = python;
+        if (input) input.value = state.labCodeDir || "";
+        paintLabFolderRow();   // Review may have rendered before this landed
+      }).catch(function () { /* the field stays blank; Check and save still works */ });
+  }
+
+  // The ONE wording of the folder in use, shared by Review and the status line.
+  function labFolderText() {
+    return state.labCodeDir || "(none — the environment's own packages)";
+  }
+  // Repaint the Review table's folder cell in place (it is drawn from state
+  // once; the async folder fetch can land after it).
+  function paintLabFolderRow() {
+    document.querySelectorAll(".gen-review-table th").forEach(function (th) {
+      if (th.textContent === "Lab code folder" && th.nextElementSibling) {
+        th.nextElementSibling.textContent = labFolderText();
+      }
+    });
+  }
+
+  function saveLabCodeDir() {
+    var input = document.getElementById("gen-lab-code-dir");
+    var status = document.getElementById("gen-lab-code-dir-status");
+    var python = state.env;
+    if (!python) {
+      if (status) status.textContent = "Choose a Python environment first.";
+      return;
+    }
+    var folder = input ? input.value.trim() : "";
+    // an empty field clears the stored folder only when it showed that folder
+    var clear = !folder && state.labCodeDirFor === python && !!state.labCodeDir;
+    if (status) status.textContent = folder ? "Checking that quam_config imports from it…" : "Clearing…";
+    return fetch("/generate/lab-code-dir", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ python: python, folder: folder, clear: clear })
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      if (state.env !== python) return;
+      if (res && res.ok && res.unchanged) {
+        state.labCodeDir = res.folder || null;
+        state.labCodeDirFor = python;
+        if (input) input.value = state.labCodeDir || "";
+        if (status) status.textContent = res.folder
+          ? "Kept the stored folder; empty the field and press again to clear it."
+          : "No folder is set for this environment.";
+      } else if (res && res.ok) {
+        state.labCodeDir = res.folder || null;
+        state.labCodeDirFor = python;
+        if (input && res.folder) input.value = res.folder;
+        if (status) status.textContent = res.folder
+          ? "✓ quam_config imports from " + res.quam_config_file
+          : "Cleared: this environment's own packages are used.";
+        _couplerCzEnv = null;          // the probe runs again with the new path
+        syncLineTypeToggles();
+        paintLabFolderRow();
+      } else if (status) {
+        // the server keeps its old folder on a refusal: say which one is in use
+        status.textContent = "✗ " + ((res && res.error) || "could not check this folder") +
+          " — not saved; still using " + labFolderText();
+      }
+    }).catch(function () {
+      if (status) status.textContent = "✗ could not check this folder — not saved; still using " +
+        labFolderText();
+    });
+  }
+
   function applySelection(python) {
+    // load on a new env AND on a draft restore (state.env already set, the
+    // field never loaded): the folder is per env, read once per env
+    if (state.env !== python || state.labCodeDirFor !== python) loadLabCodeDir(python);
     state.env = python;
     _allocAutoBlocked = false;   // a new env deserves a fresh auto attempt
     var list = document.getElementById("gen-env-list");
@@ -2920,8 +3030,8 @@
   var _couplerCzLabAvailable = false;
   var _labRoot = null;
   var COUPLER_CZ_LAB_BLOCKER = "needs your lab's quam_config.coupler_cz_gate.CouplerCZGate in this environment: "
-    + "install your lab's quam_config checkout into it (pip install -e <checkout>), or start the State Manager "
-    + "with that checkout on PYTHONPATH -- the State Manager has no path setting of its own for it";
+    + "set the Lab code folder in step 1 to your lab's quam_config checkout, "
+    + "or install that checkout into the environment (pip install -e <checkout>)";
   function couplerCzLabBlocker() {
     if (!state.env) return "choose a Python environment first — your lab's coupler gate is checked in it";
     if (_couplerCzCheck === "checking") return "checking this environment for your lab's coupler gate…";
@@ -10449,6 +10559,7 @@
 
     var rows = [
       ["Environment", state.env || "(none selected — step 1)"],
+      ["Lab code folder", labFolderText()],
       ["Network", (sp.network.host || "?") +
         " · cluster " + (sp.network.cluster_name || "?") +
         // QA F10: the port that will be written, shown before Generate
@@ -13709,6 +13820,7 @@
     init: init,
     reloadEnvs: loadEnvs,
     useCustomEnv: useCustomEnv,
+    saveLabCodeDir: saveLabCodeDir,
     // docs/135: force the full conda scan past the mtime-keyed memo.
     rescanEnvs: function (btn) {
       var list = document.getElementById("gen-env-list");

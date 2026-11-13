@@ -48688,6 +48688,45 @@ def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
         _maybe_prewarm_plot_worker(_ctx, inst, reason="env-select")
 
 
+@bp.route("/generate/lab-code-dir", methods=["GET", "POST"])
+def generate_lab_code_dir():
+    """The lab code folder of one interpreter: GET reads it, POST checks and
+    stores it (an empty folder clears it). Stored in the instance settings,
+    never in the env; the folder goes first on PYTHONPATH for the capability
+    probe and the build / re-generate subprocesses, and a change makes the
+    cached capability probe a miss (its key carries that PYTHONPATH)."""
+    if request.method == "GET":
+        python_path = _unquote_path(request.args.get("python"))
+        if not python_path:
+            return jsonify({"error": "No interpreter path given."}), 400
+        return jsonify({"python": python_path,
+                        "folder": config_generator.get_lab_code_dir(python_path)})
+    data = json_object()
+    python_path = _unquote_path(data.get("python"))
+    if not python_path or not isinstance(python_path, str):
+        return jsonify({"ok": False, "error": "No interpreter path given."}), 400
+    if not _interpreter_known(python_path):
+        return jsonify({"ok": False, "error": _UNKNOWN_INTERPRETER}), 403
+    folder = data.get("folder")
+    folder = folder.strip() if isinstance(folder, str) else ""
+    if not folder:
+        # clear only on an explicit request (the field showed a folder and the
+        # user emptied it); a blank field that never loaded keeps the folder
+        if data.get("clear") is not True:
+            return jsonify({"ok": True, "unchanged": True,
+                            "folder": config_generator.get_lab_code_dir(python_path),
+                            "quam_config_file": None})
+        config_generator.set_lab_code_dir(current_app.instance_path, python_path, None)
+        return jsonify({"ok": True, "folder": None, "quam_config_file": None})
+    check = config_generator.check_lab_code_dir(python_path, folder)
+    if not check["ok"]:
+        return jsonify({"ok": False, "folder": folder, "error": check["error"],
+                        "quam_config_file": check["quam_config_file"]}), 400
+    folder = check["folder"]
+    config_generator.set_lab_code_dir(current_app.instance_path, python_path, folder)
+    return jsonify({"ok": True, "folder": folder, "quam_config_file": check["quam_config_file"]})
+
+
 @bp.route("/generate/capabilities", methods=["POST"])
 def generate_capabilities():
     """Assess a spec against the SELECTED env's real capabilities.

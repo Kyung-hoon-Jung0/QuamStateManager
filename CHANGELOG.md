@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.9.0 (unreleased)
+
+- Generate and Re-generate build a lab's coupler-only CZ layout (its own root, z-less qubits, the lab's coupler gate) beside the existing extension layout.
+- Generate: a per-environment lab code folder puts a lab's own `quam_config` checkout first on PYTHONPATH for the environment check and the build.
+
 ## v1.8.0 (unreleased)
 
 - Added chip component review, environment checks and port testing.

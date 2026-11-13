@@ -124,8 +124,29 @@ def _kill_tree(proc):
     psutil.wait_procs(children, timeout=5)
 
 
+def _lab_dir(python_path):
+    try:
+        from quam_state_manager.core.config_generator import get_lab_code_dir
+        return get_lab_code_dir(python_path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _lab_env(argv, kwargs):
+    """Put the interpreter's lab code folder first on the child's PYTHONPATH
+    (the same folder the generator subprocesses get)."""
+    lab = _lab_dir(argv[0]) if argv else None
+    if not lab:
+        return
+    env = dict(kwargs.get("env") or os.environ)
+    base = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = lab + (os.pathsep + base if base else "")
+    kwargs["env"] = env
+
+
 def _spawn(argv, **kwargs):
     import subprocess
+    _lab_env(argv, kwargs)
     if os.name != "nt":
         return subprocess.Popen(argv, **kwargs)
     from .process_owner import Job
@@ -311,6 +332,7 @@ class Worker:
         env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1")
         self.python_path = python_path
         self.env_sig = self.signature(python_path)
+        self.lab_dir = _lab_dir(python_path)
         # a cold run inherits the environment AT ITS SPAWN (PYTHONPATH decides
         # which lab module is imported): the warm one must still match it
         self.environ = dict(os.environ)
@@ -362,6 +384,8 @@ class Worker:
         if self.signature(self.python_path) != self.env_sig:
             return False
         if dict(os.environ) != self.environ:
+            return False
+        if _lab_dir(self.python_path) != self.lab_dir:      # the lab code folder moved
             return False
         for f, rec in self.sources.items():
             now = _stat(f)

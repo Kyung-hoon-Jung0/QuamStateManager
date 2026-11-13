@@ -64,6 +64,17 @@
         </div>
         <span id="gen-env-custom-status" class="muted"></span>
       </div>
+      {# a lab's own quam_config checkout: stored per environment in SM's settings
+         (never in the env), first on PYTHONPATH for the probe and the build #}
+      <div class="gen-env-custom">
+        <label for="gen-lab-code-dir" class="muted gen-env-custom-label">Lab code folder for this environment (optional): the folder holding your lab's <code>quam_config</code></label>
+        <div class="gen-env-custom-row">
+          <input type="text" id="gen-lab-code-dir" autocomplete="off"
+                 placeholder="C:/my_lab_checkout  ·  /path/to/checkout">
+          <button type="button" class="btn-sync gen-env-custom-use" onclick="QuamGen.saveLabCodeDir()">Check and save</button>
+        </div>
+        <span id="gen-lab-code-dir-status" class="muted"></span>
+      </div>
     </section>
 
     <section class="gen-panel" data-step="2">

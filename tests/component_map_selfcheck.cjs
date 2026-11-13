@@ -478,6 +478,10 @@ async function checkComponentMap() {
     ok(doc.body.classList.contains('cm-dir-overlay-on') && /px$/.test(doc.body.style.getPropertyValue('--cm-overlay-h')),
        'an open overlay card lifts the toast lane (body class + its height)');
     ok(!!pd.querySelector('.cm-popup-title .cm-dir-where'), 'the overlay title says where the entity is');
+    { const ti = pd.querySelector('.cm-popup-title'), wh = ti.querySelector('.cm-dir-where');
+      ok(wh.textContent === 'ringed on the map' && ti.firstChild.nextSibling === wh
+         && ti.firstChild.textContent.trim().length > 0,
+         'the overlay title reads "<entity> · ringed on the map", the entity first (' + ti.textContent + ')'); }
     doc.dispatchEvent(new win.Event('scroll'));
     ok(pd.classList.contains('cm-dir-overlay') && !pd.style.left && !pd.style.top, 'a scroll does not move the overlay card');
     // a click inside the overlay card keeps it open
@@ -547,6 +551,20 @@ async function checkComponentMap() {
   ok(!!pop && !pop.hidden, 'keyboard focus on a stone shows the panel');
   stone.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }));
   ok(doc.activeElement === pop.querySelector('.cm-popup-hint'), 'Tab from the stone reaches Expand');
+  // Enter on the focused Expand: a real <button> whose Enter is not swallowed
+  // (the browser then fires its click), and that click opens the inspector.
+  (function () {
+    const hb = pop.querySelector('.cm-popup-hint');
+    ok(hb && hb.tagName === 'BUTTON' && hb.type === 'button', 'Expand is a native button (Enter activates it)');
+    const kd = new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    hb.dispatchEvent(kd);
+    ok(!kd.defaultPrevented, 'nothing swallows Enter on Expand');
+    win._htmxCalls.length = 0;
+    if (!kd.defaultPrevented) hb.click();   // the browser's Enter activation
+    ok(win._htmxCalls.some(function (c) { return c[1] === '/qubit/qA1'; }), 'Enter on Expand opens the inspector');
+  })();
+  stone.dispatchEvent(new win.FocusEvent('focusin'));
+  pop = doc.querySelector('.cm-popup');
   doc.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   ok(!doc.querySelector('.cm-popup:not([hidden])') || !pop.isConnected, 'Escape closes the panel');
   // touch: a tap shows the panel, it does not open the inspector
