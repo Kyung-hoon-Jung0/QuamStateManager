@@ -121,7 +121,10 @@ def summarize(findings: list[Finding]) -> dict:
         # stops. `total` still counts it and the page still lists it.
         if getattr(f, "acknowledged", None):
             out["acknowledged"] += 1
-        elif getattr(f, "advisory", False):
+        elif getattr(f, "advisory", False) or f.severity == "recommendation":
+            # a "recommendation"-severity finding is an optional nudge too:
+            # counted with the advisories, never as a warning (the page's
+            # pills, this summary and the Chip Status Health tile agree)
             out["advisory"] += 1
         elif f.severity in out:
             out[f.severity] += 1

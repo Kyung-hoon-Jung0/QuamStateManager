@@ -86,6 +86,10 @@
                         {{ p.value }}
                         {% if p.is_pointer %}<span class="ptr-inline pointer-badge" title="{{ p.raw }}">{{ p.raw }}</span>{% endif %}
                     {% endif %}
+                    {# one per-gate fidelity per macro (query.pair_gate_fidelity); the
+                       key it came from is in the dot path above, and two keys that
+                       disagree are said out loud #}
+                    {% if p.fid_note and p.fid_note.conflict %}<span class="ui-badge ui-badge--warn" data-fid-conflict="1" title="{{ p.fid_note.conflict }} &#10;shown: {{ p.fid_note.title }}">&#9888; {{ p.fid_note.title }}</span>{% endif %}
                 </td>
             </tr>
             {% endfor %}

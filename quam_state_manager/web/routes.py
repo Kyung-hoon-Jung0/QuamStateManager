@@ -128,7 +128,7 @@ from quam_state_manager.core.pointer_resolver import (
     is_pointer, is_self_ref, pointer_target_name,
 )
 from quam_state_manager.core.pulse_index import PulseIndex
-from quam_state_manager.core.query import QueryEngine
+from quam_state_manager.core.query import QueryEngine, gate_conflict_text, pair_gate_fidelity
 from quam_state_manager.core import query as _query_mod
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
@@ -7581,11 +7581,22 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
 
         section_label = _humanize_gate_name(gate_name)
         section = {"name": section_label, "props": []}
+        # the ONE per-gate fidelity of this macro (query.pair_gate_fidelity):
+        # its row edits the key it was read from, and says which key that is
+        _gfid = (macros.get(gate_name) or {}).get("fidelity") if isinstance(macros.get(gate_name), dict) else None
+        _pg = pair_gate_fidelity(_gfid)
         for field_suffix, dot_suffix in _CZ_GATE_FIELDS:
             key = f"{prefix}_{field_suffix}"
             if key not in pair_data:
                 continue
             resolved_value = pair_data[key]
+            fid_note = None
+            if field_suffix == "interleaved_rb" and _pg:
+                dot_suffix = "macros.{gate}.fidelity." + _pg["key"]
+                fid_note = {"key": _pg["key"],
+                            "title": (f"from {_pg['key']}"
+                                      + (f" ({_pg['basis']})" if len(_pg["keys"]) > 1 else "")),
+                            "conflict": gate_conflict_text(_pg["conflict"])}
             dot_path = f"qubit_pairs.{name}.{dot_suffix.format(gate=gate_name)}"
 
             raw_value = resolved_value
@@ -7628,6 +7639,7 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                 "is_self_ref": self_ref,
                 "dangling": dangling,
                 "editable": editable,
+                "fid_note": fid_note,
             })
 
         if section["props"]:
@@ -24315,6 +24327,9 @@ def _cz_plan_table(rows) -> list[dict]:
             "coupler": r.get("coupler"),
             "amp_sort": first.get("amp_sort"),
             "irb": (r["fidelity"].get("InterleavedRB") or {}).get("value"),
+            # which key that per-gate value came from + a disagreement, if any
+            "irb_key": (r["fidelity"].get("InterleavedRB") or {}).get("key"),
+            "irb_conflict": gate_conflict_text((r["fidelity"].get("InterleavedRB") or {}).get("conflict") or []),
         })
     return out
 

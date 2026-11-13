@@ -13,9 +13,11 @@ def test_load_id_and_manual_edits_never_prove_a_writer(tmp_path):
 
 
 def test_exact_selected_path_and_current_value_are_required(tmp_path, monkeypatch):
-    client = _chip(tmp_path, {"InterleavedRB": .90, "InterleavedRB_load_id": 412, "IRB": .999})
+    # the edge reads the key query.pair_gate_fidelity picks (InterleavedRB
+    # before the lab alias IRB with no time per key), never the larger one
+    client = _chip(tmp_path, {"InterleavedRB": .999, "InterleavedRB_load_id": 412, "IRB": .90})
     assert _edge(client)["cz_fidelity_run"] is None
-    path = "qubit_pairs.q1-q2.macros.cz.fidelity.IRB"
+    path = "qubit_pairs.q1-q2.macros.cz.fidelity.InterleavedRB"
     point = dict(provenance="run_proven", proven=True, value=.999, run_id=413)
     def history(ctx, paths, **kw):
         assert list(paths) == [path]

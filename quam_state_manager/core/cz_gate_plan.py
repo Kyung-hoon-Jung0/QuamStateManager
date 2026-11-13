@@ -1386,10 +1386,17 @@ def _fidelity(raw):
     if not isinstance(raw, dict):
         return {}
     out = {}
-    for k in ("StandardRB", "InterleavedRB"):
-        v = number(raw.get(k))
-        if v is not None:
-            out[k] = {"value": v, "load_id": raw.get(k + "_load_id")}
+    v = number(raw.get("StandardRB"))
+    if v is not None:
+        out["StandardRB"] = {"value": v, "load_id": raw.get("StandardRB_load_id")}
+    # the per-gate number is the ONE every surface shows (query.pair_gate_fidelity):
+    # a lab alias `IRB` counts, and two keys that disagree are reported, never maxed
+    from quam_state_manager.core.query import pair_gate_fidelity
+    pg = pair_gate_fidelity(raw)
+    if pg is not None:
+        out["InterleavedRB"] = {"value": pg["value"], "load_id": raw.get(pg["key"] + "_load_id"),
+                                "key": pg["key"], "physical": pg["physical"],
+                                "conflict": [[k, x] for k, x in pg["conflict"]]}
     # an IRB run's own load id is sometimes stored only beside the RB one
     return out
 

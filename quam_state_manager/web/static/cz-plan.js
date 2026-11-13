@@ -816,7 +816,11 @@
         });
         var fid = r.fidelity || {}, fl = [];
         ['InterleavedRB', 'StandardRB'].forEach(function (k) {
-            if (fid[k]) fl.push(k + ' ' + Number(fid[k].value).toFixed(4) + (fid[k].load_id != null ? ' <small class="muted">(load id ' + esc(fid[k].load_id) + ')</small>' : ''));
+            // the per-gate entry names the key it was read from
+            // (query.pair_gate_fidelity), and says when two keys disagree
+            var c = fid[k] && fid[k].conflict && fid[k].conflict.length > 1 ? fid[k].conflict : null;
+            if (fid[k]) fl.push(esc(fid[k].key || k) + ' ' + Number(fid[k].value).toFixed(4) + (fid[k].load_id != null ? ' <small class="muted">(load id ' + esc(fid[k].load_id) + ')</small>' : '')
+                + (c ? ' <span class="ui-badge ui-badge--warn" data-fid-conflict="1" title="' + esc(c.length + ' IRB values on this pair: ' + c.map(function (x) { return x[0] + ' ' + Number(x[1]).toFixed(4); }).join(', ')) + '">\u26a0 ' + c.length + ' IRB values</span>' : ''));
         });
         var near = r.nearest;
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;

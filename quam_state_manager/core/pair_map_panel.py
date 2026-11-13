@@ -15,6 +15,7 @@ import math
 from typing import Any
 
 from quam_state_manager.core import units
+from quam_state_manager.core.query import gate_conflict_text
 
 # What the edge's headline number is (query.get_topology ``fidelity_source``).
 _SOURCE_KIND = {
@@ -42,6 +43,9 @@ def _variant_line(rows: list[dict]) -> str:
         if lvl not in _LEVEL_TAG or not _num(r.get("value")):
             continue
         txt = f"{_LEVEL_TAG[lvl]} {_fid(r['value'])}"
+        if r.get("gate_conflict"):
+            # two per-gate keys of this pulse disagree (query.pair_gate_fidelity)
+            txt += f" from {r.get('metric')} \u26a0 " + gate_conflict_text(r["gate_conflict"])
         if lvl == "clifford":
             txt += " /Clifford"
             g = r.get("derived_gate_fidelity")
@@ -104,6 +108,8 @@ def pair_rows(edge: dict | None, pair: dict | None, qubit_f01: dict | None = Non
 
     by_gate: dict[str, list[dict]] = {}
     for r in edge.get("gate_fidelities") or []:
+        if r.get("gate_pick") is False:
+            continue                 # not this pulse's per-gate number (pair_gate_fidelity)
         if r.get("level") in _LEVEL_TAG and _num(r.get("value")):
             by_gate.setdefault(str(r.get("gate")), []).append(r)
     show_list = len(by_gate) > 1 or any(len(v) > 1 for v in by_gate.values()) \

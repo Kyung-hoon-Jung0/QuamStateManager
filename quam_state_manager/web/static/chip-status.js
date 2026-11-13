@@ -796,12 +796,35 @@ window.ChipStatus.calAgeRunTitle = function (n, age) {
     return 'last moved in ' + who + ' ' + age + ' (change ledger; the run is not named as its writer)';
 };
 
+// ONE per-gate fidelity per pulse (query.pair_gate_fidelity). A macro holding
+// two per-gate keys (InterleavedRB and a lab alias IRB) ships both rows, and
+// the server stamps `gate_pick` on them; every surface on this page shows one
+// number per pulse, so the rows the resolver did not pick leave the list here,
+// once, before any builder reads it. The full list stays on `_gfAll`.
+window.ChipStatus._pickGateRows = function (topo) {
+    ((topo && topo.edges) || []).forEach(function (e) {
+        if (!e || !Array.isArray(e.gate_fidelities) || e._gfAll) return;
+        if (!e.gate_fidelities.some(function (gf) { return gf && gf.gate_pick === false; })) return;
+        e._gfAll = e.gate_fidelities;
+        e.gate_fidelities = e.gate_fidelities.filter(function (gf) { return !gf || gf.gate_pick !== false; });
+    });
+    return topo;
+};
+// "2 IRB values on this pair: InterleavedRB 0.9073, IRB 0.9434", or ''.
+window.ChipStatus._gfConflictText = function (gf) {
+    var c = gf && gf.gate_conflict;
+    if (!Array.isArray(c) || c.length < 2) return '';
+    return c.length + ' IRB values on this pair: ' + c.map(function (x) {
+        return x[0] + ' ' + Number(x[1]).toFixed(4); }).join(', ');
+};
+
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
     var topo = opts.topo || {nodes: [], edges: []};
     // What this render was built from, so liveDetection's refresh can tell a
     // real topology change from a mutation that moved nothing on this page.
     window.ChipStatus._renderedSig = window.ChipStatus._topoSig(topo);
+    window.ChipStatus._pickGateRows(topo);
     // SA-F9 (g): the chip's change ledger was still being read (a Take live
     // rebuilds it), so the calibration ages are missing or a pull old -- ask
     // again until it answers, instead of showing "no timestamps" until a reload.
@@ -1386,13 +1409,13 @@ window.ChipStatus.mount = function (opts) {
                 // QA F-04: each tile takes its OWN per-pair best, so two tiles
                 // can quote two different pulses of one pair -- every entry
                 // carries the pulse it came from, and the hover names it.
-                var best = null, worst = null, bestGate = null, worstGate = null;
+                var best = null, worst = null, bestGate = null, worstGate = null, bestGf = null;
                 e.gate_fidelities.forEach(function(gf) {
                     if (!match(gf.metric)) return;
                     if (gf.physical === false) dropped++;
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; }
+                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; bestGf = gf; }
                     // the server dropped `value` and kept the number in
                     // `raw_value` (query._gate_fidelity_row) -- a fidelity
                     // outside (0,1]. It is never a candidate for `best`, but
@@ -1402,7 +1425,9 @@ window.ChipStatus.mount = function (opts) {
                           : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
                     if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) { worst = r; worstGate = gf.gate; }
                 });
-                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate });
+                // the key the value was read from + a disagreement of its pulse
+                if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate,
+                                             src: bestGf.metric, conflict: window.ChipStatus._gfConflictText(bestGf) });
                 else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true, gate: worstGate });
             });
             out.excluded = dropped;
@@ -2139,8 +2164,13 @@ window.ChipStatus.mount = function (opts) {
                         + ' from it; see Diagnostics"';
             // QA F-04: the pulse this pair's number came from, in its own span
             // so the value's text stays exactly the formatted number.
+            // gl-1h8: the key the number came from in the title; a pulse whose
+            // two per-gate keys disagree says so in the row itself
             var gate = (typeof x.gate === 'string' && x.gate)
-                ? '<span class="ov-hover-gate">' + _esc(x.gate) + '</span>' : '';
+                ? '<span class="ov-hover-gate"' + (x.src ? ' title="from ' + _esc(x.src)
+                      + (x.conflict ? ' \u00b7 ' + _esc(x.conflict) : '') + '"' : '') + '>' + _esc(x.gate)
+                  + (x.conflict ? ' <span class="ui-badge ui-badge--warn" data-fid-conflict="1">\u26a0 from '
+                      + _esc(x.src) + '</span>' : '') + '</span>' : '';
             return '<span class="ov-hover-item">' + dot
                  + '<span class="ov-hover-id">' + _esc(x.id) + '</span>'
                  + '<span class="ov-hover-val' + vCls + '"' + vTit + '>'
@@ -2635,6 +2665,8 @@ window.ChipStatus.mount = function (opts) {
                 }
                 if (gf.level === 'clifford') name += ' <span class="topo-popup-kind">per Clifford</span>';
                 else if (gf.level === 'gate') name += ' <span class="topo-popup-kind">per gate</span>';
+                var _gfc = ((window.ChipStatus || {})._gfConflictText || function () { return ''; })(gf);
+                if (_gfc) name += ' <span class="ui-badge ui-badge--warn" data-fid-conflict="1" title="' + _esc(_gfc) + '">\u26a0</span>';
                 var shown = pct(v);
                 // docs/138 — the per-GATE number this Clifford fit implies. The
                 // run computed it (epc / average_gates_per_clifford) and stored
@@ -3697,11 +3729,22 @@ window.ChipStatus.mount = function (opts) {
                 if (!rbType) return;
                 var val = typeof gf.value === 'number' ? gf.value
                         : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
+                // gl-6ot: a fidelity outside (0, 1] (the server moved it to
+                // `raw_value`) is SHOWN, marked unphysical, with its raw number --
+                // never as a percentage, never in the stats, never dropped (the
+                // printable report's rule, docs/188).
+                var bad = false;
+                if (val == null && gf.physical === false) {
+                    val = typeof gf.raw_value === 'number' ? gf.raw_value
+                        : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
+                    bad = val != null;
+                }
                 if (val == null) return;
                 if (!rbData[rbType]) rbData[rbType] = {};
                 if (!rbData[rbType][gf.gate]) rbData[rbType][gf.gate] = [];
                 rbData[rbType][gf.gate].push({
-                    pair_id: e.pair_id, source: e.source, target: e.target, value: val,
+                    pair_id: e.pair_id, source: e.source, target: e.target, value: val, bad: bad,
+                    src: gf.metric, conflict: window.ChipStatus._gfConflictText(gf),
                     err: typeof gf.err === 'number' ? gf.err : null,
                     run: typeof gf.load_id === 'number' ? gf.load_id : null,
                     inferredRun: gf.load_id == null ? gf.inferred_load_id : null
@@ -3810,7 +3853,16 @@ window.ChipStatus.mount = function (opts) {
                 var pairs = gates[gateName];
                 if (!pairs.length) return;
 
-                var vals = pairs.map(function(p) { return p.value; });
+                var vals = pairs.filter(function(p) { return !p.bad; }).map(function(p) { return p.value; });
+                var nBad = pairs.length - vals.length;
+                // the unphysical cell text: the raw number, never a percentage
+                var _badCell = function (p) { return p.value.toFixed(4) + ' \u26a0'; };
+                var _badTip = function (p, gl) { return _esc(p.pair_id) + ' \u2014 ' + gl + ': ' + p.value.toFixed(4)
+                    + ' unphysical (a fidelity outside 0..1, likely a failed fit) \u00b7 from ' + _esc(p.src || '')
+                    + ' \u00b7 not in the stats or the colours \u00b7 click to inspect'; };
+                // the key every value was read from; a disagreement of two keys
+                var _srcTip = function (p) { return (p.src ? ' \u00b7 from ' + _esc(p.src) : '')
+                    + (p.conflict ? ' \u00b7 \u26a0 ' + _esc(p.conflict) : ''); };
                 // Physical-gate BEFORE aggregating — a broken RB fit (>1 or ≤0) must
                 // not pollute the stat line avg/min/max, skew the colour range, or
                 // enter the outlier median/MAD that other pairs are judged against.
@@ -3854,6 +3906,8 @@ window.ChipStatus.mount = function (opts) {
                     + 'avg ' + (agg.avg * 100).toFixed(2) + '% <span>med ' + (agg.median * 100).toFixed(2)
                     + '%</span> <span>min ' + (agg.min * 100).toFixed(2) + '%</span> <span>max ' + (agg.max * 100).toFixed(2)
                     + '%</span> <span>(' + agg.count + '/' + topo.edges.length + ' pairs)</span>'
+                    + (nBad ? ' <span class="ui-badge ui-badge--warn" data-fid-unphysical="' + nBad + '">\u26a0 ' + nBad
+                        + ' unphysical (outside 0..1), shown raw, not in the stats</span>' : '')
                     + '</div>';
 
                 // ── Side-by-side: grid (left) + bar chart (right) ────
@@ -3886,13 +3940,17 @@ window.ChipStatus.mount = function (opts) {
                             sectionHtml += '<div class="heatmap-cell heatmap-cell-none tmap-pill" data-pair="' + pidE + '" title="' + pidE + ' \u2014 ' + gateLabel + ': not measured \u00b7 click to inspect" style="' + pos + '"><span class="heatmap-cell-value">\u2014</span></div>';
                             return;
                         }
+                        if (p.bad) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none tmap-pill" data-pair="' + pidE + '" data-fid-unphysical="1" title="' + _badTip(p, gateLabel) + '" style="' + pos + '"><span class="heatmap-cell-value">' + _badCell(p) + '</span></div>';
+                            return;
+                        }
                         var ht = _tOf(p.value), paint = _tmapPaint(interpolateColor(ht, stops), _surf9);
                         var physOk = p.value > 0 && p.value <= 1.0000001;
                         var vd = physOk ? _verdict(p.value, thresholds['cz_fidelity']) : null;
                         var isOut = scorer && physOk && scorer.isOutlier(p.value);
                         sectionHtml += '<div class="heatmap-cell tmap-pill tmap-painted' + (vd === 'warn' || vd === 'fail' ? ' tmap-' + vd + ' tmap-flag' : '') + (isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" data-heat-t="' + ht.toFixed(6) + '" data-tmap-cr="' + paint.cr + '"'
-                            + ' title="' + pidE + ' (' + _esc(e.source) + ' \u2192 ' + _esc(e.target) + ') \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + (p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '') + ' ' + rbKind + (p.run != null ? ' \u00b7 run #' + p.run : '') + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '') + ' \u00b7 click to inspect"'
-                            + ' style="' + pos + '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';"><span class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '</span></div>';
+                            + ' title="' + pidE + ' (' + _esc(e.source) + ' \u2192 ' + _esc(e.target) + ') \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + (p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '') + ' ' + rbKind + (p.run != null ? ' \u00b7 run #' + p.run : '') + (vd === 'warn' || vd === 'fail' ? ' \u00b7 ' + vd + ' vs spec' : '') + _srcTip(p) + ' \u00b7 click to inspect"'
+                            + ' style="' + pos + '--ui-map-bg:' + paint.bg + ';--ui-map-fg:' + paint.fg + ';"><span class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + (p.conflict ? ' \u26a0' : '') + '</span></div>';
                     });
                 } else {
                     // Pair topology grid
@@ -3932,6 +3990,13 @@ window.ChipStatus.mount = function (opts) {
                                 + '<div class="heatmap-cell-value">—</div></div>';
                             return;
                         }
+                        if (p.bad) {
+                            sectionHtml += '<div class="heatmap-cell heatmap-cell-none" data-pair="' + pidE + '" data-fid-unphysical="1" '
+                                + 'title="' + _badTip(p, gateLabel) + '" style="' + posStyle + '">'
+                                + '<div class="heatmap-cell-name">' + pidE + '</div>'
+                                + '<div class="heatmap-cell-value">' + _badCell(p) + '</div></div>';
+                            return;
+                        }
                         var ht = _tOf(p.value);
                         var bg = interpolateColor(ht, stops), fg = textColorForBg(bg);
                         var _physOk = p.value > 0 && p.value <= 1.0000001;
@@ -3940,11 +4005,11 @@ window.ChipStatus.mount = function (opts) {
                         var _errTip = p.err != null ? ' \u00b1 ' + (p.err * 100).toFixed(2) + '%' : '';
                         var _runTip = p.run != null ? ' \u00b7 run #' + p.run : (p.inferredRun != null ? ' \u00b7 run #' + p.inferredRun + ': inferred source, not proven' : '');
                         sectionHtml += '<div class="heatmap-cell' + (_isOut ? ' topo-outlier' : '') + '" data-pair="' + pidE + '" data-metric="cz_fidelity" data-heat-v="' + p.value + '" '
-                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + ' \u00b7 click to inspect" '
+                            + 'title="' + pidE + ' \u2014 ' + gateLabel + ': ' + (p.value * 100).toFixed(2) + '%' + _errTip + ' ' + rbKind + _runTip + _outTip + _srcTip(p) + ' \u00b7 click to inspect" '
                             + 'data-heat-t="' + ht.toFixed(6) + '" '
                             + 'style="' + posStyle + 'background-color:' + bg + ';color:' + fg + ';">'
                             + '<div class="heatmap-cell-name">' + pidE + '</div>'
-                            + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%</div></div>';
+                            + '<div class="heatmap-cell-value">' + (p.value * 100).toFixed(2) + '%' + (p.conflict ? ' \u26a0' : '') + '</div></div>';
                     });
                 }
                 sectionHtml += '</div>'; // close grid
@@ -3956,7 +4021,9 @@ window.ChipStatus.mount = function (opts) {
 
                 // Defer the bar chart: data is pure JS, but height needs the
                 // grid's offsetHeight, only measurable after the single write.
-                var sorted = pairs.slice().sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
+                // an unphysical value is in the grid (marked), never a bar: a 153% bar
+                // would stretch the axis every real pair is read against
+                var sorted = pairs.filter(function(p) { return !p.bad; }).sort(function(a, b) { return (b.value || 0) - (a.value || 0); });
                 var barColors = sorted.map(function(p) {
                     return interpolateColor(_tOf(p.value), _barColorScale);
                 });
@@ -6010,6 +6077,7 @@ window.ChipStatus.mount = function (opts) {
         var diagTotal = diagErr + diagWarn;
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
                 'href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" ' +
+                'title="The errors and warnings the Diagnostics page counts; its recommendations and suggestions are not issues" ' +
                 'style="text-decoration:none">' +
                 '<div class="tile-val">' + (diagTotal || '✓') + '</div>' +
                 '<div class="tile-label">structural issues</div>' +

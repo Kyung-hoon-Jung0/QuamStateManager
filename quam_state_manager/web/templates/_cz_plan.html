@@ -140,7 +140,7 @@
             <td>{% if missing %}<span class="czp-tier czp-no-quad" title="{{ r.reasons | join('; ') }}; {{ r.validity }}; history on Last set hover">no quad term</span>{% elif r.nearest %}<span class="czp-nowrap">{{ r.nearest.name }}</span>{% if r.nearest.lobe %} <small class="muted">{{ r.nearest.lobe }}</small>{% endif %} <small class="muted czp-nowrap">{{ '%+.1f' | format(r.nearest.distance_hz / 1e6) }} MHz</small>{% else %}<span class="muted" title="{{ r.reasons | join('; ') }}">{{ r.reasons[0] if r.reasons else '—' }}</span>{% endif %}</td>
             <td>{% if missing %}<span title="{{ r.kinds | join('; ') }}">—</span>{% else %}{% for k in r.kinds %}<span class="czp-tier{% if 'quad' in k %} czp-tier-quad{% endif %}">{{ k }}</span>{% endfor %}{% endif %}</td>
             <td class="czp-prose czp-validity">{% if missing %}<span title="{{ r.validity }}">—</span>{% elif r.validity %}<span title="{{ r.validity_title }}" class="{{ 'muted' if r.validity_class == 'ok' else 'czp-warn-text' }}">{{ r.validity }}</span>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
-            <td class="czp-num">{{ '%.4f' | format(r.irb) if r.irb is not none else '—' }}</td>
+            <td class="czp-num"{% if r.irb_key %} title="from {{ r.irb_key }}{% if r.irb_conflict %} &#10;{{ r.irb_conflict }}{% endif %}"{% endif %}>{{ '%.4f' | format(r.irb) if r.irb is not none else '—' }}{% if r.irb_conflict %} <span class="ui-badge ui-badge--warn" data-fid-conflict="1">&#9888; from {{ r.irb_key }}</span>{% endif %}</td>
             <td class="czp-last czp-prose" data-last="{{ r.path }}"><span class="muted">&hellip;</span></td>
         </tr>
     {% endfor %}
