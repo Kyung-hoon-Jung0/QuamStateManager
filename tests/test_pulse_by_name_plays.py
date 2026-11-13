@@ -1,4 +1,4 @@
-"""A pair gate that plays a channel op BY NAME (gl-0mj).
+"""A pair gate that plays a channel op BY NAME.
 
 quam_builder's CZGate plays ``moving_qubit.z.play(get_pulse_name(pulse))``,
 and ``get_pulse_name`` returns ``pulse.id`` when it is set. An INLINE slot

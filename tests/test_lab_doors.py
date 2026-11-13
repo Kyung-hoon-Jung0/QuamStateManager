@@ -671,7 +671,7 @@ class TestAnOpTheGatePlaysByNameIsOnItsRoute:
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         ops = _v(c, "qubits.q1.z.operations")
         assert "czl_q1" in ops and "czl_renamed" not in ops
-        # gl-0mj: a rename now takes the slot's id along (asked of the gate
+        # a rename now takes the slot's id along (asked of the gate
         # AS a whole -- the gate still finds its op), so it goes through
         r = c.post("/api/pulse/rename", data={"path": OP_C, "new_name": "czl_renamed"})
         assert r.status_code == 200, r.data[:300]
@@ -1071,7 +1071,7 @@ class TestASpectatorPulseIsOnTheRoute:
         r = c.post("/api/pulse/delete", data={"path": "qubits.q3.z.operations.park",
                                               "force": "1"})
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
-        # gl-0mj: a rename takes the spectator slot's id along, so the gate
+        # a rename takes the spectator slot's id along, so the gate
         # still finds its op and the rename goes through
         r = c.post("/api/pulse/rename", data={"path": "qubits.q3.z.operations.park",
                                               "new_name": "park2"})

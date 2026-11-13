@@ -204,7 +204,7 @@ def build_op_referrers(reverse_index: dict[str, list[str]],
 
 
 def _add_by_name_referrers(merged: dict, op_referrers: dict[str, list[str]]) -> None:
-    """gl-0mj: a pair-gate slot that plays an op BY NAME (its inline pulse's
+    """a pair-gate slot that plays an op BY NAME (its inline pulse's
     ``id``) is a user of that op like a pointer is -- the row's used_by
     carries it, labelled. Refreshed the way pointer users are: a write at
     such a slot is never a value-only step (:func:`is_by_name_holder`), so

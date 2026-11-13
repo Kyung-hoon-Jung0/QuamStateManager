@@ -16250,7 +16250,7 @@ def field_delete():
     if _psc is not None:
         return _pulse_structure_refused(_psc)
 
-    # gl-0mj: a channel (or qubit) delete that takes an op a pair-gate slot
+    # a channel (or qubit) delete that takes an op a pair-gate slot
     # plays BY NAME with it -- refused naming the slot, as the Pulses door
     by_name = _by_name_cut(modifier.store, [dot_path])
     if by_name and request.form.get("force") != "1":
@@ -26128,7 +26128,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                       else used_by_target)
     # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
     played_by_name = _lab_named_players(store, actual_path)
-    # gl-0mj: any gate slot that plays it by name (a quam CZGate's inline
+    # any gate slot that plays it by name (a quam CZGate's inline
     # flux pulse whose id is this op's name) -- a lab gate already listed
     # above is not listed twice
     named_slots = [h for h in _slot_named_players(store, actual_path)
@@ -28711,7 +28711,7 @@ def _lab_named_players(store, path: str) -> list[str]:
 
 def _slot_named_players(store, path: str) -> list[str]:
     """The pair-gate slot holders (``<slot>.id``, or a plain-name slot) that
-    play the channel op at *path* BY NAME (gl-0mj): quam_builder's CZGate
+    play the channel op at *path* BY NAME: quam_builder's CZGate
     plays ``moving_qubit.z.play(get_pulse_name(pulse))``, the pulse's ``id``
     -- no pointer names the op, so ``used_by`` cannot see it. Any gate class,
     not only a lab's own (``_lab_named_players``)."""
@@ -30057,7 +30057,7 @@ def api_pulse_delete_together():
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
             "(Live state edit (Json tree view)).")), 400
-    # gl-0mj: an op a gate slot OUTSIDE the set plays by name
+    # an op a gate slot OUTSIDE the set plays by name
     by_name = _by_name_cut(modifier.store, paths)
     if by_name and str(pj.get("force") or "") != "1":
         return _by_name_refused_json(by_name)
@@ -30449,7 +30449,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
                 new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path, store.merged)
                 if new_ptr and new_ptr != raw:
                     _writes.append((referrer, new_ptr))
-            # gl-0mj: a gate slot that plays the op BY NAME follows it too
+            # a gate slot that plays the op BY NAME follows it too
             for holder in _slot_named_players(store, path):
                 _writes.append((holder, new_name))
         if (retarget and isinstance(body, dict) and body.get("id") == old_name
@@ -30460,7 +30460,7 @@ def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
         return _lab_edit_refused(_lab[0])
     with store._lock:
         referrers = pulse_index.used_by(path)
-        # gl-0mj: read BEFORE the rename moves the op (the scan matches the
+        # read BEFORE the rename moves the op (the scan matches the
         # op by its current path)
         by_name = _slot_named_players(store, path)
         try:
