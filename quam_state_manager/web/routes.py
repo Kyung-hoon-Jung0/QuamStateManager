@@ -7493,7 +7493,7 @@ _CZ_KNOWN_PULSE_FIELDS = ("amplitude", "length", "flat_length", "smoothing_lengt
 
 
 def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
-                        pair_obj: dict) -> dict:
+                        pair_obj: dict, field: str = "flux_pulse_qubit") -> dict:
     """What a CZ macro's ``flux_pulse_qubit`` really is, for the pair inspector.
 
     ``class_name`` (last segment of ``__class__``), ``shape`` (peak / length of a
@@ -7506,8 +7506,11 @@ def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
     gate = ((pair_obj.get("macros") or {}).get(gate_name)) if isinstance(pair_obj, dict) else None
     if not isinstance(gate, dict):
         return out
-    base = ("qubit_pairs", name, "macros", gate_name, "flux_pulse_qubit")
-    pulse, pbase = _query_mod._deref_pulse_ref(store, gate.get("flux_pulse_qubit"), base)
+    # ``flux_pulse_target`` is the second line of a both-movers gate: it has no
+    # fixed rows above it, so every field it holds is listed, under "<gate>_target_".
+    second = field == "flux_pulse_target"
+    base = ("qubit_pairs", name, "macros", gate_name, field)
+    pulse, pbase = _query_mod._deref_pulse_ref(store, gate.get(field), base)
     if not isinstance(pulse, dict) or not pulse:
         return out
     pulse = {k: _query_mod._resolve(store, v, pbase + (k,)) for k, v in pulse.items()}
@@ -7515,7 +7518,7 @@ def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
     if isinstance(qclass, str) and qclass:
         out["class_name"] = qclass.split(".")[-1]
     # the sample period comes from the port that plays the pulse (the moving qubit's z)
-    role = pair_obj.get("moving_qubit")
+    role = "target" if second else pair_obj.get("moving_qubit")
     rate = None
     ref = pair_obj.get("qubit_" + role) if role in ("control", "target") else None
     if isinstance(ref, str) and ref.startswith("#/"):
@@ -7528,9 +7531,9 @@ def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
     out["shape"] = waveform_shape(pulse, sampling_rate=rate)
     alias = ".".join(base)
     for field, value in pulse.items():
-        if field == "__class__" or field in _CZ_KNOWN_PULSE_FIELDS or value is None:
+        if field == "__class__" or value is None or (field in _CZ_KNOWN_PULSE_FIELDS and not second):
             continue
-        key = f"{gate_name}_{field}"
+        key = f"{gate_name}_target_{field}" if second else f"{gate_name}_{field}"
         dot_path = f"{alias}.{field}"
         if isinstance(value, (list, tuple)):
             out["extra_props"].append(_display_prop(
@@ -7731,6 +7734,16 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
                 "editable": editable,
                 "fid_note": fid_note,
             })
+
+        # a both-movers gate: the second qubit's flux pulse, every field it holds
+        _gm = macros.get(gate_name)
+        if isinstance(_gm, dict) and isinstance(_gm.get("flux_pulse_target"), (dict, str)):
+            second = _cz_flux_pulse_view(store, name, gate_name, pair_obj, field="flux_pulse_target")
+            if second["class_name"]:
+                section["props"].append(_display_prop(
+                    f"{prefix}_target_pulse_class", second["class_name"],
+                    f"qubit_pairs.{name}.macros.{gate_name}.flux_pulse_target.__class__"))
+            section["props"].extend(second["extra_props"])
 
         if section["props"]:
             sections.append(section)

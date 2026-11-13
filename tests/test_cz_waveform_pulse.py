@@ -93,7 +93,9 @@ class TestPlan:
         rows, _ = C.operations(_plan_state({"amplitude": 0.1, "length": 40,
                                             "__class__": "quam.components.pulses.SquarePulse"}))
         line = rows[0]["lines"][0]
-        assert line["amplitude_v"] == 0.1 and line["amplitude_source"] is None
+        assert line["amplitude_v"] == 0.1
+        # an ordinary pulse's line keeps its old shape: no waveform keys at all
+        assert not {"amplitude_source", "waveform_samples", "waveform_length_ns"} & set(line)
         assert line["point"]["frequency_hz"] == pytest.approx(5e9 - 80e6)
 
     def test_a_truly_missing_amplitude_still_says_so(self):

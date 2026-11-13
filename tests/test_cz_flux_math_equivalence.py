@@ -80,8 +80,17 @@ def assert_equivalent(actual, expected, path, hz_abs_tol=0.0):
         assert isinstance(actual, list) and len(actual) == len(expected), path
         for index, (got, want) in enumerate(zip(actual, expected)):
             assert_equivalent(got, want, f"{path}[{index}]", hz_abs_tol)
+    elif isinstance(expected, str) and expected.endswith(_OLD_MISSING):
+        # the one combined reason now names what is really missing (prefix kept)
+        head = expected[:-len(_OLD_MISSING)]
+        assert isinstance(actual, str) and actual.startswith(head)             and actual[len(head):] in _NEW_MISSING, (path, actual, expected)
     else:
         assert actual == expected, (path, actual, expected)
+
+
+_OLD_MISSING = "f_01 or the operation amplitude is missing"
+_NEW_MISSING = {"f_01 is missing", "the operation amplitude is missing",
+                "f_01 and the operation amplitude are missing"}
 
 
 def test_pre_extraction_fixture_outputs_are_identical():
@@ -125,6 +134,19 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     assert added <= MEASURED_PLAN_KEYS, (record["call"], sorted(added))
                     for key in added:
                         exp_plan[key] = got_plan[key]
+                # One per-gate fidelity per macro (query.pair_gate_fidelity) adds only
+                # which key the value came from, its physicality and any disagreeing key;
+                # the value and load id stay pinned. Their meaning is pinned in
+                # test_pair_gate_fidelity.
+                exp_fid, got_fid = exp_row.get("fidelity"), got_row.get("fidelity")
+                if isinstance(exp_fid, dict) and isinstance(got_fid, dict):
+                    for name, entry in exp_fid.items():
+                        got = got_fid.get(name)
+                        if isinstance(entry, dict) and isinstance(got, dict):
+                            added = set(got) - set(entry)
+                            assert added <= {"key", "physical", "conflict"}, (record["call"], sorted(added))
+                            for key in added:
+                                entry[key] = got[key]
         model = None
         if record["call"] == "C.fitted_shift":
             model = restore(record["args"])[0]

@@ -114,11 +114,12 @@ def test_no_coupler_table_identity(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     table = re.search(r'<table id="czp-table".*?</table>', html, re.S)[0]
     # S2 adds inspectable frequency spans and an accessibility label; the
-    # CZ7 UX-6 changes missing-model badges and pair grouping; pin the revised markup.
+    # CZ7 UX-6 changes missing-model badges and pair grouping; the IRB cell names the key
+    # its value came from (title="from InterleavedRB"); pin the revised markup.
     table = re.sub(r' aria-label="[^"]*"', '', table)
     table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
     table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
-    assert hashlib.sha256(table.encode()).hexdigest() == "fc51539bfaedf8e6ad6289da9e2b674b9e91eb8295f6dc64264189e64991de0f"
+    assert hashlib.sha256(table.encode()).hexdigest() == "873bc033fc6d5546709abe3f5d47814dc5ddc47260c78b377eb0295fe9d17f9d"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):

@@ -1025,10 +1025,11 @@ def operations(doc, conversions=None, unavailable=None):
                                                    and field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low")),
                               "pulse_class": (str(current(doc, pulse_path + ".__class__", "")).split(".")[-1]
                                               if pulse_path and isinstance(pulse, dict) else None),
-                              "amplitude_v": amp, "point": pt,
-                              "amplitude_source": shape["label"] if shape else None,
-                              "waveform_samples": shape["samples"] if shape else None,
-                              "waveform_length_ns": shape["length_ns"] if shape else None})
+                              "amplitude_v": amp, "point": pt})
+                if shape:
+                    # only a sample-array pulse carries these; every other line keeps its shape
+                    lines[-1].update(amplitude_source=shape["label"], waveform_samples=shape["samples"],
+                                     waveform_length_ns=shape["length_ns"])
             for ln in lines:
                 ln["lobes"] = []
                 if not ln["pulse_field"] or ln["refusal"]:
