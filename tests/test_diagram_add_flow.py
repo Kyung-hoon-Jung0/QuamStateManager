@@ -258,6 +258,14 @@ def test_the_panel_shows_the_active_box_and_the_stage_follows_it(app_env):
     assert r.status_code == 200, r.data
     assert d["name"] in st.merged["qubits"] and d["name"] not in st.merged["active_qubit_names"]
     assert "did not join active_qubit_names" in r.get_data(as_text=True)
+    # the box checked against the template's default: the stage follows the box
+    c.post("/undo")
+    d, form = _form(c, st)
+    form["active"] = ["0", "1"]
+    r = c.post("/diagram-add/stage", data=dict(form, dry="0"))
+    assert r.status_code == 200, r.data
+    assert st.merged["active_qubit_names"][-1] == d["name"]
+    assert "joined active_qubit_names" in r.get_data(as_text=True)
 
 
 @pytest.mark.parametrize("app_env", [_freed_port], indirect=True)
