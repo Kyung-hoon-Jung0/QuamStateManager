@@ -662,7 +662,12 @@ window.AgentPanel = (function () {
     }
     var said = "";
     var se = S.startErr[p.id];
-    if (se && p.status === "draft") {
+    if (se && se.gone && p.status === "draft") {
+      // the proposer exited: the person chooses who drives it, never SM on its own
+      said = '<p class="ag-err ui-agent-said ag-proposer-gone" role="alert">Not started: the terminal agent that proposed this plan has exited.' +
+        (!S.observer ? ' <button type="button" class="btn-sm secondary ag-drive-app" onclick="AgentPanel.driveInApp(\'' + esc(p.id) + '\')">Let the in-app agent drive</button>' +
+          ' <button type="button" class="btn-sm secondary ag-wait-term" onclick="AgentPanel.waitTerminal(\'' + esc(p.id) + '\')">Wait for the terminal agent</button>' : "") + "</p>";
+    } else if (se && p.status === "draft") {
       said = '<p class="ag-err ui-agent-said" role="alert">Not started: ' + esc(se.text) +
         (se.other && !S.observer ? ' <button type="button" class="btn-sm secondary ag-stop-other" onclick="AgentPanel.cancelPlan(\'' + esc(se.other.id) + '\')">Stop ' + esc(se.other.title || "that plan") + "</button>" : "") + "</p>";
     } else if (p.refusal && (p.status === "running" || p.status === "stopping" || p.end_code === p.refusal.code)) {
@@ -1547,8 +1552,10 @@ window.AgentPanel = (function () {
     doStart(id, e ? e.envelope : null);
   }
   function closeEnvelope(id) { delete S.envelope[id]; repaintPlan(id); }
-  function doStart(id, env) {
-    api("POST", "/api/agent/plans/" + id + "/start", env ? { envelope: env } : {}).then(function (r) {
+  function doStart(id, env, driver) {
+    var body = env ? { envelope: env } : {};
+    if (driver) body.driver = driver;
+    api("POST", "/api/agent/plans/" + id + "/start", body).then(function (r) {
       if (r.status === 409 && r.body && r.body.refused === "envelope_changed" && r.body.envelope) {
         // the limits moved since the card showed them: show the new envelope, never arm the old one
         var cur = S.envelope[id] || {};
@@ -1562,7 +1569,8 @@ window.AgentPanel = (function () {
       // docs/253: say WHO runs it -- a terminal agent's plan is not run by SM's in-app agent
       if (r.status !== 200) {
         // said on the card that was pressed, with the way out -- never only in a line below the composer
-        S.startErr[id] = { text: errText(r, "could not start"), other: (r.body && r.body.running_plan) || null };
+        S.startErr[id] = { text: errText(r, "could not start"), other: (r.body && r.body.running_plan) || null,
+                           gone: !!(r.status === 409 && r.body && r.body.refused === "proposer_gone"), env: env || null };
         repaintPlan(id);
         toast(errText(r, "could not start"), "error");
       } else delete S.startErr[id];
@@ -1570,6 +1578,17 @@ window.AgentPanel = (function () {
       else toast("started — " + (r.body && r.body.driver ? driverText(r.body.driver).replace(/^driven by /, "") + " runs it" : "the agent is running the plan"));
       poll(true);
     });
+  }
+  function driveInApp(id) {
+    if (S.observer) return;
+    var se = S.startErr[id] || {};
+    doStart(id, se.env || null, "app");
+  }
+  function waitTerminal(id) {
+    if (S.observer) return;
+    delete S.startErr[id];
+    repaintPlan(id);
+    toast("left for the terminal agent: press Start again once it is back");
   }
   function cancelPlan(id) {
     if (S.observer) return;
@@ -2301,7 +2320,7 @@ window.AgentPanel = (function () {
   document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); lateSync(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
-  return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan, releaseHuman: releaseHuman, rejectNote: rejectNote, rejectCancel: rejectCancel, rejectConfirm: rejectConfirm, rejectKey: rejectKey,
+  return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan, driveInApp: driveInApp, waitTerminal: waitTerminal, releaseHuman: releaseHuman, rejectNote: rejectNote, rejectCancel: rejectCancel, rejectConfirm: rejectConfirm, rejectKey: rejectKey,
            confirmStart: confirmStart, closeEnvelope: closeEnvelope,
            setIntent: setIntent, sessionOpen: sessionOpen,
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,

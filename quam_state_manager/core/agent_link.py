@@ -148,12 +148,31 @@ def candidate_urls(instance_path: Path | None = None) -> list[str]:
 # PID, SM can tell the plan's driver apart and notice when it is gone.
 BRIDGE_SESSION = (os.environ.get("SM_SESSION") or "").strip() or None
 
+# A terminal CLI that exports its own session id to the processes it spawns gives every bridge
+# of that CLI session the same id, so a bridge spawned afresh for each call is still the same
+# agent (Claude Code exports CLAUDE_CODE_SESSION_ID). Without one the id is per bridge process.
+_CLI_SESSION_VARS = ("CLAUDE_CODE_SESSION_ID",)
+
+
+def cli_session_id() -> str | None:
+    if BRIDGE_SESSION and not BRIDGE_SESSION.startswith("t-"):
+        return None                       # SM's in-app session: SM_SESSION names it
+    for k in _CLI_SESSION_VARS:
+        v = "".join(ch for ch in (os.environ.get(k) or "") if ch.isalnum() or ch in "-_")[:60]
+        if v:
+            return v
+    return None
+
 
 def bridge_session() -> str:
     global BRIDGE_SESSION
     if not BRIDGE_SESSION:
-        import uuid
-        BRIDGE_SESSION = "t-" + uuid.uuid4().hex[:12]
+        cli = cli_session_id()
+        if cli:
+            BRIDGE_SESSION = "t-cli-" + cli
+        else:
+            import uuid
+            BRIDGE_SESSION = "t-" + uuid.uuid4().hex[:12]
     return BRIDGE_SESSION
 
 
@@ -173,6 +192,13 @@ class SMLink:
             h.update(extra)
         h.setdefault("X-SM-Session", bridge_session())        # docs/253: which agent this bridge speaks for
         h.setdefault("X-SM-Bridge-Pid", str(os.getpid()))
+        # a one-shot CLI call (``claude -p`` sets this entrypoint) exits after its answer, so a plan
+        # it proposes is driven by SM's in-app session at Start without asking (agent_grant)
+        sid = h.get("X-SM-Session") or ""
+        if sid.startswith("t-") and os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").strip() == "sdk-cli":
+            h.setdefault("X-SM-Oneshot", "1")
+        if sid.startswith("t-cli-"):
+            h.setdefault("X-SM-Stable-Id", "1")          # the id is the CLI session's, not this process's
         # decisions D-22 (agents ver180): a read-only bridge says so on EVERY call,
         # so SM's write doors can refuse it -- a guard the server cannot see is no guard
         if os.environ.get("SM_MCP_MODE", "").strip().lower() == "readonly":
