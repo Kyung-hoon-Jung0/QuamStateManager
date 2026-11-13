@@ -17164,6 +17164,21 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # skips just the refused rows.
     _lab_skip: set = set()
     _lab_writes, _lab_idx = [], []
+    # SM's own catalog pulse classes: every written row is judged by the
+    # class's own rules (in-process), not only the rows a lab pulse sees
+    _syn_writes, _syn_idx = [], []
+    for _n, (_dp, _rv, _c) in enumerate(pairs):
+        if _n in _ps_skip or _rv is _BATCH_DELETE:
+            continue
+        try:
+            _tgt = _resolve_edit_path(modifier.store, _dp)
+            _pv = (_parse_for_target(modifier.store, _tgt, _rv)
+                   if isinstance(_rv, str) else _rv)
+        except Exception:  # noqa: BLE001 -- the row loop reports it
+            continue
+        _syn_writes.append((_tgt, _pv))
+        _syn_idx.append(_n)
+    _syn = _synth_write_refusal(modifier.store, _syn_writes) if _syn_writes else None
     from quam_state_manager.core import lab_watch as _lw
     try:
         _watch = _lw.watch_for(modifier.store)
@@ -17200,14 +17215,21 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     _lab_rel = _lab_hold(modifier.store, [w for w, _v in _lab_writes])
     _lab_info: dict = {}
     try:
-        _lab = (_lab_write_refusal(modifier.store, _lab_writes, info=_lab_info)
-                if _lab_writes else None)
+        _lab = (_lab_write_refusal(modifier.store, _lab_writes, info=_lab_info,
+                                   synth=False)
+                if _lab_writes and not (_syn and not independent) else None)
     except BaseException:
         _lab_rel()
         raise
+    _syn_extra: set = set()
+    if _syn:
+        if _lab and independent:
+            _syn_extra = {_syn_idx[k] for k in _syn[1]}
+        else:
+            _lab, _lab_writes, _lab_idx = _syn, _syn_writes, _syn_idx
     if _lab:
         _lab_msg = _lab_refusal_text(_lab[0])
-        _lab_skip = {_lab_idx[k] for k in _lab[1]}
+        _lab_skip = {_lab_idx[k] for k in _lab[1]} | _syn_extra
         if not independent:
             _lab_rel()
             _one = _lab_writes[_lab[1][0]] if len(_lab[1]) == 1 else None
@@ -27849,9 +27871,152 @@ def _pair_addition_verdicts(store, pairs, rule, manifest=None):
                            lab_check=lambda writes, **kw: _lab_write_refusal(store, writes, **kw))
 
 
+#: the first words of every :func:`_synth_write_refusal` message (the doors'
+#: refusal text tells it apart from a lab class's own refusal by them)
+_SYNTH_REFUSAL_LEAD = "The pulse class's own rule rejects this"
+
+
+def _synth_judged_class(qclass) -> bool:
+    """A pulse class SM synthesizes in-process (its catalog: quam and
+    quam_builder classes). A lab class is :func:`_lab_write_refusal`'s."""
+    from quam_state_manager.core.pulse_catalog import resolve_qclass
+    return isinstance(qclass, str) and bool(qclass) and resolve_qclass(qclass)[0] is not None
+
+
+def _synth_owner(merged, segs, bodies):
+    """``(op path, body)`` of the deepest catalog-class pulse dict a write at
+    *segs* lands inside (a body this batch already rewrote wins), else None."""
+    nodes = [merged]
+    cur = merged
+    for seg in segs[:-1]:
+        if isinstance(cur, dict):
+            cur = cur.get(seg, _MISSING)
+        elif isinstance(cur, list) and seg.isdigit() and int(seg) < len(cur):
+            cur = cur[int(seg)]
+        else:
+            cur = _MISSING
+        if cur is _MISSING:
+            break
+        nodes.append(cur)
+    for n in range(len(segs) - 1, 0, -1):
+        op = ".".join(segs[:n])
+        if op in bodies:
+            return op, bodies[op]
+        node = nodes[n] if n < len(nodes) else None
+        if isinstance(node, dict) and _synth_judged_class(node.get("__class__")):
+            return op, node
+    return None
+
+
+def _synth_write_refusal(store, writes):
+    """``(message, refused_write_indices)`` when a write would leave a pulse
+    of a class SM synthesizes in-process (quam / quam_builder: the catalog)
+    breaking one of that class's OWN rules -- the ``raise`` its
+    ``waveform_function`` makes, e.g. an odd ``SNZPulse.flat_length``, which
+    makes quam's ``generate_config()`` raise for the whole chip; else None.
+
+    *writes* is :func:`_lab_write_refusal`'s ``[(write_path, value)]``. Each
+    pulse a write lands inside (or a whole new pulse dict written at a path)
+    is drawn as it would be after the batch by the Pulses preview's own
+    :func:`waveform_synth.synth_for_operation` (references read the same
+    way); a pulse whose field POINTS at a written path is drawn with that
+    field overridden, when the chip's pulse index is warm (a guard never makes
+    an edit wait on a whole-chip walk).
+
+    Only a :class:`waveform_synth.PulseRuleError` refuses -- never an
+    unknown class, an unresolved pointer, a missing parameter or anything
+    else that only means SM cannot draw the pulse -- and only when the write
+    makes the pulse break the rule (a pulse already breaking it with the
+    same message, e.g. an unrelated field edited, is not refused). Lab
+    classes are not judged here; a delete never is. A check that fails
+    never blocks."""
+    from quam_state_manager.core import pulse_refs, waveform_synth
+    try:
+        bodies: dict[str, Any] = {}
+        fields_of: dict[str, list] = {}
+        idx_of: dict[str, set] = {}
+        literal: dict[str, tuple] = {}
+        with store._lock:
+            merged = store.merged
+            for idx, (wp, val) in enumerate(writes):
+                if not isinstance(wp, str) or not wp or val is _LAB_DELETE:
+                    continue
+                segs = wp.split(".")
+                if isinstance(val, dict) and _synth_judged_class(val.get("__class__")):
+                    bodies[wp] = copy.deepcopy(val)
+                    fields_of.setdefault(wp, [])
+                    idx_of.setdefault(wp, set()).add(idx)
+                    continue
+                if not (isinstance(val, (dict, list))
+                        or (isinstance(val, str) and is_pointer(val.strip()))):
+                    literal[wp] = (idx, val)
+                got = _synth_owner(merged, segs, bodies)
+                if got is None:
+                    continue
+                op, node = got
+                rel = segs[len(op.split(".")):]
+                body = node if op in bodies else copy.deepcopy(node)
+                if not _set_nested(body, rel, copy.deepcopy(val)):
+                    continue
+                bodies[op] = body
+                fields_of.setdefault(op, []).append(".".join(rel))
+                idx_of.setdefault(op, set()).add(idx)
+        overrides: dict[str, dict] = {}
+        try:
+            ctx = _active_ctx()
+            index = ctx.get("pulse_index") if ctx else None
+        except Exception:  # noqa: BLE001 -- outside a request: no index
+            index = None
+        if literal and index is not None and index.store is store:
+            roots = index.rows_seeing_if_warm(list(literal)) or ()
+            with store._lock:
+                for op in roots:
+                    if op in bodies:
+                        continue
+                    try:
+                        node = store.get_value(op)
+                    except (KeyError, TypeError, ValueError, IndexError):
+                        continue
+                    if not (isinstance(node, dict)
+                            and _synth_judged_class(node.get("__class__"))):
+                        continue
+                    osegs = op.split(".")
+                    for fname, fval in node.items():
+                        if fname == "__class__" or not pulse_refs.is_ref(fval):
+                            continue
+                        r = pulse_refs.read(store.merged, osegs, fval)
+                        hit = literal.get(r.target) if r.target else None
+                        if hit is None:
+                            continue
+                        overrides.setdefault(op, {})[fname] = hit[1]
+                        fields_of.setdefault(op, []).append(fname)
+                        idx_of.setdefault(op, set()).add(hit[0])
+        jobs = [(op, {"body": b}) for op, b in bodies.items()]
+        jobs += [(op, {"overrides": ov}) for op, ov in overrides.items()]
+        for op, kw in jobs:
+            after = waveform_synth.synth_for_operation(store, op, **kw)
+            if not after.get("rule_violation"):
+                continue
+            before = waveform_synth.synth_for_operation(store, op)
+            if before.get("rule_violation") and before.get("error") == after.get("error"):
+                continue
+            qclass = str(after.get("qclass") or "")
+            leaf = qclass.rsplit(".", 1)[-1] or "pulse"
+            fields = ", ".join(f for f in fields_of.get(op) or () if f)
+            return (f"{_SYNTH_REFUSAL_LEAD}: {leaf} at {op}"
+                    + (f" ({fields})" if fields else "")
+                    + f" -- {after.get('error')} quam's generate_config() "
+                    "would raise for the whole chip, so every node would fail.",
+                    sorted(idx_of.get(op) or ()))
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("pulse rule check failed", exc_info=True)
+    return None
+
+
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
                        info: dict | None = None,
-                       fills_slot: str | bool | None = None):
+                       fills_slot: str | bool | None = None,
+                       synth: bool = True):
     """``(message, refused_write_indices)`` when a LAB class's own code
     rejects what *writes* (``[(write_path, value)]``, the paths the values
     actually land at; value ``_LAB_DELETE`` = the key is removed) would make of
@@ -27897,6 +28062,12 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
     cannot be resolved) never blocks: the write goes through, and the note
     says it was NOT checked."""
     from quam_state_manager.core import lab_watch
+    if synth:
+        # SM's own catalog classes: their rules are known in-process (one
+        # guard, every door that asks this one)
+        got = _synth_write_refusal(store, writes)
+        if got:
+            return got
     if info is None:
         info = {}
     notes = info.setdefault("notes", [])
@@ -29018,6 +29189,8 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 
 
 def _lab_refusal_text(message: str, action: str = "value") -> str:
+    if message.startswith(_SYNTH_REFUSAL_LEAD):
+        return f"Nothing was written -- {message}"
     if message.startswith("your chip's generate_config()"):
         return (f"Your chip's own generate_config() refused this{' delete' if action == 'delete' else ''} (run in the "
                 f"selected environment) — nothing was changed: {message}")
@@ -29310,6 +29483,11 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     # node would stop compiling. Refuse it here, where it is one pulse.
     if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
         return _iq_on_single_refusal(chan_label)
+    # a pulse its own class rejects (an odd SNZPulse.flat_length) is never
+    # staged: once applied, generate_config() would raise for the whole chip
+    _syn = _synth_write_refusal(store, [(dot_path, template)])
+    if _syn:
+        return _lab_edit_refused(_syn[0])
     if slot_fill is not None:
         from flask import g
         _info = getattr(g, "lab_info", None)
@@ -29317,7 +29495,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             _info = g.lab_info = {"notes": []}
         _lab = _lab_write_refusal(store, [(slot_fill[2], template),
                                           (slot_fill[0], slot_fill[1])],
-                                  info=_info,
+                                  info=_info, synth=False,
                                   fills_slot=slot_fill[0].rsplit(".", 1)[0])
         if _lab:
             return _lab_edit_refused(_lab[0])

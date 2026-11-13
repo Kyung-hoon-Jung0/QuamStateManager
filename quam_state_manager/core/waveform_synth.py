@@ -156,6 +156,17 @@ from quam_state_manager.core.pulse_catalog import (
 __all__ = ["synthesize", "synthesize_raw", "synth_for_operation",
            "decimate_minmax", "sparkline_svg"]
 
+class PulseRuleError(ValueError):
+    """A pulse class's OWN rule rejected the parameters (the mirror of a
+    ``raise`` in its ``waveform_function``, e.g. an odd ``SNZPulse.flat_length``).
+
+    Distinct from every "SM cannot draw this" outcome (an unknown class, an
+    unresolved pointer, a missing parameter, a preview cap): only this one
+    means quam's ``generate_config()`` would raise for the whole chip, so
+    only this one may refuse a write. A ``ValueError`` subclass, so every
+    existing caller that catches ``ValueError`` is unchanged."""
+
+
 # Hard cap so a typo'd length can't allocate gigabytes in the Flask process.
 MAX_SAMPLES = 200_000
 
@@ -169,7 +180,7 @@ _erf_vec = np.vectorize(math.erf, otypes=[float])
 def _drag_gaussian_pulse_waveforms(amplitude, length, sigma, alpha, anharmonicity,
                                    detuning=0.0, subtracted=True):
     if alpha != 0 and anharmonicity == 0:
-        raise ValueError("Cannot create a DRAG pulse with `anharmonicity=0`")
+        raise PulseRuleError("Cannot create a DRAG pulse with `anharmonicity=0`")
     t = np.arange(length, step=1.0)
     center = (length - 1) / 2
     gauss_wave = amplitude * np.exp(-((t - center) ** 2) / (2 * sigma**2))
@@ -183,7 +194,7 @@ def _drag_gaussian_pulse_waveforms(amplitude, length, sigma, alpha, anharmonicit
     if anharmonicity != detuning:
         z += 1j * gauss_der_wave * (alpha / (2 * np.pi * anharmonicity - 2 * np.pi * detuning))
     elif alpha != 0:
-        raise ValueError(
+        raise PulseRuleError(
             "The complex envelop for the DRAG waveform cannot be created if"
             " anharmonicity = detuning and alpha != 0."
         )
@@ -193,10 +204,10 @@ def _drag_gaussian_pulse_waveforms(amplitude, length, sigma, alpha, anharmonicit
 
 def _drag_cosine_pulse_waveforms(amplitude, length, alpha, anharmonicity, detuning=0.0):
     if alpha != 0 and anharmonicity == 0:
-        raise ValueError("Cannot create a DRAG pulse with `anharmonicity=0`")
+        raise PulseRuleError("Cannot create a DRAG pulse with `anharmonicity=0`")
     if length < 2:
         # quam divides by (length - 1) here and yields nan/inf; reject instead.
-        raise ValueError("DragCosinePulse requires length >= 2")
+        raise PulseRuleError("DragCosinePulse requires length >= 2")
     t = np.arange(length, step=1.0)
     end_point = length - 1
     cos_wave = 0.5 * amplitude * (1 - np.cos(t * 2 * np.pi / end_point))
@@ -205,7 +216,7 @@ def _drag_cosine_pulse_waveforms(amplitude, length, alpha, anharmonicity, detuni
     if anharmonicity != detuning:
         z += 1j * sin_wave * (alpha / (2 * np.pi * anharmonicity - 2 * np.pi * detuning))
     elif alpha != 0:
-        raise ValueError(
+        raise PulseRuleError(
             "The complex envelop for the DRAG waveform cannot be created if"
             " anharmonicity = detuning and alpha != 0."
         )
@@ -422,10 +433,10 @@ def _square(p):
 def _gaussian(p):
     length = int(p["length"])
     if length < 1:
-        raise ValueError("GaussianPulse requires length >= 1")
+        raise PulseRuleError("GaussianPulse requires length >= 1")
     sigma = float(p["sigma"])
     if sigma == 0:
-        raise ValueError("GaussianPulse requires sigma != 0")
+        raise PulseRuleError("GaussianPulse requires sigma != 0")
     t = np.arange(length, dtype=int)
     center = (length - 1) / 2
     waveform = float(p["amplitude"]) * np.exp(-((t - center) ** 2) / (2 * sigma**2))
@@ -468,7 +479,7 @@ def _flattop_factory(kind: str, class_name: str):
         flat_length = int(p.get("flat_length", 0) or 0)
         rise_fall_length = (length - flat_length) // 2
         if flat_length + 2 * rise_fall_length != length:
-            raise ValueError(
+            raise PulseRuleError(
                 f"{class_name} requires (length - flat_length) to be even"
                 f" (length={length}, flat_length={flat_length})"
             )
@@ -496,9 +507,9 @@ def _erf_square(p):
     risetime_samples = int(p["risetime_samples"])
     flat_length = int(p["flat_length"])
     if risetime_samples <= 0:
-        raise ValueError("ErfSquarePulse.risetime_samples must be positive")
+        raise PulseRuleError("ErfSquarePulse.risetime_samples must be positive")
     if flat_length < 0:
-        raise ValueError("ErfSquarePulse.flat_length must be non-negative")
+        raise PulseRuleError("ErfSquarePulse.flat_length must be non-negative")
     sample_rate = float(p.get("sample_rate", 1e9) or 1e9)
     length = int(p["length"])
 
@@ -537,16 +548,16 @@ def _snz(p):
     t_phi_eff = float(p.get("t_phi_eff", 0.0) or 0.0)
     padding = int(p.get("padding", 0) or 0)
     if t_phi_eff < 0:
-        raise ValueError("SNZPulse.t_phi_eff must be non-negative")
+        raise PulseRuleError("SNZPulse.t_phi_eff must be non-negative")
     if flat_length <= 0:
-        raise ValueError("SNZPulse.flat_length must be positive")
+        raise PulseRuleError("SNZPulse.flat_length must be positive")
     if flat_length % 2 != 0:
-        raise ValueError(
+        raise PulseRuleError(
             f"SNZPulse.flat_length={flat_length} must be even to "
             "split equally into positive and negative halves."
         )
     if padding < 0:
-        raise ValueError("SNZPulse.padding must be non-negative")
+        raise PulseRuleError("SNZPulse.padding must be non-negative")
 
     t_phi = int(math.floor(t_phi_eff / 2.0)) * 2
     b_over_a = 1.0 - (t_phi_eff - t_phi) / 2.0
@@ -582,15 +593,15 @@ def _gaussian_filtered_factory(bipolar: bool):
         length = int(p["length"])
 
         if pulse_length <= 0:
-            raise ValueError(f"{cls}.pulse_length must be positive")
+            raise PulseRuleError(f"{cls}.pulse_length must be positive")
         if bipolar and pulse_length % 2 != 0:
-            raise ValueError(f"{cls}.pulse_length must be even")
+            raise PulseRuleError(f"{cls}.pulse_length must be even")
         if padding < 0:
-            raise ValueError(f"{cls}.post_zero_padding_length must be non-negative")
+            raise PulseRuleError(f"{cls}.post_zero_padding_length must be non-negative")
         if freq_mhz <= 0:
-            raise ValueError(f"{cls}.gaussian_filter_frequency_mhz must be positive (MHz)")
+            raise PulseRuleError(f"{cls}.gaussian_filter_frequency_mhz must be positive (MHz)")
         if sample_rate <= 0:
-            raise ValueError(f"{cls}.sample_rate must be positive (Hz)")
+            raise PulseRuleError(f"{cls}.sample_rate must be positive (Hz)")
 
         if amplitude == 0:
             return np.zeros(length, dtype=np.float64)
@@ -628,7 +639,7 @@ def _gaussian_filtered_factory(bipolar: bool):
 def _waveform_passthrough(p):
     waveform_i = p.get("waveform_I")
     if not isinstance(waveform_i, (list, tuple)):
-        raise ValueError("WaveformPulse.waveform_I must be a list of floats")
+        raise PulseRuleError("WaveformPulse.waveform_I must be a list of floats")
     waveform_q = p.get("waveform_Q")
     if waveform_q is None:
         return np.array(waveform_i, dtype=float)
@@ -643,7 +654,7 @@ def _flattop_gaussian_deprecated(p):
     smoothing_length = int(p.get("smoothing_length", 0) or 0)
     rise_fall_length = smoothing_length // 2
     if smoothing_length % 2 != 0:
-        raise ValueError("FlatTopGaussianPulse rise_fall_length must be a multiple of 2")
+        raise PulseRuleError("FlatTopGaussianPulse rise_fall_length must be a multiple of 2")
     rise = _flattop_rise("gaussian", float(p["amplitude"]), rise_fall_length)
     waveform = np.array(
         rise + [float(p["amplitude"])] * int(p["flat_length"]) + rise[::-1])
@@ -682,11 +693,11 @@ def _cosine_bipolar(p):
     flat = int(p["flat_length"])
 
     if flat > length:
-        raise ValueError(
+        raise PulseRuleError(
             f"CosineBipolarPulse.flat_length={flat} cannot exceed total length={length}."
         )
     if flat % 2 != 0:
-        raise ValueError(
+        raise PulseRuleError(
             f"CosineBipolarPulse.flat_length={flat} must be even to split equally "
             "into + and - halves."
         )
@@ -732,16 +743,16 @@ def _cosine_bipolar_deprecated(p):
     smoothing = int(p.get("smoothing_length", 0) or 0)
 
     if flat > length:
-        raise ValueError(
+        raise PulseRuleError(
             f"CosineBipolarPulse.flat_length={flat} cannot exceed total length={length}."
         )
     if flat % 2 != 0:
-        raise ValueError(
+        raise PulseRuleError(
             f"CosineBipolarPulse.flat_length={flat} must be an even number to split "
             "equally into + and - halves."
         )
     if length - (smoothing + flat) < 0:
-        raise ValueError(
+        raise PulseRuleError(
             f"CosineBipolarPulse.smoothing_time + flat_length ="
             f" {smoothing + flat} exceeds total length={length}."
         )
@@ -1062,8 +1073,11 @@ def synthesize(qclass_or_key: str, params: dict[str, Any], *,
     try:
         raw = synthesize_raw(spec.key, resolved)
     except (ValueError, KeyError, ZeroDivisionError, IndexError) as exc:
-        return _payload_error(str(exc), spec_key=spec.key, class_match=how,
-                              unmodeled=unmodeled, warnings=warnings)
+        payload = _payload_error(str(exc), spec_key=spec.key, class_match=how,
+                                 unmodeled=unmodeled, warnings=warnings)
+        if isinstance(exc, PulseRuleError):
+            payload["rule_violation"] = True
+        return payload
     except ImportError as exc:
         # v1.3.0 B3: a filtered/windowed shape needs scipy; without it (a broken
         # or partial env) this payload says so -- it raised, and every page that
@@ -1165,7 +1179,8 @@ def _shape_payload(spec: PulseSpec, raw: Any, length: int | None,
 
 def synth_for_operation(store, op_path: str, *,
                         overrides: dict[str, Any] | None = None,
-                        max_samples: int = MAX_SAMPLES) -> dict:
+                        max_samples: int = MAX_SAMPLES,
+                        body: dict | None = None) -> dict:
     """Synthesize the waveform of the operation at *op_path* in *store*.
 
     Two-phase (the ``field_peek`` pattern): snapshot + pointer-resolve under
@@ -1173,16 +1188,22 @@ def synth_for_operation(store, op_path: str, *,
     operations (a bare ``"#./other_op"`` string) are followed to their
     target; the payload notes ``alias_of``. *overrides* lets the live
     preview substitute uncommitted form values for individual params.
+    *body* judges a pulse dict that is not (or not yet) stored at *op_path*
+    -- the body a write WOULD leave there -- with its references read from
+    *op_path* exactly as a stored one's are (the write guard's one source).
     """
     from quam_state_manager.core.pointer_path import resolve_field_target
 
     context_slot = op_path.rsplit(".", 1)[-1]
 
     with store._lock:
-        try:
-            raw_op = store.get_value(op_path)
-        except (KeyError, TypeError, ValueError, IndexError):
-            return _payload_error(f"operation not found: {op_path}")
+        if body is not None:
+            raw_op = body
+        else:
+            try:
+                raw_op = store.get_value(op_path)
+            except (KeyError, TypeError, ValueError, IndexError):
+                return _payload_error(f"operation not found: {op_path}")
 
         alias_of = None
         actual_path = op_path
