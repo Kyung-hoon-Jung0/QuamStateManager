@@ -74,6 +74,7 @@ def load(instance_path, chip: str) -> list[dict]:
             for step in rec.get("steps") or []:
                 approval = decided.get(step.get("approval"))
                 if approval and approval.get("plan_id") == rec.get("id"):
+                    step["approval_id"] = step["approval"]   # gl-bbi: the settled id stays
                     step["approval"] = None
                     if approval["status"] == "approved":
                         step["applied"] = True
@@ -270,6 +271,7 @@ def approval_settled(instance_path, chip: str, plan_id: str | None, approval_id:
         hit = False
         for st in rec.get("steps") or []:
             if st.get("approval") == approval_id:
+                st["approval_id"] = approval_id          # gl-bbi: the settled id stays
                 st["approval"] = None
                 if applied:
                     st["applied"] = True

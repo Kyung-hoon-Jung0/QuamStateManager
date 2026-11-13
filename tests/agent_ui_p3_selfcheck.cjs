@@ -69,10 +69,12 @@ function feed() {
         // gl-ck9: three runs whose writes were held; the server sends the approval as it stands NOW
         { key: 'rk-held-pending', status: 'ended', node: 'n', targets: ['q1'], since: 23,
           result: { status: 'done', applied: false, approval: { id: 'ap-p' }, writes: runWrites.slice(0, 2) },
-          approval_state: { id: 'ap-p', status: 'pending', n_writes: 2 } },
+          approval_state: { id: 'ap-p', status: 'pending', n_writes: 2 },
+          how: '2 write(s) wait for the human approval' },
         { key: 'rk-held-rejected', status: 'ended', node: 'n', targets: ['q1'], since: 24,
           result: { status: 'done', applied: false, approval: { id: 'ap-r' }, writes: runWrites.slice(0, 2) },
-          approval_state: { id: 'ap-r', status: 'rejected', decided_by: 'human:user-a', n_writes: 2 } },
+          approval_state: { id: 'ap-r', status: 'rejected', decided_by: 'human:user-a', n_writes: 2 },
+          how: '2 write(s) rejected by human:user-a; nothing was written (approval ap-r)' },
         { key: 'rk-held-approved', status: 'ended', node: 'n', targets: ['q1'], since: 25,
           result: { status: 'done', applied: false, approval: { id: 'ap-a' }, writes: runWrites.slice(0, 2) },
           approval_state: { id: 'ap-a', status: 'approved', decided_by: 'human:user-a', n_writes: 1 } }],
@@ -189,6 +191,10 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   const held = k => txt(A.card('run:' + k).querySelector('.ag-writes summary'));
   pin('ck9-a-pending-approval-still-says-waiting', held('rk-held-pending') === '2 write(s) waiting for approval', held('rk-held-pending'));
   pin('ck9-a-rejected-approval-says-rejected-by-whom', held('rk-held-rejected') === '2 write(s) rejected by human:user-a, not written', held('rk-held-rejected'));
+  // gl-e02: a settled approval is said once (the summary), a pending one keeps its how line
+  const hows = k => A.card('run:' + k).querySelectorAll('.ag-how').length;
+  pin('e02-a-settled-approval-is-said-once', hows('rk-held-rejected') === 0 && /rejected/.test(txt(A.card('run:rk-held-rejected'))), hows('rk-held-rejected'));
+  pin('e02-a-pending-approval-keeps-its-how-line', hows('rk-held-pending') === 1, hows('rk-held-pending'));
   pin('ck9-an-approved-approval-says-applied-with-its-count', held('rk-held-approved') === '1 write(s) approved by human:user-a and applied to the chip', held('rk-held-approved'));
 
   // ------------------------------------------------------------ C-23
