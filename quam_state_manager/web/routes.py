@@ -47022,6 +47022,7 @@ def dataset_detail(uid):
         return render_template("_status.html",
                                message=f"Run #{run_id} not found", level="error"), 404
     from quam_state_manager.core.fit_targets import resolve_fit_targets
+    from quam_state_manager.core.fit_targets import written_by_run as _fit_written_by_run
     # Stamp the run's OWN chip identity so an "Apply fitted value" can be checked
     # against the loaded chip — a run's fit must not be silently written onto a
     # different chip that merely reuses the same qubit names (audit #1).
@@ -47056,6 +47057,7 @@ def dataset_detail(uid):
                            via_saved=request.args.get("via") == "saved",
                            via_inferred=request.args.get("via") == "inferred",
                            fit_targets=resolve_fit_targets(run, names=run_names_),
+                           fit_written=_fit_written_by_run(run, run_names_),
                            fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
@@ -47267,7 +47269,7 @@ def dataset_interactive(uid):
                 ' takes clicks</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
-                           reproduction_hint=capability["reason"])
+                           reproduction_hint=replot.reproduction_hint(capability, figures))
 
 
 @bp.route("/dataset/<uid>/interactive/status")
