@@ -516,7 +516,9 @@ class TestValueSpec:
         s = _healthy_state()
         s["qubits"]["q1"]["xy"] = {"operations": {"x180": {"length": 18}}}
         cats = _cats(diagnostics.lint_state(_store(state=s)))
-        assert "value_spec_length" in cats
+        # gl-tmz: the QOP-aware row (an error: QOP refuses every program)
+        # replaces the plain spec row on the same field -- one row, not two
+        assert "waveform_length" in cats and "value_spec_length" not in cats
 
     def test_pulse_length_pointer_and_large_ok(self):
         s = _healthy_state()

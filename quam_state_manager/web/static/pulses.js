@@ -1265,9 +1265,45 @@ window.PulsesPage = (function () {
             }
             label.appendChild(span);
             label.appendChild(input);
+            if (_qubitDefault(p.name)) {
+                input.setAttribute('data-qubit-default', p.name);
+                if (p.default !== null && p.default !== undefined) {
+                    input.setAttribute('data-catalog-default', input.value);
+                }
+                var note = document.createElement('span');
+                note.className = 'muted';
+                note.setAttribute('data-field-note', '');
+                label.appendChild(note);
+                _applyQubitDefault(input);
+            }
             fs.appendChild(label);
         });
         wrap.appendChild(fs);
+    }
+
+    /* gl-tmz P2: a field whose default depends on the target qubit (a DRAG
+       pulse's anharmonicity points at that qubit's own value). The server
+       decides the value (pulse-qubit-defaults-data); a field the user typed
+       into keeps what they typed. */
+    function _selectedQubit() {
+        var root = createRoot();
+        var sel = root && root.querySelector('select[name="qubit"]');
+        return sel ? sel.value : '';
+    }
+    function _qubitDefault(name) {
+        var root = createRoot();
+        var all = (root && root._qubitDefaults) || {};
+        var q = all[_selectedQubit()];
+        return (q && q[name]) || null;
+    }
+    function _applyQubitDefault(input) {
+        if (input.getAttribute('data-user-typed') === '1') return;
+        var d = _qubitDefault(input.getAttribute('data-qubit-default'));
+        if (!d) return;
+        input.value = d.value != null ? String(d.value)
+            : (input.getAttribute('data-catalog-default') || '');
+        var note = input.parentNode && input.parentNode.querySelector('[data-field-note]');
+        if (note) note.textContent = d.note || '';
     }
 
     function createCollectParams(root) {
@@ -1796,6 +1832,7 @@ window.PulsesPage = (function () {
         root._pulsesInit = true;
         root._catalog = parseEmbeddedJson('pulse-catalog-data') || {};
         root._existing = parseEmbeddedJson('pulse-existing-data') || {};
+        root._qubitDefaults = parseEmbeddedJson('pulse-qubit-defaults-data') || {};
         root._pairs = parseEmbeddedJson('pulse-pairs-data') || {};
         root._pairChannels = parseEmbeddedJson('pulse-pair-channels-data') || {};
         root._pairsInfo = parseEmbeddedJson('pulse-pairs-info-data') || {};
@@ -1835,7 +1872,18 @@ window.PulsesPage = (function () {
             });
         }
 
+        root.addEventListener('change', function (evt) {
+            var t = evt.target;
+            if (!(t && t.matches && t.matches('select[name="qubit"]'))) return;
+            root.querySelectorAll('#pulse-create-fields input[data-qubit-default]')
+                .forEach(_applyQubitDefault);
+            schedulCreatePreview(root);
+        });
         root.addEventListener('input', function (evt) {
+            if (evt.target && evt.target.hasAttribute
+                    && evt.target.hasAttribute('data-qubit-default')) {
+                evt.target.setAttribute('data-user-typed', '1');
+            }
             if (_createEditMarksDirty(evt)) root._dirty = true;
             if (evt.target.closest && evt.target.closest('#pulse-create-fields')) {
                 schedulCreatePreview(root);

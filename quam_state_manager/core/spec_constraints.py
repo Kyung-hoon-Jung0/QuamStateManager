@@ -19,6 +19,7 @@ dicts; :func:`core.diagnostics._spec_findings` wraps them into ``Finding``\\ s.
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -26,7 +27,9 @@ from quam_state_manager.core.loader import _walk
 
 # --- Named constants (tweak here; some are setup/QOP-version dependent) ------
 TIME_OF_FLIGHT_MIN_NS = 24          # conservative; exact min is setup/QOP dependent
-PULSE_LENGTH_MIN_NS = 16
+# 4 ns in the configuration since QOP 3.3 (docs Guides/timing_in_qua.md:14);
+# the QOP-aware rule is pulse_length_problem() below
+PULSE_LENGTH_MIN_NS = 4
 PULSE_LENGTH_MAX_NS = 2 ** 26       # 2^24 clock cycles; catches a fat-fingered extra digit
 FULL_SCALE_POWER_DBM_RANGE = (-11, 18)   # inclusive, 1 dB step (QOP 360+; old 3 dB grid obsolete)
 VALID_BANDS = (1, 2, 3)
@@ -116,6 +119,45 @@ def qop_port_sharing_affected(version) -> bool | None:
     3.5 and 3.7); None = version unknown (the note is shown)."""
     mm = qop_minor(version)
     return None if mm is None else mm in ((3, 3), (3, 4), (3, 6))
+
+
+# --- Pulse length in the config (one rule: the write guard + Diagnostics) ----
+# QOP refuses EVERY program on a chip whose config holds a pulse length that is
+# not a multiple of 4 ns -- measured on QM-SaaS, QOP 3.7.3, with
+# generate_config() passing: "Invalidation ERROR pulses.length@...: Pulse length
+# must be a multiple of 4". The minimum is QOP-version dependent, docs
+# Guides/timing_in_qua.md:14-16: "The minimum pulse and wait duration is 4 ns if
+# set in the configuration" (QOP >= 3.3); "Prior to QOP 3.3, the minimum pulse
+# and wait duration was 16 ns (4 clock cycles), both from the configuration and
+# from QUA."
+PULSE_LENGTH_STEP_NS = 4
+
+
+def min_pulse_length_ns(qop_version=None) -> int:
+    """4 ns for QOP >= 3.3 and for an unknown version, 16 ns before 3.3."""
+    mm = qop_minor(qop_version)
+    return 16 if mm is not None and mm < (3, 3) else 4
+
+
+def pulse_length_problem(length, qop_version=None) -> str | None:
+    """Why QOP would refuse a pulse whose config length is *length* ns, or
+    None (also None when *length* is not a number: nothing to judge)."""
+    if isinstance(length, bool) or not isinstance(length, (int, float)):
+        return None
+    if not math.isfinite(length):
+        return None
+    if length % PULSE_LENGTH_STEP_NS:
+        return (f"length {length:g} ns is not a multiple of "
+                f"{PULSE_LENGTH_STEP_NS} ns; QOP refuses every program on the "
+                "chip with \"Pulse length must be a multiple of 4\"")
+    lo = min_pulse_length_ns(qop_version)
+    if length < lo:
+        known = qop_minor(qop_version) is not None
+        return (f"length {length:g} ns is below the {lo} ns minimum for a pulse "
+                "in the configuration"
+                + ("" if known else " (the chip declares no QOP version; "
+                   "QOP 3.3 or later assumed)"))
+    return None
 
 
 def qop_version_of(state) -> str | None:

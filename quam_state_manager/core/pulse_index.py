@@ -1036,6 +1036,16 @@ class PulseIndex:
                 return list(self._pos)
         return None
 
+    def rows_seeing_if_warm(self, paths) -> set[str] | None:
+        """Op paths of every row that can see a write at any of *paths* (the
+        written pulse itself, and every pulse pointing into it, transitively);
+        None when only a cold rebuild could say. Never builds: a write guard
+        must not make an ordinary edit wait on a whole-chip walk."""
+        with self.store._lock:
+            if not self._warm():
+                return None
+            return self._rows_seeing(list(paths))
+
     def known_paths(self):
         """Every pulse op path, as an O(1) membership container."""
         self._ensure()

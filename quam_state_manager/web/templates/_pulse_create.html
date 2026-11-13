@@ -145,6 +145,7 @@
 
 <script id="pulse-catalog-data" type="application/json">{{ catalog_json | script_json }}</script>
 <script id="pulse-existing-data" type="application/json">{{ existing_json | script_json }}</script>
+<script id="pulse-qubit-defaults-data" type="application/json">{{ qubit_defaults_json | script_json }}</script>
 <script id="pulse-pairs-data" type="application/json">{{ pairs_map | tojson }}</script>
 <script id="pulse-pair-channels-data" type="application/json">{{ pair_channels_map | tojson }}</script>
 {# docs/136: qubits whose z IS the QDAC bias line — that channel cannot play a pulse. #}
