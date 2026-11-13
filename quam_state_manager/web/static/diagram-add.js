@@ -470,6 +470,25 @@ window.DiagramAdd = (function () {
     onMapClick(g);
   });
 
+  // A failed panel request must say so where the user is looking: htmx swaps
+  // nothing on an error status, which left the "click the target" hint up.
+  document.addEventListener("htmx:responseError", function (ev) {
+    var tgt = ev.detail && ev.detail.target;
+    if (!tgt || tgt.id !== "cm-add-panel") return;
+    var xhr = ev.detail.xhr || {};
+    tgt.textContent = "";
+    var n = document.createElement("p");
+    n.className = "ui-callout ui-callout--warn";
+    n.setAttribute("data-cm-add-error", "");
+    n.textContent = "The add panel could not be opened (server answered " + (xhr.status || "?") +
+      "). Nothing was changed. ";
+    var c = document.createElement("button");
+    c.type = "button"; c.className = "btn-sm outline secondary";
+    c.setAttribute("data-cm-add-cancel", ""); c.textContent = "Cancel";
+    n.appendChild(c);
+    tgt.appendChild(n);
+  });
+
   // A panel landed: draw its rack, and bring it into view (it opens under
   // the map, below the fold on a short screen -- FB-10 D).
   document.addEventListener("htmx:afterSwap", function (ev) {

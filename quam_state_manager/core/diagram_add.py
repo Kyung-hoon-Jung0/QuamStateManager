@@ -774,8 +774,11 @@ def pick_pair_template(merged: dict, a: str, b: str) -> str | None:
         if not isinstance(p, dict):
             continue
         m = _pair_membership(p, merged)
-        if m and not any(qdac.bias_mode(merged["qubits"][q]) in ("qdac", "bias_tee")
-                         for q in m):
+        qs = merged.get("qubits") or {}
+        # a pair naming a qubit the chip does not have (a dangling pointer) is
+        # no template; it must not stop every other pair from being added
+        if m and all(isinstance(qs.get(q), dict) for q in m) and not any(
+                qdac.bias_mode(qs[q]) in ("qdac", "bias_tee") for q in m):
             ok.append((pid, m))
     for pid, m in ok:
         if a in m or b in m:

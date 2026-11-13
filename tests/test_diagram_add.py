@@ -663,3 +663,13 @@ class TestReadoutBand:
         _d, p = TestQubitPlan()._plan(m, readout_rf=d["readout_rf"])
         assert not p.get("error"), p
         assert any("band" in n for n in p["summary"]["notes"])
+
+
+def test_a_dangling_pair_is_skipped_as_a_template():
+    """A pair naming a qubit the chip does not have used to raise KeyError for
+    EVERY add-pair request (HTTP 500)."""
+    from quam_state_manager.core.diagram_add import pick_pair_template
+    merged = {"qubits": {"q1": {"id": "q1"}, "q2": {"id": "q2"}, "q3": {"id": "q3"}},
+              "qubit_pairs": {"q1-q9": {"qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q9"},
+                              "q1-q2": {"qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2"}}}
+    assert pick_pair_template(merged, "q2", "q3") == "q1-q2"
