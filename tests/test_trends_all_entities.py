@@ -819,8 +819,11 @@ class TestReviewRound2:
         answers first."""
         c = _hot_cold_chip(tmp_path, "leadrb", {SRB_TAIL: 0.97}, {IRB_TAIL: 0.99})
         badges = _badges(c.get("/topology/trends").get_data(as_text=True))
-        assert "InterleavedRB" in badges[0][0], badges
-        assert badges[0][1] == "2Q gate fid. (IRB)", badges
+        # the resolved gate fidelity (the Overview tile's number) leads, then
+        # the raw gate-level family
+        assert badges[0][1] == "2Q gate fidelity (resolved)", badges
+        assert "InterleavedRB" in badges[1][0], badges
+        assert badges[1][1] == "2Q gate fid. (IRB)", badges
 
     def test_an_SRB_ONLY_chip_still_gets_the_question(self, tmp_path):
         """The fix must not delete the empty template — a Clifford number is not

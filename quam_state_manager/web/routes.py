@@ -21010,6 +21010,176 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
     return out
 
 
+#: The Trends path of the ONE resolved 2Q gate fidelity per pair: what the
+#: Overview tile and the topology edge show (query.pair_gate_fidelity per gate
+#: macro, the best physical macro per pair), recomputed at every recorded
+#: change of its inputs. Not a state leaf: the raw per-key families
+#: (``InterleavedRB``, ``IRB``) stay charted as recorded.
+_TREND_2Q_RESOLVED = "qubit_pairs.*.gate_fidelity_resolved"
+_TREND_2Q_RESOLVED_FAM = "gate_fidelity_resolved"
+_TREND_2Q_RESOLVED_LABEL = "2Q gate fidelity (resolved)"
+
+
+def _trend_axis_order(key) -> tuple:
+    """Sort key of a Trends axis key: a ledger key ``<UTC stamp>_e<eid>``
+    sorts by stamp then by the NUMBER of the event (``e9`` before ``e10``);
+    a snapshot id sorts as text."""
+    k = str(key)
+    stamp, sep, eid = k.rpartition("_e")
+    if sep and eid.isdigit():
+        return (stamp, int(eid))
+    return (k, -1)
+
+
+def _resolved_2q_at(fids: dict) -> tuple[float, str, str] | None:
+    """``(value, source, basis)`` of one pair from its macros' fidelity blocks
+    (``{gate: block}``): pair_gate_fidelity per macro, then the macro with
+    the largest PHYSICAL value -- the rule ``QueryEngine.get_topology`` uses
+    for the edge and the Overview tile uses per pair. None when no macro has
+    a physical per-gate value."""
+    best = None
+    for gate in sorted(fids):
+        r = pair_gate_fidelity(fids[gate])
+        if r is None or not r.get("physical"):
+            continue
+        if best is None or r["value"] > best[0]:
+            best = (r["value"], f"{gate}.{r['key']}", r.get("basis") or "")
+    return best
+
+
+def _trend_has_gate_key(hm, path: Path, tbl=None) -> bool:
+    """Does any pair's gate macro record a per-gate fidelity key
+    (query.rb_level "gate": ``InterleavedRB``, ``IRB``, ...)?"""
+    from quam_state_manager.core.query import rb_level
+    match = (tbl.leaf_matching_paths if tbl is not None
+             else (lambda pat: hm.leaf_matching_paths(path, pat)))
+    try:
+        for pat in ("qubit_pairs.*.macros.*.fidelity.*",
+                    "qubit_pairs.*.macros.*.fidelity.*.*"):
+            if any(rb_level(dp.split(".")[5]) == "gate" for dp in match(pat)):
+                return True
+    except Exception:  # noqa: BLE001 -- no resolved badge then
+        logger.debug("gate-key scan failed", exc_info=True)
+    return False
+
+
+def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> list[dict]:
+    """One line per pair: the resolved 2Q gate fidelity (``_TREND_2Q_RESOLVED``).
+
+    Each pair's gate-macro fidelity blocks are rebuilt from the recorded
+    in-force values of their leaves (the per-gate values and the run-id fields
+    pair_gate_fidelity reads; a per-key time recorded as text only where the
+    history holds that path) at every point any of them changed, and the
+    resolver judges the rebuilt block. Where no time or run id is recorded the
+    resolver's own last rule applies (key order). A point is kept where the
+    resolved value or its source changes, the last one is held to the newest
+    event, and each point's hover names its source key (``<gate>.<key>``).
+    """
+    from quam_state_manager.core.query import rb_level
+    pairs = list(pairs or [])
+    if not pairs:
+        return []
+    match = (tbl.leaf_matching_paths if tbl is not None
+             else (lambda pat: hm.leaf_matching_paths(path, pat)))
+    cand = (list(match("qubit_pairs.*.macros.*.fidelity.*"))
+            + list(match("qubit_pairs.*.macros.*.fidelity.*.*")))
+    known = set(getattr(tbl, "paths", ()) or ()) if tbl is not None else set()
+    by_pair: dict[str, list[str]] = {}
+    for dp in cand:
+        parts = dp.split(".")
+        if parts[1] in pairs:
+            by_pair.setdefault(parts[1], []).append(dp)
+    # a gate key's time recorded as text is not a NUMERIC path; ask for it
+    # where the history holds it at all
+    for dps in by_pair.values():
+        for dp in list(dps):
+            parts = dp.split(".")
+            if rb_level(parts[5]) != "gate":
+                continue
+            base = ".".join(parts[:6])
+            for extra in (base + "_updated_at", base + ".updated_at"):
+                if extra in known and extra not in dps:
+                    dps.append(extra)
+    by_pair = {p: dps for p, dps in by_pair.items()
+               if any(rb_level(d.split(".")[5]) == "gate" for d in dps)}
+    if not by_pair:
+        return []
+    allp = [d for dps in by_pair.values() for d in dps]
+    got = (tbl.leaf_series_many(allp, hold_to_newest=True) if tbl is not None
+           else hm.leaf_field_series_many(path, allp, hold_to_newest=True))
+    out: list[dict] = []
+    for p in pairs:
+        dps = by_pair.get(p)
+        if not dps:
+            continue
+        rows, held_keys, newest = {}, set(), None
+        for dp in dps:
+            rs = [r for r in (got.get(dp) or []) if r and r[0] is not None]
+            # a held endpoint (7-tuple) is the newest event, not a change
+            if rs and len(rs[-1]) > 6:
+                held_keys.add(rs[-1][0])
+                newest = rs[-1][0]
+                rs = rs[:-1]
+            rows[dp] = rs
+        keys = sorted({r[0] for rs in rows.values() for r in rs}, key=_trend_axis_order)
+        cursor = {dp: -1 for dp in dps}
+        pts, attr, last = [], {}, None
+        for k in keys:
+            ko = _trend_axis_order(k)
+            fids: dict[str, dict] = {}
+            set_at: dict[str, Any] = {}
+            for dp in dps:
+                rs = rows[dp]
+                i = cursor[dp]
+                while i + 1 < len(rs) and _trend_axis_order(rs[i + 1][0]) <= ko:
+                    i += 1
+                cursor[dp] = i
+                if i < 0 or rs[i][1] is None:
+                    continue
+                parts = dp.split(".")
+                block = fids.setdefault(parts[3], {})
+                src = parts[3] + "." + parts[5]
+                if len(parts) == 6:
+                    block[parts[5]] = rs[i][1]
+                    set_at[src] = (dp, rs[i][0])
+                else:
+                    sub = block.get(parts[5])
+                    if not isinstance(sub, dict):
+                        sub = block[parts[5]] = {}
+                    sub[parts[6]] = rs[i][1]
+                    set_at.setdefault(src, (dp, rs[i][0]))
+            res = _resolved_2q_at(fids)
+            now = (res[0], res[1]) if res else None
+            if now == last:
+                continue
+            last = now
+            pts.append((k, res[0] if res else None))
+            if res:
+                why = "source " + res[1] + (f" ({res[2]})" if res[2] else "")
+                info = {}
+                if tbl is not None and res[1] in set_at:
+                    sdp, skey = set_at[res[1]]
+                    info = dict((tbl.attrs.get(sdp) or {}).get(skey) or {})
+                info["sub"] = why + (" 00b7 " + info["sub"] if info.get("sub") else "")
+                info.setdefault("label", why)
+                attr[k] = info
+        if not any(v is not None for _, v in pts):
+            continue
+        ser = {"metric": _TREND_2Q_RESOLVED_FAM, "entity": p, "kind": "pair",
+               "points": pts,
+               "sources": [(attr.get(k) or {}).get("sub", "").split(" 00b7 ")[0]
+                           for k, _ in pts]}
+        if newest and pts[-1][0] != newest and pts[-1][1] is not None:
+            ser["held"] = {newest: pts[-1][0]}
+            attr[newest] = dict(attr.get(pts[-1][0]) or {})
+            pts.append((newest, pts[-1][1]))
+            ser["sources"].append(ser["sources"][-1])
+        if tbl is not None:
+            ser["attr"] = attr
+        out.append(ser)
+    return out
+
+
 def _trend_witness_fields(ser: dict, left_out, now) -> None:
     """What a trend line shows beside its in-force values (only when there
     is something to show, so a plain series ships as before):
@@ -21888,6 +22058,18 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # the charts, so both can be named out of ONE label map below.
     pair_chips, pair_chips_more = (
         _trend_pair_chips(hm, path, extras, tbl) if pairs else ([], 0))
+    # The resolved 2Q gate fidelity (the Overview tile's number) leads the
+    # 2Q row on a chip that records any per-gate key; the raw key families
+    # keep their own badges.
+    if pairs and _trend_has_gate_key(hm, path, tbl):
+        pair_chips = [{"path": _TREND_2Q_RESOLVED, "fam": _TREND_2Q_RESOLVED_FAM,
+                       "label": _TREND_2Q_RESOLVED_LABEL, "n": len(pairs),
+                       "active": _TREND_2Q_RESOLVED in extras}] + [
+            c for c in pair_chips if c.get("path") != _TREND_2Q_RESOLVED]
+        # the row keeps its cap: the last badge makes room and is counted
+        if len(pair_chips) > _TREND_2Q_MAX_CHIPS:
+            pair_chips_more += len(pair_chips) - _TREND_2Q_MAX_CHIPS
+            pair_chips = pair_chips[:_TREND_2Q_MAX_CHIPS]
     # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
     # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
@@ -21909,8 +22091,11 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                      "x180_amplitude", "readout_amplitude"]
         have = _trend_metrics_with_data(hm, path, curated, tbl)
         sel = [m for m in preferred if m in have][:3] or preferred[:3]
+        # the default 2Q trend is the RESOLVED gate fidelity (what the
+        # Overview tile shows), where the raw IRB family used to be
         if any(c["path"] == _TREND_IRB for c in pair_chips):
-            extras.append(_TREND_IRB)
+            extras.append(_TREND_2Q_RESOLVED if any(
+                c["path"] == _TREND_2Q_RESOLVED for c in pair_chips) else _TREND_IRB)
             for c in pair_chips:
                 c["active"] = c["path"] in extras
     sel = [m for m in sel if m in curated][:8]
@@ -21920,7 +22105,8 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         _s.setdefault("kind", "qubit")
     extra_series_by_path: dict[str, list[dict]] = {}
     for _p in extras:
-        _es = _trend_series_leaf(hm, path, _p, qubits, pairs, tbl)
+        _es = (_trend_series_resolved_2q(hm, path, pairs, tbl) if _p == _TREND_2Q_RESOLVED
+               else _trend_series_leaf(hm, path, _p, qubits, pairs, tbl))
         extra_series_by_path[_p] = _es
         series += _es
 
@@ -22032,9 +22218,14 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     for c in charts:
         if c.get("kind") == "pair" and c["metric"] in _pair_labels:
             c["label"] = _pair_labels[c["metric"]]
+        if c.get("kind") == "pair" and c["metric"] == _TREND_2Q_RESOLVED_FAM:
+            c["label"] = _TREND_2Q_RESOLVED_LABEL
         if c.get("kind") == "pair":
             # the y axis says what the chart title says, never the raw key
             c["ytitle"] = c.get("label") or _trend_axis_title(c["metric"])
+    for c in pair_chips:
+        if c.get("path") == _TREND_2Q_RESOLVED:
+            c["label"] = _TREND_2Q_RESOLVED_LABEL
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.
@@ -36793,14 +36984,63 @@ def export_csv():
     for p in props:
         u = units[p] = unit_of(p) or ""
         heads[p] = f"{p} [{u}]" if u else p
+    unit_cols = {}
+    if entity == "pairs":
+        rows, unit_cols = _pair_detuning_export_units(rows, props, heads, units)
     if entity != "pairs" and request.args.get("view") == "qubits":
         rows = _export_table_values(_store(), rows, props)
     from quam_state_manager.core.pointer_resolver import is_pointer
     rows = [{"id": r.get("id"),
              **{heads[p]: (_export_pointer_value(_store(), _EXPORT_PROP_PATHS.get(p, "").format(
                  qid=r.get("id")) or None, r.get(p), units[p]) if is_pointer(r.get(p)) else r.get(p))
-                for p in props}} for r in rows]
-    return _csv_download(["id"] + [heads[p] for p in props], rows, name)
+                for p in props},
+             **{c: r.get(c, "") for c in unit_cols.values()}} for r in rows]
+    cols = ["id"]
+    for p in props:
+        cols.append(heads[p])
+        if p in unit_cols:
+            cols.append(unit_cols[p])
+    return _csv_download(cols, rows, name)
+
+
+def _pair_detuning_export_units(rows: list[dict], props: list, heads: dict,
+                                units: dict) -> tuple[list[dict], dict]:
+    """The Pairs CSV's ``detuning`` column under the shared unit fallback
+    (``units.stored_value_unit``): a column never mixes V and Hz.
+
+    * every numeric value plausible volts: ``detuning [V]``, as before;
+    * every numeric value judged Hz: ``detuning [Hz]`` (the stored numbers are
+      the Hz values);
+    * both kinds on one chip: the header names no unit, each cell keeps its
+      stored number and a ``detuning_unit`` column beside it names the unit
+      of that row.
+
+    Returns ``(rows, {prop: unit column header})`` -- the second is empty
+    unless the mixed case added a unit column. Rows are copied, not mutated.
+    """
+    from quam_state_manager.core import units as _units
+    unit_cols = {}
+    for p in props:
+        if _units.pair_field_key(p) != "pair_detuning":
+            continue
+        kinds = {_units.stored_value_unit("pair_detuning", r.get(p)) for r in rows
+                 if isinstance(r.get(p), (int, float)) and not isinstance(r.get(p), bool)}
+        if kinds == {"Hz"}:
+            units[p] = "Hz"
+            heads[p] = f"{p} [Hz]"
+        elif len(kinds) > 1:
+            units[p] = ""
+            heads[p] = p
+            col = unit_cols[p] = f"{p}_unit"
+            out = []
+            for r in rows:
+                r = dict(r)
+                v = r.get(p)
+                r[col] = (_units.stored_value_unit("pair_detuning", v)
+                          if isinstance(v, (int, float)) and not isinstance(v, bool) else "")
+                out.append(r)
+            rows = out
+    return rows, unit_cols
 
 
 #: v1.5.1 (r6, P2-15): where a Qubits / Resonators table property is stored
