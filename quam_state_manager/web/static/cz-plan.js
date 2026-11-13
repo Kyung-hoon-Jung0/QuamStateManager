@@ -897,7 +897,7 @@
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
         h.push('<div class="czp-card-q ui-cz-plan-card"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
-            '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
+            '<dt>Nearest resonance</dt><dd>' + (near ? '<span data-near-words="1" title="' + esc(near.name + ': \u0394 ' + fmtMHz(near.distance_hz, true) + ' from the condition (\u0394 = f_control \u2212 f_target)') + '">' + esc(near.words || (near.name + ' ' + fmtMHz(near.distance_hz, true))) + '</span>' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '\u2014') + '</dd>' +
              (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
              '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') +
                 twoFluxLengths(r.two_flux_lengths) + '</dd>') +

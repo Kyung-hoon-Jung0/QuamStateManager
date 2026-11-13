@@ -17774,7 +17774,8 @@ def pair_gate_inspector_plot(name: str):
         if ln is not None:
             gate_inspector.add_gate_point(
                 sweep, qa, qb, gate=gate, amplitude_v=ln.get("amplitude_v"),
-                frequency_hz=(ln.get("point") or {}).get("frequency_hz"))
+                frequency_hz=(ln.get("point") or {}).get("frequency_hz"),
+                lobes=ln.get("lobes"))
         if "gate_point" not in sweep:
             sweep.setdefault("notes", []).append(
                 f"{gate}: no operating point for the {role} qubit in the CZ gate plan "

@@ -119,6 +119,14 @@ def test_no_coupler_table_identity(tmp_path):
     table = re.sub(r' aria-label="[^"]*"', '', table)
     table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
     table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
+    # Recheck wording item: the Nearest resonance cell shows ONE phrase ("mover 17.3 MHz
+    # below |11>-|20>") with the name and the signed distance moved into its title; fold it
+    # back to the previous markup so every other byte stays pinned.
+    table, n_words = re.subn(
+        r'<span class="czp-nowrap" data-near-words="1" title="([^":]*): &Delta; ([^ "]+) MHz from[^"]*">[^<]*</span>'
+        r'((?: <small class="muted">[^<]*</small>)?)',
+        r'<span class="czp-nowrap">\1</span>\3 <small class="muted czp-nowrap">\2 MHz</small>', table)
+    assert n_words, "the phrase cell is rendered"
     # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
     # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
     assert hashlib.sha256(table.encode()).hexdigest() == "092cee50afde2f1d8f24ee7e5cf4945cdd4050ce8fd09592a5ff008fbd8f9ffe"

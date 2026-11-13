@@ -19,7 +19,9 @@ import json
 
 import pytest
 
-from quam_state_manager.core import gate_inspector
+from pathlib import Path
+
+from quam_state_manager.core import cz_flux_math, gate_inspector
 from quam_state_manager.core.gate_inspector import (
     build_plotly_figure,
     compute_detuning_sweep,
@@ -679,3 +681,105 @@ class TestGatePointSigns:
         assert "20" in gp["detuning_label"]
         assert gp["y"] == pytest.approx(17.2e6)
         assert gp["mover_offset_hz"] == pytest.approx(-17.2e6)
+
+
+class TestRecheckOperatingPointMarkers:
+    """Audit recheck (D9 leftovers): the idle marker sits ON a curve, every
+    played lobe of a bipolar pulse is marked, and the hover speaks the CZ
+    plan's one phrase for the distance from the resonance."""
+
+    @staticmethod
+    def _fig(lobes=None, amp=0.1):
+        import copy
+        sweep = gate_inspector.compute_detuning_sweep(copy.deepcopy(QC), copy.deepcopy(QT),
+                                                      sweep_role="control")
+        f = QC["f_01"] + cz_flux_math.quad_shift(amp, 1e9, -1.0)
+        gate_inspector.add_gate_point(sweep, QC, QT, gate="cz", amplitude_v=amp,
+                                      frequency_hz=f, lobes=lobes)
+        return sweep, gate_inspector.build_plotly_figure(sweep, moving_role="control")
+
+    def test_the_idle_marker_sits_on_the_curve_the_gate_drives(self):
+        import numpy as np
+        sweep, fig = self._fig()
+        idle = [t for t in fig["data"] if t.get("name") == "Idle bias"][0]
+        curve = [t for t in fig["data"] if t.get("name") == sweep["gate_point"]["detuning_label"]][0]
+        assert idle["y"][0] != 0
+        assert idle["y"][0] == pytest.approx(np.interp(idle["x"][0], curve["x"], curve["y"]), abs=1e-6)
+
+    def test_without_a_gate_the_idle_marker_is_on_the_curve_nearest_zero(self):
+        import copy
+        import numpy as np
+        sweep = gate_inspector.compute_detuning_sweep(copy.deepcopy(QC), copy.deepcopy(QT))
+        fig = gate_inspector.build_plotly_figure(sweep, moving_role="control")
+        idle = [t for t in fig["data"] if t.get("name") == "Idle bias"][0]
+        ys = [np.interp(idle["x"][0], t["x"], t["y"]) for t in fig["data"] if t.get("mode") == "lines"]
+        assert idle["y"][0] == pytest.approx(min(ys, key=abs), abs=1e-6)
+
+    def test_a_unipolar_pulse_has_exactly_one_cz_point(self):
+        _, fig = self._fig(lobes=[{"name": "first lobe", "amplitude_v": 0.1}])
+        assert len([t for t in fig["data"] if str(t.get("name")).startswith("Operating point")]) == 1
+
+    def test_a_bipolar_pulses_mirror_lobe_is_marked(self):
+        f_m = QC["f_01"] + cz_flux_math.quad_shift(-0.1, 1e9, -1.0)
+        _, fig = self._fig(lobes=[{"name": "first lobe", "amplitude_v": 0.1},
+                                  {"name": "mirror lobe", "amplitude_v": -0.1,
+                                   "point": {"frequency_hz": f_m}}])
+        pts = [t for t in fig["data"] if str(t.get("name")).startswith("Operating point")]
+        assert [t["name"] for t in pts] == ["Operating point (cz)", "Operating point (cz, mirror lobe)"]
+        assert pts[1]["x"][0] == pytest.approx(QC["idle_voltage"] - 0.1)
+
+    def test_the_hover_speaks_the_plans_phrase(self):
+        sweep, fig = self._fig()
+        gp = sweep["gate_point"]
+        pt = [t for t in fig["data"] if t.get("name") == "Operating point (cz)"][0]
+        assert gp["words"].startswith("mover ") and " MHz " in gp["words"]
+        assert gp["words"] in pt["hovertemplate"]
+        side = "above" if gp["mover_offset_hz"] > 0 else "below"
+        assert f"{abs(gp['mover_offset_hz']) / 1e6:.1f} MHz {side}" in gp["words"]
+
+
+class TestOneResonancePhrase:
+    def test_sign_is_a_word_and_the_mover_frame_is_applied(self):
+        w = cz_flux_math.resonance_offset_words
+        assert w("|11>-|20>", -17.3e6, "control") == "mover 17.3 MHz below |11>-|20>"
+        assert w("|11>-|20>", -17.3e6, "target") == "mover 17.3 MHz above |11>-|20>"
+        assert w("iSWAP", 2e6, None) == "\u0394 2.0 MHz above iSWAP"
+        assert w("iSWAP", 1e3, "control") == "mover on iSWAP"
+        assert w("iSWAP", None, "control") is None
+
+    def test_the_plan_table_and_card_render_it(self):
+        tpl = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "templates"
+               / "_cz_plan.html").read_text(encoding="utf-8")
+        assert "{{ r.nearest.words }}" in tpl
+        js = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web" / "static"
+              / "cz-plan.js").read_text(encoding="utf-8")
+        assert "esc(near.words ||" in js
+
+
+def test_the_plot_route_marks_the_plans_mirror_lobe(tmp_path):
+    """The route hands the CZ plan line's own lobes to the marker (one source):
+    a bipolar pulse gets a second point at idle - A."""
+    st = _chip_state()
+    st["qubit_pairs"]["q1-2"]["macros"]["cz_flattop"]["flux_pulse_qubit"]["__class__"] = "BipolarFluxPulse"
+    live = tmp_path / "c"
+    live.mkdir()
+    (live / "state.json").write_text(json.dumps(st), encoding="utf-8")
+    (live / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(live)})
+    fig = c.get("/pair/q1-2/gate-inspector/plot?op=cz_flattop").get_json()
+    pts = {t["name"]: t for t in fig["data"] if str(t.get("name")).startswith("Operating point")}
+    assert set(pts) == {"Operating point (cz_flattop)", "Operating point (cz_flattop, mirror lobe)"}
+    assert pts["Operating point (cz_flattop, mirror lobe)"]["x"][0] == pytest.approx(-0.02 - 0.12)
+
+
+def test_the_plan_rows_carry_the_phrase_in_the_movers_frame(chip):
+    from quam_state_manager.web import routes as _r
+    app, c = chip
+    with app.test_request_context():
+        rows, _c, _u = _r._cz_plan_ops(_ctx(app)["store"])
+    row = next(r for r in rows if r["pair"] == "q1-2" and r["operation"] == "cz_unipolar")
+    near = row["nearest"]
+    # the fixture's mover is the target: its frame flips the sign of Delta
+    assert near["words"] == cz_flux_math.resonance_offset_words(near["name"], near["distance_hz"], "target")

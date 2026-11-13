@@ -1237,6 +1237,11 @@ def operations(doc, conversions=None, unavailable=None):
                                            resonances(*frequencies, *alphas))
             known = [r for r in lobe_resonances if r["distance_hz"] is not None]
             nearest = min(known, key=lambda r: abs(r["distance_hz"])) if known else None
+            if nearest is not None:
+                # one phrase for table, card and the Pulses hover (cz_flux_math)
+                movers = [ln["role"] for ln in lines if ln.get("moves")]
+                nearest = {**nearest, "words": cz_flux_math.resonance_offset_words(
+                    nearest["name"], nearest["distance_hz"], movers[0] if len(movers) == 1 else None)}
             coupler = _coupler_line(doc, pp, path, notes)
             if (duration_ns is None and raw_duration is None and cls == "CZGate"
                     and kind in ("single mover", "single mover + spectator")
