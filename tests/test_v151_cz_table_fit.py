@@ -77,7 +77,8 @@ def test_short_cells_stay_whole_and_prose_reads_in_the_ui_font(cells):
     assert all({"czp-last", "czp-prose"} <= set(row[10][1].split()) for row in body)
     nowrap = {(col, tag) for col, tag, cls in cells.spans if "czp-nowrap" in cls.split()}
     assert (2, "small") in nowrap, "the mover kind (single mover, two-flux) stays on one line"
-    assert (6, "span") in nowrap and (6, "small") in nowrap, "a resonance and its distance stay whole"
+    # the resonance and its distance are ONE phrase ("mover 17.3 MHz below |11>-|20>") in one span
+    assert (6, "span") in nowrap, "a resonance and its distance stay whole"
 
 
 def test_the_stylesheet_never_breaks_a_word_and_holds_the_identity_columns():

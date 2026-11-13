@@ -120,7 +120,8 @@ class TestWording:
     def test_prev_state_counts_carry_their_word(self):
         tpl = _tpl("_dataset_prev_diff.html")
         assert "~{{ summary.modified }}" not in tpl
-        assert "{{ summary.modified }} changed</span>" in tpl
+        # the class-change count rides inside the same badge, after its word
+        assert re.search(r"\{\{ summary\.modified \}\} changed(\{% if summary\.class_changed %\}[^<]*\{% endif %\})?</span>", tpl)
         assert "{{ summary.added }} added</span>" in tpl
         assert "{{ summary.removed }} removed</span>" in tpl
 

@@ -227,8 +227,11 @@ class TestThePillFitsANarrowWindow:
         # the pill has a ceiling, truncates, and sheds its secondary parts first
         assert re.search(r"\.agent-pill-link \{[^}]*max-width: min\(20rem, 26vw\);[^}]*overflow: hidden;", blk, re.S)
         assert re.search(r"\.agent-pill-text \{[^}]*text-overflow: ellipsis;", blk)
-        assert re.search(r"@media \(max-width: 1400px\) \{ \.agent-pill-res \{ display: none; \} \}", blk)
-        assert re.search(r"@media \(max-width: 1150px\) \{ \.agent-pill-mode \{ display: none; \} \}", blk)
+        # the resolution and the mode go first; the top-bar fit rules further down
+        # hide them at wider widths than the pill block ever did, so they are the
+        # rules that act (an earlier 1400/1150 pair was fully shadowed and removed)
+        assert re.search(r"@media \(max-width: 1700px\) \{[^\n]*\.agent-pill-res \{ display: none; \} \}", css)
+        assert re.search(r"@media \(max-width: 1500px\) \{\s*\.agent-pill-mode \{ display: none !important; \}", css)
         assert re.search(r"@media \(max-width: 1000px\) \{ \.agent-pill-link \{ max-width: 11rem; \} \}", blk)
         # the left group shrinks and wraps INSIDE its row; wrapping the whole nav
         # put the tools on a third row and doubled the bar's height (measured)
