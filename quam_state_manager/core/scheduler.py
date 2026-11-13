@@ -1454,7 +1454,10 @@ def apply_outcome_inserts(instance_path, item_id: str, planned: list[dict],
         if it is None:
             return 0
         if note:
-            it["outcome_note"] = note
+            prev = it.get("outcome_note")
+            # a failed-target note recorded first stays; the rule's note joins it
+            it["outcome_note"] = (f"{prev}; {note}"
+                                  if prev and it.get("failed_targets") else note)
         base = it.get("order", 0)
         for k, info in enumerate(planned):
             child = _new_item(info, info.get("_targets"))
@@ -1467,6 +1470,115 @@ def apply_outcome_inserts(instance_path, item_id: str, planned: list[dict],
             _renumber(state)
         save_queue(instance_path, state)
     return made
+
+
+# ----------------------------------------------------------------------
+# Failed targets of a finished node (a run that wrote a failed target's values)
+# ----------------------------------------------------------------------
+
+def _patch_dotted(path) -> str:
+    """'/quam/qubits/q1/f_01' or '#/qubits/q1/f_01' -> 'qubits.q1.f_01'."""
+    parts = [p for p in str(path or "").replace("#", "").split("/") if p]
+    if parts and parts[0] == "quam":
+        parts = parts[1:]
+    return ".".join(parts)
+
+
+def failed_target_writes(outcomes, patches) -> dict | None:
+    """What a finished node wrote for the targets it marked failed.
+
+    *outcomes* is the run's per-target map (node.json ``data.outcomes``,
+    ``{target: "successful" | "failed" | ...}``); *patches* the run's state
+    patches (node.json ``patches``, ``[{op, path, value, old}]``). Returns None
+    when the run recorded no outcomes or every target is ``successful`` --
+    nothing changes for such a run. Otherwise ``{failed, n_targets, writes}``
+    where ``writes`` are the patches whose path names a failed target as one
+    of its segments (``qubits.<t>...`` / ``qubit_pairs.<t>...``), each with its
+    dotted path and the target it belongs to. A successful target's write is
+    never listed, so a revert of these writes cannot touch it.
+    """
+    if not isinstance(outcomes, dict) or not outcomes:
+        return None
+    failed = [str(t) for t, o in outcomes.items() if o != "successful"]
+    if not failed:
+        return None
+    fset = set(failed)
+    every = {str(t) for t in outcomes}
+    writes: list[dict] = []
+    untied: list[str] = []   # paths naming no target at all: never reverted, always named
+    for p in patches if isinstance(patches, list) else ():
+        if not isinstance(p, dict):
+            continue
+        dotted = _patch_dotted(p.get("path"))
+        segs = dotted.split(".")
+        hit = next((seg for seg in segs if seg in fset), None)
+        if hit is None:
+            if not any(seg in every for seg in segs):
+                untied.append(dotted)
+            continue
+        writes.append({"path": p.get("path"), "dotted": dotted, "target": hit,
+                       "op": p.get("op", "replace"), "value": p.get("value"),
+                       "old": p.get("old")})
+    return {"failed": failed, "n_targets": len(outcomes), "writes": writes,
+            "untied": untied}
+
+
+def _short(v) -> str:
+    r = repr(v)
+    return r if len(r) <= 40 else r[:37] + "..."
+
+
+def failed_targets_note(info: dict) -> str:
+    """One sentence naming every failed target and what was written for it."""
+    k, n = len(info["failed"]), info["n_targets"]
+    by_t: dict[str, list[str]] = {}
+    for w in info["writes"]:
+        by_t.setdefault(w["target"], []).append(
+            f"{w['dotted']} ({_short(w.get('old'))} -> {_short(w.get('value'))})")
+    parts = []
+    for t in info["failed"]:
+        ws = by_t.get(t)
+        parts.append(f"{t}: still wrote {', '.join(ws)} to the chip" if ws
+                     else f"{t}: wrote nothing")
+    note = f"{k} of {n} targets failed -- " + "; ".join(parts)
+    untied = info.get("untied") or []
+    if untied:
+        shown = ", ".join(untied[:5])
+        more = f" and {len(untied) - 5} more" if len(untied) > 5 else ""
+        note += (f"; {len(untied)} further write{'s' if len(untied) != 1 else ''} "
+                 f"could not be tied to a target (not reverted): {shown}{more}")
+    return note
+
+
+def set_item_failed_targets(instance_path, item_id: str, info: dict,
+                            folder: str | None) -> None:
+    """Record a finished item's failed targets, the values written for them
+    and the chip folder they were written to (the revert reads all three)."""
+    note = failed_targets_note(info)
+    with _QLOCK:
+        state = load_queue(instance_path)
+        it = _find(state, item_id)
+        if it is None:
+            return
+        it["failed_targets"] = list(info["failed"])
+        it["n_targets"] = int(info["n_targets"])
+        it["failed_writes"] = list(info["writes"])
+        it["failed_untied"] = list(info.get("untied") or [])
+        it["failed_folder"] = str(folder) if folder else None
+        it["failed_revert"] = None
+        it["outcome_note"] = note
+        save_queue(instance_path, state)
+
+
+def set_item_failed_revert(instance_path, item_id: str, result: dict) -> None:
+    """Remember what the revert of an item's failed-target writes did."""
+    with _QLOCK:
+        state = load_queue(instance_path)
+        it = _find(state, item_id)
+        if it is None:
+            return
+        it["failed_revert"] = dict(result)
+        save_queue(instance_path, state)
 
 
 def expand_per_qubit(instance_path, item_id: str, targets: list[str]) -> int:
@@ -1514,7 +1626,9 @@ _PRESETS_FILENAME = "scheduler_presets.json"
 # Runtime fields stripped when snapshotting the queue into a preset; everything
 # regenerated on load (fresh ids, queued status).
 _PRESET_STRIP = ("id", "status", "started_at", "ended_at", "returncode",
-                 "error", "log_file", "result_ref", "inserted_by", "outcome_note")
+                 "error", "log_file", "result_ref", "inserted_by", "outcome_note",
+                 "failed_targets", "n_targets", "failed_writes", "failed_untied", "failed_folder",
+                 "failed_revert")
 
 
 def presets_path(scope) -> Path:

@@ -183,7 +183,7 @@ def test_persist_strips_after_save(tmp_path, monkeypatch):
     calls: list = []
 
     class FakeMachine:
-        def save(self):
+        def save(self, path=None):
             calls.append("save")
 
     class FakeNode:

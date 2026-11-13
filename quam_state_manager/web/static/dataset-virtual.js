@@ -603,6 +603,21 @@
         for (var q in oc) { n++; if (oc[q] === 'successful') return false; }
         return n > 0;
     }
+    // A run whose node marked SOME targets failed: {k, n}, or null when none
+    // failed or no outcomes were recorded.
+    function failedTargets(row) {
+        var oc = row && row.oc, n = 0, k = 0;
+        if (!oc) return null;
+        for (var q in oc) { n++; if (oc[q] !== 'successful') k++; }
+        return k ? {k: k, n: n} : null;
+    }
+    // The key metric was read off the fit of a target the node marked failed
+    // (the server names that target as `mq` only for a run with a failure).
+    function metricFromFailedTarget(row) {
+        if (allTargetsFailed(row)) return true;
+        var oc = row && row.oc;
+        return !!(oc && row.mq != null && (row.mq in oc) && oc[row.mq] !== 'successful');
+    }
     function tagsCell(row) {
         var h = '';
         if (row.tags && row.tags.length) {
@@ -667,14 +682,24 @@
              return allTargetsFailed(r)
                  ? '<span class="ds-status ds-status-err ds-all-failed" title="' + escapeHtml(r.status || 'no status')
                    + '; the node marked every target of this run as failed">all failed</span>'
-                 : statusChip(r.status);
+                 : (failedTargets(r)
+                     ? (function (f) {
+                         return '<span class="ds-status ds-status-err" data-failed="' + f.k + '/' + f.n
+                           + '" title="' + escapeHtml(r.status || 'no status') + '; the node marked '
+                           + f.k + ' of ' + f.n + ' targets of this run as failed">'
+                           + f.k + ' of ' + f.n + ' failed</span>';
+                       })(failedTargets(r))
+                     : statusChip(r.status));
          }},
         {key: 'metric', label: 'Key Metric', on: true, w: 108, sortKey: 'metric', type: 'num', cls: 'col-metric',   // L9: 96 clipped -3.0143e-05
          render: function (r) { return (r.metric == null || r.metric === '')
              ? '<span class="muted" title="No key metric: this run saved no finite fit number (no fit results, or the fit did not converge). Open the run for its fit details.">-</span>'
              : (allTargetsFailed(r)
                  ? '<span class="muted ds-metric-failed" title="From a fit the node marked failed for every target; not a calibrated value">' + escapeHtml(r.metric) + ' ✗</span>'
-                 : escapeHtml(r.metric)); }},
+                 : (metricFromFailedTarget(r)
+                     ? '<span class="muted ds-metric-failed" title="From the fit of ' + escapeHtml(r.mq)
+                       + ', a target the node marked failed; not a calibrated value">' + escapeHtml(r.metric) + ' ✗</span>'
+                     : escapeHtml(r.metric))); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
          render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
         {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',

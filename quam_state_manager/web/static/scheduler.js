@@ -46,6 +46,18 @@
     });
   }
 
+  // How many targets a finished node marked failed (0 when none recorded).
+  function failedCount(it) {
+    return (it && it.failed_targets && it.failed_targets.length) || 0;
+  }
+  // The queue row's status word; a finished node with failed targets says how many.
+  function statusText(it) {
+    var s = it.status || "queued";
+    var k = failedCount(it);
+    if (s === "done" && k) return "done — " + k + " of " + (it.n_targets || k) + " targets failed";
+    return s;
+  }
+
   var STATUS_ICON = { pass: "✓", fail: "✗", warn: "⚠", skip: "·" };
 
   function SchedulerUI(root) {
@@ -356,6 +368,15 @@
         "Insert mode: the next “+ Add” will land after “" + (it.label || it.name) + "”.", "info");
       return;
     }
+    if (act === "revert-failed") {
+      return postJSON("/scheduler/item/" + encodeURIComponent(it.id) + "/revert-failed", {})
+        .then(function (r) {
+          if (r && r.state) self.renderQueue(r.state);
+          var msg = (r && (r.message || r.error)) || "Revert failed";
+          if (window.showToast) window.showToast(msg, r && r.ok ? "success" : "warning");
+          return r;
+        });
+    }
     if (act === "rules") return self.openRulesEditor(it);
     if (act === "label") {
       var v = window.prompt("Step label (empty to clear):", it.label || "");
@@ -550,7 +571,7 @@
         (nOver ? '<span class="sched-item-overbadge" title="' + esc(nOver) + ' parameter override(s)">●' + esc(nOver) + "</span>" : "") +
       "</span>" +
       targetCell +
-      '<span class="sched-item-status">' + esc(it.status || "queued") + "</span>" +
+      '<span class="sched-item-status">' + esc(statusText(it)) + "</span>" +
       '<span class="sched-item-actions">' + inlineActions + overflowMenu + "</span>";
 
     if (it.status === "done" && it.error) {
@@ -560,6 +581,39 @@
       warning.setAttribute("role", "status");
       warning.textContent = "done -- " + it.error;
       row.querySelector(".sched-item-name").appendChild(warning);
+    }
+    // A finished node that marked targets failed: its values for them are
+    // already on the chip. Say so in the row and offer to put exactly those
+    // values back (a successful target's writes are never in the list).
+    var nFailed = failedCount(it);
+    if (it.status === "done" && nFailed) {
+      row.classList.add("sched-item-capture-warning");
+      var fw = document.createElement("span");
+      fw.className = "sched-item-warning";
+      fw.setAttribute("role", "status");
+      fw.setAttribute("data-failed-targets", String(nFailed));
+      fw.textContent = it.outcome_note || (nFailed + " of " + (it.n_targets || nFailed) + " targets failed");
+      var nameCell = row.querySelector(".sched-item-name");
+      nameCell.appendChild(fw);
+      var nWrites = (it.failed_writes || []).length;
+      var rv = it.failed_revert;
+      if (rv && rv.message) {
+        var rmsg = document.createElement("span");
+        rmsg.className = "sched-item-warning";
+        rmsg.setAttribute("data-failed-revert", rv.ok ? "ok" : "refused");
+        rmsg.textContent = "Revert: " + rv.message;
+        nameCell.appendChild(rmsg);
+      }
+      if (nWrites && !(rv && rv.ok && !(rv.refused || []).length)) {
+        var rb = document.createElement("button");
+        rb.type = "button";
+        rb.className = "btn-sm outline";
+        rb.setAttribute("data-act", "revert-failed");
+        rb.textContent = "Revert the " + nWrites + " value" + (nWrites === 1 ? "" : "s")
+          + " written for the failed target" + (nFailed === 1 ? "" : "s");
+        rb.title = "Put back each listed value; a value changed since the run is refused and named";
+        nameCell.appendChild(rb);
+      }
     }
 
     var en = row.querySelector(".sched-item-enabled");

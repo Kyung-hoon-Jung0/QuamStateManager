@@ -313,7 +313,7 @@ def _compact_row(run: "RunInfo") -> dict:
     these keys; ``status``/``dur`` power the Status chip + Duration column, and the
     relative "When" column is derived client-side from ``date``+``time``.
     """
-    return {
+    row = {
         "id": run.run_id,
         "exp": run.experiment_name,
         "date": run.date,
@@ -338,6 +338,16 @@ def _compact_row(run: "RunInfo") -> dict:
         "sm": run.sort_scalars,   # sparse {fit_key: scalar | [first,max,min]} for the Sort banner
         "pm": run.filter_params,  # sparse {param_key: bool|str|int} for the Parameters facet filter
     }
+    # A run whose node marked some target failed: name the target the key
+    # metric came from, so the table can mark a metric read off a failed fit
+    # (shipped only then -- a clean run's row is unchanged).
+    oc = run.outcomes
+    if isinstance(oc, dict) and any(o != "successful" for o in oc.values()) \
+            and run.key_metric:
+        mq = _key_metric_target(run)
+        if mq is not None:
+            row["mq"] = mq
+    return row
 
 
 def trend_point(v: Any) -> "tuple[bool, Any]":
@@ -3285,14 +3295,8 @@ class DatasetStore:
         # Get first qubit's results. natural_key (customer rule 2026-09-09):
         # of {q2, q10} a string sort calls q10 "first", so the browser table
         # showed q10's number where the reader assumes the lowest qubit.
-        first_qubit_results = None
-        first_qubit = ""
-        for qname in sorted(run.fit_results.keys(), key=natural_key):
-            val = run.fit_results[qname]
-            if isinstance(val, dict):
-                first_qubit_results = val
-                first_qubit = qname
-                break
+        first_qubit = _key_metric_target(run)
+        first_qubit_results = run.fit_results.get(first_qubit) if first_qubit else None
 
         if not first_qubit_results:
             return "", False
@@ -3572,6 +3576,17 @@ def _saved_keys_for(key: str) -> frozenset[str]:
     if n in ("decay", "t2star", "t2*", "t2ramsey"):
         return frozenset({n, "t2ramsey", "t2star", "t2*"})
     return frozenset({n})
+
+
+def _key_metric_target(run) -> str | None:
+    """The target the key metric is read from: the first one, by natural
+    sort, whose fit results are a dict. ONE rule for ``_key_metric`` and the
+    compact row's ``mq`` (of {q2, q10} a string sort would call q10 first)."""
+    fr = getattr(run, "fit_results", None) or {}
+    for qname in sorted(fr.keys(), key=natural_key):
+        if isinstance(fr[qname], dict):
+            return qname
+    return None
 
 
 def _patch_saved_value(patches, qname: str, keys: frozenset[str]):
