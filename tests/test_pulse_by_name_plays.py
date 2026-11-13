@@ -185,3 +185,79 @@ class TestDelete:
     def test_the_delete_step_warns(self, client):
         html = client.get(f"/pulse/detail?path={OP}").data.decode()
         assert "leaves the gate playing a name that no longer exists" in " ".join(html.split())
+
+
+class TestTheJsonTreeDeleteDoor:
+    def test_a_channel_delete_that_takes_the_op_is_refused_naming_the_slot(self, client):
+        r = client.post("/field/delete", data={"dot_path": "qubits.q1.z"})
+        assert r.status_code == 409, r.data[:300]
+        j = r.get_json()
+        assert j["error_kind"] == "by_name" and j["by_name"] == [HOLDER]
+        assert BY_NAME_LABEL in j["error"]
+        assert _store(client).get_value(f"{OP}.length") == 40
+
+    def test_forced_it_deletes_and_says_so(self, client):
+        r = client.post("/field/delete", data={"dot_path": "qubits.q1.z", "force": "1"})
+        assert r.status_code == 200, r.data[:300]
+        assert "no longer exists" in r.get_json().get("warning", "")
+
+    def test_the_other_qubits_channel_is_not_refused_for_a_name(self, client):
+        r = client.post("/field/delete", data={"dot_path": "qubits.q2.z"})
+        assert r.status_code == 200, r.data[:300]
+
+    def test_a_delete_that_takes_the_slot_too_loses_nothing(self, client):
+        r = client.post("/field/delete", data={"dot_path": "qubit_pairs.q1-q2.macros.cz_flat"})
+        assert (r.get_json() or {}).get("error_kind") != "by_name"
+
+
+class TestTheDeleteTogetherDoor:
+    def _post(self, client, paths, **extra):
+        return client.post("/api/pulse/delete-together",
+                           json={"path": paths[0], "paths": paths, **extra})
+
+    def test_a_set_without_the_slot_is_refused_naming_it(self, client):
+        r = self._post(client, [OP, "qubits.q1.z.operations.cz_other"])
+        assert r.status_code == 409, r.data[:300]
+        j = r.get_json()
+        assert j["error_kind"] == "by_name" and j["by_name"] == [HOLDER]
+        assert _store(client).get_value(f"{OP}.length") == 40
+
+    def test_forced_it_goes_through(self, client):
+        r = self._post(client, [OP, "qubits.q1.z.operations.cz_other"], force="1")
+        assert r.status_code == 200, r.data[:300]
+        with pytest.raises(Exception):
+            _store(client).get_value(f"{OP}.length")
+
+    def test_a_set_holding_the_slot_is_not_refused_for_a_name(self, client):
+        r = self._post(client, [OP, "qubit_pairs.q1-q2.macros.cz_flat.flux_pulse_qubit"])
+        assert (r.get_json() or {}).get("error_kind") != "by_name", r.data[:300]
+
+
+class TestTheRowCountFollowsTheSlot:
+    """The Pulses table's used_by: by-name users are counted like pointer
+    users, and refreshed the way pointer users are (a write at a slot's id
+    is never a value-only step, so the rows rebuild cold)."""
+
+    def _row_users(self, client):
+        ctx = next(iter(client._app.config["contexts"].values()))
+        from quam_state_manager.core.pulse_index import PulseIndex
+        pi = ctx.get("pulse_index") or PulseIndex(ctx["store"])
+        ctx["pulse_index"] = pi
+        return pi, pi.row(OP)["used_by"]
+
+    def test_the_row_counts_the_slot_labelled(self, client):
+        _pi, users = self._row_users(client)
+        assert users == [f"{HOLDER} ({BY_NAME_LABEL})"]
+
+    def test_an_id_edit_refreshes_the_count(self, client):
+        pi, _users = self._row_users(client)
+        ctx = next(iter(client._app.config["contexts"].values()))
+        ctx["modifier"].set_value(HOLDER, "something_else")
+        assert pi.row(OP)["used_by"] == []
+        ctx["modifier"].set_value(HOLDER, "cz_flat_q2")
+        assert pi.row(OP)["used_by"] == [f"{HOLDER} ({BY_NAME_LABEL})"]
+
+    def test_a_phase_edit_stays_incremental(self, client):
+        from quam_state_manager.core.pulse_index import is_by_name_holder
+        assert not is_by_name_holder("qubit_pairs.q1-q2.macros.cz_flat.phase_shift_control")
+        assert is_by_name_holder(HOLDER)

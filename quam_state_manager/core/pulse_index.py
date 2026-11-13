@@ -203,6 +203,39 @@ def build_op_referrers(reverse_index: dict[str, list[str]],
     return {k: sorted(v, key=natural_key) for k, v in out.items()}
 
 
+def _add_by_name_referrers(merged: dict, op_referrers: dict[str, list[str]]) -> None:
+    """gl-0mj: a pair-gate slot that plays an op BY NAME (its inline pulse's
+    ``id``) is a user of that op like a pointer is -- the row's used_by
+    carries it, labelled. Refreshed the way pointer users are: a write at
+    such a slot is never a value-only step (:func:`is_by_name_holder`), so
+    the rows rebuild cold."""
+    from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL, named_slot_plays
+    extra: dict[str, set] = {}
+    for op, holder, _slot in named_slot_plays(merged):
+        extra.setdefault(op, set()).add(f"{holder} ({BY_NAME_LABEL})")
+    for op, hs in extra.items():
+        op_referrers[op] = list(op_referrers.get(op, [])) + sorted(hs, key=natural_key)
+
+
+def is_by_name_holder(path: str) -> bool:
+    """Could a write at *path* change which op a pair-gate slot plays by
+    name? A slot's own value (a plain name), a slot pulse's ``id``, or a
+    spectator entry / its ``id``. Other gate fields (phase shifts, extras)
+    are not."""
+    segs = path.split(".") if isinstance(path, str) else []
+    if len(segs) < 5 or segs[0] != "qubit_pairs" or segs[2] != "macros":
+        return False
+    if segs[4] == "spectator_qubits_control":
+        return len(segs) == 6 or (len(segs) == 7 and segs[6] == "id")
+    if len(segs) == 5:
+        return segs[4] not in ("id", "__class__") and segs[4] in _BY_NAME_SLOTS
+    return len(segs) == 6 and segs[5] == "id"
+
+
+#: slot names whose plain string value is an op name a gate plays
+_BY_NAME_SLOTS = GATE_SLOTS + ("flux_pulse_high", "flux_pulse_low")
+
+
 # ---------------------------------------------------------------------------
 # Enumeration
 # ---------------------------------------------------------------------------
@@ -641,6 +674,8 @@ def _list_pulses_with(merged: dict, reverse_index, *,
     op_referrers = (build_op_referrers(
         reverse_index, frozenset(p for p, _b, _k in found) or None)
         if reverse_index is not None else None)
+    if op_referrers is not None:
+        _add_by_name_referrers(merged, op_referrers)
     rows = []
     for i, (p, b, kw) in enumerate(pending):
         if tick is not None and not i % _TICK_ROWS:
@@ -874,7 +909,8 @@ class PulseIndex:
             return not self._drop_hint
         mut_since = getattr(self.store, "mutations_since", None)
         steps = mut_since(self._seq) if mut_since is not None else None
-        if steps and all(vo and isinstance(p, str) for _, p, vo in steps):
+        if steps and all(vo and isinstance(p, str) and not is_by_name_holder(p)
+                         for _, p, vo in steps):
             if self._apply_value_steps([p for _, p, _ in steps], seq):
                 self._drop_hint = False
                 return True

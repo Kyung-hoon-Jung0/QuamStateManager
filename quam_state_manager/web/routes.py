@@ -16250,6 +16250,12 @@ def field_delete():
     if _psc is not None:
         return _pulse_structure_refused(_psc)
 
+    # gl-0mj: a channel (or qubit) delete that takes an op a pair-gate slot
+    # plays BY NAME with it -- refused naming the slot, as the Pulses door
+    by_name = _by_name_cut(modifier.store, [dot_path])
+    if by_name and request.form.get("force") != "1":
+        return _by_name_refused_json(by_name)
+
     dangling, _ = _count_refs_into(modifier.store, dot_path)
     # a removed field of a pulse a lab GATE plays falls back to the class
     # default -- one half of a coupled pair can then disagree with the other
@@ -16277,6 +16283,9 @@ def field_delete():
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
+    if by_name:
+        _lab_notes.append(f"{len(by_name)} gate slot(s) now play a name that no"
+                          f" longer exists: {', '.join(by_name)}")
     return jsonify(ok=True, tray_html=_tray_html(), removed_leaves=removed,
                    dangling_refs=dangling,
                    **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
@@ -28323,6 +28332,41 @@ def _slot_named_players(store, path: str) -> list[str]:
         return []
 
 
+def _by_name_cut(store, paths) -> list[str]:
+    """Slot holders a delete of *paths* leaves playing a missing name (the
+    same finder, ``gate_pulse_ids.named_slot_plays``, as every door). A
+    holder of a LAB gate is left to the lab check (``lab_watch.named_by``),
+    which asks the gate's own code and offers what must go with it -- the
+    same split as the Pulses delete door's ``played`` list."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.gate_pulse_ids import named_slots_cut
+    try:
+        with store._lock:
+            cut = named_slots_cut(store.merged, list(paths))
+    except Exception:  # noqa: BLE001 -- a reader, never a 500
+        logger.exception("named slot scan failed for %s", list(paths)[:5])
+        return []
+    if not cut:
+        return []
+    try:
+        watch = lab_watch.watch_for(store)
+        lab_holders = set().union(*watch.named_by.values()) if watch.named_by else set()
+    except Exception:  # noqa: BLE001 -- no watch: every holder is ours
+        lab_holders = set()
+    return [h for h in cut if h not in lab_holders]
+
+
+def _by_name_refused_json(holders: list[str]):
+    """The 409 a JSON delete door answers when a gate slot plays a deleted op
+    by name: the Pulses delete door's own sentence, plus the holders; the
+    caller's ``force=1`` deletes anyway."""
+    from quam_state_manager.core.gate_pulse_ids import BY_NAME_LABEL
+    named = [f"{h} ({BY_NAME_LABEL})" for h in holders]
+    return jsonify(ok=False, error_kind="by_name", by_name=holders,
+                   error=("Refusing to delete: referenced by " + ", ".join(named)
+                          + ". Use the confirm step to delete anyway.")), 409
+
+
 def _lab_delete_asks(store, path: str) -> bool:
     """Would ``/api/pulse/delete`` of *path* be asked of the lab's own code?
     The delete branch of :func:`_lab_write_refusal`: a lab gate the delete
@@ -29615,6 +29659,10 @@ def api_pulse_delete_together():
         return jsonify(ok=False, error=(
             "Nothing in this set is a pulse — delete it where it lives "
             "(Live state edit (Json tree view)).")), 400
+    # gl-0mj: an op a gate slot OUTSIDE the set plays by name
+    by_name = _by_name_cut(modifier.store, paths)
+    if by_name and str(pj.get("force") or "") != "1":
+        return _by_name_refused_json(by_name)
     payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
                "group": pj.get("group") or "new",
                "expect_chip": pj.get("expect_chip") or "",

@@ -198,3 +198,17 @@ def named_slot_players(merged, op_path: str) -> list[str]:
     """The slot holders (``<slot>.id`` or a plain-name slot) that play the
     operation at *op_path* by name -- see :func:`named_slot_plays`."""
     return sorted({h for op, h, _s in named_slot_plays(merged) if op == op_path})
+
+
+def named_slots_cut(merged, paths) -> list[str]:
+    """The slot holders left playing a missing name when every path in
+    *paths* is deleted: the op a slot plays by name is at or under one of
+    them, and the slot itself is not (a slot deleted with its op loses
+    nothing)."""
+    paths = [p for p in paths if isinstance(p, str) and p]
+
+    def gone(x):
+        return any(x == p or x.startswith(p + ".") for p in paths)
+
+    return sorted({h for op, h, slot in named_slot_plays(merged)
+                   if gone(op) and not gone(slot)})
