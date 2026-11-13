@@ -54,11 +54,15 @@
         var qubits = ((root._czLast || {}).d || {}).qubits || [];
         var higher = qubits.filter(function (q) { return q.summary && q.summary.f01_hz != null; })
             .sort(function (a, b) { return b.summary.f01_hz - a.summary.f01_hz; })[0];
-        var summary = result.summary || result.reason || '';
-        match.innerHTML = esc(summary.replace(/\(= .*? of H per node 30\)/,
-            '(= \u2212anharmonicity of ' + (higher ? higher.name : 'the higher qubit') + (higher ? ', the higher qubit)' : ')'))) +
+        var summary = (result.summary || result.reason || '').replace(/\(= .*? of H per node 30\)/,
+            '(= \u2212anharmonicity of ' + (higher ? higher.name : 'the higher qubit') + (higher ? ', the higher qubit)' : ')'));
+        // B: an answer outside where its conversion was measured is flagged right beside
+        // the required amplitude, not only in the legend
+        var cut = result.validity_warning ? summary.indexOf(' | stored ') : -1;
+        match.innerHTML = (cut >= 0 ? esc(summary.slice(0, cut)) + ' <span class="ui-badge ui-badge--warn" data-validity-warn="1">\u26a0 ' +
+                esc(result.validity) + '</span>' + esc(summary.slice(cut)) : esc(summary)) +
             help('same rule as official node 30');
-        ['target_detuning_hz', 'amplitude_v', 'stored_amplitude_v', 'difference_v', 'tier', 'line'].forEach(function (key) {
+        ['target_detuning_hz', 'amplitude_v', 'stored_amplitude_v', 'difference_v', 'tier', 'line', 'conversion'].forEach(function (key) {
             match.setAttribute('data-' + key.replace(/_/g, '-'), result[key] == null ? '' : result[key]);
         });
     }
@@ -216,7 +220,7 @@
     function layout(over) {
         var base = window.PlotTheme ? window.PlotTheme.houseLayout({}) : {};
         var L = window.PlotTheme ? window.PlotTheme.houseLayout(over) : over;
-        ['xaxis', 'xaxis2', 'yaxis', 'yaxis2'].forEach(function (k) {
+        ['xaxis', 'xaxis2', 'yaxis', 'yaxis2', 'yaxis3'].forEach(function (k) {
             if (over[k]) L[k] = Object.assign({}, base[k] || base[k.charAt(0) + 'axis'] || base.yaxis || {}, over[k]);
         });
         // read at a glance: tick, title, legend and label text never below the house floors
@@ -574,10 +578,23 @@
             annotations.push({ xref: 'paper', x: 0, xanchor: 'left', yref: 'y', y: ghz(fi), yanchor: 'bottom', showarrow: false,
                 text: 'stored interaction frequency', font: { size: 11, color: C.plan } });
         }
+        // A: the parking offset each qubit's amplitude rides on, shown and labelled (not added)
+        var parks = (d.qubits || []).filter(function (q) { return q.summary && q.summary.parking; }).map(function (q) {
+            var p = q.summary.parking;
+            return q.name + ' ' + p.field + ' ' + (p.volts == null ? 'unknown' : (p.volts * 1e3).toFixed(2) + ' mV');
+        });
+        if (parks.length) {
+            el.setAttribute('data-parking', parks.join('; '));
+            annotations.push({ _czpParking: true, xref: 'paper', x: 0, xanchor: 'left', yref: 'paper', y: 1, yanchor: 'bottom',
+                showarrow: false, font: { size: 11, color: C.muted },
+                text: 'V = 0 is the parking point (' + esc(parks.join('; ')) + ', not added)' });
+        }
         var over = {
             margin: { l: 64, r: 142, t: 44, b: 120 }, showlegend: true,
             legend: { orientation: 'h', y: -0.24, x: 0, font: { size: 11 } },
-            xaxis: { title: { text: 'flux amplitude (V)' }, zeroline: true, domain: [0, right] },
+            // A: V is the pulse amplitude from the parking point (where f_01 and the quad term
+            // were fitted); each qubit's parking offset is named, never added
+            xaxis: { title: { text: 'flux pulse amplitude (V, from the parking point)' }, zeroline: true, domain: [0, right] },
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
         };
@@ -697,14 +714,54 @@
         el.setAttribute('data-dwell', panel.dwell);
         var frequencyTraces = traces.filter(function (t) { return t.yaxis !== 'y2'; });
         traces = traces.filter(function (t) { return t.yaxis === 'y2'; });
-        var L = layout({
-            margin: { l: 64, r: 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
+        // D5: |Delta| is the same for +A and -A, so each moving line's signed commanded Z
+        // amplitude rides a second axis (the samples the Delta trace was computed from)
+        var amps = panel.amplitude_v || [];
+        d.qubits.forEach(function (q, k) {
+            var a = amps[k];
+            if (!a || !a.some(function (v) { return v != null; })) return;
+            traces.push({ type: 'scatter', mode: 'lines', x: tt, y: a.map(function (v) { return v == null ? null : v * 1e3; }),
+                name: q.name + ' Z amp (commanded)', yaxis: 'y3', line: { color: C.q[k], width: 1.5, dash: 'dot', shape: 'hv' },
+                hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ' Z amp: %{y:+.1f} mV<extra>commanded</extra>' });
+        });
+        // C: optional, the same samples after the port's own filters (the Z-line page's model)
+        var toggle = root.querySelector('#czp-filtered-toggle');
+        if (toggle && !toggle._czpBound) {
+            toggle._czpBound = true;
+            toggle.addEventListener('change', function () {
+                var last = root._czLast;
+                if (last && last.d && !last.d.row.a4) drawTime(root, last.d, last.token);
+            });
+        }
+        var filteredNotes = [];
+        if (toggle && toggle.checked) {
+            d.qubits.forEach(function (q, k) {
+                var f = traj[k] && traj[k].filtered;
+                if (!f) return;
+                if (!f.v) { filteredNotes.push(q.name + ': ' + f.note); return; }
+                traces.push({ type: 'scatter', mode: 'lines', x: f.t_ns, y: f.v.map(function (v) { return v * 1e3; }),
+                    name: q.name + ' Z out (after filters, ' + f.model_label + ')', yaxis: 'y3', _czpFiltered: true,
+                    line: { color: C.q[k], width: 1.5, dash: 'dash' },
+                    hovertemplate: 't = %{x} ns<br>' + hoverEsc(q.name) + ' output: %{y:+.1f} mV<extra>after filters</extra>' });
+            });
+        }
+        el.setAttribute('data-filtered-traces', String(traces.filter(function (t) { return t._czpFiltered; }).length));
+        el.setAttribute('data-filtered-notes', filteredNotes.join('; '));
+        var ampCount = traces.filter(function (t) { return t.yaxis === 'y3'; }).length;
+        el.setAttribute('data-z-amp-traces', String(ampCount));
+        var over = {
+            margin: { l: 64, r: ampCount ? 64 : 16, t: 32, b: 90 }, showlegend: true,   // t: clear of the toolbar (U P2-4)
             legend: { orientation: 'h', y: -0.22, x: 0, font: { size: 11 } },
             xaxis: { title: { text: 'time (ns, 1 sample per ns)' }, anchor: 'y2' },
             yaxis: { visible: false, domain: [0, 1] },
             yaxis2: { title: { text: 'Δ (MHz)' }, domain: [0, 1], anchor: 'x' },
             shapes: shapes, annotations: annotations, hovermode: 'x unified'
-        });
+        };
+        var shownFiltered = traces.some(function (t) { return t._czpFiltered; });
+        if (ampCount) over.yaxis3 = { title: { text: shownFiltered ? 'Z amp (mV): dotted commanded, dashed after filters'
+                                                                   : 'Z amp, commanded (mV)' }, overlaying: 'y2', side: 'right',
+                                      anchor: 'x', zeroline: true, showgrid: false };
+        var L = layout(over);
         var f0 = (d.qubits || []).map(function (q) { return q && q.summary ? q.summary.f01_hz : null; });
         var view = deltaRange(delta, panel.levels,
             f0.length === 2 && f0[0] != null && f0[1] != null ? (f0[0] - f0[1]) / 1e6 : null);
@@ -777,6 +834,16 @@
         return ' <span class="czp-help-hover" tabindex="0" role="note" aria-label="' + esc(text) + '" title="' + esc(text) + '">(?)</span>';
     }
 
+    /* D7: a two-flux gate plays two pulses; each line's length, the macro's own duration
+       (the control pulse) and a warning when the two lengths differ. */
+    function twoFluxLengths(t) {
+        if (!t) return '';
+        var ns = function (v) { return v == null ? 'unknown' : v + ' ns'; };
+        return '<br><small class="muted czp-two-flux-lengths">control ' + ns(t.control) + ' / target ' + ns(t.target) +
+            ' \u00b7 macro duration ' + ns(t.macro_duration_ns) + '</small>' +
+            (t.mismatch ? ' <span class="ui-badge ui-badge--warn" data-two-flux-mismatch="1" title="' + esc(t.mismatch) +
+                '">\u26a0 lengths differ</span>' : '');
+    }
     function renderCard(root, d) {
         var el = root.querySelector('#czp-card');
         if (!el) return;
@@ -810,6 +877,9 @@
                         ' <small>' + esc(l.point.kind || l.point.reason || 'unknown') + '</small></dd>';
                 }).join('') +
                 '<dt>Direction</dt><dd>' + esc((s.frame || {}).reason || '—') + '</dd>' +
+                (s.provenance ? '<dt>Conversion</dt><dd data-conversion="1">' + esc(s.provenance) + '</dd>' : '') +
+                (s.parking ? '<dt>Parking</dt><dd data-parking="1">' + esc(s.parking.field) + ' ' +
+                    (s.parking.volts == null ? 'unknown' : (s.parking.volts * 1e3).toFixed(2) + ' mV') + help(s.parking.note) + '</dd>' : '') +
                 (r.plan && r.plan.roles[ln.role] && r.plan.roles[ln.role].plan_v != null ? '<dt>Planned amplitude</dt><dd>' + fmtV(r.plan.roles[ln.role].plan_v) +
                     (r.plan.roles[ln.role].difference_v != null ? ' <small class="muted">(operation ' + (r.plan.roles[ln.role].difference_v >= 0 ? '+' : '') + (r.plan.roles[ln.role].difference_v * 1e3).toFixed(1) + ' mV)</small>' : '') + '</dd>' : '') +
                 '<dt>Phase correction</dt><dd>' + (r.phases[ln.role] == null ? '—' : Number(r.phases[ln.role]).toFixed(4) + ' × 2π') + '</dd>' +
@@ -829,7 +899,8 @@
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
             '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
              (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
-             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') + '</dd>') +
+             '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') +
+                twoFluxLengths(r.two_flux_lengths) + '</dd>') +
             (r.coupler ? '<dt>Coupler pulse</dt><dd class="czp-card-coupler" title="' + esc(r.coupler.amp_title) + '">' + esc(r.coupler.amp_text) + (r.coupler.amp_reason ? ' <small class="muted">(' + esc(r.coupler.amp_reason) + ')</small>' : '') + '</dd>' : '') +
             (r.plan ? planMeasurements(r) + '<dt>Planned ω_int</dt><dd>' + fmtGHz(r.plan.omega_int_hz) + (r.plan.path_ok === false ? ' <span class="czp-warn-text">path not ok</span>' : '') +
                 (r.plan.reasons.length ? '<br><small class="muted">' + esc(r.plan.reasons.join(', ')) + '</small>' : '') + '</dd>' : '') +

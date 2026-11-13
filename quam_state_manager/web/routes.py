@@ -25101,6 +25101,10 @@ def cz_plan_data():
         elif ln["duration_unknown"]:
             notes.append(f"{ln['name']}: drawn waveform is the nominal one; played duration is unknown")
         traj.append({"amplitude_v": samples, "playback_known": playback_known, **conv.trajectory(samples)})
+        # C: the same samples through the port's own exponential/FIR filters, by the
+        # Z-line distortion page's model (one source); drawn only on the toggle
+        traj[-1]["filtered"] = _cz_filtered_output(store, ln["qubit_path"] + ".z", samples,
+                                                   "cascade" if request.args.get("filter_model") == "cascade" else "sum")
     # A14 S4: which figure each note explains -- the chip's unreadable entries go to
     # the status line, the operation's own notes (routing, pair refusal, unreadable
     # amplitude, coupler shift) concern both figures, everything the waveform loop
@@ -25130,6 +25134,37 @@ def cz_plan_data():
                    time_panel=czp.time_panel(row, traj, [q["summary"] for q in qubits]), notes=notes, info=info,
                    notes_figure=notes_figure, info_figure=info_figure, unavailable=unavailable,
                    calibration=card, pair_ops=others, amax_v=amax, gate_loss=gate_loss)
+
+
+def _cz_filtered_output(store, channel_path: str, samples, model: str = "sum") -> dict:
+    """One moving line's commanded samples through its LF port's output filters.
+
+    The Z-line distortion page's own path (``_zline_snapshot`` + ``_zline_analyze`` +
+    ``zline_filters.pulse_response``), so the two pages can never draw different
+    outputs for one pulse. Returns ``{"t_ns", "v", "model", "port_path", "notes"}`` on
+    the filters' 0.5 ns grid (DC offset excluded, as on that page), or ``{"note"}``
+    saying why there is nothing to draw."""
+    try:
+        from quam_state_manager.core import zline_filters as zf
+    except ImportError:
+        return {"note": "the output-filter model is not available in this install"}
+    snap = _zline_snapshot(store, channel_path)
+    if snap["port"] is None:
+        return {"note": "; ".join(n["text"] for n in snap["notes"]) or "no LF port"}
+    pf, notes, verdicts = _zline_analyze(snap["port_path"], snap["port"])
+    if pf is None:
+        return {"note": "; ".join(n["text"] for n in notes) or "the port's filters cannot be read"}
+    if not (pf.has_iir or pf.has_fir):
+        return {"note": "the port has no output filters: the output is the commanded waveform"}
+    if zf.model_blocked(verdicts.get(model, [])):
+        return {"note": f"the {zf.MODEL_LABEL[model]} is unstable for this port's filters"}
+    try:
+        r = zf.pulse_response(pf, samples, pad_before_ns=0.0, pad_after_ns=40.0, model=model)
+    except Exception as exc:  # noqa: BLE001 -- an advisory trace, never a 500
+        return {"note": f"SM could not compute the filtered output ({type(exc).__name__}: {exc})"}
+    return {"t_ns": r["t_ns"], "v": r["both"], "model": model, "model_label": zf.MODEL_LABEL[model],
+            "port_path": snap["port_path"], "peak_v": r["peak"],
+            "notes": [n["text"] for n in r["notes"]]}
 
 
 def _cz_warning_groups(row: dict, warnings: list[dict]) -> list[dict]:
