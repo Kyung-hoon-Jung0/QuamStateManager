@@ -251,8 +251,21 @@ class TestEveryBrokenPulseIsRefused:
         assert _peek(client, f"{Z}.broken.amplitude") == 0.3
         assert _peek(client, f"{Z}.snz.flat_length") == 20
         assert _peek(client, f"{Z}.flat.length") == 40
-        msg = res[f"{Z}.flat.length"]["error"]
+        # each refused row names its OWN pulse; the combined text is the
+        # top-level message
+        flat = res[f"{Z}.flat.length"]["error"]
+        snz = res[f"{Z}.snz.flat_length"]["error"]
+        assert f"{Z}.flat" in flat and f"{Z}.snz" not in flat and "pulses)" not in flat
+        assert f"{Z}.snz" in snz and f"{Z}.flat " not in snz and f"{Z}.flat (" not in snz
+        msg = body["message"]
         assert "2 pulses" in msg and f"{Z}.snz" in msg and f"{Z}.flat" in msg
+
+    def test_a_partial_batch_hands_back_the_tray_with_the_applied_row(self, client):
+        """The same response shape as a full success: the applied row is in
+        the tray it returns (a caller that swaps it shows "1 staged")."""
+        body = self._batch(client, True).get_json()
+        assert body["ok"] is False
+        assert 'data-change-count="1"' in body["tray_html"]
 
     def test_atomic_writes_nothing_and_names_both(self, client):
         r = self._batch(client, False)
