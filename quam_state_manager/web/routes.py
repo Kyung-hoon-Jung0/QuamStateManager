@@ -21199,6 +21199,112 @@ def _trend_witness_fields(ser: dict, left_out, now) -> None:
         ser["now"] = now
 
 
+def _trend_value_physical(metric: str, kind: str, value) -> bool:
+    """Is one Trends value physically possible? The Overview's own rule
+    (``chip_health``): a curated qubit metric by its key (fidelities in
+    ``(0, 1]``, coherence times > 0), a pair family whose leaf carries a
+    fidelity (``_is_fidelity_tail``, the resolved series included) by the
+    fidelity bound. Anything else only has to be a finite number, which a
+    plotted value already is."""
+    v = _vh_numeric(value)
+    if v is None:
+        return True
+    if kind == "pair" and (metric == _TREND_2Q_RESOLVED_FAM or _is_fidelity_tail(metric)):
+        return chip_health.physical_fidelity(v)
+    return chip_health.physicality(metric, v)
+
+
+def _trend_point_run_uid(info) -> str | None:
+    """The dataset uid of the run a ledger point came from: its proven
+    writer, else the run whose saved state carried it."""
+    if not isinstance(info, dict):
+        return None
+    return info.get("uid") or info.get("saved_uid") or info.get("first_uid") or None
+
+
+def _trend_exclude(ser: dict, metric: str, kind: str, invalid: frozenset) -> int:
+    """Take the values a Trends line must not draw out of it: a value outside
+    its physical range (:func:`_trend_value_physical`) or a value from a run
+    tagged ``INVALID_TAG`` (*invalid*: dataset uids). Each leaves a GAP in the
+    line (the chip did hold it, so the line never bridges it) and is listed
+    in ``ser["excluded"]`` as ``[key, value, why]``, which the client draws
+    as a hollow mark only on request and never into the axis range. A held
+    endpoint carrying an excluded value goes with it. Returns the count."""
+    attr = ser.get("attr") or {}
+    held = ser.get("held") or {}
+    out: list[list] = []
+    pts = []
+    prev_why = None
+    for k, v in ser.get("points") or []:
+        why = None
+        if v is not None:
+            if held.get(k):
+                why = prev_why
+            elif not _trend_value_physical(metric, kind, v):
+                why = "unphysical"
+            elif invalid and _trend_point_run_uid(attr.get(str(k))) in invalid:
+                why = "invalid"
+            if why and not held.get(k):
+                out.append([k, v, why])
+            if not held.get(k):
+                prev_why = why
+        pts.append((k, None) if why else (k, v))
+    lo_keep = []
+    for r in ser.get("left_out") or []:
+        why = None
+        if not _trend_value_physical(metric, kind, r[1]):
+            why = "unphysical"
+        elif invalid and ((len(r) > 7 and r[7]) or (len(r) > 8 and r[8])
+                          or _trend_point_run_uid(attr.get(str(r[0])))) in invalid:
+            why = "invalid"
+        if why:
+            out.append([r[0], r[1], why])
+        else:
+            lo_keep.append(r)
+    now_bad = (ser.get("now") is not None
+               and not _trend_value_physical(metric, kind, ser["now"]))
+    if not out and not now_bad:
+        return 0
+    ser["points"] = pts
+    if lo_keep:
+        ser["left_out"] = lo_keep
+    else:
+        ser.pop("left_out", None)
+    if now_bad:
+        out.append([pts[-1][0] if pts else None, ser.pop("now"), "unphysical"])
+    ser["excluded"] = out
+    return len(out)
+
+
+def _trend_excluded_note(whys: list[str]) -> str:
+    """One line per chart: how many values were left out, and why."""
+    if not whys:
+        return ""
+    parts = []
+    for why, words in (("unphysical", "outside the physical range"),
+                       ("invalid", "from a run marked invalid")):
+        n = whys.count(why)
+        if n:
+            parts.append(f"{n} {words}")
+    n = len(whys)
+    return (f"{n} value{'' if n == 1 else 's'} left out of the line and the axis "
+            f"({', '.join(parts)}).")
+
+
+def _invalid_run_uids() -> frozenset:
+    """Dataset uids of every run tagged ``INVALID_TAG`` in a loaded data
+    folder (the Datasets tag store): Trends leaves their values out."""
+    from quam_state_manager.core.dataset import INVALID_TAG
+    out = set()
+    try:
+        for fol in _active_dataset_stores(fast=True, rescan=False):
+            for rid in fol["store"].runs_with_tag(INVALID_TAG):
+                out.add(f"{fol['key']}:{rid}")
+    except Exception:  # noqa: BLE001 -- no store, no flag: nothing is excluded
+        logger.debug("invalid-run lookup failed", exc_info=True)
+    return frozenset(out)
+
+
 # The family grouping is done IN SQL (`leaf_index.path_families`), never by
 # folding a LIMITed row list. The old shape pulled 4,000 leaf rows and counted
 # the families inside them, so the badge row's "· N pairs" — the only claim a
@@ -21208,6 +21314,7 @@ def _trend_witness_fields(ser: dict, left_out, now) -> None:
 # display choice; a cap that silently changes a count is a wrong number.
 _TREND_IRB = "qubit_pairs.*.macros.*.fidelity.InterleavedRB"
 _TRENDS_MAX_FAMILIES = 8        # charted at once; see the trim note
+_TRENDS_MAX_METRICS = 8         # qubit metric chips pressed at once; see metric_note
 
 
 # The Overview's 2Q vocabulary, as WHOLE-SEGMENT tests over a family tail.
@@ -21938,9 +22045,14 @@ def topology_trends():
         # docs/298: a TYPED path also asks the chip's state whether it names a
         # leaf (outside the table's facts): such a fragment is recomputed on
         # every edit; any other is served again while its facts hold
+        # runs tagged invalid in the Datasets tag store: their values leave
+        # the lines, so a tag change is part of what the fragment depends on
+        invalid = _invalid_run_uids()
         return ledger_table.part(
-            ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
-            lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
+            ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs),
+             tuple(sorted(invalid))),
+            lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table,
+                                          invalid=invalid),
             narrow=not (request.args.get("path") or "").strip())
     except _ramcache.Warming:
         return _hub_surface_wait(_hub_waiting(ledger_table, "trends"), "trends")
@@ -22028,7 +22140,7 @@ def _hub_surface_wait(ans, surface):
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
-                          pairs: list[str], tbl) -> str:
+                          pairs: list[str], tbl, invalid: frozenset = frozenset()) -> str:
     """The body of :func:`topology_trends` (the section fragment), read from
     the chip's change ledger table (``hub_status.LedgerTable``)."""
     # S10 C5: the volatile-list and fallback-label params -> none, only the ledger table renders this.
@@ -22103,7 +22215,11 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                 c["path"] == _TREND_2Q_RESOLVED for c in pair_chips) else _TREND_IRB)
             for c in pair_chips:
                 c["active"] = c["path"] in extras
-    sel = [m for m in sel if m in curated][:8]
+    sel = [m for m in sel if m in curated]
+    # A pressed chip past the cap is NAMED, never dropped in silence: the
+    # chip stays unpressed and the row says why (the pair row's trim note).
+    metrics_trimmed = sel[_TRENDS_MAX_METRICS:]
+    sel = sel[:_TRENDS_MAX_METRICS]
 
     series = _trend_series_curated(hm, path, sel, tbl) if sel else []
     for _s in series:
@@ -22133,6 +22249,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         _seen_series.add(_k)
         _deduped.append(_s)
     series = _deduped
+    # The Overview's validity rule, per point: an unphysical value or one from
+    # a run marked invalid leaves the line (a gap) and the axis range
+    for _s in series:
+        _trend_exclude(_s, _s.get("metric") or "", _s.get("kind") or "", invalid)
 
     series_trimmed = 0
     if len(series) > _TRENDS_MAX_SERIES:
@@ -22152,7 +22272,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
 
     def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
         unit, scale = _trend_display_unit(metric)
+        _why = [e[2] for r in rows for e in r.get("excluded") or ()]
         return {"metric": metric, "kind": kind, "series": rows,
+                "n_excluded": len(_why),
+                "excluded_note": _trend_excluded_note(_why),
                 "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": unit,
                 "scale": scale,
                 "label": _trend_pair_label(metric) if kind == "pair" else "",
@@ -22236,6 +22359,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # Earlier constant values carry an explicit held endpoint and draw a line.
     for c in charts:
         rows = c.get("series") or []
+        if c.get("n_excluded"):
+            # the excluded points ARE the recorded values: the chart keeps
+            # them (drawn on request) and its note says what was left out
+            continue
         if rows and not any(
                 _vh_numeric(p[1]) is not None for r in rows for p in r.get("points") or []):
             # docs/283: values were recorded, none of them a finite number
@@ -22276,6 +22403,12 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                      f"families — {_first}{_rest} "
                      f"{'was' if families_trimmed == 1 else 'were'} left off. "
                      f"Deselect one to make room.")
+    metric_note = ""
+    if metrics_trimmed:
+        _names = [_TREND_LABEL_OVERRIDES.get(m) or _trend_metric_label(m) for m in metrics_trimmed]
+        metric_note = (f"At most {_TRENDS_MAX_METRICS} qubit metrics are charted at once "
+                       f"\u2014 {', '.join(_names)} {'was' if len(_names) == 1 else 'were'} "
+                       f"not added. Deselect one to make room.")
     if series_trimmed:
         trim_note = ((trim_note + " ") if trim_note else "") + (
             f"Showing the first {_TRENDS_MAX_SERIES} lines — "
@@ -22315,7 +22448,8 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
-                           trim_note=trim_note,
+                           trim_note=trim_note, metric_note=metric_note,
+                           n_excluded=sum(c.get("n_excluded") or 0 for c in charts),
                            snapshots=tbl.snapshot_count(),
                            hub_notes=tbl.notes,
                            hub_mode="ledger")

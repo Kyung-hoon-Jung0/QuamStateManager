@@ -56,6 +56,10 @@
            S10 C5: the snapshot arm's "snapshot" count and History (N) out-of-band write -> gone. #}
         {% endif %}
     </div>
+    {% if metric_note %}
+    {# F3: a qubit chip pressed past the cap is named here, at its row. #}
+    <div class="ui-callout ui-callout--warn" role="status" data-trends-metric-cap><p class="ui-callout-text">{{ metric_note }}</p></div>
+    {% endif %}
 
     {# The 2Q group. A separate row, because these are PAIR numbers and the row
        above is qubit numbers — the Overview panel makes the same split. Each
@@ -83,6 +87,17 @@
     </div>
     {% endif %}
 
+    {% if n_excluded %}
+    {# F1/F2: values outside the physical range (the Overview's rule) or
+       from a run tagged "invalid" are not drawn by default; this shows
+       them as hollow marks, still outside the axis range. #}
+    <label class="ui-check" data-trends-excluded-toggle>
+        <input type="checkbox" id="topo-trends-show-excluded"
+               onchange="ChipTrends.setShowExcluded(this.checked)">
+        Show excluded points ({{ '{:,}'.format(n_excluded) }})
+    </label>
+    {% endif %}
+
     {% if trim_note %}
     {# Never a silent trim: a cap that quietly drops families is
        indistinguishable from a badge that does not work. #}
@@ -102,6 +117,7 @@
             <div class="topo-trend-title">{{ c.label or (metric_labels or {}).get(c.metric, c.metric) }}
                 {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} {{ 'pair' if c.kind == 'pair' else 'qubit' }}{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
             </div>
+            {% if c.excluded_note %}<p class="ui-note" data-trend-excluded="{{ c.n_excluded }}">{{ c.excluded_note }}</p>{% endif %}
             {% if c.series %}
             <div class="topo-trend-chart" id="topo-trend-{{ loop.index0 }}"></div>
             {% elif c.note %}

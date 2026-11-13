@@ -152,6 +152,13 @@ _RUN_SETTLE_MAX = 32
 # and web/static/app.js.
 FAVORITE_TAG = "favorite"
 
+# Reserved tag that marks a run's results as not to be trusted (a readout
+# outage, a broken setup). Chip Status > Trends leaves the values such a run
+# carried out of its lines and axis ranges, and lists them apart. Plain text
+# in the same store as every other tag, so it is set, searched and removed
+# like one.
+INVALID_TAG = "invalid"
+
 # Per-file locks for h5py reads (h5py is NOT thread-safe).
 # A global lock serialises ALL reads; per-file locks allow concurrent
 # reads of different HDF5 files while still protecting each file.
@@ -3230,6 +3237,19 @@ class DatasetStore:
                     self.runs[run_id].note = previous or ""
                 self._note_meta_change()
                 raise
+
+    def runs_with_tag(self, tag: str) -> list[int]:
+        """Run ids that carry *tag* in the tag store (runs not yet scanned
+        included): the stored list, read under the tag lock."""
+        out = []
+        with self._tags_lock:
+            for rid, tags in (self._tags_data.get("tags") or {}).items():
+                if tag in (tags or ()):
+                    try:
+                        out.append(int(rid))
+                    except (TypeError, ValueError):
+                        continue
+        return sorted(out)
 
     def list_all_tags(self) -> list[str]:
         """Return sorted list of all unique tags across all runs."""

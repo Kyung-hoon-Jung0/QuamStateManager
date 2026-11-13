@@ -1,0 +1,127 @@
+"""Chip Status > Trends: the Overview's validity rule on every point.
+
+* F1/F2: a value outside its physical range (``chip_health.physicality``, a
+  pair fidelity family by the fidelity bound) leaves the line and the axis
+  and is listed in ``excluded``; a chart with all-valid points is unchanged.
+* F1: a run tagged ``invalid`` (the Datasets tag store) leaves its values out.
+* F3: a qubit chip pressed past the cap is named, never dropped silently.
+"""
+import re
+
+from quam_state_manager.core.dataset import INVALID_TAG
+from quam_state_manager.web import routes
+from tests.test_trends_all_entities import _hot_cold_chip, _charts
+
+IRB = "qubit_pairs.*.macros.cz.fidelity.IRB"
+
+
+def _chart(body, metric):
+    return next(c for c in _charts(body) if c["metric"] == metric)
+
+
+class TestPhysicalRule:
+    def test_the_rule_is_the_overviews(self):
+        assert not routes._trend_value_physical("T2echo", "qubit", -8.1e-2)
+        assert not routes._trend_value_physical("gate_fidelity_avg", "qubit", 0.0)
+        assert routes._trend_value_physical("T2echo", "qubit", 3e-5)
+        assert not routes._trend_value_physical("macros.*.fidelity.InterleavedRB", "pair", 2.167)
+        assert routes._trend_value_physical("macros.*.fidelity.InterleavedRB", "pair", 0.95)
+        assert not routes._trend_value_physical(routes._TREND_2Q_RESOLVED_FAM, "pair", 1.05)
+        # not a fidelity: any finite number is physical
+        assert routes._trend_value_physical("macros.cz.phase_shift_control", "pair", 3.2)
+        assert routes._trend_value_physical("f_01", "qubit", -1.0)
+
+    def test_an_excluded_point_leaves_a_gap_and_is_listed(self):
+        ser = {"points": [("a", 0.95), ("b", 2.1), ("c", 0.96), ("d", 0.96)],
+               "held": {"d": "c"}}
+        n = routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset())
+        assert n == 1
+        assert ser["points"] == [("a", 0.95), ("b", None), ("c", 0.96), ("d", 0.96)]
+        assert ser["excluded"] == [["b", 2.1, "unphysical"]]
+
+    def test_a_held_endpoint_of_an_excluded_value_goes_with_it(self):
+        ser = {"points": [("a", 0.95), ("b", 1.3), ("c", 1.3)], "held": {"c": "b"}}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset())
+        assert ser["points"][-1] == ("c", None)
+        assert len(ser["excluded"]) == 1
+
+    def test_an_all_valid_series_is_untouched(self):
+        ser = {"points": [("a", 0.95), ("b", 0.97)]}
+        before = dict(ser)
+        assert routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset()) == 0
+        assert ser == before and "excluded" not in ser
+
+    def test_an_invalid_runs_point_is_excluded(self):
+        ser = {"points": [("a", 0.95), ("b", 0.97)],
+               "attr": {"b": {"saved_uid": "k:7"}}}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset({"k:7"}))
+        assert ser["excluded"] == [["b", 0.97, "invalid"]]
+        assert ser["points"][1] == ("b", None)
+
+    def test_a_left_out_run_value_outside_the_range_is_excluded(self):
+        ser = {"points": [("a", 0.95)], "left_out": [["x", 2.0, 5, "not_kept", "w", .95, 0, None, None]]}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset())
+        assert "left_out" not in ser
+        assert ser["excluded"] == [["x", 2.0, "unphysical"]]
+
+
+class TestRoute:
+    def test_an_unphysical_fidelity_is_left_out_of_the_chart(self, tmp_path):
+        c = _hot_cold_chip(tmp_path, "bad", {"macros.cz.fidelity.IRB": 1.5}, {}, steps=2)
+        body = c.get("/topology/trends?metrics=&paths=" + IRB).get_data(as_text=True)
+        ch = _chart(body, "macros.cz.fidelity.IRB")
+        assert ch["n_excluded"] > 0
+        for s in ch["series"]:
+            assert all(v is None for _, v in s["points"]), s["points"]
+        assert "outside the physical range" in ch["excluded_note"]
+        assert 'id="topo-trends-show-excluded"' in body
+
+    def test_an_all_valid_chart_has_no_toggle_and_no_note(self, tmp_path):
+        c = _hot_cold_chip(tmp_path, "good", {"macros.cz.fidelity.IRB": .93}, {}, steps=2)
+        body = c.get("/topology/trends?metrics=&paths=" + IRB).get_data(as_text=True)
+        ch = _chart(body, "macros.cz.fidelity.IRB")
+        assert ch["n_excluded"] == 0 and ch["excluded_note"] == ""
+        assert "topo-trends-show-excluded" not in body
+        assert all("excluded" not in s for s in ch["series"])
+
+    def test_a_run_tagged_invalid_is_left_out(self, tmp_path, monkeypatch):
+        """The tag set is part of the fragment's cache key: tagging a run
+        re-renders, and that run's values leave the line."""
+        c = _hot_cold_chip(tmp_path, "inv", {"macros.cz.fidelity.IRB": .93}, {}, steps=2)
+        url = "/topology/trends?metrics=&paths=" + IRB
+        ch = _chart(c.get(url).get_data(as_text=True), "macros.cz.fidelity.IRB")
+        assert ch["n_excluded"] == 0
+        monkeypatch.setattr(routes, "_trend_point_run_uid", lambda info: "k:1")
+        monkeypatch.setattr(routes, "_invalid_run_uids", lambda: frozenset({"k:1"}))
+        ch2 = _chart(c.get(url).get_data(as_text=True), "macros.cz.fidelity.IRB")
+        assert ch2["n_excluded"] > 0
+        assert all(e[2] == "invalid" for s in ch2["series"] for e in s.get("excluded") or [])
+        assert "from a run marked invalid" in ch2["excluded_note"]
+
+
+class TestMetricCap:
+    def test_a_ninth_qubit_metric_is_named(self, tmp_path):
+        c = _hot_cold_chip(tmp_path, "cap", {"macros.cz.fidelity.IRB": .93}, {}, steps=1)
+        metrics = list(routes.DEFAULT_TRACKED_PROPERTIES)[:9]
+        body = c.get("/topology/trends?metrics=" + ",".join(metrics)).get_data(as_text=True)
+        assert "data-trends-metric-cap" in body
+        ninth = routes._trend_metric_label(metrics[8])
+        m = re.search(r'data-trends-metric-cap><p class="ui-callout-text">([^<]*)<', body)
+        assert m and ninth in m.group(1).replace("&#39;", "'"), m and m.group(1)
+        assert "Deselect one" in m.group(1)
+
+    def test_eight_metrics_say_nothing(self, tmp_path):
+        c = _hot_cold_chip(tmp_path, "cap8", {"macros.cz.fidelity.IRB": .93}, {}, steps=1)
+        metrics = list(routes.DEFAULT_TRACKED_PROPERTIES)[:8]
+        body = c.get("/topology/trends?metrics=" + ",".join(metrics)).get_data(as_text=True)
+        assert "data-trends-metric-cap" not in body
+
+
+class TestInvalidTagStore:
+    def test_runs_with_tag_reads_the_store(self, tmp_path):
+        from quam_state_manager.core.dataset import DatasetStore
+        ds = DatasetStore.__new__(DatasetStore)
+        import threading
+        ds._tags_lock = threading.Lock()
+        ds._tags_data = {"tags": {"3": [INVALID_TAG], "4": ["x"], "9": ["x", INVALID_TAG]}}
+        assert ds.runs_with_tag(INVALID_TAG) == [3, 9]

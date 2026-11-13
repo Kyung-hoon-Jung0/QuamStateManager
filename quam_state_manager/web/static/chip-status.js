@@ -7626,6 +7626,22 @@ window.ChipTrends = (function () {
             go();
         }
     }
+    /* F1/F2: values outside the physical range (or from a run tagged
+       "invalid") are left out of every line and axis; this per-viewer switch
+       draws them as hollow marks, still outside the axis range. Off unless
+       the viewer turned it on (remembered in this browser only). */
+    var EXCL_KEY = 'quam_trends_show_excluded';
+    function _showExcluded() {
+        try { return window.localStorage.getItem(EXCL_KEY) === '1'; }
+        catch (e) { return false; }
+    }
+    function setShowExcluded(on) {
+        try { window.localStorage.setItem(EXCL_KEY, on ? '1' : '0'); } catch (e) { /* private window */ }
+        var el = document.getElementById('topo-trends-data');
+        var charts = null;
+        try { charts = el ? JSON.parse(el.textContent || '[]') : null; } catch (e) { charts = null; }
+        if (charts) render(charts);
+    }
     function setCols(n) {
         n = _applyCols(n);
         try { window.localStorage.setItem(COLS_KEY, String(n)); } catch (e) { /* private window */ }
@@ -7964,9 +7980,10 @@ window.ChipTrends = (function () {
     /* "#34 · Res spec" for a run; the why-sentence otherwise. Never both, and
        never a fabricated run number: a chip with no run provenance at all (a
        freshly-generated one) shows only why, which is the true answer. */
-    function _provLine(info) {
+    function _provLine(info, omitSub) {
         if (!info) return '';
-        return _esc(info.label) + (info.sub ? '<br>' + _esc(info.sub) : '')
+        var sub = (info.sub && info.sub !== omitSub) ? info.sub : '';
+        return _esc(info.label) + (sub ? '<br>' + _esc(sub) : '')
              + (info.flag_text && info.flag_text.length ? '<br>' + _esc(info.flag_text.join('; ')) : '');
     }
     /* S10 C5: the captured-only hover line (the snapshot writer check's "captured with
@@ -8074,6 +8091,10 @@ window.ChipTrends = (function () {
             if (t.meta === 'now') t.x = [win.range[1]];
         });
     }
+    var EXCL_WORDS = { unphysical: 'outside the physical range',
+                       invalid: 'from a run marked invalid' };
+    // F7: past this many lines a chart starts its unchanged ones hidden
+    var FLAT_HIDE_MIN = 8;
     var NOW_NOTE = 'current value differs from the newest recorded run value';
     var NOW_TITLE = 'The value now is not the newest recorded one: an edit not applied to the '
         + 'chip yet, or a change made outside SM since the last run.';
@@ -8236,9 +8257,17 @@ window.ChipTrends = (function () {
         });
         var r = host.getBoundingClientRect ? host.getBoundingClientRect() : { left: 0, top: 0 };
         var off = (xa._offset || 0), offy = (ya._offset || 0);
-        tip.style.left = Math.round(r.left + off + px + 14) + 'px';
-        tip.style.top = Math.round(r.top + offy + py + 14) + 'px';
+        // F5: placed right of / below the pointer, and FLIPPED to its left /
+        // above when that would run past the window -- a fixed box near the
+        // right edge used to shrink to a 70 px column that wrapped every value
+        var ax0 = r.left + off + px, ay0 = r.top + offy + py;
+        tip.style.left = Math.round(ax0 + 14) + 'px';
+        tip.style.top = Math.round(ay0 + 14) + 'px';
         tip.hidden = false;
+        var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+        var tw = tip.offsetWidth || 0, th = tip.offsetHeight || 0;
+        if (vw && tw && ax0 + 14 + tw > vw - 8) tip.style.left = Math.max(8, Math.round(ax0 - 14 - tw)) + 'px';
+        if (vh && th && ay0 + 14 + th > vh - 8) tip.style.top = Math.max(8, Math.round(ay0 - 14 - th)) + 'px';
         host.classList.add('trends-cotip-on'); _cotipPlotlyLabel(host, 'none');
     }
     window._trendsCoincident = _coincident;
@@ -8360,6 +8389,9 @@ window.ChipTrends = (function () {
             });
         }
         var _tzNow = _tzKey();
+        var _showEx = _showExcluded();
+        var _exBox = document.getElementById('topo-trends-show-excluded');
+        if (_exBox) _exBox.checked = _showEx;
         // v1.3.0 A3: the view's ONE time window, decided before any chart draws
         var _marks = _renameMarks();
         var win = _viewWindow(charts, _marks);
@@ -8494,6 +8526,49 @@ window.ChipTrends = (function () {
             var _yr = _flat || ((isFinite(_lo) && isFinite(_hi) && _hi > _lo)
                 ? [_lo - (_hi - _lo) * 0.08, _hi + (_hi - _lo) * 0.08] : null);
             var _clipped = false;
+            // F4: a provenance sub-line every point of this chart shares
+            // ("writer not proven") is said once, in the chart's key, not on
+            // every hover
+            var _subs = {}, _nSub = 0;
+            c.series.forEach(function (s4) {
+                s4.points.forEach(function (p) {
+                    var ov4 = s4.attr && s4.attr[String(p[0])];
+                    if (!ov4) return;
+                    _nSub++;
+                    _subs[ov4.sub || ''] = (_subs[ov4.sub || ''] || 0) + 1;
+                });
+            });
+            var _subKeys = Object.keys(_subs);
+            var commonSub = (_nSub > 1 && _subKeys.length === 1 && _subKeys[0]) ? _subKeys[0] : null;
+            // F7: a chart of many lines whose values never moved -- the
+            // unchanged ones start hidden (one click on a legend name shows
+            // one), so the lines that DID move can be read
+            var _flatOf = function (s5) {
+                var v0 = null, n5 = 0;
+                for (var i5 = 0; i5 < s5.points.length; i5++) {
+                    var y5 = s5.points[i5][1];
+                    if (typeof y5 !== 'number' || !isFinite(y5)) continue;
+                    if (n5 && y5 !== v0) return false;
+                    v0 = y5; n5++;
+                }
+                return n5 > 0 && !(s5.left_out && s5.left_out.length);
+            };
+            var _hideFlat = c.series.length > FLAT_HIDE_MIN ? c.series.map(_flatOf) : null;
+            if (_hideFlat && _hideFlat.every(Boolean)) _hideFlat = null;   // nothing moved: show all
+            var _nHidden = _hideFlat ? _hideFlat.filter(Boolean).length : 0;
+            // F6: one pair's lines all named "<pair> \u00b7 <macro>" -- the
+            // pair is said once, as the legend's title
+            var _pfx = null;
+            if (c.series.length > 1) {
+                c.series.forEach(function (s6) {
+                    var at = String(s6.entity).indexOf(' \u00b7 ');
+                    var pf = at > 0 ? String(s6.entity).slice(0, at) : '';
+                    _pfx = (_pfx === null) ? pf : (_pfx === pf ? _pfx : '');
+                });
+            }
+            var _shortName = function (e) {
+                return _pfx ? String(e).slice(_pfx.length + 3) : e;
+            };
             var traces = c.series.map(function (s, si) {
                 var held = (s.held && Object.keys(s.held).length) ? s.held : null;
                 var tr = {
@@ -8506,7 +8581,7 @@ window.ChipTrends = (function () {
                     // the snapshot the value came from even on a date axis.
                     customdata: s.points.map(function (p) { return p[0]; }),
                     mode: (longest > 120 && !held) ? 'lines' : 'lines+markers',
-                    type: dense ? 'scattergl' : 'scatter', name: s.entity,
+                    type: dense ? 'scattergl' : 'scatter', name: _shortName(s.entity),
                     // docs/301 (F8): a stored value HOLDS until the next change --
                     // a step, as the value drawer draws the same series; a slope
                     // between two change points showed a drift that never happened
@@ -8544,7 +8619,7 @@ window.ChipTrends = (function () {
                     // S10 C5: the snapshot writer check's captured / pending arms -> gone.
                     var ov = s.attr && s.attr[String(p[0])];
                     if (ov) {
-                        var pointData = [p[0], _provLine(ov),
+                        var pointData = [p[0], _provLine(ov, commonSub),
                                 _hintLine(ov), ov.uid || null,
                                 (!ov.uid && (ov.saved_uid || ov.first_uid)) || null];
                         if (!ov.uid && ov.inferred_uid) pointData.push(ov.inferred_uid);
@@ -8560,6 +8635,7 @@ window.ChipTrends = (function () {
                 // the line, its left-out values and its "now" mark are one
                 // entity: one legend entry toggles them together, one colour
                 tr.legendgroup = 'ent:' + s.entity;
+                if (_hideFlat && _hideFlat[si]) tr.visible = 'legendonly';
                 var col = colorway ? colorway[si % colorway.length] : undefined;
                 if (col) {
                     tr.line.color = col;
@@ -8601,11 +8677,43 @@ window.ChipTrends = (function () {
                         }),
                         mode: 'markers', type: 'scatter', name: s.entity,
                         legendgroup: 'ent:' + s.entity, showlegend: false,
-                        meta: 'left_out', cliponaxis: false,
+                        meta: 'left_out', cliponaxis: false, opacity: 0.6,
                         marker: { symbol: edge.map(function (e) {
                                       return e.dir > 0 ? 'triangle-up-open'
                                           : (e.dir < 0 ? 'triangle-down-open' : 'circle-open'); }),
                                   size: 9, color: col,
+                                  line: { width: 1.5, color: col } },
+                        hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
+                            + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
+                    });
+                }
+                // F1/F2: the values left out of the line (unphysical, or
+                // from a run marked invalid) -- drawn only on request, as a
+                // hollow x, never into the axis range (an outlier beyond the
+                // line's range sits on its edge, its hover the real value)
+                var ex = (s.excluded || []).filter(function (r) {
+                    return r[0] != null && typeof r[1] === 'number' && isFinite(r[1]);
+                });
+                if (_showEx && ex.length && axisType === 'date') {
+                    var exEdge = ex.map(function (r) { return _edgeY(_scaled(r[1], cScale), _yr); });
+                    extraTraces.push({
+                        x: ex.map(function (r) { return _iso(r[0]); }),
+                        y: exEdge.map(function (e) { return e.y; }),
+                        text: ex.map(function (r, i) {
+                            return _hoverValue(_scaled(r[1], cScale), c.unit, cDigits)
+                                + (exEdge[i].dir ? ' (off the scale ' + (exEdge[i].dir > 0 ? 'above' : 'below') + ')' : '');
+                        }),
+                        customdata: ex.map(function (r) {
+                            var ov = s.attr && s.attr[String(r[0])];
+                            return [r[0], 'excluded: ' + (EXCL_WORDS[r[2]] || r[2])
+                                        + (ov ? '<br>' + _provLine(ov, commonSub) : ''),
+                                    ov ? _hintLine(ov) : '', (ov && ov.uid) || null,
+                                    (ov && !ov.uid && (ov.saved_uid || ov.first_uid)) || null];
+                        }),
+                        mode: 'markers', type: 'scatter', name: _shortName(s.entity),
+                        legendgroup: 'ent:' + s.entity, showlegend: false,
+                        meta: 'excluded', cliponaxis: false,
+                        marker: { symbol: 'x-thin-open', size: 9, color: col,
                                   line: { width: 1.5, color: col } },
                         hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
                             + '<br>%{customdata[1]}<br>%{customdata[2]}<extra></extra>'
@@ -8674,6 +8782,7 @@ window.ChipTrends = (function () {
                 }
                 return tr;
             });
+            var _exShown = extraTraces.some(function (t) { return t.meta === 'excluded'; });
             var nowSeries = extraTraces.filter(function (t) { return t.meta === 'now'; })
                 .map(function (t) { return t.name; });
             traces = traces.concat(extraTraces);
@@ -8704,8 +8813,8 @@ window.ChipTrends = (function () {
                          tickformat: _numFmt.tickformat,
                          exponentformat: _numFmt.exponentformat,
                          automargin: true,
-                         range: (_clipped ? _yr : _flat) || undefined,
-                         autorange: (_clipped || _flat) ? false : true },
+                         range: ((_clipped || (_exShown && _yr)) ? _yr : _flat) || undefined,
+                         autorange: (_clipped || _flat || (_exShown && _yr)) ? false : true },
                 // a marker under the pointer is the one picked: never the
                 // nearest point in x across every series (overlapping marks)
                 hovermode: 'closest', hoverdistance: 12,
@@ -8726,7 +8835,15 @@ window.ChipTrends = (function () {
                     + (_clipped ? ' (△▽: off the scale, on its edge)' : ''));
             }
             if (extraTraces.some(function (t) { return t.meta === 'late'; })) {
-                keyLines.push('◇ newest value, changed after the runs shown (right edge)');
+                keyLines.push('\u25c7 newest value, changed after the runs shown (right edge)');
+            }
+            if (_exShown) {
+                keyLines.push('\u00d7 excluded: outside the physical range or from a run marked invalid (not in the axis range)');
+            }
+            if (commonSub) keyLines.push('every point: ' + _esc(commonSub));
+            if (_nHidden) {
+                keyLines.push(_nHidden + ' unchanged line' + (_nHidden === 1 ? '' : 's')
+                    + ' hidden \u2014 click a name in the legend to show it');
             }
             if (keyLines.length) {
                 layout.annotations = (layout.annotations || []).concat([{
@@ -8762,6 +8879,7 @@ window.ChipTrends = (function () {
                 });
                 layout.annotations = _markNotes(marks).concat(layout.annotations || []);
             }
+            if (_pfx) layout.legend.title = { text: _esc(_pfx) + ':', side: 'left' };
             _applyWindow(layout, c.series, cWin);
             _nowAtEdge(traces, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
@@ -8800,6 +8918,7 @@ window.ChipTrends = (function () {
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
+             setShowExcluded: setShowExcluded,
              storedQuery: storedQuery, hold: hold, busy: busy };
 })();
 
