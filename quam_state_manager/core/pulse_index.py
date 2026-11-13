@@ -291,6 +291,15 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
                                           owner=owner, channel=channel, op_name=op_name, gate=gate,
                                           reverse_index=reverse_index, op_referrers=op_referrers)
                     row["length"] = trow.get("length")
+            if row["amplitude"] is None:
+                # an alias of a sample-array pulse shows its target's waveform peak
+                tbody = merged
+                for seg in target["resolved_path"].split("."):
+                    tbody = tbody.get(seg) if isinstance(tbody, dict) else None
+                from quam_state_manager.core.pulse_catalog import waveform_shape
+                shape = waveform_shape(tbody) if isinstance(tbody, dict) else None
+                if shape is not None:
+                    row["amplitude_peak"] = shape["peak"]
         else:
             row["alias_target"] = body  # dangling — show the raw pointer
         row["summary"] = f"alias → {row['alias_target']}"
@@ -356,6 +365,14 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
                              "drawn this pulse at its current values yet")
     amp = resolved.get("amplitude")
     row["amplitude"] = amp if isinstance(amp, (int, float)) and not isinstance(amp, bool) else None
+    if row["amplitude"] is None:
+        # a sample-array pulse (WaveformPulse) has no amplitude field: its
+        # amplitude is the waveform's peak, the same number the CZ gate plan
+        # shows (pulse_catalog.waveform_shape, one source), labelled "peak"
+        from quam_state_manager.core.pulse_catalog import waveform_shape
+        shape = waveform_shape(resolved)
+        if shape is not None:
+            row["amplitude_peak"] = shape["peak"]
 
     if spec is not None:
         axis_angle = resolved.get("axis_angle")

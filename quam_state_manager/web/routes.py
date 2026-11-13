@@ -24233,7 +24233,7 @@ _PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
                    "op_name", "alias_target", "iq", "readout", "found", "location",
                    "class_match", "unmodeled", "qclass", "class_short",
                    "length_implausible", "length_stored", "length", "amplitude",
-                   "used_by", "length_why", "length_from_lab", "length_from_config",
+                   "amplitude_peak", "used_by", "length_why", "length_from_lab", "length_from_config",
                    "length_from_transcription")
 
 

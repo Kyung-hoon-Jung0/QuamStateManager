@@ -160,6 +160,33 @@ def _measured(fit, role, pidx):
     return arr.reshape(-1), "I quadrature [V]"
 
 
+def _fitted_phase_shift(fit, role, pidx, frame, fitted):
+    """The frame at which the node's fitted ``<role>`` curve peaks, from its
+    ``fitted_<role>_phase``, or None.
+
+    [derived] The saved fit is a cosine in the frame whose maximum sits at
+    ``(1 - fitted_phase) mod 1``; that is the phase shift the node proposes
+    (a real run: 1 - 0.59534 = 0.40466 = its ``phase_shift_control`` patch).
+    Checked per run, not assumed: the mark is drawn only when the fitted
+    curve's own sampled maximum lies within one frame step of it, so a
+    generation with another phase convention gets no mark rather than a
+    wrong one."""
+    if f"fitted_{role}_phase" not in (fit.get("vars") or {}):
+        return None
+    ph = pair_scalar(fit, f"fitted_{role}_phase", pidx)
+    fitted = np.asarray(fitted, dtype=float).reshape(-1)
+    if ph is None or not np.isfinite(ph) or frame.size < 2 or fitted.size != frame.size \
+            or not np.all(np.isfinite(fitted)):
+        return None
+    shift = float((1.0 - ph) % 1.0)
+    step = float(np.min(np.abs(np.diff(frame))))
+    peak = float(frame[int(np.argmax(fitted))])
+    d = abs(peak - shift)
+    if min(d, 1.0 - d) > step + 1e-12:
+        return None
+    return shift
+
+
 def build(bundle, key):
     base, pname = split_key(key)
     if base == "raw_and_fit":
@@ -194,8 +221,21 @@ def _raw_and_fit(bundle, key, pname):
             pb.line(frame, arr("fitted_control"), name="control fit", color=_CONTROL),
             pb.scatter(frame, mt, name="target", color=_TARGET, size=7),
             pb.line(frame, arr("fitted_target"), name="target fit", color=_TARGET)]
+    shapes, annotations = [], []
+    for role, color in (("control", _CONTROL), ("target", _TARGET)):
+        shift = _fitted_phase_shift(fit, role, pidx, frame, arr(f"fitted_{role}"))
+        if shift is None:
+            continue
+        shapes.append(pb.vline(shift, color=color, dash="dash"))
+        annotations.append({"x": shift, "xref": "x", "y": 1.0 if role == "control" else 0.93,
+                            "yref": "paper", "yanchor": "bottom", "showarrow": False,
+                            "text": f"{role} fit phase shift {shift:.3f}",
+                            "font": {"size": 11, "color": color}})
     layout = {"xaxis": {"title": {"text": "x90 frame rotation [rad/2π]"}},
               "yaxis": {"title": {"text": ylabel}},
+              # four colour-coded traces: the legend names which is control / target
+              "showlegend": True,
+              "shapes": shapes, "annotations": annotations,
               "hovermode": "closest", "margin": _M}
     return FigureSpec(key=key, title="CZ phase compensation (raw + fit)", kind="1d",
                       figure={"data": data, "layout": layout})

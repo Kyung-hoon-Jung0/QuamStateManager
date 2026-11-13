@@ -567,6 +567,11 @@ def chip_map(rows, conversions, op_name=None):
     first CZ operation. A refused frequency is listed, never drawn."""
     qubits = {}
     for path, conv in conversions.items():
+        # a column is a qubit of the chip: a pair member whose pointer dangles is held
+        # at the pair's own field (``qubit_pairs.<p>.qubit_target``) and is no column
+        # (it drew a stray "qubit_target" header past the last real one)
+        if not path.startswith("qubits."):
+            continue
         name = path.split(".")[-1]
         q = conv.qubit or {}
         defects, safe = tls_bands(q), safe_intervals(q)
