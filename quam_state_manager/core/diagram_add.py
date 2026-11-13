@@ -1069,12 +1069,53 @@ def plan_pair(merged: dict, control: str, target: str, *, flux=None, inv=None,
     if has_flux and flux is not None:
         clears, flux_info = _flux_port_sets(inv, flux, port_filters)
         sets += clears
+    unplayable = pair_unplayable(merged, creates, new_pid)
     return {"creates": creates, "sets": sets,
             "summary": {"kind": "pair", "name": new_pid, "template": tpid,
+                        "unplayable": unplayable,
                         "control": control, "target": target,
                         "flux": flux, "active": act_summary, "flux_carry": flux_info,
                         "phase_cleared": phase_cleared, "copied_amplitudes": amps,
                         "member_ops": [p for p, _ in creates if p.startswith("qubits.")]}}
+
+
+def _with_writes(merged: dict, creates: list) -> dict:
+    """*merged* with each ``(dot path, value)`` of *creates* written, copying
+    only the dicts on the way (the original is never touched)."""
+    doc = dict(merged)
+    for path, val in creates:
+        keys = path.split(".")
+        node = doc
+        for k in keys[:-1]:
+            nxt = node.get(k)
+            nxt = dict(nxt) if isinstance(nxt, dict) else {}
+            node[k] = nxt
+            node = nxt
+        node[keys[-1]] = val
+    return doc
+
+
+def pair_unplayable(merged: dict, creates: list, pair_id: str) -> list[str]:
+    """``"<gate>: <reason>"`` for every CZ gate of *pair_id* the CZ gate plan
+    refuses as not playable once *creates* are written -- the plan's own
+    check (``cz_gate_plan.operations``), run on the chip as it would be."""
+    from . import cz_gate_plan as czp
+    try:
+        rows, _c = czp.operations(_with_writes(merged, creates))
+    except Exception:  # noqa: BLE001 -- a review line is never worth an error
+        return []
+    out = []
+    for row in rows:
+        if row.get("pair") != pair_id:
+            continue
+        reasons = [ln.get("refusal") for ln in row.get("lines") or []]
+        reasons.append((row.get("coupler") or {}).get("refusal"))
+        for r in reasons:
+            if isinstance(r, str) and r.startswith("not playable"):
+                line = f"{row.get('operation')}: {r}"
+                if line not in out:
+                    out.append(line)
+    return out
 
 
 # ------------------------------------------------------------------ review
