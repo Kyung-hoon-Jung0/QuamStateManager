@@ -863,13 +863,18 @@ class QueryEngine:
             # the key is missing, not when its value is None).
             macros = p.get("macros") or {}
             has_cz = bool(macros)
+            # gl-mxs: a `cz` alias names the gate the pair plays; its numbers
+            # are the pair's 2Q fidelity, never the best of its macros. With
+            # no alias the best macro still wins, as before.
+            op_gate = pair_operational_gate(pair_name, macros)
+            cand = {op_gate: macros[op_gate]} if op_gate else macros
 
             best_fidelity = None
             best_gate = None
             best_metric = None
             best_fid_obj = None
             fidelity_conflict = []
-            for gate_name, gate in macros.items():
+            for gate_name, gate in cand.items():
                 if not isinstance(gate, dict):
                     continue
                 fid = gate.get("fidelity") or {}
@@ -913,7 +918,7 @@ class QueryEngine:
             # conversion available: `average_gates_per_clifford` is a node
             # namespace value and is in neither state.json nor the saved run.
             if best_fidelity is None:
-                for _g, _gate in macros.items():
+                for _g, _gate in cand.items():
                     if not isinstance(_gate, dict):
                         continue
                     _f = _gate.get("fidelity") or {}
@@ -935,7 +940,7 @@ class QueryEngine:
                         fidelity_source = "interleaved_rb"
                         fidelity_conflict = _r["conflict"]
 
-            if best_fidelity is None:
+            if best_fidelity is None and not op_gate:
                 _fb = cr_semantics.fidelity(p)
                 if (_fb is not None and _fb["source"] == "channel"
                         and chip_health.physicality("cz_fidelity", _fb["value"])):
@@ -1002,7 +1007,10 @@ class QueryEngine:
                            if _is_cr_pair else None),
                 "edge_key": (list(cr_semantics.physical_edge_key(p) or ())
                              or None),
-                "best_gate": best_gate,
+                "best_gate": op_gate or best_gate,
+                # the macro the pair's `cz` alias names (pair_operational_gate),
+                # or None; every "best" reader on Chip Status keeps to it
+                "op_gate": op_gate,
                 "gate_fidelities": gate_fidelities,
                 "gate_details": gate_details,
                 "confusion_size": confusion_size,
@@ -1668,6 +1676,34 @@ def _gate_key_run(fid: dict, key: str) -> int | float | None:
         if _is_num(v):
             return v
     return None
+
+
+def pair_operational_gate(pair_name: str, macros: Any) -> str | None:
+    """The macro a pair's ``cz`` alias points to, or None.
+
+    A pair holding two CZ macros plays the one its ``cz`` alias names
+    (``macros.cz = "#./cz_unipolar"``, or the absolute
+    ``#/qubit_pairs/<pair>/macros/<name>`` a rebuild writes). Every 2Q
+    fidelity surface shows THAT macro's numbers, never the best of the
+    pair's macros. None when there is no alias, when ``cz`` is itself a
+    macro dict, or when the alias does not land on a macro dict of this
+    pair; the caller then keeps its no-alias rule.
+    """
+    if not isinstance(macros, dict):
+        return None
+    alias = macros.get("cz")
+    if not isinstance(alias, str):
+        return None
+    name = None
+    if alias.startswith("#./"):
+        name = alias[3:]
+    else:
+        prefix = f"#/qubit_pairs/{pair_name}/macros/"
+        if alias.startswith(prefix):
+            name = alias[len(prefix):]
+    if not name or "/" in name or name == "cz":
+        return None
+    return name if isinstance(macros.get(name), dict) else None
 
 
 def pair_gate_fidelity(fid: Any) -> dict | None:

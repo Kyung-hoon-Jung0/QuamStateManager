@@ -54,7 +54,7 @@ from quam_state_manager.core import run_time
 
 logger = logging.getLogger(__name__)
 
-GATES_REV = "2026-09-06a"          # bump when gates.py / families.py change what a verdict means
+GATES_REV = "2026-11-13a"          # bump when gates.py / families.py change what a verdict means
 _BEFORE_S = 60.0
 _AFTER_S = 300.0
 _ENTRY = re.compile(r"^- \*\*(\d{2}:\d{2}:\d{2})\*\* `([^`]+)` ?(.*)$")
@@ -419,7 +419,7 @@ def _compute_gate(run: dict) -> dict:
                 "family": getattr(fam, "key", None), "anchor": None}
     run_obj = dict(run)
     run_obj["folder_path"] = Path(run["folder_path"])
-    targets = list(run.get("qubits") or []) + list(run.get("qubit_pairs") or [])
+    targets = gates.node_targets(run, fam)
     verdicts = gates.evaluate_run(run_obj, fam, targets, current_value_of=lambda p: _walk(doc, p))
     per = {t: {"verdict": v.verdict, "failure_mode": v.failure_mode, "reasons": list(v.reasons)}
            for t, v in verdicts.items()}
