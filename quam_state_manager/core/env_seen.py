@@ -85,9 +85,18 @@ def _order(old, new):
     return "upgrade" if right > left else "downgrade"
 
 
+def _folder_moved(previous: dict, current: dict) -> bool:
+    """The lab code folder changed. A record written before the folder was
+    observed carries no key, and is never read as a change."""
+    return "lab_code_dir" in previous and previous.get("lab_code_dir") != current.get("lab_code_dir")
+
+
 def direction(previous: dict, current: dict) -> str:
     """Describe direction only when the version strings can be ordered."""
     labels = []
+    if _folder_moved(previous, current):
+        labels.append("lab code folder " + (previous.get("lab_code_dir") or "none") +
+                      " → " + (current.get("lab_code_dir") or "none"))
     for name, old, new in _version_pairs(previous, current):
         suffix = _order(old, new) or "version changed"
         labels.append(f"{name.replace('_', '-')} {old} \u2192 {new} ({suffix})")
@@ -109,7 +118,7 @@ def transition(previous: dict | None, current: dict) -> dict:
     other_versions_changed = bool(_version_pairs(previous, current))
     official_changed = (official_versions_changed or
                         previous.get("official_digest") != current.get("official_digest"))
-    changed = (other_versions_changed or official_changed or
+    changed = (other_versions_changed or official_changed or _folder_moved(previous, current) or
                previous.get("source_fingerprint") != current.get("source_fingerprint"))
     return {"first": False, "changed": changed,
             "official_changed": official_changed,
@@ -123,6 +132,8 @@ def observe(instance_path, key: str, python_path: str, body: dict, *, context: d
         return {"recorded": False, "first": False, "changed": False}
     env = normalize_env_path(python_path)
     current = {k: body.get(k) for k in ("official_digest", "lab_digest", "source_fingerprint")}
+    from quam_state_manager.core.config_generator import get_lab_code_dir
+    current["lab_code_dir"] = get_lab_code_dir(python_path) or None
     current.update(versions={k: (body.get("versions") or {}).get(k) for k in VERSIONS},
                    baseline_key=body.get("key"),
                    time=datetime.now(timezone.utc).isoformat(timespec="microseconds"))

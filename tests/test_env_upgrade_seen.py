@@ -79,3 +79,27 @@ def test_observation_protects_its_reference(tmp_path, monkeypatch):
     env_seen.observe(tmp_path, "a", "env-a", stored, context={})
     baseline.record_baseline(tmp_path, {**original, "sources": {"file.py": [1, 2]}}, python_path="env-a")
     assert baseline.load_baseline(tmp_path, key)
+
+
+def test_a_lab_folder_change_is_named_as_one():
+    before = {**body(), "lab_code_dir": "D:/lab/a"}
+    after = {**before, "lab_code_dir": "D:/lab/b", "source_fingerprint": "source-b"}
+    event = env_seen.transition(before, after)
+    assert event["changed"]
+    assert event["direction"].startswith("lab code folder D:/lab/a \u2192 D:/lab/b")
+    cleared = env_seen.transition(before, {**before, "lab_code_dir": None})
+    assert cleared["changed"] and "D:/lab/a \u2192 none" in cleared["direction"]
+
+
+def test_a_record_without_the_folder_never_reads_as_a_folder_change():
+    event = env_seen.transition(body(), {**body(), "lab_code_dir": "D:/lab/a"})
+    assert not event["changed"] and "folder" not in event["direction"]
+
+
+def test_observe_records_the_folder(tmp_path, monkeypatch):
+    from quam_state_manager.core import config_generator
+    monkeypatch.setattr(config_generator, "get_lab_code_dir", lambda p: "D:/lab/a")
+    env_seen.observe(tmp_path, "chip", "env-a", body(), context={})
+    monkeypatch.setattr(config_generator, "get_lab_code_dir", lambda p: "D:/lab/b")
+    event = env_seen.observe(tmp_path, "chip", "env-a", body(), context={})
+    assert event["changed"] and "lab code folder" in event["direction"]
