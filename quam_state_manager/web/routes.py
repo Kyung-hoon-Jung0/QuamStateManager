@@ -53776,7 +53776,7 @@ def scheduler_revert_failed(item_id: str):
     if store.change_log:
         return jsonify({"ok": False, "error":
                         f"the chip has {len(store.change_log)} unapplied edit(s); apply or "
-                        "discard them first -- the revert writes the chip"}), 409
+                        "discard them first — the revert writes the chip"}), 409
     try:
         _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
     except (OSError, ValueError) as exc:
@@ -53806,7 +53806,7 @@ def scheduler_revert_failed(item_id: str):
     if refused:
         parts.append(f"refused {len(refused)}: " + "; ".join(
             f"{c.get('path') or 'all'} ({c.get('reason')})" for c in refused))
-    message = " -- ".join(parts) or "nothing to revert"
+    message = " — ".join(parts) or "nothing to revert"
     result = {"ok": bool(out.ok and reverted), "reverted": reverted, "refused": refused,
               "message": message, "at": datetime.now(timezone.utc).isoformat()}
     scheduler.set_item_failed_revert(inst, item_id, result)
