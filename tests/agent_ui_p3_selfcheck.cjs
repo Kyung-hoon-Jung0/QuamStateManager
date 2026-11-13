@@ -61,7 +61,16 @@ function feed() {
         plan('pl-unlisted', 'stopped', [{ i: 0, node: 'n', targets: ['q1'], status: 'running', run_key: 'rk-gone' }]),
         plan('pl-running', 'running', [{ i: 0, node: 'n', targets: ['q1'], status: 'running', run_key: 'rk-live' }],
           { may_change: [{ target: 'q1', path: 'qubits.q1.T1', now: 3.5e-5, label: 'T1', display: US }], may_change_total: 1 }),
-        plan('pl-stopping', 'stopping', [{ i: 0, node: 'n', targets: ['q1'], status: 'running', run_key: 'rk-cancel' }])],
+        plan('pl-stopping', 'stopping', [{ i: 0, node: 'n', targets: ['q1'], status: 'running', run_key: 'rk-cancel' }]),
+        // gl-ukt: an approved-and-applied step, a rejected one, an expired one, one with no approval record
+        plan('pl-held', 'done', [
+          { i: 0, node: 'n', targets: ['q1'], status: 'done', n_writes: 3, applied: true, approval_id: 'ap-x',
+            approval_state: { id: 'ap-x', status: 'approved', n_writes: 3 } },
+          { i: 1, node: 'n', targets: ['q1'], status: 'done', n_writes: 3, applied: false, approval_id: 'ap-y',
+            approval_state: { id: 'ap-y', status: 'rejected', decided_by: 'human:user-a', n_writes: 3 } },
+          { i: 2, node: 'n', targets: ['q1'], status: 'done', n_writes: 1, applied: false, approval_id: 'ap-z',
+            approval_state: { id: 'ap-z', status: 'expired', n_writes: 1 } },
+          { i: 3, node: 'n', targets: ['q1'], status: 'done', n_writes: 2, applied: true, approval_state: null }])],
       runs: [
         { key: 'rk-cancel', status: 'ended', node: 'n_cancel', targets: ['q1'], since: 20, params: PARAMS, result: { status: 'cancelled', writes: runWrites } },
         { key: 'rk-done', status: 'done', node: 'n', targets: ['q1'], since: 21, result: { status: 'done' } },
@@ -146,6 +155,16 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   pin('c21-no-closed-plan-shows-the-marker', ['pl-stopped', 'pl-done-run', 'pl-unlisted'].every(id => badges(id).every(b => txt(b) !== '▶')));
   pin('c21-active-plans-keep-the-marker', ['pl-running', 'pl-stopping'].every(id => txt(badges(id)[0]) === '▶' && badges(id)[0].title === 'running'));
   pin('c21-other-steps-say-their-own-state', txt(badges('pl-stopped')[1]) === '—' && badges('pl-stopped')[1].title === 'cancelled' && txt(badges('pl-stopped')[2]) === '✓');
+
+  // ------------------------------------------------------------ gl-ukt
+  const hs = Array.from(A.card('plan:pl-held').querySelectorAll('.ag-step'));
+  const hw = i => txt(hs[i].querySelector('.ag-step-w'));
+  const hb = i => hs[i].firstElementChild;
+  pin('ukt-an-approved-step-keeps-its-check', txt(hb(0)) === '✓' && hb(0).classList.contains('ag-st-done') && hw(0) === '3 writes applied', txt(hb(0)) + ' | ' + hw(0));
+  pin('ukt-a-rejected-step-is-no-check', txt(hb(1)) === 'rejected' && hb(1).classList.contains('ui-badge--warn') && hb(1).getAttribute('data-held') === 'rejected'
+    && !hs[1].querySelector('.ag-st-done') && hw(1) === '3 writes rejected, nothing written', txt(hb(1)) + ' | ' + hw(1));
+  pin('ukt-an-expired-step-says-so', txt(hb(2)) === 'expired' && hw(2) === '1 write expired, nothing written', txt(hb(2)) + ' | ' + hw(2));
+  pin('ukt-a-step-with-no-approval-is-unchanged', txt(hb(3)) === '✓' && hb(3).classList.contains('ag-st-done') && hw(3) === '2 applied', txt(hb(3)) + ' | ' + hw(3));
 
   // ------------------------------------------------------------ C-24
   const rows = Array.from(A.card('approval:ap1').querySelectorAll('tbody tr'));

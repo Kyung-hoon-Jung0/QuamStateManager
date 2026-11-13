@@ -186,7 +186,31 @@ class TestRevertTheFailedTargets:
         assert live["q1"]["T1"] == 9.9e-05            # kept
         assert live["q1"]["f_01"] == 5.01e9           # the other leaf still reverts
         assert [c["path"] for c in body["result"]["refused"]] == ["qubits.q1.T1"]
-        assert "qubits.q1.T1" in body["message"] and "refused" in body["message"]
+        assert "qubits.q1.T1" in body["message"] and "not reverted" in body["message"]
+        # gl-aat: plain words for a person; the machine reason and code are kept
+        assert "CAS" not in body["message"] and "patch" not in body["message"]
+        assert "the live value changed since the run (now 9.9e-05)" in body["message"]
+        ref = body["result"]["refused"][0]
+        assert ref["code"] == "changed" and "CAS" in ref["reason"]
+        assert body["result"]["remaining"] == []       # the button goes: nothing a press could put back
+
+    def test_a_full_revert_leaves_nothing_to_offer(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert body["ok"] and body["result"]["remaining"] == []
+        again = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        assert again.status_code == 409 and "nothing is left" in again.get_json()["error"]
+
+    def test_a_second_press_reverts_only_what_is_left(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        # a first revert that stopped as a whole leaves both values to put back
+        scheduler.set_item_failed_revert(inst, iid, {"ok": False, "reverted": [], "remaining": ["qubits.q1.T1"],
+                                                     "refused": [{"path": None, "reason": "x"}]})
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert [x["path"] for x in body["result"]["reverted"]] == ["qubits.q1.T1"], body
+        assert chip.live_state()["qubits"]["q1"]["f_01"] == 5.11e9    # not in what was left: untouched
 
     def test_unapplied_edits_refuse_before_writing(self, chip):
         patches = self._node_wrote(chip)
@@ -226,7 +250,7 @@ def test_the_queue_row_says_it_and_offers_the_revert():
                        capture_output=True, text=True, encoding="utf-8", timeout=60,
                        env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(
                            Path(__file__).resolve().parents[1] / "node_modules")))
-    assert r.returncode == 0 and "7 checks passed" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "11 checks passed" in r.stdout, r.stdout + r.stderr
 
 
 class TestCompactRowNamesTheMetricTarget:

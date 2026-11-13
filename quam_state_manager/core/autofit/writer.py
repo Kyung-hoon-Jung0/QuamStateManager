@@ -301,16 +301,17 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
         op = p.get("op", "replace")
         old = p.get("old")
         if op != "replace" or old is None or isinstance(old, (dict, list)):
-            conflicts.append({"path": dotted, "reason":
+            conflicts.append({"path": dotted, "code": "non_revertible", "reason":
                               f"non-revertible patch (op={op}, old={type(old).__name__})"})
             continue
         try:
             cur = _current_value(chip, dotted)
         except KeyError:
-            conflicts.append({"path": dotted, "reason": "path vanished"})
+            conflicts.append({"path": dotted, "code": "vanished", "reason": "path vanished"})
             continue
         if not _values_equal(cur, p.get("value")):
-            conflicts.append({"path": dotted, "reason":
+            conflicts.append({"path": dotted, "code": "changed", "current": cur,
+                              "written": p.get("value"), "reason":
                               "value changed since the node wrote it (CAS) — "
                               f"current={cur!r}, patch={p.get('value')!r}"})
             continue
@@ -341,7 +342,8 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                         chip.store.search_index.update_entry(e.dot_path,
                                                              e.new_value)
         except _CasConflict as cc:
-            conflicts.append({"path": cc.path, "reason":
+            conflicts.append({"path": cc.path, "code": "changed", "current": cc.cur,
+                              "written": cc.expect, "reason":
                               f"CAS lost under lock (current={cc.cur!r})"})
             return WriteOutcome(ok=False, action="reverted",
                                 error="CAS conflict", conflicts=conflicts)

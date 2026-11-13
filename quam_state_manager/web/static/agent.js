@@ -579,6 +579,31 @@ window.AgentPanel = (function () {
     var x = stepState(s, p);
     return '<span class="ag-step-st ag-st-' + esc(x.st) + '" title="' + esc(x.title) + '">' + esc(STEP_GLYPH[x.st] || x.st) + "</span>";
   }
+  /* gl-ukt: a step whose held writes were rejected or expired ran, but wrote
+     nothing; its badge must not be the applied step's check mark. Read from the
+     step's live approval record (approval_state); without one, the plain badge. */
+  function stepHeldNotWritten(s) {
+    var a = s.approval_state || {};
+    return a.status === "rejected" || a.status === "expired" ? a.status : "";
+  }
+  function stepBadgeOrHeld(s, p) {
+    var held = stepHeldNotWritten(s);
+    if (!held) return stepBadge(s, p);
+    return '<span class="ui-badge ui-badge--warn" data-held="' + esc(held) + '" title="' + esc("the run finished; its writes were " + held + " and nothing was written") + '">' + esc(held) + "</span>";
+  }
+  function stepWritesHtml(s) {
+    if (!s.n_writes) return "";
+    var a = s.approval_state || {};
+    var n = a.n_writes != null ? a.n_writes : s.n_writes;
+    var w = n + " write" + (n === 1 ? "" : "s");
+    var held = stepHeldNotWritten(s);
+    var txt;
+    if (held) txt = w + " " + held + ", nothing written";
+    else if (a.status === "approved" || (s.approval_state && s.applied)) txt = w + " applied";
+    else if (s.approval_state && a.status === "pending") txt = w + " waiting for approval";
+    else txt = s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : ""));   // no approval record: as before
+    return ' <span class="ag-step-w">' + esc(txt) + "</span>";
+  }
   /* docs/261: what the stop-loss read from a step -- a fit the node itself marked failed (the
      run finished, so nothing else on the row says it), and a step skipped because its target
      was halted (the reason rides the title). */
@@ -612,11 +637,11 @@ window.AgentPanel = (function () {
       var rq = s.request ? (s.request.status === "approved"
         ? ' <span class="ag-step-req" title="' + esc("run request " + s.request.id) + '">allowed' + (s.request.decided_by ? " by " + esc(s.request.decided_by) : "") + " — the agent runs it next</span>"
         : ' <span class="ag-step-req ag-st-waiting" title="' + esc("run request " + s.request.id) + '">run request waiting for Allow</span>') : "";
-      return '<div class="ag-step">' + stepBadge(s, p) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
+      return '<div class="ag-step">' + stepBadgeOrHeld(s, p) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
         ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" + paramsHtml(s.params) + rq +
         (s.run_id ? " " + runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") +
         stepGateHtml(s) +
-        (s.n_writes ? ' <span class="ag-step-w">' + s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : "")) + "</span>" : "") +
+        stepWritesHtml(s) +
         (s.why ? ' <span class="muted ag-step-why">' + esc(s.why) + "</span>" : "") + "</div>";
     }).join("");
     // "q1 · amplitude   now 0.12" -- the dot path rides the title
