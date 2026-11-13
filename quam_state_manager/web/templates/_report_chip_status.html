@@ -324,6 +324,12 @@
                     {{ raw(gf.get('value')) }}
                 {%- else -%}
                     {{ pct(gf.get('value')) }}
+                {%- endif %}
+                {%- if gf.get('gate_pick') is sameas false %}
+                    <span class="rep-note">not shown on the pages: {{ gf.get('superseded_by') }} is this pulse's per-gate value</span>
+                {%- endif %}
+                {%- if gf.get('gate_conflict') and gf.get('gate_pick') %}
+                    <span class="rep-bad">&#9888; {{ gf.gate_conflict | length }} IRB values on this pair: {% for k, v in gf.gate_conflict %}{{ k }} {{ "%.4f" | format(v) }}{% if not loop.last %}, {% endif %}{% endfor %}</span>
                 {%- endif %}</td>
             <td>{% if gf.get('derived_gate_fidelity') is not none -%}
                     {{ pct(gf.get('derived_gate_fidelity')) }}

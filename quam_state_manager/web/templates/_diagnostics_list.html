@@ -13,7 +13,7 @@
 {%- set ns = namespace(e=0, w=0, a=0, i=0, k=0) -%}
 {%- set groups = {} -%}
 {%- for f in findings -%}
-  {%- set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) -%}
+  {%- set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if (f.advisory or f.severity == 'recommendation') else 'warning')) -%}
   {#- docs/168 + on-site 2026-09-07: an acknowledged finding is not COUNTED
       anywhere on this page -- not the pills, not the domain badges -- so a
       chip whose every finding was confirmed reads as healthy here too. It
@@ -86,7 +86,7 @@
 {%- endmacro -%}
 
 {%- macro finding_row(f, group_key='', hidden=false) -%}
-  {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if f.advisory else 'warning')) %}
+  {% set bucket = 'error' if f.severity == 'error' else ('info' if f.severity == 'info' else ('advisory' if (f.advisory or f.severity == 'recommendation') else 'warning')) %}
   <tr class="diag-row diag-row-{{ f.severity }}{% if f.advisory %} diag-row-advisory{% endif %}{% if f.acknowledged %} diag-row-acknowledged{% endif %}{% if group_key %} diag-row-in-group ui-diag-in-group{% endif %}" data-bucket="{{ bucket }}" data-category="{{ f.category }}"{% if group_key %} data-group="{{ group_key }}"{% endif %}{% if hidden %} hidden{% endif %}>
     <td>
       {% if f.advisory %}<span class="diag-badge diag-advisory">Recommendation</span>

@@ -402,7 +402,11 @@ class QueryEngine:
                 if isinstance(bell, dict):
                     result[f"{prefix}_bell_fidelity"] = bell.get("Fidelity")
                 result[f"{prefix}_standard_rb"] = fidelity.get("StandardRB")
-                result[f"{prefix}_interleaved_rb"] = fidelity.get("InterleavedRB")
+                # the ONE per-gate value (pair_gate_fidelity): a lab alias
+                # `IRB` alone shows too, and two keys never disagree here
+                _pg = pair_gate_fidelity(fidelity)
+                result[f"{prefix}_interleaved_rb"] = (fidelity.get(_pg["key"]) if _pg
+                                                      else fidelity.get("InterleavedRB"))
 
         # Cross-resonance drive channel (the CR 2Q gate). Surface the channel
         # parameters; the CR pulse shapes (operations) live on the Pulses page.
@@ -840,6 +844,7 @@ class QueryEngine:
             best_gate = None
             best_metric = None
             best_fid_obj = None
+            fidelity_conflict = []
             for gate_name, gate in macros.items():
                 if not isinstance(gate, dict):
                     continue
@@ -890,16 +895,21 @@ class QueryEngine:
                     _f = _gate.get("fidelity") or {}
                     if not isinstance(_f, dict):
                         continue
-                    for _k in ("InterleavedRB", "IRB"):
-                        _v = _f.get(_k)
-                        if (isinstance(_v, (int, float)) and not isinstance(_v, bool)
-                                and chip_health.physicality("cz_fidelity", _v)
-                                and (best_fidelity is None or _v > best_fidelity)):
-                            best_fidelity = _v
-                            best_metric = _k
-                            best_gate = _g
-                            best_fid_obj = _f
-                            fidelity_source = "interleaved_rb"
+                    # ONE per-gate value per macro (pair_gate_fidelity: newest,
+                    # else InterleavedRB before IRB -- never the larger key).
+                    # Across macros the best PULSE still wins, as before.
+                    _r = pair_gate_fidelity(_f)
+                    if _r is None:
+                        continue
+                    _v = _r["value"]
+                    if (chip_health.physicality("cz_fidelity", _v)
+                            and (best_fidelity is None or _v > best_fidelity)):
+                        best_fidelity = _v
+                        best_metric = _r["key"]
+                        best_gate = _g
+                        best_fid_obj = _f
+                        fidelity_source = "interleaved_rb"
+                        fidelity_conflict = _r["conflict"]
 
             if best_fidelity is None:
                 _fb = cr_semantics.fidelity(p)
@@ -959,6 +969,9 @@ class QueryEngine:
                                  else None),
                 "cz_fidelity": best_fidelity,
                 "fidelity_source": fidelity_source,
+                # two per-gate keys of the winning macro that disagree
+                # ([(key, value), ...], pair_gate_fidelity); [] otherwise
+                "fidelity_conflict": fidelity_conflict,
                 "gate_kind": "cr" if _is_cr_pair else ("cz" if macros else "none"),
                 "directed": _is_cr_pair,
                 "active": (cr_semantics.is_active(self.store.merged, pair_name)
@@ -1594,6 +1607,120 @@ def fidelity_family(metric: Any) -> str | None:
 _rb_level = rb_level
 
 
+#: Fixed precedence of the per-gate keys of one fidelity block when the block
+#: records no time (or run id) for every one of them. ``InterleavedRB`` is the
+#: node's canonical name; ``IRB`` is a lab alias for the same measurement. Any
+#: other spelling rb_level classifies as per-gate comes after, by name.
+_GATE_KEY_ORDER = ("InterleavedRB", "IRB")
+
+#: Two per-gate values of one block closer than this are the same number
+#: written twice, not a disagreement.
+GATE_CONFLICT_TOL = 1e-6
+
+
+def _fid_scalar(v: Any) -> float | None:
+    """The fidelity a per-gate key holds: a bare number, or the canonical field
+    of a nested dict (the same fields `_extract_pair_gate_fidelities` reads)."""
+    if isinstance(v, dict):
+        for k in ("value", "fidelity", "Fidelity", "average_gate_fidelity"):
+            if _is_num(v.get(k)):
+                return v[k]
+        return None
+    return v if _is_num(v) else None
+
+
+def _gate_key_time(fid: dict, key: str) -> int | None:
+    """Epoch ms of the time recorded for ``key`` in this block, or None."""
+    nested = fid.get(key) if isinstance(fid.get(key), dict) else {}
+    return chip_health.epoch_ms(nested.get("updated_at") or fid.get(key + "_updated_at"))
+
+
+def _gate_key_run(fid: dict, key: str) -> int | float | None:
+    """The run id recorded for ``key`` in this block (its own, never a
+    sibling's), or None."""
+    nested = fid.get(key) if isinstance(fid.get(key), dict) else {}
+    for v in (fid.get(key + "_load_id"), fid.get(key + "_run_id"), fid.get(key + "_run"),
+              nested.get("load_id"), nested.get("run_id"), nested.get("run")):
+        if _is_num(v):
+            return v
+    return None
+
+
+def pair_gate_fidelity(fid: Any) -> dict | None:
+    """The ONE per-gate fidelity of a gate macro's ``fidelity`` block.
+
+    A block can carry several keys that rb_level calls per-gate (``"gate"``):
+    ``InterleavedRB`` and a lab alias ``IRB`` side by side, written by two
+    generations of a node, and they need not agree. Every surface that shows a
+    pair's per-gate fidelity asks this function, so no two of them can pick
+    differently.
+
+    Precedence (never the max or the min across keys -- a larger number is not
+    a better measurement):
+
+    1. every per-gate key records a time (``<key>_updated_at`` or a nested
+       ``updated_at``): the newest wins;
+    2. else every per-gate key records its own run id (``<key>_load_id`` /
+       ``_run_id`` / ``_run`` or nested): the highest run id wins, run ids
+       within one data folder being in order;
+    3. else the fixed key order :data:`_GATE_KEY_ORDER`: ``InterleavedRB``
+       before ``IRB``, then any other per-gate spelling by name.
+
+    Ties in 1 and 2 fall back to the key order.
+
+    Returns ``{"value", "key", "basis", "physical", "keys", "conflict"}`` or
+    None when the block holds no numeric per-gate key. ``conflict`` is
+    ``[(key, value), ...]`` in precedence order when two per-gate values differ
+    by more than :data:`GATE_CONFLICT_TOL`, else ``[]``. ``physical`` is the
+    (0, 1] bound on the chosen value; an unphysical choice is returned as is
+    (not replaced by another key), so the caller can show it as invalid.
+    StandardRB (per Clifford) and Bell_State (a state fidelity) are never
+    candidates (docs/138).
+    """
+    if not isinstance(fid, dict):
+        return None
+    cands = []
+    for k, v in fid.items():
+        if not isinstance(k, str) or rb_level(k) != "gate":
+            continue
+        val = _fid_scalar(v)
+        if val is not None:
+            cands.append((k, val))
+    if not cands:
+        return None
+
+    def _order(k: str) -> tuple:
+        return ((_GATE_KEY_ORDER.index(k), "") if k in _GATE_KEY_ORDER
+                else (len(_GATE_KEY_ORDER), k))
+
+    cands.sort(key=lambda kv: _order(kv[0]))
+    basis = "key order"
+    if len(cands) > 1:
+        times = {k: _gate_key_time(fid, k) for k, _ in cands}
+        runs = {k: _gate_key_run(fid, k) for k, _ in cands}
+        if all(t is not None for t in times.values()):
+            basis = "newest time"
+            cands.sort(key=lambda kv: (-times[kv[0]], _order(kv[0])))
+        elif all(r is not None for r in runs.values()):
+            basis = "newest run"
+            cands.sort(key=lambda kv: (-runs[kv[0]], _order(kv[0])))
+    key, value = cands[0]
+    vals = [v for _, v in cands]
+    conflict = (list(cands) if len(cands) > 1
+                and max(vals) - min(vals) > GATE_CONFLICT_TOL else [])
+    return {"value": value, "key": key, "basis": basis,
+            "physical": chip_health.physical_fidelity(value),
+            "keys": [k for k, _ in cands], "conflict": conflict}
+
+
+def gate_conflict_text(conflict: list) -> str:
+    """``"2 IRB values on this pair: InterleavedRB 0.9763, IRB 0.9434"``, or ""."""
+    if not conflict:
+        return ""
+    return (f"{len(conflict)} IRB values on this pair: "
+            + ", ".join(f"{k} {v:.4f}" for k, v in conflict))
+
+
 # Which fields of a fidelity row carry a FIDELITY (as opposed to an error, a
 # decay base read separately, or a run id). `value` is the canonical scalar
 # `_extract_pair_gate_fidelities` derives below; the rest are the nested
@@ -1762,6 +1889,7 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
             continue
         # Each metric owns its source run; sibling measurements are independent.
         flat_attrs, flat_used = _flat_metric_attrs(fid)
+        first_row = len(results)
         # Search for any key containing fidelity-like data
         for metric_name, metric_val in fid.items():
             gate_load_id = fid.get(metric_name + "_load_id")
@@ -1831,7 +1959,33 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                         row["inferred_load_id"] = candidate
                         row["inferred_source"] = "shared RB source"
                 results.append(_gate_fidelity_row(row))
+        _mark_gate_pick(results[first_row:], fid)
     return results
+
+
+def _mark_gate_pick(rows: list[dict], fid: dict) -> None:
+    """Stamp which per-gate row of ONE macro is its per-gate fidelity.
+
+    Only a macro holding two or more per-gate keys is touched (a single-key
+    macro's rows stay byte-identical). The row :func:`pair_gate_fidelity`
+    chose gets ``gate_pick: True``; every other per-gate row gets
+    ``gate_pick: False`` + ``superseded_by``. Readers that show ONE per-gate
+    number per pulse skip ``gate_pick is False`` rows; readers that list
+    every stored number (the printable report) keep them, labelled. When the
+    values disagree every per-gate row carries ``gate_conflict``.
+    """
+    res = pair_gate_fidelity(fid)
+    if res is None or len(res["keys"]) < 2:
+        return
+    for r in rows:
+        if r.get("level") != "gate" or r.get("metric") not in res["keys"]:
+            continue
+        r["gate_pick"] = r["metric"] == res["key"]
+        if not r["gate_pick"]:
+            r["superseded_by"] = res["key"]
+        r["gate_pick_basis"] = res["basis"]
+        if res["conflict"]:
+            r["gate_conflict"] = [[k, v] for k, v in res["conflict"]]
 
 
 def _extract_pair_confusion_offdiag(confusion: Any) -> list[float] | None:
