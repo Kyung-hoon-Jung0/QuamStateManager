@@ -654,9 +654,20 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
         extra = {"time_panel"} if name == "data_rig5q" else set()
         assert set(live[name]) == set(frozen[name]) | extra, name
         if extra:
-            assert set(live[name]["time_panel"]) == {"time_ns", "series_hz", "detuning_mhz", "dwell", "levels"}
+            # D5 adds amplitude_v: each moving line's signed commanded Z amplitude per sample
+            assert set(live[name]["time_panel"]) == {"time_ns", "series_hz", "detuning_mhz", "dwell", "levels",
+                                                     "amplitude_v"}
         # the frozen curve entry's keys are exactly what a live curve carries
-        _subset(_shape({k: v for k, v in live[name].items() if k not in extra}), _shape(frozen[name]), name)
+        # B adds the conversion's provenance and A the parking offset to each qubit summary;
+        # C adds the filtered port output to each trajectory entry
+        body = {k: v for k, v in live[name].items() if k not in extra}
+        for q in body.get("qubits") or []:
+            for key in ("provenance", "parking"):
+                (q.get("summary") or {}).pop(key, None)
+        for t in body.get("trajectory") or []:
+            if isinstance(t, dict):
+                t.pop("filtered", None)
+        _subset(_shape(body), _shape(frozen[name]), name)
     scan_keys = set(live["loss_rig5q"]["curves"]["q1"]["scan"])
     frozen_scan = next(e["scan"] for e in frozen["loss_rig5q"]["curves"].values() if e["scan"])
     assert scan_keys == set(frozen_scan)

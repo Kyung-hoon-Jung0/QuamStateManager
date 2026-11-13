@@ -106,7 +106,12 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     # two central samples and two edge samples. Only this
                     # formerly unknown duration changes; flux math stays pinned.
                     row["duration_ns"] = 24
-                    row["duration_note"] = "24 ns from the played SNZ waveform (flat length, edges and padding)"
+                    # D7 names each line's length and the macro's own duration in the note
+                    row["duration_note"] = ("24 ns played span (control 24 ns, target 24 ns, flat length, edges "
+                                            "and padding); the macro's own duration is 24 ns (the control pulse)")
+                    row["two_flux_lengths"] = {"control": 24, "target": 24, "macro_duration_ns": 24}
+                    for line in row["lines"]:
+                        line["played_length_ns"] = 24
                 def holder(path):
                     return (C.read(doc, path).get("holder_path") or path) if path else path
                 # S3 adds unknown-only coupler metadata and replaces the old omission
@@ -129,6 +134,18 @@ def test_pre_extraction_fixture_outputs_are_identical():
             # are pinned in test_cz_gate_plan_measurements. Every older key stays exact.
             for exp_row, got_row in zip(expected[0], actual[0]):
                 exp_plan, got_plan = exp_row.get("plan"), got_row.get("plan")
+                # A CZGate whose duration is "#./inferred_duration" now reads the
+                # duration the gate infers (its longest played pulse length). Only rows
+                # that were "unknown: no play-time duration override" may change, and
+                # only the duration, its note and the plan's duration_minus_t_p_ns.
+                if (exp_row.get("duration_ns") is None
+                        and str(exp_row.get("duration_note")).startswith("unknown: no play-time duration override")
+                        and " ns inferred the way the gate infers it" in str(got_row.get("duration_note"))):
+                    assert isinstance(got_row["duration_ns"], int) and got_row["duration_ns"] > 0
+                    exp_row["duration_ns"] = got_row["duration_ns"]
+                    exp_row["duration_note"] = got_row["duration_note"]
+                    if isinstance(exp_plan, dict) and isinstance(got_plan, dict) and "duration_minus_t_p_ns" in exp_plan:
+                        exp_plan["duration_minus_t_p_ns"] = got_plan.get("duration_minus_t_p_ns")
                 if isinstance(exp_plan, dict) and isinstance(got_plan, dict):
                     added = set(got_plan) - set(exp_plan)
                     assert added <= MEASURED_PLAN_KEYS, (record["call"], sorted(added))

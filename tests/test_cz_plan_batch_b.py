@@ -119,7 +119,9 @@ def test_no_coupler_table_identity(tmp_path):
     table = re.sub(r' aria-label="[^"]*"', '', table)
     table = re.sub(r' data-value="amplitude" data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*" data-amplitude-v="[^"]*"', '', table)
     table = re.sub(r'<span data-pair="[^"]*" data-op="[^"]*" data-line="[^"]*" data-freq-hz="[^"]*" data-method="[^"]*" data-path="[^"]*">(.*?)</span>', r'\1', table)
-    assert hashlib.sha256(table.encode()).hexdigest() == "873bc033fc6d5546709abe3f5d47814dc5ddc47260c78b377eb0295fe9d17f9d"
+    # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
+    # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
+    assert hashlib.sha256(table.encode()).hexdigest() == "092cee50afde2f1d8f24ee7e5cf4945cdd4050ce8fd09592a5ff008fbd8f9ffe"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):
