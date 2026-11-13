@@ -984,17 +984,21 @@ def _set_by_ref(machine, ref: str, value) -> None:
     helper is unavailable: walk attributes/items and set the leaf."""
     parts = [p for p in str(ref).lstrip("#/").split("/") if p]
     obj = machine
+    # quam's QuamList / QuamDict are UserList / UserDict, not list / dict, so a
+    # container is recognised by its abstract base: a sequence takes an integer
+    # index (confusion_matrix/0/1), a mapping a key, anything else an attribute.
+    from collections.abc import Mapping, MutableMapping, MutableSequence, Sequence
     for p in parts[:-1]:
-        if isinstance(obj, dict):
+        if isinstance(obj, Mapping):
             obj = obj[p]
-        elif isinstance(obj, (list, tuple)):
+        elif isinstance(obj, Sequence) and not isinstance(obj, (str, bytes)):
             obj = obj[int(p)]
         else:
             obj = getattr(obj, p)
     leaf = parts[-1]
-    if isinstance(obj, dict):
+    if isinstance(obj, MutableMapping):
         obj[leaf] = value
-    elif isinstance(obj, list):
+    elif isinstance(obj, MutableSequence):
         obj[int(leaf)] = value
     else:
         setattr(obj, leaf, value)
