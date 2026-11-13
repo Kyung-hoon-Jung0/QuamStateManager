@@ -27082,6 +27082,10 @@ def pulse_create_form():
     # so the form opens already targeted at that qubit + channel).
     sel_qubit = request.args.get("qubit", "").strip()
     sel_channel = request.args.get("channel", "").strip()
+    # gl-5y8: "+ New pulse" on a Pulses page filtered to one qubit (the map
+    # pick) opens on that qubit, not on the first one of the chip.
+    if not sel_qubit:
+        sel_qubit = request.args.get("owner", "").strip()
     return render_template(
         "_pulse_create.html",
         groups=groups,

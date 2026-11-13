@@ -131,4 +131,26 @@ ok(window.UndoTrail.steps().length === 8 && panel().querySelectorAll('.undo-trai
     d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q5.T1', value: '1', from: '2' }] } }));
     ok(p.style.left === '' && p.style.right === '', 'with the corner clear the panel docks right again');
 }
+// gl-5y8 (1): a structural step names what happened to the path. An undo
+// of a removal (deleted=true) re-creates it; an undo of an add (created=true)
+// removes it. Neither may read "(deleted)" on an entry that is back.
+d.dispatchEvent(new window.CustomEvent('cellsReverted', { detail: { message: 'Undone: qubits.q9',
+    entries: [{ dot_path: 'qubits.q9', deleted: true, old_value_disp: '{...}', from_value_disp: null },
+              { dot_path: 'qubits.q8', created: true, old_value_disp: null, from_value_disp: '{...}' }] } }));
+{ const lt = panel().querySelector('.undo-trail-latest');
+  const rows = lt.querySelectorAll('.undo-trail-row');
+  ok(/\(re-created\)/.test(rows[0].textContent) && !/\(deleted\)/.test(lt.textContent),
+     'a re-created entry reads "(re-created)", never "(deleted)"');
+  ok(!rows[0].querySelector('.undo-trail-from'), 'a re-created entry shows no struck-through value');
+  ok(/\(removed\)/.test(rows[1].textContent), 'an entry the step took away reads "(removed)"'); }
+// gl-5y8 (2): the add / remove panel opening hides the trail (it covered the
+// removal review); the next step brings it back
+{ const slot = d.createElement('div'); slot.id = 'cm-rm-slot'; d.body.appendChild(slot);
+  slot.innerHTML = '<div>remove panel</div>';
+  ok(!panel().hidden, 'the trail is open before the remove panel lands');
+  slot.dispatchEvent(new window.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: slot } }));
+  ok(panel().hidden, 'opening the remove panel hides the trail');
+  d.dispatchEvent(new window.CustomEvent('quam:undo-step', { detail: { kind: 'undo', tier: 'memory', entries: [{ dot_path: 'qubits.q4.T1', value: '1', from: '2' }] } }));
+  ok(!panel().hidden, 'the next step shows the trail again');
+  slot.remove(); }
 process.exit(fails ? 1 : 0);
