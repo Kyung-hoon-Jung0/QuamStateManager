@@ -363,7 +363,11 @@ window.ChipStatus.jumpGuard = (function () {
     var last = null, WINDOW_MS = 8000, CAP_MS = 60000, armedPane = null;
     function live() {
         var now = Date.now();
-        return !!last && now - last.act <= WINDOW_MS && now - last.at <= CAP_MS;
+        // F13: a page OPENED on a section (?view=) holds its jump until the
+        // reader moves or the cap runs out: at a narrow width the sections
+        // above Trends lay out and fill in for longer than the window, with
+        // pauses between the landings, and the page was left on Overview
+        return !!last && (last.deep || now - last.act <= WINDOW_MS) && now - last.at <= CAP_MS;
     }
     /* QA F-20 (review): an offset INSIDE a section that has not got its content
        yet (Trends is a 51 px placeholder until its fetch lands) points past the
@@ -463,6 +467,8 @@ window.ChipStatus.jumpGuard = (function () {
                      foff: (typeof foff === 'number') ? foff : null };
             arm(pane);
         },
+        // F13: the live jump came from the page's own ?view= (see live())
+        deepen: function () { if (last) last.deep = true; },
         below: BELOW,
         cancel: cancel,
         baseView: baseView,
@@ -6830,6 +6836,7 @@ window.ChipStatus.mount = function (opts) {
         _restoreChipScroll(_hs);           // QA F-20: Back / reload of THIS entry
     } else if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
+        window.ChipStatus.jumpGuard.deepen();
     } else {
         // a fresh page with no deep view has no live jump: a jump made on the
         // previous visit must not re-anchor (or light the spy) on this one
@@ -7894,9 +7901,42 @@ window.ChipTrends = (function () {
         win.key = win.range.join('/') + (win.focus ? '/focus' : '');
         return win;
     }
-    function _applyWindow(layout, series, win) {
+    /* F6: the view's ONE window stays the frame every chart shares (its
+       right edge, the "now" marks, the held-to note), but a chart whose
+       first drawn point comes well after the window opens starts its axis
+       there: a chart of three late changes no longer opens on an empty
+       left half. The window itself is not changed. */
+    var OWN_START_MIN = 0.25;
+    function _ownStart(series, win, marks) {
+        var lo = Infinity;
+        // a rename mark is part of what the chart shows
+        (marks || []).forEach(function (m) {
+            var t = _ms(m.x);
+            if (isFinite(t) && t < lo) lo = t;
+        });
+        series.forEach(function (s) {
+            s.points.forEach(function (p) {
+                if (typeof p[1] !== 'number' || !isFinite(p[1])) return;
+                var t = _ms(_iso(p[0]));
+                if (isFinite(t) && t < lo) lo = t;
+            });
+            (s.left_out || []).forEach(function (r) {
+                var t = _ms(_iso(r[0]));
+                if (isFinite(t) && t < lo) lo = t;
+            });
+        });
+        if (!isFinite(lo) || lo <= win.lo) return null;
+        var pad = Math.max((win.hi - lo) * 0.04, HOUR_MS / 4);
+        var start = lo - pad;
+        // only when it frees a real part of the axis (a quarter): a chart
+        // starting a little later stays aligned with the ones above it
+        return (start - win.lo > (win.hi - win.lo) * OWN_START_MIN) ? start : null;
+    }
+    function _applyWindow(layout, series, win, marks) {
         if (!win) return;
         layout.xaxis.range = win.range.slice();
+        var own = _ownStart(series, win, marks);
+        if (own !== null) layout.xaxis.range[0] = _naive(own);
         layout.xaxis.autorange = false;
         if (!win.focus) return;
         var heldHi = -Infinity, lateHi = -Infinity, lateN = 0;
@@ -8093,6 +8133,54 @@ window.ChipTrends = (function () {
     }
     var EXCL_WORDS = { unphysical: 'outside the physical range',
                        invalid: 'from a run marked invalid' };
+    /* N1: an excluded value leaves a GAP over the run that carried it -- but
+       the value before it was held right up to that run. With the step line
+       (shape hv) a null cuts the segment that LEADS into it too, so the held
+       value vanished for hours (a value saved at 07:19 drew nothing until the
+       next valid point at 12:04). A bridge point repeats the held value at
+       the excluded run's time, so the step ends there and the gap covers the
+       excluded interval only. Only points the server lists as excluded are
+       bridged: any other null keeps its old meaning. */
+    function _bridgePts(s) {
+        var ex = s.excluded || [];
+        if (!ex.length) return s.points;
+        var exKey = {};
+        ex.forEach(function (r) { if (r && r[0] != null) exKey[String(r[0])] = 1; });
+        var out = [], prev = null;
+        s.points.forEach(function (p) {
+            var y = p[1];
+            if ((y === null || y === undefined) && prev !== null && exKey[String(p[0])]) {
+                var b = [p[0], prev];
+                b.bridge = true;
+                out.push(b);
+            }
+            out.push(p);
+            prev = (typeof y === 'number' && isFinite(y)) ? y : null;
+        });
+        return out;
+    }
+    // P3: every value of the line was excluded (and nothing else of it drawn)
+    function _allExcluded(s) {
+        if (!s.excluded || !s.excluded.length) return false;
+        if (s.left_out && s.left_out.length) return false;
+        if (typeof s.now === 'number' && isFinite(s.now)) return false;
+        return !s.points.some(function (p) { return typeof p[1] === 'number' && isFinite(p[1]); });
+    }
+    /* F13: how many rows a horizontal legend of these names takes in a
+       figure this wide (Plotly's item: a 40 px swatch + ~7 px per character
+       at the 12 px legend font). An unknown width (0) is one row. */
+    var LEGEND_ROW_PX = 19, LEGEND_FREE_ROWS = 2;
+    function _legendRows(names, width, title) {
+        if (!width || !names.length) return names.length ? 1 : 0;
+        var avail = Math.max(120, width - 24);
+        var rows = 1, used = title ? (String(title).length + 2) * 7 : 0;
+        names.forEach(function (n) {
+            var w = 40 + 7 * String(n == null ? '' : n).length;
+            if (used > 0 && used + w > avail) { rows++; used = 0; }
+            used += w;
+        });
+        return rows;
+    }
     // F7: past this many lines a chart starts its unchanged ones hidden
     var FLAT_HIDE_MIN = 8;
     var NOW_NOTE = 'current value differs from the newest recorded run value';
@@ -8339,7 +8427,7 @@ window.ChipTrends = (function () {
             return a && a.xref === 'paper' && a.xanchor === 'left' && a.yanchor === 'bottom';
         });
         var lx = { xaxis: {}, annotations: _markNotes(marks || []).concat(own) };
-        _applyWindow(lx, series, cWin);
+        _applyWindow(lx, series, cWin, marks);
         var upd = { 'xaxis.range': lx.xaxis.range, 'xaxis.autorange': false,
                     annotations: lx.annotations };
         var initial = function () {
@@ -8569,17 +8657,26 @@ window.ChipTrends = (function () {
             var _shortName = function (e) {
                 return _pfx ? String(e).slice(_pfx.length + 3) : e;
             };
+            // P3: a line whose every value was excluded draws nothing; it
+            // leaves the legend (a bold name with no line read as a bug) and
+            // the chart key names it instead
+            var _allExcl = c.series.map(_allExcluded);
+            var _allExclNames = c.series.filter(function (s7, i7) { return _allExcl[i7]; })
+                .map(function (s7) { return _shortName(s7.entity); });
             var traces = c.series.map(function (s, si) {
                 var held = (s.held && Object.keys(s.held).length) ? s.held : null;
+                // N1: the drawn points, a held value carried up to an excluded run
+                var pts = _bridgePts(s);
+                var bridged = pts.length !== s.points.length;
                 var tr = {
-                    x: s.points.map(function (p) {
+                    x: pts.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
-                    y: s.points.map(function (p) { return _scaled(p[1], cScale); }),
+                    y: pts.map(function (p) { return _scaled(p[1], cScale); }),
                     // docs/301 F10: the value as the hover says it, with its unit
-                    text: s.points.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit, cDigits); }),
+                    text: pts.map(function (p) { return _hoverValue(_scaled(p[1], cScale), c.unit, cDigits); }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
-                    customdata: s.points.map(function (p) { return p[0]; }),
+                    customdata: pts.map(function (p) { return p[0]; }),
                     mode: (longest > 120 && !held) ? 'lines' : 'lines+markers',
                     type: dense ? 'scattergl' : 'scatter', name: _shortName(s.entity),
                     // docs/301 (F8): a stored value HOLDS until the next change --
@@ -8593,20 +8690,27 @@ window.ChipTrends = (function () {
                     // the local time on the line above it
                     hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}<extra></extra>',
                 };
-                if (held) {
+                if (held || bridged) {
                     // A HELD point is the last value carried to the newest
                     // snapshot (docs/208): hollow, and on a dense line the
                     // only marker drawn, so it never reads as a measurement.
+                    // A bridge point (N1) only ends the held step: no mark.
                     tr.marker = {
-                        size: s.points.map(function (p) {
-                            return held[p[0]] ? 7 : (longest > 120 ? 0 : 5); }),
-                        symbol: s.points.map(function (p) {
-                            return held[p[0]] ? 'circle-open' : 'circle'; }),
+                        size: pts.map(function (p) {
+                            if (p.bridge) return 0;
+                            return (held && held[p[0]]) ? 7 : (longest > 120 ? 0 : 5); }),
+                        symbol: pts.map(function (p) {
+                            return (held && held[p[0]] && !p.bridge) ? 'circle-open' : 'circle'; }),
                     };
                 }
                 // [snapshot id, provenance line, click hint] — joined in
                 // BROWSER memory, so the wire still carries 2-tuples.
-                tr.customdata = s.points.map(function (p) {
+                tr.customdata = pts.map(function (p) {
+                    if (p.bridge) {
+                        // not a measurement: the value held until the run
+                        // whose value was left out of the line
+                        return ['', 'held until the next run (its value is excluded)', '', null];
+                    }
                     if (held && held[p[0]]) {
                         // Not a measurement: no snapshot id (a click does
                         // nothing), no run, and the time it was last SET.
@@ -8636,6 +8740,7 @@ window.ChipTrends = (function () {
                 // entity: one legend entry toggles them together, one colour
                 tr.legendgroup = 'ent:' + s.entity;
                 if (_hideFlat && _hideFlat[si]) tr.visible = 'legendonly';
+                if (_allExcl[si]) tr.showlegend = false;
                 var col = colorway ? colorway[si % colorway.length] : undefined;
                 if (col) {
                     tr.line.color = col;
@@ -8841,6 +8946,9 @@ window.ChipTrends = (function () {
                 keyLines.push('\u00d7 excluded: outside the physical range or from a run marked invalid (not in the axis range)');
             }
             if (commonSub) keyLines.push('every point: ' + _esc(commonSub));
+            if (_allExclNames.length) {
+                keyLines.push('no line (every value excluded): ' + _allExclNames.map(_esc).join(', '));
+            }
             if (_nHidden) {
                 keyLines.push(_nHidden + ' unchanged line' + (_nHidden === 1 ? '' : 's')
                     + ' hidden \u2014 click a name in the legend to show it');
@@ -8880,7 +8988,15 @@ window.ChipTrends = (function () {
                 layout.annotations = _markNotes(marks).concat(layout.annotations || []);
             }
             if (_pfx) layout.legend.title = { text: _esc(_pfx) + ':', side: 'left' };
-            _applyWindow(layout, c.series, cWin);
+            // F13: at a narrow width the horizontal legend wraps into many
+            // rows; the figure grows by them so the plot keeps its height
+            var _legRows = _legendRows(traces.filter(function (t) {
+                return t.showlegend !== false; }).map(function (t) { return t.name; }),
+                host.clientWidth || 0, _pfx);
+            if (_legRows > LEGEND_FREE_ROWS) {
+                layout.height += (_legRows - LEGEND_FREE_ROWS) * LEGEND_ROW_PX;
+            }
+            _applyWindow(layout, c.series, cWin, marks);
             _nowAtEdge(traces, cWin);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
@@ -8919,6 +9035,7 @@ window.ChipTrends = (function () {
     return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
              setShowExcluded: setShowExcluded,
+             _viewWindow: _viewWindow, _legendRows: _legendRows,
              storedQuery: storedQuery, hold: hold, busy: busy };
 })();
 

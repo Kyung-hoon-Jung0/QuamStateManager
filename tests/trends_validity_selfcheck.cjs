@@ -104,4 +104,72 @@ ok(left + 300 <= w.innerWidth - 8, 'F5: the tooltip fits left of the pointer: le
 const css = fs.readFileSync(path.join(STATIC, 'ui-kit.css'), 'utf8');
 ok(/\.ui-trends-cotip\s*\{[^}]*width:\s*max-content/.test(css), 'F5: the tooltip takes its content width, never a squeezed column');
 
+// ---- recheck round (N1, P3, F13) ----
+// N1: an excluded point ends the held step AT its own time; the gap covers
+// the excluded interval only. qD3 holds 96.35 % from 07:19; the next runs
+// (11:55, 11:58) are excluded; the next valid value is at 12:04.
+const K = (h, m) => '20261113_' + h + m + '00';
+const n1 = [{metric: 'm', kind: 'qubit', label: 'GE', unit: '', scale: 1, series: [
+    {entity: 'qD3', points: [[K('07', '19'), .9635], [K('11', '55'), null], [K('11', '58'), null], [K('12', '04'), .9601]],
+     excluded: [[K('11', '55'), 2.0, 'invalid'], [K('11', '58'), 2.0, 'invalid']]},
+    {entity: 'qD1', points: [[K('07', '19'), .8915], [K('12', '04'), .89]]},
+]}];
+w.localStorage.setItem('quam_trends_show_excluded', '0');
+w.ChipTrends.render(JSON.parse(JSON.stringify(n1)));
+d = s.draws.pop();
+let t0 = d.data[0];
+const at1155 = t0.x.map((x, i) => [x, t0.y[i]]).filter(p => String(p[0]).indexOf('11:55') >= 0);
+ok(at1155.length === 2 && at1155[0][1] === .9635 && at1155[1][1] === null,
+   'N1: the held 96.35 % runs up to the excluded run, then the gap: ' + JSON.stringify(at1155));
+ok(t0.marker && t0.marker.size[t0.x.indexOf(at1155[0][0])] === 0, 'N1: the bridge point carries no marker');
+ok(/held until/.test(t0.customdata[1][1]), 'N1: its hover says it is the held value: ' + t0.customdata[1][1]);
+ok(t0.y.filter(v => v === null).length === 2, 'N1: the excluded interval itself stays a gap');
+// a line with no excluded point is drawn exactly as before
+ok(JSON.stringify(d.data[1].y) === JSON.stringify([.8915, .89]) && d.data[1].marker.size === 5,
+   'N1: an all-valid line is unchanged');
+
+// P3: a line whose every value is excluded leaves the legend; the key names it
+const p3 = [{metric: 'm', kind: 'qubit', label: 'F', unit: '', scale: 1, series: [
+    {entity: 'qB1', points: [[T(0), null], [T(1), null]], excluded: [[T(0), 0, 'unphysical'], [T(1), 0, 'unphysical']]},
+    {entity: 'qB2', points: [[T(0), .99], [T(1), .98]]},
+]}];
+w.ChipTrends.render(JSON.parse(JSON.stringify(p3)));
+d = s.draws.pop();
+ok(d.data[0].showlegend === false && d.data[1].showlegend !== false, 'P3: the all-excluded line is not in the legend');
+ok(/no line \(every value excluded\): qB1/.test((d.layout.annotations || []).map(a => a.text).join(' ')),
+   'P3: the chart key names it');
+
+// F13: at a narrow width a long legend grows the figure, a wide one does not
+const RW = w.ChipTrends._legendRows;
+const names15 = Array.from({length: 15}, (_, i) => 'q' + String.fromCharCode(65 + (i % 4)) + (i + 1));
+ok(RW(names15, 360) > 2 && RW(names15, 1600) === 1 && RW(names15, 0) === 1,
+   'F13: legend rows by width: ' + [RW(names15, 360), RW(names15, 1600)]);
+Object.defineProperty(w.HTMLElement.prototype, 'clientWidth', {configurable: true,
+    get() { return this.classList && this.classList.contains('topo-trend-chart') ? (w.__cw || 0) : 0; }});
+const many15 = [{metric: 'm', kind: 'qubit', label: 'T1', unit: '', scale: 1, series:
+    names15.map((nm, i) => ({entity: nm, points: [[T(0), 1 + i], [T(2), 2 + i]]}))}];
+w.__cw = 360; w.ChipTrends.render(JSON.parse(JSON.stringify(many15)));
+const hNarrow = s.draws.pop().layout.height;
+w.__cw = 1600; w.ChipTrends.render(JSON.parse(JSON.stringify(many15)));
+const hWide = s.draws.pop().layout.height;
+ok(hWide === 300 && hNarrow > 300, 'F13: the narrow figure grows by its legend rows: ' + hNarrow + ' vs ' + hWide);
+
+// F13: a page opened on ?view= holds its jump past the 8 s window until the
+// reader moves (or the 60 s cap); a click jump keeps the 8 s window
+const J = w.ChipStatus.jumpGuard;
+const realNow = w.Date.now;
+let clock = 1e12; w.Date.now = () => clock;
+J.note('trends', null); J.deepen(); clock += 20000;
+ok(J.current() === 'trends', 'F13: a deep-link jump is still live 20 s on');
+clock += 45000;
+ok(J.current() === null, 'F13: ...never past the 60 s cap');
+J.note('trends', null); clock += 20000;
+ok(J.current() === null, 'F13: a plain jump keeps its 8 s window');
+J.note('trends', null); J.deepen(); J.cancel();
+ok(J.current() === null, 'F13: the reader moving ends a deep-link jump');
+w.Date.now = realNow;
+const src = fs.readFileSync(path.join(STATIC, 'chip-status.js'), 'utf8');
+ok(/setChipStatusView\(_deepView, null, true\);\s*window\.ChipStatus\.jumpGuard\.deepen\(\);/.test(src),
+   'F13: the mount deepens the ?view= jump');
+
 process.exit(fails ? 1 : 0);

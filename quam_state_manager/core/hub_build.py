@@ -75,8 +75,18 @@ def read_node(folder: Path) -> tuple[dict, str | None]:
     slim = {"created_at": node.get("created_at"), "metadata": {
         k: meta.get(k) for k in ("run_start", "run_end", "status", "name")},
         "parents": node.get("parents", []), "patches": node.get("patches", []),
+        # the node's own record of the changes it accepted (a write proof,
+        # ``_proven``): only the key and the new value are kept
+        "state_changes": _slim_state_changes(node.get("state_changes")),
         "targets": {k: model[k] for k in ("qubits", "qubit_pairs", "pairs", "cz_macro_name") if k in model}}
     return slim, error
+
+
+def _slim_state_changes(sc: Any) -> dict:
+    recorded = sc.get("changes") if isinstance(sc, dict) else None
+    return {"changes": [{"key": c["key"], "new": c["new"]}
+                        for c in (recorded if isinstance(recorded, list) else ())
+                        if isinstance(c, dict) and "key" in c and "new" in c]}
 
 
 def run_of(folder: Path) -> Run | None:
@@ -152,25 +162,43 @@ def read_doc(folder: Path) -> dict:
     return rules.merged(state, wiring)
 
 
-def _proven(node: dict, changes: list[rules.Change], flat: dict) -> set[str]:
-    """Only an explicit leaf patch with exactly the saved new value proves it."""
-    proven = set()
+def _recorded_writes(node: dict):
+    """``(pointer, value)`` for every write the run's node.json RECORDS: a
+    leaf patch (``patches``: ``{"op", "path", "value"}``) and an accepted
+    state change (``state_changes.changes``: ``{"key": "#/...", "new"}``).
+    Both are the node's own record of what it wrote; neither is a value
+    match. ``state_updates.json`` (proposals) is never read."""
     patches = node.get("patches")
-    if not isinstance(patches, list):
-        return proven
-    by_parts = {tuple(segments(c.path)): c.path for c in changes if c.op != "gone"}
-    for patch in patches:
+    for patch in patches if isinstance(patches, list) else ():
         if not isinstance(patch, dict) or patch.get("op") not in ("add", "replace"):
             continue
         raw = patch.get("path")
-        if not isinstance(raw, str) or not raw.startswith("/") or "value" not in patch:
+        if isinstance(raw, str) and raw.startswith("/") and "value" in patch:
+            yield raw, patch["value"]
+    sc = node.get("state_changes")
+    recorded = sc.get("changes") if isinstance(sc, dict) else None
+    for ch in recorded if isinstance(recorded, list) else ():
+        if not isinstance(ch, dict) or "new" not in ch:
             continue
+        raw = ch.get("key")
+        if isinstance(raw, str) and raw.startswith("#/"):
+            yield raw[1:], ch["new"]
+
+
+def _proven(node: dict, changes: list[rules.Change], flat: dict) -> set[str]:
+    """Only a write the node records (a leaf patch or an accepted state
+    change) with exactly the saved new value proves it."""
+    proven = set()
+    by_parts = {tuple(segments(c.path)): c.path for c in changes if c.op != "gone"}
+    if not by_parts:
+        return proven
+    for raw, value in _recorded_writes(node):
         parts = [p.replace("~1", "/").replace("~0", "~") for p in raw.split("/")[1:]]
         if parts and parts[0] == "quam":
             parts.pop(0)
         path = by_parts.get(tuple(parts))
         if path is not None:
-            proposed = patch["value"]
+            proposed = value
             if isinstance(flat[path], dict):
                 proposed = rules.flatten(proposed).get("")
             if rules.same(proposed, flat[path]):

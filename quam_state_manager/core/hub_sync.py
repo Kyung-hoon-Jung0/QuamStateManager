@@ -56,6 +56,7 @@ from quam_state_manager.core.hub_store import (
     _NEW,
     CHIP_UNCERTAIN,
     NODE_UNREADABLE,
+    PROOF_RULE,
     OPS,
     OVERLAPS_SM_WRITE,
     REVERTS_TO_EARLIER,
@@ -609,6 +610,12 @@ class ChipSync:
                         if store.meta("chip_identity") != want:
                             hub_build.reseed(store, self.identity)
                 self.seed_checked = (lid, want)
+        if store.meta("proof_rule") != PROOF_RULE:
+            # a ledger proved under an older rule (state_changes did not count
+            # as a recorded write): every run is proved again, once per file
+            with txn(store):
+                if store.meta("proof_rule") != PROOF_RULE:
+                    reprove_all(store)
         for rs in list(self.roots.values()):
             if rs.root_id is None:
                 self._register(store, rs)
@@ -1944,6 +1951,30 @@ def _reprove(store, ev, node: dict) -> None:
     proven = hub_build._proven(node, rows, store.flat_of(ev))
     store.conn.executemany("UPDATE changes SET proven=? WHERE eid=? AND pid=(SELECT pid FROM paths WHERE path=?)",
                            [(int(r.path in proven), ev["eid"], r.path) for r in rows])
+
+
+def reprove_all(store) -> int:
+    """Prove every run event's rows again from its folder's node.json under
+    the current :data:`hub_store.PROOF_RULE` and record that rule. A folder
+    that is gone or unreadable keeps its old proofs. Returns the runs read.
+    The caller holds the write transaction."""
+    n = 0
+    rows = store.conn.execute(
+        "SELECT * FROM events WHERE kind='run' AND state_ref IS NOT NULL AND n_changes > 0").fetchall()
+    for ev in rows:
+        folder = Path(ev["state_ref"] or "")
+        try:
+            if not folder.is_dir():
+                continue
+        except OSError:
+            continue
+        node, err = hub_build.read_node(folder)
+        if err is not None:
+            continue
+        _reprove(store, ev, node)
+        n += 1
+    store.set_meta("proof_rule", PROOF_RULE)
+    return n
 
 
 def _update_run_meta(store, ev, cand: Cand, hint) -> None:

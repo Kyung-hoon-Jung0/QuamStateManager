@@ -125,3 +125,34 @@ class TestInvalidTagStore:
         ds._tags_lock = threading.Lock()
         ds._tags_data = {"tags": {"3": [INVALID_TAG], "4": ["x"], "9": ["x", INVALID_TAG]}}
         assert ds.runs_with_tag(INVALID_TAG) == [3, 9]
+
+
+class TestInvalidElsewhere:
+    """N4: a tag matches a point by dataset uid (folder key + run id). Tags in
+    a folder no drawn point comes from are named, never matched by number."""
+
+    def _charts(self, uid):
+        return [{"series": [{"attr": {"k1": {"saved_uid": uid}}}]}]
+
+    def test_tags_in_another_folder_are_named(self):
+        note = routes._trend_invalid_elsewhere_note(self._charts("orig:7"),
+                                                    frozenset({"copy:7", "copy:9"}))
+        assert note.startswith("2 runs tagged")
+        assert "do not come from" in note
+
+    def test_tags_in_the_charts_folder_say_nothing(self):
+        assert routes._trend_invalid_elsewhere_note(self._charts("orig:7"),
+                                                    frozenset({"orig:7", "orig:3"})) == ""
+
+    def test_never_excluded_by_run_number_alone(self):
+        ser = {"points": [("a", 0.95)], "attr": {"a": {"saved_uid": "orig:7"}}}
+        routes._trend_exclude(ser, "macros.cz.fidelity.IRB", "pair", frozenset({"copy:7"}))
+        assert "excluded" not in ser and ser["points"] == [("a", 0.95)]
+
+    def test_the_route_shows_the_note(self, tmp_path, monkeypatch):
+        c = _hot_cold_chip(tmp_path, "else", {"macros.cz.fidelity.IRB": .93}, {}, steps=2)
+        monkeypatch.setattr(routes, "_trend_point_run_uid", lambda info: "orig:1")
+        monkeypatch.setattr(routes, "_invalid_run_uids", lambda: frozenset({"copy:1"}))
+        body = c.get("/topology/trends?metrics=&paths=" + IRB).get_data(as_text=True)
+        assert "data-trends-invalid-elsewhere" in body
+        assert _chart(body, "macros.cz.fidelity.IRB")["n_excluded"] == 0

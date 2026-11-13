@@ -98,6 +98,11 @@
     </label>
     {% endif %}
 
+    {% if invalid_note %}
+    {# N4: tags on runs of a data folder no drawn point comes from match nothing. #}
+    <p class="ui-note" data-trends-invalid-elsewhere>{{ invalid_note }}</p>
+    {% endif %}
+
     {% if trim_note %}
     {# Never a silent trim: a cap that quietly drops families is
        indistinguishable from a badge that does not work. #}
