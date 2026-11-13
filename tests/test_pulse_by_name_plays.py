@@ -328,3 +328,32 @@ class TestTheDiagnosticsFinding:
 
     def test_a_chip_whose_slots_resolve_has_none(self):
         assert self._found(_state()) == []
+
+
+class TestTheRowCountFollowsTheChannel:
+    """A pair field that moves the slot to another channel (moving_qubit and
+    friends) is a value write too, and the by-name count must follow it."""
+
+    def _pi(self, client):
+        ctx = next(iter(client._app.config["contexts"].values()))
+        from quam_state_manager.core.pulse_index import PulseIndex
+        pi = ctx.get("pulse_index") or PulseIndex(ctx["store"])
+        ctx["pulse_index"] = pi
+        return ctx, pi
+
+    def test_a_moving_qubit_edit_moves_the_count(self, client):
+        ctx, pi = self._pi(client)
+        q2 = "qubits.q2.z.operations.cz_flat_q2"
+        assert pi.row(OP)["used_by"] == [f"{HOLDER} ({BY_NAME_LABEL})"]
+        assert pi.row(q2)["used_by"] == []
+        ctx["modifier"].set_value("qubit_pairs.q1-q2.moving_qubit", "target")
+        assert pi.row(OP)["used_by"] == []
+        assert pi.row(q2)["used_by"] == [f"{HOLDER} ({BY_NAME_LABEL})"]
+
+    def test_the_channel_fields_are_holders(self):
+        from quam_state_manager.core.pulse_index import is_by_name_holder
+        for p in ("qubit_pairs.q1-q2.moving_qubit", "qubit_pairs.q1-q2.qubit_control",
+                  "qubit_pairs.q1-q2.coupler",
+                  "qubit_pairs.q1-q2.macros.cz_flat.spectator_qubits.q3"):
+            assert is_by_name_holder(p), p
+        assert not is_by_name_holder("qubit_pairs.q1-q2.extras.note")

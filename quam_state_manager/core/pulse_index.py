@@ -219,18 +219,29 @@ def _add_by_name_referrers(merged: dict, op_referrers: dict[str, list[str]]) -> 
 
 def is_by_name_holder(path: str) -> bool:
     """Could a write at *path* change which op a pair-gate slot plays by
-    name? A slot's own value (a plain name), a slot pulse's ``id``, or a
-    spectator entry / its ``id``. Other gate fields (phase shifts, extras)
-    are not."""
+    name? A slot's own value (a plain name), a slot pulse's ``id``, a
+    spectator entry / its ``id``, or a pair field that decides which channel
+    the slots play on (``moving_qubit``, ``qubit_control``, ``qubit_target``,
+    ``coupler``, a macro's ``spectator_qubits``). Other gate fields (phase
+    shifts, extras) are not."""
     segs = path.split(".") if isinstance(path, str) else []
+    if len(segs) >= 3 and segs[0] == "qubit_pairs" and segs[2] in _BY_NAME_HOSTS:
+        return True          # which channel the slots play on (or a whole pair)
+    if len(segs) == 2 and segs[0] == "qubit_pairs":
+        return True
     if len(segs) < 5 or segs[0] != "qubit_pairs" or segs[2] != "macros":
         return False
+    if segs[4] == "spectator_qubits":
+        return True          # which qubit a spectator entry plays on
     if segs[4] == "spectator_qubits_control":
         return len(segs) == 6 or (len(segs) == 7 and segs[6] == "id")
     if len(segs) == 5:
         return segs[4] not in ("id", "__class__") and segs[4] in _BY_NAME_SLOTS
     return len(segs) == 6 and segs[5] == "id"
 
+
+#: pair fields that decide on which channel a slot plays its name
+_BY_NAME_HOSTS = ("moving_qubit", "qubit_control", "qubit_target", "coupler")
 
 #: slot names whose plain string value is an op name a gate plays
 _BY_NAME_SLOTS = GATE_SLOTS + ("flux_pulse_high", "flux_pulse_low")
