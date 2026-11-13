@@ -1059,6 +1059,13 @@ def operations(doc, conversions=None, unavailable=None):
                 if all(s is not None for s in samples):
                     duration_ns = max(map(len, samples))
                     duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
+            if raw_duration is None and duration_ns is None:
+                # a sample-array pulse states its own length: samples x sample period
+                lens = [ln["waveform_length_ns"] for ln in lines
+                        if ln.get("moves") and ln.get("waveform_length_ns") is not None]
+                if lens:
+                    duration_ns = max(lens)
+                    duration_note = f"{duration_ns:g} ns from the stored waveform samples"
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
@@ -1366,11 +1373,21 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                 validity = ("quad-term extrapolated estimate" if point.get("quad_kind") == "quad-term extrapolated estimate"
                             else point["validity"])
         path = read(doc, ln["amplitude_path"]).get("holder_path")
+        stage_refusal = None
         if not path or number(current(doc, path)) is None:
-            raise ValueError("pulse amplitude cannot be resolved")
+            if not ln.get("amplitude_source"):
+                raise ValueError("pulse amplitude cannot be resolved")
+            # a sample-array pulse has no amplitude field: the required amplitude
+            # needs only f_01, alpha and the conversion, so it is still answered;
+            # only the write has nowhere to go
+            path = None
+            stage_refusal = ("this pulse stores samples, not an amplitude: "
+                             "rescale its waveform to stage the required peak")
         port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
         bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
-        peak = pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+        # the samples' own peak IS the played amplitude, so its ratio is 1
+        peak = (pulse_peak(doc, path, (ln.get("played_pulse_path") or ln["pulse_path"]) + ".amplitude")["ratio"]
+                if path else 1.0)
         if bound is not None and peak is not None and abs(amplitude * peak) > bound:
             mode = "amplified" if "amplified" in label else "direct"
             raise ValueError(f"{amplitude:g} V exceeds the {mode} LF output range (±{bound:g} V)")
@@ -1384,7 +1401,8 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        preview.update(amp_text=f"{amplitude:g} V (stored amplitude)", amp_title=path)
+        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if stage_refusal else 'stored amplitude'})",
+                       amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,
                 "line": ln["role"], "target_detuning_hz": target_detuning,
@@ -1392,7 +1410,8 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                 "distances": resonances(*frequencies, ac, at), "validity": validity,
                 "quad_v": quad_v, "model_v": model_v,
                 "rel_diff": abs(quad_v - model_v) / abs(model_v) if quad_v is not None and model_v else None,
-                "notes": notes, "path": path}
+                "notes": notes + ([stage_refusal] if stage_refusal else []), "path": path,
+                "stage_refusal": stage_refusal}
     except ValueError as exc:
         result = {"ok": False, "reason": str(exc), "notes": notes,
                   "tier": locals().get("selected", tier)}

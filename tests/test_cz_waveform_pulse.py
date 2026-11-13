@@ -205,3 +205,39 @@ class TestInspector:
         assert _row(sec, "cz_square_pulse_class") == "SquarePulse"
         amp = _row(sec, "cz_square_amplitude")
         assert 'name="value"' in amp and 'value="0.1"' in amp
+
+
+def _real_shaped(pulse):
+    """The measured pair's shape: the mover ~5.59 GHz, alpha -211 MHz, the partner 5.07 GHz,
+    so node 30 has an answer to give."""
+    doc = _plan_state(pulse)
+    q1, q2 = doc["qubits"]["q1"], doc["qubits"]["q2"]
+    q1.update(f_01=5.5926e9, anharmonicity=211.4e6, freq_vs_flux_01_quad_term=-8.943e9)
+    q2.update(f_01=5.0727e9, anharmonicity=217.7e6, freq_vs_flux_01_quad_term=-9.26e9)
+    return doc
+
+
+class TestSolveAndDuration:
+    """The required amplitude needs only f_01, alpha and the conversion, so a
+    sample-array macro is answered; only the write has nowhere to go. Its
+    duration is the samples' own length."""
+
+    def test_the_required_amplitude_is_answered_and_the_stage_refused(self):
+        doc = _real_shaped(WAVE)
+        rows, conv = C.operations(doc)
+        s = C.solve(doc, "q1-q2", rows[0]["path"], rows=rows, conversions=conv)
+        assert s["ok"] and s["amplitude_v"] is not None
+        assert "unknown" not in s["summary"] and "cannot be resolved" not in s["summary"]
+        assert s["path"] is None and "rescale its waveform" in s["stage_refusal"]
+
+    def test_a_square_pulse_still_stages_to_its_amplitude(self):
+        doc = _real_shaped({"amplitude": 0.19, "length": 40,
+                            "__class__": "quam.components.pulses.SquarePulse"})
+        rows, conv = C.operations(doc)
+        s = C.solve(doc, "q1-q2", rows[0]["path"], rows=rows, conversions=conv)
+        assert s["ok"] and s["path"] and s["stage_refusal"] is None
+
+    def test_the_duration_is_the_samples_length(self):
+        rows, _ = C.operations(_plan_state(WAVE))
+        assert rows[0]["duration_ns"] == 92
+        assert "waveform samples" in rows[0]["duration_note"]

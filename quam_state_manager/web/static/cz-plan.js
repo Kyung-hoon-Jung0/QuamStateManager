@@ -113,7 +113,8 @@
                 el.querySelector('.czp-solve-result').textContent = d.ok ? fmtV(d.amplitude_v) + ' → ' + fmtGHz(d.frequency_hz) + ' · ' + (d.validity || '') +
                     (d.rel_diff == null ? '' : ' · quad ' + fmtV(d.quad_v) + ', model ' + fmtV(d.model_v) + ', relative difference ' + d.rel_diff) : d.reason;
                 el.querySelector('.czp-solve-notes').textContent = (d.notes || []).join('; ');
-                button.disabled = !d.ok;
+                button.disabled = !d.ok || !d.path;
+                button.title = d.stage_refusal || '';
                 var point = operatingPoint(root, row.path, params.get('line'));
                 if (point) { point.solve = d; savePoints(root); }
                 if (d.ok && d.operating_point) {
