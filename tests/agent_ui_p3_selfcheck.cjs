@@ -65,7 +65,17 @@ function feed() {
       runs: [
         { key: 'rk-cancel', status: 'ended', node: 'n_cancel', targets: ['q1'], since: 20, params: PARAMS, result: { status: 'cancelled', writes: runWrites } },
         { key: 'rk-done', status: 'done', node: 'n', targets: ['q1'], since: 21, result: { status: 'done' } },
-        { key: 'rk-live', status: 'running', node: 'n', targets: ['q1'], since: 22, result: {} }],
+        { key: 'rk-live', status: 'running', node: 'n', targets: ['q1'], since: 22, result: {} },
+        // gl-ck9: three runs whose writes were held; the server sends the approval as it stands NOW
+        { key: 'rk-held-pending', status: 'ended', node: 'n', targets: ['q1'], since: 23,
+          result: { status: 'done', applied: false, approval: { id: 'ap-p' }, writes: runWrites.slice(0, 2) },
+          approval_state: { id: 'ap-p', status: 'pending', n_writes: 2 } },
+        { key: 'rk-held-rejected', status: 'ended', node: 'n', targets: ['q1'], since: 24,
+          result: { status: 'done', applied: false, approval: { id: 'ap-r' }, writes: runWrites.slice(0, 2) },
+          approval_state: { id: 'ap-r', status: 'rejected', decided_by: 'human:user-a', n_writes: 2 } },
+        { key: 'rk-held-approved', status: 'ended', node: 'n', targets: ['q1'], since: 25,
+          result: { status: 'done', applied: false, approval: { id: 'ap-a' }, writes: runWrites.slice(0, 2) },
+          approval_state: { id: 'ap-a', status: 'approved', decided_by: 'human:user-a', n_writes: 1 } }],
       approvals: [{ id: 'ap1', kind: 'writes', node: 'n_cancel', targets: ['q1'], created: 30, why_held: 'mode ask-writes', params: PARAMS, writes: apWrites }]
     }
   };
@@ -174,6 +184,12 @@ const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
   const sent = A.calls.find(c => /ap1\/approve$/.test(c.url));
   const sw = sent && JSON.parse(sent.opts.body).writes;
   pin('c24-write-sends-the-raw-value-it-showed', sw && sw[0].new === 0.00005 && sw[1].new === 6.25001e9 && sw[2].new === 0.373876, JSON.stringify(sw));
+
+  // ------------------------------------------------------------ gl-ck9
+  const held = k => txt(A.card('run:' + k).querySelector('.ag-writes summary'));
+  pin('ck9-a-pending-approval-still-says-waiting', held('rk-held-pending') === '2 write(s) waiting for approval', held('rk-held-pending'));
+  pin('ck9-a-rejected-approval-says-rejected-by-whom', held('rk-held-rejected') === '2 write(s) rejected by human:user-a, not written', held('rk-held-rejected'));
+  pin('ck9-an-approved-approval-says-applied-with-its-count', held('rk-held-approved') === '1 write(s) approved by human:user-a and applied to the chip', held('rk-held-approved'));
 
   // ------------------------------------------------------------ C-23
   pin('c23-a-tab-seeds-from-the-shared-name', A.P.actorName() === 'user-a' && sessA.getItem('quam_actor_name') === 'user-a');

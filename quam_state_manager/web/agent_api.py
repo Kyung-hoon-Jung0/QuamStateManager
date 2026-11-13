@@ -2172,8 +2172,31 @@ def _run_adapter():
         chip_name=name)
 
 
+def _run_approval_state(m: dict) -> dict | None:
+    """gl-ck9: the run's held-writes approval as it stands NOW, read from the
+    live approval record (approved / rejected / expired / pending), or None.
+    The run's own result keeps the approval as it was when the run ended, so a
+    view built from that alone said "waiting" after the person had decided."""
+    res = m.get("result") or {}
+    ap = res.get("approval")
+    aid = ap.get("id") if isinstance(ap, dict) else (ap if isinstance(ap, str) else None)
+    if not aid or not m.get("chip"):
+        return None
+    try:
+        from quam_state_manager.core import approvals
+        rec = approvals.get(current_app.instance_path, m["chip"], aid)
+    except Exception:  # noqa: BLE001 -- an unreadable store says nothing, never a guess
+        return None
+    if not rec:
+        return None
+    return {"id": aid, "status": rec.get("status"), "decided_by": rec.get("decided_by"),
+            "decided_at": rec.get("decided_at"), "n_writes": len(rec.get("writes") or [])}
+
+
 def _run_view(m: dict) -> dict:
     res = m.get("result") or {}
+    ap_state = _run_approval_state(m)
+    ap_status = (ap_state or {}).get("status")
     out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
            "params": m.get("params") or {},
            "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
@@ -2184,14 +2207,30 @@ def _run_view(m: dict) -> dict:
         # docs/249: the run's own failure text says what failed and whether to retry (host
         # unreachable is not contention; contention is not a node error)
         out["how"] = res["failure"]["how"]
+    elif res.get("approval") and ap_status in ("approved", "rejected", "expired"):
+        # gl-ck9 / gl-dke: the decision as the approval record holds it, so neither the card nor
+        # the agent reading this run reports a settled approval as pending
+        who = (ap_state or {}).get("decided_by")
+        n = (ap_state or {}).get("n_writes") or 0
+        aid = (ap_state or {}).get("id")
+        if ap_status == "approved":
+            out["how"] = (f"{n} write(s) approved{' by ' + who if who else ''} and applied to the chip "
+                          f"(approval {aid})")
+        elif ap_status == "rejected":
+            out["how"] = (f"{n} write(s) rejected{' by ' + who if who else ''}; nothing was written "
+                          f"(approval {aid})")
+        else:
+            out["how"] = f"{n} write(s) expired without a decision; nothing was written (approval {aid})"
     elif res.get("approval"):
         out["how"] = f"{len(res.get('writes') or [])} write(s) wait for the human's approval ({res.get('why_held')}); " \
-                     "do not re-run this node on these targets until it is decided"
+                     "do not re-run this node on these targets until it is decided (the approvals tool " \
+                     "shows whether it has been decided since)"
     elif res.get("classification") == "unattributed":
         out["how"] = "the node finished but no run folder appeared under its name; check the log tail"
     elif res.get("apply_error"):
         out["how"] = f"applied: no ({res.get('apply_error')})"
     out["driver"] = m.get("driver")              # docs/253 (C-05): which agent asked -- in-app or terminal
+    out["approval_state"] = ap_state
     return out
 
 

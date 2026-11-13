@@ -1070,3 +1070,57 @@ def test_node_identity_write_is_held_with_approval_reason(c, inst, synth_folder,
     assert 'port identity' in json.dumps(cards)
     assert json.loads(state_path.read_text(encoding='utf-8')) == state
     assert c.get('/api/agent/chip').get_json()['pending'] == 0
+
+
+# ------------------------------------------- gl-ck9 / gl-dke: a run reads its approval NOW
+
+def _run_views(c, key):
+    """The three places a run is read: run_wait (the agent), the run list, the card feed."""
+    one = c.get(f"/api/agent/run/{key}").get_json()
+    listed = next(x for x in c.get("/api/agent/runs/agent").get_json()["runs"] if x["key"] == key)
+    fed = next(x for x in c.get("/api/agent/chat/cards?after=0").get_json()["live"]["runs"] if x["key"] == key)
+    return [one, listed, fed]
+
+
+class TestRunReadsItsApprovalNow:
+    def test_still_pending_still_says_waiting(self, c, inst, fake_run):
+        _arm(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+        for v in _run_views(c, r["key"]):
+            assert "wait for the human's approval" in v["how"], v["how"]
+            assert v["approval_state"]["status"] == "pending" and v["approval_state"]["id"] == aid, v
+
+    def test_a_rejection_shows_on_every_view_and_survives_a_reload(self, c, inst, fake_run):
+        _arm(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+        assert c.post(f"/api/agent/approvals/{aid}/reject", json={}, headers=HUMAN).get_json()["ok"]
+        for _ in range(2):                       # a second read is the page reload
+            for v in _run_views(c, r["key"]):
+                assert "wait for" not in v["how"], v["how"]
+                assert "1 write(s) rejected by human:user-a; nothing was written" in v["how"], v["how"]
+                st = v["approval_state"]
+                assert st["status"] == "rejected" and st["decided_by"] == "human:user-a" and st["n_writes"] == 1, st
+
+    def test_an_approval_shows_applied_with_its_count(self, c, inst, fake_run):
+        _arm(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+        assert c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers=HUMAN).get_json()["ok"]
+        for v in _run_views(c, r["key"]):
+            assert "1 write(s) approved by human:user-a and applied to the chip" in v["how"], v["how"]
+            assert v["approval_state"]["status"] == "approved", v
+
+    def test_a_rejection_after_the_plan_ended_is_what_the_agent_reads(self, c, inst, fake_run):
+        """gl-dke: with no armed plan nobody is told, so the agent's own view must say it."""
+        _arm(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+        assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["ok"]
+        d = c.post(f"/api/agent/approvals/{aid}/reject", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is False, d
+        v = c.get(f"/api/agent/run/{r['key']}").get_json()
+        assert "rejected" in v["how"] and "wait for" not in v["how"], v["how"]
+        ap = c.get("/api/agent/approvals").get_json()
+        assert not ap["pending"] and any(x["id"] == aid and x["status"] == "rejected" for x in ap["recent"]), ap
