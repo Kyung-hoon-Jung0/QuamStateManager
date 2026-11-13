@@ -5416,8 +5416,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 }
                 if (!data.tray_html) _banner();
                 if (expectChip) return;          // the automatic merge never opens the panel
-                // the user's own press hit a collision: answer it where the
+                // the user's own press hit a collision: say so, naming the
+                // fields (nothing was written, and the panel alone may read
+                // as "live has not changed"), then answer it where the
                 // choice lives (the panel re-reads with the fields to pick)
+                if (window.showToast) {
+                    var _cp = (data.paths || []).slice(0, 4).join(", ");
+                    window.showToast((data.message || "Nothing was applied: the live chip changed a field you also edited.")
+                                     + (_cp ? " Fields: " + _cp + ((data.count || 0) > 4 ? ", …" : "") : ""),
+                                     "warning", -1);
+                }
                 window.openReview({ force: true });
                 return;
             }
