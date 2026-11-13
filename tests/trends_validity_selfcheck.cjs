@@ -26,11 +26,11 @@ function boot() {
 }
 const T = (i) => '2026010' + (i + 1) + '_000000';
 const charts = [{metric: 'm', kind: 'pair', label: 'IRB', unit: '', scale: 1, series: [
-    {entity: 'q1-2 · cz_a', points: [[T(0), .95], [T(1), null], [T(2), .96]],
+    {entity: 'q1-2 \u00b7 cz_a', points: [[T(0), .95], [T(1), null], [T(2), .96]],
      excluded: [[T(1), 2.167, 'unphysical']],
      attr: {[T(0)]: {label: 'saved in #1', sub: 'writer not proven'},
             [T(2)]: {label: 'saved in #3', sub: 'writer not proven'}}},
-    {entity: 'q1-2 · cz_b', points: [[T(0), .94], [T(2), .97]]},
+    {entity: 'q1-2 \u00b7 cz_b', points: [[T(0), .94], [T(2), .97]]},
 ]}];
 
 // toggle off (the default): no excluded mark, the axis is the valid points'

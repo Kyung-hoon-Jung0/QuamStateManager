@@ -22407,7 +22407,7 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     if metrics_trimmed:
         _names = [_TREND_LABEL_OVERRIDES.get(m) or _trend_metric_label(m) for m in metrics_trimmed]
         metric_note = (f"At most {_TRENDS_MAX_METRICS} qubit metrics are charted at once "
-                       f"— {', '.join(_names)} {'was' if len(_names) == 1 else 'were'} "
+                       f"\u2014 {', '.join(_names)} {'was' if len(_names) == 1 else 'were'} "
                        f"not added. Deselect one to make room.")
     if series_trimmed:
         trim_note = ((trim_note + " ") if trim_note else "") + (
