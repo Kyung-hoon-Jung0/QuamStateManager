@@ -12,7 +12,7 @@ from quam_state_manager.core import scheduler
 @pytest.mark.parametrize("failure", ["PermissionError('write denied')", "ValueError('state.json is torn')"])
 def test_measured_node_reports_capture_failure(rex, tmp_path, monkeypatch, failure):
     target = tmp_path / "node.py"
-    target.write_text("class Machine:\n    def save(self):\n        raise " + failure +
+    target.write_text("class Machine:\n    def save(self, path=None):\n        raise " + failure +
                       "\nclass Node:\n    machine = Machine()\nnode = Node()\n", encoding="utf-8")
     monkeypatch.setattr(rex, "_library_versions", lambda: {})
     monkeypatch.setattr(rex, "_qualibrate_version", lambda: "test")

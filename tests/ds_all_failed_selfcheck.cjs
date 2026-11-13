@@ -11,6 +11,12 @@ const rows = [
     Object.assign({id: 3, q: ['q1', 'q2'], oc: {q1: 'failed', q2: 'failed'}}, base),
     Object.assign({id: 2, q: ['q1', 'q2'], oc: {q1: 'successful', q2: 'failed'}}, base),
     Object.assign({id: 1, q: ['q1']}, base),
+    // a partial failure whose key metric came from the failed target
+    Object.assign({id: 4, q: ['q1', 'q2'], oc: {q1: 'failed', q2: 'successful'}, mq: 'q1'}, base),
+    // a partial failure whose key metric came from a successful target
+    Object.assign({id: 5, q: ['q1', 'q2'], oc: {q1: 'successful', q2: 'failed'}, mq: 'q1'}, base),
+    // every target successful: the plain row
+    Object.assign({id: 6, q: ['q1', 'q2'], oc: {q1: 'successful', q2: 'successful'}}, base),
 ];
 const dom = new JSDOM('<body><input id="dataset-search" value="">' +
     '<script id="ds-rows-data" data-now="1">' + JSON.stringify(rows) + '</script>' +
@@ -30,6 +36,17 @@ setTimeout(() => {
     assert.ok(r3.querySelector('.ds-metric-failed'), 'its key metric is marked as a failed fit'); checks++;
     assert.ok(!r2.querySelector('.ds-all-failed') && !r2.querySelector('.ds-metric-failed'), 'a partly successful run is not marked'); checks++;
     assert.ok(!r1.querySelector('.ds-all-failed'), 'a run without outcomes is not marked'); checks++;
+    const r4 = tr(4), r5 = tr(5), r6 = tr(6);
+    assert.ok(r4 && r5 && r6, 'partial rows rendered'); checks++;
+    const st2 = r2.querySelector('[data-failed]');
+    assert.ok(st2 && st2.getAttribute('data-failed') === '1/2' && /1 of 2 failed/.test(st2.textContent),
+              'a partial failure says how many targets failed'); checks++;
+    assert.ok(r4.querySelector('.ds-metric-failed'), 'a metric read off the failed target is marked'); checks++;
+    assert.ok(!r5.querySelector('.ds-metric-failed') && r5.querySelector('[data-failed]'),
+              'a metric from a successful target stays plain, the status still counts the failure'); checks++;
+    assert.ok(!r6.querySelector('[data-failed]') && !r6.querySelector('.ds-metric-failed')
+              && !r6.querySelector('.ds-all-failed'), 'an all-successful run is unmarked'); checks++;
+    assert.ok(!r1.querySelector('[data-failed]'), 'a run without outcomes has no failure count'); checks++;
     console.log(checks + ' checks passed');
     w.close();
 }, 300);

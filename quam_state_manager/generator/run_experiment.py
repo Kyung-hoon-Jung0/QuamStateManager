@@ -909,9 +909,12 @@ def _persist_node_state(ns: dict, state_path: str, original_roots: set | None = 
 
     Here, on SM's own subprocess boundary, we make the node's PROPOSED state the
     thing on disk at QUAM_STATE_PATH: apply any recorded ``state_updates`` back
-    onto the machine (the reverted case), then ``machine.save()`` to the scratch.
-    The live chip is never touched -- state_path is always the Scheduler's
-    per-run scratch copy. Best-effort and never fatal: a run that produced no
+    onto the machine (the reverted case), then ``machine.save(state_path)``.
+    For an agent item state_path is the Scheduler's per-run scratch copy; for a
+    person's Experiment Runner item it is the chip folder in the runner
+    settings, i.e. the LIVE chip -- this save is that run's live write, and a
+    target the node marked failed is written too (the post-node hook reports
+    it and offers a revert; nothing is filtered here). Best-effort and never fatal: a run that produced no
     node object, or a machine without ``save``, just leaves the scratch as-is
     (the pre-S9 behaviour) rather than failing the whole run.
     """
@@ -935,7 +938,9 @@ def _persist_node_state(ns: dict, state_path: str, original_roots: set | None = 
                 update_machine_attribute(machine, ref, rec["new"])   # writes rec["new"] at ref
             except Exception:  # noqa: BLE001
                 _set_by_ref(machine, ref, rec["new"])
-        machine.save()
+        # never pathless: name the folder this run targets, so the save can
+        # not fall through to quam's own default (env / config) location
+        machine.save(state_path)
         # docs/174 amended: remove the class-default root keys machine.save() just
         # materialized, so the scratch (and everything SM adopts from it) matches
         # the chip's own schema and never diverges live on the next node.

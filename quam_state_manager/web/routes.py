@@ -53142,6 +53142,8 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.api_pulse_delete_together",
     "main.type_fix_apply", "main.auto_apply_revert",
     "main.state_take_live_restore", "main.chip_profile_set", "main.app_reload",
+    # a finished runner item's failed-target values put back (stages + live write)
+    "main.scheduler_revert_failed",
     # v1.5.1: a refused recovery checkpoint staged back into the tray (or set aside)
     "main.state_recovery_restore", "main.state_recovery_discard",
     "agent.undo_mine", "agent.run_node", "agent.approvals_decide", "agent.plan_start",
@@ -53712,6 +53714,72 @@ def scheduler_queue_mutate(action: str):
     return jsonify({"ok": True, "state": _sched_state()})
 
 
+@bp.route("/scheduler/item/<item_id>/revert-failed", methods=["POST"])
+def scheduler_revert_failed(item_id: str):
+    """Put back exactly the values a finished node wrote for the targets it
+    marked failed -- one person's press, through autofit's compare-and-swap
+    revert and the one live-write door. A leaf whose live value moved since
+    the run is refused and named; every other listed leaf still reverts. A
+    successful target's writes are never in the list (``failed_writes`` only
+    holds paths under a failed target)."""
+    from quam_state_manager.core.autofit.writer import ChipHandle, revert_patches
+    inst = _sched_inst()
+    item = scheduler._find(scheduler.load_queue(inst), item_id)
+    if item is None:
+        return jsonify({"ok": False, "error": "no such queue item"}), 404
+    writes = [w for w in (item.get("failed_writes") or []) if isinstance(w, dict)]
+    if not item.get("failed_targets") or not writes:
+        return jsonify({"ok": False, "error":
+                        "this item wrote no values for a failed target"}), 409
+    folder = item.get("failed_folder")
+    ctx = _find_quam_ctx_by_path(folder)
+    if ctx is None:
+        return jsonify({"ok": False, "error":
+                        f"open the chip this run wrote ({folder}) to revert its values"}), 409
+    store = ctx["store"]
+    if store.change_log:
+        return jsonify({"ok": False, "error":
+                        f"the chip has {len(store.change_log)} unapplied edit(s); apply or "
+                        "discard them first -- the revert writes the chip"}), 409
+    try:
+        _reconcile_cached_quam_ctx(ctx["path"], ctx, auto_adopt=True)
+    except (OSError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"could not read the chip: {exc}"}), 409
+    live_path = ctx.get("live_path") or ctx["path"]
+    handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],
+                        saver=ctx["saver"], wc=ctx["working_copy"],
+                        build_lock=_get_quam_build_lock(ctx["path"]),
+                        live_path=str(live_path),
+                        hub_dir=_hub_chip_dir(live_path),
+                        hub_plan=f"runner-revert:{item.get('name') or item_id}",
+                        origin=ctx.get("origin") or "live",
+                        on_live_landed=lambda: _live_write_landed(ctx))
+    patches = [{"op": w.get("op", "replace"), "path": w.get("path"),
+                "value": w.get("value"), "old": w.get("old")} for w in writes]
+    out = revert_patches(handle, patches, apply_live=True,
+                         label=f"runner:{item.get('name') or item_id}")
+    # out.paths: old = the node's value the revert replaced, new = restored
+    reverted = [{"path": p["path"], "from": p["old"], "to": p["new"]}
+                for p in (out.paths if out.ok else [])]
+    refused = list(out.conflicts or [])
+    if not out.ok and out.error and out.error not in ("nothing revertible", "CAS conflict"):
+        refused.append({"path": None, "reason": out.error})
+    parts = []
+    if reverted:
+        parts.append(f"reverted {len(reverted)}: " + ", ".join(r["path"] for r in reverted))
+    if refused:
+        parts.append(f"refused {len(refused)}: " + "; ".join(
+            f"{c.get('path') or 'all'} ({c.get('reason')})" for c in refused))
+    message = " -- ".join(parts) or "nothing to revert"
+    result = {"ok": bool(out.ok and reverted), "reverted": reverted, "refused": refused,
+              "message": message, "at": datetime.now(timezone.utc).isoformat()}
+    scheduler.set_item_failed_revert(inst, item_id, result)
+    if reverted:
+        scheduler.bump_chip_rev(inst)
+    return jsonify({"ok": result["ok"], "result": result, "message": message,
+                    "state": _sched_state()})
+
+
 @bp.route("/scheduler/presets", methods=["GET", "POST"])
 def scheduler_presets():
     """List presets (GET) or snapshot the current queue as a named preset (POST)."""
@@ -53793,6 +53861,23 @@ def _fit_results_for_ref(ref: dict) -> dict | None:
     except Exception:  # noqa: BLE001
         logger.warning("fit_results resolve failed", exc_info=True)
     return None
+
+
+def _failed_target_info(run) -> dict | None:
+    """``scheduler.failed_target_writes`` for one dataset run: its per-target
+    outcomes and the state patches its node.json recorded. None when the run
+    recorded no outcomes or no target failed."""
+    outcomes = getattr(run, "outcomes", None)
+    if not isinstance(outcomes, dict) or not any(
+            o != "successful" for o in outcomes.values()):
+        return None
+    patches = None
+    try:
+        nj = safe_io.read_json(Path(run.folder_path) / "node.json")
+        patches = nj.get("patches") if isinstance(nj, dict) else None
+    except Exception:  # noqa: BLE001 -- the failure is still reported, with no paths
+        logger.warning("node.json unreadable for failed-target note", exc_info=True)
+    return scheduler.failed_target_writes(outcomes, patches)
 
 
 def _names_match(item_name: str | None, run_name: str | None) -> bool:
@@ -53881,6 +53966,26 @@ def _scheduler_refresh_hook(app, instance_path, folder, item_id, status) -> None
                             attributed = True
             except Exception:  # noqa: BLE001
                 logger.warning("post-node dataset rescan failed", exc_info=True)
+            # --- failed targets (every finished item, rules or not) ---------
+            # A node that marks a target failed still finishes "done", and on
+            # a person's item its writes for that target already reached the
+            # chip. Never filtered or held back (the person pressed run and
+            # chooses) -- recorded, so the queue and the run say it out loud
+            # and offer a revert of exactly those values.
+            try:
+                if status == "done" and attributed:
+                    item = scheduler._find(scheduler.load_queue(instance_path), item_id)
+                    run = latest[0] if latest else None
+                    if (item is not None and not item.get("state_path")
+                            and run is not None
+                            and _names_match(item.get("name"), run.experiment_name)):
+                        info = _failed_target_info(run)
+                        if info is not None:
+                            scheduler.set_item_failed_targets(
+                                instance_path, item_id, info, folder)
+                            attributed = True  # force a UI re-render
+            except Exception:  # noqa: BLE001
+                logger.warning("failed-target record failed", exc_info=True)
             # --- outcome-aware chaining (sequence editor) -------------------
             # Runs synchronously BEFORE the worker's next _next_queued read, so
             # rule inserts land seamlessly mid-run. Fails closed on any

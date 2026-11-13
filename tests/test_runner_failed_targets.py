@@ -1,0 +1,191 @@
+"""A finished Experiment Runner node that marked targets failed is LOUD.
+
+The node's writes for a failed target already reached the chip (a person's
+item runs against the live folder, and the write is kept -- the person pressed
+run and chooses). The queue item names each failed target and what was written
+for it, and one press puts back exactly those values through the
+compare-and-swap revert, refusing a value that moved since the run.
+"""
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from quam_state_manager.core import scheduler
+from tests.state_model.repros._rig import Chip
+
+
+def _patch(q, key, old, new):
+    return {"op": "replace", "path": f"/quam/qubits/{q}/{key}", "value": new, "old": old}
+
+
+class TestFailedTargetWrites:
+    def test_all_successful_changes_nothing(self):
+        assert scheduler.failed_target_writes(
+            {"q1": "successful", "q2": "successful"},
+            [_patch("q1", "f_01", 1, 2)]) is None
+
+    def test_no_outcomes_changes_nothing(self):
+        assert scheduler.failed_target_writes({}, [_patch("q1", "f_01", 1, 2)]) is None
+        assert scheduler.failed_target_writes(None, [_patch("q1", "f_01", 1, 2)]) is None
+
+    def test_only_the_failed_targets_writes_are_listed(self):
+        info = scheduler.failed_target_writes(
+            {"q1": "failed", "q2": "successful", "q10": "successful"},
+            [_patch("q1", "f_01", 1, 2), _patch("q2", "f_01", 3, 4),
+             _patch("q10", "T1", 5, 6), _patch("q1", "T1", 7, 8)])
+        assert info["failed"] == ["q1"] and info["n_targets"] == 3
+        assert [w["dotted"] for w in info["writes"]] == ["qubits.q1.f_01", "qubits.q1.T1"]
+        note = scheduler.failed_targets_note(info)
+        assert note.startswith("1 of 3 targets failed")
+        assert "qubits.q1.f_01 (1 -> 2)" in note and "q2" not in note and "q10" not in note
+
+    def test_a_failed_target_that_wrote_nothing_says_so(self):
+        info = scheduler.failed_target_writes({"q1": "failed", "q2": "successful"},
+                                              [_patch("q2", "f_01", 3, 4)])
+        assert info["writes"] == []
+        assert "q1: wrote nothing" in scheduler.failed_targets_note(info)
+
+
+@pytest.fixture
+def chip(tmp_path):
+    return Chip(tmp_path)
+
+
+def _inst(chip):
+    from quam_state_manager.web import routes
+    with chip.app.test_request_context():
+        return routes._sched_inst()
+
+
+def _run_hook(chip, monkeypatch, tmp_path, outcomes, patches, *, item_info=None, name="05_qubit_spec"):
+    from quam_state_manager.web import routes
+    inst = _inst(chip)
+    info = {"name": name, "kind": "node"}
+    info.update(item_info or {})
+    it = scheduler.add_item(inst, info, ["q1", "q2"])
+    run_dir = tmp_path / "run7"
+    run_dir.mkdir()
+    (run_dir / "node.json").write_text(json.dumps({"patches": patches}), encoding="utf-8")
+    run = SimpleNamespace(outcomes=outcomes, folder_path=run_dir, experiment_name=name, run_id=7)
+    monkeypatch.setattr(routes, "_latest_run_info",
+                        lambda: (run, {"uid": "u7", "run_id": 7, "name": name}))
+    monkeypatch.setattr(routes, "_active_dataset_stores", lambda: [])
+    monkeypatch.setattr(routes, "_enqueue_exp_ingest", lambda *a, **k: None)
+    routes._scheduler_refresh_hook(chip.app, inst, str(chip.live), it["id"], "done")
+    return inst, scheduler._find(scheduler.load_queue(inst), it["id"])
+
+
+class TestTheHookRecordsFailedTargets:
+    def test_a_partial_failure_is_recorded_without_any_rule(self, chip, monkeypatch, tmp_path):
+        inst, item = _run_hook(chip, monkeypatch, tmp_path,
+                               {"q1": "failed", "q2": "successful"},
+                               [_patch("q1", "f_01", 5.0e9, 5.1e9), _patch("q2", "f_01", 5.2e9, 5.3e9)])
+        assert not item.get("on_outcome")
+        assert item["failed_targets"] == ["q1"] and item["n_targets"] == 2
+        assert [w["dotted"] for w in item["failed_writes"]] == ["qubits.q1.f_01"]
+        assert "qubits.q1.f_01" in item["outcome_note"] and "q2" not in item["outcome_note"]
+        assert item["failed_folder"] == str(chip.live)
+
+    def test_all_successful_leaves_the_item_as_today(self, chip, monkeypatch, tmp_path):
+        inst, item = _run_hook(chip, monkeypatch, tmp_path,
+                               {"q1": "successful", "q2": "successful"},
+                               [_patch("q1", "f_01", 1, 2)])
+        assert "failed_targets" not in item and item["outcome_note"] is None
+
+    def test_no_outcomes_leaves_the_item_as_today(self, chip, monkeypatch, tmp_path):
+        inst, item = _run_hook(chip, monkeypatch, tmp_path, {}, [_patch("q1", "f_01", 1, 2)])
+        assert "failed_targets" not in item and item["outcome_note"] is None
+
+    def test_an_agent_item_on_a_scratch_copy_is_not_flagged(self, chip, monkeypatch, tmp_path):
+        inst, item = _run_hook(chip, monkeypatch, tmp_path, {"q1": "failed"},
+                               [_patch("q1", "f_01", 1, 2)],
+                               item_info={"state_path": str(tmp_path / "scratch")})
+        assert "failed_targets" not in item
+
+
+def _record(chip, writes_for, folder=None):
+    inst = _inst(chip)
+    it = scheduler.add_item(inst, {"name": "05_qubit_spec", "kind": "node"}, ["q1", "q2"])
+    info = scheduler.failed_target_writes({"q1": "failed", "q2": "successful"}, writes_for)
+    scheduler.set_item_failed_targets(inst, it["id"], info, folder or str(chip.live))
+    return inst, it["id"]
+
+
+class TestRevertTheFailedTargets:
+    def _node_wrote(self, chip):
+        """The node's live write: q1 (failed) and q2 (successful) both moved."""
+        chip.set_live("qubits.q1.f_01", 5.11e9)
+        chip.set_live("qubits.q1.T1", 3.0e-05)
+        chip.set_live("qubits.q2.f_01", 5.33e9)
+        return [_patch("q1", "f_01", 5.01e9, 5.11e9), _patch("q1", "T1", 2.1e-05, 3.0e-05),
+                _patch("q2", "f_01", 5.13e9, 5.33e9)]
+
+    def test_only_the_failed_targets_values_come_back(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        body = r.get_json()
+        assert r.status_code == 200 and body["ok"], body
+        live = chip.live_state()["qubits"]
+        assert live["q1"]["f_01"] == 5.01e9 and live["q1"]["T1"] == 2.1e-05
+        assert live["q2"]["f_01"] == 5.33e9          # a successful target is never reverted
+        assert {x["path"] for x in body["result"]["reverted"]} == {"qubits.q1.f_01", "qubits.q1.T1"}
+        item = scheduler._find(scheduler.load_queue(inst), iid)
+        assert item["failed_revert"]["ok"] and not item["failed_revert"]["refused"]
+
+    def test_a_value_edited_since_is_refused_and_named(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)        # the person changed it after the run
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        body = r.get_json()
+        live = chip.live_state()["qubits"]
+        assert live["q1"]["T1"] == 9.9e-05            # kept
+        assert live["q1"]["f_01"] == 5.01e9           # the other leaf still reverts
+        assert [c["path"] for c in body["result"]["refused"]] == ["qubits.q1.T1"]
+        assert "qubits.q1.T1" in body["message"] and "refused" in body["message"]
+
+    def test_unapplied_edits_refuse_before_writing(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        chip.edit("qubits.q3.f_01", "5.5e9")
+        before = chip.live_state()
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        assert r.status_code == 409 and "unapplied" in r.get_json()["error"]
+        assert chip.live_state() == before
+
+    def test_nothing_written_for_a_failed_target_is_a_409(self, chip):
+        inst, iid = _record(chip, [_patch("q2", "f_01", 1, 2)])
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        assert r.status_code == 409
+
+
+def test_the_queue_row_says_it_and_offers_the_revert():
+    import os
+    import subprocess
+    from pathlib import Path
+    r = subprocess.run(["node", str(Path(__file__).with_name("runner_failed_targets_selfcheck.cjs"))],
+                       capture_output=True, text=True, encoding="utf-8", timeout=60,
+                       env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(
+                           Path(__file__).resolve().parents[1] / "node_modules")))
+    assert r.returncode == 0 and "7 checks passed" in r.stdout, r.stdout + r.stderr
+
+
+class TestCompactRowNamesTheMetricTarget:
+    def _run(self, outcomes):
+        from pathlib import Path
+        from quam_state_manager.core.dataset import RunInfo, _compact_row
+        run = RunInfo(run_id=1, experiment_name="t1", date="2026-01-01", time="01:00:00",
+                      folder_path=Path("."), outcomes=outcomes,
+                      fit_results={"q10": {"T1": 1e-5}, "q2": {"T1": 2e-5}})
+        run.key_metric = "20 us"
+        return _compact_row(run)
+
+    def test_a_failure_names_the_lowest_target(self):
+        assert self._run({"q2": "failed", "q10": "successful"})["mq"] == "q2"
+
+    def test_a_clean_run_row_is_unchanged(self):
+        assert "mq" not in self._run({"q2": "successful", "q10": "successful"})
+        assert "mq" not in self._run({})

@@ -53,8 +53,12 @@ class _Machine:
         self.extras = {"note": "x"}     # a dict LEAF, to exercise the dict branch of _set_by_ref
         self._path = path
         self.saves = 0
+        self.save_paths = []
 
-    def save(self):
+    def save(self, path=None):
+        # a real quam save with no path falls back to its own default location
+        # (env / config); SM must always name the folder it targets
+        self.save_paths.append(path)
         self.saves += 1
         self._path.write_text(json.dumps(
             {"tof": self.qubits["qA1"].resonator.time_of_flight}), encoding="utf-8")
@@ -140,6 +144,13 @@ class TestPersistNodeState:
         rex._persist_node_state({"node": _Node(m, {})}, str(tmp_path))
         assert m.saves == 1 and _tof(p) == 350
 
+    def test_the_save_names_the_folder_it_targets(self, rex, tmp_path):
+        """A person's runner item targets the live chip; the save must name
+        that folder, never fall through to quam's default location."""
+        m = _Machine(tmp_path / "state.json")
+        rex._persist_node_state({"node": _Node(m, {})}, str(tmp_path))
+        assert m.save_paths == [str(tmp_path)]
+
     def test_reverted_machine_with_a_recorded_diff(self, rex, tmp_path):
         """interactive_only=False: the machine was reverted to 372 and the diff is
         in node.state_updates -> we apply new and save."""
@@ -163,7 +174,7 @@ class TestPersistNodeState:
         """A machine whose save() throws must be swallowed -- the hardware
         measurement already happened; the capture is best-effort."""
         class Boom(_Machine):
-            def save(self):
+            def save(self, path=None):
                 raise RuntimeError("disk gone")
         rex._persist_node_state({"node": _Node(Boom(tmp_path / "x.json"), {})}, str(tmp_path))
 
