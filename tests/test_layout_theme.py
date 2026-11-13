@@ -58,9 +58,28 @@ class TestRunNameTail:
 
     def test_the_last_part_is_its_own_span(self, run_name):
         out = str(run_name("31_chevron_11_20"))
-        assert out == ('<span class="entry-name-head">31_<wbr>chevron_<wbr>11_<wbr></span>'
-                       '<span>20</span>')
+        # a last part under 4 characters widens the tail to the last two parts
+        assert out == ('<span class="entry-name-lead">31_<wbr>chevron_<wbr></span>'
+                       '<span class="entry-name-tail">11_<wbr>20</span>')
         assert re.sub(r"<[^>]+>", "", out) == "31_chevron_11_20", "textContent is the plain name"
+
+    @staticmethod
+    def _pieces(out):
+        return {c: re.sub(r"<[^>]+>", "", t) for c, t in
+                re.findall(r'<span class="entry-name-(\w+)">(.*?)</span>', out)}
+
+    def test_the_lead_keeps_the_node_number_and_first_word(self, run_name):
+        # audit recheck: 34a_cz_phase_compensation rendered as "3compensation"
+        p = self._pieces(str(run_name("34a_cz_phase_compensation")))
+        assert p == {"lead": "34a_cz_", "head": "phase_", "tail": "compensation"}
+        p = self._pieces(str(run_name("37c_two_qubit_paired_interleaved_rb_dsp")))
+        assert p == {"lead": "37c_two_", "head": "qubit_paired_interleaved_", "tail": "rb_dsp"}
+
+    def test_only_the_head_ellipsizes(self):
+        # lead and tail keep a flex item's min-width:auto (their nowrap text
+        # width), so neither may gain an overflow rule that lets it shrink
+        css = (_WEB / "static" / "style.css").read_text(encoding="utf-8")
+        assert ".entry-name-lead" not in css and ".entry-name-tail" not in css
 
     def test_no_split_without_a_short_tail(self, run_name):
         assert str(run_name("rabi")) == '<span class="entry-name-head">rabi</span>'

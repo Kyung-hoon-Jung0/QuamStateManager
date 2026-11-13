@@ -177,3 +177,17 @@ def test_every_pair_names_its_members_and_every_qubit_its_grid_location():
     assert m["pairs"]["empty"] == {"control_path": "qubits.q3", "target_path": "qubits.q10",
                                    "control": "q3", "target": "q10"}
     assert "q3-2" in m["missing"] and m["pairs"]["q3-2"]["target"] == "q2"
+
+
+def test_a_pair_member_that_dangles_is_no_column():
+    """Audit recheck: a pair whose target pointer names no qubit drew a stray
+    rotated "qubit_target" column header past the last real column."""
+    doc = chip()
+    doc["qubit_pairs"]["q3-9"] = {"qubit_control": "#/qubits/q3", "qubit_target": "#/qubits/q9",
+                                  "moving_qubit": "control",
+                                  "macros": {"cz": {"__class__": "x.CZGate",
+                                                    "flux_pulse_qubit": {"amplitude": .1, "length": 20}}}}
+    rows, convs = C.operations(doc)
+    assert any(not p.startswith("qubits.") for p in convs), "the fixture reaches the dangling holder"
+    m = C.chip_map(rows, convs)
+    assert [q["name"] for q in m["qubits"]] == ["q2", "q3", "q10"]

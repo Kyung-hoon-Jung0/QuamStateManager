@@ -667,6 +667,11 @@ def test_the_routes_answer_in_the_frozen_contract_shape(tmp_path):
         for t in body.get("trajectory") or []:
             if isinstance(t, dict):
                 t.pop("filtered", None)
+        # the recheck's wording item adds `words` (one phrase, e.g. "mover 17.3 MHz
+        # below |11>-|20>") to each nearest-resonance entry
+        for holder in [body.get("row") or {}] + list(body.get("segments") or []):
+            if isinstance(holder, dict) and isinstance(holder.get("nearest"), dict):
+                holder["nearest"].pop("words", None)
         _subset(_shape(body), _shape(frozen[name]), name)
     scan_keys = set(live["loss_rig5q"]["curves"]["q1"]["scan"])
     frozen_scan = next(e["scan"] for e in frozen["loss_rig5q"]["curves"].values() if e["scan"])

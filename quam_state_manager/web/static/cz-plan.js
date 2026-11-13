@@ -56,6 +56,10 @@
             .sort(function (a, b) { return b.summary.f01_hz - a.summary.f01_hz; })[0];
         var summary = (result.summary || result.reason || '').replace(/\(= .*? of H per node 30\)/,
             '(= \u2212anharmonicity of ' + (higher ? higher.name : 'the higher qubit') + (higher ? ', the higher qubit)' : ')'));
+        // Say each thing once (audit recheck): the badge below carries the validity, so its
+        // copy at the tail goes; the conversion clause names the tier, so "(quad)" goes.
+        if (result.validity_warning && result.validity) summary = summary.split(' | ' + result.validity).join('');
+        if (result.conversion && result.tier) summary = summary.split(' (' + result.tier + ') | ').join(' | ');
         // B: an answer outside where its conversion was measured is flagged right beside
         // the required amplitude, not only in the legend
         var cut = result.validity_warning ? summary.indexOf(' | stored ') : -1;
@@ -587,7 +591,8 @@
             el.setAttribute('data-parking', parks.join('; '));
             annotations.push({ _czpParking: true, xref: 'paper', x: 0, xanchor: 'left', yref: 'paper', y: 1, yanchor: 'bottom',
                 showarrow: false, font: { size: 11, color: C.muted },
-                text: 'V = 0 is the parking point (' + esc(parks.join('; ')) + ', not added)' });
+                // one line per qubit: a single line ran past the plot's width and was clipped
+                text: 'V = 0 is the parking point (not added):<br>' + parks.map(esc).join('<br>') });
         }
         var over = {
             margin: { l: 64, r: 142, t: 44, b: 120 }, showlegend: true,
@@ -598,6 +603,8 @@
             yaxis: { title: { text: 'frequency (GHz)' } },
             shapes: shapes, annotations: annotations, hovermode: 'closest'
         };
+        // the wrapped parking note sits in the top margin: room for its lines (14 px each)
+        if (parks.length) over.margin.t = 44 + 14 * parks.length;
         // The frequency span follows what is read here -- the main curves, the idle and operating points
         // and the resonance / plan levels; a quad-term estimate drawn beside a fitted model leaves the
         // span (it ran to ~10 GHz and flattened the operating region); the loss panel is cut to the span.
@@ -897,7 +904,7 @@
         var count = cal.warning_count != null ? cal.warning_count : (cal.warnings || []).length;
         h.push('<div class="czp-card-q ui-cz-plan-card"><strong>Operation</strong><dl>' +
             '<dt>Δ at the operation</dt><dd>' + fmtMHz(r.detuning_hz, true) + ' <small class="muted">(idle ' + fmtMHz(r.idle_detuning_hz, true) + ')</small></dd>' +
-            '<dt>Nearest resonance</dt><dd>' + (near ? esc(near.name) + ' ' + fmtMHz(near.distance_hz, true) + ' away' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '—') + '</dd>' +
+            '<dt>Nearest resonance</dt><dd>' + (near ? '<span data-near-words="1" title="' + esc(near.name + ': \u0394 ' + fmtMHz(near.distance_hz, true) + ' from the condition (\u0394 = f_control \u2212 f_target)') + '">' + esc(near.words || (near.name + ' ' + fmtMHz(near.distance_hz, true))) + '</span>' + (near.lobe ? ' (' + esc(near.lobe) + ', closest across played lobes)' : '') : '\u2014') + '</dd>' +
              (r.a4 ? '<dt>Duration</dt><dd class="czp-a4-duration">' + a4Duration(r.a4) + '</dd>' :
              '<dt>Duration</dt><dd>' + (r.duration_ns != null ? r.duration_ns + ' ns' : 'unknown') + (r.duration_note ? help(r.duration_note) : '') +
                 twoFluxLengths(r.two_flux_lengths) + '</dd>') +

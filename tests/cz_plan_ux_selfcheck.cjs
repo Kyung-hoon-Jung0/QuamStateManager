@@ -24,7 +24,11 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     w.eval(source('cz-plan.js'));w.CzPlan.mount();await wait(40);
     const flux=()=>renders.filter(x=>x.id==='czp-flux').at(-1);
     const higherName=[...f.data.qubits].sort((a,b)=>b.summary.f01_hz-a.summary.f01_hz)[0].name;
-    const visibleSummary=f.solve.summary.replace(/\(= .*? of H per node 30\)/,
+    // audit recheck: said once -- the validity only as the badge, the tier only in the conversion clause
+    let onceSummary=f.solve.summary;
+    if(f.solve.validity_warning&&f.solve.validity) onceSummary=onceSummary.split(' | '+f.solve.validity).join('');
+    if(f.solve.conversion&&f.solve.tier) onceSummary=onceSummary.split(' ('+f.solve.tier+') | ').join(' | ');
+    const visibleSummary=onceSummary.replace(/\(= .*? of H per node 30\)/,
         '(= \u2212anharmonicity of '+higherName+', the higher qubit)')
         // B: an out-of-range answer carries its validity badge right after the amplitude
         .replace(f.solve.validity_warning ? ' | stored ' : /$^/, ' \u26a0 '+f.solve.validity+' | stored ')+' (?)';
@@ -49,9 +53,17 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
             assert(flux().traces.some(t=>(t.name||'').startsWith(ln.name+' · ') && t.name.endsWith(ln.point.validity)));
             assert(d.querySelector('#czp-card').textContent.includes(ln.point.validity));
         }
+        // audit recheck: the parking note wraps one qubit per line and the top margin makes room
+        const parks=f.data.qubits.filter(q=>q.summary&&q.summary.parking);
+        assert(parks.length,'the fixture names a parking offset');
+        const park=flux().layout.annotations.find(a=>a._czpParking);
+        assert.strictEqual(park.text.split('<br>').length,parks.length+1,'one line per qubit');
+        assert(flux().layout.margin.t>=44+14*parks.length,'the margin holds every line');
     }
     if(item===3){
         const match=d.getElementById('czp-match');assert.strictEqual(match.textContent,visibleSummary);
+        if(f.solve.validity) assert(match.textContent.split(f.solve.validity).length-1<=1,'the validity is said once');
+        if(f.solve.conversion) assert(!match.textContent.includes('('+f.solve.tier+')'),'the conversion clause names the tier');
         for(const key of ['target_detuning_hz','amplitude_v','stored_amplitude_v','difference_v','tier','line'])
             assert.strictEqual(match.getAttribute('data-'+key.replaceAll('_','-')),String(f.solve[key]));
         const blob=JSON.parse(d.getElementById('cz-operating-points').textContent);

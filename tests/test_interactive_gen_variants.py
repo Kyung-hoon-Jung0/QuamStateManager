@@ -212,3 +212,36 @@ def test_env_line_only_when_nothing_is_drawn():
     other = {"available": False, "reason": "Run has no quam_state/ snapshot.", "env": "py"}
     assert reproduction_hint(other, static_only) == "Run has no quam_state/ snapshot."
     assert reproduction_hint(other, drawn) == ""
+
+
+def _comp_run_with_phases(tmp_path, control_phase, target_phase):
+    n = 17
+    frame = np.linspace(0, 1, n, endpoint=False)
+    fc = 1e-4 * np.cos(2 * np.pi * frame)               # peaks at frame 0
+    ft = 1e-4 * np.sin(2 * np.pi * frame) - 5e-4        # peaks at frame 0.25
+    fit = {"state_control": (("qubit_pair", "frame"), fc[None]),
+           "state_target": (("qubit_pair", "frame"), ft[None]),
+           "fitted_control": (("qubit_pair", "frame"), fc[None]),
+           "fitted_target": (("qubit_pair", "frame"), ft[None]),
+           "fitted_control_phase": (("qubit_pair",), [control_phase]),
+           "fitted_target_phase": (("qubit_pair",), [target_phase])}
+    coords = {"qubit_pair": [PAIR.encode()], "frame": frame}
+    return _run(tmp_path, "34a_cz_phase_compensation", fit, coords, {"success": True}, ["raw_and_fit"])
+
+
+def test_compensation_figure_has_a_legend_and_marks_the_fitted_phase_shift(tmp_path):
+    """Audit recheck: the four control / target traces had no legend, and the
+    fitted phase was not marked. A cosine fit peaks at (1 - fitted phase) mod 1."""
+    run = _comp_run_with_phases(tmp_path, control_phase=1.0, target_phase=0.75)
+    fig = _build(run, f"raw_and_fit::{PAIR}")
+    assert fig["layout"]["showlegend"] is True
+    xs = sorted(s["x0"] for s in fig["layout"]["shapes"])
+    assert xs == pytest.approx([0.0, 0.25])
+    texts = [a["text"] for a in fig["layout"]["annotations"]]
+    assert texts == ["control fit phase shift 0.000", "target fit phase shift 0.250"]
+
+
+def test_a_phase_that_does_not_match_its_own_fit_is_not_marked(tmp_path):
+    run = _comp_run_with_phases(tmp_path, control_phase=0.5, target_phase=0.75)
+    fig = _build(run, f"raw_and_fit::{PAIR}")
+    assert [a["text"] for a in fig["layout"]["annotations"]] == ["target fit phase shift 0.250"]

@@ -14,6 +14,34 @@
         return (v && v.trim()) || fallback;
     }
 
+    /* The card ground every framed plot box uses (hover label, legend backing). */
+    function cardBg() {
+        return cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222'));
+    }
+
+    /* The ui-kit callout look (.ui-callout: surface-2 ground, accent strip, text colour)
+       for a Plotly annotation, OPAQUE so it reads over any trace or heatmap. Read off a
+       .ui-callout probe: its tokens are color-mix() expressions Plotly cannot parse,
+       the browser computes them. Without a computed colour (no stylesheet) the card
+       ground and the plot's own text colour stand in. */
+    function calloutColours(font, text) {
+        var bg = '', border = '', fg = '';
+        try {
+            var probe = document.createElement('div');
+            probe.className = 'ui-callout';
+            (document.body || document.documentElement).appendChild(probe);
+            var cs = getComputedStyle(probe);
+            bg = cs.backgroundColor; border = cs.borderLeftColor; fg = cs.color;
+            probe.remove();
+        } catch (e) { /* no DOM: fallbacks below */ }
+        function opaque(c) { return c && !/^transparent$|,\s*0(\.\d*)?\)$/.test(c) ? c : ''; }
+        return {
+            bgcolor: opaque(bg) || cardBg(),
+            bordercolor: opaque(border) || palette()[0], borderwidth: 1,
+            font: Object.assign({}, font || {}, { color: opaque(fg) || text }),
+        };
+    }
+
     function palette() {
         var out = [];
         for (var i = 1; i <= 8; i++) {
@@ -163,7 +191,7 @@
             xaxis: { gridcolor: grid, zerolinecolor: grid, automargin: true },
             yaxis: { gridcolor: grid, zerolinecolor: grid, automargin: true },
             hoverlabel: {
-                bgcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222')),
+                bgcolor: cardBg(),
                 font: { color: cssVar('--plot-hover-text', text), size: 12 },
                 bordercolor: grid,
             },
@@ -190,7 +218,7 @@
         });
         if (out.shapes) out.shapes = out.shapes.map(function (shape) {
             return shape.name === 'legend-backing' ? Object.assign({}, shape,
-                {fillcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222'))}) : shape;
+                {fillcolor: cardBg()}) : shape;
         });
         // v1.5.1 (D3 class G): a SUBPLOT axis (xaxis2..N beside the first panel) got no
         // theme either, so every panel after the first drew Plotly's near-white default
@@ -206,7 +234,12 @@
         Object.keys(out).forEach(function (k) {
             var lg = out[k];
             if (!/^legend\d*$/.test(k) || !lg || typeof lg !== 'object' || !(lg.borderwidth > 0) || lg.bgcolor) return;
-            out[k] = Object.assign({}, lg, { bgcolor: cssVar('--plot-hover-bg', cssVar('--pico-card-background-color', '#222')) });
+            out[k] = Object.assign({}, lg, { bgcolor: cardBg() });
+        });
+        // audit recheck: a fit note (plotbuild.note, name "fit-note") over a dark heatmap
+        // was unreadable on its translucent grey; it takes the ui-kit callout colours, opaque
+        if (out.annotations) out.annotations = out.annotations.map(function (note) {
+            return note && note.name === 'fit-note' ? Object.assign({}, note, calloutColours(note.font, text)) : note;
         });
         Object.keys(out).forEach(function (k) {
             var ax = out[k];
@@ -224,7 +257,7 @@
             });
             if (out.title) out.title = Object.assign({}, titleObject(out.title), { font: artistStyle(out.title.font, text) });
             if (out.annotations) out.annotations = out.annotations.map(function (note) {
-                if (onHeatmap(note, data, out)) return Object.assign({}, note);
+                if (note.name === 'fit-note' || onHeatmap(note, data, out)) return Object.assign({}, note);
                 // text on the box the lab drew behind it keeps the lab colour (black on a
                 // white fit-summary box would turn light on light)
                 if (onOwnBox(note)) return Object.assign({}, note);
@@ -354,6 +387,10 @@
                     });
                     (themed.annotations || []).forEach(function (note, index) {
                         updates['annotations[' + index + '].font.color'] = (note.font || {}).color || L.font.color;
+                        if (note.name === 'fit-note') {
+                            updates['annotations[' + index + '].bgcolor'] = note.bgcolor;
+                            updates['annotations[' + index + '].bordercolor'] = note.bordercolor;
+                        }
                     });
                     (themed.shapes || []).forEach(function (shape, index) {
                         if (shape.line && 'color' in shape.line) updates['shapes[' + index + '].line.color'] = shape.line.color;

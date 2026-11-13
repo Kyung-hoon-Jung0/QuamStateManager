@@ -2156,7 +2156,7 @@ body.exp-list-compact .entry-name {
    compact rows wrapped at them (measured 51–73 px rows where one 32 px line
    was promised). A display:none wbr makes no box and no opportunity. */
 body.exp-list-compact .entry-name wbr { display: none; }
-.entry-name-head { overflow: hidden; text-overflow: ellipsis; } /* compact: only the head ellipsizes, the last `_` part (run_name filter) stays */
+.entry-name-head { overflow: hidden; text-overflow: ellipsis; } /* compact: only the middle ellipsizes; lead + tail (run_name) keep min-width:auto */
 
 .compare-form { margin-top: .3rem; }
 .btn-compare, .btn-trend {

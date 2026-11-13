@@ -146,6 +146,15 @@ def test_pre_extraction_fixture_outputs_are_identical():
                     exp_row["duration_note"] = got_row["duration_note"]
                     if isinstance(exp_plan, dict) and isinstance(got_plan, dict) and "duration_minus_t_p_ns" in exp_plan:
                         exp_plan["duration_minus_t_p_ns"] = got_plan.get("duration_minus_t_p_ns")
+                # The recheck's wording item adds only `words` to the nearest
+                # resonance, recomputed here from the PINNED name and distance in
+                # the frame of the row's single moving line (meaning pinned in
+                # test_gate_inspector); name, delta and distance stay exact.
+                exp_near = exp_row.get("nearest")
+                if isinstance(exp_near, dict):
+                    movers = [ln["role"] for ln in exp_row["lines"] if ln.get("moves")]
+                    exp_near["words"] = C.cz_flux_math.resonance_offset_words(
+                        exp_near["name"], exp_near["distance_hz"], movers[0] if len(movers) == 1 else None)
                 if isinstance(exp_plan, dict) and isinstance(got_plan, dict):
                     added = set(got_plan) - set(exp_plan)
                     assert added <= MEASURED_PLAN_KEYS, (record["call"], sorted(added))

@@ -293,9 +293,15 @@ def build_plotly_figure(
     # was asked about one gate.
     op = sweep["operating_point"]
     op_x = op["x"] if x_kind == "voltage" else op["x"] * hz_to_mhz
+    # The marker sits ON a curve, never on the y = 0 resonance line (which
+    # would read "idle is on resonance"): the curve the gate point drives, else
+    # the one nearest zero at idle -- read off the drawn curve itself.
+    idle_key = _idle_curve_key(sweep, xs, op_x)
+    idle_label = next(lbl for key, lbl, _ in _DETUNING_TRACES if key == idle_key)
+    idle_y = float(np.interp(op_x, xs, sweep[idle_key])) * hz_to_mhz
     traces.append({
         "x": [op_x],
-        "y": [0],
+        "y": [idle_y],
         "type": "scatter",
         "mode": "markers",
         "name": "Idle bias",
@@ -303,32 +309,40 @@ def build_plotly_figure(
         "hovertemplate": (
             "<b>Idle bias</b><br>"
             + (f"V = {op['voltage']:.4f} V<br>" if op["voltage"] is not None else "")
-            + f"f\u2080\u2081 = {op['frequency'] * hz_to_mhz:.1f} MHz"
+            + f"f\u2080\u2081 = {op['frequency'] * hz_to_mhz:.1f} MHz<br>"
+            + f"{idle_label} = {idle_y:+.1f} MHz"
             "<extra></extra>"
         ),
         "showlegend": True,
     })
     gp = sweep.get("gate_point")
     if gp:
-        gp_x = gp["x"] if x_kind == "voltage" else gp["x"] * hz_to_mhz
-        traces.append({
-            "x": [gp_x],
-            "y": [gp["y"] * hz_to_mhz],
-            "type": "scatter",
-            "mode": "markers",
-            "name": f"Operating point ({gp['gate']})",
-            "marker": {"color": "#2ecc71", "size": 12, "symbol": "diamond"},
-            "hovertemplate": (
-                f"<b>Operating point \u00b7 {gp['gate']}</b><br>"
-                + (f"V = {gp['voltage']:.4f} V (idle + {gp['amplitude_v']:+.4f} V)<br>"
-                   if gp["voltage"] is not None else "")
-                + f"f\u2080\u2081 = {gp['frequency'] * hz_to_mhz:.1f} MHz<br>"
-                + f"{gp['detuning_label']} = {gp['y'] * hz_to_mhz:+.1f} MHz<br>"
-                + f"mover {gp['mover_offset_hz'] * hz_to_mhz:+.1f} MHz from that resonance (as on the CZ gate plan)"
-                "<extra></extra>"
-            ),
-            "showlegend": True,
-        })
+        # one marker per played lobe of the pulse (a bipolar / SNZ pulse plays
+        # -A after +A); every lobe comes from the CZ gate plan's own line data
+        for i, pt in enumerate([gp] + list(gp.get("lobes") or [])):
+            pt_x = pt["x"] if x_kind == "voltage" else pt["x"] * hz_to_mhz
+            lobe = pt.get("lobe") or "first lobe"
+            traces.append({
+                "x": [pt_x],
+                "y": [pt["y"] * hz_to_mhz],
+                "type": "scatter",
+                "mode": "markers",
+                "name": (f"Operating point ({gp['gate']})" if i == 0
+                         else f"Operating point ({gp['gate']}, {lobe})"),
+                "marker": {"color": "#2ecc71", "size": 12 if i == 0 else 10,
+                           "symbol": "diamond" if i == 0 else "diamond-open"},
+                "hovertemplate": (
+                    f"<b>Operating point \u00b7 {gp['gate']}"
+                    + (f" \u00b7 {lobe}" if gp.get("lobes") else "") + "</b><br>"
+                    + (f"V = {pt['voltage']:.4f} V (idle + {pt['amplitude_v']:+.4f} V)<br>"
+                       if pt["voltage"] is not None else "")
+                    + f"f\u2080\u2081 = {pt['frequency'] * hz_to_mhz:.1f} MHz<br>"
+                    + f"{pt['detuning_label']} = {pt['y'] * hz_to_mhz:+.1f} MHz<br>"
+                    + (pt.get("words") or "") + " (as on the CZ gate plan)"
+                    "<extra></extra>"
+                ),
+                "showlegend": True,
+            })
 
     y_vals = [v * hz_to_mhz for key, _, _ in _DETUNING_TRACES for v in sweep[key]]
     y_min = min(y_vals) if y_vals else -500
@@ -462,45 +476,90 @@ def gate_for_pulse(store: Any, path: str) -> str | None:
     return gate if p == pair else None
 
 
+_L_11_20 = "\u0394(|11\u27e9\u2212|20\u27e9)"
+_L_11_02 = "\u0394(|11\u27e9\u2212|02\u27e9)"
+_L_10_01 = "\u0394(|10\u27e9\u2212|01\u27e9)"
+# the CZ gate plan's names for the same three conditions (cz_flux_math.resonances)
+_PLAN_NAME = {_L_11_20: "|11>-|20>", _L_11_02: "|11>-|02>", _L_10_01: "iSWAP"}
+
+
+def _idle_curve_key(sweep: dict[str, Any], xs: list[float], op_x: float) -> str:
+    """Which drawn curve the idle marker sits on: the one the gate point
+    drives when there is one, else the one nearest zero at idle."""
+    gp = sweep.get("gate_point")
+    if gp:
+        key = next((k for k, lbl, _ in _DETUNING_TRACES if lbl == gp.get("detuning_label")), None)
+        if key:
+            return key
+    return min((k for k, _, _ in _DETUNING_TRACES),
+               key=lambda k: abs(float(np.interp(op_x, xs, sweep[k]))))
+
+
+def _gate_point(sweep, control, target, *, amplitude_v, frequency_hz, label=None):
+    """One operating point (x, y on a drawn curve, the plan's phrase), or None.
+    *label* pins the curve (a later lobe stays on the first lobe's curve)."""
+    if frequency_hz is None:
+        return None
+    moving_is_control = sweep.get("sweep_role", "control") == "control"
+    f_c = frequency_hz if moving_is_control else control["f_01"]
+    f_t = target["f_01"] if moving_is_control else frequency_hz
+    # labs store alpha with either sign; the levels need its size (as the CZ plan does)
+    a_c, a_t = abs(control["anharmonicity"]), abs(target["anharmonicity"])
+    dets = {_L_11_20: f_t - f_c + a_c, _L_11_02: f_c - f_t + a_t, _L_10_01: f_c - f_t}
+    if label is None:
+        label = min(dets, key=lambda k: abs(dets[k]))
+    y = dets[label]
+    # d(level difference)/d(mover frequency) is +1 or -1 per level: the mover's
+    # offset from the resonance is that sign times the difference
+    dsign = {_L_11_20: -1, _L_11_02: 1, _L_10_01: 1}[label] * (1 if moving_is_control else -1)
+    v_idle = sweep.get("idle_voltage")
+    voltage = (v_idle + amplitude_v
+               if sweep.get("x_kind") == "voltage" and v_idle is not None and amplitude_v is not None
+               else None)
+    if sweep.get("x_kind") == "voltage" and voltage is None:
+        return None
+    mover_offset = dsign * y
+    # cz_flux_math's distance is Delta - condition (Delta = f_c - f_t); the
+    # mover's offset is that times dDelta/df_mover (+1 control, -1 target)
+    distance = mover_offset if moving_is_control else -mover_offset
+    return {
+        "x": voltage if voltage is not None else frequency_hz,
+        "voltage": voltage, "amplitude_v": amplitude_v, "frequency": frequency_hz,
+        "y": y, "detuning_label": label,
+        # the CZ plan's phrasing of the same point: how far the moving qubit sits
+        # from the resonance it aims at
+        "mover_offset_hz": mover_offset,
+        "words": cz_flux_math.resonance_offset_words(
+            _PLAN_NAME[label], distance, "control" if moving_is_control else "target"),
+    }
+
+
 def add_gate_point(sweep: dict[str, Any], control: dict[str, Any], target: dict[str, Any],
                    *, gate: str, amplitude_v: float | None,
-                   frequency_hz: float | None) -> dict[str, Any]:
+                   frequency_hz: float | None,
+                   lobes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Mark the CZ operating point of *gate* on *sweep*.
 
     The amplitude and the frequency are the CZ gate plan's own
     (``cz_gate_plan.operations`` -- one source), never recomputed here. On a
     voltage axis the point sits at idle + pulse amplitude; its y is the
     detuning closest to zero at that frequency (the interaction the gate
-    drives). Absent numbers leave the sweep unmarked.
+    drives). *lobes* is the plan line's ``lobes`` list; every played lobe
+    after the first (a bipolar pulse's mirror lobe, an SNZ third level) is
+    marked too, on the first lobe's curve. Absent numbers leave the sweep
+    unmarked.
     """
-    if frequency_hz is None:
+    pt = _gate_point(sweep, control, target, amplitude_v=amplitude_v, frequency_hz=frequency_hz)
+    if pt is None:
         return sweep
-    moving_is_control = sweep.get("sweep_role", "control") == "control"
-    f_c = frequency_hz if moving_is_control else control["f_01"]
-    f_t = target["f_01"] if moving_is_control else frequency_hz
-    # labs store alpha with either sign; the levels need its size (as the CZ plan does)
-    a_c, a_t = abs(control["anharmonicity"]), abs(target["anharmonicity"])
-    dets = {"\u0394(|11\u27e9\u2212|20\u27e9)": f_t - f_c + a_c, "\u0394(|11\u27e9\u2212|02\u27e9)": f_c - f_t + a_t,
-            "\u0394(|10\u27e9\u2212|01\u27e9)": f_c - f_t}
-    label, y = min(dets.items(), key=lambda kv: abs(kv[1]))
-    # d(level difference)/d(mover frequency) is +1 or -1 per level: the mover's
-    # offset from the resonance is that sign times the difference
-    dsign = {"Δ(|11⟩−|20⟩)": -1, "Δ(|11⟩−|02⟩)": 1,
-             "Δ(|10⟩−|01⟩)": 1}[label] * (1 if moving_is_control else -1)
-    v_idle = sweep.get("idle_voltage")
-    voltage = (v_idle + amplitude_v
-               if sweep.get("x_kind") == "voltage" and v_idle is not None and amplitude_v is not None
-               else None)
-    if sweep.get("x_kind") == "voltage" and voltage is None:
-        return sweep
-    sweep["gate_point"] = {
-        "gate": gate, "x": voltage if voltage is not None else frequency_hz,
-        "voltage": voltage, "amplitude_v": amplitude_v, "frequency": frequency_hz,
-        "y": y, "detuning_label": label,
-        # the CZ plan's phrasing of the same point: how far the moving qubit sits
-        # from the resonance it aims at
-        "mover_offset_hz": dsign * y,
-    }
+    extra = []
+    for lobe in (lobes or [])[1:]:
+        other = _gate_point(sweep, control, target, amplitude_v=lobe.get("amplitude_v"),
+                            frequency_hz=(lobe.get("point") or {}).get("frequency_hz"),
+                            label=pt["detuning_label"])
+        if other is not None:
+            extra.append({**other, "lobe": lobe.get("name")})
+    sweep["gate_point"] = {"gate": gate, **pt, **({"lobes": extra} if extra else {})}
     return sweep
 
 
