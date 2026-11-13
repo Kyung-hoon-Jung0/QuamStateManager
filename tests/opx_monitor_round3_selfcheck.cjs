@@ -2,6 +2,10 @@
 const fs = require('fs');
 const path = require('path');
 const {JSDOM} = require('jsdom');
+if (!process.argv[2]) {
+  console.error('usage: node ' + require('path').basename(__filename) + ' <pages.json>  (its pytest driver writes the file)');
+  process.exit(1);
+}
 const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const doc = key => new JSDOM(pages[key]).window.document;
 let count = 0;
