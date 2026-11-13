@@ -17,6 +17,8 @@
 //      pulse -> a link to the same offer there (no batch button); a set
 //      without a pulse -> the tree's own batch button, as before
 //   G5 the add-key panel and the JSON editor show the link on a refusal
+//   G8 a by-name refusal (a gate slot plays an op under the path) carries
+//      one "Delete anyway" confirm that re-posts with force=1
 //   G6 TAKE LIVE (live-diff ✓ both kinds, Accept all, the sync review ✓)
 //      says so: source "live" (the server verifies it)
 // Run: node tests/pulse_gate_tree_selfcheck.cjs  (driven by tests/test_pulse_structure.py)
@@ -337,6 +339,38 @@ const quiet = function (url) {
     ok(win2._treePulseGate.rows_known === false, 'G7: an answer for a replaced page is dropped');
     ok(built.del && !!built.node.querySelector(':scope > .tree-row > .tree-row-actions'),
        'G7: ...and touches none of the new page\'s rows');
+  }
+
+  // G8 --------------------------------------------------------------------
+  // a delete refused because a gate slot plays an op under it BY NAME: the
+  // refusal text, one "Delete anyway" confirm that re-posts with force=1
+  {
+    const posts = [];
+    const win = makeWorld(function (url, opts) {
+      if (url === '/field/delete') {
+        const body = new URLSearchParams(opts.body || '');
+        posts.push(body.get('force'));
+        if (body.get('force') === '1') return jsonResp({ ok: true, removed: 3 });
+        return jsonResp({ ok: false, error_kind: 'by_name', by_name: ['qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.id'],
+          error: 'Refusing to delete: referenced by qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.id (plays by name).' }, 409);
+      }
+      return quiet(url);
+    }, PAYLOAD);
+    const node = hover(win, 'qubits.q1.xy');
+    node.querySelector(':scope > .tree-row .tree-act-del').click();
+    await tick(20);
+    node.querySelectorAll(':scope > .tree-row .tree-row-actions .tree-act-btn')[0].click();
+    await tick(30);
+    const chip = node.querySelector(':scope > .tree-row > .tree-edit-err');
+    const force = chip && chip.querySelector('button[data-force-delete]');
+    ok(!!chip && chip.textContent.indexOf('plays by name') >= 0, 'G8: the by-name refusal text is shown');
+    ok(!!force && force.textContent === 'Delete anyway' && force.className === 'btn-sm outline',
+       "G8: ...with one confirm control built from the UI kit's button");
+    ok(posts.length === 1 && posts[0] === null, 'G8: the first delete is not forced');
+    if (force) force.click();
+    await tick(30);
+    ok(posts.length === 2 && posts[1] === '1', 'G8: the confirm re-posts the delete with force=1');
+    ok(!win.document.querySelector('.tree-node[data-path="qubits.q1.xy"]'), 'G8: ...and the forced delete lands');
   }
 
   if (fails) { console.error(fails + ' FAILED'); process.exit(1); }
