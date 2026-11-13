@@ -17104,6 +17104,18 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                          if n in _ps_skip else {})}
                      for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
+    # a delete row (a channel, a qubit, a whole container) that takes an op a
+    # pair-gate slot plays BY NAME, while the slot stays: refused as the Json
+    # Tree's /field/delete, naming the slot; force=1 deletes anyway. A slot
+    # deleted in the same batch loses nothing. The Delete-together door asked
+    # this already (with its own force).
+    if not pulse_door:
+        _del_paths = [dp for n, (dp, v, _c) in enumerate(pairs)
+                      if v is _BATCH_DELETE and n not in _ps_skip]
+        _by_name = _by_name_cut(modifier.store, _del_paths) if _del_paths else []
+        if _by_name and str(_pj.get("force") or request.form.get("force") or "") != "1":
+            return _by_name_refused_json(_by_name)
+
     # docs/20 r12-B: an FSP edit never silently changes amplitudes. D-44: an
     # unacked batch commits now and the offer follows (X-SM-Fsp-Changed);
     # fsp_ack=comp still sends FSP + compensated amps in ONE group (one
