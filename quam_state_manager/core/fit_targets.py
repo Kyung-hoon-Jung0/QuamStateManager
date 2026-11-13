@@ -244,21 +244,78 @@ def recorded_writes(folder) -> list[dict[str, Any]]:
         return []
     if not isinstance(node, dict):
         return []
+    return [{"path": w["path"], "old": w["old"], "new": w["new"]}
+            for w in _patch_writes(node) + _change_writes(node)]
+
+
+def _ops_writes(entries: Any, path_key: str, new_key: str) -> list[dict[str, Any]]:
+    """One recorded write list as ``[{"path", "old", "new", "has_old"}]``."""
     out: list[dict[str, Any]] = []
-    patches = node.get("patches")
-    for p in patches if isinstance(patches, list) else ():
-        if isinstance(p, dict) and p.get("op", "replace") in ("replace", "add"):
-            path = _dot_path(p.get("path"))
-            if path:
-                out.append({"path": path, "old": p.get("old"), "new": p.get("value")})
-    sc = node.get("state_changes")
-    changes = sc.get("changes") if isinstance(sc, dict) else None
-    for c in changes if isinstance(changes, list) else ():
-        if isinstance(c, dict):
-            path = _dot_path(c.get("key"))
-            if path:
-                out.append({"path": path, "old": c.get("old"), "new": c.get("new")})
+    for e in entries if isinstance(entries, list) else ():
+        if not isinstance(e, dict) or e.get("op", "replace") not in ("replace", "add"):
+            continue
+        path = _dot_path(e.get(path_key))
+        if path:
+            out.append({"path": path, "old": e.get("old"), "new": e.get(new_key),
+                        "has_old": "old" in e})
     return out
+
+
+def _patch_writes(node: Any) -> list[dict[str, Any]]:
+    """node.json ``patches`` (``{"op", "path", "value", "old"}``)."""
+    return _ops_writes(node.get("patches") if isinstance(node, dict) else None,
+                       "path", "value")
+
+
+def _change_writes(node: Any) -> list[dict[str, Any]]:
+    """node.json ``state_changes.changes`` (``{"key", "old", "new"}``)."""
+    sc = node.get("state_changes") if isinstance(node, dict) else None
+    return _ops_writes(sc.get("changes") if isinstance(sc, dict) else None, "key", "new")
+
+
+def _proposal_writes(doc: Any) -> list[dict[str, Any]]:
+    """``state_updates.json`` ``operations`` (``{"op", "path", "value", "old"}``)."""
+    return _ops_writes(doc.get("operations") if isinstance(doc, dict) else None,
+                       "path", "value")
+
+
+# The places a run records the values it wrote, in the order they are trusted.
+# The first one that holds any write is the run's write list.
+RUN_WRITE_SOURCES = ("patches", "state_changes", "state_updates")
+
+
+def run_writes(folder) -> tuple[list[dict[str, Any]], str | None]:
+    """The values one run wrote, from the first source that records any.
+
+    Order: node.json ``patches``, then node.json ``state_changes.changes``, then
+    the run's ``state_updates.json`` ``operations``. Returns ``(writes, source)``;
+    each write is ``{"path", "old", "new", "has_old"}`` (``path`` a state dot
+    path) and ``source`` one of :data:`RUN_WRITE_SOURCES`, or ``([], None)`` when
+    no source records a write. ``has_old`` is False when the source did not
+    record the value the write replaced: such a write is named, never reverted
+    blind. An unreadable file counts as absent.
+    """
+    from pathlib import Path
+
+    from quam_state_manager.core import safe_io
+    folder = Path(folder)
+    try:
+        node = safe_io.read_json(folder / "node.json")
+    except (OSError, ValueError):
+        node = None
+    for source, writes in (("patches", _patch_writes(node)),
+                           ("state_changes", _change_writes(node))):
+        if writes:
+            return writes, source
+    proposals = folder / "state_updates.json"
+    if proposals.is_file():
+        try:
+            writes = _proposal_writes(safe_io.read_json(proposals))
+        except (OSError, ValueError):
+            writes = []
+        if writes:
+            return writes, "state_updates"
+    return [], None
 
 
 def _same(a: Any, b: Any) -> bool:

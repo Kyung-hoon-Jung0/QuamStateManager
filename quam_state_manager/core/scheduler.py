@@ -1608,7 +1608,9 @@ def failed_target_writes(outcomes, patches) -> dict | None:
             continue
         writes.append({"path": p.get("path"), "dotted": dotted, "target": hit,
                        "op": p.get("op", "replace"), "value": p.get("value"),
-                       "old": p.get("old")})
+                       "old": p.get("old"),
+                       # False only when the run did not record the replaced value
+                       "has_old": bool(p.get("has_old", True))})
     return {"failed": failed, "n_targets": len(outcomes), "writes": writes,
             "untied": untied}
 
@@ -1622,15 +1624,22 @@ def failed_targets_note(info: dict) -> str:
     """One sentence naming every failed target and what was written for it."""
     k, n = len(info["failed"]), info["n_targets"]
     by_t: dict[str, list[str]] = {}
+    no_old: list[str] = []
     for w in info["writes"]:
+        old = _short(w.get("old")) if w.get("has_old", True) else "not recorded"
         by_t.setdefault(w["target"], []).append(
-            f"{w['dotted']} ({_short(w.get('old'))} -> {_short(w.get('value'))})")
+            f"{w['dotted']} ({old} -> {_short(w.get('value'))})")
+        if not w.get("has_old", True):
+            no_old.append(w["dotted"])
     parts = []
     for t in info["failed"]:
         ws = by_t.get(t)
         parts.append(f"{t}: still wrote {', '.join(ws)} to the chip" if ws
                      else f"{t}: wrote nothing")
     note = f"{k} of {n} targets failed — " + "; ".join(parts)
+    if no_old:
+        note += (f"; the run did not record the old value of {', '.join(no_old)}, "
+                 "so the revert cannot put it back")
     untied = info.get("untied") or []
     if untied:
         shown = ", ".join(untied[:5])

@@ -759,7 +759,9 @@ window.AgentPanel = (function () {
     // docs/249: what failed, in plain words, above the run's raw error ("QM host unreachable at 127.0.0.1:1")
     var what = res.failure && res.failure.what ? '<div class="ag-err ag-what"><strong>' + esc(String(res.failure.what).slice(0, 200)) + "</strong></div>" : "";
     var err = res.error ? '<div class="ag-err">' + esc(String(res.error).slice(0, 300)) + "</div>" : "";
-    var how = r.how ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
+    // gl-e02: a settled approval is already said by the writes summary; never twice
+    var settled = writes && res.approval && /^(approved|rejected|expired)$/.test((r.approval_state || {}).status || "");
+    var how = r.how && !settled ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
     var log = res.log_tail ? '<details class="ag-log"><summary>log tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";
     setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + what + err + writes + how + log), force);
   }

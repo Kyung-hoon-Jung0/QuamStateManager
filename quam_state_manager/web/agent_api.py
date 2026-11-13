@@ -2180,11 +2180,18 @@ def _run_approval_state(m: dict) -> dict | None:
     res = m.get("result") or {}
     ap = res.get("approval")
     aid = ap.get("id") if isinstance(ap, dict) else (ap if isinstance(ap, str) else None)
-    if not aid or not m.get("chip"):
+    return _approval_state(m.get("chip"), aid)
+
+
+def _approval_state(chip: str | None, aid: str | None) -> dict | None:
+    """One held-writes approval as its live record holds it now
+    (``{id, status, decided_by, decided_at, n_writes}``), or None. The one
+    reader for a run view and a plan step (gl-ck9, gl-bbi)."""
+    if not aid or not chip:
         return None
     try:
         from quam_state_manager.core import approvals
-        rec = approvals.get(current_app.instance_path, m["chip"], aid)
+        rec = approvals.get(current_app.instance_path, chip, aid)
     except Exception:  # noqa: BLE001 -- an unreadable store says nothing, never a guess
         return None
     if not rec:
@@ -2197,6 +2204,13 @@ def _run_view(m: dict) -> dict:
     res = m.get("result") or {}
     ap_state = _run_approval_state(m)
     ap_status = (ap_state or {}).get("status")
+    if ap_state and isinstance(res.get("approval"), dict):
+        # gl-e02: the nested copy follows the live record too, so an agent reading
+        # the raw result never sees "pending" beside a settled approval_state
+        res = dict(res)
+        res["approval"] = {**res["approval"], "status": ap_status,
+                           "decided_by": ap_state.get("decided_by"),
+                           "decided_at": ap_state.get("decided_at")}
     out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
            "params": m.get("params") or {},
            "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
@@ -3005,6 +3019,10 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
     out = dict(rec)
     out["counts"] = agent_plans.counts(rec)
     try:
+        _step_approvals(out)
+    except Exception:  # noqa: BLE001
+        logger.debug("step approvals failed", exc_info=True)
+    try:
         _step_requests(out)
     except Exception:  # noqa: BLE001
         logger.debug("step requests failed", exc_info=True)
@@ -3015,6 +3033,29 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
             logger.debug("may_change failed", exc_info=True)
             out["may_change"], out["may_change_total"] = [], 0
     return out
+
+
+def _step_approvals(view: dict) -> None:
+    """gl-bbi: every step whose writes were held carries ``approval_state``, the
+    approval as its live record holds it now (the same reader as a run view).
+    A settled approval leaves ``approval`` empty (nothing waits) and keeps its id
+    as ``approval_id``; without this a rejected step read like a pending one."""
+    chip = view.get("chip") or _chip_key()
+    steps = []
+    for s in view.get("steps") or []:
+        s2 = dict(s)
+        aid = s.get("approval") or s.get("approval_id")
+        if not aid and s.get("run_key") and s.get("n_writes"):
+            # a step settled before approval_id was kept: its run still names the approval
+            try:
+                meta = _registry().runs.get(s["run_key"]) or {}
+                ap = (meta.get("result") or {}).get("approval")
+                aid = ap.get("id") if isinstance(ap, dict) else (ap if isinstance(ap, str) else None)
+            except Exception:  # noqa: BLE001
+                aid = None
+        s2["approval_state"] = _approval_state(chip, aid) if aid else None
+        steps.append(s2)
+    view["steps"] = steps
 
 
 def _step_requests(view: dict) -> None:

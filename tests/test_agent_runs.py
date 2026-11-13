@@ -1112,6 +1112,44 @@ class TestRunReadsItsApprovalNow:
             assert "1 write(s) approved by human:user-a and applied to the chip" in v["how"], v["how"]
             assert v["approval_state"]["status"] == "approved", v
 
+    def test_the_nested_result_approval_follows_the_record(self, c, inst, fake_run):
+        """gl-e02: result.approval never says pending beside a settled approval_state."""
+        _arm(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+        for v in _run_views(c, r["key"]):
+            assert v["result"]["approval"]["status"] == "pending", v["result"]["approval"]
+        assert c.post(f"/api/agent/approvals/{aid}/reject", json={}, headers=HUMAN).get_json()["ok"]
+        for v in _run_views(c, r["key"]):
+            ap = v["result"]["approval"]
+            assert ap["id"] == aid and ap["status"] == "rejected", ap
+            assert ap["decided_by"] == "human:user-a", ap
+
+    @pytest.mark.parametrize("end_plan_first", [False, True])
+    def test_a_plan_step_carries_its_settled_approval(self, c, inst, fake_run, end_plan_first):
+        """gl-bbi: a rejected step does not read like a pending one, also when the
+        plan ended before the person decided."""
+        _arm(c)
+        pid = _armed_plan(c)
+        r = _run(c).get_json()
+        aid = r["result"]["approval"]["id"]
+
+        def step():
+            plan = c.get(f"/api/agent/plans/{pid}").get_json()["plan"]
+            return next(s for s in plan["steps"] if s.get("run_key") == r["key"])
+        assert step()["approval_state"]["status"] == "pending"
+        if end_plan_first:
+            assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["ok"]
+        assert c.post(f"/api/agent/approvals/{aid}/reject", json={}, headers=HUMAN).get_json()["ok"]
+        for _ in range(2):                       # a second read is the page reload
+            s = step()
+            st = s["approval_state"]
+            assert st and st["id"] == aid and st["status"] == "rejected", s
+            assert st["decided_by"] == "human:user-a" and not s.get("applied"), s
+        listed = next(p for p in c.get("/api/agent/plans").get_json()["plans"] if p["id"] == pid)
+        ls = next(s for s in listed["steps"] if s.get("run_key") == r["key"])
+        assert ls["approval_state"]["status"] == "rejected", ls
+
     def test_a_rejection_after_the_plan_ended_is_what_the_agent_reads(self, c, inst, fake_run):
         """gl-dke: with no armed plan nobody is told, so the agent's own view must say it."""
         _arm(c)

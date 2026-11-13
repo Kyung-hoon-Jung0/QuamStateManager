@@ -53813,14 +53813,19 @@ def scheduler_revert_failed(item_id: str):
                         hub_plan=f"runner-revert:{item.get('name') or item_id}",
                         origin=ctx.get("origin") or "live",
                         on_live_landed=lambda: _live_write_landed(ctx))
+    # A write whose old value the run never recorded is refused, never guessed.
+    blind = [{"path": w.get("dotted") or w.get("path"), "reason":
+              "the run did not record the value this write replaced"}
+             for w in writes if not w.get("has_old", True)]
     patches = [{"op": w.get("op", "replace"), "path": w.get("path"),
-                "value": w.get("value"), "old": w.get("old")} for w in writes]
+                "value": w.get("value"), "old": w.get("old")}
+               for w in writes if w.get("has_old", True)]
     out = revert_patches(handle, patches, apply_live=True,
                          label=f"runner:{item.get('name') or item_id}")
     # out.paths: old = the node's value the revert replaced, new = restored
     reverted = [{"path": p["path"], "from": p["old"], "to": p["new"]}
                 for p in (out.paths if out.ok else [])]
-    refused = list(out.conflicts or [])
+    refused = blind + list(out.conflicts or [])
     if not out.ok and out.error and out.error not in ("nothing revertible", "CAS conflict"):
         refused.append({"path": None, "reason": out.error})
     parts = []
@@ -53963,19 +53968,29 @@ def _run_in_item_window(run, item) -> bool:
 
 def _failed_target_info(run) -> dict | None:
     """``scheduler.failed_target_writes`` for one dataset run: its per-target
-    outcomes and the state patches its node.json recorded. None when the run
+    outcomes and the writes the run recorded, read through the one reader
+    ``fit_targets.run_writes`` (node.json ``patches``, else
+    ``state_changes.changes``, else ``state_updates.json``). None when the run
     recorded no outcomes or no target failed."""
+    from quam_state_manager.core import fit_targets
     outcomes = getattr(run, "outcomes", None)
     if not isinstance(outcomes, dict) or not any(
             o != "successful" for o in outcomes.values()):
         return None
-    patches = None
+    writes, source = [], None
     try:
-        nj = safe_io.read_json(Path(run.folder_path) / "node.json")
-        patches = nj.get("patches") if isinstance(nj, dict) else None
+        writes, source = fit_targets.run_writes(run.folder_path)
     except Exception:  # noqa: BLE001 -- the failure is still reported, with no paths
-        logger.warning("node.json unreadable for failed-target note", exc_info=True)
-    return scheduler.failed_target_writes(outcomes, patches)
+        logger.warning("run writes unreadable for failed-target note", exc_info=True)
+    # A write with no recorded old value keeps old=None: the revert refuses it
+    # (it never guesses the value to put back) and the note names it.
+    patches = [{"op": "replace", "path": w["path"], "value": w["new"],
+                "old": w["old"] if w.get("has_old") else None,
+                "has_old": bool(w.get("has_old"))} for w in writes]
+    info = scheduler.failed_target_writes(outcomes, patches)
+    if info is not None:
+        info["source"] = source
+    return info
 
 
 def _names_match(item_name: str | None, run_name: str | None) -> bool:
