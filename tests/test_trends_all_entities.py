@@ -416,6 +416,27 @@ class TestTheTwoQBadges:
         assert "qubit_pairs.*.gate_fidelity" in body, \
             "the slot names what was asked for"
 
+    def test_an_rb_details_block_gets_no_badge_of_its_own(self, tmp_path):
+        """`InterleavedRB_details.fidelity` repeats `InterleavedRB`: one badge,
+        the parent's."""
+        folder = _chip(tmp_path / "quam_state")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        for step in range(2):
+            d = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+            for p in d["qubit_pairs"]:
+                v = 0.95 + step * 1e-3
+                d["qubit_pairs"][p]["macros"]["cz"]["fidelity"] = {
+                    "InterleavedRB": v, "InterleavedRB_details": {"fidelity": v, "alpha": 0.9}}
+            (folder / "state.json").write_text(json.dumps(d), encoding="utf-8")
+            c.post("/state/archive", data={"tag": f"d{step}"})
+            time.sleep(1.05)
+        body = c.get("/topology/trends").get_data(as_text=True)
+        assert "InterleavedRB_details" not in "".join(
+            m for m in re.findall(r'data-trend-path="([^"]*)"', body))
+        assert re.search(r'data-trend-path="[^"]*InterleavedRB"', body)
+
     def test_a_recorded_fidelity_family_lights_the_badge_by_itself(self, tmp_path):
         """On a chip that DOES record a 2Q fidelity, the same badge points at
         the chip's own family instead of the empty template."""

@@ -21866,7 +21866,10 @@ def _trend_pair_chips_uncached(hm, path: Path, active: list[str], tbl=None) -> t
     rows.sort(key=lambda f: (not _is_fidelity_tail(f["label"]),
                              f["path"] != _TREND_IRB))
     fams = [f for f in rows
-            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])]
+            if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])
+            # a node's `<RB key>_details` block repeats its experiment's numbers:
+            # it is folded into the parent family (still reachable by the search)
+            and not any(seg.lower().endswith("_details") for seg in f["label"].split("."))]
     # What the Overview REPORTS comes before what was SET. Ranked by change
     # points alone, a chip with five CZ variants filled the whole row with
     # phase-shift knobs and pushed its own RB numbers off the end — which is
