@@ -482,8 +482,9 @@ class TestTheAxisSaysWhatItMeans:
         assert "_flat" in src
         # fix/trends-stress2: the range is the line's own when an outlier
         # left-out value is drawn on its edge (_clipped), else the flat one
-        assert "range: (_clipped ? _yr : _flat) || undefined" in src
-        assert "autorange: (_clipped || _flat) ? false : true" in src
+        # F1/F2: with excluded points shown, the axis stays the line's own (_yr)
+        assert "range: ((_clipped || (_exShown && _yr)) ? _yr : _flat) || undefined" in src
+        assert "autorange: (_clipped || _flat || (_exShown && _yr)) ? false : true" in src
 
 
 def _P_read():

@@ -943,6 +943,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # S10 walk (round 4): one name per list of saved values that are not the
     # chip's history (hub_witness.WORDS), on every surface
     app.jinja_env.globals["witness_words"] = _WITNESS_WORDS
+    # the reserved run tag Chip Status Trends honours (core.dataset.INVALID_TAG)
+    from quam_state_manager.core.dataset import INVALID_TAG as _INVALID_TAG
+    app.jinja_env.globals["invalid_tag"] = _INVALID_TAG
 
     # Diagnostics-list grouping: map a Finding category → display domain, and the
     # ordered domain list. Single source of truth in core.diagnostics, so every
