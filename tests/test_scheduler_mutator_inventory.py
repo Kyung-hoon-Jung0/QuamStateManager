@@ -78,6 +78,8 @@ _NON_STAGING_POSTS = {
     'main.generate_roles',
     'main.generate_proposals_context',
     'main.generate_proposal_accept',
+    # Saves a per-interpreter lab code folder in SM's own settings; no chip store is touched.
+    'main.generate_lab_code_dir',
     'main.generate_proposal_dismiss',
     'main.generate_additions_lint',
     # Addition rules: pure functions of the posted wizard spec (expand / apply return a new
