@@ -238,16 +238,16 @@ class TestRoute:
         assert r.status_code == 200, r.data
         st = self._store(env)
         assert "cz_gaussian_unipolar" in st.state["qubit_pairs"]["q1-2"]["macros"]
-        assert "cz_gaussian_bipolar_pulse" in \
+        assert "cz_gaussian_bipolar_pulse_q1_q2" in \
             st.state["qubits"]["q1"]["z"]["operations"]
-        assert "cz_gaussian_unipolar_coupler_pulse" in \
+        assert "cz_gaussian_unipolar_coupler_pulse_q1_q2" in \
             st.state["qubit_pairs"]["q1-2"]["coupler"]["operations"]
         # ONE undo removes the whole set (one group)
         r2 = c.post("/undo")
         assert r2.status_code == 200
         assert "cz_gaussian_unipolar" not in \
             st.state["qubit_pairs"]["q1-2"]["macros"]
-        assert "cz_gaussian_unipolar_pulse" not in \
+        assert "cz_gaussian_unipolar_pulse_q1_q2" not in \
             st.state["qubits"]["q1"]["z"]["operations"]
 
         # create again, then 409 on a repeat until overwrite=1
@@ -390,3 +390,187 @@ def test_suffix_none_preserves_legacy_names_and_invalid_pair_ids_refuse():
     result = gaussian_cz.plan(_chip(), "q1-2", suffix_ids=None)
     assert dict(result["creates"])["qubit_pairs.q1-2.macros.cz_gaussian_unipolar"]["flux_pulse_qubit"]["id"] == "cz_gaussian_unipolar_pulse"
     assert "error" in gaussian_cz.plan(_chip(), "q1-2", suffix_ids=("q2", "q1"))
+
+
+# -- gl-cad / gl-2o5: two pairs sharing a moving qubit ----------------------
+
+def _shared_mover_chip():
+    """q1-2 and q1-3 both move q1 (the control): one z line, two gates."""
+    from copy import deepcopy
+    state = _chip(moving="control")
+    state["qubits"]["q3"] = deepcopy(state["qubits"]["q2"])
+    state["qubits"]["q3"]["id"] = "q3"
+    second = deepcopy(state["qubit_pairs"]["q1-2"])
+    second.update(id="q1-3", qubit_target="#/qubits/q3")
+    second["coupler"] = {"id": "c13", "operations": {"const": {"amplitude": 0.2}}}
+    second["macros"]["cz_flattop"]["flux_pulse_qubit"]["amplitude"] = 0.47
+    state["qubit_pairs"]["q1-3"] = second
+    state["active_qubit_names"].append("q3")
+    return state
+
+
+def _set(state, path, value):
+    node = state
+    parts = path.split(".")
+    for k in parts[:-1]:
+        node = node.setdefault(k, {})
+    node[parts[-1]] = value
+
+
+class TestSharedMovingQubit:
+    @pytest.fixture
+    def env(self, tmp_path):
+        return self._env(tmp_path, _shared_mover_chip())
+
+    def _env(self, tmp_path, state):
+        from quam_state_manager.web.app import create_app
+        (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (tmp_path / "wiring.json").write_text(json.dumps(_WIRING), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path)})
+        ctx = next(iter(app.config["contexts"].values()))
+        return {"client": c, "store": ctx["store"], "modifier": ctx["modifier"],
+                "tmp": tmp_path}
+
+    @staticmethod
+    def _resolved(store, path):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        ft = resolve_field_target(store.merged, path)
+        assert ft.get("resolvable"), (path, ft)
+        return ft["resolved_value"]
+
+    def test_second_pair_gets_its_own_ops_and_the_first_keeps_its_pulse(self, env):
+        c, st = env["client"], env["store"]
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"})
+        assert r.status_code == 200, r.data
+        seen = str(len(env["modifier"].get_change_log()))
+        r = c.post("/state/apply-to-live", data={"seen_changes": seen},
+                   headers={"Origin": "http://localhost"})
+        assert r.status_code == 200, r.get_data(as_text=True)[:300]
+        live = json.loads((env["tmp"] / "state.json").read_text(encoding="utf-8"))
+        assert "cz_gaussian_unipolar_pulse_q1_q2" in live["qubits"]["q1"]["z"]["operations"]
+
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-3"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert "Replace existing" not in r.get_data(as_text=True)
+        zops = st.state["qubits"]["q1"]["z"]["operations"]
+        for g in ("cz_gaussian_unipolar", "cz_gaussian_bipolar"):
+            a, b = g + "_pulse_q1_q2", g + "_pulse_q1_q3"
+            assert a in zops and b in zops
+            assert g + "_pulse" not in zops
+            # each pair's macro names the op its pair plays, and that op
+            # resolves to its OWN pair's amplitude
+            assert st.state["qubit_pairs"]["q1-2"]["macros"][g]["flux_pulse_qubit"]["id"] == a
+            assert st.state["qubit_pairs"]["q1-3"]["macros"][g]["flux_pulse_qubit"]["id"] == b
+            assert self._resolved(st, f"qubits.q1.z.operations.{a}.amplitude") == 0.31
+            assert self._resolved(st, f"qubits.q1.z.operations.{b}.amplitude") == 0.47
+            assert st.state["qubit_pairs"]["q1-2"]["macros"][g]["flux_pulse_qubit"]["amplitude"] == 0.31
+            cops = st.state["qubit_pairs"]["q1-3"]["coupler"]["operations"]
+            assert g + "_coupler_pulse_q1_q3" in cops
+
+    def test_replace_on_this_pair_names_this_pair(self, env):
+        c = env["client"]
+        assert c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"}).status_code == 200
+        assert c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-3"}).status_code == 200
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-3"})
+        body = r.get_data(as_text=True)
+        assert r.status_code == 409
+        assert "Already present on pair q1-3" in body and "Replace existing" in body
+        r = c.post("/api/pulse/gaussian-cz",
+                   data={"pair_id": "q1-3", "overwrite": "1", "qubit_filter_mhz": "33"})
+        assert r.status_code == 200, r.data
+        st = env["store"]
+        assert st.state["qubit_pairs"]["q1-3"]["macros"]["cz_gaussian_unipolar"][
+            "flux_pulse_qubit"]["gaussian_filter_frequency_mhz"] == 33
+        # the other pair is untouched
+        assert st.state["qubit_pairs"]["q1-2"]["macros"]["cz_gaussian_unipolar"][
+            "flux_pulse_qubit"]["gaussian_filter_frequency_mhz"] == 20
+        assert self._resolved(
+            st, "qubits.q1.z.operations.cz_gaussian_unipolar_pulse_q1_q2.amplitude") == 0.31
+
+    def test_an_op_another_pair_owns_is_refused_naming_that_pair(self, tmp_path):
+        state = _shared_mover_chip()
+        # an op under q1-3's own name whose pointers belong to q1-2's gate
+        other = dict(gaussian_cz.plan(state, "q1-2")["creates"])[
+            "qubits.q1.z.operations.cz_gaussian_unipolar_pulse"]
+        state["qubits"]["q1"]["z"]["operations"]["cz_gaussian_unipolar_pulse_q1_q3"] = other
+        env = self._env(tmp_path, state)
+        r = env["client"].post("/api/pulse/gaussian-cz",
+                               data={"pair_id": "q1-3", "overwrite": "1"})
+        body = r.get_data(as_text=True)
+        assert r.status_code == 409, body
+        assert "belongs to pair q1-2" in body
+        assert "Replace existing" not in body
+        assert "cz_gaussian_unipolar" not in env["store"].state["qubit_pairs"]["q1-3"]["macros"]
+
+    def test_a_legacy_bare_op_of_another_pair_is_left_alone(self, tmp_path):
+        state = _shared_mover_chip()
+        # an older build on q1-2: bare names, linked to q1-2's macros
+        for path, value in gaussian_cz.plan(state, "q1-2")["creates"]:
+            _set(state, path, value)
+        env = self._env(tmp_path, state)
+        c, st = env["client"], env["store"]
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-3"})
+        body = r.get_data(as_text=True)
+        assert r.status_code == 200, body
+        assert "stays with pair q1-2" in body
+        zops = st.state["qubits"]["q1"]["z"]["operations"]
+        assert zops["cz_gaussian_unipolar_pulse"]["amplitude"] == (
+            "#/qubit_pairs/q1-2/macros/cz_gaussian_unipolar/flux_pulse_qubit/amplitude")
+        assert self._resolved(
+            st, "qubits.q1.z.operations.cz_gaussian_unipolar_pulse.amplitude") == 0.31
+        # replacing q1-2 itself takes its own bare op along
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"})
+        body = r.get_data(as_text=True)
+        assert r.status_code == 409 and "Already present on pair q1-2" in body
+        assert "cz_gaussian_unipolar_pulse," in body or "cz_gaussian_unipolar_pulse " in body
+        r = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2", "overwrite": "1"})
+        assert r.status_code == 200, r.data
+        zops = st.state["qubits"]["q1"]["z"]["operations"]
+        assert "cz_gaussian_unipolar_pulse" not in zops
+        assert "cz_gaussian_unipolar_pulse_q1_q2" in zops
+        assert "cz_gaussian_unipolar_pulse_q1_q3" in zops
+
+    def test_an_alias_op_is_not_another_pairs(self):
+        state = _shared_mover_chip()
+        state["qubits"]["q1"]["z"]["operations"]["cz_gaussian_unipolar_pulse_q1_q3"] = (
+            "#/qubit_pairs/q1-2/macros/cz_gaussian_unipolar/flux_pulse_qubit")
+        res = gaussian_cz.plan(state, "q1-3", own_names=True)
+        assert "error" not in res, res
+        assert "qubits.q1.z.operations.cz_gaussian_unipolar_pulse_q1_q3" in res["existing"]
+
+    def test_one_pair_chip_still_builds_and_macros_name_their_ops(self):
+        res = gaussian_cz.plan(_chip(), "q1-2", own_names=True)
+        assert "error" not in res and not res["existing"]
+        by = dict(res["creates"])
+        for g in ("cz_gaussian_unipolar", "cz_gaussian_bipolar"):
+            name = g + "_pulse_q1_q2"
+            assert by[f"qubit_pairs.q1-2.macros.{g}"]["flux_pulse_qubit"]["id"] == name
+            assert by[f"qubits.q1.z.operations.{name}"]["amplitude"] == (
+                f"#/qubit_pairs/q1-2/macros/{g}/flux_pulse_qubit/amplitude")
+
+    def test_the_panel_renders_the_refusal(self, env, tmp_path):
+        """gl-2o5 under the real bundled htmx + app.js: a 409 renders in the
+        panel, the previous success line is cleared at request start, and a
+        Replace's overwrite=1 is sent once only (gcz_panel_fragcheck.cjs)."""
+        import subprocess
+        c = env["client"]
+        form = c.get("/pulse/gaussian-cz").get_data(as_text=True)
+        ok = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"}).get_data(as_text=True)
+        again = c.post("/api/pulse/gaussian-cz", data={"pair_id": "q1-2"})
+        assert again.status_code == 409
+        root = Path(__file__).resolve().parents[1]
+        files = []
+        for name, text in (("form", form), ("ok", ok),
+                           ("refusal", again.get_data(as_text=True))):
+            f = tmp_path / (name + ".html")
+            f.write_text(text, encoding="utf-8")
+            files.append(str(f))
+        proc = subprocess.run(
+            ["node", str(root / "tests" / "gcz_panel_fragcheck.cjs"), *files],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(root), timeout=120)
+        if proc.returncode == 2 and "jsdom not installed" in (proc.stdout + proc.stderr):
+            pytest.skip("jsdom not installed")
+        assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
