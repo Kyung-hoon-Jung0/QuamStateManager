@@ -240,7 +240,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
     ("waveforms", [
         ("error", "Sample within DAC range", "Every synthesized pulse sample stays inside its output's range (MW ±1, LF direct ±0.5 V / amplified ±2.5 V) — a sample outside it makes generate_config() reject the whole config."),
         ("error", "Valid pulse parameters", "Pulse parameters produce a real waveform (e.g. not sigma = 0 or a DRAG anharmonicity of 0)."),
-        ("error", "Pulse length QOP accepts", "A channel operation's config length (an inferred one as its class rounds it) is a multiple of 4 ns and at least 4 ns (16 ns before QOP 3.3; 4 assumed when the chip declares no QOP version) -- otherwise QOP refuses every program on the chip although generate_config() passes."),
+        ("error", "Pulse length QOP accepts", "A channel operation's config length (an inferred one as its class rounds it) is a multiple of 4 ns and at least 4 ns (16 ns before QOP 3.3; 4 assumed when the chip declares no QOP version) — otherwise QOP refuses every program on the chip although generate_config() passes."),
     ]),
     ("references", [
         ("error", "Pointers resolve", "Every QUAM JSON pointer (#/, #../, #./) resolves to a real target."),

@@ -28117,7 +28117,7 @@ def _qubit_param_defaults(merged: dict) -> dict:
         else:
             out[q] = {"anharmonicity": {
                 "value": None,
-                "note": "placeholder: this qubit stores no anharmonicity -- set it"}}
+                "note": "placeholder: this qubit stores no anharmonicity — set it"}}
     return out
 
 
@@ -28284,7 +28284,7 @@ def _synth_write_refusal(store, writes):
                    if after.get("rule_violation") else
                    "QOP would refuse every program on the chip")
             found.append((f"{leaf} at {op}" + (f" ({fields})" if fields else "")
-                          + f" -- {problem}. {why}", op))
+                          + f" — {problem}. {why}", op))
         if found:
             # every pulse a rule breaks is refused (an independent batch skips
             # each one's rows); one pulse keeps the single-pulse sentence
@@ -29548,7 +29548,7 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 
 def _lab_refusal_text(message: str, action: str = "value") -> str:
     if message.startswith(_SYNTH_REFUSAL_LEAD):
-        return f"Nothing was written -- {message}"
+        return f"Nothing was written — {message}"
     if message.startswith("your chip's generate_config()"):
         return (f"Your chip's own generate_config() refused this{' delete' if action == 'delete' else ''} (run in the "
                 f"selected environment) — nothing was changed: {message}")
