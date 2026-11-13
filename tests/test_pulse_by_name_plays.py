@@ -177,6 +177,26 @@ class TestDelete:
         assert r.status_code == 200
         assert "no longer exists" in r.data.decode()
 
+    def test_the_forced_delete_answers_a_warning_naming_the_gate(self, client):
+        r = client.post("/api/pulse/delete", data={"path": OP, "force": "1"})
+        body = r.data.decode()
+        assert "toast-warning" in body and "toast-success" not in body
+        assert HOLDER in body and "fails" in body
+        assert "diagnostics-changed" in r.headers.get("HX-Trigger", "")
+
+    def test_after_the_forced_delete_diagnostics_lists_the_missing_name(self, client):
+        before = client.get("/diagnostics/summary").data.decode()
+        client.post("/api/pulse/delete", data={"path": OP, "force": "1"})
+        after = client.get("/diagnostics/summary").data.decode()
+        assert after != before
+        page = client.get("/diagnostics").data.decode()
+        assert "cz_flat_q2" in page and "by name" in page
+
+    def test_a_plain_delete_stays_a_success(self, client):
+        r = client.post("/api/pulse/delete",
+                        data={"path": "qubits.q2.z.operations.cz_flat_q2"})
+        assert "toast-success" in r.data.decode()
+
     def test_the_other_qubits_op_deletes_without_refusal(self, client):
         r = client.post("/api/pulse/delete",
                         data={"path": "qubits.q2.z.operations.cz_flat_q2"})

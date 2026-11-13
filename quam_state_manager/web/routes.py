@@ -29909,8 +29909,12 @@ def api_pulse_delete():
         note += f" — {len(referrers)} reference(s) now dangle"
     if by_name:
         note += (f" \u2014 {len(by_name)} gate slot(s) now play a name that no"
-                 f" longer exists: {', '.join(by_name)}")
-    detail = render_template("_status.html", message=note, level="success")
+                 f" longer exists: {', '.join(by_name)} (applying that gate"
+                 f" now fails; see Diagnostics)")
+    # a forced delete that left a dangling pointer or a gate playing a
+    # missing name is not a plain success: it says so as a warning
+    detail = render_template("_status.html", message=note,
+                             level="warning" if (referrers or by_name) else "success")
     return _lab_toast(_pulse_mutation_response(detail))
 
 
