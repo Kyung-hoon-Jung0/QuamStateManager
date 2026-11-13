@@ -4653,6 +4653,7 @@ window.SyncPanel = (function () {
                 if (g !== _gen || !_syncPanelOpen()) return;
                 h.innerHTML = html;
                 if (window.htmx) htmx.process(h);
+                carryArm();     // gl-17y: an armed confirm survives the refresh
                 // docs/244: the panel's times (checked / last apply / take
                 // live) are ts_local spans now -- show them in the viewer's zone
                 if (typeof applyLocalTimes === "function") applyLocalTimes(h);
@@ -4683,31 +4684,65 @@ window.SyncPanel = (function () {
             return;
         }
         Array.prototype.forEach.call(document.querySelectorAll("[data-armed='1']"), disarm);
+        var now = Date.now();
+        // R4 A2: armed by a key or pointer press still held down -- the
+        // confirm waits for it to be let go (keyup / pointerup)
+        _startArm(btn, now, now + ARM_S * 1000, _pressDown !== btn);
+    }
+    /* One armed confirm at a time: which button, when it was armed and when
+       its window closes. The window is a DEADLINE, not a count of timer ticks,
+       so the badge and the expiry always agree with the 5 s the toast names
+       (gl-17y). */
+    var _live = null;
+    function _startArm(btn, armedAt, deadline, released) {
         var lab = btn.querySelector(".sp-choice-label") || btn;
         _clearExpired(btn);
         _dropExpiredToast(btn);     // v1.5.1 (r6 P2-7): pressed again, "Not done" is answered
         btn._armOrig = lab.innerHTML;
         lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
         btn.setAttribute("data-armed", "1");
-        btn._armedAt = Date.now();
-        // R4 A2: armed by a key or pointer press still held down -- the
-        // confirm waits for it to be let go (keyup / pointerup)
-        btn._armReleased = (_pressDown !== btn);
+        btn._armedAt = armedAt;
+        btn._armReleased = released;
         btn.classList.add("sync-armed");
+        _live = { btn: btn, key: _armKey(btn), armedAt: armedAt, deadline: deadline };
         // v1.5.1 (U P2-32): the seconds left show on the button (a corner
         // badge: the label keeps its width), and running out is SAID -- a
         // second press that came too late used to re-arm without a word
-        var left = ARM_S;
-        _badge(btn, String(left));
+        function secondsLeft() { return Math.ceil((deadline - Date.now()) / 1000); }
+        _badge(btn, String(Math.max(1, secondsLeft())));
         btn._armTimer = setInterval(function () {
-            // R3 MINOR 3: a re-render replaced this button -- its countdown
-            // ends quietly (the press that matters is on the new button)
-            if (!btn.isConnected) { clearInterval(btn._armTimer); return; }
-            left -= 1;
+            if (!btn.isConnected) {
+                // a re-render replaced this button: the armed state moves to
+                // its twin (same action) with the same deadline, else it ends
+                // quietly (R3 MINOR 3)
+                clearInterval(btn._armTimer);
+                carryArm();
+                return;
+            }
+            var left = secondsLeft();
             if (left > 0) { _badge(btn, String(left)); return; }
             disarm(btn);
             _expired(btn);
-        }, 1000);
+        }, 250);
+    }
+    /* gl-17y: a panel refresh (a poll, another window, a node's save) re-renders
+       the armed button. The fresh twin -- the same action, recognised by
+       _armKey -- keeps the confirm armed until the ORIGINAL deadline, so a
+       second press inside the window still lands. A twin whose action changed
+       (another snapshot, another label) is a different button and stays
+       unarmed. */
+    function carryArm() {
+        var a = _live;
+        if (!a || a.btn.isConnected) return false;
+        if (Date.now() >= a.deadline) { _live = null; return false; }
+        var twin = null;
+        Array.prototype.forEach.call(document.querySelectorAll(".sync-arm, button[onclick*='SyncPanel.arm']"),
+            function (b) { if (!twin && b !== a.btn && b.getAttribute("data-armed") !== "1" && _armKey(b) === a.key) twin = b; });
+        if (!twin) return false;
+        var released = a.btn._armReleased !== false;
+        if (_pressDown === a.btn) _pressDown = twin;
+        _startArm(twin, a.armedAt, a.deadline, released);
+        return true;
     }
     var ARM_S = 5;
     // R3 M6: the least time between arming and a confirm that counts
@@ -4818,6 +4853,7 @@ window.SyncPanel = (function () {
     function disarm(btn) {
         if (!btn || btn.getAttribute("data-armed") !== "1") return;
         clearInterval(btn._armTimer);
+        if (_live && _live.btn === btn) _live = null;
         var lab = btn.querySelector(".sp-choice-label") || btn;
         if (btn._armOrig != null) lab.innerHTML = btn._armOrig;
         btn.removeAttribute("data-armed");
