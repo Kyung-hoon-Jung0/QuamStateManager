@@ -51,6 +51,7 @@ const letterXY = (t) => ({ x: +t.getAttribute('x'), y: +t.getAttribute('y') });
 const letterDists = (g, cx, cy) => roleLetters(g).map((t) => Math.hypot(+t.getAttribute('x') - cx, +t.getAttribute('y') - cy));
 // The rounding the renderer applies to each coordinate (r1: 0.1 px).
 const ARC_TOL = 0.15;
+const DOT = String.fromCharCode(0xb7);   // the faint middle dot of a non-moving end
 
 const TOPO = {
   nodes: [
@@ -158,7 +159,8 @@ function checkRenderLayout() {
   ok(st && Array.prototype.map.call(st.querySelectorAll('text'), function (x) { return x.textContent; }).join(' ') === 'qA3 qA1' && st.querySelectorAll('line.cm-dir-connector').length === 1,
      'a vertical edge groups two ids top-first with an SVG connector: ' + (st && st.textContent));
   ok(onlyIdsOrRoles, 'every rendered text is a qubit id, a pair id or a C/T/M role letter');
-  const endSet = { 'C': 1, 'T': 1, 'C H': 1, 'C L': 1, 'T H': 1, 'T L': 1, 'C M': 1, 'T M': 1, 'C ·': 1, 'T ·': 1 };
+  const endSet = { 'C': 1, 'T': 1, 'C H': 1, 'C L': 1, 'T H': 1, 'T L': 1, 'C M': 1, 'T M': 1 };
+  endSet['C ' + DOT] = 1; endSet['T ' + DOT] = 1;
   ok(Array.from(m.querySelectorAll('.cm-role')).every(g => endSet[roleStr(g)]),
      'every role end reads as one role sequence: ' + Array.from(m.querySelectorAll('.cm-role')).map(roleStr).join('|'));
   ok(!anyNumeric, 'no NUMBER is ever drawn on the component map (docs/91 §2.4)');
