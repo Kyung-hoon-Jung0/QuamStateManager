@@ -28,6 +28,10 @@ from quam_state_manager.web.app import create_app
 LAB_CLASS = "mylab.two_flux_gate.SNZTwoFluxPulse"
 SNZ_PATH = "qubits.q1.z.operations.cz_snz"
 KNOWN_PATH = "qubits.q1.xy.operations.x180_DragCosine"
+#: a lab class SM has NOT transcribed (the SNZ two-flux class is, for the CZ
+#: gate plan -- see tests/test_pulse_lab_transcription.py)
+GNZ_CLASS = "mylab.two_flux_gate.GaussianNZTwoFluxPulse"
+GNZ_PATH = "qubits.q1.z.operations.cz_gnz"
 
 
 def _chip(folder: Path) -> Path:
@@ -56,6 +60,10 @@ def _chip(folder: Path) -> Path:
                               "t_phi": 0, "b_over_a": 0.25,
                               "neg_offset_v": -9.5e-05, "padding": 4,
                               "axis_angle": None, "length": 88,
+                          },
+                          "cz_gnz": {
+                              "__class__": GNZ_CLASS,
+                              "amplitude": 0.2, "length": 40, "sigma": 5,
                           },
                       }},
             },
@@ -182,9 +190,9 @@ class TestNoConfigIsNotADeadEnd:
     def test_it_names_the_class_and_offers_the_one_action(self, plain):
         _, c, _ = plain
         body = c.get("/pulse/detail",
-                     query_string={"path": SNZ_PATH}).get_data(as_text=True)
+                     query_string={"path": GNZ_PATH}).get_data(as_text=True)
         assert "unrecognized pulse class" in body
-        assert LAB_CLASS in body
+        assert GNZ_CLASS in body
         # the door that fixes it, not just a diagnosis
         assert "Generate now" in body
         assert "regenerateThenVerify" in body
@@ -459,10 +467,19 @@ class TestTheTableRowGetsASparklineToo:
         assert "the lab's own" in body
 
     def test_with_no_config_the_column_is_blank_as_before(self, plain):
-        # No config to read, so no thumbnail -- and nothing invented.
+        # No config to read, so no config thumbnail -- and nothing invented:
+        # only the class SM transcribed for the CZ gate plan gets one, titled
+        # as that transcription; any other lab class stays blank.
         _, c, _ = plain
         body = c.get("/pulses").get_data(as_text=True)
-        assert "pulse-spark-lab" not in body
+        assert "from the generated config" not in body
+        assert body.count("pulse-spark-lab") == 1
+        rows = body.split("<tr")
+        snz = [r for r in rows if "operations.cz_snz" in r]
+        gnz = [r for r in rows if "operations.cz_gnz" in r]
+        assert snz and gnz
+        assert "transcription of the lab class" in snz[0]
+        assert "pulse-spark-lab" not in gnz[0]
 
     def test_a_class_SM_knows_is_drawn_by_SM_and_not_marked(self, configured):
         # The control: the known pulse's own sparkline must be untouched by
@@ -495,7 +512,7 @@ class TestTheTableRowGetsASparklineToo:
             body = c.get("/pulses").get_data(as_text=True)
         finally:
             rt._pulse_truth_lookup = real
-        assert "pulse-spark-lab" not in body, \
+        assert "from the generated config" not in body, \
             "a non-ok verdict must not be drawn, whatever it happens to carry"
 
     def test_the_single_row_endpoint_agrees_with_the_page(self, configured):

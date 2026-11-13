@@ -37,7 +37,7 @@
     </div>
     <div class="gi-plot-area">
         <div class="gi-plot" id="gi-plot-{{ pair_name | replace('-', '_') }}"
-             data-pair="{{ pair_name }}"
+             data-pair="{{ pair_name }}"{% if gate %} data-op="{{ gate }}"{% endif %}
              data-role="{{ moving_role }}">
             <p class="muted" style="text-align:center;padding:2em">Loading detuning plot…</p>
         </div>
@@ -47,6 +47,7 @@
             Click on the plot to stage a z-voltage edit.
             Δ(|11⟩−|20⟩) and Δ(|11⟩−|02⟩) zero crossings are CZ interaction points.
             Red ✕ markers show where detunings vanish.
+            {% if gate %}The green diamond is {{ gate }}'s operating point (idle bias + pulse amplitude, as the CZ gate plan computes it); the grey ring is the idle bias.{% else %}The grey ring is the idle bias.{% endif %}
         </small>
     </div>
 </div>

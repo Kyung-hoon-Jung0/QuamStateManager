@@ -146,6 +146,8 @@ window.PulsesPage = (function () {
        waveform is worse than no waveform. The generated config is the lab's
        OWN `generate_config()` output, so it cannot disagree with the hardware.
        It is labelled as such, never passed off as the synthesized preview. */
+    var TRANSCRIPTION_LABEL = 'SM\'s transcription of the lab class (as the CZ gate plan draws it)'
+        + ' — not quam\'s synthesis, not your own code';
     function groundTruthInto(root, sec, gen, done) {
         fetch('/api/pulse/ground-truth?path=' + encodeURIComponent(sec.path))
             .then(function (r) { return r.json(); })
@@ -160,6 +162,17 @@ window.PulsesPage = (function () {
                     cacheCommitted(sec, data.plot);
                     setPlotLabel(root, 'waveform from the generated config'
                         + ' \u2014 this class is the lab\'s own, so its own code drew it');
+                    publishSynthErr(root);
+                } else if (data && data.transcription && data.transcription.ok) {
+                    /* No config waveform, but SM transcribed this lab class for
+                       the CZ gate plan: the same samples, labelled as SM's
+                       transcription -- never as the lab's own code. */
+                    sec.committedPlot = data.transcription;
+                    sec.fromConfig = false;
+                    sec.synthErr = '';
+                    if (sec.index === 0) root._committedPlot = data.transcription;
+                    cacheCommitted(sec, data.transcription);
+                    setPlotLabel(root, TRANSCRIPTION_LABEL);
                     publishSynthErr(root);
                 } else {
                     /* No config yet is not a dead end: the button that

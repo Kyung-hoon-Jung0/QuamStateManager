@@ -287,6 +287,10 @@ def build_plotly_figure(
             ),
         })
 
+    # The idle bias is where the qubit WAITS, not where a CZ operates: it is
+    # named for what it is. A CZ pulse's own operating point (idle + pulse
+    # amplitude, from the CZ gate plan) is drawn on the curve when the plot
+    # was asked about one gate.
     op = sweep["operating_point"]
     op_x = op["x"] if x_kind == "voltage" else op["x"] * hz_to_mhz
     traces.append({
@@ -294,16 +298,36 @@ def build_plotly_figure(
         "y": [0],
         "type": "scatter",
         "mode": "markers",
-        "name": "Operating point",
-        "marker": {"color": "#2ecc71", "size": 12, "symbol": "diamond"},
+        "name": "Idle bias",
+        "marker": {"color": "#95a5a6", "size": 10, "symbol": "circle-open"},
         "hovertemplate": (
-            "<b>Operating point</b><br>"
+            "<b>Idle bias</b><br>"
             + (f"V = {op['voltage']:.4f} V<br>" if op["voltage"] is not None else "")
-            + f"f₀₁ = {op['frequency'] * hz_to_mhz:.1f} MHz"
+            + f"f\u2080\u2081 = {op['frequency'] * hz_to_mhz:.1f} MHz"
             "<extra></extra>"
         ),
         "showlegend": True,
     })
+    gp = sweep.get("gate_point")
+    if gp:
+        gp_x = gp["x"] if x_kind == "voltage" else gp["x"] * hz_to_mhz
+        traces.append({
+            "x": [gp_x],
+            "y": [gp["y"] * hz_to_mhz],
+            "type": "scatter",
+            "mode": "markers",
+            "name": f"Operating point ({gp['gate']})",
+            "marker": {"color": "#2ecc71", "size": 12, "symbol": "diamond"},
+            "hovertemplate": (
+                f"<b>Operating point \u00b7 {gp['gate']}</b><br>"
+                + (f"V = {gp['voltage']:.4f} V (idle + {gp['amplitude_v']:+.4f} V)<br>"
+                   if gp["voltage"] is not None else "")
+                + f"f\u2080\u2081 = {gp['frequency'] * hz_to_mhz:.1f} MHz<br>"
+                + f"{gp['detuning_label']} = {gp['y'] * hz_to_mhz:+.1f} MHz"
+                "<extra></extra>"
+            ),
+            "showlegend": True,
+        })
 
     y_vals = [v * hz_to_mhz for key, _, _ in _DETUNING_TRACES for v in sweep[key]]
     y_min = min(y_vals) if y_vals else -500
@@ -408,9 +432,67 @@ def build_plotly_figure(
 
 
 _PAIR_MACRO_PULSE = re.compile(
-    r"^qubit_pairs\.([^.]+)\.macros\.[^.]+\.(?:flux_pulse_qubit|coupler_flux_pulse)$")
+    r"^qubit_pairs\.([^.]+)\.macros\.([^.]+)\.(?:flux_pulse_qubit|coupler_flux_pulse)$")
 _QUBIT_Z_OP = re.compile(r"^qubits\.([^.]+)\.z\.operations\.[^.]+$")
 _PAIR_POINTER = re.compile(r"^#/qubit_pairs/([^/]+)/")
+_MACRO_POINTER = re.compile(r"^#/qubit_pairs/([^/]+)/macros/([^/]+)/")
+
+
+def gate_for_pulse(store: Any, path: str) -> str | None:
+    """The CZ macro (gate name) *path* is the flux pulse of, read the same way
+    :func:`pair_for_pulse` reads the pair; None when it is not ONE macro."""
+    if not isinstance(path, str):
+        return None
+    pair = pair_for_pulse(store, path)
+    if pair is None:
+        return None
+    m = _PAIR_MACRO_PULSE.match(path)
+    if m:
+        return m.group(2)
+    try:
+        body = store.get_value(path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+    named = {(pm.group(1), pm.group(2)) for v in (body or {}).values()
+             if isinstance(v, str) for pm in [_MACRO_POINTER.match(v)] if pm}
+    if len(named) != 1:
+        return None
+    p, gate = named.pop()
+    return gate if p == pair else None
+
+
+def add_gate_point(sweep: dict[str, Any], control: dict[str, Any], target: dict[str, Any],
+                   *, gate: str, amplitude_v: float | None,
+                   frequency_hz: float | None) -> dict[str, Any]:
+    """Mark the CZ operating point of *gate* on *sweep*.
+
+    The amplitude and the frequency are the CZ gate plan's own
+    (``cz_gate_plan.operations`` -- one source), never recomputed here. On a
+    voltage axis the point sits at idle + pulse amplitude; its y is the
+    detuning closest to zero at that frequency (the interaction the gate
+    drives). Absent numbers leave the sweep unmarked.
+    """
+    if frequency_hz is None:
+        return sweep
+    moving_is_control = sweep.get("sweep_role", "control") == "control"
+    f_c = frequency_hz if moving_is_control else control["f_01"]
+    f_t = target["f_01"] if moving_is_control else frequency_hz
+    a_c, a_t = control["anharmonicity"], target["anharmonicity"]
+    dets = {"\u0394(|11\u27e9\u2212|20\u27e9)": f_t - f_c + a_c, "\u0394(|11\u27e9\u2212|02\u27e9)": f_c - f_t + a_t,
+            "\u0394(|10\u27e9\u2212|01\u27e9)": f_c - f_t}
+    label, y = min(dets.items(), key=lambda kv: abs(kv[1]))
+    v_idle = sweep.get("idle_voltage")
+    voltage = (v_idle + amplitude_v
+               if sweep.get("x_kind") == "voltage" and v_idle is not None and amplitude_v is not None
+               else None)
+    if sweep.get("x_kind") == "voltage" and voltage is None:
+        return sweep
+    sweep["gate_point"] = {
+        "gate": gate, "x": voltage if voltage is not None else frequency_hz,
+        "voltage": voltage, "amplitude_v": amplitude_v, "frequency": frequency_hz,
+        "y": y, "detuning_label": label,
+    }
+    return sweep
 
 
 def pair_for_pulse(store: Any, path: str) -> str | None:

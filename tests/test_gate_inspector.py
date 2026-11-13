@@ -393,8 +393,36 @@ class TestRoutes:
         assert r.status_code == 200
         fig = r.get_json()
         assert fig["clickable"]["targets"][0]["path"] == "qubits.q2.z.joint_offset"
-        op = [t for t in fig["data"] if t.get("name") == "Operating point"][0]
+        op = [t for t in fig["data"] if t.get("name") == "Idle bias"][0]
         assert op["x"] == [-0.02]          # the real idle bias, not 0 V
+        # no gate asked about: no CZ operating point is claimed
+        assert not [t for t in fig["data"] if str(t.get("name")).startswith("Operating point")]
+
+    def test_a_gate_plot_marks_the_cz_point_the_plan_computes(self, chip):
+        """The marker of a CZ pulse is idle + pulse amplitude, at the CZ gate
+        plan's own frequency, ON the curve -- not the idle bias."""
+        import numpy as np
+        from quam_state_manager.web import routes as _r
+        app, c = chip
+        fig = c.get("/pair/q1-2/gate-inspector/plot?op=cz_unipolar").get_json()
+        gp = [t for t in fig["data"] if t.get("name") == "Operating point (cz_unipolar)"]
+        assert gp, [t.get("name") for t in fig["data"]]
+        with app.test_request_context():
+            rows, _c, _u = _r._cz_plan_ops(_ctx(app)["store"])
+        row = next(r for r in rows if r["pair"] == "q1-2" and r["operation"] == "cz_unipolar")
+        ln = next(ln for ln in row["lines"] if ln["role"] == "target" and ln["moves"])
+        assert ln["amplitude_v"] == pytest.approx(0.1)
+        assert gp[0]["x"][0] == pytest.approx(-0.02 + ln["amplitude_v"])
+        idle = [t for t in fig["data"] if t.get("name") == "Idle bias"][0]
+        assert gp[0]["x"][0] != idle["x"][0]
+        curves = [t for t in fig["data"] if t.get("mode") == "lines"]
+        on = [abs(np.interp(gp[0]["x"][0], t["x"], t["y"]) - gp[0]["y"][0]) for t in curves]
+        assert min(on) < 1.0                # MHz: the marker sits on a curve
+
+    def test_the_pulse_detail_asks_about_its_own_gate(self, chip):
+        app, c = chip
+        assert gate_inspector.gate_for_pulse(
+            _ctx(app)["store"], "qubit_pairs.q1-2.macros.cz_flattop.flux_pulse_qubit") == "cz_flattop"
 
     def test_switch_moving_with_the_token_the_browser_sends(self, chip):
         """`_chip_token` does not exist — this call used to raise NameError
@@ -608,3 +636,23 @@ class TestCrossingLabelsDoNotCollide:
         assert len(set(_stagger_labels([0.0, 0.001, 0.002], axis_span=1.0))) == 3
         # the same three on a 10 mV axis are genuinely spread out
         assert _stagger_labels([0.0, 0.004, 0.008], axis_span=0.01) == ["top center"] * 3
+
+
+def test_the_pulse_detail_plot_carries_its_gate(chip):
+    """The Pulses inspector's operating-point plot is asked about the pulse's
+    own gate (``data-op``), so it marks that gate's CZ point."""
+    _, c = chip
+    html = c.get("/pulse/detail?path=qubit_pairs.q1-2.macros.cz_unipolar.flux_pulse_qubit"
+                 ).get_data(as_text=True)
+    assert 'class="gi-plot"' in html, html[:400]
+    assert 'data-op="cz_unipolar"' in html
+
+
+def test_the_client_forwards_the_gate_to_the_plot():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static"
+          / "app.js").read_text(encoding="utf-8")
+    i = js.index("function loadPlot(el)")
+    body = js[i:i + 900]
+    assert "el.getAttribute('data-op')" in body
+    assert "'&op=' + encodeURIComponent(gateOp)" in body
