@@ -7523,7 +7523,7 @@ def _cz_flux_pulse_view(store: QuamStore, name: str, gate_name: str,
             ft = resolve_field_target(store.merged, ref[2:].replace("/", ".")
                                       + ".z.opx_output.sampling_rate")
             rate = ft.get("resolved_value") if ft.get("resolvable") else None
-        except Exception:  # noqa: BLE001 — an unresolvable port means the 1 GSa/s default
+        except Exception:  # noqa: BLE001 -- an unresolvable port means the 1 GSa/s default
             rate = None
     out["shape"] = waveform_shape(pulse, sampling_rate=rate)
     alias = ".".join(base)
