@@ -24,8 +24,8 @@
 {% if cands | selectattr('carries') | list %}
 <tr data-cm-add-filters-row><th class="ui-table-head" scope="row">Previous line's filters</th>
     <td class="ui-table-cell"><select name="port_filters" aria-label="Filters a reused port still carries" data-cm-add-filters>
-      <option value="clear" selected>clear them</option><option value="keep">keep them</option></select></td>
-    <td class="ui-table-cell ui-table-muted">only for a picked port that still carries a previous line's FIR / IIR filters or delay (named in its list entry); clearing resets them to a new port's values</td></tr>
+      <option value="clear" selected>clear the FIR / IIR filters</option><option value="keep">keep them</option></select></td>
+    <td class="ui-table-cell ui-table-muted">only for a picked port that still carries a previous line's FIR / IIR filters (named in its list entry); clearing resets them to a new port's values. A delay is always kept: recalibrate the z-line delay for the new element</td></tr>
 {% endif %}
 {%- endmacro %}
 <div class="ui-item" id="cm-add-box" data-cm-box data-kind="{{ kind }}">

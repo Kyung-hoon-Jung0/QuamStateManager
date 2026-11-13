@@ -332,8 +332,11 @@ def port_carry(decl: dict | None) -> list[str]:
 
 
 def port_clears(decl: dict | None) -> list[tuple[str, Any]]:
-    """``(key, clean value)`` for every setting :func:`port_carry` names: the
-    value a new port starts with (:func:`_new_port`: filters None, delay 0)."""
+    """``(key, clean value)`` for every distortion filter :func:`port_carry`
+    names: the value a new port starts with (:func:`_new_port`: None). The
+    delay is never cleared: it aligns the line with the others, including the
+    latency of the port crosstalk that is always kept, so zeroing it would
+    silently shift the line's timing; the review asks for a recalibration."""
     if not isinstance(decl, dict):
         return []
     out = []
@@ -342,8 +345,6 @@ def port_clears(decl: dict | None) -> list[tuple[str, Any]]:
             out.append((k, None))
         elif k == "filter" and isinstance(v, dict) and any(_taps(x) for x in v.values()):
             out.append((k, None))
-        elif k == "delay" and _num(v):
-            out.append((k, 0))
     return out
 
 
@@ -384,7 +385,10 @@ def _flux_port_sets(inv: dict, port: tuple, choice: str | None):
     keep = choice == "keep"
     sets = [] if keep else [(f"ports.analog_outputs.{con}.{fem}.{pid}.{k}", v)
                             for k, v in port_clears(decl)]
+    delay = _num(decl.get("delay")) or None
     return sets, {"port": f"{con} slot {fem} out {pid}", "carries": carries,
+                  "filters": [c for c in carries if not c.startswith("delay ")],
+                  "delay_kept": delay,
                   "choice": "keep" if keep else "clear"}
 
 

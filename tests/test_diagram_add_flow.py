@@ -142,7 +142,7 @@ class TestFreedPort:
         assert not cands[0]["carries"]
         assert all(not c["carries"] for c in cands[:cands.index(freed)])
 
-    def test_picking_it_clears_its_settings_by_default_and_keep_keeps_them(self):
+    def test_picking_it_clears_its_filters_by_default_and_keep_keeps_them(self):
         s, _w, m = _chip(edit=_freed_port)
         con, fem, pid = s.pop("_freed")
         base = f"ports.analog_outputs.{con}.{fem}.{pid}"
@@ -151,8 +151,11 @@ class TestFreedPort:
         sets = _sets(p)
         assert sets[f"{base}.feedforward_filter"] is None
         assert sets[f"{base}.exponential_filter"] is None
-        assert sets[f"{base}.delay"] == 0
-        assert p["summary"]["flux_carry"]["choice"] == "clear"
+        # the delay aligns the line (crosstalk latency included): never cleared
+        assert f"{base}.delay" not in sets
+        fc = p["summary"]["flux_carry"]
+        assert fc["choice"] == "clear" and fc["delay_kept"] == 62
+        assert fc["filters"] == ["FIR 48 taps", "3 exponential terms"]
         _d, p = _qubit_plan(m, flux=(con, fem, pid), port_filters="keep")
         assert not any(k.startswith(base) for k in _sets(p))
         assert p["summary"]["flux_carry"]["choice"] == "keep"
@@ -281,8 +284,13 @@ def test_the_review_and_the_result_line_state_the_filter_choice(app_env):
     r = c.post("/diagram-add/stage", data=dict(form, dry="0"))
     assert r.status_code == 200, r.data
     port = st.merged["ports"]["analog_outputs"][freed["con"]][str(freed["fem"])][str(freed["port"])]
-    assert port["feedforward_filter"] is None and port["delay"] == 0
-    assert "were cleared" in r.get_data(as_text=True)
+    assert port["feedforward_filter"] is None and port["exponential_filter"] is None
+    assert port["delay"] == 62
+    out = r.get_data(as_text=True)
+    assert "filters (FIR 48 taps, 3 exponential terms) were cleared" in out
+    want = "delay 62 ns kept — recalibrate this line's timing (z-line delay) for the new element"
+    assert want in out.replace("&#39;", "'")
+    assert "data-cm-add-delay-kept" in rev and "delay 62 ns kept &mdash; recalibrate" in rev
 
 
 def test_the_pair_review_names_the_copied_amplitudes(app_env):

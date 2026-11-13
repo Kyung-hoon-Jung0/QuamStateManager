@@ -177,6 +177,12 @@ def _plan_from_form(store):
                          active=_active_arg(), port_filters=_filters_arg())
 
 
+def delay_kept_line(delay) -> str:
+    """The one sentence for a reused port's delay (kept, never cleared)."""
+    return (f"delay {delay:g} ns kept \u2014 recalibrate this line's timing "
+            "(z-line delay) for the new element.")
+
+
 def _choices_line(s: dict) -> str:
     """The choices the stage made, said in its result line: whether the new
     entity joined the active list, and what happened to a reused port's
@@ -188,9 +194,12 @@ def _choices_line(s: dict) -> str:
                    f"{a['list']}.")
     fc = s.get("flux_carry")
     if fc:
-        what = ", ".join(fc["carries"])
-        out.append(f"Port {fc['port']}: its previous line's settings ({what}) were "
-                   + ("kept." if fc["choice"] == "keep" else "cleared."))
+        if fc["filters"]:
+            out.append(f"Port {fc['port']}: its previous line's filters "
+                       f"({', '.join(fc['filters'])}) were "
+                       + ("kept." if fc["choice"] == "keep" else "cleared."))
+        if fc["delay_kept"] is not None:
+            out.append(delay_kept_line(fc["delay_kept"]))
     return (" ".join(out) + " ") if out else ""
 
 
