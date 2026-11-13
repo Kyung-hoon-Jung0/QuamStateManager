@@ -28231,6 +28231,11 @@ def _synth_write_refusal(store, writes):
             problem = waveform_synth.pulse_write_problem(after, qop or None)
             if not problem:
                 continue
+            if not after.get("rule_violation") and not _synth_reaches_config(store, op):
+                # the length rule is QOP's for a CONFIG pulse; a pulse
+                # generate_config() never builds (a gate macro's own object
+                # reached only by field pointers) is not sent to QOP
+                continue
             before = waveform_synth.synth_for_operation(store, op)
             if waveform_synth.pulse_write_problem(before, qop or None) == problem:
                 continue
@@ -28255,6 +28260,19 @@ def _synth_write_refusal(store, writes):
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("pulse rule check failed", exc_info=True)
     return None
+
+
+def _synth_reaches_config(store, op: str) -> bool:
+    """Diagnostics' own rule (``diagnostics._reaches_config``): the pulse at
+    *op* is built by ``generate_config()`` -- it sits in a channel's
+    ``operations`` (a path test, so a whole pulse written there counts) or an
+    operation points at it. A check that cannot run answers True."""
+    from quam_state_manager.core.diagnostics import _reaches_config
+    try:
+        with store._lock:
+            return _reaches_config(store.merged, op)
+    except Exception:  # noqa: BLE001 -- unknown: keep the guard
+        return True
 
 
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,

@@ -268,6 +268,33 @@ class TestEveryBrokenPulseIsRefused:
         assert "pulses)" not in err and f"{Z}.flat" in err
 
 
+class TestALengthOutsideTheConfigIsNotRefused:
+    """The QOP length rule is for a pulse generate_config() builds; a gate
+    macro's own pulse object reached only by field pointers is not built."""
+
+    def _st(self):
+        st = _state()
+        st["qubits"]["q1"]["macros"] = {"cz": {
+            "pulse": {"__class__": QC + "SquarePulse", "amplitude": 0.1,
+                      "length": 40}}}
+        return st
+
+    def test_a_non_config_pulse_takes_length_42(self, tmp_path):
+        c = _load(tmp_path, self._st())
+        r = c.post("/field/edit", data={"dot_path": "qubits.q1.macros.cz.pulse.length",
+                                         "value": "42"})
+        assert r.status_code == 200, r.data[:300]
+        assert _peek(c, "qubits.q1.macros.cz.pulse.length") == 42
+
+    def test_an_operation_pointing_at_it_is_judged(self, tmp_path):
+        st = self._st()
+        st["qubits"]["q1"]["z"]["operations"]["cz_alias"] = "#/qubits/q1/macros/cz/pulse"
+        c = _load(tmp_path, st)
+        r = c.post("/field/edit", data={"dot_path": "qubits.q1.macros.cz.pulse.length",
+                                         "value": "42"})
+        assert r.status_code == 400 and "multiple of 4" in r.get_json()["error"]
+
+
 class TestPulseLengthDiagnostics:
     def _found(self, st):
         from quam_state_manager.core import diagnostics
