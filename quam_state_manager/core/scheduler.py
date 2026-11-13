@@ -1503,18 +1503,24 @@ def failed_target_writes(outcomes, patches) -> dict | None:
     if not failed:
         return None
     fset = set(failed)
+    every = {str(t) for t in outcomes}
     writes: list[dict] = []
+    untied: list[str] = []   # paths naming no target at all: never reverted, always named
     for p in patches if isinstance(patches, list) else ():
         if not isinstance(p, dict):
             continue
         dotted = _patch_dotted(p.get("path"))
-        hit = next((seg for seg in dotted.split(".") if seg in fset), None)
+        segs = dotted.split(".")
+        hit = next((seg for seg in segs if seg in fset), None)
         if hit is None:
+            if not any(seg in every for seg in segs):
+                untied.append(dotted)
             continue
         writes.append({"path": p.get("path"), "dotted": dotted, "target": hit,
                        "op": p.get("op", "replace"), "value": p.get("value"),
                        "old": p.get("old")})
-    return {"failed": failed, "n_targets": len(outcomes), "writes": writes}
+    return {"failed": failed, "n_targets": len(outcomes), "writes": writes,
+            "untied": untied}
 
 
 def _short(v) -> str:
@@ -1534,7 +1540,14 @@ def failed_targets_note(info: dict) -> str:
         ws = by_t.get(t)
         parts.append(f"{t}: still wrote {', '.join(ws)} to the chip" if ws
                      else f"{t}: wrote nothing")
-    return f"{k} of {n} targets failed -- " + "; ".join(parts)
+    note = f"{k} of {n} targets failed -- " + "; ".join(parts)
+    untied = info.get("untied") or []
+    if untied:
+        shown = ", ".join(untied[:5])
+        more = f" and {len(untied) - 5} more" if len(untied) > 5 else ""
+        note += (f"; {len(untied)} further write{'s' if len(untied) != 1 else ''} "
+                 f"could not be tied to a target (not reverted): {shown}{more}")
+    return note
 
 
 def set_item_failed_targets(instance_path, item_id: str, info: dict,
@@ -1550,6 +1563,7 @@ def set_item_failed_targets(instance_path, item_id: str, info: dict,
         it["failed_targets"] = list(info["failed"])
         it["n_targets"] = int(info["n_targets"])
         it["failed_writes"] = list(info["writes"])
+        it["failed_untied"] = list(info.get("untied") or [])
         it["failed_folder"] = str(folder) if folder else None
         it["failed_revert"] = None
         it["outcome_note"] = note
@@ -1613,7 +1627,7 @@ _PRESETS_FILENAME = "scheduler_presets.json"
 # regenerated on load (fresh ids, queued status).
 _PRESET_STRIP = ("id", "status", "started_at", "ended_at", "returncode",
                  "error", "log_file", "result_ref", "inserted_by", "outcome_note",
-                 "failed_targets", "n_targets", "failed_writes", "failed_folder",
+                 "failed_targets", "n_targets", "failed_writes", "failed_untied", "failed_folder",
                  "failed_revert")
 
 

@@ -40,6 +40,19 @@ class TestFailedTargetWrites:
         assert note.startswith("1 of 3 targets failed")
         assert "qubits.q1.f_01 (1 -> 2)" in note and "q2" not in note and "q10" not in note
 
+    def test_writes_naming_no_target_are_named_and_never_reverted(self):
+        stray = [{"op": "replace", "path": f"/quam/ports/p{i}/offset", "value": i, "old": 0}
+                 for i in range(7)]
+        info = scheduler.failed_target_writes(
+            {"q1": "failed", "q2": "successful"},
+            [_patch("q1", "f_01", 1, 2), _patch("q2", "f_01", 3, 4)] + stray)
+        assert [w["dotted"] for w in info["writes"]] == ["qubits.q1.f_01"]
+        assert info["untied"] == [f"ports.p{i}.offset" for i in range(7)]
+        note = scheduler.failed_targets_note(info)
+        assert "7 further writes could not be tied to a target" in note
+        assert "ports.p4.offset" in note and "ports.p5.offset" not in note
+        assert "and 2 more" in note
+
     def test_a_failed_target_that_wrote_nothing_says_so(self):
         info = scheduler.failed_target_writes({"q1": "failed", "q2": "successful"},
                                               [_patch("q2", "f_01", 3, 4)])
@@ -153,7 +166,21 @@ class TestRevertTheFailedTargets:
         chip.edit("qubits.q3.f_01", "5.5e9")
         before = chip.live_state()
         r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
-        assert r.status_code == 409 and "unapplied" in r.get_json()["error"]
+        err = r.get_json()["error"]
+        assert r.status_code == 409 and "unapplied" in err and "apply or discard them first" in err
+        assert chip.live_state() == before
+
+    def test_a_running_queue_refuses_and_says_to_wait(self, chip, monkeypatch):
+        from quam_state_manager.web import routes
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        before = chip.live_state()
+        monkeypatch.setattr(routes.scheduler, "is_active", lambda *a, **k: True)
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={})
+        body = r.get_json()
+        assert r.status_code == 409 and body["error"] == "scheduler_running"
+        assert "Experiment Runner is running" in body["message"]
+        assert "until it finishes or is cancelled" in body["message"]
         assert chip.live_state() == before
 
     def test_nothing_written_for_a_failed_target_is_a_409(self, chip):
