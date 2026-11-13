@@ -227,3 +227,91 @@ def test_a_real_quam_save_lands_at_the_named_folder_not_the_env_default(rex, tmp
         body.update(json.loads((state_dir / name).read_text(encoding="utf-8")))
     assert body.get("value") == 9
     assert list(env_dir.iterdir()) == []
+
+
+# gl-cnx: a node whose recorded updates reach a list ELEMENT (a readout
+# confusion matrix row) must be captured, not skipped. quam stores lists as
+# QuamList (a UserList, not a list), so the fallback setter has to index it.
+
+def _quam_matrix_root():
+    quam_core = pytest.importorskip("quam.core")
+    from typing import List
+
+    @quam_core.quam_dataclass
+    class _Res(quam_core.QuamComponent):
+        confusion_matrix: List[List[float]] = None
+        time_of_flight: int = 24
+
+    @quam_core.quam_dataclass
+    class _Root(quam_core.QuamRoot):
+        res: _Res = None
+
+    return _Root(res=_Res(confusion_matrix=[[0.9, 0.1], [0.2, 0.8]]))
+
+
+@pytest.fixture
+def no_qualibrate_helper(monkeypatch):
+    """Force the fallback setter: the qualibrate helper is absent or fails on
+    the lab's qualibrate version (the reported run went down this path)."""
+    import types
+    mod = types.ModuleType("qualibrate.core.utils.node.record_state_update")
+
+    def update_machine_attribute(*_a, **_k):
+        raise AttributeError("helper unavailable in this env")
+
+    mod.update_machine_attribute = update_machine_attribute
+    monkeypatch.setitem(sys.modules, "qualibrate.core.utils.node.record_state_update", mod)
+
+
+def _saved(state_dir):
+    body = {}
+    for p in state_dir.iterdir():
+        if p.suffix == ".json":
+            body.update(json.loads(p.read_text(encoding="utf-8")))
+    return body
+
+
+def _persist(rex, machine, updates, state_dir):
+    from types import SimpleNamespace
+    rex._STATE_CAPTURE_WARNING = None
+    rex._persist_node_state({"node": SimpleNamespace(machine=machine, state_updates=updates)},
+                            str(state_dir), None)
+
+
+class TestListElementCapture:
+    def test_set_by_ref_indexes_a_quam_list_matrix(self, rex):
+        m = _quam_matrix_root()
+        rex._set_by_ref(m, "#/res/confusion_matrix/0/1", 0.05)
+        rex._set_by_ref(m, "#/res/confusion_matrix/1/0", 0.15)
+        assert m.res.confusion_matrix[0][1] == 0.05
+        assert m.res.confusion_matrix[1][0] == 0.15
+        assert m.res.confusion_matrix[0][0] == 0.9
+
+    def test_set_by_ref_replaces_a_whole_row(self, rex):
+        m = _quam_matrix_root()
+        rex._set_by_ref(m, "#/res/confusion_matrix/1", [0.3, 0.7])
+        assert list(m.res.confusion_matrix[1]) == [0.3, 0.7]
+
+    def test_a_list_element_update_is_captured(self, rex, tmp_path, no_qualibrate_helper):
+        m = _quam_matrix_root()
+        _persist(rex, m, {
+            "#/res/confusion_matrix/0/1": {"key": "#/res/confusion_matrix/0/1", "old": 0.1, "new": 0.05},
+            "#/res/confusion_matrix/1/1": {"key": "#/res/confusion_matrix/1/1", "old": 0.8, "new": 0.85},
+        }, tmp_path)
+        assert rex._STATE_CAPTURE_WARNING is None, rex._STATE_CAPTURE_WARNING
+        assert _saved(tmp_path)["res"]["confusion_matrix"] == [[0.9, 0.05], [0.2, 0.85]]
+
+    def test_no_list_element_capture_is_unchanged(self, rex, tmp_path, no_qualibrate_helper):
+        m = _quam_matrix_root()
+        _persist(rex, m, {"#/res/time_of_flight": {"key": "#/res/time_of_flight", "old": 24, "new": 32}},
+                 tmp_path)
+        assert rex._STATE_CAPTURE_WARNING is None, rex._STATE_CAPTURE_WARNING
+        body = _saved(tmp_path)
+        assert body["res"]["time_of_flight"] == 32
+        assert body["res"]["confusion_matrix"] == [[0.9, 0.1], [0.2, 0.8]]
+
+    def test_another_capture_failure_still_says_why(self, rex, tmp_path, no_qualibrate_helper):
+        m = _quam_matrix_root()
+        _persist(rex, m, {"#/res/confusion_matrix/5/0": {"key": "#/res/confusion_matrix/5/0", "new": 0.0}},
+                 tmp_path)
+        assert rex._STATE_CAPTURE_WARNING and "IndexError" in rex._STATE_CAPTURE_WARNING
