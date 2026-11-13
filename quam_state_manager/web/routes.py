@@ -21160,14 +21160,14 @@ def _trend_series_resolved_2q(hm, path: Path, pairs: list[str], tbl=None) -> lis
                 if tbl is not None and res[1] in set_at:
                     sdp, skey = set_at[res[1]]
                     info = dict((tbl.attrs.get(sdp) or {}).get(skey) or {})
-                info["sub"] = why + (" 00b7 " + info["sub"] if info.get("sub") else "")
+                info["sub"] = why + (" · " + info["sub"] if info.get("sub") else "")
                 info.setdefault("label", why)
                 attr[k] = info
         if not any(v is not None for _, v in pts):
             continue
         ser = {"metric": _TREND_2Q_RESOLVED_FAM, "entity": p, "kind": "pair",
                "points": pts,
-               "sources": [(attr.get(k) or {}).get("sub", "").split(" 00b7 ")[0]
+               "sources": [(attr.get(k) or {}).get("sub", "").split(" · ")[0]
                            for k, _ in pts]}
         if newest and pts[-1][0] != newest and pts[-1][1] is not None:
             ser["held"] = {newest: pts[-1][0]}
@@ -36961,10 +36961,15 @@ def export_csv():
         return _export_grid_csv(body or {})
 
     entity = request.args.get("entity") or "qubits"
-    props = request.args.getlist("props") or [
+    # a bare pairs export gets pair columns (the Pairs table's CZ export), never
+    # the qubit summary's, which a pair row does not have
+    props = request.args.getlist("props") or ([
+        "qubit_control", "qubit_target", "is_active", "moving_qubit",
+        "bell_fidelity", "detuning",
+    ] if entity == "pairs" else [
         "f_01", "readout_frequency", "T1", "T2ramsey",
         "readout_amplitude", "readout_threshold", "gate_fidelity_avg",
-    ]
+    ])
     from quam_state_manager.core import units as _units
     if entity == "pairs":
         rows = _export_pair_rows(engine, props)

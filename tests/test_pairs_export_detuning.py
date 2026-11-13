@@ -57,3 +57,9 @@ def test_mixed_units_keep_each_number_and_name_its_unit(tmp_path):
     head, body = _rows(_client(tmp_path, [0.12, 509318255.4322]))
     assert head == ["id", "detuning", "detuning_unit"]
     assert [(r[1], r[2]) for r in body] == [("0.12", "V"), ("509318255.4322", "Hz")]
+
+
+def test_a_bare_pairs_export_has_pair_columns(tmp_path):
+    c = _client(tmp_path, [-0.1659])
+    head = c.get("/export?entity=pairs").get_data(as_text=True).lstrip("\ufeff").splitlines()[0]
+    assert "qubit_control" in head and "detuning" in head and "T1" not in head

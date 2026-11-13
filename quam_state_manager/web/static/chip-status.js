@@ -2838,7 +2838,7 @@ window.ChipStatus.mount = function (opts) {
             var f = n.readout_frequency, rf = n.readout_rf_frequency;
             if (typeof f === 'number' && typeof rf === 'number' && fmt(f, 'GHz') !== fmt(rf, 'GHz')) {
                 return { sub: 'f_01 ' + fmt(f, 'GHz'),
-                         title: 'played RF ' + fmt(rf, 'GHz') + ' 00b7 resonator f_01 ' + fmt(f, 'GHz') };
+                         title: 'played RF ' + fmt(rf, 'GHz') + ' · resonator f_01 ' + fmt(f, 'GHz') };
             }
             return null;
         }
