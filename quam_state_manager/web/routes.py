@@ -8866,7 +8866,20 @@ def _qualibrate_tray_badge() -> dict | None:
             "standalone_path": (ctx or {}).get("live_path") if standalone else None,
             # w9/labwarm: WHICH env SM runs the lab's code with, beside the
             # project it belongs to (two small file reads, stat-memoized)
-            "env": _active_env_badge(env_project)}
+            "env": _active_env_badge(env_project),
+            "pythonpath_shadows": _pythonpath_shadows(ctx)}
+
+
+def _pythonpath_shadows(ctx) -> dict | None:
+    """An inherited PYTHONPATH entry holding the project's lab modules from
+    another tree (stats only, no import): ``{"root", "entries"}`` or None.
+    Node runs put the project root first, so this is a warning, not a gate."""
+    try:
+        root = config_generator.project_code_root(_calibrations_folder(ctx))
+        entries = config_generator.shadowing_pythonpath_entries(root)
+    except Exception:  # noqa: BLE001 -- the badge must never break a render
+        return None
+    return {"root": root, "entries": entries} if entries else None
 
 
 def _active_env_badge(project: str | None) -> dict:
@@ -52461,9 +52474,15 @@ def diagnostics_banner():
         _loc = str(first.location).split(" (")[0]
         if first_msg.startswith(_loc + ": "):
             first_msg = first_msg[len(_loc) + 2:]
+    # A dangling pointer fails only a node that READS it (quam resolves
+    # references on attribute access), so the banner counts it apart and
+    # never calls it a crash of every node run.
+    n_dangling = sum(1 for f in errs if diagnostics.is_dangling_pointer(f))
     return render_template("_diagnostics_banner.html", diag_summary=summary,
                            active_name=name, diag_sig=sig,
-                           first_error=first, first_error_msg=first_msg)
+                           first_error=first, first_error_msg=first_msg,
+                           n_crash=summary["error"] - n_dangling,
+                           n_dangling=n_dangling)
 
 
 @bp.route("/diagnostics/findings.json")
@@ -53445,7 +53464,8 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     open_folder = _active_path() if ctx_type == "quam" else None
     chip_clean = not (_change_count() > 0 or _working_dirty() or bool(_ctx_obj("pending_reapply")))
 
-    eff = scheduler.read_effective_config(env_python) if env_python else {}
+    eff = (scheduler.read_effective_config(env_python, calibrations_folder=cal or None)
+           if env_python else {})
     cfg = eff.get("config") or {}
     install = (eff.get("editable_install") or {}).get("path")
 
@@ -53459,19 +53479,31 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     # findings and the same summarize() error tier -- so the pre-flight can
     # never read "ready to run" under a banner that says the chip would crash
     # a node run. None when it cannot be computed (skip, never a guess).
-    diag_errors, diag_examples = None, []
+    # A dangling pointer is NOT crash-class: quam resolves a reference only
+    # when a node reads it (see diagnostics.DANGLING_POINTER_MESSAGE), so it
+    # leaves the blocking count and gets its own advisory warn line.
+    diag_errors, diag_examples, dangling = None, [], []
     diag_store = _store() if ctx_type == "quam" else None
     if diag_store is not None:
         try:
             diag_findings = _active_chip_findings(diag_store)
-            diag_errors = int(diagnostics.summarize(diag_findings).get("error") or 0)
+            dangling = [f.location for f in diag_findings
+                        if diagnostics.is_dangling_pointer(f)]
+            diag_errors = (int(diagnostics.summarize(diag_findings).get("error") or 0)
+                           - len(dangling))
             diag_examples = [f.location for f in diag_findings
                              if f.severity == "error"
                              and not getattr(f, "acknowledged", None)
-                             and not getattr(f, "advisory", False)]
+                             and not getattr(f, "advisory", False)
+                             and not diagnostics.is_dangling_pointer(f)]
         except Exception:  # noqa: BLE001 -- a lint bug must never break a gate
             logger.warning("pre-flight diagnostics count failed", exc_info=True)
-            diag_errors, diag_examples = None, []
+            diag_errors, diag_examples, dangling = None, [], []
+    from quam_state_manager.core import qualibrate_config
+    try:
+        missing_ref_flag = qualibrate_config.raise_error_missing_reference()
+    except Exception:  # noqa: BLE001 -- read-only advisory, never a gate breaker
+        missing_ref_flag = None
 
     result = scheduler.build_preflight({
         # v1.5.1 (SA-F5): a frozen run record is never a run target
@@ -53491,6 +53523,10 @@ def _gather_preflight(inst: str, data: dict) -> dict:
         "workspace_roots": workspace_roots,
         "diagnostics_errors": diag_errors,
         "diagnostics_examples": diag_examples,
+        "dangling_pointers": dangling,
+        "raise_error_missing_reference": missing_ref_flag,
+        "import_origins": eff.get("import_origins") or {},
+        "import_pythonpath": eff.get("pythonpath"),
     })
     result["effective_config"] = cfg
     result["editable_install"] = eff.get("editable_install")

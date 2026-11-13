@@ -1017,6 +1017,20 @@ def _validate_pointers_cached(store) -> list:
     return out
 
 
+DANGLING_POINTER_MESSAGE = (
+    "JSON pointer does not resolve to anything: a node that reads this field "
+    "gets the raw pointer text (with a warning) or fails at that read, "
+    "depending on quam's raise_error_missing_reference setting")
+
+
+def is_dangling_pointer(f) -> bool:
+    """A counted (not acknowledged, not advisory) dangling-pointer error."""
+    return (getattr(f, "category", None) == "dangling_pointer"
+            and f.severity == "error"
+            and not getattr(f, "acknowledged", None)
+            and not getattr(f, "advisory", False))
+
+
 def _dangling_pointer_findings_cold(store) -> list[Finding]:
     """:func:`_dangling_pointer_findings` over a fresh validation (the cold
     reference for the RAM shadow check)."""
@@ -1060,9 +1074,15 @@ def _dangling_pointer_findings(store, _warnings=None) -> list[Finding]:
                 detail=w.pointer, jump_path=w.dot_path, advisory=True,
             ))
             continue
+        # quam resolves a reference only when the attribute is READ
+        # (quam/utils/reference_class.py:47-55, __getattribute__), never at
+        # Quam.load(); on a miss it warns and returns the raw pointer text, or
+        # raises InvalidReferenceError when the quam config sets
+        # raise_error_missing_reference (quam/core/quam_classes.py:661-673).
+        # So this fails only a node that reads the field -- never "every run".
         findings.append(Finding(
             "error", "dangling_pointer", w.dot_path,
-            "JSON pointer does not resolve to anything",
+            DANGLING_POINTER_MESSAGE,
             detail=w.pointer, jump_path=w.dot_path,
         ))
     return findings

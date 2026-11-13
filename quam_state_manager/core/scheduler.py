@@ -62,7 +62,8 @@ EXPERIMENT_SCRIPT = config_generator._script_path("run_experiment.py")
 # ----------------------------------------------------------------------
 
 def _run_experiment_script(python_path: str, mode: str, *, timeout: int,
-                           extra_args: list[str] | None = None) -> dict:
+                           extra_args: list[str] | None = None,
+                           project_root: str | None = None) -> dict:
     """Spawn ``run_experiment.py --mode <mode>`` and return its parsed result.
 
     Mirrors the config_generator runner contract: a private temp work dir holds
@@ -89,7 +90,11 @@ def _run_experiment_script(python_path: str, mode: str, *, timeout: int,
             *(extra_args or []),
             "--out", str(work_dir),
         ]
-        returncode, stdout, stderr = config_generator._run_command(argv, timeout=timeout)
+        # the project root rides along only when there is one, so a
+        # monkeypatched runner with the historical signature keeps working
+        run_kw = {"project_root": project_root} if project_root else {}
+        returncode, stdout, stderr = config_generator._run_command(
+            argv, timeout=timeout, **run_kw)
         result_file = work_dir / "_result.json"
         if not result_file.exists():
             blank["returncode"] = returncode
@@ -115,15 +120,21 @@ def _run_experiment_script(python_path: str, mode: str, *, timeout: int,
         config_generator._cleanup_work_dir(work_dir)
 
 
-def read_effective_config(python_path: str, *, timeout: int = 60) -> dict:
+def read_effective_config(python_path: str, *, timeout: int = 60,
+                          calibrations_folder: str | None = None) -> dict:
     """Read the chosen env's effective qualibrate config + editable-install root.
 
     Returns the parsed ``run_experiment.py`` envelope: ``{ok, status, config:
     {config_file, project, state_path, storage_location,
     calibration_library_folder, source}, editable_install: {dist, path,
-    editable}, versions, error, ...}``.
+    editable}, import_origins: {module: origin|None}, pythonpath, versions,
+    error, ...}``. With *calibrations_folder* the child runs with the
+    project's code root first on PYTHONPATH (config_generator.child_env, the
+    same helper the node spawn uses), so it measures what a node imports.
     """
-    return _run_experiment_script(python_path, "report-config", timeout=timeout)
+    root = config_generator.project_code_root(calibrations_folder)
+    return _run_experiment_script(python_path, "report-config", timeout=timeout,
+                                  project_root=root)
 
 
 _SCAN_CACHE_FILENAME = "scheduler_scan_cache.json"
@@ -723,6 +734,9 @@ def _check(key, label, status, detail=""):
     return {"key": key, "label": label, "status": status, "detail": detail}
 
 
+_DANGLING_SHOWN = 5
+
+
 def build_preflight(ctx: dict) -> dict:
     """Assemble the pre-flight check list from gathered facts (pure).
 
@@ -734,7 +748,11 @@ def build_preflight(ctx: dict) -> dict:
     ``dataset_roots`` (list), ``workspace_roots`` (list),
     ``diagnostics_errors`` (int|None -- the crash-class count the red
     Diagnostics banner shows; None = not computed) and
-    ``diagnostics_examples`` (list[str] -- their locations).
+    ``diagnostics_examples`` (list[str] -- their locations),
+    ``dangling_pointers`` (list[str] -- dot paths, an advisory warn line),
+    ``raise_error_missing_reference`` (bool|None -- the merged qualibrate
+    config's ``[quam]`` value), ``import_origins`` ({module: origin|None} as
+    measured in the node's env) and ``import_pythonpath`` (str|None).
 
     Returns ``{"ok": bool, "checks": [{key,label,status,detail}, ...]}`` where
     ``ok`` is True iff no check is ``"fail"``. Status ∈ pass|fail|warn|skip.
@@ -800,21 +818,63 @@ def build_preflight(ctx: dict) -> dict:
                              f"Env will load {cfg_state}, but the open chip is {open_folder}. "
                              f"Strict policy requires they match."))
 
-    # 5. calibrations folder is inside the env's editable install
+    # 5. calibrations folder is where the node's lab imports resolve. The
+    #    truth is the import origin the report-config child measured
+    #    (find_spec in the node's own env, same PYTHONPATH as the node run --
+    #    config_generator.child_env); the editable-install metadata is only
+    #    the fallback when no origin could be measured.
+    label5 = ("Lab code (quam_config, calibration_utils) imports from the "
+              "selected project's folder")
+    root = (ctx["project_code_root"] if "project_code_root" in ctx
+            else config_generator.project_code_root(cal))
+    origins = ctx.get("import_origins") or {}
+    found = {n: o for n, o in origins.items() if isinstance(o, str) and o}
+    outside = ([(n, o) for n, o in sorted(found.items())
+                if folder_under_install(o, root or cal) is not True]
+               if cal else [])
     under = folder_under_install(cal, ctx.get("editable_install_path"))
-    if under is True:
-        checks.append(_check("folder_install", "Calibrations folder matches the env's editable install",
+    if outside:
+        pp = ctx.get("import_pythonpath")
+        names = "; ".join(f"{n} imports from {o}" for n, o in outside)
+        checks.append(_check(
+            "folder_install", label5, "fail",
+            f"{names}, outside the selected project's folder {root or cal} "
+            f"(calibrations folder {cal}). A node would run code from a "
+            f"different tree than the project's."
+            + (f" PYTHONPATH: {pp}" if pp else " PYTHONPATH is not set.")))
+    elif under is True:
+        checks.append(_check("folder_install", label5,
                              "pass", ctx.get("editable_install_path") or ""))
+    elif found:
+        checks.append(_check(
+            "folder_install", label5, "pass",
+            "; ".join(f"{n} imports from {o}" for n, o in sorted(found.items()))))
     elif under is False:
-        checks.append(_check("folder_install", "Calibrations folder matches the env's editable install",
+        checks.append(_check("folder_install", label5,
                              "fail",
                              f"The env's editable install is {ctx.get('editable_install_path')}, "
                              f"not a parent of {cal}. Imports (quam_config/calibration_utils) "
                              f"would resolve to a different (possibly stale) tree."))
     else:
-        checks.append(_check("folder_install", "Calibrations folder matches the env's editable install",
+        checks.append(_check("folder_install", label5,
                              "warn",
                              "Env has no editable 'superconducting_calibrations' install to check against."))
+
+    # 5a. An inherited PYTHONPATH entry holds the same lab modules from
+    #     another tree. Child envs put the project root first, so it cannot
+    #     win -- but it is a stale setting the user should know about.
+    shadows = ctx.get("pythonpath_shadows")
+    if shadows is None:
+        shadows = config_generator.shadowing_pythonpath_entries(root)
+    if shadows:
+        what = "; ".join(f"{e['entry']} (holds {', '.join(e['modules'])})"
+                         for e in shadows)
+        checks.append(_check(
+            "pythonpath_shadow", "No other lab tree on the inherited PYTHONPATH", "warn",
+            f"PYTHONPATH has {what}, another copy of the project's lab code in "
+            f"{root}. SM puts {root} first for node runs, so the project's copy "
+            f"is used; remove the other entry from PYTHONPATH to be sure every "
+            f"other tool imports the same code."))
 
     # 5b. graph member-node library folder (only bites graph items, so warn; the
     #     run-gate hard-fails a graph whose library folder doesn't match).
@@ -870,7 +930,8 @@ def build_preflight(ctx: dict) -> dict:
     #    "would crash a node run" (same count, same filter). Blocking like the
     #    other Strict checks -- the user can still Start ANYWAY (force). None
     #    means it could not be computed (no chip, lint failed): skip, never a
-    #    guess in either direction.
+    #    guess in either direction. Dangling pointers are NOT in this count
+    #    (the route subtracts them): they get their own warn line below.
     n_err = ctx.get("diagnostics_errors")
     diag_label = "No crash-class Diagnostics errors"
     if n_err is None:
@@ -886,6 +947,35 @@ def build_preflight(ctx: dict) -> dict:
             f"{n_err} error{'s' if n_err != 1 else ''} on the open chip would "
             f"crash a node run" + (f" (e.g. {', '.join(ex)})" if ex else "")
             + ". Fix before running an experiment — see Diagnostics."))
+
+    # 10. Dangling pointers: advisory, never blocking. quam resolves a
+    #     reference only when the attribute is read (reference_class.py
+    #     __getattribute__), so only a node that reads one of these fields is
+    #     affected (quam_classes.py: warn + raw text, or raise when
+    #     raise_error_missing_reference is true).
+    dangling = [str(p) for p in (ctx.get("dangling_pointers") or []) if p]
+    if dangling:
+        n = len(dangling)
+        shown = dangling[:_DANGLING_SHOWN]
+        more = n - len(shown)
+        flag = ctx.get("raise_error_missing_reference")
+        if flag is True:
+            how = ("fails at that read (quam config raise_error_missing_reference "
+                   "= true: it raises)")
+        elif flag is False:
+            how = ("gets the raw pointer text and a warning (quam config "
+                   "raise_error_missing_reference = false)")
+        else:
+            how = ("gets the raw pointer text and a warning, or fails at that "
+                   "read when quam's raise_error_missing_reference is true "
+                   "(not set in the qualibrate config; quam's default is false)")
+        checks.append(_check(
+            "dangling_pointers", "Dangling pointers (advisory)", "warn",
+            f"{n} pointer{'s' if n != 1 else ''} do{'es' if n == 1 else ''} not "
+            f"resolve: {', '.join(shown)}"
+            + (f" and {more} more" if more > 0 else "")
+            + f". A node that reads one of these fields {how}; "
+            f"nodes that never read them are unaffected."))
 
     ok = all(c["status"] != "fail" for c in checks)
     return {"ok": ok, "checks": checks}
@@ -1739,10 +1829,14 @@ def load_preset(instance_path, preset_id: str, mode: str = "append") -> tuple[di
 # Subprocess spawn / kill (platform-aware)
 # ----------------------------------------------------------------------
 
-def _spawn(argv: list[str], log_path: Path):
-    """Popen *argv* in its own process group, stdout+stderr → *log_path*."""
+def _spawn(argv: list[str], log_path: Path, env: dict | None = None):
+    """Popen *argv* in its own process group, stdout+stderr → *log_path*.
+
+    *env* None inherits this process's environment."""
     logf = open(log_path, "wb")
     kwargs: dict = {"stdout": logf, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}
+    if env is not None:
+        kwargs["env"] = env
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
@@ -1973,7 +2067,14 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
         if runner["cancel"].is_set():
             return {"status": "cancelled", "error": "cancelled by user",
                     "returncode": None, "log_file": log_str}
-        proc, logf = _spawn(argv, log_path)
+        # The node child gets the env the pre-flight check child measured
+        # (config_generator.child_env): the project's code root first, so
+        # what a node imports is the selected project's tree.
+        node_env = config_generator.child_env(
+            settings.get("env_python"),
+            config_generator.project_code_root(settings.get("calibrations_folder")))
+        proc, logf = (_spawn(argv, log_path, env=node_env) if node_env is not None
+                      else _spawn(argv, log_path))
         with runner["proc_lock"]:
             runner["proc"] = proc
             # Re-check under the SAME lock cancel() takes: if cancel landed between
