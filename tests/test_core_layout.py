@@ -321,6 +321,7 @@ def test_mixed_fems_counted_separately():
 def test_opx_plus_costs_estimated():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {"1": {}, "2": {}}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     c.el("q0", "xy", opx_output_I="#/ports/analog_outputs/con1/1", opx_output_Q="#/ports/analog_outputs/con1/2")
     f = cl.core_budget(c.s)["fems"][0]
     assert f["fem"] is None and f["fem_type"] == "OPX+"
@@ -532,6 +533,7 @@ def test_two_elements_same_name_same_fem_no_name_finding():
 def test_opx_plus_message_and_location():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 21)}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     for i in range(1, 20):
         c.el(f"q{i}", "z", opx_output=f"#/ports/analog_outputs/con1/{i}")
     fs = core_findings(c.s)
@@ -541,9 +543,48 @@ def test_opx_plus_message_and_location():
     assert "FEM" not in fs[0].message and "FEM" not in fs[0].location
 
 
+def _controller_chip(n, con="con1"):
+    c = Chip()
+    c.s["ports"] = {"analog_outputs": {con: {str(i): {} for i in range(1, n + 1)}}}
+    for i in range(1, n + 1):
+        c.el(f"q{i}", "z", opx_output=f"#/ports/analog_outputs/{con}/{i}")
+    return c
+
+
+def test_controller_type_unknown_uses_the_opx_limit_and_says_so():
+    c = _controller_chip(12)
+    f = cl.core_budget(c.s)["fems"][0]
+    assert f["cores"]["limit"] == 10 and f["controller_type"] == "unknown"
+    assert f["cores"]["limit_estimated"] is True
+    fs = core_findings(c.s)
+    assert len(fs) == 1
+    assert fs[0].message == ("12 / 10 cores (estimated) on con1 (controller type unknown: "
+                             "OPX limit 10, OPX+ limit 18); routes 0 / 10 (estimated)")
+    assert fs[0].location == "con1 (OPX or OPX+)"
+    # a type field that is present but not the OPX+ value is unknown too
+    c.s["controllers"] = {"con1": {"type": "opx1000"}}
+    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 10
+    c.s["controllers"] = {"con1": {}}
+    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 10
+    assert len(core_findings(_controller_chip(10).s)) == 0
+
+
+def test_opx_plus_typed_and_untyped_side_by_side():
+    c = _controller_chip(12)
+    c.s["ports"]["analog_outputs"]["con2"] = {str(i): {} for i in range(1, 13)}
+    for i in range(1, 13):
+        c.el(f"p{i}", "z", opx_output=f"#/ports/analog_outputs/con2/{i}")
+    c.s["controllers"] = {"con2": {"type": "opx1"}}
+    by = {f["controller"]: f for f in cl.core_budget(c.s)["fems"]}
+    assert by["con1"]["cores"]["limit"] == 10 and by["con2"]["cores"]["limit"] == 18
+    assert by["con2"]["controller_type"] == "OPX+"
+    assert [f.location for f in core_findings(c.s)] == ["con1 (OPX or OPX+)"]
+
+
 def test_opx_plus_oscillator_message():
     c = Chip()
     c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 8)}}}
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
     for i in range(1, 8):
         c.el(f"q{i}", "z", "g", opx_output=f"#/ports/analog_outputs/con1/{i}")
     fs = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "oscillators"]
