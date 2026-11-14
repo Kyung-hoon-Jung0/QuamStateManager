@@ -293,6 +293,23 @@ def _previews(plan: dict) -> tuple[dict, list[str]]:
     return out, skipped
 
 
+def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
+    """One short sentence for the verdict banner. A failed range check says
+    which line would play what against which limit, from the drawn lanes;
+    anything else keeps the rule's own reason."""
+    checks = (entry or {}).get("checks") or {}
+    if (checks.get("range") or {}).get("status") == "fail":
+        for ln in (tl or {}).get("lanes") or []:
+            for s in ln.get("segments") or []:
+                if "over_range" in (s.get("flags") or []):
+                    v = s["peak_v"] if abs(s.get("peak_v") or 0) >= abs(s.get("min_v") or 0) else s["min_v"]
+                    lim = ln.get("limit_v")
+                    edge = (lim[1] if v >= 0 else lim[0]) if lim else None
+                    tail = f" This port's limit is {edge:.4g} V." if edge is not None else ""
+                    return f"{ln['key']} would play {v:.4g} V.{tail}"
+    return reason
+
+
 def run_check(store, python_path, gates, creates, previews):
     """The one gate check (tests replace this function)."""
     return gate_check.check_gates(store, python_path, gates, creates, previews=previews)
@@ -419,7 +436,8 @@ def api_cz_gate_check():
             "intent": gate_intent.intent_rows(p, entry),
             "previews_skipped": skipped_by.get(pid) or [],
             "paths": [c[0] for c in p["creates"]],
-            "verdict": {"allowed": allowed, "state": state, "reason": reason}})
+            "verdict": {"allowed": allowed, "state": state, "reason": reason,
+                        "headline": headline(entry, tl, reason)}})
         verdicts[pid] = {"allowed": allowed, "state": state, "reason": reason}
         sigs[pid] = _creates_sig(p)
     seq = (res or {}).get("seq")

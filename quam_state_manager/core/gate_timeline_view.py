@@ -194,7 +194,7 @@ def tiles(data: dict) -> list[dict]:
         if not overlap:
             gap = min(b[1] - a[2] for a, b in zip(ordered, ordered[1:]))
             out.append({"key": "timing", "label": "Timing", "value": f"{gap:g} ns gap",
-                        "note": "no overlap between the lines", "tone": "warn"})
+                        "note": "no overlap", "tone": "warn"})
         elif max(starts) != min(starts):
             out.append({"key": "timing", "label": "Timing",
                         "value": f"starts differ by {max(starts) - min(starts):g} ns",

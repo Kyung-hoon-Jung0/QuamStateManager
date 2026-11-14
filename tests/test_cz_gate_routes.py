@@ -181,7 +181,7 @@ def test_check_then_create_is_one_group_and_one_undo_restores_bytes(chip, fake):
     before = chip.snap()
     j = _check(chip.c, _body())
     p = j["pairs"][0]
-    assert p["verdict"] == {"allowed": True, "state": "verified", "reason": ""}
+    assert p["verdict"] == {"allowed": True, "state": "verified", "reason": "", "headline": ""}
     assert p["timeline"]["lanes"][0]["key"] == "q1.z"
     assert [t["key"] for t in p["tiles"]] == ["lines", "length", "peak"]
     assert p["intent"][0]["intended"]["amplitude"] == 0.2
@@ -326,3 +326,11 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
     assert "(45 assertions)" in r.stdout
+
+
+def test_headline_names_line_value_and_limit():
+    entry = {"checks": {"range": {"status": "fail", "message": "long"}}}
+    tl = {"lanes": [{"key": "q1.z", "limit_v": [-2.5, 2.5], "segments": [
+        {"peak_v": 3.0, "min_v": 0.0, "flags": ["over_range"]}]}]}
+    assert czr.headline(entry, tl, "long") == "q1.z would play 3 V. This port's limit is 2.5 V."
+    assert czr.headline({"checks": {"ops": {"status": "fail"}}}, tl, "why") == "why"

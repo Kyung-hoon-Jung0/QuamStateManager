@@ -481,8 +481,11 @@
             dot.setAttribute('aria-hidden', 'true');
             tds[0].insertBefore(dot, tds[0].firstChild);
             if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
-            if (tones.amplitude) { [3, 4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.amplitude]); }); flagged++; }
-            if ((r.actual || {}).limit_v && tones.amplitude === 'danger') tds[4].title = 'limit ' + num(r.actual.limit_v, 'V');
+            if (tones.amplitude === 'danger') {
+                [4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE.danger); });
+                if ((r.actual || {}).limit_v) tds[4].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(r.actual.limit_v, 'V')));
+                flagged++;
+            } else if (tones.amplitude) { [3, 4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.amplitude]); }); flagged++; }
         });
         host.appendChild(t);
         var over = rows.filter(function (r) { return (r.tones || {}).amplitude === 'danger'; }).length;
@@ -528,7 +531,7 @@
         if (!ts.length) return;
         host.appendChild(UIkit().stats(ts.map(function (t) {
             var m = /^(-?[\d.]+)\s*(.*)$/.exec(t.value || '');
-            var unit = (m ? m[2] : '') + (t.key === 'peak' || t.key === 'timing' ? (m && m[2] ? ' ' : '') + t.note : '');
+            var unit = (m ? m[2] : '') + (t.key === 'peak' || t.key === 'timing' ? (m && m[2] ? (t.key === 'timing' ? ', ' : ' ') : '') + t.note : '');
             return { label: t.label, value: m ? m[1] : t.value, unit: unit.trim() || null,
                      tone: t.tone === 'warn' || t.tone === 'danger' ? t.tone : null };
         }), 'Key numbers'));
@@ -558,7 +561,7 @@
         var no = (c.pairs || []).filter(function (x) { return !(x.verdict && x.verdict.allowed); });
         var parts = [];
         if (!ok.length) {
-            alertBox(banner('danger', 'Cannot be created yet', (no.map(function (x) { return (c.pairs.length > 1 ? x.pair + ': ' : '') + x.verdict.reason; }).join(' '))
+            alertBox(banner('danger', 'Cannot be created yet', (no.map(function (x) { return (c.pairs.length > 1 ? x.pair + ': ' : '') + (x.verdict.headline || x.verdict.reason); }).join(' '))
                 + ' Change the inputs and check again.'));
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
             var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
