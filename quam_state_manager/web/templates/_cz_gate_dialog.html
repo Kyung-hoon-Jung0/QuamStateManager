@@ -1,0 +1,75 @@
+{#- The CZ gate dialog (one door for every entry point). The server renders the
+    shell from UI-kit parts and hands the chip data as one JSON block; cz-gate.js
+    builds the form from it, asks /api/pulse/cz-gate/plan on every change and
+    /check before /create. Nothing here writes the live chip. -#}
+{%- from '_ui.html' import ui_note, ui_callout -%}
+<dialog id="czg-dialog" class="ui-dialog ui-dialog--l czg" aria-labelledby="czg-title">
+    <div class="ui-dialog-head">
+        <header class="ui-head">
+            <div class="ui-head-eyebrow">New gate</div>
+            <h2 id="czg-title" class="ui-head-title">Create a CZ gate</h2>
+            <p class="ui-head-gist">One named gate per pair. The lab's code checks it on a copy of the chip before anything is written.</p>
+        </header>
+        <button type="button" class="ui-btn-icon" data-czg-close aria-label="Close" title="Close">&#10005;</button>
+    </div>
+    <div class="ui-dialog-body czg-body">
+        <div id="czg-alert" class="czg-alert" aria-live="polite">
+            {%- if unknown_pair %}{{ ui_callout('warn', 'Pair not found', 'This chip has no pair ' ~ unknown_pair ~ '. Pick a pair from the list.') }}{% endif -%}
+            {%- if not data.pairs %}{{ ui_callout('danger', 'No pairs', 'This chip has no qubit pairs, so there is nowhere to add a gate. Add a pair from the chip diagram first.') }}{% endif -%}
+        </div>
+        <div class="czg-cols">
+            <form id="czg-form" class="czg-form" autocomplete="off" aria-label="The gate">
+                <label class="ui-field"><span class="ui-field-label">Pair</span>
+                    <select id="czg-pair" class="czg-input" name="pair">
+                        <option value="">Pick a pair</option>
+                        {%- for p in data.pairs %}<option value="{{ p.id }}"{% if p.id == selected %} selected{% endif %}>{{ p.id }}</option>{% endfor -%}
+                    </select>
+                </label>
+                <p id="czg-pair-line" class="ui-note czg-readonly" aria-live="polite"></p>
+                <label class="ui-field"><span class="ui-field-label">Gate name</span>
+                    <input id="czg-name" class="czg-input" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
+                </label>
+                <p id="czg-name-why" class="ui-note czg-why"></p>
+                <label class="ui-field"><span class="ui-field-label">Gate class</span>
+                    <select id="czg-class" class="czg-input" name="gate_class"></select>
+                </label>
+                <p id="czg-class-why" class="ui-note czg-why"></p>
+                <label class="ui-field czg-model" id="czg-model-field" hidden><span class="ui-field-label">Model gate (its layout is copied)</span>
+                    <select id="czg-model" class="czg-input" name="model_gate"></select>
+                </label>
+                <label class="ui-field"><span class="ui-field-label">Start from</span>
+                    <select id="czg-from" class="czg-input" name="copy_from"></select>
+                </label>
+                <div id="czg-slots" class="czg-slots"></div>
+                <details id="czg-more" class="ui-disclosure czg-more">
+                    <summary class="ui-disclosure-summary">Also create on other pairs <span id="czg-more-count" class="ui-count"></span></summary>
+                    <div class="ui-disclosure-body">
+                        {{ ui_note('The same starting values go to every pair. A pair that cannot have this gate says why.') }}
+                        <div id="czg-more-list" class="czg-more-list" role="group" aria-label="Other pairs"></div>
+                    </div>
+                </details>
+            </form>
+            <section id="czg-evidence" class="czg-evidence" aria-label="What the lab's code made">
+                <h3 class="czg-section-title">Waveform</h3>
+                <div id="czg-chart" class="czg-chart"><p class="ui-note">Press Check to see the waveform the lab's code makes.</p></div>
+                <h3 class="czg-section-title">Intended and actual</h3>
+                <div id="czg-intent" class="czg-intent"></div>
+                <h3 class="czg-section-title">Checks</h3>
+                <div id="czg-checks" class="czg-checks"></div>
+                <h3 class="czg-section-title">What will be written</h3>
+                <div id="czg-writes" class="czg-writes"></div>
+            </section>
+        </div>
+        <div id="czg-done" class="czg-done" hidden></div>
+        <div id="czg-status-slot"></div>
+    </div>
+    <div class="ui-dialog-foot">
+        <span id="czg-status" class="ui-note" role="status"></span>
+        <div class="ui-actions" role="group" aria-label="Dialog actions">
+            <button type="button" class="btn-sync outline" data-czg-close id="czg-cancel">Cancel</button>
+            <button type="button" class="btn-sync outline" id="czg-open-pair" hidden>Open the pair</button>
+            <button type="button" class="btn-sync primary" id="czg-primary" disabled>Check</button>
+        </div>
+    </div>
+    <script type="application/json" id="czg-data">{{ data | tojson }}</script>
+</dialog>
