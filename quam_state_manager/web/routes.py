@@ -17892,32 +17892,31 @@ def pair_gate_inspector_switch(name: str):
             "_status.html", message="Chip changed — please reload.", level="error"), 409
 
     new_role = (request.form.get("role") or "").strip()
-    plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
-
-    if plan.get("error"):
-        return render_template(
-            "_status.html", message=plan["error"], level="warning"), 409
-
     # One gid for the whole rewire: the review tray shows one gesture and one
     # Ctrl+Z takes all of it back, never half a moved pulse.
     gid = modifier.new_group_id()
-    try:
-        for dot_path in plan.get("deletes", []):
-            try:
+    with store._lock:
+        start = len(store.change_log)
+        try:
+            plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
+            if plan.get("error"):
+                return render_template(
+                    "_status.html", message=plan["error"], level="warning"), 409
+            for dot_path in plan.get("deletes", []):
                 modifier.delete_subtree(dot_path, group_id=gid)
-            except (KeyError, TypeError):
-                pass
-        for dot_path, value in plan.get("creates", []):
-            modifier.create_subtree(dot_path, value, group_id=gid)
-        for dot_path, value in plan.get("sets", []):
-            modifier.set_value(dot_path, value, group_id=gid)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("switch-moving(%r, %r) failed: %s", name, new_role, e)
-        return render_template(
-            "_status.html", level="error",
-            message=f"Failed to switch moving qubit: {e}"), 500
-
-    return _render_pair_detail(name)
+            for dot_path, value in plan.get("creates", []):
+                modifier.create_subtree(dot_path, value, group_id=gid, restore=True)
+            for dot_path, value in plan.get("sets", []):
+                modifier.set_value(dot_path, value, group_id=gid)
+            return _render_pair_detail(name)
+        except Exception as e:  # noqa: BLE001
+            while len(store.change_log) > start:
+                modifier.undo()
+            _invalidate_engine_cache()
+            logger.warning("switch-moving(%r, %r) failed: %s", name, new_role, e)
+            return render_template(
+                "_status.html", level="error",
+                message=f"Failed to switch moving qubit: {e}"), 409
 
 
 # ======================================================================
@@ -31182,7 +31181,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
                     # type-fix made the walk 409 on every press); the live
                     # walk restores with enforce=False the same way.
                     e = modifier.set_value(path, value, coerce=False,
-                                           enforce=False, group_id=gid)
+                                           enforce=False, group_id=gid, restore=True)
                     if (not _differs(e.old_value, e.new_value)
                             and type(e.old_value) is type(e.new_value)):
                         # SA-F9 (e): the field already holds the value this
@@ -33584,11 +33583,11 @@ def auto_apply_revert():
                     staged.append(modifier.delete_subtree(path, group_id=gid))
                 elif op == "create":
                     staged.append(modifier.create_subtree(path, value, group_id=gid,
-                                                          key_index=key_index))
+                                                          key_index=key_index, restore=True))
                 else:
                     # coerce=False: restore the historical value VERBATIM
                     staged.append(modifier.set_value(path, value, coerce=False,
-                                                     group_id=gid))
+                                                     group_id=gid, restore=True))
         except Exception as exc:   # noqa: BLE001 — all-or-nothing
             for _ in staged:
                 try:

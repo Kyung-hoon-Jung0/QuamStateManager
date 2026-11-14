@@ -228,19 +228,116 @@ def _restore_calls(rel: str, names):
     return out
 
 
-@pytest.mark.parametrize("rel, names, minimum", [
-    ("quam_state_manager/web/routes.py",
-     {"_undo_journal_step", "_rollback_walk_step", "_redo_journal_forward", "redo"}, 8),
-    ("quam_state_manager/core/autofit/writer.py", {"revert_patches", "restore_values"}, 4),
-])
-def test_every_replay_site_is_a_restore(rel, names, minimum):
-    """One mechanism: every replay/restore write says restore=True (or
-    enforce=False, which skips every gate), so none refuses what the chip held."""
-    calls = _restore_calls(rel, names)
-    assert len(calls) >= minimum, calls
-    bad = [(fn, ln) for fn, ln, kw in calls
-           if kw.get("restore") != "True" and kw.get("enforce") != "False"]
+def _replay_violations(source):
+    """Discover replay writes, including values carried through local aliases."""
+    import ast
+
+    bad = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        nodes = list(ast.walk(fn))
+        inverse = any(isinstance(n, ast.Call)
+                      and ((isinstance(n.func, ast.Attribute) and n.func.attr == "inverse_ops")
+                           or (isinstance(n.func, ast.Name) and n.func.id == "inverse_ops"))
+                      for n in nodes)
+        journal = inverse or any((isinstance(n, ast.Name) and "journal" in n.id)
+                                 or (isinstance(n, ast.arg) and "journal" in n.arg)
+                                 or (isinstance(n, ast.Subscript)
+                                     and isinstance(n.slice, ast.Constant)
+                                     and n.slice.value == "entries")
+                                 or (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                                     and n.func.attr == "get" and n.args
+                                     and isinstance(n.args[0], ast.Constant)
+                                     and n.args[0].value == "entries")
+                                 for n in nodes)
+        aliases = set()
+        records = set()
+
+        def journal_record(expr):
+            return any((isinstance(n, ast.Name) and n.id in records)
+                       or (isinstance(n, ast.Attribute) and n.attr == "change_log")
+                       for n in ast.walk(expr))
+
+        def historical(expr):
+            for n in ast.walk(expr):
+                if isinstance(n, ast.Name) and n.id in aliases:
+                    return True
+                if (isinstance(n, ast.Attribute) and (n.attr == "old_value"
+                        or (n.attr == "new_value" and (journal or journal_record(n.value))))):
+                    return True
+                if (isinstance(n, ast.Subscript) and isinstance(n.slice, ast.Constant)
+                        and (n.slice.value == "old" or (n.slice.value == "new"
+                             and (journal or journal_record(n.value))))):
+                    return True
+                if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                        and n.func.attr == "get" and n.args
+                        and isinstance(n.args[0], ast.Constant)
+                        and (n.args[0].value == "old" or (n.args[0].value == "new"
+                             and (journal or journal_record(n.func.value))))):
+                    return True
+            return False
+
+        # Iterate to follow aliases regardless of assignment order in ast.walk.
+        while True:
+            before = (aliases.copy(), records.copy())
+            for n in nodes:
+                if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+                    targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                    if journal_record(n.value):
+                        records.update(t.id for target in targets for t in ast.walk(target)
+                                       if isinstance(t, ast.Name))
+                    if historical(n.value):
+                        aliases.update(t.id for target in targets for t in ast.walk(target)
+                                       if isinstance(t, ast.Name))
+                if isinstance(n, (ast.For, ast.AsyncFor)) and historical(n.iter):
+                    aliases.update(t.id for t in ast.walk(n.target) if isinstance(t, ast.Name))
+                if isinstance(n, (ast.For, ast.AsyncFor)) and journal_record(n.iter):
+                    records.update(t.id for t in ast.walk(n.target) if isinstance(t, ast.Name))
+            if (aliases, records) == before:
+                break
+        for n in nodes:
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr in ("set_value", "create_subtree")
+                    and (inverse or any(historical(a) for a in n.args[1:])
+                         or any(historical(k.value) for k in n.keywords))):
+                if not any(k.arg == "restore" and isinstance(k.value, ast.Constant)
+                           and k.value.value is True for k in n.keywords):
+                    bad.append((fn.name, n.lineno))
+    return bad
+
+
+def test_every_replay_site_is_a_restore():
+    root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    bad = [(str(p.relative_to(root)), fn, line) for p in root.rglob("*.py")
+           for fn, line in _replay_violations(p.read_text(encoding="utf-8-sig"))]
     assert not bad, bad
+
+
+@pytest.mark.parametrize("body", [
+    "ops = journal.inverse_ops(unit)\nfor op, path, value in ops:\n    mod.set_value(path, value)",
+    "mod.create_subtree(path, entry.old_value)",
+    "saved = entry.old_value\nvalue = saved\nmod.set_value(path, value)",
+    'value = entry["old"]\nmod.create_subtree(path, value)',
+    'value = entry.get("new")\nmod.set_value(path, value)',
+    'for entry in unit["entries"]:\n    mod.create_subtree(path, entry["new"])',
+    'for entry in store.change_log:\n    mod.set_value(path, entry.new_value)',
+])
+def test_replay_scan_flags_a_new_site(body):
+    source = "def planted(mod, journal, unit, entry, path):\n" + "\n".join(
+        "    " + line for line in body.splitlines())
+    assert _replay_violations(source)
+    restored = source.replace("mod.set_value(path, value)",
+                              "mod.set_value(path, value, restore=True)")
+    restored = restored.replace("mod.create_subtree(path, entry.old_value)",
+                                "mod.create_subtree(path, entry.old_value, restore=True)")
+    restored = restored.replace("mod.create_subtree(path, value)",
+                                "mod.create_subtree(path, value, restore=True)")
+    restored = restored.replace('mod.create_subtree(path, entry["new"])',
+                                'mod.create_subtree(path, entry["new"], restore=True)')
+    restored = restored.replace("mod.set_value(path, entry.new_value)",
+                                "mod.set_value(path, entry.new_value, restore=True)")
+    assert not _replay_violations(restored)
 
 
 def test_rollback_after_a_failed_save_is_a_restore():
@@ -286,8 +383,12 @@ def _nan_state() -> dict:
 
 @pytest.fixture
 def nan_chip(tmp_path: Path):
+    return _load_nan_chip(tmp_path, _nan_state())
+
+
+def _load_nan_chip(tmp_path, state):
     # json.dumps writes NaN as the literal NaN, as a node's save does
-    (tmp_path / "state.json").write_text(json.dumps(_nan_state()), encoding="utf-8")
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (tmp_path / "wiring.json").write_text(json.dumps(
         {"wiring": {"qubits": {"qA1": {"xy": {"opx_output": "MW-FEM/1/2"}}}}}), encoding="utf-8")
     app = create_app(testing=True, instance_path=str(tmp_path / "_app_instance"))
@@ -335,6 +436,108 @@ def test_delete_nan_subtree_undo_restores_and_redo_deletes_live(nan_chip):
     y = c.post("/redo", headers=_JSON)
     assert y.status_code == 200, y.get_data(as_text=True)[:300]
     assert "fit_extra" not in _live(folder)["qubits"]["qA1"]
+
+
+@pytest.mark.parametrize("action", ["delete", "edit"])
+def test_auto_apply_row_revert_restores_nan(nan_chip, action):
+    from quam_state_manager.web import routes
+
+    c, folder = nan_chip
+    assert c.post("/auto-apply/arm").status_code == 200
+    path = "qubits.qA1.fit_extra"
+    data = {"dot_path": path} if action == "delete" else {
+        "dot_path": path + ".a", "value": "0.5"}
+    r = c.post("/field/" + action, data=data)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    _apply(c)
+    if action == "delete":
+        assert "fit_extra" not in _live(folder)["qubits"]["qA1"]
+    else:
+        assert _live(folder)["qubits"]["qA1"]["fit_extra"]["a"] == 0.5
+    with c.application.app_context():
+        rows = routes._applied_log_rows()
+    assert len(rows) == 1
+    r = c.post("/auto-apply/revert", data={"unit_id": rows[0]["id"]})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _isnan(_raw(c, path + ".a"))
+    _apply(c)  # the armed browser flushes the staged inverse through this door
+    restored = _live(folder)["qubits"]["qA1"]["fit_extra"]
+    assert _isnan(restored["a"]) and _isnan(restored["b"][1])
+
+
+def test_field_edit_float_still_refuses_typed_nan(nan_chip):
+    c, _ = nan_chip
+    r = c.post("/field/edit", data={"dot_path": f"{XY}.saturation.amplitude",
+                                    "value": "nan"})
+    assert r.status_code == 400
+    assert _raw(c, f"{XY}.saturation.amplitude") == 0.004
+
+
+@pytest.fixture
+def nan_pair_chip(tmp_path):
+    state = _nan_state()
+    state["qubits"]["qA1"]["z"] = {"operations": {"cz_pulse": {
+        "__class__": QC + "SquarePulse", "amplitude": NAN, "length": 60}}}
+    state["qubits"]["qB2"] = {"id": "qB2", "f_01": 5.0e9,
+                                "z": {"operations": {}}}
+    state["qubit_pairs"]["pair"] = {
+        "id": "pair", "qubit_control": "#/qubits/qA1",
+        "qubit_target": "#/qubits/qB2", "moving_qubit": "control",
+        "macros": {"cz": {"__class__": "CZGate",
+                           "flux_pulse_qubit": {"amplitude": NAN, "length": 60}}}}
+    return _load_nan_chip(tmp_path, state)
+
+
+def test_switch_moves_nan_pulse(nan_pair_chip):
+    c, folder = nan_pair_chip
+    r = c.post("/pair/pair/gate-inspector/switch-moving", data={"role": "target"})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _raw(c, "qubits.qA1.z.operations") == {}
+    assert _isnan(_raw(c, "qubits.qB2.z.operations.cz_pulse.amplitude"))
+    assert _raw(c, "qubit_pairs.pair.moving_qubit") == "target"
+    _apply(c)
+    live = _live(folder)
+    assert live["qubits"]["qA1"]["z"]["operations"] == {}
+    assert _isnan(live["qubits"]["qB2"]["z"]["operations"]["cz_pulse"]["amplitude"])
+
+
+@pytest.mark.parametrize("stage", ["delete", "create", "set", "render", "plan"])
+@pytest.mark.parametrize("prior", [False, True])
+def test_switch_failure_rolls_back_request(nan_pair_chip, monkeypatch, stage, prior):
+    from quam_state_manager.web import routes
+
+    c, folder = nan_pair_chip
+    store = _store_of(c)
+    ctx = next(x for x in c.application.config["contexts"].values() if x.get("type") == "quam")
+    modifier = ctx["modifier"]
+    if prior:
+        modifier.set_value("qubits.qA1.f_01", 6.0e9)
+    before = json.dumps(store.state, sort_keys=True)
+    live_before = (folder / "state.json").read_bytes()
+    log = list(store.change_log)
+
+    def fail(*args, **kwargs):
+        raise TypeError("forced switch failure")
+
+    if stage == "render":
+        monkeypatch.setattr(routes, "_render_pair_detail", fail)
+    elif stage == "plan":
+        monkeypatch.setattr(routes.gate_inspector, "plan_switch_moving_qubit", fail)
+    else:
+        method = {"delete": "delete_subtree", "create": "create_subtree", "set": "set_value"}[stage]
+        original = getattr(modifier, method)
+
+        def stage_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            fail()
+
+        monkeypatch.setattr(modifier, method, stage_then_fail)
+    r = c.post("/pair/pair/gate-inspector/switch-moving", data={"role": "target"})
+    assert r.status_code in (400, 409), r.get_data(as_text=True)
+    assert "forced switch failure" in r.get_data(as_text=True)
+    assert json.dumps(store.state, sort_keys=True) == before
+    assert store.change_log == log
+    assert (folder / "state.json").read_bytes() == live_before
 
 
 def test_rename_nan_pulse_keeps_nan_and_undo_redo_follow_live(nan_chip):

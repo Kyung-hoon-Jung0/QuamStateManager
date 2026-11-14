@@ -553,7 +553,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             try:
                 for e in reversed(entries):
                     chip.modifier.set_value(e.dot_path, e.old_value,
-                                            coerce=False, enforce=False)
+                                            coerce=False, enforce=False, restore=True)
             except Exception:  # noqa: BLE001
                 logger.exception("restore rollback failed")
             return WriteOutcome(ok=False, action="restored",
