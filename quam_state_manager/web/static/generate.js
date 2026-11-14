@@ -5498,6 +5498,7 @@
     var qq = (state.spec.qdac || {}).qubits || {};
     Object.keys(qq).forEach(function (q) { trig[q] = wizSnapKeys(qq[q], ["trigger_pin", "pin_source"]); });
     var touched = state.wiringTouched, specSig = _allocSpecSig;
+    var origin = JSON.parse(JSON.stringify(state.pinFromCard || {}));
     return {
       valid: function () { return state.allocation === alloc; },
       restore: function () {
@@ -5511,6 +5512,7 @@
           if (qq[q]) wizPutKeys(qq[q], ["trigger_pin", "pin_source"], trig[q]);
         });
         state.wiringTouched = touched;
+        state.pinFromCard = origin;
         _allocSpecSig = specSig;
         renderQdacCabling();
         renderWiringDiagram();
@@ -5659,10 +5661,12 @@
       snap[ln.element] = wizSnapKeys(ln, ["channel", "group", "pool"]);
     });
     var mode = state.spec.readout_input, touched = state.wiringTouched;
+    var origin = JSON.parse(JSON.stringify(state.pinFromCard || {}));
     return function () {
       roLines().forEach(function (ln) {
         if (snap[ln.element]) wizPutKeys(ln, ["channel", "group", "pool"], snap[ln.element]);
       });
+      state.pinFromCard = origin;
       if (mode === undefined) delete state.spec.readout_input;
       else state.spec.readout_input = mode;
       state.wiringTouched = touched;
@@ -5676,17 +5680,16 @@
     _roNote = "";   // the caller says what happened, if anything
     var restore = roUndo();
     var was = Object.create(null);
-    roLines().forEach(function (ln) { was[ln.element] = JSON.stringify(ln.channel || null); });
+    roLines().forEach(function (ln) { was[ln.element] = ln.channel; });
     var changed = fn();
     if (changed === false) return false;
-    // a pin a card wrote is the feedline's until the user types one: every
-    // member of a feedline whose channel the card changed carries it
-    var cardGroups = Object.create(null);
+    // a pin this card action wrote (the card functions give every line they
+    // write a fresh channel object) is the feedline's until the user types
+    // one; a member the action did not write keeps its own origin
     roLines().forEach(function (ln) {
-      if (ln.group && was[ln.element] !== JSON.stringify(ln.channel || null)) cardGroups[ln.group] = true;
-    });
-    roLines().forEach(function (ln) {
-      if (ln.group && cardGroups[ln.group] && channelToPin(ln.channel)) state.pinFromCard[ln.element] = true;
+      if (ln.channel === was[ln.element]) return;
+      if (ln.group && channelToPin(ln.channel)) state.pinFromCard[ln.element] = true;
+      else delete state.pinFromCard[ln.element];
     });
     _wizPushRestore(label, restore);
     state.wiringTouched = true;
@@ -9936,7 +9939,8 @@
       if (hidden.length && hidden.length < 5) {
         var fixable = hidden.length > (couplerOnly ? 1 : 0);
         hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") + "." +
-          (couplerOnly ? " Coupler values are entered in Qubit pairs, 2Q gates below." : "") +
+          (couplerOnly ? (pairs.length ? " Coupler values are entered in Qubit pairs, 2Q gates below."
+                                       : " Define a pair in step 4 to enter coupler values.") : "") +
           (fixable ? " Change line types in step 4 to enable them." : "");
         hiddenNote.hidden = false;
       } else {
@@ -10678,6 +10682,12 @@
       var b = ((sp.populate || {}).coupler_models || {})[id];
       rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
     });
+    if (sp.lines.some(function (ln) { return ln.line === "coupler"; })) {
+      rows.push(["Coupler port delay", "each coupler flux port gets its pair's moving-qubit flux " +
+        "port delay (the control qubit when none is set; with no flux line, the delay for that " +
+        "qubit's drive band). A coupler port shared by pairs that disagree keeps the first pair's " +
+        "value, and the build result names both."]);
+    }
     var modelErrors = couplerModelErrors();
     if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
@@ -12170,6 +12180,32 @@
       return;
     }
 
+    if (res.confirm_kind === "coupler_delay") {
+      // An old wizard wrote 0 to coupler flux ports; the merge keeps stored
+      // values, so the server offers the z delay once. The answer rides the
+      // next build request; nothing changes unless the user says set.
+      (res.coupler_delay || []).forEach(function (d) {
+        var line = document.createElement("p");
+        line.className = "gen-build-warn-line";
+        line.textContent = "• " + d.pair + ": coupler port " + d.port + " has delay 0, its z port " +
+          d.z_delay + " ns";
+        el.appendChild(line);
+      });
+      [["set", "Set the couplers to the z delay", "btn-sm"],
+       ["keep", "Keep 0", "btn-sm outline"]].forEach(function (b) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = b[2] + " gen-coupler-delay-" + b[0];
+        btn.textContent = b[1];
+        btn.addEventListener("click", function () {
+          state.regenCouplerDelayAck = b[0];
+          runBuild();
+        });
+        el.appendChild(btn);
+      });
+      return;
+    }
+
     if (res.confirm_kind === "source_changed") {
       // QA regenerate-r2-35: the source chip changed (another tab / window
       // saved it) since this wizard read it — the merge carries the chip's
@@ -12653,6 +12689,8 @@
         // user's answer to the server's offer (askFspCompensation).
         power_mode: state.mode === "regenerate" ? state.powerMode : null,
         fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null,
+        // the answer to the coupler-delay offer ("set" / "keep"), if asked
+        coupler_delay_ack: state.mode === "regenerate" ? (state.regenCouplerDelayAck || null) : null,
         // QA regenerate-r2-35: the hydrate-time source stamp + the user's
         // "build anyway" to a changed source.
         source_hash: state.mode === "regenerate" ? (state.regenSourceHash || null) : null,
@@ -13906,6 +13944,7 @@
     state.regenTouched = {};
     state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
     state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
+    state.regenCouplerDelayAck = null;   // so does the coupler-delay answer
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the

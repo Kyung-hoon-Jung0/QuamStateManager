@@ -291,6 +291,74 @@ def _spec_twpa_ids(spec: dict) -> list[str] | None:
         if isinstance(tid, str) and tid.strip():
             out.append(tid.strip())
     return out
+def _resolve_ref(doc: dict, value, depth: int = 0):
+    """Follow a ``#/...`` pointer chain in ``doc`` (state + ``wiring``); the
+    final path and value, or ``(None, None)`` when a link is missing."""
+    path = None
+    while isinstance(value, str) and value.startswith("#/") and depth < 12:
+        path = value[2:]
+        node = doc
+        for part in path.split("/"):
+            if not isinstance(node, dict) or part not in node:
+                return None, None
+            node = node[part]
+        value, depth = node, depth + 1
+    return path, value
+
+
+def coupler_delay_mismatches(state: dict, wiring: dict) -> list[dict]:
+    """Coupler flux ports whose delay is 0 while their pair's moving qubit's
+    flux (z) port has another delay (an old wizard wrote 0 to coupler ports).
+
+    The moving qubit is ``moving_qubit`` (``control`` when unset), the same
+    rule the build uses. Never raises; ``[]`` when nothing differs.
+    Each item: ``{"pair", "port", "z_delay"}`` with ``port`` the coupler
+    port's state path (``ports/analog_outputs/...``).
+    """
+    out: list[dict] = []
+    doc = {"wiring": (wiring or {}).get("wiring") or {}, **(state or {})}
+    for pid, pair in sorted(((state or {}).get("qubit_pairs") or {}).items()):
+        if not isinstance(pair, dict) or not isinstance(pair.get("coupler"), dict):
+            continue
+        c_path, c_port = _resolve_ref(doc, pair["coupler"].get("opx_output"))
+        if not isinstance(c_port, dict) or c_port.get("delay") != 0:
+            continue
+        mq = pair.get("qubit_target") if pair.get("moving_qubit") == "target" \
+            else pair.get("qubit_control")
+        _, qubit = _resolve_ref(doc, mq)
+        z = qubit.get("z") if isinstance(qubit, dict) else None
+        _, z_port = _resolve_ref(doc, z.get("opx_output")) if isinstance(z, dict) else (None, None)
+        zd = z_port.get("delay") if isinstance(z_port, dict) else None
+        if isinstance(zd, (int, float)) and not isinstance(zd, bool) and zd != 0:
+            out.append({"pair": pid, "port": c_path, "z_delay": zd})
+    return out
+
+
+def coupler_delay_offer_text(items: list[dict]) -> str:
+    """The one review line for :func:`coupler_delay_mismatches`."""
+    zs = sorted({i["z_delay"] for i in items})
+    n = "/".join(f"{z:g}" for z in zs)
+    return (f"coupler flux ports have delay 0, z ports {n} ns: set the couplers to "
+            f"{n if len(zs) == 1 else 'their pair' + chr(39) + 's z delay'}?")
+
+
+def set_coupler_delays(folder: Path | str) -> list[dict]:
+    """Apply an accepted offer to a written chip: each coupler port with delay
+    0 takes its pair's moving-qubit z delay. Returns what it set."""
+    folder = Path(folder)
+    state, wiring = safe_io.read_state_wiring(folder)
+    items = coupler_delay_mismatches(state, wiring)
+    for item in items:
+        node = state
+        parts = item["port"].split("/")
+        for part in parts:
+            node = node[part]
+        node["delay"] = item["z_delay"]
+    if items:
+        safe_io.atomic_write_json(folder / "state.json", state)
+    return items
+
+
 def pending_fsp_offers(old_folder: Path | str, spec: dict,
                        populate_baseline: dict | None,
                        populate_touched: list | None,

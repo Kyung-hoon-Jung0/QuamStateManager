@@ -51377,6 +51377,22 @@ def regenerate_build():
                               "its calibrated amplitudes keep their power."),
                 })
 
+        # An old wizard wrote 0 to coupler flux ports while the z ports carry
+        # the MW alignment delay; the merge keeps stored values, so ask once.
+        coupler_delay_ack = data.get("coupler_delay_ack")
+        if coupler_delay_ack not in ("set", "keep"):
+            try:
+                _old = unsaved[:2] if unsaved else safe_io.read_state_wiring(Path(source_folder))
+                _mismatch = regenerate.coupler_delay_mismatches(*_old)
+            except (OSError, ValueError, TypeError, KeyError):
+                _mismatch = []
+            if _mismatch:
+                return jsonify({
+                    "ok": False, "needs_confirm": True, "confirm_kind": "coupler_delay",
+                    "coupler_delay": _mismatch,
+                    "error": regenerate.coupler_delay_offer_text(_mismatch),
+                })
+
         live_note = _regen_source_live_note(src_p)   # judged as the source is read
         outcome = regenerate.run_regenerate(
             python_path, source_folder, spec, Path(output_path), timeout=600,
@@ -51406,6 +51422,14 @@ def regenerate_build():
     # user loaded (its live folder), not the working copy it was read from.
     src_label = next((str(f) for f, role in _regen_protected_folders(src_p)
                       if role == "source_live"), source_folder)
+    if (isinstance(outcome, dict) and outcome.get("ok")
+            and data.get("coupler_delay_ack") == "set"):
+        _set = regenerate.set_coupler_delays(output_path)
+        res = outcome.get("result")
+        if _set and isinstance(res, dict):
+            res["warnings"] = list(res.get("warnings") or []) + [
+                "Coupler flux port delays set to their pair's z delay: " +
+                ", ".join(f"{i['pair']} {i['z_delay']:g} ns" for i in _set) + "."]
     regenerate.record_build_report(output_path, outcome, src_label)
     if isinstance(outcome, dict) and outcome.get("ok"):
         from quam_state_manager.core import build_env
