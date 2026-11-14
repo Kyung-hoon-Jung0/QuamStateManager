@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import math
+import numbers
 import re
 
 import numpy as np
@@ -1142,7 +1143,8 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     name = current(doc, cp + ".id") if isinstance(element, dict) else None
     name = name or (cp.split(".")[-1] if cp else "unknown")
     label = _pulse_label(doc, source, pulse)
-    local = number(current(doc, source + ".amplitude")) if isinstance(pulse, dict) else None
+    local_raw = current(doc, source + ".amplitude") if isinstance(pulse, dict) else None
+    local = stored_number(local_raw)
     played = cp + ".operations." + label if isinstance(label, str) and cp else None
     refusal = None
     if not isinstance(element, dict):
@@ -1152,7 +1154,11 @@ def _coupler_line(doc, pair_path, macro_path, notes):
     elif not played or not isinstance(current(doc, played), dict):
         refusal = f"not playable: {label} missing on {name}"
     holder = read(doc, played).get("holder_path") if played and not refusal else played
-    amp = number(current(doc, holder + ".amplitude")) if holder and not refusal else None
+    amp_raw = current(doc, holder + ".amplitude") if holder and not refusal else None
+    amp = stored_number(amp_raw)
+    # a text amplitude is not what QUAM plays: no number, no resonance distance from it
+    amp_text_reason = (f"{holder}.amplitude holds text, not a number"
+                       if isinstance(amp_raw, str) and number(amp_raw) is not None else None)
     line = {"role": "coupler", "name": name, "coupler_path": cp, "pulse_path": holder or source,
             "played_pulse_path": played, "amplitude_v": amp, "lobes": [], "moves": True,
             "refusal": refusal}
@@ -1164,12 +1170,14 @@ def _coupler_line(doc, pair_path, macro_path, notes):
             line["refusal"] = str(exc)
     if local is not None and amp is not None and local != amp:
         notes.append(f"{name}: the macro's copy says {signed_volts(local)}; the coupler plays {signed_volts(amp)}")
+    elif isinstance(local_raw, str):
+        notes.append(f"{name}: the macro's copy holds text ({local_raw!r}), not a number")
     # the refusal reaches the notes once, inside the coupler note the caller builds
     _amplitude_view(doc, line)
     if line["refusal"] or amp is None:
         # an unresolved coupler amplitude reads "unknown", never a dash; the title says why
         line["amp_text"] = "unknown"
-        line["amp_reason"] = line["refusal"] or "pulse amplitude unknown"
+        line["amp_reason"] = line["refusal"] or amp_text_reason or "pulse amplitude unknown"
     line.pop("moves")
     line.pop("amp_sort")
     return line
@@ -1384,7 +1392,8 @@ def operations(doc, conversions=None, unavailable=None):
                 pulse_path = path + "." + field if field else None
                 pulse = current(doc, pulse_path) if pulse_path else None
                 missing_pulse = None
-                local_amp = number(current(doc, pulse_path + ".amplitude")) if isinstance(pulse, dict) else None
+                local_raw = current(doc, pulse_path + ".amplitude") if isinstance(pulse, dict) else None
+                local_amp = stored_number(local_raw)
                 # a pulse dict without an id plays from its resolved holder (below), never "None"
                 label = (current(doc, pulse_path + ".id") if isinstance(pulse, dict) else
                          pulse if isinstance(pulse, str) and not pulse.startswith("#") else None)
@@ -1445,6 +1454,8 @@ def operations(doc, conversions=None, unavailable=None):
                         notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
+                elif isinstance(local_raw, str):
+                    notes.append(f"{info['name']}: the macro's copy holds text ({local_raw!r}), not a number")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
                       conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
                 if amp is None and not refusal and pt.get("reason") == "the operation amplitude is missing":
@@ -1518,13 +1529,18 @@ def operations(doc, conversions=None, unavailable=None):
                 for role, leaf in rate_leaves.items():
                     t = read(doc, leaf)
                     raw = t.get("current") if t.get("has_current") else None
+                    if raw is None and t.get("has_current"):
+                        # the resolver gives no value for some stored scalar types; read the leaf itself
+                        stored = _raw_at(doc, t.get("holder_path") or leaf)
+                        raw = None if isinstance(stored, str) and stored.startswith("#") else stored
                     if raw is None:
                         rate_state[role] = (1e9, True)
                     else:
                         # a stored text is not a rate, whatever float() would make of it
-                        ok = (isinstance(raw, (int, float, np.integer, np.floating))
+                        ok = (isinstance(raw, (numbers.Real, np.integer, np.floating))
                               and not isinstance(raw, (bool, np.bool_)))
-                        rate = float(raw) if ok and math.isfinite(float(raw)) and float(raw) > 0 else None
+                        rate = number(raw) if ok else None
+                        rate = rate if rate is not None and rate > 0 else None
                         rate_state[role] = (rate, False)
                 bad_rates = [rate_leaves[r] for r, (v, _d) in rate_state.items() if v is None]
                 if bad_rates:

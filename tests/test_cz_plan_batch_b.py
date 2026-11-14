@@ -232,3 +232,23 @@ def test_coupler_note_once_above_the_table(tmp_path):
 def test_no_coupler_no_note(tmp_path):
     html = _client(tmp_path).get("/cz-plan").get_data(as_text=True)
     assert "czp-coupler-note" not in html
+
+
+def test_a_text_coupler_amplitude_is_not_played():
+    state, _ = state_with_coupler()
+    state["couplers"]["c12"]["operations"]["flux"]["amplitude"] = "0.3"
+    row, _ = selected(state)
+    line = row["coupler"]
+    assert line["amplitude_v"] is None and row["coupler_amplitude_v"] is None
+    assert line["amp_text"] == "unknown"
+    assert line["amp_reason"] == "couplers.c12.operations.flux.amplitude holds text, not a number"
+    assert not any("+300 mV" in n for n in row["notes"])
+
+
+def test_a_text_macro_copy_amplitude_says_text():
+    state, _ = state_with_coupler()
+    state["qubit_pairs"]["q1-2"]["macros"]["cz_unipolar"]["coupler_flux_pulse"]["amplitude"] = "0.25"
+    row, _ = selected(state)
+    assert row["coupler"]["amplitude_v"] == .1
+    assert any("macro's copy holds text ('0.25'), not a number" in n for n in row["notes"]), row["notes"]
+    assert not any("copy says" in n for n in row["notes"])

@@ -440,3 +440,15 @@ def test_d7_a_present_unreadable_rate_gives_no_lengths(bad):
     leaf = "qubits.q1.z.opx_output.sampling_rate"
     assert f"two-flux length check not made: {leaf} is not a positive number" in row["notes"], row["notes"]
     assert not any("default 1 GS/s" in n for n in row["notes"])
+
+
+def test_d7_a_numpy_integer_rate_is_read_as_its_number():
+    t = _rate_row(np.int64(2_000_000_000))
+    assert (t["two_flux_lengths"]["control"], t["two_flux_lengths"]["target"]) == (48, 96)
+    assert not any("no sampling_rate stored" in n for n in t["notes"])
+
+
+def test_d7_a_rate_beyond_float_range_is_refused_without_raising():
+    row = _rate_row(10 ** 400)
+    assert row.get("two_flux_lengths") is None
+    assert any("qubits.q1.z.opx_output.sampling_rate is not a positive number" in n for n in row["notes"])
