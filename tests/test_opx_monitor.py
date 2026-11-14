@@ -1939,6 +1939,15 @@ def test_stale_live_rows_stay_short_and_the_notice_says_it_once(env):
     assert html.count('last seen: no job change for') == 2
 
 
+def test_stale_row_drops_the_interrupted_sentence_the_notice_already_says():
+    st = om.stale_idle_state({'idle': False, 'basis': om.WATCH_INTERRUPTED_BASIS}, '30 s ago')
+    row = om.qm_state({'id': 'QM-a', 'jobs': [{'id': 'j', 'status': 'Done'}]}, st)
+    assert row['basis'] == '' and row['fact'] == 'open, jobs finished'
+    assert 'watch interrupted' in st['basis']  # the close confirm keeps the full sentence
+    fresh = om.qm_state({'id': 'QM-a', 'jobs': []}, {'idle': False, 'basis': 'no job change for 3 min while SM watched'})
+    assert fresh['basis'] == 'no job change for 3 min while SM watched' and fresh['fact'] == 'open, no job seen'
+
+
 def test_r4_stale_slot_card_says_last_good_read_without_zone(env):
     app, m, w, clock, _ = env
     w.script[:] = [answer(temps={'FEM 0': 50})]

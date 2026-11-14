@@ -156,13 +156,17 @@ CAPPED_BASIS = (f'job list capped at {JOB_LIST_CAP} by the server; SM cannot see
                 'so activity cannot be judged (never idle)')
 
 
+WATCH_INTERRUPTED_BASIS = "SM's watch was interrupted; idle not established"
+
+
 def stale_idle_state(state, age_text):
     """The same verdict worded for a page whose last poll failed: never idle.
 
     ``basis`` is the full sentence (the close confirm quotes it); ``row_basis`` is the short
     text of a table row, whose table carries the "watch interrupted" notice once."""
     basis = state['basis'].replace(' while SM watched continuously', ' while SM watched')
-    return {'idle': False, 'last_activity': None, 'row_basis': f'last seen: {basis}',
+    row = '' if basis == WATCH_INTERRUPTED_BASIS else f'last seen: {basis}'
+    return {'idle': False, 'last_activity': None, 'row_basis': row,
             'basis': f'watch interrupted; as of the last good read ({age_text}): {basis}'}
 
 
@@ -222,7 +226,7 @@ def idle_state(q, watched, minutes=120):
     if not isinstance(watched, dict):
         return {'idle': False, 'basis': 'SM has not watched this QM yet; idle not established', 'last_activity': None}
     if not watched.get('continuous'):
-        return {'idle': False, 'basis': "SM's watch was interrupted; idle not established", 'last_activity': None}
+        return {'idle': False, 'basis': WATCH_INTERRUPTED_BASIS, 'last_activity': None}
     if watched.get('sig') != job_signature(q):
         return {'idle': False, 'basis': 'its jobs changed since SM last read them; idle not established',
                 'last_activity': None}
@@ -1123,7 +1127,8 @@ def band_view(verdict_value, state, health, problem_details=None):
 def qm_state(q, idle_value):
     """The State cell of one open QM: a short fact, what it is measured from, its job statuses."""
     jobs = q.get('jobs')
-    basis = (idle_value or {}).get('row_basis') or (idle_value or {}).get('basis') or ''
+    iv = idle_value or {}
+    basis = iv['row_basis'] if 'row_basis' in iv else (iv.get('basis') or '')
     if jobs is None:
         fact = 'jobs unknown'
     elif any(job_activity(j.get('status')) == 'active' for j in jobs):

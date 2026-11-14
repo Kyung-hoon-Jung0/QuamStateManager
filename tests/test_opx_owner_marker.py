@@ -474,4 +474,5 @@ def test_long_owner_texts_clip_with_the_full_text_on_hover(env, marker_home):
     css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
     rule = re.search(r"\.ui-opxmon-owner-marker \.ui-opxmon-owner-clip \{([^}]*)\}", css)
     assert rule and "text-overflow:ellipsis" in rule.group(1) and "white-space:nowrap" in rule.group(1)
+    assert "var(--ui-opxmon-owner-clip-max)" in rule.group(1), "a long text cannot widen the table"
     assert "overflow-wrap: anywhere" not in css.split(".ui-opxmon-owner-marker {", 1)[1].split("}", 1)[0]
