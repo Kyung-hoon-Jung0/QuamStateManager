@@ -354,7 +354,9 @@ def _lines(merged: dict, pair_id: str) -> dict[str, Any]:
     p = merged["qubit_pairs"][pair_id]
     control = pair_qubit(merged, pair_id, "qubit_control")
     target = pair_qubit(merged, pair_id, "qubit_target")
-    qubits = merged.get("qubits") or {}
+    qubits = merged.get("qubits")
+    if not isinstance(qubits, dict):
+        qubits = {}
     out: dict[str, Any] = {}
 
     def z_of(q, what, key):
@@ -519,8 +521,15 @@ def _gate_or_alias(macros: dict, name: str, merged: dict, pair_id: str
                   "Pick a gate of this pair, or leave copying off.")
 
 
-def _argument_problem(pulses, model_gate, copy_from) -> str | None:
+def _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
+                      copy_from) -> str | None:
     """A plain reason when an argument has the wrong shape."""
+    if not isinstance(pair_id, str) or not pair_id:
+        return "The pair must be given by its name. Pick a pair from the list."
+    if not isinstance(gate_name, str) or not gate_name:
+        return "The gate name must be text that starts with cz_. Type a name like cz_square."
+    if not isinstance(gate_class, str) or not gate_class:
+        return "The gate class must be given by its class name. Pick a gate class from the list."
     if pulses is not None and not isinstance(pulses, dict):
         return "The pulses must be given per pulse field. Pick the pulses again."
     for f, spec in (pulses or {}).items():
@@ -557,11 +566,26 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     {key: copied from the model gate}}, "sources": {...}}`` or ``{"error":
     str, "refusals": [str]}``. Every created value is a fresh copy.
     """
-    bad = _argument_problem(pulses, model_gate, copy_from)
+    try:
+        return _plan_body(merged, pair_id, gate_name, gate_class, pulses,
+                          copy_from, model_gate)
+    except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
+        return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "
+                        "Nothing was changed. Report this with the gate class "
+                        "and the pair."])
+
+
+def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
+               model_gate) -> dict[str, Any]:
+    bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
+                            copy_from)
     if bad:
         return _refuse([bad])
+    if not isinstance(merged, dict) or not isinstance(merged.get("qubit_pairs"), dict):
+        return _refuse(["This chip has no qubit_pairs section SM can read. "
+                        "Open a chip that has qubit pairs."])
     pulses = dict(pulses or {})
-    pairs = merged.get("qubit_pairs") or {}
+    pairs = merged["qubit_pairs"]
     p = pairs.get(pair_id)
     if not isinstance(p, dict):
         return _refuse([f"Pair {pair_id} is not on this chip (or SM cannot read "
@@ -576,7 +600,7 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
         reasons.append(r)
     lines = _lines(merged, pair_id)
     control, target = lines["_ids"]
-    if not (control and target):
+    if gate_class in GATE_CLASSES and not (control and target):
         return _refuse(reasons + [
             f"The control or target of pair {pair_id} does not point at a qubit, "
             "so SM cannot name the gate's pulses. Set the pair's qubit_control "
@@ -746,7 +770,8 @@ def copied_name(model_name: str, model_gate: str, model_ids: tuple, gate: str,
     if not model_name.startswith(model_gate + "_"):
         return None
     swaps = sorted(((tuple(m.split("_")), n) for m, n in
-                    ((model_ids[0], ids[0]), (model_ids[1], ids[1]))),
+                    ((model_ids[0], ids[0]), (model_ids[1], ids[1]))
+                    if isinstance(m, str) and isinstance(n, str) and m != n),
                    key=lambda x: -len(x[0]))
     toks = model_name[len(model_gate) + 1:].split("_")
     out: list[str] = []
@@ -887,6 +912,19 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
     return out
 
 
+def _op_pointing_at(lines: dict, prefix: str) -> str | None:
+    """The key of an operation on the pair's lines whose values reference
+    *prefix* (a macro pulse), if any."""
+    for name in ("control", "target", "coupler"):
+        ln = lines.get(name)
+        if not isinstance(ln, tuple):
+            continue
+        for key, op in ln[1].items():
+            if any(s == prefix or s.startswith(prefix + "/") for s in _strings(op)):
+                return key
+    return None
+
+
 def _model_lines_used(model: dict, fields: list[str], mlines: dict) -> set:
     return {_resolve_slot_pulse(model, f, mlines)[1] for f in fields} - {None}
 
@@ -950,6 +988,21 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     mlines = _lines(merged, mpair)
     mids = mlines["_ids"]
     control, target = lines["_ids"]
+    if mpair != pair_id:
+        for role, mq, nq, src in (("control", mids[0], control, mp),
+                                  ("target", mids[1], target, mp)):
+            if not mq:
+                return _refuse(reasons + [
+                    f"The {role} of the model pair {mpair} "
+                    f"({src.get('qubit_' + role)!r}) does not point at a qubit, so "
+                    f"SM cannot rename its pulses for pair {pair_id}. Fix that "
+                    "reference, or pick a model gate on this pair."])
+        for role, nq in (("control", control), ("target", target)):
+            if not nq:
+                return _refuse(reasons + [
+                    f"The {role} of pair {pair_id} does not point at a qubit, so SM "
+                    "cannot name the copied pulses. Set the pair's qubit_control "
+                    "and qubit_target first."])
     fields = pulse_fields(model, _op_keys(mlines))
     if not fields:
         return _refuse(reasons + [
@@ -958,8 +1011,17 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     old_ref = _ref("qubit_pairs", mpair, "macros", mname)
     macro_segs = ("qubit_pairs", pair_id, "macros", gate_name)
     new_ref = _ref(*macro_segs)
+    # Aliases on the model pair that name the model gate are references to it.
+    alias_refs = [_ref("qubit_pairs", mpair, "macros", a) for a, v in mmacros.items()
+                  if isinstance(v, str) and v in ("#./" + mname, old_ref)]
+
+    def norm(value):
+        for a in alias_refs:
+            value = _rewrite_refs(value, a, old_ref)
+        return _rewrite_refs(value, old_ref, new_ref)
+
     macro, kept = _structure_only(model, fields)
-    macro = _rewrite_refs(macro, old_ref, new_ref)
+    macro = norm(macro)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
     directions: dict[str, str] = {}
@@ -972,8 +1034,16 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     for f in fields:
         mpulse, line, mkey = _resolve_slot_pulse(model, f, mlines)
         if line is None or mkey is None:
-            reasons.append(f"SM cannot find the operation that {f} of the model gate "
-                           f"{mname} plays on pair {mpair}. Pick another model gate.")
+            played = _op_pointing_at(mlines, old_ref + "/" + f)
+            if isinstance(mpulse, dict) and mkey and played:
+                reasons.append(f"The pulse {f} of {mname} is named {mkey} but its "
+                               f"operation is {played}, so the gate would not play "
+                               "it. Fix the model gate's pulse id, or pick another "
+                               "model gate.")
+            else:
+                reasons.append(f"SM cannot find the operation that {f} of the model "
+                               f"gate {mname} plays on pair {mpair}. Pick another "
+                               "model gate.")
             continue
         base = mpulse if isinstance(mpulse, dict) else {}
         if not base.get("__class__"):
@@ -1014,17 +1084,18 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             reasons.append(r)
         if isinstance(model.get(f), dict):
             directions[f] = MACRO_OWNS
-            owned = _rewrite_refs(pulse, old_ref, new_ref)
+            owned = norm(pulse)
             if "id" in model[f]:
                 owned = {"id": key, **owned}
             macro[f] = owned
             if isinstance(model_op, dict):
-                op = _rewrite_refs(copy.deepcopy(model_op), old_ref, new_ref)
-                # A plain copy on the operation follows what the user gave
-                # (and the normalised length).
-                for k in list(given) + ["length"]:
-                    if k in op and not (isinstance(op[k], str) and op[k].startswith("#")) \
-                            and k in pulse:
+                op = norm(copy.deepcopy(model_op))
+                # Where the operation holds a plain copy, it holds what the
+                # macro pulse holds, whatever the value's source.
+                for k in op:
+                    if k in ("id", "__class__") or k not in pulse:
+                        continue
+                    if not (isinstance(op[k], str) and op[k].startswith("#")):
                         op[k] = copy.deepcopy(pulse[k])
             else:
                 op = linked_operation(owned, _ref(*macro_segs, f))
@@ -1035,9 +1106,12 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
                 macro[f] = mval if mpair == pair_id else _ref(*segs, key)
             else:
                 macro[f] = key
-            op = dict(pulse)
+            op = norm(dict(pulse))
             if isinstance(model_op, dict) and "id" in model_op:
-                op = {"id": key, **op}
+                mid = model_op["id"]
+                # The id follows the model: its own key becomes the new key,
+                # null stays null, anything else goes through the rename.
+                op = {"id": key if mid == mkey else copy.deepcopy(mid), **op}
         op_creates.append((_dot(segs, key), op))
     if len(set(names.values())) != len(names):
         reasons.append("Two pulses of the model gate would get the same name on "
@@ -1049,7 +1123,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     plain = {mname: gate_name}
     if mpair != pair_id:
         for old, new in zip(mids, (control, target)):
-            if old and old != new:
+            if old and new and old != new:
                 plain[old] = new
     macro = _rename_values(macro, names, plain)
     op_creates = [(path, _rename_values(v, names, plain)) for path, v in op_creates]

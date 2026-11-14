@@ -1055,3 +1055,111 @@ def test_copy_from_a_gate_whose_pulse_is_an_operation_name():
     s = _dir_fixture(2)
     res = _plan(s, copy_from="cz_a", pulses={"flux_pulse_qubit": {"class": SQUARE, "fields": {}}})
     assert res["fields"]["flux_pulse_qubit"]["amplitude"] == cgb.COPIED
+
+
+# --- plan never raises, and copies follow the model exactly ---------------
+
+def _target_line_chip():
+    """Model cz_a on q1-q2 that plays only the target z line."""
+    s = _two_pulse_chip()
+    del s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]
+    del s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+    return s
+
+
+@pytest.mark.parametrize("control", [None, "#./q1"])
+def test_model_pair_with_an_unresolved_qubit(control):
+    s = _target_line_chip()
+    s["qubit_pairs"]["q1-q2"]["qubit_control"] = control
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "qubits.q2.z.operations.cz_b_flux_pulse_q2_q1" in dict(res["creates"])
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "The control of the model pair q1-q2" in res["error"]
+
+
+@pytest.mark.parametrize("kw", [
+    {"pair_id": "q1-q2", "gate_name": 5, "gate_class": "some.Class"},
+    {"pair_id": "q1-q2", "gate_name": "cz_b", "gate_class": ["x"]},
+    {"pair_id": 7, "gate_name": "cz_b", "gate_class": LAB_GATE},
+])
+def test_non_string_arguments_are_refusals(kw):
+    res = cgb.plan(_two_pulse_chip(), kw.pop("pair_id"), **kw)
+    assert isinstance(res["error"], str)
+
+
+def test_an_internal_error_becomes_a_refusal(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("forced")
+    monkeypatch.setattr(cgb, "_lines", boom)
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=cgb.CZ_GATE,
+                   pulses=_square())
+    assert res["error"].startswith("SM could not plan this gate (RuntimeError). Nothing was changed.")
+
+
+def _op_owned_lab_chip(op_id):
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    for field, q, key in (("flux_pulse_qubit", "q1", "cz_a_flux_pulse_q1_q2"),
+                          ("flux_pulse_target", "q2", "cz_a_flux_pulse_q2_q1")):
+        s["qubits"][q]["z"]["operations"][key] = {
+            "id": op_id(key), "length": 40, "amplitude": 0.2, "__class__": LAB_PULSE}
+        m[field] = key
+    return s
+
+
+def test_operation_owned_copy_keeps_the_model_id_shape():
+    res = cgb.plan(_op_owned_lab_chip(lambda k: None), "q1-q2", gate_name="cz_b",
+                   gate_class=LAB_GATE)
+    assert dict(res["creates"])["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]["id"] is None
+    res = cgb.plan(_op_owned_lab_chip(lambda k: k), "q1-q2", gate_name="cz_b",
+                   gate_class=LAB_GATE)
+    assert dict(res["creates"])["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]["id"] == \
+        "cz_b_flux_pulse_q1_q2"
+
+
+def test_a_plain_operation_copy_holds_what_the_macro_pulse_holds():
+    s = _two_pulse_chip()
+    op = s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+    op["amplitude"] = 0.2
+    s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]["length"] = 40
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_src"] = {
+        "__class__": "other.Gate", "flux_pulse_qubit": {
+            "id": "x", "amplitude": 0.33, "length": 44, "__class__": LAB_PULSE}}
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE, copy_from="cz_src")
+    by = dict(res["creates"])
+    pulse = by["qubit_pairs.q1-q2.macros.cz_b"]["flux_pulse_qubit"]
+    op = by["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]
+    assert pulse["amplitude"] == op["amplitude"] == 0.33
+    assert pulse["length"] == op["length"] == 44
+
+
+def test_a_reference_through_the_cz_alias_is_a_reference_to_the_model():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "#./cz_a"
+    op = s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+    op["amplitude"] = "#/qubit_pairs/q1-q2/macros/cz/flux_pulse_qubit/amplitude"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert dict(res["creates"])["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]["amplitude"] == \
+        "#/qubit_pairs/q1-q2/macros/cz_b/flux_pulse_qubit/amplitude"
+
+
+def test_a_pulse_id_that_differs_from_its_operation_key_is_named():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["id"] = "cz_a_other"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert ("The pulse flux_pulse_qubit of cz_a is named cz_a_other but its "
+            "operation is cz_a_flux_pulse_q1_q2") in res["error"]
+
+
+@pytest.mark.parametrize("key", ["qubits", "qubit_pairs"])
+def test_a_container_that_is_not_a_dict_is_a_refusal(key):
+    s = _chip()
+    s[key] = ["not", "a", "dict"]
+    assert isinstance(_plan(s)["error"], str)
+
+
+def test_a_kept_macro_reference_into_the_model_pair_is_refused_across_pairs():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["mode"] = "#/qubit_pairs/q1-q2/extras/mode"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "#/qubit_pairs/q1-q2/extras/mode" in res["error"]
