@@ -609,9 +609,9 @@ def _copy_with(**extra):
     return dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"], res["fields"]["macro"]
 
 
-def test_copy_keeps_a_lab_duration_reference_silently():
+def test_copy_keeps_a_lab_duration_reference_as_structure():
     macro, kept = _copy_with(duration="#./total_duration")
-    assert macro["duration"] == "#./total_duration" and "duration" not in kept
+    assert macro["duration"] == "#./total_duration" and kept["duration"] == cgb.KEPT_REF
 
 
 def test_copy_keeps_a_plain_duration_and_lists_it():
@@ -1278,3 +1278,75 @@ def test_only_the_role_a_name_needs_must_have_a_qubit():
     c["qubit_pairs"]["q3-4"]["qubit_control"] = None
     res = cgb.plan(c, "q3-4", gate_name="cz_b", gate_class=LAB_GATE)
     assert "qubit_pairs.q3-4.coupler.operations.cz_b_coupler_pulse_q4" in dict(res["creates"])
+
+
+def test_a_spectator_operation_on_a_third_qubit_is_reset():
+    s = _two_pulse_chip()
+    s["qubits"]["q5"] = _qubit("q5")
+    s["qubits"]["q5"]["z"]["operations"]["cz_a_spectator_pulse_q5"] = {"length": 40}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"].update({
+        "spectator_qubits": {"q5": "#/qubits/q5"},
+        "spectator_pulse": "cz_a_spectator_pulse_q5", "spectator_mode": "static"})
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    assert macro["spectator_pulse"] is None and macro["spectator_mode"] == "static"
+    assert {"spectator_pulse", "spectator_qubits"} <= set(res["reset"])
+    assert res["fields"]["macro"]["spectator_mode"] == cgb.FROM_MODEL
+    assert not any("cz_a_spectator_pulse_q5" in x for x in _strings(res["creates"]))
+
+
+def test_a_table_class_plan_resets_nothing_and_renames_nothing():
+    res = _plan(_chip())
+    assert res["reset"] == [] and res["renamed"] == {}
+    assert res["operations"] == {"flux_pulse_qubit": {
+        "path": "qubits.q1.z.operations.cz_new_pulse_q1_q2",
+        "key": "cz_new_pulse_q1_q2", "channel": "q1.z", "created": True}}
+
+
+def test_a_coupler_only_model_on_a_pair_with_a_null_control_copies_across():
+    c = _chip(4)
+    c["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_a_coupler_pulse_q2"] = {
+        "id": "cz_a_coupler_pulse_q2", "length": 40, "__class__": LAB_PULSE}
+    c["qubit_pairs"]["q1-2"]["macros"]["cz_a"] = {"__class__": LAB_GATE,
+                                                  "coupler_pulse": "cz_a_coupler_pulse_q2"}
+    c["qubit_pairs"]["q1-2"]["qubit_control"] = None
+    res = cgb.plan(c, "q3-4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "qubit_pairs.q3-4.coupler.operations.cz_b_coupler_pulse_q4" in dict(res["creates"])
+
+
+def test_a_relative_reference_to_a_same_named_gate_on_a_third_pair_is_kept():
+    s = _two_pulse_chip()
+    ref = "#../../../../qubit_pairs/q9-q8/macros/cz_a/extras"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["src"] = ref
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    assert macro["flux_pulse_qubit"]["src"] == ref
+
+
+def test_a_cross_pair_copy_reports_operations_and_renames():
+    res = cgb.plan(_two_pulse_chip(), "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert res["operations"]["flux_pulse_target"] == {
+        "path": "qubits.q4.z.operations.cz_b_flux_pulse_q4_q3",
+        "key": "cz_b_flux_pulse_q4_q3", "channel": "q4.z", "created": True}
+    assert res["renamed"] == {"cz_a": "cz_b",
+                              "cz_a_flux_pulse_q1_q2": "cz_b_flux_pulse_q3_q4",
+                              "cz_a_flux_pulse_q2_q1": "cz_b_flux_pulse_q4_q3",
+                              "q1": "q3", "q2": "q4"}
+
+
+@pytest.mark.parametrize("copied", [False, True])
+def test_every_macro_key_written_is_accounted_for(copied):
+    if copied:
+        s = _two_pulse_chip()
+        s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"].update(
+            {"duration": "#./total", "fidelity": {"x": 1}, "label": "fast"})
+        res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+        macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    else:
+        res = _plan(_chip())
+        macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    pulse_fields = set(res["pulse_directions"]) | {"coupler_flux_pulse"}
+    for k, v in macro.items():
+        if k == "__class__" or k in pulse_fields or v is None:
+            continue
+        assert k in res["fields"]["macro"] or k in res["reset"], k
