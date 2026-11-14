@@ -489,16 +489,33 @@ def _display_scale(unit: str, magnitude: float) -> tuple[float, str]:
     return 1.0, unit
 
 
+def _plain_number_entry(entry, keys):
+    """Copy of the fit entry with numpy real scalars under ``keys`` turned
+    into Python numbers, so the shared reader judges them like a float.
+    numpy bools are not np.integer, so they stay and are refused."""
+    out = dict(entry or {})
+    for key in keys:
+        v = out.get(key)
+        if isinstance(v, (np.integer, np.floating)):
+            out[key] = v.item()
+    return out
+
+
 def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                            pre_update_value_of, current_value_of,
                            ) -> tuple[str, str]:
     """Returns (status, reason): status in ok | fail | not_evaluated."""
     rule = fam.extremum
     name = "extremum check"
+    entry = _plain_number_entry(entry, (rule.key, rule.curvature_key))
     vertex = fam_mod.fit_value(fam, entry, rule.key)
     if vertex is None:
-        return "not_evaluated", (f"{name} not evaluated: the fit does not "
-                                 f"record {rule.key}")
+        raw_v = (entry or {}).get(rule.key)
+        if raw_v is None:
+            return "not_evaluated", (f"{name} not evaluated: the fit does not "
+                                     f"record {rule.key}")
+        return "not_evaluated", (f"{name} not evaluated: {rule.key} is not a "
+                                 f"finite number ({raw_v!r})")
     folder = _attr(run, "folder_path", None)
     raw = Path(folder) / "ds_raw.h5" if folder else None
     if raw is None or not raw.exists():
@@ -514,6 +531,10 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                                  f"{rule.axis_var!r} has fewer than 2 values")
     unit = unit or rule.unit
     lo, hi = float(np.min(axis)), float(np.max(axis))
+    if hi == lo:
+        return "not_evaluated", (f"{name} not evaluated: the sweep did not "
+                                 f"move, every point of {rule.axis_var!r} "
+                                 f"has the same value")
     half = (hi - lo) / 2.0
     k, shown = _display_scale(unit, max(abs(lo), abs(hi), abs(vertex)))
     u = f" {shown}" if shown else ""
@@ -522,6 +543,7 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                         f"swept range {lo * k:.2f} .. {hi * k:.2f}{u}; the "
                         f"fit extrapolated beyond the data")
     move = None
+    path = None
     if rule.move == "relative":
         move = abs(vertex)
     elif rule.state_path:
@@ -536,9 +558,40 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
             if isinstance(anchor, (int, float)) and not isinstance(anchor, bool)                     and math.isfinite(anchor):
                 move = abs(vertex - float(anchor))
                 break
-    if move is not None and move > half:
+    if move is None:
+        # an absolute move needs the value the chip held; without it the
+        # size of the move is unknown, which is never a pass
+        where = (f"no readable value at {path}" if path
+                 else "the rule names no state path")
+        return "not_evaluated", (f"{name} not evaluated: the size of the "
+                                 f"move is unknown ({where})")
+    if move > half:
         return "fail", (f"proposed move {move * k:.2f}{u} is larger than the "
                         f"sweep half-span {half * k:.2f}{u}")
+    if rule.curvature_key:
+        if rule.expect not in ("max", "min"):
+            return "not_evaluated", (f"{name} not evaluated: the rule expects "
+                                     f"{rule.expect!r}, which is neither "
+                                     f"'max' nor 'min'")
+        c = fam_mod.fit_value(fam, entry, rule.curvature_key)
+        if c is None:
+            raw_c = (entry or {}).get(rule.curvature_key)
+            if raw_c is None:
+                return "not_evaluated", (f"{name} not evaluated: the fit does "
+                                         f"not record {rule.curvature_key}")
+            return "not_evaluated", (f"{name} not evaluated: "
+                                     f"{rule.curvature_key} is not a finite "
+                                     f"number ({raw_c!r})")
+        if c == 0:
+            return "not_evaluated", (f"{name} not evaluated: "
+                                     f"{rule.curvature_key} is 0, so the fit "
+                                     f"has no extremum")
+        want_neg = rule.expect == "max"
+        if (c < 0) != want_neg:
+            got = "minimum" if c > 0 else "maximum"
+            return "fail", (f"fit curvature {rule.curvature_key}={c:.4g} "
+                            f"makes the vertex a {got}, but this "
+                            f"calibration expects a {rule.expect}imum")
     return "ok", ""
 
 
@@ -651,9 +704,9 @@ def evaluate_target(run, fam: Family, target: str, *,
             v.reasons.append(why)
             return v
         if status == "not_evaluated":
-            # same convention as the G4 bands on a missing value: the verdict
-            # is not changed, but the check says it could not run and why
-            v.reasons.append(why)
+            # the proposed value is the extremum itself: an unread range is
+            # never a pass (and never a guessed fail)
+            suspects.append(("unverifiable", why))
     v.checks.setdefault("G4_plausibility", "ok")
 
     # --- G3: raw-data feature cross-check (family-gated) --------------------

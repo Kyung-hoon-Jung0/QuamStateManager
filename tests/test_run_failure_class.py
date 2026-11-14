@@ -356,7 +356,7 @@ class TestInterrupted:
         assert s["start_token"] is None and s["run_key"] is None and s["claimed_by_tool"] is None
         j = journal_mod.read(str(inst), "labchip", _today())
         line = ("✗ ran `11_power_rabi` on qB2 interrupted: SM restarted while this run was in flight; nothing was "
-                "applied; the session was disarmed -- running again takes a person's Start on a plan")
+                "applied; the session was disarmed. Running again takes a person's Start on a plan")
         assert line in j
         assert _wait(lambda: notified)
         ev, payload = notified[0]

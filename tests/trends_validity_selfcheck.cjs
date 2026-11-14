@@ -127,6 +127,26 @@ ok(t0.y.filter(v => v === null).length === 2, 'N1: the excluded interval itself 
 // a line with no excluded point is drawn exactly as before
 ok(JSON.stringify(d.data[1].y) === JSON.stringify([.88, .89]) && d.data[1].marker.size === 5,
    'N1: an all-valid line is unchanged');
+// two excluded in a row: only ONE bridge (at the first), never a carry over the second
+ok(t0.x.length === 5 && t0.y.filter(v => v === .95).length === 2,
+   'N1: two excluded in a row give one bridge only: ' + JSON.stringify(t0.y));
+// first point excluded: nothing held before it, so no bridge and no invented value
+// last point excluded: the held value runs up to it, then the line ends
+const n1e = [{metric: 'm', kind: 'qubit', label: 'GE', unit: '', scale: 1, series: [
+    {entity: 'qa', points: [[K('07', '00'), null], [K('08', '00'), .91], [K('09', '00'), .92]],
+     excluded: [[K('07', '00'), 1.7, 'unphysical']]},
+    {entity: 'qb', points: [[K('07', '00'), .81], [K('08', '00'), .82], [K('09', '00'), null]],
+     excluded: [[K('09', '00'), 0, 'unphysical']]},
+]}];
+w.ChipTrends.render(JSON.parse(JSON.stringify(n1e)));
+d = s.draws.pop();
+ok(JSON.stringify(d.data[0].y) === JSON.stringify([null, .91, .92]),
+   'N1: an excluded first point is a gap, no bridge: ' + JSON.stringify(d.data[0].y));
+ok(JSON.stringify(d.data[1].y) === JSON.stringify([.81, .82, .82, null]),
+   'N1: an excluded last point ends the held step at its time: ' + JSON.stringify(d.data[1].y));
+// the excluded values never set the axis (1.7 and 0 are not drawn as values)
+ok(d.data.filter(t => t.meta !== 'excluded').every(t => t.y.every(v => v === null || (v > .8 && v < 1))),
+   'N1: no excluded value is drawn as a value');
 
 // P3: a line whose every value is excluded leaves the legend; the key names it
 const p3 = [{metric: 'm', kind: 'qubit', label: 'F', unit: '', scale: 1, series: [
