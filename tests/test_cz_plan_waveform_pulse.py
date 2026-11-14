@@ -56,7 +56,7 @@ class TestReadable:
     def test_sign_changes_make_lobes_and_the_peak_keeps_its_sign(self):
         r = _row(dict(WAVE, waveform_I=[0.1, 0.15, 0.0, -0.2, -0.05, 0.04]))
         ln = r["lines"][0]
-        assert ln["amplitude_v"] == -0.2
+        assert ln["amplitude_v"] == 0.15  # the first lobe, not the overall peak
         assert [(lb["name"], lb["amplitude_v"]) for lb in ln["lobes"]] == [
             ("first lobe", 0.15), ("second lobe", -0.2), ("third lobe", 0.04)]
         assert all(lb["point"]["frequency_hz"] is not None for lb in ln["lobes"])
@@ -86,8 +86,9 @@ class TestNotDerivable:
         assert full in ln["amp_title"]
         assert "q1: " + full in r["notes"]
         if wf and isinstance(wf, list):
-            # the gate's own inferred duration still counts the stored samples
-            assert r["duration_ns"] == len(wf)
+            # a list holding a non-number is no trustworthy length either
+            assert r["duration_ns"] is None
+            assert r["duration_note"] == "not derivable: " + full
         else:
             assert r["duration_note"] == "unknown: " + full
         assert not any("operation amplitude is missing" in str(v) for v in (ln["point"]["reason"],))
@@ -114,3 +115,61 @@ class TestOtherClassesUnchanged:
     def test_sign_lobes_helper(self):
         assert C.waveform_sign_lobes([0.0, 0.0]) == [("first lobe", 0.0)]
         assert C.waveform_sign_lobes([-0.1, -0.3]) == [("first lobe", -0.3)]
+
+
+TWO_LOBE = [0.10] * 30 + [-0.15] * 30
+
+
+class TestLobes:
+    def test_operating_values_describe_the_first_lobe(self):
+        ln = _row(dict(WAVE, waveform_I=TWO_LOBE))["lines"][0]
+        assert ln["amplitude_v"] == pytest.approx(0.10)
+        assert ln["point"]["frequency_hz"] == pytest.approx(5e9 - 8e9 * 0.10 ** 2)
+        assert ln["amp_text"].startswith("+0.1 ")
+        assert [(lb["name"], lb["amplitude_v"]) for lb in ln["lobes"]] == [
+            ("first lobe", 0.10), ("second lobe", -0.15)]
+
+    def test_the_tooltip_lists_the_second_lobe(self):
+        ln = _row(dict(WAVE, waveform_I=TWO_LOBE))["lines"][0]
+        assert "first-lobe peak of waveform" in ln["amp_title"]
+        assert "second lobe -0.15" in ln["amp_title"]
+
+    def test_the_resonance_check_covers_every_lobe(self):
+        r = _row(dict(WAVE, waveform_I=TWO_LOBE))
+        assert {x["lobe"] for x in r["lobe_resonances"]} == {"first lobe", "second lobe"}
+
+    def test_a_second_lobe_closer_to_a_resonance_is_the_one_named(self):
+        # first lobe: q1 980 MHz above q2; second lobe (-0.31 V): about 231 MHz above,
+        # near the |alpha| = 200 MHz condition, so the second lobe is the closest
+        r = _row(dict(WAVE, waveform_I=[0.05] * 20 + [-0.31] * 20))
+        best = min((x for x in r["lobe_resonances"] if x["distance_hz"] is not None),
+                   key=lambda x: abs(x["distance_hz"]))
+        assert best["lobe"] == "second lobe"
+        assert r["nearest"]["lobe"] == "second lobe"
+
+    def test_a_unipolar_array_is_unchanged(self):
+        r = _row(WAVE)
+        ln = r["lines"][0]
+        assert ln["amplitude_source"] == "peak of waveform"
+        assert "lobe" not in ln["amp_title"]
+        assert {x["lobe"] for x in r["lobe_resonances"]} == {"first lobe"}
+
+    def test_a_tiny_overshoot_tail_keeps_first_lobe_values(self):
+        # the tail plays, so it is listed and checked; at -2 mV it sits ~32 kHz off the
+        # idle point, far from every condition here, so it is not the nearest
+        r = _row(dict(WAVE, waveform_I=[0.2] * 60 + [-0.002] * 4))
+        ln = r["lines"][0]
+        assert ln["amplitude_v"] == pytest.approx(0.2)
+        assert [lb["name"] for lb in ln["lobes"]] == ["first lobe", "second lobe"]
+        assert r["nearest"]["lobe"] == "first lobe"
+
+    def test_all_zero_samples_do_not_crash(self):
+        r = _row(dict(WAVE, waveform_I=[0.0] * 10))
+        assert r["lines"][0]["moves"] is False
+
+
+class TestDuration:
+    def test_an_iq_pulse_keeps_its_length_and_says_the_level_is_not_derivable(self):
+        r = _row(dict(WAVE, waveform_Q=[0.0] * 92))
+        assert r["duration_ns"] == 92
+        assert r["duration_note"].endswith("; level not derivable: waveform_Q is stored (I/Q pulse)")
