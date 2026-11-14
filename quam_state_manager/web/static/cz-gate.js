@@ -719,7 +719,9 @@
         // move the focus off the form before hiding it: a focused element that
         // disappears leaves the dialog without focus (Chrome then paints a stray mark)
         var pb = $('czg-primary');
-        if (pb) { try { pb.focus(); } catch (e) { /* not focusable */ } }
+        if (pb) { pb.disabled = false; try { pb.focus(); } catch (e) { /* not focusable */ } }
+        var ae = document.activeElement;
+        if (ae && $('czg-form') && $('czg-form').contains(ae) && ae.blur) ae.blur();
         var f = $('czg-form');
         if (f) f.hidden = true;
         var ev = $('czg-evidence');

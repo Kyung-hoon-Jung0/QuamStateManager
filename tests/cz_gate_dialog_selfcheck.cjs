@@ -227,7 +227,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     prim().click();
     await settle();
     ok(/Not on the chip yet: press Apply to write it/.test(alertText()) && $('#czg-status-slot'), 'success says Apply is still needed; the status slot is there');
-    ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close', 'after create: Open the pair and Close');
+    ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close' && !$('#czg-form').contains(doc.activeElement), 'after create: Open the pair and Close; the focus is not left in the hidden form');
     prim().click();
     await settle();
     ok(!$('#czg-dialog'), 'Close closes');
