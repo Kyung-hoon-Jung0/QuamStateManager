@@ -23933,6 +23933,11 @@ def pulse_row():
     # not fetched again by the next structural refresh
     vt_ver = _pulse_vt_entry(row)[1] if vt else None
     row = dict(row)
+    if not vt:
+        # a spectator row re-rendered in place stays a member of its fold
+        from quam_state_manager.core.pulse_index import fold_spectators, spectator_marks
+        row = next((r for r in fold_spectators([row], spectator_marks(store.merged))
+                    if not r.get("fold")), row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     if row.get("is_alias"):
         row["spark_svg"] = None
@@ -25292,6 +25297,9 @@ def pulses_page():
         # RAM): the spark keys go on a copy
         page_rows = [dict(r) for r in page_rows]
         unknown_paths = _pulse_draw_sparks(store, pulse_index, page_rows)
+        # the spectator pulses of gates sit behind one fold row per channel
+        from quam_state_manager.core.pulse_index import fold_spectators, spectator_marks
+        page_rows = fold_spectators(page_rows, spectator_marks(store.merged))
 
     if unknown_paths:
         # docs/218: draw the visible lab-class rows with their own code in the

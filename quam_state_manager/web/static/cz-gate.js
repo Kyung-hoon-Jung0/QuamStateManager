@@ -42,7 +42,7 @@
         return { data: null, busy: false, phase: 'check', plan: null, planSig: null, check: null,
                  checkSig: null, stale: 0, entered: {}, raw: {}, cls: {}, timer: null, handle: null,
                  opener: null, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
-                 confirmClose: false, downOnBackdrop: false };
+                 confirmClose: false, downOnBackdrop: false, spectOn: {}, spectNote: '' };
     }
 
     /* ---- the request body ------------------------------------------------ */
@@ -67,14 +67,14 @@
             });
         } else {
             Object.keys(S.entered).forEach(function (f) {
-                if (f === '@settings') return;
+                if (f === '@settings' || isSpectField(f)) return;
                 pulses[f] = { 'class': S.cls[f] || null, fields: Object.assign({}, S.entered[f]) };
             });
         }
-        var pair = $('czg-pair').value;
         var model = !$('czg-model-field').hidden ? (S.model || '') : '';
-        return {
-            pairs: pair ? [pair].concat(extraPairs().filter(function (p) { return p !== pair; })) : [],
+        var pairs = selectedPairs();
+        var out = {
+            pairs: pairs,
             gate_name: $('czg-name').value.trim(),
             gate_class: c ? c['class'] : '',
             pulses: pulses,
@@ -82,6 +82,9 @@
             macro_fields: Object.assign({}, S.entered['@settings'] || {}),
             model_gate: model ? model.split('/') : null
         };
+        var sp = spectBody(pairs);
+        if (sp) out.spectators = sp;
+        return out;
     }
 
     /* ---- buttons and status ---------------------------------------------- */
@@ -299,6 +302,208 @@
             row.appendChild(mw);
             box.appendChild(row);
         });
+    }
+    /* ---- spectators: other qubits' flux lines that play while the gate plays.
+       The default is none; a ticked line needs its own length and level (SM
+       computes no level). The choices live per pair: S.spectOn[pair][qubit]. */
+    var SPECT_PREFIX = '@sp:';
+    var LEVEL_NEEDED = 'Type a level in V: SM computes no level for a spectator.';
+    var LENGTH_NEEDED = 'Type a length in ns.';
+    function spectField(pair, q) { return SPECT_PREFIX + pair + ':' + q; }
+    function isSpectField(f) { return String(f || '').indexOf(SPECT_PREFIX) === 0; }
+    /* What the class says about spectators; null when the data names nothing. */
+    function spectOffer() {
+        var c = klass();
+        var s = c && c.spectators;
+        return s && typeof s === 'object' ? s : null;
+    }
+    function selectedPairs() {
+        var pair = $('czg-pair') ? $('czg-pair').value : '';
+        return pair ? [pair].concat(extraPairs().filter(function (p) { return p !== pair; })) : [];
+    }
+    function candidates(pair) { return ((pairInfo(pair) || {}).spectator_candidates) || []; }
+    function ticked(pair) {
+        var on = (S.spectOn || {})[pair] || {};
+        return candidates(pair).filter(function (c) { return on[c.qubit]; });
+    }
+    /* The request's spectators field, or null when none is ticked (the body
+       then equals a request without it). */
+    function spectBody(pairs) {
+        var offer = spectOffer();
+        if (!offer || !offer.offered) return null;
+        var out = {}, any = false;
+        pairs.forEach(function (p) {
+            var list = ticked(p).map(function (c) {
+                var e = S.entered[spectField(p, c.qubit)] || {};
+                var row = { qubit: c.qubit };
+                if (e.length !== undefined) row.length = e.length;
+                if (e.level !== undefined) row.level = e.level;
+                return row;
+            });
+            if (list.length) { out[p] = list; any = true; }
+        });
+        return any ? out : null;
+    }
+    /* The gate's own length: the longest planned pulse of the first pair. */
+    function gateLength() {
+        var fp = firstPlan();
+        var best = null;
+        Object.keys((fp && fp.ok && fp.pulses) || {}).forEach(function (f) {
+            var v = (fp.pulses[f] || {}).length;
+            if (typeof v === 'number' && isFinite(v) && (best === null || v > best)) best = v;
+        });
+        if (best === null) {
+            Object.keys(S.entered || {}).forEach(function (f) {
+                var v = isSpectField(f) ? null : (S.entered[f] || {}).length;
+                if (typeof v === 'number' && (best === null || v > best)) best = v;
+            });
+        }
+        return best;
+    }
+    function dropSpect(pairOnly) {
+        [S.entered, S.raw, S.invalid, S.placed || {}].forEach(function (m) {
+            Object.keys(m).forEach(function (k) {
+                if (!isSpectField(k)) return;
+                if (!pairOnly || k.indexOf(SPECT_PREFIX + pairOnly + ':') === 0) delete m[k];
+            });
+        });
+    }
+    function anyTicked() {
+        return Object.keys(S.spectOn || {}).some(function (p) {
+            return Object.keys(S.spectOn[p] || {}).some(function (q) { return S.spectOn[p][q]; });
+        });
+    }
+    function tickSpect(pair, q, on) {
+        S.spectOn = S.spectOn || {};
+        S.spectOn[pair] = S.spectOn[pair] || {};
+        S.spectNote = '';
+        var f = spectField(pair, q);
+        delete S.entered[f];
+        delete S.raw[f];
+        delete S.invalid[fieldKey(f, 'length')];
+        delete S.invalid[fieldKey(f, 'level')];
+        if (!on) { delete S.spectOn[pair][q]; return; }
+        S.spectOn[pair][q] = true;
+        var len = gateLength();
+        S.raw[f] = { length: len === null ? '' : String(len), level: '' };
+        S.entered[f] = len === null ? {} : { length: len };
+        if (len === null) S.invalid[fieldKey(f, 'length')] = LENGTH_NEEDED;
+        S.invalid[fieldKey(f, 'level')] = LEVEL_NEEDED;
+    }
+    function planRow(pair) {
+        return ((S.plan && S.plan.pairs) || []).filter(function (p) { return p.pair === pair; })[0] || null;
+    }
+    function checkRow(pair) {
+        return ((S.check && S.check.pairs) || []).filter(function (p) { return p.pair === pair; })[0] || null;
+    }
+    /* A spectator's identity colour: its lane's after a check (the chart and
+       the table use the same), else the next line colours after the gate's. */
+    function spectLine(pair, line, k) {
+        var cr = checkRow(pair);
+        var lane = cr && cr.timeline && (cr.timeline.lanes || []).filter(function (ln) { return ln.key === line; })[0];
+        if (lane && typeof lane.color_index === 'number') return lane.color_index % 6 + 1;
+        var gate = (S.slotChannels || []).filter(function (x, i, a) { return x && a.indexOf(x) === i; }).length || 1;
+        return (gate + k) % 6 + 1;
+    }
+    function portWords(c) {
+        var port = c.port ? String(c.port).replace(/^#\/ports\/[^/]+\//, '') : null;
+        var range = typeof c.range === 'number' ? 'range ±' + fmt(c.range) + ' V' : 'range not known';
+        return (port ? 'port ' + port : 'port not known') + ', ' + range;
+    }
+    function spectRefusals(pair) {
+        var pr = planRow(pair);
+        return ((pr && !pr.ok && pr.refusals) || []).filter(function (r) { return /spectator/i.test(r); });
+    }
+    function fillSpect() {
+        var panel = $('czg-spect');
+        var host = clear($('czg-spect-body'));
+        var sum = $('czg-spect-sum');
+        if (!panel || !host) return;
+        var offer = spectOffer();
+        panel.hidden = !offer;
+        if (!offer) return;
+        if (!offer.offered) {
+            if (sum) sum.textContent = 'not offered';
+            host.appendChild(el('p', 'ui-text-quiet', offer.why || 'This gate class takes no spectators.'));
+            return;
+        }
+        var U = UIkit();
+        var pairs = selectedPairs();
+        var lines = 0, counts = [];
+        if (S.spectNote) host.appendChild(note(S.spectNote));
+        host.appendChild(el('p', 'ui-text-quiet', 'A spectator line plays a constant level while the gate plays. None plays unless you tick it.'));
+        pairs.forEach(function (pair) {
+            var grp = el('div', 'ui-field-stack');
+            grp.setAttribute('data-czg-spect-pair', pair);
+            if (pairs.length > 1) grp.appendChild(el('div', 'ui-field-label', 'Spectators of ' + pair));
+            var cands = candidates(pair);
+            if (!cands.length) grp.appendChild(el('p', 'ui-text-quiet', 'No other qubit of this chip has a pulsed flux line.'));
+            var on = (S.spectOn || {})[pair] || {};
+            var refused = spectRefusals(pair);
+            var k = 0;
+            var pr = planRow(pair);
+            cands.forEach(function (c) {
+                var f = spectField(pair, c.qubit);
+                var row = el('div', 'ui-field-stack');
+                row.setAttribute('data-czg-spect-row', c.qubit);
+                var head = el('div', 'czg-more-row');
+                var l = U.check('', !!on[c.qubit]);
+                var i = l.querySelector('input');
+                i.setAttribute('data-czg-spect-pair', pair);
+                i.setAttribute('data-czg-spect-qubit', c.qubit);
+                i.setAttribute('aria-label', 'Play a spectator pulse on ' + c.line);
+                l.appendChild(el('span', on[c.qubit] ? 'ui-slot-chip ui-line-' + spectLine(pair, c.line, k) : 'ui-chip', c.line));
+                head.appendChild(l);
+                head.appendChild(el('span', 'ui-text-quiet', portWords(c)));
+                row.appendChild(head);
+                if (on[c.qubit]) {
+                    k++;
+                    lines++;
+                    var grid = el('div', 'ui-grid2');
+                    var raw = S.raw[f] || {};
+                    grid.appendChild(fieldInput(f, 'length', 'Length', 'ns', 'int', raw.length, null));
+                    grid.appendChild(fieldInput(f, 'level', 'Level', 'V', 'float', raw.level, null));
+                    row.appendChild(grid);
+                    var n = pr && pr.spectator_ops ? pr.spectator_ops[c.qubit] : undefined;
+                    if (typeof n === 'number') counts.push(c.line + ' ' + n);
+                    var mine = refused.filter(function (r) { return r.indexOf('For the spectator ' + c.qubit + ':') === 0; });
+                    var own = S.invalid[fieldKey(f, 'length')] || S.invalid[fieldKey(f, 'level')];
+                    if (mine.length && !own) {
+                        var w = el('p', 'ui-field-error', mine.join(' '));
+                        w.setAttribute('role', 'alert');
+                        row.appendChild(w);
+                    }
+                    refused = refused.filter(function (r) { return mine.indexOf(r) < 0; });
+                }
+                grp.appendChild(row);
+            });
+            var ops = ticked(pair).map(function (c) {
+                var m = pr && pr.spectator_ops ? pr.spectator_ops[c.qubit] : undefined;
+                return typeof m === 'number' ? c.line + ' will hold ' + m + (m === 1 ? ' spectator operation' : ' spectator operations') : null;
+            }).filter(Boolean);
+            if (ops.length) {
+                var q = el('p', 'ui-text-quiet', 'After this create: ' + ops.join(', ') + '.');
+                q.setAttribute('data-czg-spect-ops', pair);
+                grp.appendChild(q);
+            }
+            refused.forEach(function (r) {
+                var w = el('p', 'ui-field-error', r);
+                w.setAttribute('role', 'alert');
+                grp.appendChild(w);
+            });
+            host.appendChild(grp);
+        });
+        // after a check: the phase shift is not calibrated, said once, quietly
+        if (S.check && lines) {
+            var said = '';
+            pairs.forEach(function (pair) {
+                var pr2 = planRow(pair);
+                ((pr2 && pr2.spectators) || []).forEach(function (x) { if (!said && x.not_calibrated) said = x.not_calibrated; });
+            });
+            if (said) { var nc = el('p', 'ui-text-quiet', said); nc.setAttribute('data-czg-spect-uncal', ''); host.appendChild(nc); }
+        }
+        if (sum) sum.textContent = !lines ? 'none' : lines + (lines === 1 ? ' line' : ' lines')
+            + (counts.length ? ', ops after create: ' + counts.join(', ') : '');
     }
     var SOURCE_WORDS = { given: 'entered', copied: 'copied', 'default': 'default',
                          'copied from the model gate': 'copied', 'copied from the model gate, renamed': 'copied',
@@ -601,7 +806,8 @@
         if (S.alertKind === 'plan-error') alertBox(null);
         var why = clear($('czg-name-why'));
         var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
-        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0; }) : []);
+        var aboutSpect = fp ? spectRefusals(fp.pair) : [];
+        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0 && aboutSpect.indexOf(r) < 0; }) : []);
         var bad = split.rest;
         renderClassWhy(S.noClass ? [] : aboutClass);
         bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
@@ -615,6 +821,7 @@
         fillSlots();
         fillSettings();
         fillModelFacts();
+        fillSpect();
         S.focusKey = null;
         if (keep && keep[0]) restoreFocus(keep, caret);
         split.fields.forEach(function (x) {
@@ -726,7 +933,13 @@
             return;
         }
         clear($('czg-chart-tools'));
-        try { S.handle = window.GateTimeline.render(host, tl, { toolbarHost: $('czg-chart-tools') }); }
+        // a spectator lane carries only color_index: it takes that colour (the one its
+        // form chip and table dot wear), and the ticked spectators are shown unfolded
+        var data = Object.assign({}, tl, { lanes: (tl.lanes || []).map(function (ln) {
+            return ln && ln.group === 'spectator' && typeof ln.color !== 'number' && typeof ln.color_index === 'number'
+                ? Object.assign({}, ln, { color: ln.color_index }) : ln;
+        }) });
+        try { S.handle = window.GateTimeline.render(host, data, { toolbarHost: $('czg-chart-tools'), foldSpectators: false }); }
         catch (e) { clear(host).appendChild(note('Chart not loaded: ' + e)); }
     }
     function lineOfChannel(tl) {
@@ -735,6 +948,8 @@
         return m;
     }
     var CELL_TONE = { warn: 'ui-cell--warn', danger: 'ui-cell--danger' };
+    /* A spectator row is named by its line: every spectator of a gate shares one operation name. */
+    function rowName(r) { return r.group === 'spectator' ? 'spectator on ' + (r.lane_key || '?') : r.operation; }
     /* The lane key of an intent row comes from the server (row.lane_key). */
     function laneKeyOf(r) { return r.lane_key || ''; }
     function renderIntent(rows, tl, pair) {
@@ -753,7 +968,7 @@
             var a = r.actual || {};
             var i = r.intended || {};
             var levels = oneLevel ? [num(a.max_v, 'V')] : [num(a.max_v, 'V'), num(a.min_v, 'V')];
-            return [{ chip: r.operation },
+            return [{ chip: rowName(r) },
                     i.length !== null ? num(i.length, 'ns') : i.length_source,
                     num(a.length_ns, 'ns'),
                     i.amplitude !== null ? num(i.amplitude, 'V') : i.amplitude_source]
@@ -787,7 +1002,7 @@
         host.appendChild(t);
         var over = rows.filter(function (r) { var t = r.tones || {}; return t.max === 'danger' || t.min === 'danger'; }).length;
         if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
-        rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', r.operation + ': ' + w)); }); });
+        rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', rowName(r) + ': ' + w)); }); });
     }
     var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'The gate runs with the lab\'s code',
                         length: 'Pulse lengths', preview: 'Preview equals the config', timeline: 'Timeline',
@@ -959,6 +1174,7 @@
         S.pairIdx = firstBad >= 0 ? firstBad : 0;
         renderPair();
         recolourSlots();
+        fillSpect();
         var ok = allowedPairs();
         var no = pairs.filter(function (x) { return !(x.verdict && x.verdict.allowed); });
         var reason = function (x) { var v = x.verdict || {}; return sentence(v.headline || v.reason || 'no verdict from the server'); };
@@ -1255,6 +1471,7 @@
         fillFrom();
         fillMore();
         fillSlots();
+        fillSpect();
         renderWrites();
         refresh();
         layoutStack();
@@ -1355,9 +1572,20 @@
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
         if (t.id === 'czg-pair-shown') { S.pairIdx = +t.value; renderPair(); return; }
+        if (t.hasAttribute('data-czg-spect-qubit')) {
+            tickSpect(t.getAttribute('data-czg-spect-pair'), t.getAttribute('data-czg-spect-qubit'), t.checked);
+            fillSpect();
+            applyBusyLook();
+            inputsChanged();
+            return;
+        }
         if (t.id === 'czg-pair') {
+            var had = anyTicked();
+            S.spectOn = {};
+            dropSpect(null);
+            S.spectNote = had ? 'The spectator choices were cleared: ' + (t.value || 'the new pair') + ' has other neighbouring lines. Tick them again.' : '';
             if (fillClasses()) { S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; fillSlots(); }
-            fillPairLine(); fillFrom(); fillModel(); fillMore();
+            fillPairLine(); fillFrom(); fillModel(); fillMore(); fillSpect();
         }
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');
@@ -1367,7 +1595,10 @@
             [S.invalid, S.placed || {}].forEach(function (m) {
                 Object.keys(m).forEach(function (k) { if (k.indexOf(f + '\u0000') === 0) delete m[k]; });
             });
-        } else if (!t.hasAttribute('data-czg-more') && t.id !== 'czg-from') { return; }
+        } else if (t.hasAttribute('data-czg-more')) {
+            if (!t.checked && S.spectOn) { delete S.spectOn[t.value]; dropSpect(t.value); }
+            fillSpect();
+        } else if (t.id !== 'czg-from') { return; }
         if (t.hasAttribute('data-czg-slot')) fillSlots();
         inputsChanged();
     });
@@ -1378,7 +1609,7 @@
         if (t.querySelector('#czg-class')) {
             if (v === S.klass) return;
             S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]);
-            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {};
+            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {}; S.spectNote = '';
             fillModel();
             fillFrom();
         } else if (t.querySelector('#czg-model')) {
@@ -1386,6 +1617,7 @@
             S.model = v; S.entered = {}; S.raw = {}; S.placed = {}; S.invalid = {};
         } else { return; }
         fillSlots();
+        fillSpect();
         inputsChanged();
     });
     document.addEventListener('input', function (ev) {
@@ -1395,7 +1627,7 @@
         if (!t.hasAttribute('data-czg-field')) return;
         var f = t.getAttribute('data-czg-field');
         var n = t.getAttribute('data-czg-name');
-        var r = parse(t);
+        var r = isSpectField(f) && !t.value.trim() ? { ok: false, why: n === 'level' ? LEVEL_NEEDED : LENGTH_NEEDED } : parse(t);
         S.entered[f] = S.entered[f] || {};
         S.raw[f] = S.raw[f] || {};
         S.raw[f][n] = t.value;

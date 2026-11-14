@@ -190,9 +190,11 @@ def tiles(data: dict) -> list[dict]:
     "label", "value", "unit", "note", "tone"}``: a number, its unit and one
     short quiet line; tone ``neutral`` | ``note`` | ``warn`` | ``danger``:
 
-    - ``lines``: the number of gate lines that play (note: their names);
+    - ``lines``: the number of lines that play, gate lines and spectators
+      (note: their names, the spectators named as such);
     - ``length``: latest end minus earliest start over the gate's lines, ns;
-    - ``peak`` ("Largest level"): the largest magnitude with its sign, to 4
+    - ``peak`` ("Largest level", over the gate lines and the spectators):
+      the largest magnitude with its sign, to 4
       significant places, V (note: the line, "over the port's range" with the
       offset when one is in play, "from the samples received" when samples
       were cut), ``danger`` when a segment is over its range;
@@ -208,15 +210,20 @@ def tiles(data: dict) -> list[dict]:
              if ln.get("group") == "gate" and ln.get("segments")]
     if not lanes:
         return []
+    spect = [ln for ln in (data or {}).get("lanes") or []
+             if ln.get("group") == "spectator" and ln.get("segments")]
     spans = [(ln["key"], min(s["start_ns"] for s in ln["segments"]),
               max(s["end_ns"] for s in ln["segments"])) for ln in lanes]
-    out = [{"key": "lines", "label": "Lines", "value": str(len(lanes)), "unit": "",
-            "note": ", ".join(k for k, _a, _b in spans), "tone": "neutral"}]
+    names = ", ".join(k for k, _a, _b in spans)
+    if spect:
+        names += "; spectator" + ("s " if len(spect) > 1 else " ") + ", ".join(ln["key"] for ln in spect)
+    out = [{"key": "lines", "label": "Lines", "value": str(len(lanes) + len(spect)), "unit": "",
+            "note": names, "tone": "neutral"}]
     t0, t1 = min(a for _k, a, _b in spans), max(b for _k, _a, b in spans)
     out.append({"key": "length", "label": "Gate length", "value": fmt_num(t1 - t0), "unit": "ns",
                 "note": f"{fmt_num(t0)} to {fmt_num(t1)} ns", "tone": "neutral"})
     best, where, over, over_off, cut = None, None, False, 0.0, False
-    for ln in lanes:
+    for ln in lanes + spect:
         for s in ln["segments"]:
             for v in (s.get("peak_v"), s.get("min_v")):
                 if v is not None and (best is None or abs(v) > abs(best)):

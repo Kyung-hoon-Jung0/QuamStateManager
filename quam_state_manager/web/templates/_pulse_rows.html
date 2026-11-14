@@ -31,7 +31,17 @@
     <tbody{% if vt_json %} data-pulses-virtual="1"{% endif %}>
     {% if vt_json %}{% elif rows %}
     {% for r in rows %}
+        {%- if r.fold %}
+        {#- the spectator pulses of gates on one channel: one folded row that opens to them -#}
+        <tr data-pulse-fold="{{ r.fold_key }}">
+            <td class="pulse-sel-col"></td>
+            <td><strong>{{ r.owner }}</strong></td>
+            <td><span class="pulse-chan-chip pulse-chan-{{ r.channel }}">{{ r.channel }}</span></td>
+            <td colspan="6"><button type="button" class="btn-sm outline" data-pulse-fold-toggle="{{ r.fold_key }}" aria-expanded="false">{{ r.fold_n }} spectator pulse{{ '' if r.fold_n == 1 else 's' }} of CZ gates</button></td>
+        </tr>
+        {%- else %}
         {% include '_pulse_row.html' %}
+        {%- endif %}
     {% endfor %}
     {% else %}
         <tr><td colspan="9" class="ui-state ui-state--empty">
