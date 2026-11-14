@@ -121,6 +121,7 @@ class TestCheckFitRoute:
         _write_run(data, 3, "04_power_rabi", {"qubits": ["q1", "q2"]},
                    {"q1": "successful", "q2": "failed"},
                    {"q1": {"opt_amp": 0.3, "success": True}, "q2": {"success": False}})
+        _write_run(data, 4, "04_power_rabi", {}, {}, {})
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
         c = app.test_client()
         assert c.post("/load", data={"folder": str(_chip(tmp_path / "loaded"))}).status_code in (200, 302)
@@ -143,6 +144,28 @@ class TestCheckFitRoute:
         assert r["family"] == "power_rabi"
         assert set(r["verdicts"]) == {"q1", "q2"}
         assert r["verdicts"]["q2"]["verdict"] == "fail"
+
+    def test_a_run_with_nothing_judged_is_not_all_pass(self, client):
+        r = client.get("/api/agent/check-fit/4").get_json()
+        assert r["ok"] and r["family"] == "power_rabi"
+        assert r["verdicts"] == {}
+        assert r["all_pass"] is False
+        assert "nothing is cleared for writing" in r["note"]
+
+    def test_passing_targets_alone_are_all_pass(self, client):
+        r = client.get("/api/agent/check-fit/1").get_json()
+        if all(v["verdict"] == "pass" for v in r["verdicts"].values()):
+            assert r["all_pass"] is True and "note" not in r
+        else:
+            assert r["all_pass"] is False
+
+    def test_a_target_that_did_not_pass_is_named_not_to_write(self, client):
+        r = client.get("/api/agent/check-fit/3").get_json()
+        assert r["all_pass"] is False
+        assert "q2" in r["do_not_write"] and r["do_not_write"]["q2"]
+        assert all(r["verdicts"][t]["verdict"] != "pass" for t in r["do_not_write"])
+        assert all(r["verdicts"][t]["verdict"] == "pass"
+                   for t in set(r["verdicts"]) - set(r["do_not_write"]))
 
 
 # -- B: the operational gate ---------------------------------------------------
