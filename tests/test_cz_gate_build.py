@@ -17,6 +17,43 @@ LAB_GATE = "lab_pkg.TwoFluxGate"
 LAB_PULSE = "lab_pkg.StepPulse"
 
 
+@pytest.fixture(autouse=True)
+def _plan_never_changes_merged(monkeypatch):
+    """Every plan call in this module leaves its input deep-equal, and its
+    creates share no object with the input."""
+    real = cgb.plan
+
+    def checked(merged, *a, **kw):
+        before = copy.deepcopy(merged)
+        res = real(merged, *a, **kw)
+        assert merged == before
+        ids = set()
+
+        def walk(v):
+            if isinstance(v, (dict, list)):
+                ids.add(id(v))
+                for x in (v.values() if isinstance(v, dict) else v):
+                    walk(x)
+        walk(merged)
+        for _, value in res.get("creates", []):
+            stack = [value]
+            while stack:
+                v = stack.pop()
+                if isinstance(v, (dict, list)):
+                    assert id(v) not in ids
+                    stack.extend(v.values() if isinstance(v, dict) else v)
+        # mutating the creates must not reach the input
+        for _, value in res.get("creates", []):
+            if isinstance(value, dict):
+                value["__probe__"] = 1
+        assert merged == before
+        for _, value in res.get("creates", []):
+            if isinstance(value, dict):
+                value.pop("__probe__", None)
+        return res
+    monkeypatch.setattr(cgb, "plan", checked)
+
+
 def _qubit(name):
     return {"id": name, "z": {"operations": {"const": {"amplitude": 0.1}}}}
 
@@ -259,7 +296,6 @@ def test_explicit_length_multiple_of_four_and_at_least_sixteen(length, ok):
 def test_copy_takes_only_same_name_same_type_fields():
     s = _chip()
     _macro_owned(s, "q1-2", "cz_src", length=64, amp=0.25)
-    s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]["flux_pulse_qubit"]["axis_angle"] = "wide"
     res = _plan(s, copy_from="cz_src",
                 pulses={"flux_pulse_qubit": {"class": SQUARE, "fields": {}}})
     pulse = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]["flux_pulse_qubit"]
@@ -267,6 +303,20 @@ def test_copy_takes_only_same_name_same_type_fields():
     prov = res["fields"]["flux_pulse_qubit"]
     assert prov["length"] == cgb.COPIED and prov["amplitude"] == cgb.COPIED
     assert prov["axis_angle"] == cgb.DEFAULT and pulse["axis_angle"] is None
+
+
+def test_copy_never_takes_a_reference_and_fills_an_empty_default():
+    s = _chip()
+    _macro_owned(s, "q1-2", "cz_src", length=64)
+    src = s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]["flux_pulse_qubit"]
+    src["axis_angle"] = 0.5
+    src["amplitude"] = "#/qubits/q1/z/operations/const/amplitude"
+    res = _plan(s, copy_from="cz_src",
+                pulses={"flux_pulse_qubit": {"class": SQUARE, "fields": {}}})
+    pulse = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]["flux_pulse_qubit"]
+    prov = res["fields"]["flux_pulse_qubit"]
+    assert pulse["axis_angle"] == 0.5 and prov["axis_angle"] == cgb.COPIED
+    assert not str(pulse["amplitude"]).startswith("#") and prov["amplitude"] == cgb.DEFAULT
 
 
 def test_copy_marks_given_values_and_skips_a_type_mismatch():
@@ -329,7 +379,7 @@ def test_golden_square_gate_matches_an_existing_gate_with_names_changed():
 def _lab_macro_owned(s, pid, name):
     p = s["qubit_pairs"][pid]
     c, t = p["qubit_control"].split("/")[-1], p["qubit_target"].split("/")[-1]
-    m = {"__class__": LAB_GATE, "phase_shift_control": 0.1}
+    m = {"__class__": LAB_GATE, "phase_shift_control": 0.0, "mode": "fast"}
     for side, q in (("control", c), ("target", t)):
         key = f"{name}_{side}_pulse_{c}_{t}"
         m[f"flux_pulse_{side}"] = {"id": key, "length": 40, "amplitude": 0.2,
@@ -369,7 +419,8 @@ def test_copied_layout_keeps_the_model_direction_and_renames():
     by = dict(res["creates"])
     macro = by["qubit_pairs.q2-3.macros.cz_new"]
     assert macro["flux_pulse_control"]["id"] == "cz_new_control_pulse_q2_q3"
-    assert macro["phase_shift_control"] == 0.1
+    assert macro["mode"] == "fast"
+    assert res["fields"]["macro"] == {"mode": cgb.FROM_MODEL}
     op = by["qubits.q3.z.operations.cz_new_target_pulse_q2_q3"]
     assert op["length"] == "#/qubit_pairs/q2-3/macros/cz_new/flux_pulse_target/length"
     assert "qubits.q2.z.operations.cz_new_control_pulse_q2_q3" in by
@@ -526,3 +577,202 @@ def test_names_that_collide_after_renaming_are_refused():
     s["qubit_pairs"]["q3-q3"] = _pair("q3", "q3")
     res = cgb.plan(s, "q3-q3", gate_name="cz_b", gate_class=LAB_GATE)
     assert "same name" in res["error"]
+
+
+# --- copies carry structure, not results ---------------------------------
+
+def test_copy_resets_results_and_lists_kept_macro_keys():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    m.update({"fidelity": {"rb": 0.9917}, "phase_shift_target": 0.3141,
+              "extras": {"note": 7.77}, "spectator_qubits": {"q3": "#/qubits/q3"},
+              "spectator_qubits_control": [1], "duration": 124, "label": "fast"})
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    assert macro["fidelity"] == {} and macro["extras"] == {}
+    assert macro["phase_shift_target"] == 0.0
+    assert macro["spectator_qubits"] == {} and macro["spectator_qubits_control"] == []
+    assert macro["duration"] == "#./inferred_duration"
+    assert res["fields"]["macro"] == {"label": cgb.FROM_MODEL}
+    text = json.dumps(res["creates"])
+    for n in ("0.9917", "0.3141", "7.77", "124"):
+        assert n not in text
+
+
+def test_cross_pair_copy_refuses_a_different_moving_qubit():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "target"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "same moving qubit" in res["error"]
+    s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "control"
+    assert "creates" in cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+
+
+def test_leftover_references_into_the_model_pair_are_refused():
+    s = _two_pulse_chip()
+    op = s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+    op["digital_marker"] = "#/qubit_pairs/q1-q2/coupler/marker"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "#/qubit_pairs/q1-q2/coupler/marker" in res["error"]
+    s = _two_pulse_chip()
+    s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]["extra"] = \
+        "#/qubits/q1/z/operations/missing_op"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "missing_op" in res["error"]
+
+
+@pytest.mark.parametrize("bad", ["cz_x/y", "cz_a.b", "cz_" + "x" * 70])
+def test_invalid_gate_names_are_refused_in_both_paths(bad):
+    assert "not a valid name" in _plan(_chip(), name=bad)["error"]
+    res = cgb.plan(_two_pulse_chip(), "q1-q2", gate_name=bad, gate_class=LAB_GATE)
+    assert "not a valid name" in res["error"]
+
+
+def test_a_model_with_no_pulse_field_is_refused():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"] = {"__class__": LAB_GATE,
+                                                   "pulse_shape": "gaussian"}
+    assert "no pulse SM can copy" in cgb.plan(
+        s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+
+
+def test_copied_name_needs_the_gate_name_then_an_underscore():
+    assert cgb.copied_name("cz_ab_pulse_q1_q2", "cz_a", ("q1", "q2"), "cz_n", ("q1", "q2")) is None
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    m["flux_pulse_qubit"]["id"] = "cz_ab_pulse_q1_q2"
+    ops = s["qubits"]["q1"]["z"]["operations"]
+    ops["cz_ab_pulse_q1_q2"] = ops.pop("cz_a_flux_pulse_q1_q2")
+    res = cgb.plan(s, "q1-q2", gate_name="cz_n", gate_class=LAB_GATE)
+    assert "does not start with cz_a" in res["error"]
+
+
+def test_copied_name_matches_whole_ids_longest_first():
+    assert cgb.copied_name("cz_a_pulse_qA_1_qA_10", "cz_a", ("qA_1", "qA_10"),
+                           "cz_b", ("qB_2", "qB_20")) == "cz_b_pulse_qB_2_qB_20"
+    assert cgb.copied_name("cz_a_pulse_q10_q1", "cz_a", ("q1", "q10"),
+                           "cz_b", ("q2", "q3")) == "cz_b_pulse_q3_q2"
+    assert cgb.copied_name("cz_a_pulse_q1x", "cz_a", ("q1", "q2"),
+                           "cz_b", ("q3", "q4")) == "cz_b_pulse_q1x"
+
+
+@pytest.mark.parametrize("length,ok,written", [
+    (16, True, 16), (20, True, 20), (52.0, True, 52), (12, False, None),
+    (18, False, None), (52.5, False, None), ("52", False, None)])
+def test_length_must_be_a_whole_number_of_ns(length, ok, written):
+    res = _plan(_chip(), pulses=_square(length=length))
+    assert ("creates" in res) is ok, res.get("error")
+    if ok:
+        pulse = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]["flux_pulse_qubit"]
+        assert pulse["length"] == written and type(pulse["length"]) is int
+
+
+def test_a_plain_string_with_pulse_in_its_key_is_not_a_pulse_field():
+    m = {"__class__": cgb.CZ_GATE, "pulse_shape": "gaussian",
+         "flux_pulse_qubit": "cz_a_pulse_q1_q2"}
+    assert cgb.pulse_fields(m, {"cz_a_pulse_q1_q2"}) == ["flux_pulse_qubit"]
+    assert cgb.gate_direction({"pulse_shape": "gaussian"}) is None
+    assert cgb.gate_direction({"pulse_shape": "gaussian",
+                               "flux_pulse_qubit": {"amplitude": 1}}) == cgb.MACRO_OWNS
+
+
+def test_operation_reference_is_built_from_segments():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    for field, q, key in (("flux_pulse_qubit", "q1", "cz_a_flux_pulse_q1_q2"),
+                          ("flux_pulse_target", "q2", "cz_a_flux_pulse_q2_q1")):
+        s["qubits"][q]["z"]["operations"][key] = dict(m[field])
+        m[field] = f"#/qubits/{q}/z/operations/{key}"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q3-q4.macros.cz_b"]
+    assert macro["flux_pulse_qubit"] == "#/qubits/q3/z/operations/cz_b_flux_pulse_q3_q4"
+    assert res["direction"] == cgb.OPERATION_OWNS
+
+
+def test_coupler_reference_is_followed_one_hop():
+    s = _chip()
+    s["couplers"] = {"c1": {"operations": {}}}
+    s["qubit_pairs"]["q1-2"]["coupler"] = "#/couplers/c1"
+    res = _plan(s, gate_class=cgb.COUPLER_CZ_GATE,
+                pulses={"coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}})
+    assert "couplers.c1.operations.cz_new_coupler_pulse_q1_q2" in dict(res["creates"])
+    for ref in ("#/couplers/none", "#./c1"):
+        s["qubit_pairs"]["q1-2"]["coupler"] = ref
+        res = _plan(s, gate_class=cgb.COUPLER_CZ_GATE,
+                    pulses={"coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}})
+        assert "could not be followed" in res["error"]
+
+
+def test_mixed_model_reports_direction_per_pulse():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    key = "cz_a_flux_pulse_q2_q1"
+    s["qubits"]["q2"]["z"]["operations"][key] = dict(m["flux_pulse_target"])
+    m["flux_pulse_target"] = key
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert res["direction"] == cgb.MIXED
+    assert res["pulse_directions"] == {"flux_pulse_qubit": cgb.MACRO_OWNS,
+                                       "flux_pulse_target": cgb.OPERATION_OWNS}
+
+
+# --- Gaussian golden from the original builder ---------------------------
+
+def _gauss_pulse(cls, pid, amp, fmhz):
+    return {"length": "#./inferred_length", "id": pid, "digital_marker": None,
+            "pulse_length": 60, "padding_length": 20, "amplitude": amp,
+            "gaussian_filter_frequency_mhz": fmhz, "sample_rate": 1000000000.0,
+            "axis_angle": None, "__class__": cls}
+
+
+def _gauss_op(cls, ref):
+    return {"length": "#./inferred_length", "id": None, "digital_marker": None,
+            "pulse_length": ref + "/pulse_length", "padding_length": ref + "/padding_length",
+            "amplitude": ref + "/amplitude",
+            "gaussian_filter_frequency_mhz": ref + "/gaussian_filter_frequency_mhz",
+            "sample_rate": 1000000000.0, "axis_angle": None, "__class__": cls}
+
+
+def _gauss_golden(gname, cls):
+    """Transcribed from the original builder's output on _gauss_golden_chip."""
+    ref = f"#/qubit_pairs/q1-q2/macros/{gname}"
+    macro = {"id": "#./inferred_id", "fidelity": {}, "duration": "#./inferred_duration",
+             "flux_pulse_qubit": _gauss_pulse(cls, f"{gname}_pulse_q1_q2", 0.31, 20),
+             "coupler_flux_pulse": _gauss_pulse(cls, f"{gname}_coupler_pulse_q1_q2", 0.12, 50),
+             "phase_shift_control": 0.0, "phase_shift_target": 0.0,
+             "spectator_qubits": {}, "spectator_qubits_control": {},
+             "spectator_qubits_phase_shift": {}, "extras": {}, "duration_qubit": None,
+             "__class__": cgb.CZ_GATE}
+    return [
+        (f"qubit_pairs.q1-q2.macros.{gname}", macro),
+        (f"qubits.q1.z.operations.{gname}_pulse_q1_q2",
+         _gauss_op(cls, ref + "/flux_pulse_qubit")),
+        (f"qubit_pairs.q1-q2.coupler.operations.{gname}_coupler_pulse_q1_q2",
+         _gauss_op(cls, ref + "/coupler_flux_pulse")),
+    ]
+
+
+def _gauss_golden_chip():
+    s = {"qubits": {"q1": _qubit("q1"), "q2": _qubit("q2")},
+         "qubit_pairs": {"q1-q2": _pair("q1", "q2")}}
+    s["qubit_pairs"]["q1-q2"]["coupler"] = {"id": "c12", "operations": {"const": {"amplitude": 0.2}}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_flattop"] = {
+        "flux_pulse_qubit": {"amplitude": 0.31, "flat_length": 60},
+        "coupler_flux_pulse": {"amplitude": 0.12}}
+    return s
+
+
+@pytest.mark.parametrize("gname,cls", gaussian_cz.VARIANTS)
+def test_gaussian_matches_the_original_builder_literal(gname, cls):
+    s = _gauss_golden_chip()
+    want = _gauss_golden(gname, cls)
+    old = gaussian_cz.plan(s, "q1-q2", padding_length=20, qubit_filter_mhz=20,
+                           coupler_filter_mhz=50, suffix_ids=("q1", "q2"))
+    assert [c for c in old["creates"] if gname in c[0]] == want
+    new = cgb.plan(s, "q1-q2", gate_name=gname, gate_class=cgb.CZ_GATE, pulses={
+        "flux_pulse_qubit": {"class": cls, "fields": {
+            "pulse_length": 60, "padding_length": 20, "amplitude": 0.31,
+            "gaussian_filter_frequency_mhz": 20}},
+        "coupler_flux_pulse": {"class": cls, "fields": {
+            "pulse_length": 60, "padding_length": 20, "amplitude": 0.12,
+            "gaussian_filter_frequency_mhz": 50}}})
+    assert new["creates"] == want
