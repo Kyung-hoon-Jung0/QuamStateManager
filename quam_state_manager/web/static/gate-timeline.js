@@ -43,7 +43,44 @@
         over_range: "over the port range",
         bad_length: "length is not a multiple of 4 ns"
     };
+    /* Data contract, flag severity: a flag in REFUSING_FLAGS refuses the gate
+       and draws in the kit danger tone; every other flag (unknown ones too) and a
+       truncated segment only inform and draw in the warn tone. State never takes
+       a palette colour; the lane chip keeps its identity colour. */
+    var REFUSING_FLAGS = ["over_range", "bad_length"];
     var TRUNCATED_TEXT = "only part of this waveform was received";
+
+    function severity(s) {
+        var fl = s.flags || [];
+        if (fl.some(function (f) { return REFUSING_FLAGS.indexOf(f) >= 0; })) return "danger";
+        if (fl.length || s.truncated) return "warn";
+        return null;
+    }
+
+    /* A kit colour token resolved by the browser (tokens may be var() or
+       color-mix() expressions Plotly cannot parse); "" when not defined. */
+    function kitColor(name) {
+        if (!cssVar(name)) return "";
+        try {
+            var probe = document.createElement("span");
+            probe.style.setProperty("color", "var(" + name + ")");
+            (document.body || document.documentElement).appendChild(probe);
+            var col = getComputedStyle(probe).color;
+            probe.remove();
+            return (col && col.indexOf("var(") < 0) ? col : cssVar(name);
+        } catch (e) { return cssVar(name); }
+    }
+    /* The state tones: danger (refuses) and warn (informs), line and fill. */
+    function stateTones() {
+        var pt = window.PlotTheme || {};
+        var pal = (pt.palette && pt.palette()) || [];
+        var dLine = kitColor("--ui-danger-text") || (pt.lossColor && pt.lossColor()) || pal[6] || "";
+        var wLine = kitColor("--ui-warn-text") || pal[4] || dLine;
+        return {
+            danger: { line: dLine, fill: kitColor("--ui-danger-bg") || faint(dLine) },
+            warn: { line: wLine, fill: kitColor("--ui-warn-bg") || faint(wLine) }
+        };
+    }
 
     function cssVar(name) {
         try {
@@ -62,7 +99,8 @@
             flag: (pt.lossColor && pt.lossColor()) || pal[2] || text,
             text: text,
             grid: grid,
-            muted: cssVar("--pico-muted-color") || text
+            muted: cssVar("--pico-muted-color") || text,
+            tones: stateTones()
         };
     }
 
@@ -86,13 +124,27 @@
 
     function isIndex(x) { return typeof x === "number" && isFinite(x) && Math.floor(x) === x && x >= 0; }
 
-    /* The identity colour for an index: the house palette, modulo its length. */
-    function laneColor(index) {
+    /* Identity colours: the kit's line colours --ui-line-1..6; without them the
+       plot palette in the order 1, 4, 6, 3, 5, 2 (blue, magenta, teal first, the
+       status-like hues last). Index modulo the list length. */
+    var PALETTE_ORDER = [0, 3, 5, 2, 4, 1];
+    function identityColors() {
+        var out = [];
+        for (var n = 1; n <= 6; n++) {
+            var c = kitColor("--ui-line-" + n);
+            if (c) out.push(c);
+        }
+        if (out.length) return out;
         var pt = window.PlotTheme || {};
         var pal = (pt.palette && pt.palette()) || [];
-        if (!pal.length) return theme().text;
+        PALETTE_ORDER.forEach(function (k) { if (pal[k]) out.push(pal[k]); });
+        return out;
+    }
+    function laneColor(index) {
+        var list = identityColors();
+        if (!list.length) return theme().text;
         var i = isIndex(index) ? index : 0;
-        return pal[i % pal.length];
+        return list[i % list.length];
     }
     /* Spectator lanes are context, not the subject: one quiet colour for all. */
     function quietColor() {
@@ -196,7 +248,8 @@
             showSim: opts.showSim !== false,
             view: opts.view === "overlay" ? "overlay" : "lanes",
             height: "real",
-            hidden: {}
+            hidden: {},
+            highlight: null
         };
         var lanes = (data.lanes || []).slice();
         var gate = lanes.filter(function (l) { return l.group !== "spectator"; });
@@ -314,6 +367,32 @@
         var plot = el("div");
         plot.setAttribute("data-gate-timeline-plot", "");
         root.appendChild(plot);
+
+        /* With three or more brackets the pairs are listed here, one row per pair in
+           time order; hovering or focusing a row highlights its bracket and guides. */
+        var pairList = el("div");
+        pairList.setAttribute("data-gate-timeline-pairs", "");
+        root.appendChild(pairList);
+        function buildPairList(pairs) {
+            pairList.textContent = "";
+            if (!pairs || pairs.length < 3) return;
+            pairs.forEach(function (p, k) {
+                var row = el("div", "ui-actions ui-actions--start");
+                row.setAttribute("data-pair", String(k));
+                row.setAttribute("tabindex", "0");
+                row.appendChild(el("code", "ui-chip", nameOf(p.a)));
+                row.appendChild(el("span", "ui-note", "to"));
+                row.appendChild(el("code", "ui-chip", nameOf(p.b)));
+                var what = p.kind === "gap" ? "gap " + fmt(p.ns) + " ns" : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet";
+                row.appendChild(el("span", "ui-badge ui-badge--" + (p.kind === "gap" ? "warn" : "neutral"), what));
+                row.appendChild(el("span", "ui-note", fmt(p.from_ns) + " to " + fmt(p.to_ns) + " ns"));
+                function lit() { if (state.highlight !== k) { state.highlight = k; draw(); } }
+                function unlit() { if (state.highlight === k) { state.highlight = null; draw(); } }
+                on(row, "mouseenter", lit); on(row, "focus", lit);
+                on(row, "mouseleave", unlit); on(row, "blur", unlit);
+                pairList.appendChild(row);
+            });
+        }
 
         var notesBox = el("div");
         notesInto(notesBox);
@@ -502,17 +581,19 @@
                         if (!num(lim) || lim < range[0] || lim > range[1]) return;
                         shapes.push({ type: "line", name: "limit", xref: "paper", x0: 0, x1: 1, yref: ax, y0: lim, y1: lim,
                                       line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.7, layer: "below" });
+                        if (exceeds(lane, lim)) fixed.push(limitLabel(lane, lim, ax, c));
                     });
                 }
                 plan[i].segs.forEach(function (s) {
-                    var flagged = (s.flags || []).length > 0;
-                    var col = flagged ? c.flag : idCol;   // state beats identity
+                    var sev = severity(s), flagged = !!sev;
+                    var col = sev ? c.tones[sev].line : idCol;   // state beats identity
+                    var fillCol = sev ? c.tones[sev].fill : faint(idCol);
                     // the pulse body: filled to 0 V at low opacity, the line on top
                     traces.push({
                         x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
                         xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
-                        line: { color: col, width: 0, shape: "hv" }, fill: "tozeroy", fillcolor: faint(col),
-                        meta: { role: "fill", lane: lane.key, operation: s.operation, flagged: flagged },
+                        line: { color: col, width: 0, shape: "hv" }, fill: "tozeroy", fillcolor: fillCol,
+                        meta: { role: "fill", lane: lane.key, operation: s.operation, flagged: flagged, severity: sev },
                         hoverinfo: "skip"
                     });
                     traces.push({
@@ -520,7 +601,7 @@
                         xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
                         line: { color: col, width: 2, shape: "hv" },
                         name: lane.key + " " + (s.operation || ""),
-                        meta: { role: "segment", lane: lane.key, operation: s.operation, flagged: flagged },
+                        meta: { role: "segment", lane: lane.key, operation: s.operation, flagged: flagged, severity: sev },
                         hoverinfo: "skip"
                     });
                     // truncated: a faint band over the part that was not received, no line
@@ -568,7 +649,7 @@
                     var ax = i === 0 ? "y" : "y" + (i + 1);
                     var segs = plan[i].segs.filter(function (s) { return s.end_ns > xr[0] && s.start_ns < xr[1]; });
                     segs.forEach(function (s, k) {
-                        var flagged = (s.flags || []).length > 0;
+                        var sev = severity(s);
                         var row = plan[i].bottom && k % 2 === 1 ? "bottom" : "top";
                         var x0 = Math.max(s.start_ns, xr[0]);
                         var next = segs[k + (plan[i].bottom ? 2 : 1)];
@@ -583,7 +664,7 @@
                             xref: "x", yref: ax + " domain", x: x0, xanchor: "left", align: "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
                             showarrow: false, text: name + "<br>" + l2,
-                            font: { size: TEXT_PX, color: flagged ? c.flag : c.text },
+                            font: { size: TEXT_PX, color: sev ? c.tones[sev].line : c.text },
                             meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
                                     name: name, line2: line2, shown2: l2 }
                         });
@@ -595,6 +676,18 @@
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
             return { data: traces, layout: layout, drawn: drawn, fixedAnnotations: fixed, labels: labels,
                      span: span, widthPx: widthPx };
+        }
+
+        /* A lane exceeds a limit when a received sample lies beyond it. */
+        function exceeds(l, lim) {
+            return (l.segments || []).some(function (s) {
+                return (s.v || []).some(function (v) { return num(v) && (lim >= 0 ? v > lim : v < lim); });
+            });
+        }
+        function limitLabel(l, lim, ax, c) {
+            return { xref: "paper", yref: ax, x: 1, y: lim, xanchor: "right", yanchor: "bottom", showarrow: false,
+                     text: (l.label || l.key) + " limit " + fmt(lim) + " V", font: { size: TEXT_PX, color: c.tones.danger.line },
+                     meta: { role: "limit-label", lane: l.key } };
         }
 
         /* ---------------- Overlay view: every line on ONE time axis ---------------- */
@@ -722,17 +815,17 @@
                 var spectLine = l.group === "spectator";
                 var idCol = laneCol(l);
                 (l.segments || []).forEach(function (s) {
-                    var flagged = (s.flags || []).length > 0;
-                    var col = flagged ? c.flag : idCol;
+                    var sev = severity(s), flagged = !!sev;
+                    var col = sev ? c.tones[sev].line : idCol;
                     if (!spectLine) {
                         traces.push({ x: (s.t_ns || []).slice(), y: scaled(l, (s.v || []).slice()), xaxis: "x", yaxis: "y",
                                       type: "scatter", mode: "lines", line: { color: col, width: 0, shape: "hv" },
-                                      fill: "tozeroy", fillcolor: faint(col), hoverinfo: "skip",
-                                      meta: { role: "fill", lane: l.key, operation: s.operation, flagged: flagged } });
+                                      fill: "tozeroy", fillcolor: sev ? c.tones[sev].fill : faint(col), hoverinfo: "skip",
+                                      meta: { role: "fill", lane: l.key, operation: s.operation, flagged: flagged, severity: sev } });
                     }
                     traces.push({ x: (s.t_ns || []).slice(), y: scaled(l, (s.v || []).slice()), xaxis: "x", yaxis: "y",
                                   type: "scatter", mode: "lines", line: { color: col, width: spectLine ? 1 : 2, shape: "hv" },
-                                  hoverinfo: "skip", meta: { role: "segment", lane: l.key, operation: s.operation, flagged: flagged } });
+                                  hoverinfo: "skip", meta: { role: "segment", lane: l.key, operation: s.operation, flagged: flagged, severity: sev } });
                     var ts = s.t_ns || [];
                     if (s.truncated && ts.length && ts[ts.length - 1] < s.end_ns) {
                         shapes.push({ type: "rect", name: "not-received", xref: "x", x0: ts[ts.length - 1], x1: s.end_ns,
@@ -749,10 +842,11 @@
                 }
                 if (!same && l.limit_v && !spectLine) {
                     l.limit_v.forEach(function (lim) {
-                        if (!num(lim) || lim < range[0] || lim > range[1]) return;
-                        if (shapes.some(function (sh) { return sh.name === "limit" && sh.y0 === lim; })) return;
+                        if (!num(lim) || lim < range[0] || lim > range[1] || !exceeds(l, lim)) return;
                         shapes.push({ type: "line", name: "limit", xref: "paper", x0: 0, x1: 1, yref: "y", y0: lim, y1: lim,
-                                      line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.7, layer: "below" });
+                                      line: { color: c.tones.danger.line, width: 1, dash: "dot" }, layer: "below",
+                                      meta: { lane: l.key } });
+                        fixed.push(limitLabel(l, lim, "y", c));
                     });
                 }
             });
@@ -774,21 +868,29 @@
                 });
             });
             edges.sort(function (a, b) { return a - b; });
+            var hiPair = state.highlight !== null ? pairs[state.highlight] : null;
             edges.forEach(function (t) {
+                var lit = !!hiPair && (t === hiPair.from_ns || t === hiPair.to_ns);
                 shapes.push({ type: "line", name: "guide", xref: "x", x0: t, x1: t, yref: "paper", y0: 0, y1: 1,
-                              line: { color: c.muted, width: 1, dash: "dash" }, opacity: 0.6, layer: "below" });
+                              line: { color: c.muted, width: lit ? 2 : 1, dash: "dash" }, opacity: lit ? 1 : 0.6, layer: "below",
+                              meta: { lit: lit } });
             });
             // gap / overlap brackets, stacked under the guide labels
             var warn = cssVar("--ui-warn-border") || cssVar("--ui-warn-text") || c.flag;
+            var listed = pairs.length >= 3;
+            var hi = state.highlight !== null && state.highlight < pairs.length ? pairs[state.highlight] : null;
             pairs.forEach(function (p, k) {
                 var col = p.kind === "gap" ? warn : c.muted;
+                var lit = hi === p;
                 var y = 1 - (14 + 22 * k) / plotPx;
                 var text = nameOf(p.a) + " to " + nameOf(p.b) + ": " + (p.kind === "gap" ? "gap " + fmt(p.ns) + " ns"
                     : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet at " + fmt(p.from_ns) + " ns");
                 shapes.push({ type: "path", name: "bracket", xref: "x", yref: "paper",
                               path: "M " + p.from_ns + " " + (y - 0.02) + " L " + p.from_ns + " " + y + " L " + p.to_ns + " " + y +
                                     " L " + p.to_ns + " " + (y - 0.02),
-                              line: { color: col, width: p.kind === "gap" ? 1.5 : 1 }, meta: { kind: p.kind } });
+                              line: { color: col, width: lit ? 3 : (listed ? 1 : (p.kind === "gap" ? 1.5 : 1)) },
+                              meta: { kind: p.kind, index: k, lit: lit } });
+                if (listed) return;
                 fixed.push({ xref: "x", yref: "paper", x: (p.from_ns + p.to_ns) / 2, y: y, yanchor: "bottom", showarrow: false,
                              text: text, font: { size: TEXT_PX, color: col },
                              meta: { role: "bracket-label", kind: p.kind, a: p.a, b: p.b } });
@@ -871,6 +973,8 @@
             [scaleLab, seg].forEach(function (n) { n.hidden = ov; });
             [heightSeg.label, heightSeg.group].forEach(function (n) { n.hidden = !ov; });
             lastFigure = ov ? overlayFigure() : figure();
+            var listKey = ov ? JSON.stringify(lastFigure.timing) : "";
+            if (listKey !== pairList.__key) { pairList.__key = listKey; buildPairList(ov ? lastFigure.timing : null); }
             var many = ov && visibleGate().length > 3;
             if (many && !overlayNote.parentNode) notesBox.appendChild(overlayNote);
             if (!many && overlayNote.parentNode) overlayNote.parentNode.removeChild(overlayNote);

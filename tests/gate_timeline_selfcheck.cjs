@@ -249,8 +249,11 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
 
 // identity colours
 {
-    const pal = window.PlotTheme.palette();
-    ok(GT.laneColor(0) === pal[0] && GT.laneColor(3) === pal[3] && GT.laneColor(pal.length + 1) === pal[1], 'laneColor: palette by index, modulo its length');
+    const P = window.PlotTheme.palette();
+    // without the kit's --ui-line-N colours: the plot palette in the order 1, 4, 6, 3, 5, 2
+    const pal = [0, 3, 5, 2, 4, 1].map((k) => P[k]);
+    ok(GT.laneColor(0) === P[0] && GT.laneColor(1) === P[3] && GT.laneColor(2) === P[5] && GT.laneColor(3) === P[2] && GT.laneColor(7) === P[3],
+       'laneColor fallback: palette order 1, 4, 6, 3, 5, 2, modulo six');
     const lineOf = (key, op) => segs.find((s) => s.meta.lane === key && s.meta.operation === op).line.color;
     ok(lineOf('q1.z', 'cz_x_pulse_q1_q2') === pal[0] && lineOf('q2.z', 'flux_b') === pal[1] && lineOf('coupler_q1_q2', 'late') === pal[2],
        'gate lanes without a colour take 0, 1, 2 in order');
@@ -380,6 +383,62 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const shown = gl.flatMap((a) => a.meta.times);
     ok([0, 100, 101, 102, 103, 300].every((t) => shown.includes(t)), 'every edge time is written');
     ok(gl.some((a) => a.meta.row === 1) && gl.some((a) => / \/ /.test(a.text)), 'close edges: a second row, then a shared label');
+}
+
+// state tones and kit line colours (the kit tokens set here as test values)
+{
+    const st = doc.createElement('style');
+    st.textContent = ':root { --ui-line-1: rgb(1,1,1); --ui-line-2: rgb(2,2,2); --ui-line-3: rgb(3,3,3); ' +
+        '--ui-danger-text: rgb(200,0,0); --ui-danger-bg: rgb(250,220,220); --ui-warn-text: rgb(150,100,0); --ui-warn-bg: rgb(250,240,200); }';
+    doc.head.appendChild(st);
+    const nameOf = (D, key) => (D.lanes.find((l) => l.key === key) || {}).label || key;
+    ok(GT.laneColor(0) === 'rgb(1,1,1)' && GT.laneColor(2) === 'rgb(3,3,3)' && GT.laneColor(3) === 'rgb(1,1,1)', 'identity colours come from the kit line colours when defined');
+    const sq = (op, s, e, v, extra) => seg(op, [s, e], [v, v], extra);
+    const D = { lanes: [
+        lane('coupler_q1_q2', 'gate', [sq('big', 0, 50, 0.62, { flags: ['over_range'] })], { color: 0 }),
+        lane('q1.z', 'gate', [sq('odd', 60, 90, 0.1, { flags: ['something_new'] })], { color: 1 }),
+        lane('q2.z', 'gate', [Object.assign(sq('long', 100, 300, 0.1), { t_ns: [100, 150], v: [0.1, 0.1], truncated: true })], { color: 2 })],
+        notes: [] };
+    const hs = GT.render(host, D, {});
+    let f = last();
+    const segOf = (fig, key) => role(fig, 'segment').find((t) => t.meta.lane === key);
+    const fillOf = (fig, key) => role(fig, 'fill').find((t) => t.meta.lane === key);
+    ok(segOf(f, 'coupler_q1_q2').line.color === 'rgb(200,0,0)' && fillOf(f, 'coupler_q1_q2').fillcolor === 'rgb(250,220,220)',
+       'a refusing flag draws in the danger tone (line and fill)');
+    ok(segText(f, 'coupler_q1_q2')[0].font.color === 'rgb(200,0,0)', 'its label in the danger tone');
+    ok(title(f, 'coupler_q1_q2').font.color === 'rgb(1,1,1)', 'the lane chip keeps its identity colour');
+    ok(segOf(f, 'q1.z').line.color === 'rgb(150,100,0)' && fillOf(f, 'q1.z').fillcolor === 'rgb(250,240,200)', 'an unknown flag only informs: warn tone');
+    ok(segOf(f, 'q2.z').line.color === 'rgb(150,100,0)', 'a truncated segment informs: warn tone');
+    const ll = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'limit-label');
+    ok(ll.length === 1 && ll[0].text === 'coupler_q1_q2 limit 0.5 V' && ll[0].font.color === 'rgb(200,0,0)' && ll[0].x === 1 && ll[0].xanchor === 'right',
+       'lanes: an exceeded limit is labelled at its right end in the danger tone');
+    hs.setView('overlay');
+    f = last();
+    const lim = f.layout.shapes.filter((s) => s.name === 'limit');
+    ok(lim.length === 1 && lim[0].y0 === 0.5 && lim[0].line.color === 'rgb(200,0,0)' && lim[0].meta.lane === 'coupler_q1_q2',
+       'overlay: a limit only for the line that exceeds it, in the danger tone');
+    ok(f.layout.annotations.some((a) => a.meta && a.meta.role === 'limit-label' && a.text === 'coupler_q1_q2 limit 0.5 V'), 'overlay: the limit is labelled');
+    // three brackets: unlabelled in the chart, listed under it
+    ok(hs.timing().length === 3 && f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0, 'three brackets: no bracket text in the chart');
+    const rows = [...lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]')];
+    ok(rows.length === 3 && rows.map((r) => r.textContent).join('|') === hs.timing().map((p) =>
+        nameOf(D, p.a) + 'to' + nameOf(D, p.b) + (p.kind === 'gap' ? 'gap ' + p.ns + ' ns' : p.kind === 'overlap' ? 'overlap ' + p.ns + ' ns' : 'meet') + p.from_ns + ' to ' + p.to_ns + ' ns').join('|'),
+       'the pair list is timing(), one row per pair');
+    ok(rows[0].querySelector('.ui-badge--warn') && rows.every((r) => r.getAttribute('tabindex') === '0'), 'gap rows in the warn tone; rows focusable');
+    rows[1].dispatchEvent(new window.Event('mouseenter'));
+    f = last();
+    const br = f.layout.shapes.filter((s) => s.name === 'bracket');
+    const p1 = hs.timing()[1];
+    ok(br.filter((s) => s.meta.lit).length === 1 && br.find((s) => s.meta.lit).meta.index === 1 &&
+       f.layout.shapes.filter((s) => s.name === 'guide' && s.meta.lit).map((s) => s.x0).sort((a, b) => a - b).join() === [p1.from_ns, p1.to_ns].sort((a, b) => a - b).join(),
+       'hovering a row highlights exactly its bracket and its two guides');
+    rows[1].dispatchEvent(new window.Event('mouseleave'));
+    ok(!last().layout.shapes.some((s) => s.meta && s.meta.lit), 'leaving the row clears the highlight');
+    hs.setLineHidden('q2.z', true);
+    ok(lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]').length === 0 &&
+       last().layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 1, 'two brackets: labelled in the chart, no list');
+    hs.destroy();
+    st.remove();
 }
 
 // sim
