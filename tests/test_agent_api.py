@@ -114,6 +114,14 @@ class TestWithAChip:
         assert tray["entries"][0]["path"] == f"qubits.qA1.{key}" and tray["entries"][0]["new"] == 1234.5
         assert c.get("/api/agent/chip").get_json()["pending"] == 1
 
+    def test_chip_reports_a_read_only_live_folder(self, loaded_client):
+        """The agent is told what the top bar's read-only badge shows."""
+        c = loaded_client
+        assert c.get("/api/agent/chip").get_json()["live_readonly"] is False
+        ctx = c.application.config["contexts"][c.application.config["active_context"]]
+        ctx["live_readonly_hint"] = True
+        assert c.get("/api/agent/chip").get_json()["live_readonly"] is True
+
     def test_versions_and_field_history_answer(self, loaded_client):
         c = loaded_client
         v = c.get("/api/agent/versions?n=5").get_json()
