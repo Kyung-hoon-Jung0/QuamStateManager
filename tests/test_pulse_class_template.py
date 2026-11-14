@@ -1035,6 +1035,25 @@ def test_foreign_descriptor_over_slots_dataclass_field_stays_reserved():
         T.validate(s, parent_names=names)
 
 
+def test_sibling_slot_descriptor_over_slots_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+        other: float = 0.2
+
+    class Derived(Base):
+        amplitude = Base.other
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amplitude"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    with pytest.raises(T.TemplateError, match="'amplitude' is reserved"):
+        T.validate(s, parent_names=names)
+
+
 def test_string_slot_substring_does_not_exempt_foreign_descriptor():
     from dataclasses import dataclass
 
