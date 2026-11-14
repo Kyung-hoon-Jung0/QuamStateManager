@@ -117,6 +117,64 @@ def _parts():
     return out
 
 
+PAIRS = [
+    {"value": "q1-q2", "title": "q1-q2", "desc": "Coupler c12, 40 ns pulse"},
+    {"value": "q2-q3", "title": "q2-q3", "desc": "Coupler c23, 48 ns pulse"},
+    {"value": "q3-q4", "title": "q3-q4", "disabled": True, "reason": "No flux line on the control qubit"},
+    {"value": "q4-q5", "title": "q4-q5", "desc": "Coupler c45, not calibrated yet"},
+]
+CLASSES = ["CZGate", "FluxPulseCZ", "SquarePulse"]
+
+
+def _choosing():
+    """K18: select, input, field, menu, toolbar in every state (docs/308 section 4b)."""
+    sec = "Choosing"
+    return [
+        (sec, "Select", {"part": "select", "label": "Pulse class", "options": CLASSES, "value": "CZGate"}),
+        (sec, "Select, invalid", {"part": "select", "label": "Pulse class", "options": CLASSES, "value": "SquarePulse",
+                                  "invalid": True}),
+        (sec, "Select, disabled", {"part": "select", "label": "Pulse class", "options": CLASSES, "disabled": True}),
+        (sec, "Input", {"part": "input", "label": "Gate name", "value": "cz_unipolar", "placeholder": "Gate name"}),
+        (sec, "Input, invalid", {"part": "input", "label": "Gate name", "value": "cz unipolar", "invalid": True}),
+        (sec, "Input, empty with placeholder", {"part": "input", "label": "Search", "type": "search",
+                                                "placeholder": "Search pulses"}),
+        (sec, "Number with unit", {"part": "input", "label": "Length", "type": "number", "num": True, "value": "40",
+                                   "unit": "ns"}),
+        (sec, "Number with unit, disabled", {"part": "input", "label": "Amplitude", "num": True, "value": "0.125",
+                                             "unit": "V", "disabled": True}),
+        (sec, "Field with hint and source", {"part": "field", "label": "Length", "hint": "Multiple of 4 ns.",
+                                             "source": {"text": "copied"},
+                                             "control": {"part": "input", "id": "uk-f-len", "num": True, "value": "40",
+                                                         "unit": "ns"}}),
+        (sec, "Field with an error", {"part": "field", "label": "Gate name",
+                                      "error": "A name has no spaces; use cz_unipolar.",
+                                      "control": {"part": "input", "id": "uk-f-name", "value": "cz unipolar",
+                                                  "invalid": True, "block": True}}),
+        (sec, "Inline field", {"part": "field", "label": "Pulse class", "inline": True, "source": {"text": "default"},
+                               "control": {"part": "select", "id": "uk-f-cls", "options": CLASSES, "value": "CZGate"}}),
+        (sec, "Menu: pick one", {"part": "menu", "id": "uk-menu-pick", "label": "Pair", "items": PAIRS,
+                                 "value": "q1-q2"}),
+        (sec, "Menu: pick one, nothing chosen", {"part": "menu", "id": "uk-menu-none", "label": "Pair", "items": PAIRS,
+                                                 "placeholder": "Choose a pair"}),
+        (sec, "Menu: actions", {"part": "menu", "id": "uk-menu-act", "kind": "action", "label": "More actions",
+                                "trigger": {"label": "Actions", "cls": "btn-sm secondary"}, "items": [
+                                    {"value": "duplicate", "title": "Duplicate gate"},
+                                    {"value": "rename", "title": "Rename"},
+                                    {"sep": True},
+                                    {"value": "remove", "title": "Remove from the chip", "disabled": True,
+                                     "reason": "Used by 2 macros"}]}),
+        (sec, "Toolbar", {"part": "toolbar", "label": "View", "items": [
+            {"part": "segmented", "label": "Show", "options": [{"label": "All", "selected": True}, {"label": "Changed"}]},
+            {"part": "check", "text": "Only calibrated"},
+            {"part": "check", "text": "Show units", "checked": True},
+            {"part": "toolbar-sep"},
+            {"part": "select", "label": "Sort", "options": ["Name", "Length", "Updated"], "value": "Name"},
+            {"part": "toolbar-spacer"},
+            {"part": "button", "label": "Reset", "cls": "btn-sm secondary"},
+            {"part": "button", "label": "Apply", "cls": "btn-sm"}]}),
+    ]
+
+
 def _review_dialog():
     """A1: the rule review after a frequency populate swapped two pairs."""
     def pair(pid, ctl, tgt):
@@ -193,6 +251,7 @@ def _env_card():
 def specs():
     """[(section, label, spec)] in page order."""
     out = _parts()
+    out += _choosing()
     out += [("Worked example: rule review (A1)", "Review dialog", _review_dialog()),
             ("Worked example: apply to other pairs (A2)", "Apply dialog", _apply_dialog()),
             ("Worked example: environment card (E1, E2)", "Card head and verdicts", _env_card())]

@@ -88,6 +88,61 @@
 <div class="ui-segmented" role="group" aria-label="{{ label }}">{% for o in options %}<button type="button" class="ui-segmented-opt{% if o.selected %} ui-segmented-on{% endif %}"{% if not o.command %} aria-pressed="{{ 'true' if o.selected else 'false' }}"{% endif %}>{{ o.label }}</button>{% endfor %}</div>
 {%- endmacro -%}
 
+{#- K18 choosing (docs/308 §4b). The class sits on the native <select> /
+    <input> itself: the chevron is a token-drawn background, so no wrapper.
+    Options: [{value, label, disabled?}] or plain strings. -#}
+{%- macro ui_select(options, value=None, label=None, id=None, name=None, block=False, disabled=False, invalid=False) -%}
+{%- set value = value if value is defined else none -%}
+<select class="ui-select{% if block %} ui-select--block{% endif %}"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}"{% endif %}{% if label %} aria-label="{{ label }}"{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if disabled %} disabled{% endif %}>
+{%- for o in options %}{% set ov = o.value if o is mapping else o %}<option value="{{ ov }}"{% if value is not none and ov == value %} selected{% endif %}{% if o is mapping and o.disabled %} disabled{% endif %}>{{ o.label if o is mapping else o }}</option>{% endfor -%}
+</select>
+{%- endmacro -%}
+
+{%- macro ui_input(value=None, type='text', label=None, id=None, name=None, num=False, unit=None, placeholder=None, block=False, disabled=False, invalid=False) -%}
+{%- set value = value if value is defined else none -%}
+{%- set _i -%}<input type="{{ type }}" class="ui-input{% if num %} ui-input--num{% endif %}{% if block and not unit %} ui-input--block{% endif %}"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}"{% endif %}{% if value is not none %} value="{{ value }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if label %} aria-label="{{ label }}"{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if disabled %} disabled{% endif %}>{%- endset -%}
+{%- if unit %}<span class="ui-input-unit{% if block %} ui-input-unit--block{% endif %}">{{ _i }}<span class="ui-input-unit-text">{{ unit }}</span></span>{% else %}{{ _i }}{% endif -%}
+{%- endmacro -%}
+
+{#- Field: label above (or left with inline=True), one control spec, an
+    optional hint and error line, a source tag at the label's right. -#}
+{%- macro ui_field(label, control, hint=None, error=None, source=None, inline=False, id=None) -%}
+<div class="ui-field{% if inline %} ui-field--inline{% endif %}"><div class="ui-field-head"><label class="ui-field-label"{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>{% if source %}{{ ui_badge(source.text, source.tone or 'neutral') }}{% endif %}</div>
+{{- ui_render(control) -}}
+{%- if hint %}<p class="ui-field-hint">{{ hint }}</p>{% endif -%}
+{%- if error %}<p class="ui-field-error" role="alert">{{ error }}</p>{% endif -%}
+</div>
+{%- endmacro -%}
+
+{#- Menu: kind 'pick' (listbox: one of several described options, the chosen
+    row checked) or 'action' (menu of commands). Items: [{value, title,
+    desc?, disabled?, reason?}]; a disabled row shows its reason as its
+    second line. static/ui.js (UI.menu) owns the behaviour. -#}
+{%- macro ui_menu(id, items, label, kind='pick', value=None, trigger=None, placeholder='Choose', block=False, end=False, up=False) -%}
+{%- set value = value if value is defined else none -%}
+{%- set pick = kind != 'action' -%}
+{%- set ns = namespace(title=None) -%}
+{%- for it in items %}{% if pick and value is not none and it.value == value %}{% set ns.title = it.title %}{% endif %}{% endfor -%}
+<div class="ui-menu{% if block %} ui-menu--block{% endif %}" data-ui-menu="{{ 'pick' if pick else 'action' }}"{% if pick and value is not none %} data-value="{{ value }}"{% endif %}>
+<button type="button" id="{{ id }}" class="ui-menu-trigger {{ ('ui-select' ~ (' ui-select--block' if block else '')) if pick else (trigger.cls if trigger and trigger.cls else 'btn-sm secondary') }}" aria-haspopup="{{ 'listbox' if pick else 'menu' }}" aria-expanded="false" aria-controls="{{ id }}-list"{% if pick %} aria-label="{{ label }}"{% endif %}>
+{%- if pick %}<span class="ui-menu-value{% if ns.title is none %} ui-menu-placeholder{% endif %}">{{ ns.title if ns.title is not none else placeholder }}</span>{% else %}{{ trigger.label if trigger and trigger.label else label }}{% endif -%}
+</button>
+<div class="ui-menu-list{% if pick %} ui-menu-list--pick{% endif %}{% if end %} ui-menu-list--end{% endif %}{% if up %} ui-menu-list--up{% endif %}" id="{{ id }}-list" role="{{ 'listbox' if pick else 'menu' }}" aria-label="{{ label }}" hidden>
+{%- for it in items %}{% if it.sep %}<div class="ui-menu-sep" role="separator"></div>{% else %}<div class="ui-option" role="{{ 'option' if pick else 'menuitem' }}" tabindex="-1" data-value="{{ it.value }}"{% if pick %} aria-selected="{{ 'true' if value is not none and it.value == value else 'false' }}"{% endif %}{% if it.disabled %} aria-disabled="true"{% endif %}>
+{%- if pick %}<span class="ui-option-check" aria-hidden="true"></span>{% endif -%}
+<span class="ui-option-title">{{ it.title }}</span>
+{%- set d = it.reason if it.disabled and it.reason else it.desc -%}
+{%- if d %}<span class="ui-option-desc">{{ d }}</span>{% endif -%}
+</div>{% endif %}{% endfor -%}
+</div></div>
+{%- endmacro -%}
+
+{#- Toolbar: one compact row of child specs (segmented, check, select,
+    menu, button); {part: 'toolbar-sep'} draws a divider. -#}
+{%- macro ui_toolbar(items, label) -%}
+<div class="ui-toolbar" role="toolbar" aria-label="{{ label }}">{% for s in items %}{% if s.part == 'toolbar-sep' %}<span class="ui-toolbar-sep" aria-hidden="true"></span>{% elif s.part == 'toolbar-spacer' %}<span class="ui-toolbar-spacer" aria-hidden="true"></span>{% elif s.part == 'button' %}{{ ui_button(s) }}{% else %}{{ ui_render(s) }}{% endif %}{% endfor %}</div>
+{%- endmacro -%}
+
 {#- Containers take a list of child specs. -#}
 {%- macro ui_disclosure(summary, count=None, body=(), open=False) -%}
 <details class="ui-disclosure"{% if open %} open{% endif %}><summary class="ui-disclosure-summary">{{ summary }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}</summary><div class="ui-disclosure-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div></details>
@@ -132,6 +187,11 @@
 {%- elif p == 'path' %}{{ ui_path(s.text) }}
 {%- elif p == 'segmented' %}{{ ui_segmented(s.options, s.label) }}
 {%- elif p == 'disclosure' %}{{ ui_disclosure(s.summary, s.count, s.body or (), s.open) }}
+{%- elif p == 'select' %}{{ ui_select(s.options, s.value, s.label, s.id, s.name, s.block, s.disabled, s.invalid) }}
+{%- elif p == 'input' %}{{ ui_input(s.value, s.type or 'text', s.label, s.id, s.name, s.num, s.unit, s.placeholder, s.block, s.disabled, s.invalid) }}
+{%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.control.id) }}
+{%- elif p == 'menu' %}{{ ui_menu(s.id, s['items'], s.label, s.kind or 'pick', s.value, s.trigger, s.placeholder or 'Choose', s.block, s.end, s.up) }}
+{%- elif p == 'toolbar' %}{{ ui_toolbar(s['items'], s.label) }}
 {%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}
 {%- endif -%}
 {%- endmacro -%}

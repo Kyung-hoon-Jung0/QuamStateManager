@@ -864,6 +864,17 @@ _STAGE6_SELECTORS = {
     '.ui-option.ui-option--active',
     '.ui-option:hover',
     '.ui-option[aria-selected="true"]',
+    # choosing parts: ARIA state selectors (docs/308 section 4b)
+    '.ui-select.ui-select[aria-invalid="true"]',
+    '.ui-input.ui-input[aria-invalid="true"]',
+    '.ui-select.ui-select[aria-invalid="true"]:focus-visible',
+    '.ui-input.ui-input[aria-invalid="true"]:focus',
+    '.ui-menu-trigger[aria-expanded="true"]',
+    '.ui-menu-list > .ui-option[aria-selected="true"]',
+    '.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-check::after',
+    '.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-title',
+    '.ui-menu-list > .ui-option[aria-disabled="true"]',
+    '.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title',
 }
 
 
