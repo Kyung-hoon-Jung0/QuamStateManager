@@ -1,7 +1,5 @@
 # 40. Experiment Scheduler — Implementation Plan
 
-> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
-
 > Status: **Phase 0 + 1 + 2 BUILT** (2026-06-14, on branch `feat/scheduler`). Phase 0 = config +
 > pre-flight; Phase 1 = scan + single-node queue + sequential dry-run runner + status/log; Phase
 > 2a = live-lock (server 409) + badge + browser-close heartbeat + post-run chip refresh +

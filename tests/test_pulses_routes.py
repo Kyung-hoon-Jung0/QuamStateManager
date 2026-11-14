@@ -1498,6 +1498,20 @@ class TestCzGateFirst:
         assert all(i["new_gates"] == [] for i in info.values())
         assert "__new__:" not in html
 
+    def test_pair_gate_form_gains_verified_variants(self, pairs_client,
+                                                    modern_roster):
+        from quam_state_manager.core import pulse_catalog as pc
+        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
+        assert "cz_snz" not in html               # no roster -> legacy list
+        pc.apply_env_overlay(modern_roster)
+        html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
+        # w9/pulsegate: a verified flux variant still writes its flux pulses
+        # into the gate -- new pulses, built on the Pulses page; the form
+        # says where instead of offering any flux gate
+        assert 'value="cz_snz"' not in html and 'value="cz_bipolar"' not in html
+        assert 'value="cz_flattop_erf"' not in html
+        assert "CZ gate" in html
+
     def test_a_new_gate_is_refused_and_nothing_is_written(self, pairs_client,
                                                           modern_roster):
         from quam_state_manager.core import pulse_catalog as pc
@@ -2008,10 +2022,7 @@ class TestOneCreateButton:
         for method, url in (("GET", "/pulse/gaussian-cz"),
                             ("POST", "/api/pulse/gaussian-cz"),
                             ("POST", "/api/pulse/gaussian-cz/plan"),
-                            ("POST", "/api/pulse/gaussian-cz/apply-several"),
-                            ("GET", "/pair/q1-q2/gate/new"),
-                            ("GET", "/pair/q1-q2/gate/new/cancel"),
-                            ("POST", "/pair/q1-q2/gate")):
+                            ("POST", "/api/pulse/gaussian-cz/apply-several")):
             r = slot_client.open(url, method=method)
             assert r.status_code == 404, (method, url, r.status_code)
 

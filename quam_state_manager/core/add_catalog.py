@@ -1,6 +1,7 @@
-"""The gate and pulse type tables of the add paths, in one place.
+"""The gate and pulse type tables of the three add paths, in one place.
 
-Read by the Pulses page's create form (its gate list and slot classes) and the
+Read by the pair page's Add gate (``routes.pair_gate_form`` / ``pair_add_gate``),
+the Pulses page's create form (its gate list and slot classes) and the
 Generate wizard's additions (``additions``: the builder's gate names per pair).
 Each UI keeps its own filter over these tables; the tables themselves live
 only here. Pure data plus pure readers: no Flask, no store.
@@ -35,7 +36,7 @@ CZ_VARIANTS = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
 # ``arch`` gates each type to the pair's architecture (docs/54): flux types
 # need flux evidence (z lines / coupler / CZ-shaped macros) and must never be
 # written onto a FixedFrequencyTransmonPair; CR/Stark types need the matching
-# pair drive channel.
+# pair drive channel. Enforced in routes.pair_gate_form (UI) AND routes.pair_add_gate (409).
 GATE_TYPES: dict[str, dict[str, Any]] = {
     "cz_unipolar": {
         "label": "CZ Unipolar (square pulse)",

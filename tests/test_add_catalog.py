@@ -27,6 +27,7 @@ def test_the_two_name_rules_are_named_constants():
 def test_every_python_caller_reads_the_name_rules_through_add_names():
     assert additions._NAME_RE is add_names.ADDITION_NAME_RE
     assert routes._PULSE_NAME_RE is add_names.OPERATION_NAME_RE
+    assert routes._GATE_NAME_RE is add_names.OPERATION_NAME_RE
     for f in (PKG / "core" / "additions.py", PKG / "web" / "routes.py"):
         src = f.read_text(encoding="utf-8")
         assert _A_LITERAL not in src, f
@@ -34,7 +35,7 @@ def test_every_python_caller_reads_the_name_rules_through_add_names():
 
 
 def test_the_name_inputs_render_the_one_pattern():
-    for t in ("_pulse_copy.html", "_pulse_create.html", "_pulse_detail.html"):
+    for t in ("_pair_add_gate.html", "_pulse_copy.html", "_pulse_create.html", "_pulse_detail.html"):
         src = (PKG / "web" / "templates" / t).read_text(encoding="utf-8")
         assert _OP_LITERAL not in src, t
         assert "{{ op_name_pattern }}" in src, t
@@ -49,6 +50,10 @@ def test_the_wizard_checks_the_same_addition_rule():
 
 
 def test_the_gate_tables_live_in_the_catalogue():
+    assert routes._GATE_TYPES is add_catalog.GATE_TYPES
+    assert routes._ENV_GATE_TYPES is add_catalog.ENV_GATE_TYPES
+    assert routes._ENV_GATE_LEAVES is add_catalog.ENV_GATE_LEAVES
+    assert routes._SLOT_LEAVES is add_catalog.SLOT_LEAVES
     assert additions.DEFAULT_GATE_NAME is add_catalog.DEFAULT_GATE_NAME
     assert additions.NODE_DEFAULT_OPERATION is add_catalog.NODE_DEFAULT_OPERATION
     assert additions._CZ_VARIANTS is add_catalog.CZ_VARIANTS

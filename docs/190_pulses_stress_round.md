@@ -1,6 +1,6 @@
 # docs/190 — twelve users on one Pulses page, and what they broke
 
-> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) is gone. A new CZ gate is created in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about it is history; the pair page's "+ Add gate" form (CR / Stark gates) stays.
 
 **2026-09-16 → 17, user-ordered.**
 

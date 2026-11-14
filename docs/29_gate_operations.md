@@ -1,7 +1,5 @@
 # 29: Create New Gate / Pulse Operations from Detail Pages
 
-> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
-
 > A researcher can click **+ Add gate** on a qubit pair detail page (CZ
 > macros, including AC-flux parametric CZ) and **+ Add pulse** on a
 > qubit detail page (SquarePulse, DragCosinePulse) and have those

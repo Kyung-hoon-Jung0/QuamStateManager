@@ -1,0 +1,10 @@
+<div id="pair-add-gate-area" class="pair-add-gate-area">
+    <button type="button"
+            class="add-gate-btn"
+            hx-get="/pair/{{ pair_name }}/gate/new"
+            hx-target="#pair-add-gate-area"
+            hx-swap="innerHTML">
+        + Add gate
+        <span class="add-gate-experimental" title="Experimental — verify in browser before relying on this">experimental</span>
+    </button>
+</div>

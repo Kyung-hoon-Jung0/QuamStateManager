@@ -1,8 +1,8 @@
 """Plan the creation of one new CZ gate on one qubit pair (pure).
 
 ``plan`` turns "create gate G of class C on pair P" into the ordered list of
-state paths and values to create, the same result shape as
-``gaussian_cz.plan``: a route writes the creates under ONE change group. It
+state paths and values to create: a route writes the creates under ONE
+change group. It
 is the single place that decides
 
 * which way the structure points (the macro owns the pulse and the channel
