@@ -254,6 +254,34 @@ class Plausibility:
                                         # node may have already applied itself)
 
 
+@dataclass
+class ExtremumInsideSweep:
+    """G4 opt-in rule for extremum-type fits (a parabola vertex, an optimum).
+
+    The fitted extremum must lie inside the swept range of the axis it was
+    fitted on, and the proposed move of the written value must not exceed the
+    half-span of that sweep. A vertex outside the sweep is an extrapolation:
+    the data never visited it.
+
+    The range is min..max of the axis actually recorded in the run's ds_raw
+    (never the node's parameter defaults); the half-span is (max - min) / 2,
+    so a descending or off-centre sweep is judged the same way. Endpoints
+    count as inside.
+
+    ``move``:
+      ``relative``: the axis is an offset from the current setting, so the
+                      vertex value IS the proposed move (move = |vertex|).
+      ``absolute``: move = |vertex - anchor|, the anchor read (pre-update
+                      first) at ``state_path``; no anchor -> move not judged.
+    ``unit`` is the fallback when the axis carries no ``units`` attribute.
+    """
+    key: str
+    axis_var: str
+    unit: str = ""
+    move: str = "relative"
+    state_path: str | None = None
+
+
 @dataclass(frozen=True)
 class Rung:
     """One rung of an adaptation ladder (docs/56 v2 — the human escalation
@@ -291,6 +319,8 @@ class Family:
     value_key: str              # the family's headline fitted value
     metric_gates: list[MetricGate] = field(default_factory=list)
     plausibility: list[Plausibility] = field(default_factory=list)
+    # opt-in G4 rule: the fitted extremum must sit inside the swept axis
+    extremum: ExtremumInsideSweep | None = None
     feature_check: FeatureCheck | None = None
     # fit key -> multiplier applied ONCE when that key is read, so the gate and
     # the write can never disagree about units (docs/78 §22.4 item 1). That
@@ -716,6 +746,36 @@ _register(Family(
                      "frequency_detuning_in_mhz":
                          float(p.get("frequency_detuning_in_mhz", 1.0)) * 2,
                      "num_shots": int(float(p.get("num_shots", 400)) * 2)}},
+))
+
+_register(Family(
+    key="ramsey_vs_flux",
+    label="Ramsey vs flux",
+    kind="qubits",
+    value_key="flux_offset",
+    # Fits a parabola of qubit frequency against a flux offset swept around
+    # the current setting and proposes the vertex as the new offset. Before
+    # this entry the node matched the plain "ramsey" prefix, whose span check
+    # only asks whether a signal EXISTS; a fold in the data (detuning crossing
+    # the Ramsey detuning) then let a vertex far outside the sweep pass.
+    # The same metric gates and span check as "ramsey" apply (a metric the
+    # entry does not carry is skipped), so a good run passes as before.
+    metric_gates=[MetricGate("osc_amp_snr", min=1.0,
+                             reason="oscillation amplitude below the noise"),
+                  MetricGate("r2", min=0.30,
+                             reason="the node's own fit explains <30% of "
+                                    "the trace")],
+    plausibility=[Plausibility("freq_offset", lo=-5e7, hi=5e7),
+                  Plausibility("flux_offset", lo=-10.0, hi=10.0)],
+    extremum=ExtremumInsideSweep(key="flux_offset", axis_var="flux_bias",
+                                 unit="V", move="relative"),
+    feature_check=FeatureCheck(var="I", axis_var="idle_time", mode="span",
+                               spectral_min=10.0),
+    # VERIFY-ONLY: the node writes the offset, the quadratic term (stored
+    # scaled, see fit_targets) and the frequency together; a partial forward
+    # write of one of them is not offered. The node's own write stands.
+    updates=[],
+    adaptations={"noisy": _more_shots, "no_signal": _more_shots},
 ))
 
 _register(Family(

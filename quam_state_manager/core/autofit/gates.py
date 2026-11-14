@@ -440,6 +440,107 @@ def _presence_probe(raw_path: Path, fc: FeatureCheck, target: str, kind: str,
 # The pipeline
 # ---------------------------------------------------------------------------
 
+def _read_sweep_axis(raw_path: Path, axis_var: str, target: str,
+                     kind: str) -> tuple[np.ndarray, str] | str:
+    """The recorded values of *axis_var* for *target* and their unit
+    (the ``units`` attribute, "" when absent), or an error string."""
+    from quam_state_manager.core.ndview import _h5_lock_for, _open_reader
+
+    dim0s = ("qubit",) if kind == "qubits" else ("qubit_pair", "qubit")
+    try:
+        with _h5_lock_for(str(raw_path)), _open_reader(Path(raw_path)) as f:
+            ax = f.get(axis_var)
+            if ax is None:
+                return f"the run does not record the sweep axis {axis_var!r}"
+            if ax.ndim == 1:
+                arr = np.asarray(f.read(ax), dtype=float)
+            elif ax.ndim == 2:
+                names = None
+                for d0 in dim0s:
+                    coord = f.read_coord(d0)
+                    if coord is not None:
+                        names = [n.decode() if isinstance(n, bytes) else str(n)
+                                 for n in np.asarray(coord).tolist()]
+                        break
+                if not names or target not in names:
+                    return f"the sweep axis {axis_var!r} has no row for {target}"
+                arr = _row_of(f, ax, names.index(target))
+            else:
+                return f"the sweep axis {axis_var!r} is {ax.ndim}-D"
+            unit = ""
+            try:
+                u = f.coord_attr(axis_var, "units")
+            except Exception:  # noqa: BLE001
+                u = None
+            if isinstance(u, bytes):
+                u = u.decode("utf-8", "replace")
+            if isinstance(u, str):
+                unit = u.strip()
+            return arr, unit
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return f"ds_raw unreadable: {exc}"
+
+
+def _display_scale(unit: str, magnitude: float) -> tuple[float, str]:
+    """Show volts as millivolts when the numbers are below one volt."""
+    if unit == "V" and magnitude < 1.0:
+        return 1e3, "mV"
+    return 1.0, unit
+
+
+def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
+                           pre_update_value_of, current_value_of,
+                           ) -> tuple[str, str]:
+    """Returns (status, reason): status in ok | fail | not_evaluated."""
+    rule = fam.extremum
+    name = "extremum check"
+    vertex = fam_mod.fit_value(fam, entry, rule.key)
+    if vertex is None:
+        return "not_evaluated", (f"{name} not evaluated: the fit does not "
+                                 f"record {rule.key}")
+    folder = _attr(run, "folder_path", None)
+    raw = Path(folder) / "ds_raw.h5" if folder else None
+    if raw is None or not raw.exists():
+        return "not_evaluated", (f"{name} not evaluated: ds_raw.h5 is missing, "
+                                 f"so the swept range is unknown")
+    got = _read_sweep_axis(raw, rule.axis_var, target, fam.kind)
+    if isinstance(got, str):
+        return "not_evaluated", f"{name} not evaluated: {got}"
+    axis, unit = got
+    axis = axis[np.isfinite(axis)]
+    if axis.size < 2:
+        return "not_evaluated", (f"{name} not evaluated: the sweep axis "
+                                 f"{rule.axis_var!r} has fewer than 2 values")
+    unit = unit or rule.unit
+    lo, hi = float(np.min(axis)), float(np.max(axis))
+    half = (hi - lo) / 2.0
+    k, shown = _display_scale(unit, max(abs(lo), abs(hi), abs(vertex)))
+    u = f" {shown}" if shown else ""
+    if not (lo <= vertex <= hi):
+        return "fail", (f"fit vertex at {vertex * k:.2f}{u} is outside the "
+                        f"swept range {lo * k:.2f} .. {hi * k:.2f}{u}; the "
+                        f"fit extrapolated beyond the data")
+    move = None
+    if rule.move == "relative":
+        move = abs(vertex)
+    elif rule.state_path:
+        path = rule.state_path.replace("{q}", target).replace("{pair}", target)
+        for getter in (pre_update_value_of, current_value_of):
+            if getter is None:
+                continue
+            try:
+                anchor = getter(path)
+            except Exception:  # noqa: BLE001
+                anchor = None
+            if isinstance(anchor, (int, float)) and not isinstance(anchor, bool)                     and math.isfinite(anchor):
+                move = abs(vertex - float(anchor))
+                break
+    if move is not None and move > half:
+        return "fail", (f"proposed move {move * k:.2f}{u} is larger than the "
+                        f"sweep half-span {half * k:.2f}{u}")
+    return "ok", ""
+
+
 def evaluate_target(run, fam: Family, target: str, *,
                     current_value_of: Callable[[str], Any],
                     pre_update_value_of: Callable[[str], Any] | None = None,
@@ -537,6 +638,21 @@ def evaluate_target(run, fam: Family, target: str, *,
                     suspects.append(("drifted",
                                      f"{pl.key} jumped ×{jump / abs(anchor):.1f} "
                                      f"(> ×{pl.max_rel_jump:.1f}) vs pre-run state"))
+    if fam.extremum is not None:
+        status, why = _extremum_inside_sweep(
+            run, fam, entry, target,
+            pre_update_value_of=pre_update_value_of,
+            current_value_of=current_value_of)
+        v.checks["G4_extremum"] = status
+        if status == "fail":
+            v.verdict, v.failure_mode = "fail", "out_of_band"
+            v.checks["G4_plausibility"] = "fail"
+            v.reasons.append(why)
+            return v
+        if status == "not_evaluated":
+            # same convention as the G4 bands on a missing value: the verdict
+            # is not changed, but the check says it could not run and why
+            v.reasons.append(why)
     v.checks.setdefault("G4_plausibility", "ok")
 
     # --- G3: raw-data feature cross-check (family-gated) --------------------
