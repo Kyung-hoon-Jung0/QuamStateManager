@@ -156,3 +156,9 @@ def test_lanes_carry_their_identity_colour_index():
     data = timeline_data(_entry(script=TWO, cfg=_multi_cfg()), control="q1", target="q2",
                          coupler_elements=["c12"])
     assert [ln["color_index"] for ln in data["lanes"]] == [0, 1, 2, 3]
+
+
+def test_numbers_print_in_the_shortest_exact_form():
+    from quam_state_manager.core.gate_timeline_view import fmt_num
+    assert [fmt_num(v) for v in (0.1 + 0.2, 0.1001, 0.1, 0.11, 2.5, 3.0, -0.5)] == [
+        "0.3", "0.1001", "0.1", "0.11", "2.5", "3", "-0.5"]

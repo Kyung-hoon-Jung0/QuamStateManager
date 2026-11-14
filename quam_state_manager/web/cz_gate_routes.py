@@ -305,8 +305,8 @@ def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
                     v = s["peak_v"] if abs(s.get("peak_v") or 0) >= abs(s.get("min_v") or 0) else s["min_v"]
                     lim = ln.get("limit_v")
                     edge = (lim[1] if v >= 0 else lim[0]) if lim else None
-                    tail = f" This port's limit is {edge:.4g} V." if edge is not None else ""
-                    return f"{ln['key']} would play {v:.4g} V.{tail}"
+                    tail = f" This port's limit is {gate_timeline_view.fmt_num(edge)} V." if edge is not None else ""
+                    return f"{ln['key']} would play {gate_timeline_view.fmt_num(v)} V.{tail}"
     return reason
 
 

@@ -40,7 +40,7 @@
     function fresh() {
         return { data: null, busy: false, phase: 'check', plan: null, planSig: null, check: null,
                  checkSig: null, stale: 0, entered: {}, raw: {}, cls: {}, timer: null, handle: null,
-                 opener: null, seq: 0, created: null };
+                 opener: null, seq: 0, created: null, pairIdx: 0 };
     }
 
     /* ---- the request body ------------------------------------------------ */
@@ -421,11 +421,12 @@
         renderWrites();
         refresh();
     }
-    function renderWrites() {
+    function renderWrites(only) {
         var host = clear($('czg-writes'));
         var sum = $('czg-writes-sum');
         var paths = [];
-        ((S.plan && S.plan.pairs) || []).forEach(function (p) { if (p.ok) paths = paths.concat(p.paths || []); });
+        if (only) paths = only.ok ? (only.paths || []) : [];
+        else ((S.plan && S.plan.pairs) || []).forEach(function (p) { if (p.ok) paths = paths.concat(p.paths || []); });
         if (sum) sum.textContent = paths.length ? paths.length + (paths.length === 1 ? ' object' : ' objects') : 'nothing yet';
         if (!paths.length) { host.appendChild(el('p', 'ui-text-quiet', 'The plan has no gate to write yet.')); return; }
         host.appendChild(el('p', 'ui-text-quiet', 'In the working copy. Not on the chip until you press Apply.'));
@@ -434,9 +435,17 @@
     }
     /* ---- the check and its evidence --------------------------------------- */
     var TONE = { pass: 'ok', fail: 'danger', skipped: 'warn', note: 'neutral' };
+    /* The shortest exact form: 0.30000000000000004 -> 0.3, 0.1001 stays 0.1001
+       (12 significant digits, never an exponent for a value in a person's range). */
+    function fmt(v) {
+        var x = parseFloat(Number(v).toPrecision(12));
+        var s = String(x);
+        if (s.indexOf('e') < 0) return s;
+        return Math.abs(x) >= 1e-6 && Math.abs(x) < 1e21 ? x.toFixed(12).replace(/0+$/, '').replace(/\.$/, '') : s;
+    }
     function num(v, unit) {
         if (v === null || v === undefined) return '';
-        if (typeof v === 'number') return (Math.abs(v) >= 1000 || Number.isInteger(v) ? String(v) : v.toPrecision(4)) + (unit ? ' ' + unit : '');
+        if (typeof v === 'number') return fmt(v) + (unit ? ' ' + unit : '');
         return String(v);
     }
     function renderChart(tl) {
@@ -464,17 +473,20 @@
         if (!rows || !rows.length) { if (sum) sum.textContent = ''; host.appendChild(el('p', 'ui-text-quiet', 'No pulse to compare.')); return; }
         var U = UIkit();
         var lines = lineOfChannel(tl);
+        var oneLevel = rows.every(function (r) { var a = r.actual || {}; return a.max_v === a.min_v; });
         var data = rows.map(function (r) {
             var a = r.actual || {};
             var i = r.intended || {};
+            var levels = oneLevel ? [num(a.max_v, 'V')] : [num(a.max_v, 'V'), num(a.min_v, 'V')];
             return [{ chip: r.operation },
                     i.length !== null ? num(i.length, 'ns') : i.length_source,
                     num(a.length_ns, 'ns'),
-                    i.amplitude !== null ? num(i.amplitude, 'V') : i.amplitude_source,
-                    num(a.max_v, 'V'), num(a.min_v, 'V'), num(a.start_ns, 'ns')];
+                    i.amplitude !== null ? num(i.amplitude, 'V') : i.amplitude_source]
+                .concat(levels, [num(a.start_ns, 'ns')]);
         });
-        var t = U.table(['Pulse', 'Length entered', 'In config', 'Amplitude entered', 'Maximum', 'Minimum', 'Starts at'],
-                        data, false, [1, 2, 3, 4, 5, 6], 'Entered and actual');
+        var cols = ['Pulse', 'Length entered', 'In config', 'Amplitude entered']
+            .concat(oneLevel ? ['Level'] : ['Maximum', 'Minimum'], ['Starts at']);
+        var t = U.table(cols, data, false, cols.map(function (_c, k) { return k; }).slice(1), 'Entered and actual');
         var flagged = 0;
         Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
             var r = rows[k], tds = tr.children, tones = r.tones || {};
@@ -484,10 +496,10 @@
             if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
             if (tones.amplitude) { tds[3].classList.add(CELL_TONE[tones.amplitude]); flagged++; }
             // only the cell that breaks the port's limit is red, with the limit beside it
-            [['max', 4, 1], ['min', 5, -1]].forEach(function (x) {
+            [['max', 4, 1], ['min', oneLevel ? 4 : 5, -1]].forEach(function (x) {
                 if (tones[x[0]] !== 'danger') return;
                 tds[x[1]].classList.add(CELL_TONE.danger);
-                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + (+(x[2] * r.actual.limit_v).toPrecision(4)) + ' V'));
+                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(x[2] * r.actual.limit_v, 'V')));
             });
         });
         host.appendChild(t);
@@ -552,40 +564,87 @@
             ['czg-sec-chart', 'czg-sec-intent'].forEach(function (id) { if ($(id)) $(id).hidden = true; });
         }
     }
+    var PAIR_MARK = { ok: ['ok', 'ok'], fail: ['danger', 'cannot'], unchecked: ['warn', 'not checked'] };
+    function pairMark(x) {
+        if (!(x.verdict && x.verdict.allowed)) return 'fail';
+        return x.verdict.state === 'verified' ? 'ok' : 'unchecked';
+    }
+    /* More than one pair: a switch at the top of the evidence column, each
+       option with its own verdict mark; everything below follows the choice. */
+    function renderPairSwitch() {
+        var host = clear($('czg-pairs'));
+        var pairs = (S.check && S.check.pairs) || [];
+        if (!host) return;
+        host.hidden = pairs.length < 2;
+        if (pairs.length < 2) return;
+        var U = UIkit();
+        if (pairs.length <= 4) {
+            var seg = U.segmented(pairs.map(function (x, k) { return { label: x.pair, selected: k === S.pairIdx }; }), 'Pair shown');
+            Array.prototype.slice.call(seg.children).forEach(function (b, k) {
+                var m = PAIR_MARK[pairMark(pairs[k])];
+                b.setAttribute('data-czg-pair-idx', String(k));
+                b.appendChild(document.createTextNode(' '));
+                b.appendChild(U.badge(m[1], m[0]));
+            });
+            host.appendChild(seg);
+        } else {
+            var sel = U.select({ id: 'czg-pair-shown', label: 'Pair shown', value: String(S.pairIdx),
+                options: pairs.map(function (x, k) { return { value: String(k), label: x.pair + ' (' + PAIR_MARK[pairMark(x)][1] + ')' }; }) });
+            host.appendChild(sel);
+        }
+    }
+    function renderPair() {
+        var pairs = (S.check && S.check.pairs) || [];
+        var p = pairs[S.pairIdx] || pairs[0];
+        if (p) {
+            renderChart(p.ok ? p.timeline : null);
+            renderIntent(p.intent, p.timeline);
+            renderChecks(p);
+            renderTiles(p);
+            renderWrites(pairs.length > 1 ? p : null);
+        }
+        showSections(p);
+        if (p && !p.ok && pairs.length > 1) {
+            var c = $('czg-chart');
+            if (c) { clear(c).appendChild(el('p', 'ui-text-quiet', p.pair + ' cannot be planned: ' + (p.refusals || []).join(' '))); }
+            var sec = $('czg-sec-chart');
+            if (sec) sec.hidden = false;
+        }
+        renderPairSwitch();
+    }
     function renderCheck() {
         var c = S.check;
         var ev = $('czg-evidence');
         if (ev) ev.classList.remove('czg-stale');
-        var p = (c.pairs || [])[0];
-        if (p) {
-            renderChart(p.timeline);
-            renderIntent(p.intent, p.timeline);
-            renderChecks(p);
-            renderTiles(p);
-        }
-        showSections(p);
+        var pairs = c.pairs || [];
+        var firstBad = -1;
+        pairs.forEach(function (x, k) { if (firstBad < 0 && pairMark(x) === 'fail') firstBad = k; });
+        S.pairIdx = firstBad >= 0 ? firstBad : 0;
+        renderPair();
         var ok = allowedPairs();
-        var no = (c.pairs || []).filter(function (x) { return !(x.verdict && x.verdict.allowed); });
-        var parts = [];
+        var no = pairs.filter(function (x) { return !(x.verdict && x.verdict.allowed); });
+        var reason = function (x) { return x.verdict.headline || x.verdict.reason; };
+        var many = pairs.length > 1;
         if (!ok.length) {
-            alertBox(banner('danger', 'Cannot be created yet', (no.map(function (x) { return (c.pairs.length > 1 ? x.pair + ': ' : '') + (x.verdict.headline || x.verdict.reason); }).join(' '))
-                + ' Change the inputs and check again.'));
+            alertBox(banner('danger', many ? 'None of the ' + pairs.length + ' pairs can be created yet' : 'Cannot be created yet',
+                no.map(function (x) { return (many ? x.pair + ': ' : '') + reason(x); }).join(' ') + ' Change the inputs and check again.'));
+        } else if (no.length) {
+            alertBox(banner('danger', no.length + ' of ' + pairs.length + ' cannot be created: ' + no.map(function (x) { return x.pair; }).join(', '),
+                no.map(function (x) { return x.pair + ': ' + reason(x); }).join(' ') + ' The other ' + ok.length
+                + (ok.length === 1 ? ' pair' : ' pairs') + ' can still be created.'));
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
             var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
             alertBox(banner('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record says it was not checked.'));
-        } else if (no.length) {
-            alertBox(banner('ok', 'Ready to create on ' + ok.length + (ok.length === 1 ? ' pair' : ' pairs'),
-                'Left out: ' + no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
         } else {
-            alertBox(banner('ok', ok.length > 1 ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
-                'The lab\'s code built ' + (ok.length > 1 ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'));
+            alertBox(banner('ok', many ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
+                'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'));
         }
-        if (no.length && ok.length) parts.push(no.length + ' left out');
         S.phase = ok.length ? 'create' : 'check';
         S.checkSig = c.plan_sig;
         var verified = ok.length && ok.every(function (x) { return x.verdict.state === 'verified'; });
         setBusy(false, !ok.length ? 'Checked: nothing can be created. Change the inputs.'
-            : (verified ? 'Checked with the lab code. ' : 'Not checked with the lab code. ') + (parts.length ? parts.join(' ') + '. ' : '') + 'Press Create to add it to the working copy.');
+            : (verified ? 'Checked with the lab code. ' : 'Not checked with the lab code. ')
+            + 'Press Create to add ' + (ok.length === 1 ? 'it' : 'the ' + ok.length + ' gates') + ' to the working copy.');
     }
     function check() {
         if (!S || S.busy) return Promise.resolve();
@@ -657,6 +716,10 @@
         alertBox(banner('ok', 'Created ' + made.join(', '),
             'Not on the chip yet: press Apply to write it. The gate is not active; the pair\'s cz stays as it was.'
             + (skip.length ? ' Left out: ' + skip.join(' ') : '')));
+        // move the focus off the form before hiding it: a focused element that
+        // disappears leaves the dialog without focus (Chrome then paints a stray mark)
+        var pb = $('czg-primary');
+        if (pb) { try { pb.focus(); } catch (e) { /* not focusable */ } }
         var f = $('czg-form');
         if (f) f.hidden = true;
         var ev = $('czg-evidence');
@@ -765,6 +828,8 @@
             if (p && window.htmx) window.htmx.ajax('GET', '/pair/' + encodeURIComponent(p), { target: '#inspector-pane', swap: 'innerHTML' });
             return;
         }
+        var seg = t.closest('[data-czg-pair-idx]');
+        if (seg) { S.pairIdx = +seg.getAttribute('data-czg-pair-idx'); renderPair(); return; }
         if (t.closest('#czg-primary')) {
             if (S.busy) return;
             if (S.phase === 'done') close();
@@ -775,6 +840,7 @@
     document.addEventListener('change', function (ev) {
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
+        if (t.id === 'czg-pair-shown') { S.pairIdx = +t.value; renderPair(); return; }
         if (t.id === 'czg-pair') { fillPairLine(); fillFrom(); fillModel(); fillMore(); }
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');

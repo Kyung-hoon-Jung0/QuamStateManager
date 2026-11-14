@@ -148,8 +148,14 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
     return {"lanes": out, "notes": notes, "cannot_draw": None}
 
 
+def fmt_num(v: float) -> str:
+    """The shortest exact form a person reads: 12 significant digits, no trailing
+    zeros (0.30000000000000004 -> 0.3; 0.1001 stays 0.1001)."""
+    return repr(float(f"{float(v):.12g}")).removesuffix(".0")
+
+
 def _fmt_v(v: float) -> str:
-    return f"{v:.4g} V"
+    return f"{fmt_num(v)} V"
 
 
 def tiles(data: dict) -> list[dict]:

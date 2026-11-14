@@ -208,7 +208,12 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     prim().click();
     await settle();
     if (process.env.CZG_DEBUG) console.log('DBG', prim().textContent, '|', alertText(), '|', $('#czg-status').textContent, sent.slice(-2).map(s => s.kind));
-    ok(prim().textContent === 'Create gate' && /Ready to create on 1 pair/.test(alertText()) && /Left out/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named, the rest can be created');
+    ok(prim().textContent === 'Create gate' && /1 of 2 cannot be created: q2-3/.test(alertText()) && /can still be created/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named in the banner, the rest can still be created');
+    ok(!$('#czg-pairs').hidden && $('#czg-pairs').querySelectorAll('[data-czg-pair-idx]').length === 2 && $('#czg-pairs .ui-segmented-on').textContent.indexOf('q2-3') === 0 && $('#czg-pairs .ui-badge--danger'), 'pair switch: one option per pair with its mark, the failing pair shown first');
+    $('#czg-pairs [data-czg-pair-idx="0"]').click();
+    await settle();
+    ok($('#czg-pairs .ui-segmented-on').textContent.indexOf('q1-2') === 0 && /op_q1-2/.test($('#czg-intent').textContent), 'choosing a pair shows its own evidence');
+    ok(/0.18 V/.test($('#czg-intent').textContent) && !/0.1800/.test($('#czg-intent').textContent), 'numbers in the shortest exact form');
 
     // not checked wording
     type($('input[data-czg-name="amplitude"]'), '0.25');
