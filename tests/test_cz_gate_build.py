@@ -586,17 +586,38 @@ def test_copy_resets_results_and_lists_kept_macro_keys():
     m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
     m.update({"fidelity": {"rb": 0.9917}, "phase_shift_target": 0.3141,
               "extras": {"note": 7.77}, "spectator_qubits": {"q3": "#/qubits/q3"},
-              "spectator_qubits_control": [1], "duration": 124, "label": "fast"})
+              "spectator_qubits_control": [1], "label": "fast"})
     res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
     macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
     assert macro["fidelity"] == {} and macro["extras"] == {}
     assert macro["phase_shift_target"] == 0.0
     assert macro["spectator_qubits"] == {} and macro["spectator_qubits_control"] == []
-    assert macro["duration"] == "#./inferred_duration"
     assert res["fields"]["macro"] == {"label": cgb.FROM_MODEL}
     text = json.dumps(res["creates"])
-    for n in ("0.9917", "0.3141", "7.77", "124"):
+    for n in ("0.9917", "0.3141", "7.77"):
         assert n not in text
+
+
+def _copy_with(**extra):
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"].update(extra)
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    return dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"], res["fields"]["macro"]
+
+
+def test_copy_keeps_a_lab_duration_reference_silently():
+    macro, kept = _copy_with(duration="#./total_duration")
+    assert macro["duration"] == "#./total_duration" and "duration" not in kept
+
+
+def test_copy_keeps_a_plain_duration_and_lists_it():
+    macro, kept = _copy_with(duration_qubit=40)
+    assert macro["duration_qubit"] == 40 and kept["duration_qubit"] == cgb.FROM_MODEL
+
+
+def test_copy_keeps_a_none_without_listing_it():
+    macro, kept = _copy_with(coupler_flux_pulse=None)
+    assert macro["coupler_flux_pulse"] is None and "coupler_flux_pulse" not in kept
 
 
 def test_cross_pair_copy_refuses_a_different_moving_qubit():

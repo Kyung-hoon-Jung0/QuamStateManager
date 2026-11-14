@@ -696,15 +696,10 @@ def _rewrite_refs(value: Any, old_prefix: str, new_prefix: str) -> Any:
     return value
 
 
-_RESULT_KEYS = {"duration", "duration_qubit", "id"}
-
-
 def _structure_only(model: dict, pulse_keys: list[str]) -> tuple[dict, dict]:
     """The model macro without its results: fidelity, extras and spectators
-    emptied, phase shifts at 0.0, keys the known skeletons treat as results
-    at the skeleton's value. Returns (macro, the other keys kept from the
-    model)."""
-    skeleton = {**_coupler_cz_skeleton(), **_cz_skeleton()}
+    emptied, phase shifts at 0.0; every other key keeps the model's value.
+    Returns (macro, the kept plain values: not references, not None)."""
     macro: dict[str, Any] = {}
     kept: dict[str, str] = {}
     for k, v in model.items():
@@ -716,11 +711,10 @@ def _structure_only(model: dict, pulse_keys: list[str]) -> tuple[dict, dict]:
             macro[k] = 0.0
         elif k.startswith("spectator_qubits"):
             macro[k] = [] if isinstance(v, list) else {}
-        elif k in _RESULT_KEYS and k in skeleton:
-            macro[k] = copy.deepcopy(skeleton[k])
         else:
             macro[k] = copy.deepcopy(v)
-            kept[k] = FROM_MODEL
+            if v is not None and not (isinstance(v, str) and v.startswith("#")):
+                kept[k] = FROM_MODEL
     return macro, kept
 
 
