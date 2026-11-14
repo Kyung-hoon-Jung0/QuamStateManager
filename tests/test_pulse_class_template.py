@@ -1,12 +1,13 @@
 """Pulse class template, draft store and the lab-side draft runner.
 
-Lab-env tests run the real runner in the lab interpreter and skip when it is
-absent on this machine."""
+Lab-env tests run the real runner in the lab interpreter named by
+``SM_LAB_ENV_PYTHON`` and skip when it is not set or absent."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -16,8 +17,8 @@ import pytest
 from quam_state_manager.core import pulse_class_drafts as D
 from quam_state_manager.core import pulse_class_template as T
 
-LAB_PY = Path("C:/ProgramData/miniconda3/envs/gx_qdac_ff/python.exe")
-lab = pytest.mark.skipif(not LAB_PY.is_file(), reason="lab env not on this machine")
+LAB_PY = Path(os.environ.get("SM_LAB_ENV_PYTHON") or "__no_lab_env__")
+lab = pytest.mark.skipif(not LAB_PY.is_file(), reason="SM_LAB_ENV_PYTHON not set or absent")
 F = T.FieldSpec
 FORMULA_A = ("amplitude * np.where(t < edge_length, 0.5*(1-np.cos(np.pi*t/edge_length)),\n"
              "    np.where(t > length - edge_length, "
@@ -103,17 +104,41 @@ def test_rewrite_changes_only_the_region():
     lambda s: s.replace(T.REGION_END + "\n", ""),
     lambda s: s.replace(T.REGION_BEGIN + "\n", ""),
     lambda s: s.replace(T.REGION_BEGIN + "\n", T.REGION_BEGIN + "\n" + T.REGION_BEGIN + "\n"),
-    lambda s: s.replace("        return (\n", "        x = 1\n        return (\n"),
-    lambda s: s.replace("    amplitude: float = 0.1", "    amplitude: float = 0.1 + 0"),
     lambda s: s + "\n" + T.REGION_END + "\n",
-    lambda s: s.replace("    amplitude: float = 0.1  #", "    amplitude: float = 0.10  #"),
 ])
 def test_broken_markers_are_code_view_only(breaker):
     src = breaker(T.render(spec_a()))
     p = T.parse(src)
     assert not p.editable
     assert p.reason == T.CODE_VIEW_ONLY_LINE
-    with pytest.raises(T.TemplateError, match="code view"):
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CODE_VIEW_ONLY_LINE
+
+
+@pytest.mark.parametrize("breaker", [
+    lambda s: s.replace("        return (\n", "        x = 1\n        return (\n"),
+    lambda s: s.replace("    amplitude: float = 0.1", "    amplitude: float = 0.1 + 0"),
+    lambda s: s.replace("    amplitude: float = 0.1  #", "    amplitude: float = 0.10  #"),
+    lambda s: s.replace("    amplitude: float = 0.1  #", "    amplitude: float =  0.1  #"),
+])
+def test_changed_region_names_the_region_not_the_markers(breaker):
+    src = breaker(T.render(spec_a()))
+    p = T.parse(src)
+    assert not p.editable
+    assert p.reason == T.REGION_CHANGED_LINE and p.reason != T.CODE_VIEW_ONLY_LINE
+    assert "lines between the template markers" in p.reason
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.REGION_CHANGED_LINE
+
+
+def test_region_that_fails_validation_names_the_rule():
+    src = T.render(spec_a()).replace("    length: int = 100", "    length: int = 42")
+    p = T.parse(src)
+    assert not p.editable
+    assert p.reason.startswith(T.REGION_CHANGED_LINE) and T.LENGTH_RULE_LINE in p.reason
+    with pytest.raises(T.TemplateError, match="divisible by 4"):
         T.rewrite(src, spec_a())
 
 
@@ -506,8 +531,9 @@ def test_crlf_file_names_the_line_endings():
     p = T.parse(src)
     assert not p.editable
     assert p.reason == T.CRLF_LINE and "line endings" in p.reason
-    with pytest.raises(T.TemplateError, match="code view"):
+    with pytest.raises(T.TemplateError) as ei:
         T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CRLF_LINE
 
 
 def test_length_rule_line_names_the_floor_honestly():
@@ -515,3 +541,151 @@ def test_length_rule_line_names_the_floor_honestly():
     assert "QM config rule)" not in line
     assert "conservative" in line and "divisible by 4" in line
     assert " -- " not in line
+
+
+# ------------------------------------------------- review round 3 pins
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_float_default_refused(bad):
+    s = spec_b()
+    s.fields.append(F("limit", "float", bad))
+    with pytest.raises(T.TemplateError, match="'limit': the default must be a finite number"):
+        T.render(s)
+
+
+@pytest.mark.parametrize("ok", [1e-9, -0.5, 3])
+def test_finite_float_defaults_still_render(ok):
+    s = spec_b()
+    s.fields.append(F("w", "float", ok))
+    p = T.parse(T.render(s))
+    assert p.editable and p.spec.fields[-1].default == float(ok)
+
+
+def test_int_and_negative_defaults_still_render():
+    s = spec_b()
+    s.fields += [F("k", "int", -3), F("m", "int", 7)]
+    assert T.parse(T.render(s)).editable
+
+
+@pytest.mark.parametrize("name", ["calculate_waveform", "waveform_function", "_sm_formula",
+                                  "_get_sampling_rate", "__init__", "__post_init__", "_x",
+                                  "apply_to_config", "get_reference", "float", "int", "bool",
+                                  "str", "play", "to_dict"])
+def test_reserved_field_names_refused(name):
+    s = spec_b()
+    s.fields.append(F(name, "float", 1.0))
+    with pytest.raises(T.TemplateError, match="is reserved"):
+        T.render(s)
+
+
+@pytest.mark.parametrize("name", ["amplitude_scale", "duration_ns", "waveform", "play_rate",
+                                  "lengthy"])
+def test_names_that_only_look_reserved_are_fine(name):
+    s = spec_b()
+    s.fields.append(F(name, "float", 1.0))
+    assert T.parse(T.render(s)).editable
+
+
+def test_template_names_come_from_the_template_text():
+    names = T.reserved_field_names()
+    assert {"_sm_formula", "waveform_function", "_get_sampling_rate"} <= names
+    assert "length" not in names and "amplitude" not in names
+
+
+@pytest.mark.skipif(not (LAB_PY.is_file() or __import__("importlib").util.find_spec("quam")),
+                    reason="no env with quam")
+def test_reserved_names_cover_the_installed_pulse_base():
+    py = str(LAB_PY) if LAB_PY.is_file() else __import__("sys").executable
+    out = subprocess.run(
+        [py, "-c", "from quam.components.pulses import Pulse\n"
+                   "print('NAMES=' + ','.join(n for n in dir(Pulse) if not n.startswith('_')))"],
+        capture_output=True, text=True, timeout=300)
+    line = [x for x in out.stdout.splitlines() if x.startswith("NAMES=")]
+    assert line, out.stderr[-2000:]
+    base = set(line[0][6:].split(",")) - {"length"}
+    assert base <= T.reserved_field_names(), sorted(base - T.reserved_field_names())
+
+
+@pytest.mark.parametrize("formula", ["amplitude * np.ones(n) if '''a\nb''' else 0",
+                                     'amplitude * np.ones(n) if """a\n  b""" else 0',
+                                     "amplitude * np.ones(n) if f'''{n}\nb''' else 0"])
+def test_formula_with_a_multi_line_string_refused(formula):
+    s = spec_b()
+    s.formula = formula
+    with pytest.raises(T.TemplateError, match="string that spans lines"):
+        T.render(s)
+
+
+@pytest.mark.parametrize("formula", ["amplitude * np.ones(n) if 'a' else 0",
+                                     "(amplitude * np.ones(n)  # a comment\n    + 0 * n)",
+                                     "amplitude * np.ones(n) if f'{n}' else 0",
+                                     "(amplitude\n  # 'quoted'\n  * np.ones(n))"])
+def test_formula_with_one_line_strings_and_comments_round_trips(formula):
+    s = spec_b()
+    s.formula = formula
+    p = T.parse(T.render(s))
+    assert p.editable and p.spec.formula == formula
+
+
+def test_zero_waveform_is_never_ok_even_if_called_proportional():
+    src = T.render(spec_b())
+    v = T.proportional_verdict(src, {"proportional": True, "zero_waveform": True})
+    assert v["level"] == "unknown" and v["line"] == T.CANNOT_TELL_LINE
+
+
+def test_str_default_holding_the_unit_mark_refused():
+    s = spec_b()
+    s.fields.append(F("label", "str", "a  # unit: b"))
+    with pytest.raises(T.TemplateError, match="may not contain"):
+        T.render(s)
+
+
+def test_unit_with_hash_refused():
+    s = spec_b()
+    s.fields[0] = F("amplitude", "float", 0.1, "V # x")
+    with pytest.raises(T.TemplateError, match="without '#'"):
+        T.render(s)
+
+
+def test_lf_rewrite_keeps_bytes_outside_the_region():
+    src = T.render(spec_a())
+    src = src.replace("import numpy as np\n", "import numpy as np\nimport math  # mine\n")
+    src += "\n    def extra(self):\n        return 1\n"
+    s = spec_a()
+    s.fields.append(F("w", "float", 2.0, "ns"))
+    out = T.rewrite(src, s)
+    b, e = T.parse(src).region
+    assert out[:b] == src[:b] and out.endswith(src[e:])
+    assert T.parse(out).spec.fields[-1].name == "w"
+
+
+def test_scope_with_a_trailing_newline_is_hashed(tmp_path):
+    assert D._scope_key("chip\n").startswith("s_")
+    D.save_draft(tmp_path, "chip\n", "SquaredAmp", "x")
+    assert D.load_draft(tmp_path, "chip", "SquaredAmp") is None
+
+
+@pytest.mark.parametrize("scope", ["nul", "NUL", "con.txt", "com1", "lpt9.x", "chip."])
+def test_windows_hostile_scope_refused(tmp_path, scope):
+    with pytest.raises(D.DraftError, match="drafts cannot be kept"):
+        D.save_draft(tmp_path, scope, "SquaredAmp", "x")
+    with pytest.raises(D.DraftError):
+        D.list_drafts(tmp_path, scope)
+
+
+@pytest.mark.parametrize("scope", ["chip-1", "null", "console", "chip.v2", "com10"])
+def test_ordinary_scopes_kept_as_is(scope):
+    assert D._scope_key(scope) == scope
+
+
+def test_windows_line_ending_inside_the_region_is_named():
+    src = T.render(spec_a()).replace("    length: int = 100  # unit: ns\n",
+                                     "    length: int = 100  # unit: ns\r\n")
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
+
+
+def test_windows_line_ending_on_the_end_marker_is_named():
+    src = T.render(spec_a()).replace(T.REGION_END + "\n", T.REGION_END + "\r\n")
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
