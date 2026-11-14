@@ -212,6 +212,50 @@ class TestRevertTheFailedTargets:
         assert [x["path"] for x in body["result"]["reverted"]] == ["qubits.q1.T1"], body
         assert chip.live_state()["qubits"]["q1"]["f_01"] == 5.11e9    # not in what was left: untouched
 
+    def test_a_legacy_record_keeps_what_was_reverted_and_never_calls_it_changed(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)        # changed outside after the run
+        first = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert [x["path"] for x in first["result"]["reverted"]] == ["qubits.q1.f_01"]
+        # a record written before `remaining` existed
+        legacy = dict(first["result"]); legacy.pop("remaining")
+        for k in ("reverted_now", "already_reverted", "unchanged", "presses"):
+            legacy.pop(k, None)
+        scheduler.set_item_failed_revert(inst, iid, legacy)
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        res = body["result"]
+        assert [c["path"] for c in res["refused"]] == ["qubits.q1.T1"]   # still changed, still named
+        assert [x["path"] for x in res["reverted"]] == ["qubits.q1.f_01"]  # earlier outcome kept
+        assert res["reverted_now"] == [] and res["remaining"] == []
+        assert "reverted earlier 1: qubits.q1.f_01" in body["message"]
+        assert "qubits.q1.f_01: the live value changed" not in body["message"]
+        assert res["presses"] and res["presses"][-1]["message"] == legacy["message"]
+        assert chip.live_state()["qubits"]["q1"]["T1"] == 9.9e-05        # never written
+        item = scheduler._find(scheduler.load_queue(inst), iid)
+        assert [x["path"] for x in item["failed_revert"]["reverted"]] == ["qubits.q1.f_01"]
+
+    def test_a_value_already_back_at_its_old_value_is_not_attempted(self, chip):
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 2.1e-05)        # put back by hand
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        res = body["result"]
+        assert body["ok"], body
+        assert [x["path"] for x in res["reverted"]] == ["qubits.q1.f_01"]
+        assert [a["path"] for a in res["already_reverted"]] == ["qubits.q1.T1"]
+        assert res["refused"] == [] and res["remaining"] == []
+        assert "already reverted 1: qubits.q1.T1" in body["message"]
+
+    def test_a_write_that_changed_nothing_is_not_counted_as_reverted(self, chip):
+        chip.set_live("qubits.q1.f_01", 5.11e9)
+        inst, iid = _record(chip, [_patch("q1", "f_01", 5.11e9, 5.11e9)])
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        res = body["result"]
+        assert res["reverted"] == [] and res["already_reverted"] == []
+        assert [u["path"] for u in res["unchanged"]] == ["qubits.q1.f_01"]
+        assert res["remaining"] == [] and "unchanged by the run 1" in body["message"]
+
     def test_unapplied_edits_refuse_before_writing(self, chip):
         patches = self._node_wrote(chip)
         inst, iid = _record(chip, patches)
