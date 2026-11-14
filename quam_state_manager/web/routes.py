@@ -37253,7 +37253,7 @@ def _pair_detuning_export_units(rows: list[dict], props: list, heads: dict,
         if kinds == {"Hz"}:
             units[p] = "Hz"
             heads[p] = f"{p} [Hz]"
-        elif len(kinds) > 1:
+        elif len(kinds) > 1 or kinds == {""}:
             units[p] = ""
             heads[p] = p
             col = unit_cols[p] = f"{p}_unit"
