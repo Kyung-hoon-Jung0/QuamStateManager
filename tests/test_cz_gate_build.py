@@ -937,17 +937,22 @@ def test_free_text_is_neither_renamed_nor_refused():
     assert macro["label"] == "q4"  # an exact model qubit id maps by role
 
 
-def test_a_missing_target_qubit_blocks_only_gates_that_play_there():
+def test_a_gate_sm_builds_needs_both_qubits_of_the_pair():
+    """Both classes SM builds align the channels of both qubits when the gate
+    runs (seen on a real chip: the lab's code fails on a pair whose target is
+    not on the chip), so the plan refuses instead of proposing such a gate."""
     s = _chip()
     del s["qubits"]["q2"]
-    res = _plan(s)  # official class on the moving (control) line
-    assert "qubits.q1.z.operations.cz_new_pulse_q1_q2" in dict(res["creates"])
+    res = _plan(s)  # official class; the pulse plays on the control line only
+    assert "points at the qubit q2, which this chip does not have" in res["error"]
+    assert "qubit_target" in res["error"] and "creates" not in res
     res = cgb.plan(s, "q1-2", gate_name="cz_c", gate_class=cgb.COUPLER_CZ_GATE,
                    pulses={"coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}})
-    assert "creates" in res
-    s["qubit_pairs"]["q1-2"]["moving_qubit"] = "target"
-    res = _plan(s)
-    assert "points at #/qubits/q2, which this chip does not have" in res["error"]
+    assert "points at the qubit q2" in res["error"]
+    s = _chip()
+    del s["qubits"]["q1"]
+    assert "qubit_control" in _plan(s)["error"]
+    assert "creates" in _plan(_chip())  # both qubits present: planned
 
 
 def test_a_copy_that_never_touches_the_missing_qubit_is_planned():
