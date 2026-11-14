@@ -4987,34 +4987,90 @@
     _dragGhostSrc = null;
   }
 
-  // The Review row for coupler port delays, under the build's own conditions:
-  // only LF-FEM coupler outputs take the moving qubit's flux port delay
-  // (run_build _align_coupler_delays), and Re-generate keeps stored values and
-  // offers the flux delay only for ports holding 0 (core/regenerate).
-  function couplerLineOnLf(ln) {
+  // The Review row "Output timing", from the inputs the build uses. Mirrors
+  // run_build _output_timing_plan / _align_output_timing: the latest MW band
+  // in use is the reference (band 2 when present, else bands 1 and 3); an
+  // earlier MW output gets the difference as its port delay, every LF-FEM
+  // flux port (qubit z, coupler) gets the reference latency, and a resonator
+  // whose readout output shifted gets the same shift on its time of flight.
+  // Re-generate keeps stored delays and asks before shifting them.
+  var BAND_LATENCY_NS = { 1: 141, 2: 161, 3: 141 };   // run_build _BAND_TO_DELAY_NS
+  var MW_BAND_GROUP = { drive: "qubit", resonator: "resonator", twpa_pump: "twpa" };
+
+  function lineOutFem(ln) {
     var ch = ln.channel;
     if (ch && ch.con != null) {
-      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot) === "lf-fem";
+      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot);
     }
-    var c = ((allocEntry(ln.element) || {}).c || [])[0];
-    return !!c && femTypeAt(c.con, c.slot) === "lf-fem";
+    if (ch && ch.kind === "mw_fem") return "mw-fem";
+    if (ch && ch.kind === "lf_fem") return "lf-fem";
+    var outs = (((allocEntry(ln.element) || {})[ALLOC_KEY[ln.line]]) || []).filter(
+      function (x) { return (x.io_type || "output") === "output"; });
+    return outs.length ? femTypeAt(outs[0].con, outs[0].slot) : null;
   }
 
-  function couplerDelayReviewText(sp) {
-    var lines = sp.lines.filter(function (ln) { return ln.line === "coupler"; });
-    if (!lines.length) return null;
-    if (!lines.some(couplerLineOnLf)) {
-      return "The coupler outputs are not LF-FEM outputs, so the flux delay rule does not " +
-        "apply: their delays are left as they are.";
-    }
+  function lineMwBand(sp, ln) {
+    var grp = MW_BAND_GROUP[ln.line];
+    if (!grp || lineOutFem(ln) !== "mw-fem") return null;
+    var row = ((sp.populate || {})[grp] || {})[ln.element] || {};
+    var b = parseInt(row.band, 10);
+    if (b === 1 || b === 2 || b === 3) return b;
+    return bandOf(row.LO_frequency);
+  }
+
+  function outputTimingPlan(sp) {
+    var bands = [], tofShift = 0, flux = [];
+    sp.lines.forEach(function (ln) {
+      var b = lineMwBand(sp, ln);
+      if (b) bands.push({ line: ln, band: b });
+      if ((ln.line === "flux" || ln.line === "coupler")) flux.push(ln);
+    });
+    var target = null;
+    bands.forEach(function (x) {
+      var l = BAND_LATENCY_NS[x.band];
+      if (target === null || l > target) target = l;
+    });
+    var shifted = {};
+    bands.forEach(function (x) {
+      var s = target - BAND_LATENCY_NS[x.band];
+      if (s > 0) shifted[x.band] = s;
+      if (s > 0 && x.line.line === "resonator") tofShift += 1;
+    });
+    return { target: target, bands: bands, shifted: shifted, tofResonators: tofShift,
+             fluxOnLf: flux.filter(function (ln) { return lineOutFem(ln) === "lf-fem"; }),
+             flux: flux };
+  }
+
+  function outputTimingReviewText(sp) {
+    var plan = outputTimingPlan(sp);
+    if (!plan.bands.length && !plan.flux.length) return null;
     if (state.mode === "regenerate") {
-      return "Stored coupler port delays are kept. Ports holding 0 are offered the moving " +
-        "qubit's flux port delay before the build.";
+      return "Stored port delays and times of flight are kept. A chip that mixes band 2 with " +
+        "bands 1 and 3 and holds 0 on its MW outputs is offered a 20 ns shift of the earlier " +
+        "outputs before the build.";
     }
-    return "Each coupler LF-FEM port gets its pair's moving-qubit flux port delay (the control " +
-      "qubit when none is set; with no flux line, the delay for that qubit's drive band). A " +
-      "coupler port shared by pairs that disagree keeps the first pair's value, and the build " +
-      "result names both.";
+    if (plan.flux.length && !plan.fluxOnLf.length && !plan.bands.length) {
+      return "The flux outputs are not LF-FEM outputs, so the delay rule does not apply: " +
+        "their delays are left as they are.";
+    }
+    var fluxText = plan.fluxOnLf.length ? "flux ports " + plan.target + " ns" :
+      "no LF-FEM flux ports";
+    if (plan.target === null) {
+      return "No MW output band is known yet: each coupler port takes its pair's flux delay.";
+    }
+    var used = {};
+    plan.bands.forEach(function (x) { used[x.band] = 1; });
+    var list = Object.keys(used).sort();
+    var early = Object.keys(plan.shifted).sort();
+    if (!early.length) {
+      var cls = used[2] ? "band 2" : "bands 1 and 3";
+      return "All MW outputs are in " + cls + ": " + fluxText + ".";
+    }
+    var tof = plan.tofResonators ? "; time of flight +20 ns on " + plan.tofResonators +
+      " resonator" + (plan.tofResonators === 1 ? "" : "s") : "";
+    function and(xs) { return xs.join(", ").replace(/, ([^,]*)$/, " and $1"); }
+    return "MW bands " + and(list) + " are in use: band " + and(early) +
+      " outputs get 20 ns so every MW output leaves together; " + fluxText + tof + ".";
   }
 
   function femTypeAt(con, slot) {
@@ -10714,8 +10770,9 @@
       var b = ((sp.populate || {}).coupler_models || {})[id];
       rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
     });
-    var couplerRow = couplerDelayReviewText(sp);
-    if (couplerRow) rows.push(["Coupler port delay", couplerRow]);
+    var timingRow = outputTimingReviewText(specWithCoBands());
+    if (timingRow) rows.push(["Output timing", timingRow,
+      "Starting values: output filters add latency, so calibrate xy-z timing on the chip."]);
     var modelErrors = couplerModelErrors();
     if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
@@ -10841,6 +10898,12 @@
     var cells = el.querySelectorAll("td");
     rows.forEach(function (r, i) {
       cells[i].textContent = r[1];
+      if (r[2]) {
+        var note = document.createElement("p");
+        note.className = "ui-note";
+        note.textContent = r[2];
+        cells[i].appendChild(note);
+      }
       // QA F21: the flagged path cells wear the warning colour
       if (String(r[1]).indexOf(REL_FLAG) >= 0) cells[i].classList.add("gen-cap-degrade");
     });
@@ -14031,6 +14094,7 @@
       qopReviewLines: qopReviewLines,
       enterReviewStep: enterReviewStep,
       specWithCoBands: specWithCoBands,   // docs/301 F33
+      outputTimingReviewText: outputTimingReviewText,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
