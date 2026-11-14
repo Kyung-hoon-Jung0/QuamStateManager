@@ -209,11 +209,12 @@ def reading_evidence(state):
         {"label": "Gate length", "value": "261", "unit": "ns"},
         {"label": "Highest level", "value": "0.1" if ok else "3", "unit": "V on q1.z", "tone": None if ok else "danger"},
         {"label": "Timing", "value": "101", "unit": "ns gap"}]}
-    rows = [[{"text": "cz_fast_pulse_q1_q2"}, "100 ns", "0.1 V" if ok else {"text": "3 V (limit 2.5 V)"}],
-            [{"text": "cz_fast_coupler_pulse_q1_q2"}, "60 ns", "0.05 V"]]
+    rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns", "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": "limit 2.5 V"},
+             {"text": "161 ns", "tone": "warn", "note": "port delay"}],
+            [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 4}, "60 ns", "0.05 V", "0 ns"]]
     table = {"part": "panel", "title": "Entered and actual", "flush": True,
              "summary": [{"text": "all as entered", "level": "ok"} if ok else {"text": "1 over the limit", "level": "danger"}],
-             "body": [{"part": "table", "columns": ["Pulse", "Length", "Max level"], "numeric": [1, 2], "rows": rows}]}
+             "body": [{"part": "table", "columns": ["Pulse", "Length", "Max level", "Starts at"], "numeric": [1, 2, 3], "rows": rows}]}
     names = ["Chip loads", "Operations exist", "Pulse lengths", "Preview equals config", "Timeline"]
     checks = [{"name": n, "state": "pass"} for n in names]
     checks.append({"name": "Output range", "state": "pass"} if ok else
@@ -225,7 +226,10 @@ def reading_evidence(state):
     written = {"part": "panel", "title": "Will be written", "fold": True, "hint": "working copy only; the chip changes on Apply",
                "summary": [{"text": "3", "level": "strong"}, "objects"],
                "body": ["Two pulses and one gate macro under the pair."]}
-    return [banner, stats, table, chk, written]
+    wave = {"part": "panel", "title": "Waveform", "hint": "program time, before filters",
+            "summary": [{"part": "line", "line": 1, "text": "q1.z"}, {"part": "line", "line": 4, "text": "coupler_q1_q2"}],
+            "body": [{"part": "placeholder", "text": "The lane chart renders here (gate timeline component)"}]}
+    return [banner, stats, wave, table, chk, written]
 
 
 def _reading():

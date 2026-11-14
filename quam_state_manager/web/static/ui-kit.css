@@ -143,6 +143,8 @@
     --ui-glyph-skip: "\2013";
     --ui-chip-h: 22px;
     --ui-line-dot: 8px;
+    --ui-placeholder-h: 180px;
+    --ui-row-focus: inset 0 0 0 2px var(--ui-accent);   /* keyboard focus on a list row, not the hover tint */
     --ui-r-dot: 2px;
     --ui-tag-pad: 0 .3rem;
     --ui-fs-tag: 11px;
@@ -948,7 +950,7 @@
 .ui-input--num.ui-input--num { width: var(--ui-input-num-w); text-align: right; font-family: var(--ui-font-mono); font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 .ui-input--num::-webkit-inner-spin-button, .ui-input--num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .ui-select--block.ui-select--block, .ui-input--block.ui-input--block { display: block; width: 100%; }
-.ui-input.ui-input::placeholder { color: var(--ui-text-3); }
+.ui-input.ui-input::placeholder { color: var(--ui-text-2); }
 .ui-select.ui-select:hover, .ui-input.ui-input:hover { border-color: var(--ui-ctl-border-hover); }
 .ui-select.ui-select:focus-visible, .ui-input.ui-input:focus-visible, .ui-input.ui-input:focus {
     border-color: var(--ui-accent); outline: 0; box-shadow: var(--ui-ctl-ring);
@@ -969,7 +971,7 @@
 .ui-input-unit > .ui-input.ui-input, .ui-input-unit > .ui-input.ui-input:hover, .ui-input-unit > .ui-input.ui-input:focus {
     height: auto; min-height: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: 0;
 }
-.ui-input-unit-text { padding-left: var(--ui-gap-1); color: var(--ui-text-3); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); white-space: nowrap; user-select: none; }
+.ui-input-unit-text { padding-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); white-space: nowrap; user-select: none; }
 .ui-input-unit--invalid.ui-input-unit--invalid { border-color: var(--ui-danger-text); }
 .ui-input-unit--invalid:focus-within { box-shadow: var(--ui-ctl-ring-danger); }
 .ui-input-unit--disabled.ui-input-unit--disabled { border-color: var(--ui-border); background-color: var(--ui-ctl-bg-disabled); }
@@ -1012,6 +1014,7 @@
 }
 .ui-menu-list--pick > .ui-option { grid-template-columns: var(--ui-menu-check) minmax(0, 1fr); }
 .ui-menu-list > .ui-option:hover, .ui-menu-list > .ui-option:focus { background: var(--ui-accent-bg); outline: 0; }
+.ui-menu-list > .ui-option:focus-visible { box-shadow: var(--ui-row-focus); }
 .ui-option-check { grid-row: 1 / span 2; align-self: start; position: relative; width: var(--ui-menu-check); height: var(--ui-menu-check); }
 .ui-option-check::after {
     content: ""; position: absolute; left: 30%; top: 12%; width: 28%; height: 55%;
@@ -1043,7 +1046,7 @@
    three text levels, colour only with a meaning. ---------------------- */
 /* text levels: strong = names and values, normal, quiet = explanations */
 .ui-text-strong { color: var(--ui-text); font-weight: var(--ui-fw); }
-.ui-text-quiet { color: var(--ui-text-3); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
+.ui-text-quiet { color: var(--ui-text-2); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
 .ui-text-ok { color: var(--ui-ok-text); font-weight: var(--ui-fw); }
 .ui-text-warn { color: var(--ui-warn-text); font-weight: var(--ui-fw); }
 .ui-text-danger { color: var(--ui-danger-text); font-weight: var(--ui-fw); }
@@ -1059,7 +1062,7 @@
 .ui-panel-head:last-child { border-bottom: 0; }
 .ui-panel-step { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: var(--ui-step); height: var(--ui-step); border: var(--ui-bw) solid var(--ui-accent-border); border-radius: var(--ui-r-round); background: var(--ui-accent-bg); color: var(--ui-accent); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-bold); line-height: var(--ui-lh-tight); }
 .ui-panel-title { margin: 0; font-size: var(--ui-fs-caps); font-weight: var(--ui-fw-bold); font-variant-caps: all-small-caps; letter-spacing: var(--ui-caps-track); line-height: var(--ui-lh-tight); color: var(--ui-text-2); }
-.ui-panel-hint { min-width: 0; color: var(--ui-text-3); font-size: var(--ui-fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-panel-hint { min-width: 0; color: var(--ui-text-2); font-size: var(--ui-fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ui-panel-sum { display: flex; align-items: center; gap: var(--ui-gap-2); margin-left: auto; flex: 0 0 auto; color: var(--ui-text-2); font-size: var(--ui-fs-sm); white-space: nowrap; }
 .ui-panel-body { display: flex; flex-direction: column; gap: var(--ui-gap-2); padding: var(--ui-gap-2) var(--ui-gap-3); }
 .ui-panel-body--flush { padding: 0; }
@@ -1094,7 +1097,7 @@
 /* stats: at most four key numbers; colour only on the abnormal tile */
 .ui-stats { display: grid; grid-template-columns: var(--ui-stat-cols); gap: var(--ui-gap-2); margin: 0; }
 .ui-stat { min-width: 0; padding: var(--ui-gap-1) var(--ui-gap-3) var(--ui-gap-2); border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-panel); background: var(--ui-surface-1); }
-.ui-stat-label { font-size: var(--ui-fs-caps); font-weight: var(--ui-fw-bold); font-variant-caps: all-small-caps; letter-spacing: var(--ui-caps-track); color: var(--ui-text-3); }
+.ui-stat-label { font-size: var(--ui-fs-caps); font-weight: var(--ui-fw-bold); font-variant-caps: all-small-caps; letter-spacing: var(--ui-caps-track); color: var(--ui-text-2); }
 .ui-stat-value { margin: 0; color: var(--ui-text); font-size: var(--ui-fs-stat); font-weight: var(--ui-fw-bold); font-variant-numeric: tabular-nums; line-height: var(--ui-lh-tight); overflow-wrap: anywhere; }
 .ui-stat-unit { margin-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); }
 .ui-stat--warn { border-color: var(--ui-warn-border); background: var(--ui-warn-bg); }
@@ -1113,6 +1116,15 @@
 .ui-result--skip::before { content: var(--ui-glyph-skip); }
 .ui-fail-row { margin: 0; padding: var(--ui-gap-1) var(--ui-gap-3); border-left: var(--ui-bw-strip) solid var(--ui-danger-text); border-radius: 0 var(--ui-r-btn) var(--ui-r-btn) 0; background: var(--ui-danger-bg); color: var(--ui-text); font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); }
 .ui-fail-row > .ui-fail-name { color: var(--ui-danger-text); font-weight: var(--ui-fw-bold); }
+
+/* table cell tones: a value that differs (warn) or is over a limit (danger) */
+.ui-table-cell.ui-cell--warn { background: var(--ui-warn-bg); color: var(--ui-warn-text); font-weight: var(--ui-fw-bold); }
+.ui-table-cell.ui-cell--danger { background: var(--ui-danger-bg); color: var(--ui-danger-text); font-weight: var(--ui-fw-bold); }
+.ui-cell-note { margin-left: var(--ui-gap-1); color: var(--ui-text-2); font-size: var(--ui-fs-xs); font-weight: var(--ui-fw-normal); }
+.ui-cell--warn > .ui-cell-note, .ui-cell--danger > .ui-cell-note { color: inherit; }
+
+/* placeholder: marks where a component renders (dashed, quiet, fixed height) */
+.ui-placeholder { display: flex; align-items: center; justify-content: center; box-sizing: border-box; min-height: var(--ui-placeholder-h); margin: 0; padding: var(--ui-gap-3); border: var(--ui-bw) dashed var(--ui-border-strong); border-radius: var(--ui-r-md); color: var(--ui-text-2); font-size: var(--ui-fs-sm); text-align: center; }
 
 /* line identity: a slot (left bar + tinted code chip) and a table-row dot;
    ui-line-1..6 pick the chart palette colour (--ui-line-N) */

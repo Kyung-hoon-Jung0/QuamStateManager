@@ -51,6 +51,22 @@
   "templates/ui_kit.html": 5,
   "templates/workbench.html": 1
  },
+ "bare_script_controls": {
+  "static/agent-setup.js": 8,
+  "static/agent.js": 3,
+  "static/all-values.js": 1,
+  "static/app.js": 10,
+  "static/autofit.js": 1,
+  "static/bulk-edit.js": 1,
+  "static/chip-status.js": 3,
+  "static/cz-plan.js": 3,
+  "static/dataset-virtual.js": 3,
+  "static/gen-additions.js": 1,
+  "static/generate.js": 14,
+  "static/grid-virt.js": 1,
+  "static/port-play.js": 15,
+  "static/scheduler.js": 4
+ },
  "color_literals": {
   "static/app.js": 130,
   "static/chip-status.js": 74,

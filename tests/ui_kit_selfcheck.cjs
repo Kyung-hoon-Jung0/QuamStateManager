@@ -31,11 +31,14 @@ const filled = window.UI.mountSamples(doc);
 
 const ATTRS = ["role", "aria-label", "aria-hidden", "aria-pressed", "type", "scope", "title", "disabled", "open", "checked", "data-ui-theme",
                "aria-expanded", "aria-selected", "aria-disabled", "aria-haspopup", "aria-invalid", "tabindex", "hidden", "selected",
-               "value", "placeholder", "name", "data-ui-menu", "data-value"];
+               "value", "placeholder", "name", "data-ui-menu", "data-value",
+               "id", "for", "aria-controls", "aria-live", "aria-labelledby"];
+const IDREF = new Set(["id", "for", "aria-controls", "aria-labelledby"]);
 function tree(n) {
     if (n.nodeType === 3) return null;
     const out = { tag: n.tagName.toLowerCase(), cls: [...n.classList].sort().join(" "), attrs: {}, kids: [] };
-    ATTRS.forEach((a) => { if (n.hasAttribute(a)) out.attrs[a] = a === "disabled" || a === "open" || a === "checked" || a === "hidden" || a === "selected" ? true : n.getAttribute(a); });
+    ATTRS.forEach((a) => { if (n.hasAttribute(a)) out.attrs[a] = a === "disabled" || a === "open" || a === "checked" || a === "hidden" || a === "selected" ? true
+        : IDREF.has(a) ? n.getAttribute(a).split(" ").map((v) => v.replace(/-js$/, "").replace(/^uk-[mj]-([0-9]+)$/, "uk-$1")).join(" ") : n.getAttribute(a); });
     let text = "";
     const flush = () => { const t = text.replace(/\s+/g, " ").trim(); if (t) out.kids.push("#" + t); text = ""; };
     n.childNodes.forEach((c) => {

@@ -282,6 +282,7 @@ def measure_all():
         "color_literals": measure_colors(),
         "bare_buttons": measure_bare_buttons(known),
         "bare_controls": measure_bare_controls(known),
+        "bare_script_controls": measure_script_controls(),
         "inline_styles": measure_inline_styles(),
         "overlay_shells": measure_overlay_shells(),
         "confirm_alert": measure_confirm_alert(),
@@ -749,6 +750,68 @@ def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
                          text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok ui_kit_selfcheck" in res.stdout and " 0 failed" in res.stdout
+
+
+# Small text a person must read in the kit's choosing / reading-order parts.
+_READ_TEXT_SELECTORS = (".ui-text-quiet", ".ui-panel-hint", ".ui-stat-label", ".ui-stat-unit", ".ui-input-unit-text",
+                        ".ui-input.ui-input::placeholder", ".ui-field-hint", ".ui-option-desc", ".ui-cell-note",
+                        ".ui-placeholder", ".ui-field-label", ".ui-panel-title", ".ui-panel-sum")
+_READ_SURFACES = ("--ui-surface-0", "--ui-surface-1", "--ui-surface-2")
+
+
+def read_text_contrast():
+    rules = {sel.strip(): body for sel, body, _s in _ui_kit_rules() for sel in [sel]}
+    out = []
+    for want in _READ_TEXT_SELECTORS:
+        colour = None
+        for sel, b in rules.items():    # the last rule that names the selector and sets a colour wins
+            if want in [x.strip() for x in sel.split(",")]:
+                colour = dict(_decls(b)).get("color", colour)
+        assert colour and re.fullmatch(r"var\(--ui-[\w-]+\)", colour), f"{want}: colour {colour!r} is not one kit token"
+        tok = colour[4:-1]
+        for t in THEMES:
+            env = theme_env(t)
+            page = _resolve("var(--ui-surface-0)", env)
+            for surf in _READ_SURFACES:
+                bg = _over(_resolve(f"var({surf})", env), page)
+                fg = _over(_resolve(f"var({tok})", env), bg)
+                la, lb = sorted((_lum(fg), _lum(bg)), reverse=True)
+                out.append((want, tok, t, surf, round((la + 0.05) / (lb + 0.05), 2)))
+    return out
+
+
+def test_7g_reading_text_of_the_new_parts_is_aa_in_every_theme():
+    bad = [r for r in read_text_contrast() if r[4] < 4.5]
+    assert not bad, bad
+
+
+def measure_script_controls():
+    """Selects / text inputs BUILT in static/*.js (createElement or markup
+    literals) with no styled class: a second number that only goes down."""
+    known = _known_classes()
+    out = {}
+    for p in sorted(_STATIC.glob("*.js")):
+        if p.name.endswith(".min.js"):
+            continue
+        t = _read(p)
+        n = len(re.findall(r"createElement\(\s*[\"']select[\"']\s*\)", t))
+        for m in re.finditer(r"<(select|input)\b([^<>]*)>", t):
+            if m.group(1) == "input":
+                tm = re.search(r"\btype=\\?[\"']([^\"'\\]*)", m.group(2))
+                if (tm.group(1).lower() if tm else "") not in _TEXT_INPUT_TYPES:
+                    continue
+            cm = re.search(r"\bclass=\\?[\"']([^\"'\\]*)", m.group(2))
+            toks = _literal_tokens(cm.group(1)) if cm else []
+            if cm and (not toks or any(x in known for x in toks)):
+                continue
+            n += 1
+        if n:
+            out[_rel(p)] = n
+    return out
+
+
+def test_2d_no_new_bare_select_or_input_built_in_scripts():
+    _ratchet("bare selects / inputs in scripts", measure_script_controls(), _baseline()["bare_script_controls"])
 
 
 if __name__ == "__main__":

@@ -74,8 +74,8 @@
 {%- endmacro -%}
 
 {%- macro ui_cell(c, tag, num) -%}
-<{{ tag }} class="{{ 'ui-table-head' if tag == 'th' else 'ui-table-cell' }}{% if num %} ui-table-num{% endif %}{% if c is mapping and c.muted %} ui-table-muted{% endif %}"{% if tag == 'th' %} scope="{{ 'row' if c is mapping and c.row else 'col' }}"{% endif %}{% if c is mapping and c.title %} title="{{ c.title }}"{% endif %}>
-{%- if c is mapping and c.chip is defined %}{{ ui_chip(c.chip) }}{% elif c is mapping and c.dot is defined %}{{ ui_verdict(c.dot, c.text) }}{% elif c is mapping %}{{ c.text }}{% else %}{{ c }}{% endif -%}
+<{{ tag }} class="{{ 'ui-table-head' if tag == 'th' else 'ui-table-cell' }}{% if num %} ui-table-num{% endif %}{% if c is mapping and c.muted %} ui-table-muted{% endif %}{% if c is mapping and c.tone %} {{ 'ui-cell--' ~ c.tone }}{% endif %}"{% if tag == 'th' %} scope="{{ 'row' if c is mapping and c.row else 'col' }}"{% endif %}{% if c is mapping and c.title %} title="{{ c.title }}"{% endif %}>
+{%- if c is mapping and c.chip is defined %}{{ ui_chip(c.chip) }}{% elif c is mapping and c.dot is defined %}{{ ui_verdict(c.dot, c.text) }}{% elif c is mapping %}{% if c.line %}{{ ui_line_dot(c.line) }}{% endif %}{{ c.text }}{% if c.note %}<span class="ui-cell-note">{{ c.note }}</span>{% endif %}{% else %}{{ c }}{% endif -%}
 </{{ tag }}>
 {%- endmacro -%}
 
@@ -109,11 +109,16 @@
 {#- Field: label above (or left with inline=True), one control spec, an
     optional hint and error line, a source tag at the label's right. -#}
 {%- macro ui_field(label, control, hint=None, error=None, source=None, inline=False, id=None) -%}
-<div class="ui-field{% if inline %} ui-field--inline{% endif %}"><div class="ui-field-head"><label class="ui-field-label"{% if id %} for="{{ id }}"{% endif %}>{{ label }}</label>{% if source %}{{ ui_badge(source.text, source.tone or 'neutral') }}{% endif %}</div>
+{#- With a control id: <div> + <label for>. Without one: the whole field is
+    the <label> (implicit association), so a label click still focuses the
+    control; its inner pieces are then <span>s. -#}
+{%- set w = not id -%}
+{%- set inner = 'span' if w else 'div' -%}
+<{{ 'label' if w else 'div' }} class="ui-field{% if inline %} ui-field--inline{% endif %}"><{{ inner }} class="ui-field-head"><{{ 'span' if w else 'label' }} class="ui-field-label"{% if id %} for="{{ id }}"{% endif %}>{{ label }}</{{ 'span' if w else 'label' }}>{% if source %}{{ ui_badge(source.text, source.tone or 'neutral') }}{% endif %}</{{ inner }}>
 {{- ui_render(control) -}}
-{%- if hint %}<p class="ui-field-hint">{{ hint }}</p>{% endif -%}
-{%- if error %}<p class="ui-field-error" role="alert">{{ error }}</p>{% endif -%}
-</div>
+{%- if hint %}<{{ 'span' if w else 'p' }} class="ui-field-hint">{{ hint }}</{{ 'span' if w else 'p' }}>{% endif -%}
+{%- if error %}<{{ 'span' if w else 'p' }} class="ui-field-error" role="alert">{{ error }}</{{ 'span' if w else 'p' }}>{% endif -%}
+</{{ 'label' if w else 'div' }}>
 {%- endmacro -%}
 
 {#- Menu: kind 'pick' (listbox: one of several described options, the chosen
@@ -126,11 +131,11 @@
 {%- set ns = namespace(title=None) -%}
 {%- for it in items %}{% if pick and value is not none and it.value == value %}{% set ns.title = it.title %}{% endif %}{% endfor -%}
 <div class="ui-menu{% if block %} ui-menu--block{% endif %}" data-ui-menu="{{ 'pick' if pick else 'action' }}"{% if pick and value is not none %} data-value="{{ value }}"{% endif %}>
-<button type="button" id="{{ id }}" class="ui-menu-trigger {{ ('ui-select' ~ (' ui-select--block' if block else '')) if pick else (trigger.cls if trigger and trigger.cls else 'btn-sm secondary') }}" aria-haspopup="{{ 'listbox' if pick else 'menu' }}" aria-expanded="false" aria-controls="{{ id }}-list"{% if pick %} aria-label="{{ label }}"{% endif %}>
-{%- if pick %}<span class="ui-menu-value{% if ns.title is none %} ui-menu-placeholder{% endif %}">{{ ns.title if ns.title is not none else placeholder }}</span>{% else %}{{ trigger.label if trigger and trigger.label else label }}{% endif -%}
+<button type="button" id="{{ id }}" class="ui-menu-trigger {{ ('ui-select' ~ (' ui-select--block' if block else '')) if pick else (trigger.cls if trigger and trigger.cls else 'btn-sm secondary') }}" aria-haspopup="{{ 'listbox' if pick else 'menu' }}" aria-expanded="false" aria-controls="{{ id }}-list"{% if pick %} aria-labelledby="{{ id }}-label {{ id }}-value"{% endif %}>
+{%- if pick %}<span class="ui-sr" id="{{ id }}-label">{{ label }}</span><span id="{{ id }}-value" class="ui-menu-value{% if ns.title is none %} ui-menu-placeholder{% endif %}">{{ ns.title if ns.title is not none else placeholder }}</span>{% else %}{{ trigger.label if trigger and trigger.label else label }}{% endif -%}
 </button>
 <div class="ui-menu-list{% if pick %} ui-menu-list--pick{% endif %}{% if end %} ui-menu-list--end{% endif %}{% if up %} ui-menu-list--up{% endif %}" id="{{ id }}-list" role="{{ 'listbox' if pick else 'menu' }}" aria-label="{{ label }}" hidden>
-{%- for it in items %}{% if it.sep %}<div class="ui-menu-sep" role="separator"></div>{% else %}<div class="ui-option" role="{{ 'option' if pick else 'menuitem' }}" tabindex="-1" data-value="{{ it.value }}"{% if pick %} aria-selected="{{ 'true' if value is not none and it.value == value else 'false' }}"{% endif %}{% if it.disabled %} aria-disabled="true"{% endif %}>
+{%- for it in items %}{% if it.sep %}<div class="ui-menu-sep" role="separator"></div>{% else %}<div class="ui-option" role="{{ 'option' if pick else 'menuitem' }}" tabindex="-1" {% if it.value is defined and it.value is not none %} data-value="{{ it.value }}"{% endif %}{% if pick %} aria-selected="{{ 'true' if value is not none and it.value == value else 'false' }}"{% endif %}{% if it.disabled %} aria-disabled="true"{% endif %}>
 {%- if pick %}<span class="ui-option-check" aria-hidden="true"></span>{% endif -%}
 <span class="ui-option-title">{{ it.title }}</span>
 {%- set d = it.reason if it.disabled and it.reason else it.desc -%}
@@ -241,6 +246,8 @@
 {%- elif p == 'stats' %}{{ ui_stats(s.tiles, s.label) }}
 {%- elif p == 'checks' %}{{ ui_checks(s.checks, s.label or 'Checks') }}
 {%- elif p == 'slot' %}{{ ui_slot(s.title, s.chip, s.line or 1, s.body or ()) }}
+{%- elif p == 'placeholder' %}<div class="ui-placeholder">{{ s.text }}</div>
+{%- elif p == 'line' %}<span>{{ ui_line_dot(s.line) }}{{ s.text }}</span>
 {%- elif p == 'grid2' %}<div class="ui-grid2">{% for x in s['items'] %}{{ ui_render(x) }}{% endfor %}</div>
 {%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}
 {%- endif -%}

@@ -132,6 +132,8 @@
     <script src="{{ asset_url('agent.js') }}"></script>
     {# docs/261: the night summary's buttons (approve / reject / undo) -- core, a few lines #}
     <script src="{{ asset_url('agent-summary.js') }}"></script>
+    {# docs/308 4b: kit menu + toolbar behaviour -- core, delegated, so a .ui-menu works on every page and in every swapped partial #}
+    <script src="{{ asset_url('ui-menu.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js', 'pulses-vt.js', 'gcz-several.js'],

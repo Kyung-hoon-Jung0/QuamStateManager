@@ -115,13 +115,17 @@
     function isObj(c) { return c !== null && typeof c === "object"; }
     function cell(c, tag, num) {
         var cls = (tag === "th" ? "ui-table-head" : "ui-table-cell") + (num ? " ui-table-num" : "")
-            + (isObj(c) && c.muted ? " ui-table-muted" : "");
+            + (isObj(c) && c.muted ? " ui-table-muted" : "") + (isObj(c) && c.tone ? " ui-cell--" + c.tone : "");
         var n = el(tag, cls);
         if (tag === "th") n.setAttribute("scope", isObj(c) && c.row ? "row" : "col");
         if (isObj(c) && c.title) n.title = c.title;
         if (isObj(c) && has(c.chip)) n.appendChild(chip(c.chip));
         else if (isObj(c) && has(c.dot)) n.appendChild(verdict(c.dot, c.text));
-        else n.textContent = String(isObj(c) ? c.text : c);
+        else if (isObj(c)) {
+            if (c.line) n.appendChild(lineDot(c.line));
+            n.appendChild(document.createTextNode(String(c.text)));
+            if (c.note) n.appendChild(el("span", "ui-cell-note", c.note));
+        } else n.textContent = String(c);
         return n;
     }
     function table(columns, rows, kv, numeric, label) {
@@ -193,16 +197,18 @@
         return w;
     }
     function field(o) {
-        var f = el("div", "ui-field" + (o.inline ? " ui-field--inline" : ""));
-        var h = el("div", "ui-field-head");
-        var l = el("label", "ui-field-label", o.label);
-        if (o.control && o.control.id) l.setAttribute("for", o.control.id);
+        // With a control id: <div> + <label for>; without: the field is the <label>.
+        var id = o.control && o.control.id, w = !id, inner = w ? "span" : "div";
+        var f = el(w ? "label" : "div", "ui-field" + (o.inline ? " ui-field--inline" : ""));
+        var h = el(inner, "ui-field-head");
+        var l = el(w ? "span" : "label", "ui-field-label", o.label);
+        if (id) l.setAttribute("for", id);
         h.appendChild(l);
         if (o.source) h.appendChild(badge(o.source.text, o.source.tone));
         f.appendChild(h);
         add(f, render(o.control));
-        if (o.hint) f.appendChild(el("p", "ui-field-hint", o.hint));
-        if (o.error) { var e = el("p", "ui-field-error", o.error); e.setAttribute("role", "alert"); f.appendChild(e); }
+        if (o.hint) f.appendChild(el(w ? "span" : "p", "ui-field-hint", o.hint));
+        if (o.error) { var e = el(w ? "span" : "p", "ui-field-error", o.error); e.setAttribute("role", "alert"); f.appendChild(e); }
         return f;
     }
     function menu(o) {
@@ -221,8 +227,13 @@
         t.setAttribute("aria-expanded", "false");
         t.setAttribute("aria-controls", o.id + "-list");
         if (pick) {
-            t.setAttribute("aria-label", o.label);
-            t.appendChild(el("span", "ui-menu-value" + (title === null ? " ui-menu-placeholder" : ""), title === null ? (o.placeholder || "Choose") : title));
+            t.setAttribute("aria-labelledby", o.id + "-label " + o.id + "-value");
+            var sl = el("span", "ui-sr", o.label);
+            sl.id = o.id + "-label";
+            t.appendChild(sl);
+            var sv = el("span", "ui-menu-value" + (title === null ? " ui-menu-placeholder" : ""), title === null ? (o.placeholder || "Choose") : title);
+            sv.id = o.id + "-value";
+            t.appendChild(sv);
         } else {
             t.textContent = (o.trigger && o.trigger.label) || o.label;
         }
@@ -237,7 +248,7 @@
             var r = el("div", "ui-option");
             r.setAttribute("role", pick ? "option" : "menuitem");
             r.setAttribute("tabindex", "-1");
-            r.setAttribute("data-value", String(it.value));
+            if (has(it.value)) r.setAttribute("data-value", String(it.value));
             if (pick) r.setAttribute("aria-selected", has(o.value) && it.value === o.value ? "true" : "false");
             if (it.disabled) r.setAttribute("aria-disabled", "true");
             if (pick) { var c = el("span", "ui-option-check"); c.setAttribute("aria-hidden", "true"); r.appendChild(c); }
@@ -264,113 +275,6 @@
         return n;
     }
 
-    // ---- UI.menu behaviour: one delegated set of listeners serves every
-    // .ui-menu on the page, server- or script-rendered. No inline handlers.
-    var openMenu = null;
-    function mParts(root) {
-        return { root: root, trigger: root.querySelector(".ui-menu-trigger"), list: root.querySelector(".ui-menu-list") };
-    }
-    function mRows(m, enabledOnly) {
-        return Array.prototype.filter.call(m.list.querySelectorAll(".ui-option"), function (r) {
-            return !enabledOnly || r.getAttribute("aria-disabled") !== "true";
-        });
-    }
-    function mClose(m, refocus) {
-        if (!m || !m.list) return;
-        m.list.setAttribute("hidden", "");
-        if (m.list.hasAttribute("data-ui-auto-up")) { m.list.classList.remove("ui-menu-list--up"); m.list.removeAttribute("data-ui-auto-up"); }
-        m.trigger.setAttribute("aria-expanded", "false");
-        if (openMenu && openMenu.root === m.root) openMenu = null;
-        if (refocus) m.trigger.focus();
-    }
-    function mFocus(m, row) { if (row) row.focus(); }
-    function mOpen(m, where) {
-        if (openMenu && openMenu.root !== m.root) mClose(openMenu, false);
-        m.list.removeAttribute("hidden");
-        m.trigger.setAttribute("aria-expanded", "true");
-        openMenu = m;
-        // Open upward when there is no room below and more room above.
-        var tr = m.trigger.getBoundingClientRect(), h = m.list.offsetHeight;
-        var vh = window.innerHeight || document.documentElement.clientHeight || 0;
-        if (h && tr.bottom + h > vh && tr.top > vh - tr.bottom && !m.list.classList.contains("ui-menu-list--up")) {
-            m.list.classList.add("ui-menu-list--up");
-            m.list.setAttribute("data-ui-auto-up", "");
-        }
-        var rows = mRows(m, true);
-        var sel = m.list.querySelector('.ui-option[aria-selected="true"]');
-        if (sel && sel.getAttribute("aria-disabled") === "true") sel = null;
-        mFocus(m, where === "last" ? rows[rows.length - 1] : (sel || rows[0]));
-    }
-    function mPick(m, row) {
-        if (!row || row.getAttribute("aria-disabled") === "true") return false;
-        var value = row.getAttribute("data-value");
-        var titleEl = row.querySelector(".ui-option-title");
-        var title = titleEl ? titleEl.textContent : "";
-        var kind = m.root.getAttribute("data-ui-menu") || "pick";
-        if (kind === "pick") {
-            mRows(m, false).forEach(function (r) { r.setAttribute("aria-selected", r === row ? "true" : "false"); });
-            m.root.setAttribute("data-value", value);
-            var v = m.trigger.querySelector(".ui-menu-value");
-            if (v) { v.textContent = title; v.classList.remove("ui-menu-placeholder"); }
-        }
-        mClose(m, true);
-        m.root.dispatchEvent(new CustomEvent("ui-menu-pick", { bubbles: true, detail: { value: value, title: title, kind: kind } }));
-        return true;
-    }
-    function mMove(m, row, step) {
-        var rows = mRows(m, true);
-        if (!rows.length) return;
-        var i = rows.indexOf(row);
-        i = i < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.min(rows.length - 1, Math.max(0, i + step));
-        mFocus(m, rows[i]);
-    }
-    function mType(m, row, ch) {
-        var rows = mRows(m, true);
-        if (!rows.length) return;
-        var start = rows.indexOf(row);
-        ch = ch.toLowerCase();
-        for (var k = 1; k <= rows.length; k++) {
-            var r = rows[(start + k) % rows.length];
-            var t = r.querySelector(".ui-option-title");
-            if (t && t.textContent.trim().toLowerCase().indexOf(ch) === 0) { mFocus(m, r); return; }
-        }
-    }
-    function menuOf(node) {
-        var root = node && node.closest ? node.closest(".ui-menu") : null;
-        return root ? mParts(root) : null;
-    }
-    document.addEventListener("click", function (e) {
-        var t = e.target;
-        var m = menuOf(t);
-        if (!m) { if (openMenu) mClose(openMenu, false); return; }
-        if (t.closest(".ui-menu-trigger")) {
-            if (m.list.hasAttribute("hidden")) mOpen(m, "first"); else mClose(m, false);
-            return;
-        }
-        var row = t.closest(".ui-option");
-        if (row) mPick(m, row);
-    });
-    document.addEventListener("keydown", function (e) {
-        var m = menuOf(e.target);
-        if (!m) return;
-        var k = e.key;
-        if (e.target.closest(".ui-menu-trigger")) {
-            if (k === "ArrowDown" || k === "Enter" || k === " ") { e.preventDefault(); mOpen(m, "first"); }
-            else if (k === "ArrowUp") { e.preventDefault(); mOpen(m, "last"); }
-            else if (k === "Escape" && !m.list.hasAttribute("hidden")) { e.preventDefault(); mClose(m, true); }
-            return;
-        }
-        var row = e.target.closest(".ui-option");
-        if (!row) return;
-        if (k === "ArrowDown") { e.preventDefault(); mMove(m, row, 1); }
-        else if (k === "ArrowUp") { e.preventDefault(); mMove(m, row, -1); }
-        else if (k === "Home") { e.preventDefault(); mMove(m, null, 1); }
-        else if (k === "End") { e.preventDefault(); mMove(m, null, -1); }
-        else if (k === "Enter" || k === " ") { e.preventDefault(); mPick(m, row); }
-        else if (k === "Escape") { e.preventDefault(); mClose(m, true); }
-        else if (k === "Tab") mClose(m, false);
-        else if (k.length === 1 && /\S/.test(k) && !e.ctrlKey && !e.metaKey && !e.altKey) mType(m, row, k);
-    });
 
     // K19 reading order (docs/308 section 4c).
     function text(t) {
@@ -522,6 +426,8 @@
             case "checks": return checks(s.checks, s.label);
             case "slot": return slot(s);
             case "grid2": return grid2(s.items);
+            case "placeholder": return el("div", "ui-placeholder", s.text);
+            case "line": { var ln = el("span"); ln.appendChild(lineDot(s.line)); ln.appendChild(document.createTextNode(String(s.text))); return ln; }
             case "dialog": return dialog(s);
             default: return null;
         }
@@ -534,8 +440,8 @@
         select: select, input: input, field: field, menu: menu, toolbar: toolbar,
         panel: panel, stats: stats, checks: checks, slot: slot, lineDot: lineDot, text: text, grid2: grid2,
         /* Menu behaviour for script callers: open / close / pick by element. */
-        menuOpen: function (root) { if (root) mOpen(mParts(root), "first"); },
-        menuClose: function (root) { if (root) mClose(mParts(root), false); },
+        menuOpen: function (root) { if (root && window.UIMenu) window.UIMenu.open(root); },
+        menuClose: function (root) { if (root && window.UIMenu) window.UIMenu.close(root); },
         /* The /ui-kit page: fill every script-side slot from the page's spec list. */
         mountSamples: function (root) {
             root = root || document;
@@ -549,9 +455,9 @@
                 slot.textContent = "";
                 add(slot, render(s));
                 // The template side already holds these ids: keep the page's ids unique.
-                Array.prototype.forEach.call(slot.querySelectorAll("[id], [for], [aria-controls]"), function (x) {
-                    ["id", "for", "aria-controls"].forEach(function (a) {
-                        if (x.hasAttribute(a)) x.setAttribute(a, x.getAttribute(a) + "-js");
+                Array.prototype.forEach.call(slot.querySelectorAll("[id], [for], [aria-controls], [aria-labelledby]"), function (x) {
+                    ["id", "for", "aria-controls", "aria-labelledby"].forEach(function (a) {
+                        if (x.hasAttribute(a)) x.setAttribute(a, x.getAttribute(a).split(" ").map(function (v) { return v + "-js"; }).join(" "));
                     });
                 });
                 n++;
