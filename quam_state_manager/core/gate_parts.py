@@ -217,18 +217,23 @@ def _macro_can_play(merged: dict, macro_path: str, owner: tuple[str, str]) -> bo
     return False
 
 
+#: keys whose plain string describes a macro and never plays an operation
+DESCRIPTIVE_KEYS = frozenset({"__class__", "id", "name", "label", "note", "description",
+                              "comment"})
+
+
 def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
     """Refusals for the operations of *mine* that another macro uses. The rule:
 
     * a reference (absolute or relative, at any depth, in dicts and lists)
       that resolves into one of the operations counts wherever the macro sits;
       so does an operation of the set that refers into another macro;
-    * a plain string equal to an operation's key counts only when the macro
-      can play that operation's channel (the same qubit's macros, a pair's
-      macros when the pair holds the qubit, a pair's macros for its coupler)
-      AND a key on the path from the macro's root to the string contains
-      "pulse" or "operation" (any case); a string under ``id`` or ``note``
-      alone does not count.
+    * a plain string equal to an operation's key counts when the macro can
+      play that operation's channel (the same qubit's macros, a pair's macros
+      when the pair holds the qubit, a pair's macros for its coupler), under
+      any key except the descriptive ones (:data:`DESCRIPTIVE_KEYS`: a
+      string held directly under ``note``, ``id`` and the like does not
+      count). A dangling name is worse than a refusal naming the field.
 
     Each refusal names the holder."""
     out: list[str] = []
@@ -252,7 +257,7 @@ def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
         for segs, v in _strings_at(macro, ()):
             if v not in by_key or v.startswith("#"):
                 continue
-            if not any(("pulse" in s.lower() or "operation" in s.lower()) for s in segs):
+            if not segs or segs[-1] in DESCRIPTIVE_KEYS:
                 continue
             for op in by_key[v]:
                 own = owners.get(op)
@@ -316,7 +321,7 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
                      if isinstance(macro.get(f), dict)]
     out["refusals"].extend(_other_users(merged, mpath, mine, index, ops))
     out["operations"] = sorted(mine)
-    out["active"] = pair_operational_gate(pair, macros) == gate
+    out["active"] = active_gate(pair, macros) == gate
     alias = cgb._dot(("qubit_pairs", pair, "macros", "cz"))
     out["alias"] = alias if out["active"] else None
     out["paths"] = [mpath] + out["operations"]
@@ -333,13 +338,23 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
     return out
 
 
+#: the version of the content-hash rule; a check record of another version
+#: cannot be compared with the values now
+HASH_RULE = 2
+
+
 def _norm_numbers(v: Any) -> Any:
-    """Numbers that are equal hash equal (1 and 1.0); bools stay bools."""
+    """Numbers that are equal hash equal: an int stays an exact int, a float
+    equals an int only when it is integral (then it is that int), -0.0 equals
+    0.0; bools stay bools ("1" stays a string). Never raises."""
     if isinstance(v, bool):
         return v
-    if isinstance(v, (int, float)):
-        f = float(v)
-        return ["num", repr(f)] if f == f else ["num", "nan"]
+    if isinstance(v, int):
+        return ["int", str(v)]
+    if isinstance(v, float):
+        if v == v and v not in (float("inf"), float("-inf")) and v.is_integer():
+            return ["int", str(int(v))]
+        return ["float", repr(v)]
     if isinstance(v, dict):
         return {k: _norm_numbers(x) for k, x in v.items()}
     if isinstance(v, list):
@@ -347,17 +362,80 @@ def _norm_numbers(v: Any) -> Any:
     return v
 
 
+def _walk_to(merged: Any, segs: list) -> tuple[bool, Any]:
+    node = merged
+    for s in segs:
+        if isinstance(node, dict) and s in node:
+            node = node[s]
+        elif isinstance(node, list) and s.isdigit() and int(s) < len(node):
+            node = node[int(s)]
+        else:
+            return False, None
+    return True, node
+
+
+def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0) -> Any:
+    """*value* with every reference replaced by what it plays: a reference
+    to a plain value hashes as that value (chains followed); a reference to
+    an object or a list hashes as its canonical path only (the object is
+    not walked: the gate's own content is hashed, not the whole qubit); a
+    dangling reference hashes as a marker plus its text."""
+    if isinstance(value, dict):
+        return {k: _resolved(merged, v, holder + (str(k),), depth) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolved(merged, v, holder + (str(i),), depth) for i, v in enumerate(value)]
+    if not (isinstance(value, str) and value.startswith("#")):
+        return value
+    ref, at, seen = value, holder, set()
+    while True:
+        try:
+            segs = target_path(merged, ref, at)
+        except Exception:  # noqa: BLE001
+            segs = None
+        found, node = _walk_to(merged, segs) if segs else (False, None)
+        if not found:
+            return ["dangling", value]
+        key = tuple(segs)
+        if isinstance(node, str) and node.startswith("#") and key not in seen and len(seen) < 32:
+            seen.add(key)
+            ref, at = node, key
+            continue
+        if isinstance(node, (dict, list)):
+            return ["ref", _land(merged, list(segs))]
+        return node
+
+
 def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | None:
-    """A hash of the gate's content: the macro subtree and the operations it
-    owns (:func:`gate_parts`), as canonical JSON. None when there is no such
-    gate."""
+    """A hash of everything the gate PLAYS, as canonical JSON:
+
+    the macro subtree and every operation the macro owns, names or refers to
+    (owned or kept, a shared ``const`` included), each with every reference
+    inside replaced by the value at its target (:func:`_resolved`); numbers
+    normalised (:func:`_norm_numbers`). Rule version :data:`HASH_RULE`.
+    None when there is no such gate."""
     parts = gate_parts(merged, pair, gate, index=index)
     if not parts["macro"]:
         return None
-    from quam_state_manager.core.working_copy import _at_dot_path
-    body = {p: _norm_numbers(_at_dot_path(merged, p)[1]) for p in parts["paths"]}
+    paths = [parts["macro"]] + sorted(set(parts["operations"]) | set(parts["kept"]))
+    body = {}
+    for p in paths:
+        found, node = _walk_to(merged, p.split("."))
+        body[p] = _norm_numbers(_resolved(merged, node, tuple(p.split(".")))) if found else None
     text = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def active_gate(pair: str, macros: Any) -> str | None:
+    """The pair's active gate: the macro its ``cz`` alias names
+    (query.pair_operational_gate), or the macro whose plain name ``cz``
+    holds."""
+    name = pair_operational_gate(pair, macros)
+    if name is None and isinstance(macros, dict):
+        raw = macros.get("cz")
+        if (isinstance(raw, str) and raw and not raw.startswith("#") and raw != "cz"
+                and isinstance(macros.get(raw), dict)):
+            name = raw
+    return name
 
 
 def gate_of_path(merged: dict, path: str) -> tuple[str, str] | None:

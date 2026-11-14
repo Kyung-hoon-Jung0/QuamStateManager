@@ -212,3 +212,66 @@ def test_numbers_equal_in_value_hash_equal():
     assert gp.content_hash(s, "q1-q2", "cz_sq") == h
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["phase_shift_control"] = False
     assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def _const_gate():
+    s = reverse(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_old"]["flux_pulse_qubit"] = "const"
+    return s
+
+
+def test_the_hash_covers_a_kept_operation_the_gate_plays():
+    s = _const_gate()
+    h = gp.content_hash(s, "q1-q2", "cz_old")
+    s["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = 0.77
+    assert gp.content_hash(s, "q1-q2", "cz_old") != h
+    parts = gp.gate_parts(s, "q1-q2", "cz_old")
+    assert "qubits.q1.z.operations.const" in parts["kept"]
+    assert "qubits.q1.z.operations.const" not in parts["paths"]
+
+
+def test_the_hash_follows_a_reference_to_its_value_not_its_text():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["shared_amp"] = 0.3
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]["amplitude"] = "#/qubits/q3/shared_amp"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["shared_amp"] = 0.31
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+    s["qubits"]["q3"]["shared_amp"] = 0.3
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_the_hash_ignores_an_unrelated_operation_and_the_rest_of_the_qubit():
+    s, _ = add_gate(chip())
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = 0.5
+    s["qubits"]["q1"]["f_01"] = 5.1e9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_numbers_exact_and_never_raising():
+    n = gp._norm_numbers
+    assert n(1) == n(1.0) and n(-0.0) == n(0.0) and n(0) == n(-0.0)
+    assert n(2**53) != n(2**53 + 1)
+    assert n(True) != n(1) and n("1") != n(1)
+    assert n(10**400) == ["int", str(10**400)]
+    assert n(float("inf")) != n(float("-inf"))
+    assert n(0.1) != n(0.10000000000000002)
+
+
+def test_a_plain_name_under_any_non_descriptive_key_counts():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "flux_gate_op": "cz_sq_pulse_q1_q2"}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("qubit_pairs.q1-q2.macros.cz_two.flux_gate_op" in r for r in parts["refusals"])
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "label": "cz_sq_pulse_q1_q2"}
+    assert gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+
+
+def test_a_plain_cz_name_is_the_alias():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "cz_sq"
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["active"] and parts["alias"] == "qubit_pairs.q1-q2.macros.cz"
+    assert gp.active_gate("q1-q2", s["qubit_pairs"]["q1-q2"]["macros"]) == "cz_sq"

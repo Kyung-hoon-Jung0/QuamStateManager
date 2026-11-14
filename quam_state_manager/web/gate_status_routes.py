@@ -92,6 +92,15 @@ def gate_list(store, ctx, pair: str) -> dict:
             "no_active": bool(lines) and not any(ln["active"] for ln in lines)}
 
 
+def _broken_line(pair: str, gate: str, exc: BaseException) -> dict:
+    """The honest line of a gate whose status could not be computed."""
+    item = {"key": "error", "text": "status could not be read", "tone": "warn",
+            "why": f"{type(exc).__name__}: {exc}", "pill": True}
+    return {"pair": pair, "gate": gate, "items": [item], "pills": [item],
+            "details": [item], "active": False, "present": False, "edit_paths": [],
+            "note": None, "note_tone": "neutral"}
+
+
 def gate_lines(store, ctx, pair: str) -> list[dict]:
     """One line per CZ gate of the pair (the pair detail's list)."""
     if store is None:
@@ -102,8 +111,9 @@ def gate_lines(store, ctx, pair: str) -> list[dict]:
     for gate in gate_status.cz_gates(store.merged, pair):
         try:
             out.append(gate_line(store, ctx, pair, gate, env=env, folder=folder))
-        except Exception:  # noqa: BLE001 -- one gate's line never breaks the page
+        except Exception as exc:  # noqa: BLE001 -- one gate's line never vanishes
             logger.warning("gate status for %s/%s failed", pair, gate, exc_info=True)
+            out.append(_broken_line(pair, gate, exc))
     return out
 
 
@@ -138,8 +148,12 @@ def cz_gate_status():
     bad = _gate_problem(store, pair, gate)
     if bad:
         return render_template("_status.html", message=bad, level="error"), 404
-    return render_template("_gate_status.html",
-                           line=gate_line(store, R._active_ctx(), pair, gate))
+    try:
+        line = gate_line(store, R._active_ctx(), pair, gate)
+    except Exception as exc:  # noqa: BLE001 -- an honest line, never a 500
+        logger.warning("gate status for %s/%s failed", pair, gate, exc_info=True)
+        line = _broken_line(pair, gate, exc)
+    return render_template("_gate_status.html", line=line)
 
 
 @bp.route("/pulse/cz-gate/offer-close")
@@ -188,6 +202,16 @@ def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store,
     return jsonify(ok=False, error=message, **extra), code
 
 
+def _text_of(resp) -> str:
+    """The error text of a refusal response (JSON ``error``), for a line."""
+    r = resp[0] if isinstance(resp, tuple) else resp
+    try:
+        data = r.get_json(silent=True) or {}
+    except Exception:  # noqa: BLE001
+        data = {}
+    return str(data.get("error") or "This change is not allowed now.")
+
+
 def _body_scope() -> str:
     try:
         return str(json_object(request.form.to_dict).get("scope") or "")
@@ -214,22 +238,21 @@ def api_cz_gate_make_active():
     htmx = bool(request.headers.get("HX-Request"))
     if not store or not modifier:
         return jsonify(ok=False, error=R._no_chip_msg()), 400
-    if ctx and (ctx.get("origin") or "live") != "live":
-        return jsonify(ok=False, error=ARCHIVE_REFUSAL), 409
-    lk = R._agent_edit_lock_refusal(ctx)
-    if lk is not None:
-        return lk
     body = json_object(request.form.to_dict)
     pair, gate = json_text(body, "pair"), json_text(body, "gate")
     kw = dict(htmx=htmx, pair=pair, gate=gate, store=store, ctx=ctx)
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return _refuse(ARCHIVE_REFUSAL, 409, **kw)
+    lk = R._agent_edit_lock_refusal(ctx)
+    if lk is not None:
+        return _refuse(_text_of(lk), 409, **kw) if htmx else lk
     bad = _gate_problem(store, pair, gate)
     if bad:
         return _refuse(bad, 404 if htmx else 400, **kw)
-    from quam_state_manager.core.query import pair_operational_gate
     with store._lock:
         macros = store.merged["qubit_pairs"][pair]["macros"]
         macro = macros[gate]
-        if pair_operational_gate(pair, macros) == gate:
+        if gate_parts.active_gate(pair, macros) == gate:
             return _refuse(f"{gate} is already the active CZ gate of {pair}.", 409, **kw)
         alias = macros.get("cz")
         cls = str(macro.get("__class__") or "")
@@ -313,11 +336,6 @@ def delete_gate_together(ctx, modifier, body: dict):
     batch door's own (one group, the lab check, atomic rollback)."""
     store = modifier.store
     htmx = bool(request.headers.get("HX-Request"))
-    if ctx and (ctx.get("origin") or "live") != "live":
-        return jsonify(ok=False, error=ARCHIVE_REFUSAL), 409
-    lk = R._agent_edit_lock_refusal(ctx)
-    if lk is not None:
-        return lk
     pair, gate = json_text(body, "pair"), json_text(body, "gate")
 
     def say(message, code, **extra):
@@ -326,6 +344,11 @@ def delete_gate_together(ctx, modifier, body: dict):
                 "_status.html", message=message, level="error"), 200)
         return jsonify(ok=False, error=message, **extra), code
 
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return say(ARCHIVE_REFUSAL, 409)
+    lk = R._agent_edit_lock_refusal(ctx)
+    if lk is not None:
+        return say(_text_of(lk), 409) if htmx else lk
     with store._lock:
         parts = gate_parts.gate_parts(store.merged, pair, gate)
     if not parts["ok"]:

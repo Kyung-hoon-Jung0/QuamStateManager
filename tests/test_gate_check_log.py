@@ -107,3 +107,14 @@ def test_old_and_new_key_the_later_time_wins(tmp_path):
     assert _both(tmp_path, "2026-11-14T09:00:00+00:00", "2026-11-14T10:00:00+00:00") == "new"
     assert _both(tmp_path, "2026-11-14T10:00:00+00:00", "2026-11-14T10:00:00+00:00") == "new"
     assert _both(tmp_path, "garbage", "2026-11-14T10:00:00+00:00") == "new"
+
+
+def test_naive_against_aware_time_is_unreadable_and_the_new_key_wins(tmp_path):
+    assert _both(tmp_path, "2026-11-14T10:00:00", "2026-11-14T09:00:00+00:00") == "new"
+    assert _both(tmp_path, None, "2026-11-14T09:00:00+00:00") == "new"
+
+
+def test_a_record_carries_the_rule_version(tmp_path):
+    from quam_state_manager.core.gate_parts import HASH_RULE
+    ent = log.record(tmp_path, "p", "g", result=log.CHECKED, reason=None, content="h")
+    assert ent["rule"] == HASH_RULE

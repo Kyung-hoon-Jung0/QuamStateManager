@@ -77,9 +77,11 @@ def entry(folder, pair: str, gate: str) -> dict | None:
     if new is None or old is None:
         return new if new is not None else old
     # both: the later time wins; equal or unreadable times: the new key
-    t_new, t_old = _time(new), _time(old)
-    if t_new is not None and t_old is not None and t_old > t_new:
-        return old
+    try:
+        if _time(old) > _time(new):
+            return old
+    except TypeError:          # a missing time, or naive vs aware: unreadable
+        pass
     return new
 
 
@@ -108,9 +110,10 @@ def record(folder, pair: str, gate: str, *, result: str, reason: str | None,
     if result == CHECKED and not content:
         raise ValueError("a checked result needs the gate's content hash")
     when = when or datetime.now(timezone.utc)
+    from quam_state_manager.core.gate_parts import HASH_RULE
     ent = {"result": result, "reason": reason,
            "time": when.astimezone(timezone.utc).isoformat(timespec="seconds"),
-           "hash": content}
+           "hash": content, "rule": HASH_RULE}
     folder = Path(folder)
     try:
         return _write(folder, pair, gate, ent)

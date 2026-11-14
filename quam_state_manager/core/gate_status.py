@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from quam_state_manager.core import gate_check_log
-from quam_state_manager.core.gate_parts import content_hash
+from quam_state_manager.core.gate_parts import active_gate, content_hash
 from quam_state_manager.core.query import pair_operational_gate
 
 
@@ -86,6 +86,11 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
         return _item("check", "checked, cannot tell whether values changed", "warn",
                      f"Checked with the lab's code {when} UTC; the record holds no copy "
                      "of the values it checked.")
+    from quam_state_manager.core.gate_parts import HASH_RULE
+    if ent.get("hash") and ent.get("rule") != HASH_RULE:
+        return _item("check", "checked with an older rule: check again", "neutral",
+                     f"Checked {when} UTC; SM now compares more of the gate than when "
+                     "this was recorded, so it cannot say whether the values changed.")
     now = content_hash(merged, pair, gate)
     if ent.get("hash") and now != ent.get("hash"):
         return _item("check", "values changed since the check", "warn",
@@ -117,7 +122,7 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
                       f"Pair {pair} has no gate {gate}.")]
     mpath = f"qubit_pairs.{pair}.macros.{gate}"
     items = [_where(ctx, mpath)]
-    if pair_operational_gate(pair, macros) == gate:
+    if active_gate(pair, macros) == gate:
         items.append(_item("active", "active", "accent", "The pair's cz alias names this gate."))
     else:
         items.append(_item("active", "not active", "neutral",

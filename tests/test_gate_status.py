@@ -180,3 +180,31 @@ def test_which_items_are_pills(monkeypatch, tmp_path):
     cls = m["__class__"]
     pills = _pills(gs.status(_store(s), None, "q1-q2", "cz_sq", missing_classes=[cls]))
     assert "class" in pills
+
+
+def test_an_old_rule_record_is_not_plain_checked(tmp_path):
+    import json
+    s, _ = add_gate(chip())
+    key = json.dumps(["q1-q2", "cz_sq"])
+    (tmp_path / log.FILE_NAME).write_text(json.dumps({"gates": {key: {
+        "result": "checked", "hash": log.content_hash(s, "q1-q2", "cz_sq"),
+        "time": "2026-11-14T10:00:00+00:00"}}}), encoding="utf-8")
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
+    assert it["text"] == "checked with an older rule: check again" and it["tone"] == "neutral"
+
+
+def test_a_change_to_a_kept_operation_reads_as_changed(tmp_path):
+    from tests.cz_gate_chip import reverse
+    s = reverse(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_old"]["flux_pulse_qubit"] = "const"
+    log.record(tmp_path, "q1-q2", "cz_old", result=log.CHECKED, reason=None,
+               content=log.content_hash(s, "q1-q2", "cz_old"))
+    s["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = 0.77
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_old", check_folder=tmp_path))["check"]
+    assert it["text"] == "values changed since the check"
+
+
+def test_a_plain_cz_name_makes_the_gate_active():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "cz_sq"
+    assert _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq"))["active"]["text"] == "active"

@@ -349,3 +349,43 @@ def test_a_type_only_rewrite_keeps_checked(rig):
     body = rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
     pills = body.split('class="gate-status-items"')[1].split("</span></span>")[0]
     assert pills.endswith(">checked") or ">checked<" in pills
+
+
+def test_a_row_whose_status_raises_still_renders(rig, monkeypatch):
+    from quam_state_manager.core import gate_status as gs_mod
+    real = gs_mod.status
+
+    def flaky(store, ctx, pair, gate, **kw):
+        if gate == "cz_sq":
+            raise TypeError("can't compare offset-naive and offset-aware datetimes")
+        return real(store, ctx, pair, gate, **kw)
+    monkeypatch.setattr(gs_mod, "status", flaky)
+    body = rig.get("/pair/q1-q2", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert 'data-gate="cz_sq"' in body and "status could not be read" in body
+    assert 'data-gate="cz_two"' in body
+    r = rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_sq")
+    assert r.status_code == 200 and "status could not be read" in r.get_data(as_text=True)
+
+
+def test_htmx_archive_refusals_render_a_readable_line(rig):
+    from quam_state_manager.web.gate_status_routes import ARCHIVE_REFUSAL
+    _ctx(rig)["origin"] = "archive"
+    hx = {"HX-Request": "true"}
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
+                 data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"})
+    assert r.status_code == 200 and ARCHIVE_REFUSAL in r.get_data(as_text=True).replace("&#39;", "'")
+    r = rig.post("/api/pulse/delete-together", headers=hx, data={"pair": "q1-q2", "gate": "cz_sq"})
+    assert r.status_code == 200 and ARCHIVE_REFUSAL in r.get_data(as_text=True).replace("&#39;", "'")
+
+
+def test_htmx_lock_refusals_render_a_readable_line(rig, monkeypatch):
+    from flask import jsonify
+    from quam_state_manager.web import routes as R
+    monkeypatch.setattr(R, "_agent_edit_lock_refusal",
+                        lambda ctx: (jsonify(ok=False, error="An agent plan holds this chip."), 423))
+    hx = {"HX-Request": "true"}
+    r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
+                 data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"})
+    assert r.status_code == 200 and "An agent plan holds this chip." in r.get_data(as_text=True)
+    r = rig.post("/api/pulse/delete-together", headers=hx, data={"pair": "q1-q2", "gate": "cz_sq"})
+    assert r.status_code == 200 and "An agent plan holds this chip." in r.get_data(as_text=True)
