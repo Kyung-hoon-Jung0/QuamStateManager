@@ -670,13 +670,14 @@ def _row_samples(info: dict | None) -> dict:
     marked ``truncated``; a waveform SM cannot read carries no samples."""
     out = {"samples": None, "constant": None, "total": None, "truncated": False,
            "sampling_rate": None, "length_ns": None, "range_v": None, "offset_v": 0.0,
-           "port_kind": None}
+           "port_kind": None, "delay_ns": None}
     if not isinstance(info, dict):
         return out
     out["sampling_rate"] = info.get("sampling_rate")
     out["length_ns"] = info.get("length")
     out["range_v"] = port_range(info)
     out["port_kind"] = info.get("port_kind")
+    out["delay_ns"] = _whole(info.get("delay") or 0)
     try:
         out["offset_v"] = (0.0 if info.get("port_kind") == "mw"
                            else float(info.get("offset") or 0.0))

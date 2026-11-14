@@ -105,3 +105,54 @@ def test_long_waveform_is_cut_and_marked():
     assert row["total"] == len(long)
     seg = timeline_data(e, control="q1", target="q2")["lanes"][0]["segments"][0]
     assert seg["truncated"] and len(seg["v"]) == gate_check.ROW_SAMPLE_CAP
+
+
+# ---------------------------------------------------------------- tiles
+
+from quam_state_manager.core.gate_timeline_view import tiles  # noqa: E402
+
+
+def _lane(key, start, end, peak=0.1, flags=(), group="gate"):
+    return {"key": key, "group": group, "segments": [{"start_ns": start, "end_ns": end, "peak_v": peak,
+                                                       "min_v": 0.0, "flags": list(flags)}]}
+
+
+def _tile(ts, key):
+    return next((t for t in ts if t["key"] == key), None)
+
+
+def test_single_line_has_three_tiles_and_no_timing():
+    ts = tiles({"lanes": [_lane("q1.z", 161, 261)]})
+    assert [t["key"] for t in ts] == ["lines", "length", "peak"]
+    assert _tile(ts, "length")["value"] == "100 ns" and _tile(ts, "peak")["tone"] == "neutral"
+
+
+def test_no_overlap_is_a_warn_gap():
+    ts = tiles({"lanes": [_lane("q1.z", 161, 261), _lane("c12", 0, 60)]})
+    t = _tile(ts, "timing")
+    assert t["value"] == "101 ns gap" and t["tone"] == "warn"
+    assert _tile(ts, "length")["value"] == "261 ns"
+
+
+def test_overlap_with_different_starts_is_a_note():
+    t = _tile(tiles({"lanes": [_lane("q1.z", 10, 110), _lane("c12", 0, 100)]}), "timing")
+    assert t["value"] == "starts differ by 10 ns" and t["tone"] == "note"
+    t = _tile(tiles({"lanes": [_lane("q1.z", 0, 100), _lane("c12", 0, 100)]}), "timing")
+    assert t["tone"] == "neutral"
+
+
+def test_over_the_limit_makes_the_peak_tile_danger_and_names_the_line():
+    ts = tiles({"lanes": [_lane("q1.z", 0, 100, peak=3.0, flags=["over_range"]), _lane("c12", 0, 100)]})
+    p = _tile(ts, "peak")
+    assert p["value"] == "3 V" and p["tone"] == "danger" and "q1.z" in p["note"]
+
+
+def test_spectators_and_empty_data_give_no_tiles():
+    assert tiles({"lanes": [_lane("q3.z", 0, 10, group="spectator")]}) == []
+    assert tiles({"lanes": [], "cannot_draw": "cannot draw: x"}) == []
+
+
+def test_lanes_carry_their_identity_colour_index():
+    data = timeline_data(_entry(script=TWO, cfg=_multi_cfg()), control="q1", target="q2",
+                         coupler_elements=["c12"])
+    assert [ln["color_index"] for ln in data["lanes"]] == [0, 1, 2, 3]

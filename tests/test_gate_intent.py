@@ -84,3 +84,16 @@ def test_macro_owned_pulse_is_read_from_the_macro():
     plan["creates"][1] = (plan["creates"][1][0], {"length": "#/x", "amplitude": "#/y"})
     (r,) = gi.intent_rows(plan, _entry(constant=0.3))
     assert r["intended"]["amplitude"] == 0.3 and not r["differs"]["amplitude"]
+
+
+def test_port_delay_start_and_cell_tones():
+    e = _entry(constant=0.2)
+    e["timeline"]["rows"][0].update(start_ns=161, delay_ns=161, range_v=0.5, offset_v=0.0)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.2}), e)
+    assert r["actual"]["start_ns"] == 161 and any("port delay of 161 ns" in w for w in r["why"])
+    assert r["tones"] == {"length": None, "amplitude": None}
+    e["timeline"]["rows"][0].update(constant=3.0)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 3.0}), e)
+    assert r["tones"]["amplitude"] == "danger"
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.2}), _entry(samples=[0, 0.18, 0]))
+    assert r["tones"]["amplitude"] == "warn"

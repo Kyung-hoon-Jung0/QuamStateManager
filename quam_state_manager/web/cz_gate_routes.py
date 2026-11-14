@@ -415,7 +415,8 @@ def api_cz_gate_check():
             "checks": [{"name": k, "status": v.get("status"), "message": v.get("message")}
                        for k, v in ((entry or {}).get("checks") or {}).items()],
             "unchecked": (entry or {}).get("unchecked") or [],
-            "timeline": tl, "intent": gate_intent.intent_rows(p, entry),
+            "timeline": tl, "tiles": gate_timeline_view.tiles(tl),
+            "intent": gate_intent.intent_rows(p, entry),
             "previews_skipped": skipped_by.get(pid) or [],
             "paths": [c[0] for c in p["creates"]],
             "verdict": {"allowed": allowed, "state": state, "reason": reason}})

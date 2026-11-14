@@ -140,4 +140,66 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         lane["segments"].append(_segment(row))
     order = ([e for e in gate_order if e in lanes] + [e for e in couplers if e in lanes]
              + [e for e in seen if e not in gate_order and e not in couplers])
-    return {"lanes": [lanes[e] for e in order], "notes": notes, "cannot_draw": None}
+    out = [lanes[e] for e in order]
+    for i, ln in enumerate(out):
+        ln["color_index"] = i          # the lane's identity colour (block, lane, table dot)
+    return {"lanes": out, "notes": notes, "cannot_draw": None}
+
+
+def _fmt_v(v: float) -> str:
+    return f"{v:.4g} V"
+
+
+def tiles(data: dict) -> list[dict]:
+    """The key numbers of a checked gate, at most four, from :func:`timeline_data`
+    (pure; the dialog never computes them). Each tile is ``{"key", "label",
+    "value", "note", "tone"}``, tone ``neutral`` | ``note`` | ``warn`` | ``danger``:
+
+    - ``lines``: the number of gate lines that play;
+    - ``length``: latest end minus earliest start over the gate's lines (ns);
+    - ``peak``: the highest absolute level and the line that reaches it,
+      ``danger`` when a segment of the gate is over its port's limit;
+    - ``timing`` (two or more lines only): ``warn`` "N ns gap" when no two
+      lines overlap in time (N = the smallest gap between them); ``note``
+      "starts differ by N ns" when they overlap but start apart; ``neutral``
+      "start together" otherwise.
+
+    Nothing is invented: with no drawn gate line the list is empty."""
+    lanes = [ln for ln in (data or {}).get("lanes") or []
+             if ln.get("group") == "gate" and ln.get("segments")]
+    if not lanes:
+        return []
+    spans = [(ln["key"], min(s["start_ns"] for s in ln["segments"]),
+              max(s["end_ns"] for s in ln["segments"])) for ln in lanes]
+    out = [{"key": "lines", "label": "Lines", "value": str(len(lanes)),
+            "note": ", ".join(k for k, _a, _b in spans), "tone": "neutral"}]
+    t0, t1 = min(a for _k, a, _b in spans), max(b for _k, _a, b in spans)
+    out.append({"key": "length", "label": "Gate length", "value": f"{t1 - t0:g} ns",
+                "note": f"{t0:g} to {t1:g} ns", "tone": "neutral"})
+    best, where, over = None, None, False
+    for ln in lanes:
+        for s in ln["segments"]:
+            for v in (s.get("peak_v"), s.get("min_v")):
+                if v is not None and (best is None or abs(v) > abs(best)):
+                    best, where = v, ln["key"]
+            over = over or "over_range" in (s.get("flags") or [])
+    if best is not None:
+        out.append({"key": "peak", "label": "Highest level", "value": _fmt_v(best),
+                    "note": f"on {where}" + (", over the port's limit" if over else ""),
+                    "tone": "danger" if over else "neutral"})
+    if len(spans) >= 2:
+        ordered = sorted(spans, key=lambda x: x[1])
+        overlap = any(a[2] > b[1] for i, a in enumerate(ordered) for b in ordered[i + 1:])
+        starts = [a for _k, a, _b in spans]
+        if not overlap:
+            gap = min(b[1] - a[2] for a, b in zip(ordered, ordered[1:]))
+            out.append({"key": "timing", "label": "Timing", "value": f"{gap:g} ns gap",
+                        "note": "no overlap between the lines", "tone": "warn"})
+        elif max(starts) != min(starts):
+            out.append({"key": "timing", "label": "Timing",
+                        "value": f"starts differ by {max(starts) - min(starts):g} ns",
+                        "note": "the lines overlap", "tone": "note"})
+        else:
+            out.append({"key": "timing", "label": "Timing", "value": "start together",
+                        "note": "the lines overlap", "tone": "neutral"})
+    return out

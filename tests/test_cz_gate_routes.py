@@ -183,6 +183,7 @@ def test_check_then_create_is_one_group_and_one_undo_restores_bytes(chip, fake):
     p = j["pairs"][0]
     assert p["verdict"] == {"allowed": True, "state": "verified", "reason": ""}
     assert p["timeline"]["lanes"][0]["key"] == "q1.z"
+    assert [t["key"] for t in p["tiles"]] == ["lines", "length", "peak"]
     assert p["intent"][0]["intended"]["amplitude"] == 0.2
     pv = fake.calls[0]["previews"][("q1-2", "cz_sq")]
     assert pv == {("q1.z", "cz_sq_pulse_q1_q2"): 0.2}, pv

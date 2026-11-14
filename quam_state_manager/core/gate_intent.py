@@ -38,7 +38,8 @@ WHY_SCALE = "The program plays the pulse with a scale of {k:g}, so the line reac
 WHY_NEGATIVE = "The amplitude is negative, so the extreme of the waveform is its minimum."
 WHY_SHAPE = "The class shapes the waveform, so its extreme is not the amplitude."
 WHY_PART = "Only the first {n} of {total} samples were received; the maximum and minimum cover those."
-WHY_NOT_PLAYED = "The check did not place this pulse, so there is nothing to compare."
+WHY_DELAY = "It starts at {t} ns: the port delay of {d} ns moves it."
+WHY_NOT_PLAYED ="The check did not place this pulse, so there is nothing to compare."
 
 _PADDING_FIELDS = ("post_zero_padding_length", "padding", "zero_padding_length")
 
@@ -95,8 +96,20 @@ def _actual(rows: list, key: str) -> dict | None:
                 "min_v": min(vals) if vals else None,
                 "scale": _num(r.get("scale")) if _num(r.get("scale")) is not None else 1.0,
                 "truncated": bool(r.get("truncated")),
-                "total": r.get("total"), "received": len(vals)}
+                "total": r.get("total"), "received": len(vals),
+                "start_ns": r.get("start_ns"), "delay_ns": r.get("delay_ns"),
+                "limit_v": r.get("range_v"), "offset_v": r.get("offset_v")}
     return None
+
+
+def _over(have: dict) -> bool:
+    """The played level (scale applied) plus the offset outside the port's limit."""
+    lim, k = _num(have.get("limit_v")), have.get("scale") or 1.0
+    off = _num(have.get("offset_v")) or 0.0
+    if lim is None or have.get("max_v") is None:
+        return False
+    vals = [have["max_v"] * k + off, have["min_v"] * k + off]
+    return max(vals) > lim + 1e-9 or min(vals) < -lim - 1e-9
 
 
 def _close(a: float, b: float) -> bool:
@@ -141,8 +154,15 @@ def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
                 why.append(WHY_SCALE.format(k=k, v=extreme * k))
             if have["truncated"]:
                 why.append(WHY_PART.format(n=have["received"], total=have["total"]))
+            if (have.get("delay_ns") or 0) > 0:
+                why.append(WHY_DELAY.format(t=have["start_ns"], d=have["delay_ns"]))
             have = {k2: v for k2, v in have.items() if k2 != "received"}
         want.pop("_inferred", None)
+        tones = {"length": "warn" if differs["length"] else None,
+                 "amplitude": "warn" if differs["amplitude"] else None}
+        if have is not None and _over(have):
+            tones["amplitude"] = "danger"
         out.append({"field": field, "operation": op.get("key"), "channel": op.get("channel"),
-                    "intended": want, "actual": have, "differs": differs, "why": why})
+                    "intended": want, "actual": have, "differs": differs, "tones": tones,
+                    "why": why})
     return out
