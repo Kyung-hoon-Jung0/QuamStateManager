@@ -155,7 +155,7 @@ def test_names_reject_same_row_from_same_base(names_file):
     text = response.get_data(as_text=True)
     assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
     assert 'value="First"' in text and 'name="new_tag" value="def"' in text
-    assert ('Another window changed the name of tag abc; the current names are shown below. '
+    assert ('Another window changed the name of tag abc; the current names are shown above. '
             'Type your change again. Nothing was saved.') in text
     assert 'reload' not in text
     assert path.read_bytes() == before and path.with_suffix('.json.bak').read_bytes() == backup
@@ -2421,7 +2421,7 @@ def test_names_two_changes_onto_one_tag_refuse_the_save(names_file, stored, data
     response = _names_post(app, _names_base(app), **data(_key_ref))
     assert response.status_code == 409 and response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
-    assert ('Two changes in this save give tag xyz a name; keep one of them. '
+    assert ('This save gives more than one name to tag xyz; keep one of them. '
             'Nothing was saved.') in text
     assert 'another window' not in text.lower()
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
@@ -2544,3 +2544,88 @@ def test_refusal_flash_sits_next_to_its_save_button(names_file, tmp_path):
                        capture_output=True, text=True, encoding='utf-8', timeout=60)
     assert r.returncode == 0, r.stdout + r.stderr
     assert ' 0 failed' in r.stdout and 'the PC names refusal sits right after Save PC names' in r.stdout
+
+
+def test_names_three_changes_onto_one_tag_name_no_wrong_count(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'My PC': 'A', 'Other PC': 'B', 'Third PC': 'C'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {}
+    for key in stored:
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'xyz'
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert 'This save gives more than one name to tag xyz; keep one of them. Nothing was saved.' in text
+    assert 'Two changes' not in text and 'Three changes' not in text
+    assert path.read_bytes() == before
+
+
+def test_names_two_taken_tags_use_plural_text(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'abc': 'One', 'def': 'Two', 'My PC': 'A', 'Other PC': 'B'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    before = path.read_bytes()
+    data = {'badkey__' + _key_ref('My PC'): '1', 'rename__' + _key_ref('My PC'): 'abc',
+            'badkey__' + _key_ref('Other PC'): '1', 'rename__' + _key_ref('Other PC'): 'def'}
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert ('Tags abc, def already have names; remove them first or pick other tags. '
+            'Nothing was saved.') in text
+    assert path.read_bytes() == before
+
+
+def test_names_two_tags_given_two_names_each_use_plural_text(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    stored = {'My PC': 'A', 'Other PC': 'B', 'Third PC': 'C', 'Fourth PC': 'D'}
+    path.write_text(json.dumps(stored), encoding='utf-8')
+    data = {}
+    for key, tag in zip(stored, ['xyz', 'xyz', 'uvw', 'uvw']):
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = tag
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 409
+    assert ('This save gives more than one name to tags uvw, xyz; keep one for each.'
+            in response.get_data(as_text=True))
+
+
+def test_names_a_tag_removed_in_this_save_is_free_for_a_rename(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A'}), encoding='utf-8')
+    base = _names_base(app)
+    ref = _key_ref('My PC')
+    response = _names_post(app, base, **{'label__abc': base['was__abc'], 'remove__abc': '1',
+                                         'badkey__' + ref: '1', 'rename__' + ref: 'abc'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'A'}
+
+
+def test_names_removed_tag_and_two_renames_onto_it_still_refuse(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Orig', 'My PC': 'A', 'Other PC': 'B'}), encoding='utf-8')
+    before = path.read_bytes()
+    base = _names_base(app)
+    data = {'label__abc': base['was__abc'], 'remove__abc': '1'}
+    for key in ('My PC', 'Other PC'):
+        data['badkey__' + _key_ref(key)] = '1'
+        data['rename__' + _key_ref(key)] = 'abc'
+    response = _names_post(app, base, **data)
+    assert response.status_code == 409
+    assert path.read_bytes() == before
+
+
+def test_names_new_tag_onto_a_tag_removed_in_this_save_saves(names_file):
+    app, path = names_file
+    base = _names_base(app)
+    response = _names_post(app, base, **{'label__abc': base['was__abc'], 'remove__abc': '1',
+                                         'new_tag': 'abc', 'new_label': 'Fresh'})
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == {'abc': 'Fresh'}

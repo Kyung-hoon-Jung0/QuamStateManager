@@ -435,6 +435,11 @@ def _save_pc_names_locked():
     except (OSError, ValueError):
         pass
     taken = set()  # a tag that already has another name in the file
+
+    def removed_here(t):
+        # a tag ticked for removal in this same save is free for a new name
+        return t in rows and _form_bool("remove__" + t)
+
     by_ref = {_key_ref(k): k for k in names_now if not _TAG_RE.fullmatch(k)}
     for k in f:
         if not k.startswith("badkey__"):
@@ -446,7 +451,7 @@ def _save_pc_names_locked():
         if new:
             if not _TAG_RE.fullmatch(new):
                 return refuse("A tag uses only a-z and 0-9, at most 16 characters.")
-            if new in names_now and names_now[new] != names_now[key]:
+            if new in names_now and names_now[new] != names_now[key] and not removed_here(new):
                 taken.add(new)
             changes.append((new, names_now[key]))
             changes.append((key, None))
@@ -462,7 +467,7 @@ def _save_pc_names_locked():
         if not label:
             return refuse("Give the new tag a name.")
         changes.append((tag, label))
-        if tag in names_now and names_now[tag] != label:
+        if tag in names_now and names_now[tag] != label and not removed_here(tag):
             taken.add(tag)
     # two changes of this one save that give the same tag different names
     twice, aimed = set(), {}
@@ -481,15 +486,19 @@ def _save_pc_names_locked():
     if twice or taken or conflicts:
         said = []
         if twice:
-            said.append(f"Two changes in this save give {_tags_text(twice)} a name; keep one of them.")
+            one = "keep one of them." if len(twice) == 1 else "keep one for each."
+            said.append(f"This save gives more than one name to {_tags_text(twice)}; {one}")
         taken -= twice
         if taken:
-            has = "already has a name" if len(taken) == 1 else "already have a name"
-            said.append(f"{_tags_text(taken)[:1].upper()}{_tags_text(taken)[1:]} {has}; "
-                        "remove it first or pick another tag.")
+            head = _tags_text(taken)
+            head = head[:1].upper() + head[1:]
+            if len(taken) == 1:
+                said.append(f"{head} already has a name; remove it first or pick another tag.")
+            else:
+                said.append(f"{head} already have names; remove them first or pick other tags.")
         if conflicts:
             said.append(f"Another window changed the name of {_tags_text(conflicts)}; "
-                        "the current names are shown below. Type your change again.")
+                        "the current names are shown above. Type your change again.")
         return refuse(" ".join(said + ["Nothing was saved."]), status=409, current=conflicts)
     count = None
     try:
