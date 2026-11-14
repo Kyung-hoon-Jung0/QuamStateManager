@@ -672,9 +672,16 @@ def check_fit(run_id: int):
     do_not_write = {t: list(getattr(v, "reasons", []) or [])
                     for t, v in verdicts.items()
                     if getattr(v, "verdict", None) != "pass"}
-    return jsonify(ok=True, run_id=run_id, family=getattr(fam, "key", None) or str(fam),
-                   verdicts={t: _jsonable(v) for t, v in verdicts.items()},
-                   all_pass=not do_not_write, do_not_write=do_not_write)
+    body = dict(ok=True, run_id=run_id, family=getattr(fam, "key", None) or str(fam),
+                verdicts={t: _jsonable(v) for t, v in verdicts.items()},
+                # nothing judged is not "everything passed"
+                all_pass=bool(verdicts) and not do_not_write,
+                do_not_write=do_not_write)
+    if not verdicts:
+        body["note"] = ("no target of this run was judged: the run names no "
+                        "qubit or pair the gates could check, so nothing is "
+                        "cleared for writing")
+    return jsonify(**body)
 
 
 # ------------------------------------------------------------------ notes

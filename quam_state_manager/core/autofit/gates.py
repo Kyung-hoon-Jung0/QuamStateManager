@@ -526,6 +526,7 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                         f"swept range {lo * k:.2f} .. {hi * k:.2f}{u}; the "
                         f"fit extrapolated beyond the data")
     move = None
+    path = None
     if rule.move == "relative":
         move = abs(vertex)
     elif rule.state_path:
@@ -540,18 +541,40 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
             if isinstance(anchor, (int, float)) and not isinstance(anchor, bool)                     and math.isfinite(anchor):
                 move = abs(vertex - float(anchor))
                 break
-    if move is not None and move > half:
+    if move is None:
+        # an absolute move needs the value the chip held; without it the
+        # size of the move is unknown, which is never a pass
+        where = (f"no readable value at {path}" if path
+                 else "the rule names no state path")
+        return "not_evaluated", (f"{name} not evaluated: the size of the "
+                                 f"move is unknown ({where})")
+    if move > half:
         return "fail", (f"proposed move {move * k:.2f}{u} is larger than the "
                         f"sweep half-span {half * k:.2f}{u}")
     if rule.curvature_key:
+        if rule.expect not in ("max", "min"):
+            return "not_evaluated", (f"{name} not evaluated: the rule expects "
+                                     f"{rule.expect!r}, which is neither "
+                                     f"'max' nor 'min'")
         c = fam_mod.fit_value(fam, entry, rule.curvature_key)
-        if c is not None and c != 0:
-            want_neg = rule.expect == "max"
-            if (c < 0) != want_neg:
-                got = "minimum" if c > 0 else "maximum"
-                return "fail", (f"fit curvature {rule.curvature_key}={c:.4g} "
-                                f"makes the vertex a {got}, but this "
-                                f"calibration expects a {rule.expect}imum")
+        if c is None:
+            raw_c = (entry or {}).get(rule.curvature_key)
+            if raw_c is None:
+                return "not_evaluated", (f"{name} not evaluated: the fit does "
+                                         f"not record {rule.curvature_key}")
+            return "not_evaluated", (f"{name} not evaluated: "
+                                     f"{rule.curvature_key} is not a finite "
+                                     f"number ({raw_c!r})")
+        if c == 0:
+            return "not_evaluated", (f"{name} not evaluated: "
+                                     f"{rule.curvature_key} is 0, so the fit "
+                                     f"has no extremum")
+        want_neg = rule.expect == "max"
+        if (c < 0) != want_neg:
+            got = "minimum" if c > 0 else "maximum"
+            return "fail", (f"fit curvature {rule.curvature_key}={c:.4g} "
+                            f"makes the vertex a {got}, but this "
+                            f"calibration expects a {rule.expect}imum")
     return "ok", ""
 
 

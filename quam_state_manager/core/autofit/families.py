@@ -288,7 +288,7 @@ class ExtremumInsideSweep:
       ``relative``: the axis is an offset from the current setting, so the
                       vertex value IS the proposed move (move = |vertex|).
       ``absolute``: move = |vertex - anchor|, the anchor read (pre-update
-                      first) at ``state_path``; no anchor -> move not judged.
+                      first) at ``state_path``; no anchor -> not evaluated (never a pass).
     ``unit`` is the fallback when the axis carries no ``units`` attribute.
     """
     key: str

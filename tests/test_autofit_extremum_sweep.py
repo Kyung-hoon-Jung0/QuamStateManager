@@ -184,6 +184,82 @@ def test_wrong_curvature_sign_is_not_a_pass(tmp_path):
                "a minimum" in r for r in bad.reasons), bad.reasons
 
 
+def _evaluate_with(folder, fam, *, quad=-4e10, anchor=None, drop_quad=False):
+    entry = {"success": True, "flux_offset": 0.001, "freq_offset": 1e5,
+             "quad_term": quad}
+    if drop_quad:
+        del entry["quad_term"]
+    run = {"fit_results": {"qA1": entry}, "outcomes": {"qA1": "successful"},
+           "folder_path": str(folder)}
+    return gates.evaluate_target(run, fam, "qA1",
+                                 current_value_of=lambda p: anchor)
+
+
+def test_an_unknown_expectation_is_not_read_as_a_minimum(tmp_path):
+    folder = _write_raw(tmp_path / "r")
+    # a positive coefficient would satisfy a silent "anything else is min"
+    v = _evaluate_with(folder, _curv_family("maximum"), quad=4e10)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict != "pass"
+    assert any("neither 'max' nor 'min'" in r for r in v.reasons), v.reasons
+
+
+@pytest.mark.parametrize("quad, said", [
+    (float("nan"), "is not a finite number"),
+    (float("inf"), "is not a finite number"),
+    ("steep", "is not a finite number"),
+    (0.0, "has no extremum"),
+])
+def test_an_unreadable_curvature_is_not_a_pass(tmp_path, quad, said):
+    folder = _write_raw(tmp_path / "r")
+    v = _evaluate_with(folder, _curv_family("max"), quad=quad)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict != "pass"
+    assert any("quad_term" in r and said in r for r in v.reasons), v.reasons
+
+
+def test_a_missing_curvature_is_not_a_pass(tmp_path):
+    folder = _write_raw(tmp_path / "r")
+    v = _evaluate_with(folder, _curv_family("max"), drop_quad=True)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict != "pass"
+    assert any("does not record quad_term" in r for r in v.reasons), v.reasons
+
+
+def _absolute_family(state_path="qubits.{q}.z.joint_offset"):
+    fam = families.family_for(NODE)
+    rule = dataclasses.replace(fam.extremum, move="absolute",
+                               state_path=state_path)
+    return dataclasses.replace(fam, extremum=rule)
+
+
+@pytest.mark.parametrize("anchor", [None, float("nan"), "0.001", True])
+def test_an_absolute_move_without_its_anchor_is_not_a_pass(tmp_path, anchor):
+    folder = _write_raw(tmp_path / "r")
+    v = _evaluate_with(folder, _absolute_family(), anchor=anchor)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict != "pass"
+    assert any("the size of the move is unknown" in r
+               and "qubits.qA1.z.joint_offset" in r for r in v.reasons), v.reasons
+
+
+def test_an_absolute_move_without_a_state_path_is_not_a_pass(tmp_path):
+    folder = _write_raw(tmp_path / "r")
+    v = _evaluate_with(folder, _absolute_family(state_path=None), anchor=0.0)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert any("names no state path" in r for r in v.reasons), v.reasons
+
+
+def test_an_absolute_move_is_measured_from_the_anchor(tmp_path):
+    folder = _write_raw(tmp_path / "r")
+    # vertex 1 mV, half-span 5 mV
+    near = _evaluate_with(folder, _absolute_family(), anchor=0.0005)
+    assert near.verdict == "pass" and near.checks["G4_extremum"] == "ok"
+    far = _evaluate_with(folder, _absolute_family(), anchor=-0.0045)
+    assert far.verdict == "fail"
+    assert any("larger than the sweep half-span" in r for r in far.reasons)
+
+
 def test_the_shipped_family_does_not_judge_the_curvature_sign():
     """The stored quadratic term's sign convention differs between setups."""
     assert families.family_for(NODE).extremum.curvature_key is None
