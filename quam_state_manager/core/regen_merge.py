@@ -3311,3 +3311,68 @@ def drop_new_core_keys(old_state: dict, merged_state: dict) -> tuple[list[str], 
     if isinstance(old_state, dict) and isinstance(merged_state, dict):
         walk(old_state, merged_state, "")
     return dropped, from_thread
+
+
+_PAIR_CORE_CHANNELS = ("cross_resonance", "zz_drive", "zz")
+
+
+def _qubit_by_pointer(state: dict, ref: Any) -> dict | None:
+    """The qubit dict a ``#/qubits/<name>`` pointer names, else None."""
+    if not isinstance(ref, str) or not ref.startswith("#/qubits/"):
+        return None
+    name = ref[len("#/qubits/"):].split("/", 1)[0]
+    q = (state.get("qubits") or {}).get(name)
+    return q if isinstance(q, dict) else None
+
+
+def _effective_core(el: Any) -> Any:
+    """``core`` when the key is present, else ``thread``, else None."""
+    if not isinstance(el, dict):
+        return None
+    if "core" in el:
+        return el.get("core")
+    return el.get("thread")
+
+
+def realign_new_pair_cores(old_state: dict, new_state: dict,
+                           merged_state: dict) -> list[str]:
+    """A pair channel new in the output follows its control qubit's KEPT core.
+
+    The fresh build names a cross-resonance / ZZ channel after its control
+    qubit's fresh xy core; the merge then restores that xy's source core, so
+    the new channel would sit alone on the fresh name. For every channel that
+    is a dict in ``merged_state`` but not in ``old_state`` and whose core
+    equals the fresh control xy core in ``new_state``, set its core to the
+    merged control xy's effective core (``core``, else ``thread``; None means
+    its own core). Run after :func:`drop_new_core_keys`. Returns the dotted
+    paths changed."""
+    changed: list[str] = []
+    if not all(isinstance(s, dict) for s in (old_state, new_state, merged_state)):
+        return changed
+    old_pairs = old_state.get("qubit_pairs") or {}
+    new_pairs = new_state.get("qubit_pairs") or {}
+    for pid, pair in (merged_state.get("qubit_pairs") or {}).items():
+        if not isinstance(pair, dict):
+            continue
+        new_pair = new_pairs.get(pid) if isinstance(new_pairs, dict) else None
+        if not isinstance(new_pair, dict):
+            continue
+        old_pair = old_pairs.get(pid) if isinstance(old_pairs, dict) else None
+        fresh_xy = (_qubit_by_pointer(new_state, new_pair.get("qubit_control")) or {}).get("xy")
+        fresh_core = fresh_xy.get("core") if isinstance(fresh_xy, dict) else None
+        if not isinstance(fresh_core, str) or not fresh_core:
+            continue
+        kept_xy = (_qubit_by_pointer(merged_state, pair.get("qubit_control")) or {}).get("xy")
+        if not isinstance(kept_xy, dict):
+            continue
+        kept_core = _effective_core(kept_xy)
+        for name in _PAIR_CORE_CHANNELS:
+            chan = pair.get(name)
+            if not isinstance(chan, dict) or chan.get("core") != fresh_core:
+                continue
+            if isinstance(old_pair, dict) and isinstance(old_pair.get(name), dict):
+                continue   # in the source: drop_new_core_keys already decided
+            if kept_core != fresh_core:
+                chan["core"] = kept_core
+                changed.append(f"qubit_pairs.{pid}.{name}")
+    return changed

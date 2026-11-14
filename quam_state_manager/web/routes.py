@@ -51532,6 +51532,12 @@ def regenerate_build():
                         "Coupler port delays kept as stored, as chosen; moved with the band "
                         "shift: " + "; ".join(f"{i['old']:g} to {i['new']:g} on {i['port_label']}"
                                               for i in _moved) + ".", 1)
+            # The same core budget review the Generate result carries.
+            try:
+                config_generator.annotate_core_layout(
+                    outcome, *safe_io.read_state_wiring(Path(output_path)))
+            except (OSError, ValueError) as exc:
+                logger.warning("core layout summary skipped: %s", exc)
             try:
                 from quam_state_manager.core import output_timing
                 output_timing.annotate(

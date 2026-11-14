@@ -89,6 +89,11 @@ READOUT_PROCESSES = 2
 ESTIMATED_LABEL = " (estimated)"
 FEM_MESSAGE = "{cores} / {limit} cores{ce} on {con} FEM {fem} ({type}-FEM); routes {routes} / 10{re}"
 CONTROLLER_MESSAGE = "{cores} / {limit} cores{ce} on {con} (OPX+); routes {routes} / 10{re}"
+# A controller-level port whose controller type cannot be told: the OPX limit, said as such.
+CONTROLLER_TYPE_UNKNOWN = "unknown"
+CONTROLLER_PLACE_UNKNOWN = "OPX or OPX+"
+CONTROLLER_MESSAGE_UNKNOWN = ("{cores} / {limit} cores{ce} on {con} (controller type unknown: "
+                              "OPX limit 10, OPX+ limit 18); routes {routes} / 10{re}")
 LINE_PREFIX = "Core layout warning: {message}"
 DETAIL_GROUPS = "Largest groups: {groups}."
 DETAIL_GROUP_ITEM = "{name} ({cost})"
@@ -174,6 +179,21 @@ def _qop_version(state: dict) -> str | None:
         return qop_version_of(state)
     except Exception:
         return None
+
+
+# A QUA config marks an OPX+ controller with type "opx1" (docs: Introduction/config.md, OPX+ tab).
+# No documented value marks the original OPX, and a QUAM state carries no controller type at all.
+_OPX_PLUS_CONFIG_TYPE = "opx1"
+
+
+def _controller_type(root: dict, con: str) -> str | None:
+    """``"OPX+"`` when the chip says so (a ``controllers.<con>.type`` of "opx1"), else None
+    (unknown: an OPX and an OPX+ look the same in a state)."""
+    try:
+        t = root["controllers"][con]["type"]
+    except (KeyError, TypeError):
+        return None
+    return "OPX+" if t == _OPX_PLUS_CONFIG_TYPE else None
 
 
 def _is_element(node: dict) -> bool:
@@ -500,15 +520,19 @@ def _core_budget(root: dict, report: dict) -> dict:
         elif kind == "LF":
             limit, limit_est = LF_FEM_CORE_LIMIT, False
         else:
-            limit, limit_est = OPX_PLUS_CORE_LIMIT, True
+            # Unknown type: the lower OPX limit, said as such, never the OPX+ one silently.
+            ctype = _controller_type(root, con) or CONTROLLER_TYPE_UNKNOWN
+            limit = OPX_PLUS_CORE_LIMIT if ctype == "OPX+" else OPX_CORE_LIMIT
+            limit_est = True
         core_terms = sorted({lb for g in groups for lb in g["labels"]}, key=ESTIMATED_TERMS.index)
         route_firm = kind in ("MW", "LF") and qop == ROUTE_LIMIT_MEASURED_QOP
         route_terms = [] if route_firm else [TERM_QOP_UNKNOWN if not qop else TERM_QOP_VERSION.format(v=qop)]
         for g in groups:
             g.pop("labels", None)
+        entry_type = {} if kind in ("MW", "LF") else {"controller_type": ctype}
         report["fems"].append({
             "controller": con, "fem": int(fem) if isinstance(fem, str) and fem.isdigit() else fem,
-            "fem_type": kind,
+            "fem_type": kind, **entry_type,
             "cores": {"limit": limit, "count": count, "firm_count": firm_count,
                       "estimated": bool(core_terms) or limit_est, "limit_estimated": limit_est},
             "routes": {"limit": ROUTE_LIMIT, "count": f["routes"], "estimated": not route_firm},
@@ -524,12 +548,18 @@ def _core_budget(root: dict, report: dict) -> dict:
 def _place(fem: dict) -> str:
     """Where a FEM entry sits, as the location text shows it."""
     if fem["fem"] is None:
-        return f"{fem['controller']} (OPX+)"
+        if fem.get("controller_type") == "OPX+":
+            return f"{fem['controller']} (OPX+)"
+        return f"{fem['controller']} ({CONTROLLER_PLACE_UNKNOWN})"
     return f"{fem['controller']} / FEM {fem['fem']} ({fem['fem_type']}-FEM)"
 
 
 def fem_message(fem: dict) -> str:
-    template = CONTROLLER_MESSAGE if fem["fem"] is None else FEM_MESSAGE
+    if fem["fem"] is None:
+        template = (CONTROLLER_MESSAGE if fem.get("controller_type") == "OPX+"
+                    else CONTROLLER_MESSAGE_UNKNOWN)
+    else:
+        template = FEM_MESSAGE
     return template.format(
         cores=_num(fem["cores"]["count"]), limit=fem["cores"]["limit"],
         ce=ESTIMATED_LABEL if fem["cores"]["estimated"] else "",

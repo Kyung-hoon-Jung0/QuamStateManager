@@ -98,6 +98,39 @@ const RISK = 'Known risk: on QOP 3.8.1 (another device), with xy and resonator o
   T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [], warnings: [] } }, '/o');
   ok(!res.querySelector('[data-core-layout="table"]') && !res.querySelector('[data-core-layout="warn"]'), '[none] result without core_layout');
 
+  // Shared-cores checkbox: draft saved / loaded with either value, and a draft
+  // without the key, through the real save / load / sync / build-spec paths.
+  const S = T.state;
+  const chk = w.doc.getElementById('gen-pin-cores-chk');
+  ok(!!chk, '[draft] checkbox exists');
+  function optsOf(spec) { return ((spec.populate || {}).options || {}); }
+  [false, true].forEach(function (val) {
+    S.spec.populate = S.spec.populate || {};
+    S.spec.populate.options = Object.assign({}, S.spec.populate.options, { pin_cores: val });
+    T.saveDraft();
+    const d = T.loadDraft();
+    ok(d && optsOf(d.spec).pin_cores === val, '[draft ' + val + '] saved value ' + val);
+    S.spec = {};
+    T.applyDraft(d);
+    ok(optsOf(T.specWithCoBands()).pin_cores === val, '[draft ' + val + '] build spec carries ' + val + ' without visiting step 6');
+    chk.checked = !val;
+    T.syncPinCoresUi();
+    ok(chk.checked === val, '[draft ' + val + '] checkbox shows ' + val);
+  });
+  // the user unticks: the spec and the saved draft follow the box
+  chk.checked = false;
+  chk.dispatchEvent(new w.doc.defaultView.Event('change'));
+  ok(optsOf(S.spec).pin_cores === false && optsOf(T.loadDraft().spec).pin_cores === false, '[draft] untick reaches spec and draft');
+  // a draft from before the key existed: the documented default (on)
+  const old = T.loadDraft();
+  delete old.spec.populate.options.pin_cores;
+  S.spec = {};
+  T.applyDraft(old);
+  ok(optsOf(T.specWithCoBands()).pin_cores === true, '[draft no key] build spec defaults to true');
+  chk.checked = false;
+  T.syncPinCoresUi();
+  ok(chk.checked === true, '[draft no key] checkbox shows the default');
+
   if (fails) { console.error(fails + ' failed'); process.exit(1); }
   console.log('generate_core_layout_selfcheck ok (' + asserts + ' assertions)');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

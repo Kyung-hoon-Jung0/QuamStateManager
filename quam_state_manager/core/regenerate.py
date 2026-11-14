@@ -924,6 +924,8 @@ def run_regenerate(
     # an element keeps its source core name and core-key presence
     core_keys_dropped, core_keys_from_thread = regen_merge.drop_new_core_keys(
         old_state, result.merged)
+    # a pair channel new in the output rides its control's kept core
+    regen_merge.realign_new_pair_cores(old_state, new_state, result.merged)
     result.stats.populate_conflicts.extend(pop_conflicts)
     result.stats.wiring_values_carried = wiring_carried
     if add_report and add_report.get("added"):

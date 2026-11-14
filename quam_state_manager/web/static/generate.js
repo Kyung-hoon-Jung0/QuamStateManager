@@ -14298,6 +14298,8 @@
       outputTimingResultTable: outputTimingResultTable,
       coreLayoutTable: coreLayoutTable,
       coreLayoutWarnings: coreLayoutWarnings,
+      syncPinCoresUi: syncPinCoresUi,
+      loadDraft: loadDraft,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
