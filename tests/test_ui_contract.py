@@ -699,6 +699,7 @@ _STAGE6_SELECTORS = {
     # the CZ gate status line and its delete offer
     '.gate-status-list', '.gate-status-list-head', '.gate-status-list-note', '.gate-status',
     '.gate-status-row', '.gate-status-items', '.gate-status-details',
+    '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
     '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
     '.gate-status-edit', '.gate-status-activate', '.gate-status-delete',
     '.gate-status-delete:hover', '.gate-delete-confirm', '.gate-delete-cancel', '.gate-status-slot:empty',

@@ -1291,6 +1291,8 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gate-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1) var(--ui-gap-2); min-height: var(--ui-icon-btn); }
 .gate-status-items { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); }
 .gate-status-details { margin: 0; }
+.gate-status-details[open] { flex-basis: 100%; order: 10; }
+.gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
 .gate-status-details-list { margin: var(--ui-gap-1) 0; font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
 .gate-status-details-list dd { margin: 0 0 var(--ui-gap-1) var(--ui-gap-3); }
 .gate-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-1); margin-left: auto; }
