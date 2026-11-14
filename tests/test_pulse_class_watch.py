@@ -270,6 +270,35 @@ def test_pane_save_outside_the_region_keeps_the_region_bytes(inst):
     assert data[a:b] == src[a:b] and data == mine
 
 
+@pytest.mark.parametrize("known_base", [True, False], ids=["known-base", "unknown-base"])
+def test_missing_file_locked_save_refuses_region_damage(inst, monkeypatch, known_base):
+    from flask import Flask
+    from quam_state_manager.web import pulse_class_page as P
+
+    src, base = _draft(inst)
+    path = D.draft_path(inst, "c", "FlatPulse")
+    path.unlink()
+    if known_base:
+        mine = T.render(_spec(0.9))
+        expected = "This save changes the template line of field 'amplitude'."
+    else:
+        W._WATCHES.clear()
+        mine = src.replace(T.REGION_BEGIN, "").replace(T.REGION_END, "")
+        expected = "This save breaks the template region markers or their lines."
+    monkeypatch.setattr(P, "_inst", lambda: inst)
+    monkeypatch.setattr(P, "_scope", lambda: "c")
+    app = Flask(__name__)
+    app.add_url_rule("/pulse-class/save", view_func=P.pulse_class_save, methods=["POST"])
+    response = app.test_client().post("/pulse-class/save", json={
+        "cls": "FlatPulse", "text": mine, "base_sha": base})
+    result = response.get_json()
+    assert response.status_code == 400
+    assert not result["ok"] and result["region"]
+    assert result["error"] == (expected + " The form owns these lines: change them in the form, or press "
+                               "\"Edit the template lines by hand\" first.")
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("missing", [True, False], ids=["missing-file-200", "existing-file-409"])
 def test_unknown_base_after_restart_respects_file_presence(inst, monkeypatch, missing):
     from flask import Flask

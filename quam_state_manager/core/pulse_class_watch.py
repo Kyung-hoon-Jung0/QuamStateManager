@@ -231,7 +231,9 @@ def save_from_pane(instance, scope, class_name, text: str, base_sha: str | None,
     Either choice carries the ``file_sha`` of the question it answers; when
     the file is no longer that content, the question comes back.
     ``region_ok`` False (a pane save with the template lines locked) refuses
-    a change to the template region; the form door passes True."""
+    a change to the template region; the form door passes True. With neither
+    a known base nor a file, there is no earlier template line to compare,
+    so only the marker/spec shape is checked."""
     path = D.draft_path(instance, scope, class_name)
     if keep not in (None, "sm", "file"):
         return {"ok": False, "error": "Choose which side to keep."}
@@ -264,6 +266,12 @@ def save_from_pane(instance, scope, class_name, text: str, base_sha: str | None,
                     "error": "The template base is no longer known. To save these lines, press "
                              "\"Edit the template lines by hand\" first, then Save draft."}
         why = region_change(base_text, text) if base_text is not None else None
+        if base_text is None:
+            info = _describe(text)
+            if not info["protect"] or info["spec"] is None:
+                why = ("This save breaks the template region markers or their lines."
+                       " The form owns these lines: change them in the form, or press "
+                       "\"Edit the template lines by hand\" first.")
         if why:
             return {"ok": False, "error": why, "region": True}
     data = text.encode("utf-8")

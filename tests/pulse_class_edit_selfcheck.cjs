@@ -47,6 +47,8 @@ const zeroRect = function () { return { left: 0, right: 0, top: 0, bottom: 0, wi
 win.Range.prototype.getClientRects = noRects;
 win.Range.prototype.getBoundingClientRect = zeroRect;
 const root = doc.getElementById("pulse-class-page");
+ok(root.querySelector("[data-pce-unlock]").textContent.trim() === "Edit the template lines by hand",
+  "initial template: the hand-edit control has the label named by the server");
 root.setAttribute("data-pce-cls", "FlatTop");
 root.setAttribute("data-pce-previous-line", PREVIOUS);
 // the stripped template drops the new-class section's Jinja branches: keep only the class view
