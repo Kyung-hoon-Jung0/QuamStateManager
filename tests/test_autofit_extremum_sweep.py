@@ -298,3 +298,36 @@ def test_vertex_formula_matches_brute_force_argmax():
         b, c = rng.uniform(-3, 3), rng.uniform(-1, 1)
         x = np.linspace(-10, 10, 2_000_001)
         assert abs(x[np.argmax(a * x * x + b * x + c)] - _vertex(a, b)) < 2e-5
+
+
+@pytest.mark.parametrize("flux,vertex", [([0.01, 0.01], 0.01),
+                                         ([0.0, 0.0, 0.0], 0.0)])
+def test_a_sweep_that_did_not_move_is_not_evaluated(tmp_path, flux, vertex):
+    v = _evaluate(_write_raw(tmp_path / "r", flux=flux), vertex)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict == "suspect"
+    assert any("sweep did not move" in r for r in v.reasons), v.reasons
+    assert not any("half-span" in r for r in v.reasons), v.reasons
+
+
+def test_a_two_point_sweep_with_distinct_values_still_evaluates(tmp_path):
+    v = _evaluate(_write_raw(tmp_path / "r", flux=[-0.005, 0.005]), 0.001)
+    assert v.checks["G4_extremum"] == "ok"
+
+
+@pytest.mark.parametrize("make", [np.float32, np.float64, np.int64, np.int32])
+def test_a_numpy_scalar_vertex_is_a_number(tmp_path, make):
+    folder = _write_raw(tmp_path / "r")
+    inside = _evaluate(folder, make(0.003) if "float" in make.__name__ else make(0))
+    assert inside.checks["G4_extremum"] == "ok", inside.reasons
+    assert not any("not a finite number" in r for r in inside.reasons)
+    outside = _evaluate(folder, make(0.02) if "float" in make.__name__ else make(1))
+    assert outside.checks["G4_extremum"] == "fail", outside.reasons
+
+
+@pytest.mark.parametrize("bad", [np.float64("nan"), np.float32("inf"),
+                                 np.bool_(True), True])
+def test_non_numbers_stay_not_evaluated(tmp_path, bad):
+    v = _evaluate(_write_raw(tmp_path / "r"), bad)
+    assert v.checks["G4_extremum"] == "not_evaluated"
+    assert v.verdict == "suspect"

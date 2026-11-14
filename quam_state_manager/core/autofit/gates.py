@@ -489,12 +489,25 @@ def _display_scale(unit: str, magnitude: float) -> tuple[float, str]:
     return 1.0, unit
 
 
+def _plain_number_entry(entry, keys):
+    """Copy of the fit entry with numpy real scalars under ``keys`` turned
+    into Python numbers, so the shared reader judges them like a float.
+    numpy bools are not np.integer, so they stay and are refused."""
+    out = dict(entry or {})
+    for key in keys:
+        v = out.get(key)
+        if isinstance(v, (np.integer, np.floating)):
+            out[key] = v.item()
+    return out
+
+
 def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                            pre_update_value_of, current_value_of,
                            ) -> tuple[str, str]:
     """Returns (status, reason): status in ok | fail | not_evaluated."""
     rule = fam.extremum
     name = "extremum check"
+    entry = _plain_number_entry(entry, (rule.key, rule.curvature_key))
     vertex = fam_mod.fit_value(fam, entry, rule.key)
     if vertex is None:
         raw_v = (entry or {}).get(rule.key)
@@ -518,6 +531,10 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
                                  f"{rule.axis_var!r} has fewer than 2 values")
     unit = unit or rule.unit
     lo, hi = float(np.min(axis)), float(np.max(axis))
+    if hi == lo:
+        return "not_evaluated", (f"{name} not evaluated: the sweep did not "
+                                 f"move, every point of {rule.axis_var!r} "
+                                 f"has the same value")
     half = (hi - lo) / 2.0
     k, shown = _display_scale(unit, max(abs(lo), abs(hi), abs(vertex)))
     u = f" {shown}" if shown else ""
