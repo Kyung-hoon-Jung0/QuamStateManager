@@ -262,7 +262,11 @@ def test_existing_operation_is_never_overwritten():
 
 def test_a_name_the_name_rule_rejects_is_refused_with_its_reason():
     res = _plan(_chip(), name="cz_" + "x" * 60)
-    assert "is not a valid name" in res["error"]
+    assert "longer than 64 characters. Pick a shorter gate name." in res["error"]
+    s = _chip()
+    s["qubits"]["q-1"] = s["qubits"].pop("q1")
+    s["qubit_pairs"]["q1-2"]["qubit_control"] = "#/qubits/q-1"
+    assert "The qubit id q-1 contains a character" in _plan(s)["error"]
 
 
 # --- the alias and existing paths --------------------------------------
@@ -621,7 +625,7 @@ def test_copy_keeps_a_none_without_listing_it():
 
 
 def test_cross_pair_copy_refuses_a_different_moving_qubit():
-    s = _two_pulse_chip()
+    s = _one_line_chip()
     s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "target"
     res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
     assert "same moving qubit" in res["error"]
@@ -665,7 +669,7 @@ def test_copied_name_needs_the_gate_name_then_an_underscore():
     ops = s["qubits"]["q1"]["z"]["operations"]
     ops["cz_ab_pulse_q1_q2"] = ops.pop("cz_a_flux_pulse_q1_q2")
     res = cgb.plan(s, "q1-q2", gate_name="cz_n", gate_class=LAB_GATE)
-    assert "does not start with cz_a" in res["error"]
+    assert "is not named after cz_a" in res["error"]
 
 
 def test_copied_name_matches_whole_ids_longest_first():
@@ -827,8 +831,16 @@ def test_given_value_reaches_a_plain_operation_copy():
     assert by["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]["amplitude"] == 0.5
 
 
-def test_moving_rule_applies_per_line():
+def _one_line_chip():
+    """Model cz_a on q1-q2 that plays only the control z line."""
     s = _two_pulse_chip()
+    del s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_target"]
+    del s["qubits"]["q2"]["z"]["operations"]["cz_a_flux_pulse_q2_q1"]
+    return s
+
+
+def test_moving_rule_applies_per_line():
+    s = _one_line_chip()
     del s["qubit_pairs"]["q1-q2"]["moving_qubit"]
     res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
     assert "same moving qubit" in res["error"]
@@ -845,7 +857,7 @@ def test_moving_rule_applies_per_line():
 
 
 def test_default_model_prefers_one_the_moving_rule_accepts():
-    s = _two_pulse_chip()
+    s = _one_line_chip()
     s["qubit_pairs"]["q0-q9"] = _pair("q1", "q2", moving="target")
     s["qubit_pairs"]["q0-q9"]["macros"]["cz_z"] = copy.deepcopy(
         s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"])
@@ -887,11 +899,88 @@ def test_a_qubit_that_changes_role_is_renamed_and_its_reference_refused():
     assert "#/qubits/q1/xy" in res["error"]
 
 
-def test_a_kept_plain_value_naming_the_model_gate_is_refused():
+def test_a_kept_plain_value_equal_to_the_model_gate_name_is_renamed():
     s = _two_pulse_chip()
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["id"] = "cz_a"
     res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
-    assert "names the model" in res["error"] and ".id" in res["error"]
+    assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["id"] == "cz_b"
+
+
+def test_same_gate_name_on_another_pair_is_planned():
+    res = cgb.plan(_two_pulse_chip(), "q3-q4", gate_name="cz_a", gate_class=LAB_GATE)
+    paths = [p for p, _ in res["creates"]]
+    assert paths == ["qubit_pairs.q3-q4.macros.cz_a",
+                     "qubits.q3.z.operations.cz_a_flux_pulse_q3_q4",
+                     "qubits.q4.z.operations.cz_a_flux_pulse_q4_q3"]
+    for s in _strings(res["creates"]):
+        assert "q1" not in s.split("_") and "q2" not in s.split("_")
+        assert "q1-q2" not in s
+
+
+def test_a_name_extending_the_model_name_is_planned():
+    res = cgb.plan(_two_pulse_chip(), "q1-q2", gate_name="cz_a_v2", gate_class=LAB_GATE)
+    assert "qubits.q1.z.operations.cz_a_v2_flux_pulse_q1_q2" in dict(res["creates"])
+
+
+def test_a_name_with_a_model_qubit_token_is_planned():
+    res = cgb.plan(_two_pulse_chip(), "q3-q4", gate_name="cz_q1_fast", gate_class=LAB_GATE)
+    assert "qubits.q3.z.operations.cz_q1_fast_flux_pulse_q3_q4" in dict(res["creates"])
+
+
+def test_free_text_is_neither_renamed_nor_refused():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["note"] = "calibrated on q1"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["label"] = "q2"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q3-q4.macros.cz_b"]
+    assert macro["flux_pulse_qubit"]["note"] == "calibrated on q1"
+    assert macro["label"] == "q4"  # an exact model qubit id maps by role
+
+
+def test_a_missing_target_qubit_blocks_only_gates_that_play_there():
+    s = _chip()
+    del s["qubits"]["q2"]
+    res = _plan(s)  # official class on the moving (control) line
+    assert "qubits.q1.z.operations.cz_new_pulse_q1_q2" in dict(res["creates"])
+    res = cgb.plan(s, "q1-2", gate_name="cz_c", gate_class=cgb.COUPLER_CZ_GATE,
+                   pulses={"coupler_flux_pulse": {"class": SQUARE, "fields": {"length": 48}}})
+    assert "creates" in res
+    s["qubit_pairs"]["q1-2"]["moving_qubit"] = "target"
+    res = _plan(s)
+    assert "points at #/qubits/q2, which this chip does not have" in res["error"]
+
+
+def test_a_copy_that_never_touches_the_missing_qubit_is_planned():
+    s = _one_line_chip()
+    s["qubit_pairs"]["q3-q9"] = _pair("q3", "q9")
+    res = cgb.plan(s, "q3-q9", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "qubits.q3.z.operations.cz_b_flux_pulse_q3_q9" in dict(res["creates"])
+
+
+def test_two_line_model_crosses_pairs_with_different_moving_qubits():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "target"
+    assert "creates" in cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    s = _one_line_chip()
+    s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "target"
+    assert "same moving qubit" in cgb.plan(
+        s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+
+
+def test_copy_from_the_cz_alias_follows_it():
+    s = _chip()
+    _macro_owned(s, "q1-2", "cz_src", length=64, amp=0.25)
+    s["qubit_pairs"]["q1-2"]["macros"]["cz"] = "#./cz_src"
+    res = _plan(s, copy_from="cz", pulses={"flux_pulse_qubit": {"class": SQUARE, "fields": {}}})
+    assert res["fields"]["flux_pulse_qubit"]["amplitude"] == cgb.COPIED
+    s["qubit_pairs"]["q1-2"]["macros"]["cz"] = "#./nothing"
+    assert "is an alias" in _plan(s, copy_from="cz")["error"]
+
+
+def test_table_class_lists_the_macro_keys_it_writes():
+    res = _plan(_chip())
+    assert res["fields"]["macro"]["phase_shift_control"] == cgb.DEFAULT
+    assert "flux_pulse_qubit" not in res["fields"]["macro"]
 
 
 def test_two_pulses_naming_one_operation_are_refused():
@@ -903,7 +992,7 @@ def test_two_pulses_naming_one_operation_are_refused():
     m["flux_pulse_qubit"] = key
     m["flux_pulse_target"] = key
     res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
-    assert "twice" in res["error"]
+    assert "would both be written as cz_b_flux_pulse_q1_q2" in res["error"]
 
 
 def test_model_values_are_labelled_as_from_the_model():
@@ -932,6 +1021,18 @@ def _bad_qubit_entry():
     return s
 
 
+def _bad_pair_entry():
+    s = _chip()
+    s["qubit_pairs"]["q0-q0"] = "not a pair"
+    return s
+
+
+def _bad_macros_entry():
+    s = _chip()
+    s["qubit_pairs"]["q2-3"]["macros"] = ["not", "a", "dict"]
+    return s
+
+
 @pytest.mark.parametrize("state,kw", [
     (_chip, {"pulses": "abc"}),
     (_chip, {"pulses": {"flux_pulse_qubit": "abc"}}),
@@ -939,6 +1040,8 @@ def _bad_qubit_entry():
     (_chip, {"gate_class": LAB_GATE, "model_gate": "q1-2"}),
     (_chip, {"gate_class": LAB_GATE, "model_gate": ("q1-2",)}),
     (_bad_qubit_entry, {}),
+    (_bad_pair_entry, {"gate_class": LAB_GATE}),
+    (_bad_macros_entry, {"gate_class": LAB_GATE}),
     (_chip, {"copy_from": "cz_missing"}),
     (_chip, {"copy_from": 5}),
     (_chip, {"pulses": {"flux_pulse_qubit": {"class": SQUARE, "fields": {"length": True}}}}),
