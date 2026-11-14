@@ -34,8 +34,14 @@ The result is JSON-serialisable::
      "gates": [{"pair", "gate", "checks": {name: {"status", "message"}},
                 "unchecked": [name], "partly_checked": [name],
                 "timeline": {"rows": [{element, port, operation, start_ns,
-                end_ns, level, scale}], "cannot_draw", "notes",
-                "filtered_ports"} | None}]}
+                end_ns, level, scale, samples, constant, total, truncated,
+                sampling_rate, length_ns, range_v, offset_v, port_kind}],
+                "cannot_draw", "notes", "filtered_ports"} | None}]}
+
+Each timeline row also carries the config's samples of the operation it
+plays (``samples``: at most ``ROW_SAMPLE_CAP`` of ``total``, ``truncated``
+when cut; ``constant`` for a constant waveform), the port's output range
+``range_v`` (None when unknown) and the channel offset ``offset_v``.
 
 "no-gates": the gate list was empty, an input error (nothing is copied or
 run). ``ok`` means: nothing failed AND every gate was actually run by the lab's
@@ -358,7 +364,7 @@ def _one_gate(key, data, after, after_err, preview):
             checks["timeline"] = _r("note", "The timeline could not be drawn: the gate's "
                                             "program or the config is missing.", not_run=True)
         checks["range"] = _guard(_range_check, found, tl, no_cfg)
-        return checks, tl
+        return checks, with_samples(tl, found)
     except Exception:  # noqa: BLE001 -- one gate never takes the others down
         return _all("skipped", f"Not checked: the lab's data for the gate {name} has a form "
                                "SM does not read."), None
@@ -646,6 +652,63 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
                   + ", ".join(not_checked) + "." + _iq_note(found), partly=True)
     return _r("pass", "Inside the output range: " + ", ".join(ok_names) + "."
               + _iq_note(found))
+
+
+#: the most samples one timeline row carries to the screen
+ROW_SAMPLE_CAP = 4000
+
+
+def _row_samples(info: dict | None) -> dict:
+    """The config's samples of one played operation for the picture, plus
+    the port's range and the channel offset. A list longer than
+    :data:`ROW_SAMPLE_CAP` (or one the lab already shortened) is cut and
+    marked ``truncated``; a waveform SM cannot read carries no samples."""
+    out = {"samples": None, "constant": None, "total": None, "truncated": False,
+           "sampling_rate": None, "length_ns": None, "range_v": None, "offset_v": 0.0,
+           "port_kind": None}
+    if not isinstance(info, dict):
+        return out
+    out["sampling_rate"] = info.get("sampling_rate")
+    out["length_ns"] = info.get("length")
+    out["range_v"] = port_range(info)
+    out["port_kind"] = info.get("port_kind")
+    try:
+        out["offset_v"] = (0.0 if info.get("port_kind") == "mw"
+                           else float(info.get("offset") or 0.0))
+    except (TypeError, ValueError):
+        out["offset_v"] = None
+    if _unreadable(info) or _nonfinite(info):
+        return out
+    wf = info.get("waveform") or {}
+    if wf.get("type") == "constant":
+        out["constant"] = float(wf.get("sample"))
+        out["total"] = _whole(info.get("length"))
+        return out
+    samples = [float(v) for v in (wf.get("samples") or [])]
+    total = wf.get("total") if isinstance(wf.get("total"), int) else len(samples)
+    out["total"] = total
+    out["truncated"] = bool(wf.get("truncated")) or len(samples) > ROW_SAMPLE_CAP
+    out["samples"] = samples[:ROW_SAMPLE_CAP]
+    return out
+
+
+def with_samples(tl: dict | None, found: list) -> dict | None:
+    """*tl* with each row as a dict that also carries :func:`_row_samples`
+    of the operation it plays (the same config the checks read)."""
+    if tl is None:
+        return None
+    table: dict = {}
+    for info in found:
+        if isinstance(info, dict):
+            table.setdefault((info.get("element"), info.get("operation")), info)
+    out = dict(tl)
+    rows = []
+    for r in tl.get("rows") or []:
+        d = r._asdict() if hasattr(r, "_asdict") else dict(r)
+        d.update(_row_samples(table.get((d.get("element"), d.get("operation")))))
+        rows.append(d)
+    out["rows"] = rows
+    return out
 
 
 def _scrub(res: dict, copies) -> dict:

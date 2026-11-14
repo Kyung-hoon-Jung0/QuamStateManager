@@ -1,0 +1,107 @@
+"""The gate timeline chart data from a check result: lane order, sample placement, flags."""
+import json
+
+import pytest
+
+from quam_state_manager.core import gate_check
+from quam_state_manager.core.gate_timeline_view import timeline_data
+from tests.test_gate_check import GATE, N, _cfg, _g, _ran, _wave
+
+TWO = ('from qm.qua import *\n\nwith program() as prog:\n'
+       '    play("sp_pulse", "q3.z")\n'
+       '    play("cpl_pulse" * amp(0.5), "c12")\n'
+       '    play("cz_pulse", "q1.z")\n'
+       '    play("t_pulse", "q2.z")\n\nconfig = {}\n')
+
+
+def _multi_cfg():
+    cfg = _cfg()
+    port = ["con1", 1, 1]
+    for el, op, wf in (("q3.z", "sp_pulse", "sp.wf"), ("c12", "cpl_pulse", "cpl.wf"),
+                       ("q2.z", "t_pulse", "t.wf")):
+        cfg["elements"][el] = {"singleInput": {"port": port}, "operations": {op: op + ".pulse"}}
+        cfg["pulses"][op + ".pulse"] = {"length": N, "waveforms": {"single": wf}}
+        cfg["waveforms"][wf] = {"type": "constant", "sample": 0.1}
+    return cfg
+
+
+def _entry(**kw):
+    res = gate_check.evaluate([GATE], _ran(**kw))
+    return _g(res)
+
+
+def test_samples_on_the_shared_axis_equal_the_config_value_by_value():
+    e = _entry()
+    data = timeline_data(e, control="q1", target="q2")
+    assert data["cannot_draw"] is None
+    (lane,) = data["lanes"]
+    seg = lane["segments"][0]
+    assert lane["key"] == "q1.z" and lane["group"] == "gate"
+    assert seg["v"] == _wave(0.2)
+    assert seg["t_ns"] == [4.0 + i for i in range(N)]       # port delay 4 ns, 1 GS/s
+    assert seg["peak_v"] == 0.2 and seg["min_v"] == 0.0 and seg["length_ns"] == N
+    assert seg["flags"] == [] and lane["limit_v"] == [-0.5, 0.5]
+    assert json.loads(json.dumps(data)) == data
+
+
+def test_lane_order_control_target_coupler_then_spectators():
+    cfg = _multi_cfg()
+    e = _entry(script=TWO, cfg=cfg)
+    data = timeline_data(e, control="q1", target="q2", coupler_elements=["c12"])
+    assert [ln["key"] for ln in data["lanes"]] == ["q1.z", "q2.z", "c12", "q3.z"]
+    assert [ln["group"] for ln in data["lanes"]] == ["gate", "gate", "gate", "spectator"]
+    c = data["lanes"][2]["segments"][0]
+    assert c["v"] == [0.05, 0.05] and len(c["t_ns"]) == 2      # constant: 2 points, scale applied
+
+
+def test_sampling_step_follows_the_port_rate():
+    e = _entry(cfg=_cfg(rate=2e9, length=N // 2, samples=_wave(0.2)))
+    seg = timeline_data(e, control="q1", target="q2")["lanes"][0]["segments"][0]
+    assert seg["t_ns"][1] - seg["t_ns"][0] == 0.5
+
+
+def test_over_range_flag_and_offset_moves_the_limit():
+    e = _entry(cfg=_cfg(sample=0.45, offset=0.1))
+    lane = timeline_data(e, control="q1", target="q2")["lanes"][0]
+    assert "over_range" in lane["segments"][0]["flags"]
+    assert lane["limit_v"] == pytest.approx([-0.6, 0.4])
+    inside = timeline_data(_entry(cfg=_cfg(sample=0.35, offset=0.1)), control="q1", target="q2")
+    assert inside["lanes"][0]["segments"][0]["flags"] == []
+
+
+def test_bad_length_flag():
+    e = _entry(cfg=_cfg(length=18, samples=[0.1] * 18))
+    seg = timeline_data(e, control="q1", target="q2")["lanes"][0]["segments"][0]
+    assert seg["flags"] == ["bad_length"]
+
+
+def test_unknown_range_is_null_limit():
+    e = _entry(cfg=_cfg(mode=None))
+    lane = timeline_data(e, control="q1", target="q2")["lanes"][0]
+    assert lane["limit_v"] is None and lane["segments"][0]["flags"] == []
+
+
+def test_cannot_draw_and_notes_pass_through_verbatim_without_lanes():
+    from tests.test_gate_check import LOOP
+    e = _entry(script=LOOP)
+    data = timeline_data(e, control="q1", target="q2")
+    assert data["lanes"] == []
+    assert data["cannot_draw"] == e["timeline"]["cannot_draw"]
+    assert data["notes"] == e["timeline"]["notes"]
+    ok = timeline_data(_entry(), control="q1", target="q2")
+    assert ok["notes"] == _entry()["timeline"]["notes"]
+
+
+def test_no_timeline_is_a_cannot_draw_statement():
+    data = timeline_data({"timeline": None}, control="q1", target="q2")
+    assert data["lanes"] == [] and data["cannot_draw"].startswith("cannot draw: ")
+
+
+def test_long_waveform_is_cut_and_marked():
+    long = [0.1] * (gate_check.ROW_SAMPLE_CAP + 8)
+    e = _entry(cfg=_cfg(length=len(long), samples=long))
+    row = e["timeline"]["rows"][0]
+    assert row["truncated"] and len(row["samples"]) == gate_check.ROW_SAMPLE_CAP
+    assert row["total"] == len(long)
+    seg = timeline_data(e, control="q1", target="q2")["lanes"][0]["segments"][0]
+    assert seg["truncated"] and len(seg["v"]) == gate_check.ROW_SAMPLE_CAP
