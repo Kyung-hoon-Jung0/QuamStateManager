@@ -88,3 +88,14 @@ def test_a_readable_pulse_keeps_its_stored_value_in_the_summary():
     s = C.solve(doc, "q1-q2", row["path"], rows=rows, conversions=conv)
     assert s["ok"] and s["path"] and s["stage_refusal"] is None
     assert "stored +190.0 mV" in s["summary"] and "missing or not a number" not in s["summary"]
+
+
+@pytest.mark.parametrize("name,pulse,why", UNREADABLE[:2], ids=[u[0] for u in UNREADABLE[:2]])
+def test_the_row_point_names_the_leaf_without_a_lobe_pass(monkeypatch, name, pulse, why):
+    """The row's own point, before any lobe overrides it, already names the leaf."""
+    monkeypatch.setattr(C, "pulse_lobes", lambda *_a, **_k: [])
+    _, _, _, row = _plan(pulse)
+    ln = row["lines"][0]
+    assert ln["lobes"] == []
+    assert why in ln["point"]["reason"]
+    assert "the operation amplitude is missing" not in ln["point"]["reason"]
