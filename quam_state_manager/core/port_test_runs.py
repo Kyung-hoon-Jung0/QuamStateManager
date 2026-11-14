@@ -314,10 +314,12 @@ class Runs:
             shutil.rmtree(p, ignore_errors=True)
 
     def start(self, python: str, script: str, request: dict, meta: dict,
-              popen=subprocess.Popen, job: Optional[dict] = None) -> dict:
+              popen=subprocess.Popen, job: Optional[dict] = None,
+              runner: Optional[Path] = None) -> dict:
         """Start the one port test. With ``job`` the loopback calibration
         runner runs that job instead of ``script`` (same busy/stop/owner rules;
-        Stop = the ``stop`` file, result = ``_result.json``)."""
+        Stop = the ``stop`` file, result = ``_result.json``). ``runner``
+        replaces the port-test runner script (same argv: script, work dir)."""
         with self._lock:
             generation = request.get("_port_play_generation")
             if generation is not None and generation != self.port_play_generation:
@@ -344,7 +346,7 @@ class Runs:
             req.setdefault("max_s", MAX_RUN_S)
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
             if job is None:
-                proc = popen([python, str(RUNNER), str(work / "script.py"), str(work)],
+                proc = popen([python, str(runner or RUNNER), str(work / "script.py"), str(work)],
                              stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              text=True, creationflags=flags)
             else:
