@@ -31625,7 +31625,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     Returns ``(entries, note)`` -- entries empty when nothing happened.
     Runs OUTSIDE `store._lock` (review C1): the door takes the build lock.
     """
-    from quam_state_manager.core.differ import compare_equal
+    from quam_state_manager.core import edit_policy
     from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
 
     def _current(merged, path):
@@ -31671,7 +31671,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
             if e.get("created") or e.get("deleted"):
                 continue
             cur = _current(merged, e["path"])
-            same = compare_equal(cur, e.get("old"), tolerance=None)
+            same = edit_policy.journal_equal(cur, e.get("old"))
             if not same:
                 return [], (f"{e['path']} has changed since "
                             f"(now {_fmt_msg_val(cur)}); nothing was written")

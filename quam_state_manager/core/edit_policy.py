@@ -43,6 +43,22 @@ def cas_equal(a: Any, b: Any) -> bool:
     return a == b
 
 
+def journal_equal(a: Any, b: Any) -> bool:
+    """Is the live value still the journal's recorded value?
+
+    Finite scalars compare with :func:`cas_equal` (the one tolerance); NaN
+    equals NaN (the chip's own value, restored); lists and dicts compare
+    element-wise by the same rule.
+    """
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(journal_equal(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(journal_equal(x, y) for x, y in zip(a, b))
+    if (isinstance(a, float) and isinstance(b, float) and math.isnan(a) and math.isnan(b)):
+        return True
+    return cas_equal(a, b)
+
+
 def resolve_edit_path(store: Any, dot_path: str) -> str:
     """Resolve a write path through QUAM pointers when needed.
 

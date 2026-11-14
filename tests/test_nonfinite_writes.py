@@ -234,7 +234,10 @@ def _replay_wrappers(sources):
 
     wrappers = {}
     for source in sources:
-        for fn in ast.walk(ast.parse(source)):
+        tree = ast.parse(source)
+        methods = {id(f) for cls in ast.walk(tree) if isinstance(cls, ast.ClassDef)
+                   for f in cls.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
@@ -250,9 +253,11 @@ def _replay_wrappers(sources):
                 for value in call.args[1:] + [k.value for k in call.keywords if k.arg]:
                     forwarded.update(n.id for n in ast.walk(value)
                                      if isinstance(n, ast.Name) and n.id in params)
+            # a call site's args exclude the receiver of a method
+            shift = 1 if (id(fn) in methods and params and params[0] in ("self", "cls")) else 0
             if forwarded:
                 wrappers.setdefault(fn.name, set()).update(
-                    (params.index(name), name) for name in forwarded)
+                    (params.index(name) - shift, name) for name in forwarded)
     return wrappers
 
 
@@ -390,14 +395,19 @@ def test_replay_scan_flags_a_new_site(body):
 
 
 @pytest.mark.parametrize("method", ["set_value", "create_subtree"])
-@pytest.mark.parametrize("shape", ["alias", "getattr", "wrapper", "wrapper_keyword"])
+@pytest.mark.parametrize("shape", ["alias", "getattr", "wrapper", "wrapper_keyword",
+                                   "method", "method_keyword"])
 def test_replay_scan_flags_indirect_writes(method, shape):
-    helper = f"def forward(mod, path, value, **kw):\n    mod.{method}(path, value, **kw)\n"
+    helper = (f"def forward(mod, path, value, **kw):\n    mod.{method}(path, value, **kw)\n"
+              f"class W:\n    def write(self, path, value):\n"
+              f"        self.mod.{method}(path, value)\n")
     bodies = {
         "alias": f"write = mod.{method}\nwrite(path, entry.old_value)",
         "getattr": f'getattr(mod, "{method}")(path, entry.old_value)',
         "wrapper": "forward(mod, path, entry.old_value)",
         "wrapper_keyword": "forward(mod, path, value=entry.old_value)",
+        "method": "W().write(path, entry.old_value)",
+        "method_keyword": "W().write(path, value=entry.old_value)",
     }
     source = helper + "def planted(mod, path, entry):\n" + "\n".join(
         "    " + line for line in bodies[shape].splitlines())
@@ -721,3 +731,14 @@ def test_pulse_literal_edit_refuses_bare_nonfinite_text(nan_chip, value):
                                     "mode": "literal", "value": value})
     assert r.status_code == 400, r.get_data(as_text=True)[:300]
     assert _x90_alpha(c) == "#../x180_DragCosine/alpha"
+
+
+def test_redo_compare_keeps_the_one_tolerance():
+    from quam_state_manager.core import edit_policy
+    eq = edit_policy.journal_equal
+    nan = float("nan")
+    assert eq(6.1e9 * (1 + 1e-10), 6.1e9)
+    assert not eq(6.1e9 * (1 + 1e-6), 6.1e9)
+    assert eq(nan, nan)
+    assert eq([1.0, nan], [1.0, nan]) and eq({"a": [nan, 2.0]}, {"a": [nan, 2.0]})
+    assert not eq([1.0, nan], [1.0, 0.5]) and not eq([1.0], [1.0, 2.0])
