@@ -88,7 +88,7 @@ def gate_line(store, ctx, pair: str, gate: str, *, env=None, folder=None,
 def gate_list(store, ctx, pair: str) -> dict:
     """The pair detail's gate list: its lines and the one head note."""
     lines = gate_lines(store, ctx, pair)
-    return {"lines": lines, "count": len(lines),
+    return {"pair": pair, "lines": lines, "count": len(lines),
             "no_active": bool(lines) and not any(ln["active"] for ln in lines)}
 
 
