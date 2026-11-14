@@ -72,11 +72,11 @@ def _intended(pulse: dict, prov: dict) -> dict:
     length, lsrc = None, BY_CLASS
     raw = pulse.get("length")
     if _num(raw) is not None:
-        length, lsrc = int(raw), prov.get("length", "default")
+        length, lsrc = raw, prov.get("length", "default")
     else:
         for k in ("pulse_length",):
             if _num(pulse.get(k)) is not None:
-                length, lsrc = int(pulse[k]), prov.get(k, "default")
+                length, lsrc = pulse[k], prov.get(k, "default")
                 break
     amp, asrc = None, BY_CLASS
     if _num(pulse.get("amplitude")) is not None:

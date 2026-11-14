@@ -188,16 +188,17 @@ def tiles(data: dict) -> list[dict]:
     t0, t1 = min(a for _k, a, _b in spans), max(b for _k, _a, b in spans)
     out.append({"key": "length", "label": "Gate length", "value": f"{t1 - t0:g}", "unit": "ns",
                 "note": f"{t0:g} to {t1:g} ns", "tone": "neutral"})
-    best, where, over = None, None, False
+    best, where, over, over_off = None, None, False, 0.0
     for ln in lanes:
         for s in ln["segments"]:
             for v in (s.get("peak_v"), s.get("min_v")):
                 if v is not None and (best is None or abs(v) > abs(best)):
                     best, where = v, ln["key"]
-            over = over or "over_range" in (s.get("flags") or [])
+            if "over_range" in (s.get("flags") or []):
+                over, over_off = True, float(ln.get("offset_v") or 0.0)
     if best is not None:
         out.append({"key": "peak", "label": "Highest level", "value": f"{best:.4g}", "unit": "V",
-                    "note": f"on {where}" + (", over the port's limit" if over else ""),
+                    "note": f"on {where}" + ((", over the port's range" + (f" (with the {fmt_num(over_off)} V offset)" if over_off else "")) if over else ""),
                     "tone": "danger" if over else "neutral"})
     if len(spans) >= 2:
         ordered = sorted(spans, key=lambda x: x[1])

@@ -585,7 +585,12 @@
             [['max', 4, 1], ['min', oneLevel ? 4 : 5, -1]].forEach(function (x) {
                 if (tones[x[0]] !== 'danger') return;
                 tds[x[1]].classList.add(CELL_TONE.danger);
-                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-cell-note', 'limit ' + num(x[2] * r.actual.limit_v, 'V')));
+                if ((r.actual || {}).limit_v) {
+                    var off = +(r.actual.offset_v || 0);
+                    tds[x[1]].appendChild(el('span', 'ui-cell-note', off
+                        ? 'port range ' + num(r.actual.limit_v, 'V') + ' with a ' + num(off, 'V') + ' offset'
+                        : 'limit ' + num(x[2] * r.actual.limit_v, 'V')));
+                }
             });
         });
         host.appendChild(t);

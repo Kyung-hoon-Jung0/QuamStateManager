@@ -177,3 +177,10 @@ def test_level_tile_rounds_to_four_places_and_same_start_is_zero():
     assert _tile(ts, "peak")["value"] == "0.1903" and _tile(ts, "peak")["unit"] == "V"
     t = _tile(ts, "timing")
     assert (t["value"], t["unit"], t["note"]) == ("0", "ns", "same start")
+
+
+def test_the_level_tile_names_the_offset_when_it_puts_the_line_over_the_range():
+    ln = _lane("q1.z", 0, 100, peak=0.4, flags=["over_range"])
+    ln["offset_v"] = 0.2
+    p = _tile(tiles({"lanes": [ln]}), "peak")
+    assert p["note"] == "on q1.z, over the port's range (with the 0.2 V offset)"

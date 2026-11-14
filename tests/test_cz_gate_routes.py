@@ -421,3 +421,101 @@ def test_a_record_left_by_an_undone_create_never_matches_a_new_gate(chip, fake):
     chip.c.post(CREATE, json={"check_token": j2["check_token"], "plan_sig": j2["plan_sig"]})
     row = chip.c.get("/pulse/cz-gate/status?pair=q1-2&gate=cz_sq").get_data(as_text=True)
     assert "Checked with the lab" not in row
+
+
+
+# ---------------------------------------------------------------- review fixes (server)
+
+def _live_bytes(chip):
+    folder = Path(chip.ctx["path"])
+    return (folder / "state.json").read_bytes(), (folder / "wiring.json").read_bytes()
+
+
+def test_a_write_that_logs_then_raises_is_undone_by_group(chip, fake, monkeypatch):
+    before = chip.snap()
+    j = _check(chip.c, _body())
+    mod = chip.ctx["modifier"]
+    real = mod.create_subtree
+    calls = []
+
+    def flaky(path, value, **kw):
+        calls.append(path)
+        entry = real(path, value, **kw)          # the entry is logged ...
+        if len(calls) == 2:
+            raise RuntimeError("index update failed")   # ... then the write raises
+        return entry
+    monkeypatch.setattr(mod, "create_subtree", flaky)
+    r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    assert r.status_code >= 400 and "rolled back" in r.get_json()["error"]
+    assert chip.snap() == before, "the working copy and the change log are as before"
+
+
+def test_an_undo_that_fails_is_never_called_rolled_back(chip, fake, monkeypatch):
+    j = _check(chip.c, _body())
+    mod = chip.ctx["modifier"]
+    real = mod.create_subtree
+    calls = []
+
+    def flaky(path, value, **kw):
+        calls.append(path)
+        entry = real(path, value, **kw)
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return entry
+    monkeypatch.setattr(mod, "create_subtree", flaky)
+    monkeypatch.setattr(mod, "undo", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("undo broke")))
+    r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    body = r.get_json()
+    assert r.status_code == 500 and body["partial"] and "rolled back" not in body["error"]
+    assert "press Ctrl+Z" in body["error"]
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), True, "0.2", [1], {"a": 1}])
+def test_the_server_refuses_a_value_of_the_wrong_kind(chip, bad):
+    b = _body()
+    b["pulses"]["flux_pulse_qubit"]["fields"]["amplitude"] = bad
+    p = chip.c.post(PLAN, json=b).get_json()["pairs"][0]
+    assert not p["ok"] and any("amplitude" in r for r in p["refusals"])
+
+
+def test_an_int_field_refuses_a_fraction_on_the_server(chip):
+    b = _body()
+    b["pulses"]["flux_pulse_qubit"]["fields"]["length"] = 16.5
+    p = chip.c.post(PLAN, json=b).get_json()["pairs"][0]
+    assert not p["ok"] and any("length" in r and "whole number" in r for r in p["refusals"])
+
+
+def test_a_float_field_holding_an_integer_takes_a_fraction():
+    assert czr.value_kind(1, "float") == "float"
+    assert czr.value_problem(0.5, "float") is None
+    assert czr.kind_mismatch(True, "int")
+
+
+def test_the_range_sentence_names_the_offset_and_the_range():
+    lane = {"key": "q1.z", "limit_v": [-0.7, 0.3], "offset_v": 0.2}
+    assert czr.range_sentence(lane, 0.4) == (
+        "q1.z would play 0.4 V on top of its 0.2 V offset: 0.6 V, above the port's 0.5 V range.")
+    plain = {"key": "q1.z", "limit_v": [-0.5, 0.5], "offset_v": 0.0}
+    assert czr.range_sentence(plain, 3.0) == "q1.z would play 3 V. This port's limit is 0.5 V."
+
+
+def test_the_agent_edit_lock_refuses_the_create(chip, fake):
+    j = _check(chip.c, _body())
+    before = chip.snap()
+    chip.app.config["agent_edit_lock"] = {"path": chip.ctx["path"], "node": "plan"}
+    try:
+        # call the door itself (no before-request guard), so the door's own refusal is what is pinned
+        with chip.app.test_request_context(CREATE, method="POST",
+                                           json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]}):
+            from flask import make_response
+            r = make_response(czr.api_cz_gate_create())
+    finally:
+        chip.app.config.pop("agent_edit_lock", None)
+    assert r.status_code >= 400 and chip.snap() == before
+
+
+def test_the_live_files_are_unchanged_after_a_create(chip, fake):
+    live = _live_bytes(chip)
+    j = _check(chip.c, _body())
+    r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    assert r.status_code == 200 and _live_bytes(chip) == live

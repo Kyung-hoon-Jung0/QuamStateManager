@@ -103,3 +103,8 @@ def test_port_delay_start_and_cell_tones():
     assert not any(r["tones"].values())
     (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.2}), _entry(samples=[0, 0.18, 0]))
     assert r["tones"]["amplitude"] == "warn"
+
+
+def test_an_entered_length_is_shown_as_entered_never_truncated():
+    (r,) = gi.intent_rows(_plan({"length": 16.5, "amplitude": 0.1}), _entry(constant=0.1, length=16))
+    assert r["intended"]["length"] == 16.5 and r["differs"]["length"]

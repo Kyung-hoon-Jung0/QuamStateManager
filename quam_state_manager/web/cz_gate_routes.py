@@ -194,7 +194,11 @@ def _given_values(pulse: dict) -> dict:
 
 
 def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
-    """``[(pair, plan)]``; the first pair seeds the others' field values."""
+    """``[(pair, plan)]``; the first pair seeds the others' field values.
+    A given value of the wrong kind refuses every pair, naming the field."""
+    bad = check_values(merged, body)
+    if bad:
+        return [(pid, {"error": bad[0], "refusals": bad}) for pid in body["pairs"]]
     out = []
     first = None
     for i, pid in enumerate(body["pairs"]):
@@ -232,11 +236,17 @@ def plan_signature(body: dict, plans: list) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
+_KINDS = ("int", "float", "bool", "str")
+
+
 def value_kind(value: Any, declared: str | None = None) -> str:
-    """The kind of a field the person may type, decided from the state's own
-    value type (never guessed from its digits): ``bool`` | ``int`` |
-    ``float`` | ``str``. A null value takes the class's declared kind when
-    the catalog knows it, else ``any`` (a number or text, as typed)."""
+    """The kind of a field the person may type: the catalog's declared kind
+    when it knows the field (a float field holding the JSON integer 1 stays a
+    float field), else the state value's own type, never its digits:
+    ``bool`` | ``int`` | ``float`` | ``str``; ``any`` (a number or text) for
+    a null value with no declaration."""
+    if declared in _KINDS:
+        return declared
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -245,9 +255,89 @@ def value_kind(value: Any, declared: str | None = None) -> str:
         return "float"
     if isinstance(value, str):
         return "str"
-    if declared in ("int", "float", "bool", "str"):
-        return declared
     return "any"
+
+
+def kind_mismatch(value: Any, declared: str | None) -> str | None:
+    """A hint when the state's value does not have the declared kind (a bool
+    in an int field): the field keeps the declared kind and says so."""
+    if declared not in _KINDS or value is None:
+        return None
+    if value_kind(value) != declared and not (declared == "float" and value_kind(value) == "int"):
+        return f"The chip holds {value!r} here, but the class declares {declared}."
+    return None
+
+
+def value_problem(value: Any, kind: str, optional: bool = True) -> str | None:
+    """Why *value* cannot go into a field of *kind* (the page's own words),
+    or None. Numbers are finite ints or floats, never bools, strings, lists or
+    dicts; an int field takes whole numbers only."""
+    import math
+    if value is None:
+        return None if optional else "Type a value."
+    if kind in ("int", "float"):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "Type a number."
+        if not math.isfinite(float(value)):
+            return "Type a number."
+        if kind == "int" and float(value) != int(value):
+            return "Type a whole number."
+        return None
+    if kind == "bool":
+        return None if isinstance(value, bool) else "Type true or false."
+    if kind == "str":
+        return None if isinstance(value, str) else "Type text."
+    if isinstance(value, bool) or isinstance(value, (list, dict)):
+        return "Type a number or text."
+    if isinstance(value, float) and not math.isfinite(value):
+        return "Type a number."
+    return None if isinstance(value, (int, float, str)) else "Type a number or text."
+
+
+def _given_kinds(merged: dict, body: dict) -> tuple[dict, dict]:
+    """``({slot: {field: (kind, optional)}}, {key: (kind, optional)})`` for the
+    values the person may give: from the catalog for a class SM knows, from
+    the model's own pulses and settings (with the catalog's declarations) for
+    a copied layout."""
+    pulse_kinds: dict = {}
+    for slot, spec in (body.get("pulses") or {}).items():
+        cls = (spec or {}).get("class") if isinstance(spec, dict) else None
+        cat = pulse_catalog.by_qclass(cls) if isinstance(cls, str) else None
+        if cat is not None:
+            pulse_kinds[slot] = {n: (prm.kind, False) for prm in cat.params
+                                 for n in (prm.name, *getattr(prm, "aliases", ()))}
+    setting_kinds: dict = {}
+    if body.get("gate_class") not in cgb.GATE_CLASSES and body.get("pairs"):
+        bare = cgb.plan(merged, body["pairs"][0], gate_name=body.get("gate_name") or "cz_x",
+                        gate_class=body.get("gate_class") or "", pulses={},
+                        model_gate=body.get("model_gate"))
+        if "error" not in bare:
+            for f in (bare.get("operations") or {}):
+                pulse_kinds[f] = {k: (v["kind"], v["optional"])
+                                  for k, v in field_specs(gate_intent.planned_pulse(bare, f)).items()}
+            for st in _settings(bare):
+                setting_kinds[st["key"]] = (st["kind"], st["optional"])
+    return pulse_kinds, setting_kinds
+
+
+def check_values(merged: dict, body: dict) -> list[str]:
+    """Every given pulse field and gate setting checked against its kind on
+    the server (the page checks too, but nothing it sends is trusted): one
+    refusal per bad value, naming the field."""
+    pulse_kinds, setting_kinds = _given_kinds(merged, body)
+    out = []
+    for slot, spec in (body.get("pulses") or {}).items():
+        for k, v in ((spec or {}).get("fields") or {}).items() if isinstance(spec, dict) else ():
+            kind, optional = (pulse_kinds.get(slot) or {}).get(k, (value_kind(v), True))
+            why = value_problem(v, kind, optional or v is None and kind == "any")
+            if why:
+                out.append(f"{slot}.{k}: {why}")
+    for k, v in (body.get("macro_fields") or {}).items():
+        kind, optional = setting_kinds.get(k, (value_kind(v), True))
+        why = value_problem(v, kind, optional)
+        if why:
+            out.append(f"gate setting {k}: {why}")
+    return out
 
 
 def field_specs(pulse: dict | None) -> dict:
@@ -268,10 +358,14 @@ def field_specs(pulse: dict | None) -> dict:
         if k in ("__class__", "id") or (isinstance(v, str) and v.startswith("#")):
             continue
         prm = params.get(k)
-        out[k] = {"kind": value_kind(v, getattr(prm, "kind", None)),
+        declared = getattr(prm, "kind", None)
+        out[k] = {"kind": value_kind(v, declared),
                   "label": getattr(prm, "label", None) or k,
                   "unit": getattr(prm, "unit", "") or "",
                   "optional": v is None}
+        hint = kind_mismatch(v, declared)
+        if hint:
+            out[k]["hint"] = hint
     return out
 
 
@@ -384,6 +478,24 @@ def sync_now() -> dict:
                 "readable": False}
 
 
+def range_sentence(lane: dict, v: float) -> str:
+    """What the line would play against the port's own range. With a channel
+    offset the sentence names the level, the offset, their sum and the range
+    (never an offset-shifted number as "the port's limit")."""
+    fmt = gate_timeline_view.fmt_num
+    off = float(lane.get("offset_v") or 0.0)
+    lim = lane.get("limit_v")
+    if not lim:
+        return f"{lane['key']} would play {fmt(v)} V, over the port's range."
+    rng = lim[1] + off                       # limit_v = [-range - offset, range - offset]
+    if off == 0:
+        edge = rng if v >= 0 else -rng
+        return f"{lane['key']} would play {fmt(v)} V. This port's limit is {fmt(edge)} V."
+    return (f"{lane['key']} would play {fmt(v)} V on top of its {fmt(off)} V offset: "
+            f"{fmt(v + off)} V, {'above' if v + off > 0 else 'below'} the port's "
+            f"{fmt(rng)} V range.")
+
+
 def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
     """One short sentence for the verdict banner. A failed range check says
     which line would play what against which limit, from the drawn lanes;
@@ -394,10 +506,7 @@ def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
             for s in ln.get("segments") or []:
                 if "over_range" in (s.get("flags") or []):
                     v = s["peak_v"] if abs(s.get("peak_v") or 0) >= abs(s.get("min_v") or 0) else s["min_v"]
-                    lim = ln.get("limit_v")
-                    edge = (lim[1] if v >= 0 else lim[0]) if lim else None
-                    tail = f" This port's limit is {gate_timeline_view.fmt_num(edge)} V." if edge is not None else ""
-                    return f"{ln['key']} would play {gate_timeline_view.fmt_num(v)} V.{tail}"
+                    return range_sentence(ln, v)
     return reason
 
 
@@ -606,19 +715,26 @@ def api_cz_gate_create():
             return _refuse("No pair can be created: " + " ".join(
                 f"{s['pair']}: {s['reason']}" for s in skipped), 400, skipped=skipped)
         gid = modifier.new_group_id()
-        done = 0
         try:
             for pid in todo:
                 for path, value in plans[pid]["creates"]:
                     modifier.create_subtree(path, copy.deepcopy(value), group_id=gid)
-                    done += 1
         except Exception as exc:  # noqa: BLE001 -- all or nothing
-            for _ in range(done):
+            # A write may log its entry and then raise: undo the whole group by
+            # its id (as the diagram add door does), not by a count of returns.
+            undo_error = None
+            while store.change_log and store.change_log[-1].group_id == gid:
                 try:
-                    modifier.undo()
-                except Exception:  # noqa: BLE001
+                    if not modifier.undo():
+                        raise RuntimeError("undo returned no change")
+                except Exception as rb:  # noqa: BLE001
+                    undo_error = rb
                     break
-            logger.exception("cz gate create failed; rolled back")
+            left = [e.dot_path for e in store.change_log if e.group_id == gid]
+            logger.exception("cz gate create failed; entries left in its group: %d", len(left))
+            if left or undo_error is not None:
+                return _refuse("The create failed part way and could not be undone automatically: "
+                               "press Ctrl+Z, then check the pair.", 500, partial=True)
             from quam_state_manager.core.type_policy import TypeMismatchError
             code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
             return _refuse(f"Nothing was created: the write failed and was rolled back ({exc}).",
