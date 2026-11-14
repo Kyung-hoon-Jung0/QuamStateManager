@@ -861,6 +861,40 @@ def _textual_target(ref: str, holder: tuple) -> tuple | None:
     return tuple(cur)
 
 
+def _is_index(seg: str) -> bool:
+    """A path segment that names a list index: ASCII digits only."""
+    return seg.isascii() and seg.isdigit()
+
+
+def _walk_inside(ref: str, rel: tuple, obj: Any) -> bool:
+    """Does the text of *ref*, held at *rel* inside *obj*, stay inside *obj*
+    and pass only through real nodes of it? Every named step, including one
+    a later ``..`` pops, must exist; every step but the last must be a
+    container (not a reference string)."""
+    body = ref[1:]
+    segs = [x for x in (body[2:] if body.startswith("./") else body).split("/")
+            if x not in ("", ".")]
+    cur = list(rel[:-1])
+    for i, seg in enumerate(segs):
+        if seg == "..":
+            if not cur:
+                return False
+            cur.pop()
+            continue
+        cur.append(seg)
+        node: Any = obj
+        for step in cur:
+            if isinstance(node, dict) and step in node:
+                node = node[step]
+            elif isinstance(node, list) and _is_index(step) and int(step) < len(node):
+                node = node[int(step)]
+            else:
+                return False
+        if i < len(segs) - 1 and not isinstance(node, (dict, list)):
+            return False
+    return True
+
+
 def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
                     reset: list[str], unresolved: list[str], reasons: list[str],
                     where: str) -> None:
@@ -883,6 +917,12 @@ def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
         if not _is_climbing(v):
             return
         holder = obj_path + rel
+        if any(seg.isdigit() and not _is_index(seg) for seg in v[1:].split("/")):
+            reasons.append(f"The model gate {mname} uses the relative reference {v} "
+                           f"(in {label}), which has a step that looks like a number "
+                           "but is not one. Use an absolute reference there in the "
+                           "model gate, or pick another model gate.")
+            return
         ptr = "#" + v[3:] if v.startswith("#./../") else v
         t = (_walk_relative(merged, ptr, holder) if ptr.startswith("#../")
              else target_path(merged, ptr, holder))
@@ -898,20 +938,7 @@ def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
                            "the new gate. Pick another model gate, or a gate class "
                            "SM knows.")
             return
-        ok = inner is not None
-        if ok:
-            node: Any = obj
-            for i, seg in enumerate(inner):
-                if isinstance(node, dict) and seg in node:
-                    node = node[seg]
-                elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
-                    node = node[int(seg)]
-                else:
-                    ok = False
-                    break
-                if i < len(inner) - 1 and isinstance(node, str):
-                    ok = False
-                    break
+        ok = inner is not None and _walk_inside(v, rel, obj)
         if not ok:
             reasons.append(f"The model gate {mname} uses the relative reference {v} "
                            f"(in {label}), which points outside its own macro or "

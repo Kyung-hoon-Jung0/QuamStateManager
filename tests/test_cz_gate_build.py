@@ -1257,6 +1257,49 @@ def test_a_reference_that_returns_through_an_alias_is_refused():
     assert OUTSIDE in res["error"]
 
 
+def test_a_mid_path_reference_string_inside_the_object_is_refused():
+    s = _two_pulse_chip()
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    m["a"] = "#/qubits/q1"
+    _macro_pulse(s)["src"] = "#../a/z"
+    assert OUTSIDE in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+
+
+def test_a_popped_step_that_is_a_reference_string_is_refused():
+    s = _two_pulse_chip()
+    s["qubits"]["q9"] = _qubit("q9")
+    s["qubits"]["q9"]["xy"] = {"operations": {"x180": {"amp": 1}, "x90": {"amp": 2}}}
+    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
+    m["link"] = "#/qubits/q9/xy/operations/x180"
+    m["x90"] = {"amp": 3}
+    _macro_pulse(s)["src"] = "#../link/../x90"
+    assert OUTSIDE in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+
+
+def test_a_node_missing_in_the_copy_is_refused():
+    # the model resolves through a spectator entry that the copy empties
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["spectator_qubits"] = {"q5": {"amp": 1}}
+    _macro_pulse(s)["src"] = "#../spectator_qubits/q5/../../flux_pulse_target/amplitude"
+    assert OUTSIDE in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+
+
+def test_a_list_index_out_of_range_does_not_resolve_and_is_listed():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["steps"] = [10, 20]
+    _macro_pulse(s)["first"] = "#../steps/5"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert any("#../steps/5" in u for u in res["unresolved_references"])
+
+
+def test_a_non_ascii_digit_step_is_an_explicit_refusal():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["steps"] = [10, 20]
+    _macro_pulse(s)["first"] = "#../steps/²"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "looks like a number but is not one" in res["error"]
+
+
 def test_a_same_object_form_with_dotdot_is_checked_like_a_climb():
     s = _two_pulse_chip()
     _macro_pulse(s)["inner"] = {"k": 1}
