@@ -275,3 +275,13 @@ def test_a_plain_cz_name_is_the_alias():
     parts = gp.gate_parts(s, "q1-q2", "cz_sq")
     assert parts["active"] and parts["alias"] == "qubit_pairs.q1-q2.macros.cz"
     assert gp.active_gate("q1-q2", s["qubit_pairs"]["q1-q2"]["macros"]) == "cz_sq"
+
+
+def test_a_reference_to_an_object_hashes_its_path_not_the_object():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q1"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["f_01"] = 5.2e9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q2"
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
