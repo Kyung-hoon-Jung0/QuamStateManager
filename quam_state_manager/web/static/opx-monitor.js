@@ -51,7 +51,7 @@
         ids.forEach(function (id) {
             var row = Array.from(document.querySelectorAll('.ui-opxmon-close')).find(function (b) {return b.getAttribute('data-qm-id') === id;});
             var detail = document.createElement('p');
-            detail.textContent = id + ': ' + (row ? (row.getAttribute('data-basis') || 'activity unknown') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') : 'activity, FEMs and last job unknown');
+            detail.textContent = id + ': ' + (row ? (row.getAttribute('data-basis') || 'activity unknown') + '; FEMs ' + (row.getAttribute('data-ports') || 'unknown') + '; last job ' + (row.getAttribute('data-last-job') || row.getAttribute('data-jobs') || 'none') + (row.getAttribute('data-owner') ? '; ' + row.getAttribute('data-owner') : '') : 'activity, FEMs and last job unknown');
             panel.appendChild(detail);
         });
         var typed = null;

@@ -158,7 +158,16 @@ def _view(tab: str) -> dict:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
     except Exception:
         runs, run_reason = [], 'Dataset index unavailable; no estimated links.'
-    return {'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    open_qms = (st.get('answer') or {}).get('open_qms') or []
+    owners = {q['id']: om.owner_info(q) for q in open_qms}
+    # labels are read at render time only and never leave the page
+    pc_names, pc_names_problem = om.load_pc_names()
+    seen_tags = om.owner_tags(st.get('answer'))
+    owner_ctx = {'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
+                 'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
+                 'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
+                 'pc_name_rows': sorted(set(pc_names) | set(seen_tags))}
+    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s']), 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
@@ -280,6 +289,48 @@ def opx_monitor_save_settings():
     m.want()
     m.ensure_running_if_armed()
     return _settings_reply(" ".join(["Settings saved."] + msgs))
+
+
+_TAG_RE = re.compile(r"[a-z0-9]{1,16}")
+
+
+@opxmon_bp.route("/opx-monitor/pc-names", methods=["POST"])
+def opx_monitor_save_pc_names():
+    """Add, change or remove PC names. Replies never echo a name."""
+    f = request.form
+    names, problem = om.load_pc_names()
+    new = dict(names)
+    for k, v in f.items():
+        if k.startswith("label__"):
+            tag = k[len("label__"):]
+            if not _TAG_RE.fullmatch(tag):
+                continue
+            label = v.strip()[:60]
+            if label:
+                new[tag] = label
+            else:
+                new.pop(tag, None)
+        elif k.startswith("remove__") and _form_bool(k):
+            new.pop(k[len("remove__"):], None)
+    for k in list(new):
+        if f.get("remove__" + k) and _form_bool("remove__" + k):
+            new.pop(k, None)
+    tag, label = (f.get("new_tag") or "").strip(), (f.get("new_label") or "").strip()[:60]
+    if tag or label:
+        if not _TAG_RE.fullmatch(tag):
+            return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+        if not label:
+            return _settings_reply("Give the new tag a name.", error=True)
+        new[tag] = label
+    folder = om.marker_dir()
+    try:
+        if problem and (folder / "pc_names.json").exists():
+            import shutil
+            shutil.copyfile(folder / "pc_names.json", folder / "pc_names.json.bak")
+        om.save_pc_names(new, folder)
+    except OSError:
+        return _settings_reply("The PC names file could not be written.", error=True)
+    return _settings_reply(f"PC names saved ({len(new)}).")
 
 
 def _settings_reply(message, error=False):

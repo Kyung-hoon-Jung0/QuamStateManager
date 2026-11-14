@@ -1,0 +1,31 @@
+{#- Owner cell of one open QM, read from the owner marker in its config.
+    Labels (PC names) are applied here, at render time only. -#}
+{%- macro owner_tag(tag, pc_names, this_tag) -%}
+<span class="ui-opxmon-owner-tag">{% if pc_names.get(tag) %}{{ pc_names[tag] }} ({{ tag }}){% else %}{{ tag }}{% endif %}</span>{% if this_tag and tag == this_tag %} <span class="ui-badge ui-badge--accent ui-opxmon-this-pc">this PC</span>{% endif %}
+{%- endmacro -%}
+{%- macro owner_cell(info, pc_names, this_tag) -%}
+<div class="ui-opxmon-owner" data-owner-kind="{{ info.kind }}">
+{%- if info.kind == 'unread' -%}
+<span class="ui-note">Owner unknown: this QM's configuration could not be read.</span>
+{%- elif info.kind == 'none' -%}
+<span class="ui-note">Not reported by the server (no owner marker).</span>
+{%- else -%}
+{%- if info.kind == 'several' %}<span class="ui-badge ui-badge--warn ui-opxmon-several">several markers ({{ info.markers|length }})</span>{% endif -%}
+{%- for m in info.markers %}
+<div class="ui-opxmon-owner-marker" title="marker element {{ m.name }}">
+{%- if m.parsed -%}
+<span class="ui-note">marker</span> {{ owner_tag(m.parsed.tag, pc_names, this_tag) }} <span class="ui-note">&middot; node {{ m.parsed.node or 'none' }} &middot; session {{ m.parsed.session }} &middot; state {{ m.parsed.state }}</span>
+{%- else -%}
+<span>marker present, not readable</span> <span class="ui-note">(version {{ m.version }}) <code>{{ m.name }}</code></span>
+{%- endif -%}
+</div>
+{%- endfor %}
+{%- endif -%}
+</div>
+{%- endmacro -%}
+{%- macro owner_note() -%}
+<p class="ui-note ui-opxmon-owner-note">Owner is read from a marker element the client put in the QM's configuration; the server does not check it.</p>
+{%- endmacro -%}
+{%- macro owner_text(info, pc_names, this_tag) -%}
+{%- if info.kind == 'unread' %}owner unknown (configuration not read){% elif info.kind == 'none' %}no owner marker{% else %}{% if info.kind == 'several' %}several markers: {% endif %}{% for m in info.markers %}{% if m.parsed %}marker {{ (pc_names[m.parsed.tag] ~ ' (' ~ m.parsed.tag ~ ')') if pc_names.get(m.parsed.tag) else m.parsed.tag }}{% if this_tag and m.parsed.tag == this_tag %} [this PC]{% endif %}, node {{ m.parsed.node or 'none' }}{% else %}marker present, not readable (version {{ m.version }}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}{% endif -%}
+{%- endmacro -%}

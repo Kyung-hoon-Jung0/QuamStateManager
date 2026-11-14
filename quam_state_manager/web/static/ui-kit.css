@@ -674,6 +674,15 @@
 .ui-opxmon-section-age { overflow-wrap: anywhere; }
 .ui-opxmon-sentence { overflow-wrap: anywhere; }
 .ui-opxmon-version { overflow-wrap: anywhere; }
+.ui-opxmon-owners { margin: 0 0 var(--ui-opxmon-space-md); padding: 0; list-style: none; }
+.ui-opxmon-owners > li { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); margin: 0; }
+.ui-opxmon-owner { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
+.ui-opxmon-owner-marker { overflow-wrap: anywhere; }
+.ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
+.ui-opxmon-pcnames { margin-top: var(--ui-opxmon-space-lg); }
+.ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }
+.ui-opxmon-this-pc, .ui-opxmon-several { vertical-align: baseline; }
+.ui-opxmon-owner-note, .ui-opxmon-pcnames-problem { margin: 0 0 var(--ui-opxmon-space-md); }
 
 .ui-opxmon-close-idle { width: auto; }
 .ui-opxmon-confirm-accept, .ui-opxmon-confirm-cancel { width: auto; }

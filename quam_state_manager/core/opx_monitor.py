@@ -1535,5 +1535,83 @@ class Monitor:
         return fresh
 
 
+# ------------------------------------------------------------------ QM owner marker
+# An owner-marker config element names the client that opened a QM. The server does not
+# check it, so it is shown as the client's claim and never used to pick a QM to close.
+
+def marker_dir() -> Path:
+    """The marker's own per-user app-data folder (holds ``pc_tag`` and ``pc_names.json``)."""
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "qm_owner_marker"
+
+
+def own_pc_tag(folder: Optional[Path] = None) -> Optional[str]:
+    """This PC's own tag, read only; a missing or malformed file is no tag."""
+    import re
+    try:
+        text = ((folder or marker_dir()) / "pc_tag").read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if re.fullmatch(r"[0-9a-f]{8}", text) else None
+
+
+def load_pc_names(folder: Optional[Path] = None) -> tuple:
+    """``({tag: label}, problem)``. A missing file is an empty map with no problem; an
+    unreadable one is an empty map with a one-line problem for the settings tab."""
+    p = (folder or marker_dir()) / "pc_names.json"
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}, None
+    except (OSError, UnicodeDecodeError):
+        return {}, "The PC names file could not be read; no names are applied."
+    try:
+        d = json.loads(text)
+    except ValueError:
+        return {}, "The PC names file is not valid JSON; no names are applied."
+    if not isinstance(d, dict):
+        return {}, "The PC names file is not a tag-to-name object; no names are applied."
+    return {str(k): str(v).strip() for k, v in d.items()
+            if isinstance(v, str) and v.strip()}, None
+
+
+def save_pc_names(names: dict, folder: Optional[Path] = None) -> None:
+    """Write the map atomically (temp file + replace)."""
+    d = folder or marker_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "pc_names.json.tmp"
+    tmp.write_text(json.dumps(dict(sorted(names.items())), indent=1), encoding="utf-8")
+    os.replace(tmp, d / "pc_names.json")
+
+
+def owner_info(q: dict) -> dict:
+    """What a QM's config says about its owner, without labels (labels apply at render).
+
+    kind: 'unread' (config not read), 'none', 'one', 'unreadable' (one shaped, not v1),
+    'several'. ``markers`` lists every shaped name with its parsed fields and version."""
+    from quam_state_manager.core import qm_owner_marker as qom
+    names = q.get("markers")
+    if names is None:
+        return {"kind": "unread", "markers": []}
+    rows = [{"name": n, "parsed": qom.parse_marker(n), "version": qom.marker_version(n)}
+            for n in names if qom.is_marker(n)]
+    if not rows:
+        kind = "none"
+    elif len(rows) > 1:
+        kind = "several"
+    else:
+        kind = "one" if rows[0]["parsed"] else "unreadable"
+    return {"kind": kind, "markers": rows}
+
+
+def owner_tags(answer: Optional[dict]) -> list:
+    """The parsed tags in the currently open QMs (offered on the settings tab)."""
+    return sorted({m["parsed"]["tag"] for q in (answer or {}).get("open_qms") or []
+                   for m in owner_info(q)["markers"] if m["parsed"]})
+
+
 def default_python() -> str:
     return sys.executable

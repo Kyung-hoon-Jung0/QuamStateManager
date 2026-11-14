@@ -1,3 +1,4 @@
+{%- from "_opx_owner.html" import owner_cell, owner_note, owner_text -%}
 {%- set ans = st.answer or {} -%}
 {%- set cap = st.capabilities -%}
 {%- set polls = tab in ('live', 'jobs', 'history', 'cleanup') and st.state != 'unconfigured' -%}
@@ -20,6 +21,10 @@
 
 {% for section, error in st.section_errors.items() if not (section == 'controllers' and tab == 'live') %}<p class="ui-note ui-opxmon-section-age" title="{{ error }}">{{ 'Open QMs' if section == 'open_qms' else section|replace('_', ' ')|capitalize }} unavailable; {{ 'last good read at ' ~ local_time(st.section_times.get(section)) if st.section_times.get(section) else 'no successful read yet' }}</p>{% endfor %}
 {%- if tab == 'live' %}
+  {%- if cap.live and ans.open_qms %}
+  <ul class="ui-opxmon-owners" aria-label="Who holds each open QM">{% for q in ans.open_qms %}<li><code>{{ q.id }}</code> {{ owner_cell(owners[q.id], pc_names, this_tag) }}</li>{% endfor %}</ul>
+  {% if any_marker %}{{ owner_note() }}{% endif %}
+  {%- endif %}
   {% if temperature_failed or ans.controllers is none %}<p class="ui-note">Temperatures unavailable ({{ 'last good read at ' ~ local_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else 'no successful read yet' }}){% if ans.controllers %}; the values below are stale{% endif %}</p>{% elif not (ans.controllers or [])|selectattr('temperatures')|list and not unreadable_temps %}<p>No temperature readings.</p>{% endif %}
   {% set temps_stale = (temperature_failed or st.state != 'ok') and ans.controllers %}{% set stale_at = stale_time(st.section_times.get('controllers')) if st.section_times.get('controllers') else '' %}
   {% for group in ['fem', 'other'] if ans.controllers %}
@@ -94,12 +99,13 @@
   {%- if ans.open_qms|length > 1 %}<p class="ui-state ui-state--error ui-opxmon-multi"><span class="ui-state-key">More than one QM is open.</span> Several programs or people may hold the hardware.</p>{% endif %}
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty">{% if qm_stale %}<span class="ui-state-key">No QM was open at the last good read ({{ qm_age }}).</span> Whether one is open now is unknown.{% else %}<span class="ui-state-key">No QM is open.</span>{% endif %}</p>{% else %}
   <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open quantum machines{% if qm_stale %} (last good read, {{ qm_age }}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
-    <thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th></tr></thead>
+    <thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">Owner</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th></tr></thead>
     <tbody>{% for q in ans.open_qms %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td data-label="QM id" class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
+      <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs claimed" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code>{{ j.id }}</code> {{ j.status }} {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-note">{{ match.reason }}</span>{% if j.created_at %} &middot; created {{ opx_time(j.created_at) }} (OPX clock){% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</div>{% endfor %}{% else %}none{% endif %}</td></tr>{% endfor %}</tbody>
   </table>{% endif %}
-  <p class="ui-note">The server does not report who opened a QM; the QM id and its jobs are what it gives.</p>
+  <p class="ui-note">The server does not report who opened a QM; the QM id and its jobs are what it gives.{% if any_marker %} Owner is read from a marker element the client put in the QM's configuration; the server does not check it.{% endif %}</p>
   {%- if ans.jobs is not none %}
   <h3 class="ui-opxmon-h">{{ [job_limit, ans.jobs|length]|min }} of {% if ans.jobs_capped or (ans.jobs_total or ans.jobs|length) >= job_list_cap %}at least {{ ans.jobs_total or ans.jobs|length }} jobs shown (the server lists at most {{ job_list_cap }}){% else %}{{ ans.jobs_total if ans.jobs_total is defined and ans.jobs_total is not none else ans.jobs|length }} jobs shown{% endif %}</h3>
   <p class="ui-note ui-opxmon-clock">Job times are the QM server's own clock{% if clock_skew %}; {{ skew_text }} (from the admin server's Date header; used only to show times and link runs){% else %}; its offset from this PC is unknown (it is measured from the admin server's Date header; {{ 'no Admin URL is set' if not settings.admin_url else 'no consistent fresh admin answer' }}), so no job is linked to a run{% endif %}. Idle is judged only from what SM itself watched, never from these clocks.</p>
@@ -128,9 +134,10 @@
   <p class="ui-note">Opening a new QM normally closes existing QMs. If your program keeps them open, they may continue to reserve hardware ports.</p>
   <p class="ui-note">Closing a QM stops any job it runs, for whoever opened it. Each close asks first and is written to History.</p>
   {%- if not ans.open_qms %}<p class="ui-state ui-state--empty"><span class="ui-state-key">No QM is open.</span></p>{% else %}
-  <table class="ui-table ui-opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
-    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td data-label="QM id" class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td data-label="FEMs claimed" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td data-label="Jobs" class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
-      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+  <table class="ui-table ui-opxmon-table" aria-label="Close quantum machines"><thead><tr><th class="ui-table-head">QM id</th><th class="ui-table-head">Owner</th><th class="ui-table-head">FEMs claimed</th><th class="ui-table-head">Jobs</th><th class="ui-table-head"></th></tr></thead>
+    <tbody>{% for q in ans.open_qms %}{% set jobs_txt = (q.jobs or []) | map(attribute='status') | join(', ') %}<tr><td data-label="QM id" class="ui-table-cell"><code>{{ q.id }}</code><div class="ui-note">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td><td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td><td data-label="FEMs claimed" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td><td data-label="Jobs" class="ui-table-cell">{{ 'unknown' if q.jobs is none else (jobs_txt or 'none') }}</td>
+      <td data-label="" class="ui-table-cell"><button type="button" class="btn-sm outline ui-opxmon-close" data-last-job="{{ last_job(q) }}" data-basis="{{ idle_states[q.id].basis }}" data-qm-id="{{ q.id }}" data-owner="{{ owner_text(owners[q.id], pc_names, this_tag) }}" {% if st.state != 'ok' %}disabled{% endif %} data-ports="{{ (q.ports or []) | join(', ') }}" data-jobs="{{ 'unknown' if q.jobs is none else jobs_txt }}">Close&hellip;</button></td></tr>{% endfor %}</tbody></table>
+  {% if any_marker %}{{ owner_note() }}{% endif %}
   <p><button type="button" class="btn-sm outline ui-opxmon-close-idle" data-qm-ids="{{ idle_ids | join(', ') }}" {% if not idle_ids or st.state != 'ok' %}disabled{% endif %}>Close idle QMs ({{ idle_ids|length }})</button></p>
   <details class="ui-opxmon-danger"><summary>Danger</summary><p><button type="button" class="btn-sm outline ui-opxmon-close-all" data-qm-ids="{{ ans.open_qms | map(attribute='id') | join(', ') }}" {% if st.state != 'ok' %}disabled{% endif %}>Close all {{ ans.open_qms|length }}&hellip;</button></p></details>
   {%- endif %}
@@ -170,6 +177,19 @@
       {%- endif %}
     </fieldset>
     <button type="submit" class="btn-sm">Save</button>
+  </form>
+  <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
+    <fieldset><legend>PC names</legend>
+      <p class="ui-note">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
+      {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} Saving replaces it (the old file is kept as a backup).</p>{% endif %}
+      <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
+        <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code>{{ tag }}</code>{% if this_tag == tag %} <span class="ui-badge ui-badge--accent">this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-note">in an open QM</span>{% endif %}</td>
+          <td data-label="Name" class="ui-table-cell"><input class="ui-input" name="label__{{ tag }}" value="{{ pc_names.get(tag, '') }}" maxlength="60" autocomplete="off" aria-label="Name for tag {{ tag }}"></td>
+          <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"> remove</label>{% endif %}</td></tr>{% endfor %}
+          <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" maxlength="60" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
+      {% if not pc_name_rows %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
+      <button type="submit" class="btn-sm">Save PC names</button>
+    </fieldset>
   </form>
 {%- endif %}
 </div>
