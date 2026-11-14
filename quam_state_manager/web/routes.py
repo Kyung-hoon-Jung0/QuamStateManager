@@ -53968,6 +53968,7 @@ def scheduler_revert_failed(item_id: str):
                         live_path=str(live_path),
                         hub_dir=_hub_chip_dir(live_path),
                         hub_plan=f"runner-revert:{item.get('name') or item_id}",
+                        on_live_unresolved=lambda why: _live_write_unresolved(ctx, why),
                         origin=ctx.get("origin") or "live",
                         on_live_landed=lambda: _live_write_landed(ctx))
     # A write whose old value the run never recorded is refused, never guessed.
@@ -54055,9 +54056,14 @@ def scheduler_revert_failed(item_id: str):
     if unchanged:
         parts.append(f"unchanged by the run {len(unchanged)}: "
                      + ", ".join(u["path"] for u in unchanged))
-    if refused:
-        parts.append(f"not reverted {len(refused)}: " + "; ".join(
-            (f"{c['path']}: " if c.get("path") else "") + c["text"] for c in refused))
+    # a refusal that names no path is the whole press failing (the live write),
+    # not one value: it is stated as a sentence, never counted as "1"
+    named = [c for c in refused if c.get("path")]
+    whole = [c["text"] for c in refused if not c.get("path")]
+    if named:
+        parts.append(f"not reverted {len(named)}: " + "; ".join(
+            f"{c['path']}: {c['text']}" for c in named))
+    parts.extend(whole)
     message = " — ".join(parts) or "nothing to revert"
     presses = [h for h in (prev.get("presses") or []) if isinstance(h, dict)]
     if prev.get("message"):
