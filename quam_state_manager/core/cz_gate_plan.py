@@ -35,7 +35,7 @@ import re
 import numpy as np
 
 from quam_state_manager.core import value_history, cz_flux_math
-from quam_state_manager.core.pulse_catalog import sample_period_ns, waveform_shape
+from quam_state_manager.core.pulse_catalog import waveform_shape
 from quam_state_manager.core.query import pair_operational_gate
 
 QUAD_LABEL = "quad-term estimate"
@@ -75,6 +75,11 @@ def number(value):
     except (TypeError, ValueError, OverflowError):
         return None
     return v if math.isfinite(v) else None
+
+
+def stored_number(value):
+    """A stored amplitude: a real number only. A text that reads as one ("0.2") is not."""
+    return None if isinstance(value, str) else number(value)
 
 
 def read(doc, path):
@@ -875,6 +880,8 @@ def unreadable_amplitude(line):
     if line.get("waveform_reason"):
         return (line.get("pulse_path") or "the pulse") + ".waveform_I: " + line["waveform_reason"]
     leaf = line.get("amplitude_path") or ((line.get("pulse_path") or "the pulse") + ".amplitude")
+    if line.get("amplitude_text"):
+        return f"{leaf} holds text, not a number"
     return f"{leaf} is missing or not a number"
 
 
@@ -1406,7 +1413,10 @@ def operations(doc, conversions=None, unavailable=None):
                 if missing_pulse:
                     amp_path = None
                     notes.append(missing_pulse)
-                amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
+                amp = None if refusal else stored_number(current(doc, amp_path)) if amp_path else 0.0
+                amp_is_text = bool(amp_path and not refusal and amp is None
+                                   and isinstance(current(doc, amp_path), str)
+                                   and number(current(doc, amp_path)) is not None)
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
                 shape = wave_reason = tree = None
                 if amp_path and amp is None and not refusal:
@@ -1440,11 +1450,13 @@ def operations(doc, conversions=None, unavailable=None):
                 if amp is None and not refusal and pt.get("reason") == "the operation amplitude is missing":
                     # f_01 is present: name the leaf that could not be read, never blame f_01
                     pt["reason"] = unreadable_amplitude({"amplitude_path": amp_path, "pulse_path": pulse_path,
+                                                         "amplitude_text": amp_is_text,
                                                          "waveform_reason": wave_reason and
                                                          "not derivable for WaveformPulse: " + wave_reason})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": True if routing_reason else bool(field), "refusal": refusal,
                               "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
+                              "amplitude_text": amp_is_text,
                               "played_pulse_path": played_pulse_path,
                               "play_duration_ns": duration_ns if field in ("flux_pulse_qubit", "flux_pulse_high", "flux_pulse_low") else None,
                               "duration_unknown": (raw_duration is not None and duration_ns is None
@@ -1501,11 +1513,29 @@ def operations(doc, conversions=None, unavailable=None):
                     missing = [ln["name"] for ln, s in zip(lines, samples) if s is None]
                     notes.append("two-flux length check not made: the played length of "
                                  + " and ".join(missing) + " could not be derived")
-                if all(s is not None for s in samples):
+                rate_leaves = {ln["role"]: ln["qubit_path"] + ".z.opx_output.sampling_rate" for ln in lines}
+                rate_state = {}
+                for role, leaf in rate_leaves.items():
+                    t = read(doc, leaf)
+                    raw = t.get("current") if t.get("has_current") else None
+                    if raw is None:
+                        rate_state[role] = (1e9, True)
+                    else:
+                        # a stored text is not a rate, whatever float() would make of it
+                        ok = (isinstance(raw, (int, float, np.integer, np.floating))
+                              and not isinstance(raw, (bool, np.bool_)))
+                        rate = float(raw) if ok and math.isfinite(float(raw)) and float(raw) > 0 else None
+                        rate_state[role] = (rate, False)
+                bad_rates = [rate_leaves[r] for r, (v, _d) in rate_state.items() if v is None]
+                if bad_rates:
+                    notes.extend(f"two-flux length check not made: {leaf} is not a positive number"
+                                 for leaf in bad_rates)
+                elif any(d for _v, d in rate_state.values()) and all(x is not None for x in samples):
+                    notes.append("two-flux lengths at the default 1 GS/s; no sampling_rate stored")
+                if all(s is not None for s in samples) and not bad_rates:
                     # samples play at the port's own rate: a 2 GS/s port plays 40 samples in 20 ns
                     def played_ns(ln, s):
-                        rate = current(doc, ln["qubit_path"] + ".z.opx_output.sampling_rate")
-                        return len(s) * sample_period_ns(rate)
+                        return len(s) * 1e9 / rate_state[ln["role"]][0]
                     line_lengths = {ln["role"]: played_ns(ln, s) for ln, s in zip(lines, samples)}
                     duration_ns = max(line_lengths.values())
                     duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
@@ -1542,7 +1572,7 @@ def operations(doc, conversions=None, unavailable=None):
                 else:
                     why = next((ln["waveform_reason"] for ln in lines if ln.get("waveform_reason")), None)
                     if why:
-                        duration_note = "unknown: " + why
+                        duration_note = "length " + why
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
@@ -1583,7 +1613,7 @@ def operations(doc, conversions=None, unavailable=None):
             if untrusted_samples:
                 # a sample list holding a non-number is not a length either
                 duration_ns = None
-                duration_note = "not derivable: " + next(
+                duration_note = "length " + next(
                     ln["waveform_reason"] for ln in lines if "waveform_I holds" in ln.get("waveform_reason", ""))
             elif iq_samples and duration_ns is not None:
                 # the I/Q sample count is a true length; only the level is not derivable
@@ -1910,7 +1940,7 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
                             else point["validity"])
         path = read(doc, ln["amplitude_path"]).get("holder_path")
         stage_refusal = None
-        if not path or number(current(doc, path)) is None:
+        if not path or stored_number(current(doc, path)) is None:
             # the required amplitude needs only f_01, alpha and the conversion, so it
             # is still answered; only the write has nowhere to go
             if ln.get("amplitude_source"):
@@ -1937,9 +1967,11 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        amp_label = ("peak of waveform" if ln.get("amplitude_source") else "stored amplitude" if path
-                     else "required, nothing stored: " + unreadable_amplitude(ln))
-        preview.update(amp_text=f"{amplitude:g} V ({amp_label})",
+        amp_label = ("peak of waveform" if ln.get("amplitude_source") else "required, nothing stored: "
+                     + unreadable_amplitude(ln) if not path else None)
+        stored_now = stored_number(current(doc, path)) if path else None
+        preview.update(amp_text=(f"{amplitude:g} V ({amp_label})" if amp_label
+                                 else f"{amplitude:g} V (required; stored amplitude {stored_now:g} V)"),
                        amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,

@@ -235,6 +235,8 @@ def format_quantity(value: Any, field: str) -> Optional[tuple[str, str]]:
     dimension, fixed = _resolve_field(field)
     if not _is_number(value):
         return None
+    if field == "pair_detuning" and pair_detuning_nonfinite(value):
+        return None
     if field == "pair_detuning" and pair_detuning_inferred(value):
         return _inferred_hz(value)
     if field == "pair_detuning" and pair_detuning_unstated(value):
@@ -391,6 +393,8 @@ def qty_filter(value: Any, field: str, mode: str = "num") -> str:
     - ``"unit"`` -> the unit label only, else ``""``
     """
     fq = format_quantity(value, field)
+    if field == "pair_detuning" and pair_detuning_nonfinite(value):
+        return "" if mode == "unit" else PAIR_DETUNING_NONFINITE_TEXT
     if field == "pair_detuning" and pair_detuning_inferred(value):
         # the one shared fallback: a frequency-sized pair detuning is never
         # printed as volts, and the full form says the unit was inferred
@@ -602,6 +606,9 @@ def stored_value_unit(field: str, value: Any) -> str:
     fields have no known unit. Plausible pair detuning remains volts.
     """
     unit = stored_unit_label(field)
+    if isinstance(value, float) and not math.isfinite(value):
+        # inf and NaN are not values: no unit is stated for them
+        return ""
     if (unit == "V" and isinstance(value, (int, float))
             and not isinstance(value, bool) and abs(value) > PLAUSIBLE_VOLT_MAX):
         return "Hz" if field == "pair_detuning" and abs(value) >= PAIR_DETUNING_HZ_MIN else ""
@@ -623,7 +630,16 @@ def pair_detuning_unstated(value: Any) -> bool:
     """True when a pair ``detuning`` fits neither volts nor Hz, so it is
     shown as the raw stored number with no unit."""
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and not pair_detuning_nonfinite(value)
             and stored_value_unit("pair_detuning", value) == "")
+
+
+PAIR_DETUNING_NONFINITE_TEXT = "not a finite number"
+
+
+def pair_detuning_nonfinite(value: Any) -> bool:
+    """True when a pair ``detuning`` is inf, -inf or NaN: not a value, no unit."""
+    return (isinstance(value, float) and not math.isfinite(value))
 
 
 def pair_detuning_inferred(value: Any) -> bool:
@@ -646,6 +662,8 @@ def pair_detuning_cell(value: Any) -> tuple[str, bool]:
     (the header carries the unit); a larger one renders in Hz units with its
     unit in the text and the inferred flag set.
     """
+    if pair_detuning_nonfinite(value):
+        return PAIR_DETUNING_NONFINITE_TEXT, False
     if pair_detuning_inferred(value):
         num, unit = _inferred_hz(value)
         return f"{num} {unit}", True
@@ -658,6 +676,8 @@ def pair_detuning_display(value: Any) -> str:
     """Full text, the same rule on every pair-detuning surface (inspector,
     report, Chip Status popup, CLI): volts when plausible, else Hz units with
     the stored number and the inferred-unit note."""
+    if pair_detuning_nonfinite(value):
+        return PAIR_DETUNING_NONFINITE_TEXT
     if pair_detuning_inferred(value):
         num, unit = _inferred_hz(value)
         return f"{num} {unit} (stored {value!r}, {PAIR_DETUNING_INFERRED_NOTE})"

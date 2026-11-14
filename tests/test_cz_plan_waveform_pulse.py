@@ -89,9 +89,9 @@ class TestNotDerivable:
         if wf and isinstance(wf, list):
             # a list holding a non-number is no trustworthy length either
             assert r["duration_ns"] is None
-            assert r["duration_note"] == "not derivable: " + full
+            assert r["duration_note"] == "length " + full
         else:
-            assert r["duration_note"] == "unknown: " + full
+            assert r["duration_note"] == "length " + full
         assert not any("operation amplitude is missing" in str(v) for v in (ln["point"]["reason"],))
 
     def test_an_iq_sample_pulse_on_a_flux_line_is_refused_not_read_as_I(self):
@@ -176,3 +176,15 @@ class TestDuration:
         r = _row(dict(WAVE, waveform_Q=[0.0] * 92))
         assert r["duration_ns"] == 92
         assert r["duration_note"].endswith("; level not derivable: waveform_Q is stored (I/Q pulse)")
+
+
+def test_a_non_finite_sample_gives_the_one_prefixed_length_note():
+    r = _row(dict(WAVE, waveform_I=[0.1, float("nan")]))
+    assert r["duration_ns"] is None
+    assert r["duration_note"] == ("length not derivable for WaveformPulse: "
+                                  "waveform_I holds a sample that is not a finite number")
+
+
+def test_an_empty_sample_list_gives_the_one_prefixed_length_note():
+    r = _row(dict(WAVE, waveform_I=[]))
+    assert r["duration_note"] == "length not derivable for WaveformPulse: waveform_I is empty"

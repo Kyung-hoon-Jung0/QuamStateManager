@@ -143,3 +143,23 @@ def test_edge_inputs_get_an_honest_outcome(name, pulse, ok):
     else:
         assert ln["amplitude_v"] is None and "not a finite number" in ln["point"]["reason"]
         assert row["duration_ns"] is None
+
+
+def test_a_numeric_text_amplitude_is_text_not_a_stored_number():
+    doc, rows, conv, row = _plan(dict(SQUARE, amplitude="0.2"))
+    ln = row["lines"][0]
+    assert ln["amplitude_v"] is None
+    assert LEAF + ".amplitude holds text, not a number" in ln["point"]["reason"]
+    s = C.solve(doc, "q1-q2", row["path"], rows=rows, conversions=conv)
+    text = s["operating_point"]["amp_text"]
+    assert "nothing stored" in text and LEAF + ".amplitude holds text, not a number" in text
+    assert "stored amplitude" not in text and s["path"] is None and s["stage_refusal"]
+
+
+def test_a_readable_preview_prints_the_stored_value_beside_stored_amplitude():
+    doc, rows, conv, row = _plan(SQUARE)
+    s = C.solve(doc, "q1-q2", row["path"], rows=rows, conversions=conv)
+    text = s["operating_point"]["amp_text"]
+    required = s["amplitude_v"]
+    assert text == f"{required:g} V (required; stored amplitude 0.19 V)", text
+    assert abs(required - 0.19) > 1e-4

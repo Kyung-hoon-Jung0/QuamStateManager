@@ -11,6 +11,7 @@ import math
 import re
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from quam_state_manager.core import cz_gate_plan as C
@@ -398,3 +399,44 @@ def test_d7_an_underivable_length_says_the_check_was_not_made():
     row = rows_of(merged(state, wiring))[0]["cz_two"]
     assert row.get("two_flux_lengths") is None
     assert any("two-flux length check not made" in n and "q2" in n for n in row["notes"]), row["notes"]
+
+
+def _rate_row(rate, *, absent=False, flats=(92, 92)):
+    state, wiring = lab_chip(control_flat=flats[0], target_flat=flats[1])
+    port = state["ports"]["analog_outputs"]["con1"]["5"]["1"]
+    if absent:
+        port.pop("sampling_rate", None)
+    else:
+        port["sampling_rate"] = rate
+    return rows_of(merged(state, wiring))[0]["cz_two"]
+
+
+@pytest.mark.parametrize("make", [int, float, np.float64], ids=["int", "float", "np_float"])
+def test_d7_a_numeric_rate_of_any_type_is_read(make):
+    t = _rate_row(make(2e9))["two_flux_lengths"]
+    assert (t["control"], t["target"]) == (48, 96)
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"]
+
+
+def test_d7_a_working_reference_rate_resolves():
+    state, wiring = lab_chip(control_flat=92, target_flat=92)
+    state["ports"]["analog_outputs"]["con1"]["5"]["1"]["sampling_rate"] = "#/extra_rate"
+    state["extra_rate"] = 2e9
+    t = rows_of(merged(state, wiring))[0]["cz_two"]["two_flux_lengths"]
+    assert "control q1 48 ns vs target q2 96 ns" in t["mismatch"]
+
+
+def test_d7_an_absent_rate_says_the_default_was_used():
+    row = _rate_row(None, absent=True)
+    assert row["two_flux_lengths"]["control"] == 96
+    assert "two-flux lengths at the default 1 GS/s; no sampling_rate stored" in row["notes"]
+
+
+@pytest.mark.parametrize("bad", [0, -1, "2e9", float("nan"), float("inf"), True, "#./gone"],
+                         ids=["zero", "negative", "text", "nan", "inf", "bool", "dangling"])
+def test_d7_a_present_unreadable_rate_gives_no_lengths(bad):
+    row = _rate_row(bad)
+    assert row.get("two_flux_lengths") is None
+    leaf = "qubits.q1.z.opx_output.sampling_rate"
+    assert f"two-flux length check not made: {leaf} is not a positive number" in row["notes"], row["notes"]
+    assert not any("default 1 GS/s" in n for n in row["notes"])

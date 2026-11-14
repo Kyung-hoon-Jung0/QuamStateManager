@@ -68,7 +68,7 @@ def test_peek_follows_a_pointer_and_doubts_an_implausible_volt(tmp_path):
 
 
 @pytest.mark.parametrize("value, unit", [(0.05, "V"), (10.0, "V"),
-                                       (1e5, "Hz"), (3e8, "Hz"), (-3e8, "Hz")])
+                                       (1e5, "Hz"), (3e8, "Hz"), (-3e8, "Hz"), (509.3, "")])
 def test_report_and_peek_agree_on_pair_detuning_unit(tmp_path, value, unit):
     folder = _chip(tmp_path / "chip")
     state = json.loads((folder / "state.json").read_text(encoding="utf-8"))
@@ -81,6 +81,16 @@ def test_report_and_peek_agree_on_pair_detuning_unit(tmp_path, value, unit):
     response = c.get("/chip-status/report")
     assert response.status_code == 200
     html = response.get_data(as_text=True)
+    if unit == "":
+        # an unstated value: the report prints the raw number with the doubt, the peek states no unit
+        assert "<td>509.3 (unit not stated: too large for V, too small for Hz)</td>" in html
+        assert path not in peek["units"]
+        return
+    if unit == "":
+        # unstated: the report prints the raw number and says so; the popup states no unit
+        assert "<td>509.3 (unit not stated" in html
+        assert path not in peek["units"]
+        return
     # Read the actual report cell, including its unit, rather than a helper's result.
     match = re.search(r"<td>(-?[\d.]+) (V|Hz|kHz|MHz|GHz)(?: \([^<]*\))?</td>", html)
     assert match, html
