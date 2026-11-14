@@ -598,11 +598,16 @@ def test_reserved_names_cover_the_installed_pulse_base():
     py = str(LAB_PY) if LAB_PY.is_file() else __import__("sys").executable
     out = subprocess.run(
         [py, "-c", "from quam.components.pulses import Pulse\n"
-                   "print('NAMES=' + ','.join(n for n in dir(Pulse) if not n.startswith('_')))"],
+                   "names = {n for n in dir(Pulse) if not n.startswith('_')} - {'length'}\n"
+                   "print('NAMES=' + ','.join(sorted(names)))"],
         capture_output=True, text=True, timeout=300)
     line = [x for x in out.stdout.splitlines() if x.startswith("NAMES=")]
     assert line, out.stderr[-2000:]
-    base = set(line[0][6:].split(",")) - {"length"}
+    base = set(line[0][6:].split(","))
+    assert "length" not in base
+    assert base == T.PULSE_BASE_NAMES, (
+        f"missing: {sorted(base - T.PULSE_BASE_NAMES)}; "
+        f"extra: {sorted(T.PULSE_BASE_NAMES - base)}")
     assert base <= T.reserved_field_names(), sorted(base - T.reserved_field_names())
 
 
@@ -665,12 +670,24 @@ def test_scope_with_a_trailing_newline_is_hashed(tmp_path):
     assert D.load_draft(tmp_path, "chip", "SquaredAmp") is None
 
 
-@pytest.mark.parametrize("scope", ["nul", "NUL", "con.txt", "com1", "lpt9.x", "chip."])
-def test_windows_hostile_scope_refused(tmp_path, scope):
-    with pytest.raises(D.DraftError, match="drafts cannot be kept"):
-        D.save_draft(tmp_path, scope, "SquaredAmp", "x")
-    with pytest.raises(D.DraftError):
-        D.list_drafts(tmp_path, scope)
+@pytest.mark.parametrize("scope", ["nul", "NUL", "con.txt", "com1", "lpt9.x", "chip.", "a.",
+                                   "CON", "nul.txt", "COM1"])
+def test_windows_hostile_scope_is_hashed(tmp_path, scope):
+    key = D._scope_key(scope)
+    assert key.startswith("s_") and key != scope
+    D.save_draft(tmp_path, scope, "SquaredAmp", "x")
+    assert D.load_draft(tmp_path, scope, "SquaredAmp") == b"x"
+    assert [d["class_name"] for d in D.list_drafts(tmp_path, scope)] == ["SquaredAmp"]
+    plain = scope.rstrip(".")
+    if plain and plain != scope:
+        # "chip." never shares the folder of "chip"
+        assert D.load_draft(tmp_path, plain, "SquaredAmp") is None
+
+
+def test_device_name_scopes_differing_by_case_keep_distinct_folders():
+    assert D._scope_key("nul") != D._scope_key("NUL")
+    assert D._scope_key(" a").startswith("s_")
+    assert D._scope_key("chip_a") == "chip_a"
 
 
 @pytest.mark.parametrize("scope", ["chip-1", "null", "console", "chip.v2", "com10"])
@@ -689,3 +706,409 @@ def test_windows_line_ending_on_the_end_marker_is_named():
     src = T.render(spec_a()).replace(T.REGION_END + "\n", T.REGION_END + "\r\n")
     p = T.parse(src)
     assert not p.editable and p.reason == T.CRLF_LINE
+
+
+# ------------------------------------------------- review round 4 pins
+
+def test_int_default_too_large_for_a_float_gives_the_finite_line():
+    s = spec_b()
+    s.fields.append(F("limit", "float", 10 ** 400))
+    with pytest.raises(T.TemplateError, match="'limit': the default must be a finite number"):
+        T.render(s)
+
+
+def test_pulse_parent_needs_no_note_and_another_parent_says_so():
+    assert T.validate(spec_b()) == []
+    s = spec_b()
+    s.parent = "lab_pulses.base.FancyPulse"
+    notes = T.validate(s)
+    assert notes == [T.PARENT_NOT_CHECKED_LINE.format(parent=s.parent)]
+    assert "only against the quam Pulse base" in notes[0]
+    # given the parent's names, nothing is left unchecked
+    assert T.validate(s, parent_names=["ramp"]) == []
+
+
+def test_field_shadowing_a_parent_attribute_refused():
+    s = spec_b()
+    s.parent = "lab_pulses.base.FancyPulse"
+    s.fields.append(F("ramp", "float", 1.0))
+    parent = type("FancyPulse", (), {"ramp": lambda self: 0, "length": 4})
+    with pytest.raises(T.TemplateError, match="'ramp' is reserved: the parent class "
+                                              "FancyPulse already has it"):
+        T.validate(s, parent_names=T.public_attribute_names(parent))
+    # length may be re-declared even when the parent names it
+    s.fields.pop()
+    assert T.validate(s, parent_names={"length", "ramp"}) == []
+
+
+def test_public_attribute_names_is_the_one_derivation():
+    class Base:
+        width = 2.0
+        length = 16
+
+        def shape(self):
+            return 0
+
+        @property
+        def area(self):
+            return 1
+
+        def _hidden(self):
+            return 2
+    assert T.public_attribute_names(Base) == frozenset({"width", "shape", "area"})
+
+
+def test_scope_messages_never_say_scope():
+    text = Path(D.__file__).read_text(encoding="utf-8")
+    assert "Scope" not in text and "drafts cannot be kept" not in text
+
+
+def test_cr_only_file_names_the_line_endings():
+    src = T.render(spec_a()).replace("\n", "\r")
+    assert "\n" not in src
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CRLF_LINE
+
+
+def test_tokenize_failure_refuses_the_formula(monkeypatch):
+    import tokenize
+
+    def boom(readline):
+        raise tokenize.TokenError("planted", (1, 0))
+    monkeypatch.setattr(T.tokenize, "generate_tokens", boom)
+    with pytest.raises(T.TemplateError, match="could not be checked for strings"):
+        T.render(spec_b())
+
+
+# ------------------------------------------------- review round 5 pins
+
+
+def test_parent_dataclass_fields_can_be_redeclared_but_methods_cannot():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Base:
+        amplitude: float = 0.1
+
+        def foo(self):
+            return 0
+
+    names = T.public_attribute_names(Base)
+    assert names == frozenset({"foo"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+    s.fields.append(F("foo", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'foo' is reserved: the parent class Base"):
+        T.validate(s, parent_names=names)
+
+
+def test_pulse_parent_keeps_its_fixed_names_even_for_dataclass_fields():
+    from dataclasses import dataclass
+
+    pulse = dataclass(type("Pulse", (), {
+        "__module__": "quam.components.pulses",
+        "__annotations__": {"digital_marker": str}, "digital_marker": "ON"}))
+    assert T.public_attribute_names(pulse) == T.PULSE_BASE_NAMES
+
+
+@pytest.mark.parametrize("function", [T.render, T.rewrite, T.render_region])
+def test_preview_callers_are_told_to_validate_for_notes(function):
+    assert ("Notes come only from validate; callers that show a preview must call validate."
+            in function.__doc__)
+
+
+def test_unchecked_parent_note_explains_when_conflicts_appear():
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    line, = T.validate(s)
+    assert ("A field with the same name as an attribute of that parent "
+            "shows up as an error only when the class is built." in line)
+    assert line.isascii() and " -- " not in line
+
+
+def test_case_variant_keys_keep_distinct_folders(tmp_path):
+    upper, lower = D._scope_key("ChipA"), D._scope_key("chipa")
+    assert upper != lower and upper.casefold() != lower.casefold()
+    assert D._scope_key("chip_a") == "chip_a"
+    D.save_draft(tmp_path, "ChipA", "SquaredAmp", "a")
+    D.save_draft(tmp_path, "chipa", "SquaredAmp", "b")
+    assert D.load_draft(tmp_path, "ChipA", "SquaredAmp") == b"a"
+    assert D.load_draft(tmp_path, "chipa", "SquaredAmp") == b"b"
+
+
+def test_windows_line_ending_only_on_the_begin_marker_is_named():
+    src = T.render(spec_a()).replace(T.REGION_BEGIN + "\n", T.REGION_BEGIN + "\r\n")
+    assert src.count("\r") == 1
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CRLF_LINE
+
+
+@pytest.mark.parametrize("override", ["property", "method", "classmethod", "staticmethod",
+                                      "descriptor"])
+def test_dataclass_field_overrides_are_reserved(override):
+    from dataclasses import dataclass
+
+    @dataclass
+    class A:
+        width: float = 1.0
+
+    class Descriptor:
+        def __get__(self, instance, owner):
+            raise AssertionError("Attribute discovery must not invoke descriptors")
+
+    class B(A):
+        @property
+        def width(self):
+            raise AssertionError("Attribute discovery must not invoke properties")
+
+    @dataclass
+    class C(A):
+        def width(self):
+            return 2.0
+
+    parents = {
+        "property": B,
+        "method": C,
+        "classmethod": type("B", (A,), {"width": classmethod(lambda cls: 2.0)}),
+        "staticmethod": type("B", (A,), {"width": staticmethod(lambda: 2.0)}),
+        "descriptor": type("B", (A,), {"width": Descriptor()}),
+    }
+    assert T.public_attribute_names(A) == frozenset()
+    names = T.public_attribute_names(parents[override])
+    assert names == frozenset({"width"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    s.fields.append(F("width", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'width' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_dataclass_class_variables_stay_reserved():
+    from dataclasses import make_dataclass
+    from typing import ClassVar
+
+    parent = make_dataclass("Base", [("width", ClassVar[float], 1.0)])
+    assert T.public_attribute_names(parent) == frozenset({"width"})
+
+
+@pytest.mark.parametrize("module,known", [
+    ("quam.components.pulses", True),
+    ("quam.components.pulses.custom", True),
+    ("quam.components.pulses_lab", False),
+])
+def test_pulse_module_boundary_controls_fixed_names(module, known):
+    pulse = type("Pulse", (), {"__module__": module, "width": 1.0})
+    expected = T.PULSE_BASE_NAMES if known else frozenset({"width"})
+    assert T.public_attribute_names(pulse) == expected
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_slots_dataclass_amplitude_can_be_redeclared(inherited):
+    from dataclasses import dataclass, make_dataclass
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        pass
+
+    parent = Derived if inherited else Base
+    names = T.public_attribute_names(parent)
+    assert names == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+    compile(T.render(s), "<template>", "exec")
+    template = make_dataclass("Template", [("amplitude", float, 0.2)], bases=(parent,))
+    assert template().amplitude == 0.2
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_dataclass_function_default_can_be_redeclared(inherited):
+    from dataclasses import dataclass
+
+    def default_value():
+        return 0.1
+
+    @dataclass
+    class Base:
+        amplitude: object = default_value
+
+    class Derived(Base):
+        pass
+
+    parent = Derived if inherited else Base
+    names = T.public_attribute_names(parent)
+    assert names == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+
+
+def test_foreign_member_descriptor_over_a_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    class Slots:
+        __slots__ = ("width",)
+
+    @dataclass
+    class Base:
+        width: float = 1.0
+
+    class Derived(Base):
+        width = Slots.width
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"width"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    s.fields.append(F("width", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'width' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_non_field_slot_stays_reserved():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        __slots__ = ("width",)
+
+    assert T.public_attribute_names(Derived) == frozenset({"width"})
+
+
+def test_inherited_dataclass_classvar_mixin_does_not_hide_field():
+    from dataclasses import dataclass
+    from typing import ClassVar
+
+    @dataclass
+    class Base:
+        y: float = 0.0
+
+    class Mixin(Base):
+        x: ClassVar[int] = 3
+
+    @dataclass
+    class FieldBase:
+        x: float = 1.0
+
+    @dataclass
+    class Combined(Mixin, FieldBase):
+        pass
+
+    assert T.public_attribute_names(Combined) == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Combined"
+    s.fields.append(F("x", "float", 1.0))
+    assert T.validate(s, parent_names=T.public_attribute_names(Combined)) == []
+
+
+def test_foreign_descriptor_over_slots_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    class Foreign:
+        __slots__ = ("amplitude",)
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        amplitude = Foreign.amplitude
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amplitude"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    with pytest.raises(T.TemplateError, match="'amplitude' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_sibling_slot_descriptor_over_slots_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+        other: float = 0.2
+
+    class Derived(Base):
+        amplitude = Base.other
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amplitude"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    with pytest.raises(T.TemplateError, match="'amplitude' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_string_slot_substring_does_not_exempt_foreign_descriptor():
+    from dataclasses import dataclass
+
+    class Foreign:
+        __slots__ = "amp"
+
+    @dataclass
+    class Base:
+        amp: float = 1.0
+
+    class Derived(Base):
+        __slots__ = "xamp"
+        amp = Foreign.amp
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"amp", "xamp"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Derived"
+    s.fields.append(F("amp", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'amp' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+@pytest.mark.parametrize("depth", [0, 1, 3])
+@pytest.mark.parametrize("slots", [False, True])
+@pytest.mark.parametrize("factory", [False, True])
+def test_dataclass_function_and_factory_defaults_remain_exempt(depth, slots, factory):
+    from dataclasses import field, make_dataclass
+
+    def default_value():
+        return 0.1
+
+    default = field(default_factory=default_value) if factory else default_value
+    parent = make_dataclass("Base", [("amplitude", object, default)], slots=slots)
+    for _ in range(depth):
+        parent = make_dataclass("Derived", [], bases=(parent,), slots=slots)
+    assert T.public_attribute_names(parent) == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=T.public_attribute_names(parent)) == []
+
+
+@pytest.mark.parametrize("annotated", [False, True])
+def test_other_function_override_of_function_default_stays_reserved(annotated):
+    from dataclasses import dataclass
+
+    def default_value():
+        return 0.1
+
+    @dataclass
+    class Base:
+        amplitude: object = default_value
+
+    attributes = {"amplitude": lambda self: 0.2}
+    if annotated:
+        attributes["__annotations__"] = {"amplitude": object}
+    parent = type("Derived", (Base,), attributes)
+    assert T.public_attribute_names(parent) == frozenset({"amplitude"})
