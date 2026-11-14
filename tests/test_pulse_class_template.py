@@ -907,3 +907,82 @@ def test_pulse_module_boundary_controls_fixed_names(module, known):
     pulse = type("Pulse", (), {"__module__": module, "width": 1.0})
     expected = T.PULSE_BASE_NAMES if known else frozenset({"width"})
     assert T.public_attribute_names(pulse) == expected
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_slots_dataclass_amplitude_can_be_redeclared(inherited):
+    from dataclasses import dataclass, make_dataclass
+
+    @dataclass(slots=True)
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        pass
+
+    parent = Derived if inherited else Base
+    names = T.public_attribute_names(parent)
+    assert names == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+    compile(T.render(s), "<template>", "exec")
+    template = make_dataclass("Template", [("amplitude", float, 0.2)], bases=(parent,))
+    assert template().amplitude == 0.2
+
+
+@pytest.mark.parametrize("inherited", [False, True])
+def test_dataclass_function_default_can_be_redeclared(inherited):
+    from dataclasses import dataclass
+
+    def default_value():
+        return 0.1
+
+    @dataclass
+    class Base:
+        amplitude: object = default_value
+
+    class Derived(Base):
+        pass
+
+    parent = Derived if inherited else Base
+    names = T.public_attribute_names(parent)
+    assert names == frozenset()
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+
+
+def test_foreign_member_descriptor_over_a_dataclass_field_stays_reserved():
+    from dataclasses import dataclass
+
+    class Slots:
+        __slots__ = ("width",)
+
+    @dataclass
+    class Base:
+        width: float = 1.0
+
+    class Derived(Base):
+        width = Slots.width
+
+    names = T.public_attribute_names(Derived)
+    assert names == frozenset({"width"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    s.fields.append(F("width", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'width' is reserved"):
+        T.validate(s, parent_names=names)
+
+
+def test_non_field_slot_stays_reserved():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Base:
+        amplitude: float = 0.1
+
+    class Derived(Base):
+        __slots__ = ("width",)
+
+    assert T.public_attribute_names(Derived) == frozenset({"width"})

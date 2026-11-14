@@ -266,8 +266,19 @@ def public_attribute_names(cls) -> frozenset:
     if is_dataclass(cls):
         for field in fields(cls):
             default = inspect.getattr_static(cls, field.name, None)
-            if not any(hasattr(type(default), method)
-                       for method in ("__get__", "__set__", "__delete__")):
+            # An unannotated method override is not a new field declaration.
+            owner = next((base for base in cls.__mro__
+                          if field.name in vars(base).get("__annotations__", {})
+                          and is_dataclass(base)), cls)
+            declared_field = next(f for f in fields(owner) if f.name == field.name)
+            is_declared_default = default is declared_field.default
+            is_field_slot = inspect.ismemberdescriptor(default) and any(
+                field.name in vars(base).get("__slots__", ())
+                and vars(base).get(field.name) is default
+                for base in cls.__mro__)
+            if (is_declared_default or is_field_slot
+                    or not any(hasattr(type(default), method)
+                               for method in ("__get__", "__set__", "__delete__"))):
                 field_names.add(field.name)
     return frozenset(n for n in dir(cls) if not n.startswith("_")) - {"length"} - field_names
 
