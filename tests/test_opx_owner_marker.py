@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -459,3 +460,18 @@ def test_non_text_entries_are_counted_and_backed_up_once(env, marker_home):
     (marker_home / "pc_names.json").write_text(json.dumps({"zz": 1}), encoding="utf-8")
     c.post("/opx-monitor/pc-names", data={"new_tag": "ee", "new_label": "e"}, headers=ORIGIN)
     assert (marker_home / "pc_names.json.bak").read_text() == raw  # one-time
+
+
+def test_long_owner_texts_clip_with_the_full_text_on_hover(env, marker_home):
+    app, m, w, clock, _ = env
+    w.script[:] = [five_cases()]
+    m.poll_once()
+    html = page(app, "jobs")
+    clips = re.findall(r'<(?:span|code) class="[^"]*ui-opxmon-owner-clip[^"]*" title="([^"]*)">([^<]*)<', html)
+    assert clips, "owner texts carry the clip part"
+    assert len(clips) == html.count("ui-opxmon-owner-clip"), "every clipped text has its hover"
+    assert all(t == body for t, body in clips), "the hover shows the same full text"
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.ui-opxmon-owner-marker \.ui-opxmon-owner-clip \{([^}]*)\}", css)
+    assert rule and "text-overflow:ellipsis" in rule.group(1) and "white-space:nowrap" in rule.group(1)
+    assert "overflow-wrap: anywhere" not in css.split(".ui-opxmon-owner-marker {", 1)[1].split("}", 1)[0]

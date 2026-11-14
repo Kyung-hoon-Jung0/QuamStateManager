@@ -40,7 +40,7 @@
   {%- elif not qms %}
     <p class="ui-zone-empty">{% if owners_stale %}No QM was open at the last good read ({{ owners_age }}); whether one is open now is unknown.{% else %}No QM is open: the hardware is free.{% endif %}</p>
   {%- else %}
-    {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since.</span></div>{% endif %}
+    {%- if owners_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">Owners below are from the last good read, {{ owners_age }}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span></div>{% endif %}
     {{ qm_table(qms, 'Who holds each open QM', owners_stale, owners_age) }}
   {%- endif %}
   </div></section>
@@ -124,13 +124,13 @@
   {%- else %}{% set qm_stale = st.state != 'ok' %}{% set qm_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' %}
   <section class="ui-zone" aria-label="Open quantum machines"><div class="ui-zone-head"><h3 class="ui-zone-title">Open quantum machines{% if qm_stale %} at the last good read ({{ qm_age }}){% endif %}</h3><span class="ui-zone-sum"><span class="ui-count">{{ ans.open_qms|length }}</span></span></div>
   <div class="ui-zone-body">
-  {%- if qm_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">This list is from the last good read, {{ qm_age }}; QMs may have opened or closed since.</span></div>{% endif %}
+  {%- if qm_stale %}<div class="ui-notice ui-notice--warn ui-opxmon-qm-stale" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">Not current.</strong><span class="ui-notice-text">This list is from the last good read, {{ qm_age }}; QMs may have opened or closed since. SM's watch is interrupted, so no QM counts as idle.</span></div>{% endif %}
   {%- if ans.open_qms|length > 1 %}<div class="ui-notice ui-notice--warn ui-opxmon-multi" role="status"><span class="ui-notice-icon" aria-hidden="true">⚠</span><strong class="ui-notice-key">More than one QM is open.</strong><span class="ui-notice-text">Several programs or people may hold the hardware.</span></div>{% endif %}
   {%- if not ans.open_qms %}<p class="ui-zone-empty">{% if qm_stale %}<span class="ui-state-key">No QM was open at the last good read ({{ qm_age }}).</span> Whether one is open now is unknown.{% else %}<span class="ui-state-key">No QM is open.</span>{% endif %}</p>{% else %}
   <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open quantum machines{% if qm_stale %} (last good read, {{ qm_age }}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
     <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th><th class="ui-table-head" scope="col">Jobs</th></tr></thead>
     <tbody>{% for q in ans.open_qms %}{% set qs = qm_states[q.id] %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td data-label="QM" class="ui-table-cell"><code class="ui-chip">{{ q.id }}</code></td>
-      <td data-label="State" class="ui-table-cell"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ idle_states[q.id].basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
+      <td data-label="State" class="ui-table-cell"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
       <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code class="ui-chip">{{ j.id }}</code> <span class="ui-text-strong">{{ j.status }}</span> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}{% if j.created_at %} &middot; created {{ opx_time(j.created_at) }} (OPX clock){% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</span></div>{% endfor %}{% else %}<span class="ui-text-quiet">none</span>{% endif %}</td></tr>{% endfor %}</tbody>

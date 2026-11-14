@@ -646,6 +646,8 @@
 
 .ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
 .ui-opxmon-alarm-slot .ui-opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-health-max-width)}
+/* One clipped-text rule for the top bar text and long owner-marker texts: cut with an ellipsis, full text on hover (title). */
+.ui-opxmon-owner-marker .ui-opxmon-owner-clip {display:inline-block; vertical-align:bottom; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:100%}
 .ui-opxmon-alarm-slot .ui-opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}
 .ui-opxmon-alarm-slot > a {margin:0}
 
@@ -681,8 +683,8 @@
 .ui-opxmon-owners { margin: 0 0 var(--ui-opxmon-space-md); padding: 0; list-style: none; }
 .ui-opxmon-owners > li { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: var(--ui-gap-2); margin: 0; }
 .ui-opxmon-owner { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
-.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
-.ui-opxmon-owner-marker code { display: inline; white-space: normal; overflow-wrap: anywhere; }
+.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow-wrap: break-word; }
+.ui-opxmon-owner-marker code { display: inline; }
 .ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
 .ui-opxmon-settings, .ui-opxmon-pcnames { display: flex; flex-direction: column; align-items: stretch; gap: var(--ui-gap-3); margin: 0; }
 .ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }

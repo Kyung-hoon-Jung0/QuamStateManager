@@ -1917,7 +1917,26 @@ def test_r4_failed_poll_words_the_jobs_row_from_the_last_good_read(env):
     m.poll_once()
     html = page(app, 'jobs')
     assert 'watched continuously' not in html and '&middot; idle' not in html
-    assert 'watch interrupted; as of the last good read' in html
+    assert html.count("SM's watch is interrupted") == 1
+    assert 'watch interrupted; as of the last good read' not in html
+    assert 'last seen: no job change for' in html
+
+
+def test_stale_live_rows_stay_short_and_the_notice_says_it_once(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]), ("QM-b", [("j2", "Done")], ["con1/2"])))]
+    _slow(m)
+    _watch(m, clock, 30 * 300)
+    fresh = page(app, 'live')
+    assert "SM's watch is interrupted" not in fresh and 'last seen:' not in fresh
+    assert fresh.count('watched continuously') >= 2
+    w.script[:] = [om.WorkerError('connection refused')]
+    clock.t += 300
+    m.poll_once()
+    html = page(app, 'live')
+    assert html.count("SM's watch is interrupted") == 1
+    assert 'watch interrupted; as of the last good read' not in html.split('ui-opxmon-qm-stale', 1)[1].split('</table>', 1)[0]
+    assert html.count('last seen: no job change for') == 2
 
 
 def test_r4_stale_slot_card_says_last_good_read_without_zone(env):

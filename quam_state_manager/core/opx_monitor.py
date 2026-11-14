@@ -157,9 +157,12 @@ CAPPED_BASIS = (f'job list capped at {JOB_LIST_CAP} by the server; SM cannot see
 
 
 def stale_idle_state(state, age_text):
-    """The same verdict worded for a page whose last poll failed: never idle."""
+    """The same verdict worded for a page whose last poll failed: never idle.
+
+    ``basis`` is the full sentence (the close confirm quotes it); ``row_basis`` is the short
+    text of a table row, whose table carries the "watch interrupted" notice once."""
     basis = state['basis'].replace(' while SM watched continuously', ' while SM watched')
-    return {'idle': False, 'last_activity': None,
+    return {'idle': False, 'last_activity': None, 'row_basis': f'last seen: {basis}',
             'basis': f'watch interrupted; as of the last good read ({age_text}): {basis}'}
 
 
@@ -1120,7 +1123,7 @@ def band_view(verdict_value, state, health, problem_details=None):
 def qm_state(q, idle_value):
     """The State cell of one open QM: a short fact, what it is measured from, its job statuses."""
     jobs = q.get('jobs')
-    basis = (idle_value or {}).get('basis') or ''
+    basis = (idle_value or {}).get('row_basis') or (idle_value or {}).get('basis') or ''
     if jobs is None:
         fact = 'jobs unknown'
     elif any(job_activity(j.get('status')) == 'active' for j in jobs):
