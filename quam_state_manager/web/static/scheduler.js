@@ -371,7 +371,14 @@
     if (act === "revert-failed") {
       return postJSON("/scheduler/item/" + encodeURIComponent(it.id) + "/revert-failed", {})
         .then(function (r) {
+          // the pressed button holds focus inside the list, which would
+          // skip the rebuild: release it and force the row to re-render
+          var box = el("sched-queue");
+          if (box && document.activeElement && box.contains(document.activeElement)
+              && document.activeElement.blur) document.activeElement.blur();
+          self._queueSig = null;
           if (r && r.state) self.renderQueue(r.state);
+          else fetchJSON("/scheduler/status").then(function (st) { self._queueSig = null; self.renderQueue(st); });
           var msg = (r && (r.message || r.error)) || "Revert failed";
           if (window.showToast) window.showToast(msg, r && r.ok ? "success" : "warning");
           return r;
@@ -465,7 +472,9 @@
                 i.param_overrides ? Object.keys(i.param_overrides).length : 0,
                 i.result_ref ? 1 : 0,
                 i.label || "", (i.on_outcome || []).length,
-                i.inserted_by ? 1 : 0, i.outcome_note ? 1 : 0];
+                i.inserted_by ? 1 : 0, i.outcome_note ? 1 : 0,
+                i.failed_revert ? [i.failed_revert.at || "", i.failed_revert.message || ""] : 0,
+                Array.isArray(i.revert_retryable) ? i.revert_retryable.join(",") : null];
       }));
       if (sig !== self._queueSig) {
         self._queueSig = sig;
@@ -603,10 +612,28 @@
         rmsg.setAttribute("data-failed-revert", rv.ok ? "ok" : "refused");
         rmsg.textContent = "Revert: " + rv.message;
         nameCell.appendChild(rmsg);
+        var earlierPresses = (rv.presses || []).filter(function (h) { return h && h.message; });
+        if (earlierPresses.length) {
+          var det = document.createElement("details");
+          det.setAttribute("data-revert-presses", String(earlierPresses.length));
+          var sm = document.createElement("summary");
+          sm.textContent = "Earlier presses (" + earlierPresses.length + ")";
+          det.appendChild(sm);
+          earlierPresses.slice().reverse().forEach(function (h) {
+            var line = document.createElement("div");
+            line.className = "muted";
+            line.textContent = h.message;
+            det.appendChild(line);
+          });
+          nameCell.appendChild(det);
+        }
       }
       // gl-aat: after a revert the button names only what a press can still put
       // back (rv.remaining), and is gone when nothing is left
-      var nLeft = rv && Array.isArray(rv.remaining) ? rv.remaining.length : null;
+      // the server evaluates what is retryable from the chip's values now
+      // (revert_retryable) when the chip is open; else the stored list
+      var nLeft = Array.isArray(it.revert_retryable) ? it.revert_retryable.length
+        : (rv && Array.isArray(rv.remaining) ? rv.remaining.length : null);
       var offer = nLeft !== null ? nLeft > 0 : (nWrites && !(rv && rv.ok && !(rv.refused || []).length));
       if (offer) {
         var rb = document.createElement("button");
