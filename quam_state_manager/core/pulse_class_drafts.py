@@ -12,11 +12,14 @@ Layout (one folder per scope, a chip or a project, and per class)::
 
 This module treats a draft as BYTES. It never imports, compiles or runs one:
 the preview runs only in the lab env subprocess
-(``generator/run_pulse_draft.py``), started by :func:`preview`.
+(``generator/run_pulse_draft.py``), started by :func:`preview`. The one look
+inside is :func:`import_check`, which parses the text to a syntax tree (no
+code object, nothing runs) and reads the last good preview's hash.
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -38,6 +41,9 @@ STATE_LINES = {
     STATE_SAME: "Saved to {path}, same as draft",
     STATE_DIFFERS: "Saved to {path}, differs from draft",
 }
+#: not one of the three save states: the draft file itself is gone
+STATE_MISSING = "missing"
+MISSING_LINE = "The draft file is gone: {path}"
 PREVIOUS_LINE = "Previous version: the last preview that ran"
 
 _SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -144,6 +150,32 @@ def save_state(draft: bytes, target: Path | str | None) -> dict:
     line = STATE_LINES[state].format(path=str(target) if target is not None else "")
     return {"state": state, "line": line,
             "draft_sha256": dh, "file_sha256": fh}
+
+
+def missing_state(path: Path | str) -> dict:
+    """The status line when the draft file was deleted: it names the missing
+    draft instead of comparing a class file against nothing."""
+    return {"state": STATE_MISSING, "line": MISSING_LINE.format(path=str(path)),
+            "draft_sha256": None, "file_sha256": None}
+
+
+def import_check(instance, scope, class_name, data: bytes) -> str | None:
+    """None when *data* may become a class file; otherwise the reason it may
+    not. A class file that does not import stops the whole chip from loading,
+    so the draft must parse and its exact bytes must have imported in the lab
+    env (the last good preview carries their hash)."""
+    try:
+        ast.parse(data.decode("utf-8"), filename=DRAFT_FILE)
+    except UnicodeDecodeError:
+        return "The draft is not UTF-8 text, so it cannot be a Python class file."
+    except SyntaxError as exc:
+        where = f" on line {exc.lineno}" if exc.lineno else ""
+        return f"The draft does not parse as Python{where}: {exc.msg}. Fix it before saving it as a class file."
+    prev = last_preview(instance, scope, class_name)
+    if not prev or prev.get("draft_sha256") != sha256_bytes(data):
+        return ("This version of the draft has not imported in a lab env yet. Run the preview; "
+                "the class file is written once the preview of this exact draft succeeded.")
+    return None
 
 
 def last_preview(instance, scope, class_name) -> dict | None:

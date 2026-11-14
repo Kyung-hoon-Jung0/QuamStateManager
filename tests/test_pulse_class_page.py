@@ -62,7 +62,9 @@ def test_save_with_a_stale_base_is_a_conflict_and_writes_nothing(client):
     c = r.get_json()["conflict"]
     assert {x["keep"] for x in c["choices"]} == {"sm", "file"}
     assert open(path, "rb").read() == outside
-    r = client.post("/pulse-class/save", json={"cls": "FlatPulse", "text": mine, "base_sha": p["sha"], "keep": "sm"})
+    assert c["file_sha"] == D.sha256_bytes(outside)
+    r = client.post("/pulse-class/save", json={"cls": "FlatPulse", "text": mine, "base_sha": p["sha"],
+                                               "keep": "sm", "file_sha": c["file_sha"], "hand_edit": True})
     assert r.status_code == 200 and open(path, "rb").read() == mine.encode()
     assert r.get_json()["status"] == "Draft, not saved"
 
@@ -84,6 +86,7 @@ def test_outside_edit_reaches_the_poll_after_it_settles(client):
 
 def test_save_file_moves_the_status_phrase(client, tmp_path):
     _new(client)
+    _preview_ok(client)
     target = tmp_path / "flat_pulse.py"
     r = client.post("/pulse-class/save-file", json={"cls": "FlatPulse", "target": str(target)}).get_json()
     assert r["ok"] and r["status"] == f"Saved to {target}, same as draft"
@@ -93,3 +96,79 @@ def test_preview_refuses_an_unknown_interpreter(client):
     _new(client)
     r = client.post("/pulse-class/preview", json={"cls": "FlatPulse", "python": "C:/nowhere/python.exe"})
     assert r.status_code == 400 and not r.get_json()["ok"]
+
+
+# Review round 1 fixes
+
+def _preview_ok(client, cls="FlatPulse"):
+    """A good preview of the current draft bytes, without a lab env."""
+    inst = client.application.instance_path
+    from quam_state_manager.web import routes
+    with client.application.test_request_context():
+        scope = routes._ctx_chip_key(routes._active_ctx()) or "no-chip"
+
+    def run(py, req, timeout):
+        data = open(req["draft"], "rb").read()
+        return {"ok": True, "samples": [0.0], "n": 1, "fields": [], "sha256": D.sha256_bytes(data)}
+    assert D.preview("py", inst, scope, cls, runner=run)["ok"]
+
+
+def test_save_file_over_an_existing_file_is_a_question_then_a_confirmed_replace(client, tmp_path):
+    p = _new(client)
+    _preview_ok(client)
+    t = tmp_path / "existing.py"
+    t.write_bytes(b"# a module of the lab\n")
+    r = client.post("/pulse-class/save-file", json={"cls": "FlatPulse", "target": str(t)})
+    assert r.status_code == 409
+    c = r.get_json()["confirm"]
+    assert c["path"] == str(t) and t.read_bytes() == b"# a module of the lab\n"
+    r = client.post("/pulse-class/save-file",
+                    json={"cls": "FlatPulse", "target": str(t), "replace_sha": c["file_sha"]})
+    j = r.get_json()
+    assert r.status_code == 200 and j["ok"] and t.read_bytes() == p["text"].encode()
+    assert open(j["backup"], "rb").read() == b"# a module of the lab\n"
+
+
+def test_save_file_refusals_are_honest_400s(client, tmp_path):
+    _new(client)
+    r = client.post("/pulse-class/save-file", json={"cls": "FlatPulse", "target": str(tmp_path / "a.py")})
+    assert r.status_code == 400 and "not imported" in r.get_json()["error"]
+    _preview_ok(client)
+    (tmp_path / "x.py").mkdir()
+    for target, words in ((str(tmp_path / "x.py"), "is a folder"), ("rel.py", "full path"),
+                          (str(tmp_path / "CON.py"), "reserved")):
+        r = client.post("/pulse-class/save-file", json={"cls": "FlatPulse", "target": target})
+        assert r.status_code == 400 and words in r.get_json()["error"], target
+
+
+def test_pane_save_refuses_a_region_change_unless_unlocked(client):
+    p = _new(client)
+    mine = p["text"].replace("0.1", "0.7")
+    r = client.post("/pulse-class/save", json={"cls": "FlatPulse", "text": mine, "base_sha": p["sha"]})
+    assert r.status_code == 400 and "'amplitude'" in r.get_json()["error"]
+    assert open(p["path"], "rb").read() == p["text"].encode()
+    r = client.post("/pulse-class/save", json={"cls": "FlatPulse", "text": mine, "base_sha": p["sha"],
+                                               "hand_edit": True})
+    assert r.status_code == 200 and open(p["path"], "rb").read() == mine.encode()
+
+
+def test_form_door_still_rewrites_the_region(client):
+    p = _new(client)
+    fields = [{"name": "amplitude", "type": "float", "default": 0.3, "unit": "V"},
+              {"name": "length", "type": "int", "default": 100, "unit": "ns"}]
+    r = client.post("/pulse-class/form", json={"cls": "FlatPulse", "fields": fields,
+                                               "formula": "amplitude * np.ones(n)",
+                                               "text": p["text"], "base_sha": p["sha"]})
+    assert r.status_code == 200 and r.get_json()["info"]["spec"]["fields"][0]["default"] == 0.3
+
+
+def test_poll_conflict_names_the_file_content_it_is_about(client):
+    p = _new(client)
+    new = p["text"].replace("0.1", "0.4").encode()
+    with open(p["path"], "wb") as f:
+        f.write(new)
+    st = os.stat(p["path"])
+    os.utime(p["path"], ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
+    client.get("/pulse-class/poll?cls=FlatPulse&dirty=1")
+    r = client.get("/pulse-class/poll?cls=FlatPulse&dirty=1").get_json()
+    assert r["conflict"]["file_sha"] == D.sha256_bytes(new)

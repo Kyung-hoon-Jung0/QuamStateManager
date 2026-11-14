@@ -108,7 +108,9 @@ def pulse_class_save():
     keep = data.get("keep") or None
     try:
         res = W.save_from_pane(_inst(), _scope(), cls, str(data.get("text") or ""),
-                               data.get("base_sha") or None, keep=keep)
+                               data.get("base_sha") or None, keep=keep,
+                               file_sha=data.get("file_sha") or None,
+                               region_ok=data.get("hand_edit") is True)
     except D.DraftError as exc:
         return _err(str(exc))
     return _save_result(cls, res)
@@ -128,7 +130,8 @@ def pulse_class_form():
         if cur is None:
             return _err(f"There is no draft named {cls}.", 404)
         text = T.rewrite(str(data.get("text") or cur.decode("utf-8", errors="replace")), spec)
-        res = W.save_from_pane(_inst(), _scope(), cls, text, data.get("base_sha") or None)
+        res = W.save_from_pane(_inst(), _scope(), cls, text, data.get("base_sha") or None,
+                               region_ok=True)
     except (D.DraftError, T.TemplateError, TypeError, ValueError) as exc:
         return _err(str(exc))
     return _save_result(cls, res)
@@ -144,7 +147,7 @@ def pulse_class_poll():
     res = w.poll()
     res["status_line"] = W.status(_inst(), _scope(), cls)["line"]
     if res["status"] == "changed" and request.args.get("dirty") == "1":
-        res["conflict"] = W.conflict_block(w.path)
+        res["conflict"] = W.conflict_block(w.path, res["sha"])
     return jsonify(res)
 
 
@@ -167,7 +170,13 @@ def pulse_class_save_file():
     data = json_object()
     cls = str(data.get("cls") or "")
     try:
-        st = W.save_to_target(_inst(), _scope(), cls, str(data.get("target") or "").strip())
+        st = W.save_to_target(_inst(), _scope(), cls, str(data.get("target") or "").strip(),
+                              replace_sha=data.get("replace_sha") or None)
     except D.DraftError as exc:
         return _err(str(exc))
-    return jsonify({"ok": True, "status": st["line"], "target": W.get_target(_inst(), _scope(), cls)})
+    except OSError as exc:
+        return _err(f"The class file could not be written: {exc}")
+    if not st.get("ok"):
+        return jsonify(st), 409
+    return jsonify({"ok": True, "status": st["line"], "backup": st["backup"],
+                    "target": W.get_target(_inst(), _scope(), cls)})
