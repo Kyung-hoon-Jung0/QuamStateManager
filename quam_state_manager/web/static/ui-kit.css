@@ -1316,9 +1316,6 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-slot { margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); display: flex; flex-direction: column; gap: var(--ui-gap-2); }
 .czg-slot-title { padding: 0 var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); font-family: var(--ui-font-mono); }
 .czg-fieldbox { margin: 0; }
-.czg-src { font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
-.czg-src--entered { color: var(--ui-accent); }
-.czg-src--copied { color: var(--ui-ok-text); }
 .czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
 .czg-section-title { margin: var(--ui-gap-2) 0 0; font-size: var(--ui-fs-xs); font-weight: var(--ui-fw); color: var(--ui-text-2); }

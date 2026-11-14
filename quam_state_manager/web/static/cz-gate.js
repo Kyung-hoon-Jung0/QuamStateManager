@@ -144,7 +144,7 @@
     function whyClass() {
         var w = clear($('czg-class-why'));
         var off = (S.data.classes || []).filter(function (c) { return !c.available; });
-        off.forEach(function (c) { w.appendChild(el('span', 'czg-why-line', c.label + ': ' + c.why)); });
+        if (off.length) w.appendChild(el('span', 'czg-why-line', 'Not offered: ' + off.map(function (c) { return c.label; }).join(', ') + '. ' + off[0].why));
     }
     function fillModel() {
         var c = klass();
@@ -205,13 +205,13 @@
         if (typeof v === 'object') return JSON.stringify(v);
         return String(v);
     }
-    function fieldInput(field, name, label, kind, value, src) {
+    function fieldInput(field, name, label, unit, kind, value, src) {
         var l = el('label', 'ui-field czg-fieldbox');
         var head = el('span', 'ui-field-label', label);
-        if (src) { head.appendChild(document.createTextNode(' ')); head.appendChild(el('span', src === 'entered' ? 'czg-src czg-src--entered' : src.indexOf('copied') === 0 ? 'czg-src czg-src--copied' : 'czg-src', src)); }
+        if (src) { head.appendChild(document.createTextNode(' ')); head.appendChild(el('span', src === 'entered' ? 'ui-badge ui-badge--accent' : src.indexOf('copied') === 0 ? 'ui-badge ui-badge--ok' : 'ui-badge ui-badge--neutral', src)); }
         l.appendChild(head);
         var i = document.createElement('input');
-        i.className = 'czg-input czg-input--text';
+        i.className = (kind === 'float' || kind === 'int') ? 'czg-input czg-input--text ui-input ui-input--num' : 'czg-input czg-input--text ui-input';
         i.type = 'text';
         i.spellcheck = false;
         if (kind === 'float' || kind === 'int') i.setAttribute('inputmode', 'decimal');
@@ -221,6 +221,7 @@
         var typed = (S.raw[field] || {})[name];
         i.value = typed !== undefined ? typed : shown(value);
         l.appendChild(i);
+        if (unit) l.appendChild(el('span', 'ui-input-unit ui-note', unit));
         return l;
     }
     function kindOf(v) {
@@ -245,7 +246,7 @@
                 var b = slotBlock(s.field, 'Plays on ' + s.line_words + '.');
                 var l = el('label', 'ui-field');
                 l.appendChild(el('span', 'ui-field-label', 'Pulse class'));
-                var sel = el('select', 'czg-input');
+                var sel = el('select', 'czg-input ui-select ui-select--block');
                 sel.setAttribute('data-czg-slot', s.field);
                 if (!s.required) { var n = el('option', null, 'No pulse on this line'); n.value = ''; sel.appendChild(n); }
                 (s.pulse_classes || []).forEach(function (pc) {
@@ -263,7 +264,7 @@
                     var planned = fp && fp.ok && fp.pulses ? fp.pulses[s.field] : null;
                     spec.fields.forEach(function (f) {
                         var v = planned && planned[f.name] !== undefined ? planned[f.name] : f['default'];
-                        grid.appendChild(fieldInput(s.field, f.name, f.label + (f.unit ? ' (' + f.unit + ')' : ''),
+                        grid.appendChild(fieldInput(s.field, f.name, f.label, f.unit,
                             f.kind, v, sourceOf(fp, s.field, f.name) || 'default'));
                     });
                     b.appendChild(grid);
@@ -285,7 +286,7 @@
             Object.keys(pulse).forEach(function (k) {
                 var v = pulse[k];
                 if (k === '__class__' || k === 'id' || (typeof v === 'string' && v.charAt(0) === '#')) return;
-                grid.appendChild(fieldInput(f, k, k, kindOf(v), v, sourceOf(fp, f, k) || 'default'));
+                grid.appendChild(fieldInput(f, k, k, '', kindOf(v), v, sourceOf(fp, f, k) || 'default'));
             });
             b.appendChild(grid);
             host.appendChild(b);
@@ -474,7 +475,9 @@
         if (no.length && ok.length) parts.push(no.length + ' left out');
         S.phase = ok.length ? 'create' : 'check';
         S.checkSig = c.plan_sig;
-        setBusy(false, ok.length ? ('Checked. ' + parts.join(' ')).trim() : 'Checked: nothing can be created.');
+        var verified = ok.length && ok.every(function (x) { return x.verdict.state === 'verified'; });
+        setBusy(false, !ok.length ? 'Checked: nothing can be created. Change the inputs.'
+            : (verified ? 'Checked with the lab code. ' : 'Not checked with the lab code. ') + (parts.length ? parts.join(' ') + '. ' : '') + 'Press Create to add it to the working copy.');
     }
     function check() {
         if (!S || S.busy) return Promise.resolve();

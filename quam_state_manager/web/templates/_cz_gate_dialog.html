@@ -20,25 +20,25 @@
         <div class="czg-cols">
             <form id="czg-form" class="czg-form" autocomplete="off" aria-label="The gate">
                 <label class="ui-field"><span class="ui-field-label">Pair</span>
-                    <select id="czg-pair" class="czg-input" name="pair">
+                    <select id="czg-pair" class="czg-input ui-select ui-select--block" name="pair">
                         <option value="">Pick a pair</option>
                         {%- for p in data.pairs %}<option value="{{ p.id }}"{% if p.id == selected %} selected{% endif %}>{{ p.id }}</option>{% endfor -%}
                     </select>
                 </label>
                 <p id="czg-pair-line" class="ui-note czg-readonly" aria-live="polite"></p>
                 <label class="ui-field"><span class="ui-field-label">Gate name</span>
-                    <input id="czg-name" class="czg-input czg-input--text" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
+                    <input id="czg-name" class="czg-input czg-input--text ui-input" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
                 </label>
                 <p id="czg-name-why" class="ui-note czg-why"></p>
                 <label class="ui-field"><span class="ui-field-label">Gate class</span>
-                    <select id="czg-class" class="czg-input" name="gate_class"></select>
+                    <select id="czg-class" class="czg-input ui-select ui-select--block" name="gate_class"></select>
                 </label>
                 <p id="czg-class-why" class="ui-note czg-why"></p>
                 <label class="ui-field czg-model" id="czg-model-field" hidden><span class="ui-field-label">Model gate (its layout is copied)</span>
-                    <select id="czg-model" class="czg-input" name="model_gate"></select>
+                    <select id="czg-model" class="czg-input ui-select ui-select--block" name="model_gate"></select>
                 </label>
                 <label class="ui-field"><span class="ui-field-label">Start from</span>
-                    <select id="czg-from" class="czg-input" name="copy_from"></select>
+                    <select id="czg-from" class="czg-input ui-select ui-select--block" name="copy_from"></select>
                 </label>
                 <div id="czg-slots" class="czg-slots"></div>
                 <details id="czg-more" class="ui-disclosure czg-more">

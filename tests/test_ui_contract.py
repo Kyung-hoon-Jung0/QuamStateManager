@@ -700,7 +700,7 @@ _STAGE6_SELECTORS = {
     '.czg .czg-body', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-input', '.czg-bad', '.czg-readonly',
     '.czg-why', '.czg-why:empty', '.czg-readonly:empty', '.czg-why-line', '.czg-slot',
-    '.czg-slot-title', '.czg-fieldbox', '.czg-src', '.czg-src--entered', '.czg-src--copied',
+    '.czg-slot-title', '.czg-fieldbox',
     '.czg-more-list', '.czg-more-row', '.czg-section-title', '.czg-chart > .ui-note',
     '.czg-intent', '.czg-checks', '.czg-writes', '.czg-stale', '.czg-diff', '.czg-row-acts',
     '.czg-input--text', '.czg-foot-acts',

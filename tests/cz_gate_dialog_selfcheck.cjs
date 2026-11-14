@@ -130,7 +130,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     { const off = [...$('#czg-class').options].filter((o) => o.disabled); ok(off.length > 0 && /SM does not know/.test($('#czg-class-why').textContent) && /not available/.test(off[0].textContent), 'unavailable class disabled with the reason visible'); }
     ok(count('plan') === 1 && sent[0].body.pairs.join() === 'q1-2', 'the plan is asked on open');
     ok(prim().textContent === 'Check' && !prim().disabled, 'Check before a check');
-    ok($('#czg-slots .czg-src') && /default/.test($('#czg-slots').textContent), 'fields marked default');
+    ok($('#czg-slots .ui-badge') && /default/.test($('#czg-slots').textContent), 'fields marked default');
     ok(!d.querySelector('[style]') && !d.querySelector('[onclick]'), 'no inline style or handler');
 
     // name validated by the plan
