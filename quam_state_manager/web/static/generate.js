@@ -42,7 +42,8 @@
       qdac: { communication_type: "Ethernet", ip_address: "", port: 5025,
               usb_device: null, lib: "@py", qubits: {} },
       lines: [],
-      populate: {},
+      // shared OPX cores per qubit (xy + readout): on for a new chip
+      populate: { options: { pin_cores: true } },
       pair_gate: "cz_tunable"
     };
   }
@@ -8998,6 +8999,7 @@
   }
 
   function specWithCoBands() {
+    ensurePinCores(state.spec);
     var cb = (loBandFindings(computeLoAssignments()).coBands) || {};
     var keys = Object.keys(cb);
     if (!keys.length) return state.spec;
@@ -10539,7 +10541,32 @@
     });
   }
 
+  // Shared OPX cores: the spec always carries populate.options.pin_cores
+  // explicitly. A spec without the key counts as on (the build treats it
+  // the same way); the checkbox mirrors the stored value.
+  function ensurePinCores(spec) {
+    var pop = spec.populate || (spec.populate = {});
+    var opt = pop.options || (pop.options = {});
+    if (typeof opt.pin_cores !== "boolean") opt.pin_cores = opt.pin_cores !== false;
+    return opt.pin_cores;
+  }
+
+  function syncPinCoresUi() {
+    var chk = document.getElementById("gen-pin-cores-chk");
+    if (!chk) return;
+    chk.checked = ensurePinCores(state.spec);
+    if (!chk.dataset.bound) {
+      chk.dataset.bound = "1";
+      chk.addEventListener("change", function () {
+        ensurePinCores(state.spec);
+        state.spec.populate.options.pin_cores = !!chk.checked;
+        saveDraft();
+      });
+    }
+  }
+
   function enterPopulateStep() {
+    syncPinCoresUi();
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
     renderPopulateIntro();   // QA regenerate-r2-31

@@ -242,3 +242,57 @@ def test_cr_channel_rides_the_control_core_in_a_real_build(tmp_path):
                 assert c["core"] == f"{ctrl}_core", (chan, c["core"])
                 checked += 1
     assert checked
+
+
+# ---------------------------------------------------------------- wizard
+
+def test_wizard_checkbox_is_checked_and_writes_the_option():
+    from pathlib import Path
+    web = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+    html = (web / "templates" / "_generate.html").read_text(encoding="utf-8")
+    js = (web / "static" / "generate.js").read_text(encoding="utf-8")
+    assert '<input type="checkbox" id="gen-pin-cores-chk" checked>' in html
+    assert "Share one core per qubit (xy + readout)" in html
+    assert ("Known risk: on QOP 3.8.1 (another device), with xy and resonator on one core, "
+            "a resonator update_frequency inside a program made later x180 pulses have no "
+            "effect; the simulator did not show it; it depended on the program layout. "
+            "Not tested on QOP 3.7.3; a hardware test is planned.") in html
+    assert "populate: { options: { pin_cores: true } }" in js
+    assert "state.spec.populate.options.pin_cores = !!chk.checked;" in js
+    # every build post carries the key
+    body = js[js.index("function specWithCoBands()"):]
+    assert body.index("ensurePinCores(state.spec);") < body.index("loBandFindings(")
+
+
+# ---------------------------------------------------------------- identity
+
+def test_checkbox_off_is_byte_identical_to_the_pre_layout_generator(tmp_path):
+    """With the option off, state.json and wiring.json are byte for byte what
+    the generator before shared cores wrote."""
+    import io
+    import shutil
+    import tarfile
+    from pathlib import Path
+    python = _env()
+    root = Path(__file__).resolve().parent.parent
+    if shutil.which("git") is None:
+        pytest.skip("git not on PATH")
+    arch = subprocess.run(["git", "archive", "c92b2fe9", "quam_state_manager/generator"],
+                          capture_output=True, cwd=str(root))
+    if arch.returncode != 0:
+        pytest.skip("base commit not in this clone")
+    base_dir = tmp_path / "base"
+    with tarfile.open(fileobj=io.BytesIO(arch.stdout)) as tf:
+        tf.extractall(base_dir)
+    spec = _five_qubit_spec()
+    spec["populate"]["options"] = {"pin_cores": False}
+    spec_path = tmp_path / "_spec.json"
+    spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
+    base_out = tmp_path / "base_out"
+    r = subprocess.run([python, str(base_dir / "quam_state_manager" / "generator" / "run_build.py"),
+                        "--mode", "build", "--spec", str(spec_path), "--out", str(base_out)],
+                       capture_output=True, text=True, encoding="utf-8", timeout=600)
+    assert r.returncode == 0, r.stderr[-2000:]
+    _build(python, spec, tmp_path / "built")
+    for name in ("state.json", "wiring.json"):
+        assert (tmp_path / "built" / name).read_bytes() == (base_out / name).read_bytes(), name
