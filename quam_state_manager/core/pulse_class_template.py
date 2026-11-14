@@ -24,8 +24,12 @@ as the length in ns.
 from __future__ import annotations
 
 import ast
+import functools
+import io
 import keyword
+import math
 import re
+import tokenize
 from dataclasses import dataclass, field
 
 TEMPLATE_VERSION = 1
@@ -38,9 +42,20 @@ REGION_END = "    # <<< SM template region end <<<"
 FIELD_TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 
 #: names the quam Pulse base already owns (``length`` may be re-declared with
-#: a default; the rest may not be shadowed), plus the formula's own names
-RESERVED = {"id", "digital_marker", "operation", "channel", "name", "parent",
-            "t", "dt", "n", "np", "self"}
+#: a default; the rest may not be shadowed). They are listed here because SM
+#: never imports quam; a lab-env test checks the list against the installed
+#: ``quam.components.pulses.Pulse``.
+PULSE_BASE_NAMES = frozenset({
+    "id", "digital_marker", "operation", "channel", "name", "parent",
+    "apply_to_config", "calculate_waveform", "config_settings", "digital_marker_name",
+    "get_attr_name", "get_attrs", "get_raw_value", "get_reference", "get_root",
+    "get_unreferenced_value", "inferred_id", "iterate_components", "play",
+    "print_summary", "pulse_name", "set_at_reference", "to_dict", "waveform_function",
+    "waveform_name"})
+#: the base's names, the formula's own names and the type names (a field
+#: called ``float`` would rebind the annotation for every later field). The
+#: names the template itself writes are added by :func:`reserved_field_names`.
+RESERVED = set(PULSE_BASE_NAMES) | {"t", "dt", "n", "np", "self"} | set(FIELD_TYPES)
 
 #: Windows device names: a folder or file with one of these names (any case,
 #: any extension) cannot be made, so a class may not be called that
@@ -62,6 +77,8 @@ LENGTH_RULE_LINE = (f"Field 'length': the default must be a whole number of ns, 
 
 CODE_VIEW_ONLY_LINE = ("The class structure can only be edited in the code view: "
                        "the template markers in this file were changed by hand.")
+REGION_CHANGED_LINE = ("The class structure can only be edited in the code view: "
+                       "the lines between the template markers were changed by hand.")
 CRLF_LINE = ("The class structure can only be edited in the code view: "
              "this file uses Windows line endings, and the form rewrites only files "
              "with plain line endings.")
@@ -149,7 +166,10 @@ def validate(spec: ClassSpec) -> None:
     seen = set()
     for f in spec.fields:
         _check_ident(f.name, "Field name")
-        if f.name in RESERVED:
+        if f.name.startswith("_"):
+            raise TemplateError(f"Field name {f.name!r} is reserved: a field name may not "
+                                "start with '_'")
+        if f.name in reserved_field_names():
             raise TemplateError(f"Field name {f.name!r} is reserved")
         if f.name in seen:
             raise TemplateError(f"Field {f.name!r} appears twice")
@@ -166,6 +186,12 @@ def validate(spec: ClassSpec) -> None:
         if not ok:
             article = "an" if f.type == "int" else "a"
             raise TemplateError(f"Field {f.name!r}: default {d!r} is not {article} {f.type}")
+        if want is float and not math.isfinite(d):
+            raise TemplateError(f"Field {f.name!r}: the default must be a finite number, "
+                                "not nan or inf")
+        if want is str and _UNIT_MARK.strip() in d:
+            raise TemplateError(f"Field {f.name!r}: the default may not contain "
+                                f"{_UNIT_MARK.strip()!r}")
         if f.name == "length" and (f.type != "int" or d < LENGTH_MIN_NS
                                    or d % LENGTH_STEP_NS):
             raise TemplateError(LENGTH_RULE_LINE)
@@ -186,13 +212,55 @@ def validate(spec: ClassSpec) -> None:
     except SyntaxError as exc:
         raise TemplateError(f"The waveform formula is not a valid expression: {exc.msg}") from None
     del tree
+    if _has_multi_line_string(spec.formula.strip()):
+        raise TemplateError("The waveform formula may not hold a string that spans "
+                            "lines: the template indents every formula line, which "
+                            "would change the string")
     for mark in (REGION_BEGIN, REGION_END):
         if mark.strip() in spec.formula:
             raise TemplateError("The waveform formula may not contain the SM template "
                                 "marker text")
 
 
+def _has_multi_line_string(formula: str) -> bool:
+    """True when a string literal (or f-string) in *formula* spans lines."""
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO("(\n" + formula + "\n)\n").readline))
+    except (tokenize.TokenError, SyntaxError):
+        return False      # ast.parse already accepted it; nothing more to say
+    starts = []
+    for tok in toks:
+        name = tokenize.tok_name[tok.type]
+        if name == "STRING" and tok.start[0] != tok.end[0]:
+            return True
+        if name == "FSTRING_START":
+            starts.append(tok.start[0])
+        elif name == "FSTRING_END" and starts and starts.pop() != tok.end[0]:
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def reserved_field_names() -> frozenset:
+    """Every name a field may not take: :data:`RESERVED` plus each method the
+    template writes into the class and each ``self.`` attribute its code reads
+    (``length`` excepted), taken from the rendered template text itself."""
+    skeleton = _file_text("TemplateProbe", "quam.components.pulses.Pulse",
+                          "    def _sm_formula(self, t, dt, n):\n        return 0\n")
+    names = set()
+    for node in ast.walk(ast.parse(skeleton)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+              and node.value.id == "self"):
+            names.add(node.attr)
+    names.discard("length")
+    return frozenset(names | RESERVED)
+
+
 # ------------------------------------------------------------------- render
+
+_UNIT_MARK = "  # unit: "
 
 def _default_text(f: FieldSpec) -> str:
     d = f.default
@@ -206,7 +274,7 @@ def render_region(spec: ClassSpec) -> str:
     validate(spec)
     lines = []
     for f in spec.fields:
-        unit = f"  # unit: {f.unit}" if f.unit else ""
+        unit = f"{_UNIT_MARK}{f.unit}" if f.unit else ""
         lines.append(f"    {f.name}: {f.type} = {_default_text(f)}{unit}")
     lines.append("")
     lines.append("    def _sm_formula(self, t, dt, n):")
@@ -221,24 +289,27 @@ def render_region(spec: ClassSpec) -> str:
 
 def render(spec: ClassSpec) -> str:
     """The whole source file for a new class."""
-    region = render_region(spec)
-    mod, _, parent = spec.parent.rpartition(".")
+    return _file_text(spec.class_name, spec.parent, render_region(spec))
+
+
+def _file_text(class_name: str, parent_path: str, region: str) -> str:
+    mod, _, parent = parent_path.rpartition(".")
     return (
         f"{HEADER_MARK}, version {TEMPLATE_VERSION}.\n"
         "# Edit freely. The form rewrites only the lines between the two SM\n"
         "# template markers; change the markers by hand and the form stops\n"
         "# rewriting this file (code view only).\n"
-        f'"""Pulse class {spec.class_name} (made from the SM pulse class template)."""\n'
+        f'"""Pulse class {class_name} (made from the SM pulse class template)."""\n'
         "\n"
         "import numpy as np\n"
         f"from {mod} import {parent}\n"
         "from quam.core.quam_classes import quam_dataclass\n"
         "\n"
-        f'__all__ = ["{spec.class_name}"]\n'
+        f'__all__ = ["{class_name}"]\n'
         "\n"
         "\n"
         "@quam_dataclass\n"
-        f"class {spec.class_name}({parent}):\n"
+        f"class {class_name}({parent}):\n"
         f"{REGION_BEGIN}\n"
         f"{region}"
         f"{REGION_END}\n"
@@ -302,7 +373,7 @@ def parse(text: str) -> Parsed:
     begins = [m.end() for m in re.finditer("^" + re.escape(REGION_BEGIN) + "\n", text, re.M)]
     ends = [m.start() for m in re.finditer("^" + re.escape(REGION_END) + "\n", text, re.M)]
     if len(begins) != 1 or len(ends) != 1:
-        crlf = (REGION_BEGIN + "\r\n") in text
+        crlf = (REGION_BEGIN + "\r\n") in text or (REGION_END + "\r\n") in text
         return Parsed(False, CRLF_LINE if crlf else CODE_VIEW_ONLY_LINE, version, made)
     b, e = begins[0], ends[0]
     if e < b:
@@ -317,10 +388,14 @@ def parse(text: str) -> Parsed:
                    text[:b], re.M)
     if pm:
         parent = f"{pm.group(1)}.{pm.group(2)}"
+    if "\r" in text[b:e]:
+        return Parsed(False, CRLF_LINE, version, made)
     try:
         spec = _parse_region(text[b:e], m.group(1))
-    except (ValueError, TemplateError):
-        return Parsed(False, CODE_VIEW_ONLY_LINE, version, made)
+    except TemplateError as exc:
+        return Parsed(False, f"{REGION_CHANGED_LINE} {exc}", version, made)
+    except ValueError:
+        return Parsed(False, REGION_CHANGED_LINE, version, made)
     if parent:
         spec.parent = parent
     return Parsed(True, None, version, made, spec, (b, e))
@@ -329,12 +404,13 @@ def parse(text: str) -> Parsed:
 def rewrite(text: str, spec: ClassSpec) -> str:
     """*text* with only its region replaced by *spec*'s region.
 
-    Raises :class:`TemplateError` with :data:`CODE_VIEW_ONLY_LINE` when the
-    file cannot be rewritten, and when *spec* renames the class (a rename
+    Raises :class:`TemplateError` with the reason :func:`parse` gave (changed
+    markers, a changed region, Windows line endings) when the file cannot be
+    rewritten, and when *spec* renames the class (a rename
     touches the class line outside the region)."""
     p = parse(text)
     if not p.editable:
-        raise TemplateError(CODE_VIEW_ONLY_LINE)
+        raise TemplateError(p.reason or CODE_VIEW_ONLY_LINE)
     if spec.class_name != p.spec.class_name:
         raise TemplateError("Renaming the class is done in the code view")
     b, e = p.region
@@ -357,9 +433,10 @@ def proportional_verdict(text: str, check: dict) -> dict:
     runner's proportional check on the class in *text*. A class still in its
     template shape is refused when not proportional; one edited by hand
     outside the form (code view only) is only warned about."""
+    if isinstance(check, dict) and check.get("zero_waveform"):
+        # a waveform that is zero everywhere scales with anything: say so
+        return {"level": "unknown", "line": CANNOT_TELL_LINE}
     if not isinstance(check, dict) or check.get("proportional") is None:
-        if isinstance(check, dict) and check.get("zero_waveform"):
-            return {"level": "unknown", "line": CANNOT_TELL_LINE}
         return {"level": "unknown", "line": "The proportional check did not run."}
     if check["proportional"]:
         return {"level": "ok", "line": PROPORTIONAL_LINE}
