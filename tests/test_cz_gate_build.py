@@ -446,3 +446,83 @@ def test_gaussian_regression_matches_the_old_plan(gname, cls):
     assert [p for p, _ in got] == [p for p, _ in want]
     for (gp, gv), (wp, wv) in zip(got, want):
         assert gv == wv, gp
+
+
+# --- copied names and ids ------------------------------------------------
+
+def _two_pulse_chip():
+    """Model cz_a on q1-q2: control-line name ends _q1_q2, target-line _q2_q1,
+    and each operation carries its own id equal to its key."""
+    s = {"qubits": {q: _qubit(q) for q in ("q1", "q2", "q3", "q4")},
+         "qubit_pairs": {"q1-q2": _pair("q1", "q2"), "q3-q4": _pair("q3", "q4"),
+                         "q1-q3": _pair("q1", "q3")}}
+    m = {"__class__": LAB_GATE}
+    for field, q, key in (("flux_pulse_qubit", "q1", "cz_a_flux_pulse_q1_q2"),
+                          ("flux_pulse_target", "q2", "cz_a_flux_pulse_q2_q1")):
+        m[field] = {"id": key, "length": 40, "amplitude": 0.2, "__class__": LAB_PULSE}
+        ref = f"#/qubit_pairs/q1-q2/macros/cz_a/{field}"
+        s["qubits"][q]["z"]["operations"][key] = {
+            "id": key, "length": ref + "/length", "amplitude": ref + "/amplitude",
+            "__class__": LAB_PULSE}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"] = m
+    return s
+
+
+MODEL_NAMES = ("cz_a_flux_pulse_q1_q2", "cz_a_flux_pulse_q2_q1")
+
+
+def _strings(v):
+    if isinstance(v, dict):
+        for x in v.values():
+            yield from _strings(x)
+    elif isinstance(v, (list, tuple)):
+        for x in v:
+            yield from _strings(x)
+    elif isinstance(v, str):
+        yield v
+
+
+def test_same_pair_copy_renames_operation_ids_and_leaves_no_model_name():
+    res = cgb.plan(_two_pulse_chip(), "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    by = dict(res["creates"])
+    for path in ("qubits.q1.z.operations.cz_b_flux_pulse_q1_q2",
+                 "qubits.q2.z.operations.cz_b_flux_pulse_q2_q1"):
+        assert by[path]["id"] == path.rsplit(".", 1)[-1]
+    for s in _strings(res["creates"]):
+        assert not any(n in s for n in MODEL_NAMES), s
+        assert "macros/cz_a/" not in s, s  # pointers follow the new macro
+
+
+def test_cross_pair_copy_names_after_the_new_pair_in_the_model_order():
+    res = cgb.plan(_two_pulse_chip(), "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    paths = [p for p, _ in res["creates"]]
+    assert paths == ["qubit_pairs.q3-q4.macros.cz_b",
+                     "qubits.q3.z.operations.cz_b_flux_pulse_q3_q4",
+                     "qubits.q4.z.operations.cz_b_flux_pulse_q4_q3"]
+    for s in _strings(res["creates"]):
+        assert not any(n in s for n in MODEL_NAMES), s
+
+
+def test_single_qubit_id_ending_is_renamed():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"] = {
+        "__class__": LAB_GATE, "flux_pulse_qubit": {
+            "id": "cz_a_pulse_q2", "length": 40, "__class__": LAB_PULSE}}
+    s["qubits"]["q1"]["z"]["operations"]["cz_a_pulse_q2"] = {
+        "id": "cz_a_pulse_q2", "length": 40, "__class__": LAB_PULSE}
+    res = cgb.plan(s, "q1-q3", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "qubits.q1.z.operations.cz_b_pulse_q3" in dict(res["creates"])
+
+
+def test_gate_name_with_a_qubit_token_is_used_verbatim():
+    assert cgb.copied_name("cz_q1_x_pulse_q1_q2", "cz_q1_x", ("q1", "q2"),
+                           "cz_q1_y", ("q2", "q1")) == "cz_q1_y_pulse_q2_q1"
+
+
+def test_names_that_collide_after_renaming_are_refused():
+    # A pair whose control and target are one qubit maps _q1_q2 and _q2_q1
+    # onto the same new name.
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q3-q3"] = _pair("q3", "q3")
+    res = cgb.plan(s, "q3-q3", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "same name" in res["error"]

@@ -555,15 +555,29 @@ def default_model(merged: dict, pair_id: str, gate_class: str) -> tuple[str, str
 
 def copied_name(model_name: str, model_gate: str, model_ids: tuple, gate: str,
                 ids: tuple) -> str | None:
-    """A copied pulse name: the model's name with its gate-name part (and,
-    when present, the model pair's ``_<control>_<target>`` ending) changed."""
+    """A copied pulse name: the gate-name part becomes the new gate name, and
+    in the rest each whole ``_``-separated token equal to the model pair's
+    control or target id becomes the new pair's control or target id."""
     if not model_name.startswith(model_gate):
         return None
+    swap = {model_ids[0]: ids[0], model_ids[1]: ids[1]}
     rest = model_name[len(model_gate):]
-    old_end = f"_{model_ids[0]}_{model_ids[1]}"
-    if rest.endswith(old_end):
-        rest = rest[: -len(old_end)] + f"_{ids[0]}_{ids[1]}"
-    return gate + rest
+    return gate + "_".join(swap.get(tok, tok) for tok in rest.split("_"))
+
+
+def _rename_values(value: Any, names: dict[str, str]) -> Any:
+    """Every string equal to a model name, or a pointer ending in one,
+    becomes the new name."""
+    if isinstance(value, dict):
+        return {k: _rename_values(v, names) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_rename_values(v, names) for v in value]
+    if isinstance(value, str):
+        if value in names:
+            return names[value]
+        if value.startswith("#/"):
+            return "/".join(names.get(seg, seg) for seg in value.split("/"))
+    return value
 
 
 def _rewrite_refs(value: Any, old_prefix: str, new_prefix: str) -> Any:
@@ -600,6 +614,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
     fields = _pulse_fields(model)
+    names: dict[str, str] = {}
     for f in pulses:
         if f not in fields:
             reasons.append(f"The model gate {mname} has no pulse field {f}.")
@@ -615,6 +630,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
                            f"start with {mname}, so SM cannot name the copy. "
                            "Pick another model gate.")
             continue
+        names[mkey] = key
         from quam_state_manager.core.add_names import OPERATION_NAME_RE
         if not OPERATION_NAME_RE.fullmatch(key):
             reasons.append(f"the name {key} is not a valid name. Pick a shorter or plainer gate name.")
@@ -659,8 +675,13 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             if isinstance(model_op, dict) and "id" in model_op:
                 op = {"id": key, **op}
             op_creates.append((f"{ops_path}.{key}", op))
+    if len(set(names.values())) != len(names):
+        reasons.append("Two pulses of the model gate get the same name on this "
+                       "pair. Pick another model gate.")
     if reasons:
         return _refuse(reasons)
+    macro = _rename_values(macro, names)
+    op_creates = [(p, _rename_values(v, names)) for p, v in op_creates]
     return {"creates": [(f"qubit_pairs.{pair_id}.macros.{gate_name}", macro)] + op_creates,
             "direction": direction, "model_gate": (mpair, mname),
             "fields": provenance,
