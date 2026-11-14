@@ -63,7 +63,13 @@
         dl.appendChild(row);
     }
 
-    var openConfirm = null;   // {kind, id, typed, focused}: survives the periodic refresh
+    var openConfirm = null;   // {kind, id, ids, typed}: survives the periodic refresh
+
+    function idsOf(btn) {
+        return (btn.getAttribute("data-qm-ids") || btn.getAttribute("data-qm-id") || "").split(",").map(function (id) { return id.trim(); }).filter(Boolean);
+    }
+    /* the set a confirm was drawn for, in one comparable form */
+    function setKey(ids) { return ids.slice().sort().join("\n"); }
 
     function closeConfirm() {
         var existing = document.querySelector(".ui-opxmon-confirm");
@@ -81,7 +87,7 @@
         var panel = el("div", "ui-callout ui-callout--warn ui-opxmon-confirm");
         panel.setAttribute("role", "region");
         panel.setAttribute("aria-label", "Confirm close");
-        var ids = (btn.getAttribute("data-qm-ids") || btn.getAttribute("data-qm-id") || "").split(",").map(function (id) { return id.trim(); }).filter(Boolean);
+        var ids = idsOf(btn);
         panel.appendChild(el("div", "ui-callout-title", kind === "all" ? "Close ALL " + ids.length + " listed QMs?" :
             kind === "idle" ? "Close " + ids.length + " idle QM" + (ids.length === 1 ? "" : "s") + " (activity re-checked)?" : "Close " + (ids[0] || "this QM") + "?"));
         panel.appendChild(el("p", "ui-callout-text", "Any running job will stop."));
@@ -127,7 +133,7 @@
             accept.disabled = true;
             var current = findButton(kind, ids[0]) || btn;
             closeConfirm();
-            submitClose(current, typed ? typed.value : null);
+            submitClose(current, typed ? typed.value : null, ids);
         };
         acts.appendChild(accept); acts.appendChild(cancel);
         panel.appendChild(acts);
@@ -142,7 +148,7 @@
         } else {
             (btn.closest("p") || btn).insertAdjacentElement("afterend", panel);
         }
-        openConfirm = {kind: kind, id: ids[0] || null, typed: typed ? typed.value : null};
+        openConfirm = {kind: kind, id: ids[0] || null, ids: setKey(ids), typed: typed ? typed.value : null};
         if (typed && focusTyped) typed.focus(); else accept.focus();
     }
 
@@ -180,7 +186,11 @@
         if (openConfirm && !b.querySelector(".ui-opxmon-confirm")) {
             var want = openConfirm;
             var btn = findButton(want.kind, want.id);
-            if (btn && !btn.disabled) {
+            if (btn && !btn.disabled && want.kind !== "one" && setKey(idsOf(btn)) !== want.ids) {
+                /* the consent was for the set the user saw: a different set asks again from the start */
+                openConfirm = null;
+                say("The list changed; check it again. Nothing was closed.", true);
+            } else if (btn && !btn.disabled) {
                 if (want.kind === "all") { var dz = btn.closest("details"); if (dz) dz.open = true; }
                 openPanel(btn, want.typed, typedFocused);
             } else {
@@ -192,11 +202,12 @@
         keptScroll = null;
     }
 
-    function submitClose(btn, count) {
+    /* ``seen``: the ids the confirm listed; the server refuses them when its list differs */
+    function submitClose(btn, count, seen) {
         var fd = new FormData();
         if (btn.classList.contains("ui-opxmon-close-all") || btn.classList.contains("ui-opxmon-close-idle")) {
             fd.append(btn.classList.contains("ui-opxmon-close-idle") ? "idle" : "all", "1");
-            fd.append("qm_ids", btn.getAttribute("data-qm-ids") || "");
+            fd.append("qm_ids", (seen || idsOf(btn)).join(", "));
         }
         else fd.append("qm_id", btn.getAttribute("data-qm-id"));
         if (count !== null) fd.append('confirm_count', count);

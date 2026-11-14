@@ -15,7 +15,7 @@
 <span class="ui-verdict-why">{{ why_text[:1]|upper }}{{ why_text[1:] }}{{ '' if why_text.endswith('.') else '.' }}{% if band.next %} {{ band.next }}{% endif %}</span>
 <span class="ui-verdict-meta ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
-  <span class="ui-opxmon-sentence" title="{{ plain_error(st.sentence) }}" data-state="{{ st.state }}">{{ plain_error(st.sentence) }}</span>
+  <span class="ui-opxmon-sentence" title="{{ plain_error(st.sentence) }}" data-state="{{ st.state }}">{{ plain_error(st.sentence_shown or st.sentence) }}</span>
   {%- if st.health.color == 'grey' and not st.health.problem %} &middot; <span class="ui-opxmon-health-note">{{ st.health.reason }}</span>{% endif -%}
   {%- if hottest and not temperature_failed and tab != 'live' %} &middot; <span class="ui-opxmon-hottest">{{ 'Above limit:' if hottest_limit is not none and hottest.value > hottest_limit else 'Hottest:' }} {{ hottest.label }} {{ '%.1f'|format(hottest.value) }} °C / {{ 'limit ' ~ ('%g'|format(hottest_limit)) ~ ' °C' if hottest_limit is not none else 'no limit set' }}</span>{% endif -%}
 </span></div>
@@ -84,7 +84,7 @@
   {%- if not cap.live %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.live_reason) }}</p>
   {%- elif ans.controllers is none %}
-  <p class="ui-state ui-state--empty"><span class="ui-state-key">No device data.</span> {% if ans.refused and ans.refused.get_devices %}The server refused get_devices: {{ ans.refused.get_devices }}{% else %}Nothing has been read yet.{% endif %}</p>
+  <p class="ui-state ui-state--empty"><span class="ui-state-key">No device data.</span> {% if ans.refused and ans.refused.get_devices %}{{ call_failure('get_devices', ans.refused.get_devices) }}{% else %}Nothing has been read yet.{% endif %}</p>
   {%- else %}
   {%- set busy = {} %}{%- set held = {} %}{% set occupancy = namespace(known=ans.open_qms is not none) %}{% for q in ans.open_qms or [] %}{% if q.jobs is none or q.ports is none %}{% set occupancy.known = false %}{% endif %}{% endfor %}
   {%- for q in ans.open_qms or [] %}{% set running = [] %}{% for j in q.jobs or [] %}{% if job_activity(j.status) == 'active' %}{% set _ = running.append(j) %}{% endif %}{% endfor %}
@@ -120,7 +120,7 @@
   {%- if not cap.jobs %}
   <p class="ui-state ui-state--empty"><span class="ui-state-key">{{ unavailable_key }}</span> {{ plain_error(cap.jobs_reason) }}</p>
   {%- elif ans.open_qms is none %}
-  <p class="ui-state ui-state--empty"><span class="ui-state-key">No QM list.</span> {% if ans.refused and ans.refused.list_open_qms %}The server refused list_open_qms: {{ ans.refused.list_open_qms }}{% else %}Nothing has been read yet.{% endif %}</p>
+  <p class="ui-state ui-state--empty"><span class="ui-state-key">No QM list.</span> {% if ans.refused and ans.refused.list_open_qms %}{{ call_failure('list_open_qms', ans.refused.list_open_qms) }}{% else %}Nothing has been read yet.{% endif %}</p>
   {%- else %}{% set qm_stale = st.state != 'ok' %}{% set qm_age = ('%.0f'|format(st.age_s) ~ ' s ago') if st.age_s is not none else 'at an unknown time' %}
   <section class="ui-zone" aria-label="Open quantum machines"><div class="ui-zone-head"><h3 class="ui-zone-title">Open quantum machines{% if qm_stale %} at the last good read ({{ qm_age }}){% endif %}</h3><span class="ui-zone-sum"><span class="ui-count">{{ ans.open_qms|length }}</span></span></div>
   <div class="ui-zone-body">
@@ -130,7 +130,7 @@
   <table class="ui-table ui-opxmon-table{% if qm_stale %} ui-opxmon-table--stale{% endif %}" aria-label="Open quantum machines{% if qm_stale %} (last good read, {{ qm_age }}){% endif %}"{% if qm_stale %} data-stale="1"{% endif %}>
     <thead><tr><th class="ui-table-head" scope="col">QM</th><th class="ui-table-head" scope="col">State</th>{{ owner_head(any_marker) }}<th class="ui-table-head" scope="col">FEMs</th><th class="ui-table-head" scope="col">Jobs</th></tr></thead>
     <tbody>{% for q in ans.open_qms %}{% set qs = qm_states[q.id] %}<tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}"><td data-label="QM" class="ui-table-cell"><code class="ui-chip">{{ q.id }}</code></td>
-      <td data-label="State" class="ui-table-cell ui-opxmon-qm-state"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div></td>
+      <td data-label="State" class="ui-table-cell ui-opxmon-qm-state"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle and qs.fact != 'idle' %} &middot; idle{% endif %}</div></td>
       <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       <td data-label="Jobs" class="ui-table-cell">{% if q.jobs is none %}unknown{% elif q.jobs %}{% for j in q.jobs %}<div><code class="ui-chip">{{ j.id }}</code> <span class="ui-text-strong">{{ j.status }}</span> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}{% if j.created_at %} &middot; created {{ opx_time(j.created_at) }} (OPX clock){% endif %}{% if j.description %} &middot; {{ j.description }}{% endif %}</span></div>{% endfor %}{% else %}<span class="ui-text-quiet">none</span>{% endif %}</td></tr>{% endfor %}</tbody>
@@ -146,7 +146,7 @@
   {%- if ans.jobs %}<table class="ui-table ui-opxmon-table" aria-label="Server jobs"><thead><tr><th class="ui-table-head">Job id</th><th class="ui-table-head">Status</th><th class="ui-table-head ui-table-num">Created (OPX clock, shown in {{ pc_zone }})</th><th class="ui-table-head ui-table-num">Last update (OPX clock, shown in {{ pc_zone }})</th></tr></thead>
     <tbody>{% for j in ans.jobs[:job_limit] %}<tr><td data-label="Job id" class="ui-table-cell"><code class="ui-chip">{{ j.id }}</code> {% set match = run_match(j) %}{% if match.url %}<a href="{{ match.url }}">probably #{{ match.id }}</a>{% endif %} <span class="ui-text-quiet">{{ match.reason }}</span></td><td data-label="Status" class="ui-table-cell"><span class="ui-text-strong">{{ j.status }}</span></td><td data-label="Created (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.created_at) }}</td><td data-label="Last update (OPX clock, shown in {{ pc_zone }})" class="ui-table-cell ui-table-num">{{ opx_time(j.updated_at) }}</td></tr>{% endfor %}</tbody></table>{% else %}<p class="ui-zone-empty">None.</p>{% endif %}
   {% if (ans.jobs_total or ans.jobs|length) > job_limit %}<a class="btn-sm" href="/opx-monitor/jobs?limit={{ job_limit + 100 }}">Show more</a>{% endif %}
-  {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">The server refused get_jobs: {{ ans.refused.get_jobs }}</p>{% else %}<p class="ui-zone-empty">Waiting for server jobs; this section has not answered this poll.</p>{% endif %}
+  {%- elif ans.refused and ans.refused.get_jobs %}<p class="ui-note">{{ call_failure('get_jobs', ans.refused.get_jobs) }}</p>{% else %}<p class="ui-zone-empty">Waiting for server jobs; this section has not answered this poll.</p>{% endif %}
   </div></section>
   {%- endif %}
 
@@ -237,11 +237,14 @@
       <p class="ui-text-quiet">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
       {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the old file is kept once as pc_names.json.bak).</p>{% endif %}
       <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
-        <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ tag }}</code>{% if this_tag == tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-text-quiet">in an open QM</span>{% endif %}</td>
-          <td data-label="Name" class="ui-table-cell"><input class="ui-input" name="label__{{ tag }}" value="{{ pc_names.get(tag, '') }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"><input type="hidden" name="was__{{ tag }}" value="{{ pc_names.get(tag, '') }}"></td>
+        <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ tag|owner_shown }}</code>{% if this_tag == tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-text-quiet">in an open QM</span>{% endif %}</td>
+          <td data-label="Name" class="ui-table-cell">{% set shown = pc_names.get(tag, '')|label_shown %}<input class="ui-input" name="label__{{ tag }}" value="{{ shown }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"{% if shown != pc_names.get(tag, '') %} title="Stored as {{ pc_names.get(tag, '')|label_full }}"{% endif %}><input type="hidden" name="was__{{ tag }}" value="{{ shown }}"></td>
           <td data-label="Remove" class="ui-table-cell">{% if tag in pc_names %}<label><input type="checkbox" name="remove__{{ tag }}" value="1"> remove</label>{% endif %}</td></tr>{% endfor %}
+          {% for ref, key in pc_name_bad %}<tr class="ui-opxmon-pcname-row" data-bad-key="1" data-key-ref="{{ ref }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ key|owner_shown }}</code> <span class="ui-text-quiet">not a valid tag; rename it or remove it</span><input type="hidden" name="badkey__{{ ref }}" value="1"></td>
+          <td data-label="Name" class="ui-table-cell"><span class="ui-text-quiet" title="{{ pc_names[key]|label_full }}">{{ pc_names[key]|label_shown }}</span> <input class="ui-input" name="rename__{{ ref }}" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag for the invalid key"></td>
+          <td data-label="Remove" class="ui-table-cell"><label><input type="checkbox" name="removebad__{{ ref }}" value="1"> remove</label></td></tr>{% endfor %}
           <tr class="ui-opxmon-pcname-new"><td data-label="Tag" class="ui-table-cell"><input class="ui-input" name="new_tag" maxlength="16" placeholder="new tag" autocomplete="off" aria-label="New tag"></td><td data-label="Name" class="ui-table-cell"><input class="ui-input" name="new_label" maxlength="40" placeholder="name" autocomplete="off" aria-label="Name for the new tag"></td><td class="ui-table-cell"></td></tr></tbody></table>
-      {% if not pc_name_rows %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
+      {% if not pc_name_rows and not pc_name_bad %}<p class="ui-note">No tags named yet and none seen in an open QM.</p>{% endif %}
       <button type="submit" class="btn-sm">Save PC names</button>
     </div></section>
   </form>

@@ -489,3 +489,100 @@ def test_qm_row_keeps_whole_words_so_the_state_column_cannot_collapse():
     root = Path(__file__).resolve().parents[1] / "quam_state_manager/web/templates"
     for name in ("_opx_monitor_body.html", "_opx_qm_table.html"):
         assert 'data-label="State" class="ui-table-cell ui-opxmon-qm-state"' in (root / name).read_text(encoding="utf-8")
+
+
+# ------------------------------------------------------------------ settings form round trip
+def _pc_form(html):
+    """The PC-names form fields as a browser posts them (text and hidden inputs, unticked boxes left out)."""
+    import html as _html
+    import re as _re
+    form = html[html.index('class="ui-opxmon-pcnames"'):]
+    form = form[:form.index('</form>')]
+    out = {}
+    for tag in _re.findall(r'<input\b[^>]*>', form):
+        if 'type="checkbox"' in tag:
+            continue
+        name = _re.search(r'name="([^"]*)"', tag).group(1)
+        value = _re.search(r'value="([^"]*)"', tag)
+        out[name] = _html.unescape(value.group(1)) if value else ""
+    return out
+
+
+def _stored(marker_home):
+    return json.loads((marker_home / "pc_names.json").read_text(encoding="utf-8"))
+
+
+def test_untouched_hostile_stored_label_does_not_block_a_save(env, marker_home):
+    app, m, *_ = env
+    stored = {"aa": "ab\u202ecd", "bb": "plain", "cc": "z" * 60}
+    (marker_home / "pc_names.json").write_text(json.dumps(stored), encoding="utf-8")
+    c = app.test_client()
+    form = _pc_form(page(app, "settings"))
+    # the form shows the stored name with the same visible escape the owner cells use
+    assert form["label__aa"] == r"ab\u202ecd" and "\u202e" not in page(app, "settings")
+    # a long name is cut with an ellipsis and the full text is on hover
+    assert form["label__cc"] == "z" * 37 + "..."
+    assert 'title="Stored as ' + "z" * 60 + '"' in page(app, "settings")
+    # posting the form back unchanged with one new tag keeps every stored name as it was
+    r = c.post("/opx-monitor/pc-names", data={**form, "new_tag": "dd", "new_label": "new one"}, headers=ORIGIN)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _stored(marker_home) == {**stored, "dd": "new one"}
+    # a stored valid label set saves unchanged
+    r = c.post("/opx-monitor/pc-names", data=_pc_form(page(app, "settings")), headers=ORIGIN)
+    assert r.status_code == 200 and _stored(marker_home) == {**stored, "dd": "new one"}
+
+
+def test_an_edited_row_is_still_checked_and_the_field_named(env, marker_home):
+    app, m, *_ = env
+    (marker_home / "pc_names.json").write_text(json.dumps({"aa": "one", "bb": "two"}), encoding="utf-8")
+    c = app.test_client()
+    form = _pc_form(page(app, "settings"))
+    r = c.post("/opx-monitor/pc-names", data={**form, "label__bb": "tw\u202eo"}, headers=ORIGIN)
+    assert r.status_code == 400 and "Name for tag bb:" in r.get_data(as_text=True)
+    r = c.post("/opx-monitor/pc-names", data={**form, "label__bb": r"tw\u202eo"}, headers=ORIGIN)
+    assert r.status_code == 400 and "Name for tag bb:" in r.get_data(as_text=True)
+    assert _stored(marker_home) == {"aa": "one", "bb": "two"}
+
+
+def test_an_invalid_file_key_can_be_renamed_or_removed(env, marker_home):
+    app, m, *_ = env
+    (marker_home / "pc_names.json").write_text(json.dumps({"My PC": "desk", "Bad\u202eKey": "x", "aa": "one"}),
+                                               encoding="utf-8")
+    html = page(app, "settings")
+    assert r"Bad\u202eKey" in html and "\u202e" not in html
+    assert html.count("not a valid tag; rename it or remove it") == 2
+    form = _pc_form(html)
+    ref = next(k[len("rename__"):] for k in form if k.startswith("rename__")
+               and 'data-key-ref="%s"' % k[len("rename__"):] in html
+               and "My PC" in html[html.index('data-key-ref="%s"' % k[len("rename__"):]):][:400])
+    c = app.test_client()
+    r = c.post("/opx-monitor/pc-names", data={**form, "rename__" + ref: "mypc"}, headers=ORIGIN)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _stored(marker_home) == {"mypc": "desk", "Bad\u202eKey": "x", "aa": "one"}
+    form = _pc_form(page(app, "settings"))
+    bad_ref = next(k[len("badkey__"):] for k in form if k.startswith("badkey__"))
+    r = c.post("/opx-monitor/pc-names", data={**form, "removebad__" + bad_ref: "1"}, headers=ORIGIN)
+    assert r.status_code == 200 and _stored(marker_home) == {"mypc": "desk", "aa": "one"}
+
+
+def test_a_marker_ending_in_a_newline_shows_the_newline(env, marker_home):
+    app, m, w, *_ = env
+    a = five_cases()
+    q = next(q for q in a["open_qms"] if q["id"] == "QM-one")
+    q["markers"] = [M1 + "\n"]
+    w.script[:] = [a]
+    m.poll_once()
+    row = _row(page(app, "jobs"), "QM-one")
+    assert r"name ends with \u000a" in row, row
+    assert "name ends with" not in _row(page(app, "jobs"), "QM-two")
+
+
+def test_a_long_label_in_the_owner_cell_ends_with_an_ellipsis_and_shows_in_full_on_hover(env, marker_home):
+    app, m, w, *_ = env
+    long_label = "Q" * 55
+    (marker_home / "pc_names.json").write_text(json.dumps({"ab12cd34": long_label}), encoding="utf-8")
+    w.script[:] = [five_cases()]
+    m.poll_once()
+    row = _row(page(app, "jobs"), "QM-one")
+    assert ">" + "Q" * 37 + "... (ab12cd34)<" in row, row
+    assert 'title="' + long_label + ' (ab12cd34)"' in row

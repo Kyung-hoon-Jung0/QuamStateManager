@@ -141,6 +141,32 @@ def stale_time(value):
     return full
 
 
+def _idle_states(m, st, s) -> dict:
+    """Idle state per open QM, as the page shows it (stale data never reads as idle)."""
+    watched = m.watch_info()
+    idle_states = {q['id']: om.idle_state(q, watched.get(str(q['id'])), s['idle_minutes'])
+                   for q in (st.get('answer') or {}).get('open_qms') or []}
+    if st['state'] != 'ok':
+        age = ('%.0f s ago' % st['age_s']) if st.get('age_s') is not None else 'at an unknown time'
+        idle_states = {k: om.stale_idle_state(v, age) for k, v in idle_states.items()}
+    return idle_states
+
+
+def _shown_ids(m, idle: bool) -> set:
+    """The QM ids the Clean up page shows right now for "close all" (every open QM) or
+    "close idle" (the idle ones, only on a fresh answer); the same rule as the template."""
+    st = m.status()
+    open_qms = (st.get('answer') or {}).get('open_qms') or []
+    if not idle:
+        return {str(q['id']) for q in open_qms}
+    if st['state'] != 'ok':
+        return set()
+    return {str(k) for k, v in _idle_states(m, st, m.settings()).items() if v['idle']}
+
+
+LIST_CHANGED = "The list changed; check it again. Nothing was closed."
+
+
 def _view(tab: str) -> dict:
     m = monitor()
     st = m.status()
@@ -150,12 +176,7 @@ def _view(tab: str) -> dict:
     key = om.target_key(t)
     has_headers = bool(om.load_secret_headers(m.instance, key)) if key else False
     skew = m.clock_skew()
-    watched = m.watch_info()
-    idle_states = {q['id']: om.idle_state(q, watched.get(str(q['id'])), s['idle_minutes'])
-                   for q in (st.get('answer') or {}).get('open_qms') or []}
-    if st['state'] != 'ok':
-        age = ('%.0f s ago' % st['age_s']) if st.get('age_s') is not None else 'at an unknown time'
-        idle_states = {k: om.stale_idle_state(v, age) for k, v in idle_states.items()}
+    idle_states = _idle_states(m, st, s)
     hottest = max((dict(r, controller=c['name']) for c in (st.get('answer') or {}).get('controllers') or [] for r in om.temperature_rows(c) if r['value'] is not None), key=lambda r: (om.temperature_limit(r['key'], s['thresholds']) is not None and r['value'] > om.temperature_limit(r['key'], s['thresholds']), r['value']), default=None)
     try:
         runs, run_reason = _run_candidates() if tab == 'jobs' else ([], '')
@@ -169,7 +190,8 @@ def _view(tab: str) -> dict:
     owner_ctx = {'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
-                 'pc_name_rows': sorted(set(pc_names) | set(seen_tags))}
+                 'pc_name_rows': sorted(t for t in set(pc_names) | set(seen_tags) if _TAG_RE.fullmatch(t)),
+                 'pc_name_bad': [(_key_ref(k), k) for k in sorted(pc_names) if not _TAG_RE.fullmatch(k)]}
     temperature_failed = 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {}))
     verdict = om.verdict(st.get('answer'), st['health'], idle_states, st['state'], st['age_s'])
     hottest_limit = om.temperature_limit(hottest['key'], s['thresholds']) if hottest else None
@@ -181,7 +203,7 @@ def _view(tab: str) -> dict:
         'qm_states': {q['id']: om.qm_state(q, idle_states.get(q['id'])) for q in open_qms},
         'hottest_limit': hottest_limit,
     })
-    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
+    return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
             "history_rows": h.table() if h and tab == "history" else [],
@@ -306,6 +328,30 @@ def opx_monitor_save_settings():
 
 
 _TAG_RE = re.compile(r"[a-z0-9]{1,16}")
+_ESCAPE_RE = re.compile(r"\\[uU][0-9a-fA-F]{4}")
+LABEL_SHOWN_MAX = 40
+
+
+def _key_ref(key: str) -> str:
+    """A form-safe reference to a names-file key that is not a valid tag (the key itself
+    may hold characters a form field cannot carry back unchanged)."""
+    import hashlib
+    return hashlib.sha256(key.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
+@opxmon_bp.app_template_filter("label_shown")
+def _label_shown(text):
+    """A PC name as the page shows it: escaped like the owner cells, and a name longer than
+    40 characters cut with "..." (the full escaped text goes in a title)."""
+    from quam_state_manager.core.qm_owner_marker import display_text
+    full = display_text(text, 10_000)
+    return full if len(full) <= LABEL_SHOWN_MAX else full[:LABEL_SHOWN_MAX - 3] + "..."
+
+
+@opxmon_bp.app_template_filter("label_full")
+def _label_full(text):
+    from quam_state_manager.core.qm_owner_marker import display_text
+    return display_text(text, 300)
 
 
 @opxmon_bp.app_template_filter("owner_shown")
@@ -333,12 +379,32 @@ def opx_monitor_save_pc_names():
         if _form_bool("remove__" + tag):
             changes.append((tag, None))
             continue
-        label, problem = om.check_pc_label(v)
-        if problem:
-            return _settings_reply(problem, error=True)
-        if label == (f.get("was__" + tag) or "").strip():
+        # a row the user did not touch is left alone, whatever the stored name holds
+        if (v or "").strip() == (f.get("was__" + tag) or "").strip():
             continue
+        label, problem = om.check_pc_label(v)
+        if not problem and _ESCAPE_RE.search(label):
+            problem = "A PC name cannot hold an escaped character such as \\u202e; type the name without it."
+        if problem:
+            return _settings_reply(f"Name for tag {tag}: {problem}", error=True)
         changes.append((tag, label or None))
+    # names-file keys that are not valid tags: rename to a valid tag, or remove
+    names_now, _ = om.load_pc_names()
+    by_ref = {_key_ref(k): k for k in names_now if not _TAG_RE.fullmatch(k)}
+    for k in f:
+        if not k.startswith("badkey__"):
+            continue
+        key = by_ref.get(k[len("badkey__"):])
+        if key is None:
+            continue
+        new = (f.get("rename__" + k[len("badkey__"):]) or "").strip()
+        if new:
+            if not _TAG_RE.fullmatch(new):
+                return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+            changes.append((new, names_now[key]))
+            changes.append((key, None))
+        elif _form_bool("removebad__" + k[len("badkey__"):]):
+            changes.append((key, None))
     tag, raw_label = (f.get("new_tag") or "").strip(), f.get("new_label") or ""
     if tag or raw_label.strip():
         if not _TAG_RE.fullmatch(tag):
@@ -380,6 +446,9 @@ def opx_monitor_close():
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
     if request.form.get('all') == '1' and request.form.get('confirm_count') != str(len(confirmed)):
         return jsonify({'ok': False, 'error': 'Type the count to confirm close all.'}), 400
+    # the consent is for the exact set the user saw: a set that changed since is refused
+    if every and set(confirmed) != _shown_ids(m, idle):
+        return jsonify({'ok': False, 'error': LIST_CHANGED, 'list_changed': True}), 409
     who = (request.form.get("by") or "").strip()[:80]
     res = (m.close(None, who=who, qm_ids=confirmed, idle=idle) if every else m.close(qm_id, who=who))
     return jsonify(res), (200 if res.get("ok") else 409)

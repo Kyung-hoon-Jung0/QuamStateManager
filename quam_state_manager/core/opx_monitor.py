@@ -846,12 +846,30 @@ def connection_hint(host):
     return 'Check the server connection, port or power.'
 
 
+CALL_SUBJECTS = {'get_devices': 'the device list', 'controllers': 'the device list',
+                 'list_open_qms': 'the list of open programs', 'open_qms': 'the list of open programs',
+                 'get_jobs': 'the job list', 'jobs': 'the job list', 'poll': 'the status',
+                 'call': 'the status'}
+
+
+def call_subject(name):
+    """What a data call reads, in the user's words; never the SDK call name."""
+    text = str(name or '')
+    for prefix in ('qmm.', 'qm.'):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    if text.endswith('.temperatures') or '.temperatures.' in text:
+        return 'the temperatures'
+    return CALL_SUBJECTS.get(text, 'a status request')
+
+
 def call_failure(name, error):
+    subject = call_subject(name)
     if any(word in str(error).lower() for word in ('connectionerror', 'connectionrefused', 'connection refused', 'unreachable', 'failed to connect', 'timeout', 'statuscode.unavailable')):
-        return f'Server unreachable while reading {name}: {error}'
+        return f'Server unreachable while reading {subject}: {error}'
     if call_unreadable(error):
-        return f'Unreadable reply for {name}: {error}'
-    return f'The server refused {name}: {error}'
+        return f'Unreadable reply for {subject}: {error}'
+    return f'The OPX server did not answer the request for {subject}: {error}'
 
 
 def call_timed_out(error):
@@ -1339,7 +1357,7 @@ class Monitor:
                 return
             self._fails = 0
             if not r.get("ok"):
-                self.last_error = f"The server refused the poll: {r.get('error')}"
+                self.last_error = f"The OPX server did not answer the status request: {r.get('error')}"
                 self._sections_failed(self.last_error)
                 return
             ans = r.get("result") or {}
@@ -1610,13 +1628,18 @@ class Monitor:
         # an alarm is judged only on a fresh answer: stale or failed data never alarms
         alarms = list(self.alarms) if (s.get("alarms_armed") and state == "ok") else []
         health_state = health(self.last_answer, self.admin, s['thresholds'], state)
+        sentence_shown = None
         if self.last_error or self.section_errors or (self.last_answer or {}).get('refused'):
             errors = (self.last_answer or {}).get('refused') or self.section_errors
             cause = self.last_error or failure_summary(errors)
             health_state = {**health_state, 'color': 'red', 'problem': True, 'reason': failure_headline(cause), 'details': failure_advice(errors if not self.last_error or errors else {'call': self.last_error}, (s.get('target') or {}).get('host'))}
             if state == 'ok':
                 sentence = f'Last reply {age:.0f} s ago; some data unavailable. {cause}'
-        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "age_s": age,
+            # the cause is said once, in the band; the meta line keeps only the freshness
+            sentence_shown = (f'Last reply {age:.0f} s ago; some data unavailable.' if state == 'ok'
+                              else f'The last good read was {age:.0f} s ago.' if age is not None
+                              else 'No good read yet.')
+        return {"section_times": self.section_times, "section_errors": self.section_errors, "state": state, "sentence": sentence, "sentence_shown": sentence_shown or sentence, "age_s": age,
                 'health': health_state, 'admin': self.admin,
                 "answer": self.last_answer, "target_label": target_label(s.get("target") or {}),
                 "target_kind": (s.get("target") or {}).get("kind"),
@@ -1751,7 +1774,9 @@ def owner_info(q: dict) -> dict:
     if names is None:
         return {"kind": "unread", "markers": []}
     rows = [{"name": n, "parsed": qom.parse_marker(n), "version": qom.marker_version(n),
-             "version_text": qom.version_text(n)}
+             "version_text": qom.version_text(n),
+             # a v1 name may end in one newline the parse accepts; the cell shows it escaped
+             "ends_with": qom.display_text(n[-1]) if n.endswith("\n") else ""}
             for n in names if qom.is_marker(n)]
     if not rows:
         kind = "none"

@@ -149,7 +149,7 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     a["open_qms"] = None
     w.script[:] = [a]
     m.poll_once()
-    assert "The server refused list_open_qms: PermissionError: not allowed" in page(app, "jobs")
+    assert "The OPX server did not answer the request for the list of open programs: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "ui-opxmon-close\"" not in html
     r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
@@ -1100,7 +1100,7 @@ def test_stress_d5_error_cause(env):
     a['open_qms'] = None; a['jobs'] = None
     w.script[:] = [a]; m.poll_once()
     html = page(app, 'jobs')
-    assert 'Server unreachable while reading list_open_qms' in html
+    assert 'Server unreachable while reading the list of open programs' in html
     assert 'Updated 0 s ago' not in html
     a = answer(refused={'con1.temperatures.FEM 0': "not a number: 'hot'"})
     w.script[:] = [a]; m.poll_once()
@@ -1111,7 +1111,7 @@ def test_stress_d5_error_cause(env):
     assert 'connection' not in m.status()['health']['details']
     a = answer(refused={'get_devices': 'PermissionError: not permitted'})
     w.script[:] = [a]; m.poll_once()
-    assert m.status()['health']['reason'].startswith('The server refused')
+    assert m.status()['health']['reason'].startswith('The OPX server did not answer')
     assert 'permissions' in m.status()['health']['details']
 
 
@@ -1358,7 +1358,9 @@ def test_a_connection_failure_is_said_once_short_then_in_full(env):
     visible = _re.sub(r'<[^>]*>', ' ', html)
     assert visible.count('127.0.0.1:9510') == 1  # said once, in Technical details
     assert visible.count('ConnectionError: Failed to connect to QOP at 127.0.0.1:9510') == 1
-    assert 'Technical details' in visible and 'could not connect. The last good read' in visible
+    # the cause is said once (the band); the status line keeps only the freshness
+    assert 'Technical details' in visible and visible.count('The QM SDK could not connect') == 1
+    assert 'The last good read was 5 s ago.' in visible
 
 
 def test_every_sensor_unreadable_is_not_called_no_readings(env):
@@ -1912,7 +1914,14 @@ def test_r4_failed_poll_words_the_jobs_row_from_the_last_good_read(env):
     w.script[:] = [answer(qms=(("QM-a", [("j1", "Done")], ["con1/1"]),))]
     _slow(m)
     _watch(m, clock, 30 * 300)
-    assert 'watched continuously &middot; idle' in page(app, 'jobs')
+    fresh = page(app, 'jobs')
+    import re as _re
+    cell = _re.search(r'ui-opxmon-qm-state">(.*?)</td>', fresh, _re.S).group(1)
+    # "idle" is said once per cell: the fact, not again after the basis
+    assert 'watched continuously' in cell and _re.sub(r'<[^>]+>', ' ', cell).split().count('idle') == 1, cell
+    for tab in ('live', 'cleanup'):  # the shared QM table says it once too
+        qcell = _re.search(r'ui-opxmon-qm-state">(.*?)</td>', page(app, tab), _re.S).group(1)
+        assert _re.sub(r'<[^>]+>', ' ', qcell).split().count('idle') == 1, (tab, qcell)
     w.script[:] = [om.WorkerError('connection refused')]
     clock.t += 300
     m.poll_once()
@@ -2100,3 +2109,55 @@ def test_connection_advice_is_a_sentence_of_its_own():
         assert hint[:1].isupper() and hint.endswith('.')
     body = (Path(__file__).resolve().parents[1] / 'quam_state_manager/web/templates/_opx_monitor_body.html').read_text(encoding='utf-8')
     assert '{{ why_text[:1]|upper }}{{ why_text[1:] }}' in body, 'the band reason starts with a capital letter'
+
+
+def test_close_all_and_idle_refuse_a_set_that_changed(env):
+    """Consent to close all / close idle is for the exact set the page showed: once the
+    server's list differs, the posted set is refused with 409 and nothing is sent."""
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, "cleanup")
+    c = app.test_client()
+    r = c.post("/opx-monitor/close", data={"idle": "1", "qm_ids": "QM-a"}, headers=ORIGIN)
+    assert not r.get_json().get("list_changed")  # the shown idle set passes the set check
+    assert [op for op, _ in w.calls if op.startswith("close")]
+    m.poll_once()
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]), ("QM-new", [], ["con1/2"])))]
+    m.poll_once()
+    w.calls.clear()
+    for data in ({"all": "1", "qm_ids": "QM-a", "confirm_count": "1"},
+                 {"all": "1", "qm_ids": "QM-a, QM-gone", "confirm_count": "2"},
+                 {"idle": "1", "qm_ids": "QM-a, QM-new"}):
+        r = c.post("/opx-monitor/close", data=data, headers=ORIGIN)
+        assert r.status_code == 409, data
+        j = r.get_json()
+        assert j["list_changed"] and "The list changed; check it again" in j["error"]
+    assert not [op for op, _ in w.calls if op.startswith("close")]
+    r = c.post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-new, QM-a", "confirm_count": "2"}, headers=ORIGIN)
+    assert r.status_code == 200 and sorted(r.get_json()["closed"]) == ["QM-a", "QM-new"]
+
+
+def test_problem_screen_names_no_sdk_call_and_says_the_cause_once(env):
+    """The problem page speaks of what was read, never the SDK call, and says the cause once."""
+    import re as _re
+    app, m, w, *_ = env
+    a = answer(refused={'qm.list_open_qms': 'PermissionError: not allowed', 'get_devices': 'PermissionError: not allowed',
+                        'con1.temperatures.FEM 0': 'PermissionError: not allowed'})
+    a['open_qms'] = None
+    w.script[:] = [a]; m.poll_once()
+    for tab in ('live', 'jobs', 'cleanup'):
+        html = page(app, tab)
+        for call in ('list_open_qms', 'get_devices', 'get_jobs', 'temperatures.FEM', 'qm.'):
+            assert call not in html, (tab, call)
+    html = page(app, 'live')
+    text = _re.sub(r'<[^>]+>', ' ', html)
+    cause = m.status()['health']['reason']
+    assert cause.startswith('The OPX server did not answer the request for ')
+    assert text.count(cause) == 1, text.count(cause)
+    assert 'Last reply 0 s ago; some data unavailable.' in text
+    with app.test_request_context('/'):
+        from flask import render_template
+        pill = render_template('_opx_alarm_badge.html', st=m.status())
+    assert '> OPX problem</a>' in pill and cause in pill

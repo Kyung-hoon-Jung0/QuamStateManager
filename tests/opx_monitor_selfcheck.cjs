@@ -143,6 +143,57 @@ const tick = () => new Promise(r => setTimeout(r, 20));
     swap(rowBody('con1/5', false));
     ok(!r.document.querySelector('.ui-opxmon-confirm') && /withdrawn/.test(r.document.querySelector('.ui-opxmon-close-result').textContent), 'a QM gone from the list withdraws the question and says so');
   }
+  {
+    // consent for close-all / close-idle is bound to the id set the user saw: a refresh with a
+    // different set drops the question and the typed count and says why; the same set keeps both;
+    // a fresh button that is disabled never re-opens the question
+    const setBody = (cls, ids, disabled) => '<div id="ui-opxmon-body" hx-get="/opx-monitor/body?tab=cleanup" data-state="ok">' +
+      '<details class="ui-zone ui-zone--fold" data-fold="danger"><summary class="ui-zone-head">Danger</summary><div class="ui-zone-body">' +
+      '<p><button class="btn-sm ' + cls + '" data-qm-ids="' + ids + '"' + (disabled ? ' disabled' : '') + '>Go</button></p></div></details>' +
+      '<p class="ui-opxmon-close-result" hidden></p></div>';
+    const mk = (cls, ids) => {
+      const v = new JSDOM('<!doctype html><html><body>' + setBody(cls, ids, false) + '</body></html>', { url: 'http://localhost/opx-monitor/cleanup', runScripts: 'outside-only' }).window;
+      v.__posts = [];
+      v.fetch = (u, o) => { v.__posts.push(o); return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, closed: [] }) }); };
+      v.htmx = { ajax: () => {} };
+      v.eval(SRC);
+      v.swap = (html) => {
+        const old = v.document.getElementById('ui-opxmon-body');
+        v.document.dispatchEvent(new v.CustomEvent('htmx:beforeSwap', { detail: { target: old } }));
+        old.outerHTML = html;
+        v.document.dispatchEvent(new v.CustomEvent('htmx:afterSwap', { detail: { target: v.document.getElementById('ui-opxmon-body') } }));
+      };
+      return v;
+    };
+    for (const cls of ['ui-opxmon-close-all', 'ui-opxmon-close-idle']) {
+      const tag = cls.endsWith('all') ? 'close-all' : 'close-idle';
+      let v = mk(cls, 'QM-a, QM-b');
+      v.document.querySelector('.' + cls).click();
+      const t0 = v.document.querySelector('.ui-opxmon-confirm-count');
+      if (t0) { t0.value = '2'; t0.dispatchEvent(new v.Event('input')); }
+      v.swap(setBody(cls, 'QM-b, QM-a', false));
+      const kept = v.document.querySelector('.ui-opxmon-confirm');
+      ok(kept && (!t0 || v.document.querySelector('.ui-opxmon-confirm-count').value === '2'), tag + ': a refresh with the same id set keeps the question and the typed count');
+      v.swap(setBody(cls, 'QM-a, QM-c', false));
+      ok(!v.document.querySelector('.ui-opxmon-confirm') && /The list changed; check it again/.test(v.document.querySelector('.ui-opxmon-close-result').textContent), tag + ': a refresh that swaps an id drops the question and says the list changed');
+      v.document.querySelector('.' + cls).click();
+      const t1 = v.document.querySelector('.ui-opxmon-confirm-count');
+      ok(!t1 || t1.value === '', tag + ': the typed count does not carry over to the new set');
+      v.swap(setBody(cls, 'QM-a, QM-c, QM-d', false));
+      ok(!v.document.querySelector('.ui-opxmon-confirm'), tag + ': a refresh that adds an id drops the question');
+      v = mk(cls, 'QM-a, QM-b');
+      v.document.querySelector('.' + cls).click();
+      v.swap(setBody(cls, 'QM-a, QM-b', true));
+      ok(!v.document.querySelector('.ui-opxmon-confirm') && /withdrawn/.test(v.document.querySelector('.ui-opxmon-close-result').textContent), tag + ': a disabled fresh button never re-opens the question');
+      v = mk(cls, 'QM-a, QM-b');
+      v.document.querySelector('.' + cls).click();
+      v.swap(setBody(cls, 'QM-a, QM-b', false));
+      const t2 = v.document.querySelector('.ui-opxmon-confirm-count');
+      if (t2) t2.value = '2';
+      v.document.querySelector('.ui-opxmon-confirm-accept').click();
+      ok(v.__posts.length === 1 && v.__posts[0].body.get('qm_ids') === 'QM-a, QM-b', tag + ': after a same-set refresh the POST carries the ids the user saw');
+    }
+  }
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;
