@@ -23,6 +23,7 @@ waveform: ``ports`` is set only in ``done`` and only from the simulator.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -117,11 +118,17 @@ def _shape_ports(ports: Any) -> list:
             continue
         if not volts:
             continue
+        try:
+            dt = float(p.get("dt_ns"))
+        except (TypeError, ValueError):
+            dt = None
+        if dt is not None and not (math.isfinite(dt) and dt > 0):
+            dt = None
         out.append({"key": f"{con}/{fem}/{port}", "port_text": f"{con} / {fem} / {port}",
                     "controller": con, "fem": fem, "port": port,
                     "elements": [str(e) for e in p.get("elements") or []],
                     "kind": p.get("kind"), "t0_ns": float(p.get("t0_ns") or 0.0),
-                    "dt_ns": float(p.get("dt_ns") or 1.0), "volts": volts,
+                    "dt_ns": dt, "time_step_unknown": dt is None, "volts": volts,
                     "decimated": bool(p.get("decimated")),
                     "cut_at_end": bool(p.get("cut_at_end"))})
     return out
@@ -160,6 +167,11 @@ def from_status(st: dict, meta: dict) -> dict:
     out.update(ports=ports, sim_ns=res.get("sim_ns"), length_from=res.get("length_from"),
                cannot_draw=res.get("cannot_draw"),
                note="Simulated output after the port's filters; the time axis starts at the program start.")
+    unknown = [p["port_text"] for p in ports if p["time_step_unknown"]]
+    if unknown:
+        out["time_step_note"] = ("The time step of these ports is not known (the simulator and the "
+                                 "config give no sample rate), so they have no time axis: "
+                                 + ", ".join(unknown) + ".")
     cut = [p["port_text"] for p in ports if p["cut_at_end"]]
     if cut:
         out["cut_note"] = ("The simulation window ended while these ports were still playing: "

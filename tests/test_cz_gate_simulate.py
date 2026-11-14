@@ -127,24 +127,100 @@ def _rows(*ends):
     return [type("R", (), {"end_ns": e})() for e in ends]
 
 
-def test_sim_length_adds_start_latency_and_largest_delay():
-    # undelayed lines: end + start + pad
-    assert rgs.sim_length_ns(_rows(300), [{"delay": 0}], 200, 300) == (800, "timeline")
-    # the largest delay among the lines is added once
-    ops = [{"delay": 0}, {"delay": 160}, {"delay": 40}]
-    assert rgs.sim_length_ns(_rows(300), ops, 200, 300) == (960, "timeline")
+def _tl_op(el, length, delay, port=("con1", 1, 1)):
+    return {"element": el, "operation": "p", "length": length,
+            "waveform": {"type": "constant", "sample": 0.1}, "port": list(port),
+            "delay": delay, "sampling_rate": 1e9, "filter": False}
+
+
+def _tl_rows(ops):
+    from quam_state_manager.core.static_timeline import static_timeline
+    body = "".join("    play(\"p\", \"" + o["element"] + "\")\n" for o in ops)
+    res = static_timeline("from qm.qua import *\n\nwith program() as prog:\n" + body, ops)
+    return res["rows"], res["cannot_draw"]
+
+
+def test_sim_length_from_the_real_timeline_counts_the_delay_once():
+    ops = [_tl_op("q1.z", 160, 116), _tl_op("q2.z", 100, 0, port=("con1", 1, 2))]
+    rows, why = _tl_rows(ops)
+    assert why is None and max(r.end_ns for r in rows) == 276
+    # 276 (end incl. delay) + 300 start + 200 pad = 776
+    assert rgs.sim_length_ns(rows, ops, 200, 300) == (776, "timeline")
+
+
+def test_sim_length_timeline_and_sum_agree_for_one_play():
+    ops = [_tl_op("q1.z", 160, 116)]
+    rows, _ = _tl_rows(ops)
+    assert rgs.sim_length_ns(rows, ops, 200, 300)[0] == rgs.sim_length_ns([], ops, 200, 300)[0] == 776
+
+
+def test_sim_length_zero_delay_unchanged():
+    ops = [_tl_op("q1.z", 300, 0)]
+    rows, _ = _tl_rows(ops)
+    assert rgs.sim_length_ns(rows, ops, 200, 300) == (800, "timeline")
+    assert rgs.sim_length_ns([], ops, 200, 300) == (800, "sum")
+
+
+def test_sim_length_sum_path_adds_the_largest_delay():
     assert rgs.sim_length_ns([], [{"length": 100, "delay": 160}], 200, 300) == (760, "sum")
 
 
 @pytest.mark.parametrize("bad", [None, "x", float("nan"), [], True])
 def test_sim_length_bad_delay_counts_zero(bad):
-    assert rgs.sim_length_ns(_rows(300), [{"delay": bad}], 200, 300) == (800, "timeline")
+    assert rgs.sim_length_ns([], [{"length": 300, "delay": bad}], 200, 300) == (800, "sum")
+
+
+def test_fractional_delay_falls_back_to_sum_and_rounds_up():
+    ops = [_tl_op("q1.z", 100, 161.7)]
+    rows, why = _tl_rows(ops)
+    assert rows == [] and why and "whole number" in why
+    assert rgs._delay_ns({"delay": 161.7}) == 162 and rgs._delay_ns({"delay": 160.0}) == 160
+    # 100 + 162 + 300 + 200 = 762 -> 764
+    assert rgs.sim_length_ns(rows, ops, 200, 300) == (764, "sum")
 
 
 def test_sim_length_near_the_limit_goes_over_it_not_shortened():
     # 19500 + 300 + 200 = 20000 is allowed; one more 4 ns step is over
     assert rgs.sim_length_ns(_rows(19_500), [], 200, 300)[0] == sim.MAX_SIM_NS
-    assert rgs.sim_length_ns(_rows(19_500), [{"delay": 8}], 200, 300)[0] > sim.MAX_SIM_NS
+    assert rgs.sim_length_ns(_rows(19_504), [], 200, 300)[0] > sim.MAX_SIM_NS
+
+
+def test_delayed_program_that_fits_once_is_within_the_limit():
+    # end 19500 already holds a 116 ns delay; counted twice it would be refused
+    ops = [_tl_op("q1.z", 19_384, 116)]
+    rows, _ = _tl_rows(ops)
+    assert rgs.sim_length_ns(rows, ops, 200, 300)[0] == sim.MAX_SIM_NS
+
+
+def _trace(rate, kind="lf", step=1):
+    tr = {"con": "con1", "slot": 1, "port": 1, "kind": kind, "step": step, "re": [0.0, 0.1, 0.0]}
+    if rate is not ...:
+        tr["rate"] = rate
+    return {"k": tr}
+
+
+PE = {"con1/1/1": ["q1.z"]}
+
+
+def test_lf_trace_with_a_valid_rate_keeps_1_ns():
+    [p] = rgs._ports(_trace(1e9), PE, {})
+    assert p["dt_ns"] == 1.0 and p["time_step_unknown"] is False
+
+
+@pytest.mark.parametrize("rate", [..., None, "x", 0, -1, float("nan")])
+def test_lf_trace_without_a_rate_takes_the_port_rate_or_the_default(rate):
+    cfg = {"controllers": {"con1": {"fems": {"1": {"type": "LF", "analog_outputs": {
+        "1": {"sampling_rate": 2e9}}}}}}}
+    assert rgs._ports(_trace(rate), PE, cfg)[0]["dt_ns"] == 0.5
+    assert rgs._ports(_trace(rate), PE, {})[0]["dt_ns"] == 1.0
+
+
+@pytest.mark.parametrize("rate", [..., None, "x", 0, float("nan")])
+def test_mw_trace_without_any_rate_has_no_time_axis(rate):
+    [p] = rgs._ports(_trace(rate, kind="mw"), PE, {})
+    assert p["dt_ns"] is None and p["time_step_unknown"] is True
+    shaped = sim._shape_ports([p])
+    assert shaped[0]["dt_ns"] is None and shaped[0]["time_step_unknown"] is True
 
 
 def _main(monkeypatch, tmp_path, built, target=None, limit_s=60):
@@ -257,13 +333,22 @@ def test_done_shapes_ports_and_drops_malformed():
     assert out["state"] == "done" and out["line"] == "Simulated on QM-SaaS cloud simulator: 504 ns."
     assert out["ports"] == [{"key": "con1/5/1", "port_text": "con1 / 5 / 1", "controller": "con1",
                              "fem": 5, "port": 1, "elements": ["q1.z"], "kind": None, "t0_ns": 0.0,
-                             "dt_ns": 0.5, "volts": [0.0, 0.1], "decimated": False,
-                             "cut_at_end": False}]
-    assert "cut_note" not in out
+                             "dt_ns": 0.5, "time_step_unknown": False, "volts": [0.0, 0.1],
+                             "decimated": False, "cut_at_end": False}]
+    assert "cut_note" not in out and "time_step_note" not in out
     res["ports"][0]["cut_at_end"] = True
     cut = sim.from_status({"state": "done", "result": res}, {})
     assert cut["cut_note"] == ("The simulation window ended while these ports were still playing: "
                                "con1 / 5 / 1.")
+
+
+@pytest.mark.parametrize("dt", [None, "x", 0, float("nan")])
+def test_done_names_ports_whose_time_step_is_unknown(dt):
+    res = {"ok": True, "sim_ns": 504, "ports": [
+        {"controller": "con1", "fem": 1, "port": 1, "dt_ns": dt, "volts": [0, 0.1]}]}
+    out = sim.from_status({"state": "done", "result": res}, {})
+    assert out["ports"][0]["dt_ns"] is None
+    assert "not known" in out["time_step_note"] and "con1 / 1 / 1" in out["time_step_note"]
 
 
 def test_static_lines():

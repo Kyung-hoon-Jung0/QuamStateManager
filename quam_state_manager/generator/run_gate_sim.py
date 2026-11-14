@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import queue
 import sys
@@ -51,12 +52,15 @@ def _static_timeline():
 
 
 def _delay_ns(op) -> int:
-    """The op's port delay in ns; a missing or non-numeric entry counts as 0."""
-    try:
-        d = op.get("delay") if isinstance(op, dict) else None
-        return max(int(d), 0) if d is not None and not isinstance(d, bool) else 0
-    except (TypeError, ValueError, OverflowError):
+    """The op's port delay in ns; a missing or non-numeric entry counts as 0.
+    A non-whole delay (which the timeline refuses, so the sum path is used) is
+    rounded up, so the window is never shorter than the program."""
+    d = op.get("delay") if isinstance(op, dict) else None
+    if d is None or isinstance(d, bool) or not isinstance(d, (int, float)):
         return 0
+    if not math.isfinite(d):
+        return 0
+    return max(math.ceil(d), 0)
 
 
 def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
@@ -68,8 +72,10 @@ def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
     ends = [int(r.end_ns) for r in rows or []]
     max_delay = max([_delay_ns(o) for o in ops or []] or [0])
     if ends:
-        total, how = max(ends) + max_delay, "timeline"
+        # each timeline row's end already holds its port delay
+        total, how = max(ends), "timeline"
     else:
+        # the sum of lengths holds no delay, so the largest one is added here
         lengths = [int(o.get("length") or 0) for o in ops or [] if isinstance(o, dict)]
         total, how = sum(lengths) + max_delay, "sum"
     ns = total + int(start_ns) + int(pad_ns)
@@ -187,7 +193,38 @@ def build(job: dict) -> dict:
             "length_from": how, "cannot_draw": tl.get("cannot_draw")}
 
 
-def _ports(traces: dict, port_elements: dict) -> list:
+#: an LF-FEM output port without a stated ``sampling_rate`` runs at 1 GS/s (the config default)
+LF_DEFAULT_RATE = 1e9
+
+
+def _rate_ok(rate) -> float | None:
+    try:
+        r = float(rate)
+    except (TypeError, ValueError):
+        return None
+    return r if math.isfinite(r) and r > 0 and not isinstance(rate, bool) else None
+
+
+def _port_rate(config, con, slot, port, kind) -> float | None:
+    """The output port's sampling rate from the config; an LF port without one
+    takes the config default; otherwise None (not known)."""
+    try:
+        fem = ((config.get("controllers") or {}).get(con) or {}).get("fems") or {}
+        fem = fem.get(slot) or fem.get(str(slot)) or {}
+        outs = fem.get("analog_outputs") or {}
+        entry = outs.get(port) or outs.get(str(port)) or {}
+        rate = _rate_ok(entry.get("sampling_rate"))
+    except AttributeError:
+        rate = None
+    if rate is None and str(kind or "").lower() == "lf":
+        return LF_DEFAULT_RATE
+    return rate
+
+
+def _ports(traces: dict, port_elements: dict, config: dict | None = None) -> list:
+    """Each driven port's trace. The sample step comes from the simulator's
+    rate, else from the config's port; when neither says, ``dt_ns`` is None
+    and ``time_step_unknown`` is set, never a guessed step."""
     out = []
     for tr in traces.values():
         if tr.get("digital") or tr.get("slot") is None:
@@ -195,14 +232,13 @@ def _ports(traces: dict, port_elements: dict) -> list:
         key = f"{tr['con']}/{tr['slot']}/{tr['port']}"
         if key not in port_elements:
             continue
-        rate = tr.get("rate")
-        try:
-            dt = 1e9 / float(rate) if rate else 1.0
-        except (TypeError, ValueError):
-            dt = 1.0
+        rate = _rate_ok(tr.get("rate")) or _port_rate(config or {}, tr["con"], tr["slot"],
+                                                       tr["port"], tr.get("kind"))
+        step = int(tr.get("step") or 1)
         out.append({"controller": tr["con"], "fem": tr["slot"], "port": tr["port"],
                     "elements": port_elements[key], "kind": tr.get("kind"),
-                    "t0_ns": 0.0, "dt_ns": dt * int(tr.get("step") or 1),
+                    "t0_ns": 0.0, "dt_ns": 1e9 / rate * step if rate else None,
+                    "time_step_unknown": rate is None,
                     "volts": tr.get("re") or [], "imag": tr.get("im"),
                     "decimated": int(tr.get("step") or 1) > 1,
                     "cut_at_end": bool(tr.get("re")) and abs(float(tr["re"][-1])) > CUT_V})
@@ -267,7 +303,8 @@ def main() -> int:
                       "length_from": built["length_from"], "cannot_draw": built["cannot_draw"],
                       "local_error": res.get("local_error"),
                       "ports": _ports(res.get("traces") or {},
-                                      _port_elements(built["config"], built["plays"]))}
+                                      _port_elements(built["config"], built["plays"]),
+                                      built["config"])}
     except Exception as exc:  # noqa: BLE001 -- every failure is the user's answer
         result = {"ok": False, **rpt.classify(exc, req.get("target"), "sim"),
                   "traceback": traceback.format_exc()[-3000:]}
