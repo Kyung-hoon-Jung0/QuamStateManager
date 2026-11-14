@@ -1643,11 +1643,14 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
 .czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); overflow: auto; }
 .czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+/* a zone clips its overflow, so as a flex item it would shrink and hide its fields: the column scrolls instead */
+.czg-form > *, .czg-evidence > * { flex-shrink: 0; }
 .czg-why-line { display: block; color: var(--ui-text-2); }
 .czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
 .czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
-.czg-stale { opacity: 0.45; }
+/* an earlier answer is dimmed; the banner and the pair switch (the lead) never are */
+.czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
 /* Stacked ([data-czg-stacked]: the form and the evidence do not fit side by
    side): the banner and the pair switch ([data-czg-lead]) move above the
    form, the rest of the evidence below it; one scroll for all. */
@@ -1655,7 +1658,6 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg[data-czg-stacked] .czg-evidence { display: contents; }
 .czg[data-czg-stacked] [data-czg-lead] { order: -1; }
 .czg[data-czg-stacked] .czg-form { flex: 0 0 auto; max-height: none; overflow: visible; }
-.czg[data-czg-stacked] .czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
 .czg-chips { margin-left: auto; }
 .czg .ui-segmented-opt { gap: var(--ui-gap-1); }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }

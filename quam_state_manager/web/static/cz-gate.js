@@ -1138,8 +1138,7 @@
         if (ae && $('czg-form') && $('czg-form').contains(ae) && ae.blur) ae.blur();
         var f = $('czg-form');
         if (f) f.hidden = true;
-        var ev = $('czg-evidence');
-        if (ev) ev.classList.add('czg-stale');
+        // the result stays at full strength: it is what was just written, not an earlier answer
         var open = $('czg-open-pair');
         if (open) { openLabel(); open.hidden = false; }
         var cancel = $('czg-cancel');

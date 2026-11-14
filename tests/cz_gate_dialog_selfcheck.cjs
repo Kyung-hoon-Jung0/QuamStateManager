@@ -296,6 +296,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok($('#czg-writes-title').textContent === 'What was written' && !/not written/.test($('#czg-writes').textContent)
        && $('#czg-writes [data-czg-writes-pair="q1-2"]') && $('#czg-writes [data-czg-writes-pair="q2-3"]'),
        'after Create the panel is What was written, from the create answer, both pairs, no re-plan');
+    ok(!$('#czg-evidence').classList.contains('czg-stale'), 'after Create the result is not dimmed: it shows what was written');
     ok([...doc.querySelectorAll('#czg-status-slot .gate-status-row')].map((r) => r.firstElementChild.getAttribute('data-czg-status-pair')).join() === 'q1-2,q2-3',
        'two created gates: each status row starts with its pair');
     ok($('#czg-open-pair').textContent === 'Open ' + $('#czg-pairs .ui-segmented-on').firstChild.textContent.trim()
