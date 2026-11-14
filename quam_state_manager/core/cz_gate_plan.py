@@ -996,6 +996,20 @@ SLOT_PATH = re.compile(r"^(qubit_pairs\.([^.]+)\.macros\.([^.]+))\."
                        r"(flux_pulse_qubit|flux_pulse_target|coupler_flux_pulse)$")
 
 
+def _stated_length_ns(pulse):
+    """The ``length`` a pulse of a class with no transcribed waveform stores, when it is a
+    positive whole number of ns; ``None`` for a transcribed class or any other value."""
+    if not isinstance(pulse, dict):
+        return None
+    from .waveform_synth import LAB_WAVEFORMS
+    if str(pulse.get("__class__", "")).rsplit(".", 1)[-1] in LAB_WAVEFORMS:
+        return None
+    raw = pulse.get("length")
+    if isinstance(raw, (bool, np.bool_)) or not isinstance(raw, (numbers.Integral, np.integer)):
+        return None
+    return int(raw) if raw > 0 else None
+
+
 def _raw_at(doc, path):
     """The value stored at *path*, no pointer followed (None when absent)."""
     node = doc
@@ -1303,8 +1317,8 @@ def operations(doc, conversions=None, unavailable=None):
         if not mapping(pp):
             continue
         rows.pair_names.append(pair_name)
-        _raw_pair = ((doc.get("qubit_pairs") or {}).get(pair_name)
-                     if isinstance(doc, dict) else None)
+        _raw_pairs = doc.get("qubit_pairs") if isinstance(doc, dict) else None
+        _raw_pair = _raw_pairs.get(pair_name) if isinstance(_raw_pairs, dict) else None
         rows.active[pair_name] = pair_operational_gate(
             pair_name, _raw_pair.get("macros") if isinstance(_raw_pair, dict) else None)
         roles = {}
@@ -1518,13 +1532,22 @@ def operations(doc, conversions=None, unavailable=None):
                 _amplitude_view(doc, ln)
             two_flux_lengths = None
             if kind == "two-flux" and raw_duration is None:
-                from .waveform_synth import lab_waveform, resolved_lab_pulse
-                samples = [lab_waveform(resolved_lab_pulse(doc, ln["pulse_path"])) for ln in lines]
-                if any(s is None for s in samples):
-                    missing = [ln["name"] for ln, s in zip(lines, samples) if s is None]
+                from .waveform_synth import LAB_WAVEFORMS, lab_waveform, resolved_lab_pulse
+                pulses = [resolved_lab_pulse(doc, ln["pulse_path"]) for ln in lines]
+                samples = [lab_waveform(p) for p in pulses]
+                # A pulse class with no transcribed waveform states its played length itself:
+                # its ``length`` goes to the pulse config as it is, in ns at any port rate
+                # [derived from the pulse library's config writer]. A transcribed class whose
+                # samples cannot be built stays unknown: its ``length`` is not what it plays.
+                stated = [None if s is not None else _stated_length_ns(p) for p, s in zip(pulses, samples)]
+                known = [s is not None or n is not None for s, n in zip(samples, stated)]
+                if not all(known):
+                    missing = [ln["name"] for ln, ok in zip(lines, known) if not ok]
                     notes.append("two-flux length check not made: the played length of "
                                  + " and ".join(missing) + " could not be derived")
-                rate_leaves = {ln["role"]: ln["qubit_path"] + ".z.opx_output.sampling_rate" for ln in lines}
+                # only a line played from samples needs its port rate
+                rate_leaves = {ln["role"]: ln["qubit_path"] + ".z.opx_output.sampling_rate"
+                               for ln, s in zip(lines, samples) if s is not None}
                 rate_state = {}
                 for role, leaf in rate_leaves.items():
                     t = read(doc, leaf)
@@ -1546,15 +1569,17 @@ def operations(doc, conversions=None, unavailable=None):
                 if bad_rates:
                     notes.extend(f"two-flux length check not made: {leaf} is not a positive number"
                                  for leaf in bad_rates)
-                elif any(d for _v, d in rate_state.values()) and all(x is not None for x in samples):
+                elif any(d for _v, d in rate_state.values()) and all(known):
                     notes.append("two-flux lengths at the default 1 GS/s; no sampling_rate stored")
-                if all(s is not None for s in samples) and not bad_rates:
+                if all(known) and not bad_rates:
                     # samples play at the port's own rate: a 2 GS/s port plays 40 samples in 20 ns
-                    def played_ns(ln, s):
-                        return len(s) * 1e9 / rate_state[ln["role"]][0]
-                    line_lengths = {ln["role"]: played_ns(ln, s) for ln, s in zip(lines, samples)}
+                    def played_ns(ln, s, n):
+                        return n if s is None else len(s) * 1e9 / rate_state[ln["role"]][0]
+                    line_lengths = {ln["role"]: played_ns(ln, s, n) for ln, s, n in zip(lines, samples, stated)}
                     duration_ns = max(line_lengths.values())
-                    duration_note = f"{duration_ns:g} ns from the played SNZ waveform (flat length, edges and padding)"
+                    made_of = ("flat length, edges and padding" if all(n is None for n in stated)
+                               else "the stored pulse length" if all(s is None for s in samples)
+                               else "the played waveform or the stored pulse length")
                     for ln in lines:
                         ln["played_length_ns"] = line_lengths[ln["role"]]
                     # The two-flux gate inherits CZGate.inferred_duration, which reads
@@ -1573,7 +1598,7 @@ def operations(doc, conversions=None, unavailable=None):
                         notes.append(mismatch)
                         two_flux_lengths["mismatch"] = mismatch
                     duration_note = (f"{duration_ns:g} ns played span (control {line_lengths['control']:g} ns, "
-                                     f"target {line_lengths['target']:g} ns, flat length, edges and padding); "
+                                     f"target {line_lengths['target']:g} ns, {made_of}); "
                                      + (f"the macro's own duration is {macro_duration:g} ns (the control pulse)"
                                         if macro_duration is not None else
                                         "the macro's own duration reads the control pulse label on the moving "

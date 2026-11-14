@@ -129,7 +129,9 @@ def test_no_coupler_table_identity(tmp_path):
     assert n_words, "the phrase cell is rendered"
     # D6: the two-flux row's Moves cell separates its two movers with " / " (the only
     # difference from the previous pin: "q1</span><span" -> "q1</span> / <span").
-    assert hashlib.sha256(table.encode()).hexdigest() == "092cee50afde2f1d8f24ee7e5cf4945cdd4050ce8fd09592a5ff008fbd8f9ffe"
+    # The two-flux row of two standard pulses now carries its length help note (control
+    # 40 ns vs target 32 ns): that one cell is the only difference from the previous pin.
+    assert hashlib.sha256(table.encode()).hexdigest() == "094355b3d9c6bed5711eaa0d9a80782a69d787cde0dbe58eb6cc92f83938795d"
 
 
 def test_empty_ledger_explains_data_folder(tmp_path):
