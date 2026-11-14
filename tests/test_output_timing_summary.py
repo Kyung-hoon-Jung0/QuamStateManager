@@ -19,7 +19,9 @@ def test_a_delayed_readout_lists_each_resonator_and_a_typed_one_as_typed():
     assert s["tof"] == [{"qubit": "q1", "shift": 20, "value": 32, "moved": True},
                         {"qubit": "q2", "shift": 20, "value": 32, "moved": False}]
     s = output_timing.summary(state, wiring, tof_moved=[])
-    assert [t["moved"] for t in s["tof"]] == [False, False]
+    assert s["tof"] == [] and s["tof_unchanged"] == ["q1", "q2"]
+    s = output_timing.summary(state, wiring, tof_unrecorded={"q1", "q2"})
+    assert s["tof"] == [] and s["tof_unrecorded"] == ["q1", "q2"]
 
 
 def test_flux_ports_and_unwired_ports():
@@ -33,8 +35,11 @@ def test_flux_ports_and_unwired_ports():
 
 def test_typed_tof_reads_the_populate_step():
     spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300}, "q2": {"RF_freq": 7e9}}}}
+    # no record of the prefill: the value's source is unknown
+    assert output_timing.tof_provenance(spec) == (set(), {"q1"})
+    spec["populate"]["options"] = {"tof_defaults": {}}
     assert output_timing.typed_tof(spec) == {"q1"}
-    assert output_timing.typed_tof(None) == set()
+    assert output_timing.tof_provenance(None) == (set(), set())
 
 
 def test_typed_tof_treats_a_prefilled_default_as_a_default():
@@ -42,9 +47,9 @@ def test_typed_tof_treats_a_prefilled_default_as_a_default():
             "q3": {"time_of_flight": 28}}
     spec = {"populate": {"options": {"tof_defaults": {"q1": 28, "q2": 28}}, "resonator": rows}}
     # q1 still holds its default; q2 was changed; q3 has no record (typed or preset)
-    assert output_timing.typed_tof(spec) == {"q2", "q3"}
-    # no record at all (older draft, emitted script, agent API): every value is the user's
-    assert output_timing.typed_tof({"populate": {"resonator": rows}}) == {"q1", "q2", "q3"}
+    assert output_timing.tof_provenance(spec) == ({"q2", "q3"}, set())
+    # no record at all (older draft, emitted script, agent API): every value is unrecorded
+    assert output_timing.tof_provenance({"populate": {"resonator": rows}}) == (set(), {"q1", "q2", "q3"})
 
 
 def test_typed_tof_is_the_build_rule():
@@ -54,4 +59,7 @@ def test_typed_tof_is_the_build_rule():
                                "resonator": {"q1": {"time_of_flight": 28},
                                              "q2": {"time_of_flight": 28}}}},
                  {"populate": {"resonator": {"q1": {"time_of_flight": 5}}}}, None, {}):
-        assert output_timing.typed_tof(spec) == mod._user_set_tof(spec)
+        typed, unrec = output_timing.tof_provenance(spec)
+        assert (typed, unrec) == mod._tof_provenance(spec)
+        assert typed | unrec == mod._user_set_tof(spec)
+    assert output_timing.summary(*_chip())["note"] == output_timing.LATENCY_NOTE

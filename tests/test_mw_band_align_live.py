@@ -176,6 +176,7 @@ def _pump_band_1():
 def _typed_tof():
     s = _one_qubit(2, 3)
     s["populate"]["resonator"]["q1"]["time_of_flight"] = 300
+    s["populate"].setdefault("options", {})["tof_defaults"] = {}
     return s
 
 

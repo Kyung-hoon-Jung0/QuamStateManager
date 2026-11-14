@@ -50924,8 +50924,7 @@ def generate_build():
                 config_generator.annotate_unplayable(outcome, _st, _wr)
                 config_generator.annotate_core_layout(outcome, _st, _wr)
                 from quam_state_manager.core import output_timing
-                output_timing.annotate(outcome, _st, _wr,
-                                       tof_typed=output_timing.typed_tof(spec))
+                output_timing.annotate(outcome, _st, _wr, spec=spec)
             except (OSError, ValueError) as exc:
                 logger.warning("frequency check skipped: %s", exc)
 

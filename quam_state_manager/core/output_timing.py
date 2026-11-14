@@ -1,25 +1,39 @@
 """What a built chip's output timing IS, read from its state / wiring dicts.
 
 One pure reading (plain dicts, no QM imports) of the delays a build or a
-Re-generate wrote: per MW-FEM output in use its band and delay, the flux
-LF-FEM port delays, and the resonators whose readout output carries a delay
-(with whether their time of flight moved with it). The wizard's build result
+Re-generate wrote: per MW-FEM output in use its band and delay, the LF-FEM
+output delays, and the resonators whose readout output carries a delay
+(with what happened to their time of flight). The wizard's build result
 and Re-generate's result both list this, so the page never predicts numbers
 the build did not write.
 
-"In use" is the build's rule (``generator/run_build.py`` ``_mw_output_ports``):
-an MW output counts when an element's output reference resolves to it. A
-stored chip may keep port objects no element points at; they do not count.
+"In use" and "which time of flight is the user's" are the build's own
+functions (``generator/run_build.py`` ``_used_port_paths`` and
+``_tof_provenance``), loaded from that file, so the screen and the build
+cannot count differently: a port no element plays does not count.
 """
 
 from __future__ import annotations
 
 # MW-FEM output latency per band relative to an LF-FEM output; the same
-# measured table as ``generator/run_build.py`` ``_BAND_TO_DELAY_NS``.
+# table as ``generator/run_build.py`` ``_BAND_TO_DELAY_NS``. Where these
+# numbers come from is not recorded in this repository; the docs
+# (``Guides/opx1000_fems.md``) give different absolute values (about 155 /
+# 175 ns). Only the 20 ns difference between bands is confirmed by both.
 BAND_LATENCY_NS = {1: 141, 2: 161, 3: 141}
+
+# The same sentence, in user words, under the "Output timing" result.
+LATENCY_NOTE = ("The 20 ns step between MW band 2 and bands 1 / 3 is documented. The flux port "
+                "delay relative to the MW outputs is a starting value: measure the flux to "
+                "microwave timing on the device.")
 
 _MW_PREFIX = "ports/mw_outputs/"
 _LF_PREFIX = "ports/analog_outputs/"
+
+
+def _rb():
+    from quam_state_manager.core import script_emitter
+    return script_emitter._run_build()
 
 
 def _resolve(doc: dict, value, depth: int = 0):
@@ -37,33 +51,17 @@ def _resolve(doc: dict, value, depth: int = 0):
 
 
 def _doc(state: dict, wiring: dict) -> dict:
-    return {"wiring": (wiring or {}).get("wiring") or {}, **(state or {})}
-
-
-def _output_refs(node, out: list):
-    """Every ``opx_output`` value under ``node`` (elements, not ``ports``)."""
-    if isinstance(node, dict):
-        for k, v in node.items():
-            if k == "opx_output":
-                out.append(v)
-            else:
-                _output_refs(v, out)
-    elif isinstance(node, list):
-        for v in node:
-            _output_refs(v, out)
+    return {**(state or {}), "wiring": (wiring or {}).get("wiring") or {}}
 
 
 def _ports_in_use(state: dict, wiring: dict, prefix: str) -> list[tuple[str, dict]]:
     doc = _doc(state, wiring)
-    refs: list = []
-    _output_refs({k: v for k, v in (state or {}).items() if k != "ports"}, refs)
-    seen, found = set(), []
-    for ref in refs:
-        path, port = _resolve(doc, ref)
-        if path and path.startswith(prefix) and isinstance(port, dict) and path not in seen:
-            seen.add(path)
+    found = []
+    for path in _rb()._used_port_paths(doc, prefix):
+        _, port = _resolve(doc, "#/" + path)
+        if isinstance(port, dict):
             found.append((path, port))
-    return sorted(found)
+    return found
 
 
 def mw_outputs_in_use(state: dict, wiring: dict) -> list[tuple[str, dict]]:
@@ -83,83 +81,126 @@ def _num(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=()) -> dict | None:
+def _owners(state: dict, doc: dict) -> dict:
+    """``{port path: element name}`` for every LF output reference outside
+    ``ports`` / ``wiring`` (a qubit z, a pair coupler, any other element)."""
+    out: dict = {}
+
+    def walk(node, where):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(k, str) and k.startswith("opx_output"):
+                    path, _ = _resolve(doc, v)
+                    if path:
+                        out.setdefault(path, where)
+                else:
+                    walk(v, where + [str(k)])
+
+    for top, node in (state or {}).items():
+        if top not in ("ports", "wiring") and isinstance(node, dict):
+            for name, el in node.items():
+                walk(el, [str(name)])
+    return {p: "/".join(w) for p, w in out.items()}
+
+
+def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
+            tof_unrecorded=()) -> dict | None:
     """The output timing written on a chip, or ``None`` when it has no MW output
-    and no flux port in use. Never raises.
+    and no LF output in use. Never raises.
 
     ``mw``: ``{port, label, band, delay}`` per MW output in use; ``flux``:
-    ``{port, label, delay, of}`` per LF-FEM output a qubit z or a coupler uses;
-    ``tof``: per resonator whose readout output has a delay ``s > 0``:
-    ``{qubit, shift, value, moved}``. ``moved`` says whether its time of flight
-    moved with that delay: by default (a fresh build) every resonator except
-    the ones in ``tof_typed`` (values the user set stay as set); a
-    Re-generate passes ``tof_moved``, the qubits whose time of flight it moved.
-    """
+    ``{port, label, delay, of, kind}`` per LF-FEM output in use (``kind``
+    ``flux`` for a qubit z or a coupler, ``lf`` for any other element);
+    ``tof``: per resonator whose readout output has a delay ``s > 0`` and
+    whose time of flight this run moved or would have moved:
+    ``{qubit, shift, value, moved}``.
+
+    A fresh build (``tof_moved`` None) moved every resonator except
+    ``tof_typed`` (kept as the user set it, ``moved`` False) and
+    ``tof_unrecorded`` (no record of its source: counted in
+    ``tof_unrecorded``, one grouped line, not listed per qubit). A
+    Re-generate passes ``tof_moved``, the qubits it moved: only those are
+    listed, and a delay that was already stored is counted in
+    ``tof_unchanged`` (one quiet line: timing was already aligned)."""
     try:
         doc = _doc(state, wiring)
         mw = [{"port": p, "label": port_label(v, p), "band": v.get("band"),
                "delay": v.get("delay") or 0} for p, v in mw_outputs_in_use(state, wiring)]
-        mw_delay = {m["port"]: m["delay"] for m in mw}
-        flux, seen = [], set()
-
-        def add_flux(ref, of):
-            path, port = _resolve(doc, ref)
-            if path and path.startswith(_LF_PREFIX) and isinstance(port, dict) \
-                    and path not in seen:
-                seen.add(path)
-                flux.append({"port": path, "label": port_label(port, path),
-                             "delay": port.get("delay") or 0, "of": of})
-
-        tof = []
-        typed = set(tof_typed or ())
+        owners = _owners(state, doc)
+        z_or_c = {}   # LF port path -> (rank, owner): qubit z first, then couplers
+        for i, (qid, q) in enumerate(((state or {}).get("qubits") or {}).items()):
+            if isinstance(q, dict) and isinstance(q.get("z"), dict):
+                path, _ = _resolve(doc, q["z"].get("opx_output"))
+                z_or_c.setdefault(path, ((0, i), qid))
+        for i, (pid, pair) in enumerate(((state or {}).get("qubit_pairs") or {}).items()):
+            if isinstance(pair, dict) and isinstance(pair.get("coupler"), dict):
+                path, _ = _resolve(doc, pair["coupler"].get("opx_output"))
+                z_or_c.setdefault(path, ((1, i), pid))
+        flux = []
+        for path, port in _ports_in_use(state, wiring, _LF_PREFIX):
+            rank, of = z_or_c.get(path, ((2, 0), None))
+            flux.append({"port": path, "label": port_label(port, path),
+                         "delay": port.get("delay") or 0,
+                         "of": of or owners.get(path, ""),
+                         "kind": "flux" if of else "lf", "_rank": rank})
+        flux.sort(key=lambda f: (f["_rank"], f["port"]))
+        for f in flux:
+            f.pop("_rank")
+        delay_of = {m["port"]: m["delay"] for m in mw}
+        delay_of.update({f["port"]: f["delay"] for f in flux})
+        tof, unrecorded, unchanged = [], [], []
+        typed, unrec = set(tof_typed or ()), set(tof_unrecorded or ())
         for qid, q in ((state or {}).get("qubits") or {}).items():
-            if not isinstance(q, dict):
-                continue
-            if isinstance(q.get("z"), dict):
-                add_flux(q["z"].get("opx_output"), qid)
-            rr = q.get("resonator")
+            rr = q.get("resonator") if isinstance(q, dict) else None
             if not isinstance(rr, dict):
                 continue
             path, _ = _resolve(doc, rr.get("opx_output"))
-            s = mw_delay.get(path, 0)
-            if _num(s) and s > 0 and _num(rr.get("time_of_flight")):
-                moved = (qid not in typed) if tof_moved is None else (qid in set(tof_moved))
-                tof.append({"qubit": qid, "shift": s, "value": rr["time_of_flight"],
-                            "moved": moved})
-        for pid, pair in ((state or {}).get("qubit_pairs") or {}).items():
-            if isinstance(pair, dict) and isinstance(pair.get("coupler"), dict):
-                add_flux(pair["coupler"].get("opx_output"), pid)
+            s = delay_of.get(path, 0)
+            if not (_num(s) and s > 0 and _num(rr.get("time_of_flight"))):
+                continue
+            entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
+            if tof_moved is not None:
+                if qid in set(tof_moved):
+                    tof.append({**entry, "moved": True})
+                else:
+                    unchanged.append(qid)
+            elif qid in unrec:
+                unrecorded.append(qid)
+            else:
+                tof.append({**entry, "moved": qid not in typed})
         if not mw and not flux:
             return None
-        return {"mw": mw, "flux": flux, "tof": tof}
+        out = {"mw": mw, "flux": flux, "tof": tof}
+        if unrecorded:
+            out["tof_unrecorded"] = unrecorded
+        if unchanged:
+            out["tof_unchanged"] = unchanged
+        if mw and flux:
+            out["note"] = LATENCY_NOTE
+        return out
     except (AttributeError, TypeError, ValueError, KeyError):
         return None
 
 
+def tof_provenance(spec: dict | None) -> tuple[set, set]:
+    """``(typed, unrecorded)``: the build's own rule
+    (``generator.run_build._tof_provenance``)."""
+    return _rb()._tof_provenance(spec)
+
+
 def typed_tof(spec: dict | None) -> set[str]:
-    """Qubits whose time of flight the user set in the populate step (typed,
-    from a preset the user applied, or a stored value of an imported spec).
-
-    A cell the wizard pre-filled with the standard defaults and the user never
-    changed is listed in ``populate.options.tof_defaults`` (``{qid: value}``);
-    when the cell still holds that value it is a default, not the user's, and
-    moves with its readout output's delay. A spec without ``tof_defaults``
-    (an older saved draft or a script emitted from one, the agent API) treats
-    every provided time of flight as the user's, as before. Same rule as
-    ``generator.run_build._user_set_tof``."""
-    pop = (spec or {}).get("populate") or {}
-    defaults = (pop.get("options") or {}).get("tof_defaults") or {}
-    if not isinstance(defaults, dict):
-        defaults = {}
-    return {q for q, v in (pop.get("resonator") or {}).items()
-            if isinstance(v, dict) and "time_of_flight" in v
-            and not (q in defaults and defaults[q] == v["time_of_flight"])}
+    """Qubits whose time of flight the user set in the populate step."""
+    return tof_provenance(spec)[0]
 
 
-def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, tof_typed=()) -> None:
-    """Put :func:`summary` on ``outcome["result"]["output_timing"]``."""
+def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, spec=None) -> None:
+    """Put :func:`summary` on ``outcome["result"]["output_timing"]``; a fresh
+    build passes its ``spec`` (who set each time of flight), a Re-generate
+    passes ``tof_moved``."""
     res = outcome.get("result") if isinstance(outcome, dict) else None
     if isinstance(res, dict):
-        summ = summary(state, wiring, tof_moved=tof_moved, tof_typed=tof_typed)
+        typed, unrec = tof_provenance(spec) if tof_moved is None else (set(), set())
+        summ = summary(state, wiring, tof_moved=tof_moved, tof_typed=typed,
+                       tof_unrecorded=unrec)
         if summ is not None:
             res["output_timing"] = summ

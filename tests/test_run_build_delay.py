@@ -386,7 +386,8 @@ class TestAlignOutputTimingEdges:
 
     def test_a_typed_time_of_flight_stays_and_is_named(self):
         m = _chip([2, 2], ro_band=3, tof=300)
-        spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300}}}}
+        spec = {"populate": {"options": {"tof_defaults": {}},
+                             "resonator": {"q1": {"time_of_flight": 300}}}}
         warns = self.mod._align_output_timing(m, spec)
         assert m.qubits["q1"].resonator.time_of_flight == 300
         assert m.qubits["q2"].resonator.time_of_flight == 320      # the default moves
@@ -430,3 +431,70 @@ class TestAlignOutputTimingEdges:
         self.mod._align_output_timing(m)
         assert cr.delay == 20
         assert _arrivals(self.mod, m) == ({161}, {161})
+
+
+class _StuckMWFEMAnalogOutputPort(MWFEMAnalogOutputPort):
+    """An output whose delay cannot be written."""
+
+    def __setattr__(self, name, value):
+        if name == "delay" and "delay" in self.__dict__:
+            raise ValueError("read only")
+        super().__setattr__(name, value)
+
+
+class TestOutputTimingProvenance:
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def test_no_record_keeps_the_value_under_one_grouped_line(self):
+        m = _chip([2, 2], ro_band=3, tof=300)
+        spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300},
+                                           "q2": {"time_of_flight": 300}}}}
+        warns = self.mod._align_output_timing(m, spec)
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [300, 300]
+        assert warns == ["this draft does not record which time of flight values were "
+                         "pre-filled, so the time of flight of q1, q2 was kept while their "
+                         "readout output is delayed: measure time of flight again."]
+
+    def test_a_partial_record_splits_default_typed_and_unrecorded(self):
+        m = _chip([2, 2, 2], ro_band=3, tof=28)
+        m.qubits["q2"].resonator.time_of_flight = 300
+        m.qubits["q3"].resonator.time_of_flight = 300
+        spec = {"populate": {
+            "options": {"tof_defaults": {"q1": 28, "q2": 28}, "tof_unrecorded": ["q3"]},
+            "resonator": {"q1": {"time_of_flight": 28}, "q2": {"time_of_flight": 300},
+                          "q3": {"time_of_flight": 300}}}}
+        warns = self.mod._align_output_timing(m, spec)
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [48, 300, 300]
+        assert len(warns) == 2 and "left as you set it on q2;" in warns[0]
+        assert "time of flight of q3 was kept" in warns[1]
+
+    def test_a_failed_readout_delay_moves_no_time_of_flight(self):
+        m = _chip([2, 2], ro_band=3)
+        stuck = _StuckMWFEMAnalogOutputPort(band=3, delay=0)
+        m.ports.mw_outputs["con1"][1][8] = stuck
+        for q in m.qubits.values():
+            q.resonator.opx_output = stuck
+        warns = self.mod._align_output_timing(m)
+        assert stuck.delay == 0
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [32, 32]
+        assert any("output timing not set on" in w for w in warns)
+
+    def test_an_lf_output_of_another_kind_gets_the_target(self):
+        m = _chip([2, 1], ro_band=1)
+        drive = LFFEMAnalogOutputPort(delay=0)
+        m.ports.analog_outputs = {"con1": {2: {3: drive}}}
+        self.mod._align_output_timing(m)
+        assert drive.delay == 161
+
+    def test_an_unused_port_on_another_band_does_not_count(self):
+        m = _chip([1, 1], ro_band=1)
+        m.ports.mw_outputs["con1"][1][7] = MWFEMAnalogOutputPort(band=2, delay=0)
+        doc = {"ports": {"mw_outputs": {"con1": {"1": {str(i): {} for i in (1, 2, 7, 8)}}}},
+               "qubits": {q: {"xy": {"opx_output": f"#/ports/mw_outputs/con1/1/{i}"},
+                              "resonator": {"opx_output": "#/ports/mw_outputs/con1/1/8"}}
+                          for i, q in ((1, "q1"), (2, "q2"))}}
+        m.to_dict = lambda: doc
+        assert {p.band for p in self.mod._mw_output_ports(m)} == {1}
+        self.mod._align_output_timing(m)
+        assert [p.delay for p in m.ports.mw_outputs["con1"][1].values()] == [0, 0, 0, 0]
