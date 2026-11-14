@@ -870,6 +870,14 @@ def _waveform_not_derivable(doc, pulse_path, tree):
     return None
 
 
+def unreadable_amplitude(line):
+    """Plain words for a line whose stored amplitude cannot be read, naming the leaf."""
+    if line.get("waveform_reason"):
+        return (line.get("pulse_path") or "the pulse") + ".waveform_I: " + line["waveform_reason"]
+    leaf = line.get("amplitude_path") or ((line.get("pulse_path") or "the pulse") + ".amplitude")
+    return f"{leaf} is missing or not a number"
+
+
 def _waveform_length_note(tree, shape):
     """A note when the stored ``length`` disagrees with the sample count, else None."""
     raw = tree.get("length")
@@ -1429,6 +1437,11 @@ def operations(doc, conversions=None, unavailable=None):
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
                       conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
+                if amp is None and not refusal and pt.get("reason") == "the operation amplitude is missing":
+                    # f_01 is present: name the leaf that could not be read, never blame f_01
+                    pt["reason"] = unreadable_amplitude({"amplitude_path": amp_path, "pulse_path": pulse_path,
+                                                         "waveform_reason": wave_reason and
+                                                         "not derivable for WaveformPulse: " + wave_reason})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": True if routing_reason else bool(field), "refusal": refusal,
                               "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
@@ -1458,9 +1471,12 @@ def operations(doc, conversions=None, unavailable=None):
                     levels = (ln["waveform_lobes"] if ln.get("waveform_lobes") else
                               pulse_lobes(resolved_lab_pulse(doc, ln["pulse_path"]) or {}, ln["amplitude_v"]))
                     ln["lobes"] = [{"name": stage, "amplitude_v": a, "point": conv.point(a)} for stage, a in levels]
-                    if ln.get("waveform_reason"):
+                    if ln.get("waveform_reason") or ln["amplitude_v"] is None:
+                        why = unreadable_amplitude(ln)
                         for lobe in ln["lobes"]:
-                            lobe["point"] = {**lobe["point"], "reason": ln["waveform_reason"]}
+                            if lobe["point"]["frequency_hz"] is None and (
+                                    ln.get("waveform_reason") or lobe["point"]["reason"] == "the operation amplitude is missing"):
+                                lobe["point"] = {**lobe["point"], "reason": why}
                     ln["moves"] = any(a is None or a != 0 for _, a in levels)
                     bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
                     if bad:
@@ -1724,7 +1740,10 @@ def solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversion
               else (f" {whose.rstrip()}" if whose else "") + f": unknown — {result['reason']}")
     result["summary"] = (f"target Δ {aim} (= −α of H per node 30) → required amplitude"
                          + answer
-                         + f" | stored {mv(stored)} | stored minus required {mv(difference)}"
+                         + f" | stored {mv(stored)}"
+                         + (f" ({unreadable_amplitude(mover)})" if mover and stored is None and mover["moves"]
+                            and not mover["refusal"] else "")
+                         + f" | stored minus required {mv(difference)}"
                          + f" ({result.get('tier', tier)})")
     conv = conversions.get(mover["qubit_path"]) if mover else None
     if result.get("ok") and conv is not None:
@@ -1879,14 +1898,14 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         path = read(doc, ln["amplitude_path"]).get("holder_path")
         stage_refusal = None
         if not path or number(current(doc, path)) is None:
-            if not ln.get("amplitude_source"):
-                raise ValueError("pulse amplitude cannot be resolved")
-            # a sample-array pulse has no amplitude field: the required amplitude
-            # needs only f_01, alpha and the conversion, so it is still answered;
-            # only the write has nowhere to go
+            # the required amplitude needs only f_01, alpha and the conversion, so it
+            # is still answered; only the write has nowhere to go
+            if ln.get("amplitude_source"):
+                stage_refusal = ("this pulse stores samples, not an amplitude: "
+                                 "rescale its waveform to stage the required peak")
+            else:
+                stage_refusal = "nothing to stage: " + unreadable_amplitude(ln)
             path = None
-            stage_refusal = ("this pulse stores samples, not an amplitude: "
-                             "rescale its waveform to stage the required peak")
         port = read(doc, ln["qubit_path"] + ".z.opx_output").get("holder_path") or ""
         bound, label = _sample_bound(doc, "#/" + port.replace(".", "/"))
         # the samples' own peak IS the played amplitude, so its ratio is 1
@@ -1905,7 +1924,7 @@ def _solve(doc, pair, op, line=None, tier="auto", amp=None, rows=None, conversio
         preview = next(p for p in operating_points(preview_row) if p["line"] == ln["role"])
         preview["method"] = selected
         preview["preview"] = True
-        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if stage_refusal else 'stored amplitude'})",
+        preview.update(amp_text=f"{amplitude:g} V ({'peak of waveform' if ln.get('amplitude_source') else 'stored amplitude'})",
                        amp_title=path or ln.get("pulse_path"))
         return {"ok": True, "tier": selected, "amplitude_v": amplitude, "frequency_hz": frequency,
                 "operating_point": preview,
