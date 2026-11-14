@@ -5,7 +5,7 @@ its length and amplitude, with where each value came from) with what the
 lab's config holds for the operation (the config length, the maximum and the
 minimum of its samples, the play scale of the program). Each row::
 
-    {"field", "operation", "channel",
+    {"field", "operation", "channel", "lane_key",
      "intended": {"length": int | None, "length_source": str,
                   "amplitude": float | None, "amplitude_source": str},
      "actual": {"length_ns", "max_v", "min_v", "scale", "truncated", "total"} | None,
@@ -126,6 +126,21 @@ def _close(a: float, b: float) -> bool:
     return abs(a - b) <= AMP_TOL * max(1.0, abs(a), abs(b))
 
 
+def lane_key(op: dict, rows: list) -> str | None:
+    """The timeline lane key of a planned operation (the element it plays on):
+    the element of the timeline row that plays it, else the plan's channel
+    when it names an element (``coupler <element>`` or ``<qubit>.z``); None
+    when neither tells (a channel in words such as "the coupler of pair X")."""
+    for r in rows:
+        r = r._asdict() if hasattr(r, "_asdict") else r
+        if isinstance(r, dict) and r.get("operation") == op.get("key") and r.get("element"):
+            return r["element"]
+    ch = op.get("channel")
+    if not isinstance(ch, str) or ch.startswith("the coupler of pair "):
+        return None
+    return ch[len("coupler "):] if ch.startswith("coupler ") else ch
+
+
 def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
     """One row per pulse the plan creates (see the module docstring)."""
     rows = (((entry or {}).get("timeline") or {}).get("rows")) or []
@@ -176,6 +191,7 @@ def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
             tones["max"] = "danger" if hi else None      # only the cell that breaks the limit
             tones["min"] = "danger" if lo else None
         out.append({"field": field, "operation": op.get("key"), "channel": op.get("channel"),
+                    "lane_key": lane_key(op, rows),
                     "intended": want, "actual": have, "differs": differs, "tones": tones,
                     "why": why})
     return out

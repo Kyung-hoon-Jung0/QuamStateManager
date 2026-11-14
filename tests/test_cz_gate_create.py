@@ -69,3 +69,15 @@ def test_program_unreadable_is_not_a_verified_run():
 def test_known_layout_needs_a_known_class():
     res = {"status": "no-env", "checked": False}
     assert not cc.may_create(res, None, gate_class=LAB, layout="known")[0]
+
+
+def test_the_shared_outcome_cases_decide_the_create():
+    import json
+    from pathlib import Path
+    cases = json.loads((Path(__file__).parent / "fixtures" / "gate_outcome_cases.json")
+                       .read_text(encoding="utf-8"))["cases"]
+    for name, want in [("checked", True), ("partly", True), ("failed", False), ("none", False)]:
+        r = cases[name]["result"]
+        # a copied layout: only a gate the lab's code loaded and ran may be written
+        got = cc.may_create(r, r["gates"][0], gate_class="AnyClass", layout="copied")
+        assert got[0] is want, name

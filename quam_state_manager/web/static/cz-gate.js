@@ -631,7 +631,13 @@
         var sum = $('czg-writes-sum');
         var U = UIkit();
         var rows = [];
-        if (S.check && S.check.pairs) {
+        var made = S.phase === 'done' && S.created;
+        var title = $('czg-writes-title');
+        if (title) title.textContent = made ? 'What was written' : 'What will be written';
+        if (made) {
+            // the objects the create wrote, from its answer: never a plan after Create
+            (S.created.created || []).forEach(function (c) { rows.push({ pair: c.pair, ok: true, paths: c.paths || [], why: '' }); });
+        } else if (S.check && S.check.pairs) {
             S.check.pairs.forEach(function (p) {
                 var v = p.verdict || {};
                 rows.push({ pair: p.pair, ok: !!v.allowed, paths: p.paths || [], why: v.allowed ? '' : (v.reason || 'no verdict from the server') });
@@ -643,8 +649,8 @@
         }
         var n = rows.reduce(function (a, r) { return a + (r.ok ? r.paths.length : 0); }, 0);
         if (sum) sum.textContent = n ? n + (n === 1 ? ' object' : ' objects') : 'nothing yet';
-        if (!n) { host.appendChild(el('p', 'ui-text-quiet', 'Nothing will be written yet.')); }
-        else host.appendChild(el('p', 'ui-text-quiet', syncLine((S.check && S.check.sync) || S.data.sync)));
+        if (!n) { host.appendChild(el('p', 'ui-text-quiet', made ? 'Nothing was written.' : 'Nothing will be written yet.')); }
+        else if (!made) host.appendChild(el('p', 'ui-text-quiet', syncLine((S.check && S.check.sync) || S.data.sync)));
         rows.forEach(function (r) {
             var grp = el('div', 'ui-field-stack');
             grp.setAttribute('data-czg-writes-pair', r.pair);
@@ -689,14 +695,8 @@
         return m;
     }
     var CELL_TONE = { warn: 'ui-cell--warn', danger: 'ui-cell--danger' };
-    /* The lane key of an intent row: the plan's own channel for that slot
-       (the row's channel may be words such as "the coupler of pair X"). */
-    function laneKeyOf(r, pair) {
-        var pp = ((S.plan && S.plan.pairs) || []).filter(function (x) { return x.pair === pair; })[0];
-        var op = pp && pp.operations && pp.operations[r.field];
-        var ch = (op && op.channel) || r.channel || '';
-        return String(ch).indexOf('coupler ') === 0 ? String(ch).slice(8) : ch;
-    }
+    /* The lane key of an intent row comes from the server (row.lane_key). */
+    function laneKeyOf(r) { return r.lane_key || ''; }
     function renderIntent(rows, tl, pair) {
         var host = clear($('czg-intent'));
         var sum = $('czg-intent-sum');
@@ -726,8 +726,8 @@
         Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
             var r = rows[k], tds = tr.children, tones = r.tones || {};
             // the plan names a coupler line "coupler <element>"; the lane key is the element
-            var ck = laneKeyOf(r, pair);
-            var dot = el('span', 'ui-line-dot ui-line-' + (lines[ck] || lines[r.channel] || 1));
+            var ck = laneKeyOf(r);
+            var dot = el('span', 'ui-line-dot ui-line-' + (lines[ck] || 1));
             dot.setAttribute('aria-hidden', 'true');
             tds[0].insertBefore(dot, tds[0].firstChild);
             if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
@@ -789,7 +789,10 @@
         var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
         var np = list.filter(function (c) { return c.state === 'pass'; }).length;
         var ns = list.length - nf - np;
-        if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
+        var oc = p.outcome;
+        if (sum && oc && oc.kind !== 'none') sum.textContent = oc.failed.length ? oc.failed.length + ' failed, ' + oc.passed + ' passed'
+            : oc.passed + ' of ' + oc.total + ' passed' + (oc.not_run.length ? ', ' + oc.not_run.length + ' could not run' : '');
+        else if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
         var ranNot = cs.some(function (c) { return c.name === 'ops' && c.status === 'fail'; });
         var pv = p.previews_skipped || [];
         if (pv.length && !ranNot) {
@@ -878,11 +881,13 @@
         }
         renderPairSwitch();
     }
-    function checkCounts(list) {
-        var passed = 0, skipped = 0;
-        list.forEach(function (p) { (p.checks || []).forEach(function (c) {
-            if (c.status === 'skipped') skipped++; else if (c.status === 'pass' || c.status === 'note') passed++; }); });
-        return { passed: passed, skipped: skipped };
+    /* What the checks that ran came to, in the server's words (one judgement
+       for the banner, the summary and the record): "every check passed." or
+       "5 checks passed, 1 could not run: preview comparison (why)." */
+    function outcomeLine(ok, many) {
+        var part = ok.filter(function (x) { return x.outcome && x.outcome.kind === 'partly'; });
+        if (!part.length) return 'every check passed.';
+        return part.map(function (x) { return (many ? x.pair + ': ' : '') + x.outcome.summary; }).join(' ');
     }
     function renderCheck() {
         var c = S.check;
@@ -917,12 +922,16 @@
                 named + ' You can still create ' + (unv.length === 1 && !many ? 'it' : 'them') + '; the record says '
                 + (unv.length === 1 ? 'it was' : 'they were') + ' not checked.'), 'verdict');
         } else {
-            var counts = checkCounts(ok);
+            var line = outcomeLine(ok, many);
             alertBox(banner('ok', many ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
-                'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and '
-                + (counts.skipped ? counts.passed + (counts.passed === 1 ? ' check passed, ' : ' checks passed, ') + counts.skipped
-                   + (counts.skipped === 1 ? ' was' : ' were') + ' not run.' : 'every check passed.')), 'verdict');
+                line === 'every check passed.'
+                    ? 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'
+                    : 'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip. '
+                      + line.charAt(0).toUpperCase() + line.slice(1)), 'verdict');
         }
+        // a stacked dialog has the banner above the form: bring it into view
+        var al = $('czg-alert');
+        if (al && al.scrollIntoView) { try { al.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ } }
         S.phase = ok.length ? 'create' : 'check';
         S.checkSig = c.plan_sig;
         var verified = ok.length && ok.every(function (x) { return x.verdict.state === 'verified'; });
@@ -1066,6 +1075,7 @@
         var slot = $('czg-status-slot');
         if (!slot) return;
         slot.textContent = '';
+        var many = created.length > 1;
         created.forEach(function (c) {
             var holder = el('div');
             holder.setAttribute('data-czg-status-for', c.pair + '/' + c.gate);
@@ -1075,6 +1085,12 @@
                 .then(function (html) {
                     if (S !== g) return;
                     holder.innerHTML = html;
+                    var row = many && holder.querySelector('.gate-status-row');
+                    if (row) {
+                        var tag = el('span', 'ui-chip', c.pair);
+                        tag.setAttribute('data-czg-status-pair', c.pair);
+                        row.insertBefore(tag, row.firstChild);
+                    }
                     if (window.htmx && window.htmx.process) { try { window.htmx.process(holder); } catch (e) { /* static row */ } }
                 }).catch(function () {
                     if (S !== g) return;
@@ -1112,6 +1128,7 @@
         var cancel = $('czg-cancel');
         if (cancel) cancel.hidden = true;
         say(SYNC_WORDS[word]);
+        renderWrites();
         refresh();
         if (word === 'writing') watchSync(S, skip, sync, true, 40);
         loadStatusRows(S, j.created || []);

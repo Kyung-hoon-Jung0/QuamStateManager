@@ -67,6 +67,7 @@ def _why_not_checked(result: dict, entry: dict | None) -> str:
 def may_create(result: dict | None, entry: dict | None, *, gate_class: Any,
                layout: Any) -> tuple[bool, str, str]:
     """``(allowed, state, reason)`` (see the module docstring)."""
+    from quam_state_manager.core.gate_check_log import KIND_CHECKED, KIND_PARTLY, outcome
     result = result or {}
     known = layout == "known" and gate_class in GATE_CLASSES
     if entry is not None:
@@ -75,8 +76,8 @@ def may_create(result: dict | None, entry: dict | None, *, gate_class: Any,
             return False, NOT_CHECKED, bad
     if result.get("status") == "invalid-create":
         return False, NOT_CHECKED, str(result.get("error") or "The write would be refused.")
-    ran = bool(entry and entry.get("ran"))
-    if result.get("status") == "ok" and result.get("checked") and ran:
+    # the gate ran and what ran passed: a check that could not run is not a failure
+    if outcome(result, entry)["kind"] in (KIND_CHECKED, KIND_PARTLY):
         return True, VERIFIED, ""
     why = _why_not_checked(result, entry)
     if known:

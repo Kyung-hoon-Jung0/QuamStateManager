@@ -1,0 +1,244 @@
+{
+ "_about": "One shared set of gate check results and the outcome each comes to; read by tests/test_gate_check_log.py and tests/cz_gate_dialog_selfcheck.cjs.",
+ "cases": {
+  "checked": {
+   "outcome": {
+    "failed": [],
+    "kind": "checked",
+    "not_run": [],
+    "passed": 6,
+    "reason": null,
+    "summary": "every check passed.",
+    "total": 6
+   },
+   "reasons": {},
+   "result": {
+    "checked": true,
+    "error": null,
+    "gates": [
+     {
+      "checks": {
+       "length": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "load_config": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "ops": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "preview": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "range": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "timeline": {
+        "message": "Passed.",
+        "status": "pass"
+       }
+      },
+      "gate": "cz_sq",
+      "pair": "q1-q2",
+      "partly_checked": [],
+      "ran": true,
+      "timeline": null,
+      "unchecked": []
+     }
+    ],
+    "status": "ok",
+    "why_not_checked": null
+   }
+  },
+  "failed": {
+   "outcome": {
+    "failed": [
+     {
+      "check": "range",
+      "label": "output range check",
+      "reason": "The pulse leaves the output range."
+     }
+    ],
+    "kind": "failed",
+    "not_run": [],
+    "passed": 0,
+    "reason": "The pulse leaves the output range.",
+    "summary": "1 of 6 checks failed: output range check.",
+    "total": 6
+   },
+   "reasons": {},
+   "result": {
+    "checked": true,
+    "error": null,
+    "gates": [
+     {
+      "checks": {
+       "length": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "load_config": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "ops": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "preview": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "range": {
+        "message": "The pulse leaves the output range.",
+        "status": "fail"
+       },
+       "timeline": {
+        "message": "Passed.",
+        "status": "pass"
+       }
+      },
+      "gate": "cz_sq",
+      "pair": "q1-q2",
+      "partly_checked": [],
+      "ran": true,
+      "timeline": null,
+      "unchecked": []
+     }
+    ],
+    "status": "ok",
+    "why_not_checked": null
+   }
+  },
+  "none": {
+   "outcome": {
+    "failed": [],
+    "kind": "none",
+    "not_run": [],
+    "passed": 0,
+    "reason": "No Python environment is selected.",
+    "summary": "Not checked with the lab's code: no Python environment is selected.",
+    "total": 6
+   },
+   "reasons": {},
+   "result": {
+    "checked": false,
+    "error": null,
+    "gates": [
+     {
+      "checks": {
+       "length": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       },
+       "load_config": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       },
+       "ops": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       },
+       "preview": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       },
+       "range": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       },
+       "timeline": {
+        "message": "Not checked: no environment is selected.",
+        "status": "skipped"
+       }
+      },
+      "gate": "cz_sq",
+      "pair": "q1-q2",
+      "partly_checked": [],
+      "ran": false,
+      "timeline": null,
+      "unchecked": [
+       "load_config",
+       "ops",
+       "length",
+       "preview",
+       "timeline",
+       "range"
+      ]
+     }
+    ],
+    "status": "no-env",
+    "why_not_checked": "No Python environment is selected."
+   }
+  },
+  "partly": {
+   "outcome": {
+    "failed": [],
+    "kind": "partly",
+    "not_run": [
+     {
+      "check": "preview",
+      "label": "preview comparison",
+      "reason": "no preview for this pulse class"
+     }
+    ],
+    "passed": 5,
+    "reason": "preview comparison (no preview for this pulse class)",
+    "summary": "5 checks passed, 1 could not run: preview comparison (no preview for this pulse class).",
+    "total": 6
+   },
+   "reasons": {
+    "preview": "no preview for this pulse class"
+   },
+   "result": {
+    "checked": true,
+    "error": null,
+    "gates": [
+     {
+      "checks": {
+       "length": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "load_config": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "ops": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "preview": {
+        "message": "No preview was given to compare.",
+        "status": "skipped"
+       },
+       "range": {
+        "message": "Passed.",
+        "status": "pass"
+       },
+       "timeline": {
+        "message": "Passed.",
+        "status": "pass"
+       }
+      },
+      "gate": "cz_sq",
+      "pair": "q1-q2",
+      "partly_checked": [],
+      "ran": true,
+      "timeline": null,
+      "unchecked": [
+       "preview"
+      ]
+     }
+    ],
+    "status": "ok",
+    "why_not_checked": null
+   }
+  }
+ }
+}

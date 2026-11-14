@@ -627,8 +627,13 @@ def api_cz_gate_check():
         tl = gate_timeline_view.timeline_data(entry, control=src.get("control"),
                                               target=src.get("target"),
                                               coupler_elements=[c for c in couplers if c])
+        skips = skipped_by.get(pid) or []
+        oc = gate_check_log.outcome(res, entry, reasons=(
+            {"preview": "no preview for this pulse class"}
+            if skips and all("pulse class" in t for t in skips) else {}))
         out_pairs.append({
             "pair": pid, "gate": body["gate_name"], "ok": True, "refusals": [],
+            "outcome": oc,
             "checks": [{"name": k, "status": v.get("status"), "message": v.get("message")}
                        for k, v in ((entry or {}).get("checks") or {}).items()],
             "unchecked": (entry or {}).get("unchecked") or [],
@@ -639,13 +644,8 @@ def api_cz_gate_check():
             "verdict": {"allowed": allowed, "state": state, "reason": reason,
                         "headline": headline(entry, tl, reason)}})
         verdicts[pid] = {"allowed": allowed, "state": state, "reason": reason}
-        # what the check record needs: "checked" only when the lab ran every check of THIS gate
-        full = bool(res and res.get("status") == "ok" and res.get("checked") and entry
-                    and entry.get("ran") and not entry.get("unchecked") and not entry.get("partly_checked")
-                    and not any((c or {}).get("status") == "fail" for c in (entry.get("checks") or {}).values()))
-        checks_by[pid] = {"all_checked": full,
-                          "why_not_checked": None if full else (reason or (res or {}).get("why_not_checked")
-                                                                or "not every check ran")}
+        # the check record reads the same outcome the dialog showed
+        checks_by[pid] = oc
         sigs[pid] = _creates_sig(p)
     seq = (res or {}).get("seq")
     tok = _remember({"store_id": chip_copy.store_id(store),
@@ -748,6 +748,7 @@ def api_cz_gate_create():
             rec = gate_check_log.record_check(R._history(), ctx["path"], store.merged, pid,
                                               body["gate_name"], (tok.get("checks") or {}).get(pid))
             created.append({"pair": pid, "gate": body["gate_name"], "state": v.get("state"),
+                            "outcome": (tok.get("checks") or {}).get(pid),
                             "reason": v.get("reason") or "",
                             "record": rec.get("entry", {}).get("result") if rec.get("ok") else None,
                             "record_error": None if rec.get("ok") else rec.get("error"),

@@ -120,3 +120,11 @@ def test_a_negative_scale_marks_the_cell_that_really_breaks_and_zero_plays_zero(
     e["timeline"]["rows"][0].update(samples=[0.0, 3.0], scale=0.0)
     (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 3.0}), e)
     assert r["tones"]["max"] is None and r["tones"]["min"] is None
+
+
+def test_lane_key_is_the_timeline_element_never_the_words():
+    rows = [{"operation": "op_c", "element": "c12"}]
+    assert gi.lane_key({"key": "op_c", "channel": "the coupler of pair q1-q2"}, rows) == "c12"
+    assert gi.lane_key({"key": "op_c", "channel": "the coupler of pair q1-q2"}, []) is None
+    assert gi.lane_key({"key": "op_x", "channel": "coupler c34"}, rows) == "c34"
+    assert gi.lane_key({"key": "op_q", "channel": "q1.z"}, []) == "q1.z"

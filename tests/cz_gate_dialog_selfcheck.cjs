@@ -50,6 +50,7 @@ const { window } = dom;
 const doc = window.document;
 const sent = [];
 const queue = { plan: [], check: [], create: [] };
+const OUTCOME_CASES = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'fixtures', 'gate_outcome_cases.json'), 'utf8')).cases;
 let hold = null;                    // a pending check the test resolves itself
 let holdCreate = null;
 let failDialog = false;
@@ -97,7 +98,7 @@ function checkOk(body, opts) {
                  checks: [{ name: 'range', status: 'pass', message: 'Inside the output range.' }],
                  timeline: { lanes: [{ key: 'q1.z', segments: [] }], notes: [], cannot_draw: null },
                  tiles: [{ key: 'peak', label: 'Highest level', value: '0.1903', unit: 'V', note: 'on q1.z', tone: 'neutral' }],
-                 intent: [{ field: 'flux_pulse_qubit', operation: 'op_' + p, channel: 'q1.z',
+                 intent: [{ field: 'flux_pulse_qubit', operation: 'op_' + p, channel: 'q1.z', lane_key: 'q1.z',
                             intended: { length: 100, length_source: 'default', amplitude: 0.2, amplitude_source: 'given' },
                             actual: { length_ns: 100, max_v: 0.18, min_v: 0, scale: 1 },
                             differs: { length: false, amplitude: true }, tones: { length: null, amplitude: 'warn' }, why: ['The class shapes the waveform.'] }],
@@ -110,7 +111,7 @@ window.fetch = (url, opt) => {
     if (String(url).indexOf('/pulse/cz-gate/status') === 0) {
         const q = new URLSearchParams(String(url).split('?')[1]);
         statusAsked.push(q.get('pair') + '/' + q.get('gate'));
-        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('<div class="gate-status" data-row="' + q.get('pair') + '">row</div>') });
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('<div class="gate-status" data-row="' + q.get('pair') + '"><div class="gate-status-row"><code class="ui-chip">' + q.get('gate') + '</code></div></div>') });
     }
     if (String(url).indexOf('/state/drift') === 0) {
         const nx = driftSeq.length ? driftSeq.shift() : { state: driftState, unapplied: 0 };
@@ -281,6 +282,11 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok($('#czg-status-slot').querySelectorAll('.gate-status').length === 2 && $('#czg-status-slot .gate-status[data-row="q1-2"]') && $('#czg-status-slot .gate-status[data-row="q2-3"]')
        && statusAsked.length === 2,
        'after Create the status slot shows the status slice\'s own row for the created gate');
+    ok($('#czg-writes-title').textContent === 'What was written' && !/not written/.test($('#czg-writes').textContent)
+       && $('#czg-writes [data-czg-writes-pair="q1-2"]') && $('#czg-writes [data-czg-writes-pair="q2-3"]'),
+       'after Create the panel is What was written, from the create answer, both pairs, no re-plan');
+    ok([...doc.querySelectorAll('#czg-status-slot .gate-status-row')].map((r) => r.firstElementChild.getAttribute('data-czg-status-pair')).join() === 'q1-2,q2-3',
+       'two created gates: each status row starts with its pair');
     ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close' && !$('#czg-form').contains(doc.activeElement), 'after create: Open the pair and Close; the focus is not left in the hidden form');
     prim().click();
     await settle();
@@ -601,10 +607,26 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
        && !/Reason p5/.test(alertText()) && /And 1 more\./.test(alertText()), 'mixed: the button counts, the banner names three reasons then "And 1 more."');
     type($('#czg-name'), 'cz_r12b');
     await settle();
-    queue.check.push((b) => { const j = checkOk(b); j.pairs[0].checks.push({ name: 'preview', status: 'skipped', message: 'Not checked: no preview.' }); return j; });
-    prim().click();
-    await settle();
-    ok(/1 check passed, 1 was not run\./.test(alertText()) && !/every check passed/.test(alertText()), 'a skipped check: "1 check passed, 1 was not run.", never "every check passed"');
+    // the shared cases: the banner and the summary read the server's outcome
+    for (const name of ['partly', 'checked']) {
+        const cs = OUTCOME_CASES[name];
+        if (name !== 'partly') { type($('#czg-name'), 'cz_oc_' + name); await settle(); }
+        const scrolled = [];
+        window.HTMLElement.prototype.scrollIntoView = function () { scrolled.push(this.id); };
+        queue.check.push((b) => { const j = checkOk(b); j.pairs.forEach((x) => { x.outcome = cs.outcome;
+            x.checks = Object.entries(cs.result.gates[0].checks).map(([n, c]) => ({ name: n, status: c.status, message: c.message })); }); return j; });
+        prim().click();
+        await settle();
+        if (name === 'partly') {
+            ok(/Ready to create/.test(alertText()) && /5 checks passed, 1 could not run: preview comparison \(no preview for this pulse class\)\./.test(alertText())
+               && !/every check passed/.test(alertText()) && !/not checked/i.test(alertText()), 'shared case partly: 5 passed, 1 could not run, with the reason; never every check passed');
+            ok(/^5 of 6 passed, 1 could not run$/.test($('#czg-checks-sum').textContent), 'shared case partly: the summary counts 5 of 6, 1 could not run');
+            ok(prim().textContent === 'Create gate', 'shared case partly: it may be created');
+            ok(scrolled.indexOf('czg-alert') >= 0, 'after a check answer the banner is scrolled into view (stacked: it sits above the form)');
+        } else {
+            ok(/every check passed/.test(alertText()) && /^6 of 6 passed$/.test($('#czg-checks-sum').textContent), 'shared case checked: every check passed, 6 of 6');
+        }
+    }
     // E a value the server refuses goes on its field (mutation: splitRefusals returns every refusal as rest)
     queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = ['flux_pulse_qubit.amplitude: Type a number.']; return j; });
     type($('#czg-name'), 'cz_r12c');
@@ -651,7 +673,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     queue.check.push((b) => { const j = checkOk(b); const p0 = j.pairs[0];
         p0.timeline.lanes = [{ key: 'q1.z', segments: [], color_index: 0 }, { key: 'c12', segments: [], color_index: 1 }];
-        p0.intent = p0.intent.concat([Object.assign({}, p0.intent[0], { field: 'coupler_flux_pulse', operation: 'op_c', channel: 'the coupler of pair q1-2' })]); return j; });
+        p0.intent = p0.intent.concat([Object.assign({}, p0.intent[0], { field: 'coupler_flux_pulse', operation: 'op_c', channel: 'the coupler of pair q1-2', lane_key: 'c12' })]); return j; });
     window.CzGate.state().plan.pairs[0].operations.coupler_flux_pulse = { key: 'op_c', channel: 'coupler c12' };
     prim().click();
     await settle();
