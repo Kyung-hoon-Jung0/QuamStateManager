@@ -1025,9 +1025,13 @@
           var target = (info.resolved && info.resolved !== python)
             ? info.resolved : python;
           selectEnv(target);
+          // the same versions a discovered env row shows
+          var v = info.versions || {};
+          var vers = " (qualang_tools " + (v.qualang_tools || "?") +
+            " · quam_builder " + (v.quam_builder || "?") + " · quam " + (v.quam || "?") + ")";
           if (status) status.textContent = (target !== python)
-            ? ("✓ QM stack found — selected " + target)
-            : "✓ QM stack found — selected.";
+            ? ("✓ QM stack found" + vers + " — selected " + target)
+            : "✓ QM stack found" + vers + " — selected.";
         } else {
           var miss = (info && info.missing || []).join(", ");
           if (status) status.textContent = info && info.error
@@ -4013,8 +4017,9 @@
   // A typed box that is not a pin, keyed element|line -> the text typed, so a
   // re-render keeps showing (and flagging) what the user typed.
   var _pinBad = {};
-  // resonator elements whose Pin box value was written by a feedline card
-  var _pinFromCard = Object.create(null);
+  // resonator elements whose pin the user typed in the Pin box; any other
+  // resonator pin on a feedline came from the feedline card
+  var _pinTyped = Object.create(null);
   var PIN_HINT = "con/slot/port, e.g. con1/1/2 or 1/1/2 — slot 1–8, port 1–8";
   function escapeAttr(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -4256,7 +4261,7 @@
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
         escapeAttr(pin) + '">' +
-        (pin && ln.line === "resonator" && _pinFromCard[ln.element]
+        (pin && ln.line === "resonator" && ln.group && !_pinTyped[ln.element]
           ? ' <span class="ui-badge gen-pin-from-card" title="Set by the ' + escapeAttr(ln.group || "feedline") +
             ' card; type a pin to set it here">from the feedline</span>' : "") +
         "</td></tr>";
@@ -4309,8 +4314,8 @@
     if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
     var before = JSON.stringify(ln.channel || null);
     ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
-    if (ln.line === "resonator" && _pinFromCard[ln.element]) {
-      delete _pinFromCard[ln.element];
+    if (ln.line === "resonator" && !_pinTyped[ln.element]) {
+      _pinTyped[ln.element] = true;
       var badge = tr.querySelector(".gen-pin-from-card");
       if (badge) badge.remove();
     }
@@ -5667,9 +5672,9 @@
     roLines().forEach(function (ln) { was[ln.element] = JSON.stringify(ln.channel || null); });
     var changed = fn();
     if (changed === false) return false;
-    // a pin a card wrote is the feedline's, until the user types one
+    // a card that rewrote a typed pin owns it again
     roLines().forEach(function (ln) {
-      if (was[ln.element] !== JSON.stringify(ln.channel || null)) _pinFromCard[ln.element] = true;
+      if (was[ln.element] !== JSON.stringify(ln.channel || null)) delete _pinTyped[ln.element];
     });
     _wizPushRestore(label, restore);
     state.wiringTouched = true;
@@ -6294,7 +6299,7 @@
   function resetAllocRuntime() {
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
-    _pinFromCard = Object.create(null);
+    _pinTyped = Object.create(null);
     _allocRunSeq++;
     // a stranded run never answers: its "Checking wiring" must not outlive it
     var st = _allocInFlight && document.getElementById("gen-allocate-status");
@@ -9857,7 +9862,9 @@
         output.textContent = message; output.hidden = !message;
         grid.querySelectorAll("input").forEach(function (el) {
           el.classList.toggle("gen-cell-err", !!message);
-          el.setAttribute("aria-invalid", message ? "true" : "false");
+          // "false" would paint a valid mark on an empty optional field
+          if (message) el.setAttribute("aria-invalid", "true");
+          else el.removeAttribute("aria-invalid");
         });
       }
       section.appendChild(grid); host.appendChild(section); updateError();
@@ -10527,8 +10534,8 @@
   function autoScriptsPath(outPath) {
     var p = unquotePath(outPath);
     if (!p) return "";
-    var win = /\\/.test(p) || /^[A-Za-z]:/.test(p);
-    var sep = win ? "\\" : "/";
+    // the separator the user typed: "D:/x" stays forward-slashed
+    var sep = /\\/.test(p) ? "\\" : "/";
     p = p.replace(/[\\/]+$/, "");
     return p + sep + "state_gen_scripts";
   }
@@ -14037,6 +14044,7 @@
       assignReadout: assignReadout,
       setFeedlineOutput: setFeedlineOutput,
       PIN_HINT: PIN_HINT,
+      useCustomEnv: useCustomEnv,
       runAutoAllocate: runAutoAllocate,
       resetAllocRuntime: resetAllocRuntime,
       POP_COUPLER_ONLY_PAIR_COLS: POP_COUPLER_ONLY_PAIR_COLS,

@@ -48,7 +48,10 @@ async function world(answer) {
   const calls = [];
   win.fetch = function (url, opts) {
     calls.push(url);
-    if (answer && url === '/generate/allocate' && calls.filter(u => u === url).length === 1) {
+    if (answer && answer[url] !== undefined) {
+      return win.Promise.resolve({ json: function () { return win.Promise.resolve(answer[url]); } });
+    }
+    if (answer && answer.ok && url === '/generate/allocate' && calls.filter(u => u === url).length === 1) {
       return win.Promise.resolve({ json: function () { return win.Promise.resolve(answer); } });
     }
     return new win.Promise(function () {});   // later runs never answer
@@ -190,6 +193,32 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     ok(note && !note.hidden && /no qubit has a flux line/.test(note.textContent) &&
        /Qubit pairs, 2Q gates/.test(note.textContent) && !/Change line types/.test(note.textContent),
        'W7 coupler-only note: ' + (note && note.textContent));
+    // W8: empty optional coupler-model fields carry no "valid" mark
+    const fields = Array.from(w.doc.querySelectorAll('input[data-field]'))
+      .filter(el => el.closest('#gen-pop-sec-pairs, #table-pane') && /coupler|flux|coupling|source/i.test(el.dataset.field));
+    ok(fields.length > 0, 'W8 setup: coupler-model inputs rendered');
+    ok(fields.every(el => el.getAttribute('aria-invalid') !== 'false'),
+       'W8 no coupler-model field says aria-invalid="false"');
+  }
+
+  // W9: the scripts folder keeps the separator the user typed
+  {
+    const w = await world(null);
+    const T = w.T;
+    ok(T.autoScriptsPath('D:/x/quam_state') === 'D:/x/quam_state/state_gen_scripts', 'W9 forward slashes stay: ' + T.autoScriptsPath('D:/x/quam_state'));
+    ok(T.autoScriptsPath('D:\\x\\quam_state') === 'D:\\x\\quam_state\\state_gen_scripts', 'W9 backslashes stay');
+  }
+
+  // W10: a custom interpreter that probes usable shows its package versions
+  {
+    const w = await world({ '/generate/probe': { usable: true,
+      versions: { qualang_tools: '0.24.0', quam_builder: '0.6.0', quam: '0.6.0' } } });
+    w.doc.getElementById('gen-env-custom-path').value = 'C:/some/venv/python.exe';
+    w.T.useCustomEnv();
+    await tick(w.win); await tick(w.win);
+    const st = w.doc.getElementById('gen-env-custom-status').textContent;
+    ok(/qualang_tools 0\.24\.0/.test(st) && /quam_builder 0\.6\.0/.test(st) && /quam 0\.6\.0/.test(st),
+       'W10 custom interpreter status names the versions: ' + st);
   }
 
   console.log(fails ? fails + ' FAILED of ' + asserts : 'all checks passed (' + asserts + ' assertions)');
