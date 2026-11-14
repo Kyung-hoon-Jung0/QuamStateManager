@@ -237,6 +237,7 @@
     --ui-opxmon-alarm-max-width: 38vw;
     --ui-opxmon-health-max-width: 22rem;
     --ui-opxmon-owner-clip-max: 22rem;
+    --ui-opxmon-state-min: 13rem;
     --ui-opxmon-legend-font: 0.9rem;
     --ui-opxmon-note-space: 0.2rem;
     --ui-opxmon-full-width: 100%;
@@ -648,7 +649,8 @@
 .ui-opxmon-alarm-slot {display:flex; align-items:center; gap:var(--ui-gap-2); min-width:0; max-width:var(--ui-opxmon-alarm-max-width)}
 .ui-opxmon-alarm-slot .ui-opxmon-health {overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-health-max-width)}
 /* One clipped-text rule for the top bar text and long owner-marker texts: cut with an ellipsis, full text on hover (title). */
-.ui-opxmon-owner-marker .ui-opxmon-owner-clip {display:inline-block; vertical-align:bottom; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:min(100%, var(--ui-opxmon-owner-clip-max))}
+.ui-opxmon-owner-marker .ui-opxmon-owner-clip {display:inline-block; vertical-align:bottom; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; max-width:var(--ui-opxmon-owner-clip-max)}
+.ui-opxmon-table--stacked .ui-opxmon-owner-marker .ui-opxmon-owner-clip {max-width:min(var(--ui-opxmon-owner-clip-max), 70vw)}
 .ui-opxmon-alarm-slot .ui-opxmon-alarm-badge {flex-shrink:0; white-space:nowrap}
 .ui-opxmon-alarm-slot > a {margin:0}
 
@@ -677,7 +679,9 @@
 .ui-opxmon-danger { overflow-wrap: anywhere; }
 .ui-opxmon-fem-temp { white-space: nowrap; }
 .ui-opxmon-health-dot { display: inline; }
-.ui-opxmon-qm-row { overflow-wrap: anywhere; }
+.ui-opxmon-qm-row { overflow-wrap: break-word; }
+.ui-opxmon-qm-state { width: var(--ui-opxmon-state-min); min-width: var(--ui-opxmon-state-min); }
+.ui-opxmon-table--stacked .ui-opxmon-qm-state { width: auto; min-width: 0; }
 .ui-opxmon-section-age { overflow-wrap: anywhere; }
 .ui-opxmon-sentence { overflow-wrap: anywhere; }
 .ui-opxmon-version { overflow-wrap: anywhere; }

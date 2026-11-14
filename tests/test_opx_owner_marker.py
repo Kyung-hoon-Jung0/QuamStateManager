@@ -475,4 +475,17 @@ def test_long_owner_texts_clip_with_the_full_text_on_hover(env, marker_home):
     rule = re.search(r"\.ui-opxmon-owner-marker \.ui-opxmon-owner-clip \{([^}]*)\}", css)
     assert rule and "text-overflow:ellipsis" in rule.group(1) and "white-space:nowrap" in rule.group(1)
     assert "var(--ui-opxmon-owner-clip-max)" in rule.group(1), "a long text cannot widen the table"
+    assert "100%" not in rule.group(1), "a percentage cap is ignored by the table min-content width"
     assert "overflow-wrap: anywhere" not in css.split(".ui-opxmon-owner-marker {", 1)[1].split("}", 1)[0]
+
+
+def test_qm_row_keeps_whole_words_so_the_state_column_cannot_collapse():
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager/web/static/ui-kit.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.ui-opxmon-qm-row\s*\{([^}]*)\}", css).group(1)
+    assert "anywhere" not in rule
+    state = re.search(r"\n\.ui-opxmon-qm-state\s*\{([^}]*)\}", css).group(1)
+    assert re.search(r"(?<![-\w])width: var\(--ui-opxmon-state-min\)", state), "table cells ignore min-width alone"
+    assert "min-width: var(--ui-opxmon-state-min)" in state
+    root = Path(__file__).resolve().parents[1] / "quam_state_manager/web/templates"
+    for name in ("_opx_monitor_body.html", "_opx_qm_table.html"):
+        assert 'data-label="State" class="ui-table-cell ui-opxmon-qm-state"' in (root / name).read_text(encoding="utf-8")

@@ -7,7 +7,7 @@
   <tbody>{% for q in qms %}{% set qs = qm_states[q.id] %}
     <tr class="ui-opxmon-qm-row" data-qm-id="{{ q.id }}">
       <td data-label="QM" class="ui-table-cell"><code class="ui-chip">{{ q.id }}</code></td>
-      <td data-label="State" class="ui-table-cell"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div>{% if actions %}<div class="ui-text-quiet">jobs: {{ qs.jobs }}</div>{% endif %}</td>
+      <td data-label="State" class="ui-table-cell ui-opxmon-qm-state"><span class="ui-text-strong">{{ qs.fact }}</span><div class="ui-text-quiet">{{ qs.basis }}{% if idle_states[q.id].idle %} &middot; idle{% endif %}</div>{% if actions %}<div class="ui-text-quiet">jobs: {{ qs.jobs }}</div>{% endif %}</td>
       <td data-label="Owner" class="ui-table-cell">{{ owner_cell(owners[q.id], pc_names, this_tag) }}</td>
       <td data-label="FEMs" class="ui-table-cell">{{ (q.ports or []) | join(', ') or 'unknown' }}</td>
       {%- if actions %}
