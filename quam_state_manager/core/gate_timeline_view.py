@@ -143,6 +143,8 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
     out = [lanes[e] for e in order]
     for i, ln in enumerate(out):
         ln["color_index"] = i          # the lane's identity colour (block, lane, table dot)
+        if ln["group"] == "gate":
+            ln["color"] = i            # the timeline component draws this index
     return {"lanes": out, "notes": notes, "cannot_draw": None}
 
 

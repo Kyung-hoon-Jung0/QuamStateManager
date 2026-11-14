@@ -448,7 +448,8 @@
             host.appendChild(note('Chart not loaded. The checks and the table below still hold.'));
             return;
         }
-        try { S.handle = window.GateTimeline.render(host, tl, {}); }
+        clear($('czg-chart-tools'));
+        try { S.handle = window.GateTimeline.render(host, tl, { toolbarHost: $('czg-chart-tools') }); }
         catch (e) { clear(host).appendChild(note('Chart not loaded: ' + e)); }
     }
     function lineOfChannel(tl) {
