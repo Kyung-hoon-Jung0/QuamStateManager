@@ -1432,11 +1432,16 @@ def operations(doc, conversions=None, unavailable=None):
                         untrusted_samples = untrusted_samples or wave_reason.startswith("waveform_I holds")
                         iq_samples = iq_samples or wave_reason.startswith("waveform_Q")
                     else:
-                        notes.append(f"{info['name']}: the pulse amplitude cannot be read: {amp_path} is missing or not a number")
+                        notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
                     notes.append(f"{info['name']}: the macro's copy says {local_amp:g} V; the qubit plays {amp:g} V")
                 pt = ({"frequency_hz": None, "reason": refusal} if refusal else
                       conv.point(amp) if conv else {"frequency_hz": None, "reason": "qubit not found"})
+                if amp is None and not refusal and pt.get("reason") == "the operation amplitude is missing":
+                    # f_01 is present: name the leaf that could not be read, never blame f_01
+                    pt["reason"] = unreadable_amplitude({"amplitude_path": amp_path, "pulse_path": pulse_path,
+                                                         "waveform_reason": wave_reason and
+                                                         "not derivable for WaveformPulse: " + wave_reason})
                 lines.append({"role": role, "name": info["name"], "qubit_path": info["path"],
                               "moves": True if routing_reason else bool(field), "refusal": refusal,
                               "pulse_field": field, "pulse_path": pulse_path, "amplitude_path": amp_path,
