@@ -1684,7 +1684,52 @@ def test_copy_from_leaves_an_optional_slot_the_source_does_not_fill_empty():
     assert "coupler_flux_pulse" not in res["operations"]
     s2 = _chip()
     s2["qubit_pairs"]["q1-2"]["macros"]["cz_src"] = cgb._cz_skeleton()
-    assert "needs a pulse" in _plan(s2, copy_from="cz_src", pulses=None)["error"]
+    assert "holds no pulse in flux_pulse_qubit" in _plan(
+        s2, copy_from="cz_src", pulses=None)["error"]
+    assert "needs a pulse" in _plan(s2, pulses={})["error"]
+
+
+def test_copy_from_a_relative_reference_off_the_pair_lines_is_walked():
+    s = _copy_chip("elsewhere")
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]
+    m["flux_pulse_qubit"] = "#../../../../qubits/q3/z/operations/shared"
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert "error" not in res, res
+    op = dict(res["creates"])["qubits.q1.z.operations.cz_new_pulse_q1_q2"]
+    assert op["__class__"] == SQUARE and op["amplitude"] == 0.15
+    assert "shared" not in json.dumps(res["creates"])
+
+
+@pytest.mark.parametrize("held", [None, [], 5, {}, "#/qubits/q9/z/operations/gone",
+                                  "#../../../../../../../above_root", "no_such_op"])
+def test_copy_from_a_source_without_a_usable_pulse_names_the_cause(held):
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]["flux_pulse_qubit"] = held
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    err = " ".join(res["refusals"])
+    assert "cz_src" in err and "flux_pulse_qubit" in err
+    assert "start from another gate" in err
+    assert "coupler-only" not in err
+
+
+def test_copy_from_a_source_without_a_usable_optional_pulse_leaves_it_empty():
+    s = _chip()
+    _op_owned_ref(s, "q1-2", "cz_src")
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_src"]["coupler_flux_pulse"] = "#/nowhere"
+    res = _plan(s, copy_from="cz_src", pulses=None)
+    assert "error" not in res, res
+    assert "coupler_flux_pulse" not in res["operations"]
+
+
+def test_a_dangling_plain_name_does_not_count_as_name_form():
+    s = _dir_fixture(2)
+    for m in s["qubit_pairs"]["q1-2"]["macros"].values():
+        m["coupler_flux_pulse"] = "dangling_name"
+    res = _plan(s, pulses=_both())
+    macro = dict(res["creates"])["qubit_pairs.q1-2.macros.cz_new"]
+    assert macro["flux_pulse_qubit"] == "cz_new_pulse_q1_q2"
+    assert macro["coupler_flux_pulse"].startswith("#/qubit_pairs/q1-2/coupler/operations/")
 
 
 def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
