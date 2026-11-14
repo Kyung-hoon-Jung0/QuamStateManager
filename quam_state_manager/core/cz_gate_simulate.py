@@ -114,7 +114,9 @@ def _shape_ports(ports: Any) -> list:
         try:
             volts = [float(v) for v in p["volts"]]
             con, fem, port = str(p["controller"]), int(p["fem"]), int(p["port"])
-        except (KeyError, TypeError, ValueError):
+            elements = [str(e) for e in p.get("elements") or []]
+            t0 = float(p.get("t0_ns") or 0.0)
+        except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if not volts:
             continue
@@ -126,8 +128,8 @@ def _shape_ports(ports: Any) -> list:
             dt = None
         out.append({"key": f"{con}/{fem}/{port}", "port_text": f"{con} / {fem} / {port}",
                     "controller": con, "fem": fem, "port": port,
-                    "elements": [str(e) for e in p.get("elements") or []],
-                    "kind": p.get("kind"), "t0_ns": float(p.get("t0_ns") or 0.0),
+                    "elements": elements,
+                    "kind": p.get("kind"), "t0_ns": t0,
                     "dt_ns": dt, "time_step_unknown": dt is None, "volts": volts,
                     "decimated": bool(p.get("decimated")),
                     "cut_at_end": bool(p.get("cut_at_end"))})

@@ -220,6 +220,65 @@ def test_build_turns_a_refused_delay_into_a_gate_answer(monkeypatch):
     assert "port delay of q1.z/x" in out["error"] and "finite" in out["error"]
 
 
+def _len_window(length, rows=None):
+    ops = [{"element": "q1.z", "operation": "x", "length": length}]
+    return rgs.sim_length_ns([] if rows is None else rows, ops, 200, 300)
+
+
+@pytest.mark.parametrize("bad", [[1], {}, True, "abc", float("nan"), float("inf"), -4, -8, 40.9, ""])
+def test_sim_length_unreadable_pulse_length_is_refused_naming_the_leaf(bad):
+    with pytest.raises(ValueError, match=r"length of q1\.z/x") as ei:
+        _len_window(bad)
+    assert "invalid literal" not in str(ei.value)
+    with pytest.raises(ValueError, match="length of q1"):
+        _len_window(bad, rows=_rows(500))
+
+
+def test_sim_length_pulse_length_types_and_rounding():
+    import numpy as np
+    # 300 + 200 + length, rounded up to 4
+    assert _len_window(40.0) == _len_window(40) == (540, "sum")
+    assert _len_window("40") == _len_window(np.int64(40)) == _len_window(40) == (540, "sum")
+    assert _len_window(0) == _len_window(None) == (500, "sum")
+
+
+def test_bad_delay_keeps_its_own_message_not_the_length_one():
+    ops = [{"element": "q1.z", "operation": "x", "length": 100, "delay": "abc"}]
+    with pytest.raises(ValueError, match="port delay") as ei:
+        rgs.sim_length_ns([], ops, 200, 300)
+    assert "length of" not in str(ei.value)
+
+
+def test_build_turns_a_refused_length_into_a_gate_answer(monkeypatch):
+    class _Tl:
+        @staticmethod
+        def static_timeline(script, ops):
+            return {"rows": [], "cannot_draw": None}
+    monkeypatch.setattr(rgs.rpw, "_chip_side", lambda *a, **k: (object(), {}, {"cfg": 1}))
+    monkeypatch.setattr(rgs.rpw, "_apply_in_program", lambda m, macro: object())
+    monkeypatch.setattr(rgs.rpw, "_plays", lambda script: ([("q1.z", "x")], [], True))
+    monkeypatch.setattr(rgs.rpw, "op_data", lambda cfg, el, op: {
+        "element": el, "operation": op, "length": [1], "delay": 0})
+    monkeypatch.setattr(rgs, "_static_timeline", lambda: _Tl)
+    import types
+    qm = types.ModuleType("qm")
+    qm.generate_qua_script = lambda prog: ""
+    monkeypatch.setitem(sys.modules, "qm", qm)
+    out = rgs.build({"folder": "f", "macro": "m", "pad_ns": 200, "start_ns": 300})
+    assert out["ok"] is False and out["error_kind"] == "gate"
+    assert "length of q1.z/x" in out["error"]
+    shown = sim.from_status({"state": "done", "result": out}, {})
+    assert shown["state"] == "not_run" and "ports" not in shown and "figure" not in shown
+
+
+@pytest.mark.parametrize("field,val", [("t0_ns", "x"), ("elements", 5), ("t0_ns", [1])])
+def test_malformed_port_entry_is_dropped_others_kept(field, val):
+    good = {"controller": "con1", "fem": 1, "port": 1, "volts": [0.1], "dt_ns": 1.0}
+    bad = dict(good, port=2, **{field: val})
+    shaped = sim._shape_ports([bad, good])
+    assert [p["port"] for p in shaped] == [1]
+
+
 def test_fractional_delay_falls_back_to_sum_and_rounds_up():
     ops = [_tl_op("q1.z", 100, 161.7)]
     rows, why = _tl_rows(ops)

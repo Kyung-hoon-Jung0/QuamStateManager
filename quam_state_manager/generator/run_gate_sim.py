@@ -51,21 +51,15 @@ def _static_timeline():
     return mod
 
 
-def _delay_ns(op) -> int:
-    """The op's port delay in ns, rounded up to a whole ns (a non-whole delay is
-    refused by the timeline, so the sum path is used, and the window must never
-    be shorter than the program). A missing delay (no key, or None) is 0. Any
-    real number type counts (Python or numpy), and so does a string that parses
-    to a number. A boolean, text that is not a number, a non-finite or a
-    negative delay is not readable: ``ValueError`` naming the leaf, never a
-    silent 0."""
-    if not isinstance(op, dict):
-        return 0
-    d = op.get("delay")
-    if d is None:
-        return 0
-    where = "/".join(str(op[k]) for k in ("element", "operation") if op.get(k))
-    leaf = "the port delay" + (f" of {where}" if where else "")
+def _op_where(op) -> str:
+    return "/".join(str(op[k]) for k in ("element", "operation") if op.get(k))
+
+
+def _whole_ns(d, leaf: str) -> int:
+    """*d* as whole ns, rounded up. Any real number type counts (Python or
+    numpy), and so does a string that parses to a number. A boolean, text that
+    is not a number, a non-finite or a negative value is not readable:
+    ``ValueError`` naming *leaf*, never a silent 0."""
     try:
         if isinstance(d, bool):
             raise TypeError("boolean")
@@ -79,6 +73,38 @@ def _delay_ns(op) -> int:
     return math.ceil(v)
 
 
+def _delay_ns(op) -> int:
+    """The op's port delay in ns, rounded up to a whole ns (a non-whole delay is
+    refused by the timeline, so the sum path is used, and the window must never
+    be shorter than the program). A missing delay (no key, or None) is 0; an
+    unreadable one raises ``ValueError`` (see ``_whole_ns``)."""
+    if not isinstance(op, dict):
+        return 0
+    d = op.get("delay")
+    if d is None:
+        return 0
+    where = _op_where(op)
+    return _whole_ns(d, "the port delay" + (f" of {where}" if where else ""))
+
+
+def _length_ns(op) -> int:
+    """The op's pulse length in whole ns; missing (or None) is 0. A whole float
+    (40.0) counts. A list, text that is not a number, a non-whole, non-finite
+    or negative length raises ``ValueError`` naming the leaf, never a silent
+    truncation."""
+    if not isinstance(op, dict):
+        return 0
+    v = op.get("length")
+    if v is None:
+        return 0
+    where = _op_where(op)
+    leaf = "the length of " + where if where else "the pulse length"
+    n = _whole_ns(v, leaf)
+    if n != (float(v.strip()) if isinstance(v, str) else float(v)):
+        raise ValueError(f"{leaf} ({v!r}) is not a whole number of ns")
+    return n
+
+
 def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
     """``(ns, how)``: the program end plus *start_ns* (the simulator's start
     latency) and *pad_ns*, rounded up to 4 ns. With timeline rows the program
@@ -87,13 +113,14 @@ def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
     length plus the largest port delay, an upper bound for a program without
     loops. An unreadable delay raises ``ValueError`` (see ``_delay_ns``)."""
     ends = [int(r.end_ns) for r in rows or []]
+    lengths = [_length_ns(o) for o in ops or []]  # refuses a bad length on both paths
     max_delay = max([_delay_ns(o) for o in ops or []] or [0])
+    lengths = [_length_ns(o) for o in ops or []]  # an unreadable length is refused on both paths
     if ends:
         # each timeline row's end already holds its port delay
         total, how = max(ends), "timeline"
     else:
         # the sum of lengths holds no delay, so the largest one is added here
-        lengths = [int(o.get("length") or 0) for o in ops or [] if isinstance(o, dict)]
         total, how = sum(lengths) + max_delay, "sum"
     ns = total + int(start_ns) + int(pad_ns)
     return -(-ns // 4) * 4, how
