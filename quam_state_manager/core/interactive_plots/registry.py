@@ -196,6 +196,25 @@ def list_interactive_figures(run) -> list[dict]:
              "static": s.kind == "static"} for s in specs]
 
 
+def unmapped_variables_line(run, figures) -> str:
+    """One honest line for a run SM can draw nothing of, naming what it found.
+
+    Empty while the menu holds any tile that is drawn (interactive or a saved
+    image). Otherwise it lists the variables of the run's HDF5 datasets, so the
+    user sees what the run holds instead of an empty area.
+    """
+    if any(f.get("available") for f in (figures or [])):
+        return ""
+    found = []
+    for ds in ("ds_fit", "ds_raw"):
+        probe = h5reader.probe_vars(run, ds) or {}
+        found.extend(f"{v} ({ds[3:]})" for v in sorted(probe.get("vars", {})))
+    if not found:
+        return "SM found no datasets with variables in this run, so there is nothing to draw."
+    return ("SM has no interactive view for the variables of this run: "
+            + ", ".join(found) + ".")
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Bundle-input cache — the figure-build hot path re-read EVERY input file per
 # tile request (ds_raw/ds_fit/ds_iq_blobs fully materialized + node.json +
@@ -277,14 +296,13 @@ def _shapes_of(ds: dict | None) -> dict:
             if isinstance(meta, dict) and "shape" in meta}
 
 
-def build_interactive_figure(run, key: str) -> dict | None:
-    """Full Plotly JSON for one figure key: ``{data, layout, kind, title, clickable}``."""
+def _bundle_of(run):
+    """``(recipe, bundle)`` for a run, from the cached inputs."""
     inputs = _bundle_inputs(run)
-    name, node_meta = inputs["name"], inputs["node_meta"]
-    recipe = _resolve(name)
+    recipe = _resolve(inputs["name"])
     raw, fit, iqb = inputs["raw"], inputs["fit"], inputs["iqb"]
     bundle = Bundle(
-        run=run, node_meta=node_meta, fit_results=getattr(run, "fit_results", {}) or {},
+        run=run, node_meta=inputs["node_meta"], fit_results=getattr(run, "fit_results", {}) or {},
         raw=raw, fit=fit, iqblobs=iqb, port_fit=inputs.get("port"),
         raw_vars=set(raw["vars"]) if raw else set(),
         fit_vars=set(fit["vars"]) if fit else set(),
@@ -294,6 +312,24 @@ def build_interactive_figure(run, key: str) -> dict | None:
         raw_shapes=_shapes_of(raw), fit_shapes=_shapes_of(fit),
         quam_state=inputs["quam_state"],
     )
+    return recipe, bundle
+
+
+def figure_unavailable_reason(run, key: str) -> str:
+    """Why a figure the menu offered cannot be drawn ("" when unknown)."""
+    try:
+        recipe, bundle = _bundle_of(run)
+        spec = recipe.build(bundle, key)
+    except Exception:  # noqa: BLE001
+        return ""
+    return spec.reason if spec is not None and not spec.available else ""
+
+
+def build_interactive_figure(run, key: str) -> dict | None:
+    """Full Plotly JSON for one figure key: ``{data, layout, kind, title, clickable}``."""
+    inputs = _bundle_inputs(run)
+    name = inputs["name"]
+    recipe, bundle = _bundle_of(run)
     try:
         spec = recipe.build(bundle, key)
     except Exception:  # noqa: BLE001 — one bad figure must not 500 the tab

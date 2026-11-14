@@ -1,6 +1,7 @@
 {# Interactive-figures menu for one run. Rendered into #ds-interactive-container;
    each .ds-interactive-plot lazy-loads its Plotly JSON via /interactive/plot. #}
 {% if reproduction_hint %}{% set hp = reproduction_hint.split('Generate Config') %}<p class="muted">{{ hp[0] }}{% if hp|length > 1 %}<a href="/generate">Generate Config</a>{{ hp[1:]|join('Generate Config') }}{% endif %}</p>{% endif %}
+{% if unmapped_line %}<p class="muted" data-unmapped-line>{{ unmapped_line }}</p>{% endif %}
 {% if figures %}
 <div class="ds-interactive-toolbar">
     <span class="ds-interactive-toolbar-label">Columns</span>
@@ -39,7 +40,7 @@
     </div>
     {% endfor %}
 </div>
-{% else %}
+{% elif not unmapped_line %}
 <p class="muted" style="padding:1rem;text-align:center">
     No interactive reproduction available for this experiment type — use the
     <strong>Raw Data</strong> tab to explore the HDF5 arrays.

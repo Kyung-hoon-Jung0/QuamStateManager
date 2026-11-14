@@ -66,8 +66,24 @@ def _is_error_amp(name: str) -> bool:
     return "error_amp" in name
 
 
-def _figure_for(name: str):
-    """(base, required-fit-vars, title) for the node."""
+def _figure_for(name: str, have=None):
+    """(base, required-fit-vars, title) for the node.
+
+    ``have`` (the fit variables the run holds) lets the variables decide when
+    the name cannot: a conditional-phase run that saved no ``phase_diff`` but
+    does hold both fitted curves is drawn as the raw-and-fit figure. A run
+    that holds ``phase_diff`` keeps its own figure, whatever else it saved.
+    """
+    out = _figure_for_name(name)
+    if (have is not None and out[0] == "phase_figure" and not _is_error_amp(name)
+            and "phase_diff" not in have
+            and all(v in have for v in ("fitted_control", "fitted_target"))):
+        return "raw_and_fit", _REQUIRED_VARS["raw_and_fit"], "CZ phase compensation"
+    return out
+
+
+def _figure_for_name(name: str):
+    """The name-only routing of :func:`_figure_for`."""
     import re as _re
     if _re.search(r"(?:^|_)(?:21b|35a)_", name) or (
             "phase_compensation" in name and _is_error_amp(name)):
@@ -87,7 +103,7 @@ def _figure_for(name: str):
 
 def menu(bundle):
     name = _name(bundle)
-    base, needs, title = _figure_for(name)
+    base, needs, title = _figure_for(name, bundle.fit_vars)
     missing = [v for v in needs if v not in bundle.fit_vars]
     if base == "raw_and_fit":
         missing = _raw_and_fit_missing(bundle.fit_vars)

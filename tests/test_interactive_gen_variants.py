@@ -261,3 +261,145 @@ def test_a_phase_that_does_not_match_its_own_fit_is_not_marked(tmp_path):
     run = _comp_run_with_phases(tmp_path, control_phase=0.5, target_phase=0.75)
     fig = _build(run, f"raw_and_fit::{PAIR}")
     assert [a["text"] for a in fig["layout"]["annotations"]] == ["target fit phase shift 0.250"]
+
+
+# ----- variable-driven routing and the honest "nothing mapped" line ----------
+
+def _cond_run(tmp_path, node="32a_cz_conditional_phase", with_phase_diff=False):
+    n = 17
+    frame = np.linspace(0, 1, n, endpoint=False)
+    fc = 1e-4 * np.cos(2 * np.pi * frame)
+    ft = 1e-4 * np.sin(2 * np.pi * frame) - 5e-4
+    fit = {"state_control": (("qubit_pair", "frame"), fc[None]),
+           "state_target": (("qubit_pair", "frame"), ft[None]),
+           "fitted_control": (("qubit_pair", "frame"), fc[None]),
+           "fitted_target": (("qubit_pair", "frame"), ft[None])}
+    if with_phase_diff:
+        fit["phase_diff"] = (("qubit_pair", "frame"), (fc - ft)[None])
+    coords = {"qubit_pair": [PAIR.encode()], "frame": frame}
+    run = _run(tmp_path, node, fit, coords, {"success": True}, [])
+    return run, fc, ft
+
+
+def test_conditional_phase_run_without_phase_diff_draws_the_fitted_curves(tmp_path):
+    run, fc, ft = _cond_run(tmp_path)
+    key = f"raw_and_fit::{PAIR}"
+    menu = _menu(run)
+    assert menu[key]["available"], menu
+    assert not any("phase_diff" in (m["reason"] or "") for m in menu.values())
+    by = {t["name"]: np.asarray(t["y"], dtype=float) for t in _build(run, key)["data"]}
+    assert np.allclose(by["control fit"], fc) and np.allclose(by["target fit"], ft)
+
+
+def test_run_with_phase_diff_and_fitted_curves_keeps_the_existing_figure(tmp_path):
+    run, fc, ft = _cond_run(tmp_path, with_phase_diff=True)
+    menu = _menu(run)
+    assert menu[f"phase_figure::{PAIR}"]["available"]
+    assert f"raw_and_fit::{PAIR}" not in menu          # nothing drawn twice
+
+
+def test_phase_routing_needs_both_fitted_curves():
+    from quam_state_manager.core.interactive_plots.recipes import cz_phase
+    name = "32a_cz_conditional_phase"
+    assert cz_phase._figure_for(name, {"fitted_control"})[0] == "phase_figure"
+    assert cz_phase._figure_for(name, {"fitted_target"})[0] == "phase_figure"
+    assert cz_phase._figure_for(name, set())[0] == "phase_figure"
+    assert cz_phase._figure_for(name, {"fitted_control", "fitted_target"})[0] == "raw_and_fit"
+    assert cz_phase._figure_for(
+        name, {"fitted_control", "fitted_target", "phase_diff"})[0] == "phase_figure"
+
+
+def _chevron_run(tmp_path, moving=True, stationary=True, extra=None, nan=False):
+    na, nt = 5, 7
+    amp, tm = np.linspace(0.1, 0.5, na), np.linspace(10, 70, nt)
+    rng = np.random.default_rng(5)
+    z1 = rng.random((1, na, nt))
+    z2 = rng.random((1, na, nt))
+    if nan:
+        z1[:] = np.nan
+    dims = ("qubit_pair", "amplitude", "time")
+    fit = {}
+    if moving:
+        fit["state_moving"] = (dims, z1)
+    if stationary:
+        fit["state_stationary"] = (dims, z2)
+    fit.update(extra or {})
+    coords = {"qubit_pair": [PAIR.encode()], "amplitude": amp, "time": tm}
+    return _run(tmp_path, "31_chevron", fit, coords, {"success": True}, []), z1, z2
+
+
+def _z_of(fig):
+    return np.asarray(fig["data"][0]["z"], dtype=float)
+
+
+def test_chevron_state_moving_and_stationary_values_match_the_dataset(tmp_path):
+    run, z1, z2 = _chevron_run(tmp_path)
+    for base, z in (("moving_qubit", z1), ("stationary_qubit", z2)):
+        assert np.array_equal(_z_of(_build(run, f"{base}::{PAIR}")), z[0])
+
+
+def test_chevron_with_only_one_role_draws_it_and_says_what_is_missing(tmp_path):
+    run, z1, _z2 = _chevron_run(tmp_path, stationary=False)
+    menu = _menu(run)
+    assert menu[f"moving_qubit::{PAIR}"]["available"]
+    gone = menu[f"stationary_qubit::{PAIR}"]
+    assert not gone["available"] and "state_stationary" in gone["reason"]
+    assert np.array_equal(_z_of(_build(run, f"moving_qubit::{PAIR}")), z1[0])
+
+
+def test_chevron_all_nan_is_said_not_drawn(tmp_path):
+    run, *_ = _chevron_run(tmp_path, nan=True)
+    fig = _build(run, f"moving_qubit::{PAIR}")
+    assert fig is None or not fig.get("data")
+    from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
+    assert "no finite values" in figure_unavailable_reason(run, f"moving_qubit::{PAIR}")
+    # the other role of the same run still draws
+    assert _build(run, f"stationary_qubit::{PAIR}")["data"]
+
+
+def test_chevron_unexpected_extra_dimension_is_sliced_and_said(tmp_path):
+    na, nt = 5, 7
+    z = np.random.default_rng(1).random((1, 3, na, nt))
+    fit = {"state_moving": (("qubit_pair", "prep", "amplitude", "time"), z)}
+    coords = {"qubit_pair": [PAIR.encode()], "prep": [0, 1, 2],
+              "amplitude": np.linspace(0.1, 0.5, na), "time": np.linspace(10, 70, nt)}
+    run = _run(tmp_path, "31_chevron", fit, coords, {"success": True}, [])
+    fig = _build(run, f"moving_qubit::{PAIR}")
+    assert np.array_equal(_z_of(fig), z[0, 0])
+    assert "first of 3" in json.dumps(fig["layout"])
+
+
+def test_chevron_partial_variable_name_is_not_a_match(tmp_path):
+    run, *_ = _chevron_run(tmp_path, moving=False, stationary=False,
+                           extra={"state_moving_extra": (("qubit_pair", "amplitude", "time"),
+                                                         np.zeros((1, 5, 7)))})
+    assert not any(m["available"] for m in _menu(run).values())
+
+
+def test_chevron_variable_without_amplitude_and_time_is_not_drawn(tmp_path):
+    fit = {"state_moving": (("qubit_pair", "other"), np.zeros((1, 4)))}
+    coords = {"qubit_pair": [PAIR.encode()], "other": np.arange(4.0)}
+    run = _run(tmp_path, "31_chevron", fit, coords, {"success": True}, [])
+    fig = _build(run, f"moving_qubit::{PAIR}")
+    assert fig is None or not fig.get("data")
+    from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
+    assert "not amplitude x time" in figure_unavailable_reason(run, f"moving_qubit::{PAIR}")
+
+
+def test_nothing_mapped_run_names_the_variables_it_found(tmp_path):
+    from quam_state_manager.core.interactive_plots import list_interactive_figures
+    from quam_state_manager.core.interactive_plots.registry import unmapped_variables_line
+    fit = {"mystery_a": (("qubit_pair", "x"), np.zeros((1, 3))),
+           "mystery_b": (("qubit_pair", "x"), np.ones((1, 3)))}
+    coords = {"qubit_pair": [PAIR.encode()], "x": np.arange(3.0)}
+    run = _run(tmp_path, "99_unknown_node", fit, coords, {"success": True}, [])
+    line = unmapped_variables_line(run, list_interactive_figures(run))
+    assert "mystery_a (fit)" in line and "mystery_b (fit)" in line
+    assert " -- " not in line
+
+
+def test_mapped_run_has_no_unmapped_line(tmp_path):
+    from quam_state_manager.core.interactive_plots import list_interactive_figures
+    from quam_state_manager.core.interactive_plots.registry import unmapped_variables_line
+    run, *_ = _chevron_run(tmp_path)
+    assert unmapped_variables_line(run, list_interactive_figures(run)) == ""

@@ -47483,8 +47483,10 @@ def dataset_interactive(uid):
                 ' &mdash; a figure marked <span class="ds-fig-click-badge">click a point to apply</span>'
                 ' takes clicks</p>' + render_template(
                     "_dataset_interactive.html", run_id=run_id, uid=uid, figures=legacy) if legacy else "")
+    from quam_state_manager.core.interactive_plots.registry import unmapped_variables_line
     return render_template("_dataset_interactive.html", run_id=run_id, uid=uid, figures=figures,
-                           reproduction_hint=replot.reproduction_hint(capability, figures))
+                           reproduction_hint=replot.reproduction_hint(capability, figures),
+                           unmapped_line=unmapped_variables_line(run, figures))
 
 
 @bp.route("/dataset/<uid>/interactive/status")
@@ -47513,7 +47515,9 @@ def dataset_interactive_plot(uid):
     from quam_state_manager.core.interactive_plots import build_interactive_figure
     fig = build_interactive_figure(run, fig_key)
     if fig is None:
-        return jsonify({"error": "Figure not available"}), 404
+        from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
+        why = figure_unavailable_reason(run, fig_key)
+        return jsonify({"error": ("Not drawn: " + why) if why else "Figure not available"}), 404
     if fig.get("clickable"):
         # docs/296: the click contract names the RUN's qubits; a run saved
         # before a rename stages into today's names (or refuses)
@@ -47582,7 +47586,9 @@ def dataset_replot_plot(uid):
     result = replot_run(run, current_app.instance_path)  # in-flight-coalesced w/ the menu call
     fig = replot_figure(result, fig_key)
     if fig is None:
-        return jsonify({"error": "Figure not available"}), 404
+        from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
+        why = figure_unavailable_reason(run, fig_key)
+        return jsonify({"error": ("Not drawn: " + why) if why else "Figure not available"}), 404
     if fig.get("clickable"):
         names = _dataset_run_names(run.folder_path)
         if names is not None and not names.identity:
