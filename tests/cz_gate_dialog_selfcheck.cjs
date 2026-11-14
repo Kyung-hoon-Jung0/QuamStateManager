@@ -447,6 +447,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     prim().click();
     await tick(5);
     ok($('#czg-form').inert === true, 'during a create the form is inert');
+    ok(window.CzGate.close() === false && $('#czg-dialog'), 'close() refuses while a create is in flight');
     $('#czg-dialog .ui-dialog-head [data-czg-close]').click();
     doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
     await tick(5);
@@ -454,9 +455,10 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     releaseCreate();
     await settle();
     ok(/Created/.test(alertText()), 'the create answer lands in the dialog');
-    window.CzGate._plan();
-    await settle();
-    ok(/Created/.test(alertText()), 'a plan answer after Create does not wipe the Created banner');
+    { const nPlan = count('plan');
+      window.CzGate._plan();
+      await settle();
+      ok(/Created/.test(alertText()) && count('plan') === nPlan, 'after Create no plan is asked and the Created banner stays'); }
     window.CzGate.close();
     // C4 + C9 + C7: two pairs, the first refused, one pair without a verdict
     await window.CzGate.open({ pair: 'q1-2' });
@@ -528,7 +530,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     window.CzGate.close(); await settle();
     if ($('#czg-dialog')) { $('#czg-top') && $('#czg-top').querySelector('[data-czg-discard]') && $('#czg-top').querySelector('[data-czg-discard]').click(); }
     // A6: evaluated twice, one set of listeners
+    const firstApi = window.CzGate;
     window.eval(fs.readFileSync(path.join(ROOT, 'static', 'cz-gate.js'), 'utf8'));
+    ok(window.CzGate === firstApi, 'loaded twice: the first instance stays (mutation: drop the guard)');
     await window.CzGate.open({ pair: 'q1-2' });
     await settle();
     const before = sent.filter((x) => x.kind === 'plan').length;
@@ -561,7 +565,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     $('#czg-dialog').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
     $('#czg-dialog').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
     await tick(5);
-    ok($('#czg-dialog'), 'a backdrop press during a check does not close');
+    ok($('#czg-dialog') && !$('#czg-dialog [data-czg-discard]'), 'a backdrop press during a check does nothing: no close, no question');
     release();
     await settle();
     ok(!fieldOf('flux_pulse_qubit', 'amplitude').disabled, 'after the check the controls are enabled again');
@@ -630,6 +634,32 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok($('#czg-more-list [data-czg-more-row] [data-czg-more-why]') && !$('#czg-dialog .czg-more-why') && !$('#czg-dialog .czg-head'),
        'script hooks are data attributes; no class without a kit rule');
+    window.CzGate.close();
+
+    // the slot takes the server's lane colour (mutation: drop recolourSlots()); no Pico spinner after Create (mutation: set aria-busy again)
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_col');
+    await settle();
+    { const chipKey = $('#czg-slots .ui-slot-chip').textContent;     // the rendered chip's own channel
+      queue.check.push((b) => { const j = checkOk(b); j.pairs[0].timeline.lanes[0].key = chipKey; j.pairs[0].timeline.lanes[0].color_index = 2; return j; }); }
+    prim().click();
+    await settle();
+    ok($('#czg-slots .ui-slot').classList.contains('ui-line-3') && !$('#czg-slots .ui-slot').classList.contains('ui-line-1'), 'after a check the form slot wears the lane colour the server gave');
+    // a coupler row: the plan says "coupler <element>", the lane key is the element (mutation: laneKeyOf returns r.channel)
+    type($('#czg-name'), 'cz_col2');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); const p0 = j.pairs[0];
+        p0.timeline.lanes = [{ key: 'q1.z', segments: [], color_index: 0 }, { key: 'c12', segments: [], color_index: 1 }];
+        p0.intent = p0.intent.concat([Object.assign({}, p0.intent[0], { field: 'coupler_flux_pulse', operation: 'op_c', channel: 'the coupler of pair q1-2' })]); return j; });
+    window.CzGate.state().plan.pairs[0].operations.coupler_flux_pulse = { key: 'op_c', channel: 'coupler c12' };
+    prim().click();
+    await settle();
+    { const dots = [...doc.querySelectorAll('#czg-intent .ui-line-dot')].map((d) => d.className);
+      ok(dots.length === 2 && /ui-line-1/.test(dots[0]) && /ui-line-2/.test(dots[1]), 'the coupler row dot has the coupler lane colour'); }
+    prim().click();
+    await settle();
+    ok(/Created/.test(alertText()) && !$('#czg-dialog[aria-busy="true"], #czg-dialog [aria-busy="true"]'), 'created: nothing left marked busy (Pico draws a spinner for it)');
     window.CzGate.close();
 
     // the chart component missing

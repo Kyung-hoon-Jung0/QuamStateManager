@@ -323,7 +323,21 @@
     /* The identity colour of a line: control z, target z, coupler (the same order
        and numbering as the chart lanes and the table dots, from the server). */
     var LINE_RANK = { control: 0, target: 1, coupler: 2 };
+    /* After a check: each form slot takes its lane's kit line colour from the server. */
+    function recolourSlots() {
+        Array.prototype.slice.call(document.querySelectorAll('#czg-slots .ui-slot')).forEach(function (s) {
+            var chip = s.querySelector('.ui-slot-chip');
+            if (!chip) return;
+            var n = slotLine(chip.textContent);
+            Array.prototype.slice.call(s.classList).forEach(function (c) { if (/^ui-line-\d+$/.test(c)) s.classList.remove(c); });
+            s.classList.add('ui-line-' + n);
+        });
+    }
     function slotLine(channel) {
+        // after a check the server's lane colour wins: form chip, lane chip and table dot match
+        var shownPair = S.check && (S.check.pairs || []).filter(function (x) { return x.pair === $('czg-pair').value; })[0];
+        var lane = shownPair && shownPair.timeline && (shownPair.timeline.lanes || []).filter(function (ln) { return ln.key === channel || ln.key === 'coupler ' + channel; })[0];
+        if (lane && typeof lane.color_index === 'number') return lane.color_index + 1;
         var p = pairInfo($('czg-pair').value) || {};
         var r = channel === (p.control + '.z') ? 0 : channel === (p.target + '.z') ? 1 : 2;
         var used = (S.slotChannels || []).map(function (c) {
@@ -526,6 +540,7 @@
     function plan() {
         var b = body();
         var mine = S.seq, g = S;
+        if (S.phase === 'done') return Promise.resolve();      // nothing is planned after Create
         if (!b.pairs.length) { S.plan = null; refresh(); return Promise.resolve(); }
         return post('/api/pulse/cz-gate/plan', b).then(function (x) {
             if (S !== g || mine !== S.seq || S.phase === 'done' || S.busy) return;
@@ -633,7 +648,7 @@
         rows.forEach(function (r) {
             var grp = el('div', 'ui-field-stack');
             grp.setAttribute('data-czg-writes-pair', r.pair);
-            var h = el('div', 'ui-text-strong', r.pair + (r.ok ? ': ' + r.paths.length + (r.paths.length === 1 ? ' object' : ' objects') : ''));
+            var h = el('div', 'ui-field-label', r.pair + (r.ok ? ': ' + r.paths.length + (r.paths.length === 1 ? ' object' : ' objects') : ''));
             grp.appendChild(h);
             if (!r.ok) grp.appendChild(el('div', 'ui-text-quiet', 'not written: ' + sentence(r.why)));
             else r.paths.forEach(function (x) { grp.appendChild(U.path(x)); });
@@ -674,7 +689,15 @@
         return m;
     }
     var CELL_TONE = { warn: 'ui-cell--warn', danger: 'ui-cell--danger' };
-    function renderIntent(rows, tl) {
+    /* The lane key of an intent row: the plan's own channel for that slot
+       (the row's channel may be words such as "the coupler of pair X"). */
+    function laneKeyOf(r, pair) {
+        var pp = ((S.plan && S.plan.pairs) || []).filter(function (x) { return x.pair === pair; })[0];
+        var op = pp && pp.operations && pp.operations[r.field];
+        var ch = (op && op.channel) || r.channel || '';
+        return String(ch).indexOf('coupler ') === 0 ? String(ch).slice(8) : ch;
+    }
+    function renderIntent(rows, tl, pair) {
         var host = clear($('czg-intent'));
         var sum = $('czg-intent-sum');
         if (!rows || !rows.length) { if (sum) sum.textContent = ''; host.appendChild(el('p', 'ui-text-quiet', 'No pulse to compare.')); return; }
@@ -702,7 +725,9 @@
         var flagged = 0;
         Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
             var r = rows[k], tds = tr.children, tones = r.tones || {};
-            var dot = el('span', 'ui-line-dot ui-line-' + (lines[r.channel] || 1));
+            // the plan names a coupler line "coupler <element>"; the lane key is the element
+            var ck = laneKeyOf(r, pair);
+            var dot = el('span', 'ui-line-dot ui-line-' + (lines[ck] || lines[r.channel] || 1));
             dot.setAttribute('aria-hidden', 'true');
             tds[0].insertBefore(dot, tds[0].firstChild);
             if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
@@ -839,7 +864,7 @@
         var p = pairs[S.pairIdx] || pairs[0];
         if (p) {
             renderChart(p.ok ? p.timeline : null);
-            renderIntent(p.intent, p.timeline);
+            renderIntent(p.intent, p.timeline, p.pair);
             renderChecks(p);
             renderTiles(p);
             renderWrites();
@@ -870,6 +895,7 @@
         pairs.forEach(function (x, k) { if (firstBad < 0 && pairMark(x) === 'fail') firstBad = k; });
         S.pairIdx = firstBad >= 0 ? firstBad : 0;
         renderPair();
+        recolourSlots();
         var ok = allowedPairs();
         var no = pairs.filter(function (x) { return !(x.verdict && x.verdict.allowed); });
         var reason = function (x) { var v = x.verdict || {}; return sentence(v.headline || v.reason || 'no verdict from the server'); };
