@@ -67,8 +67,10 @@
 <div class="ui-callout ui-callout--{{ tone }}" role="note"><div class="ui-callout-title">{{ title }}</div><p class="ui-callout-text">{{ text }}</p></div>
 {%- endmacro -%}
 
-{%- macro ui_verdict(tone, key, why=None) -%}
-<div class="ui-verdict ui-verdict--{{ tone }}"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ key }}</strong>{% if why %}<span class="ui-verdict-why">{{ why }}</span>{% endif %}</div>
+{#- strong=True: the screen region's conclusion (the banner): an icon disc,
+    the key phrase in the tone's colour, one sentence under it. -#}
+{%- macro ui_verdict(tone, key, why=None, strong=False) -%}
+<div class="ui-verdict ui-verdict--{{ tone }}{% if strong %} ui-verdict--strong{% endif %}"{% if strong %} role="{{ 'alert' if tone == 'danger' else 'status' }}"{% endif %}><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ key }}</strong>{% if why %}<span class="ui-verdict-why">{{ why }}</span>{% endif %}</div>
 {%- endmacro -%}
 
 {%- macro ui_cell(c, tag, num) -%}
@@ -101,7 +103,7 @@
 {%- macro ui_input(value=None, type='text', label=None, id=None, name=None, num=False, unit=None, placeholder=None, block=False, disabled=False, invalid=False) -%}
 {%- set value = value if value is defined else none -%}
 {%- set _i -%}<input type="{{ type }}" class="ui-input{% if num %} ui-input--num{% endif %}{% if block and not unit %} ui-input--block{% endif %}"{% if id %} id="{{ id }}"{% endif %}{% if name %} name="{{ name }}"{% endif %}{% if value is not none %} value="{{ value }}"{% endif %}{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}{% if label %} aria-label="{{ label }}"{% endif %}{% if invalid %} aria-invalid="true"{% endif %}{% if disabled %} disabled{% endif %}>{%- endset -%}
-{%- if unit %}<span class="ui-input-unit{% if block %} ui-input-unit--block{% endif %}">{{ _i }}<span class="ui-input-unit-text">{{ unit }}</span></span>{% else %}{{ _i }}{% endif -%}
+{%- if unit %}<span class="ui-input-unit{% if block %} ui-input-unit--block{% endif %}{% if invalid %} ui-input-unit--invalid{% endif %}{% if disabled %} ui-input-unit--disabled{% endif %}">{{ _i }}<span class="ui-input-unit-text">{{ unit }}</span></span>{% else %}{{ _i }}{% endif -%}
 {%- endmacro -%}
 
 {#- Field: label above (or left with inline=True), one control spec, an
@@ -143,6 +145,49 @@
 <div class="ui-toolbar" role="toolbar" aria-label="{{ label }}">{% for s in items %}{% if s.part == 'toolbar-sep' %}<span class="ui-toolbar-sep" aria-hidden="true"></span>{% elif s.part == 'toolbar-spacer' %}<span class="ui-toolbar-spacer" aria-hidden="true"></span>{% elif s.part == 'button' %}{{ ui_button(s) }}{% else %}{{ ui_render(s) }}{% endif %}{% endfor %}</div>
 {%- endmacro -%}
 
+{#- K19 reading order (docs/308 section 4c). -#}
+{#- Text: plain string, or {text, level: strong|quiet|ok|warn|danger}. -#}
+{%- macro ui_text(t) -%}
+{%- if t is mapping %}<span class="{{ 'ui-text-' ~ (t.level or 'strong') }}">{{ t.text }}</span>{% else %}{{ t }}{% endif -%}
+{%- endmacro -%}
+
+{#- Panel: head (step, small-caps title, quiet hint, summary: texts or one
+    control spec), body of child specs. fold=True folds it to its head (a
+    <details>; open=True starts open); the summary stays visible. -#}
+{%- macro ui_panel(title, body=(), step=None, hint=None, summary=(), fold=False, open=False, flush=False) -%}
+{%- set tag = 'details' if fold else 'section' -%}
+<{{ tag }} class="ui-panel{% if fold %} ui-panel--fold{% endif %}"{% if fold and open %} open{% endif %}{% if not fold %} aria-label="{{ title }}"{% endif %}>
+<{{ 'summary' if fold else 'div' }} class="ui-panel-head">
+{%- if step is not none and step is defined %}<span class="ui-panel-step" aria-hidden="true">{{ step }}</span>{% endif -%}
+<h3 class="ui-panel-title">{{ title }}</h3>
+{%- if hint %}<span class="ui-panel-hint">{{ hint }}</span>{% endif -%}
+{%- if summary %}<span class="ui-panel-sum">{% for t in summary %}{% if t is mapping and t.part %}{{ ui_render(t) }}{% else %}{{ ui_text(t) }}{% endif %}{% endfor %}</span>{% endif -%}
+</{{ 'summary' if fold else 'div' }}>
+{%- if body %}<div class="ui-panel-body{% if flush %} ui-panel-body--flush{% endif %}">{% for s in body %}{% if s is string %}<p class="ui-text-quiet">{{ s }}</p>{% else %}{{ ui_render(s) }}{% endif %}{% endfor %}</div>{% endif -%}
+</{{ tag }}>
+{%- endmacro -%}
+
+{#- Stats: at most four tiles [{label, value, unit?, tone?}]; tone only on an abnormal one. -#}
+{%- macro ui_stats(tiles, label=None) -%}
+<div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for t in tiles[:4] %}<div class="ui-stat{% if t.tone %} ui-stat--{{ t.tone }}{% endif %}"><div class="ui-stat-label">{{ t.label }}</div><p class="ui-stat-value">{{ t.value }}{% if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p></div>{% endfor %}</div>
+{%- endmacro -%}
+
+{#- Checks: [{name, state: pass|fail|skip, why?}]; each failure gets a fail row. -#}
+{%- macro ui_checks(checks, label='Checks') -%}
+<div class="ui-checks"><ul class="ui-checks-row" aria-label="{{ label }}">{% for c in checks %}<li class="ui-result{% if c.state != 'pass' %} ui-result--{{ c.state }}{% endif %}"><span class="ui-sr">{{ {'pass': 'passed', 'fail': 'failed', 'skip': 'skipped'}[c.state] }}: </span>{{ c.name }}</li>{% endfor %}</ul>
+{%- for c in checks %}{% if c.state == 'fail' %}<p class="ui-fail-row"><strong class="ui-fail-name">{{ c.name }}.</strong> {{ c.why }}</p>{% endif %}{% endfor -%}
+</div>
+{%- endmacro -%}
+
+{#- Slot: one line's block, its identity colour from line = 1..6. -#}
+{%- macro ui_slot(title, chip, line=1, body=()) -%}
+<div class="ui-slot ui-line-{{ line }}"><div class="ui-slot-head">{{ title }}<code class="ui-slot-chip">{{ chip }}</code></div>
+{%- if body %}<div class="ui-slot-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div>{% endif -%}
+</div>
+{%- endmacro -%}
+
+{%- macro ui_line_dot(line=1) -%}<span class="ui-line-dot ui-line-{{ line }}" aria-hidden="true"></span>{%- endmacro -%}
+
 {#- Containers take a list of child specs. -#}
 {%- macro ui_disclosure(summary, count=None, body=(), open=False) -%}
 <details class="ui-disclosure"{% if open %} open{% endif %}><summary class="ui-disclosure-summary">{{ summary }}{% if count is defined and count is not none %} {{ ui_count(count) }}{% endif %}</summary><div class="ui-disclosure-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div></details>
@@ -174,7 +219,7 @@
 {%- if p == 'head' %}{{ ui_head(s.title, s.level or 2, s.eyebrow, s.gist, s.count, s.actions, s.data, s.badge, s.page) }}
 {%- elif p == 'notice' %}{{ ui_notice(s.tone, s.key, s.text, s.actions) }}
 {%- elif p == 'callout' %}{{ ui_callout(s.tone, s.title, s.text) }}
-{%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why) }}
+{%- elif p == 'verdict' %}{{ ui_verdict(s.tone, s.key, s.why, s.strong) }}
 {%- elif p == 'item' %}{{ ui_item(s.chip, s.badge, s.title, s.count, s.body or (), s.note, s.actions) }}
 {%- elif p == 'table' %}{{ ui_table(s.columns, s.rows, s.kv, s.numeric or (), s.label) }}
 {%- elif p == 'actions' %}{{ ui_actions(s.buttons, s.label) }}
@@ -192,6 +237,11 @@
 {%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.control.id) }}
 {%- elif p == 'menu' %}{{ ui_menu(s.id, s['items'], s.label, s.kind or 'pick', s.value, s.trigger, s.placeholder or 'Choose', s.block, s.end, s.up) }}
 {%- elif p == 'toolbar' %}{{ ui_toolbar(s['items'], s.label) }}
+{%- elif p == 'panel' %}{{ ui_panel(s.title, s.body or (), s.step, s.hint, s.summary or (), s.fold, s.open, s.flush) }}
+{%- elif p == 'stats' %}{{ ui_stats(s.tiles, s.label) }}
+{%- elif p == 'checks' %}{{ ui_checks(s.checks, s.label or 'Checks') }}
+{%- elif p == 'slot' %}{{ ui_slot(s.title, s.chip, s.line or 1, s.body or ()) }}
+{%- elif p == 'grid2' %}<div class="ui-grid2">{% for x in s['items'] %}{{ ui_render(x) }}{% endfor %}</div>
 {%- elif p == 'dialog' %}{{ ui_dialog(s.head, s.size or 'm', s.body or (), s.foot or (), s.foot_actions, s.close is not sameas false) }}
 {%- endif -%}
 {%- endmacro -%}

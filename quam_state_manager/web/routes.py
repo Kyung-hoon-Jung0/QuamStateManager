@@ -7770,8 +7770,10 @@ def ui_kit_page():
     """docs/308: the UI kit sample page -- every part in each state, rendered
     by the Jinja macros and by ui.js side by side, plus worked examples.
     Linked from the bottom of /help only; never in the sidebar."""
-    from quam_state_manager.web.ui_kit_fixtures import CLASSES, PAIRS, specs
-    return render_template("ui_kit.html", **_ctx(page="ui_kit", specs=specs(), pair_items=PAIRS, pulse_classes=CLASSES))
+    from quam_state_manager.web.ui_kit_fixtures import CLASSES, PAIRS, reading_evidence, reading_form, specs
+    reading = [(st, reading_form(st), reading_evidence(st)) for st in ("ok", "danger")]
+    return render_template("ui_kit.html", **_ctx(page="ui_kit", specs=specs(), pair_items=PAIRS, pulse_classes=CLASSES,
+                                                reading=reading))
 
 
 @bp.route("/calc-window")
