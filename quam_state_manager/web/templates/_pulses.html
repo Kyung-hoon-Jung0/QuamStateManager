@@ -38,16 +38,16 @@
                hx-indicator="#pulses-search-spin">
         <span id="pulses-search-spin" class="htmx-indicator spinner"></span>
     </div>
-    {# 2026-09-27 (user): one create button, not two. The Gaussian CZ builder
-       and "copy a pulse to another channel" are choices INSIDE this flow
-       (_pulse_create_choice.html); /pulse/gaussian-cz still answers old links. #}
+    {# 2026-09-27 (user): one create button, not two. "Copy a pulse to another
+       channel" and "CZ gate" (the CZ gate dialog) are choices INSIDE this flow
+       (_pulse_create_choice.html). #}
     {# the form opens on the qubit the page is filtered to (the
        owner pick rides along as ?owner=). #}
     <button class="btn-sm pulse-new-btn" hx-get="/pulse/new"
             hx-include="#pulses-owner-pick"
             hx-target="#inspector-pane" hx-swap="innerHTML"
             hx-indicator="#inspector-pane"
-            title="Create a pulse: a new one of any class, a copy of an existing pulse on another channel, or a Gaussian CZ pair from a calibrated cz_flattop">+ New pulse</button>
+            title="Create a pulse: a new one of any class, a copy of an existing pulse on another channel, or a new CZ gate on a pair">+ New pulse</button>
 </div>
 
 {# docs/166 (customer): "at a slightly smaller size like the chip components, draw a diagram showing
