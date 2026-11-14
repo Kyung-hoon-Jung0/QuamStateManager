@@ -35,3 +35,23 @@ def test_typed_tof_reads_the_populate_step():
     spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300}, "q2": {"RF_freq": 7e9}}}}
     assert output_timing.typed_tof(spec) == {"q1"}
     assert output_timing.typed_tof(None) == set()
+
+
+def test_typed_tof_treats_a_prefilled_default_as_a_default():
+    rows = {"q1": {"time_of_flight": 28}, "q2": {"time_of_flight": 300},
+            "q3": {"time_of_flight": 28}}
+    spec = {"populate": {"options": {"tof_defaults": {"q1": 28, "q2": 28}}, "resonator": rows}}
+    # q1 still holds its default; q2 was changed; q3 has no record (typed or preset)
+    assert output_timing.typed_tof(spec) == {"q2", "q3"}
+    # no record at all (older draft, emitted script, agent API): every value is the user's
+    assert output_timing.typed_tof({"populate": {"resonator": rows}}) == {"q1", "q2", "q3"}
+
+
+def test_typed_tof_is_the_build_rule():
+    from tests.test_run_build_delay import _load_helpers
+    mod = _load_helpers()
+    for spec in ({"populate": {"options": {"tof_defaults": {"q1": 28}},
+                               "resonator": {"q1": {"time_of_flight": 28},
+                                             "q2": {"time_of_flight": 28}}}},
+                 {"populate": {"resonator": {"q1": {"time_of_flight": 5}}}}, None, {}):
+        assert output_timing.typed_tof(spec) == mod._user_set_tof(spec)

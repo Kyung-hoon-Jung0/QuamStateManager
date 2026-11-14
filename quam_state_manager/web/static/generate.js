@@ -5037,14 +5037,24 @@
     });
     (t.flux || []).forEach(function (f) { row("Flux " + f.of, f.label, f.delay); });
     wrap.appendChild(table);
+    // One line per group, never one identical sentence per qubit: the moved
+    // defaults by (shift, new value), the values the user set by shift.
+    var groups = [], byKey = {};
     (t.tof || []).forEach(function (x) {
+      var k = (x.moved ? "m|" + x.value : "k") + "|" + x.shift;
+      if (!byKey[k]) { byKey[k] = { x: x, q: [] }; groups.push(byKey[k]); }
+      byKey[k].q.push(x.qubit);
+    });
+    groups.forEach(function (g) {
       var p = document.createElement("p");
       p.className = "ui-note";
+      var x = g.x, one = g.q.length === 1;
       p.textContent = x.moved
-        ? x.qubit + ": time of flight moved by " + x.shift + " ns with its readout output (now " +
-          x.value + " ns)."
-        : x.qubit + ": time of flight left as typed (" + x.value + " ns); its readout output is " +
-          "delayed by " + x.shift + " ns: measure time of flight again.";
+        ? "time of flight moved from " + (x.value - x.shift) + " to " + x.value + " ns with " +
+          (one ? "its" : "their") + " readout output: " + g.q.join(", ") + "."
+        : "time of flight left as you set it on " + g.q.join(", ") + "; " +
+          (one ? "its" : "their") + " readout output is delayed by " + x.shift +
+          " ns: measure time of flight again.";
       wrap.appendChild(p);
     });
     return wrap;
@@ -8668,6 +8678,8 @@
   // Populate-protect bookkeeping (docs/72): cells the user explicitly owns
   // this wizard session — typed, Set-all'd, preset-applied or re-solved.
   function markPopulateTouched(group, rid, field) {
+    // A user action on a pre-filled time of flight makes it the user's.
+    if (group === "resonator" && field === "time_of_flight") forgetTofDefault(rid);
     if (state.mode !== "regenerate") {
       if (!state.populateTouched) state.populateTouched = {};
       state.populateTouched[group + "|" + rid + "|" + field] = 1;
@@ -10294,6 +10306,20 @@
     }
     return rec;
   }
+  // The time-of-flight cells the wizard pre-filled, { qid: value }, sent with
+  // the spec so the build moves them with a delayed readout output; a cell
+  // the user then changes (typed, bulk fill, preset Overwrite) leaves it.
+  function tofDefaults(create) {
+    var pop = state.spec.populate || (state.spec.populate = {});
+    var opts = pop.options || (create ? (pop.options = {}) : null);
+    if (!opts) return null;
+    if (!opts.tof_defaults && create) opts.tof_defaults = {};
+    return opts.tof_defaults || null;
+  }
+  function forgetTofDefault(rid) {
+    var d = tofDefaults(false);
+    if (d && Object.prototype.hasOwnProperty.call(d, rid)) delete d[rid];
+  }
   function autoApplyStandardDefaults() {
     // Regenerate shows a REAL chip's values — auto-filling blanks with the
     // synthetic standard preset would present defaults the chip never had
@@ -10327,7 +10353,18 @@
       .then(function (p) {
         if (!p || !p.ok || !p.sections) return;
         if (state.autoPresetRows !== rec) return;   // the wizard was reset meanwhile
+        var rr = (state.spec.populate || {}).resonator || {};
+        var emptyTof = {};
+        Object.keys(freshQ).forEach(function (q) {
+          var v = (rr[q] || {}).time_of_flight;
+          if (v == null || v === "") emptyTof[q] = 1;
+        });
         var report = applyPreset(p, false, { q: freshQ, pairs: freshP });
+        var rrAfter = (state.spec.populate || {}).resonator || {};
+        Object.keys(emptyTof).forEach(function (q) {
+          var v = (rrAfter[q] || {}).time_of_flight;
+          if (v != null && v !== "") tofDefaults(true)[q] = v;
+        });
         // Recorded only once the preset arrived — an offline visit retries.
         Object.keys(freshQ).forEach(function (q) { rec.q[q] = 1; });
         Object.keys(freshPKeys).forEach(function (k) { rec.pairs[k] = 1; });
@@ -11565,8 +11602,8 @@
       el.appendChild(msg);
       var timingTable = outputTimingResultTable(r.output_timing);
       (r.warnings || []).forEach(function (w) {
-        // the typed time-of-flight sentence is said once, beside the table
-        if (timingTable && / time of flight left as typed /.test(w)) return;
+        // the kept time-of-flight sentence is said once, beside the table
+        if (timingTable && /time of flight left as you set it /.test(w)) return;
         var wel = document.createElement("p");
         wel.className = "gen-build-warn-line";
         wel.textContent = "⚠ " + w;

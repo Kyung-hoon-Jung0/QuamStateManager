@@ -502,6 +502,29 @@ def _set_delay(port, value):
         return False
     return True
 
+def _user_set_tof(spec):
+    """Qubits whose time of flight the user set in the populate step.
+
+    A provided ``populate.resonator[qid].time_of_flight`` is the user's
+    unless ``populate.options.tof_defaults`` (``{qid: value}``, written by
+    the wizard for the cells it pre-filled with the standard defaults) holds
+    the same value for that qubit: then it is a default and moves with its
+    readout output's delay. A spec without ``tof_defaults`` (an older draft,
+    the agent API) treats every provided value as the
+    user's. Mirrored by ``core.output_timing.typed_tof``."""
+    pop = (spec or {}).get("populate") or {}
+    defaults = (pop.get("options") or {}).get("tof_defaults") or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    out = set()
+    for qid, v in (pop.get("resonator") or {}).items():
+        if not isinstance(v, dict) or "time_of_flight" not in v:
+            continue
+        if qid in defaults and defaults[qid] == v["time_of_flight"]:
+            continue
+        out.add(qid)
+    return out
+
 def _align_output_timing(machine, spec=None):
     """Put every output of a generated chip on one time base.
 
@@ -513,9 +536,9 @@ def _align_output_timing(machine, spec=None):
       ``target``;
     - a resonator whose readout output got a delay ``s`` gets its time of
       flight moved by ``s``: its pulse leaves ``s`` later in program time,
-      so the acquisition starts ``s`` later. A time of flight the user typed
-      (``spec["populate"]["resonator"][qid]["time_of_flight"]``) stays as
-      typed and a warning asks to measure it again.
+      so the acquisition starts ``s`` later. A time of flight the user set
+      (see ``_user_set_tof``) stays as set and one warning names those
+      qubits and asks to measure it again.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
     A chip with no MW output of known band keeps the per-pair coupler rule
@@ -525,8 +548,7 @@ def _align_output_timing(machine, spec=None):
     target, by_band = _output_timing_plan({getattr(p, "band", None) for p in mw})
     if target is None:
         return _align_coupler_delays(machine)
-    typed = {qid for qid, v in (((spec or {}).get("populate") or {}).get("resonator") or {}).items()
-             if isinstance(v, dict) and "time_of_flight" in v}
+    typed = _user_set_tof(spec)
     moved = {}
     for p in mw:
         s = by_band.get(getattr(p, "band", None))
@@ -536,7 +558,7 @@ def _align_output_timing(machine, spec=None):
         old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
         _set_delay(p, s)
         moved[id(p)] = (s, s - old)
-    warnings = []
+    warnings, kept = [], {}
     for qid, q in (getattr(machine, "qubits", None) or {}).items():
         z_out = getattr(getattr(q, "z", None), "opx_output", None)
         if _is_lf_output(z_out):
@@ -547,14 +569,17 @@ def _align_output_timing(machine, spec=None):
         if not s or tof is None:
             continue
         if qid in typed:
-            warnings.append(
-                f"{qid}: time of flight left as typed ({tof:g} ns); its readout output is "
-                f"delayed by {s:g} ns: measure time of flight again.")
+            kept.setdefault(s, []).append(qid)
         elif ds:
             try:
                 rr.time_of_flight = tof + ds
             except (ValueError, TypeError):
                 pass
+    for s, qids in sorted(kept.items()):
+        warnings.append(
+            f"time of flight left as you set it on {', '.join(qids)}; "
+            f"{'its' if len(qids) == 1 else 'their'} readout output is delayed by "
+            f"{s:g} ns: measure time of flight again.")
     for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
         c_out = getattr(getattr(pair, "coupler", None), "opx_output", None)
         if _is_lf_output(c_out):

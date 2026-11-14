@@ -94,16 +94,26 @@ function spec(qubits, fluxFem) {
   const rows = tbl.querySelectorAll('tr');
   ok(tbl.querySelector('table.ui-table') && rows.length === 4, '[result] header + 3 port rows');
   ok(/MW band 1con1 \/ slot 1 \/ port 520/.test(rows[2].textContent), '[result] CR port 20: ' + rows[2].textContent);
-  ok(/time of flight left as typed \(300 ns\); its readout output is delayed by 20 ns: measure time of flight again\./
-     .test(tbl.textContent), '[result] typed time of flight named');
+  ok(/time of flight left as you set it on q1; its readout output is delayed by 20 ns: measure time of flight again\./
+     .test(tbl.textContent), '[result] a time of flight the user set is named');
+  // grouped: one line for the moved defaults, one for the values the user set
+  const grp = T.outputTimingResultTable({ mw: [{ port: 'b', label: 'p8', band: 3, delay: 20 }], flux: [],
+    tof: [{ qubit: 'q1', shift: 20, value: 48, moved: true }, { qubit: 'q2', shift: 20, value: 300, moved: false },
+          { qubit: 'q3', shift: 20, value: 28, moved: false }, { qubit: 'q4', shift: 20, value: 48, moved: true },
+          { qubit: 'q5', shift: 20, value: 48, moved: true }] });
+  const notes = Array.from(grp.querySelectorAll('p.ui-note')).map(function (p) { return p.textContent; });
+  ok(notes.length === 2 &&
+     notes[0] === 'time of flight moved from 28 to 48 ns with their readout output: q1, q4, q5.' &&
+     notes[1] === 'time of flight left as you set it on q2, q3; their readout output is delayed by 20 ns: ' +
+       'measure time of flight again.', '[result] grouped lines: ' + JSON.stringify(notes));
   ok(T.outputTimingResultTable(null) === null, '[result] nothing to list');
   T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [],
-    warnings: ['q1: time of flight left as typed (300 ns); its readout output is delayed by 20 ns: measure time of flight again.'],
+    warnings: ['time of flight left as you set it on q1; its readout output is delayed by 20 ns: measure time of flight again.'],
     output_timing: { mw: [{ port: 'b', label: 'p5', band: 1, delay: 20 }], flux: [],
                      tof: [{ qubit: 'q1', shift: 20, value: 300, moved: false }] } } }, '/o');
   const res = w.doc.getElementById('gen-build-result');
   ok(res.querySelector('table.ui-table') &&
-     res.textContent.split('left as typed').length === 2, '[result] shown once in the result panel');
+     res.textContent.split('left as you set it').length === 2, '[result] shown once in the result panel');
 
   w.state.mode = 'regenerate';
   t = txt(spec([['q1', 2, 3]]));

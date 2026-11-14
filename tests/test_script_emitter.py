@@ -407,3 +407,28 @@ class TestReadmeNaturalOrder:
         readme = script_emitter.emit_bundle(
             _tee_spec(ids), None, {}, "chip", STAMP)["README.md"]
         assert "(qA2, qA10, qB1)" in readme
+
+
+def test_emitted_scripts_move_a_prefilled_time_of_flight_like_the_wizard_build():
+    """A mixed-band spec whose time of flight the wizard pre-filled: the emitted
+    build script carries the prefill record and runs the same rule, so the
+    script gives the same time of flight as the wizard build."""
+    import inspect as _inspect
+    from tests.test_run_build_delay import _chip, _load_helpers
+
+    spec = _base()
+    spec["populate"]["resonator"] = {"q1": {"time_of_flight": 28}, "q2": {"time_of_flight": 28}}
+    spec["populate"]["options"] = {"tof_defaults": {"q1": 28, "q2": 28}}
+    src = _bundle(spec)["02_build_machine.py"]
+    rb = _load_helpers()
+    for fn in ("_user_set_tof", "_align_output_timing"):
+        assert _inspect.getsource(getattr(rb, fn)) in src, f"{fn} not verbatim"
+    populate = next(ast.literal_eval(n.value) for n in ast.parse(src).body
+                    if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", None) == "POPULATE")
+    assert populate["options"]["tof_defaults"] == {"q1": 28, "q2": 28}
+    emitted, wizard = _chip([2, 2], ro_band=3, tof=28), _chip([2, 2], ro_band=3, tof=28)
+    assert rb._align_output_timing(emitted, {"populate": populate}) == []
+    assert rb._align_output_timing(wizard, spec) == []
+    assert [q.resonator.time_of_flight for q in emitted.qubits.values()] == \
+        [q.resonator.time_of_flight for q in wizard.qubits.values()] == [48, 48]

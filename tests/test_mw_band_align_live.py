@@ -179,8 +179,29 @@ def _typed_tof():
     return s
 
 
+def _prefilled_tof():
+    """xy band 2, readout band 3, every time of flight the wizard's prefill."""
+    s = _pair(2, 2, 3)
+    for ln in s["lines"]:              # off out 1, which is coupled with the readout input
+        if ln["line"] == "drive":
+            ln["channel"] = {"kind": "mw_fem", "out_port": {"q1": 2, "q2": 3}[ln["element"]]}
+    s["populate"].setdefault("options", {})["tof_defaults"] = {}
+    for q, r in s["populate"]["resonator"].items():
+        r["time_of_flight"] = 28
+        s["populate"]["options"]["tof_defaults"][q] = 28
+    return s
+
+
+def _prefilled_tof_q2_set():
+    """The same, the user changed q2's cell to 300."""
+    s = _prefilled_tof()
+    s["populate"]["resonator"]["q2"]["time_of_flight"] = 300
+    return s
+
+
 EXTRA = {"shared_feedline_2_and_3": _shared_feedline_2_and_3, "dedicated_cr": _dedicated_cr,
-         "pump_band_1": _pump_band_1, "typed_tof": _typed_tof}
+         "pump_band_1": _pump_band_1, "typed_tof": _typed_tof,
+         "prefilled_tof": _prefilled_tof, "prefilled_tof_q2_set": _prefilled_tof_q2_set}
 
 
 @pytest.mark.parametrize("name", list(EXTRA))
@@ -217,4 +238,13 @@ def test_result_lists_what_the_build_wrote(tmp_path, name):
     if name == "typed_tof":
         assert state["qubits"]["q1"]["resonator"]["time_of_flight"] == 300
         assert summ["tof"] == [{"qubit": "q1", "shift": 20, "value": 300, "moved": False}]
-        assert any("left as typed (300 ns)" in w for w in outcome["result"]["warnings"])
+        assert any("left as you set it on q1;" in w for w in outcome["result"]["warnings"])
+    if name == "prefilled_tof":
+        assert {q["resonator"]["time_of_flight"] for q in state["qubits"].values()} == {48}
+        assert summ["tof"] and all(t["moved"] for t in summ["tof"]), summ
+        assert not any("left as you set it" in w for w in outcome["result"]["warnings"])
+    if name == "prefilled_tof_q2_set":
+        tofs = {q: v["resonator"]["time_of_flight"] for q, v in state["qubits"].items()}
+        assert tofs == {"q1": 48, "q2": 300}, tofs
+        assert [t["moved"] for t in summ["tof"]] == [True, False], summ
+        assert any("left as you set it on q2;" in w for w in outcome["result"]["warnings"])

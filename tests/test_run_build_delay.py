@@ -390,8 +390,38 @@ class TestAlignOutputTimingEdges:
         warns = self.mod._align_output_timing(m, spec)
         assert m.qubits["q1"].resonator.time_of_flight == 300
         assert m.qubits["q2"].resonator.time_of_flight == 320      # the default moves
-        assert warns == ["q1: time of flight left as typed (300 ns); its readout output is "
+        assert warns == ["time of flight left as you set it on q1; its readout output is "
                          "delayed by 20 ns: measure time of flight again."]
+
+    def test_a_prefilled_default_moves_and_a_set_value_stays(self):
+        m = _chip([2, 2, 2], ro_band=3, tof=28)
+        m.qubits["q2"].resonator.time_of_flight = 300
+        spec = {"populate": {
+            "options": {"tof_defaults": {"q1": 28, "q2": 28, "q3": 28}},
+            "resonator": {"q1": {"time_of_flight": 28}, "q2": {"time_of_flight": 300},
+                          "q3": {"time_of_flight": 28}}}}
+        spec["populate"]["options"]["tof_defaults"].pop("q3")     # q3 typed 28 on purpose
+        warns = self.mod._align_output_timing(m, spec)
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [48, 300, 28]
+        assert warns == ["time of flight left as you set it on q2, q3; their readout output is "
+                         "delayed by 20 ns: measure time of flight again."]
+
+    def test_every_prefilled_default_moves_with_no_note(self):
+        m = _chip([2, 2], ro_band=3, tof=28)
+        spec = {"populate": {"options": {"tof_defaults": {"q1": 28, "q2": 28}},
+                             "resonator": {"q1": {"time_of_flight": 28},
+                                           "q2": {"time_of_flight": 28}}}}
+        assert self.mod._align_output_timing(m, spec) == []
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [48, 48]
+        assert self.mod._align_output_timing(m, spec) == []          # moves once
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [48, 48]
+
+    def test_a_single_band_chip_moves_nothing(self):
+        m = _chip([3, 3], ro_band=3, tof=28)
+        spec = {"populate": {"options": {"tof_defaults": {"q1": 28}},
+                             "resonator": {"q1": {"time_of_flight": 28}}}}
+        assert self.mod._align_output_timing(m, spec) == []
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [28, 28]
 
     def test_a_dedicated_cr_port_is_shifted(self):
         m = _chip([2, 2], ro_band=2)

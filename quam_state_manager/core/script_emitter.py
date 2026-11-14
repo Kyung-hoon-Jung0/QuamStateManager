@@ -86,7 +86,7 @@ _RUNTIME_FUNCS = (
     "_band_for", "_delay_for_band", "_is_lf_output", "_apply_lf_delay",
     "_qop_minor", "_qop_allows_13", "_band_compat", "_qop_port_sharing_affected",
     "_bands_covering", "_port_key", "_fix_coupled_bands", "_out_label", "_align_coupler_delays",
-    "_is_mw_output", "_mw_output_ports", "_output_timing_plan", "_set_delay", "_align_output_timing",
+    "_is_mw_output", "_mw_output_ports", "_output_timing_plan", "_set_delay", "_user_set_tof", "_align_output_timing",
     "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_set_channel_band", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",

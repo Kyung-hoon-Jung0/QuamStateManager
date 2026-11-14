@@ -202,6 +202,30 @@ function czAmp(win, id) {
        'A7: a q5 re-created after a board delete prefills again');
   }
 
+  // ---- A8: the wizard records the time-of-flight cells it pre-filled ----------
+  {
+    const win = makeWorld();
+    const T = win.QuamGen._test;
+    setCount(win, 5);
+    ok(!((pop(win).options || {}).tof_defaults), 'A8 setup: nothing recorded before the prefill');
+    pop(win).resonator = pop(win).resonator || {};
+    pop(win).resonator.q5 = { time_of_flight: 200 };     // the user typed q5 first
+    await visit(win);
+    const d = () => (pop(win).options || {}).tof_defaults || {};
+    ok(JSON.stringify(d()) === JSON.stringify({ q1: 28, q2: 28, q3: 28, q4: 28 }),
+       'A8: every pre-filled cell is recorded, a cell typed before is not: ' + JSON.stringify(d()));
+    ok(pop(win).options.pin_cores === true, 'A8: the other options stay');
+    pop(win).resonator.q2.time_of_flight = 300; T.markPopulateTouched('resonator', 'q2', 'time_of_flight');
+    pop(win).resonator.q3.time_of_flight = 28; T.markPopulateTouched('resonator', 'q3', 'time_of_flight');
+    ok(!('q2' in d()) && !('q3' in d()) && d().q1 === 28,
+       'A8: a cell the user typed (also the same 28) is the user\'s: ' + JSON.stringify(d()));
+    T.markPopulateTouched('resonator', 'q1', 'readout_length');
+    ok(d().q1 === 28, 'A8: another field of the row leaves the record alone');
+    T.applyPreset(JSON.parse(JSON.stringify(PRESET)), true);   // a preset Overwrite over the prefill
+    ok(Object.keys(d()).length === 0, 'A8: a preset applied over the prefill is the user\'s: ' +
+       JSON.stringify(d()));
+  }
+
   if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
   console.log('generate_autopreset_rows_selfcheck: all checks passed');
 })().catch(function (e) { console.error((e && e.stack) || e); process.exit(1); });

@@ -92,7 +92,7 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=()) -> dict | N
     ``tof``: per resonator whose readout output has a delay ``s > 0``:
     ``{qubit, shift, value, moved}``. ``moved`` says whether its time of flight
     moved with that delay: by default (a fresh build) every resonator except
-    the ones in ``tof_typed`` (values the user typed stay as typed); a
+    the ones in ``tof_typed`` (values the user set stay as set); a
     Re-generate passes ``tof_moved``, the qubits whose time of flight it moved.
     """
     try:
@@ -137,9 +137,23 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=()) -> dict | N
 
 
 def typed_tof(spec: dict | None) -> set[str]:
-    """Qubits whose time of flight the user typed in the populate step."""
-    rows = (((spec or {}).get("populate") or {}).get("resonator")) or {}
-    return {q for q, v in rows.items() if isinstance(v, dict) and "time_of_flight" in v}
+    """Qubits whose time of flight the user set in the populate step (typed,
+    from a preset the user applied, or a stored value of an imported spec).
+
+    A cell the wizard pre-filled with the standard defaults and the user never
+    changed is listed in ``populate.options.tof_defaults`` (``{qid: value}``);
+    when the cell still holds that value it is a default, not the user's, and
+    moves with its readout output's delay. A spec without ``tof_defaults``
+    (an older saved draft or a script emitted from one, the agent API) treats
+    every provided time of flight as the user's, as before. Same rule as
+    ``generator.run_build._user_set_tof``."""
+    pop = (spec or {}).get("populate") or {}
+    defaults = (pop.get("options") or {}).get("tof_defaults") or {}
+    if not isinstance(defaults, dict):
+        defaults = {}
+    return {q for q, v in (pop.get("resonator") or {}).items()
+            if isinstance(v, dict) and "time_of_flight" in v
+            and not (q in defaults and defaults[q] == v["time_of_flight"])}
 
 
 def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, tof_typed=()) -> None:
