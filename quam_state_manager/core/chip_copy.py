@@ -29,7 +29,9 @@ import marshal
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass, field
+import itertools
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -41,8 +43,8 @@ class ChipCopies:
     seq: int
     root: Path
     root_class: str | None = None
-    #: the store the copies were read from (identity, never compared by value)
-    store: Any = field(default=None, compare=False, repr=False)
+    #: the identity of the store the copies were read from (:func:`store_id`)
+    store_id: int | None = None
 
 
 class CreateError(ValueError):
@@ -118,7 +120,7 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
         raise
     return ChipCopies(before=before, after=after, seq=seq, root=root,
                       root_class=root_class if isinstance(root_class, str) else None,
-                      store=store)
+                      store_id=store_id(store))
 
 
 REMOVE_TRIES = 5
@@ -145,16 +147,37 @@ def remove_chip_copies(copies: ChipCopies | None) -> str | None:
     return str(target) if target.exists() else None
 
 
-def store_at_seq(store, copies) -> bool:
-    """True when *store* is the store the copies were read from and is
-    still at their sequence value (read under the store lock). *copies* is
-    a :class:`ChipCopies` (or a bare sequence value, which checks the
-    counter only)."""
-    if isinstance(copies, ChipCopies):
-        if copies.store is not None and copies.store is not store:
-            return False
-        seq = copies.seq
+_UIDS = itertools.count(1)
+_UID_LOCK = threading.Lock()
+
+
+def store_id(store) -> int:
+    """A process-unique id of one store object (the web layer's own uid when
+    it has given the store one, else one assigned here); ``id()`` is not
+    used because a later store can reuse it."""
+    uid = getattr(store, "_w7_uid", None)
+    if uid is not None:
+        return uid
+    with _UID_LOCK:
+        uid = getattr(store, "_chip_copy_uid", None)
+        if uid is None:
+            uid = next(_UIDS)
+            store._chip_copy_uid = uid
+        return uid
+
+
+def store_at_seq(store, ref) -> bool:
+    """True when *store* is the store *ref* was read from AND is still at
+    its sequence value (read under the store lock). *ref* is a
+    :class:`ChipCopies` or a gate-check result (``seq`` + ``store_id``); a
+    bare number is refused (TypeError), so the identity is never skipped."""
+    if isinstance(ref, ChipCopies):
+        seq, sid = ref.seq, ref.store_id
+    elif isinstance(ref, dict):
+        seq, sid = ref.get("seq"), ref.get("store_id")
     else:
-        seq = copies
+        raise TypeError("store_at_seq needs the copies or the check result, not a number")
+    if seq is None or sid is None or sid != store_id(store):
+        return False
     with store._lock:
         return store.mutation_seq == seq

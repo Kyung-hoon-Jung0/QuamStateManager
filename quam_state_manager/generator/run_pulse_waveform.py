@@ -50,6 +50,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_common import out_of_env_sources  # noqa: E402
+from path_scrub import scrub_paths  # noqa: E402
 
 _MAX_SAMPLES = 20000
 
@@ -349,9 +350,10 @@ def _check_macros(root_class: str, params: dict) -> dict:
     return res
 
 
-def _exc_where(exc: BaseException) -> str:
+def _exc_where(exc: BaseException, folders=None) -> str:
     """``Type: message`` plus WHERE it was raised -- quam's bare ``assert``
-    has no message, and "AssertionError: " alone tells the user nothing."""
+    has no message, and "AssertionError: " alone tells the user nothing.
+    *folders*: temporary paths replaced by ``<chip>`` before the cut."""
     msg = f"{type(exc).__name__}: {exc}".rstrip()
     try:
         tb = traceback.extract_tb(exc.__traceback__)
@@ -362,6 +364,8 @@ def _exc_where(exc: BaseException) -> str:
                 f": {code}" if code else "") + ")"
     except Exception:  # noqa: BLE001
         pass
+    if folders:
+        msg = scrub_paths(msg, folders)
     return msg[:600]
 
 
@@ -440,7 +444,7 @@ def _root_class_of(folder: Path, fallback=None) -> str:
     raise ValueError("state.json names no __class__ and none was given")
 
 
-def _chip_side(folder, root_class=None):
+def _chip_side(folder, root_class=None, folders=None):
     """``(machine | None, {"load_error", "config_error"}, config | None)`` of
     one chip folder: loaded with its own root class, then
     ``generate_config()``."""
@@ -452,7 +456,7 @@ def _chip_side(folder, root_class=None):
         cls = _import_class(_root_class_of(Path(folder), root_class))
         machine = _load_chip(cls, folder)
     except BaseException as exc:  # noqa: BLE001 -- the lab's own words
-        side["load_error"] = _exc_where(exc)
+        side["load_error"] = _exc_where(exc, folders)
         return None, side, None
     import warnings
     try:
@@ -460,7 +464,7 @@ def _chip_side(folder, root_class=None):
             warnings.simplefilter("ignore")
             cfg = machine.generate_config()
     except BaseException as exc:  # noqa: BLE001
-        side["config_error"] = _exc_where(exc)
+        side["config_error"] = _exc_where(exc, folders)
         return machine, side, None
     return machine, side, cfg
 
@@ -480,15 +484,28 @@ def _script_body(script: str) -> str:
 def played_ops(script: str) -> list:
     """``[(element, operation)]`` of every ``play`` with literal arguments,
     in order of first appearance."""
+    return _plays(script)[0]
+
+
+def unresolved_plays(script: str) -> int:
+    """How many ``play`` statements name their operation or element with a
+    value SM cannot read (a variable, an expression)."""
+    return _plays(script)[1]
+
+
+def _plays(script: str):
     import ast
     try:
         tree = ast.parse(_script_body(script))
-    except SyntaxError:
-        return []
+    except Exception:  # noqa: BLE001
+        return [], 0
     out = []
+    unresolved = 0
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "play"
-                and len(node.args) >= 2):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", "") == "play"):
+            continue
+        if len(node.args) < 2:
+            unresolved += 1
             continue
         opnode = node.args[0]
         if isinstance(opnode, ast.BinOp):
@@ -496,11 +513,15 @@ def played_ops(script: str) -> list:
         try:
             op, el = ast.literal_eval(opnode), ast.literal_eval(node.args[1])
         except Exception:  # noqa: BLE001 -- a real-time argument
+            unresolved += 1
             continue
-        key = (str(el), str(op))
+        if not (isinstance(op, str) and isinstance(el, str)):
+            unresolved += 1
+            continue
+        key = (el, op)
         if key not in out:
             out.append(key)
-    return out
+    return out, unresolved
 
 
 def _element_port(el_cfg: dict):
@@ -543,11 +564,10 @@ def plain(v):
         return {k: plain(x) for k, x in v.items()}
     if isinstance(v, (list, tuple)):
         return [plain(x) for x in v]
-    if type(v).__module__ == "numpy" and hasattr(v, "item"):
-        try:
-            return v.item()
-        except Exception:  # noqa: BLE001
-            return repr(v)
+    if type(v).__module__ == "numpy":
+        if hasattr(v, "tolist"):          # arrays and scalars alike
+            return plain(v.tolist())
+        raise TypeError(f"cannot read a {type(v).__name__}")
     return v
 
 
@@ -567,7 +587,16 @@ def op_data(cfg: dict, element: str, operation: str, max_samples: int = _MAX_SAM
     waveform carries ``nonfinite`` (how many samples are inf / NaN / not a
     number; they appear as None in ``samples``) and ``error`` when it cannot
     be read at all."""
-    return plain(_op_data(cfg, element, operation, max_samples))
+    try:
+        return plain(_op_data(cfg, element, operation, max_samples))
+    except Exception as exc:  # noqa: BLE001 -- one odd operation, never the whole answer
+        return {"element": element, "operation": operation, "found": True,
+                "error": None, "length": None, "port": None, "port_kind": None,
+                "delay": None, "sampling_rate": None, "filter": False,
+                "output_mode": None, "offset": None, "iq": False,
+                "waveform": {"type": None, "nonfinite": 0,
+                             "error": "the config value of this operation could not be read "
+                                      f"({type(exc).__name__})"}}
 
 
 def _op_data(cfg, element, operation, max_samples):
@@ -575,12 +604,12 @@ def _op_data(cfg, element, operation, max_samples):
            "error": None, "length": None, "waveform": None, "port": None,
            "port_kind": None, "delay": None, "sampling_rate": None,
            "filter": False, "output_mode": None, "offset": None, "iq": False}
-    el_cfg = (cfg.get("elements") or {}).get(element)
+    el_cfg = plain((cfg.get("elements") or {}).get(element))
     if not isinstance(el_cfg, dict):
         rec["error"] = f"element {element!r} is not in the config"
         return rec
     pname = (el_cfg.get("operations") or {}).get(operation)
-    pulse = (cfg.get("pulses") or {}).get(pname) if pname else None
+    pulse = plain((cfg.get("pulses") or {}).get(pname)) if isinstance(pname, str) else None
     if not isinstance(pulse, dict):
         rec["error"] = f"operation {operation!r} is not in element {element!r}"
         return rec
@@ -589,7 +618,7 @@ def _op_data(cfg, element, operation, max_samples):
     wfs = pulse.get("waveforms") or {}
     wname = wfs.get("single", wfs.get("I"))
     rec["iq"] = "Q" in wfs or any(k in el_cfg for k in ("mixInputs", "MWInput", "RF_inputs"))
-    wf = (cfg.get("waveforms") or {}).get(wname)
+    wf = plain((cfg.get("waveforms") or {}).get(wname)) if isinstance(wname, str) else None
     if not isinstance(wf, dict):
         rec["waveform"] = {"type": None, "error": f"waveform {wname!r} is not in the config",
                            "nonfinite": 0}
@@ -617,6 +646,7 @@ def _op_data(cfg, element, operation, max_samples):
     port = _element_port(el_cfg)
     rec["port"] = port
     pc, kind = _port_cfg(cfg, port)
+    pc = plain(pc)
     rec["port_kind"] = kind
     if isinstance(pc, dict):
         rec["delay"] = pc.get("delay", 0)
@@ -661,16 +691,9 @@ def _quam_config_origin(lab_dir) -> dict:
 
 def _err_text(exc, folders) -> str:
     """``Type: message`` with the temporary chip folders replaced by
-    ``<chip>`` (both separators) BEFORE the text is cut, so the same error on
-    "before" and "after" reads the same."""
-    msg = f"{type(exc).__name__}: {exc}"
-    for f in folders:
-        if not f:
-            continue
-        for form in {f, f.replace("\\", "/"), f.replace("/", "\\"),
-                     f.replace("\\", "\\\\")}:
-            msg = msg.replace(form, "<chip>")
-    return msg[:600]
+    ``<chip>`` BEFORE the text is cut, so the same error on "before" and
+    "after" reads the same."""
+    return scrub_paths(f"{type(exc).__name__}: {exc}", folders)[:600]
 
 
 def _check_gates(params: dict) -> dict:
@@ -700,10 +723,10 @@ def _check_gates(params: dict) -> dict:
         os.environ["QUAM_STATE_PATH"] = after_folder
     try:
         root_class = params.get("root_class")
-        folders = [params.get("before"), after_folder]
-        bmachine, res["before"], _c = _chip_side(params.get("before"), root_class)
+        folders = [f for f in (params.get("before"), after_folder) if isinstance(f, str)]
+        bmachine, res["before"], _c = _chip_side(params.get("before"), root_class, folders)
         del _c
-        machine, res["after"], cfg = _chip_side(after_folder, root_class)
+        machine, res["after"], cfg = _chip_side(after_folder, root_class, folders)
         res["before_gates"] = {}
         if bmachine is not None:
             for path in params.get("macros") or []:
@@ -724,7 +747,7 @@ def _check_gates(params: dict) -> dict:
                 generate_qua_script = None
                 qm_error = f"could not import qm: {type(exc).__name__}: {exc}"
             for path in params.get("macros") or []:
-                g = {"script": None, "error": None, "ops": []}
+                g = {"script": None, "error": None, "ops": [], "unresolved_plays": 0}
                 try:
                     prog = _apply_in_program(machine, path)
                     if generate_qua_script is None:
@@ -732,9 +755,10 @@ def _check_gates(params: dict) -> dict:
                     g["script"] = generate_qua_script(prog)
                 except BaseException as exc:  # noqa: BLE001 -- the lab's own check
                     g["error"] = _err_text(exc, folders)
-                if g["script"] and cfg:
-                    g["ops"] = [op_data(cfg, el, op, max_samples)
-                                for el, op in played_ops(g["script"])]
+                if g["script"]:
+                    plays, g["unresolved_plays"] = _plays(g["script"])
+                    if cfg:
+                        g["ops"] = [op_data(cfg, el, op, max_samples) for el, op in plays]
                 res["gates"][path] = g
         res["quam_config"] = _quam_config_origin(params.get("lab_dir"))
         res["ok"] = True

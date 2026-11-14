@@ -127,8 +127,8 @@ def test_measured_case_shared_const_with_spectators():
     ("v1 = declare(int, )", "declare"),
     ("with if_(v1 > 0):", "if_"),
     ('measure("readout", "q1.rr", None)', "measure"),
-    ('play("p", "q1.z", duration=v1)', "non-constant"),
-    ('wait(v1, "q1.z")', "non-constant"),
+    ('play("p", "q1.z", duration=v1)', "while the program runs"),
+    ('wait(v1, "q1.z")', "while the program runs"),
     ('play("missing", "q1.z")', "not in the config"),
 ])
 def test_cannot_draw(stmt, needle):

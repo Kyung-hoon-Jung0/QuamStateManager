@@ -629,14 +629,20 @@ def warm_config(python_path: str | None, state_folder: str) -> dict | None:
 
 GATE_CHECK_ITEM = "@gatecheck"
 GATE_CHECK_TIMEOUT_S = 180
+#: how long a gate check waits for another lab job to finish before it
+#: answers "busy" (a request thread never waits forever)
+GATE_CHECK_LOCK_WAIT_S = 30
 
 
 def run_gate_check(python_path: str | None, before: str, after: str,
                    macros: list[str], *, timeout: int = GATE_CHECK_TIMEOUT_S,
-                   root_class: str | None = None) -> dict:
+                   root_class: str | None = None,
+                   lock_wait: float = GATE_CHECK_LOCK_WAIT_S) -> dict:
     """The lab-side gate check on two chip folders, in ONE cold subprocess
     under the machine lock. ``{"status": "ok" | "no-env" | "timeout" |
-    "crash", "error", "data"}``; ``data`` is the runner's answer.
+    "crash" | "busy", "error", "data"}``; ``data`` is the runner's answer.
+    "busy": the machine lock stayed taken by another lab job for
+    :data:`GATE_CHECK_LOCK_WAIT_S`.
 
     Cold, not warm: the child gets ``QUAM_STATE_PATH`` set to the "after"
     folder, which a warm worker (started once with its own env) cannot
@@ -655,9 +661,16 @@ def run_gate_check(python_path: str | None, before: str, after: str,
     lock = _env_lock(python_path)
     _fg_add(python_path, 1)
     try:
-        lock.acquire()
+        deadline = time.monotonic() + lock_wait
+        got = lock.acquire(blocking=False)
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.1)
+            got = lock.acquire(blocking=False)
     finally:
         _fg_add(python_path, -1)
+    if not got:
+        return {"status": "busy", "data": None,
+                "error": "the lab environment is busy with another check; try again"}
     try:
         ran = _run_cold(python_path, [item], timeout=timeout,
                         env_extra={"QUAM_STATE_PATH": str(after)})

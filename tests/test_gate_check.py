@@ -138,29 +138,37 @@ def test_op_absent_from_config_fails():
     assert _checks(res)["ops"] == "fail" and "cz_pulse" in _msg(res, "ops")
 
 
-def test_existing_gate_old_error_is_not_new_but_new_error_fails():
-    """The runner applies only the named macros, on "before" too when the
-    path exists there: the same error (memory address aside) is a note; a
-    different one, or a gate that exists only in "after", fails."""
-    old = "AssertionError: lines differ <obj at 0x0000021A>"
-    same = "AssertionError: lines differ <obj at 0x7FFF1234>"
-    res = gate_check.evaluate([GATE], _ran(error=same, before_gates={PATH: {"error": old}}))
-    assert _checks(res)["ops"] == "note" and res["ok"]
-    res = gate_check.evaluate([GATE], _ran(error="KeyError: other",
-                                           before_gates={PATH: {"error": old}}))
-    assert _checks(res)["ops"] == "fail"
-    res = gate_check.evaluate([GATE], _ran(error=same, before_gates={PATH: {"error": None}}))
-    assert _checks(res)["ops"] == "fail"
-    assert _checks(gate_check.evaluate([GATE], _ran(error=same)))["ops"] == "fail"
+def test_a_checked_gate_that_cannot_run_always_fails():
+    """Re-checking an existing broken gate is not ok; the message says it
+    already failed before. A new broken gate fails too."""
+    err = "KeyError: \"Operation 'cz_x' not found in channel 'q1.z'\""
+    res = gate_check.evaluate([GATE], _ran(error=err, before_gates={PATH: {"error": err}}))
+    assert _checks(res)["ops"] == "fail" and not res["ok"]
+    assert "already failed this way before this change" in _msg(res, "ops")
+    res = gate_check.evaluate([GATE], _ran(error=err))
+    assert _checks(res)["ops"] == "fail" and "already" not in _msg(res, "ops")
+
+
+def test_another_broken_gate_of_the_chip_does_not_fail_this_one():
+    ran = _ran()
+    ran["data"]["before_gates"]["qubit_pairs.q3-4.macros.cz_old"] = {"error": "KeyError: old"}
+    res = gate_check.evaluate([GATE], ran, PREVIEW)
+    assert res["ok"] and set(_checks(res).values()) == {"pass"}
 
 
 @pytest.mark.parametrize("length,status", [(16, "pass"), (20, "pass"), (18, "fail"),
-                                           (12, "fail"), (16.0, "fail"), ("16", "fail")])
+                                           (12, "fail"), (16.0, "pass"), (96.0, "pass"),
+                                           (16.5, "fail"), ("16", "fail")])
 def test_length_rule(length, status):
     res = gate_check.evaluate([GATE], _ran(cfg=_cfg(length=length)))
     assert _checks(res)["length"] == status
     if status == "fail":
         assert "cz_pulse" in _msg(res, "length") and "q1.z" in _msg(res, "length")
+    if length == 16.5:
+        assert "must be a whole number of ns: cz_pulse on q1.z is 16.5 ns" in _msg(res, "length")
+    if isinstance(length, float) and status == "pass":
+        assert "stored as" in _msg(res, "length")
+        assert _g(res)["timeline"]["rows"], "an integral float is drawn"
 
 
 def test_preview_one_sample_off_fails_and_tolerance_passes():
@@ -210,7 +218,7 @@ def test_timeline_cannot_draw_is_a_note_and_range_scale_unknown():
     assert c["timeline"] == "note" and "declare" in _msg(res, "timeline")
     assert _g(res)["timeline"]["rows"] == []
     assert c["ops"] == "pass" and c["preview"] == "pass"
-    assert c["range"] == "skipped" and "scale is not known" in _msg(res, "range")
+    assert c["range"] == "skipped" and "timeline could not be drawn" in _msg(res, "range")
     assert res["ok"] and "range" in _g(res)["unchecked"]
 
 
@@ -229,10 +237,11 @@ def test_range_outside_fails():
 
 def test_range_inside_but_offset_pushes_outside():
     res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4, offset=0.15)))
-    assert _checks(res)["range"] == "fail" and "maximum + offset" in _msg(res, "range")
+    assert _checks(res)["range"] == "fail"
+    assert "cz_pulse on q1.z, port con1/1/1: the maximum plus the offset is +0.5500" in _msg(res, "range")
     assert _checks(gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4))))["range"] == "pass"
     res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=-0.4, offset=-0.15)))
-    assert _checks(res)["range"] == "fail"
+    assert _checks(res)["range"] == "fail" and "the minimum plus the offset" in _msg(res, "range")
 
 
 def test_range_amplified_port_allows_more():
@@ -259,8 +268,9 @@ def test_one_bad_gate_does_not_lose_the_others():
     ran = _ran()
     ran["data"]["gates"][gate_check.macro_path(*other)] = {"script": SCRIPT, "error": None,
                                                            "ops": "not a list"}
+    ran["data"]["gates"][gate_check.macro_path(*other)]["unresolved_plays"] = "x"
     res = gate_check.evaluate([other, GATE], ran, PREVIEW)
-    assert set(_checks(res, other).values()) == {"skipped"}
+    assert _checks(res, other)["ops"] == "skipped"
     assert _checks(res) == {c: "pass" for c in gate_check.CHECKS}
 
 
@@ -407,13 +417,30 @@ def test_numpy_numbers_from_the_config_are_plain():
     assert _checks(gate_check.evaluate([GATE], _ran(cfg=cfg, ops=ops)))["length"] == "pass"
     ops = _ops(_cfg(length=np.float64(16.0)))
     assert type(ops[0]["length"]) is float
-    assert _checks(gate_check.evaluate([GATE], _ran(ops=ops)))["length"] == "fail"
+    assert _checks(gate_check.evaluate([GATE], _ran(ops=ops)))["length"] == "pass"
+
+
+def test_array_valued_config_value_only_spoils_that_operation():
+    np = pytest.importorskip("numpy")
+    cfg = _cfg()
+    cfg["waveforms"]["cz.wf"]["samples"] = np.array(_wave(0.2))
+    ops = _ops(cfg)
+    assert ops[0]["waveform"]["samples"] == _wave(0.2)
+    json.dumps(ops)
+
+    class Odd:
+        __module__ = "numpy"
+    cfg["waveforms"]["cz.wf"]["samples"] = Odd()
+    ops = _ops(cfg)
+    assert ops[0]["waveform"]["error"] and "could not be read" in ops[0]["waveform"]["error"]
+    res = gate_check.evaluate([GATE], _ran(cfg=cfg, ops=ops), PREVIEW)
+    assert res["status"] == "ok" and _checks(res)["range"] == "skipped"
 
 
 @pytest.mark.parametrize("stmt,status", [
     ('play("cz_pulse", "q1.z", duration=2)', "fail"),
     ('play("cz_pulse", "q1.z", duration=0)', "fail"),
-    ('wait(3, "q1.z")', "fail"),
+    ('wait(3, "q1.z")', "note"),
     ('play("cz_pulse", "q1.z", duration=4)', "pass"),
     ('wait(4, "q1.z")', "pass"),
 ])
@@ -421,8 +448,10 @@ def test_play_time_duration_minimum(stmt, status):
     script = SCRIPT.replace('play("cz_pulse", "q1.z")', stmt + '\n    play("cz_pulse", "q1.z")')
     res = gate_check.evaluate([GATE], _ran(script=script))
     assert _checks(res)["length"] == status
-    if status == "fail":
+    if status in ("fail", "note"):
         assert stmt in _msg(res, "length")
+    if status == "note":
+        assert "minimum wait of 4 clock cycles" in _msg(res, "length")
 
 
 def test_runner_error_text_drops_the_temp_folders():
@@ -432,28 +461,90 @@ def test_runner_error_text_drops_the_temp_folders():
     assert "sm_chipcopy_x" not in e1 + e2 and e1.replace("\\", "/") == e2.replace("\\", "/")
 
 
-def test_a_create_under_the_gate_never_downgrades_to_note():
-    err = "AssertionError: lines differ"
-    ran = _ran(error=err, before_gates={PATH: {"error": err}})
-    assert _checks(gate_check.evaluate([GATE], ran))["ops"] == "note"
-    res = gate_check.evaluate([GATE], ran, created_paths=[PATH + ".extra_field"])
-    assert _checks(res)["ops"] == "fail"
-    res = gate_check.evaluate([GATE], ran, created_paths=["qubits.q1.z.operations.other"])
-    assert _checks(res)["ops"] == "note"
+def test_chip_level_errors_never_show_the_temp_folder(tmp_path):
+    from quam_state_manager.generator.path_scrub import scrub_paths
+    parent = tmp_path / "sm_chipcopy_q"
+    b, a = str(parent / "before"), str(parent / "after")
+    for text in (f"cannot read {parent}\\x.json", f"cannot read {str(parent).upper()}/x",
+                 f"bad {b.replace(chr(92), '/')}/state.json"):
+        assert "sm_chipcopy_q" not in scrub_paths(text, [b, a]).lower()
+
+    def runner(py, before, after, macros, **kw):
+        err = f"KeyError: the chip in {Path(before).parent} does not load"
+        return {"status": "ok", "error": None, "data": {
+            "before": {"load_error": err, "config_error": None},
+            "after": {"load_error": err, "config_error": None}, "gates": {}}}
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=runner)
+    assert "<chip>" in res["chip_error"] and "sm_chipcopy_" not in json.dumps(res["gates"])
+    assert "sm_chipcopy_" not in res["chip_error"]
+
+
+def test_zero_plays_fail_and_unresolved_plays_are_counted():
+    empty = SCRIPT.replace('    play("cz_pulse", "q1.z")\n', "")
+    res = gate_check.evaluate([GATE], _ran(script=empty, ops=[]))
+    assert _checks(res)["ops"] == "fail" and "plays no pulse" in _msg(res, "ops")
+    var = SCRIPT.replace('play("cz_pulse", "q1.z")', 'play("cz_pulse", "q1.z")\n    play(op_name, "q1.z")')
+    ran = _ran(script=var)
+    ran["data"]["gates"][PATH]["unresolved_plays"] = runner_mod.unresolved_plays(var)
+    res = gate_check.evaluate([GATE], ran, PREVIEW)
+    assert _checks(res)["ops"] == "note" and "1 plays use a name SM could not read" in _msg(res, "ops")
+    assert "ops" in _g(res)["partly_checked"]
+
+
+def test_range_partly_checked_names_both_sides():
+    script = SCRIPT.replace('play("cz_pulse", "q1.z")',
+                            'play("cz_pulse", "q1.z")\n    play("other", "q2.z")')
+    cfg = _cfg()
+    cfg["elements"]["q2.z"] = {"singleInput": {"port": ["con9", 1]},
+                               "operations": {"other": "cz_pulse.pulse"}}
+    res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg))
+    assert _checks(res)["range"] == "note" and "range" in _g(res)["partly_checked"]
+    m = _msg(res, "range")
+    assert "Inside the output range: cz_pulse on q1.z" in m and "other on q2.z" in m.split("Not checked")[1]
+
+
+def test_busy_lock_is_a_typed_result(tmp_path, monkeypatch):
+    py = tmp_path / "python.exe"
+    py.write_text("", encoding="utf-8")
+
+    class Taken:
+        def acquire(self, blocking=True):
+            return False
+
+        def release(self):
+            raise AssertionError("never taken")
+    monkeypatch.setattr(lab_waveform, "_env_lock", lambda p: Taken())
+    res = lab_waveform.run_gate_check(str(py), "B", "A", [PATH], lock_wait=0.2)
+    assert res["status"] == "busy" and "busy" in res["error"]
+    assert gate_check.evaluate([GATE], res)["status"] == "busy"
+
+
+def test_store_identity_travels_in_the_result(tmp_path):
+    from quam_state_manager.core import chip_copy
+    store = _store(tmp_path)
+    res = gate_check.check_gates(store, "python.exe", [GATE],
+                                 runner=lambda *a, **k: {"status": "crash", "error": "x", "data": None})
+    assert res["store_id"] == chip_copy.store_id(store)
+    assert chip_copy.store_at_seq(store, res)
+    (tmp_path / "o").mkdir()
+    other = _store(tmp_path / "o")
+    assert not chip_copy.store_at_seq(other, res)
+    with pytest.raises(TypeError):
+        chip_copy.store_at_seq(store, res["seq"])
 
 
 def test_preview_coverage_is_stated():
     pv = {GATE: {("q1.z", "cz_pulse"): _wave(0.2), ("q9.z", "ghost"): [0.1]}}
     res = gate_check.evaluate([GATE], _ran(), pv)
     assert _checks(res)["preview"] == "note"
-    assert "1 of 1 played" in _msg(res, "preview") and "q9.z ghost" in _msg(res, "preview")
+    assert "1 of 1 played" in _msg(res, "preview") and "ghost on q9.z" in _msg(res, "preview")
     script = SCRIPT.replace('play("cz_pulse", "q1.z")',
                             'play("cz_pulse", "q1.z")\n    play("other", "q2.z")')
     cfg = _cfg()
     cfg["elements"]["q2.z"] = {"singleInput": {"port": ["con1", 1, 1]},
                                "operations": {"other": "cz_pulse.pulse"}}
     res = gate_check.evaluate([GATE], _ran(script=script, cfg=cfg), PREVIEW)
-    assert "1 of 2 played" in _msg(res, "preview") and "No preview for: q2.z other" in \
+    assert "1 of 2 played" in _msg(res, "preview") and "No preview for: other on q2.z" in \
         _msg(res, "preview")
 
 
@@ -541,7 +632,10 @@ def test_real_env_copy_gate_and_broken_gate(tmp_path, monkeypatch):
     assert copy_entry["timeline"]["rows"], copy_entry
     assert "all 0 played" not in copy_entry["checks"]["ops"]["message"]
     rng = copy_entry["checks"]["range"]
-    assert rng["status"] == "pass" or (rng["status"] == "skipped" and rng["message"]), rng
+    assert rng["status"] in ("pass", "note", "skipped"), rng
+    for row in copy_entry["timeline"]["rows"]:
+        # every played operation is named, as compared or as not checked with a reason
+        assert f"{row['operation']} on {row['element']}" in rng["message"], rng
     broken = gate_check.gate_result(res, pair, "cz_broken")["checks"]["ops"]
     assert broken["status"] == "fail" and "no_such_op" in broken["message"], broken
     assert res["quam_config"] is not None

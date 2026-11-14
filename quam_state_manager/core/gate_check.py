@@ -1,43 +1,50 @@
 """SM-side gate check: turns the lab worker's answer into one result per check.
 
 The checks run on two chip copies (:mod:`core.chip_copy`): "before" (the chip
-as it is, unsaved edits included) and "after" (plus the new gate's creates).
-The lab side is ``generator/run_pulse_waveform.py``'s gate-check item, run by
+as it is, unsaved edits included) and "after" (plus the write's creates). The
+lab side is ``generator/run_pulse_waveform.py``'s gate-check item, run by
 :func:`core.lab_waveform.run_gate_check`. The checks, per gate:
 
-- ``load_config``: the "after" chip loads and builds its config;
-- ``ops``: the macro's ``apply()`` runs and every operation it plays is in the
-  config (a missing one shows up as a KeyError naming operation and channel);
-- ``length``: every played pulse length is an integer, a multiple of 4 ns and
-  at least 16 ns;
+- ``load_config``: the chip with the write loads and builds its config;
+- ``ops``: the gate's ``apply()`` runs, it plays at least one pulse, and every
+  operation it plays is in the config;
+- ``length``: every played pulse length is a whole number of ns, a multiple of
+  4 ns and at least 16 ns; a play-time ``duration=`` is at least 4 clock
+  cycles (a short ``wait`` is a note);
 - ``preview``: the preview samples equal the config's samples;
-- ``timeline``: the static timeline (:mod:`core.static_timeline`);
-- ``range``: pulse maximum * |scale| + channel offset inside the port's range.
+- ``timeline``: the static timeline (:mod:`core.static_timeline`); ``pass``
+  means "drawn", not "compared with a measurement";
+- ``range``: each side of the pulse (maximum and minimum, times the played
+  scale, plus the channel offset) inside the port's output range.
 
 Each check is ``{"status": "pass" | "fail" | "skipped" | "note",
-"message": str}``. ``load_config`` and ``ops`` fail only for what the new
-state caused: "before" must have passed, and a gate that already exists in
-"before" fails only with an error that is new or different there. When
-"before" itself does not load or build its config, every check is ``skipped``
-with the chip's own error and ``checked`` is False. A runner crash, a timeout
-and "no env selected" come back as a typed ``status``, never as an exception.
-
-Only the I (or single) waveform of an operation and its port are checked; the
-Q waveform and Q port of an IQ or microwave element are not modelled.
+"message": str}``. The before / after comparison is used for the chip-level
+check only: when the chip as it is does not load or build its config, every
+check is ``skipped`` with the chip's own error and ``checked`` is False, so an
+unrelated fault of the chip is never blamed on the gate. A gate under check
+that cannot run always fails, also when it already failed before the write.
 
 The result is JSON-serialisable::
 
-    {"status": "ok" | "no-env" | "timeout" | "crash" | "invalid-create",
+    {"status": "ok" | "no-env" | "timeout" | "crash" | "busy" | "invalid-create",
      "checked": bool, "ok": bool, "chip_error": str | None,
-     "error": str | None, "seq": int | None, "quam_config": {...} | None,
+     "error": str | None, "seq": int | None, "store_id": int | None,
+     "leftover": str | None, "quam_config": {...} | None,
      "gates": [{"pair", "gate", "checks": {name: {"status", "message"}},
-                "unchecked": [name], "timeline": {"rows": [{element, port,
-                operation, start_ns, end_ns, level, scale}], "cannot_draw",
-                "notes", "filtered_ports"} | None}]}
+                "unchecked": [name], "partly_checked": [name],
+                "timeline": {"rows": [{element, port, operation, start_ns,
+                end_ns, level, scale}], "cannot_draw", "notes",
+                "filtered_ports"} | None}]}
 
-``ok`` means "nothing failed", not "everything was compared": the checks
-that were skipped are listed per gate in ``unchecked``. ``leftover`` (from
-:func:`check_gates`) is a temporary folder that could not be removed, or null.
+``ok`` means "nothing failed", not "everything was compared": ``unchecked``
+lists the checks that were skipped, ``partly_checked`` the checks that
+compared only some of the gate's operations (their status is ``note``).
+``seq`` and ``store_id`` are what :func:`chip_copy.store_at_seq` needs.
+``leftover`` is a temporary folder that could not be removed; it is the one
+path in the result, meant to be shown only to the local user.
+
+Only the I (or single) waveform of an operation and its port are checked; the
+Q waveform and Q port of an IQ or microwave element are not modelled.
 
 Known limits: all gates of one run share one loaded machine on the lab side,
 so a lab ``apply()`` that mutates the machine could make the order matter;
@@ -76,6 +83,8 @@ _BASE_RATE = 1e9
 
 _IQ_NOTE = (" Only the I waveform and its port are checked; the Q waveform of an "
             "IQ or microwave element is not.")
+_WAIT_NOTE = ("QUA documents a minimum wait of 4 clock cycles (16 ns); check that this "
+              "runs on your controller version")
 
 
 def _r(status: str, message: str, **extra) -> dict:
@@ -119,33 +128,29 @@ def _entry(key, checks, timeline=None) -> dict:
                       for r in timeline.get("rows") or []]
     return {"pair": key[0], "gate": key[1], "checks": checks,
             "unchecked": [c for c in CHECKS if checks[c]["status"] == "skipped"],
+            "partly_checked": [c for c in CHECKS if checks[c].get("partly")],
             "timeline": tl}
 
 
+def _base(status, *, checked, error=None, chip_error=None, quam_config=None) -> dict:
+    return {"status": status, "checked": checked, "ok": False, "chip_error": chip_error,
+            "error": error, "seq": None, "store_id": None, "leftover": None,
+            "quam_config": quam_config, "gates": []}
+
+
 def _unchecked(keys, status: str, error: str, msg: str | None = None) -> dict:
-    msg = msg or f"Not checked with the lab's code: {error}"
-    return {"status": status, "checked": False, "chip_error": None,
-            "error": error, "ok": False, "quam_config": None, "seq": None, "leftover": None,
-            "gates": [_entry(k, _all("skipped", msg)) for k in keys]}
+    msg = msg or f"Not checked with the lab's code: {error}."
+    out = _base(status, checked=False, error=error)
+    out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
+    return out
 
 
-_ADDR = re.compile(r"0x[0-9a-fA-F]+")
-
-
-def _norm_err(err) -> str:
-    return _ADDR.sub("0x?", str(err or "")).strip()
-
-
-def evaluate(gates: Iterable, ran: dict, previews: dict | None = None, *,
-             created_paths: Iterable[str] = ()) -> dict:
+def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     """The per-gate checks from :func:`lab_waveform.run_gate_check`'s answer.
 
     *gates*: gate keys (see :func:`gate_key`). *previews*: ``{gate key:
     {(element, operation): samples list or constant}}``, keyed through the
-    same :func:`gate_key`. *created_paths*: the dot paths the write creates;
-    a gate at or above one of them was changed by the write, so its failure
-    is never downgraded to "failed the same way before"."""
-    created_paths = [str(c) for c in created_paths]
+    same :func:`gate_key`."""
     keys = [gate_key(g) for g in gates]
     previews = {gate_key(k): v for k, v in (previews or {}).items()}
     status = (ran or {}).get("status") or "crash"
@@ -154,133 +159,166 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None, *,
     data = ran.get("data") or {}
     before = data.get("before") or {}
     after = data.get("after") or {}
-    out = {"status": "ok", "checked": True, "chip_error": None, "error": None,
-           "quam_config": data.get("quam_config"), "seq": None, "leftover": None,
-           "gates": []}
     chip_err = before.get("load_error") or before.get("config_error")
     if chip_err:
         what = "does not load" if before.get("load_error") else "does not build its config"
-        msg = (f"The chip as it is {what} with the lab's code, so the gate could "
-               f"not be checked: {chip_err}")
-        out.update(checked=False, chip_error=chip_err, ok=False)
+        msg = (f"The chip as it is {what} with the lab's code, so the gate could not be "
+               f"checked. The lab's error: {chip_err}")
+        out = _base("ok", checked=False, chip_error=chip_err,
+                    quam_config=data.get("quam_config"))
         out["gates"] = [_entry(k, _all("skipped", msg)) for k in keys]
         return out
+    out = _base("ok", checked=True, quam_config=data.get("quam_config"))
     after_err = after.get("load_error") or after.get("config_error")
     for k in keys:
-        try:
-            mp = macro_path(*k)
-            touched = any(c == mp or c.startswith(mp + ".") for c in created_paths)
-            checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {},
-                                   touched=touched)
-            out["gates"].append(_entry(k, checks, tl))
-        except Exception as exc:  # noqa: BLE001 -- one gate never takes the others down
-            out["gates"].append(_entry(k, _all(
-                "skipped", f"Not checked: the answer for this gate could not be read "
-                           f"({type(exc).__name__}: {exc})")))
+        checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {})
+        out["gates"].append(_entry(k, checks, tl))
     out["ok"] = all(c["status"] != "fail" for g in out["gates"]
                     for c in g["checks"].values())
     return out
 
 
 def _guard(fn, *args) -> dict:
-    """One check; an unexpected input makes only THIS check skipped."""
+    """One check; data it cannot read makes only THIS check skipped."""
     try:
         return fn(*args)
-    except Exception as exc:  # noqa: BLE001
-        return _r("skipped", f"Not checked: the data for this check could not be read "
-                             f"({type(exc).__name__}: {exc})")
+    except Exception:  # noqa: BLE001
+        return _r("skipped", "Not checked: the lab's data for this check has a form SM "
+                             "does not read.")
 
 
-def _one_gate(key, data, after, after_err, preview, *, touched=False):
-    checks: dict[str, dict] = {}
-    path = macro_path(*key)
-    g = (data.get("gates") or {}).get(path)
-    old = (data.get("before_gates") or {}).get(path)
-    if after_err:
-        what = "does not load" if after.get("load_error") else "does not build its config"
-        checks["load_config"] = _r("fail", f"With the new gate the chip {what}: {after_err}")
-    else:
-        checks["load_config"] = _r("pass", "The chip loads and builds its config with the new gate.")
-    if after.get("load_error") or g is None:
-        msg = "Not checked: the chip with the new gate does not load."
-        for c in CHECKS[1:]:
-            checks[c] = _r("skipped", msg)
-        return checks, None
-    if g.get("error"):
-        if (not touched and old is not None and old.get("error")
-                and _norm_err(old["error"]) == _norm_err(g["error"])):
-            checks["ops"] = _r("note", "The gate already failed the same way before this "
-                                       f"change: {_apply_message(g['error'])}", error=g["error"])
+def _one_gate(key, data, after, after_err, preview):
+    name = key[1]
+    try:
+        checks: dict[str, dict] = {}
+        g = (data.get("gates") or {}).get(macro_path(*key))
+        old = (data.get("before_gates") or {}).get(macro_path(*key))
+        if after_err:
+            what = "does not load" if after.get("load_error") else "does not build its config"
+            checks["load_config"] = _r("fail", f"With this write the chip {what} with the "
+                                               f"lab's code. The lab's error: {after_err}")
         else:
-            checks["ops"] = _r("fail", _apply_message(g["error"]), error=g["error"])
-        msg = "Not checked: the gate's apply() failed."
-        for c in CHECKS[2:]:
-            checks[c] = _r("skipped", msg)
-        return checks, None
-    ops = g.get("ops") or []
-    no_cfg = bool(after.get("config_error"))
-    missing = [o for o in ops if not o.get("found")]
-    if no_cfg:
-        checks["ops"] = _r("skipped", "Not checked: the config was not built.")
-    elif missing:
-        checks["ops"] = _r("fail", "; ".join(o.get("error") or
-                                             f"{o.get('operation')} is not in {o.get('element')}"
-                                             for o in missing))
-    else:
-        checks["ops"] = _r("pass", f"apply() runs; all {len(ops)} played operations "
-                                   "are in the config.")
-    found = [o for o in ops if o.get("found")]
-    checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
-    checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
-    tl = None
-    if g.get("script") and not no_cfg:
-        tl = static_timeline.static_timeline(g["script"], found)
-        if tl["cannot_draw"]:
-            checks["timeline"] = _r("note", f"The timeline is not drawn: {tl['cannot_draw']}")
+            checks["load_config"] = _r("pass", "The chip loads and builds its config with "
+                                               "this write.")
+        if after.get("load_error") or g is None:
+            for c in CHECKS[1:]:
+                checks[c] = _r("skipped", "Not checked: the chip with this write does not load.")
+            return checks, None
+        if g.get("error"):
+            msg = _apply_message(name, g["error"])
+            if old is not None and old.get("error"):
+                msg += " This gate already failed this way before this change."
+            checks["ops"] = _r("fail", msg)
+            for c in CHECKS[2:]:
+                checks[c] = _r("skipped", f"Not checked: the gate {name} does not run.")
+            return checks, None
+        no_cfg = bool(after.get("config_error"))
+        ops = g.get("ops") or []
+        checks["ops"] = _guard(_ops_check, name, ops, int(g.get("unresolved_plays") or 0), no_cfg)
+        found = [o for o in ops if isinstance(o, dict) and o.get("found")]
+        checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
+        checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
+        tl = None
+        if g.get("script") and not no_cfg:
+            tl = static_timeline.static_timeline(g["script"], found)
+            if tl["cannot_draw"]:
+                why = tl["cannot_draw"]
+                if why.startswith("cannot draw: "):
+                    why = why[len("cannot draw: "):]
+                checks["timeline"] = _r("note", f"The timeline could not be drawn: {why}.")
+            else:
+                checks["timeline"] = _r("pass", f"{len(tl['rows'])} pulses placed.")
         else:
-            checks["timeline"] = _r("pass", f"{len(tl['rows'])} pulses placed.")
-    else:
-        checks["timeline"] = _r("note", "The timeline is not drawn: no program or config.")
-    checks["range"] = _guard(_range_check, found, tl, no_cfg)
-    return checks, tl
+            checks["timeline"] = _r("note", "The timeline could not be drawn: the gate's "
+                                            "program or the config is missing.")
+        checks["range"] = _guard(_range_check, found, tl, no_cfg)
+        return checks, tl
+    except Exception:  # noqa: BLE001 -- one gate never takes the others down
+        return _all("skipped", f"Not checked: the lab's data for the gate {name} has a form "
+                               "SM does not read."), None
 
 
 _KEY_RE = re.compile(r"[Oo]peration '([^']+)' not found in channel '([^']+)'")
 
 
-def _apply_message(err: str) -> str:
+def _apply_message(name: str, err: str) -> str:
     m = _KEY_RE.search(err or "")
     if m:
-        return (f"The gate plays operation '{m.group(1)}', which channel "
+        return (f"The gate {name} plays operation '{m.group(1)}', which channel "
                 f"'{m.group(2)}' does not have.")
-    return f"The gate's apply() failed: {err}"
+    return f"The gate {name} does not run with the lab's code. The lab's error: {err}"
+
+
+def _ops_check(name, ops, unresolved, no_cfg) -> dict:
+    if no_cfg:
+        return _r("skipped", "Not checked: the config was not built.")
+    missing = [o for o in ops if not o.get("found")]
+    if missing:
+        return _r("fail", " ".join(f"The operation {o.get('operation')} is not in the "
+                                   f"config of {o.get('element')}." for o in missing))
+    if not ops and not unresolved:
+        return _r("fail", f"The gate {name} plays no pulse.")
+    if unresolved:
+        return _r("note", f"{len(ops)} played operations are in the config. {unresolved} "
+                          "plays use a name SM could not read; they were not checked.",
+                  partly=True)
+    return _r("pass", f"The gate {name} runs; all {len(ops)} played operations are in "
+                      "the config.")
+
+
+def _whole(v):
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and math.isfinite(v) and v.is_integer():
+        return int(v)
+    return None
 
 
 def _length_check(found: list, no_cfg: bool, script=None) -> dict:
     if no_cfg:
         return _r("skipped", "Not checked: the config was not built.")
-    bad = [f"{stmt} is shorter than {static_timeline.MIN_CYCLES} clock cycles "
-           f"({static_timeline.MIN_CYCLES * LENGTH_STEP_NS} ns) or not a positive integer"
-           for stmt in static_timeline.short_timing(script)]
+    bad, notes, stored = [], [], []
+    for kind, stmt in static_timeline.short_timing(script):
+        if kind == "play":
+            bad.append(f"The statement {stmt} plays for less than "
+                       f"{static_timeline.MIN_CYCLES} clock cycles "
+                       f"({static_timeline.MIN_CYCLES * LENGTH_STEP_NS} ns) or not a "
+                       "whole number of cycles")
+        else:
+            notes.append(f"The statement {stmt} waits less than "
+                         f"{static_timeline.MIN_CYCLES} clock cycles")
     for o in found:
-        n = o.get("length")
-        if (isinstance(n, bool) or not isinstance(n, int) or n % LENGTH_STEP_NS
-                or n < LENGTH_MIN_NS):
-            bad.append(f"{o['operation']} on {o['element']} is {n!r} ns")
+        n, w = o.get("length"), _whole(o.get("length"))
+        where = f"{o['operation']} on {o['element']}"
+        if w is None:
+            bad.append(f"A pulse length must be a whole number of ns: {where} is {n!r} ns")
+        elif w % LENGTH_STEP_NS or w < LENGTH_MIN_NS:
+            bad.append(f"A pulse length must be a multiple of {LENGTH_STEP_NS} ns and at "
+                       f"least {LENGTH_MIN_NS} ns: {where} is {w} ns")
+        elif not isinstance(n, int):
+            stored.append(f"The length of {where} is stored as {n!r}")
     if bad:
-        return _r("fail", f"A pulse length must be a multiple of {LENGTH_STEP_NS} ns and at "
-                          f"least {LENGTH_MIN_NS} ns: " + "; ".join(bad))
-    if not found:
+        return _r("fail", _sentences(bad))
+    if not found and not notes:
         return _r("skipped", "No played operation to check.")
+    extra = (" " + _sentences(stored)) if stored else ""
+    if notes:
+        return _r("note", _sentences(notes) + " " + _WAIT_NOTE + "." + extra)
     return _r("pass", f"All {len(found)} pulse lengths are multiples of {LENGTH_STEP_NS} ns "
-                      f"and at least {LENGTH_MIN_NS} ns.")
+                      f"and at least {LENGTH_MIN_NS} ns." + extra)
+
+
+def _sentences(parts) -> str:
+    return " ".join(p + "." for p in parts)
 
 
 def _unreadable(info: dict) -> str | None:
     """Why the operation's waveform cannot be judged, else None."""
     wf = info.get("waveform")
     if not isinstance(wf, dict):
-        return "the waveform is not in the answer"
+        return "the lab sent no waveform for it"
     if wf.get("error"):
         return str(wf["error"])
     if wf.get("type") == "constant" and wf.get("sample") is None and not wf.get("nonfinite"):
@@ -308,7 +346,7 @@ def _samples(info: dict) -> list[float] | None:
         return None
     wf = info.get("waveform") or {}
     if wf.get("type") == "constant":
-        return [float(wf.get("sample"))] * max(1, int(info.get("length") or 1))
+        return [float(wf.get("sample"))] * max(1, _whole(info.get("length")) or 1)
     return [float(s) for s in (wf.get("samples") or [])]
 
 
@@ -335,19 +373,20 @@ def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
         if key not in preview:
             continue
         used.append(info)
-        name = f"{key[0]} {key[1]}"
+        name = f"{key[1]} on {key[0]}"
         want = preview[key]
         if isinstance(want, (int, float)) and not isinstance(want, bool):
-            want = [float(want)] * int(info.get("length") or 1)
+            want = [float(want)] * max(1, _whole(info.get("length")) or 1)
         if not isinstance(want, (list, tuple)) or not _finite_list(want):
-            skipped.append(f"{name}: the preview is not a list of numbers")
+            skipped.append(f"For {name}: the preview of this pulse holds values that are "
+                           "not numbers")
             continue
         why = _unreadable(info)
         if why:
-            skipped.append(f"{name}: {why}")
+            skipped.append(f"For {name}: {why}")
             continue
         if _nonfinite(info):
-            bad.append(f"{name}: the waveform of {key[1]} contains values that are not numbers")
+            bad.append(f"For {name}: the waveform contains values that are not numbers")
             continue
         have = _samples(info) or []
         wf = info.get("waveform") or {}
@@ -355,40 +394,42 @@ def _preview_check(found: list, preview: dict, no_config: bool) -> dict:
         rate = info.get("sampling_rate")
         if not truncated and len(want) != len(have):
             if isinstance(rate, (int, float)) and rate != _BASE_RATE:
-                skipped.append(f"{name}: {len(want)} preview samples, "
-                               f"{len(have)} in the config at {rate:g} samples/s")
+                skipped.append(f"For {name}: {len(want)} preview samples, {len(have)} in the "
+                               f"config at {rate:g} samples/s, so they were not compared")
             else:
-                bad.append(f"{name}: {len(want)} preview samples, {len(have)} in the config")
+                bad.append(f"For {name}: {len(want)} preview samples, {len(have)} in the config")
             continue
         n_cmp = min(len(want), len(have)) if truncated else len(have)
         compared += 1
         diffs = [i for i in range(n_cmp) if not abs(float(want[i]) - float(have[i])) <= PREVIEW_TOL]
         if diffs:
             i = diffs[0]
-            bad.append(f"{name}: sample {i} differs by {abs(float(want[i]) - float(have[i])):.3g}")
+            bad.append(f"For {name}: sample {i} differs by {abs(float(want[i]) - float(have[i])):.3g}")
         elif truncated:
-            partial.append(f"{name}: the first {n_cmp} of {wf.get('total')} samples "
+            partial.append(f"For {name}: the first {n_cmp} of {wf.get('total')} samples were "
                            "compared, the rest was not")
-    no_preview = [f"{e} {o}" for e, o in sorted(played) if (e, o) not in preview]
-    extra = [f"{e} {o}" for e, o in sorted(preview) if (e, o) not in played]
+    no_preview = [f"{o} on {e}" for e, o in sorted(played) if (e, o) not in preview]
+    extra = [f"{o} on {e}" for e, o in sorted(preview) if (e, o) not in played]
     cover = ""
     if no_preview:
         cover += " No preview for: " + ", ".join(no_preview) + "."
     if extra:
         cover += " Preview given for operations the gate does not play: " + ", ".join(extra) + "."
     if bad:
-        return _r("fail", "The preview differs from the config: " + "; ".join(bad) + cover)
+        return _r("fail", "The preview differs from the config. " + _sentences(bad) + cover)
     if partial or skipped:
-        text = "; ".join(partial + skipped)
+        text = _sentences(partial + skipped)
         if not compared:
-            return _r("skipped", "Not compared: " + text + cover)
-        return _r("note", f"Partly compared ({compared} of {len(found)} played): " + text
-                  + cover + _iq_note(used))
+            return _r("skipped", "Not compared. " + text + cover)
+        return _r("note", f"Partly compared ({compared} of {len(found)} played). " + text
+                  + cover + _iq_note(used), partly=True)
     if not compared:
         return _r("skipped", "No preview matches a played operation." + cover)
-    status = "note" if cover else "pass"
-    return _r(status, f"{compared} of {len(found)} played waveforms equal the preview "
-                      f"(tolerance {PREVIEW_TOL:g})." + cover + _iq_note(used))
+    if cover:
+        return _r("note", f"{compared} of {len(found)} played waveforms equal the preview "
+                          f"(tolerance {PREVIEW_TOL:g})." + cover + _iq_note(used), partly=True)
+    return _r("pass", f"{compared} of {len(found)} played waveforms equal the preview "
+                      f"(tolerance {PREVIEW_TOL:g})." + _iq_note(used))
 
 
 def port_range(info: dict) -> float | None:
@@ -405,6 +446,12 @@ def port_range(info: dict) -> float | None:
     return None
 
 
+def _port_text(port) -> str:
+    if isinstance(port, (list, tuple)):
+        return "/".join(str(p) for p in port)
+    return str(port)
+
+
 def _range_check(found: list, tl, no_config: bool) -> dict:
     if no_config:
         return _r("skipped", "Not checked: the config was not built.")
@@ -412,54 +459,76 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
         return _r("skipped", "No played operation to check.")
     nan_ops = [i["operation"] for i in found if not _unreadable(i) and _nonfinite(i)]
     if nan_ops:
-        return _r("fail", "; ".join(f"The waveform of {op} contains values that are not numbers"
-                                    for op in nan_ops) + ".")
+        return _r("fail", _sentences([f"The waveform of {op} contains values that are not "
+                                      "numbers" for op in nan_ops]))
     if tl is None or tl.get("cannot_draw"):
-        return _r("skipped", "Skipped: the played scale is not known because the timeline "
-                             "could not be drawn.")
+        return _r("skipped", "The output range of this gate was not checked: the played "
+                             "scale comes from the timeline, and the timeline could not be "
+                             "drawn (a loop, a variable or a value set while the program "
+                             "runs, see the timeline check).")
     scales: dict = {}
     for row in tl.get("rows") or []:
         scales.setdefault((row.element, row.operation), set()).add(row.scale)
-    bad, unknown, long_, unreadable, checked = [], [], [], [], 0
+    bad, ok_names, not_checked = [], [], []
     for info in found:
         key = (info["element"], info["operation"])
+        name = f"{key[1]} on {key[0]}"
+        port = _port_text(info.get("port"))
         rng = port_range(info)
         if rng is None:
-            unknown.append(f"{key[0]} {key[1]}")
+            not_checked.append(f"{name} (the output range of port {port} is not known)")
             continue
         if (info.get("waveform") or {}).get("truncated"):
-            long_.append(f"{key[0]} {key[1]}")
+            not_checked.append(f"{name} (the waveform was too long to check fully)")
             continue
         why = _unreadable(info)
         if why:
-            unreadable.append(f"{key[0]} {key[1]} ({why})")
+            not_checked.append(f"{name} ({why})")
             continue
         samples = _samples(info)
         offset = 0.0 if info.get("port_kind") == "mw" else float(info.get("offset") or 0.0)
+        one_bad = False
         for k in sorted(scales.get(key) or ()):
-            # max * k and min * k cover both signs of the scale and the level
             vals = [s * k for s in samples]
             hi, lo = max(vals) + offset, min(vals) + offset
-            checked += 1
-            if hi > rng + _SAMPLE_EPS or lo < -rng - _SAMPLE_EPS:
-                edge = hi if hi > rng + _SAMPLE_EPS else lo
-                bad.append(f"{key[0]} {key[1]}: maximum + offset {edge:+.4f} is outside "
-                           f"+/-{rng:g} (offset {offset:+.4f}, scale {k:g})")
+            if hi > rng + _SAMPLE_EPS:
+                one_bad = True
+                bad.append(f"For {name}, port {port}: the maximum plus the offset is {hi:+.4f}, "
+                           f"above +{rng:g} (offset {offset:+.4f}, scale {k:g})")
+            if lo < -rng - _SAMPLE_EPS:
+                one_bad = True
+                bad.append(f"For {name}, port {port}: the minimum plus the offset is {lo:+.4f}, "
+                           f"below -{rng:g} (offset {offset:+.4f}, scale {k:g})")
+        if not one_bad:
+            ok_names.append(name)
     if bad:
-        return _r("fail", "Output range exceeded: " + "; ".join(bad))
-    extra = ""
-    if unknown:
-        extra += (" Not checked, the output range of the port is not known: "
-                  + ", ".join(unknown) + ".")
-    if long_:
-        extra += (" Not checked, the waveform was too long to check fully: "
-                  + ", ".join(long_) + ".")
-    if unreadable:
-        extra += " Not checked, the waveform cannot be read: " + ", ".join(unreadable) + "."
-    if not checked:
-        return _r("skipped", "Skipped." + extra)
-    return _r("pass", "Maximum + offset is inside the output range." + extra
+        return _r("fail", "The output range is exceeded. " + _sentences(bad))
+    if not ok_names:
+        return _r("skipped", "The output range was not checked for: "
+                  + ", ".join(not_checked) + ".")
+    if not_checked:
+        return _r("note", "Inside the output range: " + ", ".join(ok_names) + ". Not checked: "
+                  + ", ".join(not_checked) + "." + _iq_note(found), partly=True)
+    return _r("pass", "Inside the output range: " + ", ".join(ok_names) + "."
               + _iq_note(found))
+
+
+def _scrub(res: dict, copies) -> dict:
+    """Replace the temporary folders in every message by ``<chip>`` (the
+    runner already does this; this is the second line for SM-side text)."""
+    if copies is None:
+        return res
+    from quam_state_manager.generator.path_scrub import scrub_paths
+    folders = [str(copies.before), str(copies.after)]
+
+    def fix(v):
+        return scrub_paths(v, folders) if isinstance(v, str) else v
+    for k in ("error", "chip_error"):
+        res[k] = fix(res.get(k))
+    for g in res.get("gates") or []:
+        for c in g["checks"].values():
+            c["message"] = fix(c["message"])
+    return res
 
 
 def check_gates(store, python_path: str | None, gates: Iterable,
@@ -468,11 +537,10 @@ def check_gates(store, python_path: str | None, gates: Iterable,
                 runner: Callable | None = None) -> dict:
     """Copy the chip (before / after *creates*), run the lab check without
     holding the store lock, remove the copies, and evaluate. The result
-    carries ``seq``, the store's sequence value at the copy, so a later write
-    can refuse when the store moved (:func:`chip_copy.store_at_seq`).
-    A create the real write would refuse gives ``status`` "invalid-create"
-    with ``load_config`` failed, naming the path. Writes nothing into the
-    store."""
+    carries ``seq`` and ``store_id``, so a later write can refuse when the
+    store moved (:func:`chip_copy.store_at_seq`). A create the real write
+    would refuse gives ``status`` "invalid-create" with ``load_config``
+    failed, naming the path. Writes nothing into the store."""
     keys = [gate_key(g) for g in gates]
     creates = [(str(p), v) for p, v in creates]
     if not python_path:
@@ -496,8 +564,9 @@ def check_gates(store, python_path: str | None, gates: Iterable,
                          [macro_path(*k) for k in keys], root_class=copies.root_class)
         except Exception as exc:  # noqa: BLE001 -- a typed result, never a raise
             ran = {"status": "crash", "error": f"{type(exc).__name__}: {exc}", "data": None}
-        res = evaluate(keys, ran, previews, created_paths=[p for p, _v in creates])
+        res = _scrub(evaluate(keys, ran, previews), copies)
         res["seq"] = copies.seq
+        res["store_id"] = copies.store_id
     except Exception as exc:  # noqa: BLE001 -- the copy itself failed
         res = _unchecked(keys, "crash", f"{type(exc).__name__}: {exc}")
     res["leftover"] = chip_copy.remove_chip_copies(copies)

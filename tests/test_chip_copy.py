@@ -95,9 +95,9 @@ def test_store_at_seq_false_after_change(tmp_path):
     store = QuamStore(_chip(tmp_path))
     copies = chip_copy.make_chip_copies(store, [])
     try:
-        assert chip_copy.store_at_seq(store, copies.seq)
+        assert chip_copy.store_at_seq(store, copies)
         Modifier(store).set_value("qubits.q1.z.operations.const.length", 24)
-        assert not chip_copy.store_at_seq(store, copies.seq)
+        assert not chip_copy.store_at_seq(store, copies)
     finally:
         chip_copy.remove_chip_copies(copies)
 

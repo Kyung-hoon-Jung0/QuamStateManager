@@ -74,7 +74,19 @@ def _const(node, stmt: str):
     try:
         return ast.literal_eval(node)
     except Exception:  # noqa: BLE001 -- any non-literal is a real-time value
-        raise _CannotDraw(f"cannot draw: {stmt} (non-constant argument)") from None
+        raise _CannotDraw(f"cannot draw: {stmt} (a value set while the program runs, so SM cannot place it)") from None
+
+
+def _whole(v):
+    """*v* as an int when it is a whole number (an int, or an integral
+    float such as 16.0), else None. A bool is never a number here."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return None
 
 
 def _key(element: str, operation: str) -> tuple[str, str]:
@@ -105,7 +117,8 @@ def _signed_peak(info: dict) -> float:
 
 def static_timeline(script: str, ops) -> dict:
     """``{"rows": [TimelineRow], "cannot_draw": str | None, "notes": [str],
-    "filtered_ports": [port]}``.
+    "filtered_ports": [port]}``. Drawing is all it does: rows placed here are
+    not compared with any measurement.
 
     *ops*: per played operation ``{"element", "operation", "length",
     "waveform": {"type": "constant", "sample"} | {"type": "arbitrary",
@@ -128,7 +141,7 @@ def static_timeline(script: str, ops) -> dict:
            "filtered_ports": filtered}
     try:
         if bad_ops:
-            raise _CannotDraw("cannot draw: the operation data is not readable")
+            raise _CannotDraw("cannot draw: the pulse data of the program could not be read")
         if not isinstance(script, str):
             raise _CannotDraw("cannot draw: no program text")
         out["rows"] = _place(script, table)
@@ -136,11 +149,11 @@ def static_timeline(script: str, ops) -> dict:
         out["cannot_draw"] = str(exc)
         out["rows"] = []
     except SyntaxError as exc:
-        out["cannot_draw"] = f"cannot draw: the script does not parse ({exc.msg})"
+        out["cannot_draw"] = "cannot draw: the program text could not be read"
         out["rows"] = []
     except Exception as exc:  # noqa: BLE001 -- never raise to the caller
-        out["cannot_draw"] = (f"cannot draw: unexpected script or operation data "
-                              f"({type(exc).__name__}: {str(exc)[:200]})")
+        out["cannot_draw"] = ("cannot draw: the program or its pulse data has a form "
+                              "SM does not read")
         out["rows"] = []
     return out
 
@@ -160,7 +173,7 @@ def _place(script: str, table: dict) -> list[TimelineRow]:
         stmt = (ast.get_source_segment(src, node) or "").strip().splitlines()[0]
         if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
                 and isinstance(node.value.func, ast.Name)):
-            raise _CannotDraw(f"cannot draw: {stmt}")
+            raise _CannotDraw(f"cannot draw: {stmt} (SM places only play, wait, align and frame rotations; loops, variables, conditions and measurements are not placed)")
         call = node.value
         name = call.func.id
         kw = {k.arg: k.value for k in call.keywords}
@@ -173,10 +186,11 @@ def _place(script: str, table: dict) -> list[TimelineRow]:
                 clocks[e] = t
         elif name == "wait":
             if not call.args:
-                raise _CannotDraw(f"cannot draw: {stmt}")
-            n = _const(call.args[0], stmt)
-            if not isinstance(n, int):
-                raise _CannotDraw(f"cannot draw: {stmt} (non-integer wait)")
+                raise _CannotDraw(f"cannot draw: {stmt} (the wait has no duration)")
+            n = _whole(_const(call.args[0], stmt))
+            if n is None:
+                raise _CannotDraw(f"cannot draw: {stmt} (the wait is not a whole number "
+                                  "of clock cycles)")
             targets = [str(_const(a, stmt)) for a in call.args[1:]] or list(clocks)
             for e in targets:
                 clocks[e] = clocks.get(e, 0) + 4 * n
@@ -185,41 +199,44 @@ def _place(script: str, table: dict) -> list[TimelineRow]:
         elif name == "play":
             rows.append(_play(call, kw, stmt, table, clocks))
         else:
-            raise _CannotDraw(f"cannot draw: {stmt}")
+            raise _CannotDraw(f"cannot draw: {stmt} (SM places only play, wait, align and frame rotations; loops, variables, conditions and measurements are not placed)")
     return rows
 
 
 def _play(call, kw, stmt, table, clocks) -> TimelineRow:
     if len(call.args) < 2:
-        raise _CannotDraw(f"cannot draw: {stmt}")
+        raise _CannotDraw(f"cannot draw: {stmt} (the play names no element)")
     opnode, el = call.args[0], str(_const(call.args[1], stmt))
     scale = 1.0
     if isinstance(opnode, ast.BinOp) and isinstance(opnode.op, ast.Mult):
         a = opnode.right
         if not (isinstance(a, ast.Call) and getattr(a.func, "id", "") == "amp"
                 and len(a.args) == 1):
-            raise _CannotDraw(f"cannot draw: {stmt} (amp matrix or unknown scale)")
+            raise _CannotDraw(f"cannot draw: {stmt} (the amplitude is scaled by a matrix or a value SM cannot read)")
         scale = float(_const(a.args[0], stmt))
         opnode = opnode.left
     op = str(_const(opnode, stmt))
     for k in kw:
         if k not in ("duration", "amplitude_scale"):
-            raise _CannotDraw(f"cannot draw: {stmt} (keyword {k})")
+            raise _CannotDraw(f"cannot draw: {stmt} (the play uses the option '{k}', which SM does not model)")
     if "amplitude_scale" in kw:
         scale *= float(_const(kw["amplitude_scale"], stmt))
     info = table.get(_key(el, op))
     if info is None or info.get("length") is None:
         raise _CannotDraw(f"cannot draw: {stmt} (operation not in the config)")
-    length = info["length"]
-    if isinstance(length, bool) or not isinstance(length, int):
-        raise _CannotDraw(f"cannot draw: {stmt} (pulse length {length!r} is not an integer)")
-    delay = info.get("delay") or 0
-    if isinstance(delay, bool) or not isinstance(delay, int):
-        raise _CannotDraw(f"cannot draw: {stmt} (port delay {delay!r} is not an integer)")
+    length = _whole(info["length"])
+    if length is None:
+        raise _CannotDraw(f"cannot draw: {stmt} (the pulse length {info['length']!r} ns "
+                          "is not a whole number)")
+    delay = _whole(info.get("delay") or 0)
+    if delay is None:
+        raise _CannotDraw(f"cannot draw: {stmt} (the port delay {info.get('delay')!r} ns "
+                          "is not a whole number)")
     if "duration" in kw:
-        n = _const(kw["duration"], stmt)
-        if not isinstance(n, int):
-            raise _CannotDraw(f"cannot draw: {stmt} (non-integer duration)")
+        n = _whole(_const(kw["duration"], stmt))
+        if n is None:
+            raise _CannotDraw(f"cannot draw: {stmt} (the duration is not a whole number "
+                              "of clock cycles)")
         length = 4 * n
     t0 = clocks.get(el, 0)
     clocks[el] = t0 + length
@@ -232,11 +249,12 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
 MIN_CYCLES = 4
 
 
-def short_timing(script) -> list[str]:
-    """The ``play(..., duration=n)`` and ``wait(n, ...)`` statements whose
-    literal *n* is not a positive integer of at least :data:`MIN_CYCLES`
-    clock cycles. A real-time (non-literal) *n* is not judged here. Never
-    raises: an unreadable script gives an empty list."""
+def short_timing(script) -> list[tuple[str, str]]:
+    """``[(kind, statement)]`` for each ``play(..., duration=n)`` (kind
+    ``"play"``) and ``wait(n, ...)`` (kind ``"wait"``) whose literal *n* is
+    not a positive whole number of at least :data:`MIN_CYCLES` clock cycles.
+    A real-time (non-literal) *n* is not judged here. Never raises: an
+    unreadable script gives an empty list."""
     try:
         src = _body(script if isinstance(script, str) else "")
         tree = ast.parse(src)
@@ -255,8 +273,9 @@ def short_timing(script) -> list[str]:
                 n = ast.literal_eval(arg)
             except Exception:  # noqa: BLE001 -- a real-time value
                 continue
-            if isinstance(n, bool) or not isinstance(n, int) or n < MIN_CYCLES:
-                out.append((ast.get_source_segment(src, node) or "").strip())
+            w = _whole(n)
+            if w is None or w < MIN_CYCLES:
+                out.append((node.func.id, (ast.get_source_segment(src, node) or "").strip()))
         return out
     except Exception:  # noqa: BLE001
         return []
