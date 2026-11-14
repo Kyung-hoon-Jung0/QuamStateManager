@@ -85,6 +85,8 @@ def synth_folder(tmp_path, request):
         }
     if getattr(request, "param", None) == "null_leaf":
         state["qubits"]["qA1"]["rb_details"] = {"alpha_stderr": None, "epc_stderr": 0.004}
+        state["qubits"]["qA1"]["rb_null_parent"] = None
+        state["qubits"]["qA1"]["rb_ptr"] = "#/qubits/qA1/rb_details/alpha_stderr"
     if getattr(request, "param", None) == "new_key":
         state["qubits"]["qA1"]["rb_details"] = {f"k{i}": float(i) for i in range(10)}
         state["qubits"]["qA1"]["rb_list"] = [{"a": 1.0}]
@@ -798,7 +800,7 @@ class TestRun:
         fake_run.extra = {"T1": {"brand_new_key": 1}}
         res = _run(c).get_json()["result"]
         assert res["applied"] is False
-        assert sorted(u["path"] for u in res["unstaged"]) == ["qubits.qA1.T1", "qubits.qA1.T1.brand_new_key"] and "new/removed key" in res["unstaged"][0]["why"]
+        assert sorted(u["path"] for u in res["unstaged"]) == ["qubits.qA1.T1", "qubits.qA1.T1.brand_new_key"] and res["unstaged"][0]["why"].startswith("removed key")
         assert "cannot be staged" in res["apply_error"] and "nothing was written" in res["apply_error"]
         assert res["approval"] and "apply refused" in res["why_held"], "the writes wait for a person instead of half-landing"
         from quam_state_manager.core import approvals as apm
@@ -1249,6 +1251,98 @@ def test_number_to_null_on_existing_leaf_is_staged(c, inst, synth_folder):
     assert "epc_stderr" in d and d["epc_stderr"] is None
 
 
+def _live_rb(synth_folder):
+    return json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+@pytest.mark.parametrize("new", [0.25, 7, "fit failed", [1.0, 2.0], {"a": 1.0}],
+                         ids=["float", "int", "str", "list", "dict"])
+def test_null_leaf_takes_the_proposed_value_with_its_own_type(c, inst, synth_folder, new):
+    """An existing null leaf is an ordinary edit: the edit door's rule for an
+    old value of null keeps the new value as it is, with its own type."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.epc_stderr", "old": 0.004, "new": 0.005},
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": new, "created": True}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["ok"] and res["stage"]["applied"] and res["stage"]["staged"] == 2, res
+    v = _live_rb(synth_folder)["rb_details"]["alpha_stderr"]
+    assert v == new and type(v) is type(new)
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "approved"
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_null_leaf_undo_and_redo_write_live(c, inst, synth_folder):
+    """Ctrl+Z after the approval puts JSON null back in the live file (key kept);
+    Ctrl+Y puts the number back."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123, "created": True}])
+    assert c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()["stage"]["applied"]
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
+    u = c.post("/undo", headers={**HUMAN, "Accept": "application/json"})
+    assert u.status_code == 200, u.get_data(as_text=True)[:300]
+    d = _live_rb(synth_folder)["rb_details"]
+    assert "alpha_stderr" in d and d["alpha_stderr"] is None
+    y = c.post("/redo", headers={**HUMAN, "Accept": "application/json"})
+    assert y.status_code == 200, y.get_data(as_text=True)[:300]
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == 0.0123
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_key_under_a_null_parent_is_refused_and_named(c, inst, synth_folder):
+    """A null container is not a place for keys: the write is a new key,
+    refused as a whole, and the answer names the path and what to do."""
+    res = _refused(c, synth_folder, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.1},
+        {"path": "qubits.qA1.rb_null_parent.x", "old": None, "new": 1.0, "created": True}])
+    assert [u["path"] for u in res["unstaged"]] == ["qubits.qA1.rb_null_parent.x"]
+    assert "under 'qubits.qA1.rb_null_parent'" in res["unstaged"][0]["why"] and "(null)" in res["unstaged"][0]["why"]
+    assert "qubits.qA1.rb_null_parent.x" in res["error"] and "Apply to chip" in res["error"] and "Reject" in res["error"]
+    assert " -- " not in res["error"]
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_two_true_new_keys_refused_message_lists_both(c, inst, synth_folder):
+    rows = [{"path": f"qubits.qA1.rb_details.k{i}", "old": float(i), "new": float(i) + 0.5} for i in range(10)]
+    rows += [{"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True},
+             {"path": "qubits.qA1.rb_list.3.a", "old": None, "new": 1.0, "created": True}]
+    res = _refused(c, synth_folder, rows)
+    assert res["error"].startswith("2 of 12 value(s) cannot be staged"), res["error"]
+    assert "qubits.qA1.rb_scalar.x" in res["error"] and "qubits.qA1.rb_list.3.a" in res["error"]
+    assert "nothing was written" in res["error"] and "Apply to chip" in res["error"]
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_pointer_to_a_null_leaf_writes_the_target(c, inst, synth_folder):
+    """A write through a pointer alias lands on the null target, never on the pointer string."""
+    ap = _null_leaf_approval(c, inst, [{"path": "qubits.qA1.rb_ptr", "old": None, "new": 0.031}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert res["ok"] and res["stage"]["applied"], res
+    q = _live_rb(synth_folder)
+    assert q["rb_ptr"] == "#/qubits/qA1/rb_details/alpha_stderr" and q["rb_details"]["alpha_stderr"] == 0.031
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_null_leaf_edited_meanwhile_is_not_overwritten_silently(c, inst, synth_folder):
+    """The proposal says old=null but a person set a number since. An edit still in
+    the tray refuses the press; once applied, the card shows the number SM holds,
+    so the press means what the presser could see."""
+    ap = _null_leaf_approval(c, inst, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123, "created": True}])
+    assert c.post("/field/edit", data={"dot_path": "qubits.qA1.rb_details.alpha_stderr",
+                                       "value": "0.5"}).status_code == 200
+    r1 = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN)
+    assert r1.status_code == 409 and "staged edit" in r1.get_json()["error"], r1.get_json()
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] is None
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    with c.application.app_context():
+        n = len(_ctx(c)["store"].change_log)
+    a = c.post("/state/apply-to-live", data={"seen_changes": str(n)}, headers={**HUMAN, "Accept": "application/json"})
+    assert a.status_code == 200, a.get_data(as_text=True)[:300]
+    card = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"][0]
+    assert card["old"] is None and card["now_known"] is True and card["now"] == 0.5, card
+
+
 # ---------------------------------------------- a new key in an existing dict
 
 def _ctx(c):
@@ -1317,7 +1411,7 @@ def test_new_key_in_new_list_element_refuses_whole(c, inst, synth_folder):
     res = _refused(c, synth_folder, [
         {"path": "qubits.qA1.rb_details.k0", "old": 0.0, "new": 9.0},
         {"path": "qubits.qA1.rb_list.1.a", "old": None, "new": 2.0, "created": True}])
-    assert "new/removed key" in res["unstaged"][0]["why"]
+    assert res["unstaged"][0]["why"].startswith("new key inside the list 'qubits.qA1.rb_list'"), res
 
 
 @pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)

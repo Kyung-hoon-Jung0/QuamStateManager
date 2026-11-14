@@ -1933,6 +1933,51 @@ def _existing_leaf(store, path: str) -> bool:
     return not isinstance(value, (dict, list))
 
 
+STRUCTURAL_WHAT_TO_DO = ("to write it, open the run in Datasets and press Apply to chip, "
+                         "or Reject this card")
+
+
+def _structural_why(store, w: dict, resized: set[str] | None = None) -> str:
+    """Plain words for a row the approval cannot stage because it changes the
+    chip's shape: a removed key, or a new key whose place does not exist."""
+    path = str(w.get("path"))
+    if w.get("deleted"):
+        return "removed key: the run deleted this key, and an approval only changes values"
+    if isinstance(w.get("new"), (dict, list)):
+        return "new key holding a group of values: an approval only adds single values"
+    for lp in resized or ():
+        if path == lp or path.startswith(lp + "."):
+            return f"new key inside the list '{lp}', whose length the run changed"
+    parts = path.split(".")
+    node = store.merged
+    for i, seg in enumerate(parts):
+        here = ".".join(parts[:i]) or "the chip root"
+        if isinstance(node, list):
+            return f"new key inside the list '{here}': an approval does not add list entries"
+        if not isinstance(node, dict):
+            shown = "null" if node is None else type(node).__name__
+            return f"new key under '{here}', which holds a single value ({shown}), not a group of keys"
+        if seg not in node:
+            if any(s.isdigit() for s in parts[i:]):
+                return f"new key with a numbered part under '{here}': it may be a list entry"
+            break
+        node = node[seg]
+    return "new key the chip does not have"
+
+
+def _unstaged_message(unstaged: list[dict], total: int) -> str:
+    """The one answer a refused group gives: every refused path (up to six),
+    why, and what the person can do. Nothing of the group was written."""
+    shown = unstaged[:6]
+    lines = "; ".join(f"{u['path']} ({str(u['why'])[:140]})" for u in shown)
+    more = f" and {len(unstaged) - len(shown)} more" if len(unstaged) > len(shown) else ""
+    tail = ""
+    if any(str(u.get("why", "")).startswith(("new key", "removed key")) for u in unstaged):
+        tail = "; " + STRUCTURAL_WHAT_TO_DO
+    return (f"{len(unstaged)} of {total} value(s) cannot be staged: {lines}{more}; "
+            f"nothing was written{tail}")
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -1988,8 +2033,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
             if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
                 root = _new_key_root(store, w["path"], w.get("new"), resized)
             if w.get("deleted") or (w.get("created") and not _existing_leaf(store, w["path"]) and root is None):
-                unstaged.append({"path": w["path"], "why": "new/removed key -- SM stages existing leaves only; "
-                                                            "apply the run's state from Datasets → Apply to chip"})
+                unstaged.append({"path": w["path"], "why": _structural_why(store, w, resized)})
                 continue
             if root is not None:
                 rest = w["path"][len(root) + 1:].split(".") if w["path"] != root else []
@@ -2050,8 +2094,7 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 store.search_index.update_entry(e.dot_path, e.new_value)
     out = {"group_id": gid, "staged": len(staged), "unstaged": unstaged, "applied": False, "error": None}
     if unstaged:
-        out["error"] = f"{len(unstaged)} of {len(writes)} value(s) cannot be staged ({unstaged[0]['path']}: " \
-                       f"{unstaged[0]['why'][:80]}); nothing was written"
+        out["error"] = _unstaged_message(unstaged, len(writes))
         return out
     if not staged or not apply:
         return out
