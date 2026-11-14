@@ -229,6 +229,15 @@ ok(f6.querySelector("input").getAttribute("aria-describedby") === "mine len6-hin
 const f7 = window.UI.field({ label: "Pair", control: { part: "segmented", labelledby: "pre", options: [{ label: "A" }] } });
 ok(/^pre uif-js[0-9]+-flabel$/.test(f7.querySelector(".ui-segmented").getAttribute("aria-labelledby")), "caller labelledby first, then the label text");
 
+// a field spec's own id wins; a whitespace id and a control without a part are refused
+const f8 = window.UI.field({ id: "X", label: "A", control: { part: "input" } });
+ok(f8.querySelector("label").getAttribute("for") === "X" && f8.querySelector("input").id === "X", "a field spec's id names the control");
+let e1 = "", e2 = "";
+try { window.UI.field({ label: "A", control: { part: "input", id: "a b" } }); } catch (e) { e1 = e.message; }
+try { window.UI.field({ label: "A", control: { id: "q" } }); } catch (e) { e2 = e.message; }
+ok(e1 === 'ui menu id must be a non-empty string without whitespace: "a b"', "a field id with whitespace is refused: " + e1);
+ok(e2 === "ui field control needs a part", "a field control without a part is refused: " + e2);
+
 // ids with whitespace are refused
 let threw = "";
 try { window.UI.menu({ id: "a b", label: "X", items: [] }); } catch (e) { threw = e.message; }

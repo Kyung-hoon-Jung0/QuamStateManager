@@ -212,7 +212,9 @@
         // other part is named by the label text (unknown parts get a group
         // wrapper). A caller's describedby / labelledby come first.
         var c = o.control || {};
+        if (!o.control || !c.part) throw new Error("ui field control needs a part");
         var fid = o.id || c.id || uid("uif");
+        validId(fid);
         var single = c.part === "input" || c.part === "select" || c.part === "check";
         var lb = fid + "-flabel";
         var desc = uniq(String(c.describedby || "").split(/\s+/).concat([o.hint ? fid + "-hint" : null, o.error ? fid + "-error" : null])).join(" ");

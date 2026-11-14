@@ -115,7 +115,9 @@
     menu, toolbar) and any other part are named by the label TEXT through
     aria-labelledby (an unknown part gets a role=group wrapper); clicking that
     text does nothing. A caller's own describedby / labelledby come first. -#}
+{{- ui_field_control(control) -}}
 {%- set fid = id or control.id or ui_uid('uif') -%}
+{{- ui_valid_id(fid) -}}
 {%- set kind = control.part -%}
 {%- set single = kind in ('input', 'select', 'check') -%}
 {%- set lb = fid ~ '-flabel' -%}
@@ -261,7 +263,7 @@
 {%- elif p == 'disclosure' %}{{ ui_disclosure(s.summary, s.count, s.body or (), s.open) }}
 {%- elif p == 'select' %}{{ ui_select(s.options, s.value, s.label, s.id, s.name, s.block, s.disabled, s.invalid) }}
 {%- elif p == 'input' %}{{ ui_input(s.value, s.type or 'text', s.label, s.id, s.name, s.num, s.unit, s.placeholder, s.block, s.disabled, s.invalid) }}
-{%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.control.id) }}
+{%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.id) }}
 {%- elif p == 'menu' %}{{ ui_menu(s.id, s['items'], s.label, s.kind or 'pick', s.value, s.trigger, s.placeholder or 'Choose', s.block, s.end, s.up) }}
 {%- elif p == 'toolbar' %}{{ ui_toolbar(s['items'], s.label) }}
 {%- elif p == 'panel' %}{{ ui_panel(s.title, s.body or (), s.step, s.hint, s.summary or (), s.fold, s.open, s.flush) }}

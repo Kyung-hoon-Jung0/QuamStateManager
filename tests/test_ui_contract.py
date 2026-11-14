@@ -753,6 +753,13 @@ def test_6c_field_macro_ids_and_relations():
             out = r("{{ ui.ui_field('Show', {'part': 'check', 'text': 'Spectators'}) }}")
             fid = re.search(r'for="([^"]+)"', out).group(1)
             assert f'<input type="checkbox" id="{fid}"' in out, out
+            out = r("{{ ui.ui_render({'part': 'field', 'id': 'X', 'label': 'A', 'control': {'part': 'input'}}) }}")
+            assert 'for="X"' in out and 'id="X"' in out, out
+            for bad, msg in (("{'part': 'input', 'id': 'a b'}", "ui menu id must be a non-empty string without whitespace: \"a b\""),
+                             ("{'id': 'q'}", "ui field control needs a part")):
+                with pytest.raises(ValueError) as ei:
+                    r("{{ ui.ui_field('A', " + bad + ") }}")
+                assert str(ei.value) == msg
             out = r("{{ ui.ui_field('Source', {'part': 'chip', 'text': 's'}) }}")
             assert "for=" not in out and 'class="ui-field-control" role="group" aria-labelledby=' in out, out
 
