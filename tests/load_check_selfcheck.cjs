@@ -47,7 +47,10 @@ window.fetch = global.fetch = function (url, init) {
     return Promise.resolve({
       ok: true, status: 200,
       json: () => Promise.resolve({ ok: true, lib_versions: { quam: '0.6.0' },
-        env: { name: 'envB', source: 'chosen' } })
+        env: { name: 'envB', source: 'chosen' },
+        core_findings: [{ kind: 'fem_budget',
+          line: 'Core layout warning: 10 / 8 cores on con1 FEM 1 (MW-FEM); routes 0 / 10 (estimated)',
+          detail: ['Largest groups: q1 (1).', 'Fix: move elements off this FEM.'] }] })
     });
   }
   if (calls === 1) {
@@ -136,6 +139,11 @@ window.eval(appJs);
     await wait(10);
     ok(bodies[3] && JSON.parse(bodies[3]).python === 'C:/envs/envB/python.exe', 'a pick posts the chosen env path');
     ok(status.textContent.includes('env: envB (chosen here)'), 'status says which env ran');
+    ok(status.classList.contains('ui-verdict--ok') && status.textContent.includes('Loads OK'), 'core warning keeps Loads OK');
+    const cw = status.querySelectorAll('.js-loadcheck-core.ui-callout--warn');
+    ok(cw.length === 1 && /^Core layout warning: 10 \/ 8 cores on con1 FEM 1/.test(cw[0].textContent), 'one core warning callout under Loads OK');
+    ok(cw.length === 1 && cw[0].querySelector('details.ui-disclosure') && /move elements off this FEM/.test(cw[0].querySelector('details').textContent), 'detail lines fold');
+    ok(window.runLoadCheck._coreWarnHtml([]) === '' && window.runLoadCheck._coreWarnHtml(null) === '', 'no findings, no callout');
   }
 
   if (fails) process.exit(1);

@@ -37618,6 +37618,17 @@ def _loadcheck_env_name(python_path: str) -> str:
     return parent.name or str(p)
 
 
+def _loadcheck_core_findings(merged: dict) -> list:
+    """The static core budget warnings for the load check (never raises)."""
+    try:
+        from quam_state_manager.core import core_layout
+        return [core_layout.finding_line(f)
+                for f in core_layout.surface_findings(merged, "load_check")]
+    except Exception:  # noqa: BLE001 -- the load verdict never depends on the count
+        logger.warning("core budget skipped in the load check", exc_info=True)
+        return []
+
+
 @bp.route("/state/load-check", methods=["POST"])
 def state_load_check():
     """Probe Quam.load on the CURRENT working state in the project's env."""
@@ -37718,7 +37729,8 @@ def state_load_check():
                         "detail": detail,
                         "lib_versions": result.get("lib_versions") or {},
                         "env": env_info,
-                        "links": links})
+                        "links": links,
+                        "core_findings": _loadcheck_core_findings(merged_copy)})
     finally:
         try:
             shutil.rmtree(tmp_root)
@@ -50910,6 +50922,7 @@ def generate_build():
             try:
                 _st, _wr = safe_io.read_state_wiring(Path(output_path))
                 config_generator.annotate_unplayable(outcome, _st, _wr)
+                config_generator.annotate_core_layout(outcome, _st, _wr)
                 from quam_state_manager.core import output_timing
                 output_timing.annotate(outcome, _st, _wr,
                                        tof_typed=output_timing.typed_tof(spec))

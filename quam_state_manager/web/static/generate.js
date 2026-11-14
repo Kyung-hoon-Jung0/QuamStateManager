@@ -5050,6 +5050,98 @@
     return wrap;
   }
 
+  // Static core budget of the built chip (server: core_layout.review_summary).
+  // Warning lines go under the verdict; the build stays a success.
+  function coreLayoutWarnings(cl) {
+    var out = [];
+    ((cl && cl.findings) || []).forEach(function (f) {
+      if (!f || !f.line) return;
+      var box = document.createElement("div");
+      box.className = "ui-callout ui-callout--warn";
+      box.setAttribute("data-core-layout", "warn");
+      var p = document.createElement("p");
+      p.className = "ui-callout-text ui-callout-title";
+      p.textContent = f.line;
+      box.appendChild(p);
+      (f.detail || []).forEach(function (d) {
+        var dp = document.createElement("p");
+        dp.className = "ui-callout-text";
+        dp.textContent = d;
+        box.appendChild(dp);
+      });
+      out.push(box);
+    });
+    return out;
+  }
+
+  // One kit table per FEM: element | core | source key | controller / FEM | cost,
+  // a total line with the limit; a FEM within its limit and over 8 rows folds.
+  function coreLayoutTable(cl) {
+    var t = cl && cl.table;
+    if (!t || !(t.fems || []).length) return null;
+    var wrap = document.createElement("div");
+    wrap.setAttribute("data-core-layout", "table");
+    var head = document.createElement("p");
+    head.textContent = "Core layout (static count):";
+    wrap.appendChild(head);
+    t.fems.forEach(function (f) {
+      var table = document.createElement("table");
+      table.className = "ui-table";
+      var tr = document.createElement("tr");
+      ["Element", "Core", "Source key", "Controller / FEM", "Cost"].forEach(function (h, i) {
+        var th = document.createElement("th");
+        th.className = "ui-table-head" + (i === 4 ? " ui-table-num" : "");
+        th.textContent = h;
+        tr.appendChild(th);
+      });
+      table.appendChild(tr);
+      (f.rows || []).forEach(function (r) {
+        var row = document.createElement("tr");
+        [r.element, r.core, r.source, r.place, r.cost].forEach(function (v, i) {
+          var td = document.createElement("td");
+          td.className = "ui-table-cell" + (i === 4 ? " ui-table-num" : "") +
+            (i === 1 && !r.shared && /^own core/.test(r.core) ? " ui-table-muted" : "");
+          td.textContent = String(v == null ? "" : v);
+          row.appendChild(td);
+        });
+        table.appendChild(row);
+      });
+      var tot = document.createElement("tr");
+      var td = document.createElement("td");
+      td.className = "ui-table-cell";
+      td.colSpan = 5;
+      var strong = document.createElement("strong");
+      strong.textContent = f.place + ": " + f.total;
+      td.appendChild(strong);
+      tot.appendChild(td);
+      table.appendChild(tot);
+      if (!f.over && (f.rows || []).length > 8) {
+        var det = document.createElement("details");
+        det.className = "ui-disclosure";
+        var sum = document.createElement("summary");
+        sum.className = "ui-disclosure-summary";
+        sum.textContent = f.place + ": " + f.total + " (" + f.rows.length + " elements)";
+        det.appendChild(sum);
+        det.appendChild(table);
+        wrap.appendChild(det);
+      } else {
+        var cap = document.createElement("p");
+        cap.className = f.over ? "gen-build-warn-line" : "";
+        cap.textContent = f.place + ": " + f.total;
+        wrap.appendChild(cap);
+        wrap.appendChild(table);
+      }
+    });
+    if (cl.risk_note) {
+      var rn = document.createElement("p");
+      rn.className = "ui-note";
+      rn.setAttribute("data-core-layout", "risk");
+      rn.textContent = cl.risk_note;
+      wrap.appendChild(rn);
+    }
+    return wrap;
+  }
+
   function femTypeAt(con, slot) {
     var ctrls = ((state.spec.instruments || {}).controllers) || [];
     for (var i = 0; i < ctrls.length; i++) {
@@ -11563,6 +11655,7 @@
         msg.className = "gen-build-warn-line";
       }
       el.appendChild(msg);
+      coreLayoutWarnings(res.core_layout).forEach(function (w) { el.appendChild(w); });
       var timingTable = outputTimingResultTable(r.output_timing);
       (r.warnings || []).forEach(function (w) {
         // the typed time-of-flight sentence is said once, beside the table
@@ -11584,6 +11677,8 @@
           " — fix them before running this chip.";
         el.appendChild(cel);
       }
+      var coreTable = coreLayoutTable(res.core_layout);
+      if (coreTable) el.appendChild(coreTable);
       // Editable-scripts export outcome (best-effort side artefact).
       if (res.scripts) {
         var sc = document.createElement("p");
@@ -14149,6 +14244,8 @@
       outputTimingReviewText: outputTimingReviewText,
       showBuildConfirm: showBuildConfirm,
       outputTimingResultTable: outputTimingResultTable,
+      coreLayoutTable: coreLayoutTable,
+      coreLayoutWarnings: coreLayoutWarnings,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
