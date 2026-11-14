@@ -174,9 +174,11 @@ def test_settings_add_change_remove_round_trip(env, marker_home):
     r = c.post("/opx-monitor/pc-names", data={"new_tag": "ab12cd34", "new_label": LABEL}, headers=ORIGIN)
     assert r.status_code == 200 and LABEL not in r.get_data(as_text=True).split("ui-opxmon-flash")[1][:80]
     assert json.loads((marker_home / "pc_names.json").read_text()) == {"ab12cd34": LABEL}
-    c.post("/opx-monitor/pc-names", data={"label__ab12cd34": "Other", "label__ff00ff00": ""}, headers=ORIGIN)
+    c.post("/opx-monitor/pc-names", data={"label__ab12cd34": "Other", "was__ab12cd34": LABEL,
+                                                 "label__ff00ff00": "", "was__ff00ff00": ""}, headers=ORIGIN)
     assert json.loads((marker_home / "pc_names.json").read_text()) == {"ab12cd34": "Other"}
-    c.post("/opx-monitor/pc-names", data={"label__ab12cd34": "Other", "remove__ab12cd34": "1"}, headers=ORIGIN)
+    c.post("/opx-monitor/pc-names", data={"label__ab12cd34": "Other", "was__ab12cd34": "Other",
+                                                 "remove__ab12cd34": "1"}, headers=ORIGIN)
     assert json.loads((marker_home / "pc_names.json").read_text()) == {}
     bad = c.post("/opx-monitor/pc-names", data={"new_tag": "Bad Tag!", "new_label": LABEL}, headers=ORIGIN)
     assert bad.status_code == 400 and LABEL not in bad.get_data(as_text=True).split("ui-state--error")[1][:200]
