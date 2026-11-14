@@ -466,6 +466,8 @@ def _run_cold(python_path: str, items: list[dict], *, timeout: int | None = None
         _cleanup_work_dir(work_dir)
     parsed = outcome.get("result") or {}
     if not outcome.get("ok"):
+        out["timed_out"] = ("timed out" in str(outcome.get("stderr") or "")
+                            and not parsed)
         out["error"] = (_timeout_text()
                         if "timed out" in str(outcome.get("stderr") or "")
                         and not parsed else
@@ -630,7 +632,8 @@ GATE_CHECK_TIMEOUT_S = 180
 
 
 def run_gate_check(python_path: str | None, before: str, after: str,
-                   macros: list[str], *, timeout: int = GATE_CHECK_TIMEOUT_S) -> dict:
+                   macros: list[str], *, timeout: int = GATE_CHECK_TIMEOUT_S,
+                   root_class: str | None = None) -> dict:
     """The lab-side gate check on two chip folders, in ONE cold subprocess
     under the machine lock. ``{"status": "ok" | "no-env" | "timeout" |
     "crash", "error", "data"}``; ``data`` is the runner's answer.
@@ -648,7 +651,7 @@ def run_gate_check(python_path: str | None, before: str, after: str,
                 "error": "the selected Python environment no longer exists"}
     item = {"qclass": GATE_CHECK_ITEM, "params": {
         "before": str(before), "after": str(after), "macros": list(macros),
-        "lab_dir": lab_worker._lab_dir(python_path)}}
+        "lab_dir": lab_worker._lab_dir(python_path), "root_class": root_class}}
     lock = _env_lock(python_path)
     _fg_add(python_path, 1)
     try:
@@ -664,7 +667,7 @@ def run_gate_check(python_path: str | None, before: str, after: str,
         lock.release()
     if not ran["ok"]:
         err = ran.get("error") or "the lab check failed"
-        status = "timeout" if err == _timeout_text() or "timed out" in err else "crash"
+        status = "timeout" if ran.get("timed_out") else "crash"
         return {"status": status, "data": None, "error": err}
     rec = (ran["items"] or [None])[0]
     if not isinstance(rec, dict) or not rec.get("ok"):

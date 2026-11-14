@@ -428,15 +428,19 @@ def _import_only(qclass: str) -> dict:
 GATE_CHECK_ITEM = "@gatecheck"
 
 
-def _root_class_of(folder: Path) -> str:
+def _root_class_of(folder: Path, fallback=None) -> str:
+    """The root class state.json names, else *fallback* (the class SM
+    passes, the one its other lab checks load the chip with)."""
     raw = json.loads((Path(folder) / "state.json").read_text(encoding="utf-8"))
     root = raw.get("__class__") if isinstance(raw, dict) else None
-    if not isinstance(root, str) or not root:
-        raise ValueError("state.json names no __class__")
-    return root
+    if isinstance(root, str) and root:
+        return root
+    if isinstance(fallback, str) and fallback:
+        return fallback
+    raise ValueError("state.json names no __class__ and none was given")
 
 
-def _chip_side(folder):
+def _chip_side(folder, root_class=None):
     """``(machine | None, {"load_error", "config_error"}, config | None)`` of
     one chip folder: loaded with its own root class, then
     ``generate_config()``."""
@@ -445,7 +449,7 @@ def _chip_side(folder):
         side["load_error"] = "no chip folder given"
         return None, side, None
     try:
-        cls = _import_class(_root_class_of(Path(folder)))
+        cls = _import_class(_root_class_of(Path(folder), root_class))
         machine = _load_chip(cls, folder)
     except BaseException as exc:  # noqa: BLE001 -- the lab's own words
         side["load_error"] = _exc_where(exc)
@@ -535,7 +539,7 @@ def op_data(cfg: dict, element: str, operation: str, max_samples: int = _MAX_SAM
     rec = {"element": element, "operation": operation, "found": False,
            "error": None, "length": None, "waveform": None, "port": None,
            "port_kind": None, "delay": None, "sampling_rate": None,
-           "filter": False, "output_mode": None, "offset": None}
+           "filter": False, "output_mode": None, "offset": None, "iq": False}
     el_cfg = (cfg.get("elements") or {}).get(element)
     if not isinstance(el_cfg, dict):
         rec["error"] = f"element {element!r} is not in the config"
@@ -549,6 +553,7 @@ def op_data(cfg: dict, element: str, operation: str, max_samples: int = _MAX_SAM
     rec["length"] = pulse.get("length")
     wfs = pulse.get("waveforms") or {}
     wname = wfs.get("single", wfs.get("I"))
+    rec["iq"] = "Q" in wfs or any(k in el_cfg for k in ("mixInputs", "MWInput", "RF_inputs"))
     wf = (cfg.get("waveforms") or {}).get(wname) or {}
     if wf.get("type") == "constant":
         rec["waveform"] = {"type": "constant", "sample": wf.get("sample")}
@@ -608,7 +613,16 @@ def _check_gates(params: dict) -> dict:
     on "after", run each named macro's ``apply()`` inside ``program()`` and
     turn it into QUA script text (``qm.generate_qua_script``). For every
     operation the script plays: the config's pulse, waveform and port data.
-    Never saves a machine and never writes into the folders."""
+    A named macro that also exists in "before" is applied there too
+    (``before_gates``), so the caller can tell an old error from a new one.
+
+    The config is built ONCE per folder; each gate gets its own
+    ``program()``, so the order of the gates does not change any answer.
+
+    Never saves a machine and never writes into the folders. The only guard
+    added for the lab's code is ``QUAM_STATE_PATH`` pointing at "after"; a
+    guard on the qualibrate config is NOT added, because lab code that reads
+    it at import would break."""
     import os
     max_samples = int(params.get("max_samples") or _MAX_SAMPLES)
     res = {"ok": False, "kind": "gatecheck", "error": None,
@@ -618,9 +632,22 @@ def _check_gates(params: dict) -> dict:
     if isinstance(after_folder, str) and after_folder:
         os.environ["QUAM_STATE_PATH"] = after_folder
     try:
-        _m, res["before"], _c = _chip_side(params.get("before"))
-        del _m, _c
-        machine, res["after"], cfg = _chip_side(after_folder)
+        root_class = params.get("root_class")
+        bmachine, res["before"], _c = _chip_side(params.get("before"), root_class)
+        del _c
+        machine, res["after"], cfg = _chip_side(after_folder, root_class)
+        res["before_gates"] = {}
+        if bmachine is not None:
+            for path in params.get("macros") or []:
+                try:
+                    _node_at(bmachine, path)
+                except BaseException:  # noqa: BLE001 -- not in "before": a new gate
+                    continue
+                try:
+                    _apply_in_program(bmachine, path)
+                    res["before_gates"][path] = {"error": None}
+                except BaseException as exc:  # noqa: BLE001
+                    res["before_gates"][path] = {"error": f"{type(exc).__name__}: {exc}"[:600]}
         if machine is not None:
             try:
                 from qm import generate_qua_script

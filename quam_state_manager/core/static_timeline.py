@@ -110,10 +110,16 @@ def static_timeline(script: str, ops) -> dict:
     *ops*: per played operation ``{"element", "operation", "length",
     "waveform": {"type": "constant", "sample"} | {"type": "arbitrary",
     "samples"}, "port", "delay", "sampling_rate", "filter"}``."""
-    table = ops_by_key(ops)
+    try:
+        table = ops_by_key(ops)
+    except Exception:  # noqa: BLE001
+        table = {}
+        bad_ops = True
+    else:
+        bad_ops = False
     filtered = []
     for info in table.values():
-        if info.get("filter") and info.get("port") not in filtered:
+        if isinstance(info, dict) and info.get("filter") and info.get("port") not in filtered:
             filtered.append(info.get("port"))
     notes = [NOTE_PROGRAM_TIME + (
         " Ports with a filter: " + ", ".join(_port_text(p) for p in filtered) + "."
@@ -121,12 +127,20 @@ def static_timeline(script: str, ops) -> dict:
     out = {"rows": [], "cannot_draw": None, "notes": notes,
            "filtered_ports": filtered}
     try:
-        out["rows"] = _place(script or "", table)
+        if bad_ops:
+            raise _CannotDraw("cannot draw: the operation data is not readable")
+        if not isinstance(script, str):
+            raise _CannotDraw("cannot draw: no program text")
+        out["rows"] = _place(script, table)
     except _CannotDraw as exc:
         out["cannot_draw"] = str(exc)
         out["rows"] = []
     except SyntaxError as exc:
         out["cannot_draw"] = f"cannot draw: the script does not parse ({exc.msg})"
+        out["rows"] = []
+    except Exception as exc:  # noqa: BLE001 -- never raise to the caller
+        out["cannot_draw"] = (f"cannot draw: unexpected script or operation data "
+                              f"({type(exc).__name__}: {str(exc)[:200]})")
         out["rows"] = []
     return out
 
@@ -196,13 +210,17 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
     info = table.get(_key(el, op))
     if info is None or info.get("length") is None:
         raise _CannotDraw(f"cannot draw: {stmt} (operation not in the config)")
-    length = int(info["length"])
+    length = info["length"]
+    if isinstance(length, bool) or not isinstance(length, int):
+        raise _CannotDraw(f"cannot draw: {stmt} (pulse length {length!r} is not an integer)")
+    delay = info.get("delay") or 0
+    if isinstance(delay, bool) or not isinstance(delay, int):
+        raise _CannotDraw(f"cannot draw: {stmt} (port delay {delay!r} is not an integer)")
     if "duration" in kw:
         n = _const(kw["duration"], stmt)
         if not isinstance(n, int):
             raise _CannotDraw(f"cannot draw: {stmt} (non-integer duration)")
         length = 4 * n
-    delay = int(info.get("delay") or 0)
     t0 = clocks.get(el, 0)
     clocks[el] = t0 + length
     return TimelineRow(element=el, port=info.get("port"), operation=op,

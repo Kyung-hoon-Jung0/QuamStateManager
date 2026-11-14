@@ -6,8 +6,10 @@ store lock, releases the lock, and writes two temporary folders:
 
 - ``before``: the documents as they are;
 - ``after``: the same documents plus a list of creates ``[(dot_path, value)]``,
-  each landing in state.json or wiring.json by the store's own rule
-  (``QuamStore.source_file_for``, the split the modifier uses).
+  applied by the modifier's own ``create_subtree`` on a detached store built
+  from the copied documents (:func:`apply_creates`), so "after" is exactly
+  what the real write produces, and a create the real write would refuse
+  raises :class:`CreateError` naming the path.
 
 Nothing in the store changes: no change-log entry, no undo step, no working
 copy or live file is touched. :func:`store_at_seq` answers, under the lock,
@@ -34,6 +36,17 @@ class ChipCopies:
     after: Path
     seq: int
     root: Path
+    root_class: str | None = None
+
+
+class CreateError(ValueError):
+    """A create the real write would refuse (missing or non-dict parent, an
+    existing target, a value the type policy rejects). ``path`` names it."""
+
+    def __init__(self, path: str, reason: str):
+        super().__init__(f"{path}: {reason}")
+        self.path = path
+        self.reason = reason
 
 
 def write_chip_folder(folder: Path, state: dict, wiring: dict) -> None:
@@ -43,35 +56,49 @@ def write_chip_folder(folder: Path, state: dict, wiring: dict) -> None:
     (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
 
 
-def _set_path(doc: dict, dot_path: str, value: Any) -> None:
-    segs = dot_path.split(".")
-    node = doc
-    for seg in segs[:-1]:
-        nxt = node.get(seg) if isinstance(node, dict) else None
-        if not isinstance(nxt, dict):
-            nxt = {}
-            node[seg] = nxt
-        node = nxt
-    node[segs[-1]] = copy.deepcopy(value)
+def apply_creates(state: dict, wiring: dict, creates, *,
+                  type_policy=None) -> tuple[dict, dict]:
+    """*state* / *wiring* (modified in place and returned) with *creates*
+    applied by ``Modifier.create_subtree`` on a detached store built from
+    them: the code the real write runs. The detached store is never
+    registered, saved or reloaded."""
+    from quam_state_manager.core.loader import QuamStore
+    from quam_state_manager.core.modifier import Modifier
+    detached = QuamStore.from_dicts(state, wiring)
+    detached.type_policy = type_policy
+    mod = Modifier(detached)
+    for path, value in creates:
+        try:
+            mod.create_subtree(path, value)
+        except Exception as exc:  # noqa: BLE001 -- reported as a failed check
+            raise CreateError(path, f"{type(exc).__name__}: {exc}") from None
+    return detached.state, detached.wiring
 
 
 def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
                      prefix: str = "sm_chipcopy_") -> ChipCopies:
     """Two temporary chip folders and the store's sequence value at the read.
 
-    The lock is held only for the read; a failed write removes everything it
-    made and re-raises."""
+    The lock is held only for the read. A create the real write would refuse
+    raises :class:`CreateError` before any folder exists; a failed write
+    removes everything it made and re-raises."""
     creates = [(str(p), v) for p, v in creates]
     with store._lock:
         seq = store.mutation_seq
-        targets = [store.source_file_for(p) for p, _v in creates]
+        policy = getattr(store, "type_policy", None)
+        root_class = (getattr(store, "merged", None) or {}).get("__class__")
         try:
             blob = marshal.dumps((store.state, store.wiring))
             raw = None
         except (ValueError, TypeError):
             blob = None
             raw = copy.deepcopy((store.state, store.wiring))
-    state, wiring = marshal.loads(blob) if blob is not None else raw
+
+    def docs():
+        return marshal.loads(blob) if blob is not None else copy.deepcopy(raw)
+
+    state, wiring = docs()
+    a_state, a_wiring = apply_creates(*docs(), creates, type_policy=policy)
     root = Path(tempfile.mkdtemp(prefix=prefix))
     try:
         before = root / "before"
@@ -79,13 +106,12 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
         before.mkdir()
         after.mkdir()
         write_chip_folder(before, state, wiring)
-        for (path, value), where in zip(creates, targets):
-            _set_path(wiring if where == "wiring" else state, path, value)
-        write_chip_folder(after, state, wiring)
+        write_chip_folder(after, a_state, a_wiring)
     except BaseException:
         shutil.rmtree(str(root.resolve()), ignore_errors=True)
         raise
-    return ChipCopies(before=before, after=after, seq=seq, root=root)
+    return ChipCopies(before=before, after=after, seq=seq, root=root,
+                      root_class=root_class if isinstance(root_class, str) else None)
 
 
 def remove_chip_copies(copies: ChipCopies | None) -> None:

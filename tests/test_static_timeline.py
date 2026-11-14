@@ -137,3 +137,40 @@ def test_cannot_draw(stmt, needle):
     assert res["rows"] == []
     assert res["cannot_draw"].startswith("cannot draw: ") and needle in res["cannot_draw"]
     assert len(res["notes"]) == 2
+
+
+@pytest.mark.parametrize("length", [16.5, "16", True])
+def test_non_integer_length_cannot_draw(length):
+    res = static_timeline(_script('play("p", "q1.z")'), [_op("q1.z", "p", length, sample=0.1)])
+    assert res["rows"] == [] and res["cannot_draw"].startswith("cannot draw: ")
+
+
+@pytest.mark.parametrize("script,ops", [
+    (_script('play("p" * amp("a"), "q1.z")'), None),
+    (_script('play("p", "q1.z")\x00'), None),
+    (_script("align(" * 400 + ")" * 400), None),
+    (_script(";"), None),
+    (_script('play("p", "q1.z")'), [{"element": "q1.z", "operation": "p", "length": 16,
+                                    "waveform": {"type": "arbitrary", "samples": ["x"]}}]),
+    (_script('play("p", "q1.z")'), "garbage"),
+    (None, None),
+])
+def test_never_raises_on_unexpected_input(script, ops):
+    res = static_timeline(script, ops if ops is not None else [_op("q1.z", "p", 20, sample=0.1)])
+    assert res["rows"] == [] and res["cannot_draw"].startswith("cannot draw")
+
+
+def test_align_subset_while_another_element_is_mid_pulse():
+    ops = [_op("q1.z", "long", 100, sample=0.1), _op("q2.z", "a", 20, sample=0.1),
+           _op("q3.z", "b", 20, sample=0.1)]
+    script = _script('play("long", "q1.z")', 'play("a", "q2.z")', 'align("q2.z", "q3.z")',
+                     'play("b", "q3.z")')
+    assert _rows(static_timeline(script, ops)) == [("q1.z", "long", 0, 100, 0.1, 1.0),
+                                                     ("q2.z", "a", 0, 20, 0.1, 1.0),
+                                                     ("q3.z", "b", 20, 40, 0.1, 1.0)]
+
+
+def test_negative_port_delay():
+    res = static_timeline(_script('wait(10, "q1.z")', 'play("p", "q1.z")'),
+                          [_op("q1.z", "p", 20, sample=0.1, delay=-8)])
+    assert _rows(res) == [("q1.z", "p", 32, 52, 0.1, 1.0)]

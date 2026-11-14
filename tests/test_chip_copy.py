@@ -109,7 +109,7 @@ def test_lock_not_held_while_the_lab_check_runs(tmp_path):
     store = QuamStore(folder)
     seen = {}
 
-    def runner(py, before, after, macros):
+    def runner(py, before, after, macros, **kw):
         got = []
 
         def other():
@@ -130,3 +130,83 @@ def test_lock_not_held_while_the_lab_check_runs(tmp_path):
         assert Path(folder).resolve() not in Path(p).resolve().parents
         assert not Path(p).exists(), "cleaned after the check"
     assert res["status"] == "crash" and res["seq"] == store.mutation_seq
+
+
+def _after_docs(copies):
+    return (json.loads((copies.after / "state.json").read_text(encoding="utf-8")),
+            json.loads((copies.after / "wiring.json").read_text(encoding="utf-8")))
+
+
+def test_after_equals_a_real_write_through_the_modifier(tmp_path):
+    store = QuamStore(_chip(tmp_path))
+    Modifier(store).set_value("qubits.q1.z.operations.const.amplitude", 0.3)
+    copies = chip_copy.make_chip_copies(store, CREATES)
+    try:
+        a_state, a_wiring = _after_docs(copies)
+    finally:
+        chip_copy.remove_chip_copies(copies)
+    (tmp_path / "scratch").mkdir()
+    scratch = QuamStore(_chip(tmp_path / "scratch"))
+    mod = Modifier(scratch)
+    mod.set_value("qubits.q1.z.operations.const.amplitude", 0.3)
+    for path, value in CREATES:
+        mod.create_subtree(path, value)
+    assert scratch.state == a_state and scratch.wiring == a_wiring
+
+
+@pytest.mark.parametrize("path", [
+    "qubits.q1.z.operations.const.length.extra",      # scalar parent
+    "qubits.q9.z.operations.p",                       # missing parent
+    "qubits.q1.z.operations.const",                   # existing target
+    "qubit_pairs.q1-2.macros.0",                      # list-index path
+])
+def test_refused_create_raises_named_and_makes_no_folder(tmp_path, monkeypatch, path):
+    store = QuamStore(_chip(tmp_path))
+    store.state["qubit_pairs"]["q1-2"]["macros"] = ["kept"]
+    store._merge()
+    made = []
+    real = chip_copy.tempfile.mkdtemp
+    monkeypatch.setattr(chip_copy.tempfile, "mkdtemp",
+                        lambda **kw: made.append(real(**kw)) or made[-1])
+    with pytest.raises(chip_copy.CreateError) as info:
+        chip_copy.make_chip_copies(store, [(path, {"x": 1})])
+    assert info.value.path == path and path in str(info.value)
+    assert made == []
+    assert store.state["qubit_pairs"]["q1-2"]["macros"] == ["kept"]
+
+
+def test_base_exception_between_the_two_writes_leaves_no_folder(tmp_path, monkeypatch):
+    store = QuamStore(_chip(tmp_path))
+    made = []
+    real = chip_copy.tempfile.mkdtemp
+    monkeypatch.setattr(chip_copy.tempfile, "mkdtemp",
+                        lambda **kw: made.append(Path(real(**kw))) or str(made[-1]))
+    real_write = chip_copy.write_chip_folder
+    calls = []
+
+    class Stop(BaseException):
+        pass
+
+    def write(folder, s, w):
+        calls.append(folder)
+        if len(calls) == 2:
+            raise Stop()
+        real_write(folder, s, w)
+    monkeypatch.setattr(chip_copy, "write_chip_folder", write)
+    with pytest.raises(Stop):
+        chip_copy.make_chip_copies(store, [])
+    assert made and not made[0].exists()
+
+
+def test_nan_and_infinity_written_like_the_chip_writer(tmp_path):
+    """Compared with ``safe_io.atomic_write_json`` (the writer of the chip's
+    own files): both emit the JSON extensions NaN / Infinity, read back alike."""
+    from quam_state_manager.core import safe_io
+    doc = {"a": float("nan"), "b": float("inf"), "c": -float("inf"), "d": 1.5}
+    chip_copy.write_chip_folder(tmp_path, doc, {})
+    safe_io.atomic_write_json(tmp_path / "ref.json", doc)
+    mine = (tmp_path / "state.json").read_text(encoding="utf-8")
+    ref = (tmp_path / "ref.json").read_text(encoding="utf-8")
+    for token in ("NaN", "Infinity", "-Infinity"):
+        assert token in mine and token in ref
+    assert repr(json.loads(mine)) == repr(json.loads(ref))
