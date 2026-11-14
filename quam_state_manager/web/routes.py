@@ -53807,7 +53807,8 @@ def scheduler_revert_failed(item_id: str):
     the run is refused and named; every other listed leaf still reverts. A
     successful target's writes are never in the list (``failed_writes`` only
     holds paths under a failed target)."""
-    from quam_state_manager.core.autofit.writer import ChipHandle, revert_patches
+    from quam_state_manager.core.autofit.writer import (
+        ChipHandle, _current_value, _values_equal, revert_patches)
     inst = _sched_inst()
     item = scheduler._find(scheduler.load_queue(inst), item_id)
     if item is None:
@@ -53852,9 +53853,34 @@ def scheduler_revert_failed(item_id: str):
         blind = [b for b in blind if b["path"] in left]
         if not writes:
             return jsonify({"ok": False, "error": "nothing is left to revert"}), 409
+    # A value that already holds the run's recorded OLD value was put back
+    # (by an earlier press, or by hand): never attempted, never called changed.
+    # Same comparator as the revert itself. A write whose old equals its new
+    # value changed nothing, so there is nothing to put back: it is listed as
+    # "unchanged", never counted as reverted.
+    already, unchanged, attempt = [], [], []
+    for w in writes:
+        if not w.get("has_old", True):
+            continue
+        key = w.get("dotted") or w.get("path")
+        old = w.get("old")
+        if w.get("op", "replace") == "replace" and old is not None \
+                and not isinstance(old, (dict, list)):
+            if _values_equal(old, w.get("value")):
+                unchanged.append({"path": key, "value": old})
+                continue
+            try:
+                cur = _current_value(handle, key)
+            except KeyError:
+                pass
+            else:
+                if _values_equal(cur, old):
+                    already.append({"path": key, "to": old})
+                    continue
+        attempt.append(w)
     patches = [{"op": w.get("op", "replace"), "path": w.get("path"),
                 "value": w.get("value"), "old": w.get("old")}
-               for w in writes if w.get("has_old", True)]
+               for w in attempt]
     out = revert_patches(handle, patches, apply_live=True,
                          label=f"runner:{item.get('name') or item_id}")
     # out.paths: old = the node's value the revert replaced, new = restored
@@ -53870,15 +53896,36 @@ def scheduler_revert_failed(item_id: str):
     stuck = {c.get("path") for c in refused if c.get("path")}
     remaining = [p for p in ((w.get("dotted") or w.get("path")) for w in writes)
                  if p not in done and p not in stuck]
+    settled = done | {a["path"] for a in already} | {u["path"] for u in unchanged}
+    remaining = [p for p in remaining if p not in settled]
+    # the record accumulates: what an earlier press put back stays recorded
+    prev_rev = [r for r in (prev.get("reverted") or []) if isinstance(r, dict)]
+    earlier = [r for r in prev_rev if r.get("path") not in done]
+    earlier_paths = {r.get("path") for r in earlier}
+    already = [a for a in already if a["path"] not in earlier_paths]
     parts = []
     if reverted:
         parts.append(f"reverted {len(reverted)}: " + ", ".join(r["path"] for r in reverted))
+    if earlier:
+        parts.append(f"reverted earlier {len(earlier)}: "
+                     + ", ".join(r["path"] for r in earlier))
+    if already:
+        parts.append(f"already reverted {len(already)}: "
+                     + ", ".join(a["path"] for a in already))
+    if unchanged:
+        parts.append(f"unchanged by the run {len(unchanged)}: "
+                     + ", ".join(u["path"] for u in unchanged))
     if refused:
         parts.append(f"not reverted {len(refused)}: " + "; ".join(
             (f"{c['path']}: " if c.get("path") else "") + c["text"] for c in refused))
     message = " — ".join(parts) or "nothing to revert"
-    result = {"ok": bool(out.ok and reverted), "reverted": reverted, "refused": refused,
-              "remaining": remaining,
+    presses = [h for h in (prev.get("presses") or []) if isinstance(h, dict)]
+    if prev.get("message"):
+        presses.append({"at": prev.get("at"), "message": prev["message"]})
+    result = {"ok": bool(out.ok and (reverted or not (attempt or blind))),
+              "reverted": earlier + reverted, "reverted_now": reverted,
+              "already_reverted": already, "unchanged": unchanged,
+              "refused": refused, "remaining": remaining, "presses": presses,
               "message": message, "at": datetime.now(timezone.utc).isoformat()}
     scheduler.set_item_failed_revert(inst, item_id, result)
     if reverted:
