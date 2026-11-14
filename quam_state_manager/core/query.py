@@ -1743,12 +1743,17 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
     if not isinstance(fid, dict):
         return None
     cands = []
+    no_number = []
     for k, v in fid.items():
         if not isinstance(k, str) or rb_level(k) != "gate":
+            continue
+        if fidelity_field_kind(k) == "load_id":
             continue
         val = _fid_scalar(v)
         if val is not None:
             cands.append((k, val))
+        else:
+            no_number.append(k)
     if not cands:
         return None
 
@@ -1757,7 +1762,9 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
                 else (len(_GATE_KEY_ORDER), k))
 
     cands.sort(key=lambda kv: _order(kv[0]))
-    basis = "key order"
+    # A sibling per-gate key that holds no number (NaN, infinite, text) never
+    # competed: when it leaves one candidate, that is the reason for the pick.
+    basis = "only number" if (len(cands) == 1 and no_number) else "key order"
     if len(cands) > 1:
         # D-NF3: newest recorded time, then newest run id, then key order.
         # A level is used only when every candidate records it; run ids are
@@ -1784,7 +1791,8 @@ def pair_gate_fidelity(fid: Any) -> dict | None:
                 and max(vals) - min(vals) > GATE_CONFLICT_TOL else [])
     return {"value": value, "key": key, "basis": basis,
             "physical": chip_health.physical_fidelity(value),
-            "keys": [k for k, _ in cands], "conflict": conflict}
+            "keys": [k for k, _ in cands], "no_number": no_number,
+            "conflict": conflict}
 
 
 _BASIS_TEXT = {"newest time": "picked: newest recorded time",
@@ -1795,7 +1803,12 @@ _BASIS_TEXT = {"newest time": "picked: newest recorded time",
 def gate_pick_basis_text(res: dict | None) -> str:
     """Why :func:`pair_gate_fidelity` picked its key, for a reader who sees
     the key; "" when the block held one per-gate key (nothing was picked)."""
-    if not res or len(res.get("keys") or ()) < 2:
+    if not res:
+        return ""
+    if res.get("basis") == "only number":
+        return ("picked: the only entry that is a number ("
+                + ", ".join(res.get("no_number") or ()) + " holds no number)")
+    if len(res.get("keys") or ()) < 2:
         return ""
     return _BASIS_TEXT.get(res.get("basis"), "")
 
@@ -2081,7 +2094,7 @@ def _mark_gate_pick(rows: list[dict], fid: dict) -> None:
         if not r["gate_pick"]:
             r["superseded_by"] = res["key"]
         r["gate_pick_basis"] = res["basis"]
-        r["gate_pick_basis_text"] = _BASIS_TEXT.get(res["basis"], "")
+        r["gate_pick_basis_text"] = gate_pick_basis_text(res)
         if res["conflict"]:
             r["gate_conflict"] = [[k, v] for k, v in res["conflict"]]
 
