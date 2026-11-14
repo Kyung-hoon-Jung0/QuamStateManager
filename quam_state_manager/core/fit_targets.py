@@ -43,6 +43,15 @@ from __future__ import annotations
 import math
 from typing import Any
 
+
+def node_operation(params: Any) -> Any:
+    """The operation a node run calibrated, read from its parameters: the
+    ``arb_operation`` parameter when it is set, else ``operation``. Every SM
+    reader that fills an ``{operation}`` path slot from a run asks this one
+    function, so a run on a named gate lands on that gate's macro."""
+    p = params if isinstance(params, dict) else {}
+    return p.get("arb_operation") or p.get("operation")
+
 # experiment-name prefix -> { fit_key: {"path": <dot-template with {q}/{pair}>,
 #                                       "scale": float, "label": str} }
 FIT_TARGET_MAP: dict[str, dict[str, dict[str, Any]]] = {
@@ -186,7 +195,7 @@ def resolve_fit_targets(run, names=None) -> dict[str, dict[str, dict[str, Any]]]
                 # it's missing — a static ``macros.cz`` would mis-route, since
                 # ``macros.cz`` is a ``#./cz_unipolar`` alias and the run may
                 # have calibrated a different variant.
-                op = (_attr(run, "parameters", None) or {}).get("operation")
+                op = node_operation(_attr(run, "parameters", None))
                 if not op:
                     continue
                 path = path.replace("{operation}", str(op))

@@ -24,6 +24,7 @@ import math as _math
 
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from quam_state_manager.core.fit_targets import node_operation
 
 # normalized family key (matches _normalize_node_name output of the node name)
 
@@ -162,7 +163,7 @@ def trend_path_for(fam, value_key: str, target: str,
         return None
     path = cand.replace("{q}", target).replace("{pair}", target)
     if "{operation}" in path:
-        op = (run_parameters or {}).get("operation")
+        op = node_operation(run_parameters)
         if not op:
             return None
         path = path.replace("{operation}", str(op))
@@ -1402,7 +1403,7 @@ def resolve_updates(fam: Family, target: str, fit_entry: dict,
                 continue
         path = spec.path.replace("{q}", target).replace("{pair}", target)
         if "{operation}" in path:
-            op_name = (run_parameters or {}).get("operation")
+            op_name = node_operation(run_parameters)
             if not op_name:
                 continue
             path = path.replace("{operation}", str(op_name))
