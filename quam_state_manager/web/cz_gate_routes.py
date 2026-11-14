@@ -184,7 +184,8 @@ def _body() -> dict:
             "gate_class": data.get("gate_class") if isinstance(data.get("gate_class"), str) else "",
             "pulses": data.get("pulses") if isinstance(data.get("pulses"), dict) else {},
             "copy_from": data.get("copy_from") or None,
-            "model_gate": tuple(model) if isinstance(model, (list, tuple)) else None}
+            "model_gate": tuple(model) if isinstance(model, (list, tuple)) else None,
+            "macro_fields": data.get("macro_fields") if isinstance(data.get("macro_fields"), dict) else {}}
 
 
 def _given_values(pulse: dict) -> dict:
@@ -211,7 +212,8 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
                     pp = gate_intent.planned_pulse(first, f) or {}
                     pulses[f] = {"class": pp.get("__class__"), "fields": _given_values(pp)}
         res = cgb.plan(merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
-                       pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"])
+                       pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
+                       macro_fields=body["macro_fields"] or None)
         if i == 0:
             first = res
         out.append((pid, res))
@@ -230,11 +232,71 @@ def plan_signature(body: dict, plans: list) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()
 
 
+def value_kind(value: Any, declared: str | None = None) -> str:
+    """The kind of a field the person may type, decided from the state's own
+    value type (never guessed from its digits): ``bool`` | ``int`` |
+    ``float`` | ``str``. A null value takes the class's declared kind when
+    the catalog knows it, else ``any`` (a number or text, as typed)."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "str"
+    if declared in ("int", "float", "bool", "str"):
+        return declared
+    return "any"
+
+
+def field_specs(pulse: dict | None) -> dict:
+    """``{field: {"kind", "label", "unit", "optional"}}`` for every plain
+    field of a planned pulse: labels and units from the pulse catalog when it
+    knows the class (the env's lab classes included), else the raw key; a
+    null value is optional (shown folded)."""
+    out: dict = {}
+    if not isinstance(pulse, dict):
+        return out
+    spec = pulse_catalog.by_qclass(pulse.get("__class__")) if isinstance(
+        pulse.get("__class__"), str) else None
+    params = {}
+    for prm in getattr(spec, "params", ()) or ():
+        for n in (prm.name, *getattr(prm, "aliases", ())):
+            params[n] = prm
+    for k, v in pulse.items():
+        if k in ("__class__", "id") or (isinstance(v, str) and v.startswith("#")):
+            continue
+        prm = params.get(k)
+        out[k] = {"kind": value_kind(v, getattr(prm, "kind", None)),
+                  "label": getattr(prm, "label", None) or k,
+                  "unit": getattr(prm, "unit", "") or "",
+                  "optional": v is None}
+    return out
+
+
+def _settings(p: dict) -> list[dict]:
+    """The gate's own settings of a copied layout: every macro key the plan
+    reports in ``fields["macro"]`` (copied, given or a kept reference)."""
+    if p.get("layout") != "copied":
+        return []
+    macro = (p.get("creates") or [(None, {})])[0][1] or {}
+    out = []
+    for k, src in sorted(((p.get("fields") or {}).get("macro") or {}).items()):
+        v = macro.get(k)
+        out.append({"key": k, "value": v, "kind": value_kind(v),
+                    "source": src, "reference": src == cgb.KEPT_REF})
+    return out
+
+
 def _summary(pid: str, p: dict) -> dict:
     if "error" in p:
         return {"pair": pid, "ok": False, "refusals": p.get("refusals") or [p["error"]]}
     pulses = {f: gate_intent.planned_pulse(p, f) for f in (p.get("operations") or {})}
     return {"pair": pid, "ok": True, "refusals": [],
+            "field_specs": {f: field_specs(v) for f, v in pulses.items()},
+            "settings": _settings(p),
+            "model_gate": list(p["model_gate"]) if p.get("model_gate") else None,
             "creates": len(p["creates"]), "paths": [c[0] for c in p["creates"]],
             "direction": p.get("direction"), "layout": p.get("layout"),
             "operations": p.get("operations"), "fields": p.get("fields"),

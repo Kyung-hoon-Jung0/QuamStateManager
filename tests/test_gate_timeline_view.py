@@ -162,3 +162,11 @@ def test_numbers_print_in_the_shortest_exact_form():
     from quam_state_manager.core.gate_timeline_view import fmt_num
     assert [fmt_num(v) for v in (0.1 + 0.2, 0.1001, 0.1, 0.11, 2.5, 3.0, -0.5)] == [
         "0.3", "0.1001", "0.1", "0.11", "2.5", "3", "-0.5"]
+
+
+def test_a_gate_that_does_not_run_says_so_not_that_it_was_unchecked():
+    from quam_state_manager.core.gate_timeline_view import NOT_RUN, NOT_CHECKED
+    e = _entry(error="ValueError: x")
+    assert timeline_data(e, control="q1", target="q2")["cannot_draw"] == NOT_RUN
+    skipped = {"checks": {"ops": {"status": "skipped"}}, "timeline": None}
+    assert timeline_data(skipped, control="q1", target="q2")["cannot_draw"] == NOT_CHECKED

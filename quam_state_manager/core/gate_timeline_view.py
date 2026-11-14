@@ -40,6 +40,7 @@ from quam_state_manager.core.gate_check import LENGTH_MIN_NS, LENGTH_STEP_NS
 from quam_state_manager.core.diagnostics import _SAMPLE_EPS as RANGE_EPS
 
 NOT_CHECKED = "cannot draw: the gate was not checked with the lab's code, so there is no config to draw"
+NOT_RUN = "cannot draw: the gate does not run with the lab's code, so there is no config to draw"
 
 
 def _port_text(port: Any) -> str | None:
@@ -117,7 +118,9 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
     elements the gate's coupler pulses play on)."""
     tl = (entry or {}).get("timeline")
     if not isinstance(tl, dict):
-        return {"lanes": [], "notes": [], "cannot_draw": NOT_CHECKED}
+        checks = (entry or {}).get("checks") or {}
+        ran_but_failed = any((checks.get(c) or {}).get("status") == "fail" for c in ("load_config", "ops"))
+        return {"lanes": [], "notes": [], "cannot_draw": NOT_RUN if ran_but_failed else NOT_CHECKED}
     notes = list(tl.get("notes") or [])
     if tl.get("cannot_draw"):
         return {"lanes": [], "notes": notes, "cannot_draw": tl["cannot_draw"]}

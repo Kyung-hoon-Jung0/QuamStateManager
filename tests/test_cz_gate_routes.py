@@ -334,3 +334,30 @@ def test_headline_names_line_value_and_limit():
         {"peak_v": 3.0, "min_v": 0.0, "flags": ["over_range"]}]}]}
     assert czr.headline(entry, tl, "long") == "q1.z would play 3 V. This port's limit is 2.5 V."
     assert czr.headline({"checks": {"ops": {"status": "fail"}}}, tl, "why") == "why"
+
+
+def test_field_kinds_come_from_the_value_type_never_from_its_digits():
+    assert czr.value_kind(0.0) == "float" and czr.value_kind(92.0) == "float"
+    assert czr.value_kind(2) == "int" and czr.value_kind(True) == "bool" and czr.value_kind("x") == "str"
+    assert czr.value_kind(None, "float") == "float" and czr.value_kind(None) == "any"
+    specs = czr.field_specs({"__class__": SQUARE, "length": 48, "amplitude": 0.0, "axis_angle": None,
+                             "id": "x", "linked": "#./a"})
+    assert specs["amplitude"] == {"kind": "float", "label": "Amplitude", "unit": "V", "optional": False}
+    assert specs["length"]["kind"] == "int" and specs["axis_angle"]["optional"] is True
+    assert "id" not in specs and "linked" not in specs
+    raw = czr.field_specs({"__class__": "lab_pkg.Unknown", "neg_offset_v": 0.0})
+    assert raw["neg_offset_v"] == {"kind": "float", "label": "neg_offset_v", "unit": "", "optional": False}
+
+
+def test_plan_reports_the_model_settings_and_takes_macro_fields(tmp_path):
+    a = App(tmp_path, _lab_chip())
+    j = a.c.post(PLAN, json=_body(pairs=["q2-3"], name="cz_new", cls=LAB_GATE)).get_json()
+    p = j["pairs"][0]
+    assert p["model_gate"] == ["q1-2", "cz_tf"] and "phase_shift_control" in p["reset"]
+    mode = next(s for s in p["settings"] if s["key"] == "mode")
+    assert mode["value"] == "fast" and mode["kind"] == "str" and mode["source"] == cgb.FROM_MODEL
+    j = a.c.post(PLAN, json=_body(pairs=["q2-3"], name="cz_new", cls=LAB_GATE, macro_fields={"mode": "slow"})).get_json()
+    mode = next(s for s in j["pairs"][0]["settings"] if s["key"] == "mode")
+    assert mode["value"] == "slow" and mode["source"] == cgb.GIVEN
+    from quam_state_manager.core.hub_index import close_readers
+    close_readers()

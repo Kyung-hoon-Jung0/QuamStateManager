@@ -387,7 +387,10 @@ def _apply_message(name: str, err: str) -> str:
     if m:
         return (f"The gate {name} plays operation '{m.group(1)}', which channel "
                 f"'{m.group(2)}' does not have.")
-    return f"The gate {name} does not run with the lab's code. The lab's error: {err}"
+    text = str(err or "").strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return f"The gate {name} does not run with the lab's code. The lab's error: “{text}”"
 
 
 def _ops_check(name, ops, unresolved, no_cfg) -> dict:
