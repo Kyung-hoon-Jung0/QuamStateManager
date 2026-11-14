@@ -64,7 +64,8 @@ def test_shared_operation_is_refused_naming_the_other_gate():
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_other"] = other
     parts = gp.gate_parts(s, "q1-q2", "cz_sq")
     assert not parts["ok"]
-    assert any("cz_other" in r for r in parts["refusals"]), parts["refusals"]
+    assert any("also used by the gate cz_other of pair q1-q2" in r
+               for r in parts["refusals"]), parts["refusals"]
 
 
 def test_a_reference_from_outside_is_refused():
