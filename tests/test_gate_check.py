@@ -572,6 +572,93 @@ def test_leftover_folder_reported(tmp_path, monkeypatch):
     json.dumps(res)
 
 
+def test_one_store_identity_for_web_and_gate_check(tmp_path):
+    from quam_state_manager.core import chip_copy
+    from quam_state_manager.web import routes
+    a = _store(tmp_path)
+    (tmp_path / "b").mkdir()
+    b = _store(tmp_path / "b")
+    web_b = routes._store_uid(b)                  # b numbered by the web layer
+    first = chip_copy.store_id(a)                 # a read before the web layer asks
+    assert first != web_b                         # one counter: never equal
+    assert chip_copy.store_id(b) == web_b
+    assert routes._store_uid(a) == first == chip_copy.store_id(a), "never changes"
+
+
+def test_copy_failure_message_has_no_path(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+    made = []
+    real = chip_copy.tempfile.mkdtemp
+    monkeypatch.setattr(chip_copy.tempfile, "mkdtemp",
+                        lambda **kw: made.append(Path(real(**kw))) or str(made[-1]))
+
+    def full(folder, s, w):
+        raise OSError(28, "No space left on device", str(folder / "state.json"))
+    monkeypatch.setattr(chip_copy, "write_chip_folder", full)
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE],
+                                 runner=lambda *a, **k: pytest.fail("not reached"))
+    text = json.dumps(res)
+    assert res["status"] == "crash" and "no space left on device" in res["error"]
+    assert "sm_chipcopy_" not in text and str(Path(made[0]).parent) not in text.replace("\\\\", "\\")
+    assert not made[0].exists()
+
+
+def test_timeout_text_names_the_timeout_used(monkeypatch, tmp_path):
+    py = tmp_path / "python.exe"
+    py.write_text("", encoding="utf-8")
+    from quam_state_manager.core import config_generator
+
+    def fake(argv, work_dir, timeout, outcome, **kw):
+        outcome.update(ok=False, stderr="Lab worker timed out", result=None, error="x")
+    monkeypatch.setattr(config_generator, "_run_script_outcome", fake)
+    out = lab_waveform._run_cold(str(py), [{"qclass": "@gatecheck", "params": {}}], timeout=180)
+    assert "180 s" in out["error"] and "90 s" not in out["error"]
+
+
+def test_unreadable_program_text_is_skipped_not_no_pulse():
+    assert runner_mod.script_readable(SCRIPT)
+    assert not runner_mod.script_readable("play('x', 'q1.z')")
+    ran = _ran(ops=[])
+    ran["data"]["gates"][PATH]["script_unreadable"] = True
+    res = gate_check.evaluate([GATE], ran)
+    assert _checks(res)["ops"] == "skipped" and "could not be read" in _msg(res, "ops")
+    assert "ops" in _g(res)["unchecked"] and not res["ok"]
+
+
+def test_before_error_different_is_said_so():
+    res = gate_check.evaluate([GATE], _ran(error="KeyError: a",
+                                           before_gates={PATH: {"error": "KeyError: b"}}))
+    assert "also failed before this change, with another error" in _msg(res, "ops")
+    assert "already failed this way" not in _msg(res, "ops")
+
+
+def test_ok_needs_every_gate_run():
+    ran = _ran()
+    ran["data"]["gates"][PATH] = "unreadable"
+    res = gate_check.evaluate([GATE], ran, PREVIEW)
+    assert set(_checks(res).values()) == {"skipped"} and not res["ok"]
+
+
+def test_existing_macro_check_import_failure_text(monkeypatch):
+    """Pins the text the existing door gives when qm cannot be imported (the
+    same as before the shared helpers were added)."""
+    import sys
+    monkeypatch.setitem(sys.modules, "qm", None)
+    monkeypatch.setitem(sys.modules, "qm.qua", None)
+    res = runner_mod._check_macros("json.JSONDecoder", {"contents": {}, "macros": ["a"]})
+    assert res["reason"] == "class-unavailable" and res["macros"] == {}
+    assert res["error"].startswith("could not import json.JSONDecoder: ModuleNotFoundError: ")
+
+
+def test_timeline_not_drawn_is_unchecked_and_unknown_level_is_null():
+    res = gate_check.evaluate([GATE], _ran(script=LOOP), PREVIEW)
+    assert "timeline" in _g(res)["unchecked"]
+    from quam_state_manager.core.static_timeline import static_timeline
+    tl = static_timeline(SCRIPT, [{"element": "q1.z", "operation": "cz_pulse", "length": 16,
+                                   "waveform": {"type": None, "error": "gone"}}])
+    assert tl["rows"][0].level is None and any("level is not known" in n for n in tl["notes"])
+
+
 # --------------------------------------------------------------- real env
 
 def _find_env_python():

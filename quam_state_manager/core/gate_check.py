@@ -36,9 +36,12 @@ The result is JSON-serialisable::
                 end_ns, level, scale}], "cannot_draw", "notes",
                 "filtered_ports"} | None}]}
 
-``ok`` means "nothing failed", not "everything was compared": ``unchecked``
-lists the checks that were skipped, ``partly_checked`` the checks that
-compared only some of the gate's operations (their status is ``note``).
+``ok`` means: nothing failed AND every gate was actually run by the lab's
+code (its ``ops`` check is ``pass`` or ``note``), so a caller that reads only
+``ok`` is safe. It does not mean everything was compared: ``unchecked`` lists
+the checks that did not run (skipped, or a timeline that could not be drawn),
+``partly_checked`` the checks that compared only some of the gate's
+operations (their status is ``note``).
 ``seq`` and ``store_id`` are what :func:`chip_copy.store_at_seq` needs.
 ``leftover`` is a temporary folder that could not be removed; it is the one
 path in the result, meant to be shown only to the local user.
@@ -56,6 +59,7 @@ from __future__ import annotations
 
 import math
 import re
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from quam_state_manager.core import chip_copy, static_timeline
@@ -127,7 +131,8 @@ def _entry(key, checks, timeline=None) -> dict:
         tl["rows"] = [r._asdict() if hasattr(r, "_asdict") else dict(r)
                       for r in timeline.get("rows") or []]
     return {"pair": key[0], "gate": key[1], "checks": checks,
-            "unchecked": [c for c in CHECKS if checks[c]["status"] == "skipped"],
+            "unchecked": [c for c in CHECKS if checks[c]["status"] == "skipped"
+                          or checks[c].get("not_run")],
             "partly_checked": [c for c in CHECKS if checks[c].get("partly")],
             "timeline": tl}
 
@@ -173,8 +178,9 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     for k in keys:
         checks, tl = _one_gate(k, data, after, after_err, previews.get(k) or {})
         out["gates"].append(_entry(k, checks, tl))
-    out["ok"] = all(c["status"] != "fail" for g in out["gates"]
-                    for c in g["checks"].values())
+    out["ok"] = bool(out["gates"]) and all(
+        c["status"] != "fail" for g in out["gates"] for c in g["checks"].values()) and all(
+        g["checks"]["ops"]["status"] in ("pass", "note") for g in out["gates"])
     return out
 
 
@@ -207,14 +213,22 @@ def _one_gate(key, data, after, after_err, preview):
         if g.get("error"):
             msg = _apply_message(name, g["error"])
             if old is not None and old.get("error"):
-                msg += " This gate already failed this way before this change."
+                if _norm_err(old["error"]) == _norm_err(g["error"]):
+                    msg += " This gate already failed this way before this change."
+                else:
+                    msg += " This gate also failed before this change, with another error."
             checks["ops"] = _r("fail", msg)
             for c in CHECKS[2:]:
                 checks[c] = _r("skipped", f"Not checked: the gate {name} does not run.")
             return checks, None
         no_cfg = bool(after.get("config_error"))
         ops = g.get("ops") or []
-        checks["ops"] = _guard(_ops_check, name, ops, int(g.get("unresolved_plays") or 0), no_cfg)
+        if g.get("script_unreadable"):
+            checks["ops"] = _r("skipped", f"Not checked: the program text of the gate {name} "
+                                          "could not be read, so SM cannot tell what it plays.")
+        else:
+            checks["ops"] = _guard(_ops_check, name, ops, int(g.get("unresolved_plays") or 0),
+                                   no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
         checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
         checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
@@ -225,17 +239,27 @@ def _one_gate(key, data, after, after_err, preview):
                 why = tl["cannot_draw"]
                 if why.startswith("cannot draw: "):
                     why = why[len("cannot draw: "):]
-                checks["timeline"] = _r("note", f"The timeline could not be drawn: {why}.")
+                checks["timeline"] = _r("note", f"The timeline could not be drawn: {why}.",
+                                        not_run=True)
             else:
                 checks["timeline"] = _r("pass", f"{len(tl['rows'])} pulses placed.")
         else:
             checks["timeline"] = _r("note", "The timeline could not be drawn: the gate's "
-                                            "program or the config is missing.")
+                                            "program or the config is missing.", not_run=True)
         checks["range"] = _guard(_range_check, found, tl, no_cfg)
         return checks, tl
     except Exception:  # noqa: BLE001 -- one gate never takes the others down
         return _all("skipped", f"Not checked: the lab's data for the gate {name} has a form "
                                "SM does not read."), None
+
+
+_ADDR = re.compile(r"0x[0-9a-fA-F]+")
+
+
+def _norm_err(err) -> str:
+    """The error text as compared: memory addresses do not count (the temp
+    folders were already replaced by the runner)."""
+    return _ADDR.sub("0x?", str(err or "")).strip()
 
 
 _KEY_RE = re.compile(r"[Oo]peration '([^']+)' not found in channel '([^']+)'")
@@ -551,6 +575,8 @@ def check_gates(store, python_path: str | None, gates: Iterable,
     try:
         try:
             copies = chip_copy.make_chip_copies(store, creates)
+        except chip_copy.CopyError as exc:
+            return _unchecked(keys, "crash", str(exc))
         except chip_copy.CreateError as exc:
             res = _unchecked(keys, "invalid-create", str(exc),
                              "Not checked: the gate cannot be written.")
@@ -567,7 +593,11 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         res = _scrub(evaluate(keys, ran, previews), copies)
         res["seq"] = copies.seq
         res["store_id"] = copies.store_id
-    except Exception as exc:  # noqa: BLE001 -- the copy itself failed
-        res = _unchecked(keys, "crash", f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # noqa: BLE001 -- never a temp path in a message
+        import tempfile
+        from quam_state_manager.generator.path_scrub import scrub_paths
+        text = scrub_paths(f"{type(exc).__name__}: {exc}",
+                           [str(Path(tempfile.gettempdir()) / "x")])
+        res = _unchecked(keys, "crash", text)
     res["leftover"] = chip_copy.remove_chip_copies(copies)
     return res

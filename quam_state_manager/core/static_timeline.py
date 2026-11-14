@@ -46,7 +46,7 @@ class TimelineRow(NamedTuple):
     operation: str
     start_ns: int
     end_ns: int
-    level: float
+    level: float | None
     scale: float
 
 
@@ -105,10 +105,17 @@ def ops_by_key(ops) -> dict:
     return out
 
 
-def _signed_peak(info: dict) -> float:
-    wf = info.get("waveform") or {}
+def _signed_peak(info: dict) -> float | None:
+    """The signed sample of largest magnitude, or None when the waveform
+    cannot be read or holds a value that is not a number."""
+    wf = info.get("waveform")
+    if not isinstance(wf, dict) or wf.get("error") or wf.get("nonfinite"):
+        return None
     if wf.get("type") == "constant":
-        return float(wf.get("sample") or 0.0)
+        s = wf.get("sample")
+        return None if s is None else float(s)
+    if any(s is None for s in (wf.get("samples") or [])):
+        return None
     samples = [float(s) for s in (wf.get("samples") or []) if s is not None]
     if not samples:
         return 0.0
@@ -139,6 +146,14 @@ def static_timeline(script: str, ops) -> dict:
         if filtered else ""), NOTE_MW_OFFSET]
     out = {"rows": [], "cannot_draw": None, "notes": notes,
            "filtered_ports": filtered}
+    try:
+        unknown = sorted({f"{o} on {e}" for (e, o), i in table.items()
+                          if isinstance(i, dict) and _signed_peak(i) is None})
+        if unknown:
+            notes.append("The level is not known for: " + ", ".join(unknown)
+                         + " (the waveform cannot be read).")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         if bad_ops:
             raise _CannotDraw("cannot draw: the pulse data of the program could not be read")
@@ -238,11 +253,12 @@ def _play(call, kw, stmt, table, clocks) -> TimelineRow:
             raise _CannotDraw(f"cannot draw: {stmt} (the duration is not a whole number "
                               "of clock cycles)")
         length = 4 * n
+    peak = _signed_peak(info)
     t0 = clocks.get(el, 0)
     clocks[el] = t0 + length
     return TimelineRow(element=el, port=info.get("port"), operation=op,
                        start_ns=t0 + delay, end_ns=t0 + length + delay,
-                       level=_signed_peak(info) * scale, scale=scale)
+                       level=None if peak is None else peak * scale, scale=scale)
 
 
 #: QUA's shortest ``duration=`` / ``wait`` (clock cycles of 4 ns, so 16 ns)

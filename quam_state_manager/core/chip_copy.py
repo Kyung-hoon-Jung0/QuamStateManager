@@ -29,8 +29,6 @@ import marshal
 import shutil
 import tempfile
 import time
-import itertools
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -45,6 +43,16 @@ class ChipCopies:
     root_class: str | None = None
     #: the identity of the store the copies were read from (:func:`store_id`)
     store_id: int | None = None
+
+
+class CopyError(OSError):
+    """The temporary copy could not be written. The message names what
+    failed in words and never holds a path."""
+
+
+def _copy_error(exc: BaseException) -> CopyError:
+    reason = getattr(exc, "strerror", None) or type(exc).__name__
+    return CopyError(f"SM could not write the temporary copy of the chip: {str(reason).lower()}")
 
 
 class CreateError(ValueError):
@@ -91,6 +99,7 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
     raises :class:`CreateError` before any folder exists; a failed write
     removes everything it made and re-raises."""
     creates = [(str(p), v) for p, v in creates]
+    sid = store_id(store)
     with store._lock:
         seq = store.mutation_seq
         policy = getattr(store, "type_policy", None)
@@ -107,7 +116,10 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
 
     state, wiring = docs()
     a_state, a_wiring = apply_creates(*docs(), creates, type_policy=policy)
-    root = Path(tempfile.mkdtemp(prefix=prefix))
+    try:
+        root = Path(tempfile.mkdtemp(prefix=prefix))
+    except OSError as exc:
+        raise _copy_error(exc) from None
     try:
         before = root / "before"
         after = root / "after"
@@ -115,12 +127,14 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
         after.mkdir()
         write_chip_folder(before, state, wiring)
         write_chip_folder(after, a_state, a_wiring)
-    except BaseException:
+        return ChipCopies(before=before, after=after, seq=seq, root=root,
+                          root_class=root_class if isinstance(root_class, str) else None,
+                          store_id=sid)
+    except BaseException as exc:
         shutil.rmtree(str(root.resolve()), ignore_errors=True)
+        if isinstance(exc, OSError):
+            raise _copy_error(exc) from None
         raise
-    return ChipCopies(before=before, after=after, seq=seq, root=root,
-                      root_class=root_class if isinstance(root_class, str) else None,
-                      store_id=store_id(store))
 
 
 REMOVE_TRIES = 5
@@ -147,23 +161,11 @@ def remove_chip_copies(copies: ChipCopies | None) -> str | None:
     return str(target) if target.exists() else None
 
 
-_UIDS = itertools.count(1)
-_UID_LOCK = threading.Lock()
-
-
 def store_id(store) -> int:
-    """A process-unique id of one store object (the web layer's own uid when
-    it has given the store one, else one assigned here); ``id()`` is not
-    used because a later store can reuse it."""
-    uid = getattr(store, "_w7_uid", None)
-    if uid is not None:
-        return uid
-    with _UID_LOCK:
-        uid = getattr(store, "_chip_copy_uid", None)
-        if uid is None:
-            uid = next(_UIDS)
-            store._chip_copy_uid = uid
-        return uid
+    """The store's one process-unique id (:func:`core.store_uid.store_uid`,
+    the same number the web layer uses); it never changes once read."""
+    from quam_state_manager.core.store_uid import store_uid
+    return store_uid(store)
 
 
 def store_at_seq(store, ref) -> bool:

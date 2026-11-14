@@ -419,8 +419,8 @@ def _run_warm(python_path: str, items: list[dict]) -> dict | None:
             "sources": parsed.get("sources") or {}}
 
 
-def _timeout_text() -> str:
-    return (f"your lab's code did not answer within {TIMEOUT_S} s and was "
+def _timeout_text(seconds: float | None = None) -> str:
+    return (f"your lab's code did not answer within {seconds or TIMEOUT_S:g} s and was "
             "stopped")
 
 
@@ -468,7 +468,7 @@ def _run_cold(python_path: str, items: list[dict], *, timeout: int | None = None
     if not outcome.get("ok"):
         out["timed_out"] = ("timed out" in str(outcome.get("stderr") or "")
                             and not parsed)
-        out["error"] = (_timeout_text()
+        out["error"] = (_timeout_text(timeout or TIMEOUT_S)
                         if "timed out" in str(outcome.get("stderr") or "")
                         and not parsed else
                         outcome.get("error") or "drawing with the lab's class failed")

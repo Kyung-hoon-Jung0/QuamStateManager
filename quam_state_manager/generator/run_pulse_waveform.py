@@ -487,6 +487,11 @@ def played_ops(script: str) -> list:
     return _plays(script)[0]
 
 
+def script_readable(script: str) -> bool:
+    """False when the program text cannot be split and parsed."""
+    return _plays(script)[2]
+
+
 def unresolved_plays(script: str) -> int:
     """How many ``play`` statements name their operation or element with a
     value SM cannot read (a variable, an expression)."""
@@ -495,10 +500,12 @@ def unresolved_plays(script: str) -> int:
 
 def _plays(script: str):
     import ast
+    if not isinstance(script, str) or "with program() as prog:" not in script:
+        return [], 0, False
     try:
         tree = ast.parse(_script_body(script))
     except Exception:  # noqa: BLE001
-        return [], 0
+        return [], 0, False
     out = []
     unresolved = 0
     for node in ast.walk(tree):
@@ -521,7 +528,7 @@ def _plays(script: str):
         key = (el, op)
         if key not in out:
             out.append(key)
-    return out, unresolved
+    return out, unresolved, True
 
 
 def _element_port(el_cfg: dict):
@@ -756,7 +763,8 @@ def _check_gates(params: dict) -> dict:
                 except BaseException as exc:  # noqa: BLE001 -- the lab's own check
                     g["error"] = _err_text(exc, folders)
                 if g["script"]:
-                    plays, g["unresolved_plays"] = _plays(g["script"])
+                    plays, g["unresolved_plays"], readable = _plays(g["script"])
+                    g["script_unreadable"] = not readable
                     if cfg:
                         g["ops"] = [op_data(cfg, el, op, max_samples) for el, op in plays]
                 res["gates"][path] = g
