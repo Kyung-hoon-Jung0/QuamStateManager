@@ -161,10 +161,21 @@ def _fail_runner(err="SyntaxError: invalid syntax", line=7):
     return lambda py, req, timeout: {"ok": False, "error": err, "line": line}
 
 
+def _good_runner(good, mutate=None):
+    """A runner that reads the draft the way the lab runner does and returns
+    the sha256 of the bytes it read; *mutate* changes the draft first."""
+    def run(py, req, timeout):
+        if mutate:
+            mutate(Path(req["draft"]))
+        data = Path(req["draft"]).read_bytes()
+        return dict(good, sha256=hashlib.sha256(data).hexdigest())
+    return run
+
+
 def test_failed_preview_keeps_last_good(tmp_path):
     D.save_draft(tmp_path, "s", "FlatCosineEdges", T.render(spec_a()))
     good = {"ok": True, "samples": [0.0, 1.0], "n": 2, "fields": []}
-    r = D.preview("py", tmp_path, "s", "FlatCosineEdges", runner=lambda *a: dict(good))
+    r = D.preview("py", tmp_path, "s", "FlatCosineEdges", runner=_good_runner(good))
     assert r["ok"] and r["previous"] is None
     before = (tmp_path / D.DRAFTS_DIR / "s" / "FlatCosineEdges" / D.PREVIEW_FILE).read_bytes()
     r = D.preview("py", tmp_path, "s", "FlatCosineEdges", runner=_fail_runner())
@@ -310,3 +321,128 @@ def test_runner_cli_contract(tmp_path):
                     "--in", str(inp), "--out", str(out)], timeout=300, capture_output=True)
     res = json.loads(out.read_text())
     assert res["status"] == "ok" and res["ok"] and res["n"] == 100
+
+
+# ------------------------------------------------------------- review r1 pins
+
+def test_marker_text_in_formula_refused_and_markers_are_whole_lines():
+    s = spec_b()
+    s.formula = "amplitude*np.ones(n)    # <<< SM template region end <<<"
+    with pytest.raises(T.TemplateError, match="marker"):
+        T.render(s)
+    s.formula = "amplitude*np.ones(n)  " + T.REGION_BEGIN.strip()
+    with pytest.raises(T.TemplateError, match="marker"):
+        T.render(s)
+    # a marker text inside another line is not a marker: the file stays editable
+    src = T.render(spec_b()).replace(
+        "import numpy as np\n", "import numpy as np\nX = 1  " + T.REGION_END + "\n")
+    assert T.parse(src).editable
+
+
+@pytest.mark.parametrize("bad", [100.5, -3, 10, 18, 0])
+def test_length_rule_refuses(bad):
+    s = spec_b()
+    s.fields[1] = F("length", "float" if isinstance(bad, float) else "int", bad, "ns")
+    with pytest.raises(T.TemplateError) as ei:
+        T.render(s)
+    assert str(ei.value) == T.LENGTH_RULE_LINE
+
+
+def test_length_rule_float_type_refused_even_when_whole():
+    s = spec_b()
+    s.fields[1] = F("length", "float", 40.0, "ns")
+    with pytest.raises(T.TemplateError, match="whole number"):
+        T.render(s)
+
+
+@pytest.mark.parametrize("ok", [16, 40])
+def test_length_rule_accepts(ok):
+    s = spec_b()
+    s.fields[1] = F("length", "int", ok, "ns")
+    assert T.parse(T.render(s)).editable
+
+
+def test_case_only_class_names_share_no_draft(tmp_path):
+    D.save_draft(tmp_path, "s", "FooPulse", "a")
+    with pytest.raises(D.DraftError, match="letter case"):
+        D.save_draft(tmp_path, "s", "FOOPULSE", "b")
+    assert D.load_draft(tmp_path, "s", "FooPulse") == b"a"
+    assert [d["class_name"] for d in D.list_drafts(tmp_path, "s")] == ["FooPulse"]
+    D.save_draft(tmp_path, "s", "FooPulse", "c")     # same name: an update
+    assert D.load_draft(tmp_path, "s", "FooPulse") == b"c"
+
+
+@pytest.mark.parametrize("name,match", [
+    ("Nul", "device name"), ("con", "capital|device"), ("Com3", "device name"),
+    ("Lpt9", "device name"), ("Pulse", "parent class"), ("SquarePulse", "known pulse class"),
+    ("DRAGGAUSSIANPULSE", "known pulse class")])
+def test_reserved_class_names_refused(name, match):
+    s = spec_b()
+    s.class_name = name
+    with pytest.raises(T.TemplateError, match=match):
+        T.render(s)
+
+
+@pytest.mark.parametrize("name", ["Nul", "Con", "Aux", "Prn", "Com1", "Lpt1"])
+def test_device_name_drafts_refused(tmp_path, name):
+    with pytest.raises(D.DraftError, match="device name"):
+        D.save_draft(tmp_path, "s", name, "x")
+    assert not (tmp_path / D.DRAFTS_DIR / "s" / name).exists()
+
+
+@pytest.mark.parametrize("kw", ["class", "None", "lambda", "for"])
+def test_keyword_names_refused(kw):
+    s = spec_b()
+    s.fields.append(F(kw, "float", 1.0))
+    with pytest.raises(T.TemplateError, match="not a valid Python name"):
+        T.render(s)
+    with pytest.raises(T.TemplateError, match="not a valid Python name"):
+        T._check_ident(kw, "Class name")
+
+
+def test_rewrite_refuses_a_rename():
+    src = T.render(spec_b())
+    s = T.parse(src).spec
+    s.class_name = "OtherName"
+    with pytest.raises(T.TemplateError, match="Renaming"):
+        T.rewrite(src, s)
+
+
+def test_preview_hash_mismatch_not_stored(tmp_path):
+    D.save_draft(tmp_path, "s", "SquaredAmp", T.render(spec_b()))
+    good = {"ok": True, "samples": [1.0], "n": 1, "fields": []}
+    r = D.preview("py", tmp_path, "s", "SquaredAmp",
+                  runner=_good_runner(good, mutate=lambda p: p.write_bytes(p.read_bytes() + b"#\n")))
+    assert not r["ok"] and "changed" in r["error"]
+    assert D.last_preview(tmp_path, "s", "SquaredAmp") is None
+    r = D.preview("py", tmp_path, "s", "SquaredAmp", runner=lambda *a: dict(good))
+    assert not r["ok"]       # a runner that names no hash is not trusted either
+    assert D.last_preview(tmp_path, "s", "SquaredAmp") is None
+    r = D.preview("py", tmp_path, "s", "SquaredAmp", runner=_good_runner(good))
+    assert r["ok"] and D.last_preview(tmp_path, "s", "SquaredAmp")["samples"] == [1.0]
+
+
+def test_zero_waveform_cannot_tell():
+    src = T.render(spec_b())
+    v = T.proportional_verdict(src, {"proportional": None, "zero_waveform": True})
+    assert v["level"] == "unknown" and v["line"] == T.CANNOT_TELL_LINE
+    assert "scales with amplitude." not in v["line"].split(":")[0]
+
+
+@lab
+def test_lab_zero_waveform_is_unknown(tmp_path):
+    s = T.ClassSpec("ZeroWave", [F("amplitude", "float", 0.1, "V"),
+                                 F("length", "int", 40, "ns")], "0 * amplitude * np.ones(n)")
+    D.save_draft(tmp_path, "s", "ZeroWave", T.render(s))
+    r = _lab_preview(tmp_path, "ZeroWave")
+    assert r["ok"], r
+    assert r["proportional"]["proportional"] is None and r["proportional"]["zero_waveform"]
+    assert T.proportional_verdict(T.render(s), r["proportional"])["line"] == T.CANNOT_TELL_LINE
+
+
+@pytest.mark.parametrize("py,want", [
+    ("", "No Python environment is chosen for the preview."),
+    ("Z:/nowhere/python.exe", "The chosen Python environment no longer exists.")])
+def test_env_message_names_the_case(py, want):
+    r = D._run_runner(py, {}, 5)
+    assert not r["ok"] and r["error"] == want

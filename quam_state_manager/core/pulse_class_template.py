@@ -42,6 +42,20 @@ FIELD_TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 RESERVED = {"id", "digital_marker", "operation", "channel", "name", "parent",
             "t", "dt", "n", "np", "self"}
 
+#: Windows device names: a folder or file with one of these names (any case,
+#: any extension) cannot be made, so a class may not be called that
+WINDOWS_DEVICE_NAMES = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)})
+
+#: the QM config rule for a pulse length: whole ns, divisible by 4
+#: (docs Introduction/config.md), and at least 16 ns, the minimum on every QOP
+#: version (docs Guides/timing_in_qua.md; QOP 3.3 and later allow less)
+LENGTH_MIN_NS = 16
+LENGTH_STEP_NS = 4
+LENGTH_RULE_LINE = (f"Field 'length': the default must be a whole number of ns, at least "
+                    f"{LENGTH_MIN_NS} and divisible by {LENGTH_STEP_NS} (the QM config rule)")
+
 CODE_VIEW_ONLY_LINE = ("The class structure can only be edited in the code view: "
                        "the template markers in this file were changed by hand.")
 
@@ -87,15 +101,40 @@ def _check_ident(name: str, what: str) -> None:
         raise TemplateError(f"{what} {name!r} is not a valid Python name")
 
 
+def taken_class_names() -> frozenset:
+    """Class names a new class may not take: every class the pulse catalog
+    knows (casefolded), so the new class can never shadow one of them."""
+    from quam_state_manager.core import pulse_catalog as pc
+    names = {s.qclass.rsplit(".", 1)[-1] for s in pc.PULSE_CATALOG.values()}
+    names |= {q.rsplit(".", 1)[-1] for q in getattr(pc, "_QCLASS_ALIASES", {})}
+    names.add("Pulse")
+    return frozenset(n.casefold() for n in names)
+
+
+def check_class_name(name: str) -> None:
+    """Raise :class:`TemplateError` when *name* cannot be a new class name."""
+    _check_ident(name, "Class name")
+    if not name[0].isupper():
+        raise TemplateError(f"Class name {name!r} must start with a capital letter")
+    if name.casefold() in WINDOWS_DEVICE_NAMES:
+        raise TemplateError(f"Class name {name!r} is a reserved Windows device name; "
+                            "choose another name")
+
+
 def validate(spec: ClassSpec) -> None:
     """Raise :class:`TemplateError` naming the first problem in *spec*."""
-    _check_ident(spec.class_name, "Class name")
-    if not spec.class_name[0].isupper():
-        raise TemplateError(f"Class name {spec.class_name!r} must start with a capital letter")
+    check_class_name(spec.class_name)
     if "." not in spec.parent:
         raise TemplateError(f"Parent class {spec.parent!r} must be a full module path")
     for part in spec.parent.split("."):
         _check_ident(part, "Parent class part")
+    parent_leaf = spec.parent.rsplit(".", 1)[-1]
+    if spec.class_name.casefold() == parent_leaf.casefold():
+        raise TemplateError(f"Class name {spec.class_name!r} is the name of its parent class; "
+                            "choose another name")
+    if spec.class_name.casefold() in taken_class_names():
+        raise TemplateError(f"Class name {spec.class_name!r} is already a known pulse class; "
+                            "choose another name")
     seen = set()
     for f in spec.fields:
         _check_ident(f.name, "Field name")
@@ -115,6 +154,9 @@ def validate(spec: ClassSpec) -> None:
               isinstance(d, str))
         if not ok:
             raise TemplateError(f"Field {f.name!r}: default {d!r} is not a {f.type}")
+        if f.name == "length" and (f.type != "int" or d < LENGTH_MIN_NS
+                                   or d % LENGTH_STEP_NS):
+            raise TemplateError(LENGTH_RULE_LINE)
         if not isinstance(f.unit, str) or "\n" in f.unit or "#" in f.unit:
             raise TemplateError(f"Field {f.name!r}: unit must be one line without '#'")
     if "amplitude" not in seen:
@@ -128,6 +170,10 @@ def validate(spec: ClassSpec) -> None:
     except SyntaxError as exc:
         raise TemplateError(f"The waveform formula is not a valid expression: {exc.msg}") from None
     del tree
+    for mark in (REGION_BEGIN, REGION_END):
+        if mark.strip() in spec.formula:
+            raise TemplateError("The waveform formula may not contain the SM template "
+                                "marker text")
 
 
 # ------------------------------------------------------------------- render
@@ -236,11 +282,12 @@ def parse(text: str) -> Parsed:
     """Find the region in *text*; never raises."""
     version = _header_version(text)
     made = version is not None
-    nb, ne = text.count(REGION_BEGIN + "\n"), text.count(REGION_END + "\n")
-    if nb != 1 or ne != 1:
+    # markers count only as whole lines
+    begins = [m.end() for m in re.finditer("^" + re.escape(REGION_BEGIN) + "\n", text, re.M)]
+    ends = [m.start() for m in re.finditer("^" + re.escape(REGION_END) + "\n", text, re.M)]
+    if len(begins) != 1 or len(ends) != 1:
         return Parsed(False, CODE_VIEW_ONLY_LINE, version, made)
-    b = text.index(REGION_BEGIN + "\n") + len(REGION_BEGIN) + 1
-    e = text.index(REGION_END + "\n")
+    b, e = begins[0], ends[0]
     if e < b:
         return Parsed(False, CODE_VIEW_ONLY_LINE, version, made)
     m = None
@@ -280,6 +327,8 @@ def rewrite(text: str, spec: ClassSpec) -> str:
 # ------------------------------------------------------- proportional check
 
 PROPORTIONAL_LINE = "The waveform scales with amplitude."
+CANNOT_TELL_LINE = ("Cannot tell whether the waveform scales with amplitude: "
+                    "the waveform is zero everywhere.")
 NOT_PROPORTIONAL_REJECT = ("Not saved: the waveform does not scale with amplitude "
                            "(ratios seen {lo:.6g} to {hi:.6g}, expected {want:.6g}).")
 NOT_PROPORTIONAL_WARN = ("Warning: the waveform does not scale with amplitude "
@@ -292,6 +341,8 @@ def proportional_verdict(text: str, check: dict) -> dict:
     template shape is refused when not proportional; one edited by hand
     outside the form (code view only) is only warned about."""
     if not isinstance(check, dict) or check.get("proportional") is None:
+        if isinstance(check, dict) and check.get("zero_waveform"):
+            return {"level": "unknown", "line": CANNOT_TELL_LINE}
         return {"level": "unknown", "line": "The proportional check did not run."}
     if check["proportional"]:
         return {"level": "ok", "line": PROPORTIONAL_LINE}

@@ -143,7 +143,12 @@ def _proportional(cls, params: dict, rate: float, amps) -> dict:
     nz = np.abs(w1) > 1e-12 * max(scale, 1e-300)
     if not np.any(nz):
         rec["reason"] = "the waveform is zero at the first amplitude"
-        rec["proportional"] = bool(np.all(w2 == 0))
+        if np.all(w2 == 0):
+            # zero at both amplitudes: the check cannot tell
+            rec["zero_waveform"] = True
+            rec["proportional"] = None
+        else:
+            rec["proportional"] = False
         return rec
     r = w2[nz] / w1[nz]
     rec["ratio_min"], rec["ratio_max"] = float(np.min(r)), float(np.max(r))

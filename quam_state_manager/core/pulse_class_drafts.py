@@ -53,9 +53,17 @@ def _scope_key(scope: str) -> str:
     return "s_" + hashlib.sha256(str(scope).encode("utf-8")).hexdigest()[:16]
 
 
+class DraftError(ValueError):
+    """A draft cannot be stored (the message is shown to the user as is)."""
+
+
 def _folder(instance: Path | str, scope: str, class_name: str) -> Path:
+    from quam_state_manager.core.pulse_class_template import WINDOWS_DEVICE_NAMES
     if not isinstance(class_name, str) or not _CLASS.match(class_name):
         raise ValueError(f"{class_name!r} is not a class name")
+    if class_name.casefold() in WINDOWS_DEVICE_NAMES:
+        raise DraftError(f"Class name {class_name!r} is a reserved Windows device name; "
+                         "choose another name")
     return Path(instance) / DRAFTS_DIR / _scope_key(scope) / class_name
 
 
@@ -76,6 +84,14 @@ def _atomic_bytes(path: Path, data: bytes) -> None:
 def save_draft(instance, scope, class_name, source: str | bytes) -> str:
     """Write the draft atomically; returns its sha256."""
     data = source.encode("utf-8") if isinstance(source, str) else bytes(source)
+    root = _folder(instance, scope, class_name).parent
+    if root.is_dir():
+        for d in root.iterdir():
+            # folder names are case-blind on Windows: two classes that differ
+            # only by case would share one draft
+            if d.name != class_name and d.name.casefold() == class_name.casefold():
+                raise DraftError(f"A draft named {d.name!r} already exists; class names "
+                                 "must differ by more than letter case")
     _atomic_bytes(draft_path(instance, scope, class_name), data)
     return sha256_bytes(data)
 
@@ -138,8 +154,10 @@ def _run_runner(python_path: str, request: dict, timeout: int) -> dict:
     from quam_state_manager.core import lab_worker
     from quam_state_manager.core.config_generator import (
         _blank_outcome, _cleanup_work_dir, _run_script_outcome, _script_path)
-    if not python_path or not Path(python_path).is_file():
-        return {"ok": False, "error": "the selected Python environment no longer exists"}
+    if not python_path:
+        return {"ok": False, "error": "No Python environment is chosen for the preview."}
+    if not Path(python_path).is_file():
+        return {"ok": False, "error": "The chosen Python environment no longer exists."}
     outcome = _blank_outcome()
     work_dir = Path(tempfile.mkdtemp(prefix="quampcdraft_"))
     try:
@@ -175,7 +193,13 @@ def preview(python_path: str, instance, scope, class_name, *, params: dict | Non
                "sampling_rate": sampling_rate, "amplitudes": list(amplitudes)}
     res = (runner or _run_runner)(python_path, request, timeout)
     res = dict(res)
-    res["draft_sha256"] = sha256_bytes(data)
+    mine = sha256_bytes(data)
+    res["draft_sha256"] = mine
+    if res.get("ok") and res.get("sha256") != mine:
+        # the runner read other bytes than SM hashed (the draft changed in
+        # between): this result is not a preview of this draft
+        res["ok"] = False
+        res["error"] = "The draft changed while the preview ran; run the preview again."
     if res.get("ok"):
         res["previous"] = None
         _store_preview(instance, scope, class_name, res)
