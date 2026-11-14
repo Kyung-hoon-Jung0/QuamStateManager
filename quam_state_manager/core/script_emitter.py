@@ -86,6 +86,7 @@ _RUNTIME_FUNCS = (
     "_band_for", "_delay_for_band", "_is_lf_output", "_apply_lf_delay",
     "_qop_minor", "_qop_allows_13", "_band_compat", "_qop_port_sharing_affected",
     "_bands_covering", "_port_key", "_fix_coupled_bands", "_out_label", "_align_coupler_delays",
+    "_is_mw_output", "_mw_output_ports", "_output_timing_plan", "_set_delay", "_align_output_timing",
     "_default_flux_upsampling",
     "_set_port_lo", "_set_channel_lo", "_set_channel_band", "_operation",
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
@@ -614,8 +615,8 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     # script writes the chip the wizard wrote
     w("for _w in _fix_coupled_bands(machine, _spec, []):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
-    # the coupler LF ports take their pair's flux delay, after the band fix-up
-    w("for _w in _align_coupler_delays(machine):")
+    # one time base for MW outputs, flux LF ports and time of flight, after the band fix-up
+    w("for _w in _align_output_timing(machine):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
     # G12: flux / coupler LF ports upsample in `pulse` mode, as the wizard's build does
     w("_default_flux_upsampling(machine, _spec)")

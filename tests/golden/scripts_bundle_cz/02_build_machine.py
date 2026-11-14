@@ -446,6 +446,101 @@ def _align_coupler_delays(machine):
             pass
     return warnings
 
+def _is_mw_output(port):
+    """True for an OPX1000 MW-FEM analog output (quam's MWFEMAnalogOutputPort)."""
+    name = type(port).__name__ if port is not None else ""
+    return "MWFEM" in name and "Output" in name
+
+def _mw_output_ports(machine):
+    """Every MW-FEM analog output port the chip uses, in a stable order.
+
+    Read from the machine's ports container (``ports.mw_outputs``, nested
+    controller / slot / port), which holds exactly the ports the wiring made."""
+    ports = getattr(machine, "ports", None)
+    tree = getattr(ports, "mw_outputs", None) or {}
+    found = []
+    for con in tree:
+        for fem in tree[con] or {}:
+            for pid in tree[con][fem] or {}:
+                port = tree[con][fem][pid]
+                if _is_mw_output(port):
+                    found.append(port)
+    return found
+
+def _output_timing_plan(bands):
+    """The one time base for a chip whose used MW outputs are in ``bands``.
+
+    The official figures (docs ``Guides/opx1000_fems.md`` lines 113-121):
+    "Relative to an LF-FEM analog output port, the additional delay of an
+    MW-FEM analog output port is approximately: `155 ns` for Bands 1 and 3,
+    `175 ns` for Band 2 ... Band 2 is delayed by an additional `20 ns`
+    compared to Bands 1 and 3." The latencies used are the measured ones in
+    ``_BAND_TO_DELAY_NS``; both agree on the 20 ns difference.
+
+    Returns ``(target, {band: mw_delay})`` or ``(None, {})`` when no known
+    band is used: ``target`` is the largest latency in use, an MW port of
+    band b gets ``target - latency(b)`` and every flux LF port gets
+    ``target``, so ``latency + delay`` is the same for every output."""
+    lat = {b: _BAND_TO_DELAY_NS[b] for b in bands if b in _BAND_TO_DELAY_NS}
+    if not lat:
+        return None, {}
+    target = max(lat.values())
+    return target, {b: target - v for b, v in lat.items()}
+
+def _set_delay(port, value):
+    """Assign ``port.delay`` only when it changes (an untouched default stays
+    unwritten); returns True when it was assigned."""
+    if port is None or not hasattr(port, "delay") or getattr(port, "delay", None) == value:
+        return False
+    try:
+        port.delay = value
+    except (ValueError, TypeError):
+        return False
+    return True
+
+def _align_output_timing(machine):
+    """Put every output of a generated chip on one time base.
+
+    Runs last among the steps that touch bands or delays (after
+    ``_fix_coupled_bands``) and owns all three assignments:
+    - every used MW-FEM analog output gets ``target - latency(its band)``
+      (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
+    - every LF-FEM output carrying a flux line (qubit z, coupler) gets
+      ``target``;
+    - a resonator whose readout output got a delay ``s`` gets
+      ``time_of_flight += s``: its pulse leaves ``s`` later in program time,
+      so the acquisition starts ``s`` later.
+    A chip with no MW output of known band keeps the per-pair coupler rule
+    (``_align_coupler_delays``). A non-LF, non-MW-FEM output (OPX+) is left
+    as it is. Returns the warnings."""
+    mw = _mw_output_ports(machine)
+    target, by_band = _output_timing_plan({getattr(p, "band", None) for p in mw})
+    if target is None:
+        return _align_coupler_delays(machine)
+    shift = {}
+    for p in mw:
+        s = by_band.get(getattr(p, "band", None))
+        if s is None:
+            continue
+        _set_delay(p, s)
+        shift[id(p)] = s
+    for q in (getattr(machine, "qubits", None) or {}).values():
+        z_out = getattr(getattr(q, "z", None), "opx_output", None)
+        if _is_lf_output(z_out):
+            _set_delay(z_out, target)
+        rr = getattr(q, "resonator", None)
+        s = shift.get(id(getattr(rr, "opx_output", None))) if rr is not None else None
+        if s and getattr(rr, "time_of_flight", None) is not None:
+            try:
+                rr.time_of_flight = rr.time_of_flight + s
+            except (ValueError, TypeError):
+                pass
+    for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
+        c_out = getattr(getattr(pair, "coupler", None), "opx_output", None)
+        if _is_lf_output(c_out):
+            _set_delay(c_out, target)
+    return []
+
 def _default_flux_upsampling(machine, spec):
     """G12: a flux or coupler line plays baseband pulses with no intermediate
     frequency, and the QM docs (Guides/opx1000_fems.md, ``upsampling_mode``)
@@ -1938,7 +2033,7 @@ if (POPULATE.get("options") or {}).get("pin_cores"):
     _pin_cores(machine)
 for _w in _fix_coupled_bands(machine, _spec, []):
     print(f"WARNING: {_w}", file=sys.stderr)
-for _w in _align_coupler_delays(machine):
+for _w in _align_output_timing(machine):
     print(f"WARNING: {_w}", file=sys.stderr)
 _default_flux_upsampling(machine, _spec)
 machine.save()
