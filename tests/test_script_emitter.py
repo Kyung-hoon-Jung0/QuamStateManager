@@ -272,6 +272,20 @@ def test_golden_bundle_stable(tmp_path):
         assert src == want, f"{name} drifted from the golden bundle"
 
 
+def test_emitted_scripts_define_every_name_they_use():
+    """The emitter copies helper functions by name: a helper that calls one
+    the list forgot would raise NameError only when that line runs."""
+    from pyflakes import checker
+    import ast
+    for name, src in _bundle().items():
+        if not name.endswith(".py"):
+            continue
+        w = checker.Checker(ast.parse(src, filename=name), filename=name)
+        undefined = sorted({str(m.message_args[0]) for m in w.messages
+                            if type(m).__name__ == "UndefinedName"})
+        assert not undefined, f"{name} uses names it never defines: {undefined}"
+
+
 def test_write_bundle(tmp_path):
     files = script_emitter.write_bundle(tmp_path / "scripts", _bundle())
     assert sorted(files) == ["01_make_wiring.py", "02_build_machine.py",

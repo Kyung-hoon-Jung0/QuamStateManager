@@ -382,6 +382,13 @@ def _fix_coupled_bands(machine, spec, warnings):
                        and _qop_allows_13(qop) is None else ""))
     return warnings
 
+def _out_label(port):
+    """An output port named the way the wizard names ports: controller / slot / port."""
+    con, fem, num = (getattr(port, a, None) for a in ("controller_id", "fem_id", "port_id"))
+    if fem is None:
+        return f"{con} / port {num}"
+    return f"{con} / slot {fem} / port {num}"
+
 def _align_coupler_delays(machine):
     """Give every coupler LF-FEM output the delay of its pair's flux port.
 
@@ -427,7 +434,8 @@ def _align_coupler_delays(machine):
         if first is not None:
             if first[1] != delay:
                 warnings.append(
-                    f"coupler port shared by pairs {first[0]} and {pid}: their flux delays "
+                    f"coupler port {_out_label(out)} shared by pairs {first[0]} and {pid}: "
+                    f"their flux delays "
                     f"differ ({first[1]} ns and {delay} ns); the port keeps {first[1]} ns "
                     f"from {first[0]}.")
             continue
@@ -508,6 +516,19 @@ def _set_channel_lo(channel, lo, band=None):
         _set_port_lo(getattr(channel, "opx_input", None), lo, band)
     elif hasattr(channel, "LO_frequency"):
         channel.LO_frequency = lo
+
+def _set_channel_band(channel, band):
+    """Band-only override (no LO edit): write the band onto the channel's
+    output + paired input ports. r16 ⓪-3."""
+    if band not in (1, 2, 3):
+        return
+    for port in (getattr(channel, "opx_output", None),
+                 getattr(channel, "opx_input", None)):
+        if port is not None and hasattr(port, "band"):
+            try:
+                port.band = band
+            except ValueError:
+                pass                      # reference-backed attr — propagates
 
 def _operation(channel, name):
     """Return a named operation/pulse on a channel, or None."""
