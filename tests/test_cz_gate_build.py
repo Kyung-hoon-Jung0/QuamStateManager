@@ -1209,6 +1209,7 @@ def test_a_sibling_reference_is_renamed_or_refused():
 
 def test_a_spectator_operation_name_is_not_kept():
     s = _two_pulse_chip()
+    s["qubits"]["q2"]["z"]["operations"]["cz_a_spec_q3"] = {"length": 40}
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["spectator_pulse"] = "cz_a_spec_q3"
     res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
     assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["spectator_pulse"] is None
@@ -1230,3 +1231,50 @@ def test_a_kept_macro_reference_into_the_model_pair_is_refused_across_pairs():
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["mode"] = "#/qubit_pairs/q1-q2/extras/mode"
     res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
     assert "#/qubit_pairs/q1-q2/extras/mode" in res["error"]
+
+
+def test_a_relative_reference_down_into_the_model_pair():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["src"] = \
+        "#../../../../qubit_pairs/q1-q2/macros/cz_a/extras"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "relative reference #../../../../qubit_pairs/q1-q2/macros/cz_b/extras" in res["error"]
+    assert "creates" in cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+
+
+def test_spectator_settings_are_kept_and_resets_are_listed():
+    s = _two_pulse_chip()
+    s["qubits"]["q1"]["z"]["operations"]["cz_a_spec_q5"] = {"length": 40}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"].update({
+        "spectator_mode": "static", "spectator_enabled": True,
+        "spectator_duration": 40, "spectator_qubits": {"q5": "#/qubits/q5"},
+        "spectator_pulse": "cz_a_spec_q5", "fidelity": {"rb": 0.99},
+        "phase_shift_control": 0.1, "extras": {}})
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    assert (macro["spectator_mode"], macro["spectator_enabled"],
+            macro["spectator_duration"]) == ("static", True, 40)
+    for k in ("spectator_mode", "spectator_enabled", "spectator_duration"):
+        assert res["fields"]["macro"][k] == cgb.FROM_MODEL
+    assert macro["spectator_qubits"] == {} and macro["spectator_pulse"] is None
+    assert sorted(res["reset"]) == sorted(["spectator_qubits", "spectator_pulse",
+                                           "fidelity", "phase_shift_control", "extras"])
+
+
+def test_layout_is_reported_in_both_paths():
+    assert _plan(_chip())["layout"] == "known"
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q3-q4"]["moving_qubit"] = "target"
+    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert res["layout"] == "copied" and "creates" in res
+
+
+def test_only_the_role_a_name_needs_must_have_a_qubit():
+    c = _chip(4)
+    c["qubit_pairs"]["q1-2"]["coupler"]["operations"]["cz_a_coupler_pulse_q2"] = {
+        "id": "cz_a_coupler_pulse_q2", "length": 40, "__class__": LAB_PULSE}
+    c["qubit_pairs"]["q1-2"]["macros"]["cz_a"] = {"__class__": LAB_GATE,
+                                                  "coupler_pulse": "cz_a_coupler_pulse_q2"}
+    c["qubit_pairs"]["q3-4"]["qubit_control"] = None
+    res = cgb.plan(c, "q3-4", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "qubit_pairs.q3-4.coupler.operations.cz_b_coupler_pulse_q4" in dict(res["creates"])

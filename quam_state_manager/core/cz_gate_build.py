@@ -560,6 +560,10 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     field values. ``copy_from`` is another gate of the same pair whose
     matching field values seed the pulses. ``model_gate`` is ``(pair,
     gate)`` for a class SM does not know. Malformed arguments are refusals.
+    A copied layout (``"layout": "copied"``) is a proposal: SM copies a
+    structure it cannot describe, so the lab's own code must confirm it
+    before it is written. ``"reset"`` lists the model keys the copy does
+    not inherit.
 
     Returns ``{"creates": [(path, value)], "direction", "pulse_directions",
     "model_gate", "fields": {slot: {field: given|copied|default}, "macro":
@@ -728,7 +732,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     return {"creates": [(_dot(macro_segs), macro)] + op_creates,
             "direction": direction,
             "pulse_directions": {f: direction for f in provenance},
-            "model_gate": None,
+            "model_gate": None, "layout": "known",
             "fields": {**provenance, "macro": {
                 k: DEFAULT for k in macro if k != "__class__" and k not in slots}},
             "sources": {"control": control, "target": target,
@@ -823,26 +827,42 @@ def _rewrite_refs(value: Any, old_prefix: str, new_prefix: str) -> Any:
     return value
 
 
-def _structure_only(model: dict, pulse_keys: list[str]) -> tuple[dict, dict]:
-    """The model macro without its results: fidelity, extras and spectators
-    emptied, phase shifts at 0.0; every other key keeps the model's value.
-    Returns (macro, the kept plain values: not references, not None)."""
+def _structure_only(model: dict, pulse_keys: list[str],
+                    op_keys: set | frozenset = frozenset()
+                    ) -> tuple[dict, dict, list[str]]:
+    """The model macro without its results: fidelity and extras emptied,
+    phase shifts at 0.0, spectator containers emptied and a spectator value
+    that is a reference or names a model operation set to None; every other
+    key keeps the model's value. Returns (macro, the kept plain values: not
+    references, not None, the keys that were reset)."""
     macro: dict[str, Any] = {}
     kept: dict[str, str] = {}
+    reset: list[str] = []
     for k, v in model.items():
         if k in pulse_keys or k == "__class__":
             macro[k] = copy.deepcopy(v)
-        elif k in ("fidelity", "extras"):
+            continue
+        if k in ("fidelity", "extras"):
             macro[k] = {}
-        elif k.startswith("phase_shift"):
+            reset.append(k)
+            continue
+        if k.startswith("phase_shift"):
             macro[k] = 0.0
-        elif k.startswith("spectator"):
-            macro[k] = [] if isinstance(v, list) else {} if isinstance(v, dict) else None
-        else:
-            macro[k] = copy.deepcopy(v)
-            if v is not None and not (isinstance(v, str) and v.startswith("#")):
-                kept[k] = FROM_MODEL
-    return macro, kept
+            reset.append(k)
+            continue
+        if k.startswith("spectator"):
+            if isinstance(v, (list, dict)):
+                macro[k] = [] if isinstance(v, list) else {}
+                reset.append(k)
+                continue
+            if isinstance(v, str) and (v.startswith("#") or v in op_keys):
+                macro[k] = None
+                reset.append(k)
+                continue
+        macro[k] = copy.deepcopy(v)
+        if v is not None and not (isinstance(v, str) and v.startswith("#")):
+            kept[k] = FROM_MODEL
+    return macro, kept, reset
 
 
 def _strings(value: Any):
@@ -919,7 +939,7 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
                                "without that reference.")
             for r in _REL_REF.findall(s):
                 segs = r.split("/")
-                if mname in segs or (cross and any(q in segs for q in moved)):
+                if mname in segs or (cross and (mpair in segs or any(q in segs for q in moved))):
                     out.append(f"The copy of {mname} would keep the relative "
                                f"reference {r} (in {where}), which still names the "
                                "model. Pick a model gate on this pair, or one "
@@ -1029,8 +1049,8 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     if mpair != pair_id:
         # The new pair's ids are needed only when a model name carries an id.
         mkeys = [_resolve_slot_pulse(model, f, mlines)[2] or "" for f in fields]
-        needs = any(_has_run(k, q) for k in mkeys for q in mids if q)
-        for role, nq in (("control", control), ("target", target)):
+        for role, mq, nq in (("control", mids[0], control), ("target", mids[1], target)):
+            needs = bool(mq) and any(_has_run(k, mq) for k in mkeys)
             if needs and not nq:
                 return _refuse(reasons + [
                     f"The {role} of pair {pair_id} does not point at a qubit, so SM "
@@ -1048,7 +1068,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             value = _rewrite_refs(value, a, old_ref)
         return _rewrite_refs(value, old_ref, new_ref)
 
-    macro, kept = _structure_only(model, fields)
+    macro, kept, reset = _structure_only(model, fields, _op_keys(mlines))
     macro = norm(macro)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
@@ -1177,6 +1197,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
             "direction": kinds.pop() if len(kinds) == 1 else MIXED,
             "pulse_directions": directions,
             "model_gate": (mpair, mname),
+            "layout": "copied", "reset": reset,
             "fields": provenance,
             "sources": {"control": control, "target": target,
                         "moving_qubit": p.get("moving_qubit")}}
