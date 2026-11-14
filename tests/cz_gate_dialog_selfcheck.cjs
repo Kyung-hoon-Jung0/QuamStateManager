@@ -70,7 +70,7 @@ function checkOk(body, opts) {
                  intent: [{ field: 'flux_pulse_qubit', operation: 'op_' + p, channel: 'q1.z',
                             intended: { length: 100, length_source: 'default', amplitude: 0.2, amplitude_source: 'given' },
                             actual: { length_ns: 100, max_v: 0.18, min_v: 0, scale: 1 },
-                            differs: { length: false, amplitude: true }, why: ['The class shapes the waveform.'] }],
+                            differs: { length: false, amplitude: true }, tones: { length: null, amplitude: 'warn' }, why: ['The class shapes the waveform.'] }],
                  paths: ['a', 'b'],
                  verdict: (opts.refuse === p) ? { allowed: false, state: 'not checked', reason: 'A gate named so exists.' }
                      : { allowed: true, state: opts.unchecked ? 'not checked' : 'verified', reason: opts.unchecked ? 'No environment.' : '' } })) };
@@ -127,9 +127,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok($('#czg-pair').value === 'q1-2', 'the pair is preselected');
     ok(doc.activeElement === $('#czg-name'), 'the gate name has the focus on open');
     ok(!$('#czg-empty').hidden && $('#czg-sec-checks').hidden && $('#czg-sec-intent').hidden, 'empty state: one sentence, no empty headings');
-    ok(/^Qubit flux pulse, plays on q1\.z/.test($('.czg-slot-title').textContent) && $('.czg-slot-title .ui-chip').textContent === 'flux_pulse_qubit', 'slot title: words and this pair\'s channel, the field name small');
-    ok(/q1 → q2, moving qubit q1 \(a property of the pair\)/.test($('#czg-pair-line').textContent), 'mover shown read-only');
-    ok(!$('#czg-pair-line').matches('input, select'), 'the mover is not an input');
+    ok($('.ui-slot.ui-line-1') && /^Qubit flux pulse/.test($('.ui-slot-head').textContent) && $('.ui-slot-chip').textContent === 'q1.z' && $('.ui-slot-head .ui-text-quiet').textContent === 'flux_pulse_qubit', 'slot: words, this pair\'s channel chip, line colour 1, field name quiet');
+    ok(/control q1 \u2192 target q2/.test($('#czg-chips').textContent) && /moving qubit q1/.test($('#czg-chips').textContent), 'the head carries the pair as chips');
+    ok(!$('#czg-chips').querySelector('input, select'), 'the mover is not an input');
     { const off = [...doc.querySelectorAll('#czg-class-list .ui-option[aria-disabled="true"]')]; ok(off.length > 0 && /SM does not know/.test(off[0].querySelector('.ui-option-desc').textContent) && $('#czg-class').classList.contains('ui-menu-trigger'), 'gate class is a kit menu; an unavailable class is a disabled row with its reason'); }
     ok(count('plan') === 1 && sent[0].body.pairs.join() === 'q1-2', 'the plan is asked on open');
     ok(prim().textContent === 'Check' && !prim().disabled, 'Check before a check');
@@ -163,8 +163,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(prim().textContent === 'Create gate' && !prim().disabled, 'after a passing check: Create gate');
     ok(charts.length === 1 && charts[0].lanes[0].key === 'q1.z', 'the chart gets the server data');
-    ok($('#czg-checks tr[data-check="range"]') && /Output range/.test($('#czg-checks').textContent) && !$('#czg-sec-checks').hidden, 'checks are named in words, the key kept as data-check');
-    ok($('#czg-intent .czg-diff') && /shapes the waveform/.test($('#czg-intent').textContent), 'a differing cell is marked with the why');
+    ok($('#czg-checks .ui-result[data-check="range"]') && /Output range/.test($('#czg-checks').textContent) && !$('#czg-sec-checks').hidden && /1 of 1 passed/.test($('#czg-checks-sum').textContent), 'checks: chips in words, key as data-check, passes counted');
+    ok($('#czg-alert .ui-verdict--strong.ui-verdict--ok') && /Ready to create/.test(alertText()), 'the banner says Ready to create');
+    ok($('#czg-intent .ui-text-warn') && /shapes the waveform/.test($('#czg-intent').textContent) && $('#czg-intent .ui-line-dot.ui-line-1') && /differ/.test($('#czg-intent-sum').textContent), 'a differing cell is marked warn, the row has its line dot, the why is under it');
 
     // an input change returns to Check and greys the evidence
     type($('input[data-czg-name="amplitude"]'), '0.3');
@@ -207,7 +208,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     prim().click();
     await settle();
     if (process.env.CZG_DEBUG) console.log('DBG', prim().textContent, '|', alertText(), '|', $('#czg-status').textContent, sent.slice(-2).map(s => s.kind));
-    ok(prim().textContent === 'Create gate' && /Some pairs are left out/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named, the rest can be created');
+    ok(prim().textContent === 'Create gate' && /Ready to create on 1 pair/.test(alertText()) && /Left out/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named, the rest can be created');
 
     // not checked wording
     type($('input[data-czg-name="amplitude"]'), '0.25');
@@ -215,7 +216,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     queue.check.push((b) => checkOk(b, { unchecked: true }));
     prim().click();
     await settle();
-    ok(prim().textContent === 'Create without the lab check' && $('#czg-alert .ui-callout--warn'), 'not checked: warning and the button says so');
+    ok(prim().textContent === 'Create without the lab check' && $('#czg-alert .ui-verdict--strong.ui-verdict--warn'), 'not checked: warn banner and the button says so');
 
     // create
     prim().click();

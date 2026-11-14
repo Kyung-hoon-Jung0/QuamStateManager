@@ -766,12 +766,8 @@ if __name__ == "__main__":
 _STAGE6_SELECTORS = {
     # the CZ gate dialog (cz-gate.js, _cz_gate_dialog.html)
     '.czg .czg-body', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
-    '.czg-form', '.czg-evidence', '.czg-slots', '.czg-readonly',
-    '.czg-why', '.czg-why:empty', '.czg-readonly:empty', '.czg-why-line', '.czg-slot',
-    '.czg-slot-title', '.czg-fieldbox',
-    '.czg-more-list', '.czg-more-row', '.czg-section-title', '.czg-chart > .ui-note',
-    '.czg-intent', '.czg-checks', '.czg-writes', '.czg-stale', '.czg-diff', '.czg-row-acts',
-    '.czg-foot-acts', '.czg-slot .ui-field-grid',
+    '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
+    '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-stale', '.czg-row-acts',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',

@@ -1591,22 +1591,13 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
 .czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); overflow: auto; }
 .czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
-.czg-foot-acts { display: flex; gap: var(--ui-gap-2); margin-left: auto; }
-.czg-readonly, .czg-why { margin-top: calc(-1 * var(--ui-gap-1)); }
-.czg-why:empty, .czg-readonly:empty { display: none; }
 .czg-why-line { display: block; color: var(--ui-text-2); }
-.czg-slot { margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); display: flex; flex-direction: column; gap: var(--ui-gap-2); }
-.czg-slot-title { padding: 0 var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); font-family: var(--ui-font-mono); }
-.czg-fieldbox { margin: 0; }
 .czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
-.czg-section-title { margin: var(--ui-gap-2) 0 0; font-size: var(--ui-fs-xs); font-weight: var(--ui-fw); color: var(--ui-text-2); }
 .czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
-.czg-intent, .czg-checks, .czg-writes { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-stale { opacity: 0.45; }
-.czg-diff { background: var(--ui-warn-bg); color: var(--ui-warn-text); }
+.czg-chips { margin-left: auto; }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
-.czg-slot .ui-field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* K18 choosing: ARIA states drive the look, so the state a screen reader
    hears is the state a person sees (docs/308 §4b). */
 .ui-select.ui-select[aria-invalid="true"], .ui-input.ui-input[aria-invalid="true"] { border-color: var(--ui-danger-text); background-image: none; }

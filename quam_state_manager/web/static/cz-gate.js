@@ -82,6 +82,10 @@
 
     /* ---- buttons and status ---------------------------------------------- */
     function say(t) { var s = $('czg-status'); if (s) s.textContent = t || ''; }
+    function banner(tone, key, why) {
+        var U = UIkit();
+        return U.verdict(tone, key, why, true);
+    }
     function alertBox(node) {
         var a = clear($('czg-alert'));
         if (a && node) a.appendChild(node);
@@ -118,19 +122,18 @@
     function pairInfo(id) {
         return (S.data.pairs || []).filter(function (p) { return p.id === id; })[0] || null;
     }
+    /* The head carries the pair as chips: pair, control -> target, moving qubit. */
     function fillPairLine() {
         var p = pairInfo($('czg-pair').value);
-        var line = $('czg-pair-line');
-        var gist = $('czg-gist');
-        if (gist) gist.textContent = p ? 'Pair ' + p.id : 'Pick a pair';
-        if (!line) return;
-        if (!p) { line.textContent = ''; return; }
+        var host = clear($('czg-chips'));
+        if (!host) return;
+        var U = UIkit();
+        if (!p) { host.appendChild(U.pill('Pick a pair', 'neutral')); return; }
         var mover = p.moving_qubit === 'control' ? p.control : p.moving_qubit === 'target' ? p.target : null;
-        line.textContent = (p.control || '?') + ' → ' + (p.target || '?') + ', moving qubit '
-            + (mover || 'not recorded') + ' (a property of the pair)';
+        host.appendChild(U.pill(p.id, 'accent'));
+        host.appendChild(U.pill('control ' + (p.control || '?') + ' \u2192 target ' + (p.target || '?'), 'neutral'));
+        host.appendChild(U.pill('moving qubit ' + (mover || 'not recorded'), 'neutral'));
     }
-    /* Gate class and model gate are kit menus: an unavailable class is a
-       disabled row that shows its reason. */
     function menuInto(hostId, spec) {
         var h = clear($(hostId));
         var U = UIkit();
@@ -185,7 +188,7 @@
             l.appendChild(i);
             l.appendChild(document.createTextNode(p.id));
             row.appendChild(l);
-            row.appendChild(el('span', 'ui-note czg-more-why'));
+            row.appendChild(el('span', 'ui-text-quiet czg-more-why'));
             box.appendChild(row);
         });
     }
@@ -241,13 +244,25 @@
         if (line === 'coupler') return 'the coupler of ' + p.id;
         return '';
     }
+    /* The identity colour of a line: control z, target z, coupler (the same order
+       and numbering as the chart lanes and the table dots, from the server). */
+    var LINE_RANK = { control: 0, target: 1, coupler: 2 };
+    function slotLine(channel) {
+        var p = pairInfo($('czg-pair').value) || {};
+        var r = channel === (p.control + '.z') ? 0 : channel === (p.target + '.z') ? 1 : 2;
+        var used = (S.slotChannels || []).map(function (c) {
+            return c === (p.control + '.z') ? 0 : c === (p.target + '.z') ? 1 : 2;
+        }).filter(function (x, i, a) { return a.indexOf(x) === i; }).sort();
+        var k = used.indexOf(r);
+        return (k < 0 ? 0 : k) + 1;
+    }
     function slotBlock(field, channel, sub) {
-        var b = el('fieldset', 'czg-slot');
-        var lg = el('legend', 'czg-slot-title', (SLOT_WORDS[field] || field) + (channel ? ', plays on ' + channel : ''));
-        lg.appendChild(document.createTextNode(' '));
-        lg.appendChild(el('span', 'ui-chip', field));
-        b.appendChild(lg);
-        if (sub) b.appendChild(note(sub));
+        var U = UIkit();
+        var root = U.slot({ line: slotLine(channel), title: SLOT_WORDS[field] || field, chip: channel || '?' });
+        var head = root.querySelector('.ui-slot-head');
+        if (head) { head.appendChild(document.createTextNode(' ')); head.appendChild(el('span', 'ui-text-quiet', field)); }
+        var b = root.querySelector('.ui-slot-body') || root.appendChild(el('div', 'ui-slot-body'));
+        if (sub) b.appendChild(el('p', 'ui-text-quiet', sub));
         return b;
     }
     function fillSlots() {
@@ -255,6 +270,12 @@
         var c = klass();
         var fp = firstPlan();
         if (!c) return;
+        S.slotChannels = c.layout === 'known'
+            ? (c.slots || []).filter(function (s) { return S.cls[s.field] !== '' || s.required; })
+                .map(function (s) { return slotChannel(s.field, s.line, fp); })
+            : Object.keys((fp && fp.ok && fp.pulses) || {}).map(function (f) { return slotChannel(f, null, fp); });
+        var sum = $('czg-pulses-sum');
+        if (sum) { var nl = S.slotChannels.length; sum.textContent = nl === 1 ? '1 line' : nl + ' lines play together'; }
         if (c.layout === 'known') {
             (c.slots || []).forEach(function (s) {
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
@@ -277,7 +298,7 @@
                 b.appendChild(l);
                 var spec = (s.pulse_classes || []).filter(function (pc) { return pc['class'] === S.cls[s.field]; })[0];
                 if (spec) {
-                    var grid = el('div', 'ui-field-grid');
+                    var grid = el('div', 'ui-grid2');
                     var planned = fp && fp.ok && fp.pulses ? fp.pulses[s.field] : null;
                     spec.fields.forEach(function (f) {
                         var v = planned && planned[f.name] !== undefined ? planned[f.name] : f['default'];
@@ -286,7 +307,7 @@
                     });
                     b.appendChild(grid);
                 }
-                host.appendChild(b);
+                host.appendChild(b.parentNode);
             });
             return;
         }
@@ -299,14 +320,14 @@
             var op = (fp.operations || {})[f] || {};
             S.cls[f] = pulse.__class__ || null;
             var b = slotBlock(f, slotChannel(f, null, fp), 'Class ' + (pulse.__class__ || '?') + ', from the model gate.');
-            var grid = el('div', 'ui-field-grid');
+            var grid = el('div', 'ui-grid2');
             Object.keys(pulse).forEach(function (k) {
                 var v = pulse[k];
                 if (k === '__class__' || k === 'id' || (typeof v === 'string' && v.charAt(0) === '#')) return;
                 grid.appendChild(fieldInput(f, k, k, '', kindOf(v), v, sourceOf(fp, f, k) || 'default'));
             });
             b.appendChild(grid);
-            host.appendChild(b);
+            host.appendChild(b.parentNode);
         });
     }
     function parse(input) {
@@ -396,21 +417,21 @@
             w.textContent = !i.checked ? '' : !p ? '' : p.ok ? 'can be created' : (p.refusals || []).join(' ');
         });
         var cnt = $('czg-more-count');
-        if (cnt) cnt.textContent = n ? String(n) : '';
+        if (cnt) cnt.textContent = n ? '+' + n + (n === 1 ? ' pair' : ' pairs') : 'only ' + ($('czg-pair').value || 'this pair');
         renderWrites();
         refresh();
     }
     function renderWrites() {
         var host = clear($('czg-writes'));
+        var sum = $('czg-writes-sum');
         var paths = [];
         ((S.plan && S.plan.pairs) || []).forEach(function (p) { if (p.ok) paths = paths.concat(p.paths || []); });
-        if (!paths.length) { host.appendChild(note('Nothing yet: the plan has no gate to write.')); return; }
-        host.appendChild(note(paths.length + (paths.length === 1 ? ' object' : ' objects')
-            + ' in the working copy. Not on the chip until you press Apply.'));
+        if (sum) sum.textContent = paths.length ? paths.length + (paths.length === 1 ? ' object' : ' objects') : 'nothing yet';
+        if (!paths.length) { host.appendChild(el('p', 'ui-text-quiet', 'The plan has no gate to write yet.')); return; }
+        host.appendChild(el('p', 'ui-text-quiet', 'In the working copy. Not on the chip until you press Apply.'));
         var U = UIkit();
-        if (U) host.appendChild(U.disclosure('Paths', paths.length, paths.map(function (p) { return { part: 'path', text: p }; }), false));
+        paths.forEach(function (x) { host.appendChild(U.path(x)); });
     }
-
     /* ---- the check and its evidence --------------------------------------- */
     var TONE = { pass: 'ok', fail: 'danger', skipped: 'warn', note: 'neutral' };
     function num(v, unit) {
@@ -430,31 +451,43 @@
         try { S.handle = window.GateTimeline.render(host, tl, {}); }
         catch (e) { clear(host).appendChild(note('Chart not loaded: ' + e)); }
     }
-    function renderIntent(rows) {
+    function lineOfChannel(tl) {
+        var m = {};
+        ((tl && tl.lanes) || []).forEach(function (ln) { m[ln.key] = (ln.color_index || 0) + 1; });
+        return m;
+    }
+    var CELL_TONE = { warn: 'ui-text-warn', danger: 'ui-text-danger' };
+    function renderIntent(rows, tl) {
         var host = clear($('czg-intent'));
-        if (!rows || !rows.length) { host.appendChild(note('No pulse to compare.')); return; }
+        var sum = $('czg-intent-sum');
+        if (!rows || !rows.length) { if (sum) sum.textContent = ''; host.appendChild(el('p', 'ui-text-quiet', 'No pulse to compare.')); return; }
         var U = UIkit();
-        if (!U) return;
-        var marks = [];
+        var lines = lineOfChannel(tl);
         var data = rows.map(function (r) {
             var a = r.actual || {};
             var i = r.intended || {};
-            marks.push([r.differs.length, r.differs.amplitude]);
             return [{ chip: r.operation },
                     i.length !== null ? num(i.length, 'ns') : i.length_source,
                     num(a.length_ns, 'ns'),
                     i.amplitude !== null ? num(i.amplitude, 'V') : i.amplitude_source,
-                    num(a.max_v, 'V'), num(a.min_v, 'V')];
+                    num(a.max_v, 'V'), num(a.min_v, 'V'), num(a.start_ns, 'ns')];
         });
-        var t = U.table(['Pulse', 'Length entered', 'Length in config', 'Amplitude entered', 'Maximum', 'Minimum'],
-                        data, false, [1, 2, 3, 4, 5], 'Intended and actual');
+        var t = U.table(['Pulse', 'Length entered', 'In config', 'Amplitude entered', 'Maximum', 'Minimum', 'Starts at'],
+                        data, false, [1, 2, 3, 4, 5, 6], 'Entered and actual');
+        var flagged = 0;
         Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
-            var tds = tr.children;
-            if (marks[k][0]) { tds[1].classList.add('czg-diff'); tds[2].classList.add('czg-diff'); }
-            if (marks[k][1]) { tds[3].classList.add('czg-diff'); tds[4].classList.add('czg-diff'); tds[5].classList.add('czg-diff'); }
+            var r = rows[k], tds = tr.children, tones = r.tones || {};
+            var dot = el('span', 'ui-line-dot ui-line-' + (lines[r.channel] || 1));
+            dot.setAttribute('aria-hidden', 'true');
+            tds[0].insertBefore(dot, tds[0].firstChild);
+            if (tones.length) { [1, 2].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.length]); }); flagged++; }
+            if (tones.amplitude) { [3, 4, 5].forEach(function (c) { tds[c].classList.add(CELL_TONE[tones.amplitude]); }); flagged++; }
+            if ((r.actual || {}).limit_v && tones.amplitude === 'danger') tds[4].title = 'limit ' + num(r.actual.limit_v, 'V');
         });
         host.appendChild(t);
-        rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(note(r.operation + ': ' + w)); }); });
+        var over = rows.filter(function (r) { return (r.tones || {}).amplitude === 'danger'; }).length;
+        if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
+        rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', r.operation + ': ' + w)); }); });
     }
     var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'Every played operation exists',
                         length: 'Pulse lengths', preview: 'Preview equals the config', timeline: 'Timeline',
@@ -464,19 +497,41 @@
         if (!cs.length || !cs.every(function (c) { return c.status === 'skipped' && c.message === cs[0].message; })) return null;
         return cs[0].message;
     }
+    var CHECK_STATE = { pass: 'pass', note: 'pass', fail: 'fail', skipped: 'skip' };
     function renderChecks(p) {
         var host = clear($('czg-checks'));
+        var sum = $('czg-checks-sum');
         var U = UIkit();
-        if (!p.ok) { (p.refusals || []).forEach(function (r) { host.appendChild(note(r)); }); return; }
-        if (!U || allSkippedReason(p)) return;
-        var t = U.table(['Check', 'Result', 'Message'], (p.checks || []).map(function (c) {
-            return [CHECK_WORDS[c.name] || c.name, { dot: TONE[c.status] || 'neutral', text: c.status }, c.message];
-        }), false, [], 'Checks');
-        Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
-            tr.setAttribute('data-check', p.checks[k].name);
+        if (!p.ok) { (p.refusals || []).forEach(function (r) { host.appendChild(el('p', 'ui-text-quiet', r)); }); return; }
+        if (allSkippedReason(p)) { if (sum) sum.textContent = ''; return; }
+        var cs = p.checks || [];
+        var list = cs.map(function (c) { return { name: CHECK_WORDS[c.name] || c.name, state: CHECK_STATE[c.status] || 'skip', why: c.message }; });
+        var w = U.checks(list, 'Checks');
+        Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) { li.setAttribute('data-check', cs[k].name); });
+        list.forEach(function (c) {
+            if (c.state !== 'skip') return;
+            var r = el('p', 'ui-fail-row');
+            r.appendChild(el('strong', 'ui-fail-name', c.name + ' not checked.'));
+            r.appendChild(document.createTextNode(' ' + (c.why || '')));
+            w.appendChild(r);
         });
-        host.appendChild(t);
-        (p.previews_skipped || []).forEach(function (s) { host.appendChild(note('No preview compared for ' + s)); });
+        host.appendChild(w);
+        var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
+        var np = list.filter(function (c) { return c.state === 'pass'; }).length;
+        var ns = list.length - nf - np;
+        if (sum) sum.textContent = nf ? nf + ' failed, ' + np + ' passed' : np + ' of ' + list.length + ' passed' + (ns ? ', ' + ns + ' not checked' : '');
+        (p.previews_skipped || []).forEach(function (x) { host.appendChild(el('p', 'ui-text-quiet', 'No preview compared for ' + x)); });
+    }
+    function renderTiles(p) {
+        var host = clear($('czg-tiles'));
+        var ts = (p && p.tiles) || [];
+        if (!ts.length) return;
+        host.appendChild(UIkit().stats(ts.map(function (t) {
+            var m = /^(-?[\d.]+)\s*(.*)$/.exec(t.value || '');
+            var unit = (m ? m[2] : '') + (t.key === 'peak' || t.key === 'timing' ? (m && m[2] ? ' ' : '') + t.note : '');
+            return { label: t.label, value: m ? m[1] : t.value, unit: unit.trim() || null,
+                     tone: t.tone === 'warn' || t.tone === 'danger' ? t.tone : null };
+        }), 'Key numbers'));
     }
     function showSections(p) {
         var has = function (id) { var n = $(id); return !!(n && n.childNodes.length); };
@@ -494,25 +549,27 @@
         var p = (c.pairs || [])[0];
         if (p) {
             renderChart(p.timeline);
-            renderIntent(p.intent);
+            renderIntent(p.intent, p.timeline);
             renderChecks(p);
+            renderTiles(p);
         }
         showSections(p);
         var ok = allowedPairs();
         var no = (c.pairs || []).filter(function (x) { return !(x.verdict && x.verdict.allowed); });
         var parts = [];
         if (!ok.length) {
-            alertBox(callout('danger', 'Cannot be created yet', (no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' '))
-                + ' Change the inputs and press Check again.'));
+            alertBox(banner('danger', 'Cannot be created yet', (no.map(function (x) { return (c.pairs.length > 1 ? x.pair + ': ' : '') + x.verdict.reason; }).join(' '))
+                + ' Change the inputs and check again.'));
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
             var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
-            alertBox(callout('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record will say it was not checked.'));
+            alertBox(banner('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record says it was not checked.'));
             var whyAll = p && allSkippedReason(p);
             if (whyAll && whyAll !== why) $('czg-alert').appendChild(note(whyAll));
         } else if (no.length) {
-            alertBox(callout('note', 'Some pairs are left out', no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
+            alertBox(banner('ok', 'Ready to create on ' + ok.length + (ok.length === 1 ? ' pair' : ' pairs'),
+                'Left out: ' + no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
         } else {
-            alertBox(null);
+            alertBox(banner('ok', 'Ready to create', 'The lab\'s code built this gate on a copy of the chip and every check passed.'));
         }
         if (no.length && ok.length) parts.push(no.length + ' left out');
         S.phase = ok.length ? 'create' : 'check';
@@ -588,7 +645,7 @@
         S.busy = false;
         var made = (j.created || []).map(function (c) { return c.gate + ' on ' + c.pair + (c.state !== 'verified' ? ' (not checked)' : ''); });
         var skip = (j.skipped || []).map(function (s) { return s.pair + ': ' + s.reason; });
-        alertBox(callout('note', 'Created ' + made.join(', '),
+        alertBox(banner('ok', 'Created ' + made.join(', '),
             'Not on the chip yet: press Apply to write it. The gate is not active; the pair\'s cz stays as it was.'
             + (skip.length ? ' Left out: ' + skip.join(' ') : '')));
         var f = $('czg-form');
