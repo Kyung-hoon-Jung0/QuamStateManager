@@ -12,7 +12,7 @@
 {#- The verdict band: the state word, one reason, one next step, and freshness as one quiet line. -#}
 <div class="ui-verdict ui-verdict--strong ui-verdict--{{ band.tone }} ui-opxmon-verdict" role="{{ 'alert' if band.tone == 'danger' else 'status' }}" data-valid-ms="{{ st.valid_for_ms }}" data-health="{{ st.health.color }}"><span class="ui-dot" aria-hidden="true"></span><strong class="ui-verdict-key">{{ verdict.label }}</strong>
 {%- set why_text %}{{ plain_error(verdict.reason) }}{% if verdict.since %} since {{ opx_time(verdict.since) }} (OPX clock{% if clock_skew %}; {{ skew_text }}{% else %}; offset from this PC unknown{% endif %}){% endif %}{% endset %}
-<span class="ui-verdict-why">{{ why_text }}{{ '' if why_text.endswith('.') else '.' }}{% if band.next %} {{ band.next }}{% endif %}</span>
+<span class="ui-verdict-why">{{ why_text[:1]|upper }}{{ why_text[1:] }}{{ '' if why_text.endswith('.') else '.' }}{% if band.next %} {{ band.next }}{% endif %}</span>
 <span class="ui-verdict-meta ui-opxmon-status {{ 'ui-opxmon-status--' ~ st.state }}">
   {%- if st.target_label %}<span class="ui-opxmon-target">{{ st.target_label }}</span> &middot; {% endif -%}
   <span class="ui-opxmon-sentence" title="{{ plain_error(st.sentence) }}" data-state="{{ st.state }}">{{ plain_error(st.sentence) }}</span>

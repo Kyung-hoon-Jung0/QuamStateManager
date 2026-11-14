@@ -106,7 +106,10 @@ def last_job(q):
     if not q['jobs']:
         return 'none observed'
     job = max(q['jobs'], key=lambda j: om.timestamp(j.get('updated_at')) or om.timestamp(j.get('created_at')) or 0)
-    return str(job['id']) + ' ' + str(job['status']) + ', created ' + om.opx_time(job.get('created_at')) + ' (OPX clock)'
+    head = str(job['id']) + ' ' + str(job['status'])
+    if not job.get('created_at'):
+        return head + ', creation time not reported'
+    return head + ', created ' + om.opx_time(job.get('created_at')) + ' (OPX clock)'
 
 
 _RAW_ERROR = re.compile(r':\s+[A-Za-z_][\w.]*(?:Error|Exception):.*?(?=\. The last good read|$)', re.S)

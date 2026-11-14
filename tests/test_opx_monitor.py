@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -924,7 +925,7 @@ def test_round4_recent_open_is_normal(env):
     w.script[:] = [answer(qms=(("QM-placeholder", [], []),), temps={'Chassis': 40})]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">Open, no job seen yet; not idle yet' in html
     assert '<strong class="ui-verdict-key">PROBLEM</strong>' not in html
 
 
@@ -1008,7 +1009,7 @@ def test_round5_no_job_seen_headline(env):
     w.script[:] = [answer(qms=(('QM-new', [], []),))]
     m.poll_once()
     html = page(app, 'live')
-    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">open, no job seen yet; not idle yet' in html
+    assert '<strong class="ui-verdict-key">OPEN 1</strong>' in html and 'ui-verdict-why">Open, no job seen yet; not idle yet' in html
     assert 'in use' not in html
 
 
@@ -2083,3 +2084,19 @@ def test_live_tiles_are_coloured_only_from_a_known_abnormal_value(env):
     assert stats.count('class="ui-stat"') + stats.count('class="ui-stat ui-stat--') == 4
     assert "ui-stat--danger" not in stats and "ui-stat--warn" not in stats   # one running job, no limit set
     assert "Hottest sensor" in stats and "unknown" in stats and "ui-stat--quiet" in stats  # no reading: grey, says unknown
+
+
+def test_last_job_without_a_creation_time_says_so_in_plain_words():
+    from quam_state_manager.web.opx_monitor_routes import last_job
+    text = last_job({'jobs': [{'id': 'j3', 'status': 'Done'}]})
+    assert text == 'j3 Done, creation time not reported'
+    assert 'OPX clock' not in text
+
+
+def test_connection_advice_is_a_sentence_of_its_own():
+    from quam_state_manager.core import opx_monitor as om
+    for host in ('localhost', 'service.invalid'):
+        hint = om.connection_hint(host)
+        assert hint[:1].isupper() and hint.endswith('.')
+    body = (Path(__file__).resolve().parents[1] / 'quam_state_manager/web/templates/_opx_monitor_body.html').read_text(encoding='utf-8')
+    assert '{{ why_text[:1]|upper }}{{ why_text[1:] }}' in body, 'the band reason starts with a capital letter'

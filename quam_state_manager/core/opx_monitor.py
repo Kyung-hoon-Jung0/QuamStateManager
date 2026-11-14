@@ -843,7 +843,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def connection_hint(host):
     """Connection advice without assuming how the server is reached."""
-    return 'check the server connection, port or power.'
+    return 'Check the server connection, port or power.'
 
 
 def call_failure(name, error):
@@ -950,7 +950,7 @@ def read_admin(url, cluster_name=None, clock=time.time):
         return {'known': bool(complete), 'reason': 'Admin fields incomplete' if not complete else '',
                 'cluster': c, 'devices': ds, 'selection': 'auto-selected from admin' if automatic else 'configured cluster', **clock_out}
     except Exception as exc:
-        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable; ' + connection_hint(admin_host), 'details': str(exc)[:400]}
+        out = {'known': False, 'problem': True, 'reason': 'Admin unavailable. ' + connection_hint(admin_host), 'details': str(exc)[:400]}
         if measured:
             out['clock'] = min(measured, key=lambda m: m['uncertainty_s'])
         return out
