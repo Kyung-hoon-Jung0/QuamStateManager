@@ -393,6 +393,24 @@ def test_a_refused_pair_is_not_counted_on_the_shared_line():
     assert res["q1-q2"]["spectator_ops"] == {"q4": 1}
 
 
+def test_a_refused_plan_s_rows_are_never_counted():
+    """The counter itself skips a refused plan, even one that still carries rows."""
+    row = {"qubit": "q4", "operation": "cz_x_spectator_pulse_q2_q3"}
+    ok = {"spectators": [dict(row, operation="cz_x_spectator_pulse_q1_q2")], "spectator_ops": {"q4": 1}}
+    bad = {"error": "refused", "spectators": [row], "spectator_ops": {"q4": 1}}
+    cgb.count_request_spectators(_five(), [("q1-q2", ok), ("q2-q3", bad)])
+    assert ok["spectator_ops"] == {"q4": 1} and bad["spectator_ops"] == {"q4": 1}
+
+
+def test_a_reference_counts_on_the_line_it_names_not_on_its_key():
+    s = _chip()
+    s["qubits"]["q3"]["z"]["operations"]["lab_hold"] = {"amplitude": 0.1, "length": 16, "__class__": SQ}
+    s["qubit_pairs"]["q2-q3"]["macros"]["cz_lab"] = dict(
+        cgb._cz_skeleton(), spectator_qubits={"q4": "#/qubits/q4"},
+        spectator_qubits_control={"q4": "#/qubits/q3/z/operations/lab_hold"})
+    assert cgb.spectator_ops_on_lines(s) == {"q3": {"lab_hold"}}
+
+
 def test_the_plan_route_counts_shared_lines_over_the_request(app):
     j = app.c.post(PLAN, json=_body(pairs=["q1-q2", "q2-q3"],
                                     spectators={"q1-q2": TWO[1:], "q2-q3": TWO[1:]})).get_json()
