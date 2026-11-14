@@ -1899,3 +1899,12 @@ def test_a_whole_number_for_a_float_field_stays_a_float():
     assert dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"] == 0.01
     res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE, macro_fields={"neg_offset_v": 2})
     assert isinstance(dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"], float)
+
+
+
+def test_refusals_cap_every_echoed_long_name():
+    long_cls = "lab_pkg." + "X" * 120
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=long_cls)
+    assert "error" in res
+    assert all(long_cls not in r for r in res["refusals"])
+    assert any(cgb.cap_name(long_cls) in r for r in res["refusals"]) and len(cgb.cap_name(long_cls)) == cgb.ECHO_CAP

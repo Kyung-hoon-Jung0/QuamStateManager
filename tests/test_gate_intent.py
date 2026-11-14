@@ -108,3 +108,15 @@ def test_port_delay_start_and_cell_tones():
 def test_an_entered_length_is_shown_as_entered_never_truncated():
     (r,) = gi.intent_rows(_plan({"length": 16.5, "amplitude": 0.1}), _entry(constant=0.1, length=16))
     assert r["intended"]["length"] == 16.5 and r["differs"]["length"]
+
+
+
+def test_a_negative_scale_marks_the_cell_that_really_breaks_and_zero_plays_zero():
+    e = _entry(samples=[0.0, 0.4, -0.1])
+    e["timeline"]["rows"][0].update(range_v=0.5, offset_v=0.0, scale=-2.0)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 0.4}), e)
+    # played: max 0.4 * -2 = -0.8 (below -0.5), min -0.1 * -2 = 0.2
+    assert r["tones"]["max"] == "danger" and r["tones"]["min"] is None
+    e["timeline"]["rows"][0].update(samples=[0.0, 3.0], scale=0.0)
+    (r,) = gi.intent_rows(_plan({"length": 52, "amplitude": 3.0}), e)
+    assert r["tones"]["max"] is None and r["tones"]["min"] is None

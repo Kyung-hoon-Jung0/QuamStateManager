@@ -707,12 +707,54 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     str, "refusals": [str]}``. Every created value is a fresh copy.
     """
     try:
-        return _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                          copy_from, model_gate, macro_fields)
+        out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
+                         copy_from, model_gate, macro_fields)
+        if "refusals" in out:
+            names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
+                                  model_gate, macro_fields)
+            out = _refuse([cap_names(r, names) for r in out["refusals"]])
+        return out
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
         return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "
                         "Nothing was changed. Report this with the gate class "
                         "and the pair."])
+
+
+#: the longest name a refusal echoes in full
+ECHO_CAP = 64
+
+
+def cap_name(name: str) -> str:
+    """*name* as a refusal shows it: at most :data:`ECHO_CAP` characters, a
+    longer one cut with an ellipsis."""
+    name = str(name)
+    return name if len(name) <= ECHO_CAP else name[:ECHO_CAP - 1] + "…"
+
+
+def cap_names(text: str, names) -> str:
+    """*text* with every long name in *names* cut to :func:`cap_name`."""
+    for n in sorted({str(n) for n in names if isinstance(n, str) and len(n) > ECHO_CAP},
+                    key=len, reverse=True):
+        text = text.replace(n, cap_name(n))
+    return text
+
+
+def _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from, model_gate,
+                  macro_fields) -> list:
+    """Every name the person gave that a refusal may echo."""
+    out = [pair_id, gate_name, gate_class, copy_from]
+    if isinstance(model_gate, (list, tuple)):
+        out.extend(model_gate)
+    if isinstance(pulses, dict):
+        for f, spec in pulses.items():
+            out.append(f)
+            if isinstance(spec, dict):
+                out.append(spec.get("class"))
+                if isinstance(spec.get("fields"), dict):
+                    out.extend(spec["fields"])
+    if isinstance(macro_fields, dict):
+        out.extend(macro_fields)
+    return [n for n in out if isinstance(n, str)]
 
 
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,

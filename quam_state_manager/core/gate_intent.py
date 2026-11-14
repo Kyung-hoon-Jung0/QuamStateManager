@@ -105,12 +105,21 @@ def _actual(rows: list, key: str) -> dict | None:
 def _over_side(have: dict) -> tuple[bool, bool]:
     """(maximum above the upper limit, minimum below the lower limit), with
     the play scale and the channel offset applied."""
-    lim, k = _num(have.get("limit_v")), have.get("scale") or 1.0
+    lim = _num(have.get("limit_v"))
+    k = _num(have.get("scale"))
+    k = 1.0 if k is None else k                  # a scale of 0 plays 0, never 1
     off = _num(have.get("offset_v")) or 0.0
     if lim is None or have.get("max_v") is None:
         return False, False
-    vals = [have["max_v"] * k + off, have["min_v"] * k + off]
-    return max(vals) > lim + 1e-9, min(vals) < -lim - 1e-9
+
+    y_max, y_min = have["max_v"] * k + off, have["min_v"] * k + off
+    upper = max(y_max, y_min) > lim + 1e-9          # the top of what is played is too high
+    lower = min(y_max, y_min) < -lim - 1e-9         # the bottom is too low
+    # which config cell produced the top / the bottom: with a negative scale
+    # the minimum becomes the top
+    top_is_max = k >= 0
+    return ((upper and top_is_max) or (lower and not top_is_max),
+            (lower and top_is_max) or (upper and not top_is_max))
 
 
 def _close(a: float, b: float) -> bool:

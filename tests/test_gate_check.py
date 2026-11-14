@@ -917,5 +917,6 @@ def test_real_env_copy_gate_and_broken_gate(tmp_path, monkeypatch):
 
 def test_the_lab_error_is_quoted_and_ends_with_its_own_full_stop():
     m = gate_check._apply_message("cz_x", "ValueError: the two pulses must share flat_length")
-    assert m.endswith("The lab's error: “ValueError: the two pulses must share flat_length.”")
-    assert gate_check._apply_message("cz_x", "Boom!").endswith("“Boom!”")
+    assert m.endswith('The lab\'s error: "ValueError: the two pulses must share flat_length."')
+    assert gate_check._apply_message("cz_x", "Boom!").endswith('"Boom!"')
+    assert m.isascii(), "user text uses plain ASCII quotes"

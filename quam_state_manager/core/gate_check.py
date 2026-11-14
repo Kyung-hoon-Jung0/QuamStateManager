@@ -390,7 +390,7 @@ def _apply_message(name: str, err: str) -> str:
     text = str(err or "").strip()
     if text and text[-1] not in ".!?":
         text += "."
-    return f"The gate {name} does not run with the lab's code. The lab's error: “{text}”"
+    return f"The gate {name} does not run with the lab's code. The lab's error: \"{text}\""
 
 
 def _ops_check(name, ops, unresolved, no_cfg) -> dict:

@@ -64,3 +64,11 @@ def test_gate_check_after_a_failing_release_is_not_busy(tmp_path, monkeypatch):
     assert first["status"] == "crash"
     second = lab_waveform.run_gate_check(str(py), "b", "a", ["m"], lock_wait=0.2)
     assert second["status"] != "busy" and len(calls) == 2
+
+
+
+def test_release_with_a_handle_already_closed_frees_the_lock(lock):
+    assert lock.acquire()
+    lock.depth.fh.close()                 # a closed handle raises ValueError on seek / unlock
+    lock.release()
+    assert _free_from_another_thread(lock)

@@ -519,3 +519,38 @@ def test_the_live_files_are_unchanged_after_a_create(chip, fake):
     j = _check(chip.c, _body())
     r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
     assert r.status_code == 200 and _live_bytes(chip) == live
+
+
+
+# ---------------------------------------------------------------- tokens
+
+def test_a_token_expires_after_its_time(chip, fake, monkeypatch):
+    j = _check(chip.c, _body())
+    now = czr.time.time()
+    monkeypatch.setattr(czr.time, "time", lambda: now + czr.TOKEN_TTL_S + 1)
+    r = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    assert r.status_code == 409 and "not known" in r.get_json()["error"]
+
+
+def test_only_the_newest_tokens_are_kept(chip, fake):
+    first = _check(chip.c, _body())["check_token"]
+    for _ in range(czr._TOKENS_MAX):
+        czr._remember({"store_id": 0, "seq": 0, "plan_sig": "x", "body": {}, "verdicts": {}, "sigs": {}})
+    assert first not in czr._TOKENS and len(czr._TOKENS) <= czr._TOKENS_MAX
+
+
+def test_two_creates_racing_on_one_token_create_once(chip, fake):
+    import threading
+    j = _check(chip.c, _body())
+    codes = []
+
+    def go():
+        with chip.app.test_client() as c:
+            codes.append(c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]}).status_code)
+    ts = [threading.Thread(target=go) for _ in range(2)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(30)
+    assert sorted(codes) == [200, 409]
+    assert list(chip.store.merged["qubit_pairs"]["q1-2"]["macros"]).count("cz_sq") == 1

@@ -184,3 +184,41 @@ def test_the_level_tile_names_the_offset_when_it_puts_the_line_over_the_range():
     ln["offset_v"] = 0.2
     p = _tile(tiles({"lanes": [ln]}), "peak")
     assert p["note"] == "on q1.z, over the port's range (with the 0.2 V offset)"
+
+
+
+# ---------------------------------------------------------------- group B
+
+from quam_state_manager.core.gate_timeline_view import fmt_num  # noqa: E402
+
+
+@pytest.mark.parametrize("v,text", [(-0.0, "0"), (1e-07, "0.0000001"), (2.5e-09, "0.0000000025"),
+                                    (1234567890123.5, "1234567890123.5"), (0.1 + 0.2, "0.3"),
+                                    (0.1001, "0.1001"), (-0.3, "-0.3"), (3.0, "3")])
+def test_fmt_num_forms(v, text):
+    assert fmt_num(v) == text
+
+
+def test_lines_that_only_meet_say_so():
+    t = _tile(tiles({"lanes": [_lane("q1.z", 0, 50), _lane("c12", 50, 100)]}), "timing")
+    assert (t["value"], t["unit"], t["note"], t["tone"]) == ("0", "ns", "the lines meet", "neutral")
+
+
+def test_three_lines_report_the_gap_even_when_two_overlap():
+    t = _tile(tiles({"lanes": [_lane("q1.z", 0, 100), _lane("q2.z", 10, 90), _lane("c12", 140, 200)]}), "timing")
+    assert (t["value"], t["tone"]) == ("50", "warn") and "largest of 3 line pairs" in t["note"]
+
+
+def test_the_level_tile_is_the_largest_magnitude_with_its_sign_and_says_when_cut():
+    ln = _lane("q1.z", 0, 100, peak=0.1)
+    ln["segments"][0]["min_v"] = -0.3
+    ln["segments"][0]["truncated"] = True
+    p = _tile(tiles({"lanes": [ln]}), "peak")
+    assert p["label"] == "Largest level" and p["value"] == "-0.3" and "from the samples received" in p["note"]
+
+
+def test_a_malformed_row_becomes_a_cannot_draw_statement():
+    e = {"timeline": {"rows": [{"element": "q1.z", "operation": "x", "start_ns": None, "end_ns": 10,
+                                "constant": "high", "scale": 1}], "notes": [], "cannot_draw": None}}
+    data = timeline_data(e, control="q1", target="q2")
+    assert data["lanes"] == [] and data["cannot_draw"].startswith("cannot draw: a timeline row")

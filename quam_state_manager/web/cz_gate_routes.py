@@ -331,12 +331,12 @@ def check_values(merged: dict, body: dict) -> list[str]:
             kind, optional = (pulse_kinds.get(slot) or {}).get(k, (value_kind(v), True))
             why = value_problem(v, kind, optional or v is None and kind == "any")
             if why:
-                out.append(f"{slot}.{k}: {why}")
+                out.append(f"{cgb.cap_name(slot)}.{cgb.cap_name(k)}: {why}")
     for k, v in (body.get("macro_fields") or {}).items():
         kind, optional = setting_kinds.get(k, (value_kind(v), True))
         why = value_problem(v, kind, optional)
         if why:
-            out.append(f"gate setting {k}: {why}")
+            out.append(f"gate setting {cgb.cap_name(k)}: {why}")
     return out
 
 

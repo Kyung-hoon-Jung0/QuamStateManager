@@ -140,7 +140,12 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
         lane = lanes[el]
         if lane["limit_v"] is None:
             lane["limit_v"] = _limit(row)
-        lane["segments"].append(_segment(row))
+        try:
+            lane["segments"].append(_segment(row))
+        except (TypeError, ValueError, KeyError) as exc:
+            return {"lanes": [], "notes": notes,
+                    "cannot_draw": "cannot draw: a timeline row has a form SM does not read "
+                                   f"({type(exc).__name__})"}
     order = ([e for e in gate_order if e in lanes] + [e for e in couplers if e in lanes]
              + [e for e in seen if e not in gate_order and e not in couplers])
     out = [lanes[e] for e in order]
@@ -152,13 +157,31 @@ def timeline_data(entry: dict | None, *, control: str | None, target: str | None
 
 
 def fmt_num(v: float) -> str:
-    """The shortest exact form a person reads: 12 significant digits, no trailing
-    zeros (0.30000000000000004 -> 0.3; 0.1001 stays 0.1001)."""
-    return repr(float(f"{float(v):.12g}")).removesuffix(".0")
+    """The shortest exact form a person reads: 15 significant places (so
+    0.30000000000000004 -> 0.3 while 0.1001 and 1234567890123.5 stay exact),
+    never "-0", and plain decimals (no exponent) from 1e-9 to below 1e15."""
+    from decimal import Decimal
+    x = float(f"{float(v):.15g}")
+    if x == 0:
+        return "0"
+    text = repr(x)
+    if "e" in text and 1e-9 <= abs(x) < 1e15:
+        text = format(Decimal(text), "f")
+    return text.removesuffix(".0")
 
 
 def _fmt_v(v: float) -> str:
     return f"{fmt_num(v)} V"
+
+
+def _pair_relation(a: tuple, b: tuple) -> tuple[str, float]:
+    """("gap", ns) | ("meet", 0) | ("overlap", start difference) of two spans."""
+    a0, a1, b0, b1 = a[1], a[2], b[1], b[2]
+    if a1 < b0 or b1 < a0:
+        return "gap", float(max(b0 - a1, a0 - b1))
+    if a1 == b0 or b1 == a0:
+        return "meet", 0.0
+    return "overlap", float(abs(a0 - b0))
 
 
 def tiles(data: dict) -> list[dict]:
@@ -169,12 +192,16 @@ def tiles(data: dict) -> list[dict]:
 
     - ``lines``: the number of gate lines that play (note: their names);
     - ``length``: latest end minus earliest start over the gate's lines, ns;
-    - ``peak``: the highest absolute level to 4 significant digits, V (note:
-      the line that reaches it), ``danger`` when a segment is over its limit;
-    - ``timing`` (two or more lines only): the smallest gap in ns, ``warn``,
-      "gap, no overlap" when no two lines overlap; else the start difference
-      in ns, ``note``, "start difference, the lines overlap", or 0 ns,
-      ``neutral``, "same start".
+    - ``peak`` ("Largest level"): the largest magnitude with its sign, to 4
+      significant places, V (note: the line, "over the port's range" with the
+      offset when one is in play, "from the samples received" when samples
+      were cut), ``danger`` when a segment is over its range;
+    - ``timing`` (two or more lines only), the worst case over every pair of
+      lines: the largest gap, ``warn``; else lines that only meet, "0 ns" /
+      "the lines meet", ``neutral``; else the largest start difference,
+      ``note`` ("start difference, the lines overlap") or "0 ns" / "same
+      start", ``neutral``. With three or more lines the note says how many
+      line pairs it summarises.
 
     Nothing is invented: with no drawn gate line the list is empty."""
     lanes = [ln for ln in (data or {}).get("lanes") or []
@@ -186,9 +213,9 @@ def tiles(data: dict) -> list[dict]:
     out = [{"key": "lines", "label": "Lines", "value": str(len(lanes)), "unit": "",
             "note": ", ".join(k for k, _a, _b in spans), "tone": "neutral"}]
     t0, t1 = min(a for _k, a, _b in spans), max(b for _k, _a, b in spans)
-    out.append({"key": "length", "label": "Gate length", "value": f"{t1 - t0:g}", "unit": "ns",
-                "note": f"{t0:g} to {t1:g} ns", "tone": "neutral"})
-    best, where, over, over_off = None, None, False, 0.0
+    out.append({"key": "length", "label": "Gate length", "value": fmt_num(t1 - t0), "unit": "ns",
+                "note": f"{fmt_num(t0)} to {fmt_num(t1)} ns", "tone": "neutral"})
+    best, where, over, over_off, cut = None, None, False, 0.0, False
     for ln in lanes:
         for s in ln["segments"]:
             for v in (s.get("peak_v"), s.get("min_v")):
@@ -196,22 +223,30 @@ def tiles(data: dict) -> list[dict]:
                     best, where = v, ln["key"]
             if "over_range" in (s.get("flags") or []):
                 over, over_off = True, float(ln.get("offset_v") or 0.0)
+            cut = cut or bool(s.get("truncated"))
     if best is not None:
-        out.append({"key": "peak", "label": "Highest level", "value": f"{best:.4g}", "unit": "V",
-                    "note": f"on {where}" + ((", over the port's range" + (f" (with the {fmt_num(over_off)} V offset)" if over_off else "")) if over else ""),
-                    "tone": "danger" if over else "neutral"})
+        note = f"on {where}"
+        if over:
+            note += ", over the port's range" + (f" (with the {fmt_num(over_off)} V offset)" if over_off else "")
+        if cut:
+            note += ", from the samples received"
+        out.append({"key": "peak", "label": "Largest level", "value": f"{best:.4g}", "unit": "V",
+                    "note": note, "tone": "danger" if over else "neutral"})
     if len(spans) >= 2:
-        ordered = sorted(spans, key=lambda x: x[1])
-        overlap = any(a[2] > b[1] for i, a in enumerate(ordered) for b in ordered[i + 1:])
-        starts = [a for _k, a, _b in spans]
-        if not overlap:
-            gap = min(b[1] - a[2] for a, b in zip(ordered, ordered[1:]))
-            out.append({"key": "timing", "label": "Timing", "value": f"{gap:g}", "unit": "ns",
-                        "note": "gap, no overlap", "tone": "warn"})
-        elif max(starts) != min(starts):
-            out.append({"key": "timing", "label": "Timing", "value": f"{max(starts) - min(starts):g}",
-                        "unit": "ns", "note": "start difference, the lines overlap", "tone": "note"})
+        rel = [_pair_relation(a, b) for i, a in enumerate(spans) for b in spans[i + 1:]]
+        many = f" (largest of {len(rel)} line pairs)" if len(rel) > 1 else ""
+        gaps = [v for k, v in rel if k == "gap"]
+        overlaps = [v for k, v in rel if k == "overlap"]
+        if gaps:
+            out.append({"key": "timing", "label": "Timing", "value": fmt_num(max(gaps)), "unit": "ns",
+                        "note": "gap, no overlap" + many, "tone": "warn"})
+        elif not overlaps:
+            out.append({"key": "timing", "label": "Timing", "value": "0", "unit": "ns",
+                        "note": "the lines meet" + many, "tone": "neutral"})
+        elif max(overlaps) > 0:
+            out.append({"key": "timing", "label": "Timing", "value": fmt_num(max(overlaps)), "unit": "ns",
+                        "note": "start difference, the lines overlap" + many, "tone": "note"})
         else:
             out.append({"key": "timing", "label": "Timing", "value": "0", "unit": "ns",
-                        "note": "same start", "tone": "neutral"})
+                        "note": "same start" + many, "tone": "neutral"})
     return out
