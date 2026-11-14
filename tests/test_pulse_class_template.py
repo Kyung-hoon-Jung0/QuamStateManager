@@ -448,3 +448,70 @@ def test_lab_zero_waveform_is_unknown(tmp_path):
 def test_env_message_names_the_case(py, want):
     r = D._run_runner(py, {}, 5)
     assert not r["ok"] and r["error"] == want
+
+
+# ------------------------------------------------- review round 2 pins
+
+@pytest.mark.parametrize("where", ["class", "field"])
+def test_trailing_newline_name_refused(where):
+    s = spec_b()
+    if where == "class":
+        s.class_name = "Foo\n"
+    else:
+        s.fields.append(F("x\n", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="not a valid Python name"):
+        T.render(s)
+
+
+def test_trailing_newline_draft_name_refused_readably(tmp_path):
+    with pytest.raises(D.DraftError, match="not a valid Python name"):
+        D.save_draft(tmp_path, "s", "Foo\n", "x")
+    assert not (tmp_path / D.DRAFTS_DIR).exists()
+
+
+@pytest.mark.parametrize("unit", ["V\rimport os; os.system('echo hi')", "V\u2028x", "V\x0bx",
+                                  "V\x85x"])
+def test_unit_with_any_line_break_refused(unit):
+    s = spec_b()
+    s.fields[0] = F("amplitude", "float", 0.1, unit)
+    with pytest.raises(T.TemplateError, match="unit must be one line"):
+        T.render(s)
+
+
+@pytest.mark.parametrize("sep", ["\u2028", "\u2029", "\x85", "\x0c", "\r"])
+def test_formula_with_other_line_breaks_refused(sep):
+    s = spec_b()
+    s.formula = f"amplitude * np.ones(n) if '{sep}' else 0"
+    with pytest.raises(T.TemplateError, match="plain line breaks"):
+        T.render(s)
+
+
+def test_multi_line_formula_still_round_trips():
+    p = T.parse(T.render(spec_a()))
+    assert p.editable and p.spec.formula == FORMULA_A
+
+
+@pytest.mark.parametrize("bad,want", [
+    (F("k", "int", True), "is not an int"), (F("k", "int", 1.5), "is not an int"),
+    (F("w", "float", "1"), "is not a float"), (F("b", "bool", 1), "is not a bool")])
+def test_type_message_grammar(bad, want):
+    s = spec_b()
+    s.fields.append(bad)
+    with pytest.raises(T.TemplateError, match=want):
+        T.render(s)
+
+
+def test_crlf_file_names_the_line_endings():
+    src = T.render(spec_a()).replace("\n", "\r\n")
+    p = T.parse(src)
+    assert not p.editable
+    assert p.reason == T.CRLF_LINE and "line endings" in p.reason
+    with pytest.raises(T.TemplateError, match="code view"):
+        T.rewrite(src, spec_a())
+
+
+def test_length_rule_line_names_the_floor_honestly():
+    line = T.LENGTH_RULE_LINE
+    assert "QM config rule)" not in line
+    assert "conservative" in line and "divisible by 4" in line
+    assert " -- " not in line

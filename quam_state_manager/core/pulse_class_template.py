@@ -48,16 +48,27 @@ WINDOWS_DEVICE_NAMES = frozenset(
     {"con", "prn", "aux", "nul"}
     | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)})
 
-#: the QM config rule for a pulse length: whole ns, divisible by 4
-#: (docs Introduction/config.md), and at least 16 ns, the minimum on every QOP
-#: version (docs Guides/timing_in_qua.md; QOP 3.3 and later allow less)
+#: pulse length: whole ns, divisible by 4 (the QM config rule, docs
+#: Introduction/config.md), and at least 16 ns. The 16 ns floor is the
+#: pre-3.3 QOP minimum (docs Guides/timing_in_qua.md; QOP 3.3 and later allow
+#: 4 ns from the config); it is kept as a conservative floor that is valid on
+#: every QOP version
 LENGTH_MIN_NS = 16
 LENGTH_STEP_NS = 4
 LENGTH_RULE_LINE = (f"Field 'length': the default must be a whole number of ns, at least "
-                    f"{LENGTH_MIN_NS} and divisible by {LENGTH_STEP_NS} (the QM config rule)")
+                    f"{LENGTH_MIN_NS} and divisible by {LENGTH_STEP_NS}. The QM config needs a "
+                    f"length divisible by {LENGTH_STEP_NS}; {LENGTH_MIN_NS} ns is a conservative "
+                    "floor that works on every QOP version")
 
 CODE_VIEW_ONLY_LINE = ("The class structure can only be edited in the code view: "
                        "the template markers in this file were changed by hand.")
+CRLF_LINE = ("The class structure can only be edited in the code view: "
+             "this file uses Windows line endings, and the form rewrites only files "
+             "with plain line endings.")
+
+#: characters Python or ``str.splitlines`` treat as a line break; a formula may
+#: use only the plain newline, which the template splits on
+_FORMULA_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 
 
 class TemplateError(ValueError):
@@ -97,7 +108,7 @@ _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _check_ident(name: str, what: str) -> None:
-    if not isinstance(name, str) or not _IDENT.match(name) or keyword.iskeyword(name):
+    if not isinstance(name, str) or not _IDENT.fullmatch(name) or keyword.iskeyword(name):
         raise TemplateError(f"{what} {name!r} is not a valid Python name")
 
 
@@ -153,18 +164,23 @@ def validate(spec: ClassSpec) -> None:
               isinstance(d, (int, float)) and not isinstance(d, bool) if want is float else
               isinstance(d, str))
         if not ok:
-            raise TemplateError(f"Field {f.name!r}: default {d!r} is not a {f.type}")
+            article = "an" if f.type == "int" else "a"
+            raise TemplateError(f"Field {f.name!r}: default {d!r} is not {article} {f.type}")
         if f.name == "length" and (f.type != "int" or d < LENGTH_MIN_NS
                                    or d % LENGTH_STEP_NS):
             raise TemplateError(LENGTH_RULE_LINE)
-        if not isinstance(f.unit, str) or "\n" in f.unit or "#" in f.unit:
-            raise TemplateError(f"Field {f.name!r}: unit must be one line without '#'")
+        # isprintable() refuses every line break Python honours, "\r" too
+        if not isinstance(f.unit, str) or not f.unit.isprintable() or "#" in f.unit:
+            raise TemplateError(f"Field {f.name!r}: unit must be one line of plain "
+                                "text without '#'")
     if "amplitude" not in seen:
         raise TemplateError("A pulse class made from the template needs an 'amplitude' field")
     if "length" not in seen:
         raise TemplateError("A pulse class made from the template needs a 'length' field (ns)")
     if not isinstance(spec.formula, str) or not spec.formula.strip():
         raise TemplateError("The waveform formula is empty")
+    if any(ch in _FORMULA_BREAKS for ch in spec.formula):
+        raise TemplateError("The waveform formula may use only plain line breaks")
     try:
         tree = ast.parse(spec.formula.strip(), mode="eval")
     except SyntaxError as exc:
@@ -197,7 +213,7 @@ def render_region(spec: ClassSpec) -> str:
     for f in spec.fields:
         lines.append(f"        {f.name} = self.{f.name}")
     lines.append("        return (")
-    for fl in spec.formula.strip().splitlines():
+    for fl in spec.formula.strip().split("\n"):
         lines.append("            " + fl.rstrip())
     lines.append("        )")
     return "\n".join(lines) + "\n"
@@ -286,7 +302,8 @@ def parse(text: str) -> Parsed:
     begins = [m.end() for m in re.finditer("^" + re.escape(REGION_BEGIN) + "\n", text, re.M)]
     ends = [m.start() for m in re.finditer("^" + re.escape(REGION_END) + "\n", text, re.M)]
     if len(begins) != 1 or len(ends) != 1:
-        return Parsed(False, CODE_VIEW_ONLY_LINE, version, made)
+        crlf = (REGION_BEGIN + "\r\n") in text
+        return Parsed(False, CRLF_LINE if crlf else CODE_VIEW_ONLY_LINE, version, made)
     b, e = begins[0], ends[0]
     if e < b:
         return Parsed(False, CODE_VIEW_ONLY_LINE, version, made)

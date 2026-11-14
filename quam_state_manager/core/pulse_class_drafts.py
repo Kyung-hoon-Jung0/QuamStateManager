@@ -48,7 +48,7 @@ TIMEOUT_S = 120
 def _scope_key(scope: str) -> str:
     """A folder name for *scope* (a chip or project key); a key that is not
     already a safe name is reduced to a short hash of itself."""
-    if isinstance(scope, str) and _SAFE.match(scope) and scope not in (".", ".."):
+    if isinstance(scope, str) and _SAFE.fullmatch(scope) and scope not in (".", ".."):
         return scope
     return "s_" + hashlib.sha256(str(scope).encode("utf-8")).hexdigest()[:16]
 
@@ -59,8 +59,8 @@ class DraftError(ValueError):
 
 def _folder(instance: Path | str, scope: str, class_name: str) -> Path:
     from quam_state_manager.core.pulse_class_template import WINDOWS_DEVICE_NAMES
-    if not isinstance(class_name, str) or not _CLASS.match(class_name):
-        raise ValueError(f"{class_name!r} is not a class name")
+    if not isinstance(class_name, str) or not _CLASS.fullmatch(class_name):
+        raise DraftError(f"Class name {class_name!r} is not a valid Python name")
     if class_name.casefold() in WINDOWS_DEVICE_NAMES:
         raise DraftError(f"Class name {class_name!r} is a reserved Windows device name; "
                          "choose another name")
@@ -112,7 +112,7 @@ def list_drafts(instance, scope) -> list[dict]:
         return out
     for d in sorted(root.iterdir()):
         f = d / DRAFT_FILE
-        if d.is_dir() and _CLASS.match(d.name) and f.is_file():
+        if d.is_dir() and _CLASS.fullmatch(d.name) and f.is_file():
             out.append({"class_name": d.name, "path": str(f),
                         "sha256": sha256_bytes(f.read_bytes())})
     return out
