@@ -1,4 +1,5 @@
-// Rebuild: npm ci && node build.mjs  -> dist/cm6.min.js
+// Rebuild: npm ci && node build.mjs  -> dist/cm6.min.js and dist/cm-python.js
 import { build } from "esbuild";
-await build({ entryPoints: ["entry.js"], bundle: true, minify: true, format: "iife",
-  target: ["es2020"], outfile: "dist/cm6.min.js", legalComments: "eof", charset: "utf8" });
+const common = { bundle: true, minify: true, format: "iife", target: ["es2020"], legalComments: "eof", charset: "utf8" };
+await build({ ...common, entryPoints: ["entry.js"], outfile: "dist/cm6.min.js" });
+await build({ ...common, entryPoints: ["entry-python.js"], outfile: "dist/cm-python.js" });
