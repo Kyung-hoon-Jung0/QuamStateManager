@@ -114,7 +114,7 @@ def test_the_build_route_offers_once_and_honours_the_answer(tmp_path, monkeypatc
     body["coupler_delay_ack"] = "keep"
     res = client.post("/regenerate/build", json=body).get_json()
     assert res.get("ok") is True
-    assert "Coupler port delays left at 0 as chosen." in res["result"]["warnings"]
+    assert "Coupler port delays kept as stored, as chosen." in res["result"]["warnings"]
     kept = json.loads((out / "state.json").read_text())
     assert kept["ports"]["analog_outputs"]["con1"]["3"]["5"]["delay"] == 0
 

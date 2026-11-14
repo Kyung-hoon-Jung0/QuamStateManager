@@ -616,7 +616,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
     w("for _w in _fix_coupled_bands(machine, _spec, []):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
     # one time base for MW outputs, flux LF ports and time of flight, after the band fix-up
-    w("for _w in _align_output_timing(machine):")
+    w("for _w in _align_output_timing(machine, _spec):")
     w('    print(f"WARNING: {_w}", file=sys.stderr)')
     # G12: flux / coupler LF ports upsample in `pulse` mode, as the wizard's build does
     w("_default_flux_upsampling(machine, _spec)")

@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import (additions, config_generator, path_match, regen_merge, regen_script, regen_spec,
+from . import (additions, config_generator, output_timing, path_match, regen_merge, regen_script, regen_spec,
                rename_lineage, safe_io)
 
 
@@ -446,6 +446,11 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     with bands 1 / 3 while every MW output delay is 0 (built before the
     output time base). ``None`` when it does not apply. Never raises.
 
+    Only MW outputs in use count, the build's rule (``run_build``
+    ``_mw_output_ports``): an output counts when an element's output
+    reference resolves to it; an unwired port object in ``ports.mw_outputs``
+    neither triggers nor blocks the offer.
+
     The shift keeps every calibrated timing inside a qubit's flux / xy pair:
     each MW output of an earlier band gets ``s = 20`` ns; a qubit whose xy
     port shifted gets ``z += s``; a coupler port gets ``+= s`` of its pair's
@@ -454,7 +459,7 @@ def mw_band_shift_plan(state: dict, wiring: dict) -> dict | None:
     readout output port. Items: ``ports``, ``flux``, ``tof`` and ``spacing``
     (qubits whose xy and readout shifts differ)."""
     try:
-        mw = list(_mw_output_items(state))
+        mw = output_timing.mw_outputs_in_use(state, wiring)
         bands = {p.get("band") for _, p in mw}
         if 2 not in bands or not bands & {1, 3}:
             return None
@@ -525,6 +530,19 @@ def mw_band_shift_offer_text(plan: dict) -> str:
     return text
 
 
+def mw_band_shift_skip_reason(state: dict, wiring: dict) -> str:
+    """Why :func:`mw_band_shift_plan` offers nothing for this chip (one clause)."""
+    mw = output_timing.mw_outputs_in_use(state, wiring)
+    bands = {p.get("band") for _, p in mw}
+    if not mw:
+        return "the rebuilt chip has no MW output in use"
+    if 2 not in bands or not bands & {1, 3}:
+        return "the rebuilt chip's MW outputs no longer mix band 2 with bands 1 / 3"
+    if any(p.get("delay") not in (0, None) for _, p in mw):
+        return "the rebuilt chip's MW outputs no longer all hold delay 0"
+    return "the rebuilt chip has no MW output to shift"
+
+
 def apply_mw_band_shift(folder: Path | str) -> dict | None:
     """Apply an accepted shift to a written chip (judged on that chip);
     returns the plan it applied, or ``None`` when nothing applied."""
@@ -592,6 +610,38 @@ def follow_source_time_base(merged: dict, old_state: dict, wiring: dict) -> list
             c_port["delay"] = z_port["delay"]
             done.append(c_path)
     return done
+
+
+def hand_set_time_base_note(old_state: dict, merged: dict, wiring: dict) -> str | None:
+    """Name it when ports a rebuild ADDED got the fresh build's values on a
+    source chip whose MW output delays were set by hand (some non-zero, but
+    not the build's time base), so the chip now mixes two time bases.
+    ``None`` otherwise. Never raises."""
+    try:
+        old_mw = output_timing.mw_outputs_in_use(old_state, wiring)
+        delays = [p.get("delay") or 0 for _, p in old_mw]
+        if not any(delays):
+            return None
+        bands = {p.get("band") for _, p in old_mw}
+        lat = {b: _BAND_LATENCY_NS[b] for b in bands if b in _BAND_LATENCY_NS}
+        if lat:
+            target = max(lat.values())
+            if all((p.get("delay") or 0) == target - lat.get(p.get("band"), target)
+                   for _, p in old_mw):
+                return None   # the source carries the build's time base
+        new = output_timing.summary(merged, wiring) or {}
+        old_paths = {p for p, _ in old_mw}
+        old_lf = {f["port"] for f in (output_timing.summary(old_state, wiring) or {}).get("flux", [])}
+        new_mw = sorted({m["delay"] for m in new.get("mw", []) if m["port"] not in old_paths})
+        new_lf = sorted({f["delay"] for f in new.get("flux", []) if f["port"] not in old_lf})
+        if not new_mw and not new_lf:
+            return None
+        def ns(xs):
+            return " / ".join(f"{x:g}" for x in xs) + " ns" if xs else "none added"
+        return ("This chip's MW output delays were set by hand, so new ports got starting "
+                f"values (MW {ns(new_mw)}, flux {ns(new_lf)}): check their timing.")
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
 
 
 def pending_fsp_offers(old_folder: Path | str, spec: dict,
@@ -939,6 +989,9 @@ def run_regenerate(
     # QA F12: the merged chip, not the build spec, decides -- a merge can
     # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
     config_generator.annotate_unplayable(outcome, result.merged, new_wiring)
+    _tb_note = hand_set_time_base_note(old_state, result.merged, new_wiring)
+    if _tb_note and isinstance(outcome.get("result"), dict):
+        outcome["result"]["warnings"] = list(outcome["result"].get("warnings") or []) + [_tb_note]
 
     # Emit the editable build-script bundle alongside the rebuilt state, so the
     # user OWNS the config as Python. script_emitter is the SINGLE maintained

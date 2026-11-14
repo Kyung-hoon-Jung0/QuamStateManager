@@ -50910,6 +50910,9 @@ def generate_build():
             try:
                 _st, _wr = safe_io.read_state_wiring(Path(output_path))
                 config_generator.annotate_unplayable(outcome, _st, _wr)
+                from quam_state_manager.core import output_timing
+                output_timing.annotate(outcome, _st, _wr,
+                                       tof_typed=output_timing.typed_tof(spec))
             except (OSError, ValueError) as exc:
                 logger.warning("frequency check skipped: %s", exc)
 
@@ -51468,7 +51471,7 @@ def regenerate_build():
                 res = outcome["result"] = {}
             note = None
             if coupler_delay_ack == "keep":
-                note = "Coupler port delays left at 0 as chosen."
+                note = "Coupler port delays kept as stored, as chosen."
             elif coupler_delay_ack == "set":
                 try:
                     _set = regenerate.set_coupler_delays(output_path, spec)
@@ -51484,9 +51487,14 @@ def regenerate_build():
                 note = ((note + " ") if note else "") + (
                     "MW outputs left unshifted as chosen: band 1/3 outputs still leave "
                     "20 ns before band 2 ones.")
-            elif mw_shift_ack == "shift":
+            _plan = None
+            if mw_shift_ack == "shift":
                 try:
                     _plan = regenerate.apply_mw_band_shift(output_path)
+                    if not _plan:
+                        note = ((note + " ") if note else "") + (
+                            "The band shift was not applied: " + regenerate.mw_band_shift_skip_reason(
+                                *safe_io.read_state_wiring(Path(output_path))) + ".")
                     if _plan:
                         res["mw_shift"] = _plan
                         note = ((note + " ") if note else "") + (
@@ -51502,6 +51510,22 @@ def regenerate_build():
                     note = ((note + " ") if note else "") + (
                         f"The chip was built, but the MW outputs could not be shifted: {exc}")
                     outcome["mw_shift_error"] = str(exc)
+            if coupler_delay_ack == "keep" and _plan:
+                # the keep note names what the band shift then did to those ports
+                _moved = [i for i in _plan["flux"] if i.get("pair")]
+                if _moved:
+                    note = note.replace(
+                        "Coupler port delays kept as stored, as chosen.",
+                        "Coupler port delays kept as stored, as chosen; moved with the band "
+                        "shift: " + "; ".join(f"{i['old']:g} to {i['new']:g} on {i['port_label']}"
+                                              for i in _moved) + ".", 1)
+            try:
+                from quam_state_manager.core import output_timing
+                output_timing.annotate(
+                    outcome, *safe_io.read_state_wiring(Path(output_path)),
+                    tof_moved=[i["qubit"] for i in (_plan or {}).get("tof", [])])
+            except (OSError, ValueError) as exc:
+                logger.warning("output timing summary skipped: %s", exc)
             if note:
                 res["warnings"] = list(res.get("warnings") or []) + [note]
     finally:

@@ -870,7 +870,11 @@ def _mw_output_ports(machine):
     """Every MW-FEM analog output port the chip uses, in a stable order.
 
     Read from the machine's ports container (``ports.mw_outputs``, nested
-    controller / slot / port), which holds exactly the ports the wiring made."""
+    controller / slot / port), which holds exactly the ports the wiring made.
+    "In use" means: an element's output reference resolves to the port. A
+    fresh build's container holds only such ports; the stored-state reading
+    (``core/output_timing.py`` ``mw_outputs_in_use``) follows the references
+    to apply the same rule to a chip that may keep unwired port objects."""
     ports = getattr(machine, "ports", None)
     tree = getattr(ports, "mw_outputs", None) or {}
     found = []
@@ -916,7 +920,7 @@ def _set_delay(port, value):
     return True
 
 
-def _align_output_timing(machine):
+def _align_output_timing(machine, spec=None):
     """Put every output of a generated chip on one time base.
 
     Runs last among the steps that touch bands or delays (after
@@ -925,9 +929,13 @@ def _align_output_timing(machine):
       (20 ns for a band 1 / 3 port on a chip that also uses band 2, else 0);
     - every LF-FEM output carrying a flux line (qubit z, coupler) gets
       ``target``;
-    - a resonator whose readout output got a delay ``s`` gets
-      ``time_of_flight += s``: its pulse leaves ``s`` later in program time,
-      so the acquisition starts ``s`` later.
+    - a resonator whose readout output got a delay ``s`` gets its time of
+      flight moved by ``s``: its pulse leaves ``s`` later in program time,
+      so the acquisition starts ``s`` later. A time of flight the user typed
+      (``spec["populate"]["resonator"][qid]["time_of_flight"]``) stays as
+      typed and a warning asks to measure it again.
+    Idempotent: the time of flight moves by the change of its readout port's
+    delay in this call (``new - old``), so a second call moves nothing.
     A chip with no MW output of known band keeps the per-pair coupler rule
     (``_align_coupler_delays``). A non-LF, non-MW-FEM output (OPX+) is left
     as it is. Returns the warnings."""
@@ -935,29 +943,41 @@ def _align_output_timing(machine):
     target, by_band = _output_timing_plan({getattr(p, "band", None) for p in mw})
     if target is None:
         return _align_coupler_delays(machine)
-    shift = {}
+    typed = {qid for qid, v in (((spec or {}).get("populate") or {}).get("resonator") or {}).items()
+             if isinstance(v, dict) and "time_of_flight" in v}
+    moved = {}
     for p in mw:
         s = by_band.get(getattr(p, "band", None))
         if s is None:
             continue
+        old = getattr(p, "delay", 0)
+        old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
         _set_delay(p, s)
-        shift[id(p)] = s
-    for q in (getattr(machine, "qubits", None) or {}).values():
+        moved[id(p)] = (s, s - old)
+    warnings = []
+    for qid, q in (getattr(machine, "qubits", None) or {}).items():
         z_out = getattr(getattr(q, "z", None), "opx_output", None)
         if _is_lf_output(z_out):
             _set_delay(z_out, target)
         rr = getattr(q, "resonator", None)
-        s = shift.get(id(getattr(rr, "opx_output", None))) if rr is not None else None
-        if s and getattr(rr, "time_of_flight", None) is not None:
+        s, ds = moved.get(id(getattr(rr, "opx_output", None)), (0, 0)) if rr is not None else (0, 0)
+        tof = getattr(rr, "time_of_flight", None) if rr is not None else None
+        if not s or tof is None:
+            continue
+        if qid in typed:
+            warnings.append(
+                f"{qid}: time of flight left as typed ({tof:g} ns); its readout output is "
+                f"delayed by {s:g} ns: measure time of flight again.")
+        elif ds:
             try:
-                rr.time_of_flight = rr.time_of_flight + s
+                rr.time_of_flight = tof + ds
             except (ValueError, TypeError):
                 pass
     for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
         c_out = getattr(getattr(pair, "coupler", None), "opx_output", None)
         if _is_lf_output(c_out):
             _set_delay(c_out, target)
-    return []
+    return warnings
 
 
 def _split_port_pointer(ptr):
@@ -3701,7 +3721,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         _fix_coupled_bands(machine, spec, warnings)
         # last among the band / delay steps: every MW output, flux LF port
         # and readout time of flight on one time base
-        warnings.extend(_align_output_timing(machine))
+        warnings.extend(_align_output_timing(machine, spec))
         # G12: flux / coupler LF ports upsample in `pulse` mode (the docs'
         # recommendation for an output with no intermediate frequency)
         _default_flux_upsampling(machine, spec)

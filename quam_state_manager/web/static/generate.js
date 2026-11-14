@@ -4987,90 +4987,66 @@
     _dragGhostSrc = null;
   }
 
-  // The Review row "Output timing", from the inputs the build uses. Mirrors
-  // run_build _output_timing_plan / _align_output_timing: the latest MW band
-  // in use is the reference (band 2 when present, else bands 1 and 3); an
-  // earlier MW output gets the difference as its port delay, every LF-FEM
-  // flux port (qubit z, coupler) gets the reference latency, and a resonator
-  // whose readout output shifted gets the same shift on its time of flight.
-  // Re-generate keeps stored delays and asks before shifting them.
-  var BAND_LATENCY_NS = { 1: 141, 2: 161, 3: 141 };   // run_build _BAND_TO_DELAY_NS
-  var MW_BAND_GROUP = { drive: "qubit", resonator: "resonator", twpa_pump: "twpa" };
-
-  function lineOutFem(ln) {
-    var ch = ln.channel;
-    if (ch && ch.con != null) {
-      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot);
-    }
-    if (ch && ch.kind === "mw_fem") return "mw-fem";
-    if (ch && ch.kind === "lf_fem") return "lf-fem";
-    var outs = (((allocEntry(ln.element) || {})[ALLOC_KEY[ln.line]]) || []).filter(
-      function (x) { return (x.io_type || "output") === "output"; });
-    return outs.length ? femTypeAt(outs[0].con, outs[0].slot) : null;
-  }
-
-  function lineMwBand(sp, ln) {
-    var grp = MW_BAND_GROUP[ln.line];
-    if (!grp || lineOutFem(ln) !== "mw-fem") return null;
-    var row = ((sp.populate || {})[grp] || {})[ln.element] || {};
-    var b = parseInt(row.band, 10);
-    if (b === 1 || b === 2 || b === 3) return b;
-    return bandOf(row.LO_frequency);
-  }
-
-  function outputTimingPlan(sp) {
-    var bands = [], tofShift = 0, flux = [];
-    sp.lines.forEach(function (ln) {
-      var b = lineMwBand(sp, ln);
-      if (b) bands.push({ line: ln, band: b });
-      if ((ln.line === "flux" || ln.line === "coupler")) flux.push(ln);
-    });
-    var target = null;
-    bands.forEach(function (x) {
-      var l = BAND_LATENCY_NS[x.band];
-      if (target === null || l > target) target = l;
-    });
-    var shifted = {};
-    bands.forEach(function (x) {
-      var s = target - BAND_LATENCY_NS[x.band];
-      if (s > 0) shifted[x.band] = s;
-      if (s > 0 && x.line.line === "resonator") tofShift += 1;
-    });
-    return { target: target, bands: bands, shifted: shifted, tofResonators: tofShift,
-             fluxOnLf: flux.filter(function (ln) { return lineOutFem(ln) === "lf-fem"; }),
-             flux: flux };
-  }
-
+  // The Review row "Output timing" states the build's RULE in words, never a
+  // prediction of numbers: the build (run_build _align_output_timing) works
+  // per port and per dedicated line, and the values it wrote are listed under
+  // the build result (outputTimingResultTable, from result.output_timing).
   function outputTimingReviewText(sp) {
-    var plan = outputTimingPlan(sp);
-    if (!plan.bands.length && !plan.flux.length) return null;
+    if (!(sp.lines || []).length) return null;
     if (state.mode === "regenerate") {
       return "Stored port delays and times of flight are kept. A chip that mixes band 2 with " +
         "bands 1 and 3 and holds 0 on its MW outputs is offered a 20 ns shift of the earlier " +
         "outputs before the build.";
     }
-    if (plan.flux.length && !plan.fluxOnLf.length && !plan.bands.length) {
-      return "The flux outputs are not LF-FEM outputs, so the delay rule does not apply: " +
-        "their delays are left as they are.";
+    return "The build aligns outputs in time: when MW band 2 and bands 1 / 3 are both in use, " +
+      "band 1 / 3 outputs get 20 ns and every flux port the band 2 value; otherwise nothing " +
+      "is added. The values written are listed after the build.";
+  }
+
+  // What the build or Re-generate wrote, read from the built chip by the
+  // server (core/output_timing.py summary): one kit table, or null.
+  function outputTimingResultTable(t) {
+    if (!t || (!(t.mw || []).length && !(t.flux || []).length)) return null;
+    var wrap = document.createElement("div");
+    var head = document.createElement("p");
+    head.textContent = "Output timing written:";
+    wrap.appendChild(head);
+    var table = document.createElement("table");
+    table.className = "ui-table";
+    var tr = document.createElement("tr");
+    ["Output", "Port", "Delay (ns)"].forEach(function (h) {
+      var th = document.createElement("th");
+      th.className = "ui-table-head";
+      th.textContent = h;
+      tr.appendChild(th);
+    });
+    table.appendChild(tr);
+    function row(kind, label, delay) {
+      var r = document.createElement("tr");
+      [kind, label, delay].forEach(function (v, i) {
+        var td = document.createElement("td");
+        td.className = "ui-table-cell" + (i === 2 ? " ui-table-num" : "");
+        td.textContent = String(v);
+        r.appendChild(td);
+      });
+      table.appendChild(r);
     }
-    var fluxText = plan.fluxOnLf.length ? "flux ports " + plan.target + " ns" :
-      "no LF-FEM flux ports";
-    if (plan.target === null) {
-      return "No MW output band is known yet: each coupler port takes its pair's flux delay.";
-    }
-    var used = {};
-    plan.bands.forEach(function (x) { used[x.band] = 1; });
-    var list = Object.keys(used).sort();
-    var early = Object.keys(plan.shifted).sort();
-    if (!early.length) {
-      var cls = used[2] ? "band 2" : "bands 1 and 3";
-      return "All MW outputs are in " + cls + ": " + fluxText + ".";
-    }
-    var tof = plan.tofResonators ? "; time of flight +20 ns on " + plan.tofResonators +
-      " resonator" + (plan.tofResonators === 1 ? "" : "s") : "";
-    function and(xs) { return xs.join(", ").replace(/, ([^,]*)$/, " and $1"); }
-    return "MW bands " + and(list) + " are in use: band " + and(early) +
-      " outputs get 20 ns so every MW output leaves together; " + fluxText + tof + ".";
+    (t.mw || []).forEach(function (m) {
+      row("MW" + (m.band != null ? " band " + m.band : ""), m.label, m.delay);
+    });
+    (t.flux || []).forEach(function (f) { row("Flux " + f.of, f.label, f.delay); });
+    wrap.appendChild(table);
+    (t.tof || []).forEach(function (x) {
+      var p = document.createElement("p");
+      p.className = "ui-note";
+      p.textContent = x.moved
+        ? x.qubit + ": time of flight moved by " + x.shift + " ns with its readout output (now " +
+          x.value + " ns)."
+        : x.qubit + ": time of flight left as typed (" + x.value + " ns); its readout output is " +
+          "delayed by " + x.shift + " ns: measure time of flight again.";
+      wrap.appendChild(p);
+    });
+    return wrap;
   }
 
   function femTypeAt(con, slot) {
@@ -11560,12 +11536,16 @@
         msg.className = "gen-build-warn-line";
       }
       el.appendChild(msg);
+      var timingTable = outputTimingResultTable(r.output_timing);
       (r.warnings || []).forEach(function (w) {
+        // the typed time-of-flight sentence is said once, beside the table
+        if (timingTable && / time of flight left as typed /.test(w)) return;
         var wel = document.createElement("p");
         wel.className = "gen-build-warn-line";
         wel.textContent = "⚠ " + w;
         el.appendChild(wel);
       });
+      if (timingTable) el.appendChild(timingTable);
       if (cellErrs.length) {
         var cel = document.createElement("p");
         cel.className = "gen-build-warn-line gen-build-cell-errs";
@@ -12319,7 +12299,7 @@
         shiftLines.forEach(function (t) {
           var line = document.createElement("p");
           line.className = "gen-build-warn-line";
-          line.textContent = "• " + t + ".";
+          line.textContent = "\u2022 " + t + ".";
           el.appendChild(line);
         });
         answerButtons([["shift", "Shift them by 20 ns", "btn-sm", "gen-mw-shift-shift", "gen-mw-shift"],
@@ -14141,6 +14121,7 @@
       specWithCoBands: specWithCoBands,   // docs/301 F33
       outputTimingReviewText: outputTimingReviewText,
       showBuildConfirm: showBuildConfirm,
+      outputTimingResultTable: outputTimingResultTable,
       coupledBandBlockers: coupledBandBlockers,   // G1
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
