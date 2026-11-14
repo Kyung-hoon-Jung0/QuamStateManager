@@ -1873,3 +1873,18 @@ def test_macro_fields_on_a_known_class_are_refused():
     res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=cgb.CZ_GATE,
                    pulses=_square(), macro_fields={"mode": "x"})
     assert "error" in res and any("no gate settings" in r for r in res["refusals"])
+
+
+def test_a_whole_number_for_a_float_field_stays_a_float():
+    s = _lab_chip()
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   pulses={"flux_pulse_control": {"fields": {"amplitude": 1, "length": 48}}})
+    pulse = dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["flux_pulse_control"]
+    assert pulse["amplitude"] == 1.0 and isinstance(pulse["amplitude"], float)
+    assert pulse["length"] == 48 and isinstance(pulse["length"], int)
+    s = _lab_with_settings()
+    s["qubit_pairs"]["q1-2"]["macros"]["cz_tf"]["neg_offset_v"] = 0.0
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE, macro_fields={"neg_offset_v": 0.01})
+    assert dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"] == 0.01
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE, macro_fields={"neg_offset_v": 2})
+    assert isinstance(dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]["neg_offset_v"], float)

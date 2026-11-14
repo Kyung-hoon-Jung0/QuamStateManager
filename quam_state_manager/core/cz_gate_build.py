@@ -594,7 +594,7 @@ def _layer(defaults: dict, given: dict, copy_src: dict | None,
     for k, v in given.items():
         if k == "id":
             continue
-        pulse[k] = copy.deepcopy(v)
+        pulse[k] = keep_float(defaults.get(k), copy.deepcopy(v))
         prov[k] = GIVEN
     pulse.pop("id", None)
     pulse["__class__"] = qclass
@@ -1334,6 +1334,14 @@ def default_model(merged: dict, pair_id: str, gate_class: str) -> tuple[str, str
     return cands[0] if cands else None
 
 
+def keep_float(old: Any, new: Any) -> Any:
+    """A whole number given for a field that holds a float stays a float
+    (JSON cannot tell 1 from 1.0, so the dialog's 1 arrives as an int)."""
+    if isinstance(old, float) and isinstance(new, int) and not isinstance(new, bool):
+        return float(new)
+    return new
+
+
 def _apply_macro_fields(macro: dict, kept: dict, model: dict, pulse_keys,
                         reset: list, macro_fields: dict | None, reasons: list) -> None:
     """The person's values for the gate's own settings (copied layout only).
@@ -1355,7 +1363,7 @@ def _apply_macro_fields(macro: dict, kept: dict, model: dict, pulse_keys,
         if why:
             reasons.append(why)
             continue
-        macro[k] = copy.deepcopy(v)
+        macro[k] = keep_float(model[k], copy.deepcopy(v))
         kept[k] = GIVEN
 
 
