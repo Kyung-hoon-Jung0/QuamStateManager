@@ -175,7 +175,7 @@ def test_poll_conflict_names_the_file_content_it_is_about(client):
 
 
 @pytest.mark.parametrize("lost", ["reset", "evicted"])
-def test_unknown_region_base_is_a_reload_409(client, lost):
+def test_unknown_region_base_is_a_hand_edit_409(client, lost):
     p = _new(client)
     outside = p["text"].replace("0.1", "0.4").encode()
     with open(p["path"], "wb") as f:
@@ -190,7 +190,7 @@ def test_unknown_region_base_is_a_reload_409(client, lost):
         "keep": "sm", "file_sha": D.sha256_bytes(outside)})
     j = r.get_json()
     assert r.status_code == 409 and j["base_unknown"]
-    assert "no longer known" in j["error"] and "Reload" in j["error"]
+    assert "no longer known" in j["error"] and "Edit the template lines by hand" in j["error"]
     assert "conflict" not in j and "region" not in j
     assert open(p["path"], "rb").read() == outside
 

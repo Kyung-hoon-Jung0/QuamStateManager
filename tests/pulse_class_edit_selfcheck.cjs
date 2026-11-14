@@ -404,14 +404,28 @@ function outsideEdit(fields, formula) {
   ok(calls.length === i0, "merge conflict: polling stays paused while the question is open");
   closeDialog();
 
-  // F2: an expired base is an error with a reload instruction, not the same question again.
+  // F2: an expired base names the hand-edit control and ends the question.
   answer("/pulse-class/save", 409, { ok: false, conflict: c1 });
   await win.PulseClassEdit._save(); await flush();
-  const unknown = "The template base is no longer known. Reload the draft to compare before saving.";
+  const unknown = "The template base is no longer known. To save these lines, press \"Edit the template lines by hand\" first, then Save draft.";
+  const watchSource = read("quam_state_manager/core/pulse_class_watch.py");
+  const unknownReply = /"error": "(The template base is no longer known\.[^\n]*)"\s*\n\s*"((?:\\.|[^"\\])*)"/.exec(watchSource);
+  ok(unknownReply && unknownReply[1] + JSON.parse('"' + unknownReply[2] + '"') === unknown &&
+    $("[data-pce-unlock]").textContent.trim() === "Edit the template lines by hand",
+    "unknown base: server message names the page's hand-edit control");
   answer("/pulse-class/save", 409, { ok: false, base_unknown: true, error: unknown });
   clickChoice("Keep the SM editor"); await flush();
   ok(!dialogOpen() && $("[data-pce-error]").textContent === unknown && cm.getDoc() === refusedText,
     "F2: unknown base does not reopen the conflict dialog or discard typing");
+  ok($("[data-pce-status]").textContent === unknown,
+    "unknown base: status shows the instruction for the existing control");
+  answer("/pulse-class/form", 409, { ok: false, conflict: c1 });
+  await win.PulseClassEdit._applyForm(true); await flush();
+  answer("/pulse-class/form", 409, { ok: false, base_unknown: true, error: unknown });
+  ok(clickChoice("Keep the SM editor"), "unknown base: the form offers its conflict choice");
+  await flush();
+  ok(!dialogOpen() && $("[data-pce-error]").textContent === unknown && cm.getDoc() === refusedText,
+    "F2 form: unknown base ends the dialog, shows the instruction, and keeps typing");
 
   // Merge seam: overwrite confirmation may move repeatedly; target is the asked path.
   const targetBox = $("[data-pce-target]"), firstConfirm = confirm("target-one"), nextConfirm = confirm("target-two");

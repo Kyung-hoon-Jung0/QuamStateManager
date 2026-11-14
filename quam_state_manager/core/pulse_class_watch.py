@@ -259,9 +259,10 @@ def save_from_pane(instance, scope, class_name, text: str, base_sha: str | None,
         base_text = w.known.get(base_sha) if base_sha else None
         if base_text is None and disk is not None and disk_sha == base_sha:
             base_text = disk.decode("utf-8", errors="replace")
-        if base_text is None:
+        if base_text is None and disk is not None:
             return {"ok": False, "base_unknown": True,
-                    "error": "The template base is no longer known. Reload the draft to compare before saving."}
+                    "error": "The template base is no longer known. To save these lines, press "
+                             "\"Edit the template lines by hand\" first, then Save draft."}
         why = region_change(base_text, text) if base_text is not None else None
         if why:
             return {"ok": False, "error": why, "region": True}

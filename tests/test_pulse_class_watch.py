@@ -270,6 +270,45 @@ def test_pane_save_outside_the_region_keeps_the_region_bytes(inst):
     assert data[a:b] == src[a:b] and data == mine
 
 
+@pytest.mark.parametrize("missing", [True, False], ids=["missing-file-200", "existing-file-409"])
+def test_unknown_base_after_restart_respects_file_presence(inst, monkeypatch, missing):
+    from flask import Flask
+    from quam_state_manager.web import pulse_class_page as P
+
+    src, base = _draft(inst)
+    path = D.draft_path(inst, "c", "FlatPulse")
+    mine = src + "\n# helper from the pane\n"
+    outside = T.render(_spec(0.4)).encode()
+    if missing:
+        path.unlink()
+    else:
+        path.write_bytes(outside)
+    W._WATCHES.clear()  # Restart loses the pane's base, even if a poll adopts the disk.
+    monkeypatch.setattr(P, "_inst", lambda: inst)
+    monkeypatch.setattr(P, "_scope", lambda: "c")
+    app = Flask(__name__)
+    app.add_url_rule("/pulse-class/save", view_func=P.pulse_class_save, methods=["POST"])
+    client = app.test_client()
+    body = {"cls": "FlatPulse", "text": mine, "base_sha": base}
+    if not missing:
+        conflict = client.post("/pulse-class/save", json=body)
+        assert conflict.status_code == 409
+        body.update(keep="sm", file_sha=conflict.get_json()["conflict"]["file_sha"])
+    response = client.post("/pulse-class/save", json=body)
+    result = response.get_json()
+    if missing:
+        assert response.status_code == 200
+        assert result["ok"] and result["text"] == mine
+        assert path.read_bytes() == mine.encode()
+    else:
+        assert response.status_code == 409
+        assert not result["ok"] and result["base_unknown"] and "conflict" not in result
+        assert result["error"] == (
+            "The template base is no longer known. To save these lines, press "
+            "\"Edit the template lines by hand\" first, then Save draft.")
+        assert path.read_bytes() == outside
+
+
 def test_save_to_file_refuses_a_relative_path_and_stores_absolute(inst, tmp_path, monkeypatch):
     _draft(inst)
     _previewed(inst)
