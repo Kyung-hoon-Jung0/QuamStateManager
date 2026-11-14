@@ -483,7 +483,7 @@ class TestOutputTimingProvenance:
         warns = self.mod._align_output_timing(m)
         assert stuck.delay == 0
         assert [q.resonator.time_of_flight for q in m.qubits.values()] == [32, 32]
-        assert any("output timing not set on" in w for w in warns)
+        assert any("output timing could not set the delay of" in w for w in warns)
 
     def test_an_lf_output_of_another_kind_gets_the_target(self):
         m = _chip([2, 1], ro_band=1)
@@ -503,3 +503,82 @@ class TestOutputTimingProvenance:
         assert {p.band for p in self.mod._mw_output_ports(m)} == {1}
         self.mod._align_output_timing(m)
         assert [p.delay for p in m.ports.mw_outputs["con1"][1].values()] == [0, 0, 0, 0]
+
+
+class _StuckTof(types.SimpleNamespace):
+    """A resonator whose time of flight cannot be written."""
+
+    def __setattr__(self, name, value):
+        if name == "time_of_flight" and "time_of_flight" in self.__dict__:
+            raise ValueError("read only")
+        super().__setattr__(name, value)
+
+
+class TestReadoutOutputTiming:
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    def test_an_lf_readout_keeps_the_time_of_flight_on_the_4_ns_grid(self):
+        m = _chip([2, 2], ro_band=2, tof=28)
+        lf_ro = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=5)
+        m.ports.analog_outputs = {"con1": {2: {5: lf_ro}}}
+        for q in m.qubits.values():
+            q.resonator.opx_output = lf_ro
+        warns = self.mod._align_output_timing(m)
+        assert lf_ro.delay == 160
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [188, 188]
+        assert any("4 ns time of flight grid" in w and "160 ns (asked 161)" in w for w in warns)
+        # a second run moves nothing
+        assert self.mod._align_output_timing(m) == [w for w in warns if "grid" in w]
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [188, 188]
+
+    def test_an_mw_readout_is_not_rounded(self):
+        m = _chip([2, 2], ro_band=3)
+        warns = self.mod._align_output_timing(m)
+        assert m.ports.mw_outputs["con1"][1][8].delay == 20
+        assert not any("grid" in w for w in warns)
+
+    def test_a_failed_time_of_flight_puts_the_delay_back(self):
+        m = _chip([2, 2], ro_band=3)
+        m.qubits["q2"].resonator = _StuckTof(opx_output=m.qubits["q1"].resonator.opx_output,
+                                             time_of_flight=32)
+        warns = self.mod._align_output_timing(m)
+        ro = m.ports.mw_outputs["con1"][1][8]
+        assert ro.delay == 0
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [32, 32]
+        assert any("the time of flight of q2, so the delay of" in w and "stays 0 ns" in w
+                   for w in warns), warns
+        # repaired by the next run once the time of flight can be written
+        m.qubits["q2"].resonator = _ns(opx_output=ro, time_of_flight=32)
+        assert self.mod._align_output_timing(m) == []
+        assert ro.delay == 20
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [52, 52]
+
+    def test_a_default_given_as_text_is_a_default(self):
+        spec = {"populate": {"options": {"tof_defaults": {"q1": "28"}},
+                             "resonator": {"q1": {"time_of_flight": 28}}}}
+        assert self.mod._tof_provenance(spec) == (set(), set())
+        spec["populate"]["resonator"]["q1"]["time_of_flight"] = 300
+        assert self.mod._tof_provenance(spec) == ({"q1"}, set())
+
+    def test_one_physical_port_reached_twice_is_one_output(self):
+        m = _chip([2, 1], ro_band=2)
+        z_a = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=1)
+        z_b = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=2, port_id=1)
+        m.ports.analog_outputs = {"con1": {2: {1: z_a}}}
+        m.qubits["q1"].z.opx_output = z_b
+        ports = self.mod._lf_output_ports(m)
+        assert sum(1 for p in ports if getattr(p, "port_id", None) == 1) == 1
+        assert self.mod._output_key(z_a) == self.mod._output_key(z_b)
+
+    def test_a_rebuild_whose_merge_carries_the_source_says_nothing_of_its_own(self):
+        from quam_state_manager.core import regenerate
+        spec = {"populate": {"resonator": {"q1": {"time_of_flight": 300},
+                                           "q2": {"time_of_flight": 300}}}}
+        build = regenerate._build_spec(spec)
+        assert "options" not in spec["populate"]
+        m = _chip([2, 2], ro_band=3, tof=300)
+        assert self.mod._align_output_timing(m, build) == []
+        assert [q.resonator.time_of_flight for q in m.qubits.values()] == [300, 300]
+        m = _chip([2, 2], ro_band=3, tof=300)
+        assert self.mod._align_output_timing(m, spec)

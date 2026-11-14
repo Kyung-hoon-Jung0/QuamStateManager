@@ -95,6 +95,9 @@ def _owners(state: dict, doc: dict) -> dict:
                         out.setdefault(path, where)
                 else:
                     walk(v, where + [str(k)])
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, where + [str(i)])
 
     for top, node in (state or {}).items():
         if top not in ("ports", "wiring") and isinstance(node, dict):
@@ -103,8 +106,20 @@ def _owners(state: dict, doc: dict) -> dict:
     return {p: "/".join(w) for p, w in out.items()}
 
 
+def _readout_delays(state: dict, wiring: dict) -> dict:
+    """``{qubit: (readout output delay, time of flight)}`` of a chip."""
+    doc, out = _doc(state, wiring), {}
+    for qid, q in ((state or {}).get("qubits") or {}).items():
+        rr = q.get("resonator") if isinstance(q, dict) else None
+        if isinstance(rr, dict):
+            _, port = _resolve(doc, rr.get("opx_output"))
+            d = (port.get("delay") or 0) if isinstance(port, dict) else None
+            out[qid] = (d, rr.get("time_of_flight"))
+    return out
+
+
 def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
-            tof_unrecorded=()) -> dict | None:
+            tof_unrecorded=(), source=None) -> dict | None:
     """The output timing written on a chip, or ``None`` when it has no MW output
     and no LF output in use. Never raises.
 
@@ -119,9 +134,14 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
     ``tof_typed`` (kept as the user set it, ``moved`` False) and
     ``tof_unrecorded`` (no record of its source: counted in
     ``tof_unrecorded``, one grouped line, not listed per qubit). A
-    Re-generate passes ``tof_moved``, the qubits it moved: only those are
-    listed, and a delay that was already stored is counted in
-    ``tof_unchanged`` (one quiet line: timing was already aligned)."""
+    Re-generate passes ``tof_moved``, the qubits it moved, and ``source``, the
+    source chip's ``(state, wiring)``: the moved ones are listed; a resonator
+    whose readout output delay is the source chip's is counted in
+    ``tof_unchanged``; one whose delay differs from the source chip (or that
+    the source chip does not have) and was not moved is counted in
+    ``tof_check`` (its time of flight must be measured again). Without
+    ``source`` every unmoved resonator is in ``tof_check``: nothing says its
+    delay was already there."""
     try:
         doc = _doc(state, wiring)
         mw = [{"port": p, "label": port_label(v, p), "band": v.get("band"),
@@ -148,8 +168,9 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             f.pop("_rank")
         delay_of = {m["port"]: m["delay"] for m in mw}
         delay_of.update({f["port"]: f["delay"] for f in flux})
-        tof, unrecorded, unchanged = [], [], []
+        tof, unrecorded, unchanged, check = [], [], [], []
         typed, unrec = set(tof_typed or ()), set(tof_unrecorded or ())
+        before = _readout_delays(*source) if source else {}
         for qid, q in ((state or {}).get("qubits") or {}).items():
             rr = q.get("resonator") if isinstance(q, dict) else None
             if not isinstance(rr, dict):
@@ -162,8 +183,10 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             if tof_moved is not None:
                 if qid in set(tof_moved):
                     tof.append({**entry, "moved": True})
-                else:
+                elif qid in before and before[qid][0] == s:
                     unchanged.append(qid)
+                else:
+                    check.append(qid)
             elif qid in unrec:
                 unrecorded.append(qid)
             else:
@@ -175,6 +198,8 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             out["tof_unrecorded"] = unrecorded
         if unchanged:
             out["tof_unchanged"] = unchanged
+        if check:
+            out["tof_check"] = check
         if mw and flux:
             out["note"] = LATENCY_NOTE
         return out
@@ -193,14 +218,15 @@ def typed_tof(spec: dict | None) -> set[str]:
     return tof_provenance(spec)[0]
 
 
-def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, spec=None) -> None:
+def annotate(outcome: dict, state: dict, wiring: dict, tof_moved=None, spec=None,
+             source=None) -> None:
     """Put :func:`summary` on ``outcome["result"]["output_timing"]``; a fresh
     build passes its ``spec`` (who set each time of flight), a Re-generate
-    passes ``tof_moved``."""
+    passes ``tof_moved`` and the source chip's ``(state, wiring)``."""
     res = outcome.get("result") if isinstance(outcome, dict) else None
     if isinstance(res, dict):
         typed, unrec = tof_provenance(spec) if tof_moved is None else (set(), set())
         summ = summary(state, wiring, tof_moved=tof_moved, tof_typed=typed,
-                       tof_unrecorded=unrec)
+                       tof_unrecorded=unrec, source=source)
         if summ is not None:
             res["output_timing"] = summ

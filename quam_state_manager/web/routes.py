@@ -51535,7 +51535,9 @@ def regenerate_build():
                 from quam_state_manager.core import output_timing
                 output_timing.annotate(
                     outcome, *safe_io.read_state_wiring(Path(output_path)),
-                    tof_moved=[i["qubit"] for i in (_plan or {}).get("tof", [])])
+                    tof_moved=[i["qubit"] for i in (_plan or {}).get("tof", [])],
+                    source=(tuple(unsaved[:2]) if unsaved
+                            else safe_io.read_state_wiring(src_p)))
             except (OSError, ValueError) as exc:
                 logger.warning("output timing summary skipped: %s", exc)
             if note:

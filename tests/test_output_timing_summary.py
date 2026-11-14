@@ -18,8 +18,9 @@ def test_a_delayed_readout_lists_each_resonator_and_a_typed_one_as_typed():
     s = output_timing.summary(state, wiring, tof_typed={"q2"})
     assert s["tof"] == [{"qubit": "q1", "shift": 20, "value": 32, "moved": True},
                         {"qubit": "q2", "shift": 20, "value": 32, "moved": False}]
+    # a Re-generate with no source to compare: nothing says the delay was there before
     s = output_timing.summary(state, wiring, tof_moved=[])
-    assert s["tof"] == [] and s["tof_unchanged"] == ["q1", "q2"]
+    assert s["tof"] == [] and s["tof_check"] == ["q1", "q2"] and "tof_unchanged" not in s
     s = output_timing.summary(state, wiring, tof_unrecorded={"q1", "q2"})
     assert s["tof"] == [] and s["tof_unrecorded"] == ["q1", "q2"]
 
@@ -63,3 +64,27 @@ def test_typed_tof_is_the_build_rule():
         assert (typed, unrec) == mod._tof_provenance(spec)
         assert typed | unrec == mod._user_set_tof(spec)
     assert output_timing.summary(*_chip())["note"] == output_timing.LATENCY_NOTE
+
+
+def test_regenerate_compares_the_readout_delay_with_the_source_chip():
+    import copy
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3)
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    src = copy.deepcopy((state, wiring))
+    s = output_timing.summary(state, wiring, tof_moved=[], source=src)
+    assert s["tof_unchanged"] == ["q1", "q2"] and "tof_check" not in s
+    src[0]["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 0
+    del src[0]["qubits"]["q2"]
+    s = output_timing.summary(state, wiring, tof_moved=["q1"], source=src)
+    assert [t["qubit"] for t in s["tof"]] == ["q1"] and s["tof_check"] == ["q2"]
+    assert "tof_unchanged" not in s
+
+
+def test_an_output_used_only_from_a_list_names_its_element():
+    state, wiring = _chip()
+    state["ports"]["analog_outputs"]["con1"]["3"]["5"] = {
+        "controller_id": "con1", "fem_id": 3, "port_id": 5, "delay": 0}
+    state["extras"] = {"pump": {"lines": [{"opx_output": "#/ports/analog_outputs/con1/3/5"}]}}
+    s = output_timing.summary(state, wiring)
+    row = [f for f in s["flux"] if f["port"] == "ports/analog_outputs/con1/3/5"]
+    assert row and row[0]["of"] == "pump/lines/0" and row[0]["kind"] == "lf", s["flux"]

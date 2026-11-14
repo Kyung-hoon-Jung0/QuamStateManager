@@ -259,3 +259,22 @@ def test_hand_set_delays_name_the_new_ports_starting_values():
     assert regenerate.hand_set_time_base_note(old, merged, wiring2) is None
     old["ports"]["mw_outputs"]["con1"]["1"]["2"]["delay"] = 0
     assert regenerate.hand_set_time_base_note(old, merged, wiring2) is None
+
+
+def test_the_result_compares_readout_timing_with_the_source_chip(tmp_path, monkeypatch):
+    state, wiring = _chip(xy_bands=(2, 2), ro_band=3, tof=52)
+    state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 20
+    client, body = _route(tmp_path, monkeypatch, (state, wiring))
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True, res
+    t = res["result"]["output_timing"]
+    assert t["tof_unchanged"] == ["q1", "q2"] and "tof_check" not in t
+    # the source chip had no readout delay: the rebuilt chip's 20 ns is new
+    src_state = json.loads((tmp_path / "src" / "state.json").read_text(encoding="utf-8"))
+    src_state["ports"]["mw_outputs"]["con1"]["1"]["8"]["delay"] = 0
+    (tmp_path / "src" / "state.json").write_text(json.dumps(src_state), encoding="utf-8")
+    body["force"], body["mw_shift_ack"] = True, "keep"
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True, res
+    t = res["result"]["output_timing"]
+    assert t.get("tof_check") == ["q1", "q2"] and "tof_unchanged" not in t, t

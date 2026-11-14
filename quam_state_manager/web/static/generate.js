@@ -5085,7 +5085,14 @@
         "output is delayed: measure time of flight again.");
     }
     if ((t.tof_unchanged || []).length) {
-      quiet("Readout output delays were already set on this chip; time of flight not changed.");
+      quiet("Readout output delays are the same as on the source chip, so no time of flight " +
+        "moved: " + t.tof_unchanged.join(", ") + ".");
+    }
+    if ((t.tof_check || []).length) {
+      var oneC = t.tof_check.length === 1;
+      quiet("The readout output delay of " + t.tof_check.join(", ") + " differs from the source " +
+        "chip and " + (oneC ? "its" : "their") + " time of flight was not moved: measure time " +
+        "of flight again.");
     }
     if (t.note) quiet(t.note);
     return wrap;

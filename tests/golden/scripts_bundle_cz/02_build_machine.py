@@ -569,7 +569,7 @@ def _tof_provenance(spec):
     for qid, v in (pop.get("resonator") or {}).items():
         if not isinstance(v, dict) or "time_of_flight" not in v:
             continue
-        if qid in defaults and defaults[qid] == v["time_of_flight"]:
+        if qid in defaults and _same_number(defaults[qid], v["time_of_flight"]):
             continue
         (unrecorded if old is None or qid in old else typed).add(qid)
     return typed, unrecorded
@@ -585,16 +585,47 @@ def _lf_output_ports(machine):
     other kind: a drive, a readout, a TWPA pump on an LF output), plus the z
     and coupler outputs reached through the elements (a machine without a
     ports container), each once."""
-    found = {id(p): p for p in _ports_in_use(machine, "analog_outputs") if _is_lf_output(p)}
+    found = {_output_key(p): p for p in _ports_in_use(machine, "analog_outputs")
+             if _is_lf_output(p)}
     for q in (getattr(machine, "qubits", None) or {}).values():
         p = getattr(getattr(q, "z", None), "opx_output", None)
         if _is_lf_output(p):
-            found.setdefault(id(p), p)
+            found.setdefault(_output_key(p), p)
     for pair in (getattr(machine, "qubit_pairs", None) or {}).values():
         p = getattr(getattr(pair, "coupler", None), "opx_output", None)
         if _is_lf_output(p):
-            found.setdefault(id(p), p)
+            found.setdefault(_output_key(p), p)
     return list(found.values())
+
+def _same_number(a, b):
+    """``a == b``, a number and its text form counting as equal ("200" and
+    200: a form cell may hold either)."""
+    if a == b:
+        return True
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
+
+def _output_key(port):
+    """One key per physical output: ``(kind, controller, slot, port)`` when the
+    port names them, else the object itself. Two objects for one port (a
+    container entry and an element's reference) share the key."""
+    ids = tuple(getattr(port, a, None) for a in ("controller_id", "fem_id", "port_id"))
+    if ids[0] is None or ids[2] is None:
+        return ("object", id(port))
+    return (type(port).__name__,) + ids
+
+def _readout_delay(value, old):
+    """The delay a readout output gets when the time base asks ``value``: the
+    nearest value whose change from ``old`` is a multiple of 4 ns, so the time
+    of flight that moves by that change stays on the 4 ns grid [derived: the
+    acquisition starts on the 4 ns clock; QM config time values "are required
+    to be divisible by 4" for some fields, docs Introduction/config.md line 93;
+    the time of flight is not named there, so the grid is a precaution].
+    A 0 / 20 ns change (an MW readout) is returned as asked; an LF readout
+    asked for 141 or 161 ns gets 140 or 160 ns, 1 ns off the other outputs."""
+    return old + 4 * int(round((value - old) / 4.0))
 
 def _align_output_timing(machine, spec=None):
     """Put every output of a generated chip on one time base.
@@ -608,10 +639,16 @@ def _align_output_timing(machine, spec=None):
     - a resonator whose readout output's delay really changed by ``ds`` gets
       its time of flight moved by ``ds`` [derived; simulator check in the
       build notes]: the pulse leaves ``ds`` later in program time, so the
-      acquisition starts ``ds`` later. A delay that could not be set moves
-      nothing and is named. A time of flight the user set stays as set and
-      one warning names those qubits; values with no record of their source
-      (``_tof_provenance``) stay too, under one grouped line.
+      acquisition starts ``ds`` later. A readout output's delay is kept on
+      the 4 ns time of flight grid (``_readout_delay``), for LF and MW alike.
+      A delay that could not be set moves nothing and is named; a time of
+      flight that could not be moved puts its port's delay back, so the next
+      call repairs it. A time of flight the user set stays as set and one
+      warning names those qubits; values with no record of their source
+      (``_tof_provenance``) stay too, under one grouped line. A Re-generate
+      (``tof_follows_source``) gets the source chip's values from the merge,
+      so neither line is written then.
+    A physical port reached twice (``_output_key``) is set once.
     Idempotent: the time of flight moves by the change of its readout port's
     delay in this call (``new - old``), so a second call moves nothing.
     A chip with no MW output of known band keeps the per-pair coupler rule
@@ -622,15 +659,52 @@ def _align_output_timing(machine, spec=None):
     if target is None:
         return _align_coupler_delays(machine)
     typed, unrecorded = _tof_provenance(spec)
-    moved, failed = {}, []
+    carried = bool(((spec or {}).get("populate") or {}).get("options", {}).get(
+        "tof_follows_source"))
+    qubits = getattr(machine, "qubits", None) or {}
+    readers = {}   # readout port key -> [(qid, resonator)]
+    for qid, q in qubits.items():
+        rr = getattr(q, "resonator", None)
+        if rr is not None and getattr(rr, "opx_output", None) is not None:
+            readers.setdefault(_output_key(rr.opx_output), []).append((qid, rr))
+    moved, failed, rounded, done = {}, [], [], set()
 
     def assign(port, value):
+        key = _output_key(port)
+        if key in done:          # one physical port, reached twice
+            return
+        done.add(key)
         old = getattr(port, "delay", 0)
         old = old if isinstance(old, (int, float)) and not isinstance(old, bool) else 0
-        if _set_delay(port, value) or getattr(port, "delay", None) == value:
-            moved[id(port)] = value - old
-        else:
-            failed.append(f"{_out_label(port)} (asked {value:g} ns, kept {old:g} ns)")
+        if key in readers:
+            asked, value = value, _readout_delay(value, old)
+            if value != asked:
+                rounded.append(f"{_out_label(port)} {value:g} ns (asked {asked:g})")
+        if not (_set_delay(port, value) or getattr(port, "delay", None) == value):
+            failed.append(f"the delay of {_out_label(port)} (asked {value:g} ns, "
+                          f"kept {old:g} ns)")
+            return
+        ds = value - old
+        if not ds:
+            return
+        # the time of flight moves with the delay, or the delay goes back:
+        # never a new delay beside an old time of flight
+        undo = []
+        for qid, rr in readers.get(key, ()):
+            tof = getattr(rr, "time_of_flight", None)
+            if tof is None or qid in unrecorded or qid in typed:
+                continue
+            try:
+                rr.time_of_flight = tof + ds
+                undo.append((rr, tof))
+            except (ValueError, TypeError):
+                for r, t in undo:
+                    r.time_of_flight = t
+                _set_delay(port, old)
+                failed.append(f"the time of flight of {qid}, so the delay of "
+                              f"{_out_label(port)} stays {old:g} ns (asked {value:g} ns)")
+                return
+        moved[key] = ds
 
     for p in mw:
         s = by_band.get(getattr(p, "band", None))
@@ -640,24 +714,20 @@ def _align_output_timing(machine, spec=None):
         if hasattr(p, "delay"):
             assign(p, target)
     warnings, kept, quiet = [], {}, []
-    for qid, q in (getattr(machine, "qubits", None) or {}).items():
+    for qid, q in qubits.items():
         rr = getattr(q, "resonator", None)
-        ds = moved.get(id(getattr(rr, "opx_output", None)), 0) if rr is not None else 0
-        tof = getattr(rr, "time_of_flight", None) if rr is not None else None
-        if not ds or tof is None:
+        ds = moved.get(_output_key(getattr(rr, "opx_output", None)), 0) if rr is not None else 0
+        if not ds or getattr(rr, "time_of_flight", None) is None or carried:
             continue
         if qid in unrecorded:
             quiet.append(qid)
         elif qid in typed:
             kept.setdefault(ds, []).append(qid)
-        else:
-            try:
-                rr.time_of_flight = tof + ds
-            except (ValueError, TypeError):
-                failed.append(f"time of flight of {qid}")
     if failed:
-        warnings.append("output timing not set on " + "; ".join(failed) +
-                        ": the time of flight of its readout stays as it was.")
+        warnings.append("output timing could not set " + "; ".join(failed) + ".")
+    if rounded:
+        warnings.append("readout output delay kept on the 4 ns time of flight grid: "
+                        + "; ".join(rounded) + ".")
     for ds, qids in sorted(kept.items()):
         warnings.append(
             f"time of flight left as you set it on {', '.join(qids)}; "
