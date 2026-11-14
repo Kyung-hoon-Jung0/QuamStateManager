@@ -18,6 +18,14 @@ from pathlib import Path
 import pytest
 
 
+class LFFEMAnalogOutputPort(types.SimpleNamespace):
+    """Stands for quam's LF-FEM output port (the delay rule keys on the class name)."""
+
+
+class MWFEMAnalogOutputPort(types.SimpleNamespace):
+    """Stands for an MW-FEM output port: the LF delay rule must not touch it."""
+
+
 _RUN_BUILD = Path(__file__).resolve().parent.parent / "quam_state_manager" / "generator" / "run_build.py"
 
 
@@ -101,51 +109,56 @@ class TestApplyLfDelay:
         self.mod = _load_helpers()
 
     def test_sets_delay_for_band1(self):
-        port = types.SimpleNamespace(delay=0)
+        port = LFFEMAnalogOutputPort(delay=0)
         self.mod._apply_lf_delay(port, 1)
         assert port.delay == 141
 
     def test_sets_delay_for_band2(self):
-        port = types.SimpleNamespace(delay=0)
+        port = LFFEMAnalogOutputPort(delay=0)
         self.mod._apply_lf_delay(port, 2)
         assert port.delay == 161
 
     def test_sets_delay_for_band3(self):
-        port = types.SimpleNamespace(delay=0)
+        port = LFFEMAnalogOutputPort(delay=0)
         self.mod._apply_lf_delay(port, 3)
         assert port.delay == 141
+
+    def test_noop_on_a_port_that_is_not_lf_fem(self):
+        port = MWFEMAnalogOutputPort(delay=0)
+        self.mod._apply_lf_delay(port, 2)
+        assert port.delay == 0
 
     def test_noop_when_port_is_none(self):
         # Should not raise.
         self.mod._apply_lf_delay(None, 1)
 
     def test_noop_when_band_is_none(self):
-        port = types.SimpleNamespace(delay=0)
+        port = LFFEMAnalogOutputPort(delay=0)
         self.mod._apply_lf_delay(port, None)
         assert port.delay == 0
 
     def test_noop_when_band_is_unknown(self):
-        port = types.SimpleNamespace(delay=0)
+        port = LFFEMAnalogOutputPort(delay=0)
         self.mod._apply_lf_delay(port, 99)
         assert port.delay == 0
 
     def test_noop_when_port_has_no_delay_attr(self):
         # Object lacks `delay` entirely → silently skipped.
-        port = types.SimpleNamespace(offset=0.0)
+        port = LFFEMAnalogOutputPort(offset=0.0)
         self.mod._apply_lf_delay(port, 1)
         assert not hasattr(port, "delay")
 
     def test_swallows_reference_assignment_error(self):
         # Some QUAM ports raise ValueError when assigning over a reference;
         # the helper must catch that.
-        class RefPort:
+        class LFFEMRefPort:
             @property
             def delay(self):
                 return 0
             @delay.setter
             def delay(self, _):
                 raise ValueError("reference write blocked")
-        port = RefPort()
+        port = LFFEMRefPort()
         # Should not raise.
         self.mod._apply_lf_delay(port, 2)
 
@@ -190,3 +203,83 @@ class TestBandOverride:
         ch = types.SimpleNamespace(opx_output=out, opx_input=None)
         self.mod._set_channel_band(ch, "3")          # strings never coerce here
         assert out.band is None
+
+
+class TestAlignCouplerDelays:
+    """A coupler LF-FEM output gets the delay of its pair's moving-qubit z output."""
+
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    @staticmethod
+    def _q(band, z_delay=None, z_kind=LFFEMAnalogOutputPort):
+        xy = types.SimpleNamespace(opx_output=MWFEMAnalogOutputPort(band=band))
+        z = (types.SimpleNamespace(opx_output=z_kind(delay=z_delay))
+             if z_delay is not None else None)
+        return types.SimpleNamespace(xy=xy, z=z)
+
+    @staticmethod
+    def _pair(qc, qt, moving="control", out=None):
+        out = out if out is not None else LFFEMAnalogOutputPort(delay=0)
+        return types.SimpleNamespace(qubit_control=qc, qubit_target=qt, moving_qubit=moving,
+                                     coupler=types.SimpleNamespace(opx_output=out))
+
+    def _run(self, *pairs):
+        m = types.SimpleNamespace(qubit_pairs={f"p{i}": p for i, p in enumerate(pairs)})
+        return self.mod._align_coupler_delays(m)
+
+    def test_moving_control_takes_control_z(self):
+        p = self._pair(self._q(2, 161), self._q(1, 141))
+        self._run(p)
+        assert p.coupler.opx_output.delay == 161
+
+    def test_moving_target_takes_target_z(self):
+        p = self._pair(self._q(2, 161), self._q(1, 141), moving="target")
+        self._run(p)
+        assert p.coupler.opx_output.delay == 141
+
+    def test_moving_unset_takes_control(self):
+        p = self._pair(self._q(2, 161), self._q(1, 141), moving=None)
+        self._run(p)
+        assert p.coupler.opx_output.delay == 161
+
+    def test_a_z_delay_of_zero_is_copied(self):
+        p = self._pair(self._q(2, 0), self._q(2, 161), out=LFFEMAnalogOutputPort(delay=99))
+        self._run(p)
+        assert p.coupler.opx_output.delay == 0
+
+    def test_no_z_line_takes_the_band_delay(self):
+        p = self._pair(self._q(2), self._q(1))
+        self._run(p)
+        assert p.coupler.opx_output.delay == self.mod._delay_for_band(2)
+
+    def test_a_coupler_on_a_non_lf_output_is_left_alone(self):
+        p = self._pair(self._q(2, 161), self._q(2, 161), out=MWFEMAnalogOutputPort(delay=7))
+        self._run(p)
+        assert p.coupler.opx_output.delay == 7
+
+    def test_a_shared_coupler_keeps_the_first_pair_and_warns(self):
+        shared = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=3, port_id=5)
+        a = self._pair(self._q(2, 161), self._q(2, 161), out=shared)
+        b = self._pair(self._q(1, 141), self._q(1, 141), out=shared)
+        warns = self._run(a, b)
+        assert shared.delay == 161
+        assert len(warns) == 1 and "161" in warns[0] and "141" in warns[0]
+        assert "con1 / slot 3 / port 5" in warns[0] and "p0" in warns[0] and "p1" in warns[0]
+
+    def test_pair_without_coupler_untouched(self):
+        p = types.SimpleNamespace(qubit_control=self._q(2, 161), qubit_target=self._q(2, 161),
+                                  moving_qubit="control", coupler=None)
+        assert self._run(p) == []
+        assert p.coupler is None
+
+    def test_no_pairs_is_noop(self):
+        assert self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={})) == []
+        assert self.mod._align_coupler_delays(types.SimpleNamespace()) == []
+
+    def test_build_aligns_after_the_band_fixup(self):
+        src = _RUN_BUILD.read_text(encoding="utf-8")
+        fix = src.index("        _fix_coupled_bands(machine, spec, warnings)\n")
+        call = src.index("        warnings.extend(_align_coupler_delays(machine))\n")
+        assert call > fix
+        assert src.count("_align_coupler_delays(machine))") == 1   # one call site

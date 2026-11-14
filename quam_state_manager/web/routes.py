@@ -51413,6 +51413,25 @@ def regenerate_build():
                               "its calibrated amplitudes keep their power."),
                 })
 
+        # An old wizard wrote 0 to coupler flux ports while the z ports carry
+        # the MW alignment delay; the merge keeps stored values, so ask once.
+        coupler_delay_ack = data.get("coupler_delay_ack")
+        if coupler_delay_ack not in (None, "set", "keep"):
+            return jsonify({"ok": False, "error": (
+                "The coupler delay answer must be \"set\" or \"keep\".")}), 400
+        if coupler_delay_ack is None:
+            try:
+                _old = unsaved[:2] if unsaved else safe_io.read_state_wiring(Path(source_folder))
+                _mismatch = regenerate.coupler_delay_mismatches(*_old, spec)
+            except (OSError, ValueError, TypeError, KeyError):
+                _mismatch = []
+            if _mismatch:
+                return jsonify({
+                    "ok": False, "needs_confirm": True, "confirm_kind": "coupler_delay",
+                    "coupler_delay": _mismatch,
+                    "error": regenerate.coupler_delay_offer_text(_mismatch),
+                })
+
         live_note = _regen_source_live_note(src_p)   # judged as the source is read
         outcome = regenerate.run_regenerate(
             python_path, source_folder, spec, Path(output_path), timeout=600,
@@ -51427,6 +51446,28 @@ def regenerate_build():
             scripts_enabled=scripts_enabled,
             qubit_sources=qubit_sources,
         )
+        # The accepted offer is written while the output is still claimed; a
+        # failure is reported in the build result, never as a bare 500.
+        if isinstance(outcome, dict) and outcome.get("ok"):
+            res = outcome.get("result")
+            if not isinstance(res, dict):
+                res = outcome["result"] = {}
+            note = None
+            if coupler_delay_ack == "keep":
+                note = "Coupler port delays left at 0 as chosen."
+            elif coupler_delay_ack == "set":
+                try:
+                    _set = regenerate.set_coupler_delays(output_path, spec)
+                    note = ("Coupler flux port delays set to their pair's flux port delay: " +
+                            "; ".join(f"{i['port_label']} ({', '.join(i['pairs'])}) "
+                                      f"{i['z_delay']:g} ns" for i in _set) + "."
+                            if _set else None)
+                except Exception as exc:   # noqa: BLE001 (reported, not raised)
+                    note = ("The chip was built, but the coupler delays could not be "
+                            f"set: {exc}")
+                    outcome["coupler_delay_error"] = str(exc)
+            if note:
+                res["warnings"] = list(res.get("warnings") or []) + [note]
     finally:
         _release_build_output(claim)
     if unsaved and isinstance(outcome, dict):
