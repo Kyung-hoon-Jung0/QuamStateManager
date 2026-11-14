@@ -615,6 +615,18 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
             f"The control or target of pair {pair_id} does not point at a qubit, "
             "so SM cannot name the gate's pulses. Set the pair's qubit_control "
             "and qubit_target first."])
+    if gate_class in GATE_CLASSES:
+        # Both classes SM builds align the channels of BOTH qubits of the pair
+        # when the gate runs, so a pair that names a qubit the chip does not
+        # have cannot run such a gate, whichever line the pulse plays on.
+        qubits = merged.get("qubits")
+        for role, q in (("control", control), ("target", target)):
+            if not (isinstance(qubits, dict) and isinstance(qubits.get(q), dict)):
+                return _refuse(reasons + [
+                    f"The {role} of pair {pair_id} points at the qubit {q}, which "
+                    "this chip does not have. A gate of this class uses both "
+                    f"qubits of the pair when it runs. Fix the pair's qubit_{role} "
+                    "first, or pick another pair."])
 
     copy_macro = None
     if copy_from is not None:
