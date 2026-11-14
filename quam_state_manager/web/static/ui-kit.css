@@ -1665,6 +1665,7 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 /* a zone clips its overflow, so as a flex item it would shrink and hide its fields: the column scrolls instead */
 .czg-form > *, .czg-evidence > * { flex-shrink: 0; }
 .czg-why-line { display: block; color: var(--ui-text-2); }
+.czg .ui-menu-trigger[aria-invalid="true"] { border-color: var(--ui-danger-text); }
 .czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
 .czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }

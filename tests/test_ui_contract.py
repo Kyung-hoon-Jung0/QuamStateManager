@@ -989,7 +989,7 @@ _STAGE6_SELECTORS = {
     '.czg-stale > :not([data-czg-lead])', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-row-acts',
-    '.czg .ui-segmented-opt',
+    '.czg .ui-segmented-opt', '.czg .ui-menu-trigger[aria-invalid="true"]',
     '.czg-form > *', '.czg-evidence > *',
     '.czg:not([data-czg-stacked]) .czg-cols', '.czg:not([data-czg-stacked]) .czg-cols::after',
     '.czg[data-czg-stacked] .czg-form::after', '.czg[data-czg-stacked] .czg-evidence::after',

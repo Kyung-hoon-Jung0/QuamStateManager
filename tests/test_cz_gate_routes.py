@@ -325,7 +325,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(133 assertions)" in r.stdout
+    assert "(151 assertions)" in r.stdout
 
 
 def test_headline_names_line_value_and_limit():
@@ -554,3 +554,66 @@ def test_two_creates_racing_on_one_token_create_once(chip, fake):
         t.join(30)
     assert sorted(codes) == [200, 409]
     assert list(chip.store.merged["qubit_pairs"]["q1-2"]["macros"]).count("cz_sq") == 1
+
+
+# ---------------------------------------------------------------- which class can run
+
+def _noflux(coupler=True):
+    s = _chip(4)
+    for q in s["qubits"].values():
+        q["z"] = None
+    if not coupler:
+        for p in s["qubit_pairs"].values():
+            p.pop("coupler", None)
+    return s
+
+
+def _dialog_data(c, pair="q1-2"):
+    html = c.get(f"/pulse/cz-gate/dialog?pair={pair}").get_data(as_text=True)
+    return json.loads(html.split('id="czg-data">', 1)[1].split("</script>", 1)[0])
+
+
+@pytest.mark.parametrize("coupler", [True, False])
+def test_no_flux_line_the_dialog_names_which_class_can_run(tmp_path, coupler):
+    a = App(tmp_path, _noflux(coupler))
+    fit = _dialog_data(a.c)["fit"]["q1-2"]
+    assert "no flux line" in fit[cgb.CZ_GATE]
+    if coupler:
+        assert fit[cgb.COUPLER_CZ_GATE] == ""
+    else:
+        assert "no coupler" in fit[cgb.COUPLER_CZ_GATE]
+
+
+def test_tunable_qubits_every_known_class_runs(chip):
+    fit = _dialog_data(chip.c)["fit"]
+    assert fit and all(v == "" for row in fit.values() for v in row.values())
+
+
+def test_a_lab_two_flux_class_is_never_refused_by_the_fit(tmp_path):
+    a = App(tmp_path, _lab_chip())
+    data = _dialog_data(a.c)
+    lab = [c["class"] for c in data["classes"] if c["layout"] == "copied" and c["available"]]
+    assert lab and all(data["fit"][p][c] == "" for p in data["fit"] for c in lab)
+
+
+def test_the_class_reason_is_named_as_about_the_class(tmp_path):
+    a = App(tmp_path, _noflux())
+    row = a.c.post(PLAN, json=_body(name="bad name")).get_json()["pairs"][0]
+    assert any("no flux line" in x for x in row["class_refusals"])
+    assert set(row["class_refusals"]) < set(row["refusals"])  # the old field still carries all
+    assert not any("no flux line" in x for x in set(row["refusals"]) - set(row["class_refusals"]))
+    r = a.c.post(PLAN, json=_body(cls=cgb.COUPLER_CZ_GATE, pulses={"coupler_flux_pulse": {
+        "class": SQUARE, "fields": {"length": 48, "amplitude": 0.1}}})).get_json()
+    assert r["pairs"][0]["ok"], r
+
+
+def test_no_class_given_is_about_the_class(chip):
+    row = chip.c.post(PLAN, json=_body(cls="")).get_json()["pairs"][0]
+    assert row["class_refusals"] == [cgb.NO_CLASS]
+
+
+def test_tunable_refusals_carry_no_class_field(chip):
+    row = chip.c.post(PLAN, json=_body(name="bad name")).get_json()["pairs"][0]
+    assert not row["ok"] and "class_refusals" not in row
+    ok = chip.c.post(PLAN, json=_body()).get_json()["pairs"][0]
+    assert ok["ok"] and "class_refusals" not in ok
