@@ -190,6 +190,42 @@ def measure_bare_buttons(known=None):
     return out
 
 
+# A text-like input: no type, or one of these (checkbox, radio, range, file,
+# hidden and the button types are other parts or carry no box).
+_TEXT_INPUT_TYPES = {"", "text", "number", "search", "email", "url", "tel", "password"}
+
+
+def measure_bare_controls(known=None):
+    """Template <select> and text / number <input> elements with no class that
+    has a CSS rule (a kit class such as ui-select / ui-input, or a feature
+    class): these fall back to Pico's full-width, tall form defaults."""
+    known = known if known is not None else _known_classes()
+    out = {}
+    for p in _templates():
+        text = re.sub(r"\{#.*?#\}", "", _read(p), flags=re.DOTALL)
+        n = 0
+        for m in re.finditer(r"<(select|input)\b((?:[^>{]|\{\{.*?\}\}|\{%.*?%\})*)>", text, flags=re.DOTALL):
+            attrs = m.group(2)
+            if m.group(1) == "input":
+                tm = re.search(r"\btype=\"([^\"]*)\"", attrs)
+                if (tm.group(1).strip().lower() if tm else "") not in _TEXT_INPUT_TYPES:
+                    continue
+            cm = re.search(r"\bclass=\"([^\"]*)\"", attrs)
+            if cm:
+                toks = _literal_tokens(cm.group(1))
+                if not toks or any(t in known for t in toks):
+                    continue
+            n += 1
+        if n:
+            out[_rel(p)] = n
+    return out
+
+
+def measure_select_tags():
+    """All <select> tags in templates (the migration backlog, for the report)."""
+    return {_rel(p): n for p in _templates() if (n := len(re.findall(r"<select\b", _read(p))))}
+
+
 def measure_inline_styles():
     out = {}
     for p in _templates():
@@ -245,6 +281,7 @@ def measure_all():
         "style_css": measure_style_css(),
         "color_literals": measure_colors(),
         "bare_buttons": measure_bare_buttons(known),
+        "bare_controls": measure_bare_controls(known),
         "inline_styles": measure_inline_styles(),
         "overlay_shells": measure_overlay_shells(),
         "confirm_alert": measure_confirm_alert(),
@@ -421,6 +458,25 @@ def test_1_color_literals_do_not_grow():
 
 def test_2_no_new_bare_or_unstyled_button():
     _ratchet("bare buttons", measure_bare_buttons(), _baseline()["bare_buttons"])
+
+
+def test_2b_no_new_bare_select_or_text_input():
+    """A template <select> / text or number <input> wears a kit class
+    (ui-select, ui-input) or a styled feature class; the count only goes down
+    and a new template adds none (docs/308 section 8)."""
+    _ratchet("bare selects / inputs", measure_bare_controls(), _baseline()["bare_controls"])
+
+
+def test_2c_bare_control_measure_can_fail(tmp_path, monkeypatch):
+    """The measure sees a bare select and a bare text input, and ignores kit,
+    classed and non-text controls."""
+    tpl = tmp_path / "t.html"
+    tpl.write_text('<select><option>a</option></select><input value="1"><input type="number">'
+                   '<select class="ui-select"></select><input class="ui-input"><input type="checkbox">'
+                   '<input type="hidden" value="x"><input class="{{ c }}">', encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_templates", lambda: [tpl])
+    monkeypatch.setattr(sys.modules[__name__], "_rel", lambda p: p.name)
+    assert measure_bare_controls(known={"ui-select", "ui-input"}) == {"t.html": 3}
 
 
 def test_3_no_new_inline_visual_style():
@@ -667,6 +723,18 @@ def test_macros_escape_text(ui_kit_html):
                 s={"part": "item", "chip": evil, "title": evil, "body": [evil], "note": evil, "badge": {"text": evil},
                    "actions": [{"label": evil, "title": evil, "cls": "btn-sync"}]})
     assert "<img" not in out and "&lt;img" in out
+
+
+def test_6b_ui_menu_behaviour_selfcheck():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    res = subprocess.run([node, str(_ROOT / "tests" / "ui_menu_selfcheck.cjs")], capture_output=True,
+                         text=True, encoding="utf-8", cwd=str(_ROOT))
+    if res.returncode == 2:
+        pytest.skip("jsdom not installed for node")
+    assert res.returncode == 0, res.stdout + "\n" + res.stderr
+    assert "ok ui_menu_selfcheck" in res.stdout and " 0 failed" in res.stdout
 
 
 def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
