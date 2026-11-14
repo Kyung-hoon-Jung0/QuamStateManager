@@ -28,6 +28,7 @@ from quam_state_manager.core import pulse_catalog
 from quam_state_manager.core.add_names import (
     ADDITION_NAME_RE, OPERATION_NAME_RE, pulse_name)
 from quam_state_manager.core.pointer_path import resolve_field_target
+from quam_state_manager.core.pointer_resolver import target_path
 
 CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
@@ -44,6 +45,7 @@ ROLES = ("pulse", "coupler_pulse", "control_pulse", "target_pulse",
 GIVEN, COPIED, DEFAULT = "given", "copied", "default"
 FROM_MODEL = "copied from the model gate"
 KEPT_REF = "kept reference"
+FROM_MODEL_RENAMED = "copied from the model gate, renamed"
 
 _OP_REF = re.compile(r"^#/.+/operations/[^/]+$")
 
@@ -737,7 +739,7 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
             "direction": direction,
             "pulse_directions": {f: direction for f in provenance},
             "model_gate": None, "layout": "known", "reset": [],
-            "operations": operations, "renamed": {},
+            "operations": operations, "renamed": {}, "unresolved_references": [],
             "fields": {**provenance, "macro": {
                 k: (KEPT_REF if isinstance(v, str) and v.startswith("#") else DEFAULT)
                 for k, v in macro.items()
@@ -800,43 +802,74 @@ def copied_name(model_name: str, model_gate: str, model_ids: tuple, gate: str,
 
 
 def _rename_values(value: Any, names: dict[str, str],
-                   plain: dict[str, str] | None = None,
-                   rel: dict[str, str] | None = None,
-                   model_pair: str | None = None) -> Any:
-    """Every string EQUAL to a model name, or a reference segment equal to
-    one, becomes the new name; a segment of a ``#../`` reference equal to a
-    key of *rel* becomes its value, unless the reference goes through
-    another pair than *model_pair* (a same-named gate elsewhere); a plain
-    (non-reference) string equal to a key of *plain* becomes its value.
-    Nothing matches inside a longer string."""
+                   plain: dict[str, str] | None = None) -> Any:
+    """Every string EQUAL to a model name, or a segment of an absolute
+    reference equal to one, becomes the new name; a plain (non-reference)
+    string equal to a key of *plain* becomes its value. Relative references
+    are left alone (``_resolve_relative`` handles them). Nothing matches
+    inside a longer string."""
     plain = plain or {}
-    rel = rel or names
     if isinstance(value, dict):
-        return {k: _rename_values(v, names, plain, rel, model_pair) for k, v in value.items()}
+        return {k: _rename_values(v, names, plain) for k, v in value.items()}
     if isinstance(value, list):
-        return [_rename_values(v, names, plain, rel, model_pair) for v in value]
+        return [_rename_values(v, names, plain) for v in value]
     if isinstance(value, str):
         if value in names:
             return names[value]
         if value.startswith("#/"):
             return "/".join(names.get(seg, seg) for seg in value.split("/"))
-        if value.startswith("#../"):
-            if _through_other_pair(value, model_pair):
-                return value
-            return "/".join(rel.get(seg, seg) for seg in value.split("/"))
+        if value.startswith("#"):
+            return value  # relative references are resolved, never renamed
         if value in plain:
             return plain[value]
     return value
 
 
-def _through_other_pair(ref: str, model_pair: str | None) -> bool:
-    """Does a reference pass through ``qubit_pairs/<p>`` with p not the
-    model pair?"""
-    segs = ref.split("/")
-    for i, s in enumerate(segs[:-1]):
-        if s == "qubit_pairs" and segs[i + 1] != model_pair:
-            return True
-    return False
+def _resolve_relative(merged: dict, value: Any, model_holder: tuple,
+                      new_holder: tuple, moves: list[tuple[tuple, tuple]],
+                      refuse_prefixes: list[tuple], unresolved: list[str],
+                      reasons: list[str], where: str) -> Any:
+    """Climbing relative references in a copied value, resolved against the
+    model with ``pointer_resolver.target_path`` (the one rule for ``#../``).
+
+    A target inside a moved model object (the model macro or a copied model
+    operation) is pointed at the new object: the relative text stays when it
+    resolves there from the new holder, else it becomes absolute. A target
+    under a refused prefix (the model pair or a model-pair qubit on another
+    pair) is a refusal. Anything else is kept. A reference that does not
+    resolve in the model is kept and listed in *unresolved*."""
+    if isinstance(value, dict):
+        return {k: _resolve_relative(merged, v, model_holder + (k,), new_holder + (k,),
+                                     moves, refuse_prefixes, unresolved, reasons,
+                                     f"{where}.{k}")
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_relative(merged, v, model_holder + (str(i),), new_holder + (str(i),),
+                                  moves, refuse_prefixes, unresolved, reasons,
+                                  f"{where}.{i}")
+                for i, v in enumerate(value)]
+    if not (isinstance(value, str) and (value.startswith("#../")
+                                        or value.startswith("#./../"))):
+        return value
+    t = target_path(merged, value, model_holder)
+    if t is None or _follow(merged, _ref(*t)) is None:
+        unresolved.append(f"{where}: {value}")
+        return value
+    t = tuple(t)
+    for old, new in moves:
+        if t[:len(old)] == old:
+            want = list(new + t[len(old):])
+            if target_path(None, value, new_holder) == want:
+                return value
+            return _ref(*want)
+    for pre in refuse_prefixes:
+        if t[:len(pre)] == pre:
+            reasons.append(f"The copy would keep the relative reference {value} (in "
+                           f"{where}), which points into {'.'.join(pre)} of the model. "
+                           "Pick a model gate on this pair, or one without that "
+                           "reference.")
+            return value
+    return value
 
 
 def _rewrite_refs(value: Any, old_prefix: str, new_prefix: str) -> Any:
@@ -948,10 +981,9 @@ def _walk_strings(value: Any, where: str):
 def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[str]:
     """Strings in the creates that still point at the model.
 
-    Absolute references and parent-relative ones (``#../``, ``#../../``)
-    are scanned; a parent-relative reference can name a sibling such as the
-    model's operation. Same-object references (``#./``) keep their meaning
-    because the copy keeps the object's shape."""
+    Absolute references are scanned here; climbing relative references are
+    resolved by ``_resolve_relative``; same-object references (``#./``)
+    keep their meaning because the copy keeps the object's shape."""
     created = {path for path, _ in creates}
     model_ref = _ref("qubit_pairs", mpair, "macros", mname)
     cross = mpair != pair_id
@@ -978,18 +1010,7 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
                                f"(in {where}), which still points at the model or "
                                "at nothing. Pick a model gate on this pair, or one "
                                "without that reference.")
-            for r in _REL_REF.findall(s):
-                segs = r.split("/")
-                names_model = mname in segs and not _through_other_pair(r, mpair)
-                if names_model or (cross and (mpair in segs or any(q in segs for q in moved))):
-                    out.append(f"The copy of {mname} would keep the relative "
-                               f"reference {r} (in {where}), which still names the "
-                               "model. Pick a model gate on this pair, or one "
-                               "without that reference.")
     return out
-
-
-_REL_REF = re.compile(r"#(?:\.\./)+[^\s\"'#]*")
 
 
 def _has_run(name: str, qubit_id: str) -> bool:
@@ -1088,8 +1109,13 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         # A missing model id is needed when the model plays that qubit's line,
         # or when a model name carries some other chip qubit id (likely the
         # missing one) that SM could not rename.
-        stray = any(_has_run(k, q) for k in mkeys for q in chip_qubits - known)
+        tails = [k[len(mname) + 1:] if k.startswith(mname + "_") else "" for k in mkeys]
         for role, mq in (("control", mids[0]), ("target", mids[1])):
+            raw = mp.get("qubit_" + role)
+            suspects = chip_qubits - known
+            if isinstance(raw, str) and raw and not raw.startswith("#"):
+                suspects = suspects | {raw}
+            stray = any(_has_run(t, q) for t in tails for q in suspects)
             if not mq and (role in used or stray):
                 return _refuse(reasons + [
                     f"The {role} of the model pair {mpair} "
@@ -1122,6 +1148,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     provenance: dict[str, dict] = {}
     directions: dict[str, str] = {}
     operations: dict[str, dict] = {}
+    op_moves: list[tuple[tuple, tuple]] = []
     names: dict[str, str] = {}
     for f in pulses:
         if f not in fields:
@@ -1222,6 +1249,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         op_creates.append((_dot(segs, key), op))
         operations[f] = {"path": _dot(segs, key), "key": key, "channel": ln[2],
                          "created": True}
+        op_moves.append((tuple(mlines[line][0]) + (mkey,), tuple(segs) + (key,)))
     if len(set(names.values())) != len(names):
         reasons.append("Two pulses of the model gate would get the same name on "
                        f"pair {pair_id}. Pick another model gate.")
@@ -1234,10 +1262,27 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         for old, new in zip(mids, (control, target)):
             if old and new and old != new:
                 plain[old] = new
-    rel = {**names, mname: gate_name}
-    macro = _rename_values(macro, names, plain, rel, mpair)
-    op_creates = [(path, _rename_values(v, names, plain, rel, mpair))
-                  for path, v in op_creates]
+    # Climbing relative references: resolved in the model, never renamed.
+    model_macro = ("qubit_pairs", mpair, "macros", mname)
+    moves = [(model_macro, macro_segs)] + op_moves
+    moved_q = [q for q, n in zip(mids, (control, target)) if q and n and q != n]
+    refuse_pre = ([("qubit_pairs", mpair)] + [("qubits", q) for q in moved_q]
+                  if mpair != pair_id else [])
+    unresolved: list[str] = []
+    macro = _resolve_relative(merged, macro, model_macro, macro_segs, moves,
+                              refuse_pre, unresolved, reasons, _dot(macro_segs))
+    op_creates = [(path, _resolve_relative(merged, v, old, new, moves, refuse_pre,
+                                           unresolved, reasons, path))
+                  for (path, v), (old, new) in zip(op_creates, op_moves)]
+    if reasons:
+        return _refuse(reasons)
+    before = {k: macro[k] for k in kept}
+    used_strings = set(_strings(macro)) | set(_strings([v for _, v in op_creates]))
+    macro = _rename_values(macro, names, plain)
+    op_creates = [(path, _rename_values(v, names, plain)) for path, v in op_creates]
+    for k in kept:
+        if kept[k] == FROM_MODEL and macro.get(k) != before[k]:
+            kept[k] = FROM_MODEL_RENAMED
     creates = [(_dot(macro_segs), macro)] + op_creates
     leftovers = _leftover_refs(merged, creates, mpair, mname, mids, pair_id,
                                (control, target))
@@ -1245,14 +1290,20 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         return _refuse(leftovers)
     kinds = set(directions.values())
     provenance["macro"] = kept
+    tails = [k[len(mname) + 1:] for k in names]
+    renamed = {k: v for k, v in names.items() if k != v}
+    if mname != gate_name:
+        renamed[mname] = gate_name
+    for old, new in plain.items():
+        if old != mname and (old in used_strings or any(_has_run(t, old) for t in tails)):
+            renamed[old] = new
     return {"creates": creates,
             "direction": kinds.pop() if len(kinds) == 1 else MIXED,
             "pulse_directions": directions,
             "model_gate": (mpair, mname),
             "layout": "copied", "reset": reset,
-            "operations": operations,
-            "renamed": {mname: gate_name, **names,
-                        **({k: v for k, v in plain.items() if k != mname})},
+            "operations": operations, "unresolved_references": unresolved,
+            "renamed": renamed,
             "fields": provenance,
             "sources": {"control": control, "target": target,
                         "moving_qubit": p.get("moving_qubit")}}
