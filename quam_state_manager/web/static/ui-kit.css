@@ -1607,7 +1607,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gate-status { display: flex; flex-direction: column; }
 .gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
 .gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
-.gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1) var(--ui-gap-2); min-height: var(--ui-icon-btn); }
+.gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
 .gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }
 .gate-status-items { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-width: 0; overflow: hidden; }
 .gate-status-row > .ui-chip, .gate-status-details { flex: 0 0 auto; }
