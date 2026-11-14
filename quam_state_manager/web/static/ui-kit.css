@@ -143,6 +143,7 @@
     --ui-glyph-skip: "\2013";
     --ui-chip-h: 22px;
     --ui-line-dot: 8px;
+    --ui-line-dot-off: inset 0 0 0 var(--ui-bw) var(--ui-text-3);   /* hollow dot of a hidden line */
     --ui-placeholder-h: 180px;
     --ui-row-focus: inset 0 0 0 2px var(--ui-accent);   /* keyboard focus on a list row, not the hover tint */
     --ui-r-dot: 2px;
@@ -1156,6 +1157,15 @@
 .ui-slot.ui-line-6 { border-left-color: var(--ui-line-6); }
 .ui-line-6 > .ui-slot-head > .ui-slot-chip, .ui-slot-chip.ui-line-6 { color: var(--ui-line-6); background: var(--ui-line-6-tint); }
 .ui-line-dot.ui-line-6 { background: var(--ui-line-6); }
+/* Legend button for one line (with btn-sm secondary): dot, label, quiet summary. Off = the line is hidden:
+   dashed border, quiet text, hollow dot; the focus ring is untouched. */
+.ui-legend-btn { display: inline-flex; align-items: center; gap: var(--ui-gap-1); }
+.ui-legend-btn.ui-legend-btn--off.btn-sm { background-color: transparent; border-color: var(--ui-border); color: var(--ui-text-3); border-style: dashed; }
+.ui-line-dot.ui-line-dot--off { background: transparent; box-shadow: var(--ui-line-dot-off); }
+/* One row of a pair list: two line dots and names, a badge, a quiet note; hover tint, keyboard ring. */
+.ui-pair-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); padding: var(--ui-gap-1) var(--ui-gap-2); border-radius: var(--ui-r-sm); }
+.ui-pair-row:hover { background: var(--ui-surface-2); }
+.ui-pair-row:focus-visible { outline: 0; box-shadow: var(--ui-row-focus); }
 
 /* field source tag: tiny; "entered" in the accent tint, "default" / "copied" quiet */
 .ui-field-head > .ui-badge { align-self: center; padding: var(--ui-tag-pad); border-color: var(--ui-border); border-radius: var(--ui-r-sm); background: var(--ui-surface-2); color: var(--ui-text-3); font-size: var(--ui-fs-tag); font-weight: var(--ui-fw-normal); line-height: var(--ui-lh-dense); }

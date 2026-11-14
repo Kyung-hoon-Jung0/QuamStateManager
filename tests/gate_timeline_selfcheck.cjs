@@ -341,6 +341,9 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
        f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0 && role(f, 'segment').every((t) => t.meta.lane !== 'q1.z'),
        'a hidden line leaves the plot, its guides and its bracket');
     ok(btns[1].querySelector('.ui-note').textContent === 'hidden', 'the button of a hidden line says "hidden"');
+    ok(btns[1].classList.contains('ui-legend-btn--off') && btns[1].querySelector('.ui-line-dot').classList.contains('ui-line-dot--off') &&
+       !btns[0].classList.contains('ui-legend-btn--off') && !btns[0].querySelector('.ui-line-dot').classList.contains('ui-line-dot--off'),
+       'the button of a hidden line and its dot look off; a shown one does not');
     ok(!ho.valuesAt(200).some((v) => v.key === 'q1.z') && ho.valuesAt(200, { all: true }).some((v) => v.key === 'q1.z'), 'valuesAt leaves out a hidden line');
     ho.setLineHidden('q1.z', false);
     // Same height: each line scaled to its own largest value; no volt numbers
@@ -584,8 +587,10 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
         if (rnd(6) === 0) out.push([out[0][0] + 1, out[0][0] + 1]);     // nested point
         return out.reverse();                                           // unsorted
     };
+    // a small fixed set by default (seconds); GATE_TIMELINE_FULL=1 runs the full set
+    const N_REF = process.env.GATE_TIMELINE_FULL ? 1800 : 60;
     let mismatches = 0, cases = 0, firstBad = '';
-    for (let c = 0; c < 300; c++) {
+    for (let c = 0; c < N_REF; c++) {
         const A = randSegs(), B = randSegs();
         const toLane = (key, ss) => L(key, ss.map(([s, e], k) => seg('s' + k, s === e ? [s / 4] : [s / 4, e / 4], s === e ? [0.1] : [0.1, 0.1],
                                                                     { start_ns: s / 4, end_ns: e / 4 })));
@@ -598,7 +603,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
             JSON.stringify(got.intervals) === JSON.stringify(want.intervals);
         if (!same) { mismatches++; if (!firstBad) firstBad = JSON.stringify({ A, B, got, want }); }
     }
-    ok(cases === 300 && mismatches === 0, 'timing() equals an independent quarter-ns reference on 300 seeded cases' + (firstBad ? ' ' + firstBad : ''));
+    ok(cases === N_REF && mismatches === 0, 'timing() equals an independent quarter-ns reference on ' + N_REF + ' seeded cases' + (firstBad ? ' ' + firstBad : ''));
     // order independence for a point inside the other line
     const pA = L('a', [sq('p', 34.5, 53.5, 0.1)]), pB = L('b', [seg('pt', [44.75], [0.1], { start_ns: 44.75, end_ns: 44.75 })]);
     const t1 = GT.render(host2, { lanes: [pA, pB], notes: [] }).timing()[0];

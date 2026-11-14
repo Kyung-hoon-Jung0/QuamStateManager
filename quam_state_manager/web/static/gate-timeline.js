@@ -506,7 +506,7 @@
         var legendBtns = [];
         gate.concat(spect.length ? [{ key: SPECT_KEY, label: spect.length + (spect.length === 1 ? " spectator" : " spectators"), spectGroup: true }] : [])
             .forEach(function (l) {
-                var b = el("button", "btn-sm secondary");
+                var b = el("button", "btn-sm secondary ui-legend-btn");
                 b.type = "button";
                 b.setAttribute("data-legend", l.key);
                 var dot = null;
@@ -565,7 +565,7 @@
             }
             state.highlight = null;   // a rebuilt list starts with nothing highlighted
             pairs.forEach(function (p, k) {
-                var row = el("div", "ui-actions ui-actions--start");
+                var row = el("div", "ui-pair-row");
                 row.setAttribute("data-pair", String(k));
                 row.setAttribute("data-pair-key", pairKey(p));
                 row.setAttribute("tabindex", "0");
@@ -579,7 +579,7 @@
                 });
                 var what = p.kind === "gap" ? "gap " + fmt(p.ns) + " ns" : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet";
                 if (p.kind === "overlap" && p.intervals.length > 1) what += " in " + p.intervals.length + " parts";
-                row.appendChild(el("span", "ui-badge ui-badge--" + (p.kind === "gap" ? "warn" : "neutral"), what));
+                row.appendChild(el("span", p.kind === "gap" ? "ui-badge ui-badge--warn" : "ui-badge", what));
                 row.appendChild(el("span", "ui-note", fmt(p.from_ns) + " to " + fmt(p.to_ns) + " ns"));
                 (more && k >= 6 ? more : pairList).appendChild(row);
             });
@@ -1157,7 +1157,8 @@
             var labelled = brackets.length <= 2;
             brackets.forEach(function (bk, n) {
                 var p = bk.p;
-                var col = c.muted;
+                // a gap is the warn tone; overlaps stay quiet
+                var col = p.kind === "gap" ? (c.tones.warn.line || c.muted) : c.muted;
                 var lit = state.highlight !== null && pairKey(p) === state.highlight;
                 var y = 1 - (14 + 22 * n) / plotPx;
                 shapes.push({ type: "path", name: "bracket", xref: "x", yref: "paper",
@@ -1248,6 +1249,8 @@
             legendBtns.forEach(function (lb) {
                 lb.btn.setAttribute("aria-pressed", state.hidden[lb.key] ? "false" : "true");
                 lb.btn.hidden = lb.spectGroup && state.fold;
+                lb.btn.classList.toggle("ui-legend-btn--off", !!state.hidden[lb.key]);
+                if (lb.dot) lb.dot.classList.toggle("ui-line-dot--off", !!state.hidden[lb.key]);
                 // a line switched off reads "hidden" even while the button has focus
                 lb.note.textContent = state.hidden[lb.key] ? "hidden" : (lb.spectGroup ? "" : lineSummaryByKey(lb.key));
             });
