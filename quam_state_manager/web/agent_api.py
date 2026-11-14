@@ -242,7 +242,7 @@ def chip():
                    reapply_stash=len(ctx.get("pending_reapply") or {}),
                    live_diverged=diverged,
                    stale_since=_stale_since() if diverged else None,
-                   live_readonly=bool(ctx.get("live_readonly")),
+                   live_readonly=bool(ctx.get("live_readonly_hint")),
                    waiting=_waiting_count(),
                    run_active=_run_active_view(),
                    plan=_plan_brief(),
