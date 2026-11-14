@@ -9937,7 +9937,9 @@
       }
       if (!pairs.length) hidden.push("Pairs (no pairs defined)");
       if (hidden.length && hidden.length < 5) {
-        var fixable = hidden.length > (couplerOnly ? 1 : 0);
+        // only a missing FEM or a disabled flux line is cured by step 4's
+        // line types; missing pairs and a coupler-only chip's flux are not
+        var fixable = !mw || (!wantFlux && !couplerOnly);
         hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") + "." +
           (couplerOnly ? (pairs.length ? " Coupler values are entered in Qubit pairs, 2Q gates below."
                                        : " Define a pair in step 4 to enter coupler values.") : "") +

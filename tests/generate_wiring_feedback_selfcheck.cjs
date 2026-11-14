@@ -290,7 +290,8 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     state.spec.qubit_pairs = [];
     T.renderPopulateTables();
     const note = w.doc.getElementById('gen-pop-hidden-note').textContent;
-    ok(!/Qubit pairs, 2Q gates/.test(note) && /Define a pair in step 4 to enter coupler values/.test(note),
+    ok(!/Qubit pairs, 2Q gates/.test(note) && /Define a pair in step 4 to enter coupler values/.test(note) &&
+       !/Change line types/.test(note),
        '[no-pairs note] no-pairs note: ' + note);
   }
 
