@@ -116,6 +116,28 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
     const doc = key => new JSDOM(pages[key]).window.document;
+    if (pages.owner_cleanup) {
+      // owner cells and the PC names table, from markup the server rendered
+      const jobs = doc('owner_jobs');
+      const kind = id => { const row = jobs.querySelector('tr[data-qm-id="' + id + '"]'); const o = row && row.querySelector('.ui-opxmon-owner'); return o ? o.getAttribute('data-owner-kind') : null; };
+      ok(kind('QM-none') === 'none' && kind('QM-one') === 'one' && kind('QM-v2') === 'unreadable' && kind('QM-two') === 'several' && kind('QM-unread') === 'unread', 'owner cell kind per QM');
+      const one = jobs.querySelector('tr[data-qm-id="QM-one"] .ui-opxmon-owner');
+      ok(/ab12cd34/.test(one.textContent) && one.querySelector('.ui-opxmon-this-pc') && /qubit_spec/.test(one.textContent), 'one marker shows tag, this PC chip and node');
+      ok(jobs.querySelectorAll('tr[data-qm-id="QM-two"] .ui-opxmon-owner-marker').length === 2 && jobs.querySelector('tr[data-qm-id="QM-two"] .ui-opxmon-several'), 'several markers: every one shown and flagged');
+      ok((jobs.body.textContent.match(/the server does not check it/g) || []).length === 1, 'the claim note is said once per table');
+      const set = doc('owner_settings');
+      ok(set.querySelector('table[aria-label="PC names"] tr[data-tag="ab12cd34"] input[name="label__ab12cd34"]') && set.querySelector('input[name="new_tag"]'), 'settings table offers seen tags and a new row');
+      // the confirm panel carries the owner of each listed QM
+      const cw = new JSDOM(pages.owner_cleanup, { url: 'http://localhost/opx-monitor/cleanup', runScripts: 'outside-only' }).window;
+      cw.fetch = () => Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true, closed: [] }) });
+      cw.htmx = { ajax: () => {} };
+      cw.eval(SRC);
+      cw.document.querySelector('.ui-opxmon-close[data-qm-id="QM-two"]').click();
+      const panel = cw.document.querySelector('.ui-opxmon-confirm');
+      ok(panel && /several markers/.test(panel.textContent) && /QM-two/.test(panel.textContent) && cw.document.querySelector('.ui-opxmon-confirm-accept'), 'confirm names the QM and its owner markers and still asks');
+      console.log(`${passes} passed, ${fails} failed`);
+      process.exit(fails ? 1 : 0);
+    }
     ok(/Close idle QMs \(1\)/.test(doc('idle').body.textContent) && /while SM watched continuously/.test(doc('idle').body.textContent), 'D-13 rendered idle count states its basis');
     ok(doc('unknown').querySelector('[data-health="grey"]') && /OPEN 1/.test(doc('unknown').body.textContent), 'round 4 unassessed health is muted while occupancy remains OPEN');
     ok(doc('stale').querySelector('[data-health="grey"]') && /fresh/.test(doc('stale').body.textContent), 'D-14 stale data is grey');
