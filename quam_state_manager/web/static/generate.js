@@ -4987,6 +4987,36 @@
     _dragGhostSrc = null;
   }
 
+  // The Review row for coupler port delays, under the build's own conditions:
+  // only LF-FEM coupler outputs take the moving qubit's flux port delay
+  // (run_build _align_coupler_delays), and Re-generate keeps stored values and
+  // offers the flux delay only for ports holding 0 (core/regenerate).
+  function couplerLineOnLf(ln) {
+    var ch = ln.channel;
+    if (ch && ch.con != null) {
+      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot) === "lf-fem";
+    }
+    var c = ((allocEntry(ln.element) || {}).c || [])[0];
+    return !!c && femTypeAt(c.con, c.slot) === "lf-fem";
+  }
+
+  function couplerDelayReviewText(sp) {
+    var lines = sp.lines.filter(function (ln) { return ln.line === "coupler"; });
+    if (!lines.length) return null;
+    if (!lines.some(couplerLineOnLf)) {
+      return "The coupler outputs are not LF-FEM outputs, so the flux delay rule does not " +
+        "apply: their delays are left as they are.";
+    }
+    if (state.mode === "regenerate") {
+      return "Stored coupler port delays are kept. Ports holding 0 are offered the moving " +
+        "qubit's flux port delay before the build.";
+    }
+    return "Each coupler LF-FEM port gets its pair's moving-qubit flux port delay (the control " +
+      "qubit when none is set; with no flux line, the delay for that qubit's drive band). A " +
+      "coupler port shared by pairs that disagree keeps the first pair's value, and the build " +
+      "result names both.";
+  }
+
   function femTypeAt(con, slot) {
     var ctrls = ((state.spec.instruments || {}).controllers) || [];
     for (var i = 0; i < ctrls.length; i++) {
@@ -10684,12 +10714,8 @@
       var b = ((sp.populate || {}).coupler_models || {})[id];
       rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
     });
-    if (sp.lines.some(function (ln) { return ln.line === "coupler"; })) {
-      rows.push(["Coupler port delay", "each coupler flux port gets its pair's moving-qubit flux " +
-        "port delay (the control qubit when none is set; with no flux line, the delay for that " +
-        "qubit's drive band). A coupler port shared by pairs that disagree keeps the first pair's " +
-        "value, and the build result names both."]);
-    }
+    var couplerRow = couplerDelayReviewText(sp);
+    if (couplerRow) rows.push(["Coupler port delay", couplerRow]);
     var modelErrors = couplerModelErrors();
     if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
@@ -12189,8 +12215,10 @@
       (res.coupler_delay || []).forEach(function (d) {
         var line = document.createElement("p");
         line.className = "gen-build-warn-line";
-        line.textContent = "• " + d.pair + ": coupler port " + d.port + " has delay 0, its z port " +
-          d.z_delay + " ns";
+        var pairs = d.pairs && d.pairs.length ? d.pairs : [d.pair];
+        line.textContent = "• Coupler port " + (d.port_label || d.port) + " (pair" +
+          (pairs.length > 1 ? "s " : " ") + pairs.join(" and ") + ") has delay 0; the moving " +
+          "qubit's flux port has " + d.z_delay + " ns.";
         el.appendChild(line);
       });
       [["set", "Set the couplers to the z delay", "btn-sm"],

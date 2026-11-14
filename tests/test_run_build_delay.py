@@ -259,12 +259,13 @@ class TestAlignCouplerDelays:
         assert p.coupler.opx_output.delay == 7
 
     def test_a_shared_coupler_keeps_the_first_pair_and_warns(self):
-        shared = LFFEMAnalogOutputPort(delay=0)
+        shared = LFFEMAnalogOutputPort(delay=0, controller_id="con1", fem_id=3, port_id=5)
         a = self._pair(self._q(2, 161), self._q(2, 161), out=shared)
         b = self._pair(self._q(1, 141), self._q(1, 141), out=shared)
         warns = self._run(a, b)
         assert shared.delay == 161
         assert len(warns) == 1 and "161" in warns[0] and "141" in warns[0]
+        assert "con1 / slot 3 / port 5" in warns[0] and "p0" in warns[0] and "p1" in warns[0]
 
     def test_pair_without_coupler_untouched(self):
         p = types.SimpleNamespace(qubit_control=self._q(2, 161), qubit_target=self._q(2, 161),

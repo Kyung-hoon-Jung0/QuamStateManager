@@ -51380,10 +51380,13 @@ def regenerate_build():
         # An old wizard wrote 0 to coupler flux ports while the z ports carry
         # the MW alignment delay; the merge keeps stored values, so ask once.
         coupler_delay_ack = data.get("coupler_delay_ack")
-        if coupler_delay_ack not in ("set", "keep"):
+        if coupler_delay_ack not in (None, "set", "keep"):
+            return jsonify({"ok": False, "error": (
+                "The coupler delay answer must be \"set\" or \"keep\".")}), 400
+        if coupler_delay_ack is None:
             try:
                 _old = unsaved[:2] if unsaved else safe_io.read_state_wiring(Path(source_folder))
-                _mismatch = regenerate.coupler_delay_mismatches(*_old)
+                _mismatch = regenerate.coupler_delay_mismatches(*_old, spec)
             except (OSError, ValueError, TypeError, KeyError):
                 _mismatch = []
             if _mismatch:
@@ -51407,6 +51410,28 @@ def regenerate_build():
             scripts_enabled=scripts_enabled,
             qubit_sources=qubit_sources,
         )
+        # The accepted offer is written while the output is still claimed; a
+        # failure is reported in the build result, never as a bare 500.
+        if isinstance(outcome, dict) and outcome.get("ok"):
+            res = outcome.get("result")
+            if not isinstance(res, dict):
+                res = outcome["result"] = {}
+            note = None
+            if coupler_delay_ack == "keep":
+                note = "Coupler port delays left at 0 as chosen."
+            elif coupler_delay_ack == "set":
+                try:
+                    _set = regenerate.set_coupler_delays(output_path, spec)
+                    note = ("Coupler flux port delays set to their pair's flux port delay: " +
+                            "; ".join(f"{i['port_label']} ({', '.join(i['pairs'])}) "
+                                      f"{i['z_delay']:g} ns" for i in _set) + "."
+                            if _set else None)
+                except Exception as exc:   # noqa: BLE001 (reported, not raised)
+                    note = ("The chip was built, but the coupler delays could not be "
+                            f"set: {exc}")
+                    outcome["coupler_delay_error"] = str(exc)
+            if note:
+                res["warnings"] = list(res.get("warnings") or []) + [note]
     finally:
         _release_build_output(claim)
     if unsaved and isinstance(outcome, dict):
@@ -51422,14 +51447,6 @@ def regenerate_build():
     # user loaded (its live folder), not the working copy it was read from.
     src_label = next((str(f) for f, role in _regen_protected_folders(src_p)
                       if role == "source_live"), source_folder)
-    if (isinstance(outcome, dict) and outcome.get("ok")
-            and data.get("coupler_delay_ack") == "set"):
-        _set = regenerate.set_coupler_delays(output_path)
-        res = outcome.get("result")
-        if _set and isinstance(res, dict):
-            res["warnings"] = list(res.get("warnings") or []) + [
-                "Coupler flux port delays set to their pair's z delay: " +
-                ", ".join(f"{i['pair']} {i['z_delay']:g} ns" for i in _set) + "."]
     regenerate.record_build_report(output_path, outcome, src_label)
     if isinstance(outcome, dict) and outcome.get("ok"):
         from quam_state_manager.core import build_env

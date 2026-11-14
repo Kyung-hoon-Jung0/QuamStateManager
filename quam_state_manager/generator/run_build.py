@@ -794,6 +794,14 @@ def _apply_lf_delay(lf_port, band):
         pass
 
 
+def _out_label(port):
+    """An output port named the way the wizard names ports: controller / slot / port."""
+    con, fem, num = (getattr(port, a, None) for a in ("controller_id", "fem_id", "port_id"))
+    if fem is None:
+        return f"{con} / port {num}"
+    return f"{con} / slot {fem} / port {num}"
+
+
 def _align_coupler_delays(machine):
     """Give every coupler LF-FEM output the delay of its pair's flux port.
 
@@ -839,7 +847,8 @@ def _align_coupler_delays(machine):
         if first is not None:
             if first[1] != delay:
                 warnings.append(
-                    f"coupler port shared by pairs {first[0]} and {pid}: their flux delays "
+                    f"coupler port {_out_label(out)} shared by pairs {first[0]} and {pid}: "
+                    f"their flux delays "
                     f"differ ({first[1]} ns and {delay} ns); the port keeps {first[1]} ns "
                     f"from {first[0]}.")
             continue

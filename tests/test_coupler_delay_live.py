@@ -64,3 +64,24 @@ def test_coupler_delay_equals_the_moving_qubit_z_delay(tmp_path, moving, qid):
         return entry.get("delay", 0)
 
     assert cfg_delay(c) == cfg_delay(z[qid]) == zd[qid]
+
+
+def test_a_zero_z_delay_gives_a_zero_coupler_in_a_real_build(tmp_path):
+    # q1 has no drive line, so nothing sets its flux port delay (it stays 0);
+    # q1 is the moving qubit, so the coupler port takes 0 as well
+    python = _first_usable_qm_env()
+    if not python:
+        pytest.skip("no usable QM env found")
+    spec = copy.deepcopy(_spec())
+    spec["lines"] = [ln for ln in spec["lines"]
+                     if not (ln["element"] == "q1" and ln["line"] == "drive")]
+    spec["populate"]["pairs"]["q1-q2"]["moving_qubit"] = "control"
+    out = tmp_path / "zero"
+    outcome = run_generator(python, "build", spec, out, timeout=600)
+    assert outcome.get("ok"), outcome
+    state = json.loads((out / "state.json").read_text(encoding="utf-8"))
+    wiring = json.loads((out / "wiring.json").read_text(encoding="utf-8"))
+    z, c = _ports(state, wiring)
+    assert _resolve(state, wiring, z["q1"])["delay"] == 0
+    assert _resolve(state, wiring, z["q2"])["delay"] != 0
+    assert _resolve(state, wiring, c)["delay"] == 0
