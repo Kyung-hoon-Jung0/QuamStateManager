@@ -421,3 +421,46 @@ class TestCompactRowNamesTheMetricTarget:
     def test_a_clean_run_row_is_unchanged(self):
         assert "mq" not in self._run({"q2": "successful", "q10": "successful"})
         assert "mq" not in self._run({})
+
+
+class TestALiveWriteThatFailsLeavesNothingBehind:
+    """The reported sequence, through the route: the live file cannot be
+    written, so the press puts nothing back; SM must not keep the reverted
+    values, must say how many remain, and a later press must work."""
+
+    def _node_wrote(self, chip):
+        chip.set_live("qubits.q1.f_01", 5.11e9)
+        chip.set_live("qubits.q1.T1", 3.0e-05)
+        return [_patch("q1", "f_01", 5.01e9, 5.11e9), _patch("q1", "T1", 2.1e-05, 3.0e-05)]
+
+    def test_failed_then_retried(self, chip, monkeypatch):
+        from quam_state_manager.core import safe_io
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        real = safe_io.write_state_wiring_bytes
+
+        def boom(folder, *a, **k):
+            raise PermissionError(5, "Access is denied", str(folder))
+        monkeypatch.setattr(safe_io, "write_state_wiring_bytes", boom)
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        res = body["result"]
+        assert not res["ok"] and not res["reverted"]
+        # the whole press failed: a sentence, never "not reverted 1"
+        assert "not reverted 1" not in res["message"]
+        assert "no value was put back" in res["message"]
+        assert "2 value(s) still hold what the run wrote" in res["message"]
+        live = chip.live_state()["qubits"]["q1"]
+        assert live["f_01"] == 5.11e9 and live["T1"] == 3.0e-05
+        # SM holds what the chip holds: the store never kept the old values
+        ctx = chip.ctx
+        assert ctx["store"].state["qubits"]["q1"]["f_01"] == 5.11e9
+        assert ctx["store"].state["qubits"]["q1"]["T1"] == 3.0e-05
+        assert not ctx["store"].change_log and not ctx.get("working_dirty")
+        # and every value is still offered
+        assert set(res["remaining"]) == {"qubits.q1.f_01", "qubits.q1.T1"}
+
+        monkeypatch.setattr(safe_io, "write_state_wiring_bytes", real)
+        again = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert again["ok"], again
+        live = chip.live_state()["qubits"]["q1"]
+        assert live["f_01"] == 5.01e9 and live["T1"] == 2.1e-05
