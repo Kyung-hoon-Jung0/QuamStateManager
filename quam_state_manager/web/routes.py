@@ -13519,6 +13519,7 @@ _TAB_CHIP_DOORS = frozenset({
     "main.api_pulse_create", "main.api_pulse_delete", "main.api_pulse_duplicate",
     "main.api_pulse_rename", "main.pair_gate_inspector_switch", "main.api_pulse_copy",
     "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
+    "main.api_cz_gate_create",
     "main.api_pulse_delete_together", "main.api_cz_gate_make_active",
     "main.type_fix_apply", "main.diagnostics_apply_fix",
     "main.save", "main.undo", "main.redo", "main.discard", "main.discard_all",
@@ -53281,6 +53282,9 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     # Every staging door shares the store saved by the plan's next write.
     "main.pair_gate_inspector_switch", "main.api_pulse_copy",
     "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
+    # The CZ gate dialog: create stages the gate; check runs the lab's code in the
+    # chosen env (a subprocess, like the other env spawners below).
+    "main.api_cz_gate_create", "main.api_cz_gate_check",
     # Add a qubit / a pair from the chip diagram: creates subtrees through the
     # modifier under one group id (a staging door like /field/edit-batch).
     "main.diagram_add_stage",
@@ -55343,5 +55347,7 @@ def autofit_diagnose_rows():
 # Add a qubit or a pair from the chip diagram: routes registered on bp.
 from quam_state_manager.web import diagram_add_routes  # noqa: E402,F401
 from quam_state_manager.web import diagram_remove_routes  # noqa: E402,F401
+# The CZ gate dialog and its one write door.
+from quam_state_manager.web import cz_gate_routes  # noqa: E402,F401
 # A CZ gate's status line, Make active and the delete offer.
 from quam_state_manager.web import gate_status_routes  # noqa: E402,F401

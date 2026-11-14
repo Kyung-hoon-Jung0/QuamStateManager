@@ -16,6 +16,9 @@
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'copy' }}"
             hx-get="/pulse/new?kind=copy" hx-target="#inspector-pane" hx-swap="innerHTML"
             title="Put an existing pulse on another channel, laid out the way this chip lays out its own pulses">Copy a pulse to another channel</button>
+    <button type="button" role="tab" data-create-kind="cz_gate" data-czg-open
+            aria-selected="false" class="pulse-create-choice-btn"
+            title="A new named CZ gate on a pair, checked with the lab's code before it is written">CZ gate</button>
     <button type="button" role="tab" data-create-kind="gaussian_cz"
             aria-selected="{{ 'true' if _k == 'gaussian_cz' else 'false' }}"
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'gaussian_cz' }}"

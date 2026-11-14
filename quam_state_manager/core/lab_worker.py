@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -20,6 +21,7 @@ import psutil
 # Machine-wide on purpose: every SM process on this PC shares the one slot.
 # QSM_LAB_WORKER_DIR moves it (the test suite uses its own, so a test run never
 # retires or waits on the worker of an SM the user has open).
+logger = logging.getLogger(__name__)
 _COORD_DIR = (Path(os.environ["QSM_LAB_WORKER_DIR"]) if os.environ.get("QSM_LAB_WORKER_DIR")
               else Path(os.environ.get("PUBLIC", "C:/Users/Public")) / "Documents"
               if os.name == "nt" else Path("/tmp"))
@@ -67,19 +69,38 @@ class _MachineLock:
                     return False
                 time.sleep(.05)
 
+    @staticmethod
+    def _os_unlock(fh):
+        if os.name == "nt":
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
     def release(self):
-        self.depth.value -= 1
-        if not self.depth.value:
-            fh = self.depth.fh
-            if os.name == "nt":
-                import msvcrt
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            fh.close()
-        self.local.release()
+        """Never raises and always frees the thread lock: an OS unlock that
+        fails (Windows answers PermissionError) is followed by closing the
+        handle, which drops the OS lock anyway. Before, that error left the
+        thread lock taken and every later lab job of this process "busy"."""
+        try:
+            self.depth.value -= 1
+            if not self.depth.value:
+                fh = self.depth.fh
+                try:
+                    self._os_unlock(fh)
+                except (OSError, ValueError):            # ValueError: a handle already closed
+                    logger.warning(
+                        "lab machine lock: the OS unlock failed; closing the handle",
+                                   exc_info=True)
+                finally:
+                    try:
+                        fh.close()
+                    except (OSError, ValueError):
+                        pass
+        finally:
+            self.local.release()
 
     def __enter__(self):
         self.acquire()

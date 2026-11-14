@@ -90,6 +90,9 @@ _NON_STAGING_POSTS = {
     # Gaussian CZ planner: reads the chip under its lock and returns a plan; the write is
     # the separate apply-several route, which is locked.
     'main.api_pulse_gaussian_cz_plan',
+    # CZ gate dialog planner: reads the chip under its lock and returns a plan; the
+    # write is the separate create route, which is locked.
+    'main.api_cz_gate_plan',
     'agent.generate_propose',
     'agent.generate_propose_card',
 
@@ -253,7 +256,7 @@ def test_map_analysis_and_config_dismissal_do_not_stage_chip_edits(tmp_path, mon
 
 @pytest.mark.parametrize("url", [
     "/pair/q1-q2/gate-inspector/switch-moving", "/api/pulse/copy",
-    "/api/pulse/gaussian-cz", "/api/pulse/delete-together",
+    "/api/pulse/gaussian-cz", "/api/pulse/delete-together", "/api/pulse/cz-gate/create",
     "/api/pulse/create", "/api/pulse/delete", "/pulse/edit",
     "/field/create", "/field/delete", "/qubit/q1/edit",
     "/pair/q1-q2/edit", "/pair/q1-q2/gate", "/diagnostics/apply-fix",

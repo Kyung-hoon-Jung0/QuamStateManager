@@ -78,7 +78,7 @@
     {% if qubits %}
     {% for q in qubits %}
         <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
-            <td><strong>{{ q.id }}</strong></td>
+            <td><strong>{{ q.id }}</strong><span class="czg-row-acts"><button type="button" class="btn-sm outline" title="Open this qubit in the inspector">Detail</button><button type="button" class="btn-sm outline" data-czg-pulse="{{ q.id }}" title="Create a new pulse on this qubit">+ Pulse</button></span></td>
             {# r15: ALL qubits are listed; this column marks active_qubit_names
                membership (absent/empty list in state.json = everything active) #}
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>

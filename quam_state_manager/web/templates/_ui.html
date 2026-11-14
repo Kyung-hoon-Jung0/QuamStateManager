@@ -251,7 +251,7 @@
 {%- endmacro -%}
 
 {%- macro ui_dialog(head, size='m', body=(), foot=(), foot_actions=None, close=True) -%}
-<div class="ui-dialog ui-dialog--{{ size }}" role="dialog" aria-label="{{ head.title }}"><div class="ui-dialog-head">{{ ui_head(head.title, head.level or 2, head.eyebrow, head.gist, head.count, None, size != 'l') }}
+<div class="ui-dialog ui-dialog--{{ size }}" role="dialog" aria-label="{{ head.title }}"><div class="ui-dialog-head">{{ ui_head(head.title, head.level or 2, head.eyebrow, head.gist, head.count, None, size not in ('l', 'xl')) }}
 {%- if close %}{{ ui_button({'label': '✕', 'cls': 'ui-btn-icon', 'aria_label': 'Close'}) }}{% endif -%}
 </div><div class="ui-dialog-body">{% for s in body %}{{ ui_render(s) }}{% endfor %}</div>
 {%- if foot or foot_actions %}<div class="ui-dialog-foot">{% for s in foot %}{{ ui_render(s) }}{% endfor %}{% if foot_actions %}{{ ui_actions(foot_actions) }}{% endif %}</div>{% endif -%}

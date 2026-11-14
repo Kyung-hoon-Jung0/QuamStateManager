@@ -179,6 +179,11 @@
     --ui-dialog-m: 760px;
     --ui-dialog-l: 920px;
     --ui-dialog-max-h: 82vh;
+    --ui-dialog-xl: min(1240px, 96vw);
+    --ui-dialog-xl-max-h: 90vh;
+    --ui-backdrop: color-mix(in srgb, black 35%, transparent);
+    --ui-czg-form-w: 360px;
+    --ui-czg-evidence-min: 640px;
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
     /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */
@@ -529,6 +534,7 @@
 .ui-dialog--s { width: var(--ui-dialog-s); }
 .ui-dialog--m { width: var(--ui-dialog-m); }
 .ui-dialog--l { width: var(--ui-dialog-l); }
+.ui-dialog--xl { width: var(--ui-dialog-xl); max-height: var(--ui-dialog-xl-max-h); }
 .ui-dialog-head { display: flex; align-items: flex-start; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4) 0; }
 .ui-dialog-head > .ui-head { flex: 1 1 auto; margin: 0; }
 .ui-dialog-head .ui-head-title { font-size: var(--ui-fs-lg); }
@@ -1619,6 +1625,42 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
 
+/* A native <dialog> wearing the kit shell: hidden when closed, a centred fixed
+   column with a backdrop when open. The two older kit dialogs keep their own
+   rules in style.css and are left out here, so they render as before. */
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several) { position: fixed; inset: 0; margin: auto; padding: 0; height: fit-content; min-width: 0; min-height: 0; max-width: 96vw; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open]) { display: none; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open] { display: flex; flex-direction: column; align-items: stretch; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: var(--ui-backdrop); }
+
+/* The CZ gate dialog: the form on the left, the lab's evidence on the right;
+   they stack on a narrow window, and each column scrolls on its own. */
+.czg .czg-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); overflow: hidden; min-height: 0; }
+.czg-alert { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.czg-alert:empty, .czg-done:empty { display: none; }
+.czg-cols { display: flex; flex-wrap: wrap; gap: var(--ui-gap-4); align-items: flex-start; min-height: 0; overflow: auto; }
+.czg-form { flex: 0 0 var(--ui-czg-form-w); max-width: 100%; }
+.czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
+.czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); overflow: auto; }
+.czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+/* a zone clips its overflow, so as a flex item it would shrink and hide its fields: the column scrolls instead */
+.czg-form > *, .czg-evidence > * { flex-shrink: 0; }
+.czg-why-line { display: block; color: var(--ui-text-2); }
+.czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
+.czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
+/* an earlier answer is dimmed; the banner and the pair switch (the lead) never are */
+.czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
+/* Stacked ([data-czg-stacked]: the form and the evidence do not fit side by
+   side): the banner and the pair switch ([data-czg-lead]) move above the
+   form, the rest of the evidence below it; one scroll for all. */
+.czg[data-czg-stacked] .czg-cols { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+.czg[data-czg-stacked] .czg-evidence { display: contents; }
+.czg[data-czg-stacked] [data-czg-lead] { order: -1; }
+.czg[data-czg-stacked] .czg-form { flex: 0 0 auto; max-height: none; overflow: visible; }
+.czg-chips { margin-left: auto; }
+.czg .ui-segmented-opt { gap: var(--ui-gap-1); }
+.czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
 /* K18 choosing: ARIA states drive the look, so the state a screen reader
    hears is the state a person sees (docs/308 §4b). */
 .ui-select.ui-select[aria-invalid="true"], .ui-input.ui-input[aria-invalid="true"] { border-color: var(--ui-danger-text); background-image: none; }
@@ -1637,6 +1679,7 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .gate-status-list { margin: var(--ui-gap-2) 0; }
 .gate-status { display: flex; flex-direction: column; }
 .gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
+.gate-status-list > .ui-zone-body { padding: 0; gap: 0; }
 .gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
 .gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
 .gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }

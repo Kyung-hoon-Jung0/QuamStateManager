@@ -283,6 +283,7 @@ def measure_all():
         "bare_buttons": measure_bare_buttons(known),
         "bare_controls": measure_bare_controls(known),
         "bare_script_controls": measure_script_controls(),
+        "unruled_classes": measure_unruled_classes(known),
         "inline_styles": measure_inline_styles(),
         "overlay_shells": measure_overlay_shells(),
         "confirm_alert": measure_confirm_alert(),
@@ -665,6 +666,55 @@ def test_9_no_new_class_without_a_css_rule():
         warnings.warn(f"dead classes fixed -- remove from the baseline: {gone}")
 
 
+_JS_CLASS_CALLS = (
+    # el('div', 'a b') / el("p", "a") -- the small element helpers most scripts define
+    re.compile(r"\bel\(\s*[\"'][\w-]+[\"']\s*,\s*[\"']([^\"'\n]*)[\"']"),
+    # classList.add('a') / .toggle('a') / .remove('a')
+    re.compile(r"classList\.(?:add|toggle|remove)\(\s*[\"']([^\"'\n]+)[\"']"),
+)
+
+
+def measure_unruled_classes(known=None):
+    """Class names used in templates/*.html and built in static/*.js that have no
+    rule in any CSS source (ui-kit.css, style.css, pico, template <style>):
+    one count per name occurrence, per file. Classes are for the kit's look;
+    script hooks are data-* attributes (docs/308 section 6).
+
+    What it cannot see: a class name held in a variable or built by
+    concatenation (a literal ending in "-" is taken as a prefix and skipped),
+    names added through setAttribute('class', ...), and classes in Jinja holes."""
+    known = known if known is not None else _known_classes()
+    out = {}
+    for p in _templates() + _scripts():
+        attrs = [a for _t, a in _class_attrs(p)]
+        if p.suffix == ".js":
+            text = _read(p)
+            for rx in _JS_CLASS_CALLS:
+                attrs.extend(m.group(1) for m in rx.finditer(text))
+        n = sum(1 for a in attrs for t in _literal_tokens(a) if not t.endswith("-") and t not in known)
+        if n:
+            out[_rel(p)] = n
+    return out
+
+
+def test_9b_no_new_class_name_without_a_rule():
+    """Every class name in a template or script is a kit/feature class with a
+    rule; the per-file count only goes down and a file not in the baseline
+    (added later) must have zero."""
+    _ratchet("class names without a rule", measure_unruled_classes(), _baseline()["unruled_classes"])
+
+
+def test_9c_unruled_class_measure_can_fail(tmp_path, monkeypatch):
+    tpl = tmp_path / "t.html"
+    tpl.write_text('<div class="ui-x czg-new-thing"></div><p class="{{ c }}"></p>', encoding="utf-8")
+    js = tmp_path / "t.js"
+    js.write_text("el('span', 'ui-x no-rule'); n.classList.add('gone'); el('i', 'ui-line-' + k);", encoding="utf-8")
+    monkeypatch.setattr(sys.modules[__name__], "_templates", lambda: [tpl])
+    monkeypatch.setattr(sys.modules[__name__], "_scripts", lambda: [js])
+    monkeypatch.setattr(sys.modules[__name__], "_rel", lambda p: p.name)
+    assert measure_unruled_classes(known={"ui-x"}) == {"t.html": 1, "t.js": 2}
+
+
 def test_7c_csp_no_new_hx_on_or_trigger_filter():
     now, base = measure_csp(), _baseline()["csp"]
     _ratchet("hx-on", now["hx_on"], base["hx_on"])
@@ -933,8 +983,21 @@ if __name__ == "__main__":
 # These selectors were reviewed together when their feature styles moved
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
+    # the CZ gate dialog (cz-gate.js, _cz_gate_dialog.html)
+    '.czg .czg-body', '.czg[data-czg-stacked] .czg-cols', '.czg[data-czg-stacked] .czg-evidence',
+    '.czg[data-czg-stacked] [data-czg-lead]', '.czg[data-czg-stacked] .czg-form',
+    '.czg-stale > :not([data-czg-lead])', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
+    '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
+    '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-row-acts',
+    '.czg .ui-segmented-opt',
+    '.czg-form > *', '.czg-evidence > *',
+    # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
+    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
+    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',
+    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open]',
+    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop',
     # the CZ gate status line and its delete offer
-    '.gate-status-list', '.gate-status-list .gate-status',
+    '.gate-status-list', '.gate-status-list .gate-status', '.gate-status-list > .ui-zone-body',
     '.gate-status-list .gate-status + .gate-status', '.gate-status',
     '.gate-status-row', '.gate-status-row:has(> .gate-status-details[open])',
     '.gate-status-row > .ui-chip', '.gate-status-items', '.gate-status-details',

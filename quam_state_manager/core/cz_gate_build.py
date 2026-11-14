@@ -594,7 +594,7 @@ def _layer(defaults: dict, given: dict, copy_src: dict | None,
     for k, v in given.items():
         if k == "id":
             continue
-        pulse[k] = copy.deepcopy(v)
+        pulse[k] = keep_float(defaults.get(k), copy.deepcopy(v))
         prov[k] = GIVEN
     pulse.pop("id", None)
     pulse["__class__"] = qclass
@@ -679,7 +679,8 @@ def _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
 def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
          pulses: dict[str, dict] | None = None,
          copy_from: str | None = None,
-         model_gate: tuple[str, str] | None = None) -> dict[str, Any]:
+         model_gate: tuple[str, str] | None = None,
+         macro_fields: dict[str, Any] | None = None) -> dict[str, Any]:
     """Plan one new CZ gate. Never raises on chip shape; never changes *merged*.
 
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
@@ -689,7 +690,10 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     and keeps the model's pulse classes; its ``pulses`` entries only give
     field values. ``copy_from`` is another gate of the same pair whose
     matching field values seed the pulses. ``model_gate`` is ``(pair,
-    gate)`` for a class SM does not know. Malformed arguments are refusals.
+    gate)`` for a class SM does not know. ``macro_fields`` gives values for
+    the gate's own settings in a copied layout (keys the model macro has,
+    never a pulse field, a reset key or a reference); they are reported as
+    ``given`` in ``fields["macro"]``. Malformed arguments are refusals.
     A copied layout (``"layout": "copied"``) is a proposal: SM copies a
     structure it cannot describe, so the lab's own code must confirm it
     before it is written. ``"reset"`` lists the model keys the copy does
@@ -703,16 +707,58 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     str, "refusals": [str]}``. Every created value is a fresh copy.
     """
     try:
-        return _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                          copy_from, model_gate)
+        out = _plan_body(merged, pair_id, gate_name, gate_class, pulses,
+                         copy_from, model_gate, macro_fields)
+        if "refusals" in out:
+            names = _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from,
+                                  model_gate, macro_fields)
+            out = _refuse([cap_names(r, names) for r in out["refusals"]])
+        return out
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
         return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "
                         "Nothing was changed. Report this with the gate class "
                         "and the pair."])
 
 
+#: the longest name a refusal echoes in full
+ECHO_CAP = 64
+
+
+def cap_name(name: str) -> str:
+    """*name* as a refusal shows it: at most :data:`ECHO_CAP` characters, a
+    longer one cut with an ellipsis."""
+    name = str(name)
+    return name if len(name) <= ECHO_CAP else name[:ECHO_CAP - 1] + "…"
+
+
+def cap_names(text: str, names) -> str:
+    """*text* with every long name in *names* cut to :func:`cap_name`."""
+    for n in sorted({str(n) for n in names if isinstance(n, str) and len(n) > ECHO_CAP},
+                    key=len, reverse=True):
+        text = text.replace(n, cap_name(n))
+    return text
+
+
+def _echoed_names(pair_id, gate_name, gate_class, pulses, copy_from, model_gate,
+                  macro_fields) -> list:
+    """Every name the person gave that a refusal may echo."""
+    out = [pair_id, gate_name, gate_class, copy_from]
+    if isinstance(model_gate, (list, tuple)):
+        out.extend(model_gate)
+    if isinstance(pulses, dict):
+        for f, spec in pulses.items():
+            out.append(f)
+            if isinstance(spec, dict):
+                out.append(spec.get("class"))
+                if isinstance(spec.get("fields"), dict):
+                    out.extend(spec["fields"])
+    if isinstance(macro_fields, dict):
+        out.extend(macro_fields)
+    return [n for n in out if isinstance(n, str)]
+
+
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
-               model_gate) -> dict[str, Any]:
+               model_gate, macro_fields=None) -> dict[str, Any]:
     bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
                             copy_from)
     if bad:
@@ -773,12 +819,18 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     copy_source.raw = lambda field: (
         None if copy_macro is None else (copy_from, copy_macro.get(field)))
 
+    if macro_fields is not None and not isinstance(macro_fields, dict):
+        return _refuse(reasons + ["The gate settings must be given by key. Type them again."])
     if gate_class in GATE_CLASSES:
+        if macro_fields:
+            return _refuse(reasons + [
+                f"This gate class has no gate settings to change ({', '.join(sorted(macro_fields))}). "
+                "Remove them."])
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
                           lines, copy_source, reasons)
     else:
         out = _plan_copied(merged, pair_id, gate_name, gate_class, pulses,
-                           lines, copy_source, reasons, model_gate)
+                           lines, copy_source, reasons, model_gate, macro_fields)
     if "error" in out:
         return out
     # The plan never overwrites a path, never writes one twice and never
@@ -1324,8 +1376,41 @@ def default_model(merged: dict, pair_id: str, gate_class: str) -> tuple[str, str
     return cands[0] if cands else None
 
 
+def keep_float(old: Any, new: Any) -> Any:
+    """A whole number given for a field that holds a float stays a float
+    (JSON cannot tell 1 from 1.0, so the dialog's 1 arrives as an int)."""
+    if isinstance(old, float) and isinstance(new, int) and not isinstance(new, bool):
+        return float(new)
+    return new
+
+
+def _apply_macro_fields(macro: dict, kept: dict, model: dict, pulse_keys,
+                        reset: list, macro_fields: dict | None, reasons: list) -> None:
+    """The person's values for the gate's own settings (copied layout only).
+
+    A key is accepted only when the model macro has it, it is not a pulse
+    field, not a key the copy resets (fidelity, phase shifts, spectators,
+    extras) and the model's value is not a reference; anything else is a
+    refusal naming the key. The lab check decides whether the value is valid."""
+    for k, v in (macro_fields or {}).items():
+        why = None
+        if k == "__class__" or k not in model:
+            why = f"The model gate has no setting named {k}. Remove it."
+        elif k in pulse_keys:
+            why = f"{k} is a pulse of the gate, not a setting. Change it in its pulse block."
+        elif k in reset:
+            why = f"{k} is not copied from the model gate (it starts empty). Remove it."
+        elif isinstance(model[k], str) and model[k].startswith("#"):
+            why = f"{k} holds a reference and is kept as it is. Remove it."
+        if why:
+            reasons.append(why)
+            continue
+        macro[k] = keep_float(model[k], copy.deepcopy(v))
+        kept[k] = GIVEN
+
+
 def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
-                 copy_source, reasons, model_gate) -> dict[str, Any]:
+                 copy_source, reasons, model_gate, macro_fields=None) -> dict[str, Any]:
     if model_gate is None:
         model_gate = default_model(merged, pair_id, gate_class)
         if model_gate is None:
@@ -1407,6 +1492,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
 
     macro, kept, reset = _structure_only(model, fields, all_operation_keys(merged))
     macro = norm(macro)
+    _apply_macro_fields(macro, kept, model, fields, reset, macro_fields, reasons)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
     directions: dict[str, str] = {}

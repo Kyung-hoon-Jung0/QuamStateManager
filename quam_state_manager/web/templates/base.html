@@ -153,20 +153,21 @@
         'opxmon': ['opx-monitor.js'],
         'agent_setup': ['agent-setup.js'],
         'uikit': ['ui.js'],
+        'czgate': ['ui.js', 'gate-timeline.js', 'cz-gate.js'],
         'cm6': ['vendor/cm6/cm6.min.js', 'tree-json-edit.js'],
     } %}
     {# docs/166: 'pulses' takes the components bundle too — its chip map
        (topo-graph + component-map) is the page's row filter. #}
     {% set page_bundles = {
         'bulk': ['grid'], 'table': ['grid'],
-        'pulses': ['pulses', 'components'],
+        'pulses': ['pulses', 'components', 'czgate'],
         'zline': ['zline'],
-        'czplan': ['czplan', 'components'],
+        'czplan': ['czplan', 'components', 'czgate'],
         'generate': ['generate'], 'regenerate': ['generate'],
         'instrument': ['wiring'],
         'port_play': ['portplay'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
-        'qubits': ['components'], 'pairs': ['components'], 'resonators': ['components'], 'flux': ['components'],
+        'qubits': ['components', 'czgate'], 'pairs': ['components', 'czgate'], 'resonators': ['components'], 'flux': ['components'],
         'couplers': ['components'], 'qdac': ['components'],
         'datasets': ['datasets'], 'dataset_detail': ['datasets'], 'dataset_compare': ['datasets'], 'collections': ['datasets'],
         'fit-audit': ['datasets'],

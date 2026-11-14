@@ -92,11 +92,16 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
         return _item("check", "checked with an older rule: check again", "neutral",
                      f"Checked {when} UTC; SM now compares more of the gate than when "
                      "this was recorded, so it cannot say whether the values changed.")
-    if ent.get("result") == gate_check_log.CHECKED:
+    if ent.get("result") in (gate_check_log.CHECKED, gate_check_log.PARTLY):
         # only a passed check is compared with the values now
         if content_hash(merged, pair, gate) != ent.get("hash"):
             return _item("check", "values changed since the check", "warn",
                          f"Checked with the lab's code {when} UTC; the gate changed after.")
+        if ent.get("result") == gate_check_log.PARTLY:
+            n = len(ent.get("not_run") or []) or 1
+            return _item("check", f"checked, {n} not run", "ok",
+                         f"Checked with the lab's code {when} UTC; the checks that ran passed. "
+                         f"{n} could not run: {ent.get('reason') or 'no reason given'}.")
         return _item("check", "checked", "ok", f"Checked with the lab's code {when} UTC.")
     return _item("check", "not checked", "warn",
                  f"Not checked with the lab's code: {ent.get('reason') or 'no reason given'} "

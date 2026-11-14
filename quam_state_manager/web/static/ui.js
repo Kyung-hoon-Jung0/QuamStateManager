@@ -438,7 +438,7 @@
         d.setAttribute("role", "dialog");
         d.setAttribute("aria-label", hd.title);
         var h = el("div", "ui-dialog-head");
-        h.appendChild(head(hd.title, hd.level, hd.eyebrow, hd.gist, hd.count, null, size !== "l"));
+        h.appendChild(head(hd.title, hd.level, hd.eyebrow, hd.gist, hd.count, null, size !== "l" && size !== "xl"));
         if (o.close !== false) h.appendChild(button({ label: "✕", cls: "ui-btn-icon", aria_label: "Close" }));
         d.appendChild(h);
         var b = el("div", "ui-dialog-body");
