@@ -67,7 +67,6 @@ def test_the_catalogue_readers():
     both = {"CosineBipolarPulse": {}, "_FlatTopGaussianPulse": {}, "ErfSquarePulse": {}, "SNZPulse": {}}
     assert list(add_catalog.env_gate_types(both)) == ["cz_bipolar", "cz_snz", "cz_flattop_erf"]
     assert add_catalog.slot_leaves("cz_snz")["coupler"] is None
-    assert add_catalog.slot_leaves("cr_gate") == {}
 
 
 def test_the_seeder_copy_of_the_variants_matches():

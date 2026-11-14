@@ -34,8 +34,8 @@ CZ_VARIANTS = ("unipolar", "flattop", "bipolar", "SNZ", "flattop_erf")
 
 # ``arch`` gates each type to the pair's architecture (docs/54): flux types
 # need flux evidence (z lines / coupler / CZ-shaped macros) and must never be
-# written onto a FixedFrequencyTransmonPair; CR/Stark types need the matching
-# pair drive channel.
+# written onto a FixedFrequencyTransmonPair. CR / Stark-induced CZ macros are
+# not created from SM in this version (no table entry).
 GATE_TYPES: dict[str, dict[str, Any]] = {
     "cz_unipolar": {
         "label": "CZ Unipolar (square pulse)",
@@ -71,22 +71,6 @@ GATE_TYPES: dict[str, dict[str, Any]] = {
             ("coupler_amplitude", "Coupler amplitude", 0.0, "float"),
             ("phase_shift_control", "Phase shift (control)", 0.0, "float"),
             ("phase_shift_target", "Phase shift (target)", 0.0, "float"),
-        ],
-    },
-    "cr_gate": {
-        "label": "CR gate (cross-resonance macro)",
-        "arch": "cr",
-        "fields": [
-            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
-            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
-        ],
-    },
-    "stark_cz": {
-        "label": "Stark-induced CZ (ZZ drive macro)",
-        "arch": "zz",
-        "fields": [
-            ("qc_correction_phase", "Correction phase (control)", 0.0, "float"),
-            ("qt_correction_phase", "Correction phase (target)", 0.0, "float"),
         ],
     },
 }

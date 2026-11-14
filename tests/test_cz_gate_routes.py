@@ -152,6 +152,16 @@ def test_every_entry_point_carries_the_one_opener(chip, url, needle):
     assert needle in html, url
 
 
+def test_the_pair_page_has_one_gate_creating_door(tmp_path):
+    # a pair with a gate shows the CZ gates zone and its "+ Gate" opener
+    a = App(tmp_path, _lab_chip())
+    html = a.c.get("/pair/q1-2", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert html.count("data-czg-open") == 1
+    assert ">+ Gate</button>" in html
+    for gone in ("/gate/new", "/pair/q1-2/gate\"", "+ Add gate", "add-gate-form"):
+        assert gone not in html, gone
+
+
 # ---------------------------------------------------------------- plan
 
 def test_plan_is_pure_and_signed(chip):
