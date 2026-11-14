@@ -105,6 +105,8 @@ def test_rewrite_changes_only_the_region():
     lambda s: s.replace(T.REGION_BEGIN + "\n", T.REGION_BEGIN + "\n" + T.REGION_BEGIN + "\n"),
     lambda s: s.replace("        return (\n", "        x = 1\n        return (\n"),
     lambda s: s.replace("    amplitude: float = 0.1", "    amplitude: float = 0.1 + 0"),
+    lambda s: s + "\n" + T.REGION_END + "\n",
+    lambda s: s.replace("    amplitude: float = 0.1  #", "    amplitude: float = 0.10  #"),
 ])
 def test_broken_markers_are_code_view_only(breaker):
     src = breaker(T.render(spec_a()))
