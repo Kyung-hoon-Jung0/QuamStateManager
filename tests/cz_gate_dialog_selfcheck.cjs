@@ -123,7 +123,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(rowClicks === 1, '+ Gate does not open the row');
     const d = $('#czg-dialog');
-    ok(d && d.hasAttribute('open') && d.classList.contains('ui-dialog--l'), 'the kit dialog opens');
+    ok(d && d.hasAttribute('open') && d.classList.contains('ui-dialog--xl'), 'the kit dialog opens');
     ok($('#czg-pair').value === 'q1-2', 'the pair is preselected');
     ok(/q1 → q2, moving qubit q1 \(a property of the pair\)/.test($('#czg-pair-line').textContent), 'mover shown read-only');
     ok(!$('#czg-pair-line').matches('input, select'), 'the mover is not an input');

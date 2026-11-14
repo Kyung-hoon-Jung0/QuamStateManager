@@ -114,7 +114,7 @@ def _check(c, body):
 def test_dialog_preselects_the_pair_and_lists_classes(chip):
     r = chip.c.get("/pulse/cz-gate/dialog?pair=q1-2")
     html = r.get_data(as_text=True)
-    assert r.status_code == 200 and 'id="czg-dialog"' in html and 'class="ui-dialog ui-dialog--l czg"' in html
+    assert r.status_code == 200 and 'id="czg-dialog"' in html and 'class="ui-dialog ui-dialog--xl czg"' in html
     assert '<option value="q1-2" selected>' in html and 'id="czg-status-slot"' in html
     data = json.loads(html.split('id="czg-data">', 1)[1].split("</script>", 1)[0])
     assert data["selected"] == "q1-2"

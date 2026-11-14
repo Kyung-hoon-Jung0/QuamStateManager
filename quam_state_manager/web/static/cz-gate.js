@@ -121,6 +121,8 @@
     function fillPairLine() {
         var p = pairInfo($('czg-pair').value);
         var line = $('czg-pair-line');
+        var gist = $('czg-gist');
+        if (gist) gist.textContent = p ? 'Pair ' + p.id : 'Pick a pair';
         if (!line) return;
         if (!p) { line.textContent = ''; return; }
         var mover = p.moving_qubit === 'control' ? p.control : p.moving_qubit === 'target' ? p.target : null;
@@ -209,7 +211,7 @@
         if (src) { head.appendChild(document.createTextNode(' ')); head.appendChild(el('span', src === 'entered' ? 'czg-src czg-src--entered' : src.indexOf('copied') === 0 ? 'czg-src czg-src--copied' : 'czg-src', src)); }
         l.appendChild(head);
         var i = document.createElement('input');
-        i.className = 'czg-input';
+        i.className = 'czg-input czg-input--text';
         i.type = 'text';
         i.spellcheck = false;
         if (kind === 'float' || kind === 'int') i.setAttribute('inputmode', 'decimal');

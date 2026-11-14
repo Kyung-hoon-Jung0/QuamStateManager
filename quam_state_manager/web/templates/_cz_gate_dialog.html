@@ -3,12 +3,12 @@
     builds the form from it, asks /api/pulse/cz-gate/plan on every change and
     /check before /create. Nothing here writes the live chip. -#}
 {%- from '_ui.html' import ui_note, ui_callout -%}
-<dialog id="czg-dialog" class="ui-dialog ui-dialog--l czg" aria-labelledby="czg-title">
+<dialog id="czg-dialog" class="ui-dialog ui-dialog--xl czg" aria-labelledby="czg-title">
     <div class="ui-dialog-head">
         <header class="ui-head">
             <div class="ui-head-eyebrow">New gate</div>
-            <h2 id="czg-title" class="ui-head-title">Create a CZ gate</h2>
-            <p class="ui-head-gist">One named gate per pair. The lab's code checks it on a copy of the chip before anything is written.</p>
+            <h2 id="czg-title" class="ui-head-title">New CZ gate</h2>
+            <p id="czg-gist" class="ui-head-gist">{{ ("Pair " ~ selected) if selected else "Pick a pair" }}</p>
         </header>
         <button type="button" class="ui-btn-icon" data-czg-close aria-label="Close" title="Close">&#10005;</button>
     </div>
@@ -27,7 +27,7 @@
                 </label>
                 <p id="czg-pair-line" class="ui-note czg-readonly" aria-live="polite"></p>
                 <label class="ui-field"><span class="ui-field-label">Gate name</span>
-                    <input id="czg-name" class="czg-input" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
+                    <input id="czg-name" class="czg-input czg-input--text" name="gate_name" type="text" value="cz_" spellcheck="false" aria-describedby="czg-name-why">
                 </label>
                 <p id="czg-name-why" class="ui-note czg-why"></p>
                 <label class="ui-field"><span class="ui-field-label">Gate class</span>
@@ -45,7 +45,7 @@
                     <summary class="ui-disclosure-summary">Also create on other pairs <span id="czg-more-count" class="ui-count"></span></summary>
                     <div class="ui-disclosure-body">
                         {{ ui_note('The same starting values go to every pair. A pair that cannot have this gate says why.') }}
-                        <div id="czg-more-list" class="czg-more-list" role="group" aria-label="Other pairs"></div>
+                        <div id="czg-more-list" class="czg-more-list" aria-label="Other pairs"></div>
                     </div>
                 </details>
             </form>
@@ -65,7 +65,7 @@
     </div>
     <div class="ui-dialog-foot">
         <span id="czg-status" class="ui-note" role="status"></span>
-        <div class="ui-actions" role="group" aria-label="Dialog actions">
+        <div class="ui-actions">
             <button type="button" class="btn-sync outline" data-czg-close id="czg-cancel">Cancel</button>
             <button type="button" class="btn-sync outline" id="czg-open-pair" hidden>Open the pair</button>
             <button type="button" class="btn-sync primary" id="czg-primary" disabled>Check</button>

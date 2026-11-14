@@ -113,6 +113,11 @@ def _parts():
                              "body": [{"part": "note", "text": "The pulses it added stay on the chip."}],
                              "foot_actions": [{"label": "Cancel", "cls": "btn-sync outline"},
                                               {"label": "Remove", "cls": "btn-sync danger"}]}),
+        ("Dialog", "Extra large (a form beside a chart)", {
+            "part": "dialog", "size": "xl", "head": {"eyebrow": "New gate", "title": "New CZ gate", "gist": "Pair q1-2"},
+            "body": [{"part": "note", "text": "The form on the left, the evidence on the right."}],
+            "foot_actions": [{"label": "Cancel", "cls": "btn-sync outline"},
+                             {"label": "Check", "cls": "btn-sync primary"}]}),
     ]
     return out
 

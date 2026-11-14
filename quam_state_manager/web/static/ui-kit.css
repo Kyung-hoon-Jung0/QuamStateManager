@@ -105,6 +105,11 @@
     --ui-dialog-m: 760px;
     --ui-dialog-l: 920px;
     --ui-dialog-max-h: 82vh;
+    --ui-dialog-xl: min(1240px, 96vw);
+    --ui-dialog-xl-max-h: 90vh;
+    --ui-backdrop: color-mix(in srgb, black 35%, transparent);
+    --ui-czg-form-w: 360px;
+    --ui-czg-evidence-min: 520px;
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
     /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */
@@ -455,6 +460,7 @@
 .ui-dialog--s { width: var(--ui-dialog-s); }
 .ui-dialog--m { width: var(--ui-dialog-m); }
 .ui-dialog--l { width: var(--ui-dialog-l); }
+.ui-dialog--xl { width: var(--ui-dialog-xl); max-height: var(--ui-dialog-xl-max-h); }
 .ui-dialog-head { display: flex; align-items: flex-start; gap: var(--ui-gap-2); padding: var(--ui-gap-3) var(--ui-gap-4) 0; }
 .ui-dialog-head > .ui-head { flex: 1 1 auto; margin: 0; }
 .ui-dialog-head .ui-head-title { font-size: var(--ui-fs-lg); }
@@ -1282,26 +1288,40 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
 
-/* The CZ gate dialog: the form on the left, the lab's evidence on the right. */
-.czg .czg-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
+/* A native <dialog> wearing the kit shell: hidden when closed, a centred fixed
+   column with a backdrop when open. The two older kit dialogs keep their own
+   rules in style.css and are left out here, so they render as before. */
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several) { position: fixed; inset: 0; margin: auto; padding: 0; height: fit-content; min-width: 0; min-height: 0; max-width: 96vw; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open]) { display: none; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open] { display: flex; flex-direction: column; align-items: stretch; }
+dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: var(--ui-backdrop); }
+
+/* The CZ gate dialog: the form on the left, the lab's evidence on the right;
+   they stack on a narrow window, and each column scrolls on its own. */
+.czg .czg-body { display: flex; flex-direction: column; gap: var(--ui-gap-3); overflow: hidden; min-height: 0; }
 .czg-alert { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
 .czg-alert:empty, .czg-done:empty { display: none; }
-.czg-cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: var(--ui-gap-4); align-items: start; }
+.czg-cols { display: flex; flex-wrap: wrap; gap: var(--ui-gap-4); align-items: flex-start; min-height: 0; overflow: auto; }
+.czg-form { flex: 0 0 var(--ui-czg-form-w); max-width: 100%; }
+.czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
+.czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); overflow: auto; }
 .czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
-.czg-input { width: 100%; margin: 0; padding: var(--ui-gap-1) var(--ui-gap-2); height: auto; font-size: var(--ui-fs-sm); }
+.czg-input { width: auto; max-width: 100%; margin: 0; padding: 0 var(--ui-gap-2); height: var(--ui-btn-h); font-size: var(--ui-fs-sm); }
+.czg-input--text { width: 100%; }
+.czg-foot-acts { display: flex; gap: var(--ui-gap-2); margin-left: auto; }
 .czg-bad { border-color: var(--ui-danger-border); }
 .czg-readonly, .czg-why { margin-top: calc(-1 * var(--ui-gap-1)); }
 .czg-why:empty, .czg-readonly:empty { display: none; }
 .czg-why-line { display: block; color: var(--ui-text-2); }
 .czg-slot { margin: 0; padding: var(--ui-gap-2) var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); display: flex; flex-direction: column; gap: var(--ui-gap-2); }
-.czg-slot-title { padding: 0 var(--ui-gap-1); font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); font-family: var(--ui-font-mono); }
+.czg-slot-title { padding: 0 var(--ui-gap-1); margin: 0; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); font-family: var(--ui-font-mono); }
 .czg-fieldbox { margin: 0; }
 .czg-src { font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
 .czg-src--entered { color: var(--ui-accent); }
 .czg-src--copied { color: var(--ui-ok-text); }
 .czg-more-list { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-more-row { display: flex; align-items: baseline; gap: var(--ui-gap-2); }
-.czg-section-title { margin: var(--ui-gap-2) 0 0; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw); color: var(--ui-text-2); }
+.czg-section-title { margin: var(--ui-gap-2) 0 0; font-size: var(--ui-fs-xs); font-weight: var(--ui-fw); color: var(--ui-text-2); }
 .czg-chart > .ui-note { padding: var(--ui-gap-3) 0; }
 .czg-intent, .czg-checks, .czg-writes { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
 .czg-stale { opacity: 0.45; }
