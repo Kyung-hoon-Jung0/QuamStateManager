@@ -1000,7 +1000,6 @@ def _sync_live_refresh(ctx) -> None:
 # SHA-256 of the live bytes read -- so a hit is a diff of exactly the content
 # in hand (validate on read), and any edit, reload or outside write is a miss.
 # ----------------------------------------------------------------------
-_W7_STORE_UIDS = itertools.count(1)
 _WL_ENTRIES = _ramcache.KeyedMemo("sync.working_vs_live", max_entries=8,
                                   max_bytes=64 * 1024 * 1024)
 _BL_ENTRIES = _ramcache.KeyedMemo("sync.baseline_vs_live", max_entries=8,
@@ -1086,15 +1085,10 @@ def _journal_ready_refusal(ctx, verb="undone"):
 
 def _store_uid(store) -> int:
     """A process-unique id for one QuamStore object (``id()`` can be reused
-    by a later store after this one is collected; this never is)."""
-    uid = getattr(store, "_w7_uid", None)
-    if uid is None:
-        with store._lock:
-            uid = getattr(store, "_w7_uid", None)
-            if uid is None:
-                uid = next(_W7_STORE_UIDS)
-                store._w7_uid = uid
-    return uid
+    by a later store after this one is collected; this never is). The one
+    source is :func:`core.store_uid.store_uid`."""
+    from quam_state_manager.core.store_uid import store_uid
+    return store_uid(store)
 
 
 def _store_token(store) -> tuple:

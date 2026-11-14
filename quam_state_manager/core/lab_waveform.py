@@ -419,8 +419,8 @@ def _run_warm(python_path: str, items: list[dict]) -> dict | None:
             "sources": parsed.get("sources") or {}}
 
 
-def _timeout_text() -> str:
-    return (f"your lab's code did not answer within {TIMEOUT_S} s and was "
+def _timeout_text(seconds: float | None = None) -> str:
+    return (f"your lab's code did not answer within {seconds or TIMEOUT_S:g} s and was "
             "stopped")
 
 
@@ -434,8 +434,11 @@ def _run(python_path: str, items: list[dict]) -> dict:
     return _run_cold(python_path, items)
 
 
-def _run_cold(python_path: str, items: list[dict]) -> dict:
-    """One cold subprocess for *items*."""
+def _run_cold(python_path: str, items: list[dict], *, timeout: int | None = None,
+              env_extra: dict | None = None) -> dict:
+    """One cold subprocess for *items* (*env_extra*: variables set in the
+    child only)."""
+    import functools
     from quam_state_manager.core.config_generator import (
         _blank_outcome, _cleanup_work_dir, _run_script_outcome, _script_path)
     script = _script_path("run_pulse_waveform.py")
@@ -454,15 +457,18 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
         _run_script_outcome(
             [python_path, "-B", str(script), "--in", str(work_dir / "_in.json"),
              "--out", str(work_dir / "_result.json")],
-            work_dir, TIMEOUT_S, outcome,
-            runner=lab_worker.command,
+            work_dir, timeout or TIMEOUT_S, outcome,
+            runner=(functools.partial(lab_worker.command, env_extra=env_extra)
+                    if env_extra else lab_worker.command),
             no_result_label="lab waveform",
             error_fallback="drawing with the lab's class failed")
     finally:
         _cleanup_work_dir(work_dir)
     parsed = outcome.get("result") or {}
     if not outcome.get("ok"):
-        out["error"] = (_timeout_text()
+        out["timed_out"] = ("timed out" in str(outcome.get("stderr") or "")
+                            and not parsed)
+        out["error"] = (_timeout_text(timeout or TIMEOUT_S)
                         if "timed out" in str(outcome.get("stderr") or "")
                         and not parsed else
                         outcome.get("error") or "drawing with the lab's class failed")
@@ -619,6 +625,68 @@ def warm_config(python_path: str | None, state_folder: str) -> dict | None:
     rec = (ran["items"] or [{}])[0] or {}
     return {"ok": bool(rec.get("ok") and rec.get("config")),
             "error": rec.get("error"), "config": rec.get("config")}
+
+
+GATE_CHECK_ITEM = "@gatecheck"
+GATE_CHECK_TIMEOUT_S = 180
+#: how long a gate check waits for another lab job to finish before it
+#: answers "busy" (a request thread never waits forever)
+GATE_CHECK_LOCK_WAIT_S = 30
+
+
+def run_gate_check(python_path: str | None, before: str, after: str,
+                   macros: list[str], *, timeout: int = GATE_CHECK_TIMEOUT_S,
+                   root_class: str | None = None,
+                   lock_wait: float = GATE_CHECK_LOCK_WAIT_S) -> dict:
+    """The lab-side gate check on two chip folders, in ONE cold subprocess
+    under the machine lock. ``{"status": "ok" | "no-env" | "timeout" |
+    "crash" | "busy", "error", "data"}``; ``data`` is the runner's answer.
+    "busy": the machine lock stayed taken by another lab job for
+    :data:`GATE_CHECK_LOCK_WAIT_S`.
+
+    Cold, not warm: the child gets ``QUAM_STATE_PATH`` set to the "after"
+    folder, which a warm worker (started once with its own env) cannot
+    carry, and a check runs once per create, so one interpreter start is
+    affordable. Never cached: the folders are temporary copies."""
+    if not python_path:
+        return {"status": "no-env", "data": None,
+                "error": "no Python environment is selected, so the gate could "
+                         "not be checked with the lab's code"}
+    if not Path(python_path).is_file():
+        return {"status": "no-env", "data": None,
+                "error": "the selected Python environment no longer exists"}
+    item = {"qclass": GATE_CHECK_ITEM, "params": {
+        "before": str(before), "after": str(after), "macros": list(macros),
+        "lab_dir": lab_worker._lab_dir(python_path), "root_class": root_class}}
+    lock = _env_lock(python_path)
+    _fg_add(python_path, 1)
+    try:
+        deadline = time.monotonic() + lock_wait
+        got = lock.acquire(blocking=False)
+        while not got and time.monotonic() < deadline:
+            time.sleep(0.1)
+            got = lock.acquire(blocking=False)
+    finally:
+        _fg_add(python_path, -1)
+    if not got:
+        return {"status": "busy", "data": None,
+                "error": "the lab environment is busy with another check; try again"}
+    try:
+        ran = _run_cold(python_path, [item], timeout=timeout,
+                        env_extra={"QUAM_STATE_PATH": str(after)})
+    except Exception as exc:  # noqa: BLE001 -- a typed result, never a raise
+        return {"status": "crash", "data": None, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        lock.release()
+    if not ran["ok"]:
+        err = ran.get("error") or "the lab check failed"
+        status = "timeout" if ran.get("timed_out") else "crash"
+        return {"status": status, "data": None, "error": err}
+    rec = (ran["items"] or [None])[0]
+    if not isinstance(rec, dict) or not rec.get("ok"):
+        return {"status": "crash", "data": rec,
+                "error": (rec or {}).get("error") or "the lab check gave no answer"}
+    return {"status": "ok", "data": rec, "error": None}
 
 
 def _sizeof(rec: dict) -> int:
