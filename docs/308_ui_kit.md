@@ -224,6 +224,23 @@ Measured (`test_7h`, contrast ratios): zone title on its head 9.65 / 9.97 / 11.8
 boundary against the ground 2.85 / 3.75 / 3.74, against `--ui-surface-2` 2.57 / 3.32 / 3.34, where the panel
 border was 1.67 / 2.09 / 2.19; head band vs body luminance step 0.137 / 0.0099 / 0.0081.
 
+## 4e. Scroll region: a region that visibly continues
+
+Use `ui-scroll` on any region that scrolls inside a dialog or a pane and can end mid-content (a dialog's
+form or result column, a long list in a side pane). Without it, a zone cut by the scroll edge has no bottom
+border and reads as broken. One class, no JS:
+- a thin scrollbar, always visible while the region can scroll (`scrollbar-width: thin`, thumb
+  `--ui-scroll-thumb`, transparent track, `scrollbar-gutter: stable` so the width does not jump when
+  content starts to overflow); `::-webkit-scrollbar` equivalents at `--ui-scroll-bar-w`;
+- a bottom fade, `::after`, `position: sticky; bottom: 0`, `--ui-scroll-fade-h` tall, painted with
+  `--ui-scroll-fade`: transparent to `--ui-scroll-bg` (`--ui-surface-1`, the dialog and pane ground). The
+  gradient is computed in the token block, so a region on another ground needs its own fade token there.
+  It takes its own space after the last child, so at the scroll end nothing is under it, and it has
+  `pointer-events: none`, so a click on a field under it reaches the field. Over the same ground it is invisible
+  when the content fits.
+Put the class on the element that really scrolls. When a layout moves the scroll to a parent (the CZ gate
+dialog stacked), hide the inner `::after` and drop its gutter, so there is one scrollbar and one fade.
+
 ## 5. Writing rules (UI text, English)
 
 1. Conclusion first, reason next, action last. A sentence <= ~90 characters; two thoughts = two sentences.
