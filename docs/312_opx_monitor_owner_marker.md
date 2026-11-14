@@ -35,12 +35,12 @@ It never chooses which QM a close acts on and never skips or shortens a confirm.
   the reference marker module by a script kept outside this repository; a new marker version
   regenerates the fixture and `tests/test_opx_owner_marker.py` fails until the copy follows.
 - `core/opx_monitor.py`: `owner_info(q)` (kind + markers, no labels), `own_pc_tag()`,
-  `load_pc_names()` / `save_pc_names()`.
+  `load_pc_names()`; the one writer is the Monitor settings save route (`web/opx_monitor_routes.py`).
 
 ## PC names
 `pc_names.json` (`{tag: name}`) lives in the marker's own per-user app-data folder, next to
 `pc_tag`; it is edited only on Monitor settings ("PC names": named tags plus the tags seen in open
 QMs, add / change / remove). A save applies only the rows that window changed, each onto the file as read at that moment, so two windows editing different tags keep both; names are trimmed, at most 40 characters, control characters refused; the temp file has a unique name. A missing file is an empty map; an unreadable
-one is an empty map with one line on the settings tab ; entries that are not text are counted there, and the first save that drops them (or rewrites an unreadable file) keeps a one-time `pc_names.json.bak`.
+one is an empty map with one line on the settings tab ; entries that are not text are counted there. Every save copies the previous file to `pc_names.json.bak` before the new file replaces it.
 Names are applied when a page is rendered and nowhere else: not in History, the status JSON,
 logs, close replies or error messages. History records no marker data at all.
