@@ -85,6 +85,10 @@ def synth_folder(tmp_path, request):
         }
     if getattr(request, "param", None) == "null_leaf":
         state["qubits"]["qA1"]["rb_details"] = {"alpha_stderr": None, "epc_stderr": 0.004}
+    if getattr(request, "param", None) == "new_key":
+        state["qubits"]["qA1"]["rb_details"] = {f"k{i}": float(i) for i in range(10)}
+        state["qubits"]["qA1"]["rb_list"] = [{"a": 1.0}]
+        state["qubits"]["qA1"]["rb_scalar"] = 1.0
     if getattr(request, "param", None) == "port_identity":
         state["ports"] = {"analog_outputs": {"con1": {"2": {"1": {
             "controller_id": "con1", "fem_id": 2, "port_id": 1}}}}}
@@ -785,16 +789,16 @@ class TestRun:
         res = _run(c).get_json()["result"]
         assert res["applied"] is False and res["why_held"].startswith("max_delta") and res["approval"]
 
-    def test_created_keys_are_not_staged_but_named(self, c, inst, fake_run):
+    def test_created_keys_are_not_staged_but_named(self, c, inst, fake_run):  # a scalar turned into a dict
         """review R1-M3: a run's writes land whole or not at all -- a key SM cannot
         stage refuses the group, names the key, and parks the writes for a person."""
         chip = _chip(c)
         limits.save(str(inst), chip, {"mode": "auto"})
         _arm(c)
-        fake_run.extra = {"brand_new_key": 1}
+        fake_run.extra = {"T1": {"brand_new_key": 1}}
         res = _run(c).get_json()["result"]
         assert res["applied"] is False
-        assert [u["path"] for u in res["unstaged"]] == ["qubits.qA1.brand_new_key"] and "new/removed key" in res["unstaged"][0]["why"]
+        assert sorted(u["path"] for u in res["unstaged"]) == ["qubits.qA1.T1", "qubits.qA1.T1.brand_new_key"] and "new/removed key" in res["unstaged"][0]["why"]
         assert "cannot be staged" in res["apply_error"] and "nothing was written" in res["apply_error"]
         assert res["approval"] and "apply refused" in res["why_held"], "the writes wait for a person instead of half-landing"
         from quam_state_manager.core import approvals as apm
@@ -1220,20 +1224,18 @@ def test_null_leaf_staged_then_undo_is_null(c, inst, synth_folder):
 
 
 @pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
-def test_null_leaf_plus_truly_new_key_refused_whole(c, inst, synth_folder):
-    original = (synth_folder / "state.json").read_bytes()
+def test_null_leaf_plus_truly_new_key_both_staged(c, inst, synth_folder):
+    """A null leaf and a truly new scalar key in the same existing dict: both staged."""
     ap = _null_leaf_approval(c, inst, [
         {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.0123},
         {"path": "qubits.qA1.rb_details.brand_new", "old": None, "new": 1.0, "created": True}])
     card = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
     assert not card[0].get("created") and card[0]["now_known"] is True and card[0]["now"] is None, card[0]
-    assert card[1].get("created") is True, "a truly new key keeps its note on the card"
-    data =c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
-    assert not data["stage"]["applied"]
-    assert [u["path"] for u in data["stage"]["unstaged"]] == ["qubits.qA1.rb_details.brand_new"]
-    assert "new/removed key" in data["stage"]["unstaged"][0]["why"]
-    assert (synth_folder / "state.json").read_bytes() == original
-    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] == "pending"
+    assert card[1].get("created") is True and card[1].get("new_key") is True, card[1]
+    data = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert data["stage"]["applied"] and not data["stage"]["unstaged"], data
+    live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+    assert live["qubits"]["qA1"]["rb_details"] == {"alpha_stderr": 0.0123, "epc_stderr": 0.004, "brand_new": 1.0}
 
 
 @pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
@@ -1245,3 +1247,108 @@ def test_number_to_null_on_existing_leaf_is_staged(c, inst, synth_folder):
     live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
     d = live["qubits"]["qA1"]["rb_details"]
     assert "epc_stderr" in d and d["epc_stderr"] is None
+
+
+# ---------------------------------------------- a new key in an existing dict
+
+def _ctx(c):
+    from quam_state_manager.web import routes as r
+    return r._active_ctx()
+
+
+def _twelve_rows():
+    rows = [{"path": f"qubits.qA1.rb_details.k{i}", "old": float(i), "new": float(i) + 0.5} for i in range(10)]
+    rows += [{"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.018, "created": True},
+             {"path": "qubits.qA1.rb_details.epc_stderr", "old": None, "new": 0.0021, "created": True}]
+    return rows
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_new_scalar_keys_in_existing_dict_are_created_and_undo_is_exact(c, inst, synth_folder):
+    original = (synth_folder / "state.json").read_text(encoding="utf-8")
+    ap = _null_leaf_approval(c, inst, _twelve_rows())
+    data = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
+    assert data["stage"]["applied"] and data["stage"]["staged"] == 12 and not data["stage"]["unstaged"], data
+    d = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]["rb_details"]
+    assert d["alpha_stderr"] == 0.018 and d["epc_stderr"] == 0.0021 and d["k3"] == 3.5
+    assert approvals.get(str(inst), _chip(c), ap["id"])["status"] != "pending"
+    u = c.post("/undo", headers={**HUMAN, "Accept": "application/json"})
+    assert u.status_code == 200, u.get_data(as_text=True)[:300]
+    assert (synth_folder / "state.json").read_text(encoding="utf-8") == original, "one undo restores the exact bytes"
+    with c.application.app_context():
+        assert json.dumps(_ctx(c)["store"].state, indent=2) == original
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_new_dict_with_two_leaves_is_created_and_undo_removes_it(c, inst, synth_folder):
+    original = (synth_folder / "state.json").read_text(encoding="utf-8")
+    with c.application.app_context():
+        from quam_state_manager.web import routes as r
+        res = aa._stage_writes(c.application, str(r._active_path()), [
+            {"path": "qubits.qA1.rb_details.fit.a", "old": None, "new": 1.5, "created": True},
+            {"path": "qubits.qA1.rb_details.fit.b", "old": None, "new": "x", "created": True}],
+            "g-dict", "by_claude", None, False)
+        assert res["staged"] == 1 and not res["unstaged"], res
+        ctx = _ctx(c)
+        mod, store = ctx["modifier"], ctx["store"]
+        assert store.state["qubits"]["qA1"]["rb_details"]["fit"] == {"a": 1.5, "b": "x"}
+        with store._lock:
+            mod.undo_group()
+        assert "fit" not in store.state["qubits"]["qA1"]["rb_details"]
+        assert json.dumps(store.state, indent=2) == original
+
+
+def _refused(c, synth_folder, writes):
+    original = (synth_folder / "state.json").read_bytes()
+    with c.application.app_context():
+        from quam_state_manager.web import routes as r
+        store = _ctx(c)["store"]
+        before = json.dumps(store.state)
+        n = len(store.change_log)
+        res = aa._stage_writes(c.application, str(r._active_path()), writes, "g-ref", "by_claude", None, True)
+        assert res["staged"] == 0 and res["unstaged"] and "nothing was written" in res["error"], res
+        assert json.dumps(store.state) == before and len(store.change_log) == n
+    assert (synth_folder / "state.json").read_bytes() == original
+    return res
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_new_key_in_new_list_element_refuses_whole(c, inst, synth_folder):
+    res = _refused(c, synth_folder, [
+        {"path": "qubits.qA1.rb_details.k0", "old": 0.0, "new": 9.0},
+        {"path": "qubits.qA1.rb_list.1.a", "old": None, "new": 2.0, "created": True}])
+    assert "new/removed key" in res["unstaged"][0]["why"]
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_deleted_key_refuses_whole(c, inst, synth_folder):
+    _refused(c, synth_folder, [{"path": "qubits.qA1.rb_details.k1", "old": 1.0, "new": None, "deleted": True}])
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_new_key_under_a_scalar_refuses_whole(c, inst, synth_folder):
+    _refused(c, synth_folder, [{"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True}])
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_new_container_value_refuses_whole(c, inst, synth_folder):
+    _refused(c, synth_folder, [{"path": "qubits.qA1.rb_details.empty", "old": None, "new": {}, "created": True}])
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_creatable_plus_refused_row_writes_nothing(c, inst, synth_folder):
+    _refused(c, synth_folder, [
+        {"path": "qubits.qA1.rb_details.alpha_stderr", "old": None, "new": 0.018, "created": True},
+        {"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True}])
+
+
+@pytest.mark.parametrize("synth_folder", ["new_key"], indirect=True)
+def test_card_marks_new_keys_without_a_cannot_stage_note(c, inst, synth_folder):
+    _null_leaf_approval(c, inst, _twelve_rows() + [
+        {"path": "qubits.qA1.rb_scalar.x", "old": None, "new": 1.0, "created": True}])
+    rows = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+    card = {w["path"]: w for w in rows}
+    for p in ("qubits.qA1.rb_details.alpha_stderr", "qubits.qA1.rb_details.epc_stderr"):
+        assert card[p].get("new_key") is True and card[p].get("created") is True and "now" not in card[p], card[p]
+    assert not card["qubits.qA1.rb_details.k0"].get("new_key")
+    assert not card["qubits.qA1.rb_scalar.x"].get("new_key"), "a refused row keeps the cannot-stage note"
