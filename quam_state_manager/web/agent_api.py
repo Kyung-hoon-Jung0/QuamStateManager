@@ -1847,7 +1847,7 @@ def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
                 # docs/255 P3: the old value goes back VERBATIM -- a coercing write turned an
                 # int field widened by a float back into 7126044234.0, which then reached live
                 inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True, coerce=False,
-                                    group_id=f"{e.group_id}:takeback")
+                                    group_id=f"{e.group_id}:takeback", restore=True)
                 inv.actor = getattr(e, "actor", "human")
             store._clear_pointer_cache()
             if store.search_index is not None:
@@ -2812,26 +2812,30 @@ def approvals_list():
     return jsonify(ok=True, pending=pend, recent=recent, waiting=len(pend))
 
 
-def _finite_or_none(v):
-    """The value as a JSON response shows it: every non-finite number is null."""
-    import math
-    if isinstance(v, dict):
-        return {k: _finite_or_none(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_finite_or_none(x) for x in v]
-    if isinstance(v, float) and not math.isfinite(v):
-        return None
-    return v
-
-
 def _nonfinite_masked(proposed_new, sent_new) -> bool:
-    """True when a proposal holds a non-finite number and the value sent back is
-    just its null-masked display (what the card shows and sends untouched)."""
-    from quam_state_manager.core.type_policy import nonfinite_where
-    if nonfinite_where(proposed_new) is None:
+    """True when a position the proposal held as a non-finite number is still
+    null in the value sent back. The card shows that position as null, so a
+    null there is the display, not a value the person chose; judged element by
+    element, so editing one element of [NaN, 2.0] to send [null, 3.0] is still
+    refused. A position the sent value no longer has (a shorter list, a
+    removed key, a different shape) was changed by the person and passes."""
+    import math
+
+    def walk(prop, sent) -> bool:
+        if isinstance(prop, float) and not math.isfinite(prop):
+            return sent is None
+        if isinstance(prop, dict):
+            if not isinstance(sent, dict):
+                return False
+            return any(walk(v, sent[k]) for k, v in prop.items() if k in sent)
+        if isinstance(prop, (list, tuple)):
+            if not isinstance(sent, (list, tuple)):
+                return False
+            return any(walk(v, sent[i]) for i, v in enumerate(prop) if i < len(sent))
         return False
+
     try:
-        return _finite_or_none(proposed_new) == _finite_or_none(sent_new)
+        return walk(proposed_new, sent_new)
     except Exception:  # noqa: BLE001 -- an odd value is judged by the stage door
         return False
 

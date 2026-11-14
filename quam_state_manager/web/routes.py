@@ -26044,6 +26044,17 @@ def pulse_edit():
                 # written over a str field uncoerced and generate_config gets the
                 # wrong type.
                 parsed = str(parsed)
+            # enforce=False below skips the modifier's non-finite gate, so the
+            # cast result is judged here: a typed "nan" or "inf" cast to a
+            # float is new input and never reaches state.json.
+            from quam_state_manager.core.type_policy import nonfinite_where
+            _nf = nonfinite_where(parsed)
+            if _nf is not None:
+                return render_template(
+                    "_status.html",
+                    message=(f"Non-finite value at {dot_path}{_nf} (NaN or Infinity) "
+                             f"cannot be stored in state.json"),
+                    level="error"), 400
             _lab_no = _lab_edit_refusal(store, dot_path, dot_path, parsed)
             if _lab_no:
                 return _lab_edit_refused(_lab_no, dot_path, parsed)
@@ -29629,6 +29640,11 @@ def api_pulse_duplicate():
             return render_template("_status.html",
                                    message=f"{new_name!r} already exists",
                                    level="error"), 409
+        except TypeError as exc:
+            # A copy is a new value: a NaN or Infinity in the source pulse is
+            # refused with the field named (the modifier's message), never a 500.
+            return render_template("_status.html", message=str(exc),
+                                   level="error"), 400
 
     _invalidate_engine_cache()
     logger.info("pulse duplicate %s -> %s", path, new_path)
@@ -31157,7 +31173,7 @@ def _undo_journal_step(ctx, n_req: int = 1):
                         drift += 1
                 elif op == "create":
                     e = modifier.create_subtree(path, value, group_id=gid,
-                                               key_index=key_index)
+                                               key_index=key_index, restore=True)
                 else:
                     # coerce=False: restore the historical value VERBATIM — the
                     # field's CURRENT type may differ (e.g. a later type-fix),
@@ -31418,9 +31434,11 @@ def _rollback_walk_step(ctx, store, modifier, staged: list) -> bool:
                     if e.created:
                         modifier.delete_subtree(e.dot_path)
                     elif e.deleted:
-                        modifier.create_subtree(e.dot_path, copy.deepcopy(e.old_value))
+                        modifier.create_subtree(e.dot_path, copy.deepcopy(e.old_value),
+                                                restore=True)
                     else:
-                        modifier.set_value(e.dot_path, copy.deepcopy(e.old_value), coerce=False)
+                        modifier.set_value(e.dot_path, copy.deepcopy(e.old_value), coerce=False,
+                                           restore=True)
         if not still_staged:
             with _active_wc_lock(ctx):
                 ctx["saver"].save()
@@ -31656,11 +31674,13 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
             for _n, (op, path, value, _src, key_index) in enumerate(fops):
                 if op == "create":
                     staged.append(modifier.create_subtree(path, value, group_id=gid,
-                                                          key_index=key_index))
+                                                          key_index=key_index,
+                                                          restore=True))
                 elif op == "delete":
                     staged.append(modifier.delete_subtree(path, group_id=gid))
                 else:
-                    staged.append(modifier.set_value(path, value, coerce=False, group_id=gid))
+                    staged.append(modifier.set_value(path, value, coerce=False, group_id=gid,
+                                                     restore=True))
                 _origin = unit["entries"][_n].get("origin")
                 if _origin is not None:
                     staged[-1].origin = copy.deepcopy(_origin)
@@ -31927,12 +31947,13 @@ def redo():
             try:
                 for fe in fents:
                     if fe["created"]:
-                        e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid)
+                        e = modifier.create_subtree(fe["path"], fe["new"], group_id=gid,
+                                                    restore=True)
                     elif fe["deleted"]:
                         e = modifier.delete_subtree(fe["path"], group_id=gid)
                     else:
                         e = modifier.set_value(fe["path"], fe["new"], coerce=False,
-                                               group_id=gid)
+                                               group_id=gid, restore=True)
                     if fe.get("origin") is not None:
                         e.origin = copy.deepcopy(fe["origin"])
                     staged.append(e)

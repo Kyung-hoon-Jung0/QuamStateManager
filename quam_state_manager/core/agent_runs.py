@@ -235,7 +235,7 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
                         "run_key": o.get("run_key")},
                 "how": f"`{o.get('name')}` from before SM restarted is still running (its node process, PID "
                        f"{o.get('worker_pid')}, is alive) and may be driving the OPX; SM will not collect what it "
-                       "writes. Wait until it ends -- this clears itself then -- or ask the human to stop it"}
+                       "writes. Wait until it ends (this clears itself then), or ask the human to stop it"}
     dead_ids = {it.get("id") for it in left["dead"]}
     # review R1-C1: the chassis runs its queue FIFO -- a person's queued rows, or a leftover from a
     # previous life, would run FIRST under the click that authorized only the agent's node

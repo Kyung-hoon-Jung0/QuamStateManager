@@ -1595,3 +1595,53 @@ def test_unstaged_message_lists_six_then_counts_the_rest():
     assert msg.endswith(aa.STRUCTURAL_WHAT_TO_DO)
     plain = aa._unstaged_message([{"path": "q.x", "why": "the value is odd"}], 1)
     assert plain.endswith("nothing was written"), plain
+
+
+def test_nonfinite_masked_is_judged_element_by_element():
+    from quam_state_manager.web.agent_api import _nonfinite_masked
+    nan = float("nan")
+    assert _nonfinite_masked(nan, None) is True
+    assert _nonfinite_masked([nan, 2.0], [None, 3.0]) is True       # one element edited
+    assert _nonfinite_masked([nan, 2.0], [5.0, 3.0]) is False
+    assert _nonfinite_masked({"a": [1.0, nan]}, {"a": [1.0, None]}) is True
+    assert _nonfinite_masked({"a": [1.0, nan]}, {"a": [1.0, 2.0]}) is False
+    assert _nonfinite_masked([nan, 2.0], [3.0]) is False             # shorter list: changed
+    assert _nonfinite_masked([nan], 4.0) is False                    # other shape: changed
+    assert _nonfinite_masked([1.0, 2.0], [None, None]) is False      # nothing was non-finite
+
+
+@pytest.mark.parametrize("synth_folder", ["null_leaf"], indirect=True)
+def test_card_press_refuses_a_masked_element_and_writes_a_typed_list(c, inst, synth_folder):
+    """[NaN, 2.0] sent back as [null, 3.0] is refused (409, names the path);
+    sent back as [5.0, 3.0] it writes."""
+    path = "qubits.qA1.rb_details.alpha_stderr"
+    original = (synth_folder / "state.json").read_bytes()
+    ap = _null_leaf_approval(c, inst, [{"path": path, "old": None, "new": [float("nan"), 2.0]}])
+    res = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                 json={"writes": [{"path": path, "new": [None, 3.0]}]}, headers=HUMAN)
+    assert res.status_code == 409 and path in res.get_json()["error"], res.get_json()
+    assert (synth_folder / "state.json").read_bytes() == original
+    ok = c.post(f"/api/agent/approvals/{ap['id']}/approve",
+                json={"writes": [{"path": path, "new": [5.0, 3.0]}]}, headers=HUMAN).get_json()
+    assert ok["stage"]["applied"], ok
+    assert _live_rb(synth_folder)["rb_details"]["alpha_stderr"] == [5.0, 3.0]
+
+
+def test_orphan_running_refusal_text_has_no_double_dash():
+    """The text a person reads for a run left from before a restart uses plain
+    punctuation, not a spaced double dash."""
+    import ast
+    from pathlib import Path as _P
+    src = (_P(__file__).resolve().parents[1] / "quam_state_manager/core/agent_runs.py").read_text(
+        encoding="utf-8")
+    hows = []
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.Dict):
+            kv = {k.value: v for k, v in zip(n.keys, n.values) if isinstance(k, ast.Constant)}
+            r = kv.get("refused")
+            if isinstance(r, ast.Constant) and r.value == "orphan_running" and "how" in kv:
+                hows.append("".join(c.value for c in ast.walk(kv["how"])
+                                    if isinstance(c, ast.Constant) and isinstance(c.value, str)))
+    mine = [h for h in hows if "ask the human to stop it" in h]
+    assert len(hows) >= 1 and len(mine) == 1, hows
+    assert " -- " not in mine[0], mine[0]
