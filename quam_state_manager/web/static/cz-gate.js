@@ -170,7 +170,9 @@
     }
     function fillFrom() {
         var sel = clear($('czg-from'));
-        var o = el('option', null, 'Defaults of the pulse class');
+        var c = klass();
+        // a copied layout starts from the model gate's values, never from class defaults
+        var o = el('option', null, c && c.layout === 'copied' ? 'The model gate\'s values' : 'Defaults of the pulse class');
         o.value = '';
         sel.appendChild(o);
         var p = pairInfo($('czg-pair').value);
@@ -361,7 +363,9 @@
         var sum = $('czg-settings-sum');
         var given = list.filter(function (x) { return x.source === 'given'; }).length;
         if (sum) sum.textContent = given ? given + ' entered' : 'as the model gate';
+        var opt = [];
         list.forEach(function (x) {
+            if (x.optional && !((S.entered['@settings'] || {}).hasOwnProperty(x.key))) { opt.push(x); return; }
             if (x.reference) {
                 var r = el('div', 'ui-field ui-field--inline');
                 var h = el('div', 'ui-field-head');
@@ -378,6 +382,17 @@
             i.setAttribute('data-czg-setting', x.key);
             host.appendChild(n);
         });
+        if (opt.length) {
+            var d = UIkit().disclosure('Optional settings', opt.length, [], false);
+            var db = d.querySelector('.ui-disclosure-body');
+            opt.forEach(function (x) {
+                var n = fieldInput('@settings', x.key, x.key, '', x.kind, x.value,
+                                   SOURCE_WORDS[x.source] || x.source, { inline: true, title: x.source });
+                n.querySelector('input').setAttribute('data-czg-setting', x.key);
+                db.appendChild(n);
+            });
+            host.appendChild(d);
+        }
     }
     function fillModelFacts() {
         var fp = firstPlan();
@@ -606,7 +621,13 @@
             byWhy[why].push(c.name);
         });
         order.forEach(function (why) {
-            w.appendChild(el('p', 'ui-text-quiet', 'Not checked: ' + byWhy[why].join(', ') + '. ' + why.replace(/^Not checked:\s*/, '')));
+            var k = byWhy[why].length;
+            var head = k + (k === 1 ? ' check was' : ' checks were') + ' not run';
+            var line = /does not run\.?$/.test(why) ? head + ' because the gate does not run.'
+                : head + ' (' + byWhy[why].join(', ') + '): ' + why.replace(/^Not checked:\s*/, '');
+            var q = el('p', 'ui-text-quiet', line);
+            q.title = byWhy[why].join(', ');
+            w.appendChild(q);
         });
         host.appendChild(w);
         var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
@@ -619,12 +640,16 @@
         var host = clear($('czg-tiles'));
         var ts = (p && p.tiles) || [];
         if (!ts.length) return;
-        host.appendChild(UIkit().stats(ts.map(function (t) {
-            var m = /^(-?[\d.]+)\s*(.*)$/.exec(t.value || '');
-            var unit = (m ? m[2] : '') + (t.key === 'peak' || t.key === 'timing' ? (m && m[2] ? (t.key === 'timing' ? ', ' : ' ') : '') + t.note : '');
-            return { label: t.label, value: m ? m[1] : t.value, unit: unit.trim() || null,
+        // the server gives value, unit and one quiet line; nothing is split here
+        var g = UIkit().stats(ts.map(function (t) {
+            return { label: t.label, value: t.value, unit: t.unit || null,
                      tone: t.tone === 'warn' || t.tone === 'danger' ? t.tone : null };
-        }), 'Key numbers'));
+        }), 'Key numbers');
+        Array.prototype.slice.call(g.querySelectorAll('.ui-stat')).forEach(function (d, k) {
+            d.setAttribute('data-tile', ts[k].key);
+            if (ts[k].note) d.appendChild(el('p', 'ui-text-quiet', ts[k].note));
+        });
+        host.appendChild(g);
     }
     function showSections(p) {
         var has = function (id) { var n = $(id); return !!(n && n.childNodes.length); };
@@ -937,6 +962,7 @@
             if (v === S.klass) return;
             S.klass = v; S.entered = {}; S.raw = {}; S.cls = {};
             fillModel();
+            fillFrom();
         } else if (t.querySelector('#czg-model')) {
             if (v === S.model) return;
             S.model = v; S.entered = {}; S.raw = {};

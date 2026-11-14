@@ -325,7 +325,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(58 assertions)" in r.stdout
+    assert "(63 assertions)" in r.stdout
 
 
 def test_headline_names_line_value_and_limit():
@@ -359,5 +359,25 @@ def test_plan_reports_the_model_settings_and_takes_macro_fields(tmp_path):
     j = a.c.post(PLAN, json=_body(pairs=["q2-3"], name="cz_new", cls=LAB_GATE, macro_fields={"mode": "slow"})).get_json()
     mode = next(s for s in j["pairs"][0]["settings"] if s["key"] == "mode")
     assert mode["value"] == "slow" and mode["source"] == cgb.GIVEN
+    from quam_state_manager.core.hub_index import close_readers
+    close_readers()
+
+
+def test_untouched_copied_values_are_created_bit_for_bit_and_null_settings_listed(tmp_path, fake):
+    s = _lab_chip()
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_tf"]
+    m["flux_pulse_control"]["amplitude"] = 0.19033062162534012
+    m["note"] = None
+    a = App(tmp_path, s)
+    body = _body(pairs=["q2-3"], name="cz_new", cls=LAB_GATE)
+    p = a.c.post(PLAN, json=body).get_json()["pairs"][0]
+    note = next(x for x in p["settings"] if x["key"] == "note")
+    assert note["optional"] and note["value"] is None and note["kind"] == "any"
+    assert not any(x["key"] in ("phase_shift_control", "flux_pulse_control", "__class__") for x in p["settings"])
+    j = _check(a.c, body)
+    r = a.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    assert r.status_code == 200, r.get_json()
+    made = a.store.merged["qubit_pairs"]["q2-3"]["macros"]["cz_new"]["flux_pulse_control"]
+    assert made["amplitude"] == 0.19033062162534012
     from quam_state_manager.core.hub_index import close_readers
     close_readers()

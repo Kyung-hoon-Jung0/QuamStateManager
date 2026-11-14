@@ -67,7 +67,8 @@ function planCopied(body) {
                                              t_phi: { kind: 'int', label: 't_phi', unit: '', optional: false },
                                              axis_angle: { kind: 'float', label: 'Axis angle', unit: 'rad', optional: true } } },
         settings: [{ key: 'link', value: '#./x', kind: 'str', source: 'kept reference', reference: true },
-                   { key: 'mode', value: mode || 'fast', kind: 'str', source: mode ? 'given' : LONG, reference: false }],
+                   { key: 'mode', value: mode || 'fast', kind: 'str', source: mode ? 'given' : LONG, reference: false },
+                   { key: 'note', value: null, kind: 'any', source: LONG, reference: false, optional: true }],
         model_gate: ['q1-2', 'cz_m'], reset: ['fidelity', 'extras'] })) };
 }
 function planOk(body) {
@@ -88,6 +89,7 @@ function checkOk(body, opts) {
                  pair: p, gate: body.gate_name, ok: true, refusals: [],
                  checks: [{ name: 'range', status: 'pass', message: 'Inside the output range.' }],
                  timeline: { lanes: [{ key: 'q1.z', segments: [] }], notes: [], cannot_draw: null },
+                 tiles: [{ key: 'peak', label: 'Highest level', value: '0.1903', unit: 'V', note: 'on q1.z', tone: 'neutral' }],
                  intent: [{ field: 'flux_pulse_qubit', operation: 'op_' + p, channel: 'q1.z',
                             intended: { length: 100, length_source: 'default', amplitude: 0.2, amplitude_source: 'given' },
                             actual: { length_ns: 100, max_v: 0.18, min_v: 0, scale: 1 },
@@ -170,6 +172,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     type(amp, '0.2');
     await settle();
     ok(sent[sent.length - 1].body.pulses.flux_pulse_qubit.fields.amplitude === 0.2, 'an entered value is sent as a number');
+    ok(Object.keys(sent[sent.length - 1].body.pulses.flux_pulse_qubit.fields).join() === 'amplitude', 'an untouched field is never sent as a given value');
     ok($('input[data-czg-name="amplitude"]').closest('.ui-field').querySelector('.ui-badge').textContent === 'entered', 'the entered field is marked entered');
 
     // busy guard
@@ -184,6 +187,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(prim().textContent === 'Create gate' && !prim().disabled, 'after a passing check: Create gate');
     ok(charts.length === 1 && charts[0].lanes[0].key === 'q1.z', 'the chart gets the server data');
+    { const tile = $('#czg-tiles [data-tile="peak"]'); ok(tile && tile.querySelector('.ui-stat-value').firstChild.textContent === '0.1903'
+       && /V/.test(tile.querySelector('.ui-stat-unit').textContent) && tile.querySelector('.ui-text-quiet').textContent === 'on q1.z',
+       'a tile is the server\'s value, unit and quiet line, never a split sentence'); }
     ok($('#czg-checks .ui-result[data-check="range"]') && /Output range/.test($('#czg-checks').textContent) && !$('#czg-sec-checks').hidden && /1 of 1 passed/.test($('#czg-checks-sum').textContent), 'checks: chips in words, key as data-check, passes counted');
     ok($('#czg-alert .ui-verdict--strong.ui-verdict--ok') && /Ready to create/.test(alertText()), 'the banner says Ready to create');
     ok($('#czg-intent .ui-cell--warn') && /shapes the waveform/.test($('#czg-intent').textContent) && $('#czg-intent .ui-line-dot.ui-line-1') && /differ/.test($('#czg-intent-sum').textContent), 'a differing cell is marked warn, the row has its line dot, the why is under it');
@@ -308,6 +314,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(tphi.getAttribute('aria-invalid') === 'true' && /Type a whole number/.test($('#czg-status').textContent), 'an int field refuses 2.5 with the reason');
     type(tphi, '4');
     await settle();
+    ok($('#czg-from').options[0].textContent === "The model gate's values" && !/Defaults of the pulse class/.test($('#czg-from').textContent),
+       'a copied layout starts from the model gate\'s values');
+    ok($('#czg-settings .ui-disclosure input[data-czg-setting="note"]'), 'a null setting sits folded under Optional settings');
     ok(!$('#czg-settings-panel').hidden && $('#czg-settings input[data-czg-setting="mode"]') && /kept reference/.test($('#czg-settings').textContent),
        'gate settings: each key a field, a reference listed read-only');
     type($('#czg-settings input[data-czg-setting="mode"]'), 'slow');
@@ -316,7 +325,8 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(!$('#czg-model-panel').hidden && /cz_m/.test($('#czg-model-facts').textContent) && /fidelity/.test($('#czg-model-facts').textContent),
        'before the first check the model gate and what is not inherited are shown');
     queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs.forEach((p) => {
-        p.checks = [{ name: 'ops', status: 'fail', message: 'The gate cz_x does not run with the lab\'s code. The lab\'s error: \u201cValueError: flat lengths differ.\u201d' }];
+        p.checks = [{ name: 'ops', status: 'fail', message: 'The gate cz_x does not run with the lab\'s code. The lab\'s error: \u201cValueError: flat lengths differ.\u201d' }]
+            .concat(['length', 'preview', 'timeline', 'range'].map((n) => ({ name: n, status: 'skipped', message: 'Not checked: the gate cz_x does not run.' })));
         p.verdict.reason = p.checks[0].message; p.verdict.headline = p.checks[0].message;
         p.intent = [{ field: 'flux_pulse_control', operation: 'op_c', channel: 'q1.z', intended: { length: null, length_source: 'set by the class', amplitude: 0.01, amplitude_source: 'given' },
                       actual: null, differs: { length: false, amplitude: false }, tones: {}, why: ['The check did not place this pulse, so there is nothing to compare.'] }];
@@ -326,6 +336,8 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(/not compared/.test($('#czg-intent-sum').textContent) && $('#czg-intent').querySelectorAll('p').length === 1,
        'nothing compared: the head says so, one line under it');
     ok(/The gate runs with the lab's code/.test($('#czg-checks').textContent) && $('#czg-model-panel').hidden, 'the failing chip is named for the gate running');
+    ok($('#czg-checks').querySelectorAll('.ui-fail-row').length === 1 && [...$('#czg-checks').querySelectorAll('p.ui-text-quiet')].some((q) => q.textContent === '4 checks were not run because the gate does not run.'),
+       'a lab refusal: one red row, then one quiet line for the four checks not run');
     ok(/\u201d Change the inputs and check again\./.test(alertText()), 'the lab\'s sentence is quoted, then SM\'s sentence');
     window.CzGate.close();
 

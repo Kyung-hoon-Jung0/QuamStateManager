@@ -163,17 +163,18 @@ def _fmt_v(v: float) -> str:
 
 def tiles(data: dict) -> list[dict]:
     """The key numbers of a checked gate, at most four, from :func:`timeline_data`
-    (pure; the dialog never computes them). Each tile is ``{"key", "label",
-    "value", "note", "tone"}``, tone ``neutral`` | ``note`` | ``warn`` | ``danger``:
+    (pure; the dialog never computes or splits them). Each tile is ``{"key",
+    "label", "value", "unit", "note", "tone"}``: a number, its unit and one
+    short quiet line; tone ``neutral`` | ``note`` | ``warn`` | ``danger``:
 
-    - ``lines``: the number of gate lines that play;
-    - ``length``: latest end minus earliest start over the gate's lines (ns);
-    - ``peak``: the highest absolute level and the line that reaches it,
-      ``danger`` when a segment of the gate is over its port's limit;
-    - ``timing`` (two or more lines only): ``warn`` "N ns gap" when no two
-      lines overlap in time (N = the smallest gap between them); ``note``
-      "starts differ by N ns" when they overlap but start apart; ``neutral``
-      "start together" otherwise.
+    - ``lines``: the number of gate lines that play (note: their names);
+    - ``length``: latest end minus earliest start over the gate's lines, ns;
+    - ``peak``: the highest absolute level to 4 significant digits, V (note:
+      the line that reaches it), ``danger`` when a segment is over its limit;
+    - ``timing`` (two or more lines only): the smallest gap in ns, ``warn``,
+      "gap, no overlap" when no two lines overlap; else the start difference
+      in ns, ``note``, "start difference, the lines overlap", or 0 ns,
+      ``neutral``, "same start".
 
     Nothing is invented: with no drawn gate line the list is empty."""
     lanes = [ln for ln in (data or {}).get("lanes") or []
@@ -182,10 +183,10 @@ def tiles(data: dict) -> list[dict]:
         return []
     spans = [(ln["key"], min(s["start_ns"] for s in ln["segments"]),
               max(s["end_ns"] for s in ln["segments"])) for ln in lanes]
-    out = [{"key": "lines", "label": "Lines", "value": str(len(lanes)),
+    out = [{"key": "lines", "label": "Lines", "value": str(len(lanes)), "unit": "",
             "note": ", ".join(k for k, _a, _b in spans), "tone": "neutral"}]
     t0, t1 = min(a for _k, a, _b in spans), max(b for _k, _a, b in spans)
-    out.append({"key": "length", "label": "Gate length", "value": f"{t1 - t0:g} ns",
+    out.append({"key": "length", "label": "Gate length", "value": f"{t1 - t0:g}", "unit": "ns",
                 "note": f"{t0:g} to {t1:g} ns", "tone": "neutral"})
     best, where, over = None, None, False
     for ln in lanes:
@@ -195,7 +196,7 @@ def tiles(data: dict) -> list[dict]:
                     best, where = v, ln["key"]
             over = over or "over_range" in (s.get("flags") or [])
     if best is not None:
-        out.append({"key": "peak", "label": "Highest level", "value": _fmt_v(best),
+        out.append({"key": "peak", "label": "Highest level", "value": f"{best:.4g}", "unit": "V",
                     "note": f"on {where}" + (", over the port's limit" if over else ""),
                     "tone": "danger" if over else "neutral"})
     if len(spans) >= 2:
@@ -204,13 +205,12 @@ def tiles(data: dict) -> list[dict]:
         starts = [a for _k, a, _b in spans]
         if not overlap:
             gap = min(b[1] - a[2] for a, b in zip(ordered, ordered[1:]))
-            out.append({"key": "timing", "label": "Timing", "value": f"{gap:g} ns gap",
-                        "note": "no overlap", "tone": "warn"})
+            out.append({"key": "timing", "label": "Timing", "value": f"{gap:g}", "unit": "ns",
+                        "note": "gap, no overlap", "tone": "warn"})
         elif max(starts) != min(starts):
-            out.append({"key": "timing", "label": "Timing",
-                        "value": f"starts differ by {max(starts) - min(starts):g} ns",
-                        "note": "the lines overlap", "tone": "note"})
+            out.append({"key": "timing", "label": "Timing", "value": f"{max(starts) - min(starts):g}",
+                        "unit": "ns", "note": "start difference, the lines overlap", "tone": "note"})
         else:
-            out.append({"key": "timing", "label": "Timing", "value": "start together",
-                        "note": "the lines overlap", "tone": "neutral"})
+            out.append({"key": "timing", "label": "Timing", "value": "0", "unit": "ns",
+                        "note": "same start", "tone": "neutral"})
     return out

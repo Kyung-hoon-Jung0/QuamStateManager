@@ -276,16 +276,26 @@ def field_specs(pulse: dict | None) -> dict:
 
 
 def _settings(p: dict) -> list[dict]:
-    """The gate's own settings of a copied layout: every macro key the plan
-    reports in ``fields["macro"]`` (copied, given or a kept reference)."""
+    """The gate's own settings of a copied layout: every key of the planned
+    macro that is not a pulse field, not a key the copy resets and not the
+    class marker. ``source`` is the plan's provenance (copied / given / kept
+    reference); a null value is ``optional`` (shown folded); a reference is
+    read-only."""
     if p.get("layout") != "copied":
         return []
     macro = (p.get("creates") or [(None, {})])[0][1] or {}
+    prov = (p.get("fields") or {}).get("macro") or {}
+    pulses = set(p.get("operations") or {})
+    reset = set(p.get("reset") or [])
     out = []
-    for k, src in sorted(((p.get("fields") or {}).get("macro") or {}).items()):
-        v = macro.get(k)
+    for k in sorted(macro):
+        if k == "__class__" or k in pulses or k in reset:
+            continue
+        v = macro[k]
+        ref = isinstance(v, str) and v.startswith("#")
         out.append({"key": k, "value": v, "kind": value_kind(v),
-                    "source": src, "reference": src == cgb.KEPT_REF})
+                    "source": prov.get(k) or (cgb.KEPT_REF if ref else cgb.FROM_MODEL),
+                    "reference": ref, "optional": v is None})
     return out
 
 

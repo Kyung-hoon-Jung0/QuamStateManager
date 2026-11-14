@@ -124,19 +124,19 @@ def _tile(ts, key):
 def test_single_line_has_three_tiles_and_no_timing():
     ts = tiles({"lanes": [_lane("q1.z", 161, 261)]})
     assert [t["key"] for t in ts] == ["lines", "length", "peak"]
-    assert _tile(ts, "length")["value"] == "100 ns" and _tile(ts, "peak")["tone"] == "neutral"
+    assert (_tile(ts, "length")["value"], _tile(ts, "length")["unit"]) == ("100", "ns") and _tile(ts, "peak")["tone"] == "neutral"
 
 
 def test_no_overlap_is_a_warn_gap():
     ts = tiles({"lanes": [_lane("q1.z", 161, 261), _lane("c12", 0, 60)]})
     t = _tile(ts, "timing")
-    assert t["value"] == "101 ns gap" and t["tone"] == "warn"
-    assert _tile(ts, "length")["value"] == "261 ns"
+    assert (t["value"], t["unit"], t["note"], t["tone"]) == ("101", "ns", "gap, no overlap", "warn")
+    assert _tile(ts, "length")["value"] == "261"
 
 
 def test_overlap_with_different_starts_is_a_note():
     t = _tile(tiles({"lanes": [_lane("q1.z", 10, 110), _lane("c12", 0, 100)]}), "timing")
-    assert t["value"] == "starts differ by 10 ns" and t["tone"] == "note"
+    assert (t["value"], t["unit"], t["note"], t["tone"]) == ("10", "ns", "start difference, the lines overlap", "note")
     t = _tile(tiles({"lanes": [_lane("q1.z", 0, 100), _lane("c12", 0, 100)]}), "timing")
     assert t["tone"] == "neutral"
 
@@ -144,7 +144,7 @@ def test_overlap_with_different_starts_is_a_note():
 def test_over_the_limit_makes_the_peak_tile_danger_and_names_the_line():
     ts = tiles({"lanes": [_lane("q1.z", 0, 100, peak=3.0, flags=["over_range"]), _lane("c12", 0, 100)]})
     p = _tile(ts, "peak")
-    assert p["value"] == "3 V" and p["tone"] == "danger" and "q1.z" in p["note"]
+    assert (p["value"], p["unit"]) == ("3", "V") and p["tone"] == "danger" and "q1.z" in p["note"]
 
 
 def test_spectators_and_empty_data_give_no_tiles():
@@ -170,3 +170,10 @@ def test_a_gate_that_does_not_run_says_so_not_that_it_was_unchecked():
     assert timeline_data(e, control="q1", target="q2")["cannot_draw"] == NOT_RUN
     skipped = {"checks": {"ops": {"status": "skipped"}}, "timeline": None}
     assert timeline_data(skipped, control="q1", target="q2")["cannot_draw"] == NOT_CHECKED
+
+
+def test_level_tile_rounds_to_four_places_and_same_start_is_zero():
+    ts = tiles({"lanes": [_lane("q1.z", 0, 100, peak=0.19033062162534012), _lane("c12", 0, 100)]})
+    assert _tile(ts, "peak")["value"] == "0.1903" and _tile(ts, "peak")["unit"] == "V"
+    t = _tile(ts, "timing")
+    assert (t["value"], t["unit"], t["note"]) == ("0", "ns", "same start")
