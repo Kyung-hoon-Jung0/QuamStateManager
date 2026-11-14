@@ -13515,10 +13515,9 @@ def _tab_chip_refusal(ctx=None, *, json_body: bool | None = None):
 _TAB_CHIP_DOORS = frozenset({
     "main.field_edit", "main.field_edit_batch", "main.qubit_edit", "main.pair_edit",
     "main.field_create", "main.field_delete", "main.field_type_assign",
-    "main.field_type_unassign", "main.pair_add_gate", "main.pulse_edit",
+    "main.field_type_unassign", "main.pulse_edit",
     "main.api_pulse_create", "main.api_pulse_delete", "main.api_pulse_duplicate",
     "main.api_pulse_rename", "main.pair_gate_inspector_switch", "main.api_pulse_copy",
-    "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
     "main.api_cz_gate_create",
     "main.api_pulse_delete_together", "main.api_cz_gate_make_active",
     "main.type_fix_apply", "main.diagnostics_apply_fix",
@@ -18022,472 +18021,6 @@ def _gate_status_lines(store, pair: str) -> list:
     except Exception:  # noqa: BLE001
         logger.warning("gate status lines for %s failed", pair, exc_info=True)
         return None
-
-
-# The gate types, the env variants and their flux-slot pulse classes live in
-# core/add_catalog.py (one place for the three add paths); these names read
-# through to it.
-_GATE_TYPES = add_catalog.GATE_TYPES
-_ENV_GATE_TYPES = add_catalog.ENV_GATE_TYPES
-_ENV_GATE_LEAVES = add_catalog.ENV_GATE_LEAVES
-_SLOT_LEAVES = add_catalog.SLOT_LEAVES
-
-
-def _env_gate_types() -> dict[str, dict[str, Any]]:
-    """The roster-verified subset of ``_ENV_GATE_TYPES`` (docs/71 §3).
-
-    No roster installed ⇒ {} — the legacy gate list stays byte-identical.
-    """
-    from quam_state_manager.core.pulse_catalog import env_overlay_active
-    return add_catalog.env_gate_types(env_overlay_active())
-
-
-def _slot_qclass(store, leaf_candidates: tuple[str, ...] | None) -> str | None:
-    """``__class__`` for a gate flux slot (docs/71 §3): chip evidence (the
-    first candidate with a same-leaf pulse on the chip, verbatim majority) >
-    roster canonical > None (today's classless shape — SM renders it as an
-    implicit SquarePulse). Never guesses a module path."""
-    if not leaf_candidates:
-        return None
-    from quam_state_manager.core.pulse_catalog import (env_overlay_active,
-                                                      evidence_qclass)
-    for leaf in leaf_candidates:
-        ev = evidence_qclass(store.merged, leaf)
-        if ev:
-            return ev
-    roster = env_overlay_active()
-    if roster:
-        for leaf in leaf_candidates:
-            rec = roster.get(leaf)
-            canonical = rec.get("canonical") if isinstance(rec, dict) else None
-            if isinstance(canonical, str) and canonical:
-                return canonical
-    return None
-
-
-def _slot_qclasses_for(store, gate_type: str) -> dict[str, str]:
-    """Resolved slot classes for *gate_type* — only verified entries appear."""
-    leaves = add_catalog.slot_leaves(gate_type)
-    out: dict[str, str] = {}
-    for slot_key in ("qubit", "coupler"):
-        qc = _slot_qclass(store, leaves.get(slot_key))
-        if qc:
-            out[slot_key] = qc
-    return out
-
-
-def _pair_arch(store, pair_obj: dict) -> dict[str, bool]:
-    """Structural evidence for which gate families this pair supports.
-
-    A pair with no evidence either way (bare macros, no channels, no flux)
-    defaults to flux — the legacy add-gate behavior for hand-built chips.
-    """
-    merged = store.merged
-    cr = cr_semantics.cr_channel(pair_obj) is not None
-    zz = cr_semantics.zz_channel(pair_obj) is not None
-    macros = pair_obj.get("macros") if isinstance(pair_obj.get("macros"), dict) else {}
-    has_flux_macro = any(cr_semantics.is_cz_shaped_macro(m)
-                         for m in macros.values() if isinstance(m, dict))
-    qc, qt = cr_semantics.pair_endpoints(pair_obj)
-    has_z = any(
-        isinstance(((merged.get("qubits") or {}).get(q) or {}).get("z"), dict)
-        for q in (qc, qt) if q)
-    flux = bool(isinstance(pair_obj.get("coupler"), dict) or has_flux_macro or has_z)
-    if not cr and not zz and not flux:
-        flux = True
-    return {"cr": cr, "zz": zz, "flux": flux}
-
-
-# Fallback CR/Stark macro class paths (the quam-builder CR branch layout).
-# Only used when the chip carries no same-leaf macro to copy the exact path
-# from — evidence beats guessing (the _parametric_cz_evidence idiom, via
-# cr_semantics.gate_class_evidence).
-_CR_GATE_QCLASS = ("quam_builder.architecture.superconducting.custom_gates"
-                   ".fixed_transmon_pair.two_qubit_gates.CRGate")
-_STARK_CZ_QCLASS = ("quam_builder.architecture.superconducting.custom_gates"
-                    ".fixed_transmon_pair.two_qubit_gates.StarkInducedCZGate")
-
-
-# Fallback ParametricCZGate class path — matches the quam_builder layout the
-# app was developed against. Only used when the chip itself carries no
-# ParametricCZGate macro to copy the path from (see _parametric_cz_qclass).
-_PARAMETRIC_CZ_QCLASS = (
-    "quam_builder.architecture.superconducting.custom_gates"
-    ".flux_tunable_transmon_pair.two_qubit_gates.ParametricCZGate"
-)
-_CZ_GATE_QCLASS = (
-    "quam_builder.architecture.superconducting.custom_gates"
-    ".flux_tunable_transmon_pair.two_qubit_gates.CZGate"
-)
-
-
-def _parametric_cz_evidence(store) -> str | None:
-    """An existing ParametricCZGate macro ``__class__`` on this chip, or None.
-
-    Reuses the exact string verbatim (majority, tie → lexicographic) —
-    evidence beats guessing. Real chips rarely carry macro ``__class__``
-    markers at all, and gate classes live in a different package family
-    than pulses, so no prefix heuristic is safe here.
-    """
-    merged = getattr(store, "merged", None)
-    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
-    found: list[str] = []
-    if isinstance(pairs, dict):
-        for pair in pairs.values():
-            macros = pair.get("macros") if isinstance(pair, dict) else None
-            if not isinstance(macros, dict):
-                continue
-            for macro in macros.values():
-                qc = macro.get("__class__") if isinstance(macro, dict) else None
-                if isinstance(qc, str) and qc.rsplit(".", 1)[-1] == "ParametricCZGate":
-                    found.append(qc)
-    if found:
-        ranked = sorted(Counter(found).items(), key=lambda kv: (-kv[1], kv[0]))
-        return ranked[0][0]
-    return None
-
-
-def _parametric_cz_qclass(store) -> str:
-    """The ParametricCZGate ``__class__`` to write on THIS chip."""
-    return _parametric_cz_evidence(store) or _PARAMETRIC_CZ_QCLASS
-
-
-def _build_gate_template(gate_type: str, fields: dict[str, Any], *,
-                         parametric_qclass: str | None = None,
-                         cr_qclass: str | None = None,
-                         stark_qclass: str | None = None,
-                         cz_qclass: str | None = None,
-                         slot_qclasses: dict[str, str] | None = None) -> dict:
-    """Construct the macro dict for ``gate_type`` from validated *fields*.
-
-    *slot_qclasses* (r15, docs/71 §3) optionally carries evidence/roster-
-    verified pulse ``__class__`` strings for the ``qubit``/``coupler`` flux
-    slots — absent, the slots stay classless (the long-standing shape SM
-    renders as an implicit SquarePulse). Never guessed.
-    """
-    _sq = slot_qclasses or {}
-
-    def _classed(d: dict, slot_key: str) -> dict:
-        qc = _sq.get(slot_key)
-        return {"__class__": qc, **d} if qc else d
-
-    # docs/190 F13: the CR / Stark / parametric branches always wrote the
-    # macro's own ``__class__`` + ``id``; the five flux branches wrote a bare
-    # dict, which quam loads as a plain dict, not a CZGate. The class comes
-    # from the chip's own CZGate macros (majority, verbatim) or the modern
-    # quam_builder canonical -- the same one gaussian_cz.py writes.
-    _cz_head = {"__class__": cz_qclass or _CZ_GATE_QCLASS, "id": "#./inferred_id"}
-
-    if gate_type == "cr_gate":
-        # the modern CRGate shape (verified on every flavor artifact, docs/54)
-        return {
-            "__class__": cr_qclass or _CR_GATE_QCLASS,
-            "id": "#./inferred_id",
-            "fidelity": None,
-            "duration": "#./inferred_duration",
-            "qc_correction_phase": fields["qc_correction_phase"],
-            "qt_correction_phase": fields["qt_correction_phase"],
-        }
-    if gate_type == "stark_cz":
-        return {
-            "__class__": stark_qclass or _STARK_CZ_QCLASS,
-            "id": "#./inferred_id",
-            "fidelity": None,
-            "duration": "#./inferred_duration",
-            "qc_correction_phase": fields["qc_correction_phase"],
-            "qt_correction_phase": fields["qt_correction_phase"],
-        }
-    if gate_type == "cz_unipolar":
-        return {
-            **_cz_head,
-            "fidelity": {},
-            "flux_pulse_qubit": _classed({
-                "amplitude": fields["amplitude"],
-                "length": fields["length"],
-            }, "qubit"),
-            "coupler_flux_pulse": _classed({
-                "amplitude": fields["coupler_amplitude"],
-                "length": fields["coupler_length"],
-            }, "coupler"),
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    if gate_type == "cz_flattop":
-        return {
-            **_cz_head,
-            "fidelity": {},
-            "flux_pulse_qubit": _classed({
-                "amplitude": fields["amplitude"],
-                "flat_length": fields["flat_length"],
-                "smoothing_length": fields["smoothing_length"],
-                "length": "#./inferred_total_length",
-            }, "qubit"),
-            # docs/190 F14: amplitude alone left a classed _FlatTopGaussianPulse
-            # without its required flat_length (no default in quam 0.6.0), so
-            # the created gate failed the env's own load. Share the qubit
-            # pulse's timing through pointers, as the bipolar branch does.
-            "coupler_flux_pulse": _classed({
-                "amplitude": fields["coupler_amplitude"],
-                "flat_length": "#../flux_pulse_qubit/flat_length",
-                "smoothing_length": "#../flux_pulse_qubit/smoothing_length",
-                "length": "#./inferred_total_length",
-            }, "coupler"),
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    if gate_type == "cz_bipolar":
-        # bipolar carrier on the qubit line; the coupler mirrors the shape
-        # fields by self-reference (run_build's link_attrs semantics — one
-        # source of truth, edits can't drift the two slots apart).
-        return {
-            **_cz_head,
-            "fidelity": {},
-            "flux_pulse_qubit": _classed({
-                "amplitude": fields["amplitude"],
-                "flat_length": fields["flat_length"],
-                "smoothing_length": fields["smoothing_length"],
-                "post_zero_padding_length": fields["post_zero_padding_length"],
-                "length": "#./inferred_total_length",
-            }, "qubit"),
-            "coupler_flux_pulse": _classed({
-                "amplitude": fields["coupler_amplitude"],
-                "flat_length": "#../flux_pulse_qubit/flat_length",
-                "smoothing_length": "#../flux_pulse_qubit/smoothing_length",
-                "post_zero_padding_length":
-                    "#../flux_pulse_qubit/post_zero_padding_length",
-                "length": "#./inferred_total_length",
-            }, "coupler"),
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    if gate_type == "cz_snz":
-        # the whole gate rides the qubit z line (safe on fixed OR tunable
-        # couplers) — no coupler pulse, matching run_build's SNZ shape.
-        return {
-            **_cz_head,
-            "fidelity": {},
-            "flux_pulse_qubit": _classed({
-                "amplitude": fields["amplitude"],
-                "flat_length": fields["flat_length"],
-                "t_phi_eff": fields["t_phi_eff"],
-                "padding": fields["padding"],
-                "length": "#./inferred_length",
-            }, "qubit"),
-            "coupler_flux_pulse": None,
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    if gate_type == "cz_flattop_erf":
-        return {
-            **_cz_head,
-            "fidelity": {},
-            "flux_pulse_qubit": _classed({
-                "amplitude": fields["amplitude"],
-                "flat_length": fields["flat_length"],
-                "risetime_samples": fields["risetime_samples"],
-                "post_zero_padding_length": fields["post_zero_padding_length"],
-                "length": "#./inferred_length",
-            }, "qubit"),
-            "coupler_flux_pulse": None,
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    if gate_type == "cz_parametric":
-        return {
-            "__class__": parametric_qclass or _PARAMETRIC_CZ_QCLASS,
-            "fidelity": {},
-            "flux_pulse_qubit": {
-                "amplitude": fields["amplitude"],
-                "length": fields["length"],
-            },
-            "modulation_frequency": fields["modulation_frequency"],
-            "coupler_flux_pulse": {"amplitude": fields["coupler_amplitude"]},
-            "phase_shift_control": fields["phase_shift_control"],
-            "phase_shift_target": fields["phase_shift_target"],
-        }
-    raise ValueError(f"Unknown gate_type: {gate_type!r}")
-
-
-_GATE_NAME_RE = add_names.OPERATION_NAME_RE
-
-
-@bp.route("/pair/<name>/gate/new/cancel", methods=["GET"])
-def pair_gate_form_cancel(name: str):
-    """Restore the empty 'Add gate' button after the user cancels the form."""
-    return render_template("_pair_add_gate_area.html", pair_name=name)
-
-
-@bp.route("/pair/<name>/gate/new", methods=["GET"])
-def pair_gate_form(name: str):
-    """Return the partial form HTML for adding a new gate on this pair."""
-    store = _store()
-    if not store:
-        return render_template("_status.html", message="No state loaded", level="warning")
-    pair_obj = store.merged.get("qubit_pairs", {}).get(name)
-    if pair_obj is None:
-        return render_template("_status.html", message=f"Unknown pair: {name}", level="error"), 404
-    existing_gates = sorted((pair_obj.get("macros") or {}).keys())
-    # cz_parametric writes a ParametricCZGate __class__. quam_builder 0.4.0
-    # removed that class entirely — a chip carrying it becomes unloadable on
-    # that stack. Offer the option only when the chip itself already proves
-    # the class exists (an existing ParametricCZGate macro to copy the exact
-    # path from); otherwise drop it rather than corrupt the file.
-    # Architecture gate: flux types on flux pairs, CR/Stark on their channels —
-    # never offer a flux-CZ macro on a FixedFrequencyTransmonPair (writing one
-    # corrupts the pair for quam's loader) nor a CR macro on a coupler pair.
-    arch = _pair_arch(store, pair_obj)
-    # r15 (docs/71 §3): + the roster-verified generator variants (SNZ /
-    # bipolar / flattop-erf) — no roster ⇒ exactly the legacy list.
-    gate_types = {k: v for k, v in {**add_catalog.GATE_TYPES, **_env_gate_types()}.items()
-                  if arch.get(v.get("arch", "flux"))}
-    if _parametric_cz_evidence(store) is None:
-        gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
-    # w9/pulsegate: a flux gate type writes its flux pulses into the gate --
-    # new pulse objects, which are added on the Pulses page (pair_add_gate
-    # refuses them too). The form offers what creates no pulse (CR / Stark)
-    # and says where the rest is built.
-    flux_moved = any(v.get("arch", "flux") == "flux" for v in gate_types.values())
-    gate_types = {k: v for k, v in gate_types.items() if v.get("arch", "flux") != "flux"}
-    if not gate_types:
-        return render_template("_pair_add_gate_pulses.html", pair_name=name)
-    parametric_qclass = _parametric_cz_qclass(store)
-    return render_template(
-        "_pair_add_gate.html",
-        pair_name=name,
-        gate_types=gate_types,
-        flux_moved=flux_moved,
-        existing_gates=existing_gates,
-        # The JSON preview in the form must show the class the SERVER will
-        # write (chip-derived when possible), not a duplicated literal.
-        parametric_qclass=parametric_qclass,
-        cr_gate_qclass=(cr_semantics.gate_class_evidence(store.merged, "CRGate")
-                        or _CR_GATE_QCLASS),
-        stark_cz_qclass=(cr_semantics.gate_class_evidence(
-            store.merged, "StarkInducedCZGate") or _STARK_CZ_QCLASS),
-        xy_detuned_missing=(arch["zz"] and cr_semantics.xy_detuned_channel(
-            pair_obj) is None),
-    )
-
-
-@bp.route("/pair/<name>/gate", methods=["POST"])
-def pair_add_gate(name: str):
-    """Create a new gate macro on this pair.  Form fields: ``gate_name``,
-    ``gate_type``, plus type-specific numeric fields.
-    """
-    modifier = _modifier()
-    store = _store()
-    if not modifier or not store:
-        return render_template("_status.html", message="No state loaded", level="warning")
-
-    gate_name = (request.form.get("gate_name") or "").strip()
-    gate_type = (request.form.get("gate_type") or "").strip()
-
-    all_gate_types = add_catalog.all_gate_types()
-    if gate_type not in all_gate_types:
-        return render_template("_status.html", message=f"Unknown gate type: {gate_type!r}", level="error"), 400
-    # Server twin of the roster gating (never trust the form): an env-variant
-    # whose pulse classes the selected env can't verify must not be written.
-    if gate_type in add_catalog.ENV_GATE_TYPES and gate_type not in _env_gate_types():
-        return render_template(
-            "_status.html",
-            message=(f"{gate_type} needs pulse classes the selected "
-                     "environment does not verify — probe/select the env "
-                     "that ships them first."),
-            level="error"), 409
-    if not _GATE_NAME_RE.match(gate_name):
-        return render_template(
-            "_status.html",
-            message="Gate name must start with a letter and contain only letters, digits, or underscores (max 64).",
-            level="error",
-        ), 400
-
-    pair_obj = store.merged.get("qubit_pairs", {}).get(name)
-    if pair_obj is None:
-        return render_template("_status.html", message=f"Unknown pair: {name}", level="error"), 404
-    if gate_name in (pair_obj.get("macros") or {}):
-        return render_template(
-            "_status.html",
-            message=f"Gate {gate_name!r} already exists on this pair. Pick a different name.",
-            level="error",
-        ), 409
-    # Server-side twin of the form's architecture gating (never trust the
-    # form): a flux-CZ macro on a CR pair — or a CR macro on a coupler pair —
-    # corrupts the pair for quam's loader.
-    arch = _pair_arch(store, pair_obj)
-    wanted_arch = all_gate_types[gate_type].get("arch", "flux")
-    if not arch.get(wanted_arch):
-        labels = {"flux": "a flux-tunable/coupler pair",
-                  "cr": "a pair with a cross-resonance channel",
-                  "zz": "a pair with a ZZ drive channel"}
-        return render_template(
-            "_status.html",
-            message=(f"{gate_type} needs {labels[wanted_arch]} — this pair's "
-                     "architecture doesn't support it."),
-            level="error",
-        ), 409
-    # Without on-chip evidence that ParametricCZGate exists in this chip's
-    # stack, refuse to write a class path that may make the whole file
-    # unloadable (quam_builder 0.4.0 removed the class).
-    if gate_type == "cz_parametric" and _parametric_cz_evidence(store) is None:
-        return render_template(
-            "_status.html",
-            message=("cz_parametric is unavailable: this chip carries no "
-                     "ParametricCZGate macro to copy the class path from, and "
-                     "recent quam-builder releases removed the class — a "
-                     "guessed path would make state.json unloadable."),
-            level="error",
-        ), 409
-
-    fields: dict[str, Any] = {}
-    for field_name, _label, default, kind in all_gate_types[gate_type]["fields"]:
-        raw = request.form.get(field_name, "")
-        try:
-            number = float(raw)
-            if not math.isfinite(number) or (kind != "float" and not number.is_integer()):
-                raise ValueError("a finite number is required")
-            fields[field_name] = number if kind == "float" else int(number)
-        except (TypeError, ValueError, OverflowError):
-            return render_template("_status.html", level="error",
-                                   message=f"{field_name}: a valid {kind} value is required"), 400
-
-    template = _build_gate_template(
-        gate_type, fields,
-        parametric_qclass=_parametric_cz_qclass(store),
-        cr_qclass=cr_semantics.gate_class_evidence(store.merged, "CRGate"),
-        stark_qclass=cr_semantics.gate_class_evidence(
-            store.merged, "StarkInducedCZGate"),
-        cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
-        slot_qclasses=_slot_qclasses_for(store, gate_type))
-    dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
-    # w9/pulsegate: a gate whose slots hold pulses brings new pulse objects
-    # -- built on the Pulses page (+ New pulse: the Gaussian CZ builder writes
-    # the channel ops and links the slots), or by the lab's own gate script.
-    # A gate without pulses (CR / Stark) is created here as before.
-    _psc = _pulse_structure_change(store, "create", dot_path, template)
-    if _psc is not None:
-        return render_template(
-            "_status.html", level="error",
-            message=(f"{gate_type} writes its flux pulses into the gate "
-                     f"({', '.join(_psc.paths[:3])}) — a new pulse. Pulses are "
-                     "added on the Pulses page: + New pulse -> \"Gaussian CZ from "
-                     "cz_flattop\" builds the gate with its channel ops, or use "
-                     "your lab's gate script.")), 409
-    try:
-        modifier.create_subtree(dot_path, template)
-        _invalidate_engine_cache()
-    except (KeyError, ValueError, TypeError) as e:
-        return render_template("_status.html", message=str(e), level="error"), 400
-
-    focus_field = ("qc_correction_phase" if wanted_arch in ("cr", "zz")
-                   else "flux_pulse_qubit.amplitude")
-    detail = _render_pair_detail(name, focus_path=f"{dot_path}.{focus_field}")
-    if isinstance(detail, tuple):
-        return detail
-    # A new gate macro adds pulse-shaped nodes (flux_pulse_qubit, …) — tell an
-    # open Pulses table to refresh, like the other pulse-mutating routes do.
-    resp = make_response(detail + "\n" + _tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
-    return resp
 
 
 @bp.route("/pair/<name>/edit", methods=["POST"])
@@ -27125,12 +26658,9 @@ def _coerce_catalog_fields(spec, form) -> tuple[dict, dict]:
 def pulse_create_form():
     """The ONE create flow (inspector pane). ``kind`` picks what to create --
     ``pulse`` (the class form, default), ``copy`` (an existing pulse onto
-    another channel) or ``gaussian_cz`` (the docs/126 macro builder) -- and
-    every kind renders the same choice strip on top (2026-09-27: one button,
+    another channel) -- and every kind renders the same choice strip on top (2026-09-27: one button,
     not two)."""
     kind = (request.args.get("kind") or "pulse").strip()
-    if kind in ("gaussian_cz", "gcz"):
-        return pulse_gaussian_cz_form()
     if kind == "copy":
         return _pulse_copy_form()
     store = _store()
@@ -27262,7 +26792,7 @@ def pulse_create_form():
         # CZGate.apply() plays `moving_qubit.z.play(flux_pulse_qubit_label)`,
         # a name no channel had, and generate_config() never saw the pulse
         # (measured on the lab-F 5Q chip, pulse_lab_check.py). New CZ gates
-        # come from the Gaussian CZ builder, which writes the channel ops.
+        # come from the CZ gate dialog, which writes the channel ops.
         info["new_gates"] = []
         pairs_info[pair_name] = info
 
@@ -27607,30 +27137,6 @@ def _attach_probe_result(store, inst, live_folder, python_path, res) -> None:
     pulse_catalog.apply_chip_classes(manifest.get("classes"))
 
 
-@bp.route("/pulse/gaussian-cz")
-def pulse_gaussian_cz_form():
-    """The Gaussian-CZ macro builder form (docs/126 ⑦b)."""
-    store = _store()
-    if not store:
-        return render_template("_status.html", message="No state loaded",
-                               level="warning")
-    from quam_state_manager.core import gaussian_cz
-    with store._lock:
-        pairs = gaussian_cz.eligible_pairs(store.merged)
-    example = ""
-    if pairs:
-        from quam_state_manager.core import gate_action
-        from quam_state_manager.core.add_names import pulse_name
-        try:
-            example = pulse_name(gaussian_cz.VARIANTS[0][0], "pulse",
-                                 *gate_action.pair_members(store.merged, pairs[0]["pair_id"]))
-        except ValueError:
-            example = ""
-    return render_template("_pulse_gaussian_cz.html", pairs=pairs,
-                           create_kind="gaussian_cz", several_example=example,
-                           several_macro=gaussian_cz.VARIANTS[0][0])
-
-
 def _pulse_copy_form():
     """The copy form of the one create flow: pick a pulse, pick a channel."""
     store = _store()
@@ -27658,261 +27164,6 @@ def _pulse_copy_form():
         "_pulse_copy.html", create_kind="copy", qubit_names=qubit_names,
         pair_channels_map=pair_channels_map, has_xy_detuned=has_xy_detuned,
         src_path=src, src_name=src_name, src_label="")
-
-
-@bp.route("/api/pulse/gaussian-cz", methods=["POST"])
-def api_pulse_gaussian_cz():
-    """Create the Gaussian CZ macro set for one pair (docs/126 ⑦b).
-
-    The customer's ``add_gaussian_cz_macros.py`` workflow: sources amplitude /
-    flat_length from the pair's ``cz_flattop``, writes the two CZGate macros
-    plus the pointer-linked z / coupler operations — six ``create_subtree``
-    calls under ONE change group (one Review bundle, one Ctrl+Z). Existing
-    macros 409 until ``overwrite=1`` (then deleted first, in the SAME group,
-    so one undo restores exactly the prior state). Working copy only; archives
-    refuse (nothing here can write live — docs/107)."""
-    ctx = _active_ctx()
-    store = _store()
-    modifier = _modifier()
-    if not store or not modifier:
-        return render_template("_status.html", message="No state loaded",
-                               level="warning"), 400
-    if ctx and (ctx.get("origin") or "live") != "live":
-        return render_template(
-            "_status.html", level="error",
-            message="This chip is a read-only archive — open the live chip "
-                    "to create macros."), 409
-
-    from quam_state_manager.core import gaussian_cz
-
-    pair_id = request.form.get("pair_id", "").strip()
-
-    def _num(name, default, integer=False):
-        raw = (request.form.get(name) or "").strip()
-        if not raw:
-            return default
-        try:
-            f = float(raw)
-            if not math.isfinite(f):
-                return None
-            return int(f) if integer else f
-        except (ValueError, OverflowError):
-            return None
-
-    padding = _num("padding_length", 20, integer=True)
-    q_mhz = _num("qubit_filter_mhz", 20.0)
-    c_mhz = _num("coupler_filter_mhz", 20.0)
-    if padding is None or q_mhz is None or c_mhz is None:
-        return render_template("_status.html", level="error",
-                               message="Padding / filter values must be numbers."), 400
-
-    suffix_ids = None
-    if request.form.get("suffix_ids"):
-        try:
-            suffix_ids = json.loads(request.form["suffix_ids"])
-        except ValueError:
-            return render_template("_status.html", level="error", message="suffix_ids must be a JSON pair"), 400
-    release_lab = _lab_hold(store, [f"qubit_pairs.{pair_id}.macros"])
-    try:
-        with store._lock:
-            result = gaussian_cz.plan(store.merged, pair_id,
-                                      padding_length=padding,
-                                      qubit_filter_mhz=q_mhz,
-                                      coupler_filter_mhz=c_mhz, suffix_ids=suffix_ids,
-                                      # the single-pair door names every
-                                      # op after THIS pair, so a moving qubit
-                                      # shared by two pairs never shares an op.
-                                      own_names=suffix_ids is None)
-            if "error" in result:
-                # Another pair owns the op: a refusal naming that pair, with
-                # no Replace (it would rewire the other pair's gate).
-                code = 409 if result.get("conflict") else 400
-                return render_template("_status.html", message=result["error"],
-                                       level="error"), code
-            if result["existing"] and request.form.get("overwrite") != "1":
-                body = render_template(
-                    "_status.html", level="warning",
-                    message=(f"Already present on pair {pair_id}: "
-                             + ", ".join(p.split(".")[-1] for p in result["existing"])
-                             + " — create again to replace them (the old subtrees "
-                               "are removed in the same undo group)."))
-                body += ('<button type="button" class="btn-sm" '
-                         'onclick="var f=document.getElementById(\'gcz-form\');'
-                         'var i=document.createElement(\'input\');i.type=\'hidden\';'
-                         'i.name=\'overwrite\';i.value=\'1\';f.appendChild(i);'
-                         'window.htmx&&htmx.trigger(f,\'submit\');">'
-                         'Replace existing</button>')
-                return body, 409
-
-            from flask import g
-            lab_info = g.lab_info = {"notes": []}
-            refusal = _lab_write_refusal(store, result["creates"], info=lab_info)
-            if refusal:
-                return render_template("_status.html", level="error", message=refusal[0]), 400
-
-            gid = modifier.new_group_id()
-            done = 0
-            try:
-                for path in result["existing"]:
-                    modifier.delete_subtree(path, group_id=gid)
-                    done += 1
-                for path, value in result["creates"]:
-                    modifier.create_subtree(path, value, group_id=gid)
-                    done += 1
-            except Exception as exc:  # noqa: BLE001 — all-or-nothing
-                for _ in range(done):
-                    try:
-                        modifier.undo()
-                    except Exception:  # noqa: BLE001
-                        break
-                logger.exception("gaussian-cz create failed; rolled back")
-                # docs/190 F50: a caught, rolled-back validation failure (a type
-                # mismatch in the caller's numbers) is a refusal, not a 500.
-                from quam_state_manager.core.type_policy import TypeMismatchError
-                code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
-                return render_template(
-                    "_status.html", level="error",
-                    message=f"Creation failed and was rolled back: {exc}"), code
-    finally:
-        release_lab()
-
-    _reprobe_if_new_classes(store)
-    src = result["sources"]
-    msg = render_template(
-        "_status.html", level="success",
-        message=(f"Created cz_gaussian_unipolar + cz_gaussian_bipolar on "
-                 f"{pair_id} (moving qubit {src['moving_qubit']}, amplitude "
-                 f"{src['qubit_amplitude']:.6g}, pulse_length "
-                 f"{src['flat_length']}"
-                 + (", coupler included" if src["has_coupler"] else "")
-                 + ") — staged in the working state; review, then Apply to "
-                   "live."
-                 + ("".join(f" {n}." for n in (src.get("notes") or [])))))
-    resp = make_response(msg + "\n" + _tray_oob())
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
-    return _lab_toast(resp)
-
-
-def _gcz_several_params(body):
-    """``(params, error)`` for the several-pairs dialog: the same three numbers
-    as the single-pair form, defaults included, finite or a 400."""
-    raw = body.get("params") if isinstance(body, dict) else None
-    raw = raw if isinstance(raw, dict) else {}
-    out = {}
-    for key, default, integer in (("padding_length", 20, True),
-                                  ("qubit_filter_mhz", 20.0, False),
-                                  ("coupler_filter_mhz", 20.0, False)):
-        value = raw.get(key)
-        if value is None or (isinstance(value, str) and not value.strip()):
-            out[key] = default
-            continue
-        if isinstance(value, bool):
-            return None, "Padding / filter values must be numbers."
-        try:
-            f = float(value)
-        except (TypeError, ValueError, OverflowError):
-            return None, "Padding / filter values must be numbers."
-        if not math.isfinite(f):
-            return None, "Padding / filter values must be numbers."
-        out[key] = int(f) if integer else f
-    return out, None
-
-
-@bp.route("/api/pulse/gaussian-cz/plan", methods=["POST"])
-def api_pulse_gaussian_cz_plan():
-    """Read-only: every eligible pair's verdict for Gaussian CZ "to several
-    pairs" (Ready / Can't), one batched lab check, and a ``plan_sig`` that the
-    apply route must echo. Writes nothing."""
-    store = _store()
-    if not store:
-        return jsonify(ok=False, error=_no_chip_msg()), 400
-    from quam_state_manager.core import gaussian_cz_several
-    params, err = _gcz_several_params(request.get_json(silent=True))
-    if err:
-        return jsonify(ok=False, error=err), 400
-    with store._lock:
-        plan = gaussian_cz_several.build(
-            store.merged, params,
-            lab_check=lambda w, info=None: _lab_write_refusal(store, w, info=info))
-    plan.pop("rows")
-    return jsonify(ok=True, params=params, **plan)
-
-
-@bp.route("/api/pulse/gaussian-cz/apply-several", methods=["POST"])
-def api_pulse_gaussian_cz_apply_several():
-    """Write the ticked Ready pairs as ONE batch (one change group, one
-    Ctrl+Z). The plan is made again here; a different ``plan_sig`` means the
-    chip moved since the dialog was opened and nothing is written (409).
-    Person-only (``callers.PERSON_ONLY``)."""
-    ctx = _active_ctx()
-    store = _store()
-    modifier = _modifier()
-    if not store or not modifier:
-        return jsonify(ok=False, error=_no_chip_msg()), 400
-    if ctx and (ctx.get("origin") or "live") != "live":
-        return jsonify(ok=False, error="This chip is a read-only archive: open "
-                                       "the live chip to create macros."), 409
-    lk = _agent_edit_lock_refusal(ctx)
-    if lk is not None:
-        return lk
-    body = request.get_json(silent=True)
-    if not isinstance(body, dict):
-        return jsonify(ok=False, error="A JSON body is required"), 400
-    params, err = _gcz_several_params(body)
-    if err:
-        return jsonify(ok=False, error=err), 400
-    wanted = body.get("pairs")
-    if (not isinstance(wanted, list) or not wanted
-            or not all(isinstance(x, str) for x in wanted)):
-        return jsonify(ok=False, error="Tick at least one pair."), 400
-    from quam_state_manager.core import gaussian_cz_several
-    from quam_state_manager.core.add_verdict import READY
-    check = lambda w, info=None: _lab_write_refusal(store, w, info=info)  # noqa: E731
-    wanted = list(dict.fromkeys(wanted))
-    release_lab = _lab_hold(store, [f"qubit_pairs.{p}.macros" for p in wanted])
-    try:
-        with store._lock:
-            plan = gaussian_cz_several.build(store.merged, params, lab_check=check)
-            if plan["plan_sig"] != str(body.get("plan_sig") or ""):
-                return jsonify(ok=False, stale=True, error=(
-                    "The chip changed since this list was made. Nothing was "
-                    "written; reopen the dialog to see the current list.")), 409
-            by_pair = {r["pair"]: r for r in plan["rows"]}
-            bad = [p for p in wanted if p not in by_pair or by_pair[p]["status"] != READY]
-            if bad:
-                return jsonify(ok=False, error=(
-                    "Not ready: " + ", ".join(bad) + ". Nothing was written.")), 400
-            creates = [c for p in wanted for c in by_pair[p]["creates"]]
-            from flask import g
-            lab_info = g.lab_info = {"notes": []}
-            refusal = _lab_write_refusal(store, creates, info=lab_info)
-            if refusal:
-                return jsonify(ok=False, error=str(refusal[0])), 400
-            gid = modifier.new_group_id()
-            done = 0
-            try:
-                for path, value in creates:
-                    modifier.create_subtree(path, value, group_id=gid)
-                    done += 1
-            except Exception as exc:  # noqa: BLE001 -- all-or-nothing
-                for _ in range(done):
-                    try:
-                        modifier.undo()
-                    except Exception:  # noqa: BLE001
-                        break
-                logger.exception("gaussian-cz several create failed; rolled back")
-                from quam_state_manager.core.type_policy import TypeMismatchError
-                code = 400 if isinstance(exc, (TypeMismatchError, ValueError, TypeError)) else 500
-                return jsonify(ok=False, error=f"Creation failed and was rolled back: {exc}"), code
-    finally:
-        release_lab()
-    _reprobe_if_new_classes(store)
-    written = [{"pair": p, "pulses": by_pair[p]["pulses"],
-                "paths": [c[0] for c in by_pair[p]["creates"]]} for p in wanted]
-    resp = jsonify(ok=True, written=written, count=len(wanted),
-                   group=gid, tray_html=_tray_html())
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
-    return _lab_toast(resp)
 
 
 @bp.route("/api/pulse/create", methods=["POST"])
@@ -29644,7 +28895,7 @@ def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):
     its own gates (``cz_unipolar.flux_pulse_qubit =
     "#/qubits/q1/z/operations/cz_unipolar_flux_pulse_q1_q2"``).
     """
-    from quam_state_manager.core.gaussian_cz import _qubit_name
+    from quam_state_manager.core.cz_gate_build import pair_qubit as _qubit_name
     ctl = _qubit_name(merged, pair_name, "qubit_control")
     tgt = _qubit_name(merged, pair_name, "qubit_target")
     if not ctl or not tgt:
@@ -29758,15 +29009,13 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
         if gate.startswith("__new__:"):
             # 2026-09-27: a new gate's slot pulse was written INLINE, on no
             # channel -- CZGate.apply() then plays a name no channel has and
-            # generate_config() never sees the pulse. The Gaussian CZ builder
-            # is the gate builder (it writes the channel ops the lab's own
-            # add_gaussian_cz_macros.py writes).
+            # generate_config() never sees the pulse. The CZ gate dialog is
+            # the gate builder (it writes the channel ops).
             return render_template(
                 "_status.html", level="error",
                 message=("Creating a new gate here is no longer offered: the "
-                         "gate it wrote could not play. Use \"Gaussian CZ from "
-                         "cz_flattop\" in + New pulse, or your lab's gate "
-                         "script.")), 410
+                         "gate it wrote could not play. Use \"CZ gate\" in "
+                         "+ New pulse, or your lab's gate script.")), 410
         if slot not in ("flux_pulse_qubit", "coupler_flux_pulse"):
             return render_template("_status.html", message="Invalid slot",
                                    level="error"), 400
@@ -30757,7 +30006,7 @@ def _slot_copies(merged: dict, slot_path: str) -> list[str]:
     *slot_path* (:func:`_is_exact_copy`): every op that points into the slot,
     and the op named by the slot's ``id`` on its pair's endpoint channels
     (the name a gate plays), checked field by field."""
-    from quam_state_manager.core.gaussian_cz import _qubit_name
+    from quam_state_manager.core.cz_gate_build import pair_qubit as _qubit_name
     parts = slot_path.split(".")
     if len(parts) < 2 or parts[0] != "qubit_pairs":
         return []
@@ -53276,12 +52525,10 @@ _SCHEDULER_MUTATOR_ENDPOINTS = {
     "main.tree_json_edit_save",
     "main.qubit_edit", "main.pair_edit",
     # subtree creation (pulses refactored qubit_add_pulse -> the /api/pulse/* CRUD)
-    "main.pair_add_gate",
     "main.pulse_edit", "main.api_pulse_create", "main.api_pulse_delete",
     "main.api_pulse_duplicate", "main.api_pulse_rename",
     # Every staging door shares the store saved by the plan's next write.
     "main.pair_gate_inspector_switch", "main.api_pulse_copy",
-    "main.api_pulse_gaussian_cz", "main.api_pulse_gaussian_cz_apply_several",
     # The CZ gate dialog: create stages the gate; check runs the lab's code in the
     # chosen env (a subprocess, like the other env spawners below).
     "main.api_cz_gate_create", "main.api_cz_gate_check",

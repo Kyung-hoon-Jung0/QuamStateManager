@@ -206,14 +206,53 @@
         var U = UIkit();
         if (h && U && U.menu) h.appendChild(U.menu(spec));
     }
+    /* Why a class cannot run on the picked pair: the env's probe first, then
+       the server's per-pair answer (data.fit); '' when it can run. */
+    function classWhy(c, pair) {
+        if (!c.available) return c.why || 'This class is not available.';
+        var f = (S.data.fit || {})[pair];
+        return (f && f[c['class']]) || '';
+    }
+    /* The selected class is the first one that can run on the pair; a class
+       picked by hand stays while it can run there. Returns true when the
+       selection changed. */
     function fillClasses() {
-        var first = (S.data.classes || []).filter(function (c) { return c.available; })[0];
-        S.klass = first ? first['class'] : '';
+        var pair = $('czg-pair') ? $('czg-pair').value : '';
+        var all = S.data.classes || [];
+        var runs = all.filter(function (c) { return !classWhy(c, pair); });
+        var before = S.klass || '';
+        var keep = runs.filter(function (c) { return c['class'] === before; })[0];
+        S.klass = keep ? before : runs[0] ? runs[0]['class'] : '';
+        S.classNote = '';
+        if (before && S.klass !== before && S.klassByHand) {
+            var old = all.filter(function (c) { return c['class'] === before; })[0];
+            S.classNote = 'The class changed to ' + (runs[0] ? runs[0].label : 'none') + ': '
+                + (old ? old.label : before) + ' cannot run on ' + pair + '. ' + (old ? classWhy(old, pair) : '');
+        }
+        if (S.klass !== before) S.klassByHand = false;
+        S.noClass = runs.length ? '' : (all.length ? 'No gate class can run on ' + (pair || 'this pair') + '. ' + classWhy(all[0], pair) : '');
         menuInto('czg-class-host', { id: 'czg-class', kind: 'pick', label: 'Gate class', block: true,
             value: S.klass, placeholder: 'Pick a gate class',
-            items: (S.data.classes || []).map(function (c) {
-                return { value: c['class'], title: c.label, disabled: !c.available, reason: c.why };
+            items: all.map(function (c) {
+                var why = classWhy(c, pair);
+                return { value: c['class'], title: c.label, disabled: !!why, reason: why };
             }) });
+        renderClassWhy([]);
+        return S.klass !== before;
+    }
+    /* Reasons about the class go under Class; the server names them
+       (class_refusals), the client never sorts by text. */
+    function renderClassWhy(fromPlan) {
+        var w = $('czg-class-why');
+        if (!w) return;
+        clear(w);
+        var lines = S.noClass ? [S.noClass] : [S.classNote].concat(fromPlan || []);
+        lines = lines.filter(function (x) { return x; });
+        lines.forEach(function (r) { w.appendChild(el('span', 'czg-why-line', r)); });
+        w.hidden = !lines.length;
+        var t = $('czg-class');
+        var bad = !!S.noClass || !!(fromPlan && fromPlan.length);
+        if (t) { if (bad) t.setAttribute('aria-invalid', 'true'); else t.removeAttribute('aria-invalid'); }
     }
     function fillModel() {
         var c = klass();
@@ -561,8 +600,10 @@
         var fp = firstPlan();
         if (S.alertKind === 'plan-error') alertBox(null);
         var why = clear($('czg-name-why'));
-        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []) : []);
+        var aboutClass = fp && !fp.ok ? (fp.class_refusals || []) : [];
+        var split = splitRefusals(fp && !fp.ok ? (fp.refusals || []).filter(function (r) { return aboutClass.indexOf(r) < 0; }) : []);
         var bad = split.rest;
+        renderClassWhy(S.noClass ? [] : aboutClass);
         bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
         why.hidden = !bad.length;
         if (bad.length) $('czg-name').setAttribute('aria-invalid', 'true'); else $('czg-name').removeAttribute('aria-invalid');
@@ -1314,7 +1355,10 @@
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
         if (t.id === 'czg-pair-shown') { S.pairIdx = +t.value; renderPair(); return; }
-        if (t.id === 'czg-pair') { fillPairLine(); fillFrom(); fillModel(); fillMore(); }
+        if (t.id === 'czg-pair') {
+            if (fillClasses()) { S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; fillSlots(); }
+            fillPairLine(); fillFrom(); fillModel(); fillMore();
+        }
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');
             S.cls[f] = t.value;
@@ -1333,7 +1377,8 @@
         var v = ev.detail && ev.detail.value;
         if (t.querySelector('#czg-class')) {
             if (v === S.klass) return;
-            S.klass = v; S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {};
+            S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]);
+            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {};
             fillModel();
             fillFrom();
         } else if (t.querySelector('#czg-model')) {

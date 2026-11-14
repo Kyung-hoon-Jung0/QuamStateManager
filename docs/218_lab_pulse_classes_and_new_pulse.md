@@ -1,5 +1,7 @@
 # docs/218 — The lab's own pulse and gate classes draw and check every write; one "+ New pulse" button
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 2026-09-26/27. Branches `w7/adaptive` (7 commits, `bd01432`..`f984798`) and `w7/pulsecreate`
 (27 commits over `e74b8ce`, contains `w7/adaptive`, head `d27a372`). **Not merged into `integ/w7`
 yet** (docs/224). Shape discovery of pulses (`729e2bd`, `9b61e35`) is docs/217. Chips: krs5 (rig

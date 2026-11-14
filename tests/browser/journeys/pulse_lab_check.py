@@ -189,23 +189,6 @@ def main(folder: str, expect_path: str, out_path: str | None):
             except Exception as ex:  # noqa: BLE001
                 it["macro"] = f"FAIL {type(ex).__name__}: {ex}"[:240]
         res["items"].append(it)
-    for e in exp:
-        if "gcz" in e:
-            pid = e["gcz"]
-            it = {"gcz": pid}
-            try:
-                pair = machine.qubit_pairs[pid]
-                for g in ("cz_gaussian_unipolar", "cz_gaussian_bipolar"):
-                    gate = pair.macros[g]
-                    mq = pair.qubit_control if pair.moving_qubit == "control" else pair.qubit_target
-                    lab = gate.flux_pulse_qubit_label
-                    it[g] = ("ok" if lab in mq.z.operations else f"FAIL {lab!r} not on {mq.name}.z")
-                    p = gate.flux_pulse_qubit
-                    it[g + ".padding_length"] = getattr(p, "padding_length", None)
-                    it[g + ".gaussian_filter_frequency_mhz"] = getattr(p, "gaussian_filter_frequency_mhz", None)
-            except Exception as ex:  # noqa: BLE001
-                it["err"] = f"{type(ex).__name__}: {ex}"[:240]
-            res["items"].append(it)
     # every gate's own apply(), chip-wide
     ok_n, bad = 0, []
     for pn, pair in machine.qubit_pairs.items():

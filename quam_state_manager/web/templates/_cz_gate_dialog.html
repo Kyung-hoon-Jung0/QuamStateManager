@@ -16,8 +16,8 @@
             {%- if unknown_pair %}{{ ui_callout('warn', 'Pair not found', 'This chip has no pair ' ~ unknown_pair ~ '. Pick a pair from the list.') }}{% endif -%}
             {%- if not data.pairs %}{{ ui_callout('danger', 'No pairs', 'This chip has no qubit pairs, so there is nowhere to add a gate. Add a pair from the chip diagram first.') }}{% endif -%}
         </div>
-        <div class="czg-cols">
-            <form id="czg-form" class="czg-form" autocomplete="off" aria-label="The gate">
+        <div class="czg-cols ui-scroll">
+            <form id="czg-form" class="czg-form ui-scroll" autocomplete="off" aria-label="The gate">
                 <section id="czg-zone-gate" class="ui-zone" aria-label="Gate">
                     <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">1</span><h3 class="ui-zone-title">Gate</h3></div>
                     <div class="ui-zone-body ui-field-stack">
@@ -33,6 +33,7 @@
                         </div>
                         <div class="ui-field"><div class="ui-field-head"><span class="ui-field-label">Class</span></div>
                             <div id="czg-class-host"></div>
+                            <p id="czg-class-why" class="ui-field-error" role="alert" hidden></p>
                         </div>
                         <div class="ui-field" id="czg-model-field" hidden><div class="ui-field-head"><span class="ui-field-label">Model gate</span></div>
                             <div id="czg-model-host"></div>
@@ -58,7 +59,7 @@
                     </div>
                 </details>
             </form>
-            <section id="czg-evidence" class="czg-evidence" aria-label="What the lab's code made">
+            <section id="czg-evidence" class="czg-evidence ui-scroll" aria-label="What the lab's code made">
                 <div id="czg-alert" class="czg-alert" aria-live="polite" data-czg-lead></div>
                 <div id="czg-pairs" data-czg-lead hidden></div>
                 {#- the banner and the pair switch stay above the zone: a stacked dialog lifts them over the form -#}

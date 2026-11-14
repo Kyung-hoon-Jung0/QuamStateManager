@@ -1,16 +1,17 @@
 {# A pair's CZ gate list: a kit zone titled "CZ gates" (a top-level region of the pair page), the count and (when
-   the pair has none) "no active gate" as its summary, one status line per
-   gate in the flush body. `gate_lines`: web/gate_status_routes.gate_list.
-   Make active answers this whole partial, so the summary and the row that
-   was active before update together. #}
-{% if gate_lines and gate_lines.count %}
-<section class="ui-zone gate-status-list" aria-label="CZ gates" data-gate-pair="{{ gate_lines.lines[0].pair }}">
+   the pair has gates but none is active) "no active gate" as its summary, one status line per
+   gate in the flush body. A pair with no gate keeps the zone, quiet, with the
+   one door that creates its first gate. `gate_lines`: web/gate_status_routes.gate_list.
+   Make active and Delete answer this whole partial, so the summary and the rows update together. #}
+{% if gate_lines and gate_lines.pair %}
+<section class="ui-zone gate-status-list{% if not gate_lines.count %} ui-zone--quiet{% endif %}" aria-label="CZ gates" data-gate-pair="{{ gate_lines.pair }}">
     <div class="ui-zone-head">
         <h3 class="ui-zone-title">CZ gates</h3>
-        <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.lines[0].pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
+        <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
         <span class="ui-zone-sum"><span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">no active gate</span>{% endif %}</span>
     </div>
     <div class="ui-zone-body">
+        {% if not gate_lines.count %}<p class="ui-zone-empty">No CZ gate on this pair yet. Press + Gate to create one.</p>{% endif %}
         {% set in_list = True %}
         {% for line in gate_lines.lines %}{% include '_gate_status.html' %}{% endfor %}
     </div>

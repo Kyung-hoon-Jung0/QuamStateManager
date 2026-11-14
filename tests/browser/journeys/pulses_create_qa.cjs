@@ -91,18 +91,15 @@ async function openCreate(p, what) {
   const arrived = (sel) => waitFor(p, `(function(){var e=document.querySelector(${J(sel)}); return e && !e.closest('[data-qa-old]') ? 1 : 0})()`, 30000);
   await fresh();
   await clickSel(p, '.pulse-new-btn');
-  const got = await arrived('#pulse-create-root, #gcz-root, #pulse-create-choice');
+  const got = await arrived('#pulse-create-root, #pulse-create-choice');
   if (!got) return false;
   const hasChoice = await p.ev(`!!document.querySelector('#pulse-create-choice')`);
-  const kind = what === 'gcz' ? 'gaussian_cz' : (what || 'pulse');
-  const rootOf = { gaussian_cz: '#gcz-root', copy: '#pulse-copy-root', pulse: '#pulse-create-root' }[kind];
+  const kind = what || 'pulse';
+  const rootOf = { copy: '#pulse-copy-root', pulse: '#pulse-create-root' }[kind];
   if (!(await p.ev(`!!document.querySelector(${J(rootOf)})`))) {
     if (hasChoice) {
       await fresh();
       await clickSel(p, `#pulse-create-choice [data-create-kind="${kind}"]`);
-    } else if (kind === 'gaussian_cz') {
-      await fresh();
-      await clickSel(p, '.pulse-gcz-btn');   // legacy second button
     } else return false;
     if (!(await arrived(rootOf))) return false;
   }
@@ -386,26 +383,6 @@ async function submitCreate(p) {
     if (check(res === 'DETAIL ' + want, `pair channel ${want} -> ${res.slice(0, 200)}`)) expect.push({ path: want, cls: 'SquarePulse', fields: f.typed });
     else defects.push({ what: 'pair channel', got: res });
   } else console.log('  pair CR/ZZ channel: not offered on this chip (disabled radio)');
-
-  // ---- Gaussian CZ builder ----------------------------------------------------
-  const gok = await openCreate(p, 'gcz');
-  if (check(!!gok, 'Gaussian CZ builder opened')) {
-    const gpairs = JSON.parse(await p.ev(`JSON.stringify([].slice.call(document.querySelectorAll('#gcz-form select[name=pair_id] option')).map(function(o){return o.value}))`) || '[]');
-    console.log('  gcz eligible pairs: ' + gpairs.join(','));
-    if (gpairs.length) {
-      const gp = gpairs[Math.min(2, gpairs.length - 1)];
-      await choose(p, '#gcz-form select[name=pair_id]', gp);
-      await typeInto(p, '#gcz-form input[name=padding_length]', '16');
-      await typeInto(p, '#gcz-form input[name=qubit_filter_mhz]', '25');
-      await typeInto(p, '#gcz-form input[name=coupler_filter_mhz]', '30');
-      await p.shot(`${DIR}/30_gcz_${W}.png`);
-      await clickSel(p, '#gcz-form button[type=submit]');
-      const gr = await waitFor(p, `(function(){var r=document.getElementById('gcz-result'); var t=r? r.innerText.trim():''; return t? t.replace(/\\s+/g,' ').slice(0,300) : ''})()`, 30000);
-      check(gr && !/error|fail|refus/i.test(gr), 'Gaussian CZ created: ' + gr);
-      await p.shot(`${DIR}/31_gcz_done_${W}.png`);
-      expect.push({ gcz: gp, padding_length: 16, qubit_filter_mhz: 25, coupler_filter_mhz: 30 });
-    }
-  }
 
   // ---- Diagnostics after the creates: no false "would crash" -------------------
   {
