@@ -28,7 +28,7 @@ from quam_state_manager.core import pulse_catalog
 from quam_state_manager.core.add_names import (
     ADDITION_NAME_RE, OPERATION_NAME_RE, pulse_name)
 from quam_state_manager.core.pointer_path import resolve_field_target
-from quam_state_manager.core.pointer_resolver import target_path
+from quam_state_manager.core.pointer_resolver import _SENTINEL, _get, _walk_relative
 
 CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
@@ -566,7 +566,9 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     A copied layout (``"layout": "copied"``) is a proposal: SM copies a
     structure it cannot describe, so the lab's own code must confirm it
     before it is written. ``"reset"`` lists the model keys the copy does
-    not inherit.
+    not inherit. A copied layout keeps a climbing relative reference
+    (``#../``) only when it points inside its own copied object, and is
+    refused when one points outside it.
 
     Returns ``{"creates": [(path, value)], "direction", "pulse_directions",
     "model_gate", "fields": {slot: {field: given|copied|default}, "macro":
@@ -806,7 +808,7 @@ def _rename_values(value: Any, names: dict[str, str],
     """Every string EQUAL to a model name, or a segment of an absolute
     reference equal to one, becomes the new name; a plain (non-reference)
     string equal to a key of *plain* becomes its value. Relative references
-    are left alone (``_resolve_relative`` handles them). Nothing matches
+    are left alone (``_check_relative`` decides on them). Nothing matches
     inside a longer string."""
     plain = plain or {}
     if isinstance(value, dict):
@@ -825,51 +827,48 @@ def _rename_values(value: Any, names: dict[str, str],
     return value
 
 
-def _resolve_relative(merged: dict, value: Any, model_holder: tuple,
-                      new_holder: tuple, moves: list[tuple[tuple, tuple]],
-                      refuse_prefixes: list[tuple], unresolved: list[str],
-                      reasons: list[str], where: str) -> Any:
-    """Climbing relative references in a copied value, resolved against the
-    model with ``pointer_resolver.target_path`` (the one rule for ``#../``).
+def _check_relative(merged: dict, obj: Any, obj_path: tuple, mname: str,
+                    reset: list[str], unresolved: list[str], reasons: list[str],
+                    where: str) -> None:
+    """Climbing relative references (``#../``, ``#./../``) in a copied object.
 
-    A target inside a moved model object (the model macro or a copied model
-    operation) is pointed at the new object: the relative text stays when it
-    resolves there from the new holder, else it becomes absolute. A target
-    under a refused prefix (the model pair or a model-pair qubit on another
-    pair) is a refusal. Anything else is kept. A reference that does not
-    resolve in the model is kept and listed in *unresolved*."""
-    if isinstance(value, dict):
-        return {k: _resolve_relative(merged, v, model_holder + (k,), new_holder + (k,),
-                                     moves, refuse_prefixes, unresolved, reasons,
-                                     f"{where}.{k}")
-                for k, v in value.items()}
-    if isinstance(value, list):
-        return [_resolve_relative(merged, v, model_holder + (str(i),), new_holder + (str(i),),
-                                  moves, refuse_prefixes, unresolved, reasons,
-                                  f"{where}.{i}")
-                for i, v in enumerate(value)]
-    if not (isinstance(value, str) and (value.startswith("#../")
-                                        or value.startswith("#./../"))):
-        return value
-    t = target_path(merged, value, model_holder)
-    if t is None or _follow(merged, _ref(*t)) is None:
-        unresolved.append(f"{where}: {value}")
-        return value
-    t = tuple(t)
-    for old, new in moves:
-        if t[:len(old)] == old:
-            want = list(new + t[len(old):])
-            if target_path(None, value, new_holder) == want:
-                return value
-            return _ref(*want)
-    for pre in refuse_prefixes:
-        if t[:len(pre)] == pre:
-            reasons.append(f"The copy would keep the relative reference {value} (in "
-                           f"{where}), which points into {'.'.join(pre)} of the model. "
-                           "Pick a model gate on this pair, or one without that "
-                           "reference.")
-            return value
-    return value
+    Each is resolved in the model from its holder's model path with the
+    resolver's own walk (``pointer_resolver._walk_relative``, which follows
+    references and list indices on the way). A target inside the same
+    object is kept, provided the copy still holds it; any other target is a
+    refusal, since SM does not translate references that leave their own
+    object; a reference that does not resolve in the model is kept and
+    listed in *unresolved*."""
+    def walk(v, rel, label):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, rel + (k,), f"{label}.{k}")
+            return
+        if isinstance(v, list):
+            for i, x in enumerate(v):
+                walk(x, rel + (str(i),), f"{label}.{i}")
+            return
+        if not (isinstance(v, str) and (v.startswith("#../") or v.startswith("#./../"))):
+            return
+        ptr = "#" + v[3:] if v.startswith("#./../") else v
+        t = _walk_relative(merged, ptr, obj_path + rel)
+        if t is None or _get(merged, list(t)) is _SENTINEL:
+            unresolved.append(f"{label}: {v}")
+            return
+        t = tuple(t)
+        if t[:len(obj_path)] != obj_path:
+            reasons.append(f"The model gate {mname} uses the relative reference {v} "
+                           f"(in {label}), which points outside the gate. SM does not "
+                           "copy such a layout. Pick another model gate, or a gate "
+                           "class SM knows.")
+            return
+        inner = list(t[len(obj_path):])
+        if _get(obj, inner) is _SENTINEL or (inner and inner[0] in reset):
+            key = inner[0] if inner else ""
+            reasons.append(f"The model gate {mname} uses the relative reference {v} "
+                           f"(in {label}), whose target {key} is not copied to the new "
+                           "gate. Pick another model gate, or a gate class SM knows.")
+    walk(obj, (), where)
 
 
 def _rewrite_refs(value: Any, old_prefix: str, new_prefix: str) -> Any:
@@ -982,7 +981,7 @@ def _leftover_refs(merged, creates, mpair, mname, mids, pair_id, ids) -> list[st
     """Strings in the creates that still point at the model.
 
     Absolute references are scanned here; climbing relative references are
-    resolved by ``_resolve_relative``; same-object references (``#./``)
+    checked by ``_check_relative``; same-object references (``#./``)
     keep their meaning because the copy keeps the object's shape."""
     created = {path for path, _ in creates}
     model_ref = _ref("qubit_pairs", mpair, "macros", mname)
@@ -1262,18 +1261,13 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
         for old, new in zip(mids, (control, target)):
             if old and new and old != new:
                 plain[old] = new
-    # Climbing relative references: resolved in the model, never renamed.
+    # Climbing relative references: kept only inside their own object.
     model_macro = ("qubit_pairs", mpair, "macros", mname)
-    moves = [(model_macro, macro_segs)] + op_moves
-    moved_q = [q for q, n in zip(mids, (control, target)) if q and n and q != n]
-    refuse_pre = ([("qubit_pairs", mpair)] + [("qubits", q) for q in moved_q]
-                  if mpair != pair_id else [])
     unresolved: list[str] = []
-    macro = _resolve_relative(merged, macro, model_macro, macro_segs, moves,
-                              refuse_pre, unresolved, reasons, _dot(macro_segs))
-    op_creates = [(path, _resolve_relative(merged, v, old, new, moves, refuse_pre,
-                                           unresolved, reasons, path))
-                  for (path, v), (old, new) in zip(op_creates, op_moves)]
+    _check_relative(merged, macro, model_macro, mname, reset, unresolved, reasons,
+                    _dot(macro_segs))
+    for (path, v), (old, _new) in zip(op_creates, op_moves):
+        _check_relative(merged, v, old, mname, [], unresolved, reasons, path)
     if reasons:
         return _refuse(reasons)
     before = {k: macro[k] for k in kept}

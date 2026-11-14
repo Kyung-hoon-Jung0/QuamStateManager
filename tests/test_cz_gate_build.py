@@ -1193,21 +1193,6 @@ def test_a_given_explicit_length_is_linked_from_an_inferred_operation():
         "#/qubit_pairs/q1-q2/macros/cz_b/flux_pulse_qubit/length"
 
 
-def test_a_sibling_reference_resolves_to_the_new_operation_or_is_refused():
-    s = _op_owned_lab_chip(lambda k: k)
-    s["qubits"]["q2"]["z"]["operations"]["cz_a_flux_pulse_q2_q1"]["amplitude"] = \
-        "#../cz_a_flux_pulse_q2_q1/length"
-    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
-    op = dict(res["creates"])["qubits.q2.z.operations.cz_b_flux_pulse_q2_q1"]
-    # the holder moved to a new key, so the reference becomes absolute
-    assert op["amplitude"] == "#/qubits/q2/z/operations/cz_b_flux_pulse_q2_q1/length"
-    s = _op_owned_lab_chip(lambda k: k)
-    s["qubits"]["q2"]["z"]["operations"]["cz_a_flux_pulse_q2_q1"]["src"] = "#../../../../q1/z"
-    s["qubit_pairs"]["q3-q1"] = _pair("q3", "q1")
-    res = cgb.plan(s, "q3-q1", gate_name="cz_b", gate_class=LAB_GATE)
-    assert "relative reference #../../../../q1/z" in res["error"]
-
-
 def test_a_spectator_operation_name_is_not_kept():
     s = _two_pulse_chip()
     s["qubits"]["q2"]["z"]["operations"]["cz_a_spec_q3"] = {"length": 40}
@@ -1234,46 +1219,11 @@ def test_a_kept_macro_reference_into_the_model_pair_is_refused_across_pairs():
     assert "#/qubit_pairs/q1-q2/extras/mode" in res["error"]
 
 
-def test_a_relative_reference_down_into_the_model_pair():
-    s = _two_pulse_chip()
-    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["src"] = \
-        "#../../../../q1-q2/moving_qubit"
-    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
-    assert "relative reference #../../../../q1-q2/moving_qubit" in res["error"]
-    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
-    assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["flux_pulse_qubit"]["src"] == \
-        "#../../../../q1-q2/moving_qubit"
-
-
 def _third_pair_chip():
     s = _two_pulse_chip()
     s["qubit_pairs"]["q9-q8"] = _pair("q9", "q8")
     s["qubit_pairs"]["q9-q8"]["macros"]["cz_a"] = {"extras": {}}
     return s
-
-
-@pytest.mark.parametrize("pair", ["q1-q2", "q3-q4"])
-def test_a_climbing_reference_into_a_third_pairs_same_named_gate_is_kept(pair):
-    s = _third_pair_chip()
-    ref = "#../../../../q9-q8/macros/cz_a/extras"
-    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]["src"] = ref
-    res = cgb.plan(s, pair, gate_name="cz_b", gate_class=LAB_GATE)
-    assert dict(res["creates"])[f"qubit_pairs.{pair}.macros.cz_b"]["flux_pulse_qubit"]["src"] == ref
-
-
-def test_a_climbing_reference_into_the_model_macro_points_at_the_new_macro():
-    s = _two_pulse_chip()
-    op = s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
-    op["note"] = "#../../../../../qubit_pairs/q1-q2/macros/cz_a/flux_pulse_qubit/amplitude"
-    m = s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]
-    m["flux_pulse_qubit"]["twin"] = "#../flux_pulse_target/amplitude"
-    res = cgb.plan(s, "q3-q4", gate_name="cz_b", gate_class=LAB_GATE)
-    by = dict(res["creates"])
-    assert by["qubits.q3.z.operations.cz_b_flux_pulse_q3_q4"]["note"] == \
-        "#/qubit_pairs/q3-q4/macros/cz_b/flux_pulse_qubit/amplitude"
-    # holder and target move together: the relative form stays
-    assert by["qubit_pairs.q3-q4.macros.cz_b"]["flux_pulse_qubit"]["twin"] == \
-        "#../flux_pulse_target/amplitude"
 
 
 def test_a_climbing_reference_that_dangles_in_the_model_is_kept_and_listed():
@@ -1283,6 +1233,96 @@ def test_a_climbing_reference_that_dangles_in_the_model_is_kept_and_listed():
     assert dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]["flux_pulse_qubit"]["src"] == \
         "#../nowhere/x"
     assert any("#../nowhere/x" in u for u in res["unresolved_references"])
+
+
+# --- climbing relative references stay inside their own object -----------
+
+def _macro_pulse(s):
+    return s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["flux_pulse_qubit"]
+
+
+def _model_op(s):
+    return s["qubits"]["q1"]["z"]["operations"]["cz_a_flux_pulse_q1_q2"]
+
+
+OUTSIDE = "points outside the gate. SM does not copy such a layout."
+
+
+@pytest.mark.parametrize("pair", ["q1-q2", "q3-q4"])
+def test_a_reference_to_a_sibling_field_of_the_same_macro_is_kept(pair):
+    s = _two_pulse_chip()
+    _macro_pulse(s)["src"] = "#../flux_pulse_target/amplitude"
+    res = cgb.plan(s, pair, gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])[f"qubit_pairs.{pair}.macros.cz_b"]
+    assert macro["flux_pulse_qubit"]["src"] == "#../flux_pulse_target/amplitude"
+
+
+def test_a_reference_into_a_reset_key_of_the_macro_is_refused():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["extras"] = {"gain": 2}
+    _macro_pulse(s)["src"] = "#../extras/gain"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "whose target extras is not copied" in res["error"]
+
+
+def test_a_reference_inside_the_same_operation_is_kept():
+    s = _op_owned_lab_chip(lambda k: k)
+    _model_op(s)["twin"] = "#./amplitude"
+    _model_op(s)["deep"] = {"x": "#../amplitude"}
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    op = dict(res["creates"])["qubits.q1.z.operations.cz_b_flux_pulse_q1_q2"]
+    assert op["deep"] == {"x": "#../amplitude"} and op["twin"] == "#./amplitude"
+
+
+def test_a_reference_to_a_sibling_operation_is_refused():
+    s = _op_owned_lab_chip(lambda k: k)
+    s["qubits"]["q1"]["z"]["operations"]["shared_op"] = {"amp": 0.1}
+    _model_op(s)["amp"] = "#../shared_op/amp"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert "The model gate cz_a uses the relative reference #../shared_op/amp" in res["error"]
+    assert OUTSIDE in res["error"]
+
+
+def test_a_reference_to_the_operations_channel_is_refused():
+    s = _op_owned_lab_chip(lambda k: k)
+    s["qubits"]["q1"]["z"]["offset"] = 0.0
+    _model_op(s)["base"] = "#../../offset"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert OUTSIDE in res["error"]
+
+
+def test_a_reference_through_a_reference_string_is_resolved_and_refused():
+    s = _two_pulse_chip()
+    _macro_pulse(s)["zline"] = "#../../../qubit_control/z"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    assert OUTSIDE in res["error"] and "#../../../qubit_control/z" in res["error"]
+
+
+def test_a_reference_through_a_list_index_in_the_same_macro_is_kept():
+    s = _two_pulse_chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"]["steps"] = [10, 20]
+    _macro_pulse(s)["first"] = "#../steps/0"
+    res = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)
+    macro = dict(res["creates"])["qubit_pairs.q1-q2.macros.cz_b"]
+    assert macro["flux_pulse_qubit"]["first"] == "#../steps/0"
+    assert res["unresolved_references"] == []
+
+
+def test_a_reference_into_a_third_pair_is_refused():
+    s = _third_pair_chip()
+    _macro_pulse(s)["src"] = "#../../../../q9-q8/macros/cz_a/extras"
+    for pair in ("q1-q2", "q3-q4"):
+        res = cgb.plan(s, pair, gate_name="cz_b", gate_class=LAB_GATE)
+        assert OUTSIDE in res["error"]
+
+
+@pytest.mark.parametrize("pair", ["q1-q2", "q3-q4"])
+def test_the_real_model_shape_is_planned_as_before(pair):
+    s = _two_pulse_chip()
+    _macro_pulse(s)["length"] = "#./inferred_length"
+    _model_op(s)["length"] = "#./inferred_length"
+    res = cgb.plan(s, pair, gate_name="cz_b", gate_class=LAB_GATE)
+    assert "creates" in res and res["unresolved_references"] == []
 
 
 def test_renamed_has_no_identity_entries_and_only_used_qubits():
