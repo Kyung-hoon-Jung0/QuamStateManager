@@ -447,7 +447,7 @@ def test_label_rules(env, marker_home):
     assert "bb" not in json.loads((marker_home / "pc_names.json").read_text())
 
 
-def test_non_text_entries_are_counted_and_backed_up_once(env, marker_home):
+def test_non_text_entries_are_counted_and_backup_rotates(env, marker_home):
     app, *_ = env
     raw = json.dumps({"aa": "x", "bb": 5, "cc": None})
     (marker_home / "pc_names.json").write_text(raw, encoding="utf-8")
@@ -459,7 +459,7 @@ def test_non_text_entries_are_counted_and_backed_up_once(env, marker_home):
     assert (marker_home / "pc_names.json.bak").read_text() == raw
     (marker_home / "pc_names.json").write_text(json.dumps({"zz": 1}), encoding="utf-8")
     c.post("/opx-monitor/pc-names", data={"new_tag": "ee", "new_label": "e"}, headers=ORIGIN)
-    assert (marker_home / "pc_names.json.bak").read_text() == raw  # one-time
+    assert json.loads((marker_home / "pc_names.json.bak").read_text()) == {"zz": 1}  # rotates
 
 
 def test_long_owner_texts_clip_with_the_full_text_on_hover(env, marker_home):

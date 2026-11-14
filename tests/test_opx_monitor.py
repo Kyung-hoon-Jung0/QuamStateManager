@@ -124,54 +124,98 @@ def names_file(env, tmp_path, monkeypatch):
 
 
 def _names_base(app):
-    return re.search(r'name="pc_names_version" value="([^"]+)"', page(app, 'settings'))[1]
+    html = page(app, 'settings')
+    assert 'pc_names_version' not in html
+    return dict(re.findall(r'name="(was__[^" ]+)" value="([^"]*)"', html))
 
 
-def _names_post(app, version, **data):
+def _names_post(app, base, **data):
     return app.test_client().post('/opx-monitor/pc-names', headers=ORIGIN,
-                                  data={'pc_names_version': version, **data})
+                                  data={**base, **data})
 
 
 def test_r2_names_backup_rotates_after_two_saves(names_file):
     app, path = names_file
     for label in ('First', 'Second'):
-        assert _names_post(app, _names_base(app), label__abc=label, was__abc='Original').status_code == 200
+        assert _names_post(app, _names_base(app), label__abc=label).status_code == 200
     assert json.loads(path.read_text()) == {'abc': 'Second'}
     assert json.loads(path.with_suffix('.json.bak').read_text()) == {'abc': 'First'}
 
 
-def test_r2_names_reject_same_base_version(names_file):
+def test_r2b_names_reject_same_row_from_same_base(names_file):
     app, path = names_file
     base = _names_base(app)
-    assert _names_post(app, base, new_tag='def', new_label='First').status_code == 200
-    response = _names_post(app, base, new_tag='ghi', new_label='Second')
+    assert _names_post(app, base, label__abc='First').status_code == 200
+    before, backup = path.read_bytes(), path.with_suffix('.json.bak').read_bytes()
+    response = _names_post(app, base, label__abc='Second', new_tag='def', new_label='Added')
     assert response.status_code == 409
     assert response.mimetype == 'text/plain'
-    assert response.get_data(as_text=True) == 'The PC names changed in another window; reload and try again. Nothing was saved.'
-    assert json.loads(path.read_text()) == {'abc': 'Original', 'def': 'First'}
+    text = response.get_data(as_text=True)
+    assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
+    assert path.read_bytes() == before and path.with_suffix('.json.bak').read_bytes() == backup
+    assert json.loads(path.read_text()) == {'abc': 'First'}
 
 
-def test_r2_names_lock_serializes_version_check_and_write(names_file, monkeypatch):
+@pytest.mark.parametrize('data', [
+    {'label__abc': 'Original'},
+    {'label__abc': 'Edited'},
+    {'label__abc': 'Original', 'remove__abc': '1'},
+])
+def test_r2b_names_missing_was_conflicts(names_file, data):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, {}, **data)
+    assert response.status_code == 409 and response.mimetype == 'text/plain'
+    assert 'abc' in response.get_data(as_text=True)
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_r2b_names_new_tag_collision(names_file):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, {}, new_tag='abc', new_label='Different')
+    assert response.status_code == 409 and response.mimetype == 'text/plain'
+    text = response.get_data(as_text=True)
+    assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+    assert _names_post(app, {}, new_tag='abc', new_label='Original').status_code == 200
+
+
+def test_r2b_names_multiple_conflicts_refuse_whole_post(names_file):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Changed', 'def': 'Changed'}))
+    before = path.read_bytes()
+    response = _names_post(app, {'was__abc': 'Original', 'was__def': 'Original'},
+                           label__abc='Edited', label__def='Original', remove__def='1',
+                           new_tag='ghi', new_label='Added')
+    assert response.status_code == 409
+    text = response.get_data(as_text=True)
+    assert 'abc' in text and 'def' in text
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+def test_r2b_names_lock_serializes_row_check_and_write(names_file, monkeypatch):
     import concurrent.futures
     import threading
     import time
     from quam_state_manager.web import opx_monitor_routes as routes
     app, path = names_file
     base = _names_base(app)
-    original = routes._pc_names_version
-    def slow_version():
-        version = original()
-        time.sleep(0.1)  # make overlapping unguarded checks observe the same old file
-        return version
-    monkeypatch.setattr(routes, '_pc_names_version', slow_version)
+    original = routes._label_shown
+    def slow_shown(value):
+        shown = original(value)
+        time.sleep(0.1)  # both unguarded checks would see the original label
+        return shown
+    monkeypatch.setattr(routes, '_label_shown', slow_shown)
     ready = threading.Barrier(2, timeout=5)
-    def post(tag):
+    def post(label):
         ready.wait()
-        return _names_post(app, base, new_tag=tag, new_label='Added').status_code
+        return label, _names_post(app, base, label__abc=label).status_code
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(post, ('def', 'ghi')))
-    assert sorted(results) == [200, 409]
-    assert len(json.loads(path.read_text())) == 2
+        results = list(pool.map(post, ('First', 'Second')))
+    assert sorted(code for _, code in results) == [200, 409]
+    winner = next(label for label, code in results if code == 200)
+    assert json.loads(path.read_text()) == {'abc': winner}
 
 
 def test_r2_names_unedited_long_label_survives_unrelated_save(names_file):

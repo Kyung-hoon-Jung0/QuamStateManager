@@ -10,7 +10,6 @@ import datetime as _dt
 
 import json
 import logging
-import hashlib
 import threading
 import tempfile
 import os
@@ -23,13 +22,6 @@ from quam_state_manager.core import opx_monitor as om
 logger = logging.getLogger(__name__)
 _PC_NAMES_LOCK = threading.RLock()
 
-
-def _pc_names_version():
-    path = om.marker_dir() / 'pc_names.json'
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except FileNotFoundError:
-        return 'missing'
 
 opxmon_bp = Blueprint("opx_monitor", __name__)
 
@@ -200,11 +192,9 @@ def _view(tab: str) -> dict:
     # labels are read at render time only and never leave the page
     with _PC_NAMES_LOCK:
         pc_names, pc_names_problem = om.load_pc_names()
-        pc_names_version = _pc_names_version()
     seen_tags = om.owner_tags(st.get('answer'))
     owner_ctx = {'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
-                 'pc_names_version': pc_names_version,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
                  'pc_name_rows': sorted(t for t in set(pc_names) | set(seen_tags) if _TAG_RE.fullmatch(t)),
                  'pc_name_bad': [(_key_ref(k), k) for k in sorted(pc_names) if not _TAG_RE.fullmatch(k)]}
@@ -390,9 +380,6 @@ def _owner_shown(text, limit=120):
 @opxmon_bp.route("/opx-monitor/pc-names", methods=["POST"])
 def opx_monitor_save_pc_names():
     with _PC_NAMES_LOCK:
-        if request.form.get('pc_names_version') != _pc_names_version():
-            return make_response('The PC names changed in another window; reload and try again. Nothing was saved.',
-                                 409, {'Content-Type': 'text/plain; charset=utf-8'})
         return _save_pc_names_locked()
 
 
@@ -401,15 +388,17 @@ def _save_pc_names_locked():
 
     Only the rows this window changed are applied (a row whose posted name equals the
     ``was__<tag>`` it was drawn with is left alone), each one onto the file as read at
-    that moment. The caller holds the process lock and checks the base version."""
+    that moment. The caller holds the process lock through conflict checks and writing."""
     f = request.form
     changes = []
+    rows = set()
     for k, v in f.items():
         if not k.startswith("label__"):
             continue
         tag = k[len("label__"):]
         if not _TAG_RE.fullmatch(tag):
             continue
+        rows.add(tag)
         if _form_bool("remove__" + tag):
             changes.append((tag, None))
             continue
@@ -458,6 +447,20 @@ def _save_pc_names_locked():
         if not label:
             return _settings_reply("Give the new tag a name.", error=True)
         changes.append((tag, label))
+    # Compare the same display value carried by each row's hidden was__ field.
+    # Validate edited fields first so invalid input keeps its field-specific 400.
+    conflicts = {t for t in rows if t in names_now and "was__" + t not in f}
+    for t, _ in changes:
+        if t in rows and ("was__" + t not in f or
+                          f["was__" + t] != _label_shown(names_now.get(t, ''))):
+            conflicts.add(t)
+    if tag and tag in names_now and names_now[tag] != label:
+        conflicts.add(tag)
+    if conflicts:
+        tags = ', '.join(sorted(conflicts))
+        return make_response(f'The label for tag(s) {tags} was changed in another window; '
+                             'reload to see it. Nothing was saved.',
+                             409, {'Content-Type': 'text/plain; charset=utf-8'})
     count = None
     try:
         for t, label in changes:
