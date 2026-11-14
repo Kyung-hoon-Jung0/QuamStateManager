@@ -21,6 +21,7 @@
 </section>
 {% else %}
 <p class="ui-note" role="status" data-pce-status>Loading the draft</p>
+<p class="ui-note" data-pce-dirty hidden></p>
 <p class="ui-note" data-pce-code-only hidden></p>
 <div class="pce-cols">
   <section class="ui-item pce-form" aria-label="Fields and formula">
@@ -32,6 +33,7 @@
           {% if pce_python and pce_python not in pce_envs | map(attribute='python') | list %}<option value="{{ pce_python }}" selected>{{ pce_python }}</option>{% endif %}
         </select></label>
     </div>
+    <p class="ui-note" data-pce-form-note role="status" hidden></p>
     <div class="pce-fields" data-pce-fields></div>
     <div class="ui-actions"><button type="button" class="btn-sm outline" data-pce-add-field>Add a field</button></div>
     <label>Formula (numpy; t, dt and n are given)
@@ -48,7 +50,8 @@
     <div class="pce-code" data-pce-code></div>
     <p class="ui-note" data-pce-path></p>
     <div class="ui-field-grid">
-      <label>Class file <input type="text" class="ui-input pce-target" data-pce-target placeholder="C:\path\to\quam_config\my_pulse.py" autocomplete="off"></label>
+      <label>Class file <input type="text" class="ui-input pce-target" data-pce-target autocomplete="off" aria-describedby="pce-target-hint"></label>
+      <p class="ui-field-hint" id="pce-target-hint">The full path of the .py file, for example in your quam_config folder.</p>
     </div>
     <div class="ui-actions"><button type="button" class="btn-sm outline" data-pce-save-file>Save to file</button></div>
   </section>
@@ -62,7 +65,7 @@
 </div>
 <dialog class="ui-dialog ui-dialog--m" data-pce-conflict aria-labelledby="pce-conflict-title">
   <div class="ui-dialog-head">
-    <h2 id="pce-conflict-title" class="ui-head-title">Two editors changed the draft</h2>
+    <h2 id="pce-conflict-title" class="ui-head-title" data-pce-conflict-title>Two editors changed the draft</h2>
   </div>
   <div class="ui-dialog-body">
     <p data-pce-conflict-question></p>
