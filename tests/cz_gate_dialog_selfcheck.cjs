@@ -51,7 +51,10 @@ const doc = window.document;
 const sent = [];
 const queue = { plan: [], check: [], create: [] };
 let hold = null;                    // a pending check the test resolves itself
-let holdCreate = null;              // a pending create the test resolves itself
+let holdCreate = null;
+let failDialog = false;
+const toasts = [];
+window.showToast = (m, k) => { toasts.push([m, k]); };              // a pending create the test resolves itself
 const LONG = 'copied from the model gate';
 function planCopied(body) {
     const given = ((body.pulses.flux_pulse_control || {}).fields) || {};
@@ -114,6 +117,7 @@ window.fetch = (url, opt) => {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, sync: nx }) });
     }
     if (!opt || !opt.method) {
+        if (failDialog) return Promise.reject(new Error('offline'));
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(dialogHtml()) });
     }
     const body = JSON.parse(opt.body);
@@ -433,7 +437,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     type(field('flux_pulse_qubit', 'length'), '48');
     type(field('flux_pulse_qubit', 'amplitude'), '-0');
     await settle();
-    ok(!prim().disabled && !$('#czg-dialog .ui-field-error') && $('#czg-status').textContent === '' && sent.filter((x) => x.kind === 'plan').pop().body.pulses.flux_pulse_qubit.fields.amplitude === 0,
+    ok(!prim().disabled && !$('#czg-dialog .ui-field-error:not([hidden])') && $('#czg-status').textContent === '' && sent.filter((x) => x.kind === 'plan').pop().body.pulses.flux_pulse_qubit.fields.amplitude === 0,
        'valid again: errors gone, status cleared, -0 sent as 0, Check on');
     // C3 + C2: a create in flight: the form is inert, X / Escape do not close, a late plan answer is ignored
     prim().click();
@@ -534,6 +538,99 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     window.CzGate.close(); await settle();
     if ($('#czg-dialog')) { const dd = $('#czg-top').querySelector('[data-czg-discard]'); if (dd) dd.click(); }
     await settle();
+
+    // ---- round 2 pins (each names the one-line mutation that turns it red) ----
+    const fieldOf = (f, n) => [...doc.querySelectorAll('#czg-dialog input[data-czg-field]')].find((i) => i.dataset.czgField === f && i.dataset.czgName === n);
+    // R14 (mutation: drop the alertBox line in inputsChanged, or clear every alert in renderPlan)
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_r14');
+    await settle();
+    prim().click();
+    await settle();
+    type(fieldOf('flux_pulse_qubit', 'amplitude'), '0.33');
+    await tick(5);
+    const r14a = $('#czg-alert .ui-callout--note') && /Inputs changed: press Check again\./.test(alertText()) && !/Ready/.test(alertText());
+    await settle();
+    ok(r14a && $('#czg-alert .ui-callout--note') && !/Ready/.test(alertText()), 'inputs changed after a check: a note banner at once, still there after the plan answer, no "ready"');
+    // G1 backdrop while busy (mutation: drop "&& !S.busy" from the backdrop close)
+    hold = new Promise((r) => { release = r; });
+    prim().click();
+    await tick(5);
+    ok(fieldOf('flux_pulse_qubit', 'amplitude').disabled && $('#czg-form').getAttribute('aria-disabled') === 'true', 'during a check every form control wears the disabled state');
+    $('#czg-dialog').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+    $('#czg-dialog').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(5);
+    ok($('#czg-dialog'), 'a backdrop press during a check does not close');
+    release();
+    await settle();
+    ok(!fieldOf('flux_pulse_qubit', 'amplitude').disabled, 'after the check the controls are enabled again');
+    // F writes follow the sync truth (mutation: syncLine ignores auto_push)
+    type($('#czg-name'), 'cz_r4');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.sync = { auto_push: true, auto_pull: false, readable: true }; return j; });
+    prim().click();
+    await settle();
+    ok(/Auto-Sync also writes the chip/.test($('#czg-writes').textContent), 'writes panel: Auto-Sync armed is said there');
+    // D partial create (mutation: drop the partial branch)
+    queue.create.push(() => [500, { ok: false, partial: true, error: 'The create failed part way and could not be undone; press Ctrl+Z.' }]);
+    prim().click();
+    await settle();
+    ok($('#czg-alert .ui-verdict--danger') && /could not be undone/.test(alertText()) && !/Created/.test(alertText())
+       && !$('#czg-status-slot').children.length, 'a partial create: the server sentence in danger, never "Created", no status row');
+    window.CzGate.close();
+    // R12 mixed verdicts (mutation: label without the count, or the "And N more" tail removed)
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_r12');
+    await settle();
+    queue.check.push((b) => {
+        const j = checkOk(b);
+        const base = j.pairs[0];
+        j.pairs = ['p1', 'p2', 'p3', 'p4', 'p5'].map((id, k) => Object.assign({}, base, { pair: id,
+            verdict: k === 0 ? { allowed: true, state: 'verified', reason: '' } : { allowed: true, state: 'not checked', reason: 'Reason ' + id + '.' } }));
+        return j;
+    });
+    prim().click();
+    await settle();
+    ok(prim().textContent === 'Create 5 gates, 4 without the lab check' && /p2: Reason p2\./.test(alertText()) && /p4: Reason p4\./.test(alertText())
+       && !/Reason p5/.test(alertText()) && /And 1 more\./.test(alertText()), 'mixed: the button counts, the banner names three reasons then "And 1 more."');
+    type($('#czg-name'), 'cz_r12b');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); j.pairs[0].checks.push({ name: 'preview', status: 'skipped', message: 'Not checked: no preview.' }); return j; });
+    prim().click();
+    await settle();
+    ok(/1 check passed, 1 was not run\./.test(alertText()) && !/every check passed/.test(alertText()), 'a skipped check: "1 check passed, 1 was not run.", never "every check passed"');
+    // E a value the server refuses goes on its field (mutation: splitRefusals returns every refusal as rest)
+    queue.plan.push((b) => { const j = planOk(b); j.pairs[0].ok = false; j.pairs[0].refusals = ['flux_pulse_qubit.amplitude: Type a number.']; return j; });
+    type($('#czg-name'), 'cz_r12c');
+    await settle();
+    { const a = fieldOf('flux_pulse_qubit', 'amplitude'); const e = a && a.closest('.ui-field').querySelector('.ui-field-error');
+      ok(e && e.textContent === 'Type a number.' && a.getAttribute('aria-invalid') === 'true' && !/Type a number/.test($('#czg-name-why').textContent),
+         'a server refusal naming a field is shown on that field, not under the name'); }
+    // H focus restore (mutation: "if (keep && keep[0]) restoreFocus" -> "if (false)")
+    type($('#czg-name'), 'cz_r8');
+    await settle();
+    { const a = fieldOf('flux_pulse_qubit', 'amplitude'); a.focus(); a.value = '0.123'; a.setSelectionRange(2, 2); a.dispatchEvent(new window.Event('input', { bubbles: true }));
+      await settle();
+      const b2 = fieldOf('flux_pulse_qubit', 'amplitude');
+      ok(b2 !== null && doc.activeElement === b2 && b2.selectionStart === 2, 'a re-rendered field gets the focus and the caret back'); }
+    window.CzGate.close();
+    // R13 open fails (mutation: drop the catch in open)
+    failDialog = true;
+    toasts.length = 0;
+    let threw = false;
+    try { await window.CzGate.open({ pair: 'q1-2' }); } catch (e) { threw = true; }
+    await settle();
+    failDialog = false;
+    ok(!threw && !$('#czg-dialog') && window.CzGate.state() === null && toasts.some((t) => /could not open/.test(t[0]) && t[1] === 'error'),
+       'a failed load: the toast says why, no half-open dialog');
+    // R10 hooks are data attributes (mutation: query the more rows by class again)
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    ok($('#czg-more-list [data-czg-more-row] [data-czg-more-why]') && !$('#czg-dialog .czg-more-why') && !$('#czg-dialog .czg-head'),
+       'script hooks are data attributes; no class without a kit rule');
+    window.CzGate.close();
 
     // the chart component missing
     delete window.GateTimeline;
