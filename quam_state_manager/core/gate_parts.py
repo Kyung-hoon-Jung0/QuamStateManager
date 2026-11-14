@@ -392,7 +392,8 @@ def is_component(segs: tuple | list, node: Any) -> bool:
     applies): a pulse holding an ``operations`` key, with no ``amplitude``
     and no class ending in "Pulse", placed directly under a qubit or pair
     entry is taken for a channel (named, not walked); a channel that has an
-    ``amplitude`` key is taken for a pulse (walked). Decided from the state's shape only, never from class names.
+    ``amplitude`` key is taken for a pulse (walked). Decided from the state itself (its shape and the class name written
+    in it), never from what a process has probed.
     Every other object or list (a pulse, an entry of an ``operations``
     container, a parameter dict, a waveform list) is not a component."""
     segs = tuple(segs)

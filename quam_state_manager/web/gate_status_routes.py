@@ -344,7 +344,7 @@ def delete_gate_together(ctx, modifier, body: dict):
     def say(message, code, **extra):
         if htmx:
             return make_response(render_template(
-                "_status.html", message=message, level="error"), 200)
+                "_gate_fail.html", message=message), 200)
         return jsonify(ok=False, error=message, **extra), code
 
     if ctx and (ctx.get("origin") or "live") != "live":

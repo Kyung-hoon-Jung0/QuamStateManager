@@ -222,7 +222,8 @@ def test_a_record_that_cannot_be_saved_is_said(rig, monkeypatch):
 def test_pair_detail_head_says_no_active_gate(rig):
     _ctx(rig)["modifier"].delete_subtree(ALIAS)
     body = rig.get("/pair/q1-q2", headers={"HX-Request": "true"}).get_data(as_text=True)
-    assert "No active CZ gate (the pair's cz alias is not set)" in body
+    assert 'class="ui-text-warn" title="The pair' in body and '>no active gate</span>' in body
+    assert body.count("no active gate") == 1
     assert body.count('data-status-key="active"') == 2   # details only, no pill
     assert "ui-pill--accent" not in body.split("gate-status-list")[1].split("</section>")[0]
 
@@ -233,7 +234,7 @@ def test_list_scope_make_active_updates_the_head_and_the_old_active_row(rig):
     r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
                  data={"pair": "q1-q2", "gate": "cz_sq", "scope": "list"})
     body = r.get_data(as_text=True).split("pending-tray")[0]
-    assert 'class="gate-status-list"' in body and "No active CZ gate" not in body
+    assert "gate-status-list" in body and "no active gate" not in body
     r = rig.post("/api/pulse/cz-gate/make-active", headers=hx,
                  data={"pair": "q1-q2", "gate": "cz_two", "scope": "list"})
     body = r.get_data(as_text=True).split("pending-tray")[0]

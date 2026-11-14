@@ -10,7 +10,7 @@
         <span class="gate-status-items">{% for it in line.pills %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}</span>
         <details class="ui-disclosure gate-status-details">
             <summary class="ui-disclosure-summary">details</summary>
-            <dl class="gate-status-details-list">
+            <dl class="ui-text-quiet gate-status-details-list">
                 {% for it in line.details or line['items'] %}<dt data-status-key="{{ it.key }}">{{ it.text }}</dt><dd>{{ it.why }}</dd>{% endfor %}
             </dl>
         </details>
@@ -36,6 +36,6 @@
         </span>
         {% endif %}
     </div>
-    {% if line.note %}{{ ui.ui_callout(line.note_tone, 'Not done' if line.note_tone == 'danger' else 'Note', line.note) }}{% endif %}
+    {% if line.note %}{% if line.note_tone == 'danger' %}{% with message=line.note %}{% include '_gate_fail.html' %}{% endwith %}{% else %}{{ ui.ui_callout(line.note_tone, 'Note', line.note) }}{% endif %}{% endif %}
     <div class="gate-status-slot" role="status" aria-live="polite"></div>
 </div>
