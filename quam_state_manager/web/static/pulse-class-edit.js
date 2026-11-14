@@ -219,15 +219,20 @@
         S.cm.setProtected(info && info.protect ? { from: info.protect[0], to: info.protect[1] } : null);
         S.cm.setGuard(!S.unlocked);
     }
-    function save(keep, text, fileSha) {
+    function save(keep, text, fileSha, conflict) {
         var body = { cls: S.cls, text: text != null ? text : S.cm.getDoc(), base_sha: S.baseSha };
         if (keep) body.keep = keep;
         if (fileSha) body.file_sha = fileSha;
-        if (S.unlocked) body.by_hand = true;
+        if (S.unlocked) body.hand_edit = true;
         return api("POST", "/pulse-class/save", body).then(function (r) {
             if (!S) return;
-            if (r.conflict) { askConflict(r.conflict, body.text, r.file_sha); return; }
-            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            if (r.conflict) { askConflict(r.conflict, body.text); return; }
+            if (!r.ok) {
+                setStatus(r.error);
+                show(q(S.root, "[data-pce-error]"), r.error);
+                if (conflict) askConflict(conflict, body.text);
+                return;
+            }
             apply(r, keep === "file" ? null : body.text);
             return preview();
         });
@@ -257,7 +262,7 @@
                      text: S.cm.getDoc(), base_sha: S.baseSha };
         return api("POST", "/pulse-class/form", body).then(function (r) {
             if (!S) return;
-            if (r.conflict) { askConflict(r.conflict, body.text, r.file_sha); return; }
+            if (r.conflict) { askConflict(r.conflict, body.text); return; }
             if (!r.ok) { show(err, r.error); return; }
             S.formDirty = false;     // the form wrote these values: show them now
             apply(r, body.text);
@@ -290,14 +295,38 @@
         d.addEventListener("close", function () { if (S) S.conflictOpen = false; }, { once: true });
         if (d.showModal) d.showModal(); else d.setAttribute("open", "");
     }
-    function askConflict(c, mine, fileSha) {
+    function askConflict(c, mine) {
         askChoice({
             title: "Two editors changed the draft",
             question: c.question,
             choices: c.choices.map(function (ch) {
                 return { label: ch.label, loses: ch.loses, keep: ch.keep, primary: ch.keep === "sm",
-                         act: function () { save(ch.keep, ch.keep === "sm" ? mine : undefined, fileSha); } };
+                         act: function () { save(ch.keep, mine, c.file_sha, c); } };
             }),
+        });
+    }
+    function saveFile(target, replaceSha) {
+        var body = { cls: S.cls, target: target };
+        if (replaceSha) body.replace_sha = replaceSha;
+        return api("POST", "/pulse-class/save-file", body).then(function (r) {
+            if (!S) return;
+            if (r.confirm) {
+                var c = r.confirm;
+                askChoice({
+                    title: "Replace the class file?",
+                    question: c.question + "\n" + c.path,
+                    choices: [
+                        { label: "Yes", loses: c.loses, primary: true,
+                          act: function () { saveFile(c.path, c.file_sha); } },
+                        { label: "No", loses: "The class file stays as it is.", act: function () {} },
+                    ],
+                });
+                return;
+            }
+            if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
+            show(q(S.root, "[data-pce-error]"), "");
+            S.statusLine = r.status + ". Backup: " + (r.backup === null ? "no copy was needed" : r.backup);
+            setStatus(S.statusLine);
         });
     }
     function poll() {
@@ -314,7 +343,7 @@
             if (r.status !== "changed" || r.sha === S.baseSha) return;
             if (S.dirty) {
                 // not adopted: the base stays, so a save without this answer asks too
-                if (r.conflict) askConflict(r.conflict, S.cm.getDoc(), r.sha);
+                if (r.conflict) askConflict(r.conflict, S.cm.getDoc());
                 return;
             }
             apply({ sha: r.sha, text: r.text, info: r.info, status: r.status_line }, null);
@@ -381,12 +410,7 @@
             if ((ev.ctrlKey || ev.metaKey) && (ev.key === "s" || ev.key === "S")) { ev.preventDefault(); save(); }
         });
         q(root, "[data-pce-save-file]").addEventListener("click", function () {
-            api("POST", "/pulse-class/save-file", { cls: S.cls, target: q(root, "[data-pce-target]").value }).then(function (r) {
-                if (!S) return;
-                if (!r.ok) { show(q(root, "[data-pce-error]"), r.error); return; }
-                S.statusLine = r.status;
-                setStatus(r.status);
-            });
+            saveFile(q(root, "[data-pce-target]").value);
         });
         return api("GET", "/pulse-class/load?cls=" + encodeURIComponent(cls)).then(function (r) {
             if (!S) return;

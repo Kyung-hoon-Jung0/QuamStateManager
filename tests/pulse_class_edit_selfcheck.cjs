@@ -57,6 +57,22 @@ env.innerHTML = '<option value="">Choose an environment</option><option value="p
 // ---------------------------------------------------------------- mock server
 const server = { text: classText(F2, "a * t"), sha: "s1", fields: F2, formula: "a * t" };
 const calls = [];
+// These error/confirm bodies match the answers returned by the server doors.
+const REGION_ERROR = "This save changes the template line of field 'amplitude'. The form owns these lines: change them in the form, or press \"Edit the template lines by hand\" first.";
+const WRITING_ERROR = "The draft file is still being written; choose again when it has stopped changing.";
+const answers = {};
+let enforceRegion = false;
+function answer(url, status, body) { (answers[url] || (answers[url] = [])).push({ http: status, body }); }
+function conflict(fileSha, filePath = "D:/draft/FlatTop.py") {
+  return { question: "The draft file changed outside SM while this editor has changes that are not saved. Which one do you keep?",
+    file_sha: fileSha, choices: [
+      { keep: "sm", label: "Keep the SM editor", loses: "The outside edit in " + filePath + " will be lost." },
+      { keep: "file", label: "Keep the file on disk", loses: "Your unsaved changes in this editor will be lost." }] };
+}
+function confirm(fileSha, filePath = "D:/classes/flat.py") {
+  return { question: "A file is already there. Replace it with this draft?", path: filePath, file_sha: fileSha,
+    loses: filePath + " will be replaced; a copy of it is kept next to it." };
+}
 let hold = null;            // {url-prefix: deferred} to hold one answer
 function deferred() { let res; const p = new Promise((r) => { res = r; }); return { p, res }; }
 const plots = { wave: 0, timeline: 0 };
@@ -65,12 +81,17 @@ let pollAnswer = () => ({ status: "unchanged", sha: server.sha, status_line: "Dr
 function route(method, url, body) {
   calls.push({ method, url, body });
   const u = url.split("?")[0];
+  if (answers[u] && answers[u].length) return answers[u].shift();
   if (u === "/pulse-class/load") return { ok: true, cls: "FlatTop", text: server.text, sha: server.sha,
     info: info(server.text, server.fields, server.formula), path: "draft/FlatTop.py", status: "Draft, not saved", target: "",
     last_preview: { samples: [0, 2, 0], sampling_rate: 1e9, draft_sha256: "s0" } };
   if (u === "/pulse-class/poll") return pollAnswer();
   if (u === "/pulse-class/preview") return previewAnswer();
   if (u === "/pulse-class/save") {
+    const region = (text) => text.slice(text.indexOf(BEGIN), text.indexOf(END) + END.length);
+    if (enforceRegion && !body.hand_edit && region(body.text) !== region(server.text)) {
+      return { http: 400, body: { ok: false, error: REGION_ERROR, region: true } };
+    }
     server.text = body.text; server.sha = "s" + calls.length;
     return { ok: true, text: server.text, sha: server.sha, info: info(server.text, server.fields, server.formula), status: "Draft, not saved" };
   }
@@ -88,7 +109,7 @@ win.__route = (m, u, b) => {
 win.eval(`window.fetch = function (url, o) {
   o = o || {};
   return Promise.resolve(window.__route(o.method || "GET", url, o.body ? JSON.parse(o.body) : null)).then(function (j) {
-    return { status: 200, json: function () { return Promise.resolve(JSON.parse(JSON.stringify(j))); } };
+    return { status: j.http || 200, json: function () { return Promise.resolve(JSON.parse(JSON.stringify(j.http ? j.body : j))); } };
   });
 };
 window.setInterval = function () { return 1; };
@@ -119,9 +140,7 @@ function outsideEdit(fields, formula) {
   const t = server.text, s = server.sha, inf = info(t, fields, formula);
   pollAnswer = () => { pollAnswer = () => ({ status: "unchanged", sha: s, status_line: "Draft, not saved" });
     return { status: "changed", sha: s, text: t, info: inf, status_line: "Draft, not saved",
-      conflict: { question: "Both changed. Which one do you keep?", choices: [
-        { keep: "sm", label: "Keep the SM editor", loses: "the file's change" },
-        { keep: "file", label: "Keep the file on disk", loses: "your edits" }] } }; };
+      conflict: conflict(s) }; };
 }
 
 (async () => {
@@ -259,9 +278,11 @@ function outsideEdit(fields, formula) {
   await win.PulseClassEdit._applyForm(); await flush();
   ok(since(i0, "/pulse-class/form").length === 0 && dialogOpen(), "P1-1: a hand edit of the template lines makes Apply the form ask");
   closeDialog();
+  enforceRegion = true;
   await win.PulseClassEdit._save(); await flush();
-  ok(calls[calls.length - 2].body && calls.filter((c) => c.url === "/pulse-class/save").pop().body.by_hand === true,
+  ok(calls.filter((c) => c.url === "/pulse-class/save").pop().body.hand_edit === true && server.text === cm.getDoc(),
     "unlock: a save made by hand says so");
+  enforceRegion = false;
   root.querySelector("[data-pce-unlock]").click();
 
   // P2-9: no invented values
@@ -321,6 +342,73 @@ function outsideEdit(fields, formula) {
   const typed2 = cm.getDoc();
   d2.res(); await sp; await flush();
   ok(cm.getDoc() === typed2 && vis("[data-pce-dirty]"), "P2-4: a keystroke made during a save stays, still unsaved");
+
+  // Merge seam: locked-region 400 preserves the user's text and server words.
+  cm.setGuard(false);
+  type(view, cm.getDoc().indexOf(BEGIN) + BEGIN.length + 1, "    # hand\n");
+  const refusedText = cm.getDoc(), diskBefore = server.text;
+  enforceRegion = true;
+  await win.PulseClassEdit._save(); await flush();
+  ok($("[data-pce-status]").textContent === REGION_ERROR, "merge region: 400 words appear in the status line");
+  ok(cm.getDoc() === refusedText && server.text === diskBefore && vis("[data-pce-dirty]"),
+    "merge region: refused save preserves pane text and disk");
+  enforceRegion = false;
+
+  // Merge seam: save 409 has only conflict.file_sha, and a moved choice asks again.
+  const c1 = conflict("first"), c2 = conflict("second", "D:/draft/new.py");
+  answer("/pulse-class/save", 409, { ok: false, conflict: c1 });
+  await win.PulseClassEdit._save(); await flush();
+  ok(dialogOpen() && $("[data-pce-conflict-question]").textContent === c1.question, "merge conflict: save 409 opens its question");
+  answer("/pulse-class/save", 409, { ok: false, conflict: c2, moved: true });
+  clickChoice("Keep the SM editor"); await flush();
+  ok(calls[calls.length - 1].body.file_sha === "first", "merge conflict: save choice sends nested file_sha");
+  ok(dialogOpen() && $("[data-pce-conflict-losses]").textContent.includes("D:/draft/new.py"),
+    "merge conflict: moved 409 reopens with the new facts");
+  answer("/pulse-class/save", 400, { ok: false, error: WRITING_ERROR });
+  clickChoice("Keep the file on disk"); await flush();
+  ok(calls[calls.length - 1].body.keep === "file" && calls[calls.length - 1].body.file_sha === "second",
+    "merge conflict: keep file sends the refreshed hash");
+  ok(dialogOpen() && $("[data-pce-error]").textContent === WRITING_ERROR && cm.getDoc() === refusedText,
+    "merge conflict: still being written shows the error and keeps the question and pane");
+  i0 = calls.length;
+  await win.PulseClassEdit._poll(); await flush();
+  ok(calls.length === i0, "merge conflict: polling stays paused while the question is open");
+  closeDialog();
+
+  // Merge seam: overwrite confirmation may move repeatedly; target is the asked path.
+  const targetBox = $("[data-pce-target]"), firstConfirm = confirm("target-one"), nextConfirm = confirm("target-two");
+  targetBox.value = firstConfirm.path;
+  answer("/pulse-class/save-file", 409, { ok: false, confirm: firstConfirm });
+  $("[data-pce-save-file]").click(); await flush();
+  ok(dialogOpen() && $("[data-pce-conflict-question]").textContent === firstConfirm.question + "\n" + firstConfirm.path &&
+    $("[data-pce-conflict-losses]").textContent.includes(firstConfirm.loses),
+    "merge overwrite: kit question names the path and loss");
+  i0 = calls.length;
+  clickChoice("No"); await flush();
+  ok(!dialogOpen() && calls.length === i0, "merge overwrite: No writes nothing");
+  answer("/pulse-class/save-file", 409, { ok: false, confirm: firstConfirm });
+  $("[data-pce-save-file]").click(); await flush();
+  targetBox.value = "D:/classes/other.py";
+  answer("/pulse-class/save-file", 409, { ok: false, confirm: nextConfirm });
+  clickChoice("Yes"); await flush();
+  ok(calls[calls.length - 1].body.replace_sha === "target-one" && calls[calls.length - 1].body.target === firstConfirm.path,
+    "merge overwrite: Yes sends replace_sha for the asked path");
+  ok(dialogOpen() && $("[data-pce-conflict-question]").textContent.includes(nextConfirm.path),
+    "merge overwrite: second 409 asks again");
+  answer("/pulse-class/save-file", 200, { ok: true, status: "Saved to D:/classes/flat.py, same as draft",
+    backup: "D:/classes/flat.py.bak", target: firstConfirm.path });
+  clickChoice("Yes"); await flush();
+  ok(calls[calls.length - 1].body.replace_sha === "target-two", "merge overwrite: second Yes sends the new hash");
+  ok(!dialogOpen() && $("[data-pce-status]").textContent.includes("D:/classes/flat.py.bak"), "merge overwrite: success names backup path");
+  answer("/pulse-class/save-file", 200, { ok: true, status: "Saved to D:/classes/flat.py, same as draft", backup: null, target: firstConfirm.path });
+  $("[data-pce-save-file]").click(); await flush();
+  ok($("[data-pce-status]").textContent.includes("no copy was needed"), "merge overwrite: null backup says no copy was needed");
+
+  // Merge seam: missing poll status_line is displayed verbatim.
+  const gone = "The draft file is gone: D:/draft/FlatTop.py";
+  answer("/pulse-class/poll", 200, { status: "missing", status_line: gone });
+  await win.PulseClassEdit._poll(); await flush();
+  ok($("[data-pce-status]").textContent === gone, "merge missing: status_line is shown as is");
 
   // P2-11 / P3: layout and colour tokens
   const css = fs.readFileSync(path.join(STATIC, "ui-kit.css"), "utf8");
