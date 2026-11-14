@@ -169,9 +169,9 @@ def test_draft_store_roundtrip_and_states(tmp_path):
     assert (st["state"], st["line"]) == ("draft", "Draft, not saved")
     target.parent.mkdir()
     target.write_bytes(data)
-    assert D.save_state(data, target)["line"] == "Saved, same as the file"
+    assert D.save_state(data, target)["line"] == f"Saved to {target}, same as draft"
     target.write_bytes(data + b"# x\n")
-    assert D.save_state(data, target)["line"] == "Saved, differs from the file"
+    assert D.save_state(data, target)["line"] == f"Saved to {target}, differs from draft"
     assert D.draft_path(inst, "chip-1", "FlatCosineEdges").is_relative_to(inst)
 
 

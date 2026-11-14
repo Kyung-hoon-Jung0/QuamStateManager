@@ -1311,6 +1311,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # Standalone Port play page (rack + popup over the open chip)
     from quam_state_manager.web.port_play_page import port_play_page_bp
     app.register_blueprint(port_play_page_bp)
+    from quam_state_manager.web.pulse_class_page import pulse_class_page_bp
+    app.register_blueprint(pulse_class_page_bp)
     if not testing:
         # A hardware run an earlier SM left with its QM maybe open is closed at
         # start, not only once someone opens the port-test page.
