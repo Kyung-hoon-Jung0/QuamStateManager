@@ -135,7 +135,26 @@ ok(at(250, 'q3.z').operation === 'park' && at(250, 'q3.z').v === null, 'truncate
 ok(h.valuesAt(64).length === 4, 'valuesAt lists every lane, folded spectators too');
 const hov = role(fig, 'hover').find((t) => t.meta.lane === 'q2.z');
 ok(hov && hov.text[hov.x.indexOf(40)] === 'idle' && hov.text[hov.x.indexOf(10)] === 'flux_a_long_operation_name: -0.07 V', 'hover text is the valuesAt readout');
-ok([...Array(106).keys()].map((i) => i + 10).every((t) => hov.x.includes(t)), 'hover grid has every 1 ns over the drawn span');
+ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every 1 ns from program time 0 over the drawn span');
+
+// the time axis: from program time 0 to the last end plus a small pad, fixed (no autorange)
+{
+    const xr = fig.layout.xaxis.range;
+    ok(xr[0] === 0 && xr[1] > 1000 && xr[1] <= 1000 * 1.04 + 2 && fig.layout.xaxis.autorange === false, 'time axis 0 to the last end plus a pad, no autorange');
+    const one = GT.render(host, { lanes: [lane('q9.z', 'gate', [seg('late', [161, 261], [0.1, 0.1])])], notes: [] });
+    const f1 = last();
+    ok(f1.layout.xaxis.range[0] === 0 && f1.layout.xaxis.range[1] > 261 && f1.layout.xaxis.range[1] < 280, 'a single late pulse: axis still starts at 0');
+    const sa = f1.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at');
+    ok(sa.length === 1 && sa[0].text === 'starts at 161 ns' && sa[0].x === 0 && sa[0].xanchor === 'left' && sa[0].font.size === 11, 'late start: "starts at 161 ns" at the lane left');
+    one.destroy();
+    const neg = GT.render(host, { lanes: [lane('q9.z', 'gate', [seg('early', [-20, 30], [0.1, 0.1])])], notes: [] });
+    const f2 = last();
+    ok(f2.layout.xaxis.range[0] === -20, 'a negative start extends the axis to it');
+    ok(!f2.layout.annotations.some((a) => a.meta && a.meta.role === 'starts-at'), 'no "starts at" text when a lane starts at or before 0');
+    neg.destroy();
+    ok(fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'starts-at').map((a) => a.meta.lane).join() === 'q1.z,q2.z,coupler_q1_q2',
+       '"starts at" only on lanes whose first pulse is later than 0');
+}
 
 // scales fit the data, not the limits
 const r1 = fig.layout.yaxis.range, r2 = fig.layout.yaxis2.range;
@@ -239,8 +258,11 @@ const plotEl = host.querySelector('[data-gate-timeline-plot]');
 ok(bar.querySelector('label.ui-check[data-spectator-summary]').textContent === 'Show 1 spectator line' &&
    bar.querySelector('input[type=checkbox][data-fold]') && !bar.querySelector('[data-fold]').checked && !host.querySelector('button.btn-sm'),
    'spectator switch is the kit checkbox in the toolbar, unchecked when folded');
-ok([...bar.children].map((n) => n.matches('.ui-segmented') ? 'scale' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'scale,spect,sim',
-   'toolbar order: scale, spectators, simulation');
+ok([...bar.children].map((n) => n.matches('[data-scale-label]') ? 'label' : n.matches('.ui-segmented') ? 'scale' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'label,scale,spect,sim',
+   'toolbar order: scale label, scale, spectators, simulation');
+ok(bar.querySelector('[data-scale-label]').textContent === 'V scale' && bar.querySelector('[data-scale-label]').classList.contains('ui-note') &&
+   [...bar.querySelectorAll('.ui-segmented-opt')].map((b) => b.textContent).join('|') === 'Per lane|Shared',
+   'scale control: quiet "V scale" label, options Per lane and Shared');
 ok(bar.compareDocumentPosition(plotEl) & 4 && [...plotEl.parentNode.children].slice([...plotEl.parentNode.children].indexOf(plotEl) + 1)
    .every((n) => !n.querySelector('button')), 'below the chart only the notes');
 { const b = host.querySelector('[data-fold]'); b.checked = true; b.dispatchEvent(new window.Event('change')); }
