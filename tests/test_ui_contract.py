@@ -991,6 +991,8 @@ _STAGE6_SELECTORS = {
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-row-acts',
     '.czg .ui-segmented-opt',
     '.czg-form > *', '.czg-evidence > *',
+    '.czg:not([data-czg-stacked]) .czg-cols', '.czg:not([data-czg-stacked]) .czg-cols::after',
+    '.czg[data-czg-stacked] .czg-form::after', '.czg[data-czg-stacked] .czg-evidence::after',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',

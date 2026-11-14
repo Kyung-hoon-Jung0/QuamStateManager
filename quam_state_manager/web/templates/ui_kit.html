@@ -191,6 +191,10 @@
 <p class="ui-kit-label">Page or dialog &gt; zone &gt; panel &gt; field. A zone is a main region the eye finds first; a panel groups inside it.</p>
 <div class="ui-kit-zones"><div class="ui-kit-zones-col">{% for z in zones %}{{ ui.ui_render(z) }}{% endfor %}</div><div class="ui-kit-zones-col">{% for z in zones %}{{ ui.ui_render(z) }}{% endfor %}</div></div>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Scroll region: one that continues, one that fits</h2>
+<p class="ui-kit-label">ui-scroll: a thin thumb while it can scroll and a fade at the bottom edge; at the end the fade covers nothing.</p>
+<div class="ui-kit-scrolls"><div class="ui-scroll ui-kit-scroll-box" data-kit-scroll="long">{% for i in range(1, 13) %}<p class="ui-kit-scroll-row">Row {{ i }}</p>{% endfor %}</div><div class="ui-scroll ui-kit-scroll-box" data-kit-scroll="short">{% for i in range(1, 3) %}<p class="ui-kit-scroll-row">Row {{ i }}</p>{% endfor %}</div></div>
+</section>
 <section class="ui-kit-section"><h2 class="ui-kit-section-title">Reading order: a dialog body, before a check, passed and failed</h2>
 {%- for st, form, ev in reading %}
 <p class="ui-kit-label">{{ {'before': 'Before a check', 'ok': 'Passed', 'danger': 'Failed'}[st] }}: form column (372 px) and result column</p>
