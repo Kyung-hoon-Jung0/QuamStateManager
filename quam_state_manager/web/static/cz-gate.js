@@ -487,7 +487,7 @@
             [['max', 4, 1], ['min', 5, -1]].forEach(function (x) {
                 if (tones[x[0]] !== 'danger') return;
                 tds[x[1]].classList.add(CELL_TONE.danger);
-                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(x[2] * r.actual.limit_v, 'V')));
+                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + (+(x[2] * r.actual.limit_v).toPrecision(4)) + ' V'));
             });
         });
         host.appendChild(t);
@@ -547,6 +547,10 @@
             var sec = $(x[0]);
             if (sec) sec.hidden = !p || !has(x[1]);
         });
+        // nothing was run: the banner says why once; no empty panels under it
+        if (p && allSkippedReason(p)) {
+            ['czg-sec-chart', 'czg-sec-intent'].forEach(function (id) { if ($(id)) $(id).hidden = true; });
+        }
     }
     function renderCheck() {
         var c = S.check;
@@ -569,8 +573,6 @@
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
             var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
             alertBox(banner('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record says it was not checked.'));
-            var whyAll = p && allSkippedReason(p);
-            if (whyAll && whyAll !== why) $('czg-alert').appendChild(note(whyAll));
         } else if (no.length) {
             alertBox(banner('ok', 'Ready to create on ' + ok.length + (ok.length === 1 ? ' pair' : ' pairs'),
                 'Left out: ' + no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
