@@ -165,9 +165,59 @@ def test_sim_length_sum_path_adds_the_largest_delay():
     assert rgs.sim_length_ns([], [{"length": 100, "delay": 160}], 200, 300) == (760, "sum")
 
 
-@pytest.mark.parametrize("bad", [None, "x", float("nan"), [], True])
-def test_sim_length_bad_delay_counts_zero(bad):
-    assert rgs.sim_length_ns([], [{"length": 300, "delay": bad}], 200, 300) == (800, "sum")
+def _sum_window(delay):
+    ops = [{"element": "q1.z", "operation": "x", "length": 100, "delay": delay}]
+    return rgs.sim_length_ns([], ops, 200, 300)
+
+
+def _np_delays():
+    import numpy as np
+    return [np.int64(160), np.float32(160.0)]
+
+
+@pytest.mark.parametrize("delay,want", [
+    (160, 760), ("160", 760), (" 160 ", 760), ("160.0", 760), (160.0, 760), (0, 600), (None, 600)])
+def test_sim_length_exact_window_for_each_delay_type(delay, want):
+    assert _sum_window(delay) == (want, "sum")
+    assert rgs._delay_ns({"delay": delay}) == want - 600
+
+
+def test_sim_length_numpy_delays_count_exactly():
+    for d in _np_delays():
+        assert _sum_window(d) == (760, "sum") and rgs._delay_ns({"delay": d}) == 160
+
+
+def test_sim_length_missing_delay_key_is_zero():
+    assert rgs.sim_length_ns([], [{"length": 100}], 200, 300) == (600, "sum")
+    assert rgs._delay_ns({"length": 100}) == 0 and rgs._delay_ns(None) == 0
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -4, "abc", True, "1e999", [], ""])
+def test_sim_length_unreadable_delay_is_refused_naming_the_leaf(bad):
+    with pytest.raises(ValueError, match=r"port delay of q1\.z/x"):
+        _sum_window(bad)
+    with pytest.raises(ValueError):
+        rgs.sim_length_ns(_rows(500), [{"element": "q1.z", "length": 1, "delay": bad}], 200, 300)
+
+
+def test_build_turns_a_refused_delay_into_a_gate_answer(monkeypatch):
+    class _Tl:
+        @staticmethod
+        def static_timeline(script, ops):
+            return {"rows": [], "cannot_draw": None}
+    monkeypatch.setattr(rgs.rpw, "_chip_side", lambda *a, **k: (object(), {}, {"cfg": 1}))
+    monkeypatch.setattr(rgs.rpw, "_apply_in_program", lambda m, macro: object())
+    monkeypatch.setattr(rgs.rpw, "_plays", lambda script: ([("q1.z", "x")], [], True))
+    monkeypatch.setattr(rgs.rpw, "op_data", lambda cfg, el, op: {
+        "element": el, "operation": op, "length": 100, "delay": float("inf")})
+    monkeypatch.setattr(rgs, "_static_timeline", lambda: _Tl)
+    import types
+    qm = types.ModuleType("qm")
+    qm.generate_qua_script = lambda prog: ""
+    monkeypatch.setitem(sys.modules, "qm", qm)
+    out = rgs.build({"folder": "f", "macro": "m", "pad_ns": 200, "start_ns": 300})
+    assert out["ok"] is False and out["error_kind"] == "gate"
+    assert "port delay of q1.z/x" in out["error"] and "finite" in out["error"]
 
 
 def test_fractional_delay_falls_back_to_sum_and_rounds_up():

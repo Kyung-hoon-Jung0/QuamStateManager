@@ -52,23 +52,40 @@ def _static_timeline():
 
 
 def _delay_ns(op) -> int:
-    """The op's port delay in ns; a missing or non-numeric entry counts as 0.
-    A non-whole delay (which the timeline refuses, so the sum path is used) is
-    rounded up, so the window is never shorter than the program."""
-    d = op.get("delay") if isinstance(op, dict) else None
-    if d is None or isinstance(d, bool) or not isinstance(d, (int, float)):
+    """The op's port delay in ns, rounded up to a whole ns (a non-whole delay is
+    refused by the timeline, so the sum path is used, and the window must never
+    be shorter than the program). A missing delay (no key, or None) is 0. Any
+    real number type counts (Python or numpy), and so does a string that parses
+    to a number. A boolean, text that is not a number, a non-finite or a
+    negative delay is not readable: ``ValueError`` naming the leaf, never a
+    silent 0."""
+    if not isinstance(op, dict):
         return 0
-    if not math.isfinite(d):
+    d = op.get("delay")
+    if d is None:
         return 0
-    return max(math.ceil(d), 0)
+    where = "/".join(str(op[k]) for k in ("element", "operation") if op.get(k))
+    leaf = "the port delay" + (f" of {where}" if where else "")
+    try:
+        if isinstance(d, bool):
+            raise TypeError("boolean")
+        v = float(d.strip()) if isinstance(d, str) else float(d)
+    except (TypeError, ValueError, AttributeError):
+        raise ValueError(f"{leaf} ({d!r}) is not a number") from None
+    if not math.isfinite(v):
+        raise ValueError(f"{leaf} ({d!r}) is not a finite number")
+    if v < 0:
+        raise ValueError(f"{leaf} ({d!r}) is negative")
+    return math.ceil(v)
 
 
 def sim_length_ns(rows, ops, pad_ns: int, start_ns: int = 0) -> tuple[int, str]:
-    """``(ns, how)``: the program end plus the largest output delay among the
-    played lines, plus *start_ns* (the simulator's start latency) and
-    *pad_ns*, rounded up to 4 ns. Without rows (the timeline cannot place the
-    program) the sum of every played length plus the largest port delay is the
-    program end, an upper bound for a program without loops."""
+    """``(ns, how)``: the program end plus *start_ns* (the simulator's start
+    latency) and *pad_ns*, rounded up to 4 ns. With timeline rows the program
+    end is the latest row end, which already holds each port delay. Without
+    rows (the timeline cannot place the program) it is the sum of every played
+    length plus the largest port delay, an upper bound for a program without
+    loops. An unreadable delay raises ``ValueError`` (see ``_delay_ns``)."""
     ends = [int(r.end_ns) for r in rows or []]
     max_delay = max([_delay_ns(o) for o in ops or []] or [0])
     if ends:
@@ -187,8 +204,11 @@ def build(job: dict) -> dict:
     plays, _unres, _readable = rpw._plays(script)
     ops = [rpw.op_data(cfg, el, op) for el, op in plays]
     tl = _static_timeline().static_timeline(script, ops)
-    ns, how = sim_length_ns(tl.get("rows"), ops, int(job.get("pad_ns") or 0),
-                          int(job.get("start_ns") or 0))
+    try:
+        ns, how = sim_length_ns(tl.get("rows"), ops, int(job.get("pad_ns") or 0),
+                                int(job.get("start_ns") or 0))
+    except ValueError as exc:
+        return {"ok": False, "error_kind": "gate", "error": str(exc)}
     return {"ok": True, "config": cfg, "program": prog, "plays": plays, "sim_ns": ns,
             "length_from": how, "cannot_draw": tl.get("cannot_draw")}
 
