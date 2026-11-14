@@ -768,13 +768,21 @@ def _delay_for_band(band):
     return _BAND_TO_DELAY_NS.get(band)
 
 
+def _is_lf_output(port):
+    """True for an OPX1000 LF-FEM analog output (quam's LFFEMAnalogOutputPort).
+
+    The MW-FEM alignment delay is an LF-FEM rule; any other analog output (an
+    OPX+ port, an MW-FEM port) is left as it is."""
+    return port is not None and "LFFEM" in type(port).__name__
+
+
 def _apply_lf_delay(lf_port, band):
     """Set ``lf_port.delay`` based on the MW-FEM ``band`` it should align with.
 
-    Safe no-op if *lf_port* is None, doesn't carry a ``delay`` attribute, or
-    *band* is not one of {1, 2, 3}.
+    Safe no-op if *lf_port* is None, is not an LF-FEM output, doesn't carry a
+    ``delay`` attribute, or *band* is not one of {1, 2, 3}.
     """
-    if lf_port is None or not hasattr(lf_port, "delay"):
+    if not _is_lf_output(lf_port) or not hasattr(lf_port, "delay"):
         return
     ns = _delay_for_band(band)
     if ns is None:
@@ -787,46 +795,60 @@ def _apply_lf_delay(lf_port, band):
 
 
 def _align_coupler_delays(machine):
-    """Give every coupler LF-FEM output the delay its pair's flux ports have.
+    """Give every coupler LF-FEM output the delay of its pair's flux port.
 
-    A coupler output and a qubit z output are both LF-FEM outputs, so they need
-    the same alignment delay: during a gate the coupler pulse and the qubit
-    pulse must arrive together. The value is the moving qubit's z port delay
-    when it has one (set by ``_apply_qubit`` from its xy band), else the other
-    qubit's, else the delay ``_delay_for_band`` gives for the moving qubit's xy
-    band (a fixed-frequency qubit has no z port). Runs for every pair gate,
-    including the paths where ``_apply_pairs`` is skipped. A pair without a
-    coupler output is left alone.
+    A coupler output and a qubit z output are both LF-FEM outputs, so during a
+    gate the coupler pulse and the qubit pulse must leave with the same delay.
+    Run it after every step that sets a z delay (``_apply_qubit`` and the band
+    fix-up ``_fix_coupled_bands``); it is the one place a coupler delay is set.
+
+    The rule, case by case:
+    - the pair's moving qubit (``pair.moving_qubit``; the control qubit when it
+      is unset) decides;
+    - that qubit has a z output: the coupler takes its delay, whatever it is
+      (0 included), even when the other qubit's z delay differs;
+    - that qubit has no z output (a fixed-frequency qubit): the coupler takes
+      ``_delay_for_band`` of that qubit's xy output band; no known band: the
+      coupler is left as it is;
+    - the coupler output is not an LF-FEM output: left as it is;
+    - one coupler output shared by pairs that ask for different delays: the
+      first pair (in the chip's pair order) sets it, and a warning names the
+      port and both values.
+
+    Returns the warnings.
     """
+    warnings = []
+    decided = {}   # id(port) -> (pair id, delay)
     qpairs = getattr(machine, "qubit_pairs", None) or {}
-    for pair in list(qpairs.values()):
+    for pid, pair in list(qpairs.items()):
         coupler = getattr(pair, "coupler", None)
         out = getattr(coupler, "opx_output", None) if coupler is not None else None
-        if out is None or not hasattr(out, "delay"):
+        if not _is_lf_output(out) or not hasattr(out, "delay"):
             continue
-        moving = getattr(pair, "moving_qubit", None)
-        order = (("qubit_target", "qubit_control") if moving == "target"
-                 else ("qubit_control", "qubit_target"))
-        qubits = [getattr(pair, name, None) for name in order]
-        delay = None
-        for q in qubits:
-            z_out = getattr(getattr(q, "z", None), "opx_output", None) if q is not None else None
-            d = getattr(z_out, "delay", None)
-            if isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0:
-                delay = d
-                break
-        if delay is None:
-            for q in qubits:
-                xy_out = getattr(getattr(q, "xy", None), "opx_output", None) if q is not None else None
-                delay = _delay_for_band(getattr(xy_out, "band", None))
-                if delay is not None:
-                    break
+        moving = getattr(pair, "qubit_target" if getattr(pair, "moving_qubit", None) == "target"
+                         else "qubit_control", None)
+        z_out = getattr(getattr(moving, "z", None), "opx_output", None) if moving is not None else None
+        if _is_lf_output(z_out) and hasattr(z_out, "delay"):
+            delay = getattr(z_out, "delay", None)
+        else:
+            xy_out = getattr(getattr(moving, "xy", None), "opx_output", None) if moving is not None else None
+            delay = _delay_for_band(getattr(xy_out, "band", None))
         if delay is None:
             continue
+        first = decided.get(id(out))
+        if first is not None:
+            if first[1] != delay:
+                warnings.append(
+                    f"coupler port shared by pairs {first[0]} and {pid}: their flux delays "
+                    f"differ ({first[1]} ns and {delay} ns); the port keeps {first[1]} ns "
+                    f"from {first[0]}.")
+            continue
+        decided[id(out)] = (pid, delay)
         try:
             out.delay = delay
         except (ValueError, TypeError):
             pass
+    return warnings
 
 
 def _split_port_pointer(ptr):
@@ -1242,15 +1264,7 @@ def _apply_pairs(machine, pairs_vals):
                 if key in vals:
                     setattr(coupler, attr, vals[key])
 
-            # Align the LF-FEM coupler delay with the moving qubit's xy band:
-            # during a 2Q gate the coupler plays at the same time as the
-            # moving qubit's MW drive, so they must share the same delay.
-            moving_xy_port = (
-                getattr(getattr(moving_q, "xy", None), "opx_output", None)
-                if moving_q is not None else None
-            )
-            coupler_band = getattr(moving_xy_port, "band", None)
-            _apply_lf_delay(getattr(coupler, "opx_output", None), coupler_band)
+            # the coupler's LF delay is set once, by _align_coupler_delays
 
 
 def _twpa_of(machine, tid):
@@ -3557,7 +3571,6 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         elif pair_gate == _COUPLER_ONLY["mode"]:
             warnings.extend(_finalize_coupler_only(machine, spec))
         _apply_coupler_models(machine, spec.get("populate") or {})
-        _align_coupler_delays(machine)
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)
         # docs/141 4ak: say it when a declared pair produced nothing. Silence
@@ -3577,6 +3590,9 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         # moves to the band the wizard's client would have chosen (a typed one
         # never moves); what is left after this is refused below
         _fix_coupled_bands(machine, spec, warnings)
+        # after every step that sets a z delay (the band fix-up re-sets some):
+        # the coupler LF ports take their pair's flux delay
+        warnings.extend(_align_coupler_delays(machine))
         # G12: flux / coupler LF ports upsample in `pulse` mode (the docs'
         # recommendation for an output with no intermediate frequency)
         _default_flux_upsampling(machine, spec)
