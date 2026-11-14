@@ -33,6 +33,8 @@
     var TEXT_PX = 11;
     var TICK_ROOM = 52;        // room for the y tick labels ("-0.05 V") between gutter and plot
     var FILL_OPACITY = 0.18;
+    var BAR_PX = 3;            // the lane colour bar at the gutter's left edge
+    var CHIP_ALPHA = 0.16;     // tint behind the lane name chip
 
     var FLAG_TEXT = {
         over_range: "over the port range",
@@ -63,9 +65,10 @@
 
     /* A see-through copy of a theme colour for a pulse body: PlotTheme.withAlpha
        for the forms it reads; any other form is resolved by the browser first. */
-    function faint(col) {
+    function faint(col, alpha) {
+        var a = alpha === undefined ? FILL_OPACITY : alpha;
         var pt = window.PlotTheme || {};
-        var out = pt.withAlpha ? pt.withAlpha(col, FILL_OPACITY) : col;
+        var out = pt.withAlpha ? pt.withAlpha(col, a) : col;
         if (out !== col) return out;
         try {
             var probe = document.createElement("span");
@@ -73,9 +76,25 @@
             document.body.appendChild(probe);
             var rgb = getComputedStyle(probe).color;
             probe.remove();
-            out = pt.withAlpha ? pt.withAlpha(rgb, FILL_OPACITY) : rgb;
+            out = pt.withAlpha ? pt.withAlpha(rgb, a) : rgb;
         } catch (e) { /* no DOM */ }
         return out || col;
+    }
+
+    function isIndex(x) { return typeof x === "number" && isFinite(x) && Math.floor(x) === x && x >= 0; }
+
+    /* The identity colour for an index: the house palette, modulo its length. */
+    function laneColor(index) {
+        var pt = window.PlotTheme || {};
+        var pal = (pt.palette && pt.palette()) || [];
+        if (!pal.length) return theme().text;
+        var i = isIndex(index) ? index : 0;
+        return pal[i % pal.length];
+    }
+    /* Spectator lanes are context, not the subject: one quiet colour for all. */
+    function quietColor() {
+        var pal = (window.PlotTheme && window.PlotTheme.palette && window.PlotTheme.palette()) || [];
+        return cssVar("--pico-muted-color") || pal[pal.length - 1] || theme().text;
     }
 
     function el(tag, cls, text) {
@@ -142,9 +161,9 @@
     }
     function shorten(name, maxChars) {
         if (name.length <= maxChars) return name;
-        if (maxChars < 5) return name.slice(0, Math.max(1, maxChars - 1)) + "…";
+        if (maxChars < 5) return name.slice(0, Math.max(1, maxChars - 1)) + "\u2026";
         var keep = maxChars - 1, head = Math.ceil(keep / 2);
-        return name.slice(0, head) + "…" + name.slice(name.length - (keep - head));
+        return name.slice(0, head) + "\u2026" + name.slice(name.length - (keep - head));
     }
 
     function dataExtent(lane, showSim) {
@@ -175,6 +194,14 @@
         };
         var lanes = (data.lanes || []).slice();
         var gate = lanes.filter(function (l) { return l.group !== "spectator"; });
+        /* Identity colour: lane.color (an index) when given; otherwise gate lanes
+           take 0, 1, 2 ... in order and every spectator one quiet colour. */
+        var colorIndex = {};
+        gate.forEach(function (l, i) { colorIndex[l.key] = isIndex(l.color) ? l.color : i; });
+        lanes.forEach(function (l) { if (l.group === "spectator" && isIndex(l.color)) colorIndex[l.key] = l.color; });
+        function laneCol(l) {
+            return colorIndex.hasOwnProperty(l.key) ? laneColor(colorIndex[l.key]) : quietColor();
+        }
         var spect = lanes.filter(function (l) { return l.group === "spectator"; });
         var anySim = lanes.some(function (l) { return !!l.sim; });
         var listeners = [];
@@ -254,7 +281,13 @@
             lab.appendChild(document.createTextNode("Show simulated output"));
             bar.appendChild(lab);
         }
-        root.appendChild(bar);
+        // where the controls go: above the chart (default), into the page's own
+        // element (opts.toolbarHost), or nowhere (opts.toolbar === false; the
+        // handle's setters still work)
+        if (opts.toolbar !== false) {
+            if (opts.toolbarHost && opts.toolbarHost.appendChild) opts.toolbarHost.appendChild(bar);
+            else root.appendChild(bar);
+        }
 
         var plot = el("div");
         plot.setAttribute("data-gate-timeline-plot", "");
@@ -336,7 +369,7 @@
                     longest = Math.max(longest, s.length * (k === 0 ? LABEL_PX / TEXT_PX : 1));
                 });
             });
-            var gutter = Math.ceil(longest * CHAR_PX) + 6;
+            var gutter = Math.ceil(longest * CHAR_PX) + BAR_PX + 16;
             var topAxis = n > TOP_AXIS_LANES;
             var margin = { l: gutter + TICK_ROOM, r: 12, t: topAxis ? 30 : 6, b: 38 };
             var span = spanOf(drawn);
@@ -404,21 +437,34 @@
                 // the lane title, left aligned at the chart's left edge, one fact per line
                 var tl = titleLines(lane);
                 var mid = spectLane ? 0.75 : 0.62;
+                var idCol = laneCol(lane);
+                // the lane name leads: a chip in the lane's identity colour (text in
+                // the colour on a see-through tint of it); spectators keep their one
+                // quiet colour with a fainter tint so the gate lanes stand out
                 fixed.push({
                     xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "bottom",
-                    xshift: -margin.l + 2, align: "left", showarrow: false, text: "<b>" + tl[0] + "</b>",
-                    font: { size: LABEL_PX, color: c.text },
-                    meta: { role: "lane-title", lane: lane.key, lines: tl }
+                    xshift: -margin.l + BAR_PX + 6, yshift: 2, align: "left", showarrow: false,
+                    text: "<b>" + tl[0] + "</b>",
+                    font: { size: LABEL_PX, color: idCol },
+                    bgcolor: faint(idCol, spectLane ? 0.10 : CHIP_ALPHA), borderpad: 3, borderwidth: 0,
+                    meta: { role: "lane-title", lane: lane.key, lines: tl, color: idCol }
                 });
+                // a thin bar in the lane colour along the lane's full height, at the gutter's left edge
+                shapes.push({ type: "rect", name: "lane-bar", xref: "paper", xsizemode: "pixel", xanchor: 0,
+                              x0: -margin.l, x1: -margin.l + BAR_PX, yref: ax + " domain", y0: 0, y1: 1,
+                              fillcolor: idCol, line: { width: 0 }, layer: "above" });
                 fixed.push({
                     xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "top",
-                    xshift: -margin.l + 2, align: "left", showarrow: false, text: tl.slice(1).join("<br>"),
+                    xshift: -margin.l + BAR_PX + 6, yshift: -2, align: "left", showarrow: false, text: tl.slice(1).join("<br>"),
                     font: { size: TEXT_PX, color: c.muted },
                     meta: { role: "lane-facts", lane: lane.key }
                 });
                 // a late first pulse: say where the lane starts
                 var first = plan[i].segs[0];
-                if (first && num(first.start_ns) && first.start_ns > 0) {
+                // (only when the idle stretch is wide enough to hold the words)
+                var startText = first ? "starts at " + fmt(first.start_ns) + " ns" : "";
+                if (first && num(first.start_ns) && first.start_ns > 0 &&
+                    (first.start_ns - span[0]) * widthPx / (span[1] - span[0]) > startText.length * CHAR_PX + 12) {
                     fixed.push({
                         xref: "paper", yref: ax + " domain", x: 0, y: 0.5, xanchor: "left", yanchor: "middle",
                         xshift: 4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
@@ -438,7 +484,7 @@
                 }
                 plan[i].segs.forEach(function (s) {
                     var flagged = (s.flags || []).length > 0;
-                    var col = flagged ? c.flag : c.trace;
+                    var col = flagged ? c.flag : idCol;   // state beats identity
                     // the pulse body: filled to 0 V at low opacity, the line on top
                     traces.push({
                         x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
@@ -481,7 +527,8 @@
                     x: times.slice(), y: times.map(function () { return 0; }),
                     text: times.map(function (t) { return readout(laneValueAt(lane, t)); }),
                     xaxis: "x", yaxis: ax, type: "scatter", mode: "markers",
-                    marker: { opacity: 0, size: 1, color: c.trace },
+                    marker: { opacity: 0, size: 1, color: idCol },
+                    line: { color: idCol },
                     name: lane.label || lane.key,
                     meta: { role: "hover", lane: lane.key },
                     hovertemplate: "%{text}<extra>" + (lane.label || lane.key) + "</extra>"
@@ -509,7 +556,7 @@
                         if (s.truncated) extra.push(TRUNCATED_TEXT);
                         var line2 = levelText(s) + (extra.length ? ", " + extra.join(", ") : "");
                         var name = shorten(s.operation || "", room);
-                        var l2 = line2.length > room ? line2.slice(0, Math.max(3, room - 1)) + "…" : line2;
+                        var l2 = line2.length > room ? line2.slice(0, Math.max(3, room - 1)) + "\u2026" : line2;
                         out.push({
                             xref: "x", yref: ax + " domain", x: x0, xanchor: "left", align: "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
@@ -581,6 +628,7 @@
                     try { window.PlotHost.purgeWithin(root); } catch (e) { /* no plot */ }
                 }
                 if (root.parentNode) root.parentNode.removeChild(root);
+                if (bar.parentNode) bar.parentNode.removeChild(bar);
             },
             setScale: function (m) { state.scale = m === "common" ? "common" : "lane"; draw(); },
             setFold: function (b) { state.fold = !!b; draw(); },
@@ -600,5 +648,5 @@
         return handle;
     }
 
-    window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout };
+    window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout, laneColor: laneColor };
 })();
