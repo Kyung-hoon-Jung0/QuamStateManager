@@ -104,6 +104,14 @@ def test_load_check_carries_core_findings_and_stays_ok(env, probe):  # noqa: F81
     assert cf[0]["kind"] == "fem_budget" and cl.FIX_MOVE in cf[0]["detail"]
 
 
+def test_diagnostics_page_lists_the_finding_line_by_line(env):
+    html = env["client"].get("/diagnostics").get_data(as_text=True)
+    if OVER not in html:
+        html = env["client"].get("/diagnostics/list").get_data(as_text=True)
+    assert OVER in html
+    assert "<br><code>" + cl.FIX_MOVE + "</code>" in html
+
+
 def test_load_check_js_renders_the_warning_under_loads_ok():
     js = Path("quam_state_manager/web/static/load_check.js").read_text(encoding="utf-8")
     assert re.search(r"setStatus\('ok', 'Loads OK'[^;]*coreWarnHtml\(data\.core_findings\)", js)

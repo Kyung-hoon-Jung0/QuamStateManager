@@ -5126,8 +5126,14 @@
         wrap.appendChild(det);
       } else {
         var cap = document.createElement("p");
-        cap.className = f.over ? "gen-build-warn-line" : "";
-        cap.textContent = f.place + ": " + f.total;
+        cap.className = "ui-verdict ui-verdict--" + (f.over ? "warn" : "ok");
+        var dot = document.createElement("span");
+        dot.className = "ui-dot";
+        var key = document.createElement("span");
+        key.className = "ui-verdict-key";
+        key.textContent = f.place + ": " + f.total + (f.over ? ", over the limit" : "");
+        cap.appendChild(dot);
+        cap.appendChild(key);
         wrap.appendChild(cap);
         wrap.appendChild(table);
       }
