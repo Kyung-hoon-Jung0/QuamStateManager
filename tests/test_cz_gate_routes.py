@@ -325,7 +325,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(66 assertions)" in r.stdout
+    assert "(79 assertions)" in r.stdout
 
 
 def test_headline_names_line_value_and_limit():
@@ -387,7 +387,7 @@ def test_check_and_create_carry_the_top_bars_sync_state(chip, fake):
     j = _check(chip.c, _body())
     assert j["sync"]["auto_push"] is False and "state" in j["sync"]
     out = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]}).get_json()
-    assert out["sync"] == {"auto_push": False, "state": out["sync"]["state"], "unapplied": out["sync"]["unapplied"]}
+    assert out["sync"]["auto_push"] is False and out["sync"]["auto_pull"] is False and out["sync"]["readable"] is True
     assert out["sync"]["state"] in ("mine", "staged") and out["sync"]["unapplied"] >= 1
     chip.ctx["auto_apply"] = {"push": True, "pull": False}
     assert _check(chip.c, _body(name="cz_sq2"))["sync"]["auto_push"] is True

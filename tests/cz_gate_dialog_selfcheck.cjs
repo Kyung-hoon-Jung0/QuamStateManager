@@ -101,7 +101,8 @@ function checkOk(body, opts) {
 function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(j), text: () => Promise.resolve('') }); }
 window.fetch = (url, opt) => {
     if (String(url).indexOf('/state/drift') === 0) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, sync: { state: driftState } }) });
+        const nx = driftSeq.length ? driftSeq.shift() : { state: driftState, unapplied: 0 };
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, sync: nx }) });
     }
     if (!opt || !opt.method) {
         return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(dialogHtml()) });
@@ -117,6 +118,7 @@ window.fetch = (url, opt) => {
     return respond(200, { ok: true, created: [{ pair: 'q1-2', gate: body.gate_name || 'cz_new', state: 'verified', paths: ['a'] }], skipped: [], count: 1, tray_html: '', sync: createSync });
 };
 let driftState = 'mine';
+let driftSeq = [];
 let createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 const charts = [];
 window.GateTimeline = { render: (host, data) => { charts.push(data); return { destroy() {} }; } };
@@ -348,21 +350,44 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(/\u201d Change the inputs and check again\./.test(alertText()), 'the lab\'s sentence is quoted, then SM\'s sentence');
     window.CzGate.close();
 
-    // Auto-Sync armed: until measured, the banner never claims the chip has it
-    for (const armedState of ['synced', 'mine']) {
-        createSync = { auto_push: true, state: armedState, unapplied: armedState === 'synced' ? 0 : 1 };
+    // the created banner follows the app's sync state read after the create's entries were counted
+    const CASES = [
+        ['push: unapplied 3 then synced 0', { auto_push: true, auto_pull: false, state: 'mine', unapplied: 3, readable: true },
+         [{ state: 'mine', unapplied: 3 }, { state: 'synced', unapplied: 0 }],
+         /Auto-Sync is on: writing it to the chip\./, /Written to the chip by Auto-Sync\./],
+        ['push: the create response already synced 0', { auto_push: true, auto_pull: false, state: 'synced', unapplied: 0, readable: true },
+         [], /Written to the chip by Auto-Sync\./, null],
+        ['push: nothing unapplied but not synced', { auto_push: true, auto_pull: false, state: 'live', unapplied: 0, readable: true },
+         [], /Auto-Sync is on: the top bar shows when it reaches the chip./, null],
+        ['pull only', { auto_push: false, auto_pull: true, state: 'mine', unapplied: 3, readable: true },
+         [], /In the working copy only: press Apply to write it to the chip\./, null],
+        ['unreadable', { readable: false, auto_push: false, state: null, unapplied: 0 },
+         [], /Auto-Sync is on: the top bar shows when it reaches the chip\./, null],
+    ];
+    for (const [label, cs, seq, first, later] of CASES) {
+        createSync = cs;
+        driftSeq = seq.slice();
+        driftState = 'synced';
         await window.CzGate.open({ pair: 'q1-2' });
         await settle();
-        type($('#czg-name'), 'cz_auto_' + armedState);
+        type($('#czg-name'), 'cz_s' + label.length);
         await settle();
-        queue.check.push((b) => { const j = checkOk(b); j.sync = { auto_push: true, state: 'synced', unapplied: 0 }; return j; });
+        queue.check.push((b) => { const j = checkOk(b); j.sync = cs; return j; });
         prim().click();
         await settle();
-        if (armedState === 'synced') ok(/Auto-Sync is on: Create also writes the chip\./.test($('#czg-status').textContent), 'before Create with Auto-Sync on, the foot says Create also writes the chip');
+        const foot = $('#czg-status').textContent;
+        ok(cs.auto_push ? /Auto-Sync is on: Create also writes the chip\./.test(foot) : !/Create also writes the chip/.test(foot),
+           label + ': the foot note before Create says Create writes the chip only under push');
         prim().click();
         await settle();
-        ok(/Auto-Sync is on: the top bar shows when it reaches the chip\./.test(alertText()) && !/Written to the chip/.test(alertText())
-           && !/In the working copy only/.test(alertText()), 'Auto-Sync on (state ' + armedState + '): only the top-bar sentence, never "written"');
+        ok(first.test(alertText()) && first.test($('#czg-status').textContent), label + ': banner and foot say ' + first);
+        if (label === 'pull only') ok(/pull only, so it does not write this/.test(alertText()), 'pull only: the quiet line says Auto-Sync does not write this');
+        if (later) {
+            await tick(1700); await settle(); await tick(1700); await settle();
+            ok(later.test(alertText()) && !/writing it to the chip/.test(alertText()), label + ': after the state shows the entries then synced, it says ' + later);
+        } else {
+            ok(!/Written to the chip/.test(alertText()) || /already synced/.test(label), label + ': never "written" without a counted state');
+        }
         window.CzGate.close();
     }
     createSync = { auto_push: false, state: 'mine', unapplied: 1 };

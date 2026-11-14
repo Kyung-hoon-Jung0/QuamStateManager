@@ -818,18 +818,53 @@
     /* After a create the dialog says what the app's own sync state says (the
        server's sync_now, the same source as the top bar's control). */
     var AUTO_NOTE = 'Auto-Sync is on: Create also writes the chip.';
+    var PULL_NOTE = 'Auto-Sync is set to pull only, so it does not write this.';
     var SYNC_WORDS = {
         working: 'In the working copy only: press Apply to write it to the chip.',
-        pending: 'Auto-Sync is on: the top bar shows when it reaches the chip.'
+        writing: 'Auto-Sync is on: writing it to the chip.',
+        written: 'Written to the chip by Auto-Sync.',
+        unknown: 'Auto-Sync is on: the top bar shows when it reaches the chip.'
     };
+    /* The words for a sync state read AFTER the create's entries were counted
+       (the create response) or later (the drift poll that starts from a
+       'writing' state, i.e. after the entries were seen unapplied). "written"
+       means synced with nothing unapplied in such a state. */
     function syncWord(sync) {
-        if (!sync || !sync.auto_push) return 'working';
-        // not claimed until measured: an armed Auto-Sync says only that the top bar shows it
-        return 'pending';
+        if (!sync || sync.readable === false) return 'unknown';
+        if (!sync.auto_push) return 'working';
+        if ((sync.unapplied || 0) > 0) return 'writing';
+        // only ever asked with a state read after the create's entries were counted:
+        // the create response, or a poll that started from a 'writing' state
+        if (sync.state === 'synced') return 'written';
+        return 'unknown';
     }
     function createdWhy(word, skip) {
         return SYNC_WORDS[word] + ' The gate is not active; the pair\'s cz stays as it was.'
             + (skip.length ? ' Left out: ' + skip.join(' ') : '');
+    }
+    function showSync(word, skip) {
+        S.syncWord = word;
+        var w = $('czg-alert') && $('czg-alert').querySelector('.ui-verdict-why');
+        if (w) w.textContent = createdWhy(word, skip);
+        say(SYNC_WORDS[word]);
+    }
+    /* Follow the app's own sync state (the top bar's /state/drift) while
+       Auto-Sync pushes: "writing" until it says synced with nothing unapplied. */
+    function watchSync(g, skip, auto, seenPending, tries) {
+        if (S !== g || tries <= 0) return;
+        setTimeout(function () {
+            if (S !== g) return;
+            fetch('/state/drift').then(function (r) { return r.json(); }).then(function (d) {
+                if (S !== g) return;
+                var sv = d && d.sync;
+                if (!sv) { showSync('unknown', skip); return; }
+                var sync = { auto_push: auto.auto_push, state: sv.state, unapplied: sv.unapplied };
+                var pending = seenPending || (sv.unapplied || 0) > 0;
+                var word = syncWord(sync);
+                showSync(word, skip);
+                if (word === 'writing') watchSync(g, skip, auto, pending, tries - 1);
+            }).catch(function () { if (S === g) showSync('unknown', skip); });
+        }, 1500);
     }
     function done(j) {
         S.phase = 'done';
@@ -837,9 +872,13 @@
         S.busy = false;
         var made = (j.created || []).map(function (c) { return c.gate + ' on ' + c.pair + (c.state !== 'verified' ? ' (not checked)' : ''); });
         var skip = (j.skipped || []).map(function (s) { return s.pair + ': ' + s.reason; });
-        var word = syncWord(j.sync);
+        var sync = j.sync;
+        var word = syncWord(sync);
         S.syncWord = word;
         alertBox(banner('ok', 'Created ' + made.join(', '), createdWhy(word, skip)));
+        if (sync && sync.readable !== false && !sync.auto_push && sync.auto_pull) {
+            $('czg-alert').appendChild(el('p', 'ui-text-quiet', PULL_NOTE));
+        }
         // move the focus off the form before hiding it: a focused element that
         // disappears leaves the dialog without focus (Chrome then paints a stray mark)
         var pb = $('czg-primary');
@@ -856,7 +895,7 @@
         if (cancel) cancel.hidden = true;
         say(SYNC_WORDS[word]);
         refresh();
-        // no promotion to 'written' from the sync state: it reported synced while the file had not changed
+        if (word === 'writing') watchSync(S, skip, sync, true, 40);
         if (window.htmx && document.body) {
             window.htmx.trigger(document.body, 'pulses-changed');
             window.htmx.trigger(document.body, 'diagnostics-changed');

@@ -372,11 +372,16 @@ def sync_now() -> dict:
     session that pushes is armed, so a create also reaches the chip's files."""
     try:
         ctx = R._active_ctx()
-        sv = R._sync_view(ctx) or {}
-        return {"auto_push": bool(R._auto_apply_state(ctx)), "state": sv.get("state"),
-                "unapplied": int(sv.get("unapplied") or 0)}
+        sv = R._sync_view(ctx)
+        sess = R._auto_sync_state(ctx) or {}
+        if not sv:
+            raise ValueError("no sync view")
+        return {"auto_push": bool(R._auto_apply_state(ctx)), "auto_pull": bool(sess.get("pull")),
+                "state": sv.get("state"), "unapplied": int(sv.get("unapplied") or 0),
+                "readable": True}
     except Exception:  # noqa: BLE001 -- unknown is said as unknown, never a guess
-        return {"auto_push": False, "state": None, "unapplied": 0}
+        return {"auto_push": False, "auto_pull": False, "state": None, "unapplied": 0,
+                "readable": False}
 
 
 def headline(entry: dict | None, tl: dict | None, reason: str) -> str:
