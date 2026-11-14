@@ -175,12 +175,67 @@ def _all_macros(merged: dict):
                 stack.append((v, segs + (str(i),)))
 
 
+def _strings_at(value: Any, segs: tuple):
+    """(segments below the macro root, string) for every string, dicts and
+    lists, any depth."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield from _strings_at(v, segs + (str(k),))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _strings_at(v, segs + (str(i),))
+    elif isinstance(value, str):
+        yield segs, value
+
+
+def _channel_owner(merged: dict, op_path: str) -> tuple[str, str] | None:
+    """Who plays an operation's channel: ``("qubit", q)`` for an operation
+    under ``qubits.<q>``, ``("coupler", pair)`` for an operation on a pair's
+    coupler (followed through the pair's coupler reference), else None."""
+    segs = op_path.split(".")
+    if len(segs) > 2 and segs[0] == "qubits":
+        return "qubit", segs[1]
+    for pair in _d(merged.get("qubit_pairs")):
+        ln = _line_paths(merged, pair).get("coupler")
+        if ln is not None and op_path.startswith(".".join(ln[0]) + "."):
+            return "coupler", str(pair)
+    return None
+
+
+def _macro_can_play(merged: dict, macro_path: str, owner: tuple[str, str]) -> bool:
+    """A macro can play a channel when it belongs to the same qubit, to a
+    pair holding that qubit, or (a coupler) to that pair."""
+    segs = macro_path.split(".")
+    kind, who = owner
+    if segs[0] == "qubits" and len(segs) > 1:
+        return kind == "qubit" and segs[1] == who
+    if segs[0] == "qubit_pairs" and len(segs) > 1:
+        if kind == "coupler":
+            return segs[1] == who
+        return who in (cgb.pair_qubit(merged, segs[1], "qubit_control"),
+                       cgb.pair_qubit(merged, segs[1], "qubit_target"))
+    return False
+
+
 def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
-    """Refusals for every operation of *mine* another macro (any class, on
-    any pair or qubit) refers to, is referred from, or names by plain key in
-    a pulse-like field. Each names the holder."""
+    """Refusals for the operations of *mine* that another macro uses. The rule:
+
+    * a reference (absolute or relative, at any depth, in dicts and lists)
+      that resolves into one of the operations counts wherever the macro sits;
+      so does an operation of the set that refers into another macro;
+    * a plain string equal to an operation's key counts only when the macro
+      can play that operation's channel (the same qubit's macros, a pair's
+      macros when the pair holds the qubit, a pair's macros for its coupler)
+      AND a key on the path from the macro's root to the string contains
+      "pulse" or "operation" (any case); a string under ``id`` or ``note``
+      alone does not count.
+
+    Each refusal names the holder."""
     out: list[str] = []
-    keys = {ops[p]: p for p in mine}
+    by_key: dict[str, list[str]] = {}
+    for p in mine:
+        by_key.setdefault(ops[p], []).append(p)
+    owners = {p: _channel_owner(merged, p) for p in mine}
     for path, macro in _all_macros(merged):
         if path == mpath:
             continue
@@ -194,9 +249,15 @@ def _other_users(merged: dict, mpath: str, mine: set, index, ops) -> list[str]:
                 op = _owner_op(holder, ops)
                 if op in mine:
                     hits.add((op, holder))
-        for k, v in macro.items():
-            if isinstance(v, str) and "pulse" in k and v in keys:
-                hits.add((keys[v], f"{path}.{k}"))
+        for segs, v in _strings_at(macro, ()):
+            if v not in by_key or v.startswith("#"):
+                continue
+            if not any(("pulse" in s.lower() or "operation" in s.lower()) for s in segs):
+                continue
+            for op in by_key[v]:
+                own = owners.get(op)
+                if own is not None and _macro_can_play(merged, path, own):
+                    hits.add((op, ".".join((path,) + segs)))
         for op, holder in sorted(hits):
             out.append(f"The operation {op} is also used by {holder}. Nothing was deleted.")
     return out
@@ -272,6 +333,20 @@ def gate_parts(merged: dict, pair: str, gate: str, *, index=None) -> dict[str, A
     return out
 
 
+def _norm_numbers(v: Any) -> Any:
+    """Numbers that are equal hash equal (1 and 1.0); bools stay bools."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        f = float(v)
+        return ["num", repr(f)] if f == f else ["num", "nan"]
+    if isinstance(v, dict):
+        return {k: _norm_numbers(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm_numbers(x) for x in v]
+    return v
+
+
 def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | None:
     """A hash of the gate's content: the macro subtree and the operations it
     owns (:func:`gate_parts`), as canonical JSON. None when there is no such
@@ -280,7 +355,7 @@ def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | Non
     if not parts["macro"]:
         return None
     from quam_state_manager.core.working_copy import _at_dot_path
-    body = {p: _at_dot_path(merged, p)[1] for p in parts["paths"]}
+    body = {p: _norm_numbers(_at_dot_path(merged, p)[1]) for p in parts["paths"]}
     text = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

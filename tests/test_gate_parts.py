@@ -164,3 +164,51 @@ def test_non_dict_shapes_never_raise():
         assert not parts["ok"]
         assert gp.gate_of_path({"qubit_pairs": bad}, "qubit_pairs.q1-q2.macros.cz_sq") is None
     assert not gp.gate_parts("x", "p", "g")["ok"]
+
+
+def _gate_with_op_key():
+    s, _ = add_gate(chip())
+    return s, "cz_sq_pulse_q1_q2"
+
+
+def test_a_plain_name_nested_in_the_same_qubit_macro_is_a_refusal():
+    for shape, field in (({"pulses": {"main": None}}, "pulses.main"), ({"pulses": [None]}, "pulses.0")):
+        s, key = _gate_with_op_key()
+        m = copy.deepcopy(shape)
+        if isinstance(m["pulses"], dict):
+            m["pulses"]["main"] = key
+        else:
+            m["pulses"][0] = key
+        s["qubits"]["q1"]["macros"] = {"x": m}
+        parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+        assert not parts["ok"]
+        assert any("qubits.q1.macros.x." + field in r for r in parts["refusals"]), parts["refusals"]
+
+
+def test_a_plain_name_on_an_unrelated_owner_or_under_note_does_not_count():
+    s, key = _gate_with_op_key()
+    s["qubits"]["q3"]["macros"] = {"x": {"pulses": {"main": key}}}
+    s["qubit_pairs"]["q2-q3"]["macros"]["other"] = {"pulses": [key]}
+    s["qubits"]["q1"]["macros"] = {"y": {"note": key, "id": key}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"], parts["refusals"]
+
+
+def test_a_reference_in_a_list_deep_in_any_macro_counts():
+    s, key = _gate_with_op_key()
+    s["qubits"]["q3"]["macros"] = {"x": {"seq": [{"a": "#/qubits/q1/z/operations/" + key}]}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("qubits.q3.macros.x.seq.0.a" in r for r in parts["refusals"])
+
+
+def test_numbers_equal_in_value_hash_equal():
+    s, _ = add_gate(chip())
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    p = s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]
+    p["length"] = float(p["length"])
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["phase_shift_control"] = 0
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["phase_shift_control"] = False
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h

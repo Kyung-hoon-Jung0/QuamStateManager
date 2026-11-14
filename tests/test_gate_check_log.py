@@ -92,3 +92,18 @@ def test_read_none_and_unwritable_places(tmp_path):
             return a_file, "k", "path", None
     rec = log.record_check(HM(), tmp_path, {}, "p", "g", None)
     assert rec["ok"] is False and rec["error"]
+
+
+def _both(tmp_path, t_old, t_new):
+    import json
+    gates = {"q1-q2/cz_a": {"result": "checked", "hash": "old", "time": t_old},
+             json.dumps(["q1-q2", "cz_a"]): {"result": "checked", "hash": "new", "time": t_new}}
+    (tmp_path / log.FILE_NAME).write_text(json.dumps({"gates": gates}), encoding="utf-8")
+    return log.entry(tmp_path, "q1-q2", "cz_a")["hash"]
+
+
+def test_old_and_new_key_the_later_time_wins(tmp_path):
+    assert _both(tmp_path, "2026-11-14T10:00:00+00:00", "2026-11-14T09:00:00+00:00") == "old"
+    assert _both(tmp_path, "2026-11-14T09:00:00+00:00", "2026-11-14T10:00:00+00:00") == "new"
+    assert _both(tmp_path, "2026-11-14T10:00:00+00:00", "2026-11-14T10:00:00+00:00") == "new"
+    assert _both(tmp_path, "garbage", "2026-11-14T10:00:00+00:00") == "new"

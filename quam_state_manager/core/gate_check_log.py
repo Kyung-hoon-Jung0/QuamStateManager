@@ -71,10 +71,23 @@ def entry(folder, pair: str, gate: str) -> dict | None:
     """The last record of one gate, or None. A file written with the older
     ``"<pair>/<gate>"`` keys still reads, when that key is not ambiguous."""
     gates = read(folder)
-    hit = gates.get(_key(pair, gate))
-    if hit is None and "/" not in str(pair) and "/" not in str(gate):
-        hit = gates.get(f"{pair}/{gate}")
-    return hit
+    new = gates.get(_key(pair, gate))
+    old = (gates.get(f"{pair}/{gate}")
+           if "/" not in str(pair) and "/" not in str(gate) else None)
+    if new is None or old is None:
+        return new if new is not None else old
+    # both: the later time wins; equal or unreadable times: the new key
+    t_new, t_old = _time(new), _time(old)
+    if t_new is not None and t_old is not None and t_old > t_new:
+        return old
+    return new
+
+
+def _time(ent: dict):
+    try:
+        return datetime.fromisoformat(str(ent.get("time")))
+    except (TypeError, ValueError):
+        return None
 
 
 def content_hash(merged: dict, pair: str, gate: str) -> str | None:

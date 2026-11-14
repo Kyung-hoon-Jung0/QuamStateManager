@@ -30,6 +30,9 @@ from quam_state_manager.web.routes import bp
 
 logger = logging.getLogger(__name__)
 
+#: the one refusal of a gate write on a chip that is not the live one
+ARCHIVE_REFUSAL = "This chip is a read-only archive: open the live chip to change it."
+
 
 def _check_folder(ctx):
     try:
@@ -139,6 +142,13 @@ def cz_gate_status():
                            line=gate_line(store, R._active_ctx(), pair, gate))
 
 
+@bp.route("/pulse/cz-gate/offer-close")
+def cz_gate_offer_close():
+    """Cancel / Close of the delete offer: the empty slot. Stages nothing and
+    calls no delete door; works on every page, with or without the script."""
+    return ""
+
+
 @bp.route("/pulse/cz-gate/delete-offer")
 def cz_gate_delete_offer():
     """What a one-step delete of the gate takes (read only; the button posts
@@ -157,6 +167,10 @@ def cz_gate_delete_offer():
 
 def _refuse(message: str, code: int, *, htmx: bool, pair: str, gate: str, store, ctx,
             **extra):
+    if htmx and store is not None and str(_body_scope()) == "list" and code == 404:
+        resp = make_response(render_template("_status.html", message=message,
+                                             level="error"), 404)
+        return resp
     if htmx and store is not None and str(_body_scope()) == "list":
         gl = gate_list(store, ctx, pair)
         for ln in gl["lines"]:
@@ -201,8 +215,7 @@ def api_cz_gate_make_active():
     if not store or not modifier:
         return jsonify(ok=False, error=R._no_chip_msg()), 400
     if ctx and (ctx.get("origin") or "live") != "live":
-        return jsonify(ok=False, error="This chip is a read-only archive: open "
-                                       "the live chip to change it."), 409
+        return jsonify(ok=False, error=ARCHIVE_REFUSAL), 409
     lk = R._agent_edit_lock_refusal(ctx)
     if lk is not None:
         return lk
@@ -211,7 +224,7 @@ def api_cz_gate_make_active():
     kw = dict(htmx=htmx, pair=pair, gate=gate, store=store, ctx=ctx)
     bad = _gate_problem(store, pair, gate)
     if bad:
-        return _refuse(bad, 400, **kw)
+        return _refuse(bad, 404 if htmx else 400, **kw)
     from quam_state_manager.core.query import pair_operational_gate
     with store._lock:
         macros = store.merged["qubit_pairs"][pair]["macros"]
@@ -300,6 +313,11 @@ def delete_gate_together(ctx, modifier, body: dict):
     batch door's own (one group, the lab check, atomic rollback)."""
     store = modifier.store
     htmx = bool(request.headers.get("HX-Request"))
+    if ctx and (ctx.get("origin") or "live") != "live":
+        return jsonify(ok=False, error=ARCHIVE_REFUSAL), 409
+    lk = R._agent_edit_lock_refusal(ctx)
+    if lk is not None:
+        return lk
     pair, gate = json_text(body, "pair"), json_text(body, "gate")
 
     def say(message, code, **extra):

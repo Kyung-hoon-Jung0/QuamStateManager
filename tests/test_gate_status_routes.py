@@ -282,3 +282,70 @@ def test_gate_status_selfcheck():
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stdout + p.stderr
     assert "ALL OK" in p.stdout
+
+
+def test_cancel_needs_no_script(rig):
+    body = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
+    cancel = body.split("gate-delete-cancel")[1].split("</button>")[0]
+    assert 'hx-get="/pulse/cz-gate/offer-close"' in cancel
+    assert 'hx-target="closest .gate-status-slot"' in cancel and 'hx-swap="innerHTML"' in cancel
+    st = _ctx(rig)["store"]
+    seq = st.mutation_seq
+    r = rig.get("/pulse/cz-gate/offer-close", headers={"HX-Request": "true"})
+    assert r.status_code == 200 and r.get_data(as_text=True) == ""
+    assert st.mutation_seq == seq
+
+
+def test_refused_offer_close_needs_no_script(rig):
+    _ctx(rig)["modifier"].create_subtree(
+        "qubits.q2.amp_ref", "#/qubit_pairs/q1-q2/macros/cz_sq/flux_pulse_qubit/amplitude")
+    body = rig.get("/pulse/cz-gate/delete-offer?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
+    assert "Cannot delete" in body and 'hx-get="/pulse/cz-gate/offer-close"' in body
+
+
+def test_gate_delete_on_an_archive_is_refused(rig):
+    from quam_state_manager.web.gate_status_routes import ARCHIVE_REFUSAL
+    _ctx(rig)["origin"] = "archive"
+    st = _ctx(rig)["store"]
+    before, n = json.dumps(st.state), len(st.change_log)
+    r = rig.post("/api/pulse/delete-together", json={"pair": "q1-q2", "gate": "cz_sq"})
+    assert r.status_code == 409 and r.get_json()["error"] == ARCHIVE_REFUSAL
+    assert json.dumps(st.state) == before and len(st.change_log) == n
+    assert _ma(rig).get_json()["error"] == ARCHIVE_REFUSAL
+
+
+def test_gate_delete_under_the_agent_lock_is_refused(rig, monkeypatch):
+    from flask import jsonify
+    from quam_state_manager.web import routes as R
+    calls = []
+
+    def locked(ctx):
+        calls.append(1)
+        return jsonify(ok=False, error="locked"), 423
+    monkeypatch.setattr(R, "_agent_edit_lock_refusal", locked)
+    st = _ctx(rig)["store"]
+    before = json.dumps(st.state)
+    r = rig.post("/api/pulse/delete-together", json={"pair": "q1-q2", "gate": "cz_sq"})
+    assert r.status_code == 423 and calls
+    assert json.dumps(st.state) == before
+
+
+def test_list_make_active_of_a_missing_gate_is_4xx(rig):
+    r = rig.post("/api/pulse/cz-gate/make-active", headers={"HX-Request": "true"},
+                 data={"pair": "q1-q2", "gate": "cz_none", "scope": "list"})
+    assert 400 <= r.status_code < 500
+    assert "no CZ gate named cz_none" in r.get_data(as_text=True)
+
+
+def test_a_type_only_rewrite_keeps_checked(rig):
+    assert _ma(rig).status_code == 200
+    m = _ctx(rig)["modifier"]
+    p = "qubit_pairs.q1-q2.macros.cz_sq.flux_pulse_qubit.length"
+    st = _ctx(rig)["store"]
+    node = st.merged
+    for seg in p.split(".")[:-1]:
+        node = node[seg]
+    node["length"] = float(node["length"])     # what a node's save may do
+    body = rig.get("/pulse/cz-gate/status?pair=q1-q2&gate=cz_sq").get_data(as_text=True)
+    pills = body.split('class="gate-status-items"')[1].split("</span></span>")[0]
+    assert pills.endswith(">checked") or ">checked<" in pills
