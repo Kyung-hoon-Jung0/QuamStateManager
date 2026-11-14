@@ -255,3 +255,56 @@ def test_nan_and_infinity_written_like_the_chip_writer(tmp_path):
     for token in ("NaN", "Infinity", "-Infinity"):
         assert token in mine and token in ref
     assert repr(json.loads(mine)) == repr(json.loads(ref))
+
+
+def test_write_chip_folder_refuses_a_folder_outside_the_temp_dir(tmp_path, monkeypatch):
+    import tempfile as _tempfile
+    from quam_state_manager.core import chip_copy as _cc
+    scratch = tmp_path / "scratch"
+    outside = tmp_path / "live_chip"
+    scratch.mkdir()
+    outside.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(scratch))
+    (scratch / "copy").mkdir()
+    _cc.write_chip_folder(scratch / "copy", {}, {})
+    assert (scratch / "copy" / "state.json").exists()
+    with pytest.raises(ValueError):
+        _cc.write_chip_folder(outside, {"a": 1}, {})
+    assert not (outside / "state.json").exists()
+
+
+def test_write_chip_folder_refuses_the_temp_root_itself(tmp_path, monkeypatch):
+    import tempfile as _tempfile
+    from quam_state_manager.core import chip_copy as _cc
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(scratch))
+    with pytest.raises(ValueError):
+        _cc.write_chip_folder(scratch, {"a": 1}, {})
+    assert not (scratch / "state.json").exists()
+
+
+def test_write_chip_folder_refuses_a_dotdot_escape(tmp_path, monkeypatch):
+    """The folder is judged by where it really is, not by how it is spelled."""
+    import tempfile as _tempfile
+    from quam_state_manager.core import chip_copy as _cc
+    scratch = tmp_path / "scratch"
+    outside = tmp_path / "live_chip"
+    scratch.mkdir()
+    outside.mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(scratch))
+    with pytest.raises(ValueError):
+        _cc.write_chip_folder(scratch / ".." / "live_chip", {"a": 1}, {})
+    assert not (outside / "state.json").exists()
+
+
+def test_write_chip_folder_judges_the_temp_root_by_where_it_is(tmp_path, monkeypatch):
+    """A temp dir spelled with ``..`` still accepts a folder inside it."""
+    import tempfile as _tempfile
+    from quam_state_manager.core import chip_copy as _cc
+    scratch = tmp_path / "scratch"
+    (scratch / "sub").mkdir(parents=True)
+    (scratch / "copy").mkdir()
+    monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(scratch / "sub" / ".."))
+    _cc.write_chip_folder(scratch / "copy", {}, {})
+    assert (scratch / "copy" / "state.json").exists()
