@@ -107,11 +107,12 @@ const t3 = title(fig, 'coupler_q1_q2'), f3 = facts(fig, 'coupler_q1_q2');
 ok([t3, f3].every((a) => a.xref === 'paper' && a.x === 0 && a.xanchor === 'left' && a.align === 'left' &&
    a.xshift === -fig.layout.margin.l + 9 && !a.textangle) && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
    'lane titles left aligned at the chart edge, horizontal, no axis title');
-ok(t3.text === '<b>coupler_q1_q2</b>' && t3.font.size === 12 && f3.text === 'con1 / 1 / 13<br>limit -0.25 to 0.25 V<br>offset 0.05 V' && f3.font.size === 11,
-   'title lines: label 12 px; port, limit, offset each on its own line at 11 px');
+ok(t3.text === '<b>coupler_q1_q2</b>' && t3.font.size === 12 && f3.text === 'con1 / 1 / 13<br>limit -0.25 to 0.25 V<br>(port range less the 0.05 V offset)' && f3.font.size === 11,
+   'title lines: label 12 px; port, limit and the offset it already has taken off, at 11 px');
 ok(/range not known/.test(facts(fig, 'q2.z').text) && !/offset/.test(facts(fig, 'q1.z').text), 'unknown range said; offset only when not 0');
 {   const gutter = fig.layout.margin.l - 52;
-    ok(gutter >= 'limit -0.25 to 0.25 V'.length * 5 && gutter <= 'limit -0.25 to 0.25 V'.length * 7, 'gutter is as wide as the longest title line needs, no wider');
+    const longest = '(port range less the 0.05 V offset)';
+    ok(gutter >= longest.length * 5 && gutter <= longest.length * 7, 'gutter is as wide as the longest title line needs, no wider');
 }
 ok(fig.layout.font.size === 11 && fig.layout.font.family && fig.layout.annotations.every((a) => a.font && a.font.size >= 11) &&
    ['xaxis', ...ya].every((k) => fig.layout[k].tickfont && fig.layout[k].tickfont.size === 11), 'UI font family; nothing below 11 px')
@@ -132,8 +133,11 @@ ok(at(65.5, 'q1.z').v === 0.1, 'valuesAt between samples holds the last sample')
 ok(at(63, 'q1.z').v === 0.0 && at(115, 'q1.z').operation === 'cz_x_pulse_q1_q2', 'valuesAt at both segment edges');
 ok(at(40, 'q2.z').operation === null && at(40, 'q2.z').v === null, 'valuesAt in the idle gap is idle');
 ok(at(500, 'q1.z').operation === null && at(0, 'q1.z').v === null, 'valuesAt outside every segment is idle');
-ok(at(250, 'q3.z').operation === 'park' && at(250, 'q3.z').v === null, 'truncated: past the received samples v is null');
-ok(h.valuesAt(64).length === 4, 'valuesAt lists every lane, folded spectators too');
+{   const all = h.valuesAt(250, { all: true }).find((r) => r.key === 'q3.z');
+    ok(all.operation === 'park' && all.v === null && all.missing === 'not received', 'truncated: past the received samples v is null, not received');
+}
+ok(h.valuesAt(64).length === 3 && h.valuesAt(64).every((r) => r.key !== 'q3.z') && h.valuesAt(64, { all: true }).length === 4,
+   'valuesAt lists the lines drawn (as hover does); {all: true} lists every line');
 const hov = role(fig, 'hover').find((t) => t.meta.lane === 'q2.z');
 ok(hov && hov.text[hov.x.indexOf(40)] === 'idle' && hov.text[hov.x.indexOf(10)] === 'flux_a_long_operation_name: -0.07 V', 'hover text is the valuesAt readout');
 ok([...Array(116).keys()].every((t) => hov.x.includes(t)), 'hover grid has every 1 ns from program time 0 over the drawn span');
@@ -308,7 +312,7 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
        fillO.length === 2 && fillO.every((t) => t.fill === 'tozeroy'), 'overlay: each gate line in its identity colour, filled');
     ok(JSON.stringify(segO.find((t) => t.meta.lane === 'q1.z').x) === '[161,261]' && JSON.stringify(segO.find((t) => t.meta.lane === 'q1.z').y) === '[0.01,0.01]', 'overlay: real samples in Real V');
     ok(f.layout.xaxis.range[0] === 0 && f.layout.xaxis.autorange === false, 'overlay: time axis from 0');
-    ok(JSON.stringify(ho.timing()) === JSON.stringify([{ a: 'coupler_q1_q2', b: 'q1.z', kind: 'gap', ns: 61, from_ns: 100, to_ns: 161 }]), 'timing: gap 61 ns from the data');
+    ok(JSON.stringify(ho.timing()) === JSON.stringify([{ a: 'coupler_q1_q2', b: 'q1.z', kind: 'gap', ns: 61, from_ns: 100, to_ns: 161, intervals: [[100, 161]] }]), 'timing: gap 61 ns from the data');
     const br = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label');
     ok(br.length === 1 && /gap 61 ns/.test(br[0].text) && br[0].font.color !== f.layout.annotations.find((a) => a.meta && a.meta.role === 'guide-label').font.color,
        'gap bracket labelled, in the warn colour');
@@ -317,23 +321,25 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const gtxt = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'guide-label').map((a) => a.text);
     ok(['0', '100', '161', '261'].every((t) => gtxt.includes(t)), 'guide times written at the top');
     ok(ho.laneCount().drawn === 2 && role(f, 'segment').length === 2, 'spectators folded: not drawn');
-    // legend chips
+    // legend: the colour key in the chart (not interactive), the controls in the DOM
     const chips = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-chip');
     ok(chips.length === 2 && chips[0].font.color === GT.laneColor(3) && chips[0].bgcolor === window.PlotTheme.withAlpha(GT.laneColor(3), 0.16) &&
-       chips.every((c) => c.captureevents), 'legend: one clickable chip per gate line in its colour');
-    const ltext = f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-text').map((a) => a.text);
+       chips.every((c) => !c.captureevents), 'legend: one chip per gate line in its colour; nothing interactive in the chart');
+    const leg = r.querySelector('[data-gate-timeline-legend]');
+    const btns = [...leg.querySelectorAll('button[data-legend]')];
+    ok(btns.length === 3 && btns.every((b) => b.type === 'button' && b.getAttribute('aria-pressed') === 'true') && btns[0].textContent === 'coupler_q1_q2' &&
+       btns[2].hidden, 'legend: a kit button per line labelled with the lane label, pressed = shown (Space and Enter are native)');
+    const ltext = [...leg.querySelectorAll('.ui-note')].map((n) => n.textContent);
     ok(ltext.includes('level 0.01 V, 100 ns, starts 161 ns') && ltext.includes('level 0.1 V, 100 ns, starts 0 ns'), 'legend text: level, length, start');
-    // hide a line from its chip (the chart's annotation click)
-    await new Promise((res) => setTimeout(res, 10));
-    const plotEl = r.querySelector('[data-gate-timeline-plot]');
-    const clickHs = (plotEl.__handlers || {}).plotly_clickannotation || [];
-    ok(clickHs.length === 1, 'listens to chip clicks');
-    clickHs[0]({ annotation: { meta: chips[1].meta } });
+    btns[1].focus();
+    btns[1].click();
     f = last();
+    ok(doc.activeElement === btns[1] && btns[1].getAttribute('aria-pressed') === 'false', 'toggling keeps the focus on the button');
     ok(ho.timing().length === 0 && f.layout.shapes.filter((s) => s.name === 'guide').map((s) => s.x0).join() === '0,100' &&
        f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0 && role(f, 'segment').every((t) => t.meta.lane !== 'q1.z'),
        'a hidden line leaves the plot, its guides and its bracket');
     ok(f.layout.annotations.find((a) => a.meta && a.meta.role === 'legend-chip' && a.meta.key === 'q1.z').opacity < 1, 'hidden chip shown faded');
+    ok(!ho.valuesAt(200).some((v) => v.key === 'q1.z') && ho.valuesAt(200, { all: true }).some((v) => v.key === 'q1.z'), 'valuesAt leaves out a hidden line');
     ho.setLineHidden('q1.z', false);
     // Same height: each line scaled to its own largest value; no volt numbers
     ho.setHeight('same');
@@ -341,10 +347,11 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     const mx = (key) => Math.max(...role(f, 'segment').find((t) => t.meta.lane === key).y.map(Math.abs));
     ok(mx('q1.z') === 1 && mx('coupler_q1_q2') === 1, 'Same height: 0.01 V and 0.1 V lines equally tall');
     ok(f.layout.yaxis.showticklabels === false && /normalised/.test(f.layout.yaxis.title.text), 'Same height: the V axis says normalised, no volts');
-    ok(f.layout.annotations.filter((a) => a.meta && a.meta.role === 'legend-text').some((a) => a.text.startsWith('level 0.01 V')), 'Same height: real level still in the chip');
+    ok([...r.querySelectorAll('[data-gate-timeline-legend] .ui-note')].some((a) => a.textContent.startsWith('level 0.01 V')), 'Same height: real level still in the legend');
     ok(role(f, 'hover').find((t) => t.meta.lane === 'q1.z').text[role(f, 'hover').find((t) => t.meta.lane === 'q1.z').x.indexOf(200)] === 'fx: 0.01 V', 'hover reads real volts');
     ok(f.layout.shapes.every((s) => s.name !== 'limit'), 'Same height: no limit lines');
     ho.setHeight('real');
+    ok(last().layout.yaxis.ticksuffix === ' V' && last().layout.yaxis.showticklabels === true, 'Real V: the overlay ticks carry " V"');
     // toolbar: view first; each view shows its own scale control
     const bar = r.querySelector('[data-gate-timeline-bar]');
     ok(bar.firstElementChild.textContent === 'View' && [...bar.querySelectorAll('[aria-label="View"] .ui-segmented-opt')].map((b) => b.textContent).join() === 'Lanes,Overlay',
@@ -369,14 +376,29 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     // overlap, meet, three lines and more than three
     const tm = (lanes) => { const h2 = GT.render(host, { lanes, notes: [] }, { view: 'overlay' }); const t = h2.timing(); const fig2 = last(); const note = !!lastRoot().querySelector('[data-overlay-note]'); h2.destroy(); return { t, fig2, note }; };
     let x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 40, 140, 0.1)])]);
-    ok(JSON.stringify(x.t) === JSON.stringify([{ a: 'a', b: 'b', kind: 'overlap', ns: 60, from_ns: 40, to_ns: 100 }]), 'timing: overlap 60 ns');
+    ok(JSON.stringify(x.t) === JSON.stringify([{ a: 'a', b: 'b', kind: 'overlap', ns: 60, from_ns: 40, to_ns: 100, intervals: [[40, 100]] }]), 'timing: overlap 60 ns');
     ok(x.fig2.layout.annotations.some((a) => a.meta && a.meta.role === 'bracket-label' && /overlap 60 ns/.test(a.text)), 'overlap bracket labelled');
     x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 100, 140, 0.1)])]);
     ok(x.t.length === 1 && x.t[0].kind === 'meet' && x.t[0].ns === 0 && x.t[0].from_ns === 100, 'timing: touching edges meet, neither gap nor overlap');
     x = tm([L('a', [sq('p', 0, 10, 0.1)]), L('b', [sq('p', 20, 30, 0.1)]), L('c', [sq('p', 25, 50, 0.1)])]);
-    ok(x.t.length === 3 && x.t.map((p) => p.a + p.b + p.kind + p.ns).join() === 'abgap10,acgap15,bcoverlap5' && !x.note, 'three lines: every pair');
-    x = tm([L('a', [sq('p', 0, 10, 0.1)]), L('b', [sq('p', 20, 30, 0.1)]), L('c', [sq('p', 40, 50, 0.1)]), L('d', [sq('p', 45, 60, 0.1)])]);
-    ok(x.t.length === 3 && x.t.map((p) => p.a + p.b).join() === 'ab,bc,cd' && x.note, 'more than three lines: neighbours in time only, said in a note');
+    ok(x.t.length === 3 && x.t.map((p) => p.a + p.b + p.kind + p.ns).join() === 'bcoverlap5,abgap10,acgap15' && !x.note, 'three lines: every pair, overlaps first');
+    // a line is the union of its segments: its own idle time is not playing
+    x = tm([L('a', [sq('p', 0, 10, 0.1), sq('p', 30, 40, 0.1)]), L('b', [sq('p', 15, 20, 0.1)])]);
+    ok(JSON.stringify(x.t) === JSON.stringify([{ a: 'a', b: 'b', kind: 'gap', ns: 5, from_ns: 10, to_ns: 15, intervals: [[10, 15]] }]),
+       'union: a line inside the idle time of the other is a gap (5 ns, 10 to 15), not an overlap');
+    x = tm([L('a', [sq('p', 0, 10, 0.1), sq('p', 30, 40, 0.1)]), L('b', [sq('p', 5, 35, 0.1)])]);
+    ok(x.t.length === 1 && x.t[0].kind === 'overlap' && x.t[0].ns === 10 && JSON.stringify(x.t[0].intervals) === '[[5,10],[30,35]]' &&
+       x.fig2.layout.shapes.filter((s2) => s2.name === 'bracket').length === 2, 'union: overlap 10 ns in two brackets');
+    ok(x.fig2.layout.annotations.some((a) => a.meta && a.meta.role === 'bracket-label' && /\(10 ns in all\)/.test(a.text)), 'a split overlap states its total');
+    // every pair with four lines; a gap bracket only for true silence
+    x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 1, 2, 0.1)]), L('c', [sq('p', 3, 4, 0.1)]), L('d', [sq('p', 200, 210, 0.1)])]);
+    ok(x.t.length === 6 && x.t.map((p) => p.a + p.b + p.kind).join() === 'aboverlap,acoverlap,bcgap,bdgap,cdgap,adgap' && !x.note,
+       'four lines: all six pairs, overlaps first, then gaps in time order, no neighbours-only note');
+    const gaps = x.fig2.layout.shapes.filter((s2) => s2.name === 'bracket' && s2.meta.kind === 'gap');
+    ok(gaps.length === 1 && gaps[0].meta.from === 100 && gaps[0].meta.to === 200, 'only the gap of true silence (100 to 200) gets a bracket');
+    // tolerance
+    x = tm([L('a', [sq('p', 0, 40.000000001, 0.1)]), L('b', [sq('p', 40, 80, 0.1)])]);
+    ok(x.t.length === 1 && x.t[0].kind === 'meet', 'times within 1e-6 ns are equal: meet, not a tiny overlap');
     // close edges: labels stagger, then share one label
     x = tm([L('a', [sq('p', 0, 100, 0.1)]), L('b', [sq('p', 101, 102, 0.1)]), L('c', [sq('p', 103, 300, 0.1)])]);
     const gl = x.fig2.layout.annotations.filter((a) => a.meta && a.meta.role === 'guide-label');
@@ -418,27 +440,89 @@ ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color,
     ok(lim.length === 1 && lim[0].y0 === 0.5 && lim[0].line.color === 'rgb(200,0,0)' && lim[0].meta.lane === 'coupler_q1_q2',
        'overlay: a limit only for the line that exceeds it, in the danger tone');
     ok(f.layout.annotations.some((a) => a.meta && a.meta.role === 'limit-label' && a.text === 'coupler_q1_q2 limit 0.5 V'), 'overlay: the limit is labelled');
-    // three brackets: unlabelled in the chart, listed under it
-    ok(hs.timing().length === 3 && f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 0, 'three brackets: no bracket text in the chart');
+    hs.setHeight('same');
+    ok(!last().layout.shapes.some((x2) => x2.name === 'limit'), 'Same height: no limit line even for an exceeded limit');
+    hs.setHeight('real');
+    f = last();
+    // the list: every pair, in timing() order; two drawn brackets are labelled in the chart
+    ok(hs.timing().length === 3 && f.layout.shapes.filter((x2) => x2.name === 'bracket').length === 2 &&
+       f.layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 2, 'two drawn brackets (the third gap is not silent) carry their text');
     const rows = [...lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]')];
     ok(rows.length === 3 && rows.map((r) => r.textContent).join('|') === hs.timing().map((p) =>
         nameOf(D, p.a) + 'to' + nameOf(D, p.b) + (p.kind === 'gap' ? 'gap ' + p.ns + ' ns' : p.kind === 'overlap' ? 'overlap ' + p.ns + ' ns' : 'meet') + p.from_ns + ' to ' + p.to_ns + ' ns').join('|'),
        'the pair list is timing(), one row per pair');
     ok(rows[0].querySelector('.ui-badge--warn') && rows.every((r) => r.getAttribute('tabindex') === '0'), 'gap rows in the warn tone; rows focusable');
-    rows[1].dispatchEvent(new window.Event('mouseenter'));
+    rows[0].dispatchEvent(new window.Event('mouseenter'));
     f = last();
-    const br = f.layout.shapes.filter((s) => s.name === 'bracket');
-    const p1 = hs.timing()[1];
-    ok(br.filter((s) => s.meta.lit).length === 1 && br.find((s) => s.meta.lit).meta.index === 1 &&
-       f.layout.shapes.filter((s) => s.name === 'guide' && s.meta.lit).map((s) => s.x0).sort((a, b) => a - b).join() === [p1.from_ns, p1.to_ns].sort((a, b) => a - b).join(),
+    const br = f.layout.shapes.filter((x2) => x2.name === 'bracket');
+    const p0 = hs.timing()[0];
+    ok(br.filter((x2) => x2.meta.lit).length === 1 && br.find((x2) => x2.meta.lit).meta.index === 0 &&
+       f.layout.shapes.filter((x2) => x2.name === 'guide' && x2.meta.lit).map((x2) => x2.x0).sort((a, b) => a - b).join() === [p0.from_ns, p0.to_ns].join(),
        'hovering a row highlights exactly its bracket and its two guides');
-    rows[1].dispatchEvent(new window.Event('mouseleave'));
-    ok(!last().layout.shapes.some((s) => s.meta && s.meta.lit), 'leaving the row clears the highlight');
-    hs.setLineHidden('q2.z', true);
-    ok(lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]').length === 0 &&
-       last().layout.annotations.filter((a) => a.meta && a.meta.role === 'bracket-label').length === 1, 'two brackets: labelled in the chart, no list');
+    rows[0].dispatchEvent(new window.Event('mouseleave'));
+    ok(!last().layout.shapes.some((x2) => x2.meta && x2.meta.lit), 'leaving the row clears the highlight');
+    hs.setView('lanes');
+    ok(lastRoot().querySelectorAll('[data-gate-timeline-pairs] [data-pair]').length === 3, 'the Lanes view shows the same list');
+    const aria = lastRoot().querySelector('[data-gate-timeline-plot]');
+    ok(aria.getAttribute('role') === 'img' && /coupler_q1_q2 plays 0 to 50 ns at 0\.62 V/.test(aria.getAttribute('aria-label')) &&
+       /gap 10 ns between coupler_q1_q2 and q1\.z/.test(aria.getAttribute('aria-label')), 'the plot has a text alternative with the lines and the timing');
     hs.destroy();
     st.remove();
+}
+
+// robustness: empty handles, limits, duplicate keys, lengths, one sample, missing values, names
+{
+    const sq = (op, s, e, v, extra) => seg(op, [s, e], [v, v], extra);
+    const he = GT.render(host, { lanes: [], notes: [], cannot_draw: 'cannot draw: x' });
+    let threw = false;
+    try { he.setView('overlay'); he.setHeight('same'); he.setLineHidden('a', true); he.relayout({}); he.readout(1); he.figure(); } catch (e) { threw = true; }
+    ok(!threw && JSON.stringify(he.timing()) === '[]' && he.valuesAt(1).length === 0, 'an empty picture has every handle method; timing() is []');
+    he.destroy();
+    const h1 = GT.render(host, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: 0.5 }), lane('q2.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: [0.4, -0.3] }),
+                                          lane('c.z', 'gate', [sq('p', 0, 10, 0.1)], { limit_v: 'wide' })], notes: [] });
+    let f = last();
+    ok(/limit -0\.5 to 0\.5 V/.test(facts(f, 'q1.z').text) && /limit -0\.3 to 0\.4 V/.test(facts(f, 'q2.z').text) && /range not known/.test(facts(f, 'c.z').text),
+       'limit_v: one number r is [-r, r]; a reversed pair is ordered; anything else is unknown');
+    h1.destroy();
+    const before = host.childNodes.length;
+    const hb = GT.render(host, { lanes: [{ key: 'bad', group: 'gate', segments: [{ operation: 'p', start_ns: 0, end_ns: 10, t_ns: 5, v: 'x' }] }], notes: ['n'] });
+    ok(host.querySelectorAll('[data-gate-timeline]').length === host.childNodes.length && host.childNodes.length === before + 1 &&
+       /^cannot draw: /.test(lastRoot().querySelector('.ui-state--empty').textContent) && typeof hb.setView === 'function',
+       'an exception while drawing leaves no half-built root, only the cannot-draw line with the reason');
+    hb.destroy();
+    const hd = GT.render(host, { lanes: [lane('q1.z', 'gate', [sq('p', 0, 10, 0.1)]), lane('q1.z', 'gate', [sq('p', 20, 30, 0.1)])], notes: [] });
+    ok(lastRoot().querySelector('.ui-state--empty').textContent === 'cannot draw: two lines share the key q1.z' && hd.laneCount().drawn === 0, 'duplicate keys are refused with the reason');
+    hd.destroy();
+    // lengths, one sample, short v, null inside, back-to-back edge, escaping
+    const odd = 'q1 <b>&</b> %{x}';
+    const L2 = { lanes: [
+        lane('a', 'gate', [sq('p', 0, 100, 0.1, { length_ns: 96 }), sq('q', 100, 140, 0.2)], { label: odd }),
+        lane('b', 'gate', [seg('one', [50], [0.1]), seg('short', [60, 61, 62, 70], [0.1, 0.2]), seg('hole', [80, 81, 90], [0.1, null, 0.1])])], notes: [] };
+    const h2 = GT.render(host, L2, {});
+    f = last();
+    const ta = segText(f, 'a');
+    ok(ta[0].meta.line2 === 'level 0.1 V, config length 96 ns, drawn 100 ns' && ta[1].meta.line2 === 'level 0.2 V, 40 ns',
+       'the label length is the drawn width; a different configured length is said');
+    const tb = segText(f, 'b');
+    ok(tb[0].meta.line2 === '1 sample at 50 ns, 0.1 V' && role(f, 'segment').find((t) => t.meta.operation === 'one').mode === 'markers',
+       'a one-sample segment is a marker labelled "1 sample at N ns"');
+    ok(/samples end at 61 ns/.test(tb[1].meta.line2), 'v shorter than t_ns is said in the label');
+    ok(h2.readout(65).find((r) => r.key === 'b').text === 'short: no value' && h2.readout(81).find((r) => r.key === 'b').text === 'hole: no value',
+       'a missing value inside a received segment reads "no value"');
+    ok(h2.valuesAt(100).find((r) => r.key === 'a').operation === 'q', 'the shared edge of two back-to-back segments belongs to the later one');
+    ok(title(f, 'a').text === '<b>q1 &lt;b&gt;&amp;&lt;/b&gt; %{x}</b>' && !/q1 <b>/.test(JSON.stringify(f.layout.annotations.map((a) => a.text))),
+       'names are escaped in Plotly text');
+    const hv = role(f, 'hover').find((t) => t.meta.lane === 'a');
+    ok(hv.hovertemplate === '%{text}<extra>%{customdata}</extra>' && hv.customdata[0] === 'q1 &lt;b&gt;&amp;&lt;/b&gt; %{x}', 'the hover template never contains a name');
+    h2.destroy();
+    // more than six pairs: six rows and a disclosure with the rest
+    const many = { lanes: [0, 1, 2, 3, 4].map((i) => lane('l' + i, 'gate', [sq('p', i * 20, i * 20 + 10, 0.1)])), notes: [] };
+    const h3 = GT.render(host, many, {});
+    const pl = lastRoot().querySelector('[data-gate-timeline-pairs]');
+    ok(h3.timing().length === 10 && pl.querySelectorAll(':scope > [data-pair]').length === 6 &&
+       pl.querySelector('details.ui-disclosure > summary.ui-disclosure-summary').textContent === 'all 10 pairs' &&
+       pl.querySelectorAll('details [data-pair]').length === 4, 'more than six pairs: six rows and "all N pairs"');
+    h3.destroy();
 }
 
 // sim
@@ -452,7 +536,7 @@ h.setShowSim(true);
 const bar = host.querySelector('[data-gate-timeline-bar]');
 const plotEl = host.querySelector('[data-gate-timeline-plot]');
 ok(bar.querySelector('label.ui-check[data-spectator-summary]').textContent === 'Show 1 spectator line' &&
-   bar.querySelector('input[type=checkbox][data-fold]') && !bar.querySelector('[data-fold]').checked && !host.querySelector('button.btn-sm'),
+   bar.querySelector('input[type=checkbox][data-fold]') && !bar.querySelector('[data-fold]').checked && !bar.querySelector('button.btn-sm'),
    'spectator switch is the kit checkbox in the toolbar, unchecked when folded');
 ok([...bar.children].map((n) => n.matches('[data-scale-label]') ? 'label' : n.matches('[aria-label="Vertical scale"]') ? 'scale' : n.matches('[data-view-label]') ? 'vlabel' : n.matches('[aria-label="View"]') ? 'view' : n.matches('[data-height-label]') ? 'hlabel' : n.matches('[aria-label="Line height"]') ? 'height' : n.matches('[data-spectator-summary]') ? 'spect' : n.querySelector('[data-show-sim]') ? 'sim' : '?').join() === 'vlabel,view,label,scale,hlabel,height,spect,sim',
    'toolbar order: scale label, scale, spectators, simulation');

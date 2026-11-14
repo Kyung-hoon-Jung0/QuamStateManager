@@ -48,6 +48,15 @@
        truncated segment only inform and draw in the warn tone. State never takes
        a palette colour; the lane chip keeps its identity colour. */
     var REFUSING_FLAGS = ["over_range", "bad_length"];
+    /* Optional behaviour (data contract unchanged):
+       - limit_v may be one number r (read as [-r, r]); a reversed pair is ordered;
+         anything else counts as unknown. limit_v is the port range with the
+         channel offset already taken off; the title says so when offset_v is set.
+       - Two lanes with the same key cannot be drawn (every toggle and colour is
+         keyed by it); the picture says so instead.
+       - A segment with fewer than two samples is drawn as a marker.
+       - Times closer than TIME_EPS ns are the same time. */
+    var TIME_EPS = 1e-6;
     var TRUNCATED_TEXT = "only part of this waveform was received";
 
     function severity(s) {
@@ -122,6 +131,13 @@
         return out || col;
     }
 
+    /* Plotly renders its text as a small HTML subset: names are escaped so a
+       "<b>", "&" or "%{" in a lane or operation name shows literally. */
+    function esc(t) {
+        return String(t === undefined || t === null ? "" : t)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
     function isIndex(x) { return typeof x === "number" && isFinite(x) && Math.floor(x) === x && x >= 0; }
 
     /* Identity colours: the kit's line colours --ui-line-1..6; without them the
@@ -185,34 +201,54 @@
             if (ts[i] <= t) v = num(vs[i]) ? vs[i] : null;
             else break;
         }
-        if (seg.truncated && ts.length && t > ts[ts.length - 1]) v = null;
-        return { key: lane.key, operation: seg.operation || null, v: v };
+        var out = { key: lane.key, operation: seg.operation || null, v: v };
+        if (seg.truncated && ts.length && t > ts[ts.length - 1]) out.v = null;
+        if (out.v === null) out.missing = (seg.truncated && ts.length && t > ts[ts.length - 1]) ? "not received" : "no value";
+        return out;
     }
 
     function readout(val) {
         if (!val.operation) return "idle";
-        if (val.v === null) return val.operation + ": not received";
+        if (val.v === null) return val.operation + ": " + (val.missing || "not received");
         return val.operation + ": " + fmtV(val.v);
     }
 
     function titleLines(lane) {
         var lines = [lane.label || lane.key];
         if (lane.port) lines.push(lane.port);
-        var lim = lane.limit_v && num(lane.limit_v[0]) && num(lane.limit_v[1])
-            ? "limit " + fmt(lane.limit_v[0]) + " to " + fmt(lane.limit_v[1]) + " V" : "range not known";
-        lines.push(lim);
-        if (num(lane.offset_v) && lane.offset_v !== 0) lines.push("offset " + fmtV(lane.offset_v));
+        var off = num(lane.offset_v) && lane.offset_v !== 0;
+        if (lane.limit_v) {
+            lines.push("limit " + fmt(lane.limit_v[0]) + " to " + fmt(lane.limit_v[1]) + " V");
+            // limit_v already has the offset taken off: say so beside it
+            if (off) lines.push("(port range less the " + fmtV(lane.offset_v) + " offset)");
+        } else {
+            lines.push("range not known");
+            if (off) lines.push("offset " + fmtV(lane.offset_v));
+        }
         return lines;
     }
 
     /* Line 2 of a segment's text, from the received samples only. */
     function levelText(s) {
-        var vs = (s.v || []).filter(num);
-        var len = (num(s.length_ns) ? s.length_ns : "?") + " ns";
-        if (!vs.length) return "no samples, " + len;
+        var ts = s.t_ns || [], vs = (s.v || []).filter(num);
+        if (ts.length === 1) {
+            return "1 sample at " + fmt(ts[0]) + " ns" + (num((s.v || [])[0]) ? ", " + fmtV(s.v[0]) : "");
+        }
+        // the drawn width; a different configured length is said, never hidden
+        var drawn = num(s.start_ns) && num(s.end_ns) ? s.end_ns - s.start_ns : null;
+        var len = drawn === null ? "" : fmt(drawn) + " ns";
+        if (drawn !== null && num(s.length_ns) && Math.abs(s.length_ns - drawn) > TIME_EPS) {
+            len = "config length " + fmt(s.length_ns) + " ns, drawn " + fmt(drawn) + " ns";
+        }
+        var tail = len ? ", " + len : "";
+        if (!s.truncated && (s.v || []).length < ts.length && ts.length) {
+            var lastIdx = Math.max(0, (s.v || []).length - 1);
+            tail += ", samples end at " + fmt(ts[lastIdx]) + " ns";
+        }
+        if (!vs.length) return "no samples" + tail;
         var mx = Math.max.apply(null, vs), mn = Math.min.apply(null, vs);
-        if (mx === mn) return "level " + fmtV(mx) + ", " + len;
-        return "max " + fmtV(mx) + (mn < 0 ? ", min " + fmtV(mn) : "") + ", " + len;
+        if (mx === mn) return "level " + fmtV(mx) + tail;
+        return "max " + fmtV(mx) + (mn < 0 ? ", min " + fmtV(mn) : "") + tail;
     }
     function shorten(name, maxChars) {
         if (name.length <= maxChars) return name;
@@ -239,9 +275,63 @@
         return [ext[0] - (botPx + 3) * perPx, ext[1] + (topPx + 3) * perPx];
     }
 
+    function normLimit(x) {
+        if (num(x)) return [-Math.abs(x), Math.abs(x)];
+        if (Array.isArray(x) && x.length === 2 && num(x[0]) && num(x[1])) return [Math.min(x[0], x[1]), Math.max(x[0], x[1])];
+        return null;
+    }
+    /* A handle with every method, for a picture with no chart: the setters do
+       nothing, timing() and valuesAt() are empty. */
+    function emptyHandle(root, counts) {
+        var noop = function () {};
+        return {
+            destroy: function () { if (root.parentNode) root.parentNode.removeChild(root); },
+            setScale: noop, setFold: noop, setShowSim: noop, setView: noop, setHeight: noop, setLineHidden: noop,
+            timing: function () { return []; },
+            valuesAt: function () { return []; },
+            readout: function () { return []; },
+            laneCount: function () { return { gate: counts.gate, spectator: counts.spectator, drawn: 0 }; },
+            figure: function () { return null; },
+            relayout: noop
+        };
+    }
+    function cannotDraw(host, statement, notes, counts) {
+        var root = el("div");
+        root.setAttribute("data-gate-timeline", "");
+        root.appendChild(el("p", "ui-state ui-state--empty", statement));
+        (notes || []).forEach(function (n) { root.appendChild(el("p", "ui-note", n)); });
+        host.appendChild(root);
+        return emptyHandle(root, counts);
+    }
+
     function render(host, data, opts) {
-        opts = opts || {};
         data = data || {};
+        var src = data.lanes || [];
+        var counts = { gate: src.filter(function (l) { return l && l.group !== "spectator"; }).length,
+                       spectator: src.filter(function (l) { return l && l.group === "spectator"; }).length };
+        var seen = {}, dup = null;
+        src.forEach(function (l) { if (l && seen[l.key] && dup === null) dup = l.key; if (l) seen[l.key] = true; });
+        if (dup !== null && !data.cannot_draw) {
+            return cannotDraw(host, "cannot draw: two lines share the key " + dup, data.notes, counts);
+        }
+        var clean = Object.assign({}, data, {
+            lanes: src.map(function (l) { return Object.assign({}, l, { limit_v: normLimit(l.limit_v) }); })
+        });
+        var before = Array.prototype.slice.call(host.childNodes);
+        var tb = opts && opts.toolbarHost;
+        var tbBefore = tb ? Array.prototype.slice.call(tb.childNodes) : [];
+        try {
+            return renderChart(host, clean, opts);
+        } catch (e) {
+            // never leave a half-built picture: remove what this call added
+            Array.prototype.slice.call(host.childNodes).forEach(function (n) { if (before.indexOf(n) < 0) host.removeChild(n); });
+            if (tb) Array.prototype.slice.call(tb.childNodes).forEach(function (n) { if (tbBefore.indexOf(n) < 0) tb.removeChild(n); });
+            return cannotDraw(host, "cannot draw: " + (e && e.message ? e.message : String(e)), data.notes, counts);
+        }
+    }
+
+    function renderChart(host, data, opts) {
+        opts = opts || {};
         var state = {
             scale: opts.scale === "common" ? "common" : "lane",
             fold: opts.foldSpectators !== false,
@@ -284,14 +374,7 @@
             if (data.cannot_draw) root.appendChild(el("p", "ui-state ui-state--empty", data.cannot_draw));
             else root.appendChild(el("p", "ui-state ui-state--empty", "Nothing plays on any channel."));
             notesInto(root);
-            return {
-                destroy: function () { if (root.parentNode) root.parentNode.removeChild(root); destroyed = true; },
-                setScale: function (m) { state.scale = m === "common" ? "common" : "lane"; },
-                setFold: function (b) { state.fold = !!b; },
-                setShowSim: function (b) { state.showSim = !!b; },
-                valuesAt: function () { return []; },
-                laneCount: function () { return { gate: gate.length, spectator: spect.length, drawn: 0 }; }
-            };
+            return emptyHandle(root, { gate: gate.length, spectator: spect.length });
         }
 
         // Toolbar: the view (lanes or overlay), the vertical scale of that view
@@ -364,18 +447,45 @@
             else root.appendChild(bar);
         }
 
+        /* Overlay legend: one kit button per gate line (and one for the spectator
+           group); pressed = shown. The identity colour is the matching chip drawn
+           in the chart; nothing interactive lives inside the chart. */
+        var legend = el("div", "ui-actions ui-actions--start");
+        legend.setAttribute("data-gate-timeline-legend", "");
+        var legendBtns = [];
+        gate.concat(spect.length ? [{ key: SPECT_KEY, label: spect.length + " spectators", spectGroup: true }] : [])
+            .forEach(function (l) {
+                var b = el("button", "btn-sm secondary", l.label || l.key);
+                b.type = "button";
+                b.setAttribute("data-legend", l.key);
+                on(b, "click", function () { handle.setLineHidden(l.key, !state.hidden[l.key]); });
+                legend.appendChild(b);
+                var note = l.spectGroup ? null : el("span", "ui-note", lineSummary(l));
+                if (note) legend.appendChild(note);
+                legendBtns.push({ key: l.key, btn: b, note: note, spectGroup: !!l.spectGroup });
+            });
+        root.appendChild(legend);
+
         var plot = el("div");
         plot.setAttribute("data-gate-timeline-plot", "");
+        plot.setAttribute("role", "img");
         root.appendChild(plot);
 
-        /* With three or more brackets the pairs are listed here, one row per pair in
-           time order; hovering or focusing a row highlights its bracket and guides. */
+        /* Every pair of visible gate lines is listed here (both views), one row per
+           pair in the order timing() returns; more than six rows: the first six and a
+           kit disclosure with the rest. Hovering or focusing a row highlights its
+           brackets and guides in the overlay. */
         var pairList = el("div");
         pairList.setAttribute("data-gate-timeline-pairs", "");
         root.appendChild(pairList);
         function buildPairList(pairs) {
             pairList.textContent = "";
-            if (!pairs || pairs.length < 3) return;
+            if (!pairs || !pairs.length) return;
+            var more = null;
+            if (pairs.length > 6) {
+                more = el("details", "ui-disclosure");
+                more.appendChild(el("summary", "ui-disclosure-summary", "all " + pairs.length + " pairs"));
+            }
             pairs.forEach(function (p, k) {
                 var row = el("div", "ui-actions ui-actions--start");
                 row.setAttribute("data-pair", String(k));
@@ -384,14 +494,16 @@
                 row.appendChild(el("span", "ui-note", "to"));
                 row.appendChild(el("code", "ui-chip", nameOf(p.b)));
                 var what = p.kind === "gap" ? "gap " + fmt(p.ns) + " ns" : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet";
+                if (p.kind === "overlap" && p.intervals.length > 1) what += " in " + p.intervals.length + " parts";
                 row.appendChild(el("span", "ui-badge ui-badge--" + (p.kind === "gap" ? "warn" : "neutral"), what));
                 row.appendChild(el("span", "ui-note", fmt(p.from_ns) + " to " + fmt(p.to_ns) + " ns"));
                 function lit() { if (state.highlight !== k) { state.highlight = k; draw(); } }
                 function unlit() { if (state.highlight === k) { state.highlight = null; draw(); } }
                 on(row, "mouseenter", lit); on(row, "focus", lit);
                 on(row, "mouseleave", unlit); on(row, "blur", unlit);
-                pairList.appendChild(row);
+                (more && k >= 6 ? more : pairList).appendChild(row);
             });
+            if (more) pairList.appendChild(more);
         }
 
         var notesBox = el("div");
@@ -545,7 +657,7 @@
                 fixed.push({
                     xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "bottom",
                     xshift: -margin.l + BAR_PX + 6, yshift: 2, align: "left", showarrow: false,
-                    text: "<b>" + tl[0] + "</b>",
+                    text: "<b>" + esc(tl[0]) + "</b>",
                     font: { size: LABEL_PX, color: idCol },
                     bgcolor: faint(idCol, spectLane ? 0.10 : CHIP_ALPHA), borderpad: 3, borderwidth: 0,
                     meta: { role: "lane-title", lane: lane.key, lines: tl, color: idCol }
@@ -556,7 +668,7 @@
                               fillcolor: idCol, line: { width: 0 }, layer: "above" });
                 fixed.push({
                     xref: "paper", yref: ax + " domain", x: 0, y: mid, xanchor: "left", yanchor: "top",
-                    xshift: -margin.l + BAR_PX + 6, yshift: -2, align: "left", showarrow: false, text: tl.slice(1).join("<br>"),
+                    xshift: -margin.l + BAR_PX + 6, yshift: -2, align: "left", showarrow: false, text: tl.slice(1).map(esc).join("<br>"),
                     font: { size: TEXT_PX, color: c.muted },
                     meta: { role: "lane-facts", lane: lane.key }
                 });
@@ -599,7 +711,8 @@
                     traces.push({
                         x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
                         xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
-                        line: { color: col, width: 2, shape: "hv" },
+                        line: { color: col, width: 2, shape: "hv" }, marker: { color: col, size: 7 },
+                        mode: (s.t_ns || []).length < 2 ? "markers" : "lines",
                         name: lane.key + " " + (s.operation || ""),
                         meta: { role: "segment", lane: lane.key, operation: s.operation, flagged: flagged, severity: sev },
                         hoverinfo: "skip"
@@ -628,13 +741,14 @@
                 // one invisible hover trace per lane: the unified readout is valuesAt's text
                 traces.push({
                     x: times.slice(), y: times.map(function () { return 0; }),
-                    text: times.map(function (t) { return readout(laneValueAt(lane, t)); }),
+                    text: times.map(function (t) { return esc(readout(laneValueAt(lane, t))); }),
+                    customdata: times.map(function () { return esc(lane.label || lane.key); }),
                     xaxis: "x", yaxis: ax, type: "scatter", mode: "markers",
                     marker: { opacity: 0, size: 1, color: idCol },
                     line: { color: idCol },
                     name: lane.label || lane.key,
                     meta: { role: "hover", lane: lane.key },
-                    hovertemplate: "%{text}<extra>" + (lane.label || lane.key) + "</extra>"
+                    hovertemplate: "%{text}<extra>%{customdata}</extra>"
                 });
             });
 
@@ -663,7 +777,7 @@
                         out.push({
                             xref: "x", yref: ax + " domain", x: x0, xanchor: "left", align: "left",
                             y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
-                            showarrow: false, text: name + "<br>" + l2,
+                            showarrow: false, text: esc(name) + "<br>" + esc(l2),
                             font: { size: TEXT_PX, color: sev ? c.tones[sev].line : c.text },
                             meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
                                     name: name, line2: line2, shown2: l2 }
@@ -686,20 +800,12 @@
         }
         function limitLabel(l, lim, ax, c) {
             return { xref: "paper", yref: ax, x: 1, y: lim, xanchor: "right", yanchor: "bottom", showarrow: false,
-                     text: (l.label || l.key) + " limit " + fmt(lim) + " V", font: { size: TEXT_PX, color: c.tones.danger.line },
+                     text: esc(l.label || l.key) + " limit " + fmt(lim) + " V", font: { size: TEXT_PX, color: c.tones.danger.line },
                      meta: { role: "limit-label", lane: l.key } };
         }
 
         /* ---------------- Overlay view: every line on ONE time axis ---------------- */
 
-        function lineSpan(l) {
-            var lo = Infinity, hi = -Infinity;
-            (l.segments || []).forEach(function (s) {
-                if (num(s.start_ns)) lo = Math.min(lo, s.start_ns);
-                if (num(s.end_ns)) hi = Math.max(hi, s.end_ns);
-            });
-            return lo === Infinity ? null : [lo, hi];
-        }
         function maxAbs(l) {
             var m = 0;
             (l.segments || []).forEach(function (s) { (s.v || []).forEach(function (v) { if (num(v)) m = Math.max(m, Math.abs(v)); }); });
@@ -716,28 +822,75 @@
             return out;
         }
 
-        /* Gap / overlap between gate lines, from start_ns / end_ns only (never
-           pixels). Each line counts as its first start to its last end. With more
-           than three visible gate lines only neighbours in time order are paired. */
-        function timing() {
-            var ls = visibleGate().map(function (l) { return { key: l.key, span: lineSpan(l) }; })
-                .sort(function (a, b) { return a.span[0] - b.span[0] || a.span[1] - b.span[1]; });
-            var pairs = [];
-            if (ls.length > 3) {
-                for (var i = 0; i + 1 < ls.length; i++) pairs.push([ls[i], ls[i + 1]]);
-            } else {
-                for (var a = 0; a < ls.length; a++) for (var b = a + 1; b < ls.length; b++) pairs.push([ls[a], ls[b]]);
+        /* A line is the UNION of its segments' intervals (its own idle time between
+           segments is not playing). Times closer than TIME_EPS ns are equal. */
+        function lineIntervals(l) {
+            var iv = (l.segments || []).filter(function (s) { return num(s.start_ns) && num(s.end_ns); })
+                .map(function (s) { return [Math.min(s.start_ns, s.end_ns), Math.max(s.start_ns, s.end_ns)]; })
+                .sort(function (a, b) { return a[0] - b[0]; });
+            var out = [];
+            iv.forEach(function (x) {
+                var last = out[out.length - 1];
+                if (last && x[0] <= last[1] + TIME_EPS) last[1] = Math.max(last[1], x[1]);
+                else out.push(x.slice());
+            });
+            return out;
+        }
+        function lineSpan(l) {
+            var iv = lineIntervals(l);
+            return iv.length ? [iv[0][0], iv[iv.length - 1][1]] : null;
+        }
+        function pairTiming(A, B) {
+            var ia = lineIntervals(A), ib = lineIntervals(B), inter = [];
+            ia.forEach(function (x) {
+                ib.forEach(function (y) {
+                    var lo = Math.max(x[0], y[0]), hi = Math.min(x[1], y[1]);
+                    if (hi - lo > TIME_EPS) inter.push([lo, hi]);
+                });
+            });
+            inter.sort(function (a, b) { return a[0] - b[0]; });
+            if (inter.length) {
+                var total = inter.reduce(function (acc, x) { return acc + (x[1] - x[0]); }, 0);
+                return { a: A.key, b: B.key, kind: "overlap", ns: total, from_ns: inter[0][0], to_ns: inter[inter.length - 1][1],
+                         intervals: inter };
             }
-            return pairs.map(function (p) {
-                var A = p[0], B = p[1];
-                if (A.span[1] < B.span[0]) {
-                    return { a: A.key, b: B.key, kind: "gap", ns: B.span[0] - A.span[1], from_ns: A.span[1], to_ns: B.span[0] };
+            var best = null;
+            ia.forEach(function (x) {
+                ib.forEach(function (y) {
+                    var from, to;
+                    if (x[1] <= y[0] + TIME_EPS) { from = x[1]; to = y[0]; }
+                    else { from = y[1]; to = x[0]; }
+                    var d = Math.max(0, to - from);
+                    if (!best || d < best.d - TIME_EPS || (Math.abs(d - best.d) <= TIME_EPS && from < best.from)) best = { d: d, from: from, to: Math.max(from, to) };
+                });
+            });
+            if (!best) return null;
+            if (best.d <= TIME_EPS) return { a: A.key, b: B.key, kind: "meet", ns: 0, from_ns: best.from, to_ns: best.from, intervals: [] };
+            return { a: A.key, b: B.key, kind: "gap", ns: best.d, from_ns: best.from, to_ns: best.to, intervals: [[best.from, best.to]] };
+        }
+        /* Every pair of visible gate lines: overlaps first, then meets, then gaps,
+           each group in time order. */
+        function timing() {
+            var ls = visibleGate();
+            var out = [];
+            for (var i = 0; i < ls.length; i++) {
+                for (var j = i + 1; j < ls.length; j++) {
+                    var a = ls[i], b = ls[j];
+                    var sa = lineSpan(a), sb = lineSpan(b);
+                    if (sb[0] < sa[0] - TIME_EPS) { var t = a; a = b; b = t; }
+                    var p = pairTiming(a, b);
+                    if (p) out.push(p);
                 }
-                if (A.span[1] === B.span[0]) {
-                    return { a: A.key, b: B.key, kind: "meet", ns: 0, from_ns: A.span[1], to_ns: A.span[1] };
-                }
-                var from = Math.max(A.span[0], B.span[0]), to = Math.min(A.span[1], B.span[1]);
-                return { a: A.key, b: B.key, kind: "overlap", ns: to - from, from_ns: from, to_ns: to };
+            }
+            var rank = { overlap: 0, meet: 1, gap: 2 };
+            return out.sort(function (x, y) { return rank[x.kind] - rank[y.kind] || x.from_ns - y.from_ns || x.to_ns - y.to_ns; });
+        }
+        /* A gap is drawn as a bracket only when it is true silence: no other
+           visible gate line plays inside it. */
+        function silentGap(p) {
+            return visibleGate().every(function (l) {
+                if (l.key === p.a || l.key === p.b) return true;
+                return lineIntervals(l).every(function (x) { return Math.min(x[1], p.to_ns) - Math.max(x[0], p.from_ns) <= TIME_EPS; });
             });
         }
 
@@ -794,7 +947,9 @@
                 lo = Math.min(lo, e[0] * factor[l.key]); hi = Math.max(hi, e[1] * factor[l.key]);
             });
             var pairs = timing();
-            var bracketRows = pairs.length;
+            var bracketRows = pairs.reduce(function (n, p) {
+                return n + (p.kind === "overlap" ? p.intervals.length : (p.kind === "gap" && silentGap(p) ? 1 : 0));
+            }, 0);
             var plotPx = 240 + 18 * bracketRows;
             var range = bandedRange([lo, hi], plotPx, 20 + 22 * bracketRows, 0);
             var layout = {
@@ -824,7 +979,8 @@
                                       meta: { role: "fill", lane: l.key, operation: s.operation, flagged: flagged, severity: sev } });
                     }
                     traces.push({ x: (s.t_ns || []).slice(), y: scaled(l, (s.v || []).slice()), xaxis: "x", yaxis: "y",
-                                  type: "scatter", mode: "lines", line: { color: col, width: spectLine ? 1 : 2, shape: "hv" },
+                                  type: "scatter", mode: (s.t_ns || []).length < 2 ? "markers" : "lines",
+                                  marker: { color: col, size: 7 }, line: { color: col, width: spectLine ? 1 : 2, shape: "hv" },
                                   hoverinfo: "skip", meta: { role: "segment", lane: l.key, operation: s.operation, flagged: flagged, severity: sev } });
                     var ts = s.t_ns || [];
                     if (s.truncated && ts.length && ts[ts.length - 1] < s.end_ns) {
@@ -854,11 +1010,12 @@
             var times = hoverTimes(lines);
             lines.forEach(function (l) {
                 traces.push({ x: times.slice(), y: times.map(function () { return 0; }),
-                              text: times.map(function (t) { return readout(laneValueAt(l, t)); }),
+                              text: times.map(function (t) { return esc(readout(laneValueAt(l, t))); }),
+                              customdata: times.map(function () { return esc(l.label || l.key); }),
                               xaxis: "x", yaxis: "y", type: "scatter", mode: "markers",
                               marker: { opacity: 0, size: 1, color: laneCol(l) }, name: l.label || l.key,
                               meta: { role: "hover", lane: l.key },
-                              hovertemplate: "%{text}<extra>" + (l.label || l.key) + "</extra>" });
+                              hovertemplate: "%{text}<extra>%{customdata}</extra>" });
             });
             // edge guides of the visible gate lines
             var edges = [];
@@ -869,30 +1026,38 @@
             });
             edges.sort(function (a, b) { return a - b; });
             var hiPair = state.highlight !== null ? pairs[state.highlight] : null;
+            var hiEdges = !hiPair ? [] : (hiPair.intervals.length ? hiPair.intervals : [[hiPair.from_ns, hiPair.to_ns]])
+                .reduce(function (a, x) { return a.concat(x); }, []);
             edges.forEach(function (t) {
-                var lit = !!hiPair && (t === hiPair.from_ns || t === hiPair.to_ns);
+                var lit = hiEdges.some(function (e) { return Math.abs(e - t) <= TIME_EPS; });
                 shapes.push({ type: "line", name: "guide", xref: "x", x0: t, x1: t, yref: "paper", y0: 0, y1: 1,
                               line: { color: c.muted, width: lit ? 2 : 1, dash: "dash" }, opacity: lit ? 1 : 0.6, layer: "below",
                               meta: { lit: lit } });
             });
-            // gap / overlap brackets, stacked under the guide labels
+            // brackets: every overlap interval; a gap only when it is true silence;
+            // meets live in the list. Up to two brackets carry their text here.
             var warn = cssVar("--ui-warn-border") || cssVar("--ui-warn-text") || c.flag;
-            var listed = pairs.length >= 3;
-            var hi = state.highlight !== null && state.highlight < pairs.length ? pairs[state.highlight] : null;
+            var brackets = [];
             pairs.forEach(function (p, k) {
+                if (p.kind === "overlap") p.intervals.forEach(function (x) { brackets.push({ p: p, k: k, from: x[0], to: x[1] }); });
+                else if (p.kind === "gap" && silentGap(p)) brackets.push({ p: p, k: k, from: p.from_ns, to: p.to_ns });
+            });
+            var labelled = brackets.length <= 2;
+            brackets.forEach(function (bk, n) {
+                var p = bk.p;
                 var col = p.kind === "gap" ? warn : c.muted;
-                var lit = hi === p;
-                var y = 1 - (14 + 22 * k) / plotPx;
-                var text = nameOf(p.a) + " to " + nameOf(p.b) + ": " + (p.kind === "gap" ? "gap " + fmt(p.ns) + " ns"
-                    : p.kind === "overlap" ? "overlap " + fmt(p.ns) + " ns" : "meet at " + fmt(p.from_ns) + " ns");
+                var lit = state.highlight === bk.k;
+                var y = 1 - (14 + 22 * n) / plotPx;
                 shapes.push({ type: "path", name: "bracket", xref: "x", yref: "paper",
-                              path: "M " + p.from_ns + " " + (y - 0.02) + " L " + p.from_ns + " " + y + " L " + p.to_ns + " " + y +
-                                    " L " + p.to_ns + " " + (y - 0.02),
-                              line: { color: col, width: lit ? 3 : (listed ? 1 : (p.kind === "gap" ? 1.5 : 1)) },
-                              meta: { kind: p.kind, index: k, lit: lit } });
-                if (listed) return;
-                fixed.push({ xref: "x", yref: "paper", x: (p.from_ns + p.to_ns) / 2, y: y, yanchor: "bottom", showarrow: false,
-                             text: text, font: { size: TEXT_PX, color: col },
+                              path: "M " + bk.from + " " + (y - 0.02) + " L " + bk.from + " " + y + " L " + bk.to + " " + y +
+                                    " L " + bk.to + " " + (y - 0.02),
+                              line: { color: col, width: lit ? 3 : (labelled ? (p.kind === "gap" ? 1.5 : 1) : 1) },
+                              meta: { kind: p.kind, index: bk.k, lit: lit, from: bk.from, to: bk.to } });
+                if (!labelled) return;
+                var what = p.kind === "gap" ? "gap " + fmt(p.ns) + " ns"
+                    : "overlap " + fmt(bk.to - bk.from) + " ns" + (p.intervals.length > 1 ? " (" + fmt(p.ns) + " ns in all)" : "");
+                fixed.push({ xref: "x", yref: "paper", x: (bk.from + bk.to) / 2, y: y, yanchor: "bottom", showarrow: false,
+                             text: esc(nameOf(p.a)) + " to " + esc(nameOf(p.b)) + ": " + what, font: { size: TEXT_PX, color: col },
                              meta: { role: "bracket-label", kind: p.kind, a: p.a, b: p.b } });
             });
             if (window.PlotTheme && window.PlotTheme.houseLayout) layout = window.PlotTheme.houseLayout(layout);
@@ -907,6 +1072,10 @@
            group) in the margin above the plot, in the line's identity colour, the
            same chip shape as the lane names. A chip toggles its line (click, or
            Enter / Space once focused); hidden lines leave the guides and brackets. */
+        function lineSummaryByKey(key) {
+            var l = lanes.filter(function (x) { return x.key === key; })[0];
+            return l ? lineSummary(l) : "";
+        }
         function lineSummary(l) {
             var sp = lineSpan(l), segs = l.segments || [];
             var parts = segs.length === 1 ? [levelText(segs[0])] : [segs.length + " pulses"];
@@ -920,20 +1089,14 @@
             items.forEach(function (it) {
                 var hidden = !!state.hidden[it.key];
                 var wName = it.name.length * CHAR_PX * LABEL_PX / TEXT_PX + 10;
-                var wText = it.text ? it.text.length * CHAR_PX + 8 : 0;
+                var wText = 0;
                 if (x > 0 && x + wName + wText > widthPx) { x = 0; row += 1; }
                 var y = row;   // row index; turned into a pixel lift below, first row on top
                 out.push({ xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom",
-                           xshift: x, yshift: y, showarrow: false, captureevents: true,
-                           text: "<b>" + it.name + "</b>", font: { size: LABEL_PX, color: it.col },
+                           xshift: x, yshift: y, showarrow: false,
+                           text: "<b>" + esc(it.name) + "</b>", font: { size: LABEL_PX, color: it.col },
                            bgcolor: faint(it.col, CHIP_ALPHA), borderpad: 3, borderwidth: 0, opacity: hidden ? 0.45 : 1,
                            meta: { role: "legend-chip", key: it.key, hidden: hidden } });
-                if (it.text) {
-                    out.push({ xref: "paper", yref: "paper", x: 0, y: 1, xanchor: "left", yanchor: "bottom",
-                               xshift: x + wName + 2, yshift: y, showarrow: false,
-                               text: hidden ? "hidden" : it.text, font: { size: TEXT_PX, color: c.muted },
-                               meta: { role: "legend-text", key: it.key } });
-                }
                 x += wName + wText + 14;
             });
             var rows = row + 1;
@@ -945,8 +1108,22 @@
             return { annotations: out, rows: rows };
         }
 
-        var overlayNote = el("p", "ui-note", "With more than three lines, gaps and overlaps are shown only between lines next to each other in time.");
-        overlayNote.setAttribute("data-overlay-note", "");
+        /* The plot's text alternative: what each visible line plays and the timing,
+           from the same data as the list. */
+        function describe() {
+            var lines = (state.view === "overlay" ? overlayLines() : drawnLanes()).filter(function (l) { return l.group !== "spectator"; });
+            var parts = lines.map(function (l) {
+                var iv = lineIntervals(l).map(function (x) { return fmt(x[0]) + " to " + fmt(x[1]) + " ns"; }).join(" and ");
+                var segs = l.segments || [];
+                var lvl = segs.length === 1 ? levelText(segs[0]).split(",")[0] : segs.length + " pulses";
+                return (l.label || l.key) + " plays " + (iv || "nothing") + (segs.length ? " at " + lvl.replace(/^level /, "") : "");
+            });
+            timing().forEach(function (p) {
+                parts.push(p.kind === "meet" ? nameOf(p.a) + " and " + nameOf(p.b) + " meet at " + fmt(p.from_ns) + " ns"
+                    : p.kind + " " + fmt(p.ns) + " ns between " + nameOf(p.a) + " and " + nameOf(p.b));
+            });
+            return parts.join("; ");
+        }
 
         var lastFigure = null;
         function draw() {
@@ -973,15 +1150,20 @@
             [scaleLab, seg].forEach(function (n) { n.hidden = ov; });
             [heightSeg.label, heightSeg.group].forEach(function (n) { n.hidden = !ov; });
             lastFigure = ov ? overlayFigure() : figure();
-            var listKey = ov ? JSON.stringify(lastFigure.timing) : "";
-            if (listKey !== pairList.__key) { pairList.__key = listKey; buildPairList(ov ? lastFigure.timing : null); }
-            var many = ov && visibleGate().length > 3;
-            if (many && !overlayNote.parentNode) notesBox.appendChild(overlayNote);
-            if (!many && overlayNote.parentNode) overlayNote.parentNode.removeChild(overlayNote);
+            var pairsNow = timing();
+            var listKey = JSON.stringify(pairsNow);
+            if (listKey !== pairList.__key) { pairList.__key = listKey; buildPairList(pairsNow); }
+            legend.hidden = !ov;
+            legendBtns.forEach(function (lb) {
+                lb.btn.setAttribute("aria-pressed", state.hidden[lb.key] ? "false" : "true");
+                lb.btn.hidden = lb.spectGroup && state.fold;
+                if (lb.note) lb.note.textContent = state.hidden[lb.key] ? "hidden" : lineSummaryByKey(lb.key);
+            });
+            plot.setAttribute("aria-label", describe());
             if (window._plotlyRender) {
                 var p = window._plotlyRender(plot, lastFigure.data, lastFigure.layout,
                     { displayModeBar: false, responsive: true });
-                if (p && p.then) p.then(function () { bindRelayout(); focusableChips(); });
+                if (p && p.then) p.then(function () { bindRelayout(); });
             }
         }
 
@@ -999,37 +1181,16 @@
             lastFigure.layout.annotations = anns;
             if (window.Plotly && window.Plotly.relayout) window.Plotly.relayout(plot, { annotations: anns });
         }
-        function onChipClick(ev) {
-            var a = ev && ev.annotation;
-            var m = a && (a.meta || (a._input && a._input.meta));
-            if (m && m.role === "legend-chip") handle.setLineHidden(m.key, !state.hidden[m.key]);
-        }
-        /* Keyboard for the legend chips: Plotly draws them as SVG groups; make each
-           one a focusable button that toggles its line on Enter or Space. */
-        function focusableChips() {
-            if (destroyed || !lastFigure || lastFigure.view !== "overlay" || !plot.querySelectorAll) return;
-            var anns = lastFigure.layout.annotations || [];
-            Array.prototype.forEach.call(plot.querySelectorAll(".annotation[data-index]"), function (g) {
-                var a = anns[+g.getAttribute("data-index")];
-                if (!a || !a.meta || a.meta.role !== "legend-chip") return;
-                g.setAttribute("tabindex", "0");
-                g.setAttribute("role", "button");
-                g.setAttribute("aria-pressed", a.meta.hidden ? "false" : "true");
-                g.setAttribute("aria-label", "Show " + a.meta.key);
-                if (g.__gtKeys) return;
-                g.__gtKeys = true;
-                on(g, "keydown", function (e) {
-                    if (e.key !== "Enter" && e.key !== " ") return;
-                    e.preventDefault();
-                    handle.setLineHidden(a.meta.key, !state.hidden[a.meta.key]);
-                });
-            });
-        }
         function bindRelayout() {
             if (relayoutBound || destroyed || typeof plot.on !== "function") return;
             plot.on("plotly_relayout", onRelayout);
-            plot.on("plotly_clickannotation", onChipClick);
             relayoutBound = true;
+        }
+
+        /* What hover shows: the lines drawn in the current view; {all: true} for every line. */
+        function shownLines(o) {
+            if (o && o.all) return lanes.slice();
+            return state.view === "overlay" ? overlayLines() : drawnLanes();
         }
 
         var handle = {
@@ -1040,7 +1201,6 @@
                 listeners = [];
                 if (relayoutBound && typeof plot.removeListener === "function") {
                     plot.removeListener("plotly_relayout", onRelayout);
-                    plot.removeListener("plotly_clickannotation", onChipClick);
                 }
                 relayoutBound = false;
                 if (window.PlotHost) {
@@ -1057,9 +1217,9 @@
             setHeight: function (m) { state.height = m === "same" ? "same" : "real"; draw(); },
             setLineHidden: function (key, b) { state.hidden[key] = !!b; draw(); },
             timing: function () { return timing(); },
-            valuesAt: function (t) { return lanes.map(function (l) { return laneValueAt(l, t); }); },
-            readout: function (t) {
-                return lanes.map(function (l) { return { key: l.key, text: readout(laneValueAt(l, t)) }; });
+            valuesAt: function (t, o) { return shownLines(o).map(function (l) { return laneValueAt(l, t); }); },
+            readout: function (t, o) {
+                return shownLines(o).map(function (l) { return { key: l.key, text: readout(laneValueAt(l, t)) }; });
             },
             laneCount: function () {
                 return { gate: gate.length, spectator: spect.length,
