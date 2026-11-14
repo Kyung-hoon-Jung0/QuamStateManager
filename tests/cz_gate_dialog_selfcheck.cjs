@@ -51,11 +51,12 @@ const doc = window.document;
 const sent = [];
 const queue = { plan: [], check: [], create: [] };
 let hold = null;                    // a pending check the test resolves itself
+let holdCreate = null;              // a pending create the test resolves itself
 const LONG = 'copied from the model gate';
 function planCopied(body) {
     const given = ((body.pulses.flux_pulse_control || {}).fields) || {};
-    const pulse = Object.assign({ __class__: 'L.Step', amplitude: 0.0, t_phi: 2, axis_angle: null }, given);
-    const prov = { amplitude: LONG, t_phi: LONG, axis_angle: LONG };
+    const pulse = Object.assign({ __class__: 'L.Step', amplitude: 0.0, t_phi: 2, axis_angle: null, 'a"]b': 1.5 }, given);
+    const prov = { amplitude: LONG, t_phi: LONG, axis_angle: LONG, 'a"]b': LONG };
     Object.keys(given).forEach((k) => { prov[k] = 'given'; });
     const mode = (body.macro_fields || {}).mode;
     return { ok: true, plan_sig: 'c' + JSON.stringify(body), pairs: body.pairs.map((pr) => ({
@@ -65,6 +66,7 @@ function planCopied(body) {
         pulses: { flux_pulse_control: pulse },
         field_specs: { flux_pulse_control: { amplitude: { kind: 'float', label: 'amplitude', unit: '', optional: false },
                                              t_phi: { kind: 'int', label: 't_phi', unit: '', optional: false },
+                                             'a"]b': { kind: 'float', label: 'a"]b', unit: '', optional: false },
                                              axis_angle: { kind: 'float', label: 'Axis angle', unit: 'rad', optional: true } } },
         settings: [{ key: 'link', value: '#./x', kind: 'str', source: 'kept reference', reference: true },
                    { key: 'mode', value: mode || 'fast', kind: 'str', source: mode ? 'given' : LONG, reference: false },
@@ -118,6 +120,7 @@ window.fetch = (url, opt) => {
     const kind = url.split('/').pop();
     sent.push({ kind, body });
     const q = queue[kind].shift();
+    if (kind === 'create' && holdCreate) { const h = holdCreate; holdCreate = null; return h.then(() => respond(200, { ok: true, created: lastAllowed.map((pp) => ({ pair: pp, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync })); }
     if (kind === 'check' && hold) { const h = hold; hold = null; return h.then(() => respond(200, q ? q(body) : checkOk(body))); }
     if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
     if (kind === 'plan') return respond(200, planOk(body));
@@ -263,7 +266,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     queue.check.push((b) => checkOk(b, { unchecked: true }));
     prim().click();
     await settle();
-    ok(prim().textContent === 'Create without the lab check' && $('#czg-alert .ui-verdict--strong.ui-verdict--warn'), 'not checked: warn banner and the button says so');
+    ok(/without the lab check/.test(prim().textContent) && /Create 2 gates, 2 without the lab check/.test(prim().textContent) && $('#czg-alert .ui-verdict--strong.ui-verdict--warn'), 'not checked: warn banner and the button counts what it will create');
 
     // create
     prim().click();
@@ -402,6 +405,135 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         window.CzGate.close();
     }
     createSync = { auto_push: false, state: 'mine', unapplied: 1 };
+
+    // ---- review fixes (client) ----
+    const field = (f, n) => [...doc.querySelectorAll('#czg-dialog input[data-czg-field]')].find((i) => i.dataset.czgField === f && i.dataset.czgName === n);
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    type($('#czg-name'), 'cz_rev');
+    await settle();
+    const ampR = field('flux_pulse_qubit', 'amplitude');
+    type(ampR, '0,1');
+    await settle(); await tick(600); await settle();
+    const ampNow = field('flux_pulse_qubit', 'amplitude');
+    const errLine = ampNow && ampNow.closest('.ui-field').querySelector('.ui-field-error');
+    ok(ampNow.getAttribute('aria-invalid') === 'true' && errLine && errLine.textContent === 'Use a dot for decimals.'
+       && (ampNow.getAttribute('aria-describedby') || '').indexOf(errLine.id) >= 0 && prim().disabled,
+       'invalid "0,1": the error line stays through re-renders, tied by aria-describedby, Check off');
+    for (const [txt, why] of [['0x10', 'Type a number.'], ['', 'Type a number.'], ['0.1.2', 'Type a number.'], ['9'.repeat(400), 'Type a number.']]) {
+        type(field('flux_pulse_qubit', 'amplitude'), txt);
+        await settle();
+        ok(field('flux_pulse_qubit', 'amplitude').closest('.ui-field').querySelector('.ui-field-error').textContent === why && prim().disabled,
+           'invalid ' + JSON.stringify(txt.slice(0, 8)) + ': ' + why);
+    }
+    const lenIn = field('flux_pulse_qubit', 'length');
+    type(lenIn, '2.5');
+    await settle();
+    ok(field('flux_pulse_qubit', 'length').closest('.ui-field').querySelector('.ui-field-error').textContent === 'Type a whole number.', '2.5 in an int field: Type a whole number.');
+    type(field('flux_pulse_qubit', 'length'), '48');
+    type(field('flux_pulse_qubit', 'amplitude'), '-0');
+    await settle();
+    ok(!prim().disabled && !$('#czg-dialog .ui-field-error') && $('#czg-status').textContent === '' && sent.filter((x) => x.kind === 'plan').pop().body.pulses.flux_pulse_qubit.fields.amplitude === 0,
+       'valid again: errors gone, status cleared, -0 sent as 0, Check on');
+    // C3 + C2: a create in flight: the form is inert, X / Escape do not close, a late plan answer is ignored
+    prim().click();
+    await settle();
+    let releaseCreate;
+    holdCreate = new Promise((r) => { releaseCreate = r; });
+    prim().click();
+    await tick(5);
+    ok($('#czg-form').inert === true, 'during a create the form is inert');
+    $('#czg-dialog .ui-dialog-head [data-czg-close]').click();
+    doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await tick(5);
+    ok($('#czg-dialog') && $('#czg-dialog .ui-dialog-head [data-czg-close]').disabled, 'a create in flight: X and Escape do not close, X is disabled');
+    releaseCreate();
+    await settle();
+    ok(/Created/.test(alertText()), 'the create answer lands in the dialog');
+    window.CzGate._plan();
+    await settle();
+    ok(/Created/.test(alertText()), 'a plan answer after Create does not wipe the Created banner');
+    window.CzGate.close();
+    // C4 + C9 + C7: two pairs, the first refused, one pair without a verdict
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    $('#czg-more').open = true;
+    const box2 = $('#czg-more-list input[value="q2-3"]');
+    box2.checked = true;
+    box2.dispatchEvent(new window.Event('change', { bubbles: true }));
+    type($('#czg-name'), 'cz_two');
+    await settle();
+    queue.check.push((b) => checkOk(b, { refuse: 'q1-2' }));
+    prim().click();
+    await settle();
+    ok(/not written:/.test($('#czg-writes').textContent) && /q2-3/.test($('#czg-writes').textContent) && /2 objects|1 object/.test($('#czg-writes-sum').textContent) === false
+       || (/not written:/.test($('#czg-writes').textContent) && $('#czg-writes').querySelectorAll('.ui-path').length === 2),
+       'writes: the refused pair is "not written", the other pair\'s objects are listed');
+    const opt1 = $('#czg-pairs [data-czg-pair-idx="1"]');
+    opt1.focus();
+    opt1.click();
+    await settle();
+    ok($('#czg-pairs').contains(doc.activeElement), 'the pair switch keeps keyboard focus');
+    type($('#czg-name'), 'cz_nov');
+    await settle();
+    queue.check.push((b) => { const j = checkOk(b); delete j.pairs[0].verdict; return j; });
+    prim().click();
+    await settle();
+    ok(/no verdict from the server/.test($('#czg-dialog').textContent) && !/TypeError/.test(alertText()), 'a pair without a verdict is said so, never a TypeError');
+    // C5: Escape with a kit menu open closes the menu only; Escape on a worked dialog asks once
+    const esc = () => doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    const takeIt = (e) => e.preventDefault();
+    doc.addEventListener('keydown', takeIt, { capture: true, once: true });
+    esc();
+    await tick(5);
+    ok($('#czg-dialog') && !/Discard this gate/.test($('#czg-top').textContent), 'an Escape a kit menu took does not close the dialog');
+    esc();
+    await tick(5);
+    ok($('#czg-dialog') && /Discard this gate/.test($('#czg-top').textContent), 'Escape on a worked dialog asks once');
+    esc();
+    await tick(5);
+    ok(!$('#czg-dialog'), 'the second Escape closes');
+    // C6: a drag that ends on the backdrop does not close
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    $('#czg-name').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+    $('#czg-dialog').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(5);
+    ok($('#czg-dialog'), 'a drag from an input onto the backdrop does not close');
+    $('#czg-dialog').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+    $('#czg-dialog').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+    await tick(5);
+    ok(!$('#czg-dialog'), 'down and up on the backdrop closes an untouched dialog');
+    // C8 + A2: a gate setting keeps focus; a field named with a quote and a bracket works
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    { const st = window.CzGate.state(); if (!st.data.classes.some((c) => c['class'] === 'L.TwoFlux')) st.data.classes.push(DATA.classes[2]); }
+    $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+    await settle(); await settle();
+    const modeIn = $('#czg-settings input[data-czg-setting="mode"]');
+    modeIn.focus();
+    type(modeIn, 'slowest');
+    await settle(); await settle();
+    ok(doc.activeElement && doc.activeElement.dataset.czgSetting === 'mode', 'typing in a gate setting keeps its focus after the plan answer');
+    const odd = field('flux_pulse_control', 'a"]b');
+    odd.focus();
+    type(odd, '2.25');
+    await settle(); await settle();
+    ok(doc.activeElement && doc.activeElement.dataset.czgName === 'a"]b' && sent.filter((x) => x.kind === 'plan').pop().body.pulses.flux_pulse_control.fields['a"]b'] === 2.25,
+       'a field named a"]b renders, takes typing and keeps focus');
+    window.CzGate.close(); await settle();
+    if ($('#czg-dialog')) { $('#czg-top') && $('#czg-top').querySelector('[data-czg-discard]') && $('#czg-top').querySelector('[data-czg-discard]').click(); }
+    // A6: evaluated twice, one set of listeners
+    window.eval(fs.readFileSync(path.join(ROOT, 'static', 'cz-gate.js'), 'utf8'));
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    const before = sent.filter((x) => x.kind === 'plan').length;
+    type($('#czg-name'), 'cz_once');
+    await settle();
+    ok(sent.filter((x) => x.kind === 'plan').length - before === 1, 'loaded twice: one plan request per change');
+    window.CzGate.close(); await settle();
+    if ($('#czg-dialog')) { const dd = $('#czg-top').querySelector('[data-czg-discard]'); if (dd) dd.click(); }
+    await settle();
 
     // the chart component missing
     delete window.GateTimeline;

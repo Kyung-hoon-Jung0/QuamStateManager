@@ -14,6 +14,7 @@
  */
 (function () {
     'use strict';
+    if (window.CzGate) return;      // loaded twice (page bundle + navigation): one set of listeners
     var DEBOUNCE_MS = 250;
     var STALE_ROUNDS = 2;
     var S = null;   // the open dialog's state
@@ -40,7 +41,8 @@
     function fresh() {
         return { data: null, busy: false, phase: 'check', plan: null, planSig: null, check: null,
                  checkSig: null, stale: 0, entered: {}, raw: {}, cls: {}, timer: null, handle: null,
-                 opener: null, seq: 0, created: null, pairIdx: 0 };
+                 opener: null, seq: 0, created: null, pairIdx: 0, invalid: {}, creating: false,
+                 confirmClose: false, downOnBackdrop: false };
     }
 
     /* ---- the request body ------------------------------------------------ */
@@ -106,20 +108,58 @@
         if (S.phase === 'done') { b.textContent = 'Close'; b.disabled = false; return; }
         if (S.phase === 'create') {
             var ok = allowedPairs();
-            var unchecked = ok.some(function (p) { return p.verdict.state !== 'verified'; });
-            b.textContent = unchecked ? 'Create without the lab check'
-                : (ok.length === 1 ? 'Create gate' : 'Create ' + ok.length + ' gates');
-            b.disabled = S.busy || !ok.length;
+            var nun = ok.filter(function (p) { return p.verdict.state !== 'verified'; }).length;
+            b.textContent = ok.length === 1 ? (nun ? 'Create without the lab check' : 'Create gate')
+                : 'Create ' + ok.length + ' gates' + (nun ? ', ' + nun + ' without the lab check' : '');
+            b.disabled = S.busy || !ok.length || hasInvalid();
             return;
         }
         b.textContent = 'Check';
         var fp = firstPlan();
-        b.disabled = S.busy || !fp || !fp.ok;
+        b.disabled = S.busy || !fp || !fp.ok || hasInvalid();
+    }
+    function fieldKey(field, name) { return field + '\u0000' + name; }
+    function hasInvalid() { return Object.keys(S.invalid || {}).length > 0; }
+    /* A2: never build a selector from a name: find by comparing dataset values */
+    function findField(field, name) {
+        var all = document.querySelectorAll('#czg-dialog input[data-czg-field]');
+        for (var k = 0; k < all.length; k++) {
+            if (all[k].getAttribute('data-czg-field') === field && all[k].getAttribute('data-czg-name') === name) return all[k];
+        }
+        return null;
+    }
+    /* The field's kit error line, tied to its input (aria-describedby). */
+    function showFieldError(input, why) {
+        var box = input.closest('.ui-field');
+        if (!box) return;
+        var eid = input.id + '-error';
+        var line = null;
+        Array.prototype.slice.call(box.querySelectorAll('.ui-field-error')).forEach(function (n) { if (n.id === eid) line = n; });
+        if (why) {
+            if (!line) { line = el('p', 'ui-field-error'); line.id = eid; line.setAttribute('role', 'alert'); box.appendChild(line); }
+            line.textContent = why;
+            input.setAttribute('aria-invalid', 'true');
+            var d = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+            if (d.indexOf(eid) < 0) d.push(eid);
+            input.setAttribute('aria-describedby', d.join(' '));
+        } else {
+            if (line) line.parentNode.removeChild(line);
+            input.removeAttribute('aria-invalid');
+            var d2 = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (x) { return x && x !== eid; });
+            if (d2.length) input.setAttribute('aria-describedby', d2.join(' ')); else input.removeAttribute('aria-describedby');
+        }
     }
     function setBusy(on, text) {
         S.busy = on;
         var d = $('czg-dialog');
         if (d) d.setAttribute('aria-busy', on ? 'true' : 'false');
+        var form = $('czg-form');
+        if (form) { form.inert = !!on; if (on) form.setAttribute('aria-disabled', 'true'); else form.removeAttribute('aria-disabled'); }
+        var x = d && d.querySelector('.ui-dialog-head [data-czg-close]');
+        if (x) {
+            x.disabled = !!(on && S.creating);
+            x.title = x.disabled ? 'A gate is being created: wait for the answer.' : 'Close';
+        }
         say(text || '');
         refresh();
     }
@@ -232,6 +272,9 @@
         i.setAttribute('data-czg-name', name);
         i.setAttribute('data-czg-kind', kind || '');
         i.value = typed !== undefined ? typed : shown(value);
+        var bad = (S.invalid || {})[fieldKey(field, name)];
+        if (bad) setTimeout(function () { if (i.isConnected) showFieldError(i, bad); }, 0);
+        if (opts.hint) f.appendChild(el('p', 'ui-field-hint', opts.hint));
         var bdg = f.querySelector('.ui-field-head .ui-badge');
         if (bdg && opts.title) { bdg.title = opts.title; bdg.setAttribute('aria-description', opts.title); }
         return f;
@@ -408,15 +451,17 @@
             ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate'));
         host.appendChild(el('p', 'ui-text-quiet', 'The new gate copies the model gate\'s structure; the lab\'s code must run it before it is written.'));
     }
+    var NUMBER_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
     function parse(input) {
         var kind = input.getAttribute('data-czg-kind');
         var raw = input.value.trim();
         if (kind === 'float' || kind === 'int') {
-            if (raw === '' ) return { ok: false, why: 'Type a number.' };
+            if (/^[+-]?\d+,\d+$/.test(raw)) return { ok: false, why: 'Use a dot for decimals.' };
+            if (!NUMBER_RE.test(raw)) return { ok: false, why: 'Type a number.' };
             var n = Number(raw);
             if (!isFinite(n)) return { ok: false, why: 'Type a number.' };
             if (kind === 'int' && !Number.isInteger(n)) return { ok: false, why: 'Type a whole number.' };
-            return { ok: true, v: n };
+            return { ok: true, v: n === 0 ? 0 : n };
         }
         if (kind === 'bool') {
             if (/^(true|yes|1)$/i.test(raw)) return { ok: true, v: true };
@@ -424,7 +469,7 @@
             return { ok: false, why: 'Type true or false.' };
         }
         if (raw === '' || raw === 'null') return { ok: true, v: null };
-        if (kind === 'any' && raw !== '' && isFinite(Number(raw))) return { ok: true, v: Number(raw) };
+        if (kind === 'any' && NUMBER_RE.test(raw) && isFinite(Number(raw))) return { ok: true, v: Number(raw) === 0 ? 0 : Number(raw) };
         return { ok: true, v: raw };
     }
 
@@ -434,6 +479,7 @@
         if (S.check) {
             var ev = $('czg-evidence');
             if (ev) ev.classList.add('czg-stale');
+            alertBox(banner('note', 'Inputs changed: press Check again.', 'The result below is for the earlier inputs.'));
             say('Inputs changed, check again.');
         }
         S.phase = 'check';
@@ -455,7 +501,7 @@
         var mine = S.seq, g = S;
         if (!b.pairs.length) { S.plan = null; refresh(); return Promise.resolve(); }
         return post('/api/pulse/cz-gate/plan', b).then(function (x) {
-            if (S !== g || mine !== S.seq) return;
+            if (S !== g || mine !== S.seq || S.phase === 'done' || S.busy) return;
             if (!x.r.ok || !x.j.ok) {
                 S.plan = null;
                 alertBox(callout('danger', 'The plan could not be made', (x.j.error || ('The app answered HTTP ' + x.r.status)) + ' Change the inputs or close the dialog.'));
@@ -484,7 +530,7 @@
         fillSettings();
         fillModelFacts();
         if (keep && keep[0]) {
-            var again = $('czg-slots').querySelector('input[data-czg-field="' + keep[0] + '"][data-czg-name="' + keep[1] + '"]');
+            var again = findField(keep[0], keep[1]);
             if (again) { again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) { /* not a text input */ } }
         }
         var rows = {};
@@ -502,17 +548,37 @@
         renderWrites();
         refresh();
     }
-    function renderWrites(only) {
+    function syncLine(sync) {
+        if (sync && sync.auto_push) return 'In the working copy; Auto-Sync also writes the chip.';
+        if (sync && sync.auto_pull) return 'In the working copy only (Auto-Sync pulls only): not on the chip until you press Apply.';
+        return 'In the working copy. Not on the chip until you press Apply.';
+    }
+    /* What Create will write: every pair that will be written, grouped; a
+       refused pair is named as not written with its reason. */
+    function renderWrites() {
         var host = clear($('czg-writes'));
         var sum = $('czg-writes-sum');
-        var paths = [];
-        if (only) paths = only.ok ? (only.paths || []) : [];
-        else ((S.plan && S.plan.pairs) || []).forEach(function (p) { if (p.ok) paths = paths.concat(p.paths || []); });
-        if (sum) sum.textContent = paths.length ? paths.length + (paths.length === 1 ? ' object' : ' objects') : 'nothing yet';
-        if (!paths.length) { host.appendChild(el('p', 'ui-text-quiet', 'The plan has no gate to write yet.')); return; }
-        host.appendChild(el('p', 'ui-text-quiet', 'In the working copy. Not on the chip until you press Apply.'));
         var U = UIkit();
-        paths.forEach(function (x) { host.appendChild(U.path(x)); });
+        var rows = [];
+        if (S.check && S.check.pairs) {
+            S.check.pairs.forEach(function (p) {
+                var v = p.verdict || {};
+                rows.push({ pair: p.pair, ok: !!v.allowed, paths: p.paths || [], why: v.allowed ? '' : (v.reason || 'no verdict from the server') });
+            });
+        } else {
+            ((S.plan && S.plan.pairs) || []).forEach(function (p) {
+                rows.push({ pair: p.pair, ok: !!p.ok, paths: p.paths || [], why: p.ok ? '' : (p.refusals || []).join(' ') });
+            });
+        }
+        var n = rows.reduce(function (a, r) { return a + (r.ok ? r.paths.length : 0); }, 0);
+        if (sum) sum.textContent = n ? n + (n === 1 ? ' object' : ' objects') : 'nothing yet';
+        if (!n) { host.appendChild(el('p', 'ui-text-quiet', 'Nothing will be written yet.')); }
+        else host.appendChild(el('p', 'ui-text-quiet', syncLine((S.check && S.check.sync) || S.data.sync)));
+        rows.forEach(function (r) {
+            if (rows.length > 1) host.appendChild(el('p', 'ui-text-strong', r.pair));
+            if (!r.ok) { host.appendChild(el('p', 'ui-text-quiet', 'not written: ' + r.why)); return; }
+            r.paths.forEach(function (x) { host.appendChild(U.path(x)); });
+        });
     }
     /* ---- the check and its evidence --------------------------------------- */
     var TONE = { pass: 'ok', fail: 'danger', skipped: 'warn', note: 'neutral' };
@@ -677,13 +743,16 @@
     }
     var PAIR_MARK = { ok: ['ok', 'ok'], fail: ['danger', 'cannot'], unchecked: ['warn', 'not checked'] };
     function pairMark(x) {
+        if (!x.verdict) x.verdict = { allowed: false, state: 'not checked', reason: 'no verdict from the server' };
         if (!(x.verdict && x.verdict.allowed)) return 'fail';
         return x.verdict.state === 'verified' ? 'ok' : 'unchecked';
     }
     /* More than one pair: a switch at the top of the evidence column, each
        option with its own verdict mark; everything below follows the choice. */
     function renderPairSwitch() {
-        var host = clear($('czg-pairs'));
+        var hostEl = $('czg-pairs');
+        var hadFocus = !!(hostEl && hostEl.contains(document.activeElement));
+        var host = clear(hostEl);
         var pairs = (S.check && S.check.pairs) || [];
         if (!host) return;
         host.hidden = pairs.length < 2;
@@ -698,6 +767,7 @@
                 b.appendChild(U.badge(m[1], m[0]));
             });
             host.appendChild(seg);
+            if (hadFocus) { var on = seg.children[S.pairIdx]; if (on) try { on.focus(); } catch (e) { /* gone */ } }
         } else {
             var sel = U.select({ id: 'czg-pair-shown', label: 'Pair shown', value: String(S.pairIdx),
                 options: pairs.map(function (x, k) { return { value: String(k), label: x.pair + ' (' + PAIR_MARK[pairMark(x)][1] + ')' }; }) });
@@ -712,7 +782,7 @@
             renderIntent(p.intent, p.timeline);
             renderChecks(p);
             renderTiles(p);
-            renderWrites(pairs.length > 1 ? p : null);
+            renderWrites();
         }
         showSections(p);
         if (p && !p.ok && pairs.length > 1) {
@@ -723,11 +793,18 @@
         }
         renderPairSwitch();
     }
+    function checkCounts(list) {
+        var passed = 0, skipped = 0;
+        list.forEach(function (p) { (p.checks || []).forEach(function (c) {
+            if (c.status === 'skipped') skipped++; else if (c.status === 'pass' || c.status === 'note') passed++; }); });
+        return { passed: passed, skipped: skipped };
+    }
     function renderCheck() {
         var c = S.check;
         var ev = $('czg-evidence');
         if (ev) ev.classList.remove('czg-stale');
         var pairs = c.pairs || [];
+        pairs.forEach(function (x) { pairMark(x); });       // every pair carries a verdict from here on
         if ($('czg-model-panel')) $('czg-model-panel').hidden = true;
         var firstBad = -1;
         pairs.forEach(function (x, k) { if (firstBad < 0 && pairMark(x) === 'fail') firstBad = k; });
@@ -735,7 +812,7 @@
         renderPair();
         var ok = allowedPairs();
         var no = pairs.filter(function (x) { return !(x.verdict && x.verdict.allowed); });
-        var reason = function (x) { return sentence(x.verdict.headline || x.verdict.reason); };
+        var reason = function (x) { var v = x.verdict || {}; return sentence(v.headline || v.reason || 'no verdict from the server'); };
         var many = pairs.length > 1;
         if (!ok.length) {
             alertBox(banner('danger', many ? 'None of the ' + pairs.length + ' pairs can be created yet' : 'Cannot be created yet',
@@ -745,11 +822,16 @@
                 no.map(function (x) { return x.pair + ': ' + reason(x); }).join(' ') + ' The other ' + ok.length
                 + (ok.length === 1 ? ' pair' : ' pairs') + ' can still be created.'));
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
-            var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
-            alertBox(banner('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record says it was not checked.'));
+            var unv = ok.filter(function (x) { return x.verdict.state !== 'verified'; });
+            var named = unv.slice(0, 3).map(function (x) { return (many ? x.pair + ': ' : '') + sentence(x.verdict.reason); }).join(' ')
+                + (unv.length > 3 ? ' And ' + (unv.length - 3) + ' more.' : '');
+            alertBox(banner('warn', many ? unv.length + ' of ' + ok.length + ' not checked with the lab\'s code' : 'Not checked with the lab\'s code',
+                named + ' You can still create ' + (unv.length === 1 && !many ? 'it' : 'them') + '; the record says it was not checked.'));
         } else {
+            var counts = checkCounts(ok);
             alertBox(banner('ok', many ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
-                'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'));
+                'The lab\'s code built ' + (many ? 'these gates' : 'this gate') + ' on a copy of the chip and '
+                + (counts.skipped ? counts.passed + ' checks passed, ' + counts.skipped + ' were not run.' : 'every check passed.')));
         }
         S.phase = ok.length ? 'create' : 'check';
         S.checkSig = c.plan_sig;
@@ -785,11 +867,19 @@
     function create() {
         if (!S || S.busy || S.phase !== 'create' || !S.check) return Promise.resolve();
         var g = S;
-        setBusy(true, 'Creating…');
+        S.creating = true;
+        setBusy(true, 'Creating\u2026');
         return post('/api/pulse/cz-gate/create', { check_token: S.check.check_token, plan_sig: S.check.plan_sig })
             .then(function (x) {
-                if (S !== g) return;
+                g.creating = false;
                 var j = x.j;
+                if (S !== g) {
+                    // the page moved on: the app still reports what happened
+                    if (j.tray_html && window._swapPendingTray) { try { window._swapPendingTray(j.tray_html); } catch (e) { /* poll catches up */ } }
+                    if (window.showToast) window.showToast(j.ok ? 'Created ' + ((j.created || []).map(function (c) { return c.gate + ' on ' + c.pair; }).join(', '))
+                        : 'The gate was not created: ' + (j.error || ('HTTP ' + x.r.status)), j.ok ? 'success' : 'error');
+                    return;
+                }
                 if (j.tray_html && window._swapPendingTray) {
                     try { window._swapPendingTray(j.tray_html); } catch (e) { /* the tray poll catches up */ }
                 }
@@ -896,6 +986,8 @@
         });
     }
     function done(j) {
+        clearTimeout(S.timer);
+        S.seq++;
         S.phase = 'done';
         S.created = j;
         S.busy = false;
@@ -938,7 +1030,8 @@
         if (!h) { h = el('div'); h.id = 'czg-host'; document.body.appendChild(h); }
         return h;
     }
-    function close() {
+    function close(force) {
+        if (S && S.creating && !force) return false;       // a create in flight: its answer must land
         var d = $('czg-dialog');
         if (S) { clearTimeout(S.timer); if (S.handle && S.handle.destroy) { try { S.handle.destroy(); } catch (e) { /* gone */ } } }
         var opener = S && S.opener;
@@ -949,6 +1042,26 @@
             if (d.parentNode) d.parentNode.removeChild(d);
         }
         if (opener && opener.focus) { try { opener.focus(); } catch (e) { /* gone */ } }
+    }
+    /* Escape or backdrop on a dialog with edits or a check asks once (kit callout
+       with two kit buttons inside the dialog; a page-level confirm cannot sit
+       above a modal dialog). */
+    function worked() {
+        return !!(S && (S.check || Object.keys(S.entered || {}).some(function (k) { return Object.keys(S.entered[k] || {}).length; })
+                        || ($('czg-name') && $('czg-name').value.trim() !== 'cz_')));
+    }
+    function softClose() {
+        if (!S || S.phase === 'done' || !worked()) { close(); return; }
+        if (S.confirmClose) { close(); return; }
+        S.confirmClose = true;
+        var top = clear($('czg-top'));
+        var U = UIkit();
+        top.appendChild(U.callout('warn', 'Discard this gate?', 'Press Escape again or Discard to close; Keep editing to stay.'));
+        var acts = U.actions([{ label: 'Keep editing', cls: 'btn-sync outline' }, { label: 'Discard', cls: 'btn-sync danger' }], 'Discard this gate?');
+        acts.children[0].setAttribute('data-czg-keep', '');
+        acts.children[1].setAttribute('data-czg-discard', '');
+        top.appendChild(acts);
+        try { acts.children[0].focus(); } catch (e) { /* not focusable */ }
     }
     function init() {
         var src = $('czg-data');
@@ -987,6 +1100,11 @@
                 var name = $('czg-name');
                 if (name) { try { name.focus(); } catch (e) { /* not focusable */ } }
                 return init();
+            }).catch(function (e) {
+                if (S !== g) return;
+                S = null;
+                clear(host());
+                if (window.showToast) window.showToast('The gate dialog could not open: ' + e, 'error');
             });
     }
 
@@ -1016,7 +1134,14 @@
             return;
         }
         if (!inDialog(t) || !S) return;
-        if (t.id === 'czg-dialog' && !S.busy) { close(); return; }       // the backdrop
+        if (t.id === 'czg-dialog') {                                   // the backdrop: down AND up on it
+            var both = S.downOnBackdrop;
+            S.downOnBackdrop = false;
+            if (both && !S.busy) softClose();
+            return;
+        }
+        if (t.closest('[data-czg-discard]')) { close(); return; }
+        if (t.closest('[data-czg-keep]')) { S.confirmClose = false; clear($('czg-top')); return; }
         if (t.closest('[data-czg-close]')) { close(); return; }
         if (t.closest('#czg-open-pair')) {
             var p = $('czg-pair') ? $('czg-pair').value : '';
@@ -1074,21 +1199,34 @@
         S.entered[f] = S.entered[f] || {};
         S.raw[f] = S.raw[f] || {};
         S.raw[f][n] = t.value;
-        if (r.ok) { S.entered[f][n] = r.v; t.removeAttribute('aria-invalid'); }
-        else { delete S.entered[f][n]; t.setAttribute('aria-invalid', 'true'); say(r.why); }
+        var key = fieldKey(f, n);
+        if (r.ok) {
+            S.entered[f][n] = r.v;
+            if (S.invalid[key]) { delete S.invalid[key]; say(''); }
+            showFieldError(t, null);
+        } else {
+            delete S.entered[f][n];
+            S.invalid[key] = r.why;
+            showFieldError(t, r.why);
+            say(r.why);
+        }
         inputsChanged();
     });
     document.addEventListener('cancel', function (ev) {
         if (!ev.target || ev.target.id !== 'czg-dialog') return;
         ev.preventDefault();
-        if (S && !S.busy) close();
+        if (S && !S.busy && !ev.defaultPrevented) softClose();
+    }, true);
+    document.addEventListener('mousedown', function (ev) {
+        if (!S) return;
+        S.downOnBackdrop = !!(ev.target && ev.target.id === 'czg-dialog');
     }, true);
     document.addEventListener('keydown', function (ev) {
-        if (ev.key !== 'Escape' || !S) return;
+        if (ev.key !== 'Escape' || !S || ev.defaultPrevented) return;      // a kit menu took this Escape
         var d = $('czg-dialog');
         if (!d || !d.hasAttribute('open')) return;
         ev.preventDefault();
-        if (!S.busy) close();
+        if (!S.busy) softClose();
     });
 
     window.CzGate = { open: open, close: close, state: function () { return S; },
