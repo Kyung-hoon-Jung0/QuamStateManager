@@ -112,6 +112,20 @@ UNRESOLVED_MORE = "{items}, and {more} more"
 UNRESOLVED_SHOWN = 5
 COUNT_FAILED_MESSAGE = "Core layout could not be counted ({exc})"
 
+# Surface sentences (Load check, Chip Status, Review), copied from the spec by script.
+FIX_MOVE = "Fix: move elements off this FEM."
+RISK_NOTE = ("Known risk: on QOP 3.8.1 (another device), with xy and resonator on one core, a resonator "
+             "update_frequency inside a program made later x180 pulses have no effect; the simulator did not "
+             "show it; it depended on the program layout. Not tested on QOP 3.7.3; a hardware test is planned.")
+PANEL_STILL_OVER = ("Static count still {firm_after} / {limit} on {con} FEM {fem} after the recommendation; "
+                    "move elements off that FEM.")
+PANEL_ROUTES = ("Core layout does not change digital routes; remove digital outputs or move elements to "
+                "another FEM.")
+REASON_OWN_UNSET = "own core: no core or thread set"
+REASON_OWN_TWO_FEMS = "own core: on different FEMs"
+TOTAL_ROW = "Total {cores} / {limit} cores{ce}"
+TOTAL_LOW = "; may be too low: {n} port references not read"
+
 REASON_DANGLING = "dangling reference"
 REASON_CYCLE = "cyclic reference"
 REASON_MALFORMED = "malformed port reference"
@@ -614,3 +628,88 @@ def _findings(Finding, rep: dict) -> list:
                            values={"kind": "unresolved_ports", "count": len(un),
                                    "unresolved": [dict(u) for u in un]}))
     return out
+
+
+def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
+    """The fix sentence for a per-FEM finding on one surface (``load_check``,
+    ``diagnostics`` or ``review``). Core layout cannot fix a route overage."""
+    if not fem_finding_values.get("over_cores"):
+        return PANEL_ROUTES
+    return FIX_REVIEW if surface == "review" else FIX_MOVE
+
+
+def surface_findings(state: dict, surface: str) -> list:
+    """``core_budget_findings`` with the surface's fix line in each per-FEM detail."""
+    out = core_budget_findings(state)
+    if not out:
+        return out
+    rep = core_budget(state)
+    by_place = {_place(f): f for f in rep.get("fems") or []}
+    for fd in out:
+        v = fd.values if isinstance(fd.values, dict) else {}
+        if v.get("kind") == "fem_budget" and fd.location in by_place:
+            fd.detail = fem_detail(by_place[fd.location], surface_fix_line(v, surface))
+    return out
+
+
+def finding_line(finding) -> dict:
+    """One finding as a surface shows it: the warning line plus its detail lines."""
+    v = finding.values if isinstance(finding.values, dict) else {}
+    return {"kind": v.get("kind"), "location": finding.location, "message": finding.message,
+            "line": LINE_PREFIX.format(message=finding.message),
+            "detail": [ln for ln in (finding.detail or "").split("\n") if ln]}
+
+
+def review_table(state: dict) -> dict | None:
+    """Rows per FEM for the build review: element, core (or own with the reason),
+    source key, controller / FEM, cost, plus one total line per FEM. None when the
+    state has no counted port at all, so no empty table is shown."""
+    rep = core_budget(state)
+    if not rep.get("fems"):
+        return None
+    elements: list = []
+    _iter_elements(state, (), elements)
+    source = {".".join(tpath): effective_core_name(elem)[1] for tpath, elem in elements}
+    seen: dict = {}
+    for f in rep["fems"]:
+        for g in f["groups"]:
+            for e in g["elements"]:
+                seen[e] = seen.get(e, 0) + 1
+    n_unresolved = len(rep.get("unresolved") or [])
+    fems = []
+    for f in rep["fems"]:
+        rows = []
+        for g in f["groups"]:
+            for e in g["elements"]:
+                if g["core"]:
+                    core = g["core"]
+                elif seen.get(e, 0) > 1:
+                    core = REASON_OWN_TWO_FEMS
+                else:
+                    core = REASON_OWN_UNSET
+                rows.append({"element": e, "core": core,
+                             "shared": bool(g["core"]) and len(g["elements"]) > 1,
+                             "source": source.get(e) or "", "place": _place(f),
+                             "cost": _num(g["cost"])})
+        total = TOTAL_ROW.format(cores=_num(f["cores"]["count"]), limit=f["cores"]["limit"],
+                                 ce=ESTIMATED_LABEL if f["cores"]["estimated"] else "")
+        if n_unresolved:
+            total += TOTAL_LOW.format(n=n_unresolved)
+        fems.append({"place": _place(f), "controller": f["controller"], "fem": f["fem"],
+                     "fem_type": f["fem_type"], "count": f["cores"]["count"],
+                     "limit": f["cores"]["limit"],
+                     "over": f["cores"]["count"] > f["cores"]["limit"], "total": total, "rows": rows})
+    shared = sum(1 for f in rep["fems"] for g in f["groups"] if g["core"] and len(g["elements"]) > 1)
+    return {"fems": fems, "shared_groups": shared}
+
+
+def review_summary(state: dict) -> dict | None:
+    """What the build review shows: the table, the warning lines (Review fix
+    sentence) and the risk note when any element shares a core. None when the
+    state has no counted port and nothing to report."""
+    table = review_table(state)
+    findings = [finding_line(f) for f in surface_findings(state, "review")]
+    if table is None and not findings:
+        return None
+    return {"table": table, "findings": findings,
+            "risk_note": RISK_NOTE if table and table["shared_groups"] else None}

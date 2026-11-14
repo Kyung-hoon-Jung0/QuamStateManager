@@ -1745,6 +1745,23 @@ def annotate_unplayable(outcome: dict, state: dict, wiring: dict) -> list[str]:
     return paths
 
 
+def annotate_core_layout(outcome: dict, state: dict, wiring: dict) -> dict | None:
+    """Add the static core budget review (table, warnings, risk note) of the
+    built state to ``outcome["core_layout"]``. Warn only: never touches ``ok``."""
+    if not isinstance(outcome, dict):
+        return None
+    from quam_state_manager.core import core_layout
+    root = dict(state or {})
+    root.update(wiring or {})
+    try:
+        summary = core_layout.review_summary(root)
+    except Exception:  # noqa: BLE001 -- the build result never depends on the count
+        summary = None
+    if summary is not None:
+        outcome["core_layout"] = summary
+    return summary
+
+
 def _blank_outcome() -> dict:
     """The shared outcome-dict shape both subprocess runners fill in."""
     return {

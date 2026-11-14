@@ -165,7 +165,7 @@ def domain_of(category: str) -> str:
         return "gates"
     if c.startswith("env_"):
         return "env"
-    if c.startswith(("connectivity", "port_", "downconverter")):
+    if c.startswith(("connectivity", "port_", "downconverter", "core_layout")):
         return "connectivity"
     if c.startswith("waveform"):
         return "waveforms"
@@ -204,6 +204,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("warning", "Package versions match", "The state's __package_versions__ stamp (written by quam ≥0.6) matches the selected env's installed versions."),
     ]),
     ("connectivity", [
+        ("warning", "Core budget per FEM", "A static worst-case count of controller cores and digital routes per FEM, oscillators per core, and core names; it only warns, the compiler decides."),
         ("error", "Port key matches identity", "Port dictionary keys agree with controller_id, fem_id and port_id; distinct entities do not claim the same physical identity within one port kind."),
         ("error", "Port exists", "Every channel's assigned opx_output / opx_input resolves to a real port declared in state.json 'ports'."),
         ("error", "No port collisions", "Two elements never share one physical port + upconverter (legal readout- and cross-resonance multiplexing and a TWPA's own pump/pump_ are allowed)."),
@@ -424,6 +425,9 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
     findings.extend(_downconverter_spacing_findings(root))
+    # Static core budget (lazy import: core_layout imports Finding from here).
+    from quam_state_manager.core.core_layout import surface_findings as _core_findings
+    findings.extend(_core_findings(root, "diagnostics"))
     _cp()
     findings.extend(_waveform_findings_cached(store) if inc_store is not None
                     else _waveform_findings(store))

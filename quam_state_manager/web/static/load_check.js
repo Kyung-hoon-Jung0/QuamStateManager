@@ -61,6 +61,26 @@ window.runLoadCheck = (function () {
         }
         setStatus('danger', typ, detail + envLabel(data && data.env) + linkHtml + (tb || ''));
     }
+    // Static core budget warnings under "Loads OK": one warn callout per
+    // finding, its detail lines folded (the load itself still passed).
+    function coreWarnHtml(list) {
+        if (!Array.isArray(list) || !list.length) return '';
+        var html = '';
+        for (var i = 0; i < list.length; i++) {
+            var f = list[i] || {};
+            if (!f.line) continue;
+            var det = Array.isArray(f.detail) ? f.detail : [];
+            html += '<div class="ui-callout ui-callout--warn js-loadcheck-core">'
+                + '<p class="ui-callout-text"><span class="ui-callout-title">' + esc(f.line) + '</span></p>';
+            if (det.length) {
+                html += '<details class="ui-disclosure"><summary class="ui-disclosure-summary">Details</summary>';
+                for (var j = 0; j < det.length; j++) html += '<p class="ui-callout-text">' + esc(det[j]) + '</p>';
+                html += '</details>';
+            }
+            html += '</div>';
+        }
+        return html;
+    }
     function envLabel(env) {
         if (!env || !env.name) return '';
         var src = { project: 'project', selected: 'selected machine-wide', chosen: 'chosen here' }[env.source] || '';
@@ -108,7 +128,8 @@ window.runLoadCheck = (function () {
                 }
                 if (resp.ok && data.ok) {
                     var qv = ((data.lib_versions || {}).quam || '?');
-                    setStatus('ok', 'Loads OK', 'quam ' + esc(qv) + envLabel(data.env));
+                    setStatus('ok', 'Loads OK', 'quam ' + esc(qv) + envLabel(data.env)
+                        + coreWarnHtml(data.core_findings));
                     return;
                 }
                 renderFail(data);
@@ -119,6 +140,7 @@ window.runLoadCheck = (function () {
             .finally(function () { setRunning(false); });
     }
     run.withEnv = function (python) { return run(python); };
+    run._coreWarnHtml = coreWarnHtml;
     return run;
 })();
 

@@ -97,7 +97,7 @@
     <td class="diag-loc-cell"><code class="diag-loc">{% for seg in (f.location | string).split('.') %}{{ seg }}{% if not loop.last %}.<wbr>{% endif %}{% endfor %}</code></td>
     <td class="diag-issue-cell">
       <div class="diag-msg ui-diag-msg">{{ f.message }}</div>
-      {% if f.detail %}<div class="diag-detail muted"><code>{{ f.detail }}</code></div>{% endif %}
+      {% if f.detail %}<div class="diag-detail muted">{% for ln in f.detail.splitlines() %}{% if not loop.first %}<br>{% endif %}<code>{{ ln }}</code>{% endfor %}</div>{% endif %}
     </td>
     {% if allow_jump %}
     <td class="diag-action">
