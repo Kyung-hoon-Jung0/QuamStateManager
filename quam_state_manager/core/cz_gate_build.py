@@ -1349,6 +1349,17 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
     control, target = lines["_ids"]
     fields = pulse_fields(model, _op_keys(mlines))
     if not fields:
+        climbing = [(k, v) for k, v in model.items()
+                    if "pulse" in k and not k.startswith("spectator")
+                    and _is_climbing(v)]
+        if climbing:
+            k, v = climbing[0]
+            return _refuse(reasons + [
+                f"The model gate {mname} uses the relative reference {v} (in "
+                f"{k}), which points outside its own macro. SM copies only "
+                "relative references that stay inside their own object. Use an "
+                "absolute reference there in the model gate, pick another model "
+                "gate, or pick a gate class SM knows."])
         return _refuse(reasons + [
             f"The model gate {mname} has no pulse SM can copy. Pick another "
             "model gate."])
