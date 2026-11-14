@@ -82,7 +82,9 @@ function planOk(body) {
                  pulses: { flux_pulse_qubit: Object.assign({ __class__: 'P.SquarePulse', length: 100, amplitude: 0.1 },
                                                            ((body.pulses.flux_pulse_qubit || {}).fields || {})) } }) };
 }
+let lastAllowed = ['q1-2'];
 function checkOk(body, opts) {
+    lastAllowed = body.pairs.filter((p) => !(opts && opts.refuse === p));
     opts = opts || {};
     return { ok: true, status: 'ok', plan_sig: planOk(body).plan_sig, check_token: 'tok' + sent.length,
              pairs: body.pairs.map((p, i) => ({
@@ -100,6 +102,11 @@ function checkOk(body, opts) {
 }
 function respond(status, j) { return Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(j), text: () => Promise.resolve('') }); }
 window.fetch = (url, opt) => {
+    if (String(url).indexOf('/pulse/cz-gate/status') === 0) {
+        const q = new URLSearchParams(String(url).split('?')[1]);
+        statusAsked.push(q.get('pair') + '/' + q.get('gate'));
+        return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('<div class="gate-status" data-row="' + q.get('pair') + '">row</div>') });
+    }
     if (String(url).indexOf('/state/drift') === 0) {
         const nx = driftSeq.length ? driftSeq.shift() : { state: driftState, unapplied: 0 };
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ ok: true, sync: nx }) });
@@ -115,10 +122,11 @@ window.fetch = (url, opt) => {
     if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
     if (kind === 'plan') return respond(200, planOk(body));
     if (kind === 'check') return respond(200, checkOk(body));
-    return respond(200, { ok: true, created: [{ pair: 'q1-2', gate: body.gate_name || 'cz_new', state: 'verified', paths: ['a'] }], skipped: [], count: 1, tray_html: '', sync: createSync });
+    return respond(200, { ok: true, created: lastAllowed.map((p) => ({ pair: p, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync });
 };
 let driftState = 'mine';
 let driftSeq = [];
+const statusAsked = [];
 let createSync = { auto_push: false, state: 'mine', unapplied: 1 };
 const charts = [];
 window.GateTimeline = { render: (host, data) => { charts.push(data); return { destroy() {} }; } };
@@ -263,6 +271,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(/In the working copy only: press Apply to write it to the chip\./.test(alertText()) && !/Not on the chip yet/.test(alertText())
        && /In the working copy only/.test($('#czg-status').textContent) && $('#czg-status-slot'),
        'Auto-Sync off: banner and foot say working copy only; the status slot is there');
+    ok($('#czg-status-slot').querySelectorAll('.gate-status').length === 2 && $('#czg-status-slot .gate-status[data-row="q1-2"]') && $('#czg-status-slot .gate-status[data-row="q2-3"]')
+       && statusAsked.length === 2,
+       'after Create the status slot shows the status slice\'s own row for the created gate');
     ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close' && !$('#czg-form').contains(doc.activeElement), 'after create: Open the pair and Close; the focus is not left in the hidden form');
     prim().click();
     await settle();

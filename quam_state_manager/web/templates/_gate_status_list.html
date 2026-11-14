@@ -7,6 +7,7 @@
 <section class="ui-panel gate-status-list" aria-label="CZ gates" data-gate-pair="{{ gate_lines.lines[0].pair }}">
     <div class="ui-panel-head">
         <h3 class="ui-panel-title">CZ gates</h3>
+        <button type="button" class="btn-sm outline" data-czg-open data-czg-pair="{{ gate_lines.lines[0].pair }}" title="Create a new CZ gate on this pair">+ Gate</button>
         <span class="ui-panel-sum"><span class="ui-count">{{ gate_lines.count }}</span>{% if gate_lines.no_active %}<span class="ui-text-warn" title="The pair's cz alias is not set">no active gate</span>{% endif %}</span>
     </div>
     <div class="ui-panel-body ui-panel-body--flush">

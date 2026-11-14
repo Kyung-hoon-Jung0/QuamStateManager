@@ -55,7 +55,7 @@ class App:
 
 @pytest.fixture
 def chip(monkeypatch):
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         a = App(tmp)
         yield a
         from quam_state_manager.core.hub_index import close_readers
@@ -325,7 +325,7 @@ def test_dialog_selfcheck_on_the_real_rendered_dialog(chip, tmp_path):
     r = subprocess.run([node, str(root / "tests" / "cz_gate_dialog_selfcheck.cjs")], env=env,
                        capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
-    assert "(79 assertions)" in r.stdout
+    assert "(80 assertions)" in r.stdout
 
 
 def test_headline_names_line_value_and_limit():
@@ -391,3 +391,33 @@ def test_check_and_create_carry_the_top_bars_sync_state(chip, fake):
     assert out["sync"]["state"] in ("mine", "staged") and out["sync"]["unapplied"] >= 1
     chip.ctx["auto_apply"] = {"push": True, "pull": False}
     assert _check(chip.c, _body(name="cz_sq2"))["sync"]["auto_push"] is True
+
+
+def test_create_records_the_check_and_a_recreated_gate_is_never_called_checked(chip, fake, monkeypatch):
+    j = _check(chip.c, _body())
+    out = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]}).get_json()
+    assert out["created"][0]["record"] == "checked"
+    row = chip.c.get("/pulse/cz-gate/status?pair=q1-2&gate=cz_sq").get_data(as_text=True)
+    assert "Checked with the lab" in row
+    assert chip.c.post("/undo").status_code == 200
+    assert "cz_sq" not in chip.store.merged["qubit_pairs"]["q1-2"]["macros"]
+    monkeypatch.setattr(czr, "_env_python", lambda: None)
+    from quam_state_manager.core import gate_check as _gc
+    monkeypatch.setattr(czr, "run_check", lambda store, py, g, c, pv: _gc.check_gates(store, py, g, c, previews=pv))
+    j = _check(chip.c, _body(amp=0.33))
+    out = chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]}).get_json()
+    assert out["ok"] and out["created"][0]["record"] == "not checked"
+    row = chip.c.get("/pulse/cz-gate/status?pair=q1-2&gate=cz_sq").get_data(as_text=True)
+    assert "not checked" in row and "Checked with the lab" not in row
+
+
+def test_a_record_left_by_an_undone_create_never_matches_a_new_gate(chip, fake):
+    j = _check(chip.c, _body())
+    chip.c.post(CREATE, json={"check_token": j["check_token"], "plan_sig": j["plan_sig"]})
+    chip.c.post("/undo")
+    j2 = _check(chip.c, _body(amp=0.33))
+    tok = czr._TOKENS[j2["check_token"]]
+    tok["checks"] = {}
+    chip.c.post(CREATE, json={"check_token": j2["check_token"], "plan_sig": j2["plan_sig"]})
+    row = chip.c.get("/pulse/cz-gate/status?pair=q1-2&gate=cz_sq").get_data(as_text=True)
+    assert "Checked with the lab" not in row

@@ -847,6 +847,8 @@
         var w = $('czg-alert') && $('czg-alert').querySelector('.ui-verdict-why');
         if (w) w.textContent = createdWhy(word, skip);
         say(SYNC_WORDS[word]);
+        // the status rows say on the chip or working copy only: read them again once written
+        if (word === 'written' && S.created) loadStatusRows(S, S.created.created || []);
     }
     /* Follow the app's own sync state (the top bar's /state/drift) while
        Auto-Sync pushes: "writing" until it says synced with nothing unapplied. */
@@ -865,6 +867,28 @@
                 if (word === 'writing') watchSync(g, skip, auto, pending, tries - 1);
             }).catch(function () { if (S === g) showSync('unknown', skip); });
         }, 1500);
+    }
+    /* After Create: the status slice's own row for every created gate, the same
+       partial the pair view shows (GET /pulse/cz-gate/status); no rendering here. */
+    function loadStatusRows(g, created) {
+        var slot = $('czg-status-slot');
+        if (!slot) return;
+        slot.textContent = '';
+        created.forEach(function (c) {
+            var holder = el('div');
+            holder.setAttribute('data-czg-status-for', c.pair + '/' + c.gate);
+            slot.appendChild(holder);
+            fetch('/pulse/cz-gate/status?pair=' + encodeURIComponent(c.pair) + '&gate=' + encodeURIComponent(c.gate))
+                .then(function (r) { return r.text(); })
+                .then(function (html) {
+                    if (S !== g) return;
+                    holder.innerHTML = html;
+                    if (window.htmx && window.htmx.process) { try { window.htmx.process(holder); } catch (e) { /* static row */ } }
+                }).catch(function () {
+                    if (S !== g) return;
+                    holder.appendChild(el('p', 'ui-text-quiet', 'The status of ' + c.gate + ' on ' + c.pair + ' could not be read; open the pair to see it.'));
+                });
+        });
     }
     function done(j) {
         S.phase = 'done';
@@ -896,6 +920,7 @@
         say(SYNC_WORDS[word]);
         refresh();
         if (word === 'writing') watchSync(S, skip, sync, true, 40);
+        loadStatusRows(S, j.created || []);
         if (window.htmx && document.body) {
             window.htmx.trigger(document.body, 'pulses-changed');
             window.htmx.trigger(document.body, 'diagnostics-changed');

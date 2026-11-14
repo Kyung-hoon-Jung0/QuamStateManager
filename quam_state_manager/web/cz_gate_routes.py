@@ -54,7 +54,7 @@ from typing import Any
 from flask import jsonify, render_template, request
 
 from quam_state_manager.core import chip_copy, cz_gate_build as cgb, cz_gate_create
-from quam_state_manager.core import gate_check, gate_intent, gate_timeline_view, pulse_catalog
+from quam_state_manager.core import gate_check, gate_check_log, gate_intent, gate_timeline_view, pulse_catalog
 from quam_state_manager.web import request_body
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.routes import bp
@@ -495,7 +495,7 @@ def api_cz_gate_check():
         previews[(pid, body["gate_name"])] = pv
         skipped_by[pid] = sk
     res = run_check(store, _env_python(), gates, creates, previews) if gates else None
-    out_pairs, verdicts, sigs = [], {}, {}
+    out_pairs, verdicts, sigs, checks_by = [], {}, {}, {}
     for pid, p in plans:
         if "error" in p:
             out_pairs.append({"pair": pid, "gate": body["gate_name"], "ok": False,
@@ -530,11 +530,19 @@ def api_cz_gate_check():
             "verdict": {"allowed": allowed, "state": state, "reason": reason,
                         "headline": headline(entry, tl, reason)}})
         verdicts[pid] = {"allowed": allowed, "state": state, "reason": reason}
+        # what the check record needs: "checked" only when the lab ran every check of THIS gate
+        full = bool(res and res.get("status") == "ok" and res.get("checked") and entry
+                    and entry.get("ran") and not entry.get("unchecked") and not entry.get("partly_checked")
+                    and not any((c or {}).get("status") == "fail" for c in (entry.get("checks") or {}).values()))
+        checks_by[pid] = {"all_checked": full,
+                          "why_not_checked": None if full else (reason or (res or {}).get("why_not_checked")
+                                                                or "not every check ran")}
         sigs[pid] = _creates_sig(p)
     seq = (res or {}).get("seq")
     tok = _remember({"store_id": chip_copy.store_id(store),
                      "seq": seq if seq is not None else pre_seq,
-                     "plan_sig": sig, "body": body, "verdicts": verdicts, "sigs": sigs})
+                     "plan_sig": sig, "body": body, "verdicts": verdicts, "sigs": sigs,
+                     "checks": checks_by})
     return jsonify(ok=True, status=(res or {}).get("status") or "not-run", sync=sync_now(),
                    why_not_checked=(res or {}).get("why_not_checked"),
                    leftover=(res or {}).get("leftover"),
@@ -619,8 +627,14 @@ def api_cz_gate_create():
             tok["used"] = True
         for pid in todo:
             v = tok["verdicts"][pid]
+            # the check record is taken from the store AFTER the write: its
+            # content hash is what a later status row compares against
+            rec = gate_check_log.record_check(R._history(), ctx["path"], store.merged, pid,
+                                              body["gate_name"], (tok.get("checks") or {}).get(pid))
             created.append({"pair": pid, "gate": body["gate_name"], "state": v.get("state"),
                             "reason": v.get("reason") or "",
+                            "record": rec.get("entry", {}).get("result") if rec.get("ok") else None,
+                            "record_error": None if rec.get("ok") else rec.get("error"),
                             "paths": [c[0] for c in plans[pid]["creates"]]})
     R._reprobe_if_new_classes(store)
     resp = jsonify(ok=True, created=created, skipped=skipped, count=len(created), group=gid,
