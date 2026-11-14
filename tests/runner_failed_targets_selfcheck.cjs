@@ -12,7 +12,7 @@ const { JSDOM } = require("jsdom");
   try {
     const w = dom.window;
     const note = "1 of 2 targets failed — q1: still wrote qubits.q1.f_01 (5 -> 6) to the chip";
-    const posts = [];
+    const posts = []; const bodies = {};
     const failed = { id: "a", name: "node", kind: "node", status: "done", enabled: true,
       failed_targets: ["q1"], n_targets: 2, outcome_note: note,
       failed_writes: [{ path: "/quam/qubits/q1/f_01", dotted: "qubits.q1.f_01", target: "q1" }] };
@@ -21,20 +21,21 @@ const { JSDOM } = require("jsdom");
     const fw3 = ["f_01", "T1", "f_12"].map(k => ({ path: "/quam/qubits/q1/" + k, dotted: "qubits.q1." + k, target: "q1" }));
     const partial = Object.assign({}, failed, { id: "c", failed_writes: fw3, failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], refused: [{ path: "qubits.q1.T1", code: "changed" }], remaining: ["qubits.q1.f_12"],
-      message: "reverted 1: qubits.q1.f_01 — not reverted 1: qubits.q1.T1: the live value changed since the run (now 2.6)" } });
+      at: "2026-01-02T03:04:05Z", message: "reverted 1: qubits.q1.f_01 — not reverted 1: qubits.q1.T1: the live value changed since the run (now 2.6)" } });
     const full = Object.assign({}, failed, { id: "d", failed_writes: fw3, failed_revert: { ok: true,
       reverted: fw3.map(x => ({ path: x.dotted })), refused: [], remaining: [], message: "reverted 3" } });
     const stuck = Object.assign({}, failed, { id: "e", failed_writes: fw3, failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], refused: [{ path: "qubits.q1.T1" }, { path: "qubits.q1.f_12" }], remaining: [], message: "x" } });
     // a refused value that came back: the server says it is retryable now
     const back = Object.assign({}, failed, { id: "f", failed_writes: fw3, revert_retryable: ["qubits.q1.T1"],
+      revert_offer: [{ path: "qubits.q1.T1", value: 3e-05, old: 2.1e-05 }],
       failed_revert: { ok: true, reverted: [{ path: "qubits.q1.f_01" }], remaining: [], message: "second",
         presses: [{ at: "t0", message: "first press words" }] } });
     const afterA = Object.assign({}, failed, { revert_retryable: [], failed_revert: { ok: true,
       reverted: [{ path: "qubits.q1.f_01" }], remaining: [], message: "reverted 1: qubits.q1.f_01" } });
     let statusQueue = null;
     w.fetch = async (url, opts) => {
-      if (opts && opts.method === "POST") posts.push(String(url));
+      if (opts && opts.method === "POST") { posts.push(String(url)); bodies[String(url)] = JSON.parse(opts.body || "{}"); }
       return { json: async () => String(url).startsWith("/scheduler/status")
         ? { queue: statusQueue || [failed, clean, partial, full, stuck, back], run: { status: "idle" } }
         : (String(url).includes("/revert-failed") ? { ok: true, message: "reverted 1: qubits.q1.f_01",
@@ -67,10 +68,24 @@ const { JSDOM } = require("jsdom");
     assert(fb && fb.textContent === "Revert the 1 remaining value", "a value that came back is offered again"); checks++;
     const det = w.document.querySelector('.sched-item[data-id="f"] details[data-revert-presses="1"]');
     assert(det && !det.open && /first press words/.test(det.textContent), "earlier presses sit collapsed"); checks++;
+    assert(/as of the press at /.test(pm.textContent), "a stored refusal says when it was true"); checks++;
+    assert(/^As of /.test(det.querySelector("div").textContent), "an earlier press line says when"); checks++;
+    assert(fb.title === "Puts back: qubits.q1.T1 (run value 0.00003 -> 0.000021)",
+      "the button title names path, run value and the value it goes back to: " + fb.title); checks++;
+    const fn = w.document.querySelector('.sched-item[data-id="f"] [data-revert-names="1"]');
+    assert(fn && fn.textContent === "Will revert: qubits.q1.T1", "three or fewer: the names sit under the button"); checks++;
+    const en = w.document.querySelector('.sched-item[data-id="e"] [data-revert-none]');
+    assert(en && /^Nothing to revert: /.test(en.textContent), "a pressed row with nothing left says why"); checks++;
+    assert(!w.document.querySelector('.sched-item[data-id="a"] [data-revert-none]'), "a fresh row says nothing of the kind"); checks++;
     btn.focus();
     btn.click();
     await new Promise(resolve => setTimeout(resolve, 50));
     assert(posts.some(u => u === "/scheduler/item/a/revert-failed"), "the press posts the item's revert"); checks++;
+    assert.deepStrictEqual(bodies["/scheduler/item/a/revert-failed"], {}, "a fresh row sends no list"); checks++;
+    w.document.querySelector('.sched-item[data-id="f"] [data-act="revert-failed"]').click();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepStrictEqual(bodies["/scheduler/item/f/revert-failed"], { shown: ["qubits.q1.T1"] },
+      "the press sends the list it showed"); checks++;
     const rowA = w.document.querySelector('.sched-item[data-id="a"]');
     const msgA = rowA.querySelector("[data-failed-revert]");
     assert(msgA && msgA.textContent === "Revert: reverted 1: qubits.q1.f_01", "the row shows the press without a reload"); checks++;
