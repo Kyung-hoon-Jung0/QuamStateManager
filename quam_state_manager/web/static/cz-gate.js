@@ -186,13 +186,10 @@
         (S.data.pairs || []).forEach(function (p) {
             if (p.id === pair) return;
             var row = el('div', 'czg-more-row');
-            var l = el('label', 'ui-check');
-            var i = document.createElement('input');
-            i.type = 'checkbox';
+            var l = UIkit().check(p.id);
+            var i = l.querySelector('input');
             i.value = p.id;
             i.setAttribute('data-czg-more', '');
-            l.appendChild(i);
-            l.appendChild(document.createTextNode(p.id));
             row.appendChild(l);
             row.appendChild(el('span', 'ui-text-quiet czg-more-why'));
             box.appendChild(row);
@@ -221,7 +218,7 @@
         opts = opts || {};
         var U = UIkit();
         var num = kind === 'float' || kind === 'int';
-        var id = 'czg-f-' + field + '-' + name;
+        var id = ('czg-f-' + field + '-' + name).replace(/[^A-Za-z0-9_-]/g, '_');
         var typed = (S.raw[field] || {})[name];
         var f = U.field({ label: label, inline: !!opts.inline, source: src ? { text: src, tone: SOURCE_TONE[src] || 'neutral' } : null,
                           control: { part: 'input', id: id, num: num, unit: unit || null, block: true,
@@ -535,7 +532,7 @@
         ((tl && tl.lanes) || []).forEach(function (ln) { m[ln.key] = (ln.color_index || 0) + 1; });
         return m;
     }
-    var CELL_TONE = { warn: 'ui-text-warn', danger: 'ui-text-danger' };
+    var CELL_TONE = { warn: 'ui-cell--warn', danger: 'ui-cell--danger' };
     function renderIntent(rows, tl) {
         var host = clear($('czg-intent'));
         var sum = $('czg-intent-sum');
@@ -573,7 +570,7 @@
             [['max', 4, 1], ['min', oneLevel ? 4 : 5, -1]].forEach(function (x) {
                 if (tones[x[0]] !== 'danger') return;
                 tds[x[1]].classList.add(CELL_TONE.danger);
-                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-text-quiet', ' limit ' + num(x[2] * r.actual.limit_v, 'V')));
+                if ((r.actual || {}).limit_v) tds[x[1]].appendChild(el('span', 'ui-cell-note', 'limit ' + num(x[2] * r.actual.limit_v, 'V')));
             });
         });
         host.appendChild(t);

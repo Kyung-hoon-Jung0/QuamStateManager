@@ -186,7 +186,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(charts.length === 1 && charts[0].lanes[0].key === 'q1.z', 'the chart gets the server data');
     ok($('#czg-checks .ui-result[data-check="range"]') && /Output range/.test($('#czg-checks').textContent) && !$('#czg-sec-checks').hidden && /1 of 1 passed/.test($('#czg-checks-sum').textContent), 'checks: chips in words, key as data-check, passes counted');
     ok($('#czg-alert .ui-verdict--strong.ui-verdict--ok') && /Ready to create/.test(alertText()), 'the banner says Ready to create');
-    ok($('#czg-intent .ui-text-warn') && /shapes the waveform/.test($('#czg-intent').textContent) && $('#czg-intent .ui-line-dot.ui-line-1') && /differ/.test($('#czg-intent-sum').textContent), 'a differing cell is marked warn, the row has its line dot, the why is under it');
+    ok($('#czg-intent .ui-cell--warn') && /shapes the waveform/.test($('#czg-intent').textContent) && $('#czg-intent .ui-line-dot.ui-line-1') && /differ/.test($('#czg-intent-sum').textContent), 'a differing cell is marked warn, the row has its line dot, the why is under it');
 
     // an input change returns to Check and greys the evidence
     type($('input[data-czg-name="amplitude"]'), '0.3');
