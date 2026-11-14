@@ -1,5 +1,7 @@
 # docs/189 — a pulse whose class the LAB wrote still plots
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 **2026-09-16, customer, on-site, CRITICAL.**
 
 > 지금 KRISS_CZ라고 state manager 열려있는것 확인해봐. pulses 메뉴에서 snz 는

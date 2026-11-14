@@ -1,5 +1,7 @@
 # 308 — The UI kit (stage 0: the hub)
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 > **Contract:** new or changed UI uses only the UI kit. A class with no CSS rule, a new visual
 > rule outside `ui-kit.css`, or a raw value in place of a `--ui-*` token fails
 > `tests/test_ui_contract.py`.

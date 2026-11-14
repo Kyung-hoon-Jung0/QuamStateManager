@@ -1,5 +1,7 @@
 # docs/190 — twelve users on one Pulses page, and what they broke
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 **2026-09-16 → 17, user-ordered.**
 
 > opus, sonnet을 적절히 잘 섞어서, SM을 스트레스 테스트 하자. 1. pulses 의 각 기능 들을

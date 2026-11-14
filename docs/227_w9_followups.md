@@ -1,5 +1,7 @@
 # docs/227 — The w9 wave: sliced Chip Status panels, a virtual "All" pulse view, structural pulse edits on one page, and the lab worker warmed at chip open
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 2026-09-28/29, branch `integ/w9` (base `91c8aae` = origin/main after w8, four
 merges, no conflicts), worktree `D:\work\sm-w7`. Sources: `out_w8_uxpolish`,
 `out_w8_pulsesall`, `out_w8_pulsegate`, `out_w8_labwarm` (each branch's own
