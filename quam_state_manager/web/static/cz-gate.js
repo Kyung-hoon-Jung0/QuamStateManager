@@ -45,7 +45,7 @@
 
     /* ---- the request body ------------------------------------------------ */
     function klass() {
-        var v = $('czg-class') ? $('czg-class').value : '';
+        var v = S.klass || '';
         return (S.data.classes || []).filter(function (c) { return c['class'] === v; })[0] || null;
     }
     function extraPairs() {
@@ -69,7 +69,7 @@
             });
         }
         var pair = $('czg-pair').value;
-        var model = $('czg-model') && !$('czg-model-field').hidden ? $('czg-model').value : '';
+        var model = !$('czg-model-field').hidden ? (S.model || '') : '';
         return {
             pairs: pair ? [pair].concat(extraPairs().filter(function (p) { return p !== pair; })) : [],
             gate_name: $('czg-name').value.trim(),
@@ -129,39 +129,35 @@
         line.textContent = (p.control || '?') + ' → ' + (p.target || '?') + ', moving qubit '
             + (mover || 'not recorded') + ' (a property of the pair)';
     }
-    function fillClasses() {
-        var sel = clear($('czg-class'));
-        (S.data.classes || []).forEach(function (c, i) {
-            var o = el('option', null, c.available ? c.label : c.label + ' (not available)');
-            o.value = c['class'];
-            if (!c.available) o.disabled = true;
-            sel.appendChild(o);
-        });
-        var first = (S.data.classes || []).filter(function (c) { return c.available; })[0];
-        if (first) sel.value = first['class'];
-        whyClass();
+    /* Gate class and model gate are kit menus: an unavailable class is a
+       disabled row that shows its reason. */
+    function menuInto(hostId, spec) {
+        var h = clear($(hostId));
+        var U = UIkit();
+        if (h && U && U.menu) h.appendChild(U.menu(spec));
     }
-    function whyClass() {
-        var w = clear($('czg-class-why'));
-        var off = (S.data.classes || []).filter(function (c) { return !c.available; });
-        if (off.length) w.appendChild(el('span', 'czg-why-line', 'Not offered: ' + off.map(function (c) { return c.label; }).join(', ') + '. ' + off[0].why));
+    function fillClasses() {
+        var first = (S.data.classes || []).filter(function (c) { return c.available; })[0];
+        S.klass = first ? first['class'] : '';
+        menuInto('czg-class-host', { id: 'czg-class', kind: 'pick', label: 'Gate class', block: true,
+            value: S.klass, placeholder: 'Pick a gate class',
+            items: (S.data.classes || []).map(function (c) {
+                return { value: c['class'], title: c.label, disabled: !c.available, reason: c.why };
+            }) });
     }
     function fillModel() {
         var c = klass();
         var field = $('czg-model-field');
-        var sel = clear($('czg-model'));
         var copied = c && c.layout === 'copied';
         field.hidden = !copied;
-        if (!copied) return;
+        if (!copied) { S.model = ''; return; }
         var pair = $('czg-pair').value;
         var models = c.models || [];
-        models.forEach(function (m) {
-            var o = el('option', null, m[0] + ' / ' + m[1]);
-            o.value = m[0] + '/' + m[1];
-            sel.appendChild(o);
-        });
         var own = models.filter(function (m) { return m[0] === pair; })[0] || models[0];
-        if (own) sel.value = own[0] + '/' + own[1];
+        S.model = own ? own[0] + '/' + own[1] : '';
+        menuInto('czg-model-host', { id: 'czg-model', kind: 'pick', label: 'Model gate', block: true,
+            value: S.model, placeholder: 'Pick a model gate',
+            items: models.map(function (m) { return { value: m[0] + '/' + m[1], title: m[1], desc: 'on ' + m[0] }; }) });
     }
     function fillFrom() {
         var sel = clear($('czg-from'));
@@ -205,24 +201,23 @@
         if (typeof v === 'object') return JSON.stringify(v);
         return String(v);
     }
+    var SOURCE_TONE = { entered: 'accent', copied: 'ok' };
     function fieldInput(field, name, label, unit, kind, value, src) {
-        var l = el('label', 'ui-field czg-fieldbox');
-        var head = el('span', 'ui-field-label', label);
-        if (src) { head.appendChild(document.createTextNode(' ')); head.appendChild(el('span', src === 'entered' ? 'ui-badge ui-badge--accent' : src.indexOf('copied') === 0 ? 'ui-badge ui-badge--ok' : 'ui-badge ui-badge--neutral', src)); }
-        l.appendChild(head);
-        var i = document.createElement('input');
-        i.className = (kind === 'float' || kind === 'int') ? 'czg-input czg-input--text ui-input ui-input--num' : 'czg-input czg-input--text ui-input';
-        i.type = 'text';
+        var U = UIkit();
+        var num = kind === 'float' || kind === 'int';
+        var id = 'czg-f-' + field + '-' + name;
+        var typed = (S.raw[field] || {})[name];
+        var f = U.field({ label: label, source: src ? { text: src, tone: SOURCE_TONE[src.split(' ')[0]] || 'neutral' } : null,
+                          control: { part: 'input', id: id, num: num, unit: unit || null, block: true,
+                                     value: typed !== undefined ? typed : shown(value) } });
+        var i = f.querySelector('input');
         i.spellcheck = false;
-        if (kind === 'float' || kind === 'int') i.setAttribute('inputmode', 'decimal');
+        if (num) i.setAttribute('inputmode', 'decimal');
         i.setAttribute('data-czg-field', field);
         i.setAttribute('data-czg-name', name);
         i.setAttribute('data-czg-kind', kind || '');
-        var typed = (S.raw[field] || {})[name];
         i.value = typed !== undefined ? typed : shown(value);
-        l.appendChild(i);
-        if (unit) l.appendChild(el('span', 'ui-input-unit ui-note', unit));
-        return l;
+        return f;
     }
     function kindOf(v) {
         if (typeof v === 'boolean') return 'bool';
@@ -263,9 +258,12 @@
         if (c.layout === 'known') {
             (c.slots || []).forEach(function (s) {
                 var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
-                var l = el('label', 'ui-field');
-                l.appendChild(el('span', 'ui-field-label', 'Pulse class'));
-                var sel = el('select', 'czg-input ui-select ui-select--block');
+                var l = el('div', 'ui-field');
+                var lh = el('div', 'ui-field-head');
+                lh.appendChild(el('span', 'ui-field-label', 'Pulse class'));
+                l.appendChild(lh);
+                var sel = el('select', 'ui-select ui-select--block');
+                sel.setAttribute('aria-label', 'Pulse class of ' + (SLOT_WORDS[s.field] || s.field));
                 sel.setAttribute('data-czg-slot', s.field);
                 if (!s.required) { var n = el('option', null, 'No pulse on this line'); n.value = ''; sel.appendChild(n); }
                 (s.pulse_classes || []).forEach(function (pc) {
@@ -376,9 +374,10 @@
         var fp = firstPlan();
         alertBox(null);
         var why = clear($('czg-name-why'));
-        if (fp && !fp.ok) {
-            (fp.refusals || []).forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
-        }
+        var bad = fp && !fp.ok ? (fp.refusals || []) : [];
+        bad.forEach(function (r) { why.appendChild(el('span', 'czg-why-line', r)); });
+        why.hidden = !bad.length;
+        if (bad.length) $('czg-name').setAttribute('aria-invalid', 'true'); else $('czg-name').removeAttribute('aria-invalid');
         var focused = document.activeElement;
         var keep = focused && focused.getAttribute ? [focused.getAttribute('data-czg-field'), focused.getAttribute('data-czg-name')] : null;
         fillSlots();
@@ -711,15 +710,28 @@
         var t = ev.target;
         if (!t || !inDialog(t) || !S) return;
         if (t.id === 'czg-pair') { fillPairLine(); fillFrom(); fillModel(); fillMore(); }
-        else if (t.id === 'czg-class') { S.entered = {}; S.raw = {}; S.cls = {}; fillModel(); }
-        else if (t.id === 'czg-model') { S.entered = {}; S.raw = {}; }
         else if (t.hasAttribute('data-czg-slot')) {
             var f = t.getAttribute('data-czg-slot');
             S.cls[f] = t.value;
             S.entered[f] = {};
             S.raw[f] = {};
         } else if (!t.hasAttribute('data-czg-more') && t.id !== 'czg-from') { return; }
-        if (t.id === 'czg-class' || t.id === 'czg-model' || t.hasAttribute('data-czg-slot')) fillSlots();
+        if (t.hasAttribute('data-czg-slot')) fillSlots();
+        inputsChanged();
+    });
+    document.addEventListener('ui-menu-pick', function (ev) {
+        var t = ev.target;
+        if (!t || !inDialog(t) || !S) return;
+        var v = ev.detail && ev.detail.value;
+        if (t.querySelector('#czg-class')) {
+            if (v === S.klass) return;
+            S.klass = v; S.entered = {}; S.raw = {}; S.cls = {};
+            fillModel();
+        } else if (t.querySelector('#czg-model')) {
+            if (v === S.model) return;
+            S.model = v; S.entered = {}; S.raw = {};
+        } else { return; }
+        fillSlots();
         inputsChanged();
     });
     document.addEventListener('input', function (ev) {
@@ -733,8 +745,8 @@
         S.entered[f] = S.entered[f] || {};
         S.raw[f] = S.raw[f] || {};
         S.raw[f][n] = t.value;
-        if (r.ok) { S.entered[f][n] = r.v; t.removeAttribute('aria-invalid'); t.classList.remove('czg-bad'); }
-        else { delete S.entered[f][n]; t.setAttribute('aria-invalid', 'true'); t.classList.add('czg-bad'); say(r.why); }
+        if (r.ok) { S.entered[f][n] = r.v; t.removeAttribute('aria-invalid'); }
+        else { delete S.entered[f][n]; t.setAttribute('aria-invalid', 'true'); say(r.why); }
         inputsChanged();
     });
     document.addEventListener('cancel', function (ev) {

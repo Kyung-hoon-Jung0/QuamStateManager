@@ -37,7 +37,7 @@ lists fold; conclusions and actions stay open. Buttons are `<button>`, groups ar
 |---|---|---|
 | Tokens | `web/static/ui-kit.css`, the one `:root` block at the top | aliases of existing variables, or `color-mix()` of them; no theme blocks, nothing existing redeclared |
 | Part CSS | `web/static/ui-kit.css`, the rest | selectors that start with `.ui-` only (stage 0) |
-| Server templates | `web/templates/_ui.html` | Jinja macros `ui_head`, `ui_notice`, `ui_callout`, `ui_verdict`, `ui_item`, `ui_table`, `ui_actions`, `ui_badge`, `ui_chip`, `ui_count`, `ui_note`, `ui_check`, `ui_segmented`, `ui_disclosure`, `ui_dialog`, and the dispatcher `ui_render(spec)` |
+| Server templates | `web/templates/_ui.html` | Jinja macros `ui_head`, `ui_notice`, `ui_callout`, `ui_verdict`, `ui_item`, `ui_table`, `ui_actions`, `ui_badge`, `ui_chip`, `ui_count`, `ui_note`, `ui_check`, `ui_segmented`, `ui_disclosure`, `ui_dialog`, `ui_select`, `ui_input`, `ui_field`, `ui_menu`, `ui_toolbar` (§4b), and the dispatcher `ui_render(spec)` |
 | Script templates | `web/static/ui.js` | `window.UI.<part>(...)` and `UI.render(spec)` -- the same tag / class / role / text tree as the macro, built with `textContent` |
 
 `ui-kit.css` is linked right after `style.css` in `base.html`, `calc_window.html` and
@@ -98,6 +98,59 @@ title.
   `ui-table` (+ `ui-table--kv`), `ui-disclosure`, `ui-segmented` -- these three are full parts in
   later stages; stage 0 ships only what the worked examples use.
 
+## 4b. Choosing parts (select, input, field, menu, toolbar)
+
+One row height for every control: `--ui-ctl-h` = the small button's `--ui-btn-h-sm` (26px), so a
+`ui-select`, a `ui-input`, a `ui-segmented` and a `button.btn-sm` line up in one toolbar row. Text
+`--ui-fs-sm`, radius `--ui-r-btn`, border `--ui-ctl-border` (`--ui-border-strong`), background
+`--ui-ctl-bg` (the page surface); hover darkens the border, focus = accent border + 1px accent
+outline (`--ui-accent`, no offset, so it never clips), disabled = surface-2 + `--ui-text-3`,
+`aria-invalid="true"` = danger border. Every colour is a token; the select chevron is two
+token gradients (`--ui-chevron`), so it follows light, dark and QM.
+
+| Part | Macro / `UI.` twin | Markup |
+|---|---|---|
+| select | `ui_select(options, value, label, id, name, block, disabled, invalid)` / `UI.select(spec)` | the class sits **on the native `<select>`**: `<select class="ui-select">`. No wrapper: the chevron is a background, so `label > select`, form serialisation and every existing select handler keep working. As wide as its longest option + the chevron lane (min `--ui-ctl-min-w`, `max-width: 100%`); `ui-select--block` fills a form column. |
+| input | `ui_input(value, type, label, id, name, num, unit, placeholder, block, disabled, invalid)` / `UI.input(spec)` | `<input class="ui-input">` (text / search / number); `ui-input--num` right-aligns with tabular numbers and hides the spinner; `ui-input--block` fills. A unit: `<span class="ui-input-unit"><input class="ui-input ui-input--num"><span class="ui-input-unit-text">ns</span></span>` (`ui-input-unit--block` fills). |
+| field | `ui_field(label, control, hint, error, source, inline, id)` / `UI.field(spec)` | `ui-field` > `ui-field-head` (`ui-field-label` + an optional `ui-badge` source tag such as "copied" / "default") > the control > `ui-field-hint` > `ui-field-error` (`role=alert`). `ui-field--inline` puts the label left in a `--ui-field-label-w` column (property forms). `ui-field-stack` stacks fields; `ui-field-grid` still lays short fields side by side. The older `<label class="ui-field">` markup keeps working. |
+| menu | `ui_menu(id, items, label, kind, value, trigger, placeholder, block, end, up)` / `UI.menu(spec)` | `ui-menu` > `button.ui-menu-trigger` + `ui-menu-list` of `ui-option` rows (`ui-option-title`, optional `ui-option-desc`; a disabled row shows its `reason` there). `kind: "pick"` = `aria-haspopup=listbox`, rows `role=option` + `aria-selected`, a check mark (`ui-option-check`), the trigger looks like a select and shows the picked title. `kind: "action"` = `aria-haspopup=menu`, rows `role=menuitem`, the trigger is a `btn-sm` button. `{sep: true}` = `ui-menu-sep`. |
+| toolbar | `ui_toolbar(items, label)` / `UI.toolbar(items, label)` | `<div class="ui-toolbar" role="toolbar">`: inline, small gaps, wraps, nothing stretches; items are specs plus `{part: "button", ...}`, `{part: "toolbar-sep"}` (`ui-toolbar-sep`), `{part: "toolbar-spacer"}` (`ui-toolbar-spacer`, pushes the rest right). |
+
+Menu behaviour (`static/ui.js`, one delegated set of listeners for every `.ui-menu`, server- or
+script-rendered; no inline handlers, no `eval`): click / Enter / Space / ArrowDown open on the
+chosen row (else the first enabled one), ArrowUp opens on the last; arrows, Home and End move over
+the enabled rows (disabled rows are skipped, their reason stays visible); a letter jumps to the
+next row starting with it; Enter / Space / click pick; Escape closes and returns focus to the
+trigger; Tab or an outside click closes; one menu open at a time; the list opens upward when the
+window has no room below (`ui-menu-list--up`, also forced with `up`), aligns right with `end`
+(`ui-menu-list--end`) and scrolls inside past `--ui-menu-max-h`. A pick fires one bubbling
+`ui-menu-pick` event on the `.ui-menu` root, `detail = {value, title, kind}`; a picking menu also
+updates `aria-selected`, the trigger text and `data-value` on the root. `UI.menuOpen(root)` /
+`UI.menuClose(root)` drive it from script. Pinned by `tests/ui_menu_selfcheck.cjs`.
+
+**The stretch fix.** Pico styles every `[role=group]` as a full-width bar: `width: 100%`, a 1rem
+bottom margin, children `flex: 1 1 auto`, inner corners squared, neighbours pulled -1px, buttons
+padded 2rem. The kit's `ui-segmented` and `ui-actions` carry `role=group`, so the kit now resets
+those for both (doubled class selectors out-rank Pico's 0,2,1 child rules): a group is as wide as
+its content, its buttons keep their own corners and gaps, and a segmented control is one control
+row high. `ui-toolbar` uses `role=toolbar`, which Pico does not touch. Places this changes:
+`_ui.html` `ui_actions` (so every `ui_head` with actions, `ui_notice` with actions, the `ui_item`
+foot and the `ui_dialog` foot) and `ui_segmented`; their `ui.js` twins `UI.actions` /
+`UI.segmented`; `_env_upgrade_card.html` (the environment-check action row). Every other
+`ui-actions` / `ui-segmented` in templates and scripts has no `role=group` and only gains the
+segmented row height.
+
+**Which control when**
+
+| The choice | Use |
+|---|---|
+| 2 to 4 visible choices | `ui-segmented` |
+| many short choices | `ui-select` |
+| choices that need a description, or can be unavailable for a reason | `ui-menu` (pick) |
+| on / off | `ui-check` |
+| a command | a button |
+| several commands | `ui-menu` (action) |
+
 ## 5. Writing rules (UI text, English)
 
 1. Conclusion first, reason next, action last. A sentence <= ~90 characters; two thoughts = two sentences.
@@ -139,6 +192,8 @@ down (the test warns with the new maximum). Re-measure with
 |---|---|
 | 1 | colour literals (`#hex`, `rgb(`, `hsl(`) per file; style.css counted outside its `:root` / theme variable blocks |
 | 2 | `<button>` with no class, or only classes without a CSS rule |
+| 2b | template `<select>` and text / number / search `<input>` with no class that has a CSS rule (Pico's full-width defaults); per file, only down, a new template adds none. 157 over 45 files on 2026-11-14 (71 `<select>` tags in all) |
+| 6b | `UI.menu` behaviour (`tests/ui_menu_selfcheck.cjs`, jsdom) |
 | 3 | inline `style=` colour / background / font-size (templates), `.style.color/background/fontSize =` (JS) |
 | 4 | overlay shells (`<dialog>`, `role=dialog`) that do not wear `ui-dialog` |
 | 5 | `window.confirm` / `alert` |

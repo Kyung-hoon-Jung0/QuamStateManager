@@ -98,6 +98,31 @@
     --ui-lh-btn: 1.2;
     --ui-btn-gap: .3em;
     --ui-focus-w: 2px;
+    --ui-focus-inset: -2px;          /* a ring drawn inside a clipped box (segmented) */
+    /* choosing controls (select, input, menu, toolbar): one row height with
+       the small button, so a select, an input, a segmented control and a
+       button.btn-sm line up in one toolbar row */
+    --ui-ctl-h: var(--ui-btn-h-sm);
+    --ui-ctl-pad-x: .5rem;
+    --ui-ctl-chevron-room: 1.6rem;   /* right padding of a select: the chevron's lane */
+    --ui-ctl-min-w: 4.5rem;
+    --ui-ctl-bg: var(--ui-surface-0);
+    --ui-ctl-border: var(--ui-border-strong);
+    --ui-ctl-border-hover: var(--ui-text-3);
+    --ui-ctl-bg-disabled: var(--ui-surface-2);
+    /* the chevron: two token-coloured gradients meeting in a small V */
+    --ui-chevron: linear-gradient(45deg, transparent 50%, var(--ui-text-2) 50%), linear-gradient(135deg, var(--ui-text-2) 50%, transparent 50%);
+    --ui-chevron-disabled: linear-gradient(45deg, transparent 50%, var(--ui-text-3) 50%), linear-gradient(135deg, var(--ui-text-3) 50%, transparent 50%);
+    --ui-chevron-pos: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
+    --ui-chevron-size: 4px 4px;
+    --ui-input-w: 12rem;
+    --ui-input-num-w: 6rem;
+    --ui-field-label-w: 8.5rem;     /* the label column of a dense inline field */
+    --ui-menu-max-w: 24rem;
+    --ui-menu-max-h: 18rem;
+    --ui-menu-check: 1rem;          /* the check-mark column of a picking menu */
+    --ui-menu-z: 60;
+    --ui-kit-col-narrow: 360px;     /* the sample page's narrow form column */
     --ui-topbar-h: var(--topbar-height, 48px);   /* app.js publishes the measured height */
     --ui-ring: 0 0 0 2px var(--ui-accent);
     --ui-shadow: 0 8px 28px color-mix(in srgb, black 35%, transparent);
@@ -481,6 +506,9 @@
 .ui-kit-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: var(--ui-gap-4); margin: 0 0 var(--ui-gap-3); }
 .ui-kit-side { min-width: 0; }
 .ui-kit-label { margin: 0 0 var(--ui-gap-1); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+.ui-kit-forms { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--ui-gap-4); margin: 0 0 var(--ui-gap-3); }
+.ui-kit-col-narrow { box-sizing: border-box; width: var(--ui-kit-col-narrow); max-width: 100%; padding: var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); background: var(--ui-surface-1); }
+.ui-kit-col-wide { flex: 1 1 30rem; min-width: 0; box-sizing: border-box; padding: var(--ui-gap-3); border: var(--ui-bw) solid var(--ui-border); border-radius: var(--ui-r-md); background: var(--ui-surface-1); }
 
 /* Drag to reorder the sidebar menu (sidebar-order.js) ------------------- */
 .ui-reorder-pending #sidebar { visibility: hidden; }
@@ -865,6 +893,118 @@
 .ui-pane-sliver h1, .ui-pane-sliver h1 *, .ui-pane-sliver h2, .ui-pane-sliver h2 * { visibility: visible; }
 .ui-ds-tags { margin: 0; gap: var(--ui-gap-1); }
 .ui-note-open { flex-basis: 100%; order: 9; }
+
+/* K18 choosing: select, input, field, menu, toolbar (docs/308 §4b) -------
+   Doubled classes (.ui-select.ui-select) out-rank Pico's form defaults
+   (input:not(...) and select:not([multiple],[size]) are 0,1,1) without
+   targeting an element or an attribute. */
+.ui-select.ui-select, .ui-input.ui-input {
+    box-sizing: border-box; height: var(--ui-ctl-h); min-height: var(--ui-ctl-h); margin: 0;
+    padding: 0 var(--ui-ctl-pad-x); max-width: 100%;
+    border: var(--ui-bw) solid var(--ui-ctl-border); border-radius: var(--ui-r-btn);
+    background-color: var(--ui-ctl-bg); color: var(--ui-text);
+    font-family: inherit; font-size: var(--ui-fs-sm); font-weight: var(--ui-fw-normal); line-height: var(--ui-lh-tight);
+    box-shadow: none; outline: 0; vertical-align: middle;
+}
+/* A select is as wide as its longest option plus the chevron lane. */
+.ui-select.ui-select {
+    width: auto; min-width: var(--ui-ctl-min-w); padding-right: var(--ui-ctl-chevron-room);
+    -webkit-appearance: none; appearance: none; cursor: pointer; text-align: left; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+    background-image: var(--ui-chevron); background-position: var(--ui-chevron-pos);
+    background-size: var(--ui-chevron-size); background-repeat: no-repeat;
+}
+.ui-input.ui-input { width: var(--ui-input-w); }
+.ui-input--num.ui-input--num { width: var(--ui-input-num-w); text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+.ui-input--num::-webkit-inner-spin-button, .ui-input--num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.ui-select--block.ui-select--block, .ui-input--block.ui-input--block { display: block; width: 100%; }
+.ui-input.ui-input::placeholder { color: var(--ui-text-3); }
+.ui-select.ui-select:hover, .ui-input.ui-input:hover { border-color: var(--ui-ctl-border-hover); }
+.ui-select.ui-select:focus-visible, .ui-input.ui-input:focus-visible, .ui-input.ui-input:focus {
+    border-color: var(--ui-accent); outline: var(--ui-bw) solid var(--ui-accent); outline-offset: 0; box-shadow: none;
+}
+.ui-select.ui-select:disabled, .ui-input.ui-input:disabled {
+    opacity: 1; pointer-events: none; cursor: not-allowed;
+    border-color: var(--ui-border); background-color: var(--ui-ctl-bg-disabled); color: var(--ui-text-3);
+}
+.ui-select.ui-select:disabled { background-image: var(--ui-chevron-disabled); }
+/* A unit is attached to its input: one box, the unit in a quiet end cap. */
+.ui-input-unit { display: inline-flex; align-items: stretch; max-width: 100%; vertical-align: middle; }
+.ui-input-unit > .ui-input.ui-input { border-top-right-radius: 0; border-bottom-right-radius: 0; position: relative; }
+.ui-input-unit > .ui-input.ui-input:focus { z-index: 1; }
+.ui-input-unit-text {
+    display: inline-flex; align-items: center; box-sizing: border-box; height: var(--ui-ctl-h); padding: 0 var(--ui-gap-2);
+    border: var(--ui-bw) solid var(--ui-ctl-border); border-left: 0;
+    border-radius: 0 var(--ui-r-btn) var(--ui-r-btn) 0;
+    background: var(--ui-surface-2); color: var(--ui-text-2);
+    font-family: var(--ui-font-mono); font-size: var(--ui-fs-xs); line-height: var(--ui-lh-tight); white-space: nowrap; user-select: none;
+}
+.ui-input-unit--block { display: flex; width: 100%; }
+.ui-input-unit--block > .ui-input.ui-input { flex: 1 1 auto; width: auto; min-width: 0; }
+
+/* Field: label above (small, quiet), control, hint, error; a source tag
+   sits at the label's right. --inline: label left, control right. */
+.ui-field-head { display: flex; align-items: center; gap: var(--ui-gap-2); min-width: 0; }
+.ui-field-head > .ui-field-label { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ui-field-head > .ui-badge { align-self: center; }
+.ui-field-hint, .ui-field-error { margin: 0; font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
+.ui-field-hint { color: var(--ui-text-2); }
+.ui-field-error { color: var(--ui-danger-text); }
+.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
+.ui-field--inline > .ui-field-head { grid-column: 1; }
+.ui-field--inline > .ui-field-hint, .ui-field--inline > .ui-field-error { grid-column: 2; }
+.ui-field-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
+.ui-field-stack--dense { gap: var(--ui-gap-2); }
+
+/* Menu: a trigger and a pop-up list of options (pick one, or run an action). */
+.ui-menu { position: relative; display: inline-block; max-width: 100%; vertical-align: middle; }
+.ui-menu--block { display: block; }
+.ui-menu-trigger.ui-menu-trigger { display: inline-flex; align-items: center; }
+.ui-menu--block > .ui-menu-trigger.ui-menu-trigger { display: flex; width: 100%; }
+.ui-menu-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-menu-placeholder { color: var(--ui-text-3); }
+.ui-menu-list {
+    position: absolute; z-index: var(--ui-menu-z); top: calc(100% + var(--ui-gap-1)); left: 0;
+    box-sizing: border-box; min-width: 100%; width: max-content; max-width: var(--ui-menu-max-w); max-height: var(--ui-menu-max-h);
+    overflow-y: auto; margin: 0; padding: var(--ui-gap-1);
+    border: var(--ui-bw) solid var(--ui-border-strong); border-radius: var(--ui-r-md);
+    background: var(--ui-surface-1); box-shadow: var(--ui-shadow);
+    font-size: var(--ui-fs-sm); line-height: var(--ui-lh-dense); text-align: left;
+}
+.ui-menu-list--up { top: auto; bottom: calc(100% + var(--ui-gap-1)); }
+.ui-menu-list--end { left: auto; right: 0; }
+.ui-menu-list > .ui-option {
+    display: grid; grid-template-columns: minmax(0, 1fr); column-gap: var(--ui-gap-2);
+    padding: var(--ui-gap-1) var(--ui-gap-2); border-radius: var(--ui-r-sm); color: var(--ui-text); outline: 0;
+}
+.ui-menu-list--pick > .ui-option { grid-template-columns: var(--ui-menu-check) minmax(0, 1fr); }
+.ui-menu-list > .ui-option:hover, .ui-menu-list > .ui-option:focus { background: var(--ui-accent-bg); outline: 0; }
+.ui-option-check { grid-row: 1 / span 2; align-self: start; position: relative; width: var(--ui-menu-check); height: var(--ui-menu-check); }
+.ui-option-check::after {
+    content: ""; position: absolute; left: 30%; top: 12%; width: 28%; height: 55%;
+    border: solid var(--ui-accent); border-width: 0 var(--ui-focus-w) var(--ui-focus-w) 0; transform: rotate(45deg); opacity: 0;
+}
+.ui-option-title { grid-column: -2; font-weight: var(--ui-fw-normal); overflow-wrap: anywhere; }
+.ui-option-desc { grid-column: -2; color: var(--ui-text-2); font-size: var(--ui-fs-xs); overflow-wrap: anywhere; }
+.ui-menu-sep { height: 0; margin: var(--ui-gap-1) 0; border-top: var(--ui-bw) solid var(--ui-border); }
+
+/* Toolbar: one compact row of controls; wraps; nothing stretches. */
+.ui-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); width: auto; margin: 0; padding: 0; }
+.ui-toolbar.ui-toolbar > * { flex: 0 0 auto; margin: 0; width: auto; }
+.ui-toolbar.ui-toolbar > .ui-select--block, .ui-toolbar.ui-toolbar > .ui-menu--block { width: auto; }
+.ui-toolbar-sep { align-self: stretch; width: 0; border-left: var(--ui-bw) solid var(--ui-border); }
+.ui-toolbar.ui-toolbar > .ui-toolbar-spacer { flex: 1 1 auto; }
+
+/* The stretch fix: Pico styles every [role=group] as a full-width bar
+   (width 100%, a bottom margin, children flex-grown, inner corners squared,
+   neighbours overlapped by -1px, buttons padded 2rem). A kit row is as
+   wide as its content. Doubled classes out-rank Pico's 0,2,1 child rules. */
+.ui-segmented.ui-segmented, .ui-actions.ui-actions { width: auto; margin-bottom: 0; box-shadow: none; }
+.ui-segmented.ui-segmented { box-sizing: border-box; height: var(--ui-ctl-h); vertical-align: middle; }
+.ui-segmented.ui-segmented > .ui-segmented-opt { flex: 0 0 auto; display: inline-flex; align-items: center; margin: 0; padding-top: 0; padding-bottom: 0; line-height: var(--ui-lh-tight); }
+.ui-actions.ui-actions > button { flex: 0 0 auto; margin: 0; border-radius: var(--ui-r-btn); }
+.ui-actions.ui-actions > .ui-btn-icon { border-radius: var(--ui-r-sm); }
+.ui-segmented.ui-segmented > .ui-segmented-opt:focus-visible { outline-offset: var(--ui-focus-inset); }
 
 /* ===== stage 1: existing button classes and focus (docs/308, D-27..D-30, D-52) =====
  * The only rules in this file that target classes outside .ui-*. Allowed
@@ -1306,10 +1446,7 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-evidence { flex: 1 1 var(--ui-czg-evidence-min); min-width: 0; }
 .czg-form, .czg-evidence { max-height: calc(var(--ui-dialog-xl-max-h) - 12rem); overflow: auto; }
 .czg-form, .czg-evidence, .czg-slots { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
-.czg-input { width: auto; max-width: 100%; margin: 0; padding: 0 var(--ui-gap-2); height: var(--ui-btn-h); font-size: var(--ui-fs-sm); }
-.czg-input--text { width: 100%; }
 .czg-foot-acts { display: flex; gap: var(--ui-gap-2); margin-left: auto; }
-.czg-bad { border-color: var(--ui-danger-border); }
 .czg-readonly, .czg-why { margin-top: calc(-1 * var(--ui-gap-1)); }
 .czg-why:empty, .czg-readonly:empty { display: none; }
 .czg-why-line { display: block; color: var(--ui-text-2); }
@@ -1325,3 +1462,14 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-diff { background: var(--ui-warn-bg); color: var(--ui-warn-text); }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
 .czg-slot .ui-field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* K18 choosing: ARIA states drive the look, so the state a screen reader
+   hears is the state a person sees (docs/308 §4b). */
+.ui-select.ui-select[aria-invalid="true"], .ui-input.ui-input[aria-invalid="true"] { border-color: var(--ui-danger-text); background-image: none; }
+.ui-select.ui-select[aria-invalid="true"] { background-image: var(--ui-chevron); }
+.ui-select.ui-select[aria-invalid="true"]:focus-visible, .ui-input.ui-input[aria-invalid="true"]:focus { outline-color: var(--ui-danger-text); }
+.ui-menu-trigger[aria-expanded="true"] { border-color: var(--ui-accent); }
+.ui-menu-list > .ui-option[aria-selected="true"] { box-shadow: none; font-weight: var(--ui-fw-normal); }
+.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-check::after { opacity: 1; }
+.ui-menu-list > .ui-option[aria-selected="true"] > .ui-option-title { font-weight: var(--ui-fw); }
+.ui-menu-list > .ui-option[aria-disabled="true"] { cursor: default; background: transparent; }
+.ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title { color: var(--ui-text-3); }

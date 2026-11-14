@@ -130,7 +130,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok(/^Qubit flux pulse, plays on q1\.z/.test($('.czg-slot-title').textContent) && $('.czg-slot-title .ui-chip').textContent === 'flux_pulse_qubit', 'slot title: words and this pair\'s channel, the field name small');
     ok(/q1 → q2, moving qubit q1 \(a property of the pair\)/.test($('#czg-pair-line').textContent), 'mover shown read-only');
     ok(!$('#czg-pair-line').matches('input, select'), 'the mover is not an input');
-    { const off = [...$('#czg-class').options].filter((o) => o.disabled); ok(off.length > 0 && /SM does not know/.test($('#czg-class-why').textContent) && /not available/.test(off[0].textContent), 'unavailable class disabled with the reason visible'); }
+    { const off = [...doc.querySelectorAll('#czg-class-list .ui-option[aria-disabled="true"]')]; ok(off.length > 0 && /SM does not know/.test(off[0].querySelector('.ui-option-desc').textContent) && $('#czg-class').classList.contains('ui-menu-trigger'), 'gate class is a kit menu; an unavailable class is a disabled row with its reason'); }
     ok(count('plan') === 1 && sent[0].body.pairs.join() === 'q1-2', 'the plan is asked on open');
     ok(prim().textContent === 'Check' && !prim().disabled, 'Check before a check');
     ok($('#czg-slots .ui-badge') && /default/.test($('#czg-slots').textContent), 'fields marked default');
@@ -149,7 +149,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     type(amp, '0.2');
     await settle();
     ok(sent[sent.length - 1].body.pulses.flux_pulse_qubit.fields.amplitude === 0.2, 'an entered value is sent as a number');
-    ok(/entered/.test($('input[data-czg-name="amplitude"]').closest('label').textContent), 'the entered field is marked entered');
+    ok($('input[data-czg-name="amplitude"]').closest('.ui-field').querySelector('.ui-badge').textContent === 'entered', 'the entered field is marked entered');
 
     // busy guard
     let release;

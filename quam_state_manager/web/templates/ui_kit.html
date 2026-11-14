@@ -160,6 +160,29 @@
     <svg class="pt-trace" viewBox="0 0 100 20" role="img" aria-label="Real and imaginary traces"><path class="pt-re" d="M0 10 L100 10"/><path class="pt-im" d="M0 15 L100 5"/></svg>
   </div></div>
 </section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Choosing: a small form, narrow and wide</h2>
+{%- macro _uk_form(k, inline=False) -%}
+<form class="ui-field-stack{% if inline %} ui-field-stack--dense{% endif %}" aria-label="New gate ({{ k }})">
+{{ ui.ui_field('Pair', {'part': 'menu', 'id': 'uk-' ~ k ~ '-pair', 'label': 'Pair', 'items': pair_items, 'value': 'q1-q2', 'block': not inline}, source={'text': 'copied'}, inline=inline, id='uk-' ~ k ~ '-pair') }}
+{{ ui.ui_field('Gate name', {'part': 'input', 'id': 'uk-' ~ k ~ '-name', 'value': 'cz unipolar', 'invalid': True, 'block': not inline}, error='A name has no spaces; use cz_unipolar.', inline=inline, id='uk-' ~ k ~ '-name') }}
+<div class="ui-field-grid">
+{{ ui.ui_field('Length', {'part': 'input', 'id': 'uk-' ~ k ~ '-len', 'type': 'number', 'num': True, 'value': '40', 'unit': 'ns', 'block': True}, hint='Multiple of 4 ns.', id='uk-' ~ k ~ '-len') }}
+{{ ui.ui_field('Amplitude', {'part': 'input', 'id': 'uk-' ~ k ~ '-amp', 'num': True, 'value': '0.125', 'unit': 'V'}, source={'text': 'default'}, id='uk-' ~ k ~ '-amp') }}
+</div>
+{{ ui.ui_field('Pulse class', {'part': 'select', 'id': 'uk-' ~ k ~ '-cls', 'options': pulse_classes, 'value': 'CZGate', 'block': not inline}, inline=inline, id='uk-' ~ k ~ '-cls') }}
+{{ ui.ui_toolbar([{'part': 'segmented', 'label': 'Shape', 'options': [{'label': 'Unipolar', 'selected': True}, {'label': 'Net zero'}]}, {'part': 'check', 'text': 'Echo'}, {'part': 'check', 'text': 'Add to new pairs', 'checked': True}], 'Gate options') }}
+{{ ui.ui_actions([{'label': 'Cancel', 'cls': 'btn-sm secondary'}, {'label': 'Create gate', 'cls': 'btn-sm'}], 'Form actions') }}
+</form>
+{%- endmacro %}
+<div class="ui-kit-forms">
+  <div class="ui-kit-col-narrow"><p class="ui-kit-label">360 px column</p>{{ _uk_form('narrow') }}</div>
+  <div class="ui-kit-col-wide"><p class="ui-kit-label">Wide column, inline fields</p>{{ _uk_form('wide', True) }}</div>
+</div>
+<div class="ui-kit-forms">
+  <div class="ui-kit-col-wide"><p class="ui-kit-label">Menu aligned to its trigger's right end, always opening upward (a menu in a footer bar); any menu also opens upward by itself when the window has no room below</p>
+  {{ ui.ui_menu('uk-menu-end', pair_items, 'Pair', value='q2-q3', end=True, up=True) }}</div>
+</div>
+</section>
 <script id="ui-kit-specs" type="application/json">{{ specs | map(attribute=2) | list | tojson }}</script>
 </div>
 {% endblock %}

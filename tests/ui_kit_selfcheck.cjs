@@ -29,11 +29,13 @@ const doc = window.document;
 ok(window.UI && typeof window.UI.render === "function", "ui.js exported window.UI");
 const filled = window.UI.mountSamples(doc);
 
-const ATTRS = ["role", "aria-label", "aria-hidden", "aria-pressed", "type", "scope", "title", "disabled", "open", "checked", "data-ui-theme"];
+const ATTRS = ["role", "aria-label", "aria-hidden", "aria-pressed", "type", "scope", "title", "disabled", "open", "checked", "data-ui-theme",
+               "aria-expanded", "aria-selected", "aria-disabled", "aria-haspopup", "aria-invalid", "tabindex", "hidden", "selected",
+               "value", "placeholder", "name", "data-ui-menu", "data-value"];
 function tree(n) {
     if (n.nodeType === 3) return null;
     const out = { tag: n.tagName.toLowerCase(), cls: [...n.classList].sort().join(" "), attrs: {}, kids: [] };
-    ATTRS.forEach((a) => { if (n.hasAttribute(a)) out.attrs[a] = a === "disabled" || a === "open" || a === "checked" ? true : n.getAttribute(a); });
+    ATTRS.forEach((a) => { if (n.hasAttribute(a)) out.attrs[a] = a === "disabled" || a === "open" || a === "checked" || a === "hidden" || a === "selected" ? true : n.getAttribute(a); });
     let text = "";
     const flush = () => { const t = text.replace(/\s+/g, " ").trim(); if (t) out.kids.push("#" + t); text = ""; };
     n.childNodes.forEach((c) => {
@@ -67,7 +69,8 @@ specs.forEach((s, i) => {
     ok(d === null, d || "");
     parts.add(s.part);
 });
-["head", "actions", "notice", "verdict", "item", "dialog", "table", "callout", "segmented", "disclosure", "check"].forEach((p) => {
+["head", "actions", "notice", "verdict", "item", "dialog", "table", "callout", "segmented", "disclosure", "check",
+ "select", "input", "field", "menu", "toolbar"].forEach((p) => {
     ok(parts.has(p), "the page samples the '" + p + "' part");
 });
 
