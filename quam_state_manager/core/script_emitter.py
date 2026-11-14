@@ -145,7 +145,11 @@ def _constraint(ch) -> str:
     """The qualang_tools spec call for a wizard channel dict, or ``None``.
 
     Mirrors run_build._make_constraint; only the fields the wizard actually
-    pinned are written (unspecified kwargs default to None = free)."""
+    pinned are written (unspecified kwargs default to None = free). A channel
+    that names a kind but pins no field renders as ``fn()``, never ``None``,
+    exactly as run_build passes it: the allocator treats a constrained line
+    differently from a free one (it changes the ports), and add_twpa_lines
+    reads ``isolation_constraints=None`` as "no isolation line"."""
     if not ch:
         return "None"
     kind = ch.get("kind")
@@ -171,7 +175,7 @@ def _constraint(ch) -> str:
     else:
         return "None"
     args = ", ".join(f"{k}={v!r}" for k, v in fields if v is not None)
-    return f"{fn}({args})" if args else "None"
+    return f"{fn}({args})"
 
 
 # Allocation line-type keys (WiringLineType.value) for the reference comments.

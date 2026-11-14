@@ -202,12 +202,31 @@ def test_no_twpa_and_checkbox_off(tmp_path):
     assert _cores(off) and set(_cores(off).values()) == {None}
 
 
-def test_emitted_script_without_the_key_builds_layout_a(tmp_path):
-    python = _env()
-    # pump only: the emitted wiring script does not yet carry a TWPA isolation
-    # line, so a spec with one would differ for a reason unrelated to cores
+def _two_twpa_spec():
+    # three qubits keep the eight MW outputs of the one MW-FEM enough
     spec = _five_qubit_spec(isolation=False)
+    spec["qubits"] = ["q1", "q2", "q3"]
+    spec["lines"] = [ln for ln in spec["lines"] if ln["element"] not in ("q4", "q5")]
+    for part in spec["populate"].values():
+        for q in ("q4", "q5"):
+            part.pop(q, None)
+    spec["twpas"] = [{"id": "twpa1", "qubits": ["q1", "q2"]},
+                     {"id": "twpa2", "qubits": ["q3"]}]
+    spec["lines"].append({"element": "twpa2", "line": "twpa_pump", "channel": None})
+    spec["lines"].append({"element": "twpa2", "line": "twpa_isolation",
+                          "channel": {"kind": "mw_fem"}})
+    return spec
+
+
+@pytest.mark.parametrize("case", ["pump_and_isolation", "pump_only", "two_twpas"])
+def test_emitted_script_without_the_key_builds_layout_a(tmp_path, case):
+    python = _env()
+    spec = {"pump_and_isolation": lambda: _five_qubit_spec(),
+            "pump_only": lambda: _five_qubit_spec(isolation=False),
+            "two_twpas": _two_twpa_spec}[case]()
     outcome, a = _build(python, spec, tmp_path / "a")
+    if not a.get("twpas"):
+        pytest.skip("this env's quam_builder builds no TWPAs")
     result = outcome.get("result") or {}
     bundle = script_emitter.emit_bundle(
         copy.deepcopy(spec), result.get("allocation") or {}, result.get("versions") or {},
@@ -222,7 +241,17 @@ def test_emitted_script_without_the_key_builds_layout_a(tmp_path):
         assert r.returncode == 0, f"{script}: {r.stdout}\n{r.stderr}"
         assert "NameError" not in r.stderr
     b = json.loads((out_b / "state.json").read_text(encoding="utf-8"))
-    _expect_layout_a(b)
+    wa = json.loads((tmp_path / "a" / "wiring.json").read_text(encoding="utf-8"))
+    wb = json.loads((out_b / "wiring.json").read_text(encoding="utf-8"))
+    # every TWPA line the wizard wired (pump and isolation) is wired the same way
+    assert wa["wiring"].get("twpas") == wb["wiring"].get("twpas")
+    for tid, tw in a["twpas"].items():
+        assert set(tw) == set(b["twpas"][tid]), tid
+    iso = {tid for tid, tw in b["twpas"].items() if tw.get("isolation")}
+    assert iso == {"pump_and_isolation": {"twpa1"}, "pump_only": set(),
+                   "two_twpas": {"twpa2"}}[case]
+    if case != "two_twpas":
+        _expect_layout_a(b)
     assert _cores(a) == _cores(b)
 
 
