@@ -597,12 +597,19 @@ def test_template_names_come_from_the_template_text():
 def test_reserved_names_cover_the_installed_pulse_base():
     py = str(LAB_PY) if LAB_PY.is_file() else __import__("sys").executable
     out = subprocess.run(
-        [py, "-c", "from quam.components.pulses import Pulse\n"
-                   "print('NAMES=' + ','.join(n for n in dir(Pulse) if not n.startswith('_')))"],
+        [py, "-c", "import importlib.util, sys\n"
+                   f"spec = importlib.util.spec_from_file_location('tmpl', {str(Path(T.__file__))!r})\n"
+                   "m = importlib.util.module_from_spec(spec)\n"
+                   "sys.modules['tmpl'] = m\n"
+                   "spec.loader.exec_module(m)\n"
+                   "from quam.components.pulses import Pulse\n"
+                   "print('NAMES=' + ','.join(sorted(m.public_attribute_names(Pulse))))"],
         capture_output=True, text=True, timeout=300)
     line = [x for x in out.stdout.splitlines() if x.startswith("NAMES=")]
     assert line, out.stderr[-2000:]
-    base = set(line[0][6:].split(",")) - {"length"}
+    base = set(line[0][6:].split(","))
+    assert "length" not in base
+    assert base <= T.PULSE_BASE_NAMES, sorted(base - T.PULSE_BASE_NAMES)
     assert base <= T.reserved_field_names(), sorted(base - T.reserved_field_names())
 
 
@@ -665,12 +672,24 @@ def test_scope_with_a_trailing_newline_is_hashed(tmp_path):
     assert D.load_draft(tmp_path, "chip", "SquaredAmp") is None
 
 
-@pytest.mark.parametrize("scope", ["nul", "NUL", "con.txt", "com1", "lpt9.x", "chip."])
-def test_windows_hostile_scope_refused(tmp_path, scope):
-    with pytest.raises(D.DraftError, match="drafts cannot be kept"):
-        D.save_draft(tmp_path, scope, "SquaredAmp", "x")
-    with pytest.raises(D.DraftError):
-        D.list_drafts(tmp_path, scope)
+@pytest.mark.parametrize("scope", ["nul", "NUL", "con.txt", "com1", "lpt9.x", "chip.", "a.",
+                                   "CON", "nul.txt", "COM1"])
+def test_windows_hostile_scope_is_hashed(tmp_path, scope):
+    key = D._scope_key(scope)
+    assert key.startswith("s_") and key != scope
+    D.save_draft(tmp_path, scope, "SquaredAmp", "x")
+    assert D.load_draft(tmp_path, scope, "SquaredAmp") == b"x"
+    assert [d["class_name"] for d in D.list_drafts(tmp_path, scope)] == ["SquaredAmp"]
+    plain = scope.rstrip(".")
+    if plain and plain != scope:
+        # "chip." never shares the folder of "chip"
+        assert D.load_draft(tmp_path, plain, "SquaredAmp") is None
+
+
+def test_device_name_scopes_differing_by_case_keep_distinct_folders():
+    assert D._scope_key("nul") != D._scope_key("NUL")
+    assert D._scope_key(" a").startswith("s_")
+    assert D._scope_key("chip_a") == "chip_a"
 
 
 @pytest.mark.parametrize("scope", ["chip-1", "null", "console", "chip.v2", "com10"])
@@ -689,3 +708,78 @@ def test_windows_line_ending_on_the_end_marker_is_named():
     src = T.render(spec_a()).replace(T.REGION_END + "\n", T.REGION_END + "\r\n")
     p = T.parse(src)
     assert not p.editable and p.reason == T.CRLF_LINE
+
+
+# ------------------------------------------------- review round 4 pins
+
+def test_int_default_too_large_for_a_float_gives_the_finite_line():
+    s = spec_b()
+    s.fields.append(F("limit", "float", 10 ** 400))
+    with pytest.raises(T.TemplateError, match="'limit': the default must be a finite number"):
+        T.render(s)
+
+
+def test_pulse_parent_needs_no_note_and_another_parent_says_so():
+    assert T.validate(spec_b()) == []
+    s = spec_b()
+    s.parent = "lab_pulses.base.FancyPulse"
+    notes = T.validate(s)
+    assert notes == [T.PARENT_NOT_CHECKED_LINE.format(parent=s.parent)]
+    assert "only against the quam Pulse base" in notes[0]
+    # given the parent's names, nothing is left unchecked
+    assert T.validate(s, parent_names=["ramp"]) == []
+
+
+def test_field_shadowing_a_parent_attribute_refused():
+    s = spec_b()
+    s.parent = "lab_pulses.base.FancyPulse"
+    s.fields.append(F("ramp", "float", 1.0))
+    parent = type("FancyPulse", (), {"ramp": lambda self: 0, "length": 4})
+    with pytest.raises(T.TemplateError, match="'ramp' is reserved: the parent class "
+                                              "FancyPulse already has it"):
+        T.validate(s, parent_names=T.public_attribute_names(parent))
+    # length may be re-declared even when the parent names it
+    s.fields.pop()
+    assert T.validate(s, parent_names={"length", "ramp"}) == []
+
+
+def test_public_attribute_names_is_the_one_derivation():
+    class Base:
+        width = 2.0
+        length = 16
+
+        def shape(self):
+            return 0
+
+        @property
+        def area(self):
+            return 1
+
+        def _hidden(self):
+            return 2
+    assert T.public_attribute_names(Base) == frozenset({"width", "shape", "area"})
+
+
+def test_scope_messages_never_say_scope():
+    text = Path(D.__file__).read_text(encoding="utf-8")
+    assert "Scope" not in text and "drafts cannot be kept" not in text
+
+
+def test_cr_only_file_names_the_line_endings():
+    src = T.render(spec_a()).replace("\n", "\r")
+    assert "\n" not in src
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CRLF_LINE
+
+
+def test_tokenize_failure_refuses_the_formula(monkeypatch):
+    import tokenize
+
+    def boom(readline):
+        raise tokenize.TokenError("planted", (1, 0))
+    monkeypatch.setattr(T.tokenize, "generate_tokens", boom)
+    with pytest.raises(T.TemplateError, match="could not be checked for strings"):
+        T.render(spec_b())

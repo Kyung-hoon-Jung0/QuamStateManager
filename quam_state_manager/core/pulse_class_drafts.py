@@ -46,19 +46,15 @@ TIMEOUT_S = 120
 
 
 def _scope_key(scope: str) -> str:
-    """A folder name for *scope* (a chip or project key); a key that is not
-    already a safe name is reduced to a short hash of itself. A Windows device
-    name (any case, any extension) or a name ending in "." is refused: Windows
-    cannot make the first and drops the dot of the second, so "chip." would
-    share the folder of "chip"."""
-    if isinstance(scope, str) and _SAFE.fullmatch(scope) and scope not in (".", ".."):
-        from quam_state_manager.core.pulse_class_template import WINDOWS_DEVICE_NAMES
-        if scope.endswith("."):
-            raise DraftError(f"Scope {scope!r} ends in '.', which Windows drops from a "
-                             "folder name; drafts cannot be kept for it")
-        if scope.split(".", 1)[0].casefold() in WINDOWS_DEVICE_NAMES:
-            raise DraftError(f"Scope {scope!r} is a reserved Windows device name; "
-                             "drafts cannot be kept for it")
+    """A folder name for *scope* (a chip or project key). A key that is not
+    already a safe folder name is reduced to a short hash of itself, so
+    distinct keys keep distinct folders. That covers a Windows device name
+    (any case, any extension), which Windows cannot make, and a name ending
+    in "." (also "." and ".."), whose dot Windows drops: "chip." would
+    otherwise share the folder of "chip"."""
+    from quam_state_manager.core.pulse_class_template import WINDOWS_DEVICE_NAMES
+    if (isinstance(scope, str) and _SAFE.fullmatch(scope) and not scope.endswith(".")
+            and scope.split(".", 1)[0].casefold() not in WINDOWS_DEVICE_NAMES):
         return scope
     return "s_" + hashlib.sha256(str(scope).encode("utf-8")).hexdigest()[:16]
 

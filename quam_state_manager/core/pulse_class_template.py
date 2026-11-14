@@ -80,8 +80,15 @@ CODE_VIEW_ONLY_LINE = ("The class structure can only be edited in the code view:
 REGION_CHANGED_LINE = ("The class structure can only be edited in the code view: "
                        "the lines between the template markers were changed by hand.")
 CRLF_LINE = ("The class structure can only be edited in the code view: "
-             "this file uses Windows line endings, and the form rewrites only files "
-             "with plain line endings.")
+             "this file uses Windows (or other carriage return) line endings, and the "
+             "form rewrites only files with plain line endings.")
+
+#: the parent the reserved-name list is written for
+PULSE_PARENT = "quam.components.pulses.Pulse"
+#: what validate says when the parent is another class whose attribute names
+#: it was not given: the reserved-name check covered only the Pulse base
+PARENT_NOT_CHECKED_LINE = ("Field names were checked only against the quam Pulse base: "
+                           "the attributes of the parent class {parent} were not checked.")
 
 #: characters Python or ``str.splitlines`` treat as a line break; a formula may
 #: use only the plain newline, which the template splits on
@@ -105,7 +112,7 @@ class ClassSpec:
     class_name: str
     fields: list = field(default_factory=list)   # list[FieldSpec]
     formula: str = ""
-    parent: str = "quam.components.pulses.Pulse"
+    parent: str = PULSE_PARENT
 
 
 @dataclass
@@ -149,8 +156,16 @@ def check_class_name(name: str) -> None:
                             "choose another name")
 
 
-def validate(spec: ClassSpec) -> None:
-    """Raise :class:`TemplateError` naming the first problem in *spec*."""
+def validate(spec: ClassSpec, *, parent_names=None) -> list:
+    """Raise :class:`TemplateError` naming the first problem in *spec*.
+
+    *parent_names* are the parent's attribute names as
+    :func:`public_attribute_names` derived them where the parent can be
+    imported (the lab env); a field may not take one of them. Returns the
+    notes on what the check could not cover: when the parent is not the quam
+    Pulse and no *parent_names* were given, one line
+    (:data:`PARENT_NOT_CHECKED_LINE`) says the check covered only the Pulse
+    base; otherwise an empty list."""
     check_class_name(spec.class_name)
     if "." not in spec.parent:
         raise TemplateError(f"Parent class {spec.parent!r} must be a full module path")
@@ -163,6 +178,12 @@ def validate(spec: ClassSpec) -> None:
     if spec.class_name.casefold() in taken_class_names():
         raise TemplateError(f"Class name {spec.class_name!r} is already a known pulse class; "
                             "choose another name")
+    notes = []
+    extra = frozenset()
+    if parent_names is not None:
+        extra = frozenset(parent_names) - {"length"}
+    elif spec.parent != PULSE_PARENT:
+        notes.append(PARENT_NOT_CHECKED_LINE.format(parent=spec.parent))
     seen = set()
     for f in spec.fields:
         _check_ident(f.name, "Field name")
@@ -171,6 +192,9 @@ def validate(spec: ClassSpec) -> None:
                                 "start with '_'")
         if f.name in reserved_field_names():
             raise TemplateError(f"Field name {f.name!r} is reserved")
+        if f.name in extra:
+            raise TemplateError(f"Field name {f.name!r} is reserved: the parent class "
+                                f"{parent_leaf} already has it")
         if f.name in seen:
             raise TemplateError(f"Field {f.name!r} appears twice")
         seen.add(f.name)
@@ -186,7 +210,11 @@ def validate(spec: ClassSpec) -> None:
         if not ok:
             article = "an" if f.type == "int" else "a"
             raise TemplateError(f"Field {f.name!r}: default {d!r} is not {article} {f.type}")
-        if want is float and not math.isfinite(d):
+        try:
+            finite = want is not float or math.isfinite(d)
+        except OverflowError:      # an int too large for a float (10**400)
+            finite = False
+        if not finite:
             raise TemplateError(f"Field {f.name!r}: the default must be a finite number, "
                                 "not nan or inf")
         if want is str and _UNIT_MARK.strip() in d:
@@ -220,14 +248,28 @@ def validate(spec: ClassSpec) -> None:
         if mark.strip() in spec.formula:
             raise TemplateError("The waveform formula may not contain the SM template "
                                 "marker text")
+    return notes
+
+
+def public_attribute_names(cls) -> frozenset:
+    """The one derivation of the names a class owns that a field may not
+    shadow: every public name ``dir`` shows (methods, properties, fields with
+    a default), ``length`` excepted. Standard library only, so the lab env can
+    call it on an imported parent; :data:`PULSE_BASE_NAMES` is its answer for
+    the quam Pulse, written out because SM never imports quam (a lab-env test
+    compares the two)."""
+    return frozenset(n for n in dir(cls) if not n.startswith("_")) - {"length"}
 
 
 def _has_multi_line_string(formula: str) -> bool:
     """True when a string literal (or f-string) in *formula* spans lines."""
     try:
         toks = list(tokenize.generate_tokens(io.StringIO("(\n" + formula + "\n)\n").readline))
-    except (tokenize.TokenError, SyntaxError):
-        return False      # ast.parse already accepted it; nothing more to say
+    except (tokenize.TokenError, SyntaxError) as exc:
+        # not expected after ast.parse accepted the formula; if it happens the
+        # strings cannot be checked, so the formula is refused, never passed
+        raise TemplateError("The waveform formula could not be checked for strings "
+                            f"that span lines: {exc}") from None
     starts = []
     for tok in toks:
         name = tokenize.tok_name[tok.type]
@@ -245,7 +287,7 @@ def reserved_field_names() -> frozenset:
     """Every name a field may not take: :data:`RESERVED` plus each method the
     template writes into the class and each ``self.`` attribute its code reads
     (``length`` excepted), taken from the rendered template text itself."""
-    skeleton = _file_text("TemplateProbe", "quam.components.pulses.Pulse",
+    skeleton = _file_text("TemplateProbe", PULSE_PARENT,
                           "    def _sm_formula(self, t, dt, n):\n        return 0\n")
     names = set()
     for node in ast.walk(ast.parse(skeleton)):
@@ -373,7 +415,8 @@ def parse(text: str) -> Parsed:
     begins = [m.end() for m in re.finditer("^" + re.escape(REGION_BEGIN) + "\n", text, re.M)]
     ends = [m.start() for m in re.finditer("^" + re.escape(REGION_END) + "\n", text, re.M)]
     if len(begins) != 1 or len(ends) != 1:
-        crlf = (REGION_BEGIN + "\r\n") in text or (REGION_END + "\r\n") in text
+        # "\r\n" (Windows) or a bare "\r" (a file with no "\n" at all)
+        crlf = (REGION_BEGIN + "\r") in text or (REGION_END + "\r") in text
         return Parsed(False, CRLF_LINE if crlf else CODE_VIEW_ONLY_LINE, version, made)
     b, e = begins[0], ends[0]
     if e < b:
