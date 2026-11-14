@@ -23,11 +23,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import logging
+import os
 import math
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from quam_state_manager.core import edit_policy, working_copy
+from quam_state_manager.core import doc_cache, edit_policy, working_copy
 from quam_state_manager.core.autofit.synth import patch_path_to_dotted
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class ChipHandle:
     # v1.5.1 (M3): told after every live write that landed (the web layer
     # takes down a read-only marker a refused write raised earlier)
     on_live_landed: Callable[[], None] = lambda: None
+    # told when a failed live write could NOT be taken back out of SM (the
+    # store / working copy may hold values the chip does not): the web layer
+    # marks the chip not in sync and ends an armed Auto-Sync session
+    on_live_unresolved: Callable[[str], None] = lambda reason: None
 
 
 def _archive_refusal(chip: ChipHandle) -> str | None:
@@ -198,6 +203,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         return WriteOutcome(ok=False, action="staged", error=refused)
     updates = {r["path"]: r["value"] for r in rows}
     with chip.build_lock:
+        pre = _capture(chip) if apply_live else None
         try:
             entries = chip.modifier.batch_set(updates)
         except Exception as exc:  # noqa: BLE001 — coercion/navigation failure
@@ -231,6 +237,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_apply:{label}",
                                          mine=lambda: restaged or entries)
         if err:
+            err = _undo_failed_write(chip, pre, err)
             return WriteOutcome(ok=False, action="staged", group_id=gid,
                                 paths=paths, error=err)
         return WriteOutcome(ok=True, action="applied", group_id=gid,
@@ -271,6 +278,95 @@ def _apply_live_with_one_retry(chip: ChipHandle,
         return None
     except Exception as exc:  # noqa: BLE001
         return f"apply_to_live failed after pull+re-stage: {exc}"
+
+
+_WORKING_FILES = ("state.json", "wiring.json")
+_WC_SYNC_FIELDS = ("synced_state_mtime", "synced_wiring_mtime", "synced_live_hash",
+                   "synced_working_fp", "sync_events")
+
+
+@dataclass
+class _PreWrite:
+    """What SM held right before a writer call touched it: the working-copy
+    files and sync-point sidecar as bytes, the sync fields in memory, and the
+    store's unapplied change log (entries a person staged in the tray)."""
+    files: dict
+    meta: bytes | None
+    sync: dict
+    log: list
+    fps: tuple
+
+
+def _capture(chip: ChipHandle) -> _PreWrite:
+    wf = Path(chip.wc.working_folder)
+    files = {n: (wf / n).read_bytes() for n in _WORKING_FILES}
+    mp = Path(chip.wc.meta_path())
+    meta = mp.read_bytes() if mp.is_file() else None
+    with chip.store._lock:
+        log = list(chip.store.change_log)
+    return _PreWrite(files=files, meta=meta,
+                     sync={k: getattr(chip.wc, k, None) for k in _WC_SYNC_FIELDS},
+                     log=log, fps=(chip.hub_fp0, chip.hub_fp1))
+
+
+def _put_bytes(dst: Path, data: bytes) -> None:
+    tmp = dst.with_name(dst.name + ".rollback.tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, dst)
+
+
+def _roll_back(chip: ChipHandle, pre: _PreWrite) -> None:
+    """Put the store and the working copy back to *pre* after a live write
+    that failed: the working files and the sync point byte for byte, the
+    store re-read from them, and the person's unapplied edits re-applied on
+    top with their original change-log entries. Raises when it cannot."""
+    wf = Path(chip.wc.working_folder)
+    for n, data in pre.files.items():
+        _put_bytes(wf / n, data)
+    mp = Path(chip.wc.meta_path())
+    if pre.meta is not None:
+        _put_bytes(mp, pre.meta)
+    for k, v in pre.sync.items():
+        setattr(chip.wc, k, v)
+    chip.store.reload()
+    with chip.store._lock:
+        for e in pre.log:
+            chip.modifier.set_value(e.dot_path, e.new_value, coerce=False,
+                                    _defer_hooks=True)
+        chip.store.change_log[:] = pre.log
+        chip.store._clear_pointer_cache()
+    chip.hub_fp0, chip.hub_fp1 = pre.fps
+
+
+def _attempted_landed(chip: ChipHandle) -> bool:
+    """Did the failed write's bytes reach the chip after all (a verify or
+    read-back failure AFTER the write)? Then nothing is taken back."""
+    try:
+        pair = doc_cache.read_pair(Path(chip.wc.working_folder), mode="hash")
+        return working_copy.live_content_hash(chip.wc) == pair.content_hash()
+    except Exception:  # noqa: BLE001 -- unreadable: treat as not landed
+        return False
+
+
+def _undo_failed_write(chip: ChipHandle, pre: _PreWrite, err: str,
+                       *, taken_back: str | None = None) -> str:
+    """The one rollback for a writer call whose live write failed. Returns
+    the error text, extended with what SM did about it (*taken_back*: the
+    sentence for a rollback that succeeded)."""
+    if _attempted_landed(chip):
+        return err
+    try:
+        _roll_back(chip, pre)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("taking a failed live write back out of SM failed")
+        reason = (f"{err}; SM could not take the values back out of its working "
+                  f"copy ({type(exc).__name__}), so it no longer matches the chip")
+        try:
+            chip.on_live_unresolved(reason)
+        except Exception:  # noqa: BLE001
+            logger.warning("on_live_unresolved hook failed", exc_info=True)
+        return reason
+    return f"{taken_back} ({err})" if taken_back else err
 
 
 def _landed(chip: ChipHandle) -> None:
@@ -322,6 +418,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                             error="nothing revertible", conflicts=conflicts)
 
     with chip.build_lock:
+        pre = _capture(chip) if apply_live else None
         entries = []
         gid = f"afrev{chip.store.mutation_seq}"
         try:
@@ -385,6 +482,11 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
             err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_revert:{label}",
                                              mine=lambda: restaged or entries)
             if err:
+                n = len(revertible)
+                err = _undo_failed_write(
+                    chip, pre, err,
+                    taken_back=(f"the live write failed, so no value was put back; "
+                                f"{n} value(s) still hold what the run wrote"))
                 return WriteOutcome(ok=False, action="reverted", group_id=gid,
                                     paths=paths, error=err, conflicts=conflicts)
             paths = _written_paths(paths, restaged)
@@ -428,6 +530,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         return keep, out
 
     with chip.build_lock:
+        pre = _capture(chip) if apply_live else None
         entries = []
         gid = f"afrestore{chip.store.mutation_seq}"
         try:
@@ -485,6 +588,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_restore:{label}",
                                              mine=lambda: restaged or entries)
             if err:
+                err = _undo_failed_write(chip, pre, err)
                 return WriteOutcome(ok=False, action="restored", group_id=gid,
                                     paths=paths, error=err,
                                     conflicts=conflicts)

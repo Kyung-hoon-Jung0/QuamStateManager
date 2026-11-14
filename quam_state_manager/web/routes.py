@@ -33482,6 +33482,12 @@ def _maybe_auto_arm_on_open(ctx: dict | None) -> bool:
         chips = _auto_sync_chips_read()
         if not key or key in chips["off"]:
             return False
+        if ctx.get("working_dirty"):
+            # The working copy holds saved content the chip does not, and no
+            # person staged it in this session (a write that failed earlier,
+            # work kept from before a restart). An armed push would write it
+            # unasked; it stays a difference the person resolves.
+            return False
         push_ok, _ = _auto_apply_armable(ctx)
         pull_ok, _ = _auto_pull_armable(ctx)
         if not push_ok and pull_ok and _open_drift_is_lossless(ctx):
@@ -36722,6 +36728,23 @@ def _live_write_landed(ctx) -> None:
         ctx["live_readonly_hint"] = False
     ctx["live_landed_us"] = max(int(time.time() * 1_000_000),
                                 int(ctx.get("live_landed_us") or 0) + 1)
+
+
+def _live_write_unresolved(ctx, reason: str) -> None:
+    """A writer's live write failed and SM could not take its values back out
+    of the working copy: say the truth. The chip shows as not in sync (saved
+    but not applied, the flag a real divergence sets) and an armed Auto-Sync
+    session for it ends with the reason, so nothing pushes those values
+    unasked."""
+    if ctx is None:
+        return
+    ctx["working_dirty"] = True
+    if ctx.pop("auto_apply", None) is not None:
+        ctx["auto_apply_disarm_reason"] = reason
+    try:
+        _refresh_live_diverged(ctx)
+    except Exception:  # noqa: BLE001 -- the flags above already say it
+        logger.warning("refreshing the divergence flag failed", exc_info=True)
 
 
 def _live_landed_stamp(ctx=None) -> int:
@@ -54921,7 +54944,8 @@ def _autofit_start_real(inst, p, data, auditor):
                         # this chip's history, under the plan's name
                         hub_dir=_hub_chip_dir(live_path), hub_plan=f"autofit:{p.name}",
                         origin=ctx.get("origin") or "live",
-                        on_live_landed=lambda: _live_write_landed(ctx))   # v1.5.1 (M3)
+                        on_live_landed=lambda: _live_write_landed(ctx),   # v1.5.1 (M3)
+                        on_live_unresolved=lambda why: _live_write_unresolved(ctx, why))
     adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
                           rescan_and_list_runs=rescan_and_list_runs,
                           env_python=_autofit_env()[0] or None)
