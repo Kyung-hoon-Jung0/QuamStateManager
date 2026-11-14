@@ -74,6 +74,8 @@ _CLASS_LABELS = {cgb.CZ_GATE: "CZ gate (quam-builder)",
 _LINE_WORDS = {"moving": "the moving qubit's flux line", "control": "the control qubit's flux line",
                "target": "the target qubit's flux line", "coupler": "the pair's coupler"}
 _SKIP_FIELDS = ("id", "digital_marker")
+SPECTATORS_ONE_PAIR = ("Spectators given as a list belong to one pair. With several pairs, "
+                       "give them per pair.")
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +95,8 @@ def _pairs(merged: dict) -> list[dict]:
         out.append({"id": pid, "control": _qid(merged, pid, "qubit_control"),
                     "target": _qid(merged, pid, "qubit_target"),
                     "moving_qubit": p.get("moving_qubit"),
-                    "gates": sorted(n for n, m in macros.items() if cgb.is_cz_macro(n, m))})
+                    "gates": sorted(n for n, m in macros.items() if cgb.is_cz_macro(n, m)),
+                    "spectator_candidates": cgb.spectator_candidates(merged, pid)})
     return out
 
 
@@ -149,7 +152,8 @@ def _classes(store, merged) -> list[dict]:
                   "required": s.required, "pulse_classes": pcs}
                  for s in cgb.GATE_CLASSES[cls]["slots"]]
         out.append({"class": cls, "label": _CLASS_LABELS[cls], "layout": "known",
-                    "available": ok, "why": why, "slots": slots, "models": []})
+                    "available": ok, "why": why, "slots": slots, "models": [],
+                    "spectators": _spectator_offer(cls)})
     lab: dict[str, list] = {}
     for pid, p in sorted((merged.get("qubit_pairs") or {}).items()):
         macros = p.get("macros") if isinstance(p, dict) else None
@@ -160,13 +164,37 @@ def _classes(store, merged) -> list[dict]:
     for cls in sorted(lab):
         out.append({"class": cls, "label": cls.rsplit(".", 1)[-1] + " (copies the layout of a gate on this chip)",
                     "layout": "copied", "available": True, "why": "", "slots": [],
-                    "models": lab[cls]})
+                    "models": lab[cls], "spectators": _spectator_offer(cls)})
     for cid, short in (("pair.cz_parametric", "ParametricCZGate"),
                        ("pair.stark_cz_gate", "StarkInducedCZGate")):
         out.append({"class": short, "label": short, "layout": "copied", "available": False,
                     "why": ("SM does not know the structure of this class and this chip has "
-                            "no gate of it to copy."), "slots": [], "models": []})
+                            "no gate of it to copy."), "slots": [], "models": [],
+                    "spectators": _spectator_offer(short)})
     return out
+
+
+def _spectator_offer(gate_class: str) -> dict:
+    """``{"offered": bool, "why": str}``: whether the dialog offers
+    spectators for *gate_class*, and the reason sentence when it does not."""
+    why = cgb.spectator_refusal(gate_class)
+    return {"offered": why is None, "why": why or ""}
+
+
+def _spectators(data: dict, pairs: list) -> dict | None:
+    """The request's spectators per pair, or None when none were given.
+    ``spectators`` is ``{pair: [{qubit, length, level}]}``; a bare list is
+    the spectators of the one asked pair. Anything else is passed on so the
+    plan refuses it in words."""
+    raw = data.get("spectators")
+    if raw is None or raw == [] or raw == {}:
+        return None
+    if isinstance(raw, list):
+        return {pid: raw for pid in pairs[:1]} if len(pairs) == 1 else {"": raw}
+    if isinstance(raw, dict):
+        out = {str(k): v for k, v in raw.items() if v not in (None, [])}
+        return out or None
+    return {pid: raw for pid in pairs}
 
 
 def _body() -> dict:
@@ -179,7 +207,10 @@ def _body() -> dict:
     if not isinstance(pairs, list) or not pairs or not all(isinstance(x, str) and x for x in pairs):
         pairs = []
     model = data.get("model_gate")
-    return {"pairs": list(dict.fromkeys(pairs)),
+    pairs = list(dict.fromkeys(pairs))
+    spectators = _spectators(data, pairs)
+    extra = {"spectators": spectators} if spectators else {}
+    return {**extra, "pairs": pairs,
             "gate_name": data.get("gate_name") if isinstance(data.get("gate_name"), str) else "",
             "gate_class": data.get("gate_class") if isinstance(data.get("gate_class"), str) else "",
             "pulses": data.get("pulses") if isinstance(data.get("pulses"), dict) else {},
@@ -197,6 +228,12 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
     """``[(pair, plan)]``; the first pair seeds the others' field values.
     A given value of the wrong kind refuses every pair, naming the field."""
     bad = check_values(merged, body)
+    spect = body.get("spectators") or {}
+    for key in spect:
+        if key not in body["pairs"]:
+            bad = bad + [SPECTATORS_ONE_PAIR if key == "" else
+                         f"Spectators were given for pair {key}, which is not among the "
+                         "pairs to create. Pick that pair, or remove its spectators."]
     if bad:
         return [(pid, {"error": bad[0], "refusals": bad}) for pid in body["pairs"]]
     out = []
@@ -211,13 +248,16 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
                 cls = (spec or {}).get("class") if isinstance(spec, dict) else None
                 pulses[f] = {"class": cls or (pp or {}).get("__class__"),
                              "fields": _given_values(pp or {})}
-            for f in (first.get("operations") or {}):
+            for f, op in (first.get("operations") or {}).items():
+                if op.get("group") == "spectator":
+                    continue
                 if f not in pulses:
                     pp = gate_intent.planned_pulse(first, f) or {}
                     pulses[f] = {"class": pp.get("__class__"), "fields": _given_values(pp)}
         res = cgb.plan(merged, pid, gate_name=body["gate_name"], gate_class=body["gate_class"],
                        pulses=pulses, copy_from=copy_from, model_gate=body["model_gate"],
-                       macro_fields=body["macro_fields"] or None)
+                       macro_fields=body["macro_fields"] or None,
+                       **({"spectators": spect[pid]} if pid in spect else {}))
         if i == 0:
             first = res
         out.append((pid, res))
@@ -433,7 +473,8 @@ def _summary(pid: str, p: dict, merged: dict | None = None, gate_class: str = ""
             "direction": p.get("direction"), "layout": p.get("layout"),
             "operations": p.get("operations"), "fields": p.get("fields"),
             "pulses": pulses, "sources": p.get("sources"),
-            "renamed": p.get("renamed") or {}, "reset": p.get("reset") or []}
+            "renamed": p.get("renamed") or {}, "reset": p.get("reset") or [],
+            **{k: p[k] for k in ("spectators", "spectator_ops") if k in p}}
 
 
 def _store_or_error():
@@ -483,7 +524,16 @@ def _previews(plan: dict) -> tuple[dict, list[str]]:
             skipped.append(f"{op.get('key')}: {pay.get('error') or 'SM could not draw it in full.'}")
             continue
         cv = pay.get("constant_value")
+        if (op.get("group") == "spectator" and isinstance(cv, (int, float))
+                and isinstance(pulse.get("length"), int)):
+            # every sample, so the check compares the entered length as well
+            out[(el, op.get("key"))] = [float(cv)] * pulse["length"]
+            continue
         out[(el, op.get("key"))] = float(cv) if isinstance(cv, (int, float)) else list(pay.get("i") or [])
+    must = [(_element(op), op.get("key")) for op in (plan.get("operations") or {}).values()
+            if op.get("group") == "spectator"]
+    if must:
+        out[gate_check.REQUIRED] = must
     return out, skipped
 
 

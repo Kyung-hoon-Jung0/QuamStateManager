@@ -1,0 +1,565 @@
+{
+ "0": {
+  "create": {
+   "count": 1,
+   "created": [
+    {
+     "gate": "cz_sq",
+     "outcome": {
+      "failed": [],
+      "kind": "checked",
+      "not_run": [],
+      "passed": 6,
+      "reason": null,
+      "summary": "every check passed.",
+      "total": 6
+     },
+     "pair": "q1-2",
+     "paths": [
+      "qubit_pairs.q1-2.macros.cz_sq",
+      "qubits.q1.z.operations.cz_sq_pulse_q1_q2"
+     ],
+     "reason": "",
+     "state": "verified"
+    }
+   ],
+   "ok": true,
+   "skipped": []
+  },
+  "plan": {
+   "ok": true,
+   "pairs": [
+    {
+     "creates": 2,
+     "direction": "macro",
+     "field_specs": {
+      "flux_pulse_qubit": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      }
+     },
+     "fields": {
+      "flux_pulse_qubit": {
+       "amplitude": "given",
+       "axis_angle": "default",
+       "digital_marker": "default",
+       "length": "given"
+      },
+      "macro": {
+       "duration": "kept reference",
+       "duration_qubit": "default",
+       "extras": "default",
+       "fidelity": "default",
+       "id": "kept reference",
+       "phase_shift_control": "default",
+       "phase_shift_target": "default",
+       "spectator_qubits": "default",
+       "spectator_qubits_control": "default",
+       "spectator_qubits_phase_shift": "default"
+      }
+     },
+     "layout": "known",
+     "model_gate": null,
+     "ok": true,
+     "operations": {
+      "flux_pulse_qubit": {
+       "channel": "q1.z",
+       "created": true,
+       "key": "cz_sq_pulse_q1_q2",
+       "path": "qubits.q1.z.operations.cz_sq_pulse_q1_q2"
+      }
+     },
+     "pair": "q1-2",
+     "paths": [
+      "qubit_pairs.q1-2.macros.cz_sq",
+      "qubits.q1.z.operations.cz_sq_pulse_q1_q2"
+     ],
+     "pulses": {
+      "flux_pulse_qubit": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.2,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_sq_pulse_q1_q2",
+       "length": 48
+      }
+     },
+     "refusals": [],
+     "renamed": {},
+     "reset": [],
+     "settings": [],
+     "sources": {
+      "control": "q1",
+      "moving_qubit": "control",
+      "target": "q2"
+     }
+    }
+   ],
+   "plan_sig": "721d777371811819dbcc99d467b7f55c185e4617"
+  },
+  "state": "{\"qubits\": {\"q1\": {\"id\": \"q1\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}, \"cz_sq_pulse_q1_q2\": {\"id\": null, \"length\": \"#/qubit_pairs/q1-2/macros/cz_sq/flux_pulse_qubit/length\", \"amplitude\": \"#/qubit_pairs/q1-2/macros/cz_sq/flux_pulse_qubit/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}, \"q2\": {\"id\": \"q2\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q3\": {\"id\": \"q3\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q4\": {\"id\": \"q4\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}}, \"qubit_pairs\": {\"q1-2\": {\"id\": \"q1-q2\", \"qubit_control\": \"#/qubits/q1\", \"qubit_target\": \"#/qubits/q2\", \"moving_qubit\": \"control\", \"macros\": {\"cz_sq\": {\"id\": \"#./inferred_id\", \"fidelity\": {}, \"duration\": \"#./inferred_duration\", \"flux_pulse_qubit\": {\"id\": \"cz_sq_pulse_q1_q2\", \"length\": 48, \"amplitude\": 0.2, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"coupler_flux_pulse\": null, \"phase_shift_control\": 0.0, \"phase_shift_target\": 0.0, \"spectator_qubits\": {}, \"spectator_qubits_control\": {}, \"spectator_qubits_phase_shift\": {}, \"extras\": {}, \"duration_qubit\": null, \"__class__\": \"quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates.CZGate\"}}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}, \"q2-3\": {\"id\": \"q2-q3\", \"qubit_control\": \"#/qubits/q2\", \"qubit_target\": \"#/qubits/q3\", \"moving_qubit\": \"control\", \"macros\": {}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}, \"q3-4\": {\"id\": \"q3-q4\", \"qubit_control\": \"#/qubits/q3\", \"qubit_target\": \"#/qubits/q4\", \"moving_qubit\": \"control\", \"macros\": {}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}}}"
+ },
+ "1": {
+  "create": {
+   "count": 2,
+   "created": [
+    {
+     "gate": "cz_two",
+     "outcome": {
+      "failed": [],
+      "kind": "checked",
+      "not_run": [],
+      "passed": 6,
+      "reason": null,
+      "summary": "every check passed.",
+      "total": 6
+     },
+     "pair": "q1-2",
+     "paths": [
+      "qubit_pairs.q1-2.macros.cz_two",
+      "qubits.q1.z.operations.cz_two_pulse_q1_q2",
+      "qubit_pairs.q1-2.coupler.operations.cz_two_coupler_pulse_q1_q2"
+     ],
+     "reason": "",
+     "state": "verified"
+    },
+    {
+     "gate": "cz_two",
+     "outcome": {
+      "failed": [],
+      "kind": "checked",
+      "not_run": [],
+      "passed": 6,
+      "reason": null,
+      "summary": "every check passed.",
+      "total": 6
+     },
+     "pair": "q3-4",
+     "paths": [
+      "qubit_pairs.q3-4.macros.cz_two",
+      "qubits.q3.z.operations.cz_two_pulse_q3_q4",
+      "qubit_pairs.q3-4.coupler.operations.cz_two_coupler_pulse_q3_q4"
+     ],
+     "reason": "",
+     "state": "verified"
+    }
+   ],
+   "ok": true,
+   "skipped": []
+  },
+  "plan": {
+   "ok": true,
+   "pairs": [
+    {
+     "creates": 3,
+     "direction": "macro",
+     "field_specs": {
+      "coupler_flux_pulse": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      },
+      "flux_pulse_qubit": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      }
+     },
+     "fields": {
+      "coupler_flux_pulse": {
+       "amplitude": "given",
+       "axis_angle": "default",
+       "digital_marker": "default",
+       "length": "given"
+      },
+      "flux_pulse_qubit": {
+       "amplitude": "given",
+       "axis_angle": "default",
+       "digital_marker": "default",
+       "length": "given"
+      },
+      "macro": {
+       "duration": "kept reference",
+       "duration_qubit": "default",
+       "extras": "default",
+       "fidelity": "default",
+       "id": "kept reference",
+       "phase_shift_control": "default",
+       "phase_shift_target": "default",
+       "spectator_qubits": "default",
+       "spectator_qubits_control": "default",
+       "spectator_qubits_phase_shift": "default"
+      }
+     },
+     "layout": "known",
+     "model_gate": null,
+     "ok": true,
+     "operations": {
+      "coupler_flux_pulse": {
+       "channel": "the coupler of pair q1-2",
+       "created": true,
+       "key": "cz_two_coupler_pulse_q1_q2",
+       "path": "qubit_pairs.q1-2.coupler.operations.cz_two_coupler_pulse_q1_q2"
+      },
+      "flux_pulse_qubit": {
+       "channel": "q1.z",
+       "created": true,
+       "key": "cz_two_pulse_q1_q2",
+       "path": "qubits.q1.z.operations.cz_two_pulse_q1_q2"
+      }
+     },
+     "pair": "q1-2",
+     "paths": [
+      "qubit_pairs.q1-2.macros.cz_two",
+      "qubits.q1.z.operations.cz_two_pulse_q1_q2",
+      "qubit_pairs.q1-2.coupler.operations.cz_two_coupler_pulse_q1_q2"
+     ],
+     "pulses": {
+      "coupler_flux_pulse": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.05,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_two_coupler_pulse_q1_q2",
+       "length": 48
+      },
+      "flux_pulse_qubit": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.2,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_two_pulse_q1_q2",
+       "length": 48
+      }
+     },
+     "refusals": [],
+     "renamed": {},
+     "reset": [],
+     "settings": [],
+     "sources": {
+      "control": "q1",
+      "moving_qubit": "control",
+      "target": "q2"
+     }
+    },
+    {
+     "creates": 3,
+     "direction": "macro",
+     "field_specs": {
+      "coupler_flux_pulse": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      },
+      "flux_pulse_qubit": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      }
+     },
+     "fields": {
+      "coupler_flux_pulse": {
+       "amplitude": "given",
+       "axis_angle": "given",
+       "digital_marker": "given",
+       "length": "given"
+      },
+      "flux_pulse_qubit": {
+       "amplitude": "given",
+       "axis_angle": "given",
+       "digital_marker": "given",
+       "length": "given"
+      },
+      "macro": {
+       "duration": "kept reference",
+       "duration_qubit": "default",
+       "extras": "default",
+       "fidelity": "default",
+       "id": "kept reference",
+       "phase_shift_control": "default",
+       "phase_shift_target": "default",
+       "spectator_qubits": "default",
+       "spectator_qubits_control": "default",
+       "spectator_qubits_phase_shift": "default"
+      }
+     },
+     "layout": "known",
+     "model_gate": null,
+     "ok": true,
+     "operations": {
+      "coupler_flux_pulse": {
+       "channel": "the coupler of pair q3-4",
+       "created": true,
+       "key": "cz_two_coupler_pulse_q3_q4",
+       "path": "qubit_pairs.q3-4.coupler.operations.cz_two_coupler_pulse_q3_q4"
+      },
+      "flux_pulse_qubit": {
+       "channel": "q3.z",
+       "created": true,
+       "key": "cz_two_pulse_q3_q4",
+       "path": "qubits.q3.z.operations.cz_two_pulse_q3_q4"
+      }
+     },
+     "pair": "q3-4",
+     "paths": [
+      "qubit_pairs.q3-4.macros.cz_two",
+      "qubits.q3.z.operations.cz_two_pulse_q3_q4",
+      "qubit_pairs.q3-4.coupler.operations.cz_two_coupler_pulse_q3_q4"
+     ],
+     "pulses": {
+      "coupler_flux_pulse": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.05,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_two_coupler_pulse_q3_q4",
+       "length": 48
+      },
+      "flux_pulse_qubit": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.2,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_two_pulse_q3_q4",
+       "length": 48
+      }
+     },
+     "refusals": [],
+     "renamed": {},
+     "reset": [],
+     "settings": [],
+     "sources": {
+      "control": "q3",
+      "moving_qubit": "control",
+      "target": "q4"
+     }
+    }
+   ],
+   "plan_sig": "6f3226349ee45bc77f75437a4f7368aac56d27b1"
+  },
+  "state": "{\"qubits\": {\"q1\": {\"id\": \"q1\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}, \"cz_two_pulse_q1_q2\": {\"id\": null, \"length\": \"#/qubit_pairs/q1-2/macros/cz_two/flux_pulse_qubit/length\", \"amplitude\": \"#/qubit_pairs/q1-2/macros/cz_two/flux_pulse_qubit/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}, \"q2\": {\"id\": \"q2\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q3\": {\"id\": \"q3\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}, \"cz_two_pulse_q3_q4\": {\"id\": null, \"length\": \"#/qubit_pairs/q3-4/macros/cz_two/flux_pulse_qubit/length\", \"amplitude\": \"#/qubit_pairs/q3-4/macros/cz_two/flux_pulse_qubit/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}, \"q4\": {\"id\": \"q4\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}}, \"qubit_pairs\": {\"q1-2\": {\"id\": \"q1-q2\", \"qubit_control\": \"#/qubits/q1\", \"qubit_target\": \"#/qubits/q2\", \"moving_qubit\": \"control\", \"macros\": {\"cz_two\": {\"id\": \"#./inferred_id\", \"fidelity\": {}, \"duration\": \"#./inferred_duration\", \"flux_pulse_qubit\": {\"id\": \"cz_two_pulse_q1_q2\", \"length\": 48, \"amplitude\": 0.2, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"coupler_flux_pulse\": {\"id\": \"cz_two_coupler_pulse_q1_q2\", \"length\": 48, \"amplitude\": 0.05, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"phase_shift_control\": 0.0, \"phase_shift_target\": 0.0, \"spectator_qubits\": {}, \"spectator_qubits_control\": {}, \"spectator_qubits_phase_shift\": {}, \"extras\": {}, \"duration_qubit\": null, \"__class__\": \"quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates.CZGate\"}}, \"coupler\": {\"id\": \"c\", \"operations\": {\"cz_two_coupler_pulse_q1_q2\": {\"id\": null, \"length\": \"#/qubit_pairs/q1-2/macros/cz_two/coupler_flux_pulse/length\", \"amplitude\": \"#/qubit_pairs/q1-2/macros/cz_two/coupler_flux_pulse/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}, \"q2-3\": {\"id\": \"q2-q3\", \"qubit_control\": \"#/qubits/q2\", \"qubit_target\": \"#/qubits/q3\", \"moving_qubit\": \"control\", \"macros\": {}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}, \"q3-4\": {\"id\": \"q3-q4\", \"qubit_control\": \"#/qubits/q3\", \"qubit_target\": \"#/qubits/q4\", \"moving_qubit\": \"control\", \"macros\": {\"cz_two\": {\"id\": \"#./inferred_id\", \"fidelity\": {}, \"duration\": \"#./inferred_duration\", \"flux_pulse_qubit\": {\"id\": \"cz_two_pulse_q3_q4\", \"length\": 48, \"amplitude\": 0.2, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"coupler_flux_pulse\": {\"id\": \"cz_two_coupler_pulse_q3_q4\", \"length\": 48, \"amplitude\": 0.05, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"phase_shift_control\": 0.0, \"phase_shift_target\": 0.0, \"spectator_qubits\": {}, \"spectator_qubits_control\": {}, \"spectator_qubits_phase_shift\": {}, \"extras\": {}, \"duration_qubit\": null, \"__class__\": \"quam_builder.architecture.superconducting.custom_gates.flux_tunable_transmon_pair.two_qubit_gates.CZGate\"}}, \"coupler\": {\"id\": \"c\", \"operations\": {\"cz_two_coupler_pulse_q3_q4\": {\"id\": null, \"length\": \"#/qubit_pairs/q3-4/macros/cz_two/coupler_flux_pulse/length\", \"amplitude\": \"#/qubit_pairs/q3-4/macros/cz_two/coupler_flux_pulse/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}}}"
+ },
+ "2": {
+  "create": {
+   "count": 1,
+   "created": [
+    {
+     "gate": "cz_cp",
+     "outcome": {
+      "failed": [],
+      "kind": "checked",
+      "not_run": [],
+      "passed": 6,
+      "reason": null,
+      "summary": "every check passed.",
+      "total": 6
+     },
+     "pair": "q2-3",
+     "paths": [
+      "qubit_pairs.q2-3.macros.cz_cp",
+      "qubit_pairs.q2-3.coupler.operations.cz_cp_coupler_pulse_q2_q3"
+     ],
+     "reason": "",
+     "state": "verified"
+    }
+   ],
+   "ok": true,
+   "skipped": []
+  },
+  "plan": {
+   "ok": true,
+   "pairs": [
+    {
+     "creates": 2,
+     "direction": "macro",
+     "field_specs": {
+      "coupler_flux_pulse": {
+       "amplitude": {
+        "kind": "float",
+        "label": "Amplitude",
+        "optional": false,
+        "unit": "V"
+       },
+       "axis_angle": {
+        "kind": "float",
+        "label": "Axis angle",
+        "optional": true,
+        "unit": "rad"
+       },
+       "digital_marker": {
+        "kind": "str",
+        "label": "Digital marker",
+        "optional": true,
+        "unit": ""
+       },
+       "length": {
+        "kind": "int",
+        "label": "Length",
+        "optional": false,
+        "unit": "ns"
+       }
+      }
+     },
+     "fields": {
+      "coupler_flux_pulse": {
+       "amplitude": "given",
+       "axis_angle": "default",
+       "digital_marker": "default",
+       "length": "given"
+      },
+      "macro": {
+       "duration": "default",
+       "extras": "default",
+       "fidelity": "default",
+       "phase_shift_control": "default",
+       "phase_shift_target": "default"
+      }
+     },
+     "layout": "known",
+     "model_gate": null,
+     "ok": true,
+     "operations": {
+      "coupler_flux_pulse": {
+       "channel": "the coupler of pair q2-3",
+       "created": true,
+       "key": "cz_cp_coupler_pulse_q2_q3",
+       "path": "qubit_pairs.q2-3.coupler.operations.cz_cp_coupler_pulse_q2_q3"
+      }
+     },
+     "pair": "q2-3",
+     "paths": [
+      "qubit_pairs.q2-3.macros.cz_cp",
+      "qubit_pairs.q2-3.coupler.operations.cz_cp_coupler_pulse_q2_q3"
+     ],
+     "pulses": {
+      "coupler_flux_pulse": {
+       "__class__": "quam.components.pulses.SquarePulse",
+       "amplitude": 0.05,
+       "axis_angle": null,
+       "digital_marker": null,
+       "id": "cz_cp_coupler_pulse_q2_q3",
+       "length": 48
+      }
+     },
+     "refusals": [],
+     "renamed": {},
+     "reset": [],
+     "settings": [],
+     "sources": {
+      "control": "q2",
+      "moving_qubit": "control",
+      "target": "q3"
+     }
+    }
+   ],
+   "plan_sig": "2abc34a570a78600d295518c5e46059a13a035ad"
+  },
+  "state": "{\"qubits\": {\"q1\": {\"id\": \"q1\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q2\": {\"id\": \"q2\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q3\": {\"id\": \"q3\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}, \"q4\": {\"id\": \"q4\", \"z\": {\"operations\": {\"const\": {\"amplitude\": 0.1}}}}}, \"qubit_pairs\": {\"q1-2\": {\"id\": \"q1-q2\", \"qubit_control\": \"#/qubits/q1\", \"qubit_target\": \"#/qubits/q2\", \"moving_qubit\": \"control\", \"macros\": {}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}, \"q2-3\": {\"id\": \"q2-q3\", \"qubit_control\": \"#/qubits/q2\", \"qubit_target\": \"#/qubits/q3\", \"moving_qubit\": \"control\", \"macros\": {\"cz_cp\": {\"coupler_flux_pulse\": {\"id\": \"cz_cp_coupler_pulse_q2_q3\", \"length\": 48, \"amplitude\": 0.05, \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}, \"phase_shift_control\": 0.0, \"phase_shift_target\": 0.0, \"duration\": null, \"extras\": {}, \"fidelity\": {}, \"__class__\": \"qsm_quam_ext.CouplerCZGate\"}}, \"coupler\": {\"id\": \"c\", \"operations\": {\"cz_cp_coupler_pulse_q2_q3\": {\"id\": null, \"length\": \"#/qubit_pairs/q2-3/macros/cz_cp/coupler_flux_pulse/length\", \"amplitude\": \"#/qubit_pairs/q2-3/macros/cz_cp/coupler_flux_pulse/amplitude\", \"axis_angle\": null, \"digital_marker\": null, \"__class__\": \"quam.components.pulses.SquarePulse\"}}}}, \"q3-4\": {\"id\": \"q3-q4\", \"qubit_control\": \"#/qubits/q3\", \"qubit_target\": \"#/qubits/q4\", \"moving_qubit\": \"control\", \"macros\": {}, \"coupler\": {\"id\": \"c\", \"operations\": {}}}}}"
+ }
+}

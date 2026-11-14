@@ -84,6 +84,10 @@ from quam_state_manager.core import chip_copy, static_timeline
 from quam_state_manager.core.diagnostics import (
     _LF_AMPLIFIED_BOUND, _LF_DIRECT_BOUND, _MW_SAMPLE_BOUND, _SAMPLE_EPS)
 
+#: the key of a gate's preview dict that lists the operations the gate must
+#: play (its spectators): ``{REQUIRED: [(element, operation)]}``
+REQUIRED = "required"
+
 CHECKS = ("load_config", "ops", "length", "preview", "timeline", "range")
 
 #: preview vs config sample tolerance (volts, or normalised units on an MW
@@ -348,7 +352,16 @@ def _one_gate(key, data, after, after_err, preview):
                                    no_cfg)
         found = [o for o in ops if isinstance(o, dict) and o.get("found")]
         checks["length"] = _guard(_length_check, found, no_cfg, g.get("script"))
+        required = [tuple(x) for x in (preview.get(REQUIRED) or ())]
+        preview = {k: v for k, v in preview.items() if k != REQUIRED}
         checks["preview"] = _guard(_preview_check, found, preview, no_cfg)
+        if required and not no_cfg:
+            played = {(o.get("element"), o.get("operation")) for o in ops if isinstance(o, dict)}
+            lost = [f"{op} on {el}" for el, op in required if (el, op) not in played]
+            if lost:
+                checks["preview"] = _r("fail", "The gate does not play the spectator pulse"
+                                       + ("s " if len(lost) > 1 else " ") + ", ".join(lost)
+                                       + " with the lab's code. " + checks["preview"]["message"])
         tl = None
         if g.get("script") and not no_cfg:
             tl = static_timeline.static_timeline(g["script"], found)

@@ -5,7 +5,7 @@ its length and amplitude, with where each value came from) with what the
 lab's config holds for the operation (the config length, the maximum and the
 minimum of its samples, the play scale of the program). Each row::
 
-    {"field", "operation", "channel", "lane_key",
+    {"field", "operation", "channel", "group": "gate" | "spectator", "lane_key",
      "intended": {"length": int | None, "length_source": str,
                   "amplitude": float | None, "amplitude_source": str},
      "actual": {"length_ns", "max_v", "min_v", "scale", "truncated", "total"} | None,
@@ -58,7 +58,9 @@ def planned_pulse(plan: dict, field: str) -> dict | None:
     if not creates:
         return None
     macro = creates[0][1] if isinstance(creates[0][1], dict) else {}
-    own = macro.get(field)
+    own: Any = macro
+    for part in field.split("."):           # a spectator: "<field>.<qubit>"
+        own = own.get(part) if isinstance(own, dict) else None
     if isinstance(own, dict):
         return own
     op = (plan.get("operations") or {}).get(field) or {}
@@ -85,9 +87,11 @@ def _intended(pulse: dict, prov: dict) -> dict:
             "amplitude_source": asrc, "_inferred": not isinstance(raw, (int, float))}
 
 
-def _actual(rows: list, key: str) -> dict | None:
+def _actual(rows: list, key: str, element: str | None = None) -> dict | None:
+    """The config row of operation *key*; with *element*, only on that
+    element (spectators share one operation name across their lines)."""
     for r in rows:
-        if r.get("operation") != key:
+        if r.get("operation") != key or (element is not None and r.get("element") != element):
             continue
         vals = ([r["constant"]] if r.get("constant") is not None
                 else list(r.get("samples") or []))
@@ -130,7 +134,11 @@ def lane_key(op: dict, rows: list) -> str | None:
     """The timeline lane key of a planned operation (the element it plays on):
     the element of the timeline row that plays it, else the plan's channel
     when it names an element (``coupler <element>`` or ``<qubit>.z``); None
-    when neither tells (a channel in words such as "the coupler of pair X")."""
+    when neither tells (a channel in words such as "the coupler of pair X").
+    A spectator operation shares its name with the other spectators of the
+    gate, so its lane is always its own line."""
+    if op.get("group") == "spectator" and isinstance(op.get("channel"), str):
+        return op["channel"]
     for r in rows:
         r = r._asdict() if hasattr(r, "_asdict") else r
         if isinstance(r, dict) and r.get("operation") == op.get("key") and r.get("element"):
@@ -151,7 +159,8 @@ def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
             continue
         prov = (plan.get("fields") or {}).get(field) or {}
         want = _intended(pulse, prov)
-        have = _actual(rows, op.get("key"))
+        have = _actual(rows, op.get("key"),
+                       op.get("channel") if op.get("group") == "spectator" else None)
         differs = {"length": False, "amplitude": False}
         why: list[str] = []
         if have is None:
@@ -191,6 +200,7 @@ def intent_rows(plan: dict, entry: dict | None) -> list[dict]:
             tones["max"] = "danger" if hi else None      # only the cell that breaks the limit
             tones["min"] = "danger" if lo else None
         out.append({"field": field, "operation": op.get("key"), "channel": op.get("channel"),
+                    "group": "spectator" if op.get("group") == "spectator" else "gate",
                     "lane_key": lane_key(op, rows),
                     "intended": want, "actual": have, "differs": differs, "tones": tones,
                     "why": why})
