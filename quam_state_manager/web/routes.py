@@ -20890,9 +20890,11 @@ def _trend_value_physical(metric: str, kind: str, value) -> bool:
     fidelity (``_is_fidelity_tail``, the resolved series included) by the
     fidelity bound. Anything else only has to be a finite number, which a
     plotted value already is."""
-    v = _vh_numeric(value)
-    if v is None:
+    # a non-finite number is NOT "missing": the Overview's rule rejects it,
+    # so it is handed on as is (only a non-number is N/A)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return True
+    v = float(value)
     if kind == "pair" and (metric == _TREND_2Q_RESOLVED_FAM or _is_fidelity_tail(metric)):
         return chip_health.physical_fidelity(v)
     return chip_health.physicality(metric, v)
