@@ -125,6 +125,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     const d = $('#czg-dialog');
     ok(d && d.hasAttribute('open') && d.classList.contains('ui-dialog--xl'), 'the kit dialog opens');
     ok($('#czg-pair').value === 'q1-2', 'the pair is preselected');
+    ok(doc.activeElement === $('#czg-name'), 'the gate name has the focus on open');
+    ok(!$('#czg-empty').hidden && $('#czg-sec-checks').hidden && $('#czg-sec-intent').hidden, 'empty state: one sentence, no empty headings');
+    ok(/^Qubit flux pulse, plays on q1\.z/.test($('.czg-slot-title').textContent) && $('.czg-slot-title .ui-chip').textContent === 'flux_pulse_qubit', 'slot title: words and this pair\'s channel, the field name small');
     ok(/q1 → q2, moving qubit q1 \(a property of the pair\)/.test($('#czg-pair-line').textContent), 'mover shown read-only');
     ok(!$('#czg-pair-line').matches('input, select'), 'the mover is not an input');
     { const off = [...$('#czg-class').options].filter((o) => o.disabled); ok(off.length > 0 && /SM does not know/.test($('#czg-class-why').textContent) && /not available/.test(off[0].textContent), 'unavailable class disabled with the reason visible'); }
@@ -160,6 +163,7 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     await settle();
     ok(prim().textContent === 'Create gate' && !prim().disabled, 'after a passing check: Create gate');
     ok(charts.length === 1 && charts[0].lanes[0].key === 'q1.z', 'the chart gets the server data');
+    ok($('#czg-checks tr[data-check="range"]') && /Output range/.test($('#czg-checks').textContent) && !$('#czg-sec-checks').hidden, 'checks are named in words, the key kept as data-check');
     ok($('#czg-intent .czg-diff') && /shapes the waveform/.test($('#czg-intent').textContent), 'a differing cell is marked with the why');
 
     // an input change returns to Check and greys the evidence
@@ -221,6 +225,39 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     prim().click();
     await settle();
     ok(!$('#czg-dialog'), 'Close closes');
+
+    // reopened after a create: a clean dialog from fresh server data
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    ok($('#czg-dialog') && !$('#czg-form').hidden && prim().textContent === 'Check' && $('#czg-open-pair').hidden
+       && !$('#czg-empty').hidden && $('#czg-sec-chart').hidden && !$('#czg-evidence').classList.contains('czg-stale')
+       && !/Created/.test(alertText()), 'reopened after create: form back, Check, no evidence');
+    // a failed check is "Cannot be created yet", in the evidence column
+    queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); return j; });
+    prim().click();
+    await settle();
+    ok(/Cannot be created yet/.test(alertText()) && !/Not created/.test(alertText()) && $('#czg-evidence').contains($('#czg-alert'))
+       && prim().textContent === 'Check', 'a refused check: Cannot be created yet, on the right, button Check');
+    // every check skipped for one reason: one callout, no table
+    queue.check.push((b) => { const j = checkOk(b, { unchecked: true }); j.pairs.forEach((p) => { p.checks = ['load_config', 'ops', 'range'].map((n) => ({ name: n, status: 'skipped', message: 'No environment is selected.' })); }); return j; });
+    type($('#czg-name'), 'cz_again');
+    await settle();
+    prim().click();
+    await settle();
+    ok(!$('#czg-checks table') && $('#czg-sec-checks').hidden && /No environment/.test(alertText()), 'all skipped for one reason: said once, no table');
+    // a late answer for a closed dialog is ignored
+    hold = new Promise((r) => { release = r; });
+    type($('#czg-name'), 'cz_late');
+    await settle();
+    prim().click();
+    await tick(5);
+    window.CzGate.close();
+    await window.CzGate.open({ pair: 'q2-3' });
+    await settle();
+    release();
+    await settle();
+    ok(prim().textContent === 'Check' && $('#czg-sec-chart').hidden && !/Inputs changed/.test($('#czg-status').textContent), 'an answer for the closed dialog does not land in the new one');
+    window.CzGate.close();
 
     // the chart component missing
     delete window.GateTimeline;

@@ -229,9 +229,28 @@
         if (typeof v === 'number') return Number.isInteger(v) ? 'int' : 'float';
         return 'str';
     }
-    function slotBlock(title, sub) {
+    var SLOT_WORDS = { flux_pulse_qubit: 'Qubit flux pulse', coupler_flux_pulse: 'Coupler pulse',
+                       flux_pulse_control: 'Control flux pulse', flux_pulse_target: 'Target flux pulse' };
+    /* The channel THIS pair's slot plays on: the plan's own answer, else the pair's lines. */
+    function slotChannel(field, line, fp) {
+        var op = fp && fp.ok && fp.operations ? fp.operations[field] : null;
+        var ch = op && op.channel;
+        if (ch) return ch.indexOf('coupler ') === 0 ? ch.slice(8) : ch;
+        var p = pairInfo($('czg-pair').value);
+        if (!p) return '';
+        if (line === 'moving') {
+            var q = p.moving_qubit === 'control' ? p.control : p.moving_qubit === 'target' ? p.target : null;
+            return q ? q + '.z' : '';
+        }
+        if (line === 'control' || line === 'target') return p[line] ? p[line] + '.z' : '';
+        if (line === 'coupler') return 'the coupler of ' + p.id;
+        return '';
+    }
+    function slotBlock(field, channel, sub) {
         var b = el('fieldset', 'czg-slot');
-        var lg = el('legend', 'czg-slot-title', title);
+        var lg = el('legend', 'czg-slot-title', (SLOT_WORDS[field] || field) + (channel ? ', plays on ' + channel : ''));
+        lg.appendChild(document.createTextNode(' '));
+        lg.appendChild(el('span', 'ui-chip', field));
         b.appendChild(lg);
         if (sub) b.appendChild(note(sub));
         return b;
@@ -243,7 +262,7 @@
         if (!c) return;
         if (c.layout === 'known') {
             (c.slots || []).forEach(function (s) {
-                var b = slotBlock(s.field, 'Plays on ' + s.line_words + '.');
+                var b = slotBlock(s.field, slotChannel(s.field, s.line, fp), '');
                 var l = el('label', 'ui-field');
                 l.appendChild(el('span', 'ui-field-label', 'Pulse class'));
                 var sel = el('select', 'czg-input ui-select ui-select--block');
@@ -281,7 +300,7 @@
             var pulse = fp.pulses[f] || {};
             var op = (fp.operations || {})[f] || {};
             S.cls[f] = pulse.__class__ || null;
-            var b = slotBlock(f, 'Plays on ' + (op.channel || 'a line') + '. Class ' + (pulse.__class__ || '?') + ', from the model gate.');
+            var b = slotBlock(f, slotChannel(f, null, fp), 'Class ' + (pulse.__class__ || '?') + ', from the model gate.');
             var grid = el('div', 'ui-field-grid');
             Object.keys(pulse).forEach(function (k) {
                 var v = pulse[k];
@@ -335,10 +354,10 @@
     }
     function plan() {
         var b = body();
-        var mine = S.seq;
+        var mine = S.seq, g = S;
         if (!b.pairs.length) { S.plan = null; refresh(); return Promise.resolve(); }
         return post('/api/pulse/cz-gate/plan', b).then(function (x) {
-            if (!S || mine !== S.seq) return;
+            if (S !== g || mine !== S.seq) return;
             if (!x.r.ok || !x.j.ok) {
                 S.plan = null;
                 alertBox(callout('danger', 'The plan could not be made', (x.j.error || ('The app answered HTTP ' + x.r.status)) + ' Change the inputs or close the dialog.'));
@@ -349,7 +368,7 @@
             S.planSig = x.j.plan_sig;
             renderPlan();
         }).catch(function (e) {
-            if (!S) return;
+            if (S !== g) return;
             alertBox(callout('danger', 'The plan could not be made', 'The app did not answer (' + e + '). Try again.'));
         });
     }
@@ -438,15 +457,36 @@
         host.appendChild(t);
         rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(note(r.operation + ': ' + w)); }); });
     }
+    var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'Every played operation exists',
+                        length: 'Pulse lengths', preview: 'Preview equals the config', timeline: 'Timeline',
+                        range: 'Output range' };
+    function allSkippedReason(p) {
+        var cs = p.checks || [];
+        if (!cs.length || !cs.every(function (c) { return c.status === 'skipped' && c.message === cs[0].message; })) return null;
+        return cs[0].message;
+    }
     function renderChecks(p) {
         var host = clear($('czg-checks'));
         var U = UIkit();
         if (!p.ok) { (p.refusals || []).forEach(function (r) { host.appendChild(note(r)); }); return; }
-        if (!U) return;
-        host.appendChild(U.table(['Check', 'Result', 'Message'], (p.checks || []).map(function (c) {
-            return [c.name, { dot: TONE[c.status] || 'neutral', text: c.status }, c.message];
-        }), false, [], 'Checks'));
+        if (!U || allSkippedReason(p)) return;
+        var t = U.table(['Check', 'Result', 'Message'], (p.checks || []).map(function (c) {
+            return [CHECK_WORDS[c.name] || c.name, { dot: TONE[c.status] || 'neutral', text: c.status }, c.message];
+        }), false, [], 'Checks');
+        Array.prototype.slice.call(t.querySelectorAll('tbody tr')).forEach(function (tr, k) {
+            tr.setAttribute('data-check', p.checks[k].name);
+        });
+        host.appendChild(t);
         (p.previews_skipped || []).forEach(function (s) { host.appendChild(note('No preview compared for ' + s)); });
+    }
+    function showSections(p) {
+        var has = function (id) { var n = $(id); return !!(n && n.childNodes.length); };
+        var e = $('czg-empty');
+        if (e) e.hidden = !!p;
+        [['czg-sec-chart', 'czg-chart'], ['czg-sec-intent', 'czg-intent'], ['czg-sec-checks', 'czg-checks']].forEach(function (x) {
+            var sec = $(x[0]);
+            if (sec) sec.hidden = !p || !has(x[1]);
+        });
     }
     function renderCheck() {
         var c = S.check;
@@ -458,15 +498,18 @@
             renderIntent(p.intent);
             renderChecks(p);
         }
+        showSections(p);
         var ok = allowedPairs();
         var no = (c.pairs || []).filter(function (x) { return !(x.verdict && x.verdict.allowed); });
         var parts = [];
         if (!ok.length) {
-            alertBox(callout('danger', 'Not created', (no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' '))
+            alertBox(callout('danger', 'Cannot be created yet', (no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' '))
                 + ' Change the inputs and press Check again.'));
         } else if (ok.some(function (x) { return x.verdict.state !== 'verified'; })) {
             var why = ok.filter(function (x) { return x.verdict.state !== 'verified'; })[0].verdict.reason;
             alertBox(callout('warn', 'Not checked with the lab\'s code', why + ' You can still create it; the record will say it was not checked.'));
+            var whyAll = p && allSkippedReason(p);
+            if (whyAll && whyAll !== why) $('czg-alert').appendChild(note(whyAll));
         } else if (no.length) {
             alertBox(callout('note', 'Some pairs are left out', no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
         } else {
@@ -482,10 +525,10 @@
     function check() {
         if (!S || S.busy) return Promise.resolve();
         var b = body();
-        var mine = S.seq;
+        var mine = S.seq, g = S;
         setBusy(true, 'Checking with the lab\'s code, about 10 s');
         return post('/api/pulse/cz-gate/check', b).then(function (x) {
-            if (!S) return;
+            if (S !== g) return;
             if (mine !== S.seq) { setBusy(false, 'Inputs changed, check again.'); return; }
             if (!x.r.ok || !x.j.ok) {
                 setBusy(false, '');
@@ -495,7 +538,7 @@
             S.check = x.j;
             renderCheck();
         }).catch(function (e) {
-            if (!S) return;
+            if (S !== g) return;
             setBusy(false, '');
             alertBox(callout('danger', 'The check did not run', 'The app did not answer (' + e + '). Press Check to try again.'));
         });
@@ -504,10 +547,11 @@
     /* ---- create ---------------------------------------------------------- */
     function create() {
         if (!S || S.busy || S.phase !== 'create' || !S.check) return Promise.resolve();
+        var g = S;
         setBusy(true, 'Creating…');
         return post('/api/pulse/cz-gate/create', { check_token: S.check.check_token, plan_sig: S.check.plan_sig })
             .then(function (x) {
-                if (!S) return;
+                if (S !== g) return;
                 var j = x.j;
                 if (j.tray_html && window._swapPendingTray) {
                     try { window._swapPendingTray(j.tray_html); } catch (e) { /* the tray poll catches up */ }
@@ -534,7 +578,7 @@
                 }
                 done(j);
             }).catch(function (e) {
-                if (!S) return;
+                if (S !== g) return;
                 setBusy(false, '');
                 alertBox(callout('danger', 'Not created', 'The app did not answer (' + e + '). Nothing is known to be written; look at the pending changes, then try again.'));
             });
@@ -599,11 +643,12 @@
         opts = opts || {};
         if (S) close();
         S = fresh();
+        var g = S;
         S.opener = opts.opener || null;
         var url = '/pulse/cz-gate/dialog' + (opts.pair ? '?pair=' + encodeURIComponent(opts.pair) : '');
         return fetch(url).then(function (r) { return r.text().then(function (t) { return { r: r, t: t }; }); })
             .then(function (x) {
-                if (!S) return;
+                if (S !== g) return;
                 var h = clear(host());
                 h.innerHTML = x.t;
                 var d = $('czg-dialog');
@@ -615,6 +660,8 @@
                 }
                 if (typeof d.showModal === 'function') { try { d.showModal(); } catch (e) { d.setAttribute('open', ''); } }
                 else d.setAttribute('open', '');
+                var name = $('czg-name');
+                if (name) { try { name.focus(); } catch (e) { /* not focusable */ } }
                 return init();
             });
     }
@@ -645,6 +692,7 @@
             return;
         }
         if (!inDialog(t) || !S) return;
+        if (t.id === 'czg-dialog' && !S.busy) { close(); return; }       // the backdrop
         if (t.closest('[data-czg-close]')) { close(); return; }
         if (t.closest('#czg-open-pair')) {
             var p = $('czg-pair') ? $('czg-pair').value : '';
@@ -689,6 +737,11 @@
         else { delete S.entered[f][n]; t.setAttribute('aria-invalid', 'true'); t.classList.add('czg-bad'); say(r.why); }
         inputsChanged();
     });
+    document.addEventListener('cancel', function (ev) {
+        if (!ev.target || ev.target.id !== 'czg-dialog') return;
+        ev.preventDefault();
+        if (S && !S.busy) close();
+    }, true);
     document.addEventListener('keydown', function (ev) {
         if (ev.key !== 'Escape' || !S) return;
         var d = $('czg-dialog');

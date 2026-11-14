@@ -703,7 +703,7 @@ _STAGE6_SELECTORS = {
     '.czg-slot-title', '.czg-fieldbox',
     '.czg-more-list', '.czg-more-row', '.czg-section-title', '.czg-chart > .ui-note',
     '.czg-intent', '.czg-checks', '.czg-writes', '.czg-stale', '.czg-diff', '.czg-row-acts',
-    '.czg-input--text', '.czg-foot-acts',
+    '.czg-input--text', '.czg-foot-acts', '.czg-slot .ui-field-grid',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',

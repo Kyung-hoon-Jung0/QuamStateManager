@@ -6,14 +6,13 @@
 <dialog id="czg-dialog" class="ui-dialog ui-dialog--xl czg" aria-labelledby="czg-title">
     <div class="ui-dialog-head">
         <header class="ui-head">
-            <div class="ui-head-eyebrow">New gate</div>
             <h2 id="czg-title" class="ui-head-title">New CZ gate</h2>
             <p id="czg-gist" class="ui-head-gist">{{ ("Pair " ~ selected) if selected else "Pick a pair" }}</p>
         </header>
         <button type="button" class="ui-btn-icon" data-czg-close aria-label="Close" title="Close">&#10005;</button>
     </div>
     <div class="ui-dialog-body czg-body">
-        <div id="czg-alert" class="czg-alert" aria-live="polite">
+        <div id="czg-top" class="czg-alert">
             {%- if unknown_pair %}{{ ui_callout('warn', 'Pair not found', 'This chip has no pair ' ~ unknown_pair ~ '. Pick a pair from the list.') }}{% endif -%}
             {%- if not data.pairs %}{{ ui_callout('danger', 'No pairs', 'This chip has no qubit pairs, so there is nowhere to add a gate. Add a pair from the chip diagram first.') }}{% endif -%}
         </div>
@@ -50,12 +49,14 @@
                 </details>
             </form>
             <section id="czg-evidence" class="czg-evidence" aria-label="What the lab's code made">
-                <h3 class="czg-section-title">Waveform</h3>
-                <div id="czg-chart" class="czg-chart"><p class="ui-note">Press Check to see the waveform the lab's code makes.</p></div>
-                <h3 class="czg-section-title">Intended and actual</h3>
-                <div id="czg-intent" class="czg-intent"></div>
-                <h3 class="czg-section-title">Checks</h3>
-                <div id="czg-checks" class="czg-checks"></div>
+                <div id="czg-alert" class="czg-alert" aria-live="polite"></div>
+                <p id="czg-empty" class="ui-note">Press Check: the lab's code builds this gate on a copy of the chip and the result shows here.</p>
+                <div id="czg-sec-chart" hidden><h3 class="czg-section-title">Waveform</h3>
+                    <div id="czg-chart" class="czg-chart"></div></div>
+                <div id="czg-sec-intent" hidden><h3 class="czg-section-title">Intended and actual</h3>
+                    <div id="czg-intent" class="czg-intent"></div></div>
+                <div id="czg-sec-checks" hidden><h3 class="czg-section-title">Checks</h3>
+                    <div id="czg-checks" class="czg-checks"></div></div>
                 <h3 class="czg-section-title">What will be written</h3>
                 <div id="czg-writes" class="czg-writes"></div>
             </section>

@@ -1324,3 +1324,4 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg-stale { opacity: 0.45; }
 .czg-diff { background: var(--ui-warn-bg); color: var(--ui-warn-text); }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
+.czg-slot .ui-field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
