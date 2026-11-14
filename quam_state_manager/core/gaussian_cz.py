@@ -27,12 +27,12 @@ import re
 from typing import Any
 
 from quam_state_manager.core.add_names import pulse_name
+from quam_state_manager.core.cz_gate_build import (
+    CZ_GATE as _CZ_GATE, _cz_skeleton, linked_operation, pair_qubit)
 from quam_state_manager.core.pointer_path import resolve_field_target
 
 _QB_COMMON = "quam_builder.common.pulses."
 _QB_ARCH = "quam_builder.architecture.superconducting.components.pulses."
-_CZ_GATE = ("quam_builder.architecture.superconducting.custom_gates."
-            "flux_tunable_transmon_pair.two_qubit_gates.CZGate")
 
 # (macro name, pulse __class__) — the two variants the script builds.
 VARIANTS = (
@@ -61,15 +61,7 @@ def _qubit_name(merged: dict, pair_id: str, role_key: str) -> str | None:
     ``#/wiring/qubit_pairs/<p>/c/control_qubit`` — docs/118) and takes the
     resolved path's last segment under ``qubits.``.
     """
-    try:
-        ft = resolve_field_target(merged, f"qubit_pairs.{pair_id}.{role_key}")
-    except Exception:  # noqa: BLE001
-        return None
-    rp = ft.get("resolved_path") or ""
-    parts = rp.split(".")
-    if len(parts) == 2 and parts[0] == "qubits":
-        return parts[1]
-    return None
+    return pair_qubit(merged, pair_id, role_key)
 
 
 def _pulse(cls: str, *, pulse_id: str | None, pulse_length, padding_length,
@@ -86,17 +78,6 @@ def _pulse(cls: str, *, pulse_id: str | None, pulse_length, padding_length,
         "axis_angle": None,
         "__class__": cls,
     }
-
-
-def _linked_pulse(cls: str, macro_ref: str) -> dict[str, Any]:
-    """The channel-op twin: every calibrated field POINTS at the macro's pulse."""
-    return _pulse(
-        cls, pulse_id=None,
-        pulse_length=macro_ref + "/pulse_length",
-        padding_length=macro_ref + "/padding_length",
-        amplitude=macro_ref + "/amplitude",
-        filter_mhz=macro_ref + "/gaussian_filter_frequency_mhz",
-    )
 
 
 def eligible_pairs(merged: dict) -> list[dict[str, Any]]:
@@ -266,28 +247,16 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
                     notes.append(f"{legacy} on {host.split('.')[1]} stays "
                                  f"with pair {', '.join(sorted(lowners))}")
         macro_ref = f"#/qubit_pairs/{pair_id}/macros/{gname}"
-        macro = {
-            "id": "#./inferred_id",
-            "fidelity": {},
-            "duration": "#./inferred_duration",
-            "flux_pulse_qubit": _pulse(
-                pulse_cls, pulse_id=qname, pulse_length=flat_len,
-                padding_length=padding_length, amplitude=qubit_amp,
-                filter_mhz=qubit_filter_mhz),
-            "coupler_flux_pulse": (_pulse(
+        macro = _cz_skeleton()
+        macro["flux_pulse_qubit"] = _pulse(
+            pulse_cls, pulse_id=qname, pulse_length=flat_len,
+            padding_length=padding_length, amplitude=qubit_amp,
+            filter_mhz=qubit_filter_mhz)
+        if has_coupler:
+            macro["coupler_flux_pulse"] = _pulse(
                 pulse_cls, pulse_id=cname,
                 pulse_length=flat_len, padding_length=padding_length,
                 amplitude=coupler_amp, filter_mhz=coupler_filter_mhz)
-                if has_coupler else None),
-            "phase_shift_control": 0.0,
-            "phase_shift_target": 0.0,
-            "spectator_qubits": {},
-            "spectator_qubits_control": {},
-            "spectator_qubits_phase_shift": {},
-            "extras": {},
-            "duration_qubit": None,
-            "__class__": _CZ_GATE,
-        }
         creates.append((macro_path, macro))
 
         z_op_path = f"qubits.{mq}.z.operations.{qname}"
@@ -301,7 +270,8 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
             else:
                 existing.append(z_op_path)
         creates.append((z_op_path,
-                        _linked_pulse(pulse_cls, macro_ref + "/flux_pulse_qubit")))
+                        linked_operation(macro["flux_pulse_qubit"],
+                                         macro_ref + "/flux_pulse_qubit")))
 
         if has_coupler:
             c_op_path = (f"qubit_pairs.{pair_id}.coupler.operations."
@@ -315,8 +285,8 @@ def plan(merged: dict, pair_id: str, *, padding_length: int = 20,
                 else:
                     existing.append(c_op_path)
             creates.append((c_op_path,
-                            _linked_pulse(pulse_cls,
-                                          macro_ref + "/coupler_flux_pulse")))
+                            linked_operation(macro["coupler_flux_pulse"],
+                                             macro_ref + "/coupler_flux_pulse")))
 
     if strict and existing:
         return {"error": f"a gate or operation named {existing[0].rsplit('.', 1)[-1]} already exists",
