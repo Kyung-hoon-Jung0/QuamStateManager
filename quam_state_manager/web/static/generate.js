@@ -5076,8 +5076,9 @@
     ((cl && cl.findings) || []).forEach(function (f) {
       if (!f || !f.line) return;
       var box = document.createElement("div");
-      box.className = "ui-callout ui-callout--warn";
-      box.setAttribute("data-core-layout", "warn");
+      var info = f.severity === "info";
+      box.className = "ui-callout ui-callout--" + (info ? "note" : "warn");
+      box.setAttribute("data-core-layout", info ? "info" : "warn");
       var p = document.createElement("p");
       p.className = "ui-callout-text ui-callout-title";
       p.textContent = f.line;

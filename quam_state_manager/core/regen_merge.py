@@ -3334,8 +3334,39 @@ def _effective_core(el: Any) -> Any:
     return effective_core_name(el)[0]
 
 
+def _is_ref(value: Any) -> bool:
+    return isinstance(value, str) and value.startswith("#")
+
+
+def _kept_core_value(merged_state: dict, control_ref: Any, kept_xy: dict) -> Any:
+    """The kept xy's effective core as a plain name. A reference (``#/...``,
+    ``#./...``) is resolved against the kept xy itself, never copied raw into
+    another element where a relative pointer would land elsewhere; a reference
+    that cannot be resolved to a name gives None (the channel keeps its own core)."""
+    from quam_state_manager.core.core_layout import effective_core_name
+    from quam_state_manager.core.pointer_resolver import _get, _landing, _SENTINEL
+
+    value, key = effective_core_name(kept_xy)
+    if not (isinstance(value, str) and value.startswith("#")):
+        return value
+    if not isinstance(control_ref, str) or not control_ref.startswith("#/qubits/"):
+        return None
+    qname = control_ref[len("#/qubits/"):].split("/", 1)[0]
+    path = _landing(merged_state, value, ("qubits", qname, "xy", key))
+    if path is None:
+        return None
+    got = _get(merged_state, path)
+    if got is _SENTINEL or not isinstance(got, str) or not got or got.startswith("#"):
+        return None
+    return got
+
+
+UNRESOLVED_CORE_NOTE = ("{path}.core: the control qubit's xy core is a reference that could not "
+                        "be read as a core name; the new channel keeps its own core. Verify.")
+
+
 def realign_new_pair_cores(old_state: dict, new_state: dict,
-                           merged_state: dict) -> list[str]:
+                           merged_state: dict, notes: list | None = None) -> list[str]:
     """A pair channel new in the output follows its control qubit's KEPT core.
 
     The fresh build names a cross-resonance / ZZ channel after its control
@@ -3345,7 +3376,8 @@ def realign_new_pair_cores(old_state: dict, new_state: dict,
     equals the fresh control xy core in ``new_state``, set its core to the
     merged control xy's effective core (``core``, else ``thread``; None means
     its own core). Run after :func:`drop_new_core_keys`. Returns the dotted
-    paths changed."""
+    paths changed; a kept core reference that cannot be resolved adds one
+    line to ``notes`` (when given) per channel set to its own core."""
     changed: list[str] = []
     if not all(isinstance(s, dict) for s in (old_state, new_state, merged_state)):
         return changed
@@ -3365,7 +3397,7 @@ def realign_new_pair_cores(old_state: dict, new_state: dict,
         kept_xy = (_qubit_by_pointer(merged_state, pair.get("qubit_control")) or {}).get("xy")
         if not isinstance(kept_xy, dict):
             continue
-        kept_core = _effective_core(kept_xy)
+        kept_core = _kept_core_value(merged_state, pair.get("qubit_control"), kept_xy)
         for name in _PAIR_CORE_CHANNELS:
             chan = pair.get(name)
             if not isinstance(chan, dict) or chan.get("core") != fresh_core:
@@ -3375,4 +3407,6 @@ def realign_new_pair_cores(old_state: dict, new_state: dict,
             if kept_core != fresh_core:
                 chan["core"] = kept_core
                 changed.append(f"qubit_pairs.{pid}.{name}")
+                if kept_core is None and notes is not None and _is_ref(_effective_core(kept_xy)):
+                    notes.append(UNRESOLVED_CORE_NOTE.format(path=f"qubit_pairs.{pid}.{name}"))
     return changed

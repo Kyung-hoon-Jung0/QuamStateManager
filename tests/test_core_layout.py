@@ -645,3 +645,62 @@ def test_internal_error_returns_count_failed(monkeypatch):
     assert len(fs) == 1 and fs[0].values["kind"] == "count_failed"
     assert fs[0].message == "Core layout could not be counted (ValueError)" and fs[0].severity == "warning"
     assert cl.core_budget(c.s)["error"] == "ValueError"
+
+
+# --- untyped controller between the original OPX and the OPX+ limits --------
+def _info_lines(state, surface):
+    return [cl.finding_line(f) for f in cl.surface_findings(state, surface)
+            if f.values.get("kind") == "assumed_type"]
+
+
+def test_untyped_controller_in_the_opx_gap_gets_one_info_line():
+    expected = ("Core layout note: {n} cores on con1 fit an OPX+ (18) but would exceed an original OPX "
+                "(10); the chip does not state the controller type")
+    for n, want in ((10, False), (11, True), (14, True), (18, True), (19, False)):
+        s = _controller_chip(n).s
+        lc, rv = _info_lines(s, "load_check"), _info_lines(s, "review")
+        assert lc == rv, n
+        if want:
+            assert [x["line"] for x in lc] == [expected.format(n=n)], n
+            assert lc[0]["severity"] == "info"
+        else:
+            assert lc == [], n
+        assert _info_lines(s, "diagnostics") == []
+    # 19: the over-limit warning only
+    fs = cl.surface_findings(_controller_chip(19).s, "load_check")
+    assert [f.values["kind"] for f in fs] == ["fem_budget"]
+    # info is never a warning
+    f = cl.surface_findings(_controller_chip(14).s, "load_check")[0]
+    assert f.severity == "info" and not cl.finding_line(f)["line"].startswith("Core layout warning")
+
+
+def test_typed_or_fem_chip_in_the_gap_gets_no_info_line():
+    c = _controller_chip(14)
+    c.s["controllers"] = {"con1": {"type": "opx1"}}
+    assert cl.surface_findings(c.s, "load_check") == []
+    m = Chip()
+    for i in range(14):
+        m.el(f"q{i}", "xy", opx_output=m.port("mw_outputs", "con1", 1))
+    assert all(f.values.get("kind") != "assumed_type" for f in cl.surface_findings(m.s, "load_check"))
+
+
+def test_note_limits_come_from_the_constants(monkeypatch):
+    monkeypatch.setattr(cl, "OPX_CORE_LIMIT", 12)
+    assert cl.surface_findings(_controller_chip(12).s, "load_check") == []
+    assert "(12)" in cl.surface_findings(_controller_chip(13).s, "load_check")[0].message
+
+
+def test_controller_level_fix_says_this_controller():
+    s = _controller_chip(19).s
+    lc = [cl.finding_line(f) for f in cl.surface_findings(s, "load_check")][0]
+    rv = [cl.finding_line(f) for f in cl.surface_findings(s, "review")][0]
+    assert "Fix: move elements off this controller." in lc["detail"]
+    assert ("Fix: tick Share one core per qubit (xy + readout), or move elements off this controller."
+            in rv["detail"])
+    assert not any("this FEM" in d for d in lc["detail"] + rv["detail"])
+    m = Chip()
+    for i in range(10):
+        m.el(f"q{i}", "xy", opx_output=m.port("mw_outputs", "con1", 1))
+    d = [cl.finding_line(f) for f in cl.surface_findings(m.s, "load_check")
+         if f.values.get("kind") == "fem_budget"][0]["detail"]
+    assert "Fix: move elements off this FEM." in d

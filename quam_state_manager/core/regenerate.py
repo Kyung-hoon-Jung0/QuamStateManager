@@ -925,8 +925,10 @@ def run_regenerate(
     core_keys_dropped, core_keys_from_thread = regen_merge.drop_new_core_keys(
         old_state, result.merged)
     # a pair channel new in the output rides its control's kept core
-    regen_merge.realign_new_pair_cores(old_state, new_state, result.merged)
+    core_notes: list = []
+    regen_merge.realign_new_pair_cores(old_state, new_state, result.merged, core_notes)
     result.stats.populate_conflicts.extend(pop_conflicts)
+    result.stats.populate_conflicts.extend(core_notes)
     result.stats.wiring_values_carried = wiring_carried
     if add_report and add_report.get("added"):
         add_report["merge_skipped"] = additions.restore_paths(

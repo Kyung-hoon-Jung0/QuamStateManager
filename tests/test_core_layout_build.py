@@ -376,6 +376,25 @@ def test_pin_cores_null_or_absent_is_on_only_false_is_off():
     assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": False}}}) is False
 
 
+_NON_BOOL_ON = (0, "false", "off", None, "", 0.0)
+
+
+def test_pin_cores_non_bool_values_keep_pinning_on():
+    for v in _NON_BOOL_ON:
+        assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": v}}}) is True, repr(v)
+
+
+def test_emitted_script_keeps_pinning_on_for_non_bool_values():
+    """Run the emitted guard line itself on each value."""
+    import inspect
+    src = inspect.getsource(script_emitter)
+    line = next(ln for ln in src.splitlines() if '"pin_cores")' in ln and "if (POPULATE" in ln)
+    cond = line.split("w('if ", 1)[1].rsplit(":')", 1)[0]
+    for v, on in [(v, True) for v in _NON_BOOL_ON] + [("missing", True), (True, True), (False, False)]:
+        opts = {} if v == "missing" else {"pin_cores": v}
+        assert eval(cond, {"POPULATE": {"options": opts}}) is on, repr(v)
+
+
 def test_emitted_script_reads_pin_cores_by_the_same_rule():
     import inspect
     src = inspect.getsource(script_emitter)

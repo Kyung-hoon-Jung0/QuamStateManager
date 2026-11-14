@@ -120,6 +120,15 @@ COUNT_FAILED_MESSAGE = "Core layout could not be counted ({exc})"
 
 # Surface sentences (Load check, Chip Status, Review), copied from the spec by script.
 FIX_MOVE = "Fix: move elements off this FEM."
+# The same fix sentences on a chip with no FEM (controller-level ports).
+FIX_MOVE_CONTROLLER = "Fix: move elements off this controller."
+FIX_REVIEW_CONTROLLER = ("Fix: tick Share one core per qubit (xy + readout), or move elements off "
+                         "this controller.")
+# Information only (never a warning): an untyped controller whose count fits an OPX+ but not an
+# original OPX. Limits are filled from OPX_PLUS_CORE_LIMIT / OPX_CORE_LIMIT.
+ASSUMED_TYPE_NOTE = ("{cores} cores on {con} fit an OPX+ ({plus}) but would exceed an original OPX "
+                     "({opx}); the chip does not state the controller type")
+INFO_LINE_PREFIX = "Core layout note: {message}"
 RISK_NOTE = ("Known risk: on QOP 3.8.1 (another device), with xy and resonator on one core, a resonator "
              "update_frequency inside a program made later x180 pulses have no effect; the simulator did not "
              "show it; it depended on the program layout. Not tested on QOP 3.7.3; a hardware test is planned.")
@@ -665,12 +674,47 @@ def surface_fix_line(fem_finding_values: dict, surface: str) -> str:
     ``diagnostics`` or ``review``). Core layout cannot fix a route overage."""
     if not fem_finding_values.get("over_cores"):
         return PANEL_ROUTES
+    if fem_finding_values.get("fem") is None:
+        return FIX_REVIEW_CONTROLLER if surface == "review" else FIX_MOVE_CONTROLLER
     return FIX_REVIEW if surface == "review" else FIX_MOVE
+
+
+def assumed_type_note(fem: dict) -> str | None:
+    """The one information sentence for an untyped controller whose count is above the
+    original OPX limit and within the OPX+ limit; None otherwise (typed, FEM, or outside
+    that range, where the over-limit warning already speaks)."""
+    if fem.get("fem") is not None or fem.get("controller_type") != CONTROLLER_TYPE_ASSUMED:
+        return None
+    count = fem["cores"]["count"]
+    if not (OPX_CORE_LIMIT < count <= OPX_PLUS_CORE_LIMIT):
+        return None
+    return ASSUMED_TYPE_NOTE.format(cores=_num(count), con=fem["controller"],
+                                    plus=OPX_PLUS_CORE_LIMIT, opx=OPX_CORE_LIMIT)
+
+
+def _assumed_type_findings(state: dict) -> list:
+    """Info findings from :func:`assumed_type_note` (Load check and Re-generate result)."""
+    from quam_state_manager.core.diagnostics import Finding
+
+    try:
+        rep = core_budget(state)
+    except Exception:  # noqa: BLE001 - the count failure is reported by core_budget_findings
+        return []
+    out = []
+    for f in rep.get("fems") or []:
+        note = assumed_type_note(f)
+        if note:
+            out.append(Finding(severity="info", category=CATEGORY, location=_place(f), message=note,
+                               values={"kind": "assumed_type", "controller": f["controller"],
+                                       "count": f["cores"]["count"]}))
+    return out
 
 
 def surface_findings(state: dict, surface: str) -> list:
     """``core_budget_findings`` with the surface's fix line in each per-FEM detail."""
     out = core_budget_findings(state)
+    if surface in ("load_check", "review"):
+        out = out + _assumed_type_findings(state)
     if not out:
         return out
     rep = core_budget(state)
@@ -685,8 +729,10 @@ def surface_findings(state: dict, surface: str) -> list:
 def finding_line(finding) -> dict:
     """One finding as a surface shows it: the warning line plus its detail lines."""
     v = finding.values if isinstance(finding.values, dict) else {}
+    info = getattr(finding, "severity", None) == "info"
     return {"kind": v.get("kind"), "location": finding.location, "message": finding.message,
-            "line": LINE_PREFIX.format(message=finding.message),
+            "severity": "info" if info else "warning",
+            "line": (INFO_LINE_PREFIX if info else LINE_PREFIX).format(message=finding.message),
             "detail": [ln for ln in (finding.detail or "").split("\n") if ln]}
 
 

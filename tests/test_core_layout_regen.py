@@ -242,3 +242,45 @@ def test_regenerate_result_reads_the_wiring(tmp_path, monkeypatch):
     cl = res["core_layout"]
     assert cl == json.loads(json.dumps(core_layout.review_summary(merge_state_wiring(*built))))
     assert "10 / 8 cores on con1 FEM 1 (MW-FEM)" in json.dumps(cl["findings"])
+
+
+def test_new_cr_resolves_a_kept_core_reference():
+    for ref in ("#./thread", "#/qubits/q1/xy/thread"):
+        old = _pair_chip(ref, with_cr=False)
+        old["qubits"]["q1"]["xy"]["thread"] = "t1"
+        new = _pair_chip("q1_core", cr_core="q1_core")
+        merged = _merged(old, new)
+        regen_merge.realign_new_pair_cores(old, new, merged)
+        assert merged["qubit_pairs"]["q1-2"]["cross_resonance"]["core"] == "t1", ref
+
+
+def test_new_cr_with_a_dangling_core_reference_keeps_no_raw_pointer():
+    old = _pair_chip("#/qubits/q1/xy/nowhere", with_cr=False)
+    new = _pair_chip("q1_core", cr_core="q1_core")
+    merged = _merged(old, new)
+    regen_merge.realign_new_pair_cores(old, new, merged)
+    assert merged["qubit_pairs"]["q1-2"]["cross_resonance"]["core"] is None
+
+
+def test_dangling_core_reference_is_said_once():
+    old = _pair_chip("#/qubits/q1/xy/nowhere", with_cr=False)
+    new = _pair_chip("q1_core", cr_core="q1_core")
+    merged = _merged(old, new)
+    notes: list = []
+    regen_merge.realign_new_pair_cores(old, new, merged, notes)
+    assert notes == [regen_merge.UNRESOLVED_CORE_NOTE.format(path="qubit_pairs.q1-2.cross_resonance")]
+    assert "#" not in notes[0] and " -- " not in notes[0]
+    # a resolvable reference says nothing
+    old = _pair_chip("#./thread", with_cr=False)
+    old["qubits"]["q1"]["xy"]["thread"] = "t1"
+    notes = []
+    regen_merge.realign_new_pair_cores(old, new, _merged(old, new), notes)
+    assert notes == []
+
+
+def test_regenerate_passes_the_core_notes_to_the_result():
+    import inspect
+    from quam_state_manager.core import regenerate
+    src = inspect.getsource(regenerate)
+    assert "realign_new_pair_cores(old_state, new_state, result.merged, core_notes)" in src
+    assert "populate_conflicts.extend(core_notes)" in src

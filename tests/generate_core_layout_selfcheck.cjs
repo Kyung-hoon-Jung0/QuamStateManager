@@ -95,6 +95,9 @@ const RISK = 'Known risk: on QOP 3.8.1 (another device), with xy and resonator o
   ok(small && !small.querySelector('details'), '[within] 8 rows or fewer stay open');
   ok(T.coreLayoutTable(null) === null && T.coreLayoutTable({ table: null }) === null, '[none] no section');
   ok(T.coreLayoutWarnings(undefined).length === 0, '[none] no warning lines');
+  const infoBoxes = T.coreLayoutWarnings({ findings: [{ kind: 'assumed_type', severity: 'info', line: 'Core layout note: 14 cores on con1', detail: [] }] });
+  ok(infoBoxes.length === 1 && infoBoxes[0].classList.contains('ui-callout--note') && !infoBoxes[0].classList.contains('ui-callout--warn')
+     && infoBoxes[0].getAttribute('data-core-layout') === 'info', '[info] an info finding is a note callout');
   T.showBuildResult({ ok: true, result: { qubits: ['q1'], qubit_pairs: [], warnings: [] } }, '/o');
   ok(!res.querySelector('[data-core-layout="table"]') && !res.querySelector('[data-core-layout="warn"]'), '[none] result without core_layout');
 
