@@ -572,7 +572,8 @@
             alertBox(banner('ok', 'Ready to create on ' + ok.length + (ok.length === 1 ? ' pair' : ' pairs'),
                 'Left out: ' + no.map(function (x) { return x.pair + ': ' + x.verdict.reason; }).join(' ')));
         } else {
-            alertBox(banner('ok', 'Ready to create', 'The lab\'s code built this gate on a copy of the chip and every check passed.'));
+            alertBox(banner('ok', ok.length > 1 ? 'Ready to create on ' + ok.length + ' pairs' : 'Ready to create',
+                'The lab\'s code built ' + (ok.length > 1 ? 'these gates' : 'this gate') + ' on a copy of the chip and every check passed.'));
         }
         if (no.length && ok.length) parts.push(no.length + ' left out');
         S.phase = ok.length ? 'create' : 'check';
