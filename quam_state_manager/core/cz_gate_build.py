@@ -1076,10 +1076,22 @@ def spectator_line(merged: dict, qubit: str) -> dict[str, Any] | str:
     reason it has none: ``{"qubit", "line", "segs", "ops", "port", "range",
     "offset"}``. ``port`` is the port reference (None when SM cannot follow
     it), ``range`` the port's output range in V (None when not known) and
-    ``offset`` the port's DC offset in V (0 when not stated)."""
+    ``offset`` the port's DC offset in V (0 when not stated). ``dc_levels``
+    lists every DC level the line may hold while the gate plays
+    (:func:`flux_dc.line_dc_levels`: port offset and flux-point offset, in V
+    at the port); a level is checked against the range on top of each."""
     from quam_state_manager.core.diagnostics import _follow_to_ports_ref, _sample_bound
+    from quam_state_manager.core.flux_dc import landed_path, line_dc_levels
     qubits = merged.get("qubits") if isinstance(merged, dict) else None
     entry = qubits.get(qubit) if isinstance(qubits, dict) else None
+    qpath: tuple = ("qubits", qubit)
+    if isinstance(entry, str) and entry.startswith("#"):
+        real = landed_path(merged, qpath)
+        entry = _get(merged, list(real)) if real is not None else None
+        qpath = real or qpath
+        if not isinstance(entry, dict):
+            return (f"The spectator {qubit} is a reference ({qubits[qubit]}) that SM "
+                    "could not follow to a qubit. Pick another qubit, or fix the reference.")
     if not isinstance(entry, dict):
         return (f"The spectator {qubit} is not a qubit of this chip. Pick a qubit "
                 "from the list.")
@@ -1100,8 +1112,13 @@ def spectator_line(merged: dict, qubit: str) -> dict[str, Any] | str:
         o = node.get("offset") if isinstance(node, dict) else None
         if isinstance(o, (int, float)) and not isinstance(o, bool) and math.isfinite(o):
             off = float(o)
-    return {"qubit": qubit, "line": f"{qubit}.z", "segs": ("qubits", qubit, "z", "operations"),
-            "ops": z["operations"], "port": port, "range": rng, "offset": off}
+    levels, why = line_dc_levels(merged, tuple(qpath) + ("z",), off)
+    if why:
+        return (f"The spectator {qubit}: SM cannot tell the DC level of its flux line "
+                f"while the gate plays ({why}). Fix that value, or pick another qubit.")
+    return {"qubit": qubit, "line": f"{qubit}.z", "segs": tuple(qpath) + ("z", "operations"),
+            "ops": z["operations"], "port": port, "range": rng, "offset": off,
+            "dc_levels": levels}
 
 
 def spectator_candidates(merged: dict, pair_id: str) -> list[dict[str, Any]]:
@@ -1222,12 +1239,14 @@ def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[An
         return None, (f"For the spectator {q}: a level of 0 V plays nothing. Type a level, "
                       "or remove the spectator.")
     rng = ln["range"]
-    total = float(level) + ln["offset"]
-    if rng is not None and abs(total) > rng + 1e-12:
-        off = (f" on top of its {ln['offset']:g} V offset ({total:g} V)"
-               if ln["offset"] else "")
-        return None, (f"For the spectator {q}: {ln['line']} would play {float(level):g} V"
-                      f"{off}, outside its port's range of ±{rng:g} V. Lower the level.")
+    # An absolute 1e-12 V margin: it only absorbs float rounding of the sum,
+    # far below any DAC step, so it is the same for every range.
+    for label, dc in ln["dc_levels"]:
+        total = float(level) + dc
+        if rng is not None and abs(total) > rng + 1e-12:
+            off = f" on top of its {dc:g} V {label} ({total:g} V)" if dc else ""
+            return None, (f"For the spectator {q}: {ln['line']} would play {float(level):g} V"
+                          f"{off}, outside its port's range of ±{rng:g} V. Lower the level.")
     return {**ln, "length": probe["length"], "level": float(level)}, None
 
 

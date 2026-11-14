@@ -920,3 +920,31 @@ def test_the_lab_error_is_quoted_and_ends_with_its_own_full_stop():
     assert m.endswith('The lab\'s error: "ValueError: the two pulses must share flat_length."')
     assert gate_check._apply_message("cz_x", "Boom!").endswith('"Boom!"')
     assert m.isascii(), "user text uses plain ASCII quotes"
+
+
+def test_range_adds_the_flux_point_offset_of_the_gate_line():
+    merged = {"qubits": {"q1": {"z": {"flux_point": "joint", "joint_offset": 0.15}}}}
+    res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4)), None, merged)
+    assert _checks(res)["range"] == "fail"
+    assert "0.55 V is above this port's limit of 0.5 V (joint flux-point offset 0.15 V" in _msg(res, "range")
+    merged["qubits"]["q1"]["z"]["joint_offset"] = 0.05
+    assert _checks(gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4)), None, merged))["range"] == "pass"
+
+
+def test_range_with_an_unknown_flux_point_is_not_checked_and_says_why():
+    merged = {"qubits": {"q1": {"z": {"flux_point": "sideways"}}}}
+    res = gate_check.evaluate([GATE], _ran(cfg=_cfg(sample=0.4)), None, merged)
+    assert _checks(res)["range"] == "skipped"
+    assert "the flux point 'sideways' at qubits.q1.z.flux_point" in _msg(res, "range")
+
+
+def test_check_gates_reads_the_flux_point_from_the_chip(tmp_path):
+    folder = tmp_path / "chip"
+    folder.mkdir()
+    state = {"__class__": "pkg.Root", "qubit_pairs": {"q1-2": {"macros": {}}},
+             "qubits": {"q1": {"z": {"flux_point": "joint", "joint_offset": 0.15}}}}
+    (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps({"wiring": {}}), encoding="utf-8")
+    res = gate_check.check_gates(QuamStore(folder), "python.exe", [GATE],
+                                 runner=lambda *a, **k: _ran(cfg=_cfg(sample=0.4)))
+    assert _checks(res)["range"] == "fail" and "joint flux-point offset" in _msg(res, "range")

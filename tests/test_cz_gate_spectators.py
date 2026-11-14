@@ -460,3 +460,88 @@ def test_each_spectator_is_addressed_by_its_line_and_name(rev):
     parts = gate_parts.gate_parts(s, "q1-q2", "cz_sp")
     assert parts["ok"], parts
     assert {f"qubits.q3.z.operations.{KEY}", f"qubits.q4.z.operations.{KEY}"} <= set(parts["operations"])
+
+
+# flux-point DC level on a spectator line -----------------------------------
+
+def _joint(s, q="q3", off=0.06, port_off=None, fp="joint"):
+    s["qubits"][q]["z"].update({"flux_point": fp, "joint_offset": off})
+    node = s["ports"]["analog_outputs"]["con1"]["1"][q[1:]]
+    if port_off is None:
+        node.pop("offset", None)
+    else:
+        node["offset"] = port_off
+    return s
+
+
+def _one(s, level, q="q3"):
+    return _plan(s, [{"qubit": q, "length": 48, "level": level}])
+
+
+def test_the_flux_point_offset_is_on_the_line_when_the_gate_plays():
+    res = _one(_joint(_chip()), 0.499)
+    assert any("on top of its 0.06 V joint flux-point offset (0.559 V)" in r
+               for r in res.get("refusals", [])), res
+    assert "creates" in _one(_joint(_chip()), 0.43)
+
+
+def test_a_negative_level_with_a_positive_flux_offset_inside_is_fine():
+    assert "creates" in _one(_joint(_chip()), -0.499)
+    res = _one(_joint(_chip(), off=-0.06), -0.45)
+    assert any("(-0.51 V)" in r for r in res.get("refusals", [])), res
+
+
+def test_port_and_flux_point_offsets_replace_each_other_and_both_are_checked():
+    # set_dc_offset replaces the idle offset: 0.3 + 0.1 port fits, 0.3 + 0.25 joint does not
+    s = _joint(_chip(), off=0.25, port_off=0.1)
+    res = _one(s, 0.3)
+    assert any("0.25 V joint flux-point offset" in r for r in res.get("refusals", [])), res
+    s = _joint(_chip(), off=0.1, port_off=0.25)
+    res = _one(s, 0.3)
+    assert any("0.25 V offset (0.55 V)" in r for r in res.get("refusals", [])), res
+    # not added: 0.2 + 0.15 + 0.15 = 0.5 would be at the edge, each alone is 0.35
+    assert "creates" in _one(_joint(_chip(), off=0.15, port_off=0.15), 0.34)
+
+
+def test_an_amplified_port_uses_its_own_range():
+    s = _joint(_chip())
+    s["ports"]["analog_outputs"]["con1"]["1"]["3"]["output_mode"] = "amplified"
+    assert "creates" in _one(s, 0.499)
+
+
+@pytest.mark.parametrize("fp, value, words", [
+    ("sideways", 0.06, "the flux point 'sideways' at qubits.q3.z.flux_point is not one SM knows"),
+    ("joint", float("nan"), "at qubits.q3.z.joint_offset is not a finite number of V"),
+    ("joint", "#/nowhere/x", "the reference #/nowhere/x at qubits.q3.z.joint_offset could not be followed"),
+])
+def test_an_unreadable_flux_point_offset_is_refused_naming_the_leaf(fp, value, words):
+    res = _one(_joint(_chip(), off=value, fp=fp), 0.1)
+    assert any(words in r for r in res.get("refusals", [])), res
+
+
+def test_a_flux_offset_by_reference_is_followed():
+    s = _joint(_chip(), off="#/extra/bias")
+    s["extra"] = {"bias": 0.2}
+    res = _one(s, 0.35)
+    assert any("0.2 V joint flux-point offset" in r for r in res.get("refusals", [])), res
+
+
+def test_a_zero_or_default_flux_point_behaves_as_before():
+    s = _chip()
+    s["qubits"]["q3"]["z"]["flux_point"] = "independent"
+    assert "creates" in _one(s, 0.499)
+    s["qubits"]["q3"]["z"]["flux_point"] = "zero"
+    s["qubits"]["q3"]["z"]["joint_offset"] = 0.3
+    assert "creates" in _one(s, 0.499)
+
+
+def test_a_qubit_entry_that_is_a_reference_is_followed_or_named():
+    s = _chip()
+    s["qubits"]["q3"] = "#/spare/q3"
+    res = _one(s, 0.1)
+    assert any("is a reference (#/spare/q3) that SM could not follow" in r
+               for r in res.get("refusals", [])), res
+    assert not any("not a qubit of this chip" in r for r in res.get("refusals", []))
+    s["spare"] = {"q3": _chip()["qubits"]["q3"]}
+    s["spare"]["q3"]["z"]["opx_output"] = "#/ports/analog_outputs/con1/1/3"
+    assert "creates" in _one(s, 0.1)
