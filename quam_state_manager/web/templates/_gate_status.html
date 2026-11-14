@@ -1,0 +1,36 @@
+{# The one status line of a CZ gate (web/gate_status_routes.py, core/gate_status.py).
+   `line`: {pair, gate, items: [{key, text, tone, why}], active, present,
+   edit_paths, note, note_tone}. Its actions: Edit values (the pulse detail),
+   Make active, Delete gate (the offer opens in the line's own slot). #}
+{% import "_ui.html" as ui %}
+<div class="gate-status" data-gate-pair="{{ line.pair }}" data-gate="{{ line.gate }}">
+    <div class="gate-status-head">
+        <code class="ui-chip">{{ line.gate }}</code>
+        <span class="gate-status-items">
+        {% for it in line['items'] %}<span class="ui-pill ui-pill--{{ it.tone }}" data-status-key="{{ it.key }}"{% if it.why %} title="{{ it.why }}"{% endif %}>{{ it.text }}</span>{% endfor %}
+        </span>
+        {% if line.present %}
+        <div class="ui-actions" role="group" aria-label="Gate actions">
+            {% if line.edit_paths %}
+            <button type="button" class="btn-sm outline gate-status-edit"
+                    hx-get="/pulse/detail?{% for p in line.edit_paths %}paths={{ p | urlencode }}{% if not loop.last %}&amp;{% endif %}{% endfor %}"
+                    hx-target="#inspector-pane" hx-swap="innerHTML"
+                    title="Open this gate's pulses to edit their values">Edit values</button>
+            {% endif %}
+            {% if not line.active %}
+            <button type="button" class="btn-sm outline gate-status-activate"
+                    hx-post="/api/pulse/cz-gate/make-active"
+                    hx-vals='{{ {"pair": line.pair, "gate": line.gate} | tojson }}'
+                    hx-target="closest .gate-status" hx-swap="outerHTML"
+                    title="Check the gate with the lab's code, then point the pair's cz at it (one Ctrl+Z)">Make active</button>
+            {% endif %}
+            <button type="button" class="btn-sm outline gate-status-delete"
+                    hx-get="/pulse/cz-gate/delete-offer?pair={{ line.pair | urlencode }}&amp;gate={{ line.gate | urlencode }}"
+                    hx-target="next .gate-status-slot" hx-swap="innerHTML"
+                    title="Show what goes with this gate before deleting">Delete gate</button>
+        </div>
+        {% endif %}
+    </div>
+    {% if line.note %}{{ ui.ui_callout(line.note_tone, 'Not done', line.note) }}{% endif %}
+    <div class="gate-status-slot" role="status" aria-live="polite"></div>
+</div>

@@ -289,3 +289,107 @@ def test_pulses_delete_together_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - a Ctrl+Z pressed while the batch is checked waits for it" in res.stdout
+
+
+# ---------------------------------------------------------------- a whole CZ gate
+# The door also deletes a whole CZ gate in one step: the set comes from the
+# state (core.gate_parts), never from the body.
+from tests.test_gate_status_routes import rig  # noqa: E402,F401
+from tests.cz_gate_chip import add_gate as _add_gate, reverse as _reverse, square as _square  # noqa: E402
+
+
+def _gctx(c):
+    return next(iter(c._app.config["contexts"].values()))
+
+
+def _gm(c):
+    return _gctx(c)["store"].merged
+
+
+def _gstate(c):
+    return json.dumps(_gctx(c)["store"].state)
+
+
+def _dg(c, gate, **extra):
+    return c.post("/api/pulse/delete-together", json={"pair": "q1-q2", "gate": gate, **extra})
+
+
+def _create(c, name, **kw):
+    plan = _add_gate(_gm(c), name=name, **kw)[1]
+    m = _gctx(c)["modifier"]
+    for path, value in plan["creates"]:
+        m.create_subtree(path, value)
+    return plan
+
+
+class TestDeleteAWholeGate:
+    def test_official_class_gate_goes_with_its_operation_and_undo_is_byte_equal(self, rig):
+        before = _gstate(rig)
+        r = _dg(rig, "cz_sq")
+        assert r.status_code == 200, r.data[:400]
+        assert r.get_json()["ok"]
+        macros = _gm(rig)["qubit_pairs"]["q1-q2"]["macros"]
+        ops = _gm(rig)["qubits"]["q1"]["z"]["operations"]
+        assert "cz_sq" not in macros and "cz_sq_pulse_q1_q2" not in ops
+        assert "cz_two" in macros and "cz_two_pulse_q1_q2" in ops and "const" in ops
+        assert rig.post("/undo").status_code == 200
+        assert _gstate(rig) == before
+
+    def test_a_gate_made_then_deleted_leaves_the_state_as_before(self, rig):
+        before = _gstate(rig)
+        _create(rig, "cz_cp", pulses=_square(coupler=True))
+        assert _dg(rig, "cz_cp").status_code == 200
+        assert _gstate(rig) == before
+
+    def test_two_line_gate(self, rig):
+        _create(rig, "cz_cp", pulses=_square(coupler=True))
+        assert _dg(rig, "cz_cp").status_code == 200
+        assert "cz_cp_coupler_pulse_q1_q2" not in _gm(rig)["qubit_pairs"]["q1-q2"]["coupler"]["operations"]
+        assert "cz_cp_pulse_q1_q2" not in _gm(rig)["qubits"]["q1"]["z"]["operations"]
+
+    def test_reverse_direction_gate(self, rig):
+        m = _gctx(rig)["modifier"]
+        rv = _reverse(_gm(rig))
+        m.create_subtree("qubit_pairs.q1-q2.macros.cz_old", rv["qubit_pairs"]["q1-q2"]["macros"]["cz_old"])
+        m.create_subtree("qubits.q1.z.operations.cz_old_pulse_q1_q2",
+                         rv["qubits"]["q1"]["z"]["operations"]["cz_old_pulse_q1_q2"])
+        before = _gstate(rig)
+        assert _dg(rig, "cz_old").status_code == 200
+        assert "cz_old_pulse_q1_q2" not in _gm(rig)["qubits"]["q1"]["z"]["operations"]
+        assert rig.post("/undo").status_code == 200
+        assert _gstate(rig) == before
+
+    def test_a_shared_operation_is_refused_and_nothing_goes(self, rig):
+        _gctx(rig)["modifier"].set_value(
+            "qubit_pairs.q1-q2.macros.cz_two.flux_pulse_qubit.amplitude",
+            "#/qubits/q1/z/operations/cz_sq_pulse_q1_q2/amplitude", coerce=False)
+        before = _gstate(rig)
+        r = _dg(rig, "cz_sq")
+        assert r.status_code == 409
+        assert "cz_two" in r.get_json()["error"]
+        assert _gstate(rig) == before
+
+    def test_the_body_paths_are_ignored(self, rig):
+        r = rig.post("/api/pulse/delete-together", json={
+            "pair": "q1-q2", "gate": "cz_sq", "path": "qubits.q2", "paths": ["qubits.q2", "qubits.q3"]})
+        assert r.status_code == 200
+        assert "q2" in _gm(rig)["qubits"] and "q3" in _gm(rig)["qubits"]
+
+    def test_the_active_gate_needs_the_confirmation_and_takes_the_alias(self, rig):
+        before = _gstate(rig)
+        r = _dg(rig, "cz_two")
+        assert r.status_code == 409 and r.get_json()["needs_confirm"]
+        assert "no active CZ gate" in r.get_json()["error"]
+        assert _gstate(rig) == before
+        r = _dg(rig, "cz_two", confirm_active="1")
+        assert r.status_code == 200, r.data[:400]
+        macros = _gm(rig)["qubit_pairs"]["q1-q2"]["macros"]
+        assert "cz_two" not in macros and "cz" not in macros
+        assert rig.post("/undo").status_code == 200
+        assert _gstate(rig) == before
+
+    def test_htmx_button_answers_markup(self, rig):
+        r = rig.post("/api/pulse/delete-together", data={"pair": "q1-q2", "gate": "cz_sq"},
+                     headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert "Deleted cz_sq" in r.get_data(as_text=True)

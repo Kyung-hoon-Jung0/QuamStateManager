@@ -1281,3 +1281,13 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 
 /* The qubits page draws large stones: its map scales to the pane width. */
 .cm-svg.cm-hl-qubits { max-width: var(--ui-opxmon-full-width); height: auto; }
+
+/* CZ gate status line (_gate_status.html) and its delete offer (_gate_delete_offer.html) */
+.gate-status-list { display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: var(--ui-gap-2) 0; }
+.gate-status { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding: var(--ui-gap-2) 0; border-bottom: var(--ui-bw) solid var(--ui-border); }
+.gate-status-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-gap-2); }
+.gate-status-items { display: flex; flex-wrap: wrap; gap: var(--ui-gap-1); }
+.gate-status-edit, .gate-status-activate, .gate-status-delete, .gate-delete-confirm { width: auto; margin: 0; }
+.gate-status-slot:empty { display: none; }
+.gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }

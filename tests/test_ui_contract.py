@@ -696,6 +696,11 @@ if __name__ == "__main__":
 # These selectors were reviewed together when their feature styles moved
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
+    # the CZ gate status line and its delete offer
+    '.gate-status-list', '.gate-status', '.gate-status-head', '.gate-status-items',
+    '.gate-status-edit', '.gate-status-activate', '.gate-status-delete',
+    '.gate-delete-confirm', '.gate-status-slot:empty', '.gate-delete-offer',
+    '.gate-delete-list',
     '.gen-rule-allcant',
     '.gen-rule-dim',
     '.gen-rule-grp-mark',

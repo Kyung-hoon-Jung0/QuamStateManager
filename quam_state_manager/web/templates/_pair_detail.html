@@ -98,6 +98,11 @@
     </details>
     {% endfor %}
 
+    {% if gate_lines %}
+    <div class="gate-status-list" aria-label="CZ gates">
+        {% for line in gate_lines %}{% include '_gate_status.html' %}{% endfor %}
+    </div>
+    {% endif %}
     {% include '_pair_add_gate_area.html' %}
 
     {% if gi %}
