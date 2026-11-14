@@ -48,32 +48,37 @@ def _number(v) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def real_path(merged: dict, segs: tuple) -> tuple[tuple | None, str | None]:
+    """The real path of *segs*, following a reference at ANY segment (a
+    qubit entry that is a reference, a ``z`` that is a reference, a leaf
+    that is a reference): ``(path, None)``, or ``(None, reason naming the
+    leaf)`` when a reference dangles or loops. An absent node is not a
+    refusal: its path is returned and reading it gives the sentinel."""
+    cur: tuple = ()
+    for seg in segs:
+        cur = cur + (seg,)
+        v = _get(merged, list(cur))
+        if isinstance(v, str) and v.startswith("#"):
+            real = _landing(merged, v, cur)
+            if real is None:
+                return None, f"the reference {v} at {'.'.join(cur)} could not be followed"
+            cur = tuple(real)
+    return cur, None
+
+
 def read_leaf(merged: dict, segs: tuple) -> tuple[Any, str | None]:
     """``(value, None)`` for the leaf at *segs*, following references;
     ``(_SENTINEL, None)`` when the leaf is absent; ``(None, reason)`` when
     a reference does not resolve."""
-    v = _get(merged, list(segs))
-    hops = 0
-    path = tuple(segs)
-    while isinstance(v, str) and v.startswith("#") and hops < 16:
-        real = _landing(merged, v, path)
-        if real is None:
-            return None, f"the reference {v} at {'.'.join(segs)} could not be followed"
-        path = tuple(real)
-        v = _get(merged, list(path))
-        hops += 1
-    if v is _SENTINEL and path != tuple(segs):
-        return None, f"the reference at {'.'.join(segs)} could not be followed"
-    return v, None
+    path, why = real_path(merged, tuple(segs))
+    if why:
+        return None, why
+    return _get(merged, list(path)), None
 
 
 def landed_path(merged: dict, segs: tuple) -> tuple | None:
-    """The real path of the node at *segs* (a reference followed), or None."""
-    v = _get(merged, list(segs))
-    if isinstance(v, str) and v.startswith("#"):
-        real = _landing(merged, v, tuple(segs))
-        return tuple(real) if real is not None else None
-    return tuple(segs)
+    """The real path of the node at *segs* (references followed), or None."""
+    return real_path(merged, tuple(segs))[0]
 
 
 def is_flux_line(node: Any) -> bool:
@@ -89,11 +94,17 @@ def line_dc_levels(merged: dict, z_segs: tuple, port_offset: float,
     node is a FluxLine, the level of its flux point is the other (it
     replaces the idle offset at run time, see the module text). An unknown
     flux point, an unresolvable reference or a non-finite value is a
-    refusal, never 0."""
+    refusal, never 0.
+
+    ``flux_point`` absent or ``None`` reads as the FluxLine class default
+    ``"independent"``: the dataclass default fills an absent field, and a
+    stored None means "not set", read the same way. The lab programs pick
+    the flux point as a run argument, so the stored field is the best guess
+    SM has, which is why the port offset stays a level as well."""
     levels = [(base_label, float(port_offset))]
-    real = landed_path(merged, tuple(z_segs))
-    if real is None:
-        return None, f"the reference at {'.'.join(z_segs)} could not be followed"
+    real, why = real_path(merged, tuple(z_segs))
+    if why:
+        return None, why
     z_segs = real
     node = _get(merged, list(z_segs))
     if not is_flux_line(node):
@@ -122,13 +133,128 @@ def line_dc_levels(merged: dict, z_segs: tuple, port_offset: float,
     return levels, None
 
 
+#: TunableCoupler flux_point -> its offset field (None: 0 V)
+COUPLER_POINT_FIELDS = {
+    "off": "decouple_offset",
+    "on": "interaction_offset",
+    "arbitrary": "arbitrary_offset",
+    "zero": None,
+}
+#: the TunableCoupler default when flux_point is absent or None
+DEFAULT_COUPLER_POINT = "off"
+
+
+def _stored_number(merged: dict, segs: tuple) -> tuple[float | None, str | None]:
+    """A stored finite number at *segs*. Absent, None, NaN, inf, bool and
+    text are each a refusal naming the leaf."""
+    v, why = read_leaf(merged, segs)
+    if why:
+        return None, why
+    leaf = ".".join(segs)
+    if v is _SENTINEL or v is None:
+        return None, f"no value is stored at {leaf}"
+    if not _number(v):
+        return None, f"the value {v!r} at {leaf} is not a finite number of V"
+    return float(v), None
+
+
+def _coupler_levels(merged: dict, segs: tuple, levels: list):
+    """The DC levels of the tunable coupler at *segs*: its decouple offset
+    (the lab programs park every coupler there) and the offset of its
+    stored flux point. A level SM cannot read is a refusal, never 0."""
+    line = ".".join(segs)
+    fp, why = read_leaf(merged, segs + ("flux_point",))
+    if why:
+        return None, why
+    if fp is _SENTINEL or fp is None:
+        fp = DEFAULT_COUPLER_POINT
+    if not isinstance(fp, str) or fp not in COUPLER_POINT_FIELDS:
+        return None, (f"the flux point {fp!r} at {line}.flux_point is not one SM knows "
+                      f"({', '.join(COUPLER_POINT_FIELDS)})")
+    fields = ["decouple_offset"]
+    if COUPLER_POINT_FIELDS[fp] and COUPLER_POINT_FIELDS[fp] not in fields:
+        fields.append(COUPLER_POINT_FIELDS[fp])
+    for f in fields:
+        v, why = _stored_number(merged, segs + (f,))
+        if why:
+            return None, why
+        levels.append((f"coupler {f.replace('_', ' ')}", v))
+    if COUPLER_POINT_FIELDS[fp] is None:
+        levels.append((f"coupler {fp} flux point", 0.0))
+    return levels, None
+
+
+def _find_coupler(merged: dict, element: str) -> tuple | None:
+    """The real path of the pair coupler whose config element is *element*
+    (its ``id`` when that is text, else ``<pair>.coupler``), or None."""
+    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
+    if not isinstance(pairs, dict):
+        return None
+    for key in pairs:
+        path, why = real_path(merged, ("qubit_pairs", key, "coupler"))
+        node = _get(merged, list(path)) if not why else None
+        if not isinstance(node, dict):
+            continue
+        if isinstance(node.get("id"), str):
+            names = {node["id"]}
+        else:
+            pid = _get(merged, ["qubit_pairs", key, "id"])
+            names = {f"{key}.coupler", f"{pid}.coupler" if isinstance(pid, str) else ""}
+        if element in names:
+            return path
+    return None
+
+
+def _mutual_levels(merged: dict, q_path: tuple, levels: list):
+    """A pair's ``mutual_flux_bias`` ([control, target], set on the two
+    qubits' flux lines by the pair's mutual idle) is one more level of
+    the qubit at *q_path* for every pair that stores it."""
+    pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
+    if not isinstance(pairs, dict):
+        return levels, None
+    for key in pairs:
+        base = ("qubit_pairs", key)
+        bias, why = read_leaf(merged, base + ("mutual_flux_bias",))
+        if why:
+            return None, why
+        if bias is _SENTINEL or bias is None:
+            continue
+        for i, role in enumerate(("qubit_control", "qubit_target")):
+            qp, why = real_path(merged, base + (role,))
+            if why or qp != q_path:
+                continue
+            if not isinstance(bias, list) or len(bias) != 2:
+                return None, (f"the value {bias!r} at qubit_pairs.{key}.mutual_flux_bias "
+                              "is not a [control, target] pair of V")
+            v, why = _stored_number(merged, base + ("mutual_flux_bias", str(i)))
+            if why:
+                return None, why
+            levels.append((f"mutual flux bias of {key}", v))
+    return levels, None
+
+
 def element_dc_levels(merged: dict, element: str, port_offset: float,
                       base_label: str = "channel offset"):
-    """:func:`line_dc_levels` for a config element named ``<qubit>.z``;
-    any other element keeps only its port offset."""
-    if isinstance(element, str) and element.endswith(".z"):
+    """The DC levels of the config element *element*: a qubit flux line
+    ``<qubit>.z`` (:func:`line_dc_levels`, plus every stored
+    ``mutual_flux_bias`` naming that qubit) or a pair's tunable coupler.
+    A qubit entry, or any node on the way, that is a reference is followed.
+    Any other element keeps only its port offset."""
+    levels = [(base_label, float(port_offset))]
+    if not isinstance(element, str):
+        return levels, None
+    if element.endswith(".z"):
         q = element[:-2]
         qubits = merged.get("qubits") if isinstance(merged, dict) else None
         if isinstance(qubits, dict) and q in qubits:
-            return line_dc_levels(merged, ("qubits", q, "z"), port_offset, base_label)
-    return [(base_label, float(port_offset))], None
+            got, why = line_dc_levels(merged, ("qubits", q, "z"), port_offset, base_label)
+            if why:
+                return None, why
+            q_path, why = real_path(merged, ("qubits", q))
+            if why:
+                return None, why
+            return _mutual_levels(merged, q_path, got)
+    c_path = _find_coupler(merged, element)
+    if c_path is not None:
+        return _coupler_levels(merged, c_path, levels)
+    return levels, None
