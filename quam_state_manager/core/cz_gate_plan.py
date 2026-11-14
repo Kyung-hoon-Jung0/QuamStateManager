@@ -754,7 +754,8 @@ def _amplitude_view(doc, line):
         return
     amplitude = line["amplitude_v"]
     if line["refusal"] or amplitude is None:
-        line["amp_title"] = path + ": " + (line["refusal"] or "pulse amplitude unknown")
+        line["amp_title"] = path + ": " + (line["refusal"] or line.get("waveform_reason")
+                                           or "pulse amplitude unknown")
         return
     played = line.get("played_pulse_path") or path
     levels = line["lobes"] or [{"name": "first lobe", "amplitude_v": amplitude}]
@@ -808,6 +809,76 @@ def _leaf_unit_peak(doc, played):
     cls = str(current(doc, played + ".__class__", "")).split(".")[-1]
     return (f"volts: the peak equals the amplitude in SM's transcription of {cls}"
             " (matched by class name; the waveform the frequency-in-time figure draws)")
+
+
+_ORDINALS = ("first", "second", "third", "fourth", "fifth", "sixth")
+
+
+def _waveform_not_derivable(doc, pulse_path, tree):
+    """Why a sample-array pulse (WaveformPulse) has no usable level, else None.
+
+    Not a sample-array pulse at all (no ``waveform_I`` key, class not WaveformPulse):
+    None, so the caller keeps its generic wording. Samples are read as volts at one
+    sample per ns on an LF port [derived: quam's WaveformPulse plays waveform_I as the
+    sample list, and an LF-FEM port at its default rate plays one sample per ns]. A
+    ``waveform_Q`` array makes the pulse I/Q: a flux line is one real channel, so such
+    a pulse has no single signed level to convert, and it is refused rather than read
+    as I only [derived].
+    """
+    if not isinstance(tree, dict):
+        return None
+    cls = str(tree.get("__class__") or "").split(".")[-1]
+    if "waveform_I" not in tree and cls != "WaveformPulse":
+        return None
+    wf = tree.get("waveform_I")
+    if wf is None:
+        holder = read(doc, pulse_path).get("holder_path") or pulse_path
+        raw = _raw_at(doc, holder + ".waveform_I")
+        if isinstance(raw, str) and raw.startswith("#"):
+            return f"waveform_I is a reference that does not resolve ({raw})"
+        return "waveform_I is not stored"
+    if isinstance(wf, str) and wf.startswith("#"):
+        return f"waveform_I is a reference that does not resolve ({wf})"
+    if not isinstance(wf, list):
+        return "waveform_I is not a list of samples"
+    if not wf:
+        return "waveform_I is empty"
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(float(v))
+           for v in wf):
+        return "waveform_I holds a sample that is not a finite number"
+    if tree.get("waveform_Q") is not None:
+        return "waveform_Q is stored: an I/Q pulse has no single signed level on a flux line"
+    return None
+
+
+def _waveform_length_note(tree, shape):
+    """A note when the stored ``length`` disagrees with the sample count, else None."""
+    raw = tree.get("length")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw == shape["length_ns"]:
+        return None
+    return (f"stored length {raw:g} ns disagrees with {shape['samples']} samples "
+            f"({shape['length_ns']:g} ns); the samples are what plays")
+
+
+def waveform_sign_lobes(samples):
+    """``[(name, signed peak)]`` per run of same-sign samples; zeros separate nothing.
+
+    A unipolar waveform gives one "first lobe" at its peak; a sign change starts the
+    next lobe, whose level is that run's largest-magnitude sample [derived].
+    """
+    runs = []
+    for v in samples:
+        if v == 0:
+            continue
+        if runs and (runs[-1] > 0) == (v > 0):
+            if abs(v) > abs(runs[-1]):
+                runs[-1] = v
+        else:
+            runs.append(v)
+    if not runs:
+        runs = [0.0]
+    return [(_ORDINALS[i] + " lobe" if i < len(_ORDINALS) else f"lobe {i + 1}", float(a))
+            for i, a in enumerate(runs)]
 
 
 #: QuamMacro's default ``duration``: a runtime property, not a stored number
@@ -1305,13 +1376,20 @@ def operations(doc, conversions=None, unavailable=None):
                     notes.append(missing_pulse)
                 amp = None if refusal else number(current(doc, amp_path)) if amp_path else 0.0
                 pulse = current(doc, pulse_path, {}) if pulse_path else {}
-                shape = None
+                shape = wave_reason = tree = None
                 if amp_path and amp is None and not refusal:
                     # a sample-array pulse has no amplitude field: its peak sample is the amplitude
-                    shape = waveform_shape(resolved_tree(doc, pulse_path) if pulse_path else None,
-                                           sampling_rate=current(doc, info["path"] + ".z.opx_output.sampling_rate"))
+                    tree = resolved_tree(doc, pulse_path) if pulse_path else None
+                    rate = current(doc, info["path"] + ".z.opx_output.sampling_rate")
+                    wave_reason = _waveform_not_derivable(doc, pulse_path, tree)
+                    shape = None if wave_reason else waveform_shape(tree, sampling_rate=rate)
                     if shape is not None:
                         amp = shape["peak"]
+                        length_note = _waveform_length_note(tree, shape)
+                        if length_note:
+                            notes.append(f"{info['name']}: {length_note}")
+                    elif wave_reason:
+                        notes.append(f"{info['name']}: not derivable for WaveformPulse: {wave_reason}")
                     else:
                         notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
@@ -1331,7 +1409,10 @@ def operations(doc, conversions=None, unavailable=None):
                 if shape:
                     # only a sample-array pulse carries these; every other line keeps its shape
                     lines[-1].update(amplitude_source=shape["label"], waveform_samples=shape["samples"],
-                                     waveform_length_ns=shape["length_ns"])
+                                     waveform_length_ns=shape["length_ns"],
+                                     waveform_lobes=waveform_sign_lobes(tree["waveform_I"]))
+                elif wave_reason:
+                    lines[-1]["waveform_reason"] = "not derivable for WaveformPulse: " + wave_reason
             for ln in lines:
                 ln["lobes"] = []
                 if not ln["pulse_field"] or ln["refusal"]:
@@ -1341,8 +1422,12 @@ def operations(doc, conversions=None, unavailable=None):
                     continue
                 try:
                     from .waveform_synth import resolved_lab_pulse
-                    levels = pulse_lobes(resolved_lab_pulse(doc, ln["pulse_path"]) or {}, ln["amplitude_v"])
+                    levels = (ln["waveform_lobes"] if ln.get("waveform_lobes") else
+                              pulse_lobes(resolved_lab_pulse(doc, ln["pulse_path"]) or {}, ln["amplitude_v"]))
                     ln["lobes"] = [{"name": stage, "amplitude_v": a, "point": conv.point(a)} for stage, a in levels]
+                    if ln.get("waveform_reason"):
+                        for lobe in ln["lobes"]:
+                            lobe["point"] = {**lobe["point"], "reason": ln["waveform_reason"]}
                     ln["moves"] = any(a is None or a != 0 for _, a in levels)
                     bad = next((l for l in ln["lobes"] if l["point"]["frequency_hz"] is None), None)
                     if bad:
@@ -1392,6 +1477,10 @@ def operations(doc, conversions=None, unavailable=None):
                 if lens:
                     duration_ns = max(lens)
                     duration_note = f"{duration_ns:g} ns from the stored waveform samples"
+                else:
+                    why = next((ln["waveform_reason"] for ln in lines if ln.get("waveform_reason")), None)
+                    if why:
+                        duration_note = "unknown: " + why
             fq = [ln["point"].get("frequency_hz") for ln in lines]
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
