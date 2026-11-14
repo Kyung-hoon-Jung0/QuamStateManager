@@ -350,8 +350,6 @@ def _core_budget(root: dict, report: dict) -> dict:
         else:
             limit, limit_est = OPX_PLUS_CORE_LIMIT, True
         core_terms = sorted({lb for g in groups for lb in g["labels"]}, key=ESTIMATED_TERMS.index)
-        if limit_est and TERM_OPX_PLUS not in core_terms:
-            core_terms.append(TERM_OPX_PLUS)
         route_firm = kind in ("MW", "LF") and qop == ROUTE_LIMIT_MEASURED_QOP
         route_terms = [] if route_firm else [TERM_QOP_UNKNOWN if not qop else TERM_QOP_VERSION.format(v=qop)]
         for g in groups:
@@ -360,7 +358,7 @@ def _core_budget(root: dict, report: dict) -> dict:
             "controller": con, "fem": int(fem) if isinstance(fem, str) and fem.isdigit() else fem,
             "fem_type": kind,
             "cores": {"limit": limit, "count": count, "firm_count": firm_count,
-                      "estimated": bool(core_terms), "limit_estimated": limit_est},
+                      "estimated": bool(core_terms) or limit_est, "limit_estimated": limit_est},
             "routes": {"limit": ROUTE_LIMIT, "count": f["routes"], "estimated": not route_firm},
             "oscillators": {"limit": OSCILLATOR_LIMIT,
                             "max_group": max((g["oscillators"] for g in groups if g["core"]), default=0)},

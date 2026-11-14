@@ -324,6 +324,9 @@ def test_opx_plus_costs_estimated():
     assert f["fem"] is None and f["fem_type"] == "OPX+"
     assert f["cores"]["count"] == 2.0 and f["cores"]["limit"] == 18
     assert f["cores"]["estimated"] and "OPX+ costs" in f["estimated_terms"]
+    c.s["extras"] = {"qop_version": "3.7.3"}
+    f = cl.core_budget(c.s)["fems"][0]
+    assert f["routes"]["estimated"]  # the route limit was measured on OPX1000 only
 
 
 # --- routes ----------------------------------------------------------------
