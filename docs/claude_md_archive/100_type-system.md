@@ -1,0 +1,3 @@
+<!-- Moved verbatim from root CLAUDE.md (section: Typed Editing + State↔Env Validation, block 100) on 2026-11-14. -->
+
+**Type system** (`core/type_policy.py` + `core/state_env_validate.py`): a key's expected type resolves layered — env schema > per-key user assignment (409-confirmed `override_env`) > value inference — through one walk-down resolver and one judge. Invariants: pointers + null always writable; int widens into float; integral floats pass on int-fields verbatim (never rewritten). With no schema/assignment, behavior is byte-identical legacy `_type_coerce`. Assignments persist in `instance/type_assignments/<chip-key>.json`.
