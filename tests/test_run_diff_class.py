@@ -43,3 +43,19 @@ def test_pulse_in_one_run_only(tmp_path):
     b = _folder(tmp_path, "b", {"cz": {"__class__": "pkg.SquarePulse", "length": 44}})
     rows = _cls(diff_state_folders(a, b, keep_class=True))
     assert [r.change_type for r in rows] == ["added"]
+
+
+def test_class_change_still_a_row_when_the_cached_read_fails(tmp_path, monkeypatch):
+    """The unreadable-pair fallback reads the folders directly and keeps the class."""
+    from quam_state_manager.core import doc_cache
+
+    def refuse(*args, **kwargs):
+        raise OSError("pair read refused")
+
+    monkeypatch.setattr(doc_cache, "read_pair", refuse)
+    a = _folder(tmp_path, "a", {"cz": {"__class__": "pkg.SquarePulse", "length": 44}})
+    b = _folder(tmp_path, "b", {"cz": {"__class__": "pkg.WaveformPulse", "length": 44}})
+    rows = _cls(diff_state_folders(a, b, keep_class=True))
+    assert [(r.change_type, r.old_value, r.new_value) for r in rows] == [
+        ("modified", "pkg.SquarePulse", "pkg.WaveformPulse")]
+    assert diff_state_folders(a, b, keep_class=False) == []
