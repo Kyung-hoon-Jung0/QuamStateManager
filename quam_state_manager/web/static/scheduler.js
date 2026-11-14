@@ -25,6 +25,15 @@
       .then(function (r) { return r.json().catch(function () { return {}; }); })
       .catch(function () { return { __neterr: true }; });
   }
+  // a stored press time (ISO) in the viewer's local clock; the raw text if unreadable
+  function pressTime(iso) {
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+  }
+  function fmtVal(v) {
+    if (v === null || v === undefined) return "none";
+    return typeof v === "object" ? JSON.stringify(v) : String(v);
+  }
   function postJSON(url, body) {
     return fetchJSON(url, {
       method: "POST",
@@ -369,7 +378,11 @@
       return;
     }
     if (act === "revert-failed") {
-      return postJSON("/scheduler/item/" + encodeURIComponent(it.id) + "/revert-failed", {})
+      // send the list this row showed: the server refuses when its own list
+      // differs (another window, a hand edit), so a press never reverts a
+      // value it did not offer
+      return postJSON("/scheduler/item/" + encodeURIComponent(it.id) + "/revert-failed",
+                      Array.isArray(it.revert_retryable) ? { shown: it.revert_retryable } : {})
         .then(function (r) {
           // the pressed button holds focus inside the list, which would
           // skip the rebuild: release it and force the row to re-render
@@ -474,7 +487,8 @@
                 i.label || "", (i.on_outcome || []).length,
                 i.inserted_by ? 1 : 0, i.outcome_note ? 1 : 0,
                 i.failed_revert ? [i.failed_revert.at || "", i.failed_revert.message || ""] : 0,
-                Array.isArray(i.revert_retryable) ? i.revert_retryable.join(",") : null];
+                Array.isArray(i.revert_retryable) ? i.revert_retryable.join(",") : null,
+                Array.isArray(i.revert_offer) ? JSON.stringify(i.revert_offer) : null];
       }));
       if (sig !== self._queueSig) {
         self._queueSig = sig;
@@ -610,7 +624,9 @@
         var rmsg = document.createElement("span");
         rmsg.className = "sched-item-warning";
         rmsg.setAttribute("data-failed-revert", rv.ok ? "ok" : "refused");
-        rmsg.textContent = "Revert: " + rv.message;
+        // a press-time record: its values were true when pressed, not now
+        rmsg.textContent = (rv.at ? "Revert (as of the press at " + pressTime(rv.at) + "): "
+          : "Revert: ") + rv.message;
         nameCell.appendChild(rmsg);
         var earlierPresses = (rv.presses || []).filter(function (h) { return h && h.message; });
         if (earlierPresses.length) {
@@ -622,7 +638,7 @@
           earlierPresses.slice().reverse().forEach(function (h) {
             var line = document.createElement("div");
             line.className = "muted";
-            line.textContent = h.message;
+            line.textContent = (h.at ? "As of " + pressTime(h.at) + ": " : "") + h.message;
             det.appendChild(line);
           });
           nameCell.appendChild(det);
@@ -644,8 +660,26 @@
           ? "Revert the " + nLeft + " remaining value" + (nLeft === 1 ? "" : "s")
           : "Revert the " + nWrites + " value" + (nWrites === 1 ? "" : "s")
             + " written for the failed target" + (nFailed === 1 ? "" : "s");
-        rb.title = "Put back each listed value; a value changed since the run is refused and named";
+        var offerList = Array.isArray(it.revert_offer) ? it.revert_offer : [];
+        rb.title = offerList.length
+          ? "Puts back: " + offerList.map(function (o) {
+              return o.path + " (run value " + fmtVal(o.value) + " -> " + fmtVal(o.old) + ")";
+            }).join("; ")
+          : "Put back each listed value; a value changed since the run is refused and named";
         nameCell.appendChild(rb);
+        if (Array.isArray(it.revert_retryable) && nLeft <= 3) {
+          var names = document.createElement("span");
+          names.className = "muted";
+          names.setAttribute("data-revert-names", String(nLeft));
+          names.textContent = "Will revert: " + it.revert_retryable.join(", ");
+          nameCell.appendChild(names);
+        }
+      } else if (nLeft === 0 && rv && Array.isArray(rv.remaining)) {
+        var why = document.createElement("span");
+        why.className = "muted";
+        why.setAttribute("data-revert-none", "");
+        why.textContent = "Nothing to revert: no listed value still holds what the run wrote.";
+        nameCell.appendChild(why);
       }
     }
 

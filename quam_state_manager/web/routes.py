@@ -53841,30 +53841,48 @@ def _revert_retryable_paths(writes: list, read) -> list:
     return out
 
 
+def _revert_press_scope(item: dict, read) -> list:
+    """The ONE decision of what a revert press on ``item`` will put back,
+    used by the status annotation (the count and list the button shows) and
+    by the press itself (the writes it makes), so the two cannot differ.
+
+    Every failed-target write with a recorded old value that changed
+    something and still holds the run's value, minus every path SM already
+    reverted in an earlier press: a reverted path is settled and never
+    retried, even if a person later set it back to the run's value by hand.
+    Returns the write dicts in their recorded order."""
+    writes = [w for w in (item.get("failed_writes") or []) if isinstance(w, dict)]
+    rv = item.get("failed_revert")
+    rev = set()
+    if isinstance(rv, dict):
+        rev = {r.get("path") for r in (rv.get("reverted") or []) if isinstance(r, dict)}
+    pend = [w for w in writes if _revert_key(w) not in rev]
+    left = set(_revert_retryable_paths(pend, read)) if pend else set()
+    return [w for w in pend if _revert_key(w) in left]
+
+
 def _annotate_revert_retryable(queue: list) -> None:
-    """Stamp ``revert_retryable`` on each finished item whose failed-target
-    writes were pressed at least once and are not all settled. Reads the open
-    chip's in-memory working copy (the store the revert writes through), no
-    file I/O; O(unsettled failed writes)."""
+    """Stamp ``revert_retryable`` (paths) and ``revert_offer`` (path, the
+    run's value, the value it goes back to) on each finished item whose
+    failed-target writes were pressed at least once. Reads the open chip's
+    in-memory working copy (the store the revert writes through), no file
+    I/O; O(unsettled failed writes). Decided by ``_revert_press_scope``."""
     from types import SimpleNamespace
     from quam_state_manager.core.autofit.writer import _current_value
     for it in queue:
         rv = it.get("failed_revert")
         writes = it.get("failed_writes") or []
-        if it.get("status") != "done" or not it.get("failed_targets") or not writes                 or not isinstance(rv, dict) or not isinstance(rv.get("remaining"), list):
+        if it.get("status") != "done" or not it.get("failed_targets") or not writes \
+                or not isinstance(rv, dict) or not isinstance(rv.get("remaining"), list):
             continue
         ctx = _find_quam_ctx_by_path(it.get("failed_folder"))
         if ctx is None:
             continue
-        store = ctx["store"]
-        rev = {r.get("path") for r in (rv.get("reverted") or []) if isinstance(r, dict)}
-        pend = [w for w in writes if isinstance(w, dict) and _revert_key(w) not in rev]
-        if not pend:
-            it["revert_retryable"] = []
-            continue
-        handle = SimpleNamespace(store=store)
-        it["revert_retryable"] = _revert_retryable_paths(
-            pend, lambda k: _current_value(handle, k))
+        handle = SimpleNamespace(store=ctx["store"])
+        scope = _revert_press_scope(it, lambda k: _current_value(handle, k))
+        it["revert_retryable"] = [_revert_key(w) for w in scope]
+        it["revert_offer"] = [{"path": _revert_key(w), "value": w.get("value"),
+                               "old": w.get("old")} for w in scope]
 
 
 def _merge_revert_lists(prev: dict, now: dict, reverted_paths: set) -> dict:
@@ -53898,6 +53916,7 @@ def scheduler_revert_failed(item_id: str):
     from quam_state_manager.core.autofit.writer import (
         ChipHandle, _current_value, _values_equal, revert_patches)
     inst = _sched_inst()
+    data = json_object()
     item = scheduler._find(scheduler.load_queue(inst), item_id)
     if item is None:
         return jsonify({"ok": False, "error": "no such queue item"}), 404
@@ -53936,16 +53955,23 @@ def scheduler_revert_failed(item_id: str):
     # reverted would otherwise be refused as changed (it now holds its old value).
     prev = item.get("failed_revert") or {}
     read = lambda k: _current_value(handle, k)  # noqa: E731
-    if isinstance(prev.get("remaining"), list):
-        # decided from the chip's values now, never from the stored list: a
-        # value refused because it moved, and since moved back, is retried
-        left = set(_revert_retryable_paths(writes, read))
-        writes = [w for w in writes if _revert_key(w) in left]
+    pressed = isinstance(prev.get("remaining"), list)
+    if pressed:
+        # decided from the chip's values now by the same function the status
+        # uses; a path reverted by an earlier press is settled, never retried
+        writes = _revert_press_scope(item, read)
         blind = []
-        if not writes:
-            return jsonify({"ok": False, "error":
-                            "nothing is left to revert: no listed value still holds "
-                            "what the run wrote"}), 409
+    shown = data.get("shown") if isinstance(data, dict) else None
+    if pressed and isinstance(shown, list):
+        if sorted(str(p) for p in shown) != sorted(_revert_key(w) for w in writes):
+            return jsonify({"ok": False, "stale": True, "error":
+                            "the values to revert changed since this row was shown; "
+                            "the row now lists what a press would revert",
+                            "state": _sched_state()}), 409
+    if pressed and not writes:
+        return jsonify({"ok": False, "error":
+                        "nothing is left to revert: no listed value still holds "
+                        "what the run wrote"}), 409
     # A value that already holds the run's recorded OLD value was put back
     # (by an earlier press, or by hand): never attempted, never called changed.
     # Same comparator as the revert itself. A write whose old equals its new

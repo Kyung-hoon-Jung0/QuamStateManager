@@ -243,6 +243,51 @@ class TestRevertTheFailedTargets:
         assert len(res["presses"]) == 1 and "not reverted" in res["presses"][0]["message"]
         assert self._status_item(chip, iid)["revert_retryable"] == []
 
+    def _reverted_then_readopted(self, chip):
+        """Press 1 reverts f_01 and refuses T1 (moved away). Later T1 comes back
+        to the run's value and a person sets f_01 back to the run's value by hand."""
+        patches = self._node_wrote(chip)
+        inst, iid = _record(chip, patches)
+        chip.set_live("qubits.q1.T1", 9.9e-05)
+        first = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert [x["path"] for x in first["result"]["reverted"]] == ["qubits.q1.f_01"]
+        chip.set_live("qubits.q1.T1", 3.0e-05)
+        chip.set_live("qubits.q1.f_01", 5.11e9)        # deliberate re-adoption
+        chip.c.post("/state/sync", data={"mode": "pull"})
+        return inst, iid
+
+    def test_a_path_reverted_earlier_is_never_retried(self, chip):
+        inst, iid = self._reverted_then_readopted(chip)
+        st = self._status_item(chip, iid)
+        assert st["revert_retryable"] == ["qubits.q1.T1"]
+        assert st["revert_offer"] == [{"path": "qubits.q1.T1", "value": 3.0e-05, "old": 2.1e-05}]
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed",
+                        json={"shown": st["revert_retryable"]})
+        body = r.get_json()
+        assert r.status_code == 200, body
+        assert [x["path"] for x in body["result"]["reverted_now"]] == ["qubits.q1.T1"]
+        live = chip.live_state()["qubits"]["q1"]
+        assert live["T1"] == 2.1e-05
+        assert live["f_01"] == 5.11e9                  # never offered, never written
+        assert self._status_item(chip, iid)["revert_retryable"] == []
+
+    def test_a_press_without_a_shown_list_reverts_the_same_scope(self, chip):
+        inst, iid = self._reverted_then_readopted(chip)
+        body = chip.c.post(f"/scheduler/item/{iid}/revert-failed", json={}).get_json()
+        assert [x["path"] for x in body["result"]["reverted_now"]] == ["qubits.q1.T1"]
+        assert chip.live_state()["qubits"]["q1"]["f_01"] == 5.11e9
+
+    def test_a_stale_shown_list_is_refused_and_nothing_is_written(self, chip):
+        inst, iid = self._reverted_then_readopted(chip)
+        r = chip.c.post(f"/scheduler/item/{iid}/revert-failed",
+                        json={"shown": ["qubits.q1.f_01", "qubits.q1.T1"]})
+        body = r.get_json()
+        assert r.status_code == 409 and body.get("stale"), body
+        assert "changed since this row was shown" in body["error"]
+        assert "state" in body
+        live = chip.live_state()["qubits"]["q1"]
+        assert live["T1"] == 3.0e-05 and live["f_01"] == 5.11e9
+
     def test_a_value_that_moved_away_and_stayed_offers_nothing(self, chip):
         patches = self._node_wrote(chip)
         inst, iid = _record(chip, patches)
@@ -357,7 +402,7 @@ def test_the_queue_row_says_it_and_offers_the_revert():
                        capture_output=True, text=True, encoding="utf-8", timeout=60,
                        env=dict(os.environ, NODE_PATH=os.environ.get("NODE_PATH") or str(
                            Path(__file__).resolve().parents[1] / "node_modules")))
-    assert r.returncode == 0 and "16 checks passed" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "24 checks passed" in r.stdout, r.stdout + r.stderr
 
 
 class TestCompactRowNamesTheMetricTarget:
