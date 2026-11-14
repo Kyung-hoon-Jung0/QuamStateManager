@@ -17897,6 +17897,9 @@ def pair_gate_inspector_switch(name: str):
     gid = modifier.new_group_id()
     with store._lock:
         start = len(store.change_log)
+        ctx = _active_ctx()
+        redo_frames = list(_redo_stack(ctx))
+        redo_intact = bool(redo_frames) and ctx.get("redo_seq") == store.mutation_seq
         try:
             plan = gate_inspector.plan_switch_moving_qubit(store, name, new_role)
             if plan.get("error"):
@@ -17912,6 +17915,9 @@ def pair_gate_inspector_switch(name: str):
         except Exception as e:  # noqa: BLE001
             while len(store.change_log) > start:
                 modifier.undo()
+            if redo_intact:
+                _redo_stack(ctx)[:] = redo_frames
+                _redo_mark(ctx, store)
             _invalidate_engine_cache()
             logger.warning("switch-moving(%r, %r) failed: %s", name, new_role, e)
             return render_template(
@@ -31617,7 +31623,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     Returns ``(entries, note)`` -- entries empty when nothing happened.
     Runs OUTSIDE `store._lock` (review C1): the door takes the build lock.
     """
-    from quam_state_manager.core import edit_policy
+    from quam_state_manager.core.differ import compare_equal
     from quam_state_manager.core.pointer_path import _walk as _walk_abs, resolve_field_target
 
     def _current(merged, path):
@@ -31663,8 +31669,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
             if e.get("created") or e.get("deleted"):
                 continue
             cur = _current(merged, e["path"])
-            same = (cur == e.get("old")) if isinstance(cur, (list, dict)) or isinstance(e.get("old"), (list, dict)) \
-                else edit_policy.cas_equal(cur, e.get("old"))
+            same = compare_equal(cur, e.get("old"), tolerance=None)
             if not same:
                 return [], (f"{e['path']} has changed since "
                             f"(now {_fmt_msg_val(cur)}); nothing was written")

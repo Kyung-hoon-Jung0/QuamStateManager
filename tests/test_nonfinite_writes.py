@@ -228,15 +228,49 @@ def _restore_calls(rel: str, names):
     return out
 
 
-def _replay_violations(source):
+def _replay_wrappers(sources):
+    """Index one-level package helpers that forward a value to a write."""
+    import ast
+
+    wrappers = {}
+    for source in sources:
+        for fn in ast.walk(ast.parse(source)):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
+            params += [a.arg for a in fn.args.kwonlyargs]
+            forwarded = set()
+            for call in ast.walk(fn):
+                if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr in ("set_value", "create_subtree")):
+                    continue
+                if any(k.arg == "restore" and isinstance(k.value, ast.Constant)
+                       and k.value.value is True for k in call.keywords):
+                    continue
+                for value in call.args[1:] + [k.value for k in call.keywords if k.arg]:
+                    forwarded.update(n.id for n in ast.walk(value)
+                                     if isinstance(n, ast.Name) and n.id in params)
+            if forwarded:
+                wrappers.setdefault(fn.name, set()).update(
+                    (params.index(name), name) for name in forwarded)
+    return wrappers
+
+
+def _replay_violations(source, wrappers=None):
     """Discover replay writes, including values carried through local aliases."""
     import ast
 
+    wrappers = wrappers if wrappers is not None else _replay_wrappers([source])
     bad = []
     for fn in ast.walk(ast.parse(source)):
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         nodes = list(ast.walk(fn))
+        methods = {t.id for n in nodes if isinstance(n, (ast.Assign, ast.AnnAssign))
+                   and isinstance(n.value, ast.Attribute)
+                   and n.value.attr in ("set_value", "create_subtree")
+                   for target in (n.targets if isinstance(n, ast.Assign) else [n.target])
+                   for t in ast.walk(target) if isinstance(t, ast.Name)}
         inverse = any(isinstance(n, ast.Call)
                       and ((isinstance(n.func, ast.Attribute) and n.func.attr == "inverse_ops")
                            or (isinstance(n.func, ast.Name) and n.func.id == "inverse_ops"))
@@ -297,10 +331,23 @@ def _replay_violations(source):
             if (aliases, records) == before:
                 break
         for n in nodes:
-            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                    and n.func.attr in ("set_value", "create_subtree")
-                    and (inverse or any(historical(a) for a in n.args[1:])
-                         or any(historical(k.value) for k in n.keywords))):
+            if not isinstance(n, ast.Call):
+                continue
+            func = n.func
+            direct = ((isinstance(func, ast.Attribute)
+                       and func.attr in ("set_value", "create_subtree"))
+                      or (isinstance(func, ast.Name) and func.id in methods)
+                      or (isinstance(func, ast.Call) and isinstance(func.func, ast.Name)
+                          and func.func.id == "getattr" and len(func.args) >= 2
+                          and isinstance(func.args[1], ast.Constant)
+                          and func.args[1].value in ("set_value", "create_subtree")))
+            name = func.id if isinstance(func, ast.Name) else (
+                func.attr if isinstance(func, ast.Attribute) else None)
+            forwarded = wrappers.get(name, set())
+            values = (n.args[1:] + [k.value for k in n.keywords] if direct else
+                      [n.args[i] for i, _ in forwarded if i < len(n.args)]
+                      + [k.value for k in n.keywords if any(k.arg == p for _, p in forwarded)])
+            if ((direct or forwarded) and (inverse or any(historical(a) for a in values))):
                 if not any(k.arg == "restore" and isinstance(k.value, ast.Constant)
                            and k.value.value is True for k in n.keywords):
                     bad.append((fn.name, n.lineno))
@@ -309,8 +356,10 @@ def _replay_violations(source):
 
 def test_every_replay_site_is_a_restore():
     root = Path(__file__).resolve().parents[1] / "quam_state_manager"
+    sources = {p: p.read_text(encoding="utf-8-sig") for p in root.rglob("*.py")}
+    wrappers = _replay_wrappers(sources.values())
     bad = [(str(p.relative_to(root)), fn, line) for p in root.rglob("*.py")
-           for fn, line in _replay_violations(p.read_text(encoding="utf-8-sig"))]
+           for fn, line in _replay_violations(sources[p], wrappers)]
     assert not bad, bad
 
 
@@ -338,6 +387,24 @@ def test_replay_scan_flags_a_new_site(body):
     restored = restored.replace("mod.set_value(path, entry.new_value)",
                                 "mod.set_value(path, entry.new_value, restore=True)")
     assert not _replay_violations(restored)
+
+
+@pytest.mark.parametrize("method", ["set_value", "create_subtree"])
+@pytest.mark.parametrize("shape", ["alias", "getattr", "wrapper", "wrapper_keyword"])
+def test_replay_scan_flags_indirect_writes(method, shape):
+    helper = f"def forward(mod, path, value, **kw):\n    mod.{method}(path, value, **kw)\n"
+    bodies = {
+        "alias": f"write = mod.{method}\nwrite(path, entry.old_value)",
+        "getattr": f'getattr(mod, "{method}")(path, entry.old_value)',
+        "wrapper": "forward(mod, path, entry.old_value)",
+        "wrapper_keyword": "forward(mod, path, value=entry.old_value)",
+    }
+    source = helper + "def planted(mod, path, entry):\n" + "\n".join(
+        "    " + line for line in bodies[shape].splitlines())
+    assert _replay_violations(source)
+    restored = source.replace("entry.old_value)", "entry.old_value, restore=True)")
+    assert not _replay_violations(restored)
+    assert not _replay_violations(source.replace("entry.old_value", "0.5"))
 
 
 def test_rollback_after_a_failed_save_is_a_restore():
@@ -538,6 +605,51 @@ def test_switch_failure_rolls_back_request(nan_pair_chip, monkeypatch, stage, pr
     assert json.dumps(store.state, sort_keys=True) == before
     assert store.change_log == log
     assert (folder / "state.json").read_bytes() == live_before
+
+
+@pytest.mark.parametrize("fork", [False, True])
+@pytest.mark.parametrize("stage", ["create", "render"])
+def test_failed_switch_preserves_intact_redo(nan_pair_chip, monkeypatch, fork, stage):
+    from quam_state_manager.web import routes
+
+    c, _ = nan_pair_chip
+    path = "qubits.qA1.f_01"
+    assert c.post("/field/edit", data={"dot_path": path, "value": "6.3e9"}).status_code == 200
+    assert c.post("/undo", headers=_JSON).status_code == 200
+    assert _raw(c, path) == 6.25e9
+    if fork:
+        assert c.post("/field/edit", data={"dot_path": path, "value": "6.1e9"}).status_code == 200
+
+    def fail(*args, **kwargs):
+        raise TypeError("forced switch failure")
+
+    with monkeypatch.context() as scoped:
+        if stage == "render":
+            scoped.setattr(routes, "_render_pair_detail", fail)
+        else:
+            ctx = next(x for x in c.application.config["contexts"].values()
+                       if x.get("type") == "quam")
+            scoped.setattr(ctx["modifier"], "create_subtree", fail)
+        r = c.post("/pair/pair/gate-inspector/switch-moving", data={"role": "target"})
+        assert r.status_code == 409, r.get_data(as_text=True)
+    assert c.post("/redo", headers=_JSON).status_code == 200
+    assert _raw(c, path) == (6.1e9 if fork else 6.3e9)
+
+
+def test_live_redo_accepts_its_own_nan(nan_chip):
+    c, folder = nan_chip
+    path = "qubits.qA1.fit_extra.a"
+    assert c.post("/field/edit", data={"dot_path": path, "value": "0.5"}).status_code == 200
+    _apply(c)
+    assert c.post("/undo", headers=_JSON).status_code == 200
+    assert _isnan(_live(folder)["qubits"]["qA1"]["fit_extra"]["a"])
+    r = c.post("/redo", headers=_JSON)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert _raw(c, "qubits.qA1.fit_extra.a") == 0.5
+    assert _live(folder)["qubits"]["qA1"]["fit_extra"]["a"] == 0.5
+    assert c.post("/undo", headers=_JSON).status_code == 200
+    assert _isnan(_live(folder)["qubits"]["qA1"]["fit_extra"]["a"])
+    assert "NaN" in (folder / "state.json").read_text(encoding="utf-8")
 
 
 def test_rename_nan_pulse_keeps_nan_and_undo_redo_follow_live(nan_chip):
