@@ -227,7 +227,8 @@ def test_done_shapes_ports_and_drops_malformed():
     res = {"ok": True, "sim_ns": 504, "backend_label": "QM-SaaS cloud simulator", "ports": [
         {"controller": "con1", "fem": 5, "port": 1, "elements": ["q1.z"], "t0_ns": 0, "dt_ns": 0.5,
          "volts": [0, 0.1]},
-        {"controller": "con1", "fem": "x", "port": 2, "volts": [1]}]}
+        {"controller": "con1", "fem": "x", "port": 2, "volts": [1]},
+        {"controller": "con1", "fem": 5, "port": 3, "volts": []}]}
     out = sim.from_status({"state": "done", "result": res}, {})
     assert out["state"] == "done" and out["line"] == "Simulated on QM-SaaS cloud simulator: 504 ns."
     assert out["ports"] == [{"key": "con1/5/1", "port_text": "con1 / 5 / 1", "controller": "con1",
@@ -371,6 +372,7 @@ def test_start_runs_on_a_copy_and_writes_nothing(app):
     assert r.status_code == 200 and j["state"] == "starting", j
     job = json.loads(Path(app.procs[0].argv[2]).read_text(encoding="utf-8"))
     assert job["macro"] == "qubit_pairs.q1-2.macros.cz_sq"
+    assert job["pad_ns"] == 200 and job["max_ns"] == 20_000
     assert job["folder"] == app.env["QUAM_STATE_PATH"]
     assert Path(job["folder"]).resolve() != live.resolve()
     # the password rides stdin only, never the job file
@@ -400,6 +402,12 @@ def test_one_run_per_window_and_stop(app):
     assert _wait(app.c, other.get_json()["id"], "w2")["state"] == "done"
 
 
+def test_stop_body_goes_through_request_body(app):
+    r = app.c.post(STOP, data="[1]", content_type="application/json",
+                   headers={"X-SM-Window-ID": "w1"})
+    assert r.status_code == 400 and "JSON object" in r.get_json()["error"]
+
+
 def test_not_configured_and_no_env(app, monkeypatch):
     from quam_state_manager.web import cz_gate_routes as czr
     from quam_state_manager.web import port_test_routes as ptroutes
@@ -427,3 +435,15 @@ def test_failed_run_reports_the_classified_reason(app):
     assert out["state"] == "failed"
     assert out["line"] == "Not simulated: Could not reach the QM-SaaS simulator at x."
     assert "ports" not in out
+
+
+def test_busy_window_refuses_before_making_a_copy(tmp_path):
+    m = sim.Manager(tmp_path)
+    m.runs("w1").busy = lambda: True
+
+    def no_copy():
+        raise AssertionError("a busy window must not copy the chip")
+    ans, code = m.start("w1", python=sys.executable, target={"saas": CREDS}, label="L",
+                        limit_s=1, make_copy=no_copy, remove_copy=lambda c: None, macro="m",
+                        popen_for=lambda folder: None)
+    assert code == 409 and ans["state"] == "busy"
