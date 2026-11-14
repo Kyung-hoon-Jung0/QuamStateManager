@@ -94,7 +94,7 @@ def write_chip_folder(folder: Path, state: dict, wiring: dict) -> None:
     folder = Path(folder)
     temp_root = Path(tempfile.gettempdir()).resolve()
     resolved = folder.resolve()
-    if resolved != temp_root and temp_root not in resolved.parents:
+    if temp_root not in resolved.parents:
         raise ValueError(f"write_chip_folder writes scratch copies only, not {folder}")
     (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
     (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
