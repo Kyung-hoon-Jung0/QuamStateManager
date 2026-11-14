@@ -155,6 +155,16 @@ def _choosing():
                                       "error": "A name has no spaces; use cz_unipolar.",
                                       "control": {"part": "input", "id": "uk-f-name", "value": "cz unipolar",
                                                   "invalid": True, "block": True}}),
+        (sec, "Field without a control id (the field is the label)", {"part": "field", "label": "Amplitude", "hint": "Click the label: the input takes focus.",
+                                                                     "control": {"part": "input", "num": True, "value": "0.1", "unit": "V"}}),
+        (sec, "Field with a check", {"part": "field", "label": "Show", "hint": "Spectator qubits are drawn grey.",
+                                     "control": {"part": "check", "text": "Spectators"}}),
+        (sec, "Field with another part (a group wrapper names it)", {"part": "field", "label": "Source file",
+                                                                     "control": {"part": "chip", "text": "state.json"}}),
+        (sec, "Field keeps the caller's describedby", {"part": "field-stack", "items": [
+            {"part": "field", "label": "Length", "hint": "Multiple of 4 ns.",
+             "control": {"part": "input", "num": True, "value": "40", "unit": "ns", "describedby": "uk-length-note"}},
+            {"part": "note", "id": "uk-length-note", "text": "Lengths come from the pulse class."}]}),
         (sec, "Inline field", {"part": "field", "label": "Pulse class", "inline": True, "source": {"text": "default"},
                                "control": {"part": "select", "id": "uk-f-cls", "options": CLASSES, "value": "CZGate"}}),
         (sec, "Menu: pick one", {"part": "menu", "id": "uk-menu-pick", "label": "Pair", "items": PAIRS,
@@ -165,6 +175,7 @@ def _choosing():
                                 "trigger": {"label": "Actions", "cls": "btn-sm secondary"}, "items": [
                                     {"value": "duplicate", "title": "Duplicate gate"},
                                     {"value": "rename", "title": "Rename"},
+                                    {"title": "Open the manual", "desc": "An item without a value"},
                                     {"sep": True},
                                     {"value": "remove", "title": "Remove from the chip", "disabled": True,
                                      "reason": "Used by 2 macros"}]}),
@@ -194,7 +205,7 @@ def reading_form(state):
         {"part": "panel", "step": 2, "title": "Pulses", "summary": ["2 lines play together"], "body": [
             {"part": "slot", "title": "Qubit flux pulse", "chip": "q1.z", "line": 1, "body": [
                 {"part": "grid2", "items": [num("Length", "100", "ns", "entered"), num("Amplitude", amp, "V", "entered")]}]},
-            {"part": "slot", "title": "Coupler pulse", "chip": "coupler_q1_q2", "line": 4, "body": [
+            {"part": "slot", "title": "Coupler pulse", "chip": "coupler_q1_q2", "line": 2, "body": [
                 {"part": "grid2", "items": [num("Length", "60", "ns", "entered"), num("Amplitude", "0.05", "V", "default")]}]},
         ]},
         {"part": "panel", "step": 3, "title": "More pairs", "fold": True, "summary": ["only q1-q2"],
@@ -214,11 +225,12 @@ def reading_evidence(state):
         {"label": "Gate length", "value": "261", "unit": "ns"},
         {"label": "Highest level", "value": "0.1" if ok else "3", "unit": "V on q1.z", "tone": None if ok else "danger"},
         {"label": "Timing", "value": "101", "unit": "ns gap"}]}
-    rows = [[{"text": "cz_fast_pulse_q1_q2"}, "100 ns", "0.1 V" if ok else {"text": "3 V (limit 2.5 V)"}],
-            [{"text": "cz_fast_coupler_pulse_q1_q2"}, "60 ns", "0.05 V"]]
+    rows = [[{"text": "cz_fast_pulse_q1_q2", "line": 1}, "100 ns", "0.1 V" if ok else {"text": "3 V", "tone": "danger", "note": "limit 2.5 V"},
+             {"text": "161 ns", "tone": "warn", "note": "port delay"}],
+            [{"text": "cz_fast_coupler_pulse_q1_q2", "line": 2}, "60 ns", "0.05 V", "0 ns"]]
     table = {"part": "panel", "title": "Entered and actual", "flush": True,
              "summary": [{"text": "all as entered", "level": "ok"} if ok else {"text": "1 over the limit", "level": "danger"}],
-             "body": [{"part": "table", "columns": ["Pulse", "Length", "Max level"], "numeric": [1, 2], "rows": rows}]}
+             "body": [{"part": "table", "columns": ["Pulse", "Length", "Max level", "Starts at"], "numeric": [1, 2, 3], "rows": rows}]}
     names = ["Chip loads", "Operations exist", "Pulse lengths", "Preview equals config", "Timeline"]
     checks = [{"name": n, "state": "pass"} for n in names]
     checks.append({"name": "Output range", "state": "pass"} if ok else
@@ -230,7 +242,10 @@ def reading_evidence(state):
     written = {"part": "panel", "title": "Will be written", "fold": True, "hint": "working copy only; the chip changes on Apply",
                "summary": [{"text": "3", "level": "strong"}, "objects"],
                "body": ["Two pulses and one gate macro under the pair."]}
-    return [banner, stats, table, chk, written]
+    wave = {"part": "panel", "title": "Waveform", "hint": "program time, before filters",
+            "summary": [{"part": "line", "line": 1, "text": "q1.z"}, {"part": "line", "line": 2, "text": "coupler_q1_q2"}],
+            "body": [{"part": "placeholder", "text": "The lane chart renders here (gate timeline component)"}]}
+    return [banner, stats, wave, table, chk, written]
 
 
 def _reading():

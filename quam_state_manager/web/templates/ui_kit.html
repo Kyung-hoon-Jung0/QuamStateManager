@@ -187,7 +187,6 @@
 {%- for st, form, ev in reading %}
 <p class="ui-kit-label">{{ 'Passed' if st == 'ok' else 'Failed' }}: form column (372 px) and evidence column</p>
 <div class="ui-kit-reading"><div class="ui-kit-reading-form">{% for s in form %}{{ ui.ui_render(s) }}{% endfor %}</div><div class="ui-kit-reading-ev">{% for s in ev %}{{ ui.ui_render(s) }}{% endfor %}
-<section class="ui-panel" aria-label="Lines"><div class="ui-panel-head"><h3 class="ui-panel-title">Lines</h3><span class="ui-panel-sum">same colours as the chart</span></div><div class="ui-panel-body"><p class="ui-text-quiet">{{ ui.ui_line_dot(1) }}q1.z &nbsp; {{ ui.ui_line_dot(4) }}coupler_q1_q2</p></div></section>
 </div></div>
 {%- endfor %}
 </section>

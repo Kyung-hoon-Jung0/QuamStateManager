@@ -19,7 +19,7 @@ _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
 
 CORE = {"sidebar-order.js", "htmx.min.js", "split.min.js", "search-query.js", "app.js",
         "sidebar-typeahead.js", "auto-apply.js",
-        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js", "opx-health.js"}
+        "plot-theme.js", "calc.js", "manual.js", "undo-trail.js", "opx-health.js", "ui-menu.js"}
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "diagram-add.js", "chip-status.js", "gen-additions.js", "gen-rules.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js", "opx-monitor.js",
@@ -174,3 +174,26 @@ def test_an_htmx_navigation_loads_every_bundle_a_full_load_of_that_page_ships(cl
                                      check=True).stdout)
     assert set(man["pages"]["pulses"]) <= set(got["/pulses"]), got
     assert set(man["pages"]["czplan"]) <= set(got["/cz-plan"]), got
+
+
+# docs/308 4b: the kit menu's behaviour is CORE (ui-menu.js in base.html), so a
+# .ui-menu works on every page that extends base.html, in every swapped
+# partial and dialog. A standalone page (its own <html>, not base.html) that
+# renders a menu would get a dead menu: such a page must load ui-menu.js.
+_STANDALONE_MENU_PAGES_THAT_LOAD_IT = set()
+
+
+def test_every_page_that_can_render_a_kit_menu_has_its_behaviour():
+    import re
+    tpl = _ROOT / "quam_state_manager" / "web" / "templates"
+    base = (tpl / "base.html").read_text(encoding="utf-8")
+    assert "asset_url('ui-menu.js')" in base and "data-bundle-file=\"{{ _f }}\"" in base
+    core_part = base.split('id="bundle-manifest"')[0]
+    assert "ui-menu.js" in core_part, "ui-menu.js is a core script, before the page bundles"
+    for p in sorted(tpl.glob("*.html")):
+        t = p.read_text(encoding="utf-8")
+        if p.name == "_ui.html" or not re.search(r"ui_menu\(|\bui-menu\b|part.{0,4}menu", t):
+            continue
+        standalone = "<html" in t and "extends" not in t
+        if standalone:
+            assert "ui-menu.js" in t, f"{p.name} renders a kit menu but is a standalone page without ui-menu.js"

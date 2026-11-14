@@ -661,6 +661,17 @@ def test_a_model_with_no_pulse_field_is_refused():
         s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
 
 
+def test_a_model_whose_pulse_fields_climb_out_of_the_macro_states_that_reason():
+    s = _two_pulse_chip()
+    ref = "#../../../../qubits/q1/z/operations/cz_a_pulse"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_a"] = {"__class__": LAB_GATE,
+                                                   "flux_pulse_qubit": ref}
+    err = cgb.plan(s, "q1-q2", gate_name="cz_b", gate_class=LAB_GATE)["error"]
+    assert ref in err and "flux_pulse_qubit" in err
+    assert "points outside its own macro" in err
+    assert "no pulse SM can copy" not in err
+
+
 def test_copied_name_needs_the_gate_name_then_an_underscore():
     assert cgb.copied_name("cz_ab_pulse_q1_q2", "cz_a", ("q1", "q2"), "cz_n", ("q1", "q2")) is None
     s = _two_pulse_chip()
