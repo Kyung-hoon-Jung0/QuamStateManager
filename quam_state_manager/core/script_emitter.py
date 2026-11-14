@@ -92,7 +92,8 @@ _RUNTIME_FUNCS = (
     "_apply_resonator", "_apply_qubit", "_apply_flux", "_apply_pulses",
     "_twpa_of", "_apply_twpa", "_apply_twpa_qubits",
     "_make_cz_gate", "_apply_pairs", "apply_populate",
-    "_apply_dual_upconverters", "_pin_cores",
+    "_apply_dual_upconverters", "_pin_ports", "_pin_same_fem",
+    "_pin_set", "_pin_twpa_cores", "_pin_cores",
     "_pulse_class", "_cz_variant_pulses", "_seed_cz_variant",
     "_cr_flavor", "_import_cr_gate", "_make_cr_gate", "_seed_cr_gate",
     "_import_stark_cz_gate", "_make_stark_cz_gate", "_make_xy_detuned",
@@ -609,7 +610,7 @@ def _emit_build(spec: dict, chip: str, stamp: str, allocation: dict | None = Non
         w("    for _w in _finalize_coupler_only(machine, _spec):")
         w('        print(f"WARNING: {_w}", file=sys.stderr)')
     w('_apply_coupler_models(machine, POPULATE)')
-    w('if (POPULATE.get("options") or {}).get("pin_cores"):')
+    w('if (POPULATE.get("options") or {}).get("pin_cores", True):')
     w("    _pin_cores(machine)")
     # G1: the same coupled-band rule the wizard's build applies, so the
     # script writes the chip the wizard wrote

@@ -127,6 +127,8 @@ def test_one_latency_class_is_byte_identical_to_the_base_build(tmp_path, name):
         pytest.skip("no usable QM env found")
     gen = _base_generator(tmp_path)
     spec = CASES[name][0]()
+    # the base generator writes no core names; shared cores are on by default now
+    spec["populate"].setdefault("options", {})["pin_cores"] = False
     spec_path = tmp_path / "_spec.json"
     spec_path.write_text(json.dumps(spec, indent=2), encoding="utf-8")
     base_out = tmp_path / "base_out"
