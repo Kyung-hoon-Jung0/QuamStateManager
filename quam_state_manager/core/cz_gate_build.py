@@ -193,11 +193,12 @@ def _op_keys(lines: dict) -> set:
     return keys
 
 
-def choose_direction(merged: dict, pair_id: str) -> str:
-    """Operation-owns-pulse only when every CZ gate of the pair is, or the
-    pair has none and every CZ gate on the chip is (at least one); otherwise
-    macro-owns-pulse. Alias pointers are not gates."""
-    def directions(pairs):
+def _deciding_gates(merged: dict, pair_id: str) -> list[tuple[dict, str, str]]:
+    """The CZ gates that decide the direction, each with its direction: the
+    pair's own gates when it has any with a pulse field, else every such
+    gate on the chip, each as (macro, direction, pair). Alias pointers are
+    not gates."""
+    def gates(pairs):
         out = []
         for pid in pairs:
             p = (merged.get("qubit_pairs") or {}).get(pid)
@@ -209,16 +210,50 @@ def choose_direction(merged: dict, pair_id: str) -> str:
                 if is_cz_macro(name, m):
                     d = gate_direction(m, keys)
                     if d is not None:
-                        out.append(d)
+                        out.append((m, d, pid))
         return out
 
-    own = directions([pair_id])
+    own = gates([pair_id])
     if own:
-        return OPERATION_OWNS if all(d == OPERATION_OWNS for d in own) else MACRO_OWNS
-    chip = directions(list((merged.get("qubit_pairs") or {}).keys()))
-    if chip and all(d == OPERATION_OWNS for d in chip):
+        return own
+    return gates(list((merged.get("qubit_pairs") or {}).keys()))
+
+
+def choose_direction(merged: dict, pair_id: str) -> str:
+    """Operation-owns-pulse only when every CZ gate of the pair is, or the
+    pair has none and every CZ gate on the chip is (at least one); otherwise
+    macro-owns-pulse. Alias pointers are not gates."""
+    found = _deciding_gates(merged, pair_id)
+    if found and all(d == OPERATION_OWNS for _, d, _p in found):
         return OPERATION_OWNS
     return MACRO_OWNS
+
+
+def _is_plain_name(v: Any) -> bool:
+    return isinstance(v, str) and bool(v) and not v.startswith("#")
+
+
+def name_form_fields(merged: dict, pair_id: str, slot_lines: dict) -> set:
+    """Slot fields (field -> line role) that every gate deciding the direction
+    fills with a plain operation name: the key of an operation that exists
+    on that slot's channel of the gate's own pair. Only there does an
+    operation-owned gate get a name; in every other field it gets an
+    absolute reference."""
+    found = _deciding_gates(merged, pair_id)
+    if not found:
+        return set()
+    out = set()
+    for field, role in slot_lines.items():
+        ok = True
+        for m, _d, pid in found:
+            v = m.get(field)
+            ln = _lines(merged, pid).get(role)
+            if not (_is_plain_name(v) and isinstance(ln, tuple) and isinstance(ln[1].get(v), dict)):
+                ok = False
+                break
+        if ok:
+            out.add(field)
+    return out
 
 
 def operation_length(macro_pulse: dict, macro_ref: str) -> Any:
@@ -384,7 +419,13 @@ def _lines(merged: dict, pair_id: str) -> dict[str, Any]:
     out["control"] = z_of(control, "control", "qubit_control")
     out["target"] = z_of(target, "target", "qubit_target")
     role = p.get("moving_qubit")
-    if role in ("control", "target"):
+    no_z = all(isinstance(qubits.get(q), dict) and qubits[q].get("z") is None
+               for q in (control, target) if q) and bool(control and target)
+    if no_z:
+        out["moving"] = (f"The qubits of pair {pair_id} have no flux line, so a "
+                         "gate that plays on a qubit flux line cannot run here. "
+                         "Pick the coupler-only gate class.")
+    elif role in ("control", "target"):
         out["moving"] = out[role]
     else:
         out["moving"] = (f"Pair {pair_id} records no moving qubit, so SM does not "
@@ -418,17 +459,88 @@ def _dot(segs: tuple, key: str | None = None) -> str:
     return ".".join(segs + ((key,) if key is not None else ()))
 
 
-def _resolve_slot_pulse(macro: dict, field: str, lines: dict
+_LIST_INDEX = re.compile(r"0|[1-9][0-9]*")
+
+
+def _walk_path(merged: Any, segs) -> Any:
+    """The node at *segs*; a list step must be a plain non-negative decimal
+    index without a leading zero or sign. _SENTINEL when it does not exist."""
+    node = merged
+    for seg in segs:
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif (isinstance(node, list) and isinstance(seg, str)
+              and _LIST_INDEX.fullmatch(seg) and int(seg) < len(node)):
+            node = node[int(seg)]
+        else:
+            return _SENTINEL
+    return node
+
+
+def _resolve_reference(merged: dict, ref: str, holder: tuple | None
+                       ) -> tuple[tuple, Any] | None:
+    """(path, object) a reference held at *holder* (the path of the holding
+    field) names in *merged*, with the meaning the state gives it; None when
+    it does not resolve."""
+    try:
+        if ref.startswith("#/"):
+            t = tuple(x for x in ref[2:].split("/") if x)
+        else:
+            if holder is None:
+                return None
+            ptr = "#" + ref[3:] if ref.startswith("#./../") else ref
+            t = (_walk_relative(merged, ptr, holder) if ptr.startswith("#../")
+                 else target_path(merged, ptr, holder))
+            if t is None:
+                return None
+            t = tuple(t)
+        node = _walk_path(merged, t)
+        return None if node is _SENTINEL else (t, node)
+    except Exception:  # noqa: BLE001 -- a reference that cannot be walked does not resolve
+        return None
+
+
+def _is_pulse_place(path: tuple) -> bool:
+    """A pulse sits in an ``operations`` container of a channel, or inline in
+    a macro's pulse field (list steps below either place are allowed). A gate
+    macro, a channel, a qubit or a pair is not a pulse, whatever its class."""
+    p = list(path)
+    # Which list steps are valid is the walker's decision; here any step a
+    # list could take is skipped.
+    while len(p) > 1 and str(p[-1]).strip().lstrip("-").isdigit() and p[-2] != "operations":
+        p.pop()
+    if len(p) >= 2 and p[-2] == "operations":
+        return True
+    return len(p) >= 3 and p[-3] == "macros" and "pulse" in str(p[-1])
+
+
+def _resolve_slot_pulse(macro: dict, field: str, lines: dict, merged: dict | None = None,
+                        holder: tuple | None = None
                         ) -> tuple[dict | None, str | None, str | None]:
-    """(pulse dict, line role, operation key) a gate's pulse field plays."""
+    """(pulse dict, line role, operation key) a gate's pulse field plays.
+
+    With *merged*, a reference is followed as the state reads it (a
+    relative one from the field under *holder*, the macro's path) and only
+    its target counts; without it, a reference is matched by its last
+    segment on the pair's lines."""
     v = macro.get(field)
     key = None
     if isinstance(v, dict):
         key = v.get("id") if isinstance(v.get("id"), str) and not v["id"].startswith("#") else None
         pulse = v
     elif isinstance(v, str):
-        key = v.rstrip("/").rsplit("/", 1)[-1] if v.startswith("#/") else v
+        key = v.rstrip("/").rsplit("/", 1)[-1] if v.startswith("#") else v
         pulse = None
+        if merged is not None and v.startswith("#"):
+            hit = _resolve_reference(merged, v, None if holder is None
+                                     else tuple(holder) + (field,))
+            if hit is not None and isinstance(hit[1], dict) and _is_pulse_place(hit[0]):
+                pulse = hit[1]
+            for line in ("control", "target", "coupler"):
+                ln = lines.get(line)
+                if isinstance(ln, tuple) and key and key in ln[1]:
+                    return pulse, line, key
+            return pulse, None, key
     else:
         return None, None, None
     for line in ("control", "target", "coupler"):
@@ -523,6 +635,20 @@ def _gate_or_alias(macros: dict, name: str, merged: dict, pair_id: str
                       "follow. Name the gate itself to copy values from.")
     return None, (f"Pair {pair_id} has no gate {name} to copy values from. "
                   "Pick a gate of this pair, or leave copying off.")
+
+
+def _gate_path(macros: dict, name: str, merged: dict, pair_id: str) -> tuple | None:
+    """The path of the gate *name* names on the pair, following an alias one hop."""
+    v = macros.get(name)
+    base = ("qubit_pairs", pair_id, "macros")
+    if isinstance(v, dict):
+        return base + (name,)
+    if isinstance(v, str):
+        if v.startswith("#./"):
+            return base + (v[3:],)
+        hop = _follow(merged, v)
+        return hop[0] if hop else None
+    return None
 
 
 def _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
@@ -629,15 +755,23 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
                     "first, or pick another pair."])
 
     copy_macro = None
+    copy_path = None
     if copy_from is not None:
         copy_macro, why = _gate_or_alias(macros, copy_from, merged, pair_id)
         if why:
-            reasons.append(why)
+            # Without the source gate, no slot can be judged: refuse on the
+            # cause alone so no advice about slots is given that does not fit.
+            return _refuse(reasons + [why])
+        else:
+            copy_path = _gate_path(macros, copy_from, merged, pair_id)
 
     def copy_source(field):
         if copy_macro is None:
             return None
-        return _resolve_slot_pulse(copy_macro, field, lines)[0]
+        return _resolve_slot_pulse(copy_macro, field, lines, merged, copy_path)[0]
+
+    copy_source.raw = lambda field: (
+        None if copy_macro is None else (copy_from, copy_macro.get(field)))
 
     if gate_class in GATE_CLASSES:
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
@@ -688,12 +822,34 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     desc = GATE_CLASSES[gate_class]
     slots = {s.field: s for s in desc["slots"]}
     have = ", ".join(slots)
+    copy_refused: set = set()
     for f in pulses:
         if f not in slots:
             reasons.append(f"This gate class has no pulse field {f} (its pulse "
                            f"fields are {have}). Remove that pulse.")
     for s in desc["slots"]:
-        if s.required and s.field not in pulses:
+        spec = pulses.get(s.field)
+        if isinstance(spec, dict) and isinstance(spec.get("class"), str) and spec["class"]:
+            continue
+        src = copy_source(s.field)
+        cls = src.get("__class__") if isinstance(src, dict) else None
+        if isinstance(cls, str) and cls:
+            pulses[s.field] = {"class": cls,
+                               "fields": dict((spec or {}).get("fields") or {})}
+            continue
+        raw = getattr(copy_source, "raw", lambda f: None)(s.field)
+        if raw is not None and s.required:
+            src_name, held = raw
+            if isinstance(held, str) and held:
+                why = (f"The gate {src_name} holds the reference {held} in "
+                       f"{s.field}, which does not lead to a pulse.")
+            else:
+                why = f"The gate {src_name} holds no pulse in {s.field} to copy."
+            reasons.append(f"{why} Pick a pulse class for {s.field}, or start "
+                           "from another gate.")
+            copy_refused.add(s.field)
+    for s in desc["slots"]:
+        if s.required and s.field not in pulses and s.field not in copy_refused:
             extra = (" A coupler pulse alone is not a gate of this class; for a "
                      "coupler-only gate pick the coupler-only gate class."
                      if gate_class == CZ_GATE else "")
@@ -702,6 +858,8 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
     if reasons:
         return _refuse(reasons)
     direction = choose_direction(merged, pair_id)
+    named = (name_form_fields(merged, pair_id, {f: x.line for f, x in slots.items()})
+             if direction == OPERATION_OWNS else set())
     control, target = lines["_ids"]
     macro = desc["skeleton"]()
     macro_segs = ("qubit_pairs", pair_id, "macros", gate_name)
@@ -746,7 +904,12 @@ def _plan_known(merged, pair_id, p, gate_name, gate_class, pulses, lines,
             op_creates.append((_dot(segs, key),
                                linked_operation(owned, _ref(*macro_segs, s.field))))
         else:
-            macro[s.field] = key
+            if s.field in named:
+                macro[s.field] = key
+                operations[s.field]["macro_holds"] = "name"
+            else:
+                macro[s.field] = _ref(*segs, key)
+                operations[s.field]["macro_holds"] = "reference"
             op_creates.append((_dot(segs, key), {"id": key, **pulse}))
     if reasons:
         return _refuse(reasons)
