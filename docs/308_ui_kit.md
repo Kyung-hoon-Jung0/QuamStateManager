@@ -100,18 +100,18 @@ title.
 
 ## 4b. Choosing parts (select, input, field, menu, toolbar)
 
-One row height for every control: `--ui-ctl-h` = the small button's `--ui-btn-h-sm` (26px), so a
+One row height for every control: `--ui-ctl-h` = 28px (the design study's row; a toolbar lifts its `btn-sm` to it), so a
 `ui-select`, a `ui-input`, a `ui-segmented` and a `button.btn-sm` line up in one toolbar row. Text
 `--ui-fs-sm`, radius `--ui-r-btn`, border `--ui-ctl-border` (`--ui-border-strong`), background
-`--ui-ctl-bg` (the page surface); hover darkens the border, focus = accent border + 1px accent
-outline (`--ui-accent`, no offset, so it never clips), disabled = surface-2 + `--ui-text-3`,
+`--ui-ctl-bg` (the page surface); hover darkens the border, focus = accent border + a soft 2px ring (`--ui-ctl-ring`)
+that never clips, disabled = surface-2 + `--ui-text-3`,
 `aria-invalid="true"` = danger border. Every colour is a token; the select chevron is two
 token gradients (`--ui-chevron`), so it follows light, dark and QM.
 
 | Part | Macro / `UI.` twin | Markup |
 |---|---|---|
 | select | `ui_select(options, value, label, id, name, block, disabled, invalid)` / `UI.select(spec)` | the class sits **on the native `<select>`**: `<select class="ui-select">`. No wrapper: the chevron is a background, so `label > select`, form serialisation and every existing select handler keep working. As wide as its longest option + the chevron lane (min `--ui-ctl-min-w`, `max-width: 100%`); `ui-select--block` fills a form column. |
-| input | `ui_input(value, type, label, id, name, num, unit, placeholder, block, disabled, invalid)` / `UI.input(spec)` | `<input class="ui-input">` (text / search / number); `ui-input--num` right-aligns with tabular numbers and hides the spinner; `ui-input--block` fills. A unit: `<span class="ui-input-unit"><input class="ui-input ui-input--num"><span class="ui-input-unit-text">ns</span></span>` (`ui-input-unit--block` fills). |
+| input | `ui_input(value, type, label, id, name, num, unit, placeholder, block, disabled, invalid)` / `UI.input(spec)` | `<input class="ui-input">` (text / search / number); `ui-input--num` right-aligns with tabular numbers and hides the spinner; `ui-input--block` fills. A unit sits inside the box: `<span class="ui-input-unit"><input class="ui-input ui-input--num"><span class="ui-input-unit-text">ns</span></span>`; the wrapper also takes `--block`, `--invalid`, `--disabled` (the macro sets them). Numbers are mono and tabular. |
 | field | `ui_field(label, control, hint, error, source, inline, id)` / `UI.field(spec)` | `ui-field` > `ui-field-head` (`ui-field-label` + an optional `ui-badge` source tag such as "copied" / "default") > the control > `ui-field-hint` > `ui-field-error` (`role=alert`). `ui-field--inline` puts the label left in a `--ui-field-label-w` column (property forms). `ui-field-stack` stacks fields; `ui-field-grid` still lays short fields side by side. The older `<label class="ui-field">` markup keeps working. |
 | menu | `ui_menu(id, items, label, kind, value, trigger, placeholder, block, end, up)` / `UI.menu(spec)` | `ui-menu` > `button.ui-menu-trigger` + `ui-menu-list` of `ui-option` rows (`ui-option-title`, optional `ui-option-desc`; a disabled row shows its `reason` there). `kind: "pick"` = `aria-haspopup=listbox`, rows `role=option` + `aria-selected`, a check mark (`ui-option-check`), the trigger looks like a select and shows the picked title. `kind: "action"` = `aria-haspopup=menu`, rows `role=menuitem`, the trigger is a `btn-sm` button. `{sep: true}` = `ui-menu-sep`. |
 | toolbar | `ui_toolbar(items, label)` / `UI.toolbar(items, label)` | `<div class="ui-toolbar" role="toolbar">`: inline, small gaps, wraps, nothing stretches; items are specs plus `{part: "button", ...}`, `{part: "toolbar-sep"}` (`ui-toolbar-sep`), `{part: "toolbar-spacer"}` (`ui-toolbar-spacer`, pushes the rest right). |
@@ -150,6 +150,28 @@ segmented row height.
 | on / off | `ui-check` |
 | a command | a button |
 | several commands | `ui-menu` (action) |
+
+## 4c. Reading order
+
+A screen tells the eye where to look first. Six rules, each with its part:
+
+| # | Rule | Part |
+|---|---|---|
+| 1 | The conclusion first, one banner per region | `ui-verdict ui-verdict--strong ui-verdict--{ok,warn,danger,note}` (`ui_verdict(..., strong=True)`): icon disc, key phrase in the tone colour, one sentence (reason + what to do). The existing verdict is the conclusion part, so the banner is its strong size, not a fourth look-alike of notice / callout / verdict. |
+| 2 | At most four key numbers as tiles; colour only on the abnormal one | `ui-stats` > `ui-stat [ui-stat--warn,--danger]` > `ui-stat-label` / `ui-stat-value` / `ui-stat-unit` (`ui_stats(tiles)`) |
+| 3 | Every group in a panel with a title and a one-phrase summary; details folded unless something is wrong | `ui-panel` (`ui_panel(title, body, step, hint, summary, fold, open, flush)`): `ui-panel-head` (`ui-panel-step`, small-caps `ui-panel-title`, quiet `ui-panel-hint`, right `ui-panel-sum`), `ui-panel-body`; `fold` = `<details class="ui-panel ui-panel--fold">`, the summary stays visible when folded |
+| 4 | Three text levels; an explanation is never louder than the content; prose longer than one line goes into a hint or a disclosure | `ui-text-strong` (names, values), normal, `ui-text-quiet` (smaller, `--ui-text-3`); `ui-field-hint`, `ui-panel-hint`, `ui-disclosure` |
+| 5 | Colour only with a meaning: a state, the identity of a line, or "can be pressed" | state tones; `ui-line-1..6` on `ui-slot` (left bar + tinted `ui-slot-chip`) and `ui-line-dot`; accent on controls |
+| 6 | Passes are counted, failures are spelled out | `ui-checks` > `ui-checks-row` of `ui-result [--fail,--skip]` + one `ui-fail-row` per failure; the count goes in the panel summary |
+
+Line colours: `--ui-line-N` is `var(--plot-colorway-N)`, the same variables `PlotTheme.palette()`
+reads for the charts, so line N in a form, a table dot and chart series N can never disagree
+(a chart's series N uses `palette()[N-1]`). They are classes, not an inline `--ui-line`, because
+inline styles are not allowed.
+
+Small caps titles use `font-variant-caps: all-small-caps` (never `text-transform: uppercase`).
+The sample page rebuilds a dialog body from these parts only, passed and failed, with a 372 px
+form column and an evidence column.
 
 ## 5. Writing rules (UI text, English)
 

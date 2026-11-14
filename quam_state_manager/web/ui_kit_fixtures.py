@@ -220,7 +220,7 @@ def reading_evidence(state):
                   {"name": "Output range", "state": "fail", "why": "cz_fast_pulse_q1_q2 on q1.z: 3 V is above the 2.5 V limit."})
     checks.append({"name": "Hardware timing", "state": "skip"})
     chk = {"part": "panel", "title": "Checks",
-           "summary": [{"text": "6 of 6 passed", "level": "ok"}] if ok else [{"text": "1 failed", "level": "danger"}, ", 5 passed"],
+           "summary": [{"text": "6 of 6 passed", "level": "ok"}] if ok else [{"text": "1 failed", "level": "danger"}, "5 passed"],
            "body": [{"part": "checks", "checks": checks}]}
     written = {"part": "panel", "title": "Will be written", "fold": True, "hint": "working copy only; the chip changes on Apply",
                "summary": [{"text": "3", "level": "strong"}, "objects"],
