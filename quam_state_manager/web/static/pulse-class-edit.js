@@ -106,8 +106,8 @@
     function typed(type, raw) {
         if (type === "str") return { value: raw };
         if (raw === "") return { error: "the default is empty" };
-        if (type === "float") return NUM.test(raw) ? { value: Number(raw) } : { error: raw + " is not a number" };
-        if (type === "int") return INT.test(raw) ? { value: parseInt(raw, 10) } : { error: raw + " is not a whole number" };
+        if (type === "float") return NUM.test(raw) && Number.isFinite(Number(raw)) ? { value: Number(raw) } : { error: raw + " is not a number" };
+        if (type === "int") return INT.test(raw) && Number.isSafeInteger(Number(raw)) ? { value: parseInt(raw, 10) } : { error: raw + " is not a whole number" };
         if (type === "bool") {
             if (raw === "True" || raw === "true") return { value: true };
             if (raw === "False" || raw === "false") return { value: false };
@@ -210,7 +210,7 @@
         protect(p.info);
         S.fileInfo = p.info;
         if (!S.formDirty || !S.formInfo) renderForm(p.info, p.sha);
-        else show(q(S.root, "[data-pce-form-note]"), FORM_OLD_LINE);
+        else show(q(S.root, "[data-pce-form-note]"), formIsOld() ? FORM_OLD_LINE : "");
         markDirty(false);
         labelPreview();
         return true;
@@ -230,7 +230,7 @@
             if (!r.ok) {
                 setStatus(r.error);
                 show(q(S.root, "[data-pce-error]"), r.error);
-                if (conflict) askConflict(conflict, body.text);
+                if (conflict && !r.base_unknown) askConflict(conflict, body.text);
                 return;
             }
             apply(r, keep === "file" ? null : body.text);
@@ -238,7 +238,7 @@
         });
     }
     function formIsOld() {
-        return S.formSha !== S.baseSha || regionText() !== S.formRegion;
+        return regionText() !== S.formRegion;
     }
     function applyForm(force) {
         var err = q(S.root, "[data-pce-error]");
@@ -260,12 +260,23 @@
         show(err, "");
         var body = { cls: S.cls, fields: f.fields, formula: q(S.root, "[data-pce-formula]").value,
                      text: S.cm.getDoc(), base_sha: S.baseSha };
+        return submitForm(body);
+    }
+    function submitForm(body, conflict) {
+        var err = q(S.root, "[data-pce-error]");
+        function retry(keep, _mine, fileSha, c) {
+            return submitForm(Object.assign({}, body, { keep: keep, file_sha: fileSha }), c);
+        }
         return api("POST", "/pulse-class/form", body).then(function (r) {
             if (!S) return;
-            if (r.conflict) { askConflict(r.conflict, body.text); return; }
-            if (!r.ok) { show(err, r.error); return; }
+            if (r.conflict) { askConflict(r.conflict, body.text, retry); return; }
+            if (!r.ok) {
+                show(err, r.error);
+                if (conflict && !r.base_unknown) askConflict(conflict, body.text, retry);
+                return;
+            }
             S.formDirty = false;     // the form wrote these values: show them now
-            apply(r, body.text);
+            apply(r, body.keep === "file" ? null : body.text);
             return preview();
         });
     }
@@ -274,7 +285,12 @@
         var d = q(S.root, "[data-pce-conflict]");
         if (!d || d.open) return;
         q(d, "[data-pce-conflict-title]").textContent = spec.title;
-        q(d, "[data-pce-conflict-question]").textContent = spec.question;
+        var question = q(d, "[data-pce-conflict-question]");
+        question.textContent = "";
+        spec.question.split("\n").forEach(function (line, i) {
+            if (i) question.appendChild(el("br"));
+            question.appendChild(document.createTextNode(line));
+        });
         var losses = q(d, "[data-pce-conflict-losses]");
         var acts = q(d, "[data-pce-conflict-actions]");
         losses.textContent = ""; acts.textContent = "";
@@ -295,17 +311,20 @@
         d.addEventListener("close", function () { if (S) S.conflictOpen = false; }, { once: true });
         if (d.showModal) d.showModal(); else d.setAttribute("open", "");
     }
-    function askConflict(c, mine) {
+    function askConflict(c, mine, action) {
         askChoice({
             title: "Two editors changed the draft",
             question: c.question,
             choices: c.choices.map(function (ch) {
                 return { label: ch.label, loses: ch.loses, keep: ch.keep, primary: ch.keep === "sm",
-                         act: function () { save(ch.keep, mine, c.file_sha, c); } };
+                         act: function () { (action || save)(ch.keep, mine, c.file_sha, c); } };
             }),
         });
     }
     function saveFile(target, replaceSha) {
+        var dirty = S.dirty;
+        show(q(S.root, "[data-pce-file-note]"), dirty ?
+            "Save to file writes the saved draft, not the unsaved pane. Save draft first to include your typing." : "");
         var body = { cls: S.cls, target: target };
         if (replaceSha) body.replace_sha = replaceSha;
         return api("POST", "/pulse-class/save-file", body).then(function (r) {
@@ -314,7 +333,7 @@
                 var c = r.confirm;
                 askChoice({
                     title: "Replace the class file?",
-                    question: c.question + "\n" + c.path,
+                    question: c.question + "\n" + c.path + (dirty ? "\nThis writes the saved draft, not the unsaved pane." : ""),
                     choices: [
                         { label: "Yes", loses: c.loses, primary: true,
                           act: function () { saveFile(c.path, c.file_sha); } },
@@ -325,7 +344,10 @@
             }
             if (!r.ok) { show(q(S.root, "[data-pce-error]"), r.error); return; }
             show(q(S.root, "[data-pce-error]"), "");
-            S.statusLine = r.status + ". Backup: " + (r.backup === null ? "no copy was needed" : r.backup);
+            S.statusLine = r.status;
+            show(q(S.root, "[data-pce-file-note]"),
+                (r.backup === null ? "Saved; no earlier file to back up." : "Backup: " + r.backup) +
+                (dirty || S.dirty ? " The saved draft was written, not the unsaved pane." : ""));
             setStatus(S.statusLine);
         });
     }
@@ -380,6 +402,11 @@
         if (!window.SmCodePython) { show(q(root, "[data-pce-error]"), "The code editor did not load."); return; }
         S = { root: root, cls: cls, dirty: false, baseSha: null, formInfo: null, formSha: null, formRegion: null,
               formDirty: false, fileInfo: null, drawnSha: undefined, unlocked: false };
+        var fileNote = el("p", "ui-field-hint");
+        fileNote.setAttribute("data-pce-file-note", "");
+        fileNote.setAttribute("role", "status");
+        fileNote.hidden = true;
+        q(root, "[data-pce-status]").after(fileNote);
         S.cm = window.SmCodePython.create(q(root, "[data-pce-code]"), {
             doc: "", dark: isDark(),
             onChange: function () { if (S) markDirty(true); },

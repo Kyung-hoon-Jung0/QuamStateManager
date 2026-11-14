@@ -97,7 +97,7 @@ def pulse_class_load():
 
 def _save_result(cls: str, res: dict):
     if not res.get("ok"):
-        return jsonify(res), 409 if res.get("conflict") else 400
+        return jsonify(res), 409 if res.get("conflict") or res.get("base_unknown") else 400
     return jsonify(_payload(cls, res["text"], res["info"], res["sha"]) | {"kept": res["kept"]})
 
 
@@ -131,6 +131,7 @@ def pulse_class_form():
             return _err(f"There is no draft named {cls}.", 404)
         text = T.rewrite(str(data.get("text") or cur.decode("utf-8", errors="replace")), spec)
         res = W.save_from_pane(_inst(), _scope(), cls, text, data.get("base_sha") or None,
+                               keep=data.get("keep") or None, file_sha=data.get("file_sha") or None,
                                region_ok=True)
     except (D.DraftError, T.TemplateError, TypeError, ValueError) as exc:
         return _err(str(exc))

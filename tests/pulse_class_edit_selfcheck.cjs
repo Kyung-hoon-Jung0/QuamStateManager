@@ -269,6 +269,29 @@ function outsideEdit(fields, formula) {
   i0 = calls.length;
   await win.PulseClassEdit._applyForm(); await flush();
   ok(!dialogOpen() && since(i0, "/pulse-class/form").length === 1, "a current form applies without a question");
+  // F4: saving a helper in the pane leaves the form's template base current.
+  amp().value = "0.6"; amp().dispatchEvent(new win.Event("input", { bubbles: true }));
+  type(view, 0, "# helper\n");
+  await win.PulseClassEdit._save(); await flush();
+  ok(!vis("[data-pce-form-note]"), "F4: own pane save does not label unchanged template lines old");
+  i0 = calls.length;
+  await win.PulseClassEdit._applyForm(); await flush();
+  ok(!dialogOpen() && since(i0, "/pulse-class/form").length === 1,
+    "F4: own pane save does not make the form old");
+
+  // F5: the form door retries the captured form values, even if the form changes meanwhile.
+  amp().value = "0.65"; amp().dispatchEvent(new win.Event("input", { bubbles: true }));
+  answer("/pulse-class/form", 409, { ok: false, conflict: conflict("form-outside") });
+  await win.PulseClassEdit._applyForm(); await flush();
+  amp().value = "0.9";
+  i0 = calls.length;
+  clickChoice("Keep the SM editor"); await flush();
+  const formRetry = since(i0, "/pulse-class/form")[0];
+  ok(formRetry && formRetry.body.keep === "sm" && formRetry.body.file_sha === "form-outside" &&
+    formRetry.body.fields[0].default === 0.65 && since(i0, "/pulse-class/save").length === 0,
+    "F5: keeping SM retries the form values rather than the pane");
+  ok(server.fields[0].default === 0.65 && amp().value === "0.65", "F5: applied form values redraw after conflict");
+
   // a hand edit of the template lines makes the form stale too
   root.querySelector("[data-pce-unlock]").click();
   const pr2 = cm.getProtected();
@@ -290,8 +313,14 @@ function outsideEdit(fields, formula) {
   amp().value = ""; await win.PulseClassEdit._applyForm(); await flush();
   ok(since(i0, "/pulse-class/form").length === 0 && /empty/.test($("[data-pce-error]").textContent) && amp().getAttribute("aria-invalid") === "true",
     "P2-9: an empty float default is refused, named, not sent as 0");
+  amp().value = "1e400"; await win.PulseClassEdit._applyForm(); await flush();
+  ok(since(i0, "/pulse-class/form").length === 0 && /amplitude/.test($("[data-pce-error]").textContent) &&
+    amp().getAttribute("aria-invalid") === "true", "F8 float: non-finite defaults are named, invalid, never sent");
   amp().value = "0.1";
   const len = () => rows()[1].querySelector('[data-k="default"]');
+  len().value = "9007199254740993"; await win.PulseClassEdit._applyForm(); await flush();
+  ok(since(i0, "/pulse-class/form").length === 0 && /length/.test($("[data-pce-error]").textContent) &&
+    len().getAttribute("aria-invalid") === "true", "F8 int: unsafe integers are named, invalid, never sent");
   len().value = "1.5"; await win.PulseClassEdit._applyForm(); await flush();
   ok(since(i0, "/pulse-class/form").length === 0 && /whole number/.test($("[data-pce-error]").textContent),
     "P2-9: 1.5 for an int is refused, not truncated");
@@ -375,14 +404,28 @@ function outsideEdit(fields, formula) {
   ok(calls.length === i0, "merge conflict: polling stays paused while the question is open");
   closeDialog();
 
+  // F2: an expired base is an error with a reload instruction, not the same question again.
+  answer("/pulse-class/save", 409, { ok: false, conflict: c1 });
+  await win.PulseClassEdit._save(); await flush();
+  const unknown = "The template base is no longer known. Reload the draft to compare before saving.";
+  answer("/pulse-class/save", 409, { ok: false, base_unknown: true, error: unknown });
+  clickChoice("Keep the SM editor"); await flush();
+  ok(!dialogOpen() && $("[data-pce-error]").textContent === unknown && cm.getDoc() === refusedText,
+    "F2: unknown base does not reopen the conflict dialog or discard typing");
+
   // Merge seam: overwrite confirmation may move repeatedly; target is the asked path.
   const targetBox = $("[data-pce-target]"), firstConfirm = confirm("target-one"), nextConfirm = confirm("target-two");
   targetBox.value = firstConfirm.path;
   answer("/pulse-class/save-file", 409, { ok: false, confirm: firstConfirm });
   $("[data-pce-save-file]").click(); await flush();
-  ok(dialogOpen() && $("[data-pce-conflict-question]").textContent === firstConfirm.question + "\n" + firstConfirm.path &&
+  ok(dialogOpen() && $("[data-pce-conflict-question]").textContent.includes(firstConfirm.question) && $("[data-pce-conflict-question]").textContent.includes(firstConfirm.path) &&
     $("[data-pce-conflict-losses]").textContent.includes(firstConfirm.loses),
     "merge overwrite: kit question names the path and loss");
+  ok($("[data-pce-conflict-question]").querySelectorAll("br").length >= 1,
+    "F7: confirmation question and path render on separate lines");
+  ok(/saved draft, not the unsaved pane/.test($("[data-pce-file-note]").textContent) &&
+    /saved draft, not the unsaved pane/.test($("[data-pce-conflict-question]").textContent),
+    "F6: dirty pane save explains which text will be written before confirmation");
   i0 = calls.length;
   clickChoice("No"); await flush();
   ok(!dialogOpen() && calls.length === i0, "merge overwrite: No writes nothing");
@@ -399,10 +442,17 @@ function outsideEdit(fields, formula) {
     backup: "D:/classes/flat.py.bak", target: firstConfirm.path });
   clickChoice("Yes"); await flush();
   ok(calls[calls.length - 1].body.replace_sha === "target-two", "merge overwrite: second Yes sends the new hash");
-  ok(!dialogOpen() && $("[data-pce-status]").textContent.includes("D:/classes/flat.py.bak"), "merge overwrite: success names backup path");
+  ok(!dialogOpen() && $("[data-pce-file-note]").textContent.includes("D:/classes/flat.py.bak"), "merge overwrite: success names backup path");
+  answer("/pulse-class/poll", 200, { status: "unchanged", status_line: "Saved to D:/classes/flat.py, same as draft" });
+  await win.PulseClassEdit._poll(); await flush();
+  await win.PulseClassEdit._poll(); await flush();
+  ok(vis("[data-pce-file-note]") && $("[data-pce-file-note]").textContent.includes("D:/classes/flat.py.bak"),
+    "F1: backup path persists through repeated polls after overwrite success");
+  ok(/saved draft was written, not the unsaved pane/.test($("[data-pce-file-note]").textContent),
+    "F6: dirty pane success explains that the saved draft was written");
   answer("/pulse-class/save-file", 200, { ok: true, status: "Saved to D:/classes/flat.py, same as draft", backup: null, target: firstConfirm.path });
   $("[data-pce-save-file]").click(); await flush();
-  ok($("[data-pce-status]").textContent.includes("no copy was needed"), "merge overwrite: null backup says no copy was needed");
+  ok($("[data-pce-file-note]").textContent.includes("Saved; no earlier file to back up."), "F7: first save uses plain no-earlier-file wording");
 
   // Merge seam: missing poll status_line is displayed verbatim.
   const gone = "The draft file is gone: D:/draft/FlatTop.py";

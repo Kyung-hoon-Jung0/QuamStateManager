@@ -172,3 +172,54 @@ def test_poll_conflict_names_the_file_content_it_is_about(client):
     client.get("/pulse-class/poll?cls=FlatPulse&dirty=1")
     r = client.get("/pulse-class/poll?cls=FlatPulse&dirty=1").get_json()
     assert r["conflict"]["file_sha"] == D.sha256_bytes(new)
+
+
+@pytest.mark.parametrize("lost", ["reset", "evicted"])
+def test_unknown_region_base_is_a_reload_409(client, lost):
+    p = _new(client)
+    outside = p["text"].replace("0.1", "0.4").encode()
+    with open(p["path"], "wb") as f:
+        f.write(outside)
+    if lost == "reset":
+        W._WATCHES.clear()
+    else:
+        for w in W._WATCHES.values():
+            w.known.clear()
+    r = client.post("/pulse-class/save", json={
+        "cls": "FlatPulse", "text": p["text"] + "# mine\n", "base_sha": p["sha"],
+        "keep": "sm", "file_sha": D.sha256_bytes(outside)})
+    j = r.get_json()
+    assert r.status_code == 409 and j["base_unknown"]
+    assert "no longer known" in j["error"] and "Reload" in j["error"]
+    assert "conflict" not in j and "region" not in j
+    assert open(p["path"], "rb").read() == outside
+
+
+@pytest.mark.parametrize("name,reason", [
+    ("CON .py", "reserved"), ("nUl .py", "reserved"), ("PRN... .py", "reserved"),
+    ("aux .py", "reserved"), ("CoM9 .py", "reserved"), ("lPt1 .py", "reserved"),
+    ("host:evil.py", "colon"), ("folder:stream/file.py", "colon")])
+def test_target_edge_names_are_reasoned_400s(client, tmp_path, name, reason):
+    _new(client)
+    r = client.post("/pulse-class/save-file", json={"cls": "FlatPulse", "target": str(tmp_path / name)})
+    assert r.status_code == 400 and reason in r.get_json()["error"]
+    assert list(tmp_path.glob("*.py")) == []
+
+
+def test_form_conflict_keeps_form_output_including_formula(client):
+    p = _new(client)
+    outside = p["text"].replace("0.1", "0.4").encode()
+    with open(p["path"], "wb") as f:
+        f.write(outside)
+    body = {"cls": "FlatPulse", "fields": [
+        {"name": "amplitude", "type": "float", "default": 0.65, "unit": "V"},
+        {"name": "length", "type": "int", "default": 100, "unit": "ns"}],
+        "formula": "amplitude * np.ones(n) * 2", "text": p["text"] + "# helper\n", "base_sha": p["sha"]}
+    r = client.post("/pulse-class/form", json=body)
+    assert r.status_code == 409
+    c = r.get_json()["conflict"]
+    r = client.post("/pulse-class/form", json=body | {"keep": "sm", "file_sha": c["file_sha"]})
+    j = r.get_json()
+    assert r.status_code == 200 and j["info"]["spec"]["fields"][0]["default"] == 0.65
+    assert j["info"]["spec"]["formula"] == body["formula"] and j["text"].endswith("# helper\n")
+    assert open(p["path"], "rb").read() == j["text"].encode()

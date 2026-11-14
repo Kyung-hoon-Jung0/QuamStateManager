@@ -257,8 +257,11 @@ def save_from_pane(instance, scope, class_name, text: str, base_sha: str | None,
         return {"ok": False, "conflict": conflict_block(path, disk_sha), "moved": True}
     if not region_ok:
         base_text = w.known.get(base_sha) if base_sha else None
-        if base_text is None and disk is not None:
+        if base_text is None and disk is not None and disk_sha == base_sha:
             base_text = disk.decode("utf-8", errors="replace")
+        if base_text is None:
+            return {"ok": False, "base_unknown": True,
+                    "error": "The template base is no longer known. Reload the draft to compare before saving."}
         why = region_change(base_text, text) if base_text is not None else None
         if why:
             return {"ok": False, "error": why, "region": True}
@@ -292,9 +295,11 @@ def check_target(target: str) -> Path:
     if not t.is_absolute():
         raise D.DraftError("The class file must be a full path, starting with its drive "
                            f"or root folder: {target}")
+    if ":" in target[len(t.drive):]:
+        raise D.DraftError("The class file path cannot contain a colon after the drive.")
     if t.suffix != ".py":
         raise D.DraftError("The class file must end in .py")
-    if t.stem.split(".", 1)[0].casefold() in T.WINDOWS_DEVICE_NAMES:
+    if t.stem.split(".", 1)[0].rstrip(" .").casefold() in T.WINDOWS_DEVICE_NAMES:
         raise D.DraftError(f"{t.name} is a reserved Windows device name; choose another file name.")
     if t.is_dir():
         raise D.DraftError(f"{t} is a folder, not a file; choose a file name inside it.")
