@@ -261,6 +261,7 @@ def _plan_all(merged: dict, body: dict) -> list[tuple[str, dict]]:
         if i == 0:
             first = res
         out.append((pid, res))
+    cgb.count_request_spectators(merged, out)
     return out
 
 

@@ -603,6 +603,12 @@ def port_range(info: dict) -> float | None:
     return None
 
 
+def range_unknown_words(port) -> str:
+    """Why an output range was not compared: the same words for the gate's
+    own lines (the check) and for a spectator's level (the plan)."""
+    return f"the output range of port {_port_text(port)} is not known"
+
+
 def _v(x: float) -> str:
     """A voltage in plain units: ``3 V``, ``0.55 V`` (4 significant digits)."""
     return f"{float(x):.4g} V".replace("-0 V", "0 V")
@@ -638,7 +644,7 @@ def _range_check(found: list, tl, no_config: bool) -> dict:
         port = _port_text(info.get("port"))
         rng = port_range(info)
         if rng is None:
-            not_checked.append(f"{name} (the output range of port {port} is not known)")
+            not_checked.append(f"{name} ({range_unknown_words(info.get('port'))})")
             continue
         if (info.get("waveform") or {}).get("truncated"):
             not_checked.append(f"{name} (the waveform was too long to check fully)")

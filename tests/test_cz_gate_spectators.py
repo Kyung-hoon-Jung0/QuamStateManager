@@ -138,7 +138,7 @@ def test_the_plan_names_every_spectator_object_and_counts_per_qubit():
     res = _plan(s, TWO)
     paths = [p for p, _ in res["creates"]]
     assert f"qubits.q3.z.operations.{KEY}" in paths and f"qubits.q4.z.operations.{KEY}" in paths
-    assert res["spectator_ops"] == {"q3": 2, "q4": 1}
+    assert res["spectator_ops"] == {"q3": 1, "q4": 1}   # a name alone does not count
     assert [r["not_calibrated"] for r in res["spectators"]] == [cgb.NOT_CALIBRATED] * 2
     assert [r["phase_shift"] for r in res["spectators"]] == [0.0, 0.0]
 
@@ -333,3 +333,112 @@ def test_delete_route_removes_spectators_in_one_group_and_undo_restores(app):
     assert json.dumps(app.store.state) == before
     assert app.c.post("/undo").status_code == 200
     assert json.dumps(app.store.state) == made
+
+
+# 7. counts over a whole request, unknown ranges, line-addressed lookups ------
+
+def test_the_count_comes_from_the_gates_spectator_lists_not_from_names():
+    s = _chip()
+    # an op whose name looks like a spectator, used by no gate: not counted
+    s["qubits"]["q3"]["z"]["operations"]["cz_old_spectator_pulse_q1_q2"] = {
+        "amplitude": 0.1, "length": 16, "__class__": SQ}
+    # a spectator op under another name that a gate lists: counted
+    s["qubits"]["q4"]["z"]["operations"]["lab_hold"] = {"amplitude": 0.1, "length": 16, "__class__": SQ}
+    s["qubit_pairs"]["q2-q3"]["macros"]["cz_lab"] = dict(
+        cgb._cz_skeleton(), spectator_qubits={"q4": "#/qubits/q4"},
+        spectator_qubits_control={"q4": "#/qubits/q4/z/operations/lab_hold"})
+    assert cgb.spectator_ops_on_lines(s) == {"q4": {"lab_hold"}}
+    assert _plan(s, TWO)["spectator_ops"] == {"q3": 1, "q4": 2}
+
+
+def _five():
+    s = _chip(5)
+    s["ports"]["analog_outputs"]["con1"]["1"]["4"]["offset"] = 0.0
+    return s
+
+
+Q4 = [{"qubit": "q4", "length": 48, "level": 0.05}]
+
+
+def _plan_request(state, pairs, spect):
+    out = [(p, cgb.plan(state, p, gate_name="cz_sp", gate_class=CZ, pulses=cc.square(),
+                        **({"spectators": spect[p]} if p in spect else {})))
+           for p in pairs]
+    cgb.count_request_spectators(state, out)
+    return dict(out)
+
+
+def test_three_pairs_two_share_a_spectator_and_one_owns_it():
+    res = _plan_request(_five(), ["q1-q2", "q2-q3", "q3-q4"],
+                        {"q1-q2": Q4, "q2-q3": Q4, "q3-q4": Q4})
+    assert res["q1-q2"]["spectator_ops"] == {"q4": 2}
+    assert res["q2-q3"]["spectator_ops"] == {"q4": 2}
+    assert res["q3-q4"]["refusals"] == ["The spectator q4 is the target of pair q3-q4. "
+                                        "A spectator must be another qubit."]
+
+
+def test_an_existing_spectator_plus_two_new_ones_counts_three():
+    s0 = _five()
+    s = cc.apply(s0, cgb.plan(s0, "q1-q2", gate_name="cz_old", gate_class=CZ,
+                              pulses=cc.square(), spectators=Q4)["creates"])
+    assert cgb.spectator_ops_on_lines(s) == {"q4": {"cz_old_spectator_pulse_q1_q2"}}
+    res = _plan_request(s, ["q1-q2", "q2-q3"], {"q1-q2": Q4, "q2-q3": Q4})
+    assert res["q1-q2"]["spectator_ops"] == {"q4": 3} == res["q2-q3"]["spectator_ops"]
+
+
+def test_a_refused_pair_is_not_counted_on_the_shared_line():
+    bad = [{"qubit": "q4", "length": 48, "level": 9.0}]
+    res = _plan_request(_five(), ["q1-q2", "q2-q3"], {"q1-q2": Q4, "q2-q3": bad})
+    assert "error" in res["q2-q3"]
+    assert res["q1-q2"]["spectator_ops"] == {"q4": 1}
+
+
+def test_the_plan_route_counts_shared_lines_over_the_request(app):
+    j = app.c.post(PLAN, json=_body(pairs=["q1-q2", "q2-q3"],
+                                    spectators={"q1-q2": TWO[1:], "q2-q3": TWO[1:]})).get_json()
+    rows = {r["pair"]: r for r in j["pairs"]}
+    assert rows["q1-q2"]["spectator_ops"] == {"q4": 2} == rows["q2-q3"]["spectator_ops"], rows
+
+
+def test_an_unreadable_range_is_said_on_that_row_only():
+    s = _chip()
+    del s["ports"]["analog_outputs"]["con1"]["1"]["3"]["output_mode"]
+    res = _plan(s, [{"qubit": "q3", "length": 48, "level": 5.0}, TWO[1]])
+    assert "error" not in res, res
+    q3, q4 = res["spectators"]
+    assert q3["range_not_compared"] == (
+        "The level on q3.z was not compared with its port's output range: the output "
+        "range of port #/ports/analog_outputs/con1/1/3 is not known.")
+    assert "range_not_compared" not in q4
+    s["qubits"]["q3"]["z"]["opx_output"] = None
+    q3 = _plan(s, TWO)["spectators"][0]
+    assert q3["range_not_compared"].endswith("SM cannot follow the port of q3.z.")
+
+
+def test_the_check_and_the_plan_share_the_unknown_range_words():
+    assert gate_check.range_unknown_words(("con1", 1, 3)) == \
+        "the output range of port con1/1/3 is not known"
+
+
+@pytest.mark.parametrize("rev", [False, True])
+def test_each_spectator_is_addressed_by_its_line_and_name(rev):
+    """Every spectator of a gate shares one operation name: the plan, the
+    previews, the parts (delete) address each by line + name."""
+    s0 = cc.reverse(_chip()) if rev else _chip()
+    p = _plan(s0, TWO)
+    ops = [o for o in p["operations"].values() if o.get("group") == "spectator"]
+    assert {o["key"] for o in ops} == {KEY}
+    assert sorted(o["path"] for o in ops) == [f"qubits.q3.z.operations.{KEY}",
+                                             f"qubits.q4.z.operations.{KEY}"]
+    pv, _ = czr._previews(p)
+    assert pv[("q3.z", KEY)] == [0.05] * 48 and pv[("q4.z", KEY)] == [-0.03] * 32
+    assert sorted(pv[gate_check.REQUIRED]) == [("q3.z", KEY), ("q4.z", KEY)]
+    s = cc.apply(s0, p["creates"])
+    for q, ln, lv in (("q3", 48, 0.05), ("q4", 32, -0.03)):
+        pulse = s["qubit_pairs"]["q1-q2"]["macros"]["cz_sp"]["spectator_qubits_control"][q]
+        if isinstance(pulse, str):
+            pulse = s["qubits"][q]["z"]["operations"][KEY]
+        assert (pulse["length"], pulse["amplitude"]) == (ln, lv)
+    parts = gate_parts.gate_parts(s, "q1-q2", "cz_sp")
+    assert parts["ok"], parts
+    assert {f"qubits.q3.z.operations.{KEY}", f"qubits.q4.z.operations.{KEY}"} <= set(parts["operations"])

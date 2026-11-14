@@ -424,12 +424,13 @@
         if (!offer) return;
         if (!offer.offered) {
             if (sum) sum.textContent = 'not offered';
+            if (S.spectNote) host.appendChild(note(S.spectNote));
             host.appendChild(el('p', 'ui-text-quiet', offer.why || 'This gate class takes no spectators.'));
             return;
         }
         var U = UIkit();
         var pairs = selectedPairs();
-        var lines = 0, counts = [];
+        var lines = 0;
         if (S.spectNote) host.appendChild(note(S.spectNote));
         host.appendChild(el('p', 'ui-text-quiet', 'A spectator line plays a constant level while the gate plays. None plays unless you tick it.'));
         pairs.forEach(function (pair) {
@@ -464,8 +465,12 @@
                     grid.appendChild(fieldInput(f, 'length', 'Length', 'ns', 'int', raw.length, null));
                     grid.appendChild(fieldInput(f, 'level', 'Level', 'V', 'float', raw.level, null));
                     row.appendChild(grid);
-                    var n = pr && pr.spectator_ops ? pr.spectator_ops[c.qubit] : undefined;
-                    if (typeof n === 'number') counts.push(c.line + ' ' + n);
+                    var planned = ((pr && pr.ok && pr.spectators) || []).filter(function (x) { return x.qubit === c.qubit; })[0];
+                    if (planned && planned.range_not_compared) {
+                        var rn = el('p', 'ui-text-quiet', planned.range_not_compared);
+                        rn.setAttribute('data-czg-spect-range-note', c.qubit);
+                        row.appendChild(rn);
+                    }
                     var mine = refused.filter(function (r) { return r.indexOf('For the spectator ' + c.qubit + ':') === 0; });
                     var own = S.invalid[fieldKey(f, 'length')] || S.invalid[fieldKey(f, 'level')];
                     if (mine.length && !own) {
@@ -502,8 +507,7 @@
             });
             if (said) { var nc = el('p', 'ui-text-quiet', said); nc.setAttribute('data-czg-spect-uncal', ''); host.appendChild(nc); }
         }
-        if (sum) sum.textContent = !lines ? 'none' : lines + (lines === 1 ? ' line' : ' lines')
-            + (counts.length ? ', ops after create: ' + counts.join(', ') : '');
+        if (sum) sum.textContent = !lines ? 'none' : lines + (lines === 1 ? ' line ticked' : ' lines ticked');
     }
     var SOURCE_WORDS = { given: 'entered', copied: 'copied', 'default': 'default',
                          'copied from the model gate': 'copied', 'copied from the model gate, renamed': 'copied',
@@ -1609,7 +1613,9 @@
         if (t.querySelector('#czg-class')) {
             if (v === S.klass) return;
             S.klass = v; S.klassByHand = true; S.classNote = ''; renderClassWhy([]);
-            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {}; S.spectNote = '';
+            var hadTicks = anyTicked();
+            S.entered = {}; S.raw = {}; S.cls = {}; S.placed = {}; S.invalid = {}; S.spectOn = {};
+            S.spectNote = hadTicks ? 'The spectator choices were cleared: the new gate class takes other choices. Tick them again where it offers spectators.' : '';
             fillModel();
             fillFrom();
         } else if (t.querySelector('#czg-model')) {

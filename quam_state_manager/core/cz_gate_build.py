@@ -1122,8 +1122,68 @@ def spectator_candidates(merged: dict, pair_id: str) -> list[dict[str, Any]]:
     return out
 
 
-def _is_spectator_key(key: str) -> bool:
-    return f"_{SPECTATOR_ROLE}_" in key
+def _qubit_of_ref(ref: Any) -> str | None:
+    if isinstance(ref, str) and ref.startswith("#/qubits/"):
+        rest = ref[len("#/qubits/"):].split("/")
+        return rest[0] if len(rest) == 1 and rest[0] else None
+    return None
+
+
+def spectator_ops_on_lines(merged: dict) -> dict[str, set]:
+    """``{qubit: {operation key}}``: the operations on each qubit's flux line
+    that existing gates play as spectators, read from the gates' own
+    spectator lists (never from an operation's name). A reference names its
+    line and key; a macro-owned pulse sits on its qubit's line under its id.
+    Only operations the line actually holds are counted."""
+    out: dict[str, set] = {}
+    qubits = (merged or {}).get("qubits") or {}
+    for pv in ((merged or {}).get("qubit_pairs") or {}).values():
+        if not isinstance(pv, dict):
+            continue
+        for macro in (pv.get("macros") or {}).values():
+            if not isinstance(macro, dict) or not isinstance(macro.get(SPECTATOR_CONTROL), dict):
+                continue
+            who = macro.get(SPECTATOR_QUBITS)
+            for q, v in macro[SPECTATOR_CONTROL].items():
+                owner = _qubit_of_ref(who.get(q) if isinstance(who, dict) else None) or str(q)
+                if isinstance(v, str) and v.startswith("#/qubits/"):
+                    segs = v[2:].split("/")
+                    if len(segs) != 5 or segs[2:4] != ["z", "operations"]:
+                        continue
+                    owner, key = segs[1], segs[4]
+                elif isinstance(v, dict) and isinstance(v.get("id"), str) and v["id"]:
+                    key = v["id"]
+                else:
+                    continue
+                entry = qubits.get(owner)
+                z = entry.get("z") if isinstance(entry, dict) else None
+                ops = z.get("operations") if isinstance(z, dict) else None
+                if isinstance(ops, dict) and key in ops:
+                    out.setdefault(owner, set()).add(key)
+    return out
+
+
+def count_request_spectators(merged: dict, plans: list) -> None:
+    """Set every planned pair's ``spectator_ops`` to what each line holds
+    after the WHOLE request: the existing gates' spectator operations plus
+    the new ones of every pair that is not refused. *plans* is
+    ``[(pair, plan)]`` in request order; changed in place."""
+    held = spectator_ops_on_lines(merged)
+    for _pid, p in plans:
+        if "error" not in p:
+            for row in p.get("spectators") or []:
+                held.setdefault(row["qubit"], set()).add(row["operation"])
+    for _pid, p in plans:
+        if "error" not in p and "spectator_ops" in p:
+            p["spectator_ops"] = {q: len(held.get(q, ())) for q in p["spectator_ops"]}
+
+
+def range_not_compared(line: str, port: Any) -> str:
+    """The sentence a spectator row carries when its level could not be
+    compared with its port's output range (the lab check's words)."""
+    from quam_state_manager.core.gate_check import range_unknown_words
+    why = range_unknown_words(port) if port else f"SM cannot follow the port of {line}"
+    return f"The level on {line} was not compared with its port's output range: {why}."
 
 
 def _spectator_problem(merged, pair_id, spec, control, target, seen) -> tuple[Any, str | None]:
@@ -1218,11 +1278,14 @@ def _plan_spectators(merged, pair_id, gate_name, spectators, macro, macro_segs,
             macro[SPECTATOR_CONTROL][q] = _ref(*info["segs"], key)
             operations[field]["macro_holds"] = "reference"
             op_creates.append((op_path, {"id": key, **pulse}))
-        counts[q] = sum(1 for k in info["ops"] if _is_spectator_key(str(k))) + 1
-        rows.append({"qubit": q, "line": info["line"], "operation": key, "path": op_path,
-                     "length": info["length"], "level": info["level"],
-                     "port": info["port"], "range": info["range"],
-                     "phase_shift": 0.0, "not_calibrated": NOT_CALIBRATED})
+        counts[q] = len(spectator_ops_on_lines(merged).get(q, set()) | {key})
+        row = {"qubit": q, "line": info["line"], "operation": key, "path": op_path,
+               "length": info["length"], "level": info["level"],
+               "port": info["port"], "range": info["range"],
+               "phase_shift": 0.0, "not_calibrated": NOT_CALIBRATED}
+        if info["range"] is None:
+            row["range_not_compared"] = range_not_compared(info["line"], info["port"])
+        rows.append(row)
     return {"spectators": rows, "spectator_ops": counts}
 
 

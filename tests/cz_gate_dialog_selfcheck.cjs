@@ -60,6 +60,7 @@ const queue = { plan: [], check: [], create: [] };
 const OUTCOME_CASES = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, 'fixtures', 'gate_outcome_cases.json'), 'utf8')).cases;
 let hold = null;                    // a pending check the test resolves itself
 let holdCreate = null;
+let holdPlan = null;                // a pending plan the test resolves itself
 let failDialog = false;
 const toasts = [];
 window.showToast = (m, k) => { toasts.push([m, k]); };              // a pending create the test resolves itself
@@ -122,6 +123,7 @@ function checkOk(body, opts) {
 /* Spectators in the answers, only when the body asks for them (the contract's shapes). */
 const NOT_CAL = 'The phase shift of this spectator starts at 0 and is not calibrated. Calibrate it before relying on the gate.';
 const SPECT_OPS = { q3: 1, q4: 2, q1: 1 };
+const RANGE_NOTE = "The level on q4.z was not compared with its port's output range: the output range of port con1/1/4 is not known.";
 function spectPlan(body, j) {
     if (!body.spectators) return j;
     (j.pairs || []).forEach((p) => {
@@ -131,7 +133,8 @@ function spectPlan(body, j) {
         if (bad.length) { p.ok = false; p.refusals = (p.refusals || []).concat(bad); return; }
         const op = body.gate_name + '_spectator_pulse';
         p.spectators = sp.map((x) => ({ qubit: x.qubit, line: x.qubit + '.z', operation: op, path: 'qubits.' + x.qubit + '.z.operations.' + op,
-                                        length: x.length, level: x.level, phase_shift: 0.0, not_calibrated: NOT_CAL }));
+                                        length: x.length, level: x.level, phase_shift: 0.0, not_calibrated: NOT_CAL,
+                                        ...(x.qubit === 'q4' ? { range_not_compared: RANGE_NOTE } : {}) }));
         p.spectator_ops = {};
         sp.forEach((x) => { p.spectator_ops[x.qubit] = SPECT_OPS[x.qubit]; });
         p.paths = (p.paths || []).concat(p.spectators.map((x) => x.path));
@@ -171,6 +174,7 @@ window.fetch = (url, opt) => {
     sent.push({ kind, body });
     const q = queue[kind].shift();
     if (kind === 'create' && holdCreate) { const h = holdCreate; holdCreate = null; return h.then(() => respond(200, { ok: true, created: lastAllowed.map((pp) => ({ pair: pp, gate: 'cz_x', state: 'verified', paths: ['a'] })), skipped: [], count: lastAllowed.length, tray_html: '', sync: createSync })); }
+    if (kind === 'plan' && holdPlan) { const h = holdPlan; holdPlan = null; const ans = q ? q(body) : spectPlan(body, planOk(body)); return h.then(() => respond(200, ans)); }
     if (kind === 'check' && hold) { const h = hold; hold = null; return h.then(() => respond(200, q ? q(body) : spectCheck(body, checkOk(body)))); }
     if (q) { const r = q(body); return Array.isArray(r) ? respond(r[0], r[1]) : respond(200, r); }
     if (kind === 'plan') return respond(200, spectPlan(body, planOk(body)));
@@ -865,8 +869,11 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         ok(JSON.stringify(last().spectators) === JSON.stringify({ 'q1-2': [{ qubit: 'q3', length: 48, level: 0.05 }, { qubit: 'q4', length: 32, level: -0.03 }] }),
            'one pair: the spectators field equals the server contract\'s example');
         ok(/q3\.z will hold 1 spectator operation, q4\.z will hold 2 spectator operations/.test($('[data-czg-spect-ops="q1-2"]').textContent)
-           && /^2 lines, ops after create: q3\.z 1, q4\.z 2$/.test($('#czg-spect-sum').textContent),
-           'before creating: per line, the spectator operations it will hold');
+           && $('#czg-spect-sum').textContent === '2 lines ticked',
+           'before creating: per line, the spectator operations it will hold; the header only counts ticked lines');
+        ok($('[data-czg-spect-range-note="q4"]') && $('[data-czg-spect-range-note="q4"]').textContent === RANGE_NOTE
+           && $('[data-czg-spect-row="q4"]').contains($('[data-czg-spect-range-note="q4"]')) && !$('[data-czg-spect-range-note="q3"]'),
+           'an unreadable range is said on that line only, in plain words');
         ok(/qubits\.q3\.z\.operations\.cz_\w*spectator_pulse/.test($('#czg-writes').textContent) && /qubits\.q4\.z\.operations/.test($('#czg-writes').textContent),
            'What will be written lists every spectator operation');
         // check: lanes, rows, the not-calibrated note
@@ -923,6 +930,23 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
         change($('#czg-pair'), 'q1-2');
         await settle();
         ok(!/were cleared/.test($('#czg-spect-body').textContent), 'pair change with nothing ticked: no note');
+        // class switched twice with ticks on, a late plan answer arriving after the switch
+        tickBox('q3', true);
+        await settle();
+        type(fld('q3', 'level'), '0.05');
+        let relP;
+        holdPlan = new Promise((r) => { relP = r; });
+        await settle();
+        const heldSent = sent.length;
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
+        ok(/spectator choices were cleared/.test($('#czg-spect-body').textContent) && $('#czg-spect-sum').textContent === 'not offered',
+           'class switch to one without spectators: the ticks are cleared and the panel says so');
+        $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CZGate', kind: 'pick' } }));
+        relP();
+        await settle();
+        ok(heldSent > 0 && !doc.querySelector('#czg-spect-body input[data-czg-spect-qubit]:checked') && !('spectators' in last())
+           && !$('[data-czg-spect-ops]') && $('#czg-spect-sum').textContent === 'none' && !Object.keys(st().spectOn || {}).length,
+           'class switched twice: a late plan answer brings no ticks or counts back, and the request carries none');
         // a class that takes no spectators
         $('#czg-class-host .ui-menu').dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'G.CouplerCZ', kind: 'pick' } }));
         await settle();
