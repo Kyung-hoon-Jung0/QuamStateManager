@@ -1751,9 +1751,9 @@ def annotate_core_layout(outcome: dict, state: dict, wiring: dict) -> dict | Non
     if not isinstance(outcome, dict):
         return None
     from quam_state_manager.core import core_layout
-    root = dict(state or {})
-    root.update(wiring or {})
+    from quam_state_manager.core.loader import merge_state_wiring
     try:
+        root = merge_state_wiring(state or {}, wiring or {})
         summary = core_layout.review_summary(root)
     except Exception:  # noqa: BLE001 -- the build result never depends on the count
         summary = None

@@ -2764,6 +2764,12 @@ def _pin_twpa_cores(machine):
             _pin_set(chans, f"{tid}_{base}_core")
 
 
+def _pin_cores_wanted(spec) -> bool:
+    """populate.options.pin_cores: on unless it is exactly False (absent or null is on,
+    as the wizard reads it)."""
+    return ((spec.get("populate") or {}).get("options") or {}).get("pin_cores") is not False
+
+
 def _pin_cores(machine):
     """Core-pinning scheme (populate.options.pin_cores, on unless the spec
     sets it false): each qubit's xy and resonator share the core
@@ -3793,7 +3799,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         elif pair_gate == _COUPLER_ONLY["mode"]:
             warnings.extend(_finalize_coupler_only(machine, spec))
         _apply_coupler_models(machine, spec.get("populate") or {})
-        if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores", True):
+        if _pin_cores_wanted(spec):
             _pin_cores(machine)
         # docs/141 4ak: say it when a declared pair produced nothing. Silence
         # here reads as success, and the chip that comes out has no pairs at

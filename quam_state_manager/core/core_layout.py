@@ -89,11 +89,12 @@ READOUT_PROCESSES = 2
 ESTIMATED_LABEL = " (estimated)"
 FEM_MESSAGE = "{cores} / {limit} cores{ce} on {con} FEM {fem} ({type}-FEM); routes {routes} / 10{re}"
 CONTROLLER_MESSAGE = "{cores} / {limit} cores{ce} on {con} (OPX+); routes {routes} / 10{re}"
-# A controller-level port whose controller type cannot be told: the OPX limit, said as such.
-CONTROLLER_TYPE_UNKNOWN = "unknown"
-CONTROLLER_PLACE_UNKNOWN = "OPX or OPX+"
-CONTROLLER_MESSAGE_UNKNOWN = ("{cores} / {limit} cores{ce} on {con} (controller type unknown: "
-                              "OPX limit 10, OPX+ limit 18); routes {routes} / 10{re}")
+# A controller-level port whose controller type the chip does not state: an OPX+ is assumed
+# (the only controller-level instrument Generate builds), said as such with the OPX limit.
+CONTROLLER_TYPE_ASSUMED = "assumed"
+CONTROLLER_PLACE_ASSUMED = "OPX+ assumed"
+CONTROLLER_MESSAGE_ASSUMED = ("{cores} / {limit} cores{ce} on {con} (OPX+ assumed; an original OPX "
+                              "allows 10); routes {routes} / 10{re}")
 LINE_PREFIX = "Core layout warning: {message}"
 DETAIL_GROUPS = "Largest groups: {groups}."
 DETAIL_GROUP_ITEM = "{name} ({cost})"
@@ -188,7 +189,7 @@ _OPX_PLUS_CONFIG_TYPE = "opx1"
 
 def _controller_type(root: dict, con: str) -> str | None:
     """``"OPX+"`` when the chip says so (a ``controllers.<con>.type`` of "opx1"), else None
-    (unknown: an OPX and an OPX+ look the same in a state)."""
+    (not stated: a QUAM state.json / wiring.json carries no controller type)."""
     try:
         t = root["controllers"][con]["type"]
     except (KeyError, TypeError):
@@ -520,10 +521,9 @@ def _core_budget(root: dict, report: dict) -> dict:
         elif kind == "LF":
             limit, limit_est = LF_FEM_CORE_LIMIT, False
         else:
-            # Unknown type: the lower OPX limit, said as such, never the OPX+ one silently.
-            ctype = _controller_type(root, con) or CONTROLLER_TYPE_UNKNOWN
-            limit = OPX_PLUS_CORE_LIMIT if ctype == "OPX+" else OPX_CORE_LIMIT
-            limit_est = True
+            # Type not stated: OPX+ assumed (limit 18), said as such; never a warning for the rare OPX.
+            ctype = _controller_type(root, con) or CONTROLLER_TYPE_ASSUMED
+            limit, limit_est = OPX_PLUS_CORE_LIMIT, True
         core_terms = sorted({lb for g in groups for lb in g["labels"]}, key=ESTIMATED_TERMS.index)
         route_firm = kind in ("MW", "LF") and qop == ROUTE_LIMIT_MEASURED_QOP
         route_terms = [] if route_firm else [TERM_QOP_UNKNOWN if not qop else TERM_QOP_VERSION.format(v=qop)]
@@ -550,14 +550,14 @@ def _place(fem: dict) -> str:
     if fem["fem"] is None:
         if fem.get("controller_type") == "OPX+":
             return f"{fem['controller']} (OPX+)"
-        return f"{fem['controller']} ({CONTROLLER_PLACE_UNKNOWN})"
+        return f"{fem['controller']} ({CONTROLLER_PLACE_ASSUMED})"
     return f"{fem['controller']} / FEM {fem['fem']} ({fem['fem_type']}-FEM)"
 
 
 def fem_message(fem: dict) -> str:
     if fem["fem"] is None:
         template = (CONTROLLER_MESSAGE if fem.get("controller_type") == "OPX+"
-                    else CONTROLLER_MESSAGE_UNKNOWN)
+                    else CONTROLLER_MESSAGE_ASSUMED)
     else:
         template = FEM_MESSAGE
     return template.format(

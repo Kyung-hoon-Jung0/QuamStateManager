@@ -2137,7 +2137,7 @@ if PAIR_GATE in ("cz_fixed", "cz_tunable", "cz_coupler", "cr"):
     for _w in _finalize_pair_gates(machine, _spec, PAIR_GATE):
         print(f"WARNING: {_w}", file=sys.stderr)
 _apply_coupler_models(machine, POPULATE)
-if (POPULATE.get("options") or {}).get("pin_cores", True):
+if (POPULATE.get("options") or {}).get("pin_cores") is not False:
     _pin_cores(machine)
 for _w in _fix_coupled_bands(machine, _spec, []):
     print(f"WARNING: {_w}", file=sys.stderr)

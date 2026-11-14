@@ -203,3 +203,42 @@ def test_call_site_realigns_a_new_cr(tmp_path, monkeypatch):
     merged = json.loads((tmp_path / "new" / "state.json").read_text())
     assert merged["qubits"]["q1"]["xy"]["core"] == "kept_core"
     assert merged["qubit_pairs"]["q1-2"]["cross_resonance"]["core"] == "kept_core"
+
+
+def test_new_cr_follows_the_thread_when_the_kept_core_is_null_or_empty():
+    for empty in (None, ""):
+        old = _pair_chip(empty, with_cr=False)
+        old["qubits"]["q1"]["xy"]["thread"] = "t1"
+        new = _pair_chip("q1_core", cr_core="q1_core")
+        merged = _merged(old, new)
+        regen_merge.realign_new_pair_cores(old, new, merged)
+        cr = merged["qubit_pairs"]["q1-2"]["cross_resonance"]
+        assert core_layout.effective_core_name(cr)[0] == "t1"
+        assert core_layout.effective_core_name(merged["qubits"]["q1"]["xy"])[0] == "t1"
+
+
+def _split_chip():
+    """The over-limit chip with q4 moved into wiring.json: only a deep merge sees all five."""
+    s, w = _over_limit_chip()
+    q4 = s["qubits"].pop("q4")
+    return s, {"wiring": {}, "qubits": {"q4": q4}}
+
+
+def test_annotate_core_layout_merges_like_load_check():
+    from quam_state_manager.core.loader import merge_state_wiring
+    s, w = _split_chip()
+    out = {}
+    config_generator.annotate_core_layout(out, s, w)
+    assert out["core_layout"] == core_layout.review_summary(merge_state_wiring(s, w))
+    assert "10 / 8 cores on con1 FEM 1 (MW-FEM)" in json.dumps(out["core_layout"]["findings"])
+
+
+def test_regenerate_result_reads_the_wiring(tmp_path, monkeypatch):
+    from quam_state_manager.core.loader import merge_state_wiring
+    built = _split_chip()
+    client, body = _client(tmp_path, monkeypatch, built)
+    res = client.post("/regenerate/build", json=body).get_json()
+    assert res.get("ok") is True, res
+    cl = res["core_layout"]
+    assert cl == json.loads(json.dumps(core_layout.review_summary(merge_state_wiring(*built))))
+    assert "10 / 8 cores on con1 FEM 1 (MW-FEM)" in json.dumps(cl["findings"])

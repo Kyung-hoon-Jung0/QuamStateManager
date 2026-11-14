@@ -551,34 +551,36 @@ def _controller_chip(n, con="con1"):
     return c
 
 
-def test_controller_type_unknown_uses_the_opx_limit_and_says_so():
+def test_controller_type_not_stated_assumes_opx_plus_and_says_so():
+    # 6 qubits with IQ xy on a controller-level chip: 12 cores, inside the OPX+ limit, no warning.
     c = _controller_chip(12)
     f = cl.core_budget(c.s)["fems"][0]
-    assert f["cores"]["limit"] == 10 and f["controller_type"] == "unknown"
+    assert f["cores"]["limit"] == 18 and f["controller_type"] == "assumed"
     assert f["cores"]["limit_estimated"] is True
-    fs = core_findings(c.s)
+    assert core_findings(c.s) == []
+    assert core_findings(_controller_chip(18).s) == []
+    fs = core_findings(_controller_chip(19).s)
     assert len(fs) == 1
-    assert fs[0].message == ("12 / 10 cores (estimated) on con1 (controller type unknown: "
-                             "OPX limit 10, OPX+ limit 18); routes 0 / 10 (estimated)")
-    assert fs[0].location == "con1 (OPX or OPX+)"
-    # a type field that is present but not the OPX+ value is unknown too
+    assert fs[0].message == ("19 / 18 cores (estimated) on con1 (OPX+ assumed; an original OPX "
+                             "allows 10); routes 0 / 10 (estimated)")
+    assert fs[0].location == "con1 (OPX+ assumed)"
+    # a type field that is present but not the OPX+ value is not a statement either
     c.s["controllers"] = {"con1": {"type": "opx1000"}}
-    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 10
+    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 18
     c.s["controllers"] = {"con1": {}}
-    assert cl.core_budget(c.s)["fems"][0]["cores"]["limit"] == 10
-    assert len(core_findings(_controller_chip(10).s)) == 0
+    assert cl.core_budget(c.s)["fems"][0]["controller_type"] == "assumed"
 
 
 def test_opx_plus_typed_and_untyped_side_by_side():
-    c = _controller_chip(12)
-    c.s["ports"]["analog_outputs"]["con2"] = {str(i): {} for i in range(1, 13)}
-    for i in range(1, 13):
+    c = _controller_chip(19)
+    c.s["ports"]["analog_outputs"]["con2"] = {str(i): {} for i in range(1, 20)}
+    for i in range(1, 20):
         c.el(f"p{i}", "z", opx_output=f"#/ports/analog_outputs/con2/{i}")
     c.s["controllers"] = {"con2": {"type": "opx1"}}
     by = {f["controller"]: f for f in cl.core_budget(c.s)["fems"]}
-    assert by["con1"]["cores"]["limit"] == 10 and by["con2"]["cores"]["limit"] == 18
-    assert by["con2"]["controller_type"] == "OPX+"
-    assert [f.location for f in core_findings(c.s)] == ["con1 (OPX or OPX+)"]
+    assert by["con1"]["cores"]["limit"] == 18 and by["con2"]["cores"]["limit"] == 18
+    assert by["con2"]["controller_type"] == "OPX+" and by["con1"]["controller_type"] == "assumed"
+    assert sorted(f.location for f in core_findings(c.s)) == ["con1 (OPX+ assumed)", "con2 (OPX+)"]
 
 
 def test_opx_plus_oscillator_message():

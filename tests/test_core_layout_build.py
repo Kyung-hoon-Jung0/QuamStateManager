@@ -366,3 +366,18 @@ def test_pin_same_fem_agrees_with_the_counter_for_every_element_pair():
             f = next(f for f in rep["fems"] if f["controller"] == con and f["fem"] == fem)
             on_fem = sum(1 for n, (o, i) in layout.items() if (con, fem) in (o, i))
             assert f["cores"]["count"] == on_fem - 1, (x, y, f["cores"])
+
+
+def test_pin_cores_null_or_absent_is_on_only_false_is_off():
+    assert rb._pin_cores_wanted({}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": None}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": True}}}) is True
+    assert rb._pin_cores_wanted({"populate": {"options": {"pin_cores": False}}}) is False
+
+
+def test_emitted_script_reads_pin_cores_by_the_same_rule():
+    import inspect
+    src = inspect.getsource(script_emitter)
+    assert 'get("pin_cores") is not False' in src
+    assert 'get("pin_cores", True)' not in src

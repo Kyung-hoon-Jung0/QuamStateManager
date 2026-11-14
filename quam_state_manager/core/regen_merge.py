@@ -3326,12 +3326,12 @@ def _qubit_by_pointer(state: dict, ref: Any) -> dict | None:
 
 
 def _effective_core(el: Any) -> Any:
-    """``core`` when the key is present, else ``thread``, else None."""
+    """The core the budget counter places ``el`` on (a non-empty ``core``, else
+    ``thread``), else None. The counter's own rule, so the two never split."""
     if not isinstance(el, dict):
         return None
-    if "core" in el:
-        return el.get("core")
-    return el.get("thread")
+    from quam_state_manager.core.core_layout import effective_core_name
+    return effective_core_name(el)[0]
 
 
 def realign_new_pair_cores(old_state: dict, new_state: dict,
