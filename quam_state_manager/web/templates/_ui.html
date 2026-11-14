@@ -196,6 +196,21 @@
 </{{ tag }}>
 {%- endmacro -%}
 
+{#- Zone (docs/308 section 4d): the strong container for one main region; panels group inside it.
+    quiet = the empty-state line of a zone that has no content yet (it stays a visible region). -#}
+{%- macro ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None) -%}
+<section class="ui-zone{% if fill %} ui-zone--fill{% endif %}{% if quiet %} ui-zone--quiet{% endif %}" aria-label="{{ title }}">
+<div class="ui-zone-head">
+{%- if step is not none and step is defined %}<span class="ui-zone-step" aria-hidden="true">{{ step }}</span>{% endif -%}
+<h3 class="ui-zone-title">{{ title }}</h3>
+{%- if summary %}<span class="ui-zone-sum">{% for t in summary %}{% if t is mapping and t.part %}{{ ui_render(t) }}{% else %}{{ ui_text(t) }}{% endif %}{% endfor %}</span>{% endif -%}
+</div>
+<div class="ui-zone-body">
+{%- if quiet %}<p class="ui-zone-empty">{{ quiet }}</p>{% else %}{% for s in body %}{% if s is string %}<p class="ui-text-quiet">{{ s }}</p>{% else %}{{ ui_render(s) }}{% endif %}{% endfor %}{% endif -%}
+</div>
+</section>
+{%- endmacro -%}
+
 {#- Stats: at most four tiles [{label, value, unit?, tone?}]; tone only on an abnormal one. -#}
 {%- macro ui_stats(tiles, label=None) -%}
 <div class="ui-stats" role="group"{% if label %} aria-label="{{ label }}"{% endif %}>{% for t in tiles[:4] %}<div class="ui-stat{% if t.tone %} ui-stat--{{ t.tone }}{% endif %}"><div class="ui-stat-label">{{ t.label }}</div><p class="ui-stat-value">{{ t.value }}{% if t.unit %}<span class="ui-stat-unit">{{ t.unit }}</span>{% endif %}</p></div>{% endfor %}</div>
@@ -266,6 +281,7 @@
 {%- elif p == 'field' %}{{ ui_field(s.label, s.control, s.hint, s.error, s.source, s.inline, s.id) }}
 {%- elif p == 'menu' %}{{ ui_menu(s.id, s['items'], s.label, s.kind or 'pick', s.value, s.trigger, s.placeholder or 'Choose', s.block, s.end, s.up) }}
 {%- elif p == 'toolbar' %}{{ ui_toolbar(s['items'], s.label) }}
+{%- elif p == 'zone' %}{{ ui_zone(s.title, s.step, s.summary or (), s.body or (), s.fill, s.quiet) }}
 {%- elif p == 'panel' %}{{ ui_panel(s.title, s.body or (), s.step, s.hint, s.summary or (), s.fold, s.open, s.flush) }}
 {%- elif p == 'stats' %}{{ ui_stats(s.tiles, s.label) }}
 {%- elif p == 'checks' %}{{ ui_checks(s.checks, s.label or 'Checks') }}

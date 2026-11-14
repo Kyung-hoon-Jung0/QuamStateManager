@@ -187,9 +187,13 @@
   {{ ui.ui_menu('uk-menu-end', pair_items, 'Pair', value='q2-q3', end=True, up=True) }}</div>
 </div>
 </section>
-<section class="ui-kit-section"><h2 class="ui-kit-section-title">Reading order: a dialog body, passed and failed</h2>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Zones: a 360 px column and a wide one</h2>
+<p class="ui-kit-label">Page or dialog &gt; zone &gt; panel &gt; field. A zone is a main region the eye finds first; a panel groups inside it.</p>
+<div class="ui-kit-zones"><div class="ui-kit-zones-col">{% for z in zones %}{{ ui.ui_render(z) }}{% endfor %}</div><div class="ui-kit-zones-col">{% for z in zones %}{{ ui.ui_render(z) }}{% endfor %}</div></div>
+</section>
+<section class="ui-kit-section"><h2 class="ui-kit-section-title">Reading order: a dialog body, before a check, passed and failed</h2>
 {%- for st, form, ev in reading %}
-<p class="ui-kit-label">{{ 'Passed' if st == 'ok' else 'Failed' }}: form column (372 px) and evidence column</p>
+<p class="ui-kit-label">{{ {'before': 'Before a check', 'ok': 'Passed', 'danger': 'Failed'}[st] }}: form column (372 px) and result column</p>
 <div class="ui-kit-reading"><div class="ui-kit-reading-form">{% for s in form %}{{ ui.ui_render(s) }}{% endfor %}</div><div class="ui-kit-reading-ev">{% for s in ev %}{{ ui.ui_render(s) }}{% endfor %}
 </div></div>
 {%- endfor %}

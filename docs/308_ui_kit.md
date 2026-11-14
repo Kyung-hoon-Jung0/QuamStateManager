@@ -196,6 +196,34 @@ Small caps titles use `font-variant-caps: all-small-caps` (never `text-transform
 `ui-placeholder` marks where a component renders (dashed, quiet text, `--ui-placeholder-h`). The sample page rebuilds a dialog body from these parts only, passed and failed, with a 372 px
 form column and an evidence column.
 
+## 4d. Zones: the level above a panel
+
+Hierarchy, outermost first:
+1. Page or dialog: the ground (`--ui-surface-0`, or `--ui-surface-2` for a result column).
+2. Zone (`ui_zone` / `UI.zone`): a main region the eye must find first. At most three or four per screen
+   (a dialog's form steps and its result). Coloured boundary, tinted head band, bold title, filled step badge.
+3. Panel (`ui_panel` / `UI.panel`): a lighter grouping inside a zone or a page (waveform, checks, a table).
+   Grey border, small-caps quiet title. Never as loud as a zone.
+4. Field: one label and its control.
+
+Use a zone when the region is one of the few things the user scans for on arrival; use a panel for
+everything that groups content inside it. Never nest a zone in a zone.
+
+Parts: `ui-zone`, `ui-zone-head`, `ui-zone-step` (optional), `ui-zone-title`, `ui-zone-sum` (right, quiet),
+`ui-zone-body`; `ui-zone--fill` fills its column's height; `ui-zone--quiet` is a zone with nothing to show yet:
+it keeps its head and shows one centred `ui-zone-empty` line (macro argument `quiet="..."`), so the region stays
+visible before a check. Signature: `ui_zone(title, step=None, summary=None, body=(), fill=False, quiet=None)`.
+
+Tokens (all derived, one formula serves light, dark and qm):
+- `--ui-zone-border`: the accent 30 % over a 40 % text-on-ground grey. A cool boundary, deliberately
+  under the state colours: a red banner inside a zone still dominates it.
+- `--ui-zone-head-bg`: the accent 10 % over `--ui-surface-1`; `--ui-zone-bg`: `--ui-surface-1`.
+- `--ui-zone-title`: `--ui-text`; `--ui-fs-zone`: 14/17 of the base size (one step above the panel's small caps).
+
+Measured (`test_7h`, contrast ratios): zone title on its head 9.65 / 9.97 / 11.85 (light / dark / qm);
+boundary against the ground 2.85 / 3.75 / 3.74, against `--ui-surface-2` 2.57 / 3.32 / 3.34, where the panel
+border was 1.67 / 2.09 / 2.19; head band vs body luminance step 0.137 / 0.0099 / 0.0081.
+
 ## 5. Writing rules (UI text, English)
 
 1. Conclusion first, reason next, action last. A sentence <= ~90 characters; two thoughts = two sentences.
