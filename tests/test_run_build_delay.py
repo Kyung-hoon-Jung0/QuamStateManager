@@ -455,6 +455,11 @@ class TestOutputTimingProvenance:
         assert warns == ["this draft does not record which time of flight values were "
                          "pre-filled, so the time of flight of q1, q2 was kept while their "
                          "readout output is delayed: measure time of flight again."]
+        m = _chip([2, 2], ro_band=3, tof=300)
+        del spec["populate"]["resonator"]["q2"]
+        warns = self.mod._align_output_timing(m, spec)
+        assert warns[0].endswith("of q1 was kept while its readout output is delayed: "
+                                 "measure time of flight again.")
 
     def test_a_partial_record_splits_default_typed_and_unrecorded(self):
         m = _chip([2, 2, 2], ro_band=3, tof=28)
