@@ -1653,12 +1653,14 @@ GATE_CONFLICT_TOL = 1e-6
 def _fid_scalar(v: Any) -> float | None:
     """The fidelity a per-gate key holds: a bare number, or the canonical field
     of a nested dict (the same fields `_extract_pair_gate_fidelities` reads)."""
+    # A NaN or infinite entry is no measurement: it must never outrank a real
+    # number held under another per-gate key.
     if isinstance(v, dict):
         for k in ("value", "fidelity", "Fidelity", "average_gate_fidelity"):
-            if _is_num(v.get(k)):
+            if _is_num(v.get(k)) and math.isfinite(v[k]):
                 return v[k]
         return None
-    return v if _is_num(v) else None
+    return v if _is_num(v) and math.isfinite(v) else None
 
 
 def _gate_key_time(fid: dict, key: str) -> int | None:
