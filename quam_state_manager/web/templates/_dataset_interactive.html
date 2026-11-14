@@ -32,7 +32,7 @@
              data-run-id="{{ uid }}" data-fig="{{ fig.key }}"
              style="min-height:340px"></div>
         {% elif not fig.available %}
-        <p class="muted ds-interactive-unavail">Not drawn: {{ fig.reason }}. SM could not
+        <p class="muted ds-interactive-unavail">{{ fig.reason | not_drawn }} SM could not
             reconstruct this figure from the run's saved arrays &mdash; open the
             <strong>Raw Data</strong> tab to see what the run saved, or the
             <strong>Figures</strong> tab for its saved images.</p>

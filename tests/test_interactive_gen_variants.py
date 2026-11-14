@@ -472,3 +472,60 @@ def test_unavailable_reason_keeps_only_the_base_name_of_a_path():
     assert _reason_for("OSError: C:/lab/data/run/ds.nc") == "OSError: ds.nc"
     assert _reason_for("OSError: /home/u/data/ds.nc") == "OSError: ds.nc"
     assert _reason_for("ValueError: a and/or b, 1/2") == "ValueError: a and/or b, 1/2"
+
+
+_BS = "\\"
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("see https://example.com/a/b.html now", "see https://example.com/a/b.html now"),
+    (f"ValueError: cannot read D:{_BS}a{_BS}b.h5 because 3/4 of points are NaN",
+     "ValueError: cannot read b.h5 because 3/4 of points are NaN"),
+    (f"OSError: {_BS}{_BS}server{_BS}share{_BS}f.h5 missing", "OSError: f.h5 missing"),
+    (f"OSError: {_BS}server{_BS}share{_BS}f.h5 missing", "OSError: f.h5 missing"),
+    ("KeyError: '/qubits/q1/xy'", "KeyError: '/qubits/q1/xy'"),
+    (f'IOError: "C:{_BS}x y{_BS}z.h5" locked', 'IOError: "z.h5" locked'),
+    ("IOError: 'D:/a b/c.h5'", "IOError: 'c.h5'"),
+    (f"E:{_BS}\ub370\uc774\ud130{_BS}f.h5 gone", "f.h5 gone"),
+    (f"x /a/b.h5 and D:{_BS}c{_BS}d.nc, end", "x b.h5 and d.nc, end"),
+    ("/home/u/run/data.h5", "data.h5"),
+    (f"OSError: C:{_BS}Some One{_BS}run 1{_BS}ds.h5 not found", "OSError: ds.h5 not found"),
+    ("", ""),
+    ("a and/or b, 1/2", "a and/or b, 1/2"),
+    ("x" * 500, "x" * 200 + "..."),
+    (None, ""),
+    (5, "5"),
+])
+def test_bounded_reason_shortens_only_file_paths(line, expected):
+    from quam_state_manager.core.interactive_plots.replot import _bounded_reason
+    assert _bounded_reason(line) == expected
+
+
+@pytest.mark.parametrize("reason, expected", [
+    ("no finite values", "Not drawn: no finite values."),
+    ("already ends.", "Not drawn: already ends."),
+    ("a question?", "Not drawn: a question?"),
+    ("loud!", "Not drawn: loud!"),
+])
+def test_not_drawn_line_ends_with_exactly_one_period(reason, expected):
+    from quam_state_manager.core.interactive_plots.replot import not_drawn_line
+    assert not_drawn_line(reason) == expected
+
+
+def test_interactive_route_404_texts_end_with_one_period(tmp_path, monkeypatch):
+    from quam_state_manager.core.interactive_plots import registry
+    run, *_ = _chevron_run(tmp_path, nan=True)
+    client = _client(tmp_path, monkeypatch, run)
+    err = client.get(f"/dataset/x/interactive/plot?fig=moving_qubit::{PAIR}").get_json()["error"]
+    assert err.endswith(".") and not err.endswith("..")
+    monkeypatch.setattr(registry, "figure_unavailable_reason", lambda r, k: "")
+    err = client.get("/dataset/x/interactive/plot?fig=no_such_fig").get_json()["error"]
+    assert err == "Figure not available."
+
+
+def test_unavailable_tile_line_has_one_period(tmp_path):
+    from quam_state_manager.web.app import create_app
+    app = create_app(testing=True, instance_path=str(tmp_path / "instance"))
+    tpl = app.jinja_env.from_string("{{ r | not_drawn }}")
+    assert tpl.render(r="x holds no finite values.") == "Not drawn: x holds no finite values."
+    assert tpl.render(r="after slicing") == "Not drawn: after slicing."

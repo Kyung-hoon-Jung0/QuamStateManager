@@ -47517,7 +47517,8 @@ def dataset_interactive_plot(uid):
     if fig is None:
         from quam_state_manager.core.interactive_plots.registry import figure_unavailable_reason
         why = figure_unavailable_reason(run, fig_key)
-        return jsonify({"error": ("Not drawn: " + why) if why else "Figure not available"}), 404
+        from quam_state_manager.core.interactive_plots.replot import not_drawn_line
+        return jsonify({"error": not_drawn_line(why) if why else "Figure not available."}), 404
     if fig.get("clickable"):
         # docs/296: the click contract names the RUN's qubits; a run saved
         # before a rename stages into today's names (or refuses)
@@ -47586,9 +47587,10 @@ def dataset_replot_plot(uid):
     result = replot_run(run, current_app.instance_path)  # in-flight-coalesced w/ the menu call
     fig = replot_figure(result, fig_key)
     if fig is None:
-        from quam_state_manager.core.interactive_plots.replot import replot_unavailable_reason
+        from quam_state_manager.core.interactive_plots.replot import (
+            replot_unavailable_reason, not_drawn_line)
         why = replot_unavailable_reason(result, fig_key)
-        return jsonify({"error": ("Not drawn: " + why) if why
+        return jsonify({"error": not_drawn_line(why) if why
                         else "Figure not available: the reproduction has no figure named " + fig_key + "."}), 404
     if fig.get("clickable"):
         names = _dataset_run_names(run.folder_path)

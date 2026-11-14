@@ -735,6 +735,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # number only; 'full' emits "<num> <unit>"; 'unit' the label only.
     from quam_state_manager.core import units as _units
     app.jinja_env.filters["qty"] = _units.qty_filter
+    from quam_state_manager.core.interactive_plots.replot import not_drawn_line as _not_drawn
+    app.jinja_env.filters["not_drawn"] = _not_drawn
     app.jinja_env.filters["pair_detuning_cell"] = _units.pair_detuning_cell
     app.jinja_env.filters["pair_detuning_display"] = _units.pair_detuning_display
     app.jinja_env.filters["pair_detuning_inferred"] = _units.pair_detuning_inferred

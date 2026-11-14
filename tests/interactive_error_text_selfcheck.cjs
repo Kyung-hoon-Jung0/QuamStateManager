@@ -40,6 +40,30 @@ async function tile(errorValue) {
   div = await tile('Not drawn: ValueError: x');
   check('plain text unchanged', div.textContent === 'Not drawn: ValueError: x');
   check('tile may retry', div.getAttribute('data-rendered') === '0');
+  // stale guard on the error path: an older request's error arriving after a newer
+  // request started must not replace the tile
+  {
+    const dom = new JSDOM('<!doctype html><html><body><div id="c"><div id="t"></div></div></body></html>',
+      { runScripts: 'outside-only', url: 'http://localhost/' });
+    const w = dom.window;
+    let release;
+    w.fetch = function () {
+      return new Promise((res) => { release = () => res({ json: () => Promise.resolve({ error: 'Not drawn: old run.' }) }); });
+    };
+    w.matchMedia = w.matchMedia || function () { return { matches: false, addListener() {}, removeListener() {} }; };
+    w.requestAnimationFrame = w.requestAnimationFrame || function (f) { return setTimeout(f, 0); };
+    global.window = w; global.document = w.document;
+    w.eval(fs.readFileSync(SRC, 'utf8'));
+    const c = w.document.getElementById('c');
+    c._gen = 1;
+    w.eval('_fetchInteractiveFig(document.getElementById("t"), "r1", "fig", 1, document.getElementById("c"))');
+    const t = w.document.getElementById('t');
+    c._gen = 2;
+    t.innerHTML = '<span id="newer">newer figure</span>';
+    release();
+    await sleep(30);
+    check('stale error does not replace the newer tile', t.querySelector('#newer') !== null && t.textContent === 'newer figure', t.textContent);
+  }
   console.log(failures ? failures + ' failure(s)' : 'all ok');
   process.exit(failures ? 1 : 0);
 })();

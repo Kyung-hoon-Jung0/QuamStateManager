@@ -568,18 +568,106 @@ def replot_outcome(result: dict) -> dict:
 
 
 _REASON_MAX_CHARS = 200
-_ABS_PATH_RE = re.compile(
-    r"(?<![\w.])(?:[A-Za-z]:[\\/]|/)(?:[^\\/\r\n\"'<>|:]*[\\/])*([^\\/\r\n\"'<>|:]*)")
+# A token that may hold a file path: a quoted span starting like a path (spaces allowed
+# inside the quotes), or an unquoted run of non-space characters.
+_PATH_TOKEN_RE = re.compile(
+    r"""(?P<q>["'])(?P<qi>(?:[A-Za-z]:[\\/]|\\|/)[^"'\r\n]*?)(?P=q)|(?P<t>[^\s"']+)""")
+_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_UNC_RE = re.compile(r"^\\\\[^\\/\s]+\\")
+_LEAD = "([{<="
+_TRAIL = ",;:)]}>."
 
 
-def _bounded_reason(line: str) -> str:
-    """One trace line made fit for the page: absolute paths reduced to the base name, capped."""
-    def _base(m):
-        return m.group(1) or ""
-    out = _ABS_PATH_RE.sub(_base, line)
+def _base_name(path: str) -> str:
+    parts = [p for p in re.split(r"[\\/]", path) if p]
+    return parts[-1] if parts else path
+
+
+def _is_file_path(tok: str) -> bool:
+    """A real file path: a drive path, a UNC path (also with one leading backslash),
+    or a POSIX absolute path ending in a file name with an extension."""
+    if "://" in tok:
+        return False
+    if _DRIVE_RE.match(tok) or _UNC_RE.match(tok):
+        return True
+    has_ext = "." in _base_name(tok).strip(".")
+    if tok.startswith("\\") and tok.count("\\") >= 2:
+        return has_ext
+    return tok.startswith("/") and len(_base_name(tok)) < len(tok) and has_ext
+
+
+def _peel(tok: str) -> tuple[str, str, str]:
+    i = 0
+    while i < len(tok) and tok[i] in _LEAD:
+        i += 1
+    j = len(tok)
+    while j > i and tok[j - 1] in _TRAIL:
+        j -= 1
+    return tok[:i], tok[i:j], tok[j:]
+
+
+def _shorten_paths(line: str) -> str:
+    """Reduce every file path in ``line`` to its base name (see ``_is_file_path``).
+
+    An unquoted path ends at the first whitespace, with one exception: a Windows drive or
+    UNC path whose following words each carry its own separator (a folder name with spaces,
+    as tracebacks print it) extends over them, up to the last word ending in a file name
+    with an extension.
+    """
+    ms = list(_PATH_TOKEN_RE.finditer(line))
+    out, pos, k = [], 0, 0
+    while k < len(ms):
+        m = ms[k]
+        out.append(line[pos:m.start()])
+        pos, k = m.end(), k + 1
+        if m.group("q"):
+            inner = m.group("qi")
+            out.append(m.group("q") + _base_name(inner) + m.group("q")
+                       if _is_file_path(inner) else m.group(0))
+            continue
+        lead, core, trail = _peel(m.group("t"))
+        if not (core and _is_file_path(core)):
+            out.append(m.group(0))
+            continue
+        if _DRIVE_RE.match(core) or _UNC_RE.match(core):
+            sep = "\\" if "\\" in core else "/"
+            best, n = None, k
+            while n < len(ms) and ms[n].group("t") and line[ms[n - 1].end():ms[n].start()].isspace():
+                word = ms[n].group("t")
+                if sep not in word or _DRIVE_RE.match(word) or "://" in word:
+                    break
+                _, wcore, wtrail = _peel(word)
+                if "." in _base_name(wcore).strip("."):
+                    best = n
+                n += 1
+            if best is not None:
+                _, core, trail = _peel(line[m.start() + len(lead):ms[best].end()])
+                pos, k = ms[best].end(), best + 1
+        out.append(lead + _base_name(core) + trail)
+    out.append(line[pos:])
+    return "".join(out)
+
+
+def _bounded_reason(line) -> str:
+    """One trace line made fit for the page: file paths reduced to the base name, capped."""
+    if line is None:
+        return ""
+    out = _shorten_paths(line if isinstance(line, str) else str(line))
     if len(out) > _REASON_MAX_CHARS:
         out = out[:_REASON_MAX_CHARS] + "..."
     return out
+
+
+def not_drawn_line(reason: str) -> str:
+    """The one place a reason becomes the user's line: "Not drawn: <reason>." with exactly
+    one final period (none added when the reason already ends in . ! or ?)."""
+    return "Not drawn: " + end_sentence(reason)
+
+
+def end_sentence(text) -> str:
+    """``text`` with a final period added unless it already ends in . ! or ?."""
+    t = "" if text is None else str(text).rstrip()
+    return t if not t or t[-1] in ".!?" else t + "."
 
 
 def replot_unavailable_reason(result: dict, key: str) -> str:
