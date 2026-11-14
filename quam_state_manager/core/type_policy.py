@@ -426,6 +426,37 @@ def _graft(merged: dict, root_path: str, value: Any) -> dict:
 _PLAIN_GROUPED_NUMBER = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
 
 
+def nonfinite_where(value, where: str = "") -> str | None:
+    """Where inside *value* a non-finite number (NaN, +Infinity, -Infinity)
+    sits, or None when there is none. Python floats and numpy scalars, at the
+    top level or nested in lists / tuples / dict values, are all checked.
+    ``where`` is the prefix of the answer: "" for the value itself, else
+    ".key" / ".0" steps. Such a number is not JSON, so state.json must never
+    hold it; every door that stages a proposed value asks this one function."""
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            hit = nonfinite_where(v, f"{where}.{k}")
+            if hit is not None:
+                return hit
+        return None
+    if isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            hit = nonfinite_where(v, f"{where}.{i}")
+            if hit is not None:
+                return hit
+        return None
+    import numbers
+    if isinstance(value, numbers.Real) and not isinstance(value, numbers.Integral):
+        try:
+            if not math.isfinite(float(value)):
+                return where
+        except (TypeError, ValueError, OverflowError):
+            return where
+    return None
+
+
 def parse_value(raw: str):
     """Parse a CLI / web-edit string value into the appropriate Python type.
 

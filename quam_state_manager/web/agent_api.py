@@ -1978,6 +1978,22 @@ def _unstaged_message(unstaged: list[dict], total: int) -> str:
             f"nothing was written{tail}")
 
 
+def _nonfinite_rows(writes: list[dict]) -> list[dict]:
+    """The proposed values that hold NaN or Infinity (not JSON): one row per
+    write, naming the field. One check, ``type_policy.nonfinite_where``."""
+    from quam_state_manager.core.type_policy import nonfinite_where
+    out = []
+    for w in writes:
+        if w.get("deleted"):
+            continue
+        hit = nonfinite_where(w.get("new"))
+        if hit is not None:
+            field = str(w.get("path")) + hit
+            out.append({"path": w.get("path"),
+                        "why": f"the value proposed for '{field}' is not a finite number (NaN or Infinity)"})
+    return out
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -2024,6 +2040,10 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "unstaged": [{"path": w["path"], "why": w["capture_error"]}
                              for w in writes if w.get("capture_error")],
                 "error": "node writes could not be captured; nothing was written"}
+    bad = _nonfinite_rows(writes)
+    if bad:
+        return {"group_id": gid, "staged": 0, "applied": False, "unstaged": bad[:50],
+                "error": "; ".join(u["why"] for u in bad[:6]) + "; nothing was written"}
     from quam_state_manager.core.agent_runs import resized_lists
     resized = resized_lists(writes)
     creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
@@ -3285,6 +3305,29 @@ def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     return out, total
 
 
+def _text_into_null(store, target: str, new: str) -> dict:
+    """A string proposed for a leaf that holds null keeps its own type, so the
+    card says so before the Yes: a pointer string makes the field a reference
+    (``becomes_ref`` names the target, ``ref_resolves`` says whether SM finds
+    it); any other string is TEXT going into the field (``text_into_null``)."""
+    from quam_state_manager.core.pointer_resolver import target_path
+    if new.startswith(("#/", "#./", "#../")):
+        segs = None
+        try:
+            segs = target_path(store.merged, new, target.split("."))
+        except Exception:  # noqa: BLE001 -- an unreadable pointer is named as not found
+            segs = None
+        found = False
+        if segs:
+            try:
+                store.get_value(".".join(segs))
+                found = True
+            except Exception:  # noqa: BLE001
+                found = False
+        return {"becomes_ref": ".".join(segs) if segs else new, "ref_resolves": found}
+    return {"text_into_null": True}
+
+
 def _approval_view(ap: dict, store) -> dict:
     """An approval as the card shows it: each write also carries ``now`` --
     the value SM holds for that leaf NOW (through the pointer alias, the way
@@ -3313,6 +3356,9 @@ def _approval_view(ap: dict, store) -> dict:
                 w2["now_known"] = True
             except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
                 w2["now_known"] = False
+            else:
+                if w2["now"] is None and isinstance(w.get("new"), str):
+                    w2.update(_text_into_null(store, target, w["new"]))
         rows.append(w2)
     out["writes"] = rows
     return out

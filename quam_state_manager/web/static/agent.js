@@ -851,6 +851,9 @@ window.AgentPanel = (function () {
       var stored = (w.display && w.display.stored) || "";
       var writeNote = w.origin ? ' <span class="muted">' + esc(w.origin) + '</span>' : '';
       var cannotStage = w.capture_error || (((w.created && !w.new_key) || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
+      if (w.becomes_ref) writeNote += ' <span class="muted">this field becomes a reference to ' + esc(w.becomes_ref) +
+        (w.ref_resolves ? '' : ', which SM cannot find in the chip') + '</span>';
+      else if (w.text_into_null) writeNote += ' <span class="muted">writes text, not a number, into a field that holds null</span>';
       if (cannotStage) writeNote += ' <span class="muted">cannot be staged: ' + esc(cannotStage) + '</span>';
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;
