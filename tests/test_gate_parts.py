@@ -328,3 +328,12 @@ def test_a_descriptive_key_anywhere_on_the_path_exempts():
     assert gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "flux_gate_op": ["cz_sq_pulse_q1_q2"]}
     assert not gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+
+
+def test_a_cycle_is_cut_where_it_closes():
+    import json as _json
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["x"] = {"other": "#/qubits/q3/y", "v": 1}
+    s["qubits"]["q3"]["y"] = {"back": "#/qubits/q3/x", "v": 2}
+    out = gp._resolved(s, "#/qubits/q3/x", ("qubit_pairs", "q1-q2", "macros", "cz_sq", "extra"))
+    assert out == {"other": {"back": ["cycle", "qubits.q3.x"], "v": 2}, "v": 1}, _json.dumps(out)
