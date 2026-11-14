@@ -310,10 +310,9 @@ def opx_monitor_save_pc_names():
                 new[tag] = label
             else:
                 new.pop(tag, None)
-        elif k.startswith("remove__") and _form_bool(k):
-            new.pop(k[len("remove__"):], None)
+    # removals win over a label sent for the same tag
     for k in list(new):
-        if f.get("remove__" + k) and _form_bool("remove__" + k):
+        if _form_bool("remove__" + k):
             new.pop(k, None)
     tag, label = (f.get("new_tag") or "").strip(), (f.get("new_label") or "").strip()[:60]
     if tag or label:
