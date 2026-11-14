@@ -18,9 +18,9 @@
         </div>
         <div class="czg-cols">
             <form id="czg-form" class="czg-form" autocomplete="off" aria-label="The gate">
-                <section class="ui-panel" aria-label="Gate">
-                    <div class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">1</span><h3 class="ui-panel-title">Gate</h3></div>
-                    <div class="ui-panel-body ui-field-stack">
+                <section id="czg-zone-gate" class="ui-zone" aria-label="Gate">
+                    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">1</span><h3 class="ui-zone-title">Gate</h3></div>
+                    <div class="ui-zone-body ui-field-stack">
                         <div class="ui-field"><div class="ui-field-head"><label class="ui-field-label" for="czg-pair">Pair</label></div>
                             <select id="czg-pair" class="ui-select ui-select--block" name="pair">
                                 <option value="">Pick a pair</option>
@@ -42,16 +42,16 @@
                         </div>
                     </div>
                 </section>
-                <section class="ui-panel" aria-label="Pulses">
-                    <div class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">2</span><h3 class="ui-panel-title">Pulses</h3><span id="czg-pulses-sum" class="ui-panel-sum"></span></div>
-                    <div id="czg-slots" class="ui-panel-body ui-field-stack"></div>
+                <section id="czg-zone-pulses" class="ui-zone" aria-label="Pulses">
+                    <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">2</span><h3 class="ui-zone-title">Pulses</h3><span id="czg-pulses-sum" class="ui-zone-sum"></span></div>
+                    <div id="czg-slots" class="ui-zone-body ui-field-stack"></div>
                 </section>
                 <section id="czg-settings-panel" class="ui-panel" aria-label="Gate settings" hidden>
-                    <div class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">3</span><h3 class="ui-panel-title">Gate settings</h3><span id="czg-settings-sum" class="ui-panel-sum"></span></div>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">Gate settings</h3><span id="czg-settings-sum" class="ui-panel-sum"></span></div>
                     <div id="czg-settings" class="ui-panel-body ui-field-stack"></div>
                 </section>
                 <details id="czg-more" class="ui-panel ui-panel--fold">
-                    <summary class="ui-panel-head"><span id="czg-more-step" class="ui-panel-step" aria-hidden="true">3</span><h3 class="ui-panel-title">More pairs</h3><span id="czg-more-count" class="ui-panel-sum"></span></summary>
+                    <summary class="ui-panel-head"><h3 class="ui-panel-title">More pairs</h3><span id="czg-more-count" class="ui-panel-sum"></span></summary>
                     <div class="ui-panel-body">
                         <p class="ui-text-quiet">The same starting values go to every pair.</p>
                         <div id="czg-more-list" class="czg-more-list" aria-label="Other pairs"></div>
@@ -61,7 +61,11 @@
             <section id="czg-evidence" class="czg-evidence" aria-label="What the lab's code made">
                 <div id="czg-alert" class="czg-alert" aria-live="polite" data-czg-lead></div>
                 <div id="czg-pairs" data-czg-lead hidden></div>
-                <p id="czg-empty" class="ui-text-quiet">Press Check: the lab's code builds this gate on a copy of the chip and the result shows here.</p>
+                {#- the banner and the pair switch stay above the zone: a stacked dialog lifts them over the form -#}
+                <section id="czg-zone-result" class="ui-zone ui-zone--fill ui-zone--quiet" aria-label="Result">
+                <div class="ui-zone-head"><span class="ui-zone-step" aria-hidden="true">3</span><h3 class="ui-zone-title">Result</h3></div>
+                <div class="ui-zone-body">
+                <p id="czg-empty" class="ui-zone-empty">Press Check: the lab's code builds this gate on a copy of the chip and the result shows here.</p>
                 <section id="czg-model-panel" class="ui-panel" aria-label="From the model gate" hidden>
                     <div class="ui-panel-head"><h3 class="ui-panel-title">From the model gate</h3></div>
                     <div id="czg-model-facts" class="ui-panel-body"></div>
@@ -83,6 +87,8 @@
                     <summary class="ui-panel-head"><h3 class="ui-panel-title" id="czg-writes-title">What will be written</h3><span id="czg-writes-sum" class="ui-panel-sum"></span></summary>
                     <div id="czg-writes" class="ui-panel-body"></div>
                 </details>
+                </div>
+                </section>
             </section>
         </div>
         <div id="czg-done" class="czg-done" hidden></div>

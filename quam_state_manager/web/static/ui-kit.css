@@ -1657,6 +1657,7 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .czg[data-czg-stacked] .czg-form { flex: 0 0 auto; max-height: none; overflow: visible; }
 .czg[data-czg-stacked] .czg-stale > :not([data-czg-lead]) { opacity: 0.45; }
 .czg-chips { margin-left: auto; }
+.czg .ui-segmented-opt { gap: var(--ui-gap-1); }
 .czg-row-acts { display: inline-flex; gap: var(--ui-gap-1); margin-left: var(--ui-gap-2); vertical-align: middle; }
 /* K18 choosing: ARIA states drive the look, so the state a screen reader
    hears is the state a person sees (docs/308 §4b). */
@@ -1676,6 +1677,7 @@ dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: va
 .gate-status-list { margin: var(--ui-gap-2) 0; }
 .gate-status { display: flex; flex-direction: column; }
 .gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
+.gate-status-list > .ui-zone-body { padding: 0; gap: 0; }
 .gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
 .gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
 .gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }

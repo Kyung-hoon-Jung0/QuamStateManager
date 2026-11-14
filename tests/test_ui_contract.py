@@ -989,13 +989,14 @@ _STAGE6_SELECTORS = {
     '.czg[data-czg-stacked] .czg-stale > :not([data-czg-lead])', '.czg-alert', '.czg-alert:empty', '.czg-done:empty', '.czg-cols',
     '.czg-form', '.czg-evidence', '.czg-slots', '.czg-why-line', '.czg-chips',
     '.czg-more-list', '.czg-more-row', '.czg-chart > .ui-note', '.czg-stale', '.czg-row-acts',
+    '.czg .ui-segmented-opt',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open]',
     'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop',
     # the CZ gate status line and its delete offer
-    '.gate-status-list', '.gate-status-list .gate-status',
+    '.gate-status-list', '.gate-status-list .gate-status', '.gate-status-list > .ui-zone-body',
     '.gate-status-list .gate-status + .gate-status', '.gate-status',
     '.gate-status-row', '.gate-status-row:has(> .gate-status-details[open])',
     '.gate-status-row > .ui-chip', '.gate-status-items', '.gate-status-details',

@@ -157,10 +157,10 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     T.setFeedlineInput(names[1], 'crossing');
     T.renderReadoutPool();
     const on = w.doc.querySelectorAll('.gen-ro-mode.is-on').length;
-    const mixed = w.doc.querySelector('.gen-ro-mixed');
+    const mixed = w.doc.querySelector('[data-gen-ro-mixed]');
     ok(on === 0 && mixed && mixed.textContent === 'mixed', '[mixed inputs] disagreeing cards: no option pressed, "mixed" shown');
     T.setAllReadoutInputs('neighbor');
-    ok(!w.doc.querySelector('.gen-ro-mixed') && w.doc.querySelectorAll('.gen-ro-mode.is-on').length === 1,
+    ok(!w.doc.querySelector('[data-gen-ro-mixed]') && w.doc.querySelectorAll('.gen-ro-mode.is-on').length === 1,
        '[mixed inputs] pressing an option sets every card and clears "mixed"');
   }
 
@@ -173,12 +173,12 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     T.renderWiringTable();
     const row = () => Array.from(w.doc.querySelectorAll('#gen-wiring-tbl tr'))
       .find(tr => /q1/.test(tr.children[0] && tr.children[0].textContent) && /resonator/.test(tr.textContent));
-    ok(row() && row().querySelector('.gen-pin-from-card'), '[feedline badge] a card-set pin shows the badge');
+    ok(row() && row().querySelector('[data-gen-pin-from-card]'), '[feedline badge] a card-set pin shows the badge');
     const box = row().querySelector('.gen-wiring-pin');
     box.value = '1/1/8';
     box.dispatchEvent(new w.win.Event('change'));
     T.renderWiringTable();
-    ok(row() && !row().querySelector('.gen-pin-from-card'), '[feedline badge] after typing a pin the badge is gone');
+    ok(row() && !row().querySelector('[data-gen-pin-from-card]'), '[feedline badge] after typing a pin the badge is gone');
   }
 
   // [coupler-only note]: coupler-only chip, step 6 note never sends the user to step 4 for Flux
@@ -252,8 +252,8 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     w2.T.renderWiringTable();
     const row = q => Array.from(w2.doc.querySelectorAll('#gen-wiring-tbl tr'))
       .find(tr => tr.children[0] && tr.children[0].textContent === q && /resonator/.test(tr.textContent));
-    ok(row('q1') && !row('q1').querySelector('.gen-pin-from-card'), '[badge after reload] a typed pin has no badge after a reload');
-    ok(row('q2') && row('q2').querySelector('.gen-pin-from-card'), '[badge after reload] a card-set pin keeps its badge after a reload');
+    ok(row('q1') && !row('q1').querySelector('[data-gen-pin-from-card]'), '[badge after reload] a typed pin has no badge after a reload');
+    ok(row('q2') && row('q2').querySelector('[data-gen-pin-from-card]'), '[badge after reload] a card-set pin keeps its badge after a reload');
   }
 
   // [typed pin origin]: a typed pin keeps its own origin when the card assigns another

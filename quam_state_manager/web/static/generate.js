@@ -4262,7 +4262,7 @@
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
         escapeAttr(pin) + '">' +
         (pin && ln.line === "resonator" && ln.group && state.pinFromCard[ln.element]
-          ? ' <span class="ui-badge gen-pin-from-card" title="Set by the ' + escapeAttr(ln.group || "feedline") +
+          ? ' <span class="ui-badge" data-gen-pin-from-card title="Set by the ' + escapeAttr(ln.group || "feedline") +
             ' card; type a pin to set it here">from the feedline</span>' : "") +
         "</td></tr>";
     }).join("");
@@ -4323,7 +4323,7 @@
     ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
     if (ln.line === "resonator" && state.pinFromCard[ln.element]) {
       delete state.pinFromCard[ln.element];
-      var badge = tr.querySelector(".gen-pin-from-card");
+      var badge = tr.querySelector("[data-gen-pin-from-card]");
       if (badge) badge.remove();
     }
     // QA generate-r2-11: typed text that is not a pin is flagged where it was
@@ -6049,7 +6049,7 @@
       '<button type="button" class="btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
       '" data-mode="crossing" aria-pressed="' + (mode === "crossing") +
       '" title="Out 1 → In 2, Out 8 → In 1 (QM: optimized readout)">Crossing</button></span>' +
-      (mode === "mixed" ? '<span class="muted gen-ro-mixed" title="The feedlines use different inputs; ' +
+      (mode === "mixed" ? '<span class="muted" data-gen-ro-mixed title="The feedlines use different inputs; ' +
         'pressing an option sets every feedline on Out 1 / Out 8">mixed</span>' : "") +
       '<button type="button" class="btn-xs outline gen-ro-fill"' + (model.pool.length ? "" : " disabled") +
       ' title="Fill feedlines up to the step-4 size, in qubit order">Fill from pool</button>' +
@@ -11113,7 +11113,8 @@
     box.appendChild(wrap);
     if (state.chipArch === "fixed_tunable_coupler_lab") {
       var why = document.createElement("p");
-      why.className = "ui-note gen-cap-class-why";
+      why.className = "ui-note";
+      why.setAttribute("data-gen-cap-class-why", "");
       why.textContent = "Qubits: FluxTunableTransmon (no flux line). Pairs: FluxTunableTransmonPair " +
         "with a TunableCoupler. " + LAB_COUPLER_CLASS_WHY;
       box.appendChild(why);

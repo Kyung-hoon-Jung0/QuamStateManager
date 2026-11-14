@@ -441,8 +441,6 @@
         var panel = $('czg-settings-panel');
         var list = (fp && fp.ok && fp.settings) || [];
         if (panel) panel.hidden = !list.length;
-        var step = $('czg-more-step');
-        if (step) step.textContent = list.length ? '4' : '3';
         if (!list.length || !host) return;
         var sum = $('czg-settings-sum');
         var given = list.filter(function (x) { return x.source === 'given'; }).length;
@@ -484,6 +482,7 @@
         var host = clear($('czg-model-facts'));
         var show = !!(fp && fp.ok && fp.layout === 'copied' && fp.model_gate) && !S.check;
         if (panel) panel.hidden = !show;
+        resultQuiet();
         if (!show) return;
         var U = UIkit();
         host.appendChild(U.table(null, [
@@ -828,6 +827,24 @@
         if (p && allSkippedReason(p)) {
             ['czg-sec-chart', 'czg-sec-intent'].forEach(function (id) { if ($(id)) $(id).hidden = true; });
         }
+        resultQuiet();
+    }
+    /* The Result zone is quiet (its head and one centred line) until it has
+       something to show: a check answer or the model gate's facts. */
+    function resultQuiet() {
+        var z = $('czg-zone-result');
+        if (!z) return;
+        var mp = $('czg-model-panel');
+        var e = $('czg-empty');
+        z.classList.toggle('ui-zone--quiet', !!(e && !e.hidden) && !(mp && !mp.hidden));
+    }
+    function openLabel() {
+        var b = $('czg-open-pair');
+        if (!b) return;
+        var pairs = (S.check && S.check.pairs) || [];
+        var p = pairs.length > 1 ? (pairs[S.pairIdx] || pairs[0]) : null;
+        b.textContent = p ? 'Open ' + p.pair : 'Open the pair';
+        if (p) b.setAttribute('data-czg-open-target', p.pair); else b.removeAttribute('data-czg-open-target');
     }
     var PAIR_MARK = { ok: ['ok', 'ok'], fail: ['danger', 'cannot'], unchecked: ['warn', 'not checked'] };
     function pairMark(x) {
@@ -851,7 +868,6 @@
             Array.prototype.slice.call(seg.children).forEach(function (b, k) {
                 var m = PAIR_MARK[pairMark(pairs[k])];
                 b.setAttribute('data-czg-pair-idx', String(k));
-                b.appendChild(document.createTextNode(' '));
                 b.appendChild(U.badge(m[1], m[0]));
             });
             host.appendChild(seg);
@@ -880,6 +896,7 @@
             if (sec) sec.hidden = false;
         }
         renderPairSwitch();
+        openLabel();
     }
     /* What the checks that ran came to, in the server's words (one judgement
        for the banner, the summary and the record): "every check passed." or
@@ -1124,7 +1141,7 @@
         var ev = $('czg-evidence');
         if (ev) ev.classList.add('czg-stale');
         var open = $('czg-open-pair');
-        if (open) open.hidden = false;
+        if (open) { openLabel(); open.hidden = false; }
         var cancel = $('czg-cancel');
         if (cancel) cancel.hidden = true;
         say(SYNC_WORDS[word]);
@@ -1271,7 +1288,8 @@
         if (t.closest('[data-czg-keep]')) { S.confirmClose = false; clear($('czg-top')); return; }
         if (t.closest('[data-czg-close]')) { close(); return; }
         if (t.closest('#czg-open-pair')) {
-            var p = $('czg-pair') ? $('czg-pair').value : '';
+            var ob = $('czg-open-pair');
+            var p = (ob && ob.getAttribute('data-czg-open-target')) || ($('czg-pair') ? $('czg-pair').value : '');
             close();
             if (p && window.htmx) window.htmx.ajax('GET', '/pair/' + encodeURIComponent(p), { target: '#inspector-pane', swap: 'innerHTML' });
             return;

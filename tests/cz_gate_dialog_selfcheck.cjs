@@ -173,6 +173,14 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     ok($('#czg-pair').value === 'q1-2', 'the pair is preselected');
     ok(doc.activeElement === $('#czg-name'), 'the gate name has the focus on open');
     ok(!$('#czg-empty').hidden && $('#czg-sec-checks').hidden && $('#czg-sec-intent').hidden, 'empty state: one sentence, no empty headings');
+    ok(d.querySelectorAll('.ui-zone').length === 3 && !d.querySelector('.ui-zone .ui-zone')
+       && [...d.querySelectorAll('.ui-zone-title')].map((t) => t.textContent).join() === 'Gate,Pulses,Result',
+       'three zones (Gate, Pulses, Result), never a zone in a zone');
+    ok($('#czg-zone-result').classList.contains('ui-zone--quiet') && $('#czg-zone-result').contains($('#czg-empty'))
+       && $('#czg-empty').classList.contains('ui-zone-empty') && !$('#czg-zone-result').contains($('#czg-alert'))
+       && !$('#czg-zone-result').contains($('#czg-pairs')),
+       'before a check the Result zone is quiet with its one line; the banner and pair switch sit above it');
+    ok(/^1 line|lines play together$/.test($('#czg-zone-pulses .ui-zone-sum').textContent), 'the Pulses line count is the zone summary');
     ok($('.ui-slot.ui-line-1') && /^Qubit flux pulse/.test($('.ui-slot-head').textContent) && $('.ui-slot-chip').textContent === 'q1.z' && $('.ui-slot-head .ui-text-quiet').textContent === 'flux_pulse_qubit', 'slot: words, this pair\'s channel chip, line colour 1, field name quiet');
     ok(/control q1 \u2192 target q2/.test($('#czg-chips').textContent) && /moving qubit q1/.test($('#czg-chips').textContent), 'the head carries the pair as chips');
     ok(!$('#czg-chips').querySelector('input, select'), 'the mover is not an input');
@@ -260,6 +268,9 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     if (process.env.CZG_DEBUG) console.log('DBG', prim().textContent, '|', alertText(), '|', $('#czg-status').textContent, sent.slice(-2).map(s => s.kind));
     ok(prim().textContent === 'Create gate' && /1 of 2 cannot be created: q2-3/.test(alertText()) && /can still be created/.test(alertText()) && /A gate named so exists/.test(alertText()), 'one pair refused: named in the banner, the rest can still be created');
     ok(!$('#czg-pairs').hidden && $('#czg-pairs').querySelectorAll('[data-czg-pair-idx]').length === 2 && $('#czg-pairs .ui-segmented-on').textContent.indexOf('q2-3') === 0 && $('#czg-pairs .ui-badge--danger'), 'pair switch: one option per pair with its mark, the failing pair shown first');
+    ok(!$('#czg-zone-result').classList.contains('ui-zone--quiet') && $('#czg-empty').hidden, 'after a check answer the Result zone is not quiet');
+    ok([...$('#czg-pairs').querySelectorAll('[data-czg-pair-idx]')].every((b) => ![...b.childNodes].some((n) => n.nodeType === 3 && /^\s*$/.test(n.textContent))),
+       'pair switch: label and mark are separated by the kit gap, not a collapsible space');
     $('#czg-pairs [data-czg-pair-idx="0"]').click();
     await settle();
     ok($('#czg-pairs .ui-segmented-on').textContent.indexOf('q1-2') === 0 && /op_q1-2/.test($('#czg-intent').textContent), 'choosing a pair shows its own evidence');
@@ -287,6 +298,8 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
        'after Create the panel is What was written, from the create answer, both pairs, no re-plan');
     ok([...doc.querySelectorAll('#czg-status-slot .gate-status-row')].map((r) => r.firstElementChild.getAttribute('data-czg-status-pair')).join() === 'q1-2,q2-3',
        'two created gates: each status row starts with its pair');
+    ok($('#czg-open-pair').textContent === 'Open ' + $('#czg-pairs .ui-segmented-on').firstChild.textContent.trim()
+       && /^Open q\d-\d$/.test($('#czg-open-pair').textContent), 'two created pairs: the button names the pair it opens');
     ok(!$('#czg-open-pair').hidden && prim().textContent === 'Close' && !$('#czg-form').contains(doc.activeElement), 'after create: Open the pair and Close; the focus is not left in the hidden form');
     prim().click();
     await settle();
