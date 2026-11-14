@@ -170,7 +170,7 @@
     --ui-dialog-xl-max-h: 90vh;
     --ui-backdrop: color-mix(in srgb, black 35%, transparent);
     --ui-czg-form-w: 360px;
-    --ui-czg-evidence-min: 520px;
+    --ui-czg-evidence-min: 640px;
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
     /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */

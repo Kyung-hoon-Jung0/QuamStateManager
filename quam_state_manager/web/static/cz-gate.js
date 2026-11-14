@@ -65,6 +65,7 @@
             });
         } else {
             Object.keys(S.entered).forEach(function (f) {
+                if (f === '@settings') return;
                 pulses[f] = { 'class': S.cls[f] || null, fields: Object.assign({}, S.entered[f]) };
             });
         }
@@ -76,12 +77,17 @@
             gate_class: c ? c['class'] : '',
             pulses: pulses,
             copy_from: $('czg-from').value || null,
+            macro_fields: Object.assign({}, S.entered['@settings'] || {}),
             model_gate: model ? model.split('/') : null
         };
     }
 
     /* ---- buttons and status ---------------------------------------------- */
     function say(t) { var s = $('czg-status'); if (s) s.textContent = t || ''; }
+    function sentence(t) {
+        t = String(t || '').trim();
+        return !t || /[.!?\u201d"]$/.test(t) ? t : t + '.';
+    }
     function banner(tone, key, why) {
         var U = UIkit();
         return U.verdict(tone, key, why, true);
@@ -192,7 +198,13 @@
             box.appendChild(row);
         });
     }
-    var SOURCE_WORDS = { given: 'entered', copied: 'copied', 'default': 'default' };
+    var SOURCE_WORDS = { given: 'entered', copied: 'copied', 'default': 'default',
+                         'copied from the model gate': 'copied', 'copied from the model gate, renamed': 'copied',
+                         'kept reference': 'kept' };
+    function sourceLong(planned, field, name) {
+        var f = planned && planned.fields && planned.fields[field];
+        return (f && f[name]) || '';
+    }
     function sourceOf(planned, field, name) {
         var f = planned && planned.fields && planned.fields[field];
         var s = f && f[name];
@@ -205,12 +217,13 @@
         return String(v);
     }
     var SOURCE_TONE = { entered: 'accent', copied: 'ok' };
-    function fieldInput(field, name, label, unit, kind, value, src) {
+    function fieldInput(field, name, label, unit, kind, value, src, opts) {
+        opts = opts || {};
         var U = UIkit();
         var num = kind === 'float' || kind === 'int';
         var id = 'czg-f-' + field + '-' + name;
         var typed = (S.raw[field] || {})[name];
-        var f = U.field({ label: label, source: src ? { text: src, tone: SOURCE_TONE[src.split(' ')[0]] || 'neutral' } : null,
+        var f = U.field({ label: label, inline: !!opts.inline, source: src ? { text: src, tone: SOURCE_TONE[src] || 'neutral' } : null,
                           control: { part: 'input', id: id, num: num, unit: unit || null, block: true,
                                      value: typed !== undefined ? typed : shown(value) } });
         var i = f.querySelector('input');
@@ -220,12 +233,9 @@
         i.setAttribute('data-czg-name', name);
         i.setAttribute('data-czg-kind', kind || '');
         i.value = typed !== undefined ? typed : shown(value);
+        var bdg = f.querySelector('.ui-field-head .ui-badge');
+        if (bdg && opts.title) { bdg.title = opts.title; bdg.setAttribute('aria-description', opts.title); }
         return f;
-    }
-    function kindOf(v) {
-        if (typeof v === 'boolean') return 'bool';
-        if (typeof v === 'number') return Number.isInteger(v) ? 'int' : 'float';
-        return 'str';
     }
     var SLOT_WORDS = { flux_pulse_qubit: 'Qubit flux pulse', coupler_flux_pulse: 'Coupler pulse',
                        flux_pulse_control: 'Control flux pulse', flux_pulse_target: 'Target flux pulse' };
@@ -317,18 +327,74 @@
         }
         Object.keys(fp.pulses || {}).forEach(function (f) {
             var pulse = fp.pulses[f] || {};
-            var op = (fp.operations || {})[f] || {};
+            var specs = (fp.field_specs || {})[f] || {};
             S.cls[f] = pulse.__class__ || null;
-            var b = slotBlock(f, slotChannel(f, null, fp), 'Class ' + (pulse.__class__ || '?') + ', from the model gate.');
-            var grid = el('div', 'ui-grid2');
-            Object.keys(pulse).forEach(function (k) {
-                var v = pulse[k];
-                if (k === '__class__' || k === 'id' || (typeof v === 'string' && v.charAt(0) === '#')) return;
-                grid.appendChild(fieldInput(f, k, k, '', kindOf(v), v, sourceOf(fp, f, k) || 'default'));
+            var cls = String(pulse.__class__ || '?').split('.').pop();
+            var b = slotBlock(f, slotChannel(f, null, fp), 'Class ' + cls + ', from the model gate.');
+            var main = el('div', 'ui-field-stack');
+            var opt = [];
+            Object.keys(specs).forEach(function (k) {
+                var sp = specs[k];
+                var long = sourceLong(fp, f, k);
+                var node = fieldInput(f, k, sp.label || k, sp.unit, sp.kind, pulse[k],
+                                      SOURCE_WORDS[long] || long || 'default', { inline: true, title: long });
+                if (sp.optional && !((S.entered[f] || {}).hasOwnProperty(k))) opt.push(node); else main.appendChild(node);
             });
-            b.appendChild(grid);
+            b.appendChild(main);
+            if (opt.length) {
+                var d = UIkit().disclosure('Optional fields', opt.length, [], false);
+                var db = d.querySelector('.ui-disclosure-body');
+                opt.forEach(function (n) { db.appendChild(n); });
+                b.appendChild(d);
+            }
             host.appendChild(b.parentNode);
         });
+    }
+    /* The gate's own settings of a copied layout (server list: key, value,
+       kind, source); references are listed read-only. */
+    function fillSettings() {
+        var fp = firstPlan();
+        var host = clear($('czg-settings'));
+        var panel = $('czg-settings-panel');
+        var list = (fp && fp.ok && fp.settings) || [];
+        if (panel) panel.hidden = !list.length;
+        var step = $('czg-more-step');
+        if (step) step.textContent = list.length ? '4' : '3';
+        if (!list.length || !host) return;
+        var sum = $('czg-settings-sum');
+        var given = list.filter(function (x) { return x.source === 'given'; }).length;
+        if (sum) sum.textContent = given ? given + ' entered' : 'as the model gate';
+        list.forEach(function (x) {
+            if (x.reference) {
+                var r = el('div', 'ui-field ui-field--inline');
+                var h = el('div', 'ui-field-head');
+                h.appendChild(el('span', 'ui-field-label', x.key));
+                h.appendChild(UIkit().badge('kept reference', 'neutral'));
+                r.appendChild(h);
+                r.appendChild(el('code', 'ui-chip', String(x.value)));
+                host.appendChild(r);
+                return;
+            }
+            var n = fieldInput('@settings', x.key, x.key, '', x.kind, x.value,
+                               SOURCE_WORDS[x.source] || x.source, { inline: true, title: x.source });
+            var i = n.querySelector('input');
+            i.setAttribute('data-czg-setting', x.key);
+            host.appendChild(n);
+        });
+    }
+    function fillModelFacts() {
+        var fp = firstPlan();
+        var panel = $('czg-model-panel');
+        var host = clear($('czg-model-facts'));
+        var show = !!(fp && fp.ok && fp.layout === 'copied' && fp.model_gate) && !S.check;
+        if (panel) panel.hidden = !show;
+        if (!show) return;
+        var U = UIkit();
+        host.appendChild(U.table(null, [
+            ['Model gate', { chip: fp.model_gate[1] }],
+            ['On the pair', { chip: fp.model_gate[0] }],
+            ['Not inherited', (fp.reset || []).join(', ') || 'nothing']], true, [], 'From the model gate'));
+        host.appendChild(el('p', 'ui-text-quiet', 'The new gate copies the model gate\'s structure; the lab\'s code must run it before it is written.'));
     }
     function parse(input) {
         var kind = input.getAttribute('data-czg-kind');
@@ -346,6 +412,7 @@
             return { ok: false, why: 'Type true or false.' };
         }
         if (raw === '' || raw === 'null') return { ok: true, v: null };
+        if (kind === 'any' && raw !== '' && isFinite(Number(raw))) return { ok: true, v: Number(raw) };
         return { ok: true, v: raw };
     }
 
@@ -402,6 +469,8 @@
         var focused = document.activeElement;
         var keep = focused && focused.getAttribute ? [focused.getAttribute('data-czg-field'), focused.getAttribute('data-czg-name')] : null;
         fillSlots();
+        fillSettings();
+        fillModelFacts();
         if (keep && keep[0]) {
             var again = $('czg-slots').querySelector('input[data-czg-field="' + keep[0] + '"][data-czg-name="' + keep[1] + '"]');
             if (again) { again.focus(); try { again.setSelectionRange(again.value.length, again.value.length); } catch (e) { /* not a text input */ } }
@@ -473,6 +542,11 @@
         if (!rows || !rows.length) { if (sum) sum.textContent = ''; host.appendChild(el('p', 'ui-text-quiet', 'No pulse to compare.')); return; }
         var U = UIkit();
         var lines = lineOfChannel(tl);
+        if (rows.every(function (r) { return !r.actual; })) {
+            if (sum) sum.textContent = 'not compared';
+            host.appendChild(el('p', 'ui-text-quiet', (rows[0].why || [])[0] || 'Nothing was compared.'));
+            return;
+        }
         var oneLevel = rows.every(function (r) { var a = r.actual || {}; return a.max_v === a.min_v; });
         var data = rows.map(function (r) {
             var a = r.actual || {};
@@ -507,7 +581,7 @@
         if (sum) sum.textContent = over ? over + ' over the limit' : flagged ? flagged + ' differ' : 'all as entered';
         rows.forEach(function (r) { (r.why || []).forEach(function (w) { host.appendChild(el('p', 'ui-text-quiet', r.operation + ': ' + w)); }); });
     }
-    var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'Every played operation exists',
+    var CHECK_WORDS = { load_config: 'Chip loads and builds its config', ops: 'The gate runs with the lab\'s code',
                         length: 'Pulse lengths', preview: 'Preview equals the config', timeline: 'Timeline',
                         range: 'Output range' };
     function allSkippedReason(p) {
@@ -617,13 +691,14 @@
         var ev = $('czg-evidence');
         if (ev) ev.classList.remove('czg-stale');
         var pairs = c.pairs || [];
+        if ($('czg-model-panel')) $('czg-model-panel').hidden = true;
         var firstBad = -1;
         pairs.forEach(function (x, k) { if (firstBad < 0 && pairMark(x) === 'fail') firstBad = k; });
         S.pairIdx = firstBad >= 0 ? firstBad : 0;
         renderPair();
         var ok = allowedPairs();
         var no = pairs.filter(function (x) { return !(x.verdict && x.verdict.allowed); });
-        var reason = function (x) { return x.verdict.headline || x.verdict.reason; };
+        var reason = function (x) { return sentence(x.verdict.headline || x.verdict.reason); };
         var many = pairs.length > 1;
         if (!ok.length) {
             alertBox(banner('danger', many ? 'None of the ' + pairs.length + ' pairs can be created yet' : 'Cannot be created yet',

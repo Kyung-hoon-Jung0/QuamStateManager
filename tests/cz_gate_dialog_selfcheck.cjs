@@ -23,7 +23,8 @@ const DATA = {
                           pulse_classes: [{ 'class': 'P.SquarePulse', label: 'Square', length: 'explicit',
                                             fields: [{ name: 'length', label: 'Length', kind: 'int', unit: 'ns', 'default': 100 },
                                                      { name: 'amplitude', label: 'Amplitude', kind: 'float', unit: 'V', 'default': 0.1 }] }] }] },
-              { 'class': 'X', label: 'Other', layout: 'copied', available: false, why: 'SM does not know it.', slots: [], models: [] }],
+              { 'class': 'X', label: 'Other', layout: 'copied', available: false, why: 'SM does not know it.', slots: [], models: [] },
+              { 'class': 'L.TwoFlux', label: 'TwoFlux (copies a gate)', layout: 'copied', available: true, why: '', slots: [], models: [['q1-2', 'cz_m']] }],
 };
 
 function dialogHtml() {
@@ -50,7 +51,27 @@ const doc = window.document;
 const sent = [];
 const queue = { plan: [], check: [], create: [] };
 let hold = null;                    // a pending check the test resolves itself
+const LONG = 'copied from the model gate';
+function planCopied(body) {
+    const given = ((body.pulses.flux_pulse_control || {}).fields) || {};
+    const pulse = Object.assign({ __class__: 'L.Step', amplitude: 0.0, t_phi: 2, axis_angle: null }, given);
+    const prov = { amplitude: LONG, t_phi: LONG, axis_angle: LONG };
+    Object.keys(given).forEach((k) => { prov[k] = 'given'; });
+    const mode = (body.macro_fields || {}).mode;
+    return { ok: true, plan_sig: 'c' + JSON.stringify(body), pairs: body.pairs.map((pr) => ({
+        pair: pr, ok: true, refusals: [], creates: 3, paths: ['a', 'b', 'c'], layout: 'copied',
+        operations: { flux_pulse_control: { key: 'op_c_' + pr, channel: 'q1.z' } },
+        fields: { flux_pulse_control: prov, macro: { mode: mode ? 'given' : LONG, link: 'kept reference' } },
+        pulses: { flux_pulse_control: pulse },
+        field_specs: { flux_pulse_control: { amplitude: { kind: 'float', label: 'amplitude', unit: '', optional: false },
+                                             t_phi: { kind: 'int', label: 't_phi', unit: '', optional: false },
+                                             axis_angle: { kind: 'float', label: 'Axis angle', unit: 'rad', optional: true } } },
+        settings: [{ key: 'link', value: '#./x', kind: 'str', source: 'kept reference', reference: true },
+                   { key: 'mode', value: mode || 'fast', kind: 'str', source: mode ? 'given' : LONG, reference: false }],
+        model_gate: ['q1-2', 'cz_m'], reset: ['fidelity', 'extras'] })) };
+}
 function planOk(body) {
+    if (body.gate_class === 'L.TwoFlux') return planCopied(body);
     return { ok: true, plan_sig: 'sig-' + JSON.stringify(body.pulses) + body.gate_name + body.pairs.join(','),
              pairs: body.pairs.map((p) => p === 'q9-9' ? { pair: p, ok: false, refusals: ['No such pair.'] } : {
                  pair: p, ok: /^cz_/.test(body.gate_name), refusals: /^cz_/.test(body.gate_name) ? [] : ['The gate name must start with cz_.'],
@@ -263,6 +284,49 @@ function change(sel, v) { sel.value = v; sel.dispatchEvent(new window.Event('cha
     release();
     await settle();
     ok(prim().textContent === 'Check' && $('#czg-sec-chart').hidden && !/Inputs changed/.test($('#czg-status').textContent), 'an answer for the closed dialog does not land in the new one');
+    window.CzGate.close();
+
+    // a copied layout: server kinds, short source tags, optional fields folded, gate settings, model facts
+    await window.CzGate.open({ pair: 'q1-2' });
+    await settle();
+    { const st = window.CzGate.state(); if (!st.data.classes.some((c) => c['class'] === 'L.TwoFlux')) st.data.classes.push(DATA.classes[2]); }
+    const menu = $('#czg-class-host .ui-menu');
+    menu.dispatchEvent(new window.CustomEvent('ui-menu-pick', { bubbles: true, detail: { value: 'L.TwoFlux', kind: 'pick' } }));
+    await settle(); await settle();
+    const ampIn = $('input[data-czg-field="flux_pulse_control"][data-czg-name="amplitude"]');
+    const badge = ampIn && ampIn.closest('.ui-field').querySelector('.ui-badge');
+    ok(badge && badge.textContent === 'copied' && badge.title === 'copied from the model gate' && ampIn.closest('.ui-field--inline'),
+       'copied layout: a short "copied" tag with the sentence as its title, inline fields');
+    ok($('.ui-disclosure input[data-czg-name="axis_angle"]') && !$('#czg-slots > .ui-slot .ui-field-stack input[data-czg-name="axis_angle"]'),
+       'a null optional field sits folded under Optional fields');
+    type(ampIn, '0.01');
+    await settle();
+    ok(!ampIn.hasAttribute('aria-invalid') && sent.filter((x) => x.kind === 'plan').pop().body.pulses.flux_pulse_control.fields.amplitude === 0.01,
+       'a float field holding 0.0 accepts 0.01 (the kind comes from the server, never from the digits)');
+    const tphi = $('input[data-czg-field="flux_pulse_control"][data-czg-name="t_phi"]');
+    type(tphi, '2.5');
+    ok(tphi.getAttribute('aria-invalid') === 'true' && /Type a whole number/.test($('#czg-status').textContent), 'an int field refuses 2.5 with the reason');
+    type(tphi, '4');
+    await settle();
+    ok(!$('#czg-settings-panel').hidden && $('#czg-settings input[data-czg-setting="mode"]') && /kept reference/.test($('#czg-settings').textContent),
+       'gate settings: each key a field, a reference listed read-only');
+    type($('#czg-settings input[data-czg-setting="mode"]'), 'slow');
+    await settle();
+    ok(sent.filter((x) => x.kind === 'plan').pop().body.macro_fields.mode === 'slow', 'a changed setting goes to the plan as macro_fields');
+    ok(!$('#czg-model-panel').hidden && /cz_m/.test($('#czg-model-facts').textContent) && /fidelity/.test($('#czg-model-facts').textContent),
+       'before the first check the model gate and what is not inherited are shown');
+    queue.check.push((b) => { const j = checkOk(b, { refuse: 'q1-2' }); j.pairs.forEach((p) => {
+        p.checks = [{ name: 'ops', status: 'fail', message: 'The gate cz_x does not run with the lab\'s code. The lab\'s error: \u201cValueError: flat lengths differ.\u201d' }];
+        p.verdict.reason = p.checks[0].message; p.verdict.headline = p.checks[0].message;
+        p.intent = [{ field: 'flux_pulse_control', operation: 'op_c', channel: 'q1.z', intended: { length: null, length_source: 'set by the class', amplitude: 0.01, amplitude_source: 'given' },
+                      actual: null, differs: { length: false, amplitude: false }, tones: {}, why: ['The check did not place this pulse, so there is nothing to compare.'] }];
+        p.timeline = { lanes: [], notes: [], cannot_draw: 'cannot draw: the gate does not run with the lab\'s code, so there is no config to draw' }; }); return j; });
+    prim().click();
+    await settle();
+    ok(/not compared/.test($('#czg-intent-sum').textContent) && $('#czg-intent').querySelectorAll('p').length === 1,
+       'nothing compared: the head says so, one line under it');
+    ok(/The gate runs with the lab's code/.test($('#czg-checks').textContent) && $('#czg-model-panel').hidden, 'the failing chip is named for the gate running');
+    ok(/\u201d Change the inputs and check again\./.test(alertText()), 'the lab\'s sentence is quoted, then SM\'s sentence');
     window.CzGate.close();
 
     // the chart component missing

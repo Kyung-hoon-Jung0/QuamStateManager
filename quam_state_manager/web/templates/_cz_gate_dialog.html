@@ -46,8 +46,12 @@
                     <div class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">2</span><h3 class="ui-panel-title">Pulses</h3><span id="czg-pulses-sum" class="ui-panel-sum"></span></div>
                     <div id="czg-slots" class="ui-panel-body ui-field-stack"></div>
                 </section>
+                <section id="czg-settings-panel" class="ui-panel" aria-label="Gate settings" hidden>
+                    <div class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">3</span><h3 class="ui-panel-title">Gate settings</h3><span id="czg-settings-sum" class="ui-panel-sum"></span></div>
+                    <div id="czg-settings" class="ui-panel-body ui-field-stack"></div>
+                </section>
                 <details id="czg-more" class="ui-panel ui-panel--fold">
-                    <summary class="ui-panel-head"><span class="ui-panel-step" aria-hidden="true">3</span><h3 class="ui-panel-title">More pairs</h3><span id="czg-more-count" class="ui-panel-sum"></span></summary>
+                    <summary class="ui-panel-head"><span id="czg-more-step" class="ui-panel-step" aria-hidden="true">3</span><h3 class="ui-panel-title">More pairs</h3><span id="czg-more-count" class="ui-panel-sum"></span></summary>
                     <div class="ui-panel-body">
                         <p class="ui-text-quiet">The same starting values go to every pair.</p>
                         <div id="czg-more-list" class="czg-more-list" aria-label="Other pairs"></div>
@@ -58,6 +62,10 @@
                 <div id="czg-alert" class="czg-alert" aria-live="polite"></div>
                 <div id="czg-pairs" hidden></div>
                 <p id="czg-empty" class="ui-text-quiet">Press Check: the lab's code builds this gate on a copy of the chip and the result shows here.</p>
+                <section id="czg-model-panel" class="ui-panel" aria-label="From the model gate" hidden>
+                    <div class="ui-panel-head"><h3 class="ui-panel-title">From the model gate</h3></div>
+                    <div id="czg-model-facts" class="ui-panel-body"></div>
+                </section>
                 <div id="czg-tiles"></div>
                 <section id="czg-sec-chart" class="ui-panel" aria-label="Waveform" hidden>
                     <div class="ui-panel-head"><h3 class="ui-panel-title">Waveform</h3><span class="ui-panel-hint">from the lab's config, program time before filters</span><span id="czg-chart-tools" class="ui-panel-sum"></span></div>
