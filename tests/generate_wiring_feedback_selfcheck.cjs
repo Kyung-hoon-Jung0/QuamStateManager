@@ -139,6 +139,59 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     ok(sel && sel.value === 'flattop', 'W4 an untouched CZ shape shows flattop: ' + (sel && sel.value));
   }
 
+  // W5: two feedlines on Out 1/8 with different input relations -> "mixed"
+  {
+    const w = await world(null);
+    const T = w.T, state = w.state;
+    state.spec.qubits = ['q1', 'q2', 'q3', 'q4'];
+    w.doc.getElementById('gen-mux-size').value = '2';
+    T.deriveLines();
+    const names = T.readoutModel().feeds.map(f => f.name);
+    ok(names.length === 2, 'W5 setup: two feedlines: ' + names);
+    T.setFeedlineOutput(names[0], { con: 1, slot: 1 }, 1);
+    T.setFeedlineInput(names[0], 'neighbor');
+    T.setFeedlineOutput(names[1], { con: 1, slot: 1 }, 8);
+    T.setFeedlineInput(names[1], 'crossing');
+    T.renderReadoutPool();
+    const on = w.doc.querySelectorAll('.gen-ro-mode.is-on').length;
+    const mixed = w.doc.querySelector('.gen-ro-mixed');
+    ok(on === 0 && mixed && mixed.textContent === 'mixed', 'W5 disagreeing cards: no option pressed, "mixed" shown');
+    T.setAllReadoutInputs('neighbor');
+    ok(!w.doc.querySelector('.gen-ro-mixed') && w.doc.querySelectorAll('.gen-ro-mode.is-on').length === 1,
+       'W5 pressing an option sets every card and clears "mixed"');
+  }
+
+  // W6: a Pin box filled by a feedline card carries "from the feedline" until typed in
+  {
+    const w = await world(null);
+    const T = w.T;
+    const name = T.readoutModel().feeds[0].name;
+    T.setFeedlineOutput(name, { con: 1, slot: 1 }, 1);
+    T.renderWiringTable();
+    const row = () => Array.from(w.doc.querySelectorAll('#gen-wiring-tbl tr'))
+      .find(tr => /q1/.test(tr.children[0] && tr.children[0].textContent) && /resonator/.test(tr.textContent));
+    ok(row() && row().querySelector('.gen-pin-from-card'), 'W6 a card-set pin shows the badge');
+    const box = row().querySelector('.gen-wiring-pin');
+    box.value = '1/1/8';
+    box.dispatchEvent(new w.win.Event('change'));
+    T.renderWiringTable();
+    ok(row() && !row().querySelector('.gen-pin-from-card'), 'W6 after typing a pin the badge is gone');
+  }
+
+  // W7: coupler-only chip, step 6 note never sends the user to step 4 for Flux
+  {
+    const w = await world(null);
+    const T = w.T, state = w.state;
+    state.chipArch = 'fixed_tunable_coupler_lab';
+    state.qubitFlux = false;
+    state.spec.qubit_pairs = [['q1', 'q2']];
+    T.renderPopulateTables();
+    const note = w.doc.getElementById('gen-pop-hidden-note');
+    ok(note && !note.hidden && /no qubit has a flux line/.test(note.textContent) &&
+       /Qubit pairs, 2Q gates/.test(note.textContent) && !/Change line types/.test(note.textContent),
+       'W7 coupler-only note: ' + (note && note.textContent));
+  }
+
   console.log(fails ? fails + ' FAILED of ' + asserts : 'all checks passed (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);
 })();

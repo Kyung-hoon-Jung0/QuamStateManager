@@ -3206,8 +3206,9 @@
       } else if (state.chipArch === "fixed_tunable_coupler_lab") {
         archNote.textContent = !_couplerCzLabAvailable ? couplerCzLabBlocker()
           : "Fixed-frequency qubits (no flux line); CZ flux on the coupler only. The chip holds: "
-            + (state.spec.quam_class || "a flux-tunable root") + ", FluxTunableTransmonPair with a "
-            + "coupler, your lab's CouplerCZGate as macro cz_coupler_only.";
+            + (state.spec.quam_class || "a flux-tunable root") + ", FluxTunableTransmon qubits, "
+            + "FluxTunableTransmonPair pairs with a TunableCoupler, your lab's CouplerCZGate as macro "
+            + "cz_coupler_only. " + LAB_COUPLER_CLASS_WHY;
       } else if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
           ? "Fixed-frequency needs an MW-FEM — add one in step 3."
@@ -4012,6 +4013,8 @@
   // A typed box that is not a pin, keyed element|line -> the text typed, so a
   // re-render keeps showing (and flagging) what the user typed.
   var _pinBad = {};
+  // resonator elements whose Pin box value was written by a feedline card
+  var _pinFromCard = Object.create(null);
   var PIN_HINT = "con/slot/port, e.g. con1/1/2 or 1/1/2 — slot 1–8, port 1–8";
   function escapeAttr(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -4252,7 +4255,11 @@
         escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
-        escapeAttr(pin) + '"></td></tr>';
+        escapeAttr(pin) + '">' +
+        (pin && ln.line === "resonator" && _pinFromCard[ln.element]
+          ? ' <span class="ui-badge gen-pin-from-card" title="Set by the ' + escapeAttr(ln.group || "feedline") +
+            ' card; type a pin to set it here">from the feedline</span>' : "") +
+        "</td></tr>";
     }).join("");
     host.innerHTML =
       '<table class="gen-wiring" id="gen-wiring-tbl"><thead><tr>' +
@@ -4302,6 +4309,11 @@
     if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
     var before = JSON.stringify(ln.channel || null);
     ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
+    if (ln.line === "resonator" && _pinFromCard[ln.element]) {
+      delete _pinFromCard[ln.element];
+      var badge = tr.querySelector(".gen-pin-from-card");
+      if (badge) badge.remove();
+    }
     // QA generate-r2-11: typed text that is not a pin is flagged where it was
     // typed (and in the issues panel), never silently read as "auto".
     if (v && !ln.channel) _pinBad[key] = v; else delete _pinBad[key];
@@ -5651,8 +5663,14 @@
   function roEdit(label, fn) {
     _roNote = "";   // the caller says what happened, if anything
     var restore = roUndo();
+    var was = Object.create(null);
+    roLines().forEach(function (ln) { was[ln.element] = JSON.stringify(ln.channel || null); });
     var changed = fn();
     if (changed === false) return false;
+    // a pin a card wrote is the feedline's, until the user types one
+    roLines().forEach(function (ln) {
+      if (was[ln.element] !== JSON.stringify(ln.channel || null)) _pinFromCard[ln.element] = true;
+    });
     _wizPushRestore(label, restore);
     state.wiringTouched = true;
     regenMarkEdited(null);
@@ -5859,6 +5877,15 @@
     return state.env ? "re-allocating…" : "changed: press Auto-allocate";
   }
 
+  // Why a fixed-frequency chip built for the lab coupler gate shows a
+  // flux-tunable qubit class (how run_build builds it today).
+  var LAB_COUPLER_CLASS_WHY = "The qubits use the flux-tunable class because the pair " +
+    "class that carries the coupler is built on it; they get no flux line, so z stays empty.";
+
+  function isCouplerOnlyArch() {
+    return state.chipArch === "fixed_tunable_coupler" || state.chipArch === "fixed_tunable_coupler_lab";
+  }
+
   function roAllocText(f, stale) {
     if (stale) {
       // the card's own ports, until the allocator answers for them
@@ -5904,6 +5931,13 @@
     var fems = mwFems();
     var clash = readoutClashes(model.feeds);
     var stale = allocIsStale();
+    // Cards on Out 1 / Out 8 that disagree: the chip-wide toggle presses neither.
+    var cardModes = Object.create(null);
+    model.feeds.forEach(function (f) {
+      var m = f.channel && f.channel.in_port != null ? inModeOf(f.channel) : null;
+      if (m === "neighbor" || m === "crossing") cardModes[m] = true;
+    });
+    if (cardModes.neighbor && cardModes.crossing) mode = "mixed";
     var NOTE_23 = "Out 2–7 are coupled to another output, not an input " +
       "(QM: Out1–In1, Out8–In2), so neighbor/crossing does not apply — pick the input.";
 
@@ -5965,6 +5999,8 @@
       '<button type="button" class="btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
       '" data-mode="crossing" aria-pressed="' + (mode === "crossing") +
       '" title="Out 1 → In 2, Out 8 → In 1 (QM: optimized readout)">Crossing</button></span>' +
+      (mode === "mixed" ? '<span class="muted gen-ro-mixed" title="The feedlines use different inputs; ' +
+        'pressing an option sets every feedline on Out 1 / Out 8">mixed</span>' : "") +
       '<button type="button" class="btn-xs outline gen-ro-fill"' + (model.pool.length ? "" : " disabled") +
       ' title="Fill feedlines up to the step-4 size, in qubit order">Fill from pool</button>' +
       '<button type="button" class="btn-xs outline gen-ro-clear"' + (model.feeds.length ? "" : " disabled") +
@@ -6258,6 +6294,7 @@
   function resetAllocRuntime() {
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
+    _pinFromCard = Object.create(null);
     _allocRunSeq++;
     // a stranded run never answers: its "Checking wiring" must not outlive it
     var st = _allocInFlight && document.getElementById("gen-allocate-status");
@@ -9869,11 +9906,20 @@
     if (hiddenNote) {
       var hidden = [];
       if (!mw) hidden.push("Qubit / Resonator / Pulses (no MW-FEM)");
-      if (!wantFlux) hidden.push("Flux (disabled or no LF-FEM)");
+      // A coupler-only chip has no qubit flux line by design: no step-4
+      // change brings the Flux section back, and its coupler values live in
+      // the pairs table.
+      var couplerOnly = !wantFlux && isCouplerOnlyArch();
+      if (!wantFlux) {
+        hidden.push(couplerOnly ? "Flux (no qubit has a flux line on this chip)"
+                                : "Flux (disabled or no LF-FEM)");
+      }
       if (!pairs.length) hidden.push("Pairs (no pairs defined)");
       if (hidden.length && hidden.length < 5) {
-        hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") +
-          ". Change line types in step 4 to enable them.";
+        var fixable = hidden.length > (couplerOnly ? 1 : 0);
+        hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") + "." +
+          (couplerOnly ? " Coupler values are entered in Qubit pairs, 2Q gates below." : "") +
+          (fixable ? " Change line types in step 4 to enable them." : "");
         hiddenNote.hidden = false;
       } else {
         hiddenNote.hidden = true;
@@ -11001,6 +11047,13 @@
     lab.appendChild(sel);
     wrap.appendChild(lab);
     box.appendChild(wrap);
+    if (state.chipArch === "fixed_tunable_coupler_lab") {
+      var why = document.createElement("p");
+      why.className = "ui-note gen-cap-class-why";
+      why.textContent = "Qubits: FluxTunableTransmon (no flux line). Pairs: FluxTunableTransmonPair " +
+        "with a TunableCoupler. " + LAB_COUPLER_CLASS_WHY;
+      box.appendChild(why);
+    }
   }
 
   function _capRows(box, rows, cls, heading) {
