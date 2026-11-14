@@ -187,6 +187,11 @@ A chart that draws line N uses the colour of `--ui-line-N` (palette index 1,4,6,
 not series N. `tests/test_ui_contract.py` (`test_7h`) pins that no line resolves to, or lies within RGB distance 40 of, a state tone; the known exceptions are lines 5 and 6 near the warning border (light, dark) and line 5 equal to the warning colour in QM. They are classes, not an inline `--ui-line`, because
 inline styles are not allowed.
 
+A line legend button is `btn-sm secondary ui-legend-btn` holding a `ui-line-dot`, the label and a `ui-note`; a hidden line adds
+`ui-legend-btn--off` to the button (dashed border, quiet text) and `ui-line-dot--off` to its dot (hollow), keeps
+`aria-pressed="false"` and its focus ring. A pair list row is `ui-pair-row` (hover tint, `--ui-row-focus` ring). A class a
+component uses only as a script hook is a `data-*` attribute, never a class: every class on an element has a kit rule.
+
 Small caps titles use `font-variant-caps: all-small-caps` (never `text-transform: uppercase`).
 `ui-placeholder` marks where a component renders (dashed, quiet text, `--ui-placeholder-h`). The sample page rebuilds a dialog body from these parts only, passed and failed, with a 372 px
 form column and an evidence column.
