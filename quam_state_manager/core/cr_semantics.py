@@ -766,10 +766,9 @@ def is_active(merged: Any, pair_id: str) -> bool:
 
 def gate_class_evidence(merged: Any, leaf_name: str) -> str | None:
     """Majority-vote verbatim ``__class__`` among this chip's macros whose leaf
-    equals *leaf_name* (e.g. ``"CRGate"``). The add-gate form writes what the
-    chip already uses — never an invented module path (the
-    ``routes._parametric_cz_evidence`` pattern, lifted to core so routes and
-    tests share it). Deterministic tie-break: lexicographically smallest.
+    equals *leaf_name* (e.g. ``"CRGate"``). A writer uses what the
+    chip already uses — never an invented module path (lifted to core so
+    routes and tests share it). Deterministic tie-break: lexicographically smallest.
     """
     pairs = merged.get("qubit_pairs") if isinstance(merged, dict) else None
     if not isinstance(pairs, dict):

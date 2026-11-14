@@ -1068,10 +1068,10 @@ class TestQueueRoutes:
     def test_mutators_blocked_when_active(self, client, monkeypatch):
         monkeypatch.setattr(scheduler, "is_active", lambda inst: True)
         # Every chip-mutating / QM-subprocess route must 409 — including the ones
-        # the first review pass missed (state_sync, qubit/pair edit, pair gate).
+        # the first review pass missed (state_sync, qubit/pair edit).
         paths = ["/save", "/state/sync", "/state/apply-to-live", "/field/edit",
                  "/field/edit-batch", "/qubit/q1/edit", "/pair/q1-2/edit",
-                 "/pair/q1-2/gate", "/undo", "/discard",
+                 "/undo", "/discard",
                  "/diagnostics/apply-fix", "/generate/build", "/generate/allocate",
                  "/config/regenerate", "/config/preview",
                  "/pulse/edit", "/api/pulse/create", "/api/pulse/delete",
@@ -1086,7 +1086,7 @@ class TestQueueRoutes:
     def test_blocklist_covers_known_mutators(self):
         from quam_state_manager.web import routes
         for ep in ("main.state_sync", "main.qubit_edit", "main.pair_edit",
-                   "main.pair_add_gate", "main.field_edit", "main.field_edit_batch",
+                   "main.field_edit", "main.field_edit_batch",
                    "main.save", "main.state_apply_to_live",
                    "main.pulse_edit", "main.api_pulse_create",
                    "main.state_history_stage", "main.state_history_restore_live",

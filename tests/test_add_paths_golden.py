@@ -5,8 +5,6 @@ A -- the Generate wizard's add forms: ``spec.additions`` plus the
 B -- the Pulses page create flow: create (qubit channel, gate slot) and copy:
      the ordered modifier operations each request makes, plus the option list
      each form offers.
-C -- the pair page's Add gate: every gate type's ordered modifier operations
-     or refusal, plus the option list the form offers.
 
 Each is recorded on three synthetic chip shapes. Later refactors (shared name
 rules, one gate/pulse catalogue, the server-side gate plan) must keep these
@@ -208,29 +206,6 @@ def _record_b(c, rec, pair: str, shape: str) -> dict:
     return {"forms": forms, "steps": steps}
 
 
-# -- C: the pair page's Add gate --------------------------------------------
-
-def _record_c(c, rec, pair: str) -> dict:
-    from quam_state_manager.web import routes
-    form = _options(c.get(f"/pair/{pair}/gate/new").data.decode())
-    # the pulse inspector's rename / duplicate inputs carry the same name rule
-    form["detail"] = _options(c.get("/pulse/detail?path=qubits." + pair.split("-")[0]
-                                    + ".xy.operations.x180").data.decode())
-    steps = []
-    types = {**routes._GATE_TYPES, **routes._ENV_GATE_TYPES}
-    for gt in sorted(types):
-        data = {"gate_name": "g_" + gt, "gate_type": gt}
-        for fname, _label, default, _kind in types[gt]["fields"]:
-            data[fname] = str(default)
-        steps.append(_post(c, rec, f"/pair/{pair}/gate", data))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "1bad", "gate_type": "stark_cz"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_x", "gate_type": "nope"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_stark_cz", "gate_type": "stark_cz"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_typo", "gate_type": "stark_cz",
-                                                      "qc_correction_phase": "abc"}))
-    return {"form": form, "steps": steps}
-
-
 def _compare(name: str, got) -> None:
     path = GOLDEN / name
     text = json.dumps(got, indent=1, sort_keys=True, ensure_ascii=False) + "\n"
@@ -248,13 +223,6 @@ def test_golden_b_pulses_create_copy(tmp_path, recorder, shape):
     state, wiring, pair = _shapes()[shape]
     c = _client(tmp_path, shape, state, wiring)
     _compare(f"add_paths_b_{shape}.json", _record_b(c, recorder, pair, shape))
-
-
-@pytest.mark.parametrize("shape", list(_shapes()))
-def test_golden_c_pair_add_gate(tmp_path, recorder, shape):
-    state, wiring, pair = _shapes()[shape]
-    c = _client(tmp_path, shape, state, wiring)
-    _compare(f"add_paths_c_{shape}.json", _record_c(c, recorder, pair))
 
 
 def test_the_recorder_sees_every_write(tmp_path, recorder):

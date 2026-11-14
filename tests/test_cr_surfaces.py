@@ -57,8 +57,7 @@ def test_every_surface_renders(chip):
     c = chip["client"]
     pid = _PAIR_OF[chip["kind"]]
     for url in ("/qubits", "/pairs", f"/pair/{pid}", "/qubit/q0",
-                "/bulk", "/pulses", "/api/topology", "/instrument",
-                f"/pair/{pid}/gate/new"):
+                "/bulk", "/pulses", "/api/topology", "/instrument"):
         resp = c.get(url, headers={"HX-Request": "true"})
         assert resp.status_code == 200, f"{chip['kind']}: {url} -> {resp.status_code}"
 
@@ -124,28 +123,6 @@ def test_topology_edges_flavor_aware(chip):
         # channel bell_state_fidelity feeds the edge metric (macro fid is null)
         assert edges["q1-2"]["cz_fidelity"] == 0.93
         assert edges["q1-2"]["fidelity_source"] == "channel"
-
-
-def test_add_gate_form_arch_gated(chip):
-    c = chip["client"]
-    pid = _PAIR_OF[chip["kind"]]
-    html = c.get(f"/pair/{pid}/gate/new").data.decode()
-    # assert on the OPTION values — the template's static preview JS always
-    # contains every branch's literal text regardless of gating
-    if chip["kind"] == "cz_reference":
-        # w9/pulsegate: a flux CZ gate brings its flux pulses -- built on the
-        # Pulses page; the form says where instead of offering it
-        assert 'value="cz_unipolar"' not in html and "CZ gate" in html
-        assert 'value="cr_gate"' not in html
-    else:
-        # CR gates are not created from this form, even on a CR pair
-        assert 'value="cr_gate"' not in html
-        assert 'value="cz_unipolar"' not in html
-        if chip["kind"] == "flavor_b_zz":
-            assert 'value="stark_cz"' in html
-        else:
-            assert 'value="stark_cz"' not in html
-            assert "Nothing to add on this pair here" in html
 
 
 def test_diagnostics_flag_only_the_invalid_pair(chip):
