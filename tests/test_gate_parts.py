@@ -277,11 +277,16 @@ def test_a_plain_cz_name_is_the_alias():
     assert gp.active_gate("q1-q2", s["qubit_pairs"]["q1-q2"]["macros"]) == "cz_sq"
 
 
-def test_a_reference_to_an_object_hashes_its_content():
+def test_a_reference_to_a_qubit_hashes_which_one_only():
     s, _ = add_gate(chip())
     s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q1"
     h = gp.content_hash(s, "q1-q2", "cz_sq")
-    s["qubits"]["q1"]["f_01"] = 5.2e9            # the referenced object is walked
+    s["qubits"]["q1"]["f_01"] = 5.2e9            # a component: only which one
+    s["qubits"]["q1"]["xy"]["operations"]["x180"] = {"amplitude": 0.3}
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["amplitude"] = 0.9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h   # played, reached as an operation
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q2"
     assert gp.content_hash(s, "q1-q2", "cz_sq") != h
 
 
@@ -337,3 +342,36 @@ def test_a_cycle_is_cut_where_it_closes():
     s["qubits"]["q3"]["y"] = {"back": "#/qubits/q3/x", "v": 2}
     out = gp._resolved(s, "#/qubits/q3/x", ("qubit_pairs", "q1-q2", "macros", "cz_sq", "extra"))
     assert out == {"other": {"back": ["cycle", "qubits.q3.x"], "v": 2}, "v": 1}, _json.dumps(out)
+
+
+def test_a_reference_to_a_channel_hashes_which_one_only():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["line"] = "#/qubits/q1/z"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["joint_offset"] = 0.12
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_parameter_dict_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["extras"] = {"cz_params": {"a": 1.0, "b": 2.0}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["params"] = "#/qubits/q1/extras/cz_params"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["extras"]["cz_params"]["b"] = 2.5
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_another_channels_operation_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["amplitude"] = "#/qubits/q3/z/operations/const"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["z"]["operations"]["const"]["length"] = 120
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_component_rule():
+    assert gp.is_component((), {}) and gp.is_component(("qubits",), {})
+    assert gp.is_component(("qubits", "q1"), {}) and gp.is_component(("qubit_pairs", "p"), {})
+    assert gp.is_component(("ports", "a", "b"), {}) and gp.is_component(("x", "y"), {"operations": {}})
+    assert not gp.is_component(("qubits", "q1", "z", "operations", "k"), {"amplitude": 1})
+    assert not gp.is_component(("qubits", "q3", "wf"), [1, 2])

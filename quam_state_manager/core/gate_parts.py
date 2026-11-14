@@ -378,13 +378,32 @@ def _walk_to(merged: Any, segs: list) -> tuple[bool, Any]:
 RESOLVE_DEPTH = 8
 
 
+def is_component(segs: tuple | list, node: Any) -> bool:
+    """True when a reference target is a COMPONENT, which a gate names as a
+    whole (its path is hashed, its settings are not): the machine root, a
+    top-level container, an entry of ``qubits`` or ``qubit_pairs``, a channel
+    (a dict holding an ``operations`` container), or anything under
+    ``ports``. Decided from the state's shape only, never from class names.
+    Every other object or list (a pulse, an entry of an ``operations``
+    container, a parameter dict, a waveform list) is not a component."""
+    segs = tuple(segs)
+    if len(segs) <= 1:
+        return True
+    if segs[0] in ("qubits", "qubit_pairs") and len(segs) == 2:
+        return True
+    if "ports" in segs:
+        return True
+    return isinstance(node, dict) and isinstance(node.get("operations"), dict)
+
+
 def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
               trail: frozenset = frozenset()) -> Any:
     """*value* with every reference replaced by what it plays.
 
     A reference is followed to its target (chains of references followed);
-    a plain value there hashes as that value, an object or a list there is
-    walked and hashed by its own resolved content. A dangling reference
+    a plain value there hashes as that value; a component there
+    (:func:`is_component`) hashes as its path only; any other object or list
+    there is walked and hashed by its own resolved content. A dangling reference
     hashes as a marker plus its text. A reference back into an object
     already being walked (a cycle) hashes as ``["cycle", path]``; past
     :data:`RESOLVE_DEPTH` nested references the target hashes as
@@ -413,6 +432,8 @@ def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
             continue
         if isinstance(node, (dict, list)):
             path = _land(merged, list(segs))
+            if is_component(key, node):
+                return ["component", path]
             if any(key[:len(t)] == t for t in trail):
                 return ["cycle", path]
             if depth >= RESOLVE_DEPTH:
@@ -431,8 +452,9 @@ def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | Non
     :data:`HASH_RULE`.
 
     NOT covered, on purpose: a port's output range, offset and delay, the
-    channel's offset parameters, and the qubits' other settings (they are
-    retuned often and are not part of the gate). None when there is no such
+    channel's offset parameters, the qubits' other settings, and components
+    the gate refers to as a whole (:func:`is_component`): only which one, not
+    their settings (they are retuned often and are not part of the gate). None when there is no such
     gate."""
     parts = gate_parts(merged, pair, gate, index=index)
     if not parts["macro"]:
