@@ -37,8 +37,9 @@ def cas_equal(a: Any, b: Any) -> bool:
     Lifted verbatim from ``autofit/writer._values_equal`` (docs/56 §8), which
     now delegates here so the robot path and the user path can never drift.
     """
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)) \
-            and not isinstance(a, bool) and not isinstance(b, bool):
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return math.isclose(float(a), float(b), rel_tol=CAS_REL_TOL, abs_tol=0.0)
     return a == b
 

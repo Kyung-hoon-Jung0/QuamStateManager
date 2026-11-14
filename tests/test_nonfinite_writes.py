@@ -742,3 +742,33 @@ def test_redo_compare_keeps_the_one_tolerance():
     assert eq(nan, nan)
     assert eq([1.0, nan], [1.0, nan]) and eq({"a": [nan, 2.0]}, {"a": [nan, 2.0]})
     assert not eq([1.0, nan], [1.0, 0.5]) and not eq([1.0], [1.0, 2.0])
+
+
+def test_bool_is_not_a_number_in_the_one_compare():
+    from quam_state_manager.core import edit_policy
+    ce, je = edit_policy.cas_equal, edit_policy.journal_equal
+    assert not ce(True, 1) and not ce(1.0, True) and not ce(False, 0) and not ce(0, False)
+    assert ce(True, True) and ce(False, False) and not ce(True, False)
+    assert not je([True], [1]) and not je({"a": 1.0}, {"a": True})
+    assert je([True, 1.0], [True, 1.0])
+
+
+@pytest.mark.parametrize("rel, ok", [(1e-10, True), (1e-6, False)])
+def test_redo_route_keeps_the_one_tolerance(nan_chip, rel, ok):
+    c, folder = nan_chip
+    path = "qubits.qA1.f_01"
+    assert c.post("/field/edit", data={"dot_path": path, "value": "6.3e9"}).status_code == 200
+    _apply(c)
+    assert c.post("/undo", headers=_JSON).status_code == 200
+    ctx = next(x for x in c.application.config["contexts"].values() if x.get("type") == "quam")
+    unit = ctx["undo_units"][int(ctx["undo_cursor"])]
+    e = next(x for x in unit["entries"] if x["path"] == path)
+    e["old"] = e["old"] * (1 + rel)          # the journal's old drifts from the chip by rel
+    r = c.post("/redo", headers=_JSON)
+    said = r.get_data(as_text=True) + json.dumps(dict(r.headers))
+    if ok:
+        assert r.status_code == 200 and "has changed since" not in said, said[:300]
+        assert _live(folder)["qubits"]["qA1"]["f_01"] == 6.3e9
+    else:
+        assert "has changed since" in said, said[:300]
+        assert _live(folder)["qubits"]["qA1"]["f_01"] == 6.25e9
