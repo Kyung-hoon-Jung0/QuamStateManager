@@ -344,7 +344,7 @@
     <section class="gen-panel" data-step="5">
       <h3>Wiring</h3>
       <p class="muted">Auto-allocate channels for every qubit and coupler
-        line. To override one, type <code>con/slot/port</code> in its Pin
+        line. To override one, type <code>con/slot/port</code> (e.g. <code>con1/1/2</code> or <code>1/1/2</code>) in its Pin
         field &mdash; blank means the allocator chooses.</p>
       {# docs/242 — readout feedlines as cards: a pool of unassigned qubits,
          one card per feedline (output chosen, input by neighbor/crossing). #}
@@ -533,10 +533,10 @@
       <p class="muted">Where to write <code>state.json</code> +
         <code>wiring.json</code>. Pick an empty folder &mdash; one named
         <code>quam_state</code> is conventional.</p>
-      <div class="gen-field">
+      <div class="ui-field">
         <label for="gen-output-path">Destination folder</label>
         <div class="path-input-group">
-          <input type="text" id="gen-output-path" placeholder="…/quam_state"
+          <input type="text" id="gen-output-path" class="ui-input ui-input--block" placeholder="…/quam_state"
                  autocomplete="off">
           <button type="button" class="outline btn-sm btn-browse"
                   onclick="openFolderBrowser('gen-output-path')"
@@ -553,12 +553,12 @@
         <input type="checkbox" id="gen-scripts-enable" checked>
         Also export editable Python build scripts
       </label>
-      <div class="gen-field" id="gen-scripts-field">
+      <div class="ui-field" id="gen-scripts-field">
         <label for="gen-scripts-path">Scripts folder <span class="muted">&mdash;
           readable Python with this chip's values inlined; edit + re-run in an IDE.
           Follows the state folder (<code>state_gen_scripts</code>) until you change it</span></label>
         <div class="path-input-group">
-          <input type="text" id="gen-scripts-path"
+          <input type="text" id="gen-scripts-path" class="ui-input ui-input--block"
                  placeholder="&lt;state folder&gt;/state_gen_scripts"
                  autocomplete="off">
           <button type="button" class="outline btn-sm btn-browse"

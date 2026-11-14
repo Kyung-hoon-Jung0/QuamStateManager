@@ -54,6 +54,9 @@
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
     wiringTouched: false, // user edited the READOUT wiring (drag/pin/CSV/regen) -> keep their feedline groups
+    // resonator elements whose Pin value a feedline card wrote (until the user
+    // types a pin there); saved with the draft so a reload keeps the origin
+    pinFromCard: {},
     // Qubit naming scheme (step 4): "one_based" (q1, q2, … — the historical
     // default), "zero_based" (q0, q1, …), "grid" (board-derived letters —
     // qA1, qB2; one-shot Apply), or "custom" (prefix + start index).
@@ -1025,9 +1028,13 @@
           var target = (info.resolved && info.resolved !== python)
             ? info.resolved : python;
           selectEnv(target);
+          // the same versions a discovered env row shows
+          var v = info.versions || {};
+          var vers = " (qualang_tools " + (v.qualang_tools || "?") +
+            " · quam_builder " + (v.quam_builder || "?") + " · quam " + (v.quam || "?") + ")";
           if (status) status.textContent = (target !== python)
-            ? ("✓ QM stack found — selected " + target)
-            : "✓ QM stack found — selected.";
+            ? ("✓ QM stack found" + vers + " — selected " + target)
+            : "✓ QM stack found" + vers + " — selected.";
         } else {
           var miss = (info && info.missing || []).join(", ");
           if (status) status.textContent = info && info.error
@@ -3206,8 +3213,9 @@
       } else if (state.chipArch === "fixed_tunable_coupler_lab") {
         archNote.textContent = !_couplerCzLabAvailable ? couplerCzLabBlocker()
           : "Fixed-frequency qubits (no flux line); CZ flux on the coupler only. The chip holds: "
-            + (state.spec.quam_class || "a flux-tunable root") + ", FluxTunableTransmonPair with a "
-            + "coupler, your lab's CouplerCZGate as macro cz_coupler_only.";
+            + (state.spec.quam_class || "a flux-tunable root") + ", FluxTunableTransmon qubits, "
+            + "FluxTunableTransmonPair pairs with a TunableCoupler, your lab's CouplerCZGate as macro "
+            + "cz_coupler_only. " + LAB_COUPLER_CLASS_WHY;
       } else if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
           ? "Fixed-frequency needs an MW-FEM — add one in step 3."
@@ -3981,7 +3989,10 @@
     // enough channels". A pin is three whole numbers naming real hardware:
     // con >= 1, slot 1-8 (OPX1000 chassis), port 1-8 (a FEM's 8 analog
     // outputs -- QM docs, opx1000_fems.md). Anything else is not a pin (null).
+    // The controller may be written as its name ("con1/1/2", as the rest of
+    // the UI names it) or as its bare number ("1/1/2").
     var raw = String(str).split("/");
+    if (raw.length === 3) raw[0] = raw[0].replace(/^\s*con(?=\d)/i, "");
     if (raw.length !== 3 || !raw.every(function (s) { return /^\s*\d+\s*$/.test(s); })) return null;
     var parts = raw.map(function (s) { return parseInt(s, 10); });
     var con = parts[0], slot = parts[1], port = parts[2];
@@ -4009,7 +4020,7 @@
   // A typed box that is not a pin, keyed element|line -> the text typed, so a
   // re-render keeps showing (and flagging) what the user typed.
   var _pinBad = {};
-  var PIN_HINT = "con/slot/port — slot 1–8, port 1–8";
+  var PIN_HINT = "con/slot/port, e.g. con1/1/2 or 1/1/2 — slot 1–8, port 1–8";
   function escapeAttr(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -4202,7 +4213,7 @@
     // re-allocates) — a pin box being typed in must keep its text and focus.
     var ae = document.activeElement, keep = null;
     if (ae && ae.classList && ae.classList.contains("gen-wiring-pin") && host.contains(ae)) {
-      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
+      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value, rendered: ae.defaultValue,
                s: ae.selectionStart, e: ae.selectionEnd, prev: ae.__wizPrev };
     }
     renderReadoutPool();   // docs/242: every wiring repaint reaches the cards
@@ -4216,6 +4227,7 @@
     state.spec.lines.forEach(function (ln) {
       if (ln.line === "resonator" && ln.group && !feedLead[ln.group]) feedLead[ln.group] = ln.element;
     });
+    var allocStale = allocIsStale();
     var staleIdx = {};
     stalePinGroups().forEach(function (g) {
       g.idx.forEach(function (i) { staleIdx[i] = stalePinText(g); });
@@ -4243,12 +4255,16 @@
         "<td>" + ln.element + "</td>" +
         "<td>" + ln.line +
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
-        '<td class="gen-wiring-alloc">' + allocText(ln.element, ln.line) + "</td>" +
+        '<td class="gen-wiring-alloc">' + (allocStale ? allocPendingText() : allocText(ln.element, ln.line)) + "</td>" +
         '<td><input type="text" id="' + escapeAttr(pinBoxId(ln)) + '" aria-label="' +
         escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
-        escapeAttr(pin) + '"></td></tr>';
+        escapeAttr(pin) + '">' +
+        (pin && ln.line === "resonator" && ln.group && state.pinFromCard[ln.element]
+          ? ' <span class="ui-badge gen-pin-from-card" title="Set by the ' + escapeAttr(ln.group || "feedline") +
+            ' card; type a pin to set it here">from the feedline</span>' : "") +
+        "</td></tr>";
     }).join("");
     host.innerHTML =
       '<table class="gen-wiring" id="gen-wiring-tbl"><thead><tr>' +
@@ -4268,7 +4284,10 @@
     if (keep) {
       var again = host.querySelector('tr[data-idx="' + keep.idx + '"] .gen-wiring-pin');
       if (again) {
-        again.value = keep.value;
+        // the box shows the stored pin unless the user changed its text since
+        // it was rendered: an untouched focused box must not carry an old
+        // value into the new render, where its blur would commit it
+        if (keep.value !== keep.rendered) again.value = keep.value;
         window.NumberInput.fit(again);
         again.focus();
         // focus() re-snapshots the Ctrl+Z "before" value from the half-typed
@@ -4286,6 +4305,10 @@
   // drag redraws. Idempotent: an unchanged box or channel does nothing.
   function commitWiringPin(input) {
     if (!input.isConnected) return;   // a re-render replaced it (its text moved on)
+    // Untouched since it was rendered: nothing to commit. A browser blurs a
+    // focused box while a re-render removes it; committing its old text then
+    // would overwrite the pin the card just wrote.
+    if (input.value === input.defaultValue) return;
     var tr = input.closest("tr");
     var ln = tr && state.spec.lines[Number(tr.dataset.idx)];
     if (!ln) return;
@@ -4298,6 +4321,11 @@
     if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
     var before = JSON.stringify(ln.channel || null);
     ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
+    if (ln.line === "resonator" && state.pinFromCard[ln.element]) {
+      delete state.pinFromCard[ln.element];
+      var badge = tr.querySelector(".gen-pin-from-card");
+      if (badge) badge.remove();
+    }
     // QA generate-r2-11: typed text that is not a pin is flagged where it was
     // typed (and in the issues panel), never silently read as "auto".
     if (v && !ln.channel) _pinBad[key] = v; else delete _pinBad[key];
@@ -4959,6 +4987,36 @@
     _dragGhostSrc = null;
   }
 
+  // The Review row for coupler port delays, under the build's own conditions:
+  // only LF-FEM coupler outputs take the moving qubit's flux port delay
+  // (run_build _align_coupler_delays), and Re-generate keeps stored values and
+  // offers the flux delay only for ports holding 0 (core/regenerate).
+  function couplerLineOnLf(ln) {
+    var ch = ln.channel;
+    if (ch && ch.con != null) {
+      return femTypeAt(ch.con, ch.out_slot != null ? ch.out_slot : ch.slot) === "lf-fem";
+    }
+    var c = ((allocEntry(ln.element) || {}).c || [])[0];
+    return !!c && femTypeAt(c.con, c.slot) === "lf-fem";
+  }
+
+  function couplerDelayReviewText(sp) {
+    var lines = sp.lines.filter(function (ln) { return ln.line === "coupler"; });
+    if (!lines.length) return null;
+    if (!lines.some(couplerLineOnLf)) {
+      return "The coupler outputs are not LF-FEM outputs, so the flux delay rule does not " +
+        "apply: their delays are left as they are.";
+    }
+    if (state.mode === "regenerate") {
+      return "Stored coupler port delays are kept. Ports holding 0 are offered the moving " +
+        "qubit's flux port delay before the build.";
+    }
+    return "Each coupler LF-FEM port gets its pair's moving-qubit flux port delay (the control " +
+      "qubit when none is set; with no flux line, the delay for that qubit's drive band). A " +
+      "coupler port shared by pairs that disagree keeps the first pair's value, and the build " +
+      "result names both.";
+  }
+
   function femTypeAt(con, slot) {
     var ctrls = ((state.spec.instruments || {}).controllers) || [];
     for (var i = 0; i < ctrls.length; i++) {
@@ -5470,6 +5528,7 @@
     var qq = (state.spec.qdac || {}).qubits || {};
     Object.keys(qq).forEach(function (q) { trig[q] = wizSnapKeys(qq[q], ["trigger_pin", "pin_source"]); });
     var touched = state.wiringTouched, specSig = _allocSpecSig;
+    var origin = JSON.parse(JSON.stringify(state.pinFromCard || {}));
     return {
       valid: function () { return state.allocation === alloc; },
       restore: function () {
@@ -5483,6 +5542,7 @@
           if (qq[q]) wizPutKeys(qq[q], ["trigger_pin", "pin_source"], trig[q]);
         });
         state.wiringTouched = touched;
+        state.pinFromCard = origin;
         _allocSpecSig = specSig;
         renderQdacCabling();
         renderWiringDiagram();
@@ -5631,10 +5691,12 @@
       snap[ln.element] = wizSnapKeys(ln, ["channel", "group", "pool"]);
     });
     var mode = state.spec.readout_input, touched = state.wiringTouched;
+    var origin = JSON.parse(JSON.stringify(state.pinFromCard || {}));
     return function () {
       roLines().forEach(function (ln) {
         if (snap[ln.element]) wizPutKeys(ln, ["channel", "group", "pool"], snap[ln.element]);
       });
+      state.pinFromCard = origin;
       if (mode === undefined) delete state.spec.readout_input;
       else state.spec.readout_input = mode;
       state.wiringTouched = touched;
@@ -5647,8 +5709,18 @@
   function roEdit(label, fn) {
     _roNote = "";   // the caller says what happened, if anything
     var restore = roUndo();
+    var was = Object.create(null);
+    roLines().forEach(function (ln) { was[ln.element] = ln.channel; });
     var changed = fn();
     if (changed === false) return false;
+    // a pin this card action wrote (the card functions give every line they
+    // write a fresh channel object) is the feedline's until the user types
+    // one; a member the action did not write keeps its own origin
+    roLines().forEach(function (ln) {
+      if (ln.channel === was[ln.element]) return;
+      if (ln.group && channelToPin(ln.channel)) state.pinFromCard[ln.element] = true;
+      else delete state.pinFromCard[ln.element];
+    });
     _wizPushRestore(label, restore);
     state.wiringTouched = true;
     regenMarkEdited(null);
@@ -5845,7 +5917,34 @@
   }
 
   // "con1 slot2 · Out 8 → In 1" from the allocation, or null.
-  function roAllocText(f) {
+  // The allocation on screen describes an older spec (a feedline or pin was
+  // edited since): its ports must not be shown as the wiring.
+  function allocIsStale() {
+    return !!state.allocation && _allocSpecSig !== null && _allocSpecSig !== topoSig();
+  }
+
+  function allocPendingText() {
+    return state.env ? "re-allocating…" : "changed: press Auto-allocate";
+  }
+
+  // Why a fixed-frequency chip built for the lab coupler gate shows a
+  // flux-tunable qubit class (how run_build builds it today).
+  var LAB_COUPLER_CLASS_WHY = "The qubits use the flux-tunable class because the pair " +
+    "class that carries the coupler is built on it; they get no flux line, so z stays empty.";
+
+  function isCouplerOnlyArch() {
+    return state.chipArch === "fixed_tunable_coupler" || state.chipArch === "fixed_tunable_coupler_lab";
+  }
+
+  function roAllocText(f, stale) {
+    if (stale) {
+      // the card's own ports, until the allocator answers for them
+      var ch = f.channel || {};
+      if (ch.out_port == null) return allocPendingText();
+      return (ch.con != null && ch.slot != null ? "con" + ch.con + " slot " + ch.slot + " · " : "") +
+        "Out " + ch.out_port + (ch.in_port != null ? " → In " + ch.in_port : "") +
+        " (" + allocPendingText() + ")";
+    }
     var rr = (allocEntry(f.members[0]) || {}).rr;
     if (!rr) return null;
     var o = rr.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
@@ -5881,6 +5980,14 @@
     var mode = readoutMode();
     var fems = mwFems();
     var clash = readoutClashes(model.feeds);
+    var stale = allocIsStale();
+    // Cards on Out 1 / Out 8 that disagree: the chip-wide toggle presses neither.
+    var cardModes = Object.create(null);
+    model.feeds.forEach(function (f) {
+      var m = f.channel && f.channel.in_port != null ? inModeOf(f.channel) : null;
+      if (m === "neighbor" || m === "crossing") cardModes[m] = true;
+    });
+    if (cardModes.neighbor && cardModes.crossing) mode = "mixed";
     var NOTE_23 = "Out 2–7 are coupled to another output, not an input " +
       "(QM: Out1–In1, Out8–In2), so neighbor/crossing does not apply — pick the input.";
 
@@ -5910,7 +6017,7 @@
           var tag = nb == null ? "" : (p === nb ? " · neighbor" : " · crossing");
           return roOpt(String(p), "In " + p + tag, p === inp);
         }).join("") + "</select>";
-      var at = roAllocText(f);
+      var at = roAllocText(f, stale);
       var err = clash[f.name] ||
         (f.members.length > MUX_MAX ? "More than " + MUX_MAX + " qubits on one feedline." : "");
       return '<div class="gen-ro-card' + (err ? " has-err" : "") + '" data-ro-target="' +
@@ -5942,6 +6049,8 @@
       '<button type="button" class="btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
       '" data-mode="crossing" aria-pressed="' + (mode === "crossing") +
       '" title="Out 1 → In 2, Out 8 → In 1 (QM: optimized readout)">Crossing</button></span>' +
+      (mode === "mixed" ? '<span class="muted gen-ro-mixed" title="The feedlines use different inputs; ' +
+        'pressing an option sets every feedline on Out 1 / Out 8">mixed</span>' : "") +
       '<button type="button" class="btn-xs outline gen-ro-fill"' + (model.pool.length ? "" : " disabled") +
       ' title="Fill feedlines up to the step-4 size, in qubit order">Fill from pool</button>' +
       '<button type="button" class="btn-xs outline gen-ro-clear"' + (model.feeds.length ? "" : " disabled") +
@@ -6128,7 +6237,7 @@
     if (!model.feeds.length && !model.pool.length) return null;
     var parts = model.feeds.map(function (f) {
       var ch = f.channel || {};
-      var at = roAllocText(f);
+      var at = roAllocText(f, allocIsStale());
       var where = at || ((ch.con != null ? "con" + ch.con + " slot " + ch.slot : "auto FEM") +
         (ch.out_port != null ? " · Out " + ch.out_port : "") +
         (ch.in_port != null ? " → In " + ch.in_port : ""));
@@ -6236,6 +6345,11 @@
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
     _allocRunSeq++;
+    // a stranded run never answers: its "Checking wiring" must not outlive it
+    var st = _allocInFlight && document.getElementById("gen-allocate-status");
+    if (st) st.textContent = "";
+    var abtn = document.getElementById("gen-allocate-btn");
+    if (abtn) abtn.disabled = false;
     _allocInFlight = false;
     _allocAutoBlocked = false;
     _allocFailSig = null;
@@ -6699,7 +6813,9 @@
   // amplitude, and the SNZ shape's own parameters. No moving qubit, no
   // interaction offset: this gate plays on the coupler only (review r2 P2-3/4).
   var POP_COUPLER_ONLY_PAIR_COLS = [
-    { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"] },
+    // shown when untouched: the shape run_build writes for a blank value
+    { field: "coupler_pulse_shape", label: "CZ shape", kind: "select", options: ["flattop", "snz"],
+      shownDefault: "flattop" },
     // the gate's own fields (no preset default fills them): blank = the lab defaults (D-8)
     { field: "coupler_cz_length", label: "CZ length", dim: "time", placeholder: "76 (lab default)" },
     { field: "coupler_amplitude", label: "CZ amp", dim: "volt", placeholder: "0.1 (lab default)" },
@@ -7115,7 +7231,7 @@
         o.textContent = opt === "" ? "—" : opt;
         input.appendChild(o);
       });
-      input.value = current == null ? "" : String(current);
+      input.value = current == null ? (col.shownDefault || "") : String(current);
     } else {
       input = document.createElement("input");
       input.type = col.kind === "text" ? "text" : "number";
@@ -7441,7 +7557,7 @@
       if (input.dataset.dirty === "1") return;   // don't clobber an uncommitted edit
       var rid = input.dataset.rid;
       var v = popBucketRead(group, rid)[col.field];
-      if (v == null) input.value = "";
+      if (v == null) input.value = col.shownDefault || "";
       else if (col.kind === "select") input.value = String(v);
       else if (col.dim === "amp") {
         input.value = ampToDisplay(v, ampMode(),
@@ -9790,7 +9906,9 @@
         output.textContent = message; output.hidden = !message;
         grid.querySelectorAll("input").forEach(function (el) {
           el.classList.toggle("gen-cell-err", !!message);
-          el.setAttribute("aria-invalid", message ? "true" : "false");
+          // "false" would paint a valid mark on an empty optional field
+          if (message) el.setAttribute("aria-invalid", "true");
+          else el.removeAttribute("aria-invalid");
         });
       }
       section.appendChild(grid); host.appendChild(section); updateError();
@@ -9839,11 +9957,23 @@
     if (hiddenNote) {
       var hidden = [];
       if (!mw) hidden.push("Qubit / Resonator / Pulses (no MW-FEM)");
-      if (!wantFlux) hidden.push("Flux (disabled or no LF-FEM)");
+      // A coupler-only chip has no qubit flux line by design: no step-4
+      // change brings the Flux section back, and its coupler values live in
+      // the pairs table.
+      var couplerOnly = !wantFlux && isCouplerOnlyArch();
+      if (!wantFlux) {
+        hidden.push(couplerOnly ? "Flux (no qubit has a flux line on this chip)"
+                                : "Flux (disabled or no LF-FEM)");
+      }
       if (!pairs.length) hidden.push("Pairs (no pairs defined)");
       if (hidden.length && hidden.length < 5) {
-        hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") +
-          ". Change line types in step 4 to enable them.";
+        // only a missing FEM or a disabled flux line is cured by step 4's
+        // line types; missing pairs and a coupler-only chip's flux are not
+        var fixable = !mw || (!wantFlux && !couplerOnly);
+        hiddenNote.textContent = "Sections not shown: " + hidden.join(" \u00b7 ") + "." +
+          (couplerOnly ? (pairs.length ? " Coupler values are entered in Qubit pairs, 2Q gates below."
+                                       : " Define a pair in step 4 to enter coupler values.") : "") +
+          (fixable ? " Change line types in step 4 to enable them." : "");
         hiddenNote.hidden = false;
       } else {
         hiddenNote.hidden = true;
@@ -10451,8 +10581,8 @@
   function autoScriptsPath(outPath) {
     var p = unquotePath(outPath);
     if (!p) return "";
-    var win = /\\/.test(p) || /^[A-Za-z]:/.test(p);
-    var sep = win ? "\\" : "/";
+    // the separator the user typed: "D:/x" stays forward-slashed
+    var sep = /\\/.test(p) ? "\\" : "/";
     p = p.replace(/[\\/]+$/, "");
     return p + sep + "state_gen_scripts";
   }
@@ -10466,6 +10596,14 @@
 
   // Mirror the DOM-only output-path field into state so it persists in a draft.
   function bindOutputStep() {
+    // a long path scrolls inside its box; the whole path is its tooltip
+    ["gen-output-path", "gen-scripts-path"].forEach(function (id) {
+      var box = document.getElementById(id);
+      if (!box) return;
+      ["mouseenter", "focus", "input", "change"].forEach(function (ev) {
+        box.addEventListener(ev, function () { box.title = box.value; });
+      });
+    });
     var out = document.getElementById("gen-output-path");
     if (out) {
       // "change" too: the folder browser fills .value programmatically and
@@ -10576,6 +10714,8 @@
       var b = ((sp.populate || {}).coupler_models || {})[id];
       rows.push([id, "coupler model: " + (b && Object.keys(b).length && !couplerModelError(id) ? "set" : "not set")]);
     });
+    var couplerRow = couplerDelayReviewText(sp);
+    if (couplerRow) rows.push(["Coupler port delay", couplerRow]);
     var modelErrors = couplerModelErrors();
     if (modelErrors.length) rows.push(["Coupler model errors", modelErrors.join("; ")]);
     var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
@@ -10971,6 +11111,13 @@
     lab.appendChild(sel);
     wrap.appendChild(lab);
     box.appendChild(wrap);
+    if (state.chipArch === "fixed_tunable_coupler_lab") {
+      var why = document.createElement("p");
+      why.className = "ui-note gen-cap-class-why";
+      why.textContent = "Qubits: FluxTunableTransmon (no flux line). Pairs: FluxTunableTransmonPair " +
+        "with a TunableCoupler. " + LAB_COUPLER_CLASS_WHY;
+      box.appendChild(why);
+    }
   }
 
   function _capRows(box, rows, cls, heading) {
@@ -12061,6 +12208,34 @@
       return;
     }
 
+    if (res.confirm_kind === "coupler_delay") {
+      // An old wizard wrote 0 to coupler flux ports; the merge keeps stored
+      // values, so the server offers the z delay once. The answer rides the
+      // next build request; nothing changes unless the user says set.
+      (res.coupler_delay || []).forEach(function (d) {
+        var line = document.createElement("p");
+        line.className = "gen-build-warn-line";
+        var pairs = d.pairs && d.pairs.length ? d.pairs : [d.pair];
+        line.textContent = "• Coupler port " + (d.port_label || d.port) + " (pair" +
+          (pairs.length > 1 ? "s " : " ") + pairs.join(" and ") + ") has delay 0; the moving " +
+          "qubit's flux port has " + d.z_delay + " ns.";
+        el.appendChild(line);
+      });
+      [["set", "Set the couplers to the z delay", "btn-sm"],
+       ["keep", "Keep 0", "btn-sm outline"]].forEach(function (b) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = b[2] + " gen-coupler-delay-" + b[0];
+        btn.textContent = b[1];
+        btn.addEventListener("click", function () {
+          state.regenCouplerDelayAck = b[0];
+          runBuild();
+        });
+        el.appendChild(btn);
+      });
+      return;
+    }
+
     if (res.confirm_kind === "source_changed") {
       // QA regenerate-r2-35: the source chip changed (another tab / window
       // saved it) since this wizard read it — the merge carries the chip's
@@ -12544,6 +12719,8 @@
         // user's answer to the server's offer (askFspCompensation).
         power_mode: state.mode === "regenerate" ? state.powerMode : null,
         fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null,
+        // the answer to the coupler-delay offer ("set" / "keep"), if asked
+        coupler_delay_ack: state.mode === "regenerate" ? (state.regenCouplerDelayAck || null) : null,
         // QA regenerate-r2-35: the hydrate-time source stamp + the user's
         // "build anyway" to a changed source.
         source_hash: state.mode === "regenerate" ? (state.regenSourceHash || null) : null,
@@ -12720,6 +12897,7 @@
         spec: state.spec, allocation: state.allocation,
         allocSig: _allocTopoSig,
         pairsTouched: state.pairsTouched, wiringTouched: state.wiringTouched,
+        pinFromCard: state.pinFromCard,
         naming: state.naming, namesTouched: state.namesTouched,
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
@@ -12774,6 +12952,7 @@
     state.allocation = d.allocation || null;
     state.pairsTouched = !!d.pairsTouched;
     state.wiringTouched = !!d.wiringTouched;
+    state.pinFromCard = (d.pinFromCard && typeof d.pinFromCard === "object") ? d.pinFromCard : {};
     // The restored allocation's request-time signature rides the draft
     // (docs/134 review): without it, a reloaded session's allocation was
     // exempt from topology-staleness forever. An old draft lacks the field —
@@ -12941,7 +13120,7 @@
     // anything from re-selecting it.
     state.allocation = null;
     state.pairsTouched = false;
-    state.wiringTouched = false;
+    state.wiringTouched = false; state.pinFromCard = {};
     state.naming = { preset: "one_based", prefix: "q", start: 1 };
     state.namesTouched = false;
     state.qubitFlux = true;
@@ -13185,7 +13364,7 @@
       state.namesTouched = false;
       state.pairsTouched = false;
       state.populateTouched = {};
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.qubitFlux = true;
       state.couplerFlux = true;
       state.chipArch = "flux_tunable_coupler";
@@ -13210,7 +13389,7 @@
       });
       state.heldPins = {};
       state.allocation = null;
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.spec.readout_input = "crossing";   // docs/242: the new-chip default
     } else if (step === 6) {
       // keep only what step 4 decided: board placement, CZ orientation
@@ -13306,7 +13485,7 @@
       state.env = null;
       state.allocation = null;
       state.pairsTouched = false;
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.muxSize = 6;
       // Fresh session: recall the last output folder (durable mirror) — a
       // new browser session used to start with the path blank every time.
@@ -13795,6 +13974,7 @@
     state.regenTouched = {};
     state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
     state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
+    state.regenCouplerDelayAck = null;   // so does the coupler-delay answer
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -13953,6 +14133,14 @@
       inModeOf: inModeOf,
       assignReadout: assignReadout,
       setFeedlineOutput: setFeedlineOutput,
+      PIN_HINT: PIN_HINT,
+      saveDraft: saveDraft,
+      useCustomEnv: useCustomEnv,
+      runAutoAllocate: runAutoAllocate,
+      resetAllocRuntime: resetAllocRuntime,
+      POP_COUPLER_ONLY_PAIR_COLS: POP_COUPLER_ONLY_PAIR_COLS,
+      buildPopCell: buildPopCell,
+      renderWiringTable: renderWiringTable,
       setFeedlineInput: setFeedlineInput,
       setAllReadoutInputs: setAllReadoutInputs,
       fillReadoutFromPool: fillReadoutFromPool,
