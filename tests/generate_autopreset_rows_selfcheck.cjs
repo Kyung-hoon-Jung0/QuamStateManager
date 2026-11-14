@@ -221,6 +221,9 @@ function czAmp(win, id) {
        'A8: a cell the user typed (also the same 28) is the user\'s: ' + JSON.stringify(d()));
     T.markPopulateTouched('resonator', 'q1', 'readout_length');
     ok(d().q1 === 28, 'A8: another field of the row leaves the record alone');
+    T.applyQubitIdMap({ q1: 'qA', q4: 'q1' });
+    ok(d().qA === 28 && d().q1 === 28 && !('q4' in d()) && !('q2' in d()),
+       'A8: a renamed qubit keeps its pre-filled record under the new name: ' + JSON.stringify(d()));
     T.applyPreset(JSON.parse(JSON.stringify(PRESET)), true);   // a preset Overwrite over the prefill
     ok(Object.keys(d()).length === 0, 'A8: a preset applied over the prefill is the user\'s: ' +
        JSON.stringify(d()));

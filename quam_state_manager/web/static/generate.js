@@ -1673,6 +1673,15 @@
       });
       pop.pairs = npairs;
     }
+    // The pre-filled time-of-flight record follows a rename too: a renamed
+    // qubit's untouched pre-fill is still the wizard's, not the user's.
+    if (pop.options && pop.options.tof_defaults) {
+      var ntd = {};
+      Object.keys(pop.options.tof_defaults).forEach(function (qid) {
+        ntd[map[qid] || qid] = pop.options.tof_defaults[qid];
+      });
+      pop.options.tof_defaults = ntd;
+    }
     // The auto-prefill record follows a rename, so a renamed row is not
     // mistaken for a new one (QA generate-r2-05).
     var apr = state.autoPresetRows;
