@@ -682,8 +682,9 @@
 .ui-opxmon-version { overflow-wrap: anywhere; }
 .ui-opxmon-owners { margin: 0 0 var(--ui-opxmon-space-md); padding: 0; list-style: none; }
 .ui-opxmon-owners > li { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: var(--ui-gap-2); margin: 0; }
-.ui-opxmon-owner { min-width: 0; max-width: 100%; display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
-.ui-opxmon-owner-marker { max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ui-opxmon-owner { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--ui-gap-2); }
+.ui-opxmon-owner-marker { flex: 0 1 auto; max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ui-opxmon-owner-marker code { display: inline; }
 .ui-opxmon-owner-tag { font-weight: var(--ui-fw); }
 .ui-opxmon-pcnames { margin-top: var(--ui-opxmon-space-lg); }
 .ui-opxmon-pcname-row code, .ui-opxmon-pcname-new input { overflow-wrap: anywhere; }
