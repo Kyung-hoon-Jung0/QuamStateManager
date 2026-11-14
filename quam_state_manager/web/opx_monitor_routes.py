@@ -210,10 +210,6 @@ def _view(tab: str) -> dict:
         'hottest_limit': hottest_limit,
     })
     for tile in owner_ctx['tiles']:
-        if tile['label'] == 'Jobs running':
-            tile['label'] = 'Jobs'
-            tile['value'] += ' running, queued or processing'
-            tile['note'] = ''
         if st['state'] != 'ok' and tile['label'] != 'Server' and tile['value'] != 'unknown':
             section = 'controllers' if tile['label'] == 'Hottest sensor' else 'open_qms'
             at = st['section_times'].get(section)
@@ -360,7 +356,7 @@ def _label_shown(text):
     """A PC name as the page shows it: escaped like the owner cells, and a name longer than
     40 characters cut with "..." (the full escaped text goes in a title)."""
     from quam_state_manager.core.qm_owner_marker import display_text
-    full = display_text(text, 10_000)
+    full = display_text(text.strip(), 10_000)
     return full if len(full) <= LABEL_SHOWN_MAX else full[:LABEL_SHOWN_MAX - 3] + "..."
 
 
@@ -422,6 +418,7 @@ def _save_pc_names_locked():
                     names_now[key] = stored[key]
     except (OSError, ValueError):
         pass
+    conflicts = set()
     by_ref = {_key_ref(k): k for k in names_now if not _TAG_RE.fullmatch(k)}
     for k in f:
         if not k.startswith("badkey__"):
@@ -433,6 +430,8 @@ def _save_pc_names_locked():
         if new:
             if not _TAG_RE.fullmatch(new):
                 return _settings_reply("A tag uses only a-z and 0-9, at most 16 characters.", error=True)
+            if new in names_now and names_now[new] != names_now[key]:
+                conflicts.add(new)
             changes.append((new, names_now[key]))
             changes.append((key, None))
         elif _form_bool("removebad__" + k[len("badkey__"):]):
@@ -449,7 +448,7 @@ def _save_pc_names_locked():
         changes.append((tag, label))
     # Compare the same display value carried by each row's hidden was__ field.
     # Validate edited fields first so invalid input keeps its field-specific 400.
-    conflicts = {t for t in rows if t in names_now and "was__" + t not in f}
+    conflicts.update(t for t in rows if t in names_now and "was__" + t not in f)
     for t, _ in changes:
         if t in rows and ("was__" + t not in f or
                           f["was__" + t] != _label_shown(names_now.get(t, ''))):
@@ -458,9 +457,8 @@ def _save_pc_names_locked():
         conflicts.add(tag)
     if conflicts:
         tags = ', '.join(sorted(conflicts))
-        return make_response(f'The label for tag(s) {tags} was changed in another window; '
-                             'reload to see it. Nothing was saved.',
-                             409, {'Content-Type': 'text/plain; charset=utf-8'})
+        return _settings_reply(f'The label for tag(s) {tags} was changed in another window; '
+                               'reload to see it. Nothing was saved.', error=True, status=409)
     count = None
     try:
         for t, label in changes:
@@ -493,11 +491,10 @@ def _save_pc_names_locked():
     return _settings_reply(f"PC names saved ({count}).")
 
 
-def _settings_reply(message, error=False):
-    r = _r()
+def _settings_reply(message, error=False, status=None):
     html = render_template("_opx_monitor_body.html", flash=message, flash_error=error,
                            **_view("settings"))
-    return make_response(html, 400 if error else 200)
+    return make_response(html, status if status is not None else (400 if error else 200))
 
 
 @opxmon_bp.route("/opx-monitor/close", methods=["POST"])
@@ -513,6 +510,9 @@ def opx_monitor_close():
         return jsonify({"ok": False, "error": "Nothing named to close."}), 400
     if request.form.get('all') == '1' and request.form.get('confirm_count') != str(len(confirmed)):
         return jsonify({'ok': False, 'error': 'Type the count to confirm close all.'}), 400
+    if idle and m.status()["state"] != "ok":
+        return jsonify({"ok": False, "error":
+                        "The status is not fresh; wait for the next refresh. Nothing was closed."}), 409
     # the consent is for the exact set the user saw: a set that changed since is refused
     if every and set(confirmed) != _shown_ids(m, idle):
         return jsonify({'ok': False, 'error': LIST_CHANGED, 'list_changed': True}), 409

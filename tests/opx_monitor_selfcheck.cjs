@@ -140,9 +140,9 @@ const tick = () => new Promise(r => setTimeout(r, 20));
     const c = r.document.querySelector('.ui-opxmon-confirm');
     ok(c && /con1\/5/.test(c.textContent) && !/con1\/4/.test(c.textContent), 'the close question survives a refresh, rebuilt from the fresh row');
     const changed = c.querySelector('[data-fact-updated="1"]');
-    ok(changed && changed.querySelector('dt').textContent === 'FEMs' && /con1\/5/.test(changed.textContent) && /Updated just now/.test(changed.textContent) && c.querySelectorAll('[data-fact-updated]').length === 1, 'r2: only the changed fact carries Updated just now');
+    ok(changed && changed.querySelector('dt').textContent === 'FEMs' && /con1\/5/.test(changed.textContent) && /Updated just now/.test(changed.textContent) && c.querySelectorAll('[data-fact-updated]').length === 1, 'only the changed fact carries Updated just now');
     swap(rowBody('con1/5', true));
-    ok(!r.document.querySelector('[data-fact-updated]') && !/Updated just now/.test(r.document.querySelector('.ui-opxmon-confirm').textContent), 'r2: unchanged facts have no update cue');
+    ok(!r.document.querySelector('[data-fact-updated]') && !/Updated just now/.test(r.document.querySelector('.ui-opxmon-confirm').textContent), 'unchanged facts have no update cue');
     ok(r.document.querySelector('.ui-opxmon-danger').open, 'a fold the user opened stays open across a refresh');
     swap(rowBody('con1/5', false));
     ok(!r.document.querySelector('.ui-opxmon-confirm') && /withdrawn/.test(r.document.querySelector('.ui-opxmon-close-result').textContent), 'a QM gone from the list withdraws the question and says so');
@@ -197,6 +197,62 @@ const tick = () => new Promise(r => setTimeout(r, 20));
       v.document.querySelector('.ui-opxmon-confirm-accept').click();
       ok(v.__posts.length === 1 && v.__posts[0].body.get('qm_ids') === 'QM-a, QM-b', tag + ': after a same-set refresh the POST carries the ids the user saw');
     }
+  }
+  {
+    // Exercise the PC names form with real htmx and the app's complete 4xx swap listener.
+    const app = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager/web/static/app.js'), 'utf8');
+    const start = app.indexOf("document.addEventListener('htmx:beforeSwap', function(evt) {");
+    const end = app.indexOf('\n});', start) + 4;
+    if (start < 0 || end < 4) throw new Error('beforeSwap listener missing');
+    const v = new JSDOM('<!doctype html><html><body><div id="ui-opxmon-body">' +
+      '<form hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">' +
+      '<input name="label__abc" value="Edited"><button type="submit">Save</button></form>' +
+      '</div></body></html>', {url: 'http://localhost/opx-monitor/settings', runScripts: 'outside-only'}).window;
+    // jsdom's XPath needs its optional result type supplied for htmx's startup scan.
+    const evaluate = v.XPathExpression.prototype.evaluate;
+    v.XPathExpression.prototype.evaluate = function (context, type, result) {
+      return evaluate.call(this, context, type || v.XPathResult.ANY_TYPE, result || null);
+    };
+    const requests = [];
+    class ReplyXHR extends v.EventTarget {
+      constructor() { super(); this.upload = new v.EventTarget(); this.headers = {}; }
+      open(method, url) { this.method = method; this.url = url; }
+      overrideMimeType() {}
+      setRequestHeader(key, value) { this.headers[key] = value; }
+      getAllResponseHeaders() { return 'Content-Type: text/html\r\n'; }
+      getResponseHeader() { return null; }
+      send(body) {
+        requests.push({method: this.method, url: this.url, body});
+        this.status = 409;
+        this.responseURL = 'http://localhost/opx-monitor/pc-names';
+        this.response = this.responseText = '<div id="ui-opxmon-body"><p class="ui-state ui-state--error" role="status">' +
+          'The label for tag(s) abc was changed in another window; reload to see it. Nothing was saved.</p></div>';
+        setTimeout(() => this.onload(), 0);
+      }
+      abort() {}
+    }
+    v.XMLHttpRequest = ReplyXHR;
+    v.eval(app.slice(start, end));
+    v.eval(SRC);
+    v.eval(fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager/web/static/htmx.min.js'), 'utf8'));
+    await tick();
+    v.htmx.process(v.document.body);
+    v.document.querySelector('form').dispatchEvent(new v.Event('submit', {bubbles: true, cancelable: true}));
+    await tick();
+    await tick();
+    const flash = v.document.querySelector('#ui-opxmon-body .ui-state--error');
+    ok(requests.length === 1 && requests[0].method === 'POST' && /label__abc=Edited/.test(requests[0].body), 'PC names form posts its edited row');
+    ok(flash && !flash.hidden && /reload to see it/.test(flash.textContent), 'a 409 PC names reply leaves its error flash visible');
+    for (const id of ['ui-opxmon-body', 'unrelated-target', 'table-pane']) {
+      for (const status of [400, 401, 403, 404, 409, 422, 500]) {
+        const target = v.document.createElement('div'); target.id = id;
+        const detail = {target, xhr: {status, responseText: ''}, shouldSwap: false, isError: true};
+        v.document.dispatchEvent(new v.CustomEvent('htmx:beforeSwap', {detail}));
+        const allowed = id === 'ui-opxmon-body' && [400, 409].includes(status);
+        ok(detail.shouldSwap === allowed && detail.isError === !allowed, id + ': HTTP ' + status + ' swap stays scoped');
+      }
+    }
+    v.close();
   }
   if (process.argv[2]) {
     const pages = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));

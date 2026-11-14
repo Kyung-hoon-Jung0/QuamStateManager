@@ -126,7 +126,9 @@ def names_file(env, tmp_path, monkeypatch):
 def _names_base(app):
     html = page(app, 'settings')
     assert 'pc_names_version' not in html
-    return dict(re.findall(r'name="(was__[^" ]+)" value="([^"]*)"', html))
+    from html import unescape
+    return {key: unescape(value) for key, value in
+            re.findall(r'name="(was__[^" ]+)" value="([^"]*)"', html)}
 
 
 def _names_post(app, base, **data):
@@ -134,7 +136,7 @@ def _names_post(app, base, **data):
                                   data={**base, **data})
 
 
-def test_r2_names_backup_rotates_after_two_saves(names_file):
+def test_names_backup_rotates_after_two_saves(names_file):
     app, path = names_file
     for label in ('First', 'Second'):
         assert _names_post(app, _names_base(app), label__abc=label).status_code == 200
@@ -142,15 +144,17 @@ def test_r2_names_backup_rotates_after_two_saves(names_file):
     assert json.loads(path.with_suffix('.json.bak').read_text()) == {'abc': 'First'}
 
 
-def test_r2b_names_reject_same_row_from_same_base(names_file):
+def test_names_reject_same_row_from_same_base(names_file):
     app, path = names_file
     base = _names_base(app)
     assert _names_post(app, base, label__abc='First').status_code == 200
     before, backup = path.read_bytes(), path.with_suffix('.json.bak').read_bytes()
     response = _names_post(app, base, label__abc='Second', new_tag='def', new_label='Added')
     assert response.status_code == 409
-    assert response.mimetype == 'text/plain'
+    assert response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
+    assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
+    assert 'value="First"' in text
     assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
     assert path.read_bytes() == before and path.with_suffix('.json.bak').read_bytes() == backup
     assert json.loads(path.read_text()) == {'abc': 'First'}
@@ -161,27 +165,27 @@ def test_r2b_names_reject_same_row_from_same_base(names_file):
     {'label__abc': 'Edited'},
     {'label__abc': 'Original', 'remove__abc': '1'},
 ])
-def test_r2b_names_missing_was_conflicts(names_file, data):
+def test_names_missing_was_conflicts(names_file, data):
     app, path = names_file
     before = path.read_bytes()
     response = _names_post(app, {}, **data)
-    assert response.status_code == 409 and response.mimetype == 'text/plain'
+    assert response.status_code == 409 and response.mimetype == 'text/html'
     assert 'abc' in response.get_data(as_text=True)
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
 
 
-def test_r2b_names_new_tag_collision(names_file):
+def test_names_new_tag_collision(names_file):
     app, path = names_file
     before = path.read_bytes()
     response = _names_post(app, {}, new_tag='abc', new_label='Different')
-    assert response.status_code == 409 and response.mimetype == 'text/plain'
+    assert response.status_code == 409 and response.mimetype == 'text/html'
     text = response.get_data(as_text=True)
     assert 'abc' in text and 'changed in another window' in text and 'reload to see it' in text
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
     assert _names_post(app, {}, new_tag='abc', new_label='Original').status_code == 200
 
 
-def test_r2b_names_multiple_conflicts_refuse_whole_post(names_file):
+def test_names_multiple_conflicts_refuse_whole_post(names_file):
     app, path = names_file
     path.write_text(json.dumps({'abc': 'Changed', 'def': 'Changed'}))
     before = path.read_bytes()
@@ -194,7 +198,7 @@ def test_r2b_names_multiple_conflicts_refuse_whole_post(names_file):
     assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
 
 
-def test_r2b_names_lock_serializes_row_check_and_write(names_file, monkeypatch):
+def test_names_lock_serializes_row_check_and_write(names_file, monkeypatch):
     import concurrent.futures
     import threading
     import time
@@ -218,7 +222,7 @@ def test_r2b_names_lock_serializes_row_check_and_write(names_file, monkeypatch):
     assert json.loads(path.read_text()) == {'abc': winner}
 
 
-def test_r2_names_unedited_long_label_survives_unrelated_save(names_file):
+def test_names_unedited_long_label_survives_unrelated_save(names_file):
     app, path = names_file
     label = 'Long label ' * 9 + '  '
     path.write_text(json.dumps({'abc': label}), encoding='utf-8')
@@ -233,7 +237,7 @@ def test_r2_names_unedited_long_label_survives_unrelated_save(names_file):
     assert response.status_code == 400 and 'Name for tag abc:' in response.get_data(as_text=True)
 
 
-def test_r2_stale_key_numbers_show_last_good_read(env):
+def test_stale_key_numbers_show_last_good_read(env):
     from quam_state_manager.web.opx_monitor_routes import stale_time
     app, m, w, clock, _ = env
     m.poll_once()
@@ -245,7 +249,7 @@ def test_r2_stale_key_numbers_show_last_good_read(env):
     assert re.search(r'as of .*\d\d:\d\d:\d\d', stats)
 
 
-def test_r2_jobs_tile_wording_is_unambiguous(env):
+def test_jobs_tile_wording_is_unambiguous(env):
     app, m, *_ = env
     m.poll_once()
     html = page(app, 'live')
@@ -288,7 +292,7 @@ def test_refused_list_open_qms_says_so_and_disables_close(env):
     a["open_qms"] = None
     w.script[:] = [a]
     m.poll_once()
-    assert "The OPX server did not answer the request for the list of open programs: PermissionError: not allowed" in page(app, "jobs")
+    assert "The OPX server did not answer the request for the list of open quantum machines: PermissionError: not allowed" in page(app, "jobs")
     html = page(app, "cleanup")
     assert "Closing is not available." in html and "ui-opxmon-close\"" not in html
     r = app.test_client().post("/opx-monitor/close", data={"all": "1", "qm_ids": "QM-a", "confirm_count": "1"}, headers=ORIGIN)
@@ -1239,7 +1243,7 @@ def test_stress_d5_error_cause(env):
     a['open_qms'] = None; a['jobs'] = None
     w.script[:] = [a]; m.poll_once()
     html = page(app, 'jobs')
-    assert 'Server unreachable while reading the list of open programs' in html
+    assert 'Server unreachable while reading the list of open quantum machines' in html
     assert 'Updated 0 s ago' not in html
     a = answer(refused={'con1.temperatures.FEM 0': "not a number: 'hot'"})
     w.script[:] = [a]; m.poll_once()
@@ -1995,7 +1999,7 @@ def test_unreachable_server_is_not_called_unavailable_for_this_target(env):
         assert 'Not available for this target.' not in html
 
 
-def test_r2_live_wording_count_grammar_refusal_and_reasons(env):
+def test_live_wording_count_grammar_refusal_and_reasons(env):
     app, m, w, clock, _ = env
     # the count is the server's, before truncation to the shown 100
     a = answer()
@@ -2300,3 +2304,97 @@ def test_problem_screen_names_no_sdk_call_and_says_the_cause_once(env):
         from flask import render_template
         pill = render_template('_opx_alarm_badge.html', st=m.status())
     assert '> OPX problem</a>' in pill and cause in pill
+
+
+@pytest.mark.parametrize('stored', [' Spaced ', 'L' * 70, ' Escaped\u202e ', 'A & "quoted"'])
+@pytest.mark.parametrize('action', ['edit', 'remove'])
+def test_names_edit_and_remove_use_the_rendered_label(names_file, stored, action):
+    app, path = names_file
+    path.write_text(json.dumps({'abc': stored}), encoding='utf-8')
+    base = _names_base(app)
+    if stored != 'A & "quoted"':
+        assert base['was__abc'] != stored
+    data = {'label__abc': 'Changed'} if action == 'edit' else {
+        'label__abc': base['was__abc'], 'remove__abc': '1'}
+    response = _names_post(app, base, **data)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    assert json.loads(path.read_text()) == ({'abc': 'Changed'} if action == 'edit' else {})
+
+
+def test_names_invalid_key_rename_collision_refuses_every_change(names_file):
+    from quam_state_manager.web.opx_monitor_routes import _key_ref
+    app, path = names_file
+    path.write_text(json.dumps({'abc': 'Original', 'My PC': 'Other'}), encoding='utf-8')
+    before = path.read_bytes()
+    ref = _key_ref('My PC')
+    response = _names_post(app, _names_base(app), **{
+        'badkey__' + ref: '1', 'rename__' + ref: 'abc',
+        'new_tag': 'def', 'new_label': 'Added'})
+    assert response.status_code == 409 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'ui-state--error' in text and 'reload to see it' in text and 'abc' in text
+    assert path.read_bytes() == before and not path.with_suffix('.json.bak').exists()
+
+
+@pytest.mark.parametrize('data', [
+    {'label__abc': 'bad\u202e'},
+    {'new_tag': 'Bad Tag', 'new_label': 'Name'},
+    {'new_tag': 'def', 'new_label': '   '},
+])
+def test_names_validation_reply_is_settings_html(names_file, data):
+    app, path = names_file
+    before = path.read_bytes()
+    response = _names_post(app, _names_base(app), **data)
+    assert response.status_code == 400 and response.mimetype == 'text/html'
+    text = response.get_data(as_text=True)
+    assert 'id="ui-opxmon-body"' in text and 'ui-state--error' in text
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('stale', [False, True])
+def test_unknown_jobs_tile_keeps_its_unread_note(env, stale):
+    app, m, w, clock, _ = env
+    a = answer()
+    a['open_qms'][0]['jobs'] = None
+    w.script[:] = [a]
+    m.poll_once()
+    if stale:
+        clock.t += 40
+    tiles = om.live_tiles(a, {}, None, None, m.status()['state'], 0)
+    tile = next(t for t in tiles if t['label'] == 'Jobs')
+    assert tile['value'] == 'unknown' and tile['note'] == 'job list not read'
+    html = page(app, 'live')
+    job = re.search(r'>Jobs</[^>]+>(.*?)</div>', html, re.S)[1]
+    assert '>unknown<' in job and 'job list not read' in job
+    assert 'as of' not in job and 'running, queued or processing' not in job
+
+
+def test_known_stale_jobs_tile_keeps_count_and_time(env):
+    app, m, w, clock, _ = env
+    m.poll_once()
+    clock.t += 40
+    html = page(app, 'live')
+    job = re.search(r'>Jobs</[^>]+>(.*?)</div>', html, re.S)[1]
+    assert '>1 running, queued or processing<' in job and 'as of ' in job
+
+
+def test_close_idle_stale_status_has_its_own_reason(env):
+    app, m, w, clock, _ = env
+    w.script[:] = [answer(qms=(("QM-a", [], ["con1/1"]),))]
+    _slow(m)
+    _watch(m, clock, 7300)
+    assert 'data-qm-ids="QM-a"' in page(app, 'cleanup')
+    clock.t += 1000
+    w.calls.clear()
+    response = app.test_client().post('/opx-monitor/close', headers=ORIGIN,
+                                      data={'idle': '1', 'qm_ids': 'QM-a'})
+    assert response.status_code == 409
+    reply = response.get_json()
+    assert reply['error'] == 'The status is not fresh; wait for the next refresh. Nothing was closed.'
+    assert not reply.get('list_changed')
+    assert not any(op.startswith('close') for op, _ in w.calls)
+
+
+def test_names_have_one_writer():
+    assert not hasattr(om, 'apply_pc_name_change')
+    assert not hasattr(om, 'save_pc_names')

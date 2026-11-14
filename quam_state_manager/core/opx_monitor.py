@@ -847,7 +847,7 @@ def connection_hint(host):
 
 
 CALL_SUBJECTS = {'get_devices': 'the device list', 'controllers': 'the device list',
-                 'list_open_qms': 'the list of open programs', 'open_qms': 'the list of open programs',
+                 'list_open_qms': 'the list of open quantum machines', 'open_qms': 'the list of open quantum machines',
                  'get_jobs': 'the job list', 'jobs': 'the job list', 'poll': 'the status',
                  'call': 'the status'}
 
@@ -1177,12 +1177,11 @@ def live_tiles(answer, idle_states, hottest, limit, state, failures):
                       'note': (f'{idle} idle' if idle else ('none idle' if qms else 'no QM open')),
                       'tone': 'warn' if idle and fresh else None})
     if qms is None or any(q.get('jobs') is None for q in qms):
-        tiles.append({'label': 'Jobs running', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
+        tiles.append({'label': 'Jobs', 'value': 'unknown', 'note': 'job list not read', 'tone': 'quiet'})
     else:
-        active = [q for q in qms if any(job_activity(j.get('status')) == 'active' for j in q.get('jobs') or [])]
         n = sum(job_activity(j.get('status')) == 'active' for q in qms for j in q.get('jobs') or [])
-        tiles.append({'label': 'Jobs running', 'value': str(n),
-                      'note': (f'in {len(active)} QM' + ('s' if len(active) != 1 else '')) if n else 'running, queued or processing'})
+        tiles.append({'label': 'Jobs', 'value': str(n) + ' running, queued or processing',
+                      'note': ''})
     if hottest is None:
         tiles.append({'label': 'Hottest sensor', 'value': 'unknown', 'note': 'no temperature reading', 'tone': 'quiet'})
     else:
@@ -1718,46 +1717,6 @@ def check_pc_label(label: str) -> tuple:
     if any(not (ch == " " or ch.isprintable()) for ch in label):
         return label, "A PC name cannot hold control or other invisible characters."
     return label, None
-
-
-def apply_pc_name_change(tag: str, label: Optional[str], folder: Optional[Path] = None) -> int:
-    """Apply ONE row change (``label`` None removes the tag) onto the file as read now.
-
-    Reading just before the write keeps another window's edit of a different tag. When
-    the file is unreadable, or holds entries that are not text, a one-time
-    ``pc_names.json.bak`` is written before the save drops them. Returns the entry count."""
-    d = folder or marker_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / "pc_names.json"
-    names, ignored, problem = _read_pc_names_raw(p)
-    bak = d / "pc_names.json.bak"
-    if (problem or ignored) and p.exists() and not bak.exists():
-        import shutil
-        shutil.copyfile(p, bak)
-    if label is None:
-        names.pop(tag, None)
-    else:
-        names[tag] = label
-    save_pc_names(names, d)
-    return len(names)
-
-
-def save_pc_names(names: dict, folder: Optional[Path] = None) -> None:
-    """Write the map atomically (a uniquely named temp file in the same folder + replace)."""
-    import tempfile
-    d = folder or marker_dir()
-    d.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix="pc_names.", suffix=".tmp", dir=str(d))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(dict(sorted(names.items())), indent=1))
-        os.replace(tmp, d / "pc_names.json")
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 
 def owner_info(q: dict) -> dict:
