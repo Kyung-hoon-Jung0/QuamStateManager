@@ -489,6 +489,7 @@ _BS = "\\"
     (f"E:{_BS}\ub370\uc774\ud130{_BS}f.h5 gone", "f.h5 gone"),
     (f"x /a/b.h5 and D:{_BS}c{_BS}d.nc, end", "x b.h5 and d.nc, end"),
     ("/home/u/run/data.h5", "data.h5"),
+    (f"D:{_BS}a{_BS}b.h5 failed, see /x/c.h5", "b.h5 failed, see c.h5"),
     (f"OSError: C:{_BS}Some One{_BS}run 1{_BS}ds.h5 not found", "OSError: ds.h5 not found"),
     ("", ""),
     ("a and/or b, 1/2", "a and/or b, 1/2"),
@@ -529,3 +530,11 @@ def test_unavailable_tile_line_has_one_period(tmp_path):
     tpl = app.jinja_env.from_string("{{ r | not_drawn }}")
     assert tpl.render(r="x holds no finite values.") == "Not drawn: x holds no finite values."
     assert tpl.render(r="after slicing") == "Not drawn: after slicing."
+
+
+def test_unavailable_tile_template_renders_the_reason_through_the_one_helper():
+    from pathlib import Path
+    import quam_state_manager.web as web
+    src = (Path(web.__file__).parent / "templates" / "_dataset_interactive.html").read_text(encoding="utf-8")
+    assert "{{ fig.reason | not_drawn }}" in src
+    assert "Not drawn: {{" not in src

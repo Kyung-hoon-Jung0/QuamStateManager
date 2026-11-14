@@ -586,8 +586,6 @@ def _base_name(path: str) -> str:
 def _is_file_path(tok: str) -> bool:
     """A real file path: a drive path, a UNC path (also with one leading backslash),
     or a POSIX absolute path ending in a file name with an extension."""
-    if "://" in tok:
-        return False
     if _DRIVE_RE.match(tok) or _UNC_RE.match(tok):
         return True
     has_ext = "." in _base_name(tok).strip(".")
