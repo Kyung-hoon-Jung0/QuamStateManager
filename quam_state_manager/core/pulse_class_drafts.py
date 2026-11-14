@@ -35,8 +35,8 @@ STATE_SAME = "same"
 STATE_DIFFERS = "differs"
 STATE_LINES = {
     STATE_DRAFT: "Draft, not saved",
-    STATE_SAME: "Saved, same as the file",
-    STATE_DIFFERS: "Saved, differs from the file",
+    STATE_SAME: "Saved to {path}, same as draft",
+    STATE_DIFFERS: "Saved to {path}, differs from draft",
 }
 PREVIOUS_LINE = "Previous version: the last preview that ran"
 
@@ -131,7 +131,8 @@ def save_state(draft: bytes, target: Path | str | None) -> dict:
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             fh = None
     state = STATE_DRAFT if fh is None else STATE_SAME if fh == dh else STATE_DIFFERS
-    return {"state": state, "line": STATE_LINES[state],
+    line = STATE_LINES[state].format(path=str(target) if target is not None else "")
+    return {"state": state, "line": line,
             "draft_sha256": dh, "file_sha256": fh}
 
 
