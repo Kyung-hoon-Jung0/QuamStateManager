@@ -385,7 +385,14 @@ def is_component(segs: tuple | list, node: Any) -> bool:
     (a dict holding an ``operations`` container that is a child or grandchild
     of a ``qubits`` / ``qubit_pairs`` entry and does not read as a pulse),
     or anything under ``ports``
-    whatever its type (a port's offset included). Decided from the state's shape only, never from class names.
+    whatever its type (a port's offset included); the first target under
+    ``ports`` is not followed further.
+
+    Known limits (pulses normally sit inside ``operations``, where neither
+    applies): a pulse holding an ``operations`` key, with no ``amplitude``
+    and no class ending in "Pulse", placed directly under a qubit or pair
+    entry is taken for a channel (named, not walked); a channel that has an
+    ``amplitude`` key is taken for a pulse (walked). Decided from the state's shape only, never from class names.
     Every other object or list (a pulse, an entry of an ``operations``
     container, a parameter dict, a waveform list) is not a component."""
     segs = tuple(segs)
@@ -403,10 +410,13 @@ def is_component(segs: tuple | list, node: Any) -> bool:
 
 
 def _pulse_like(node: dict) -> bool:
-    """A dict that reads as a pulse (an amplitude, or a pulse class), so an
-    ``operations`` key on it does not make it a channel."""
-    from quam_state_manager.core import pulse_catalog
-    return "amplitude" in node or bool(pulse_catalog.is_pulse_class(node.get("__class__")))
+    """A dict that reads as a pulse (an ``amplitude`` key, or a class whose
+    leaf name ends in "Pulse"), so an ``operations`` key on it does not make
+    it a channel. Reads the state only."""
+    # only what is in the state itself, so the hash is the same in every
+    # process (the pulse catalog's answer depends on what was probed)
+    leaf = str(node.get("__class__") or "").rsplit(".", 1)[-1]
+    return "amplitude" in node or leaf.endswith("Pulse")
 
 
 def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,

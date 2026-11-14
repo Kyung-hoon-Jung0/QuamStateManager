@@ -432,3 +432,39 @@ def test_the_hop_limit_hashes_a_marker():
     s2["qubits"]["q3"][f"h{n}"] = 0.5
     assert gp._resolved(s2, "#/qubits/q3/h0", ("x",))[0] == "depth"
     assert gp.content_hash(s, "q1-q2", "cz_sq") == h1 != h
+
+
+def test_a_channel_like_dict_five_deep_is_walked():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["coupler"]["sub"] = {"chan": {"operations": {}, "gain": 1.0}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["c"] = "#/qubit_pairs/q1-q2/coupler/sub/chan"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["coupler"]["sub"]["chan"]["gain"] = 2.0
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_the_first_target_under_ports_is_not_followed():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["v"] = 0.1
+    s["ports"] = {"a": "#/qubits/q3/v"}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["p"] = "#/ports/a"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["v"] = 0.2
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_the_hash_does_not_depend_on_the_pulse_catalog():
+    from quam_state_manager.core import pulse_catalog
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["p"] = {"operations": {"a": 1}, "__class__": "lab.Shape", "w": 1}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["x"] = "#/qubits/q3/p"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    pulse_catalog.apply_chip_classes({"lab.Shape": {
+        "importable": True, "canonical": "lab.Shape",
+        "bases": ["quam.components.pulses.Pulse"], "fields": {}}})
+    try:
+        assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    finally:
+        pulse_catalog.apply_chip_classes(None)
+    assert gp._pulse_like({"__class__": "a.b.SquarePulse"})
+    assert not gp._pulse_like({"__class__": "a.b.Shape"})
