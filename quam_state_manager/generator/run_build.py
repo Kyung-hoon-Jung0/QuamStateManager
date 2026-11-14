@@ -786,6 +786,49 @@ def _apply_lf_delay(lf_port, band):
         pass
 
 
+def _align_coupler_delays(machine):
+    """Give every coupler LF-FEM output the delay its pair's flux ports have.
+
+    A coupler output and a qubit z output are both LF-FEM outputs, so they need
+    the same alignment delay: during a gate the coupler pulse and the qubit
+    pulse must arrive together. The value is the moving qubit's z port delay
+    when it has one (set by ``_apply_qubit`` from its xy band), else the other
+    qubit's, else the delay ``_delay_for_band`` gives for the moving qubit's xy
+    band (a fixed-frequency qubit has no z port). Runs for every pair gate,
+    including the paths where ``_apply_pairs`` is skipped. A pair without a
+    coupler output is left alone.
+    """
+    qpairs = getattr(machine, "qubit_pairs", None) or {}
+    for pair in list(qpairs.values()):
+        coupler = getattr(pair, "coupler", None)
+        out = getattr(coupler, "opx_output", None) if coupler is not None else None
+        if out is None or not hasattr(out, "delay"):
+            continue
+        moving = getattr(pair, "moving_qubit", None)
+        order = (("qubit_target", "qubit_control") if moving == "target"
+                 else ("qubit_control", "qubit_target"))
+        qubits = [getattr(pair, name, None) for name in order]
+        delay = None
+        for q in qubits:
+            z_out = getattr(getattr(q, "z", None), "opx_output", None) if q is not None else None
+            d = getattr(z_out, "delay", None)
+            if isinstance(d, (int, float)) and not isinstance(d, bool) and d > 0:
+                delay = d
+                break
+        if delay is None:
+            for q in qubits:
+                xy_out = getattr(getattr(q, "xy", None), "opx_output", None) if q is not None else None
+                delay = _delay_for_band(getattr(xy_out, "band", None))
+                if delay is not None:
+                    break
+        if delay is None:
+            continue
+        try:
+            out.delay = delay
+        except (ValueError, TypeError):
+            pass
+
+
 def _split_port_pointer(ptr):
     """Parse a wiring port reference into its path segments.
 
@@ -3514,6 +3557,7 @@ def run_build(spec: dict, out_dir: Path) -> dict:
         elif pair_gate == _COUPLER_ONLY["mode"]:
             warnings.extend(_finalize_coupler_only(machine, spec))
         _apply_coupler_models(machine, spec.get("populate") or {})
+        _align_coupler_delays(machine)
         if ((spec.get("populate") or {}).get("options") or {}).get("pin_cores"):
             _pin_cores(machine)
         # docs/141 4ak: say it when a declared pair produced nothing. Silence

@@ -8522,10 +8522,9 @@ button.recents-item:focus {
 /* step 5 — wiring */
 .gen-wiring-table { margin-top: 0.6rem; overflow-x: auto; }
 .gen-wiring-diagram { margin: 0.6rem 0; overflow-x: auto; }
-/* Docked monitor panel — port hover + live drag state, above the diagram.
-   r15 CG2 (docs/70): enlarged (0.84em → 0.95em) + STICKY inside the
-   #table-pane scroller so it stays visible while dragging near the bottom
-   of a tall rack; opaque background so rows never bleed through. */
+/* Monitor panel — port hover + live drag state, in the flow under the
+   diagram. r15 CG2 (docs/70) made it sticky; it then covered the rack's
+   bottom rows, so it is no longer docked. */
 .gen-wiring-monitor {
     display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
     min-height: 2.4rem; margin: 0.6rem 0 0;
@@ -8533,7 +8532,6 @@ button.recents-item:focus {
     border: 1px solid var(--pico-muted-border-color);
     background: var(--pico-card-background-color);
     font-size: 0.95em;
-    position: sticky; bottom: 0; z-index: 5;
 }
 .gen-wiring-monitor.gen-monitor-ok  { border-color: #2ea043; }
 .gen-wiring-monitor.gen-monitor-bad { border-color: #d0342c; }

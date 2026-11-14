@@ -190,3 +190,53 @@ class TestBandOverride:
         ch = types.SimpleNamespace(opx_output=out, opx_input=None)
         self.mod._set_channel_band(ch, "3")          # strings never coerce here
         assert out.band is None
+
+
+class TestAlignCouplerDelays:
+    """A coupler LF-FEM output gets the same delay as its pair's z outputs."""
+
+    def setup_method(self):
+        self.mod = _load_helpers()
+
+    @staticmethod
+    def _q(band, z_delay=None):
+        xy = types.SimpleNamespace(opx_output=types.SimpleNamespace(band=band))
+        z = (types.SimpleNamespace(opx_output=types.SimpleNamespace(delay=z_delay))
+             if z_delay is not None else None)
+        return types.SimpleNamespace(xy=xy, z=z)
+
+    def _pair(self, qc, qt, moving="control", coupler_delay=0):
+        c = types.SimpleNamespace(opx_output=types.SimpleNamespace(delay=coupler_delay))
+        return types.SimpleNamespace(qubit_control=qc, qubit_target=qt,
+                                     moving_qubit=moving, coupler=c)
+
+    def test_tunable_qubits_coupler_equals_z(self):
+        p = self._pair(self._q(2, 161), self._q(2, 161))
+        self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={"q1-q2": p}))
+        assert p.coupler.opx_output.delay == 161
+
+    def test_moving_target_uses_target_z(self):
+        p = self._pair(self._q(2, 161), self._q(1, 141), moving="target")
+        self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={"q1-q2": p}))
+        assert p.coupler.opx_output.delay == 141
+
+    def test_fixed_frequency_qubits_coupler_gets_band_delay(self):
+        p = self._pair(self._q(2), self._q(2))
+        self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={"q1-q2": p}))
+        assert p.coupler.opx_output.delay == self.mod._delay_for_band(2)
+
+    def test_pair_without_coupler_untouched(self):
+        p = types.SimpleNamespace(qubit_control=self._q(2, 161), qubit_target=self._q(2, 161),
+                                  moving_qubit="control", coupler=None)
+        self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={"q1-q2": p}))
+        assert p.coupler is None
+
+    def test_no_pairs_is_noop(self):
+        self.mod._align_coupler_delays(types.SimpleNamespace(qubit_pairs={}))
+        self.mod._align_coupler_delays(types.SimpleNamespace())
+
+    def test_build_calls_it_after_the_pair_gates(self):
+        src = _RUN_BUILD.read_text(encoding="utf-8")
+        gates = src.index("_finalize_coupler_only(machine, spec)")
+        call = src.index("        _align_coupler_delays(machine)\n")
+        assert call > gates

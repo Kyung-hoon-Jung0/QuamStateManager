@@ -54,6 +54,9 @@
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
     wiringTouched: false, // user edited the READOUT wiring (drag/pin/CSV/regen) -> keep their feedline groups
+    // resonator elements whose Pin value a feedline card wrote (until the user
+    // types a pin there); saved with the draft so a reload keeps the origin
+    pinFromCard: {},
     // Qubit naming scheme (step 4): "one_based" (q1, q2, … — the historical
     // default), "zero_based" (q0, q1, …), "grid" (board-derived letters —
     // qA1, qB2; one-shot Apply), or "custom" (prefix + start index).
@@ -4017,9 +4020,6 @@
   // A typed box that is not a pin, keyed element|line -> the text typed, so a
   // re-render keeps showing (and flagging) what the user typed.
   var _pinBad = {};
-  // resonator elements whose pin the user typed in the Pin box; any other
-  // resonator pin on a feedline came from the feedline card
-  var _pinTyped = Object.create(null);
   var PIN_HINT = "con/slot/port, e.g. con1/1/2 or 1/1/2 — slot 1–8, port 1–8";
   function escapeAttr(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -4213,7 +4213,7 @@
     // re-allocates) — a pin box being typed in must keep its text and focus.
     var ae = document.activeElement, keep = null;
     if (ae && ae.classList && ae.classList.contains("gen-wiring-pin") && host.contains(ae)) {
-      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
+      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value, rendered: ae.defaultValue,
                s: ae.selectionStart, e: ae.selectionEnd, prev: ae.__wizPrev };
     }
     renderReadoutPool();   // docs/242: every wiring repaint reaches the cards
@@ -4261,7 +4261,7 @@
         (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
         escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
         escapeAttr(pin) + '">' +
-        (pin && ln.line === "resonator" && ln.group && !_pinTyped[ln.element]
+        (pin && ln.line === "resonator" && ln.group && state.pinFromCard[ln.element]
           ? ' <span class="ui-badge gen-pin-from-card" title="Set by the ' + escapeAttr(ln.group || "feedline") +
             ' card; type a pin to set it here">from the feedline</span>' : "") +
         "</td></tr>";
@@ -4284,7 +4284,10 @@
     if (keep) {
       var again = host.querySelector('tr[data-idx="' + keep.idx + '"] .gen-wiring-pin');
       if (again) {
-        again.value = keep.value;
+        // the box shows the stored pin unless the user changed its text since
+        // it was rendered: an untouched focused box must not carry an old
+        // value into the new render, where its blur would commit it
+        if (keep.value !== keep.rendered) again.value = keep.value;
         window.NumberInput.fit(again);
         again.focus();
         // focus() re-snapshots the Ctrl+Z "before" value from the half-typed
@@ -4314,8 +4317,8 @@
     if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
     var before = JSON.stringify(ln.channel || null);
     ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
-    if (ln.line === "resonator" && !_pinTyped[ln.element]) {
-      _pinTyped[ln.element] = true;
+    if (ln.line === "resonator" && state.pinFromCard[ln.element]) {
+      delete state.pinFromCard[ln.element];
       var badge = tr.querySelector(".gen-pin-from-card");
       if (badge) badge.remove();
     }
@@ -5672,9 +5675,14 @@
     roLines().forEach(function (ln) { was[ln.element] = JSON.stringify(ln.channel || null); });
     var changed = fn();
     if (changed === false) return false;
-    // a card that rewrote a typed pin owns it again
+    // a pin a card wrote is the feedline's until the user types one: every
+    // member of a feedline whose channel the card changed carries it
+    var cardGroups = Object.create(null);
     roLines().forEach(function (ln) {
-      if (was[ln.element] !== JSON.stringify(ln.channel || null)) delete _pinTyped[ln.element];
+      if (ln.group && was[ln.element] !== JSON.stringify(ln.channel || null)) cardGroups[ln.group] = true;
+    });
+    roLines().forEach(function (ln) {
+      if (ln.group && cardGroups[ln.group] && channelToPin(ln.channel)) state.pinFromCard[ln.element] = true;
     });
     _wizPushRestore(label, restore);
     state.wiringTouched = true;
@@ -6299,7 +6307,6 @@
   function resetAllocRuntime() {
     if (window.GenRules) window.GenRules.resetRuleRuntime();   // C5: strand in-flight rule requests too
     _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
-    _pinTyped = Object.create(null);
     _allocRunSeq++;
     // a stranded run never answers: its "Checking wiring" must not outlive it
     var st = _allocInFlight && document.getElementById("gen-allocate-status");
@@ -10549,6 +10556,14 @@
 
   // Mirror the DOM-only output-path field into state so it persists in a draft.
   function bindOutputStep() {
+    // a long path scrolls inside its box; the whole path is its tooltip
+    ["gen-output-path", "gen-scripts-path"].forEach(function (id) {
+      var box = document.getElementById(id);
+      if (!box) return;
+      ["mouseenter", "focus", "input", "change"].forEach(function (ev) {
+        box.addEventListener(ev, function () { box.title = box.value; });
+      });
+    });
     var out = document.getElementById("gen-output-path");
     if (out) {
       // "change" too: the folder browser fills .value programmatically and
@@ -12810,6 +12825,7 @@
         spec: state.spec, allocation: state.allocation,
         allocSig: _allocTopoSig,
         pairsTouched: state.pairsTouched, wiringTouched: state.wiringTouched,
+        pinFromCard: state.pinFromCard,
         naming: state.naming, namesTouched: state.namesTouched,
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
@@ -12864,6 +12880,7 @@
     state.allocation = d.allocation || null;
     state.pairsTouched = !!d.pairsTouched;
     state.wiringTouched = !!d.wiringTouched;
+    state.pinFromCard = (d.pinFromCard && typeof d.pinFromCard === "object") ? d.pinFromCard : {};
     // The restored allocation's request-time signature rides the draft
     // (docs/134 review): without it, a reloaded session's allocation was
     // exempt from topology-staleness forever. An old draft lacks the field —
@@ -13031,7 +13048,7 @@
     // anything from re-selecting it.
     state.allocation = null;
     state.pairsTouched = false;
-    state.wiringTouched = false;
+    state.wiringTouched = false; state.pinFromCard = {};
     state.naming = { preset: "one_based", prefix: "q", start: 1 };
     state.namesTouched = false;
     state.qubitFlux = true;
@@ -13275,7 +13292,7 @@
       state.namesTouched = false;
       state.pairsTouched = false;
       state.populateTouched = {};
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.qubitFlux = true;
       state.couplerFlux = true;
       state.chipArch = "flux_tunable_coupler";
@@ -13300,7 +13317,7 @@
       });
       state.heldPins = {};
       state.allocation = null;
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.spec.readout_input = "crossing";   // docs/242: the new-chip default
     } else if (step === 6) {
       // keep only what step 4 decided: board placement, CZ orientation
@@ -13396,7 +13413,7 @@
       state.env = null;
       state.allocation = null;
       state.pairsTouched = false;
-      state.wiringTouched = false;
+      state.wiringTouched = false; state.pinFromCard = {};
       state.muxSize = 6;
       // Fresh session: recall the last output folder (durable mirror) — a
       // new browser session used to start with the path blank every time.
@@ -14044,6 +14061,7 @@
       assignReadout: assignReadout,
       setFeedlineOutput: setFeedlineOutput,
       PIN_HINT: PIN_HINT,
+      saveDraft: saveDraft,
       useCustomEnv: useCustomEnv,
       runAutoAllocate: runAutoAllocate,
       resetAllocRuntime: resetAllocRuntime,

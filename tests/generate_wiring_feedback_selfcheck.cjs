@@ -209,6 +209,44 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     ok(T.autoScriptsPath('D:\\x\\quam_state') === 'D:\\x\\quam_state\\state_gen_scripts', 'W9 backslashes stay');
   }
 
+  // W11: a focused, untouched resonator Pin box survives a re-render + blur
+  {
+    const w = await world(null);
+    const T = w.T, state = w.state;
+    T.renderWiringTable();
+    const box = () => w.doc.querySelector('input[aria-label="q2 resonator pin"]');
+    box().focus();
+    const name = T.readoutModel().feeds[0].name;
+    T.setFeedlineOutput(name, { con: 1, slot: 1 }, 1);   // re-renders the table
+    const q2 = () => state.spec.lines.find(l => l.element === 'q2' && l.line === 'resonator');
+    const pinBefore = T.channelToPin(q2().channel);
+    ok(pinBefore === '1/1/1', 'W11 setup: the card pinned q2: ' + pinBefore);
+    ok(box().value === pinBefore, 'W11 the focused box shows the stored pin after the re-render: "' + box().value + '"');
+    box().dispatchEvent(new w.win.Event('blur'));
+    ok(T.channelToPin(q2().channel) === pinBefore, 'W11 blurring the untouched box keeps the pin: ' + JSON.stringify(q2().channel));
+  }
+
+  // W12: the badge origin survives a reload (draft save + restore)
+  {
+    const w = await world(null);
+    const T = w.T, state = w.state;
+    const name = T.readoutModel().feeds[0].name;
+    T.setFeedlineOutput(name, { con: 1, slot: 1 }, 1);
+    T.renderWiringTable();
+    const box = w.doc.querySelector('input[aria-label="q1 resonator pin"]');
+    box.value = '1/1/8';
+    box.dispatchEvent(new w.win.Event('change'));
+    T.saveDraft();
+    const draft = JSON.parse(w.win.sessionStorage.getItem('quam_generate_draft'));
+    const w2 = await world(null);
+    w2.T.applyDraft(draft);
+    w2.T.renderWiringTable();
+    const row = q => Array.from(w2.doc.querySelectorAll('#gen-wiring-tbl tr'))
+      .find(tr => tr.children[0] && tr.children[0].textContent === q && /resonator/.test(tr.textContent));
+    ok(row('q1') && !row('q1').querySelector('.gen-pin-from-card'), 'W12 a typed pin has no badge after a reload');
+    ok(row('q2') && row('q2').querySelector('.gen-pin-from-card'), 'W12 a card-set pin keeps its badge after a reload');
+  }
+
   // W10: a custom interpreter that probes usable shows its package versions
   {
     const w = await world({ '/generate/probe': { usable: true,
