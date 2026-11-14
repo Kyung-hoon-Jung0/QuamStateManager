@@ -232,10 +232,11 @@
     <button type="submit" class="btn-sm">Save</button>
   </form>
   <form class="ui-opxmon-pcnames" hx-post="/opx-monitor/pc-names" hx-target="#ui-opxmon-body" hx-swap="outerHTML">
+    <input type="hidden" name="pc_names_version" value="{{ pc_names_version }}">
     <section class="ui-zone" aria-label="PC names"><div class="ui-zone-head"><h3 class="ui-zone-title">PC names</h3><span class="ui-zone-sum">{{ pc_names|length }} named &middot; {{ seen_tags|length }} seen in open QMs</span></div>
     <div class="ui-zone-body">
       <p class="ui-text-quiet">Names for the tags in owner markers. Kept only on this PC, in this user's app-data folder; applied when a page is drawn, never written to History.</p>
-      {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the old file is kept once as pc_names.json.bak).</p>{% endif %}
+      {% if pc_names_problem %}<p class="ui-note ui-opxmon-pcnames-problem">{{ pc_names_problem }} The next save rewrites the file (the previous file is kept as pc_names.json.bak on each save).</p>{% endif %}
       <table class="ui-table ui-opxmon-table" aria-label="PC names"><thead><tr><th class="ui-table-head">Tag</th><th class="ui-table-head">Name</th><th class="ui-table-head">Remove</th></tr></thead>
         <tbody>{% for tag in pc_name_rows %}<tr class="ui-opxmon-pcname-row" data-tag="{{ tag }}"><td data-label="Tag" class="ui-table-cell"><code class="ui-chip">{{ tag|owner_shown }}</code>{% if this_tag == tag %} <span class="ui-pill ui-pill--accent ui-opxmon-this-pc" title="{{ same_tag_hint }}">same tag as this PC</span>{% endif %}{% if tag in seen_tags %} <span class="ui-text-quiet">in an open QM</span>{% endif %}</td>
           <td data-label="Name" class="ui-table-cell">{% set shown = pc_names.get(tag, '')|label_shown %}<input class="ui-input" name="label__{{ tag }}" value="{{ shown }}" maxlength="40" autocomplete="off" aria-label="Name for tag {{ tag }}"{% if shown != pc_names.get(tag, '') %} title="Stored as {{ pc_names.get(tag, '')|label_full }}"{% endif %}><input type="hidden" name="was__{{ tag }}" value="{{ shown }}"></td>

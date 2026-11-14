@@ -115,6 +115,101 @@ def page(app, tab):
     return app.test_client().get(f"/opx-monitor/body?tab={tab}").get_data(as_text=True)
 
 
+@pytest.fixture
+def names_file(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(om, 'marker_dir', lambda: tmp_path)
+    path = tmp_path / 'pc_names.json'
+    path.write_text(json.dumps({'abc': 'Original'}), encoding='utf-8')
+    return env[0], path
+
+
+def _names_base(app):
+    return re.search(r'name="pc_names_version" value="([^"]+)"', page(app, 'settings'))[1]
+
+
+def _names_post(app, version, **data):
+    return app.test_client().post('/opx-monitor/pc-names', headers=ORIGIN,
+                                  data={'pc_names_version': version, **data})
+
+
+def test_r2_names_backup_rotates_after_two_saves(names_file):
+    app, path = names_file
+    for label in ('First', 'Second'):
+        assert _names_post(app, _names_base(app), label__abc=label, was__abc='Original').status_code == 200
+    assert json.loads(path.read_text()) == {'abc': 'Second'}
+    assert json.loads(path.with_suffix('.json.bak').read_text()) == {'abc': 'First'}
+
+
+def test_r2_names_reject_same_base_version(names_file):
+    app, path = names_file
+    base = _names_base(app)
+    assert _names_post(app, base, new_tag='def', new_label='First').status_code == 200
+    response = _names_post(app, base, new_tag='ghi', new_label='Second')
+    assert response.status_code == 409
+    assert response.mimetype == 'text/plain'
+    assert response.get_data(as_text=True) == 'The PC names changed in another window; reload and try again. Nothing was saved.'
+    assert json.loads(path.read_text()) == {'abc': 'Original', 'def': 'First'}
+
+
+def test_r2_names_lock_serializes_version_check_and_write(names_file, monkeypatch):
+    import concurrent.futures
+    import threading
+    import time
+    from quam_state_manager.web import opx_monitor_routes as routes
+    app, path = names_file
+    base = _names_base(app)
+    original = routes._pc_names_version
+    def slow_version():
+        version = original()
+        time.sleep(0.1)  # make overlapping unguarded checks observe the same old file
+        return version
+    monkeypatch.setattr(routes, '_pc_names_version', slow_version)
+    ready = threading.Barrier(2, timeout=5)
+    def post(tag):
+        ready.wait()
+        return _names_post(app, base, new_tag=tag, new_label='Added').status_code
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(post, ('def', 'ghi')))
+    assert sorted(results) == [200, 409]
+    assert len(json.loads(path.read_text())) == 2
+
+
+def test_r2_names_unedited_long_label_survives_unrelated_save(names_file):
+    app, path = names_file
+    label = 'Long label ' * 9 + '  '
+    path.write_text(json.dumps({'abc': label}), encoding='utf-8')
+    html = page(app, 'settings')
+    shown = re.search(r'name="label__abc" value="([^"]+)"', html)[1]
+    assert len(label) > 40 and len(shown) == 40
+    response = _names_post(app, _names_base(app), label__abc=shown, was__abc=shown,
+                           new_tag='def', new_label='Added')
+    assert response.status_code == 200
+    assert json.loads(path.read_text())['abc'].encode('utf-8') == label.encode('utf-8')
+    response = _names_post(app, _names_base(app), label__abc=r'bad\u202e', was__abc=shown)
+    assert response.status_code == 400 and 'Name for tag abc:' in response.get_data(as_text=True)
+
+
+def test_r2_stale_key_numbers_show_last_good_read(env):
+    from quam_state_manager.web.opx_monitor_routes import stale_time
+    app, m, w, clock, _ = env
+    m.poll_once()
+    at = m.status()['section_times']['open_qms']
+    clock.t += 40
+    html = page(app, 'live')
+    stats = html[html.index('class="ui-stats"'):].split('<section', 1)[0]
+    assert 'as of ' + stale_time(at) in stats
+    assert re.search(r'as of .*\d\d:\d\d:\d\d', stats)
+
+
+def test_r2_jobs_tile_wording_is_unambiguous(env):
+    app, m, *_ = env
+    m.poll_once()
+    html = page(app, 'live')
+    stats = html[html.index('class="ui-stats"'):].split('<section', 1)[0]
+    assert '>Jobs<' in stats and '>1 running, queued or processing<' in stats
+    assert 'Jobs running' not in stats
+
+
 def test_live_page_shows_fems_and_occupancy(env):
     app, m, w, clock, _ = env
     m.poll_once()

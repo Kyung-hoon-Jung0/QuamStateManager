@@ -80,7 +80,7 @@
         openConfirm = null;
     }
 
-    function openPanel(btn, typedValue, focusTyped) {
+    function openPanel(btn, typedValue, focusTyped, previousFacts) {
         var existing = document.querySelector(".ui-opxmon-confirm");
         if (existing) { var sub0 = existing.closest(".ui-table-sub"); (sub0 || existing).remove(); }
         var kind = kindOf(btn);
@@ -94,12 +94,19 @@
         var dl = el("dl", "ui-facts");
         dl.setAttribute("aria-label", "What will be closed");
         var rowOf = function (id) { return Array.from(document.querySelectorAll(".ui-opxmon-close")).find(function (b) { return b.getAttribute("data-qm-id") === id; }); };
+        var facts = {};
         if (kind === "one") {
             var r = rowOf(ids[0]) || btn;
-            fact(dl, "State", r.getAttribute("data-basis") || "activity unknown");
-            fact(dl, "FEMs", r.getAttribute("data-ports") || "unknown");
-            fact(dl, "Last job", r.getAttribute("data-last-job") || r.getAttribute("data-jobs") || "none");
-            if (r.getAttribute("data-owner")) fact(dl, "Owner", r.getAttribute("data-owner"));
+            facts = {State: r.getAttribute("data-basis") || "activity unknown",
+                FEMs: r.getAttribute("data-ports") || "unknown",
+                "Last job": r.getAttribute("data-last-job") || r.getAttribute("data-jobs") || "none",
+                Owner: r.getAttribute("data-owner") || "owner not reported"};
+            Object.keys(facts).forEach(function (label) {
+                if (label === "Owner" && !r.getAttribute("data-owner") && !(previousFacts && previousFacts.Owner !== facts.Owner)) return;
+                var changed = previousFacts && previousFacts[label] !== facts[label];
+                fact(dl, label, facts[label], changed ? "Updated just now" : null);
+                if (changed) dl.lastElementChild.setAttribute("data-fact-updated", "1");
+            });
         } else {
             ids.forEach(function (id) {
                 var row = rowOf(id);
@@ -148,7 +155,7 @@
         } else {
             (btn.closest("p") || btn).insertAdjacentElement("afterend", panel);
         }
-        openConfirm = {kind: kind, id: ids[0] || null, ids: setKey(ids), typed: typed ? typed.value : null};
+        openConfirm = {kind: kind, id: ids[0] || null, ids: setKey(ids), typed: typed ? typed.value : null, facts: facts};
         if (typed && focusTyped) typed.focus(); else accept.focus();
     }
 
@@ -192,7 +199,7 @@
                 say("The list changed; check it again. Nothing was closed.", true);
             } else if (btn && !btn.disabled) {
                 if (want.kind === "all") { var dz = btn.closest("details"); if (dz) dz.open = true; }
-                openPanel(btn, want.typed, typedFocused);
+                openPanel(btn, want.typed, typedFocused, want.facts);
             } else {
                 openConfirm = null;
                 say("The close question was withdrawn: " + (want.kind === "one" ? want.id + " is no longer listed" : "the list changed") + " or the data is not fresh. Nothing was closed.", true);

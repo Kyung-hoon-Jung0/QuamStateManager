@@ -10,6 +10,10 @@ import datetime as _dt
 
 import json
 import logging
+import hashlib
+import threading
+import tempfile
+import os
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, make_response, render_template, request
@@ -17,6 +21,15 @@ from flask import Blueprint, current_app, jsonify, make_response, render_templat
 from quam_state_manager.core import opx_monitor as om
 
 logger = logging.getLogger(__name__)
+_PC_NAMES_LOCK = threading.RLock()
+
+
+def _pc_names_version():
+    path = om.marker_dir() / 'pc_names.json'
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError:
+        return 'missing'
 
 opxmon_bp = Blueprint("opx_monitor", __name__)
 
@@ -185,10 +198,13 @@ def _view(tab: str) -> dict:
     open_qms = (st.get('answer') or {}).get('open_qms') or []
     owners = {q['id']: om.safe_owner_info(q) for q in open_qms}
     # labels are read at render time only and never leave the page
-    pc_names, pc_names_problem = om.load_pc_names()
+    with _PC_NAMES_LOCK:
+        pc_names, pc_names_problem = om.load_pc_names()
+        pc_names_version = _pc_names_version()
     seen_tags = om.owner_tags(st.get('answer'))
     owner_ctx = {'owners': owners, 'any_marker': any(o['markers'] for o in owners.values()),
                  'pc_names': pc_names, 'pc_names_problem': pc_names_problem,
+                 'pc_names_version': pc_names_version,
                  'this_tag': om.own_pc_tag(), 'seen_tags': seen_tags,
                  'pc_name_rows': sorted(t for t in set(pc_names) | set(seen_tags) if _TAG_RE.fullmatch(t)),
                  'pc_name_bad': [(_key_ref(k), k) for k in sorted(pc_names) if not _TAG_RE.fullmatch(k)]}
@@ -203,6 +219,16 @@ def _view(tab: str) -> dict:
         'qm_states': {q['id']: om.qm_state(q, idle_states.get(q['id'])) for q in open_qms},
         'hottest_limit': hottest_limit,
     })
+    for tile in owner_ctx['tiles']:
+        if tile['label'] == 'Jobs running':
+            tile['label'] = 'Jobs'
+            tile['value'] += ' running, queued or processing'
+            tile['note'] = ''
+        if st['state'] != 'ok' and tile['label'] != 'Server' and tile['value'] != 'unknown':
+            section = 'controllers' if tile['label'] == 'Hottest sensor' else 'open_qms'
+            at = st['section_times'].get(section)
+            if at:
+                tile['note'] = (tile['note'] + '; ' if tile['note'] else '') + 'as of ' + stale_time(at)
     return {**owner_ctx, 'temperature_failed': 'controllers' in st['section_errors'] or any(k.endswith('.temperatures') for k in (st.get('answer') or {}).get('refused', {})), 'unreadable_temps': om.unreadable_temperatures(st.get('answer')), 'last_job': last_job, 'hottest': hottest, 'local_time': om.local_time, 'plain_error': plain_error, 'call_failure': om.call_failure, 'raw_error': raw_error(st), 'stale_time': stale_time, 'opx_time': om.opx_time, 'pc_zone': om.zone_text(), 'words': om.words, 'job_activity': om.job_activity, 'firmware_summary': om.firmware_summary, 'job_limit': min(1000, max(100, request.args.get('limit', 100, type=int))), 'verdict': verdict, 'run_reason': run_reason, 'run_match': lambda j: run_match(j, runs, run_reason, skew=skew) if not run_reason else {}, 'clock_skew': skew, 'skew_text': om.skew_text(skew, m.clock()), 'metric_known': om.metric_known, 'job_list_cap': om.JOB_LIST_CAP, 'value_vs_limit': om.value_vs_limit,
             "trends": m.trends().series(m.clock()) if m.trends() and tab == "live" else {}, "idle_states": idle_states, "idle_ids": [k for k, v in idle_states.items() if v['idle'] and st['state'] == 'ok'], "tab": tab, "tabs": TABS, "tab_labels": TAB_LABELS, "st": st, "settings": s,
             "target": t, "has_headers": has_headers,
@@ -363,11 +389,19 @@ def _owner_shown(text, limit=120):
 
 @opxmon_bp.route("/opx-monitor/pc-names", methods=["POST"])
 def opx_monitor_save_pc_names():
+    with _PC_NAMES_LOCK:
+        if request.form.get('pc_names_version') != _pc_names_version():
+            return make_response('The PC names changed in another window; reload and try again. Nothing was saved.',
+                                 409, {'Content-Type': 'text/plain; charset=utf-8'})
+        return _save_pc_names_locked()
+
+
+def _save_pc_names_locked():
     """Add, change or remove PC names. Replies never echo a name.
 
     Only the rows this window changed are applied (a row whose posted name equals the
     ``was__<tag>`` it was drawn with is left alone), each one onto the file as read at
-    that moment, so two windows editing different tags keep both edits."""
+    that moment. The caller holds the process lock and checks the base version."""
     f = request.form
     changes = []
     for k, v in f.items():
@@ -390,6 +424,15 @@ def opx_monitor_save_pc_names():
         changes.append((tag, label or None))
     # names-file keys that are not valid tags: rename to a valid tag, or remove
     names_now, _ = om.load_pc_names()
+    # The display loader normalizes labels; untouched stored strings must round-trip exactly.
+    try:
+        stored = json.loads((om.marker_dir() / 'pc_names.json').read_bytes())
+        if isinstance(stored, dict):
+            for key in names_now:
+                if isinstance(stored.get(key), str):
+                    names_now[key] = stored[key]
+    except (OSError, ValueError):
+        pass
     by_ref = {_key_ref(k): k for k in names_now if not _TAG_RE.fullmatch(k)}
     for k in f:
         if not k.startswith("badkey__"):
@@ -418,7 +461,28 @@ def opx_monitor_save_pc_names():
     count = None
     try:
         for t, label in changes:
-            count = om.apply_pc_name_change(t, label, om.marker_dir())
+            if label is None:
+                names_now.pop(t, None)
+            else:
+                names_now[t] = label
+        if changes:
+            directory = om.marker_dir()
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / 'pc_names.json'
+            payload = json.dumps(names_now, ensure_ascii=True, indent=1).encode('utf-8')
+            # Stage the new file before rotating the previous file into the backup.
+            fd, temporary = tempfile.mkstemp(dir=directory, prefix='pc_names-', suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(payload)
+                if path.exists():
+                    backup = path.with_suffix('.json.bak')
+                    backup.write_bytes(path.read_bytes())
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            count = len(names_now)
     except OSError:
         return _settings_reply("The PC names file could not be written.", error=True)
     if count is None:
