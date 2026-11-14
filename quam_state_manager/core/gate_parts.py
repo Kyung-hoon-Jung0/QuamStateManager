@@ -382,8 +382,10 @@ def is_component(segs: tuple | list, node: Any) -> bool:
     """True when a reference target is a COMPONENT, which a gate names as a
     whole (its path is hashed, its settings are not): the machine root, a
     top-level container, an entry of ``qubits`` or ``qubit_pairs``, a channel
-    (a dict holding an ``operations`` container), or anything under
-    ``ports``. Decided from the state's shape only, never from class names.
+    (a dict holding an ``operations`` container that is a child or grandchild
+    of a ``qubits`` / ``qubit_pairs`` entry and does not read as a pulse),
+    or anything under ``ports``
+    whatever its type (a port's offset included). Decided from the state's shape only, never from class names.
     Every other object or list (a pulse, an entry of an ``operations``
     container, a parameter dict, a waveform list) is not a component."""
     segs = tuple(segs)
@@ -393,7 +395,18 @@ def is_component(segs: tuple | list, node: Any) -> bool:
         return True
     if "ports" in segs:
         return True
-    return isinstance(node, dict) and isinstance(node.get("operations"), dict)
+    # a channel by position AND shape: a child (or grandchild, e.g. a pair's
+    # coupler) of a qubits / qubit_pairs entry that holds operations
+    return (segs[0] in ("qubits", "qubit_pairs") and len(segs) in (3, 4)
+            and isinstance(node, dict) and isinstance(node.get("operations"), dict)
+            and not _pulse_like(node))
+
+
+def _pulse_like(node: dict) -> bool:
+    """A dict that reads as a pulse (an amplitude, or a pulse class), so an
+    ``operations`` key on it does not make it a channel."""
+    from quam_state_manager.core import pulse_catalog
+    return "amplitude" in node or bool(pulse_catalog.is_pulse_class(node.get("__class__")))
 
 
 def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
@@ -405,9 +418,11 @@ def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
     (:func:`is_component`) hashes as its path only; any other object or list
     there is walked and hashed by its own resolved content. A dangling reference
     hashes as a marker plus its text. A reference back into an object
-    already being walked (a cycle) hashes as ``["cycle", path]``; past
-    :data:`RESOLVE_DEPTH` nested references the target hashes as
-    ``["depth", path]`` (a change that deep is not seen)."""
+    already being walked (a cycle) hashes as ``["cycle", path]``. The limit
+    :data:`RESOLVE_DEPTH` counts REFERENCE HOPS (each followed reference,
+    in a chain or inside a walked object), not dict nesting; the target
+    reached past it hashes as ``["depth", path]`` (a change there is not
+    seen)."""
     if isinstance(value, dict):
         return {k: _resolved(merged, v, holder + (str(k),), depth, trail)
                 for k, v in value.items()}
@@ -426,7 +441,11 @@ def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
         if not found:
             return ["dangling", value]
         key = tuple(segs)
-        if isinstance(node, str) and node.startswith("#") and key not in seen and len(seen) < 32:
+        if "ports" in key:
+            return ["component", _land(merged, list(segs))]
+        if depth + len(seen) >= RESOLVE_DEPTH:
+            return ["depth", _land(merged, list(segs))]
+        if isinstance(node, str) and node.startswith("#") and key not in seen:
             seen.add(key)
             ref, at = node, key
             continue
@@ -436,8 +455,6 @@ def _resolved(merged: dict, value: Any, holder: tuple, depth: int = 0,
                 return ["component", path]
             if any(key[:len(t)] == t for t in trail):
                 return ["cycle", path]
-            if depth >= RESOLVE_DEPTH:
-                return ["depth", path]
             return _resolved(merged, node, key, depth + 1, trail | {key})
         return node
 
@@ -453,8 +470,11 @@ def content_hash(merged: dict, pair: str, gate: str, *, index=None) -> str | Non
 
     NOT covered, on purpose: a port's output range, offset and delay, the
     channel's offset parameters, the qubits' other settings, and components
-    the gate refers to as a whole (:func:`is_component`): only which one, not
-    their settings (they are retuned often and are not part of the gate). None when there is no such
+    the gate refers to as a whole (:func:`is_component`, anything under
+    ``ports`` included): only which one, not their settings (they are
+    retuned often and are not part of the gate). A plain number the gate
+    refers to directly (``#/qubits/q1/f_01``, a pair-level value) IS
+    covered: the gate uses that number. None when there is no such
     gate."""
     parts = gate_parts(merged, pair, gate, index=index)
     if not parts["macro"]:

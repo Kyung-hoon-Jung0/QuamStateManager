@@ -177,7 +177,7 @@ def test_which_items_are_pills(monkeypatch, tmp_path):
     assert pills["active"] == "active"
     items = gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path)
     assert {i["key"] for i in items} == {"where", "active", "class", "scaling", "spectators",
-                                        "check", "scope"}
+                                        "check", "scope"}   # a checked record
     cls = m["__class__"]
     pills = _pills(gs.status(_store(s), None, "q1-q2", "cz_sq", missing_classes=[cls]))
     assert "class" in pills
@@ -219,13 +219,25 @@ def test_a_failed_record_without_a_rule_shows_its_own_result(tmp_path):
         "result": "not checked", "reason": "the lab check failed", "hash": "abc",
         "time": "2026-11-14T10:00:00+00:00"}}}), encoding="utf-8")
     it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
-    assert it["text"] != "checked with an older rule: check again"
-    assert it["text"] in ("not checked", "values changed since the check")
+    assert it["text"] == "not checked" and "the lab check failed" in it["why"]
+    # the same with an older rule and a stale hash
+    (tmp_path / log.FILE_NAME).write_text(json.dumps({"gates": {key: {
+        "result": "not checked", "reason": "the lab check failed", "hash": "abc", "rule": 2,
+        "time": "2026-11-14T10:00:00+00:00"}}}), encoding="utf-8")
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["check"]
+    assert it["text"] == "not checked" and "the lab check failed" in it["why"]
 
 
-def test_the_details_say_what_the_check_covers():
+def test_the_details_say_what_the_check_covers(tmp_path):
     s, _ = add_gate(chip())
-    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq"))["scope"]
+    assert "scope" not in _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq",
+                                            check_folder=tmp_path))
+    log.record(tmp_path, "q1-q2", "cz_sq", result=log.NOT_CHECKED, reason="r", content="h")
+    assert "scope" not in _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq",
+                                            check_folder=tmp_path))
+    log.record(tmp_path, "q1-q2", "cz_sq", result=log.CHECKED, reason=None,
+               content=log.content_hash(s, "q1-q2", "cz_sq"))
+    it = _by_key(gs.status(_store(s), None, "q1-q2", "cz_sq", check_folder=tmp_path))["scope"]
     assert not it["pill"]
     assert it["why"] == ("The check covered this gate's pulses. Later changes to a port's "
                          "offset, range or delay are not tracked here.")

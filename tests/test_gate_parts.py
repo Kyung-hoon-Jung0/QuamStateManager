@@ -372,6 +372,59 @@ def test_another_channels_operation_is_walked():
 def test_component_rule():
     assert gp.is_component((), {}) and gp.is_component(("qubits",), {})
     assert gp.is_component(("qubits", "q1"), {}) and gp.is_component(("qubit_pairs", "p"), {})
-    assert gp.is_component(("ports", "a", "b"), {}) and gp.is_component(("x", "y"), {"operations": {}})
+    assert gp.is_component(("ports", "a", "b"), {}) and gp.is_component(("qubits", "q1", "z"), {"operations": {}})
+    assert not gp.is_component(("x", "y"), {"operations": {}})
     assert not gp.is_component(("qubits", "q1", "z", "operations", "k"), {"amplitude": 1})
     assert not gp.is_component(("qubits", "q3", "wf"), [1, 2])
+
+
+def test_a_pulse_like_dict_with_an_operations_key_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["p"] = {"amplitude": 0.1, "operations": {"a": 1}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["x"] = "#/qubits/q3/p"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["p"]["amplitude"] = 0.2
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_whole_coupler_is_a_component():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["c"] = "#/qubit_pairs/q1-q2/coupler"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["coupler"]["offset"] = 0.3
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_port_scalar_is_a_component_even_through_a_chain():
+    s, _ = add_gate(chip())
+    s["ports"] = {"o1": {"offset": 0.01}}
+    s["qubits"]["q3"]["via"] = "#/ports/o1/offset"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["z"] = "#/ports/o1/offset"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["z2"] = "#/qubits/q3/via"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["ports"]["o1"]["offset"] = 0.02
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_number_referred_to_directly_is_covered():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["f_01"] = 5.0e9
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["f"] = "#/qubits/q1/f_01"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["f_01"] = 5.1e9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_the_hop_limit_hashes_a_marker():
+    s, _ = add_gate(chip())
+    n = gp.RESOLVE_DEPTH + 3
+    for i in range(n):
+        s["qubits"]["q3"][f"h{i}"] = f"#/qubits/q3/h{i + 1}"
+    s["qubits"]["q3"][f"h{n}"] = 0.5
+    out = gp._resolved(s, "#/qubits/q3/h0", ("x",))
+    assert out[0] == "depth", out
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["deep"] = "#/qubits/q3/h0"
+    h1 = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"][f"h{n}"] = 0.6          # past the limit: not seen
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h1 != h

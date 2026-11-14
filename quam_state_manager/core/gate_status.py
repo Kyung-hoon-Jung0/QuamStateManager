@@ -92,11 +92,11 @@ def _check(folder, merged: dict, pair: str, gate: str) -> dict:
         return _item("check", "checked with an older rule: check again", "neutral",
                      f"Checked {when} UTC; SM now compares more of the gate than when "
                      "this was recorded, so it cannot say whether the values changed.")
-    now = content_hash(merged, pair, gate)
-    if ent.get("hash") and now != ent.get("hash"):
-        return _item("check", "values changed since the check", "warn",
-                     f"Checked with the lab's code {when} UTC; the gate changed after.")
     if ent.get("result") == gate_check_log.CHECKED:
+        # only a passed check is compared with the values now
+        if content_hash(merged, pair, gate) != ent.get("hash"):
+            return _item("check", "values changed since the check", "warn",
+                         f"Checked with the lab's code {when} UTC; the gate changed after.")
         return _item("check", "checked", "ok", f"Checked with the lab's code {when} UTC.")
     return _item("check", "not checked", "warn",
                  f"Not checked with the lab's code: {ent.get('reason') or 'no reason given'} "
@@ -140,8 +140,11 @@ def status(store, ctx: dict | None, pair: str, gate: str, *,
     sp = _spectators(macro)
     if sp is not None:
         items.append(sp)
-    items.append(_check(check_folder, merged, pair, gate))
-    items.append(_item("scope", "what the check covers", "neutral",
+    check = _check(check_folder, merged, pair, gate)
+    items.append(check)
+    # only a completed check has a scope to state
+    if check["text"].startswith("checked") or check["text"] == "values changed since the check":
+        items.append(_item("scope", "what the check covers", "neutral",
                        "The check covered this gate's pulses. Later changes to a port's "
                        "offset, range or delay are not tracked here.", pill=False))
     return items
