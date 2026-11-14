@@ -4305,6 +4305,10 @@
   // drag redraws. Idempotent: an unchanged box or channel does nothing.
   function commitWiringPin(input) {
     if (!input.isConnected) return;   // a re-render replaced it (its text moved on)
+    // Untouched since it was rendered: nothing to commit. A browser blurs a
+    // focused box while a re-render removes it; committing its old text then
+    // would overwrite the pin the card just wrote.
+    if (input.value === input.defaultValue) return;
     var tr = input.closest("tr");
     var ln = tr && state.spec.lines[Number(tr.dataset.idx)];
     if (!ln) return;

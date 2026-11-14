@@ -224,6 +224,15 @@ function tick(win) { return new Promise(function (r) { win.setTimeout(r, 0); });
     ok(box().value === pinBefore, 'W11 the focused box shows the stored pin after the re-render: "' + box().value + '"');
     box().dispatchEvent(new w.win.Event('blur'));
     ok(T.channelToPin(q2().channel) === pinBefore, 'W11 blurring the untouched box keeps the pin: ' + JSON.stringify(q2().channel));
+    ok(state.pinFromCard.q2 === true, 'W11 ...and keeps its "from the feedline" origin');
+    // A real browser blurs the focused box while the re-render removes it,
+    // i.e. after the card changed the pin but before the new box exists.
+    const old = box();
+    old.focus();
+    q2().channel = Object.assign({}, q2().channel, { out_port: 8 });   // the card's new pin
+    old.dispatchEvent(new w.win.Event('blur'));
+    ok(T.channelToPin(q2().channel) === '1/1/8' && state.pinFromCard.q2 === true,
+       'W11 a blur of the stale box during a re-render commits nothing: ' + JSON.stringify(q2().channel));
   }
 
   // W12: the badge origin survives a reload (draft save + restore)
