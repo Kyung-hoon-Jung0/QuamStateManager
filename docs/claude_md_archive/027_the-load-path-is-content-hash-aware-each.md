@@ -1,0 +1,3 @@
+<!-- Moved verbatim from root CLAUDE.md (section: Working-Copy / Live-File Safety, block 27) on 2026-11-14. -->
+
+The **load path is content-hash-aware**: each sync point records `synced_live_hash` in the meta sidecar, and `reconcile_with_live` runs on load/select — live replaced + working copy provably clean ⇒ auto-pull; replaced + possibly edited ⇒ keep + `live_diverged` banner (never clobber); unreadable live ⇒ never treated as replaced. Working-copy **GC** deletes only provably-clean copies (transient read failures classify as kept-unverifiable), and its in-use set folds in every LIVE peer window's open chip via `instances.peers()` + `working_copy.key_for`.

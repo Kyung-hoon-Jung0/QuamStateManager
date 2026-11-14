@@ -1,0 +1,3 @@
+<!-- Moved verbatim from root CLAUDE.md (section: Re-generate Config, block 180) on 2026-11-14. -->
+
+**Re-generate config** (`/regenerate`) lets a user take a chip they already built, edit its structure in the wizard, rebuild it fresh, and keep every calibrated value, plus emit a single editable Python build recipe. Pipeline (`core/regenerate.py`): `regen_spec.reconstruct_spec` inverts the chip → spec → wizard edits → `config_generator.run_generator` builds fresh structure into a NEW folder → `regen_merge.merge_states` carries calibrated values (tier-1) + grafts user-added subtrees (tier-2) → `regen_script.emit_build_script`. The State Manager process never imports quam/quam_builder.
