@@ -945,12 +945,12 @@
 /* Field: label above (small, quiet), control, hint, error; a source tag
    sits at the label's right. --inline: label left, control right. */
 .ui-field-head { display: flex; align-items: center; gap: var(--ui-gap-2); min-width: 0; }
-.ui-field-head > .ui-field-label { flex: 1 1 auto; min-width: 0; margin: 0; }
+.ui-field-head > .ui-field-label { flex: 0 1 auto; min-width: 0; margin: 0; }
 .ui-field-head > .ui-badge { align-self: center; }
 .ui-field-hint, .ui-field-error { margin: 0; font-size: var(--ui-fs-xs); line-height: var(--ui-lh-dense); }
 .ui-field-hint { color: var(--ui-text-2); }
 .ui-field-error { color: var(--ui-danger-text); }
-.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
+.ui-field.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
 .ui-field--inline > .ui-field-head { grid-column: 1; }
 .ui-field--inline > .ui-field-hint, .ui-field--inline > .ui-field-error { grid-column: 2; }
 .ui-field-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
