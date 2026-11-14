@@ -842,14 +842,15 @@ window.AgentPanel = (function () {
          poll), like the plan card's; the value the proposal was made from is
          shown beside it only when the two differ, and flagged. */
       var nowTd, t = apTexts(w, w.new);
-      if (w.now_known === undefined) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
+      if (w.new_key) nowTd = '<td class="muted" title="this key is not in the chip yet; writing creates it">new key</td>';
+      else if (w.now_known === undefined) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
       else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
       else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
       else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
         esc(t.cell) + '</span> <span class="ag-ap-from">⚠ proposed from <span class="ag-ap-oldv">' + esc(t.old) + "</span></span></td>";
       var stored = (w.display && w.display.stored) || "";
       var writeNote = w.origin ? ' <span class="muted">' + esc(w.origin) + '</span>' : '';
-      var cannotStage = w.capture_error || ((w.created || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
+      var cannotStage = w.capture_error || (((w.created && !w.new_key) || w.deleted) ? 'new or removed key; SM stages existing leaves only' : '');
       if (cannotStage) writeNote += ' <span class="muted">cannot be staged: ' + esc(cannotStage) + '</span>';
       // a value from a target the node itself marked failed: shown apart, not written unless ticked
       var failed = !!w.failed_target;

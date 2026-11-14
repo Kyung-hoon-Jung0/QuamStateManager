@@ -20,6 +20,7 @@ at the next start from the hook's jsonl, deduplicated by event identity.
 from __future__ import annotations
 
 import collections
+import copy
 import base64
 import os
 import json
@@ -1888,6 +1889,36 @@ def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
     return None
 
 
+def _new_key_root(store, path: str, new, resized: set[str] | None = None) -> str | None:
+    """For a row flagged ``created`` whose key is absent in the chip: the path
+    of the first missing segment when the key can be created safely, else None.
+
+    Creatable means: the new value is a scalar (number, string, bool or null);
+    every container walked from the root down to the nearest existing ancestor
+    is a dict (no list anywhere on the way); that ancestor is a dict; no list
+    whose shape changed in this write set is a prefix of the path; and no
+    missing segment is numeric (it may have been a list index). The missing
+    segments are created as nested dicts."""
+    if isinstance(new, (dict, list)):
+        return None
+    parts = str(path).split(".")
+    if not parts or not all(parts):
+        return None
+    for lp in resized or ():
+        if path == lp or path.startswith(lp + "."):
+            return None
+    node = store.merged
+    for i, seg in enumerate(parts):
+        if not isinstance(node, dict):
+            return None
+        if seg not in node:
+            if any(s.isdigit() for s in parts[i:]):
+                return None
+            return ".".join(parts[: i + 1])
+        node = node[seg]
+    return None                      # the key exists: not a creation
+
+
 def _existing_leaf(store, path: str) -> bool:
     """True when ``path`` is a key present in the chip right now and holds a
     scalar (JSON null included). A row a capture flagged ``created`` because
@@ -1948,11 +1979,39 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 "unstaged": [{"path": w["path"], "why": w["capture_error"]}
                              for w in writes if w.get("capture_error")],
                 "error": "node writes could not be captured; nothing was written"}
+    from quam_state_manager.core.agent_runs import resized_lists
+    resized = resized_lists(writes)
+    creations: dict[str, dict] = {}     # first missing path -> nested dict of the new leaves (or a scalar)
     with store._lock:
         for w in writes:
-            if w.get("deleted") or (w.get("created") and not _existing_leaf(store, w["path"])):
+            root = None
+            if w.get("created") and not w.get("deleted") and not _existing_leaf(store, w["path"]):
+                root = _new_key_root(store, w["path"], w.get("new"), resized)
+            if w.get("deleted") or (w.get("created") and not _existing_leaf(store, w["path"]) and root is None):
                 unstaged.append({"path": w["path"], "why": "new/removed key -- SM stages existing leaves only; "
                                                             "apply the run's state from Datasets → Apply to chip"})
+                continue
+            if root is not None:
+                rest = w["path"][len(root) + 1:].split(".") if w["path"] != root else []
+                if not rest:
+                    if root in creations:
+                        unstaged.append({"path": w["path"], "why": "new key written twice in one run"})
+                        continue
+                    creations[root] = {"value": copy.deepcopy(w.get("new")), "rows": [w["path"]]}
+                    continue
+                slot = creations.setdefault(root, {"value": {}, "rows": []})
+                d = slot["value"]
+                ok = isinstance(d, dict)
+                for seg in rest[:-1]:
+                    if not ok:
+                        break
+                    d = d.setdefault(seg, {})
+                    ok = isinstance(d, dict)
+                if not ok or rest[-1] in d:
+                    unstaged.append({"path": w["path"], "why": "new key conflicts with another new key of this run"})
+                    continue
+                d[rest[-1]] = copy.deepcopy(w.get("new"))
+                slot["rows"].append(w["path"])
                 continue
             try:
                 # review R2-2: a pointer alias (x180 -> #./x180_DragCosine) is edited at its target,
@@ -1969,6 +2028,17 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
                 staged.append(e)
             except Exception as exc:  # noqa: BLE001
                 unstaged.append({"path": w["path"], "why": f"{type(exc).__name__}: {str(exc)[:160]}"})
+        if not unstaged:
+            for root, slot in creations.items():
+                try:
+                    # the node saved these keys through its own state save; the key names are not
+                    # judged again here (the person sees them as new keys on the card)
+                    e = mod.create_subtree(root, slot["value"], group_id=gid, enforce=False)
+                    e.actor = actor
+                    staged.append(e)
+                except Exception as exc:  # noqa: BLE001
+                    unstaged.append({"path": slot["rows"][0], "why": f"{type(exc).__name__}: {str(exc)[:160]}"})
+                    break
         if unstaged and staged:
             # all or nothing: a partial write would put half a run on the chip
             while store.change_log and store.change_log[-1].group_id == gid:
@@ -3184,10 +3254,15 @@ def _approval_view(ap: dict, store) -> dict:
         return out
     r = _r()
     rows = []
+    from quam_state_manager.core.agent_runs import resized_lists
+    _resized = resized_lists(ap.get("writes") or [])
     for w in ap.get("writes") or []:
         w2 = dict(w)
         if w.get("created") and not w.get("deleted") and _existing_leaf(store, str(w.get("path"))):
             w2.pop("created", None)       # the same rule the approve door stages by
+        elif w.get("created") and not w.get("deleted") and _new_key_root(
+                store, str(w.get("path")), w.get("new"), _resized) is not None:
+            w2["new_key"] = True          # staged as a key creation; the card says "new key"
         if not (w2.get("created") or w2.get("deleted")):
             try:
                 target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
