@@ -994,10 +994,10 @@ _STAGE6_SELECTORS = {
     '.czg:not([data-czg-stacked]) .czg-cols', '.czg:not([data-czg-stacked]) .czg-cols::after',
     '.czg[data-czg-stacked] .czg-form::after', '.czg[data-czg-stacked] .czg-evidence::after',
     # a native <dialog> in the kit shell (the two older ones keep their style.css rules)
-    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)',
-    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open])',
-    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open]',
-    'dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop',
+    'dialog.ui-dialog:not(.gen-rule-dlg)',
+    'dialog.ui-dialog:not(.gen-rule-dlg):not([open])',
+    'dialog.ui-dialog:not(.gen-rule-dlg)[open]',
+    'dialog.ui-dialog:not(.gen-rule-dlg)::backdrop',
     # the CZ gate status line and its delete offer
     '.gate-status-list', '.gate-status-list .gate-status', '.gate-status-list > .ui-zone-body',
     '.gate-status-list .gate-status + .gate-status', '.gate-status',

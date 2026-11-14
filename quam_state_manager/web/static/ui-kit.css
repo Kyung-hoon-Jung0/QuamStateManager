@@ -1644,10 +1644,10 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 /* A native <dialog> wearing the kit shell: hidden when closed, a centred fixed
    column with a backdrop when open. The two older kit dialogs keep their own
    rules in style.css and are left out here, so they render as before. */
-dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several) { position: fixed; inset: 0; margin: auto; padding: 0; height: fit-content; min-width: 0; min-height: 0; max-width: 96vw; }
-dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several):not([open]) { display: none; }
-dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)[open] { display: flex; flex-direction: column; align-items: stretch; }
-dialog.ui-dialog:not(.gen-rule-dlg):not(#gcz-several)::backdrop { background: var(--ui-backdrop); }
+dialog.ui-dialog:not(.gen-rule-dlg) { position: fixed; inset: 0; margin: auto; padding: 0; height: fit-content; min-width: 0; min-height: 0; max-width: 96vw; }
+dialog.ui-dialog:not(.gen-rule-dlg):not([open]) { display: none; }
+dialog.ui-dialog:not(.gen-rule-dlg)[open] { display: flex; flex-direction: column; align-items: stretch; }
+dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); }
 
 /* The CZ gate dialog: the form on the left, the lab's evidence on the right;
    they stack on a narrow window, and each column scrolls on its own. */

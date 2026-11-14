@@ -1,4 +1,4 @@
-"""Copy and Gaussian CZ ask the same lab checker before any write."""
+"""Copy asks the lab checker before any write."""
 import json
 import pytest
 from tests.test_add_paths_golden import _shapes, _client, _post, recorder
@@ -16,13 +16,12 @@ def setup_client(tmp_path):
 
 
 def request_data(kind, pair):
-    if kind == "copy":
-        return "/api/pulse/copy", {"path": "qubits.q1.xy.operations.probe", "target_kind": "qubit",
-                                   "qubit": "q2", "channel": "xy", "op_name": "copy_probe"}
-    return "/api/pulse/gaussian-cz", {"pair_id": pair}
+    assert kind == "copy"
+    return "/api/pulse/copy", {"path": "qubits.q1.xy.operations.probe", "target_kind": "qubit",
+                               "qubit": "q2", "channel": "xy", "op_name": "copy_probe"}
 
 
-@pytest.mark.parametrize("kind,count", [("copy", 1), ("gaussian", 6)])
+@pytest.mark.parametrize("kind,count", [("copy", 1)])
 def test_lab_refusal_precedes_all_writes_and_releases_hold(tmp_path, monkeypatch, recorder, kind, count):
     client, pair = setup_client(tmp_path)
     events, batches = [], []
@@ -43,7 +42,7 @@ def test_lab_refusal_precedes_all_writes_and_releases_hold(tmp_path, monkeypatch
     assert len(batches) == 1 and len(batches[0]) == count
 
 
-@pytest.mark.parametrize("kind", ["copy", "gaussian"])
+@pytest.mark.parametrize("kind", ["copy"])
 def test_unavailable_lab_check_is_reported_without_blocking(tmp_path, monkeypatch, kind):
     client, pair = setup_client(tmp_path)
     def check(store, writes, *, info):

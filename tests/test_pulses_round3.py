@@ -326,7 +326,7 @@ class TestTheGateNameBoxIsWired:
                 "gate": "__new__:cz_unipolar", "new_gate_name": name,
                 "slot": "flux_pulse_qubit", "pulse_type": "SquarePulse"})
             assert r.status_code == 410, r.status_code
-            assert "Gaussian CZ" in r.get_data(as_text=True)
+            assert "CZ gate" in r.get_data(as_text=True)
         assert json.dumps(ctx["store"].state, sort_keys=True) == before
 
 

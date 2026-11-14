@@ -1,5 +1,7 @@
 # docs/126 — Customer feedback round 2 (PJ_10082026 + topology/UX batch)
 
+> **Removed (2026-11-15):** the Gaussian CZ builder (`/pulse/gaussian-cz`, `/api/pulse/gaussian-cz*`, the "Gaussian CZ from cz_flattop" kind of + New pulse, the several-pairs dialog) and the pair page's experimental "+ Add gate" form (`/pair/<name>/gate/new`, `POST /pair/<name>/gate`) are gone. A CZ gate is created only in the CZ gate dialog (+ New pulse -> "CZ gate", the gate list on a pair page, or the CZ plan). What follows about them is history.
+
 The second customer-feedback batch, received 2026-08-19. Scope confirmed with
 the user before any code: ① the SUPER CRITICAL pair-grid search gap, ② the
 Topology rework (metric patches drive the map), ③ Live-Edit patch bundle,

@@ -1,12 +1,10 @@
-"""Goldens of the three add paths, recorded before any extraction touches them.
+"""Goldens of the add paths, recorded before any extraction touches them.
 
 A -- the Generate wizard's add forms: ``spec.additions`` plus the
      ``populate.pairs`` side effects (``add_paths_golden_a.cjs`` under jsdom).
-B -- the Pulses page create flow: create (qubit channel, gate slot), copy and
-     Gaussian CZ (plain, refused, overwrite): the ordered modifier operations
-     each request makes, plus the option list each form offers.
-C -- the pair page's Add gate: every gate type's ordered modifier operations
-     or refusal, plus the option list the form offers.
+B -- the Pulses page create flow: create (qubit channel, gate slot) and copy:
+     the ordered modifier operations each request makes, plus the option list
+     each form offers.
 
 Each is recorded on three synthetic chip shapes. Later refactors (shared name
 rules, one gate/pulse catalogue, the server-side gate plan) must keep these
@@ -180,7 +178,7 @@ def _post(c, rec, url, data):
 
 def _record_b(c, rec, pair: str, shape: str) -> dict:
     forms = {kind: _options(c.get("/pulse/new" + ("?kind=" + kind if kind else "")).data.decode())
-             for kind in ("", "copy", "gaussian_cz")}
+             for kind in ("", "copy")}
     q = "q1" if shape != "cr_zz" else "q0"
     steps = [
         _post(c, rec, "/api/pulse/create", {
@@ -204,35 +202,8 @@ def _record_b(c, rec, pair: str, shape: str) -> dict:
         _post(c, rec, "/api/pulse/copy", {
             "path": f"qubits.{q}.xy.operations.gauss_probe", "target_kind": "qubit",
             "qubit": q, "channel": "xy", "op_name": "gauss_probe"}),
-        _post(c, rec, "/api/pulse/gaussian-cz", {"pair_id": pair}),
-        _post(c, rec, "/api/pulse/gaussian-cz", {"pair_id": pair}),
-        _post(c, rec, "/api/pulse/gaussian-cz", {"pair_id": pair, "overwrite": "1",
-                                                 "padding_length": "16"}),
     ]
     return {"forms": forms, "steps": steps}
-
-
-# -- C: the pair page's Add gate --------------------------------------------
-
-def _record_c(c, rec, pair: str) -> dict:
-    from quam_state_manager.web import routes
-    form = _options(c.get(f"/pair/{pair}/gate/new").data.decode())
-    # the pulse inspector's rename / duplicate inputs carry the same name rule
-    form["detail"] = _options(c.get("/pulse/detail?path=qubits." + pair.split("-")[0]
-                                    + ".xy.operations.x180").data.decode())
-    steps = []
-    types = {**routes._GATE_TYPES, **routes._ENV_GATE_TYPES}
-    for gt in sorted(types):
-        data = {"gate_name": "g_" + gt, "gate_type": gt}
-        for fname, _label, default, _kind in types[gt]["fields"]:
-            data[fname] = str(default)
-        steps.append(_post(c, rec, f"/pair/{pair}/gate", data))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "1bad", "gate_type": "cr_gate"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_x", "gate_type": "nope"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_cr_gate", "gate_type": "cr_gate"}))
-    steps.append(_post(c, rec, f"/pair/{pair}/gate", {"gate_name": "g_typo", "gate_type": "cr_gate",
-                                                      "qc_correction_phase": "abc"}))
-    return {"form": form, "steps": steps}
 
 
 def _compare(name: str, got) -> None:
@@ -248,17 +219,10 @@ def _compare(name: str, got) -> None:
 
 
 @pytest.mark.parametrize("shape", list(_shapes()))
-def test_golden_b_pulses_create_copy_gaussian(tmp_path, recorder, shape):
+def test_golden_b_pulses_create_copy(tmp_path, recorder, shape):
     state, wiring, pair = _shapes()[shape]
     c = _client(tmp_path, shape, state, wiring)
     _compare(f"add_paths_b_{shape}.json", _record_b(c, recorder, pair, shape))
-
-
-@pytest.mark.parametrize("shape", list(_shapes()))
-def test_golden_c_pair_add_gate(tmp_path, recorder, shape):
-    state, wiring, pair = _shapes()[shape]
-    c = _client(tmp_path, shape, state, wiring)
-    _compare(f"add_paths_c_{shape}.json", _record_c(c, recorder, pair))
 
 
 def test_the_recorder_sees_every_write(tmp_path, recorder):
@@ -266,10 +230,12 @@ def test_the_recorder_sees_every_write(tmp_path, recorder):
     show up as at least one operation, a refusal as none."""
     state, wiring, pair = _shapes()["flux_coupler"]
     c = _client(tmp_path, "rec", state, wiring)
-    ok = _post(c, recorder, "/api/pulse/gaussian-cz", {"pair_id": pair})
-    assert ok["status"] == 200 and len(ok["ops"]) >= 4 and len({o[3] for o in ok["ops"]}) == 1
-    bad = _post(c, recorder, "/api/pulse/gaussian-cz", {"pair_id": pair})
-    assert bad["status"] == 409 and bad["ops"] == []
+    data = {"target_kind": "qubit", "qubit": "q1", "channel": "z", "op_name": "rec_probe",
+            "pulse_type": "SquarePulse", "length": "60", "amplitude": "0.05"}
+    ok = _post(c, recorder, "/api/pulse/create", data)
+    assert ok["status"] == 200 and len(ok["ops"]) >= 1
+    bad = _post(c, recorder, "/api/pulse/create", dict(data, op_name="1bad"))
+    assert bad["status"] >= 400 and bad["ops"] == []
 
 
 def test_golden_a_wizard_additions():

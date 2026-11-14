@@ -22,7 +22,7 @@ def _rule(css, selector_part, prop):
 
 def test_both_rule_dialogs_reset_picos_full_viewport_flex_box():
     css = (STATIC / "style.css").read_text(encoding="utf-8")
-    for sel in ("dialog.gen-rule-dlg", "dialog#gcz-several"):
+    for sel in ("dialog.gen-rule-dlg",):
         body = _rule(css, sel, "min-width")
         assert body and re.search(r"min-width\s*:\s*0", body), sel
         assert re.search(r"min-height\s*:\s*0", body), sel

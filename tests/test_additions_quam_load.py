@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from quam_state_manager.core import additions, config_generator, gaussian_cz
+from quam_state_manager.core import additions, config_generator, cz_gate_build
 
 
 def _find_env_python():
@@ -31,7 +31,7 @@ def test_d5_instance_after_rename_loads_and_all_pointers_resolve(tmp_path, monke
          "class": "quam.components.pulses.SquarePulse", "fields": {"length": 40, "amplitude": 0.05},
          "rule_id": "rule_1", "copied_value": {"length": 40, "amplitude": 0.05}},
         {"kind": "macro", "target": "qubit_pairs.q2-3.macros", "name": "cz_bm",
-         "class": gaussian_cz._CZ_GATE,
+         "class": cz_gate_build.CZ_GATE,
          "fields": {"flux_pulse_qubit": "#/qubits/q2/z/operations/cz_bm_pulse_q2_q3"},
          "rule_id": "rule_1"}]
     spec["additions"] = additions.rename_qubits(spec["additions"], {"q2": "qA"},
