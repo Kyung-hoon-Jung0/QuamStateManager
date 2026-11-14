@@ -213,6 +213,9 @@ form column and an evidence column.
 `attributesToSettle`; theme blocks in `ui-kit.css`; inline `style=` colours or sizes; a new
 `<dialog>` shell without `ui-dialog`; `window.confirm` / `alert`; a class with no rule.
 
+Classes are for the kit's look: every class name has a rule in `ui-kit.css` (or `style.css`).
+Script hooks are `data-*` attributes, never classes (check 9b counts class names without a rule per file).
+
 ## 7. The sample page `/ui-kit`
 
 Every part in each state (ok / warn / danger / note / neutral, disabled, long text, empty),
