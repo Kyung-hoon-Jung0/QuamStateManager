@@ -24,20 +24,31 @@ Report shape (``core_budget``)::
        }],
      "names_on_two_fems": [{"core": str, "fems": [[con, fem], ...]}],
      "both_keys": [dot paths of elements with both core and thread set],
+     "unresolved": [{"element": dot path, "field": str, "ref": Any, "reason": str}],
+     "error": None | exception class name,   # set when counting itself failed
     }
+
+An element is any dict with a port field (``opx_output*``, ``opx_input*``) or a
+non-empty ``digital_outputs``; a missing ``core`` / ``thread`` key is a null core.
+Port references are followed through absolute and relative pointers; one that
+cannot be read is listed in ``unresolved`` and reported, never dropped.
 
 Each ``Finding`` has category ``core_layout`` and severity ``warning``; its
 ``values`` carries the machine-readable part (``kind``, controller, FEM, counts,
 limit, firm / estimated) so a surface never parses the message text. The
 per-FEM finding's ``detail`` holds the fixed detail lines without the fix line,
 which depends on the surface; ``fem_detail(fem, fix_line)`` rebuilds it with one.
+
+Not implemented, because no state field identifies them: MW time tagging and the
+OPX+ limit on IF elements per controller.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from quam_state_manager.core.query import _follow_port_ref, _parse_port_ref, _resolve_port_dict
+from quam_state_manager.core.pointer_resolver import target_path
+from quam_state_manager.core.query import _parse_port_ref
 
 # --- limits ---------------------------------------------------------------
 # "Limits: MW-FEM 8, LF-FEM 16" cores per FEM.
@@ -77,9 +88,11 @@ READOUT_PROCESSES = 2
 # --- exact warning strings ------------------------------------------------
 ESTIMATED_LABEL = " (estimated)"
 FEM_MESSAGE = "{cores} / {limit} cores{ce} on {con} FEM {fem} ({type}-FEM); routes {routes} / 10{re}"
+CONTROLLER_MESSAGE = "{cores} / {limit} cores{ce} on {con} (OPX+); routes {routes} / 10{re}"
 LINE_PREFIX = "Core layout warning: {message}"
 DETAIL_GROUPS = "Largest groups: {groups}."
 DETAIL_GROUP_ITEM = "{name} ({cost})"
+DETAIL_OWN_ITEM = "{element} (own, {cost})"
 OWN_CORE_NAME = "own"
 FIX_RECOMMEND = "Fix: press Recommend core layout, or move elements off this FEM."
 FIX_REVIEW = "Fix: tick Share one core per qubit (xy + readout), or move elements off this FEM."
@@ -90,8 +103,19 @@ DETAIL_ESTIMATED = "Estimated: {terms}."
 DETAIL_OTHER_CAUSE = ("If a program still fails to allocate resources while these counts are within limits, "
                       "another program open on the same cluster may be using cores from the same budget.")
 OSCILLATOR_MESSAGE = "{k} oscillators on core {name} on {con} FEM {fem} (limit 6, estimated)"
+OSCILLATOR_MESSAGE_CONTROLLER = "{k} oscillators on core {name} on {con} (limit 6, estimated)"
 TWO_FEMS_MESSAGE = "Core name '{name}' on two FEMs; sharing needs the same FEM"
 BOTH_KEYS_MESSAGE = "{element}: thread ignored, core used"
+UNRESOLVED_MESSAGE = "{n} port references could not be read; the core count may be too low"
+UNRESOLVED_DETAIL = "Not read: {items}."
+UNRESOLVED_MORE = "{items}, and {more} more"
+UNRESOLVED_SHOWN = 5
+COUNT_FAILED_MESSAGE = "Core layout could not be counted ({exc})"
+
+REASON_DANGLING = "dangling reference"
+REASON_CYCLE = "cyclic reference"
+REASON_MALFORMED = "malformed port reference"
+REASON_TYPE_UNKNOWN = "port type unknown"
 
 TERM_TWO_FEMS = "element on two FEMs"
 TERM_LF_FAST = "LF port at 2 GSa/s"
@@ -108,8 +132,11 @@ CATEGORY = "core_layout"
 
 _OUTPUT_KEYS = ("opx_output", "opx_output_I", "opx_output_Q")
 _INPUT_KEYS = ("opx_input", "opx_input_I", "opx_input_Q")
-_ELEMENT_KEYS = frozenset(("core", "thread") + _OUTPUT_KEYS + _INPUT_KEYS)
+_PORT_KEYS = frozenset(_OUTPUT_KEYS + _INPUT_KEYS)
 _SKIP_TOP = frozenset(("wiring", "ports", "network", "extras"))
+_MW_SECTIONS = ("mw_outputs", "mw_inputs")
+_LF_SECTIONS = ("analog_outputs", "analog_inputs")
+_DIGITAL = "digital"
 
 
 def _num(x: float) -> str:
@@ -135,10 +162,17 @@ def _qop_version(state: dict) -> str | None:
         return None
 
 
+def _is_element(node: dict) -> bool:
+    if _PORT_KEYS & set(node):
+        return True
+    dig = node.get("digital_outputs")
+    return isinstance(dig, dict) and bool(dig)
+
+
 def _iter_elements(node: Any, path: tuple, out: list) -> None:
     if isinstance(node, dict):
-        if path and _ELEMENT_KEYS & set(node):
-            out.append((".".join(path), node))
+        if path and _is_element(node):
+            out.append((path, node))
             return
         for k, v in node.items():
             if not isinstance(k, str) or k.startswith("__") or k == "digital_outputs":
@@ -151,45 +185,126 @@ def _iter_elements(node: Any, path: tuple, out: list) -> None:
             _iter_elements(v, path + (str(i),), out)
 
 
-def _resolve_port(root: dict, ref: Any) -> tuple[str, str, str | None, dict] | None:
-    """(port_type, controller, fem or None, port dict) for a port reference, else None."""
-    if isinstance(ref, (list, tuple)):
-        if len(ref) == 3:
-            return "", str(ref[0]), str(ref[1]), {}
-        if len(ref) == 2:
-            return "", str(ref[0]), None, {}
+class _Unresolved(Exception):
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _get_path(root: Any, path: tuple) -> Any:
+    obj = root
+    for seg in path:
+        if isinstance(obj, dict) and seg in obj:
+            obj = obj[seg]
+        elif isinstance(obj, list) and seg.isdigit() and int(seg) < len(obj):
+            obj = obj[int(seg)]
+        else:
+            raise _Unresolved(REASON_DANGLING)
+    return obj
+
+
+def _as_int(x: Any) -> int | None:
+    if isinstance(x, bool):
         return None
-    if not isinstance(ref, str):
-        return None
-    final = _follow_port_ref(root, ref) if ref.startswith("#/") else ref
-    if not final:
-        return None
-    parsed = _parse_port_ref(final)
-    if parsed:
-        ptype, con, fem, _port = parsed
-        return ptype, con, fem, _resolve_port_dict(root, final)
-    if final.startswith("#/ports/"):  # controller-level port, no FEM (OPX+ / OPX)
-        parts = final.split("/")
-        if len(parts) == 5:
-            return parts[2], parts[3], None, _resolve_port_dict(root, final)
+    if isinstance(x, int):
+        return x
+    if isinstance(x, float) and x.is_integer():
+        return int(x)
     return None
 
 
-def _fem_kind(root: dict, con: str, fem: str | None, hint: str = "") -> str:
-    if fem is None:
-        return "OPX+"
-    if hint.startswith("mw_"):
+def _section_for(root: dict, con: str, fem: str, sections: tuple) -> str | None:
+    """The first ports section that declares (con, fem)."""
+    ports = root.get("ports")
+    if not isinstance(ports, dict):
+        return None
+    for t in sections:
+        sec = ports.get(t)
+        if isinstance(sec, dict) and isinstance(sec.get(con), dict) and fem in sec[con]:
+            return t
+    return None
+
+
+def _fem_kind(root: dict, con: str, fem: str, ptype: str) -> str:
+    """MW / LF for an OPX1000 FEM, from the port type or else the state's ports section."""
+    if ptype.startswith("mw_"):
         return "MW"
-    if hint.startswith("analog_"):
+    if ptype.startswith("analog_"):
         return "LF"
-    ports = root.get("ports") if isinstance(root.get("ports"), dict) else {}
-    for t in ("mw_outputs", "mw_inputs"):
-        try:
-            if fem in ports[t][con]:
-                return "MW"
-        except (KeyError, TypeError):
-            pass
-    return "LF"
+    if _section_for(root, con, fem, _MW_SECTIONS):
+        return "MW"
+    if _section_for(root, con, fem, _LF_SECTIONS):
+        return "LF"
+    raise _Unresolved(REASON_TYPE_UNKNOWN)
+
+
+def _port_dict(root: dict, ptype: str, con: str, fem: str | None, port: str) -> dict:
+    try:
+        node = root["ports"][ptype][con]
+        if fem is not None:
+            node = node[fem]
+        node = node[port]
+        return node if isinstance(node, dict) else {}
+    except (KeyError, TypeError, IndexError):
+        return {}
+
+
+def _from_sequence(root: dict, ref: Any, field: str) -> tuple[str, str, str | None, dict]:
+    """A ``[con, fem, port]`` or ``[con, port]`` reference."""
+    if len(ref) not in (2, 3) or not isinstance(ref[0], str) or not ref[0]:
+        raise _Unresolved(REASON_MALFORMED)
+    nums = [_as_int(x) for x in ref[1:]]
+    if any(n is None for n in nums):
+        raise _Unresolved(REASON_MALFORMED)
+    con = ref[0]
+    if len(ref) == 2:
+        return "OPX+", con, None, {}
+    fem, port = str(nums[0]), str(nums[1])
+    if field in _INPUT_KEYS:
+        own = ("mw_inputs", "analog_inputs")
+    elif field == _DIGITAL:
+        own = ("digital_outputs",)
+    else:
+        own = ("mw_outputs", "analog_outputs")
+    kind = _fem_kind(root, con, fem, "")
+    ptype = _section_for(root, con, fem, own) or ""
+    return kind, con, fem, _port_dict(root, ptype, con, fem, port) if ptype else {}
+
+
+def _resolve_port(root: dict, holder: tuple, ref: Any, field: str) -> tuple[str, str, str | None, dict]:
+    """(kind MW / LF / OPX+, controller, fem or None, port dict); raises _Unresolved.
+
+    ``holder`` is the path of the leaf that stores ``ref``, so relative pointers
+    resolve from where they are written; chains are followed until a port or a
+    repeat (cycle)."""
+    seen: set = set()
+    cur, where = ref, holder
+    while True:
+        if isinstance(cur, (list, tuple)):
+            return _from_sequence(root, cur, field)
+        if not isinstance(cur, str) or not cur:
+            raise _Unresolved(REASON_MALFORMED)
+        if not cur.startswith("#"):
+            parsed = _parse_port_ref(cur)  # label form, e.g. MW-FEM/1/2
+            if not parsed:
+                raise _Unresolved(REASON_MALFORMED)
+            ptype, con, fem, _port = parsed
+            return _fem_kind(root, con, fem, ptype), con, fem, {}
+        tp = target_path(root, cur, where)
+        if not tp:
+            raise _Unresolved(REASON_DANGLING)
+        if tp[0] == "ports":
+            if len(tp) == 4:  # controller-level port, no FEM (OPX+ / OPX)
+                return "OPX+", tp[2], None, _port_dict(root, tp[1], tp[2], None, tp[3])
+            if len(tp) == 5:
+                ptype, con, fem, port = tp[1], tp[2], tp[3], tp[4]
+                return _fem_kind(root, con, fem, ptype), con, fem, _port_dict(root, ptype, con, fem, port)
+            raise _Unresolved(REASON_MALFORMED)
+        key = tuple(tp)
+        if key in seen:
+            raise _Unresolved(REASON_CYCLE)
+        seen.add(key)
+        cur, where = _get_path(root, key), key
 
 
 def _is_fast(port: dict) -> bool:
@@ -199,44 +314,59 @@ def _is_fast(port: dict) -> bool:
         return False
 
 
-def _element_parts(root: dict, elem: dict) -> tuple[dict, int]:
-    """Per (con, fem): {"kind", "terms": [(cost, firm, term_label)], "routes"}; and route total."""
+def _element_parts(root: dict, path: tuple, elem: dict, unresolved: list) -> tuple[dict, int]:
+    """Per (con, fem): {"kind", "terms": [(cost, firm, term_label)], "routes"}; and route total.
+
+    A reference that cannot be read goes to ``unresolved``; a digital route whose
+    port cannot be read is counted in the total but charged to no FEM."""
     parts: dict[tuple, dict] = {}
+    dotted = ".".join(path)
 
     def slot(con, fem, kind):
         return parts.setdefault((con, fem), {"kind": kind, "outputs": [], "inputs": [], "digital": 0})
 
-    for k in _OUTPUT_KEYS:
-        r = _resolve_port(root, elem.get(k))
-        if r:
-            ptype, con, fem, pd = r
-            slot(con, fem, _fem_kind(root, con, fem, ptype))["outputs"].append((k, pd))
-    for k in _INPUT_KEYS:
-        r = _resolve_port(root, elem.get(k))
-        if r:
-            ptype, con, fem, pd = r
-            slot(con, fem, _fem_kind(root, con, fem, ptype))["inputs"].append((k, pd))
+    def resolve(field, label, ref, holder):
+        try:
+            return _resolve_port(root, holder, ref, field)
+        except _Unresolved as exc:
+            reason = exc.reason
+        except RecursionError:
+            reason = REASON_CYCLE
+        unresolved.append({"element": dotted, "field": label, "ref": ref, "reason": reason})
+        return None
+
+    fast = False  # doubling follows the element's own LF ports
+    for keys, bucket in ((_OUTPUT_KEYS, "outputs"), (_INPUT_KEYS, "inputs")):
+        for k in keys:
+            ref = elem.get(k)
+            if ref is None:
+                continue
+            r = resolve(k, k, ref, path + (k,))
+            if r:
+                kind, con, fem, pd = r
+                slot(con, fem, kind)[bucket].append(k)
+                if kind == "LF" and _is_fast(pd):
+                    fast = True
     routes = 0
     dig = elem.get("digital_outputs")
     if isinstance(dig, dict):
-        for entry in dig.values():
+        for dk, entry in dig.items():
             routes += 1
+            label = f"digital_outputs.{dk}.opx_output"
             ref = entry.get("opx_output") if isinstance(entry, dict) else None
-            r = _resolve_port(root, ref)
+            if ref is None:
+                unresolved.append({"element": dotted, "field": label, "ref": None, "reason": REASON_DANGLING})
+                continue
+            r = resolve(_DIGITAL, label, ref, path + ("digital_outputs", str(dk), "opx_output"))
             if r:
-                _ptype, con, fem, _pd = r
-                slot(con, fem, _fem_kind(root, con, fem))["digital"] += 1
-            else:  # unresolvable digital port: the route still counts, on no FEM
-                parts.setdefault(("?", "?"), {"kind": "?", "outputs": [], "inputs": [], "digital": 0})["digital"] += 1
+                kind, con, fem, _pd = r
+                slot(con, fem, kind)["digital"] += 1
 
     out: dict[tuple, dict] = {}
     for key, p in parts.items():
-        if key == ("?", "?"):
-            continue
         kind, terms = p["kind"], []
         n_out = len(p["outputs"])
-        fast = any(_is_fast(pd) for _k, pd in p["outputs"] + p["inputs"])
-        iq_out = n_out >= 2 or any(k != "opx_output" for k, _ in p["outputs"])
+        iq_out = n_out >= 2 or any(k != "opx_output" for k in p["outputs"])
         if kind == "MW":
             if n_out:
                 terms.append((MW_OUTPUT_COST, True, None))
@@ -282,14 +412,20 @@ def _has_if(elem: dict) -> bool:
     return elem.get("intermediate_frequency") is not None
 
 
+def _empty_report() -> dict:
+    return {"qop_version": None, "fems": [], "names_on_two_fems": [], "both_keys": [],
+            "unresolved": [], "error": None}
+
+
 def core_budget(state: dict) -> dict:
-    """The per-FEM report; see the module docstring. Never raises."""
-    report: dict = {"qop_version": None, "fems": [], "names_on_two_fems": [], "both_keys": []}
+    """The per-FEM report; see the module docstring. Never raises; a failure sets ``error``."""
     if not isinstance(state, dict):
-        return report
+        return _empty_report()
     try:
-        return _core_budget(state, report)
-    except Exception:  # never fail on chip shape
+        return _core_budget(state, _empty_report())
+    except Exception as exc:  # never fail on chip shape, but say so
+        report = _empty_report()
+        report["error"] = type(exc).__name__
         return report
 
 
@@ -299,30 +435,32 @@ def _core_budget(root: dict, report: dict) -> dict:
     elements: list = []
     _iter_elements(root, (), elements)
     fems: dict[tuple, dict] = {}
-    name_fems: dict[str, set] = {}
+    name_fems: dict[str, dict] = {}  # name -> element -> FEMs
 
-    for path, elem in elements:
+    for tpath, elem in elements:
+        path = ".".join(tpath)
         name, _src = effective_core_name(elem)
         c, t = elem.get("core"), elem.get("thread")
         if isinstance(c, str) and c and isinstance(t, str) and t:
             report["both_keys"].append(path)
-        parts, _routes = _element_parts(root, elem)
+        parts, _routes = _element_parts(root, tpath, elem, report["unresolved"])
         two = len(parts) > 1
+        if name is not None and parts:
+            name_fems.setdefault(name, {})[path] = set(parts)
         for (con, fem), p in parts.items():
             f = fems.setdefault((con, fem), {"kind": p["kind"], "named": {}, "own": [], "routes": 0})
             f["routes"] += p["routes"]
             cost, firm, labels = _cost_of(p["terms"], two)
             member = {"element": path, "cost": cost, "firm_cost": firm, "labels": labels,
                       "if": _has_if(elem)}
-            if name is not None:
-                name_fems.setdefault(name, set()).add((con, fem))
             if name is None or two:
                 f["own"].append(member)
             else:
                 f["named"].setdefault(name, []).append(member)
 
-    for name, where in sorted(name_fems.items()):
-        if len(where) > 1:
+    for name, per_elem in sorted(name_fems.items()):
+        where = set().union(*per_elem.values())
+        if len(per_elem) > 1 and len(where) > 1:
             report["names_on_two_fems"].append({"core": name, "fems": [list(w) for w in sorted(where, key=str)]})
 
     for (con, fem), f in sorted(fems.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
@@ -369,13 +507,26 @@ def _core_budget(root: dict, report: dict) -> dict:
     return report
 
 
+def _place(fem: dict) -> str:
+    """Where a FEM entry sits, as the location text shows it."""
+    if fem["fem"] is None:
+        return f"{fem['controller']} (OPX+)"
+    return f"{fem['controller']} / FEM {fem['fem']} ({fem['fem_type']}-FEM)"
+
+
 def fem_message(fem: dict) -> str:
-    return FEM_MESSAGE.format(
+    template = CONTROLLER_MESSAGE if fem["fem"] is None else FEM_MESSAGE
+    return template.format(
         cores=_num(fem["cores"]["count"]), limit=fem["cores"]["limit"],
         ce=ESTIMATED_LABEL if fem["cores"]["estimated"] else "",
-        con=fem["controller"], fem=fem["fem"] if fem["fem"] is not None else "-",
-        type=fem["fem_type"],
+        con=fem["controller"], fem=fem["fem"], type=fem["fem_type"],
         routes=fem["routes"]["count"], re=ESTIMATED_LABEL if fem["routes"]["estimated"] else "")
+
+
+def _group_item(g: dict) -> str:
+    if g["core"]:
+        return DETAIL_GROUP_ITEM.format(name=g["core"], cost=_num(g["cost"]))
+    return DETAIL_OWN_ITEM.format(element=g["elements"][0], cost=_num(g["cost"]))
 
 
 def fem_detail(fem: dict, fix_line: str | None = None) -> str:
@@ -383,8 +534,7 @@ def fem_detail(fem: dict, fix_line: str | None = None) -> str:
     lines = []
     top = fem["groups"][:3]
     if top:
-        lines.append(DETAIL_GROUPS.format(groups=", ".join(
-            DETAIL_GROUP_ITEM.format(name=g["core"] or OWN_CORE_NAME, cost=_num(g["cost"])) for g in top)))
+        lines.append(DETAIL_GROUPS.format(groups=", ".join(_group_item(g) for g in top)))
     if fix_line:
         lines.append(fix_line)
     lines.append(DETAIL_STATIC)
@@ -396,15 +546,39 @@ def fem_detail(fem: dict, fix_line: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def _unresolved_detail(items: list) -> str:
+    names = [f"{u['element']}.{u['field']}" for u in items]
+    shown = ", ".join(names[:UNRESOLVED_SHOWN])
+    if len(names) > UNRESOLVED_SHOWN:
+        shown = UNRESOLVED_MORE.format(items=shown, more=len(names) - UNRESOLVED_SHOWN)
+    return UNRESOLVED_DETAIL.format(items=shown)
+
+
+def _failed(Finding, exc_name: str):
+    return Finding(severity="warning", category=CATEGORY, location=CATEGORY,
+                   message=COUNT_FAILED_MESSAGE.format(exc=exc_name),
+                   values={"kind": "count_failed", "error": exc_name})
+
+
 def core_budget_findings(state: dict) -> list:
     """Warnings for every (controller, FEM) over its core or route limit, every group over the
-    oscillator cap, every core name on two FEMs and every element with both core and thread."""
+    oscillator cap, every core name on two FEMs, every element with both core and thread, and
+    the port references that could not be read. A counting failure is one finding, never silence."""
     from quam_state_manager.core.diagnostics import Finding
 
-    rep = core_budget(state)
+    try:
+        rep = core_budget(state)
+        if rep.get("error"):
+            return [_failed(Finding, rep["error"])]
+        return _findings(Finding, rep)
+    except Exception as exc:
+        return [_failed(Finding, type(exc).__name__)]
+
+
+def _findings(Finding, rep: dict) -> list:
     out: list = []
     for f in rep["fems"]:
-        loc = f"{f['controller']} / FEM {f['fem']} ({f['fem_type']}-FEM)"
+        loc = _place(f)
         over_cores = f["cores"]["count"] > f["cores"]["limit"]
         over_routes = f["routes"]["count"] > f["routes"]["limit"]
         if over_cores or over_routes:
@@ -416,10 +590,11 @@ def core_budget_findings(state: dict) -> list:
                                                   "estimated_terms")}}))
         for g in f["groups"]:
             if g["core"] and g["oscillators"] > OSCILLATOR_LIMIT:
+                template = OSCILLATOR_MESSAGE_CONTROLLER if f["fem"] is None else OSCILLATOR_MESSAGE
                 out.append(Finding(
                     severity="warning", category=CATEGORY, location=loc,
-                    message=OSCILLATOR_MESSAGE.format(k=g["oscillators"], name=g["core"],
-                                                      con=f["controller"], fem=f["fem"]),
+                    message=template.format(k=g["oscillators"], name=g["core"],
+                                            con=f["controller"], fem=f["fem"]),
                     values={"kind": "oscillators", "controller": f["controller"], "fem": f["fem"],
                             "core": g["core"], "count": g["oscillators"], "limit": OSCILLATOR_LIMIT,
                             "estimated": True, "elements": list(g["elements"])}))
@@ -431,4 +606,11 @@ def core_budget_findings(state: dict) -> list:
         out.append(Finding(severity="warning", category=CATEGORY, location=p, jump_path=p,
                            message=BOTH_KEYS_MESSAGE.format(element=p),
                            values={"kind": "both_keys", "element": p}))
+    un = rep["unresolved"]
+    if un:
+        out.append(Finding(severity="warning", category=CATEGORY, location=un[0]["element"],
+                           jump_path=un[0]["element"],
+                           message=UNRESOLVED_MESSAGE.format(n=len(un)), detail=_unresolved_detail(un),
+                           values={"kind": "unresolved_ports", "count": len(un),
+                                   "unresolved": [dict(u) for u in un]}))
     return out

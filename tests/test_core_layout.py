@@ -73,8 +73,9 @@ class Chip:
             "sampling_rate": rate}
         return f"#/ports/{ptype}/{con}/{fem}/{p}"
 
-    def el(self, q, role, core=None, **ports):
-        e = {"core": core, "thread": None, "intermediate_frequency": 1e8, "digital_outputs": {}}
+    def el(self, q, role, core=None, bare=False, **ports):
+        e = {} if bare else {"core": core, "thread": None}
+        e.update({"intermediate_frequency": 1e8, "digital_outputs": {}})
         e.update(ports)
         self.s["qubits"].setdefault(q, {})[role] = e
         return e
@@ -124,7 +125,8 @@ def test_example_message_with_four_routes():
     assert f["cores"]["count"] == 10.0  # digital 0.5 under xy 1: max, not sum
     assert cl.fem_message(f) == SPEC_EXAMPLE
     d = cl.fem_detail(f, SPEC_FIX_RECOMMEND).split("\n")
-    assert d == ["Largest groups: own (1), own (1), own (1).", SPEC_FIX_RECOMMEND, SPEC_STATIC,
+    assert d == ["Largest groups: qubits.q0.resonator (own, 1), qubits.q0.xy (own, 1), "
+                 "qubits.q1.resonator (own, 1).", SPEC_FIX_RECOMMEND, SPEC_STATIC,
                  SPEC_ROUTES.format(routes=4), "Estimated: QOP version unknown.", SPEC_OTHER_CAUSE]
     assert SPEC_PREFIX.format(message=cl.fem_message(f)) == "Core layout warning: " + SPEC_EXAMPLE
 
@@ -205,10 +207,10 @@ def test_malformed_states_do_not_raise():
     c.mw_qubit("q0")
     c.el("q1", "xy", opx_output="#/wiring/qubits/q1/xy/opx_output")  # dangling
     c.el("q2", "xy", opx_output=42)
-    del c.s["ports"]
     rep = cl.core_budget(c.s)
-    # without the ports section the refs still parse; FEM kind falls back
-    assert rep["fems"] and sum(f["cores"]["count"] for f in rep["fems"]) > 0
+    assert fem(rep)["cores"]["count"] == 2.0  # q0 exactly; the two bad refs are charged nowhere
+    assert sorted((u["element"], u["reason"]) for u in rep["unresolved"]) == [
+        ("qubits.q1.xy", "dangling reference"), ("qubits.q2.xy", "malformed port reference")]
 
 
 def test_dangling_ref_counts_the_rest():
@@ -391,8 +393,212 @@ def test_oscillator_null_and_absent_if_count_one_ref_counts():
     assert fem(cl.core_budget(c.s))["groups"][0]["oscillators"] == 7
 
 
-def test_findings_never_errors():
+def test_twenty_qubits_one_warning_with_exact_values():
     c = Chip()
     for i in range(20):
         c.mw_qubit(f"q{i}")
-    assert all(f.severity == "warning" for f in cl.core_budget_findings(copy.deepcopy(c.s)))
+    fs = cl.core_budget_findings(copy.deepcopy(c.s))
+    assert [f.values["kind"] for f in fs] == ["fem_budget"]
+    assert fs[0].severity == "warning" and fs[0].values["cores"]["count"] == 40.0
+    assert fs[0].location == "con1 / FEM 1 (MW-FEM)"
+
+
+# --- element recognition, pointers, tuple refs ------------------------------
+def test_digital_only_without_core_keys_counted():
+    c = Chip()
+    c.s["ports"]["mw_outputs"] = {"con1": {"1": {}}}
+    e = c.el("q0", "sw", bare=True)
+    e["digital_outputs"]["d"] = {"opx_output": c.port("digital_outputs", "con1", 1)}
+    assert "core" not in e and "thread" not in e
+    f = fem(cl.core_budget(c.s))
+    assert f["cores"]["count"] == 0.5 and f["routes"]["count"] == 1
+
+
+def test_element_without_core_keys_is_null_core():
+    c = Chip()
+    for i in range(9):
+        c.el(f"q{i}", "xy", bare=True, opx_output=c.port("mw_outputs", "con1", 1))
+    assert fem(cl.core_budget(c.s))["cores"]["count"] == 9.0
+    assert len(core_findings(c.s)) == 1
+
+
+def test_relative_pointer_chain_of_six_hops_resolves():
+    c = Chip()
+    e = c.el("q0", "xy", opx_output="#./h1")
+    for i in range(1, 6):  # opx_output plus h1..h5 = six pointers, mixing #./ and #../
+        e[f"h{i}"] = f"#../xy/h{i + 1}" if i % 2 else f"#./h{i + 1}"
+    e["h6"] = c.port("mw_outputs", "con1", 1)
+    rep = cl.core_budget(c.s)
+    assert rep["unresolved"] == [] and fem(rep)["cores"]["count"] == 1.0
+
+
+def test_parent_pointer_resolves():
+    c = Chip()
+    c.s["qubits"]["q0"] = {"x": {"opx_output": c.port("mw_outputs", "con1", 1)}}
+    c.el("q0", "xy", opx_output="#../x/opx_output")
+    rep = cl.core_budget(c.s)
+    assert fem(rep)["cores"]["count"] == 2.0 and rep["unresolved"] == []
+
+
+def test_cycle_is_unresolved_and_reported():
+    c = Chip()
+    e = c.el("q0", "xy", opx_output="#./a")
+    e["a"], e["b"] = "#./b", "#./a"
+    rep = cl.core_budget(c.s)
+    assert [u["reason"] for u in rep["unresolved"]] == ["cyclic reference"]
+    fs = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "unresolved_ports"]
+    assert len(fs) == 1 and fs[0].severity == "warning" and fs[0].category == "core_layout"
+    assert fs[0].message == "1 port references could not be read; the core count may be too low"
+    assert fs[0].detail == "Not read: qubits.q0.xy.opx_output."
+
+
+def test_unresolved_detail_lists_five():
+    c = Chip()
+    for i in range(7):
+        c.el(f"q{i}", "xy", opx_output=f"#/wiring/none/{i}")
+    f = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "unresolved_ports"][0]
+    assert f.message.startswith("7 port references")
+    assert f.detail == ("Not read: qubits.q0.xy.opx_output, qubits.q1.xy.opx_output, qubits.q2.xy.opx_output, "
+                        "qubits.q3.xy.opx_output, qubits.q4.xy.opx_output, and 2 more.")
+
+
+def test_dead_digital_ref_unresolved():
+    c = Chip()
+    e = c.el("q0", "xy", opx_output=c.port("mw_outputs", "con1", 1))
+    e["digital_outputs"]["d"] = {"opx_output": "#/wiring/gone"}
+    rep = cl.core_budget(c.s)
+    assert fem(rep)["routes"]["count"] == 0
+    assert rep["unresolved"] == [{"element": "qubits.q0.xy", "field": "digital_outputs.d.opx_output",
+                                  "ref": "#/wiring/gone", "reason": "dangling reference"}]
+
+
+def test_tuple_refs_malformed_parts():
+    for bad in (["con1", None, 1], ["con1", "1", 1], ["con1", True, 1], ["", 1, 1], [None, 1, 1],
+                ["con1", 1, 1.5]):
+        c = Chip()
+        c.s["ports"]["mw_outputs"] = {"con1": {"1": {"1": {}}}}
+        c.el("q0", "xy", opx_output=bad)
+        rep = cl.core_budget(c.s)
+        assert rep["fems"] == [], bad
+        assert [u["reason"] for u in rep["unresolved"]] == ["malformed port reference"], bad
+
+
+def test_tuple_ref_float_fem_joins_int_fem():
+    c = Chip()
+    for i in range(9):
+        c.el(f"q{i}", "xy", opx_output=c.port("mw_outputs", "con1", 1))
+    c.el("qx", "xy", opx_output=["con1", 1.0, 1])
+    rep = cl.core_budget(c.s)
+    assert len(rep["fems"]) == 1 and fem(rep)["cores"]["count"] == 10.0
+    fs = core_findings(c.s)
+    assert len(fs) == 1 and fs[0].message.startswith("10 / 8 cores on con1 FEM 1 (MW-FEM)")
+
+
+def test_tuple_ref_without_ports_entry_is_type_unknown():
+    c = Chip()
+    c.el("q0", "xy", opx_output=["con1", 3, 1])
+    rep = cl.core_budget(c.s)
+    assert rep["fems"] == [] and [u["reason"] for u in rep["unresolved"]] == ["port type unknown"]
+    c.s["ports"]["analog_outputs"] = {"con1": {"3": {}}}
+    assert fem(cl.core_budget(c.s), fem_id=3)["fem_type"] == "LF"
+
+
+def test_label_form_ref():
+    c = Chip()
+    c.el("q0", "xy", opx_output="MW-FEM/2/1")
+    f = fem(cl.core_budget(c.s), fem_id=2)
+    assert f["fem_type"] == "MW" and f["cores"]["count"] == 1.0
+
+
+# --- names on two FEMs, OPX+, detail, fast, failure -------------------------
+def test_single_two_fem_element_alone_no_name_finding():
+    c = Chip()
+    c.el("q0", "resonator", "k", opx_output=c.port("mw_outputs", "con1", 1),
+         opx_input=c.port("mw_inputs", "con1", 2))
+    kinds = [f.values["kind"] for f in cl.core_budget_findings(c.s)]
+    assert "name_on_two_fems" not in kinds
+    c.el("q1", "xy", "k", opx_output=c.port("mw_outputs", "con1", 1))
+    fs = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "name_on_two_fems"]
+    assert len(fs) == 1 and fs[0].values["fems"] == [["con1", "1"], ["con1", "2"]]
+
+
+def test_two_elements_same_name_same_fem_no_name_finding():
+    c = Chip()
+    c.el("q0", "xy", "k", opx_output=c.port("mw_outputs", "con1", 1))
+    c.el("q1", "xy", "k", opx_output=c.port("mw_outputs", "con1", 1))
+    assert cl.core_budget_findings(c.s) == []
+
+
+def test_opx_plus_message_and_location():
+    c = Chip()
+    c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 21)}}}
+    for i in range(1, 20):
+        c.el(f"q{i}", "z", opx_output=f"#/ports/analog_outputs/con1/{i}")
+    fs = core_findings(c.s)
+    assert len(fs) == 1
+    assert fs[0].message == "19 / 18 cores (estimated) on con1 (OPX+); routes 0 / 10 (estimated)"
+    assert fs[0].location == "con1 (OPX+)"
+    assert "FEM" not in fs[0].message and "FEM" not in fs[0].location
+
+
+def test_opx_plus_oscillator_message():
+    c = Chip()
+    c.s["ports"] = {"analog_outputs": {"con1": {str(i): {} for i in range(1, 8)}}}
+    for i in range(1, 8):
+        c.el(f"q{i}", "z", "g", opx_output=f"#/ports/analog_outputs/con1/{i}")
+    fs = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "oscillators"]
+    assert [f.message for f in fs] == ["7 oscillators on core g on con1 (limit 6, estimated)"]
+    assert fs[0].location == "con1 (OPX+)"
+
+
+def test_oscillator_finding_values():
+    c = Chip()
+    for i in range(7):
+        c.el(f"q{i}", "xy", "big", opx_output=c.port("mw_outputs", "con1", 1))
+    f = [f for f in cl.core_budget_findings(c.s) if f.values["kind"] == "oscillators"][0]
+    assert f.values == {"kind": "oscillators", "controller": "con1", "fem": 1, "core": "big", "count": 7,
+                        "limit": 6, "estimated": True, "elements": [f"qubits.q{i}.xy" for i in range(7)]}
+
+
+def test_detail_names_null_core_elements():
+    c = Chip()
+    for q in ("a0", "a1"):
+        c.el(q, "iq", opx_output_I=c.port("analog_outputs", "con1", 5),
+             opx_output_Q=c.port("analog_outputs", "con1", 5))
+    for i in range(13):
+        c.el(f"g{i}", "z", f"n{i:02d}", opx_output=c.port("analog_outputs", "con1", 5))
+    fs = core_findings(c.s)
+    assert fs[0].message.startswith("17 / 16 cores")
+    assert fs[0].detail.split("\n")[0] == "Largest groups: qubits.a0.iq (own, 2), qubits.a1.iq (own, 2), n00 (1)."
+
+
+def test_detail_fix_line_absent_and_given():
+    c = Chip()
+    for i in range(5):
+        c.mw_qubit(f"q{i}")
+    f = fem(cl.core_budget(c.s))
+    plain = cl.fem_detail(f).split("\n")
+    assert plain[1] == SPEC_STATIC and SPEC_FIX_REVIEW not in plain
+    given = cl.fem_detail(f, SPEC_FIX_REVIEW).split("\n")
+    assert given[1] == SPEC_FIX_REVIEW and given[2] == SPEC_STATIC
+
+
+def test_fast_doubling_per_element_across_fems():
+    c = Chip()
+    c.el("q0", "rr", opx_output=c.port("analog_outputs", "con1", 5),
+         opx_input=c.port("analog_inputs", "con1", 6, rate=2e9))
+    rep = cl.core_budget(c.s)
+    assert fem(rep, fem_id=5)["cores"]["count"] == 2.0  # single 1, doubled by the element's fast input
+    assert fem(rep, fem_id=6)["cores"]["count"] == 4.0
+
+
+def test_internal_error_returns_count_failed(monkeypatch):
+    def boom(*_a, **_k):
+        raise ValueError("x")
+    monkeypatch.setattr(cl, "_iter_elements", boom)
+    c = Chip()
+    c.mw_qubit("q0")
+    fs = cl.core_budget_findings(c.s)
+    assert len(fs) == 1 and fs[0].values["kind"] == "count_failed"
+    assert fs[0].message == "Core layout could not be counted (ValueError)" and fs[0].severity == "warning"
+    assert cl.core_budget(c.s)["error"] == "ValueError"
