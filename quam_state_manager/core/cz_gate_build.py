@@ -679,7 +679,8 @@ def _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
 def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
          pulses: dict[str, dict] | None = None,
          copy_from: str | None = None,
-         model_gate: tuple[str, str] | None = None) -> dict[str, Any]:
+         model_gate: tuple[str, str] | None = None,
+         macro_fields: dict[str, Any] | None = None) -> dict[str, Any]:
     """Plan one new CZ gate. Never raises on chip shape; never changes *merged*.
 
     ``pulses`` maps a gate pulse field (``flux_pulse_qubit``,
@@ -689,7 +690,10 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     and keeps the model's pulse classes; its ``pulses`` entries only give
     field values. ``copy_from`` is another gate of the same pair whose
     matching field values seed the pulses. ``model_gate`` is ``(pair,
-    gate)`` for a class SM does not know. Malformed arguments are refusals.
+    gate)`` for a class SM does not know. ``macro_fields`` gives values for
+    the gate's own settings in a copied layout (keys the model macro has,
+    never a pulse field, a reset key or a reference); they are reported as
+    ``given`` in ``fields["macro"]``. Malformed arguments are refusals.
     A copied layout (``"layout": "copied"``) is a proposal: SM copies a
     structure it cannot describe, so the lab's own code must confirm it
     before it is written. ``"reset"`` lists the model keys the copy does
@@ -704,7 +708,7 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
     """
     try:
         return _plan_body(merged, pair_id, gate_name, gate_class, pulses,
-                          copy_from, model_gate)
+                          copy_from, model_gate, macro_fields)
     except Exception as exc:  # noqa: BLE001 -- the last net: plan never raises
         return _refuse([f"SM could not plan this gate ({type(exc).__name__}). "
                         "Nothing was changed. Report this with the gate class "
@@ -712,7 +716,7 @@ def plan(merged: dict, pair_id: str, *, gate_name: str, gate_class: str,
 
 
 def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
-               model_gate) -> dict[str, Any]:
+               model_gate, macro_fields=None) -> dict[str, Any]:
     bad = _argument_problem(pair_id, gate_name, gate_class, pulses, model_gate,
                             copy_from)
     if bad:
@@ -773,12 +777,18 @@ def _plan_body(merged, pair_id, gate_name, gate_class, pulses, copy_from,
     copy_source.raw = lambda field: (
         None if copy_macro is None else (copy_from, copy_macro.get(field)))
 
+    if macro_fields is not None and not isinstance(macro_fields, dict):
+        return _refuse(reasons + ["The gate settings must be given by key. Type them again."])
     if gate_class in GATE_CLASSES:
+        if macro_fields:
+            return _refuse(reasons + [
+                f"This gate class has no gate settings to change ({', '.join(sorted(macro_fields))}). "
+                "Remove them."])
         out = _plan_known(merged, pair_id, p, gate_name, gate_class, pulses,
                           lines, copy_source, reasons)
     else:
         out = _plan_copied(merged, pair_id, gate_name, gate_class, pulses,
-                           lines, copy_source, reasons, model_gate)
+                           lines, copy_source, reasons, model_gate, macro_fields)
     if "error" in out:
         return out
     # The plan never overwrites a path, never writes one twice and never
@@ -1324,8 +1334,33 @@ def default_model(merged: dict, pair_id: str, gate_class: str) -> tuple[str, str
     return cands[0] if cands else None
 
 
+def _apply_macro_fields(macro: dict, kept: dict, model: dict, pulse_keys,
+                        reset: list, macro_fields: dict | None, reasons: list) -> None:
+    """The person's values for the gate's own settings (copied layout only).
+
+    A key is accepted only when the model macro has it, it is not a pulse
+    field, not a key the copy resets (fidelity, phase shifts, spectators,
+    extras) and the model's value is not a reference; anything else is a
+    refusal naming the key. The lab check decides whether the value is valid."""
+    for k, v in (macro_fields or {}).items():
+        why = None
+        if k == "__class__" or k not in model:
+            why = f"The model gate has no setting named {k}. Remove it."
+        elif k in pulse_keys:
+            why = f"{k} is a pulse of the gate, not a setting. Change it in its pulse block."
+        elif k in reset:
+            why = f"{k} is not copied from the model gate (it starts empty). Remove it."
+        elif isinstance(model[k], str) and model[k].startswith("#"):
+            why = f"{k} holds a reference and is kept as it is. Remove it."
+        if why:
+            reasons.append(why)
+            continue
+        macro[k] = copy.deepcopy(v)
+        kept[k] = GIVEN
+
+
 def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
-                 copy_source, reasons, model_gate) -> dict[str, Any]:
+                 copy_source, reasons, model_gate, macro_fields=None) -> dict[str, Any]:
     if model_gate is None:
         model_gate = default_model(merged, pair_id, gate_class)
         if model_gate is None:
@@ -1396,6 +1431,7 @@ def _plan_copied(merged, pair_id, gate_name, gate_class, pulses, lines,
 
     macro, kept, reset = _structure_only(model, fields, all_operation_keys(merged))
     macro = norm(macro)
+    _apply_macro_fields(macro, kept, model, fields, reset, macro_fields, reasons)
     op_creates: list[tuple[str, Any]] = []
     provenance: dict[str, dict] = {}
     directions: dict[str, str] = {}

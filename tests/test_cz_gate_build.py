@@ -1837,3 +1837,39 @@ def test_qubits_without_flux_lines_point_at_the_coupler_only_class():
         err = _plan(s)["error"]
         assert "have no flux line" in err and "coupler-only gate class" in err
         assert "moving_qubit" not in err
+
+
+# ---------------------------------------------------------------- gate settings (macro_fields)
+
+def _lab_with_settings():
+    s = _lab_chip()
+    m = s["qubit_pairs"]["q1-2"]["macros"]["cz_tf"]
+    m["duration_ns"] = 40
+    m["link"] = "#./flux_pulse_control"
+    return s
+
+
+def test_macro_fields_change_a_copied_setting_and_report_given():
+    s = _lab_with_settings()
+    res = cgb.plan(s, "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   macro_fields={"mode": "slow", "duration_ns": 48})
+    macro = dict(res["creates"])["qubit_pairs.q2-3.macros.cz_new"]
+    assert macro["mode"] == "slow" and macro["duration_ns"] == 48
+    assert res["fields"]["macro"]["mode"] == cgb.GIVEN
+    assert res["fields"]["macro"]["duration_ns"] == cgb.GIVEN
+
+
+@pytest.mark.parametrize("key,word", [
+    ("flux_pulse_control", "pulse"), ("phase_shift_control", "not copied"),
+    ("unknown_key", "no setting named unknown_key"), ("link", "reference"),
+    ("__class__", "no setting")])
+def test_macro_fields_refuse_naming_the_key(key, word):
+    res = cgb.plan(_lab_with_settings(), "q2-3", gate_name="cz_new", gate_class=LAB_GATE,
+                   macro_fields={key: 1})
+    assert "error" in res and any(key in r and word in r for r in res["refusals"]), res
+
+
+def test_macro_fields_on_a_known_class_are_refused():
+    res = cgb.plan(_chip(), "q1-2", gate_name="cz_new", gate_class=cgb.CZ_GATE,
+                   pulses=_square(), macro_fields={"mode": "x"})
+    assert "error" in res and any("no gate settings" in r for r in res["refusals"])
