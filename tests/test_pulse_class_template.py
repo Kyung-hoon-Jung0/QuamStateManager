@@ -609,7 +609,7 @@ def test_reserved_names_cover_the_installed_pulse_base():
     assert line, out.stderr[-2000:]
     base = set(line[0][6:].split(","))
     assert "length" not in base
-    assert base <= T.PULSE_BASE_NAMES, sorted(base - T.PULSE_BASE_NAMES)
+    assert base == T.PULSE_BASE_NAMES, sorted(base ^ T.PULSE_BASE_NAMES)
     assert base <= T.reserved_field_names(), sorted(base - T.reserved_field_names())
 
 
@@ -783,3 +783,70 @@ def test_tokenize_failure_refuses_the_formula(monkeypatch):
     monkeypatch.setattr(T.tokenize, "generate_tokens", boom)
     with pytest.raises(T.TemplateError, match="could not be checked for strings"):
         T.render(spec_b())
+
+
+# ------------------------------------------------- review round 5 pins
+
+
+def test_parent_dataclass_fields_can_be_redeclared_but_methods_cannot():
+    from dataclasses import dataclass
+
+    @dataclass
+    class Base:
+        amplitude: float = 0.1
+
+        def foo(self):
+            return 0
+
+    names = T.public_attribute_names(Base)
+    assert names == frozenset({"foo"})
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    assert T.validate(s, parent_names=names) == []
+    s.fields.append(F("foo", "float", 1.0))
+    with pytest.raises(T.TemplateError, match="'foo' is reserved: the parent class Base"):
+        T.validate(s, parent_names=names)
+
+
+def test_pulse_parent_keeps_its_fixed_names_even_for_dataclass_fields():
+    from dataclasses import dataclass
+
+    pulse = dataclass(type("Pulse", (), {
+        "__module__": "quam.components.pulses",
+        "__annotations__": {"digital_marker": str}, "digital_marker": "ON"}))
+    assert T.public_attribute_names(pulse) == T.PULSE_BASE_NAMES
+
+
+@pytest.mark.parametrize("function", [T.render, T.rewrite, T.render_region])
+def test_preview_callers_are_told_to_validate_for_notes(function):
+    assert ("Notes come only from validate; callers that show a preview must call validate."
+            in function.__doc__)
+
+
+def test_unchecked_parent_note_explains_when_conflicts_appear():
+    s = spec_b()
+    s.parent = "lab_pulses.base.Base"
+    line, = T.validate(s)
+    assert ("A field with the same name as an attribute of that parent "
+            "shows up as an error only when the class is built." in line)
+    assert line.isascii() and " -- " not in line
+
+
+def test_case_variant_keys_keep_distinct_folders(tmp_path):
+    upper, lower = D._scope_key("ChipA"), D._scope_key("chipa")
+    assert upper != lower and upper.casefold() != lower.casefold()
+    assert D._scope_key("chip_a") == "chip_a"
+    D.save_draft(tmp_path, "ChipA", "SquaredAmp", "a")
+    D.save_draft(tmp_path, "chipa", "SquaredAmp", "b")
+    assert D.load_draft(tmp_path, "ChipA", "SquaredAmp") == b"a"
+    assert D.load_draft(tmp_path, "chipa", "SquaredAmp") == b"b"
+
+
+def test_windows_line_ending_only_on_the_begin_marker_is_named():
+    src = T.render(spec_a()).replace(T.REGION_BEGIN + "\n", T.REGION_BEGIN + "\r\n")
+    assert src.count("\r") == 1
+    p = T.parse(src)
+    assert not p.editable and p.reason == T.CRLF_LINE
+    with pytest.raises(T.TemplateError) as ei:
+        T.rewrite(src, spec_a())
+    assert str(ei.value) == T.CRLF_LINE

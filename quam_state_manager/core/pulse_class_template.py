@@ -30,7 +30,7 @@ import keyword
 import math
 import re
 import tokenize
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, is_dataclass
 
 TEMPLATE_VERSION = 1
 
@@ -88,7 +88,9 @@ PULSE_PARENT = "quam.components.pulses.Pulse"
 #: what validate says when the parent is another class whose attribute names
 #: it was not given: the reserved-name check covered only the Pulse base
 PARENT_NOT_CHECKED_LINE = ("Field names were checked only against the quam Pulse base: "
-                           "the attributes of the parent class {parent} were not checked.")
+                           "the attributes of the parent class {parent} were not checked. "
+                           "A field with the same name as an attribute of that parent "
+                           "shows up as an error only when the class is built.")
 
 #: characters Python or ``str.splitlines`` treat as a line break; a formula may
 #: use only the plain newline, which the template splits on
@@ -252,13 +254,13 @@ def validate(spec: ClassSpec, *, parent_names=None) -> list:
 
 
 def public_attribute_names(cls) -> frozenset:
-    """The one derivation of the names a class owns that a field may not
-    shadow: every public name ``dir`` shows (methods, properties, fields with
-    a default), ``length`` excepted. Standard library only, so the lab env can
-    call it on an imported parent; :data:`PULSE_BASE_NAMES` is its answer for
-    the quam Pulse, written out because SM never imports quam (a lab-env test
-    compares the two)."""
-    return frozenset(n for n in dir(cls) if not n.startswith("_")) - {"length"}
+    """Public attributes a field may not shadow, excluding dataclass fields
+    and ``length`` for other parents. Standard library only; the quam Pulse
+    keeps :data:`PULSE_BASE_NAMES` because SM never imports quam."""
+    if cls.__name__ == "Pulse" and cls.__module__.startswith("quam.components.pulses"):
+        return PULSE_BASE_NAMES
+    field_names = {f.name for f in fields(cls)} if is_dataclass(cls) else set()
+    return frozenset(n for n in dir(cls) if not n.startswith("_")) - {"length"} - field_names
 
 
 def _has_multi_line_string(formula: str) -> bool:
@@ -312,7 +314,10 @@ def _default_text(f: FieldSpec) -> str:
 
 
 def render_region(spec: ClassSpec) -> str:
-    """The region body (the lines between the two markers), newline-terminated."""
+    """The region body (the lines between the two markers), newline-terminated.
+
+    Notes come only from validate; callers that show a preview must call validate.
+    """
     validate(spec)
     lines = []
     for f in spec.fields:
@@ -330,7 +335,10 @@ def render_region(spec: ClassSpec) -> str:
 
 
 def render(spec: ClassSpec) -> str:
-    """The whole source file for a new class."""
+    """The whole source file for a new class.
+
+    Notes come only from validate; callers that show a preview must call validate.
+    """
     return _file_text(spec.class_name, spec.parent, render_region(spec))
 
 
@@ -446,6 +454,8 @@ def parse(text: str) -> Parsed:
 
 def rewrite(text: str, spec: ClassSpec) -> str:
     """*text* with only its region replaced by *spec*'s region.
+
+    Notes come only from validate; callers that show a preview must call validate.
 
     Raises :class:`TemplateError` with the reason :func:`parse` gave (changed
     markers, a changed region, Windows line endings) when the file cannot be

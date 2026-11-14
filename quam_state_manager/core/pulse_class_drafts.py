@@ -51,9 +51,11 @@ def _scope_key(scope: str) -> str:
     distinct keys keep distinct folders. That covers a Windows device name
     (any case, any extension), which Windows cannot make, and a name ending
     in "." (also "." and ".."), whose dot Windows drops: "chip." would
-    otherwise share the folder of "chip"."""
+    otherwise share the folder of "chip". Mixed-case keys are hashed too,
+    so case variants stay distinct on Windows."""
     from quam_state_manager.core.pulse_class_template import WINDOWS_DEVICE_NAMES
     if (isinstance(scope, str) and _SAFE.fullmatch(scope) and not scope.endswith(".")
+            and scope == scope.casefold()
             and scope.split(".", 1)[0].casefold() not in WINDOWS_DEVICE_NAMES):
         return scope
     return "s_" + hashlib.sha256(str(scope).encode("utf-8")).hexdigest()[:16]
