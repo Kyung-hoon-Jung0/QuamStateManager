@@ -1201,7 +1201,10 @@ window.ChipStatus.mount = function (opts) {
         };
     }
 
+    // D-NF2: a missing / non-finite value is "no value" (neutral), never a throw
+    var _NO_VALUE_RGB = [136, 136, 136];
     function hexToRgb(hex) {
+        if (typeof hex !== 'string') return _NO_VALUE_RGB.slice();
         hex = hex.replace('#', '');
         return [parseInt(hex.substring(0,2),16), parseInt(hex.substring(2,4),16), parseInt(hex.substring(4,6),16)];
     }
@@ -1210,6 +1213,7 @@ window.ChipStatus.mount = function (opts) {
     function _rgbCss(c) { return 'rgb(' + c.join(',') + ')'; }
 
     function interpolateColor(t, stops) {
+        if (typeof t !== 'number' || !isFinite(t) || !stops || !stops.length) return _rgbCss(_NO_VALUE_RGB);
         t = Math.max(0, Math.min(1, t));
         var idx = t * (stops.length - 1);
         var lo = Math.floor(idx), hi = Math.min(lo + 1, stops.length - 1);
@@ -1217,6 +1221,9 @@ window.ChipStatus.mount = function (opts) {
         var c1 = hexToRgb(stops[lo]), c2 = hexToRgb(stops[hi]);
         return _rgbCss([0, 1, 2].map(function (i) { return Math.round(c1[i] + (c2[i] - c1[i]) * f); }));
     }
+
+    // exposed for the non-finite selfcheck (D-NF2)
+    window.ChipStatus._interpolateColor = interpolateColor;
 
     function textColorForBg(rgbStr) {
         var m = rgbStr.match(/\d+/g);
@@ -1433,16 +1440,17 @@ window.ChipStatus.mount = function (opts) {
             var out = [], dropped = 0;
             topo.edges.forEach(function(e) {
                 if (!e.gate_fidelities) return;
+                var pairDropped = false;
                 // QA F-04: each tile takes its OWN per-pair best, so two tiles
                 // can quote two different pulses of one pair -- every entry
                 // carries the pulse it came from, and the hover names it.
                 var best = null, worst = null, bestGate = null, worstGate = null, bestGf = null;
                 window.ChipStatus._opRows(e).forEach(function(gf) {
                     if (!match(gf.metric)) return;
-                    if (gf.physical === false) dropped++;
+                    if (gf.physical === false) pairDropped = true;
                     var v = typeof gf.value === 'number' ? gf.value
                           : typeof gf.average_gate_fidelity === 'number' ? gf.average_gate_fidelity : null;
-                    if (v != null && (best == null || v > best)) { best = v; bestGate = gf.gate; bestGf = gf; }
+                    if (v != null && isFinite(v) && (best == null || v > best)) { best = v; bestGate = gf.gate; bestGf = gf; }
                     // the server dropped `value` and kept the number in
                     // `raw_value` (query._gate_fidelity_row) -- a fidelity
                     // outside (0,1]. It is never a candidate for `best`, but
@@ -1450,12 +1458,14 @@ window.ChipStatus.mount = function (opts) {
                     // is the failure this project keeps fixing (docs/94).
                     var r = typeof gf.raw_value === 'number' ? gf.raw_value
                           : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
-                    if (r != null && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) { worst = r; worstGate = gf.gate; }
+                    if (r != null && isFinite(r) && (worst == null || Math.abs(r - 1) > Math.abs(worst - 1))) { worst = r; worstGate = gf.gate; }
                 });
                 // the key the value was read from + a disagreement of its pulse
                 if (best != null) out.push({ id: _pairId(e), v: best, gate: bestGate,
                                              src: bestGf.metric, conflict: window.ChipStatus._gfConflictText(bestGf) });
                 else if (worst != null) out.push({ id: _pairId(e), v: worst, bad: true, gate: worstGate });
+                // D-NF4: "excluded" counts PAIRS left with no usable value
+                if (best == null && pairDropped) dropped++;
             });
             out.excluded = dropped;
             return out;
@@ -1471,10 +1481,9 @@ window.ChipStatus.mount = function (opts) {
         function aggE(entries) {
             var agg = computeAggregates(entries.filter(function(x) { return !x.bad; })
                                                .map(function(x) { return x.v; }));
-            // `excluded` (rows the server marked unphysical) is the truer count
-            // where the collector reports one: a pair keeps its place in the
-            // aggregate on another macro's value while a real number was still
-            // dropped, and saying 0 there would be the silent cap again.
+            // `excluded` is the collector's count of PAIRS left with no usable
+            // value (D-NF4): a pair that keeps a value on another row or macro
+            // is in the aggregate, so it is not excluded.
             agg.bad = typeof entries.excluded === 'number'
                 ? entries.excluded
                 : entries.filter(function(x) { return x.bad; }).length;
@@ -3798,7 +3807,8 @@ window.ChipStatus.mount = function (opts) {
                         : typeof gf.raw_average_gate_fidelity === 'number' ? gf.raw_average_gate_fidelity : null;
                     bad = val != null;
                 }
-                if (val == null) return;
+                // D-NF2: a NaN / infinite number is no measurement, not a cell
+                if (val == null || !isFinite(val)) return;
                 if (!rbData[rbType]) rbData[rbType] = {};
                 if (!rbData[rbType][gf.gate]) rbData[rbType][gf.gate] = [];
                 rbData[rbType][gf.gate].push({
@@ -3942,7 +3952,9 @@ window.ChipStatus.mount = function (opts) {
                 // tile sat it mid-scale (t=0.5) while its bar computed
                 // (v-min)/range = 0, the LOW end, and then flipped to mid-scale on
                 // the first bar-palette switch (recolorBarCharts reads the tile's t).
-                var _tOf = function (v) { return agg.count > 1 ? (v - agg.min) / range : 0.5; };
+                var _tOf = function (v) {
+                    if (typeof v !== 'number' || !isFinite(v)) return NaN;   // D-NF2: neutral colour
+                    return agg.count > 1 ? (v - agg.min) / range : 0.5; };
                 var scorer = outlierScorer(_physCz, (rbType !== 'StandardRB' && rbType !== 'InterleavedRB') ? {} : {   // robust MAD flag (this gate),
                     // spec-gated: an in-spec fidelity is never branded. XEB is not
                     // judged against the CZ-fidelity spec: SM does not know it is

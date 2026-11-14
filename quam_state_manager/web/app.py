@@ -16,6 +16,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from flask import Flask, current_app, jsonify, request
+from flask.json.provider import DefaultJSONProvider
 from markupsafe import Markup, escape
 
 from quam_state_manager.core import dir_sample
@@ -595,6 +597,40 @@ def warm_templates(app: Flask, *, first=None) -> int:
     return n
 
 
+def _finite_or_none(obj):
+    """``obj`` with every NaN / infinite float replaced by None (D-NF1)."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _finite_or_none(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_finite_or_none(v) for v in obj]
+    return obj
+
+
+class FiniteJSONProvider(DefaultJSONProvider):
+    """The app's JSON provider: never a bare NaN / Infinity token (D-NF1).
+
+    A NaN or infinite number stored in state is "no measurement", and bare
+    NaN is not JSON, so one such leaf blanked every consumer of a response.
+    The common case pays nothing: the payload is first encoded with
+    ``allow_nan=False``, which is byte-identical for finite data; only a
+    payload that actually holds a non-finite float is walked and re-encoded
+    with null in its place.
+    """
+
+    def dumps(self, obj, **kwargs):
+        kwargs.setdefault("allow_nan", False)
+        try:
+            return super().dumps(obj, **kwargs)
+        except ValueError as exc:
+            # only the non-finite refusal is ours to repair; a circular
+            # reference (also a ValueError) is raised as before
+            if "Out of range float" not in str(exc):
+                raise
+            return super().dumps(_finite_or_none(obj), **kwargs)
+
+
 def create_app(*, testing: bool = False, instance_path: str | None = None) -> Flask:
     """Create and configure the Flask application.
 
@@ -634,6 +670,7 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         flask_kwargs["instance_relative_config"] = True
 
     app = Flask(__name__, **flask_kwargs)
+    app.json = FiniteJSONProvider(app)
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["TESTING"] = testing
     if testing:
