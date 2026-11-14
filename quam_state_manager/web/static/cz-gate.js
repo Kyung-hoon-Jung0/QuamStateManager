@@ -597,12 +597,16 @@
         var list = cs.map(function (c) { return { name: CHECK_WORDS[c.name] || c.name, state: CHECK_STATE[c.status] || 'skip', why: c.message }; });
         var w = U.checks(list, 'Checks');
         Array.prototype.slice.call(w.querySelectorAll('.ui-result')).forEach(function (li, k) { li.setAttribute('data-check', cs[k].name); });
+        // skipped checks are not failures: one quiet line per reason, naming them
+        var byWhy = {}, order = [];
         list.forEach(function (c) {
             if (c.state !== 'skip') return;
-            var r = el('p', 'ui-fail-row');
-            r.appendChild(el('strong', 'ui-fail-name', c.name + ' not checked.'));
-            r.appendChild(document.createTextNode(' ' + (c.why || '')));
-            w.appendChild(r);
+            var why = c.why || '';
+            if (!byWhy[why]) { byWhy[why] = []; order.push(why); }
+            byWhy[why].push(c.name);
+        });
+        order.forEach(function (why) {
+            w.appendChild(el('p', 'ui-text-quiet', 'Not checked: ' + byWhy[why].join(', ') + '. ' + why.replace(/^Not checked:\s*/, '')));
         });
         host.appendChild(w);
         var nf = list.filter(function (c) { return c.state === 'fail'; }).length;
