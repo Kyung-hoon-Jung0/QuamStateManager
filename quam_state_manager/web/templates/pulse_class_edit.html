@@ -1,0 +1,77 @@
+{% if not pce_partial %}{% extends "base.html" %}{% endif %}
+{% block table_content %}
+<div id="pulse-class-page" class="pce" data-pce-cls="{{ pce_cls }}" data-pce-previous-line="{{ pce_previous_line }}">
+<div class="table-header-row ui-head ui-head--data ui-head--page">
+    <h2 class="ui-head-title">Pulse class{% if pce_cls %}: {{ pce_cls }}{% endif %}</h2>
+    {% if pce_cls %}<button type="button" class="btn-sync" hx-get="/pulse-class" hx-target="#table-pane" hx-push-url="true">All drafts</button>{% endif %}
+</div>
+{% if not pce_cls %}
+<section class="ui-item">
+  <p class="ui-note">A draft is a pulse class file kept in SM's instance folder until you save it to a file. Open one or start a new class.</p>
+  {% if pce_drafts %}
+  <ul class="pce-list">
+    {% for d in pce_drafts %}<li><a href="/pulse-class?cls={{ d.class_name }}" hx-get="/pulse-class?cls={{ d.class_name }}" hx-target="#table-pane" hx-push-url="true">{{ d.class_name }}</a></li>{% endfor %}
+  </ul>
+  {% else %}<p class="ui-note">No drafts yet.</p>{% endif %}
+  <div class="ui-field-grid">
+    <label>New class name <input type="text" class="ui-input" data-pce-new-name placeholder="FlatTopPulse" autocomplete="off"></label>
+  </div>
+  <div class="ui-actions"><button type="button" class="btn-sync primary" data-pce-new>Start a new class</button></div>
+  <p class="ui-note" data-pce-new-error role="alert" hidden></p>
+</section>
+{% else %}
+<p class="ui-note" role="status" data-pce-status>Loading the draft</p>
+<p class="ui-note" data-pce-code-only hidden></p>
+<div class="pce-cols">
+  <section class="ui-item pce-form" aria-label="Fields and formula">
+    <div class="ui-field-grid">
+      <label>Python environment
+        <select class="ui-select" data-pce-env>
+          {% if not pce_python %}<option value="">Choose an environment</option>{% endif %}
+          {% for e in pce_envs %}<option value="{{ e.python }}" {% if e.python == pce_python %}selected{% endif %}>{{ e.name }}</option>{% endfor %}
+          {% if pce_python and pce_python not in pce_envs | map(attribute='python') | list %}<option value="{{ pce_python }}" selected>{{ pce_python }}</option>{% endif %}
+        </select></label>
+    </div>
+    <div class="pce-fields" data-pce-fields></div>
+    <div class="ui-actions"><button type="button" class="btn-sm outline" data-pce-add-field>Add a field</button></div>
+    <label>Formula (numpy; t, dt and n are given)
+      <textarea class="ui-input pce-formula" rows="3" data-pce-formula spellcheck="false"></textarea></label>
+    <div class="ui-actions">
+      <button type="button" class="btn-sync primary" data-pce-apply-form>Apply the form</button>
+    </div>
+  </section>
+  <section class="ui-item pce-code-col" aria-label="Code">
+    <div class="ui-actions">
+      <button type="button" class="btn-sync primary" data-pce-save title="Ctrl+S">Save draft</button>
+      <button type="button" class="btn-sm outline" data-pce-unlock aria-pressed="false">Edit the template lines by hand</button>
+    </div>
+    <div class="pce-code" data-pce-code></div>
+    <p class="ui-note" data-pce-path></p>
+    <div class="ui-field-grid">
+      <label>Class file <input type="text" class="ui-input pce-target" data-pce-target placeholder="C:\path\to\quam_config\my_pulse.py" autocomplete="off"></label>
+    </div>
+    <div class="ui-actions"><button type="button" class="btn-sm outline" data-pce-save-file>Save to file</button></div>
+  </section>
+  <section class="ui-item pce-preview" aria-label="Waveform preview">
+    <p class="ui-note" data-pce-error role="alert" hidden></p>
+    <p class="ui-note" data-pce-prev-label hidden></p>
+    <div class="pce-plot" data-pce-wave id="pce-wave"></div>
+    <div class="pce-timeline" data-pce-timeline></div>
+    <p class="ui-note" data-pce-checks></p>
+  </section>
+</div>
+<dialog class="ui-dialog ui-dialog--m" data-pce-conflict aria-labelledby="pce-conflict-title">
+  <div class="ui-dialog-head">
+    <h2 id="pce-conflict-title" class="ui-head-title">Two editors changed the draft</h2>
+  </div>
+  <div class="ui-dialog-body">
+    <p data-pce-conflict-question></p>
+    <ul class="pce-list" data-pce-conflict-losses></ul>
+  </div>
+  <div class="ui-dialog-foot">
+    <div class="ui-actions" data-pce-conflict-actions></div>
+  </div>
+</dialog>
+{% endif %}
+</div>
+{% endblock %}

@@ -57,8 +57,15 @@ def _describe(text: str) -> dict:
         spec = {"class_name": p.spec.class_name, "formula": p.spec.formula,
                 "fields": [{"name": f.name, "type": f.type, "default": f.default, "unit": f.unit}
                            for f in p.spec.fields]}
-    return {"editable": bool(p.editable), "reason": p.reason, "region": list(p.region) if p.region else None,
-            "spec": spec}
+    protect = None
+    if p.editable and p.region:
+        b, e = p.region
+        bm = text.rfind(T.REGION_BEGIN, 0, b)
+        em = text.find(T.REGION_END, e)
+        if bm >= 0 and em >= 0:
+            # the markers and everything between them: the form owns these lines
+            protect = [bm, em + len(T.REGION_END)]
+    return {"editable": bool(p.editable), "reason": p.reason, "protect": protect, "spec": spec}
 
 
 class DraftWatch:

@@ -190,6 +190,8 @@
     --ui-scroll-fade: linear-gradient(transparent, var(--ui-scroll-bg) 80%);
     --ui-czg-form-w: 360px;
     --ui-czg-evidence-min: 640px;
+    --ui-pce-col-min: 320px;
+    --ui-pce-code-h: 460px;
     --ui-disclosure-marker: "\25B8";
     --ui-disclosure-marker-open: "\25BE";
     /* K16 checkbox (D-105): the sidebar's rounded box, one look app-wide */
@@ -1717,3 +1719,16 @@ dialog.ui-dialog:not(.gen-rule-dlg)::backdrop { background: var(--ui-backdrop); 
 .gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); }
 .gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }
 .gate-delete-actions { justify-content: flex-start; margin-left: 0; }
+/* the pulse class edit screen (pulse-class-edit.js, pulse_class_edit.html): three columns that wrap to a stack */
+.pce { display: flex; flex-direction: column; gap: var(--ui-gap-2); }
+.pce-cols { display: flex; flex-wrap: wrap; gap: var(--ui-gap-4); align-items: flex-start; }
+.pce-form, .pce-code-col, .pce-preview { flex: 1 1 var(--ui-pce-col-min); min-width: 0; display: flex; flex-direction: column; gap: var(--ui-gap-2); margin: 0; }
+.pce-code-col { flex-grow: 2; }
+.pce-code { height: var(--ui-pce-code-h); overflow: hidden; border: var(--ui-bw) solid var(--ui-border); }
+.pce-code .cm-editor { height: 100%; }
+.pce-fields { display: flex; flex-direction: column; gap: var(--ui-gap-1); }
+.pce-field-row { display: flex; flex-wrap: wrap; gap: var(--ui-gap-1); align-items: center; }
+.pce-formula, .pce-target { width: 100%; font-family: var(--ui-font-mono); }
+.pce-plot { min-height: var(--ui-placeholder-h); }
+.pce-timeline:empty { display: none; }
+.pce-list { margin: 0; padding-left: var(--ui-gap-4); }
