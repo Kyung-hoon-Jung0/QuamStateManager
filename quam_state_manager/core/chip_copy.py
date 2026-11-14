@@ -153,6 +153,10 @@ def make_chip_copies(store, creates: Iterable[tuple[str, Any]] = (), *,
         left = _remove_tree(root)
         if isinstance(exc, OSError):
             raise _copy_error(exc, left) from None
+        try:
+            exc.sm_leftover = left       # the caller still reports the folder
+        except Exception:  # noqa: BLE001
+            pass
         raise
 
 

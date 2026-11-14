@@ -26,7 +26,8 @@ that cannot run always fails, also when it already failed before the write.
 
 The result is JSON-serialisable::
 
-    {"status": "ok" | "no-env" | "timeout" | "crash" | "busy" | "invalid-create",
+    {"status": "ok" | "no-env" | "timeout" | "crash" | "busy" | "invalid-create"
+               | "no-gates",
      "checked": bool, "ok": bool, "chip_error": str | None,
      "error": str | None, "seq": int | None, "store_id": int | None,
      "leftover": str | None, "quam_config": {...} | None,
@@ -36,7 +37,8 @@ The result is JSON-serialisable::
                 end_ns, level, scale}], "cannot_draw", "notes",
                 "filtered_ports"} | None}]}
 
-``ok`` means: nothing failed AND every gate was actually run by the lab's
+"no-gates": the gate list was empty, an input error (nothing is copied or
+run). ``ok`` means: nothing failed AND every gate was actually run by the lab's
 code (its ``ops`` check is ``pass`` or ``note``), so a caller that reads only
 ``ok`` is safe. It does not mean everything was compared: ``unchecked`` lists
 the checks that did not run (skipped, or a timeline that could not be drawn),
@@ -151,6 +153,11 @@ def _base(status, *, checked, error=None, chip_error=None, quam_config=None) -> 
             "quam_config": quam_config, "gates": []}
 
 
+def _no_gates() -> dict:
+    """An empty gate list is an input error: nothing is copied or run."""
+    return _finalize(_base("no-gates", checked=False, error="no gate was given"))
+
+
 def _unchecked(keys, status: str, error: str, msg: str | None = None) -> dict:
     msg = msg or f"Not checked with the lab's code: {error}."
     out = _base(status, checked=False, error=error)
@@ -161,7 +168,24 @@ def _unchecked(keys, status: str, error: str, msg: str | None = None) -> dict:
 #: a copy folder name (and the path token around it) in a message
 _COPY_NAME = re.compile(r"[^\s'\"]*sm_chipcopy_[A-Za-z0-9_]+[^\s'\"]*")
 
+
+def scrub_copy_names(text: str) -> str:
+    """Remove copy folders from *text* when the copies' own paths are not
+    known: first the temp base joined with the copies' prefix, as a literal
+    in every spelling (so a space in the user's folder name does not
+    matter), then any remaining token holding a copy folder name."""
+    import os
+    import tempfile
+    base = os.path.normpath(tempfile.gettempdir())
+    for b in sorted({base, base.replace("\\", "/"), base.replace("\\", "\\\\")},
+                    key=len, reverse=True):
+        for sep in ("\\\\", "\\", "/"):
+            pat = re.escape(b + sep + "sm_chipcopy_") + r"[A-Za-z0-9_]*"
+            text = re.sub(pat, "<chip>", text, flags=re.IGNORECASE)
+    return _COPY_NAME.sub("<chip>", text)
+
 _WHY_STATUS = {
+    "no-gates": "No gate was given to check.",
     "no-env": "No Python environment is selected, so the lab's code did not run.",
     "busy": "The lab environment is busy with another check, so the gate was not checked; "
             "try again.",
@@ -173,14 +197,47 @@ _CHECK_WORDS = {"load_config": "loading the chip", "ops": "running the gate",
                 "timeline": "the timeline", "range": "the output range"}
 
 
-def _finalize(out: dict) -> dict:
+def _names(names: list[str]) -> str:
+    if len(names) == 1:
+        return f"the gate {names[0]}"
+    return "the gates " + ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _gates_sentence(gates: list) -> str | None:
+    """One short sentence per reason, over ALL gates: first the gates the
+    lab's code did not run, then the gates not fully checked; gates with the
+    same reason are named together."""
+    not_run: dict[str, list[str]] = {}
+    partly: dict[str, list[str]] = {}
+    for g in gates:
+        if not g["ran"]:
+            ops = g["checks"]["ops"]
+            if ops["status"] == "skipped" and "program text" in ops["message"]:
+                why = "the program text could not be read"
+            else:
+                why = "the lab's data for it could not be read"
+            not_run.setdefault(why, []).append(g["gate"])
+            continue
+        parts = list(dict.fromkeys(g["unchecked"] + g["partly_checked"]))
+        if parts:
+            what = ", ".join(_CHECK_WORDS.get(p, p) for p in parts)
+            partly.setdefault(what, []).append(g["gate"])
+    out = [f"For {_names(n)}, {why}." for why, n in not_run.items()]
+    out += [f"For {_names(n)}, not fully checked: {what}." for what, n in partly.items()]
+    return " ".join(s[0].upper() + s[1:] for s in out) or None
+
+
+def _finalize(out: dict, *, write_broke: bool = False) -> dict:
     """Add ``failed``, ``all_checked``, ``why_not_checked`` and each gate's
-    ``ran`` (see the module docstring)."""
+    ``ran`` (see the module docstring). *write_broke*: the chip-level check
+    failed because of this write ("after" does not load or build its config
+    while "before" does); that is a failure even if no gate carries it."""
     gates = out.get("gates") or []
     for g in gates:
         g["ran"] = all(g["checks"][c]["status"] in ("pass", "note")
                        for c in ("load_config", "ops"))
-    failed = any(c["status"] == "fail" for g in gates for c in g["checks"].values())
+    failed = write_broke or any(c["status"] == "fail" for g in gates
+                                for c in g["checks"].values())
     all_checked = (out.get("status") == "ok" and bool(out.get("checked")) and bool(gates)
                    and all(g["ran"] and not g["unchecked"] and not g["partly_checked"]
                            for g in gates))
@@ -190,23 +247,12 @@ def _finalize(out: dict) -> dict:
         if status in _WHY_STATUS:
             why = _WHY_STATUS[status]
         elif status != "ok":
-            why = f"The lab check could not run: {out.get('error') or status}."
+            why = f"The lab check could not run: {str(out.get('error') or status).rstrip('.')}."
         elif out.get("chip_error"):
             why = ("The chip as it is does not load or build its config with the lab's code, "
                    "so the gate could not be checked.")
         else:
-            for g in gates:
-                if g["checks"]["ops"]["status"] == "skipped" and "program text" in \
-                        g["checks"]["ops"]["message"]:
-                    why = f"The program text of the gate {g['gate']} could not be read."
-                    break
-                parts = list(dict.fromkeys(g["unchecked"] + g["partly_checked"]))
-                if parts:
-                    why = (f"For the gate {g['gate']}, not fully checked: "
-                           + ", ".join(_CHECK_WORDS.get(p, p) for p in parts) + ".")
-                    break
-            if why is None:
-                why = "No gate was checked."
+            why = _gates_sentence(gates) or "No gate was checked."
     out["failed"] = failed
     out["all_checked"] = all_checked
     out["why_not_checked"] = why
@@ -220,6 +266,8 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     {(element, operation): samples list or constant}}``, keyed through the
     same :func:`gate_key`."""
     keys = [gate_key(g) for g in gates]
+    if not keys:
+        return _no_gates()
     previews = {gate_key(k): v for k, v in (previews or {}).items()}
     status = (ran or {}).get("status") or "crash"
     if status != "ok":
@@ -244,7 +292,7 @@ def evaluate(gates: Iterable, ran: dict, previews: dict | None = None) -> dict:
     out["ok"] = bool(out["gates"]) and all(
         c["status"] != "fail" for g in out["gates"] for c in g["checks"].values()) and all(
         g["checks"]["ops"]["status"] in ("pass", "note") for g in out["gates"])
-    return _finalize(out)
+    return _finalize(out, write_broke=bool(after_err))
 
 
 def _guard(fn, *args) -> dict:
@@ -629,6 +677,8 @@ def check_gates(store, python_path: str | None, gates: Iterable,
     would refuse gives ``status`` "invalid-create" with ``load_config``
     failed, naming the path. Writes nothing into the store."""
     keys = [gate_key(g) for g in gates]
+    if not keys:
+        return _no_gates()
     creates = [(str(p), v) for p, v in creates]
     if not python_path:
         return _unchecked(keys, "no-env", "no Python environment is selected")
@@ -663,7 +713,10 @@ def check_gates(store, python_path: str | None, gates: Iterable,
         text = f"{type(exc).__name__}: {exc}"
         if copies is not None:
             text = scrub_paths(text, [str(copies.before), str(copies.after)])
-        text = _COPY_NAME.sub("<chip>", text)
+        text = scrub_copy_names(text)
         res = _unchecked(keys, "crash", text)
+        if copies is None:
+            res["leftover"] = getattr(exc, "sm_leftover", None)
+            return _finalize(res)
     res["leftover"] = chip_copy.remove_chip_copies(copies)
     return _finalize(res)

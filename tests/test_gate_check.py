@@ -747,22 +747,100 @@ def test_copy_error_texts(exc, words):
 
 
 def test_crash_path_scrubs_the_copy_folder_name_only(tmp_path, monkeypatch):
+    """The copies were never created: the pattern and the literal temp base
+    do the work; a lab path under the same temp base is kept."""
     import tempfile
     lab_path = str(Path(tempfile.gettempdir()) / "lab_code" / "pulse.py")
+    name = "sm_chipcopy_ab12"
+    copy_dir = str(Path(tempfile.gettempdir()) / name)
 
-    def boom(*a, **k):
-        raise RuntimeError("x")
-    seen = {}
-
-    def runner(py, before, after, macros, **kw):
-        seen["root"] = Path(before).parent
-        return {"status": "ok", "data": {}}
-    monkeypatch.setattr(gate_check, "evaluate", lambda *a, **k: (_ for _ in ()).throw(
-        RuntimeError(f"failed in {seen['root']}\\before\\state.json near {lab_path}")))
-    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=runner)
+    def broken(*a, **k):
+        raise RuntimeError(f"failed in {copy_dir}\\before\\state.json near {lab_path}")
+    monkeypatch.setattr(gate_check.chip_copy, "make_chip_copies", broken)
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE],
+                                 runner=lambda *a, **k: pytest.fail("not reached"))
     assert res["status"] == "crash"
-    assert seen["root"].name not in res["error"] and "sm_chipcopy_" not in res["error"]
+    assert name not in res["error"] and "sm_chipcopy_" not in res["error"]
     assert lab_path in res["error"], "a lab path under the same temp base is kept"
+
+
+@pytest.mark.parametrize("form", ["plain", "quoted", "doubled"])
+def test_scrub_copy_names_with_a_space_in_the_user_folder(monkeypatch, form):
+    base = r"C:\Users\John Doe\AppData\Local\Temp"
+    monkeypatch.setattr("tempfile.gettempdir", lambda: base)
+    path = base + r"\sm_chipcopy_ab\after\state.json"
+    if form == "quoted":
+        text = f"cannot open '{path}'"
+    elif form == "doubled":
+        text = "cannot open " + path.replace("\\", "\\\\")
+    else:
+        text = "cannot open " + path
+    out = gate_check.scrub_copy_names(text)
+    assert "John" not in out and "sm_chipcopy_" not in out and "<chip>" in out
+
+
+def test_why_not_checked_names_every_gate_grouped():
+    a, b, c = ("q1-2", "cz_a"), ("q3-4", "cz_b"), ("q5-6", "cz_c")
+    ran = _ran()
+    gates = ran["data"]["gates"]
+    entry = gates.pop(PATH)
+    for k in (a, b, c):
+        gates[gate_check.macro_path(*k)] = dict(entry)
+    gates[gate_check.macro_path(*c)]["script_unreadable"] = True
+    res = gate_check.evaluate([a, b, c], ran, {})
+    why = res["why_not_checked"]
+    assert not res["failed"]
+    assert why.index("cz_c") < why.index("cz_a"), why
+    assert "For the gate cz_c, the program text could not be read." in why
+    assert "For the gates cz_a and cz_b, not fully checked: the preview comparison." in why
+
+
+def test_no_gates_is_an_input_error(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+    monkeypatch.setattr(chip_copy, "make_chip_copies", lambda *a, **k: pytest.fail("no copy"))
+    for res in (gate_check.check_gates(_store(tmp_path), "python.exe", [],
+                                       runner=lambda *a, **k: pytest.fail("no run")),
+                gate_check.evaluate([], _ran())):
+        assert res["status"] == "no-gates" and not res["failed"] and not res["ok"]
+        assert res["why_not_checked"] == "No gate was given to check."
+        json.dumps(res)
+
+
+def test_write_that_breaks_the_chip_is_failed_without_a_gate_result():
+    ran = _ran(after={"load_error": None, "config_error": "ValueError: cfg"})
+    out = gate_check._finalize({"status": "ok", "checked": True, "gates": []},
+                               write_broke=True)
+    assert out["failed"]
+    assert gate_check.evaluate([GATE], ran)["failed"]
+
+
+def test_copy_failure_sentence_has_one_full_stop(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+
+    def full(folder, s, w):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(chip_copy, "write_chip_folder", full)
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=lambda *a, **k: None)
+    assert ".." not in res["why_not_checked"] and res["why_not_checked"].endswith(".")
+
+
+def test_non_os_copy_error_keeps_the_leftover(tmp_path, monkeypatch):
+    from quam_state_manager.core import chip_copy
+    monkeypatch.setattr(chip_copy, "REMOVE_PAUSE_S", 0)
+
+    def odd(folder, s, w):
+        raise ValueError("odd data")
+    monkeypatch.setattr(chip_copy, "write_chip_folder", odd)
+    real = chip_copy.shutil.rmtree
+    monkeypatch.setattr(chip_copy.shutil, "rmtree",
+                        lambda *a, **k: (_ for _ in ()).throw(PermissionError("in use")))
+    res = gate_check.check_gates(_store(tmp_path), "python.exe", [GATE], runner=lambda *a, **k: None)
+    monkeypatch.setattr(chip_copy.shutil, "rmtree", real)
+    try:
+        assert res["status"] == "crash" and res["leftover"] and Path(res["leftover"]).exists()
+        assert "sm_chipcopy_" not in res["error"]
+    finally:
+        real(res["leftover"], ignore_errors=True)
 
 
 # --------------------------------------------------------------- real env
