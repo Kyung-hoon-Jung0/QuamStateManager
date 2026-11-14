@@ -765,7 +765,9 @@ def _amplitude_view(doc, line):
         channel = channel_of(doc, played + ".amplitude")
         physical = channel is not None and _port_kind(doc, channel)[0] == "lf"
         values = [amplitude]
-        levels = [{"name": line["amplitude_source"], "amplitude_v": amplitude}]
+        # the first lobe carries the label; later sign lobes follow in the tooltip
+        levels = [{"name": line["amplitude_source"], "amplitude_v": amplitude}] + list(line["lobes"][1:])
+        values = [level["amplitude_v"] for level in levels]
     elif len(levels) > 1:
         channel = channel_of(doc, played + ".amplitude")
         rotated = number((resolved_tree(doc, path) or {}).get("axis_angle"))
@@ -1338,6 +1340,7 @@ def operations(doc, conversions=None, unavailable=None):
                         if kind == "single mover":
                             kind = "single mover + spectator"
             lines = []
+            untrusted_samples = iq_samples = False
             for role in ("control", "target"):
                 info = roles[role]
                 conv = conversions.get(info["path"])
@@ -1384,12 +1387,21 @@ def operations(doc, conversions=None, unavailable=None):
                     wave_reason = _waveform_not_derivable(doc, pulse_path, tree)
                     shape = None if wave_reason else waveform_shape(tree, sampling_rate=rate)
                     if shape is not None:
-                        amp = shape["peak"]
+                        # Operating values describe the FIRST lobe, as for a multi-lobe
+                        # parametric class: the first run of same-sign non-zero samples,
+                        # at that run's largest-magnitude sample [derived]. A unipolar
+                        # array has one run, so this equals its overall peak.
+                        wave_lobes = waveform_sign_lobes(tree["waveform_I"])
+                        amp = wave_lobes[0][1]
+                        if len(wave_lobes) > 1:
+                            shape = {**shape, "label": "first-lobe peak of waveform"}
                         length_note = _waveform_length_note(tree, shape)
                         if length_note:
                             notes.append(f"{info['name']}: {length_note}")
                     elif wave_reason:
                         notes.append(f"{info['name']}: not derivable for WaveformPulse: {wave_reason}")
+                        untrusted_samples = untrusted_samples or wave_reason.startswith("waveform_I holds")
+                        iq_samples = iq_samples or wave_reason.startswith("waveform_Q")
                     else:
                         notes.append(f"{info['name']}: the pulse amplitude cannot be read")
                 if local_amp is not None and amp is not None and local_amp != amp:
@@ -1410,7 +1422,7 @@ def operations(doc, conversions=None, unavailable=None):
                     # only a sample-array pulse carries these; every other line keeps its shape
                     lines[-1].update(amplitude_source=shape["label"], waveform_samples=shape["samples"],
                                      waveform_length_ns=shape["length_ns"],
-                                     waveform_lobes=waveform_sign_lobes(tree["waveform_I"]))
+                                     waveform_lobes=wave_lobes)
                 elif wave_reason:
                     lines[-1]["waveform_reason"] = "not derivable for WaveformPulse: " + wave_reason
             for ln in lines:
@@ -1485,8 +1497,13 @@ def operations(doc, conversions=None, unavailable=None):
             alphas = [number(roles[k]["qubit"].get("anharmonicity")) for k in ("control", "target")]
             res = [] if any(ln["refusal"] for ln in lines) else resonances(fq[0], fq[1], alphas[0], alphas[1])
             lobe_resonances = []
-            stages = ["first lobe"] + [stage for stage in ("mirror lobe", "third lobe")
-                                        if any(l["name"] == stage for ln in lines for l in ln["lobes"])]
+            # every played lobe, in order: parametric (mirror, third) and sample-array
+            # (second, third, ...) names alike
+            stages = ["first lobe"]
+            for ln in lines:
+                for l in ln["lobes"]:
+                    if l["name"] not in stages:
+                        stages.append(l["name"])
             if None not in fq:
                 for stage in stages:
                     frequencies = []
@@ -1513,6 +1530,14 @@ def operations(doc, conversions=None, unavailable=None):
                 inferred, inferred_note = inferred_gate_duration(doc, lines, coupler)
                 if inferred is not None:
                     duration_ns, duration_note = inferred, inferred_note
+            if untrusted_samples:
+                # a sample list holding a non-number is not a length either
+                duration_ns = None
+                duration_note = "not derivable: " + next(
+                    ln["waveform_reason"] for ln in lines if "waveform_I holds" in ln.get("waveform_reason", ""))
+            elif iq_samples and duration_ns is not None:
+                # the I/Q sample count is a true length; only the level is not derivable
+                duration_note += "; level not derivable: waveform_Q is stored (I/Q pulse)"
             if coupler:
                 shown = coupler["amp_text"] if coupler["amplitude_v"] is not None and not coupler["refusal"] else "amplitude unknown: " + coupler.get("amp_reason", "")
                 coupler_note = "a coupler pulse also plays (" + shown + "): these bare-qubit frequencies omit the coupler's shift"
