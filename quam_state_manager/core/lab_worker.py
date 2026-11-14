@@ -67,19 +67,38 @@ class _MachineLock:
                     return False
                 time.sleep(.05)
 
+    @staticmethod
+    def _os_unlock(fh):
+        if os.name == "nt":
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
     def release(self):
-        self.depth.value -= 1
-        if not self.depth.value:
-            fh = self.depth.fh
-            if os.name == "nt":
-                import msvcrt
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fh, fcntl.LOCK_UN)
-            fh.close()
-        self.local.release()
+        """Never raises and always frees the thread lock: an OS unlock that
+        fails (Windows answers PermissionError) is followed by closing the
+        handle, which drops the OS lock anyway. Before, that error left the
+        thread lock taken and every later lab job of this process "busy"."""
+        try:
+            self.depth.value -= 1
+            if not self.depth.value:
+                fh = self.depth.fh
+                try:
+                    self._os_unlock(fh)
+                except OSError:
+                    __import__("logging").getLogger(__name__).warning(
+                        "lab machine lock: the OS unlock failed; closing the handle",
+                                   exc_info=True)
+                finally:
+                    try:
+                        fh.close()
+                    except OSError:
+                        pass
+        finally:
+            self.local.release()
 
     def __enter__(self):
         self.acquire()
