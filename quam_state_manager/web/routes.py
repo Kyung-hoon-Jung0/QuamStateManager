@@ -47589,7 +47589,7 @@ def dataset_replot_plot(uid):
         from quam_state_manager.core.interactive_plots.replot import replot_unavailable_reason
         why = replot_unavailable_reason(result, fig_key)
         return jsonify({"error": ("Not drawn: " + why) if why
-                        else "Figure not available: the reproduction has no figure named " + fig_key}), 404
+                        else "Figure not available: the reproduction has no figure named " + fig_key + "."}), 404
     if fig.get("clickable"):
         names = _dataset_run_names(run.folder_path)
         if names is not None and not names.identity:

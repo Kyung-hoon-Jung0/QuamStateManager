@@ -453,3 +453,22 @@ def test_build_interactive_figure_reads_the_bundle_inputs_once(tmp_path, monkeyp
     monkeypatch.setattr(registry, "_bundle_inputs", lambda r: calls.append(1) or real(r))
     registry.build_interactive_figure(run, f"moving_qubit::{PAIR}")
     assert len(calls) == 1
+
+
+def _reason_for(trace_last_line):
+    from quam_state_manager.core.interactive_plots.replot import replot_unavailable_reason
+    result = {"errors": [{"stage": "plot:amp_map", "trace": "Traceback\n  ...\n" + trace_last_line}]}
+    return replot_unavailable_reason(result, "amp_map")
+
+
+def test_unavailable_reason_is_cut_at_200_characters():
+    why = _reason_for("ValueError: " + "x" * 300)
+    assert len(why) == 203 and why.endswith("...")
+    assert _reason_for("ValueError: short") == "ValueError: short"
+
+
+def test_unavailable_reason_keeps_only_the_base_name_of_a_path():
+    assert _reason_for(r"FileNotFoundError: C:\Users\Some One\my data\run 1\ds.h5") == "FileNotFoundError: ds.h5"
+    assert _reason_for("OSError: C:/lab/data/run/ds.nc") == "OSError: ds.nc"
+    assert _reason_for("OSError: /home/u/data/ds.nc") == "OSError: ds.nc"
+    assert _reason_for("ValueError: a and/or b, 1/2") == "ValueError: a and/or b, 1/2"
