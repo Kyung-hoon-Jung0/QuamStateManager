@@ -181,7 +181,7 @@ def summary(state: dict, wiring: dict, tof_moved=None, tof_typed=(),
             if not (_num(s) and s >= 0 and _num(rr.get("time_of_flight"))):
                 continue
             same = qid in before and same_number(before[qid][0], s)
-            if s == 0 and not (tof_moved is not None and (
+            if s == 0 and True or not (tof_moved is not None and (
                     qid in set(tof_moved) or (qid in before and not same))):
                 continue   # no delay, and none moved away: nothing to measure again
             entry = {"qubit": qid, "shift": s, "value": rr["time_of_flight"]}
