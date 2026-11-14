@@ -217,7 +217,7 @@
         var seg = el("div", "ui-segmented");
         seg.setAttribute("role", "toolbar");
         seg.setAttribute("aria-label", "Vertical scale");
-        var scaleBtns = [["lane", "Per lane"], ["common", "Common V scale"]].map(function (o) {
+        var scaleBtns = [["lane", "Per lane"], ["common", "Shared"]].map(function (o) {
             var b = el("button", "ui-segmented-opt", o[1]);
             b.type = "button";
             b.setAttribute("data-scale", o[0]);
@@ -225,6 +225,9 @@
             seg.appendChild(b);
             return b;
         });
+        var scaleLab = el("span", "ui-note", "V scale");
+        scaleLab.setAttribute("data-scale-label", "");
+        bar.appendChild(scaleLab);
         bar.appendChild(seg);
         // the spectator group: the kit checkbox, unchecked = folded
         var foldBox = null;
@@ -278,6 +281,7 @@
                 });
             });
             if (lo !== Infinity) {
+                lo = Math.min(0, lo);   // the axis starts at program time 0
                 var step = Math.max(1, Math.ceil((hi - lo) / MAX_HOVER_POINTS));
                 for (var t = Math.floor(lo); t <= hi; t += step) add(t);
             }
@@ -294,7 +298,11 @@
                     lo = Math.min(lo, l.sim.t_ns[0]); hi = Math.max(hi, l.sim.t_ns[l.sim.t_ns.length - 1]);
                 }
             });
-            return lo === Infinity ? [0, 1] : [lo, Math.max(hi, lo + 1)];
+            // program time starts at 0: a late first pulse (a port delay) must show as a gap
+            if (lo === Infinity) return [0, 1];
+            lo = Math.min(0, lo);
+            hi = Math.max(hi, lo + 1);
+            return [lo, hi + Math.max(2, 0.03 * (hi - lo))];
         }
 
         function uiFont() {
@@ -345,7 +353,7 @@
                 font: { family: family, size: TEXT_PX, color: c.text },
                 hoverlabel: { font: { family: family, size: TEXT_PX } },
                 xaxis: { title: { text: "time (ns)", font: { size: TEXT_PX } }, zeroline: false,
-                         anchor: "y" + (n > 1 ? n : ""), range: span.slice(), showgrid: true,
+                         anchor: "y" + (n > 1 ? n : ""), range: span.slice(), autorange: false, showgrid: true,
                          gridcolor: c.grid, tickfont: { size: TEXT_PX } },
                 shapes: shapes
             };
@@ -408,6 +416,16 @@
                     font: { size: TEXT_PX, color: c.muted },
                     meta: { role: "lane-facts", lane: lane.key }
                 });
+                // a late first pulse: say where the lane starts
+                var first = plan[i].segs[0];
+                if (first && num(first.start_ns) && first.start_ns > 0) {
+                    fixed.push({
+                        xref: "paper", yref: ax + " domain", x: 0, y: 0.5, xanchor: "left", yanchor: "middle",
+                        xshift: 4, showarrow: false, text: "starts at " + fmt(first.start_ns) + " ns",
+                        font: { size: TEXT_PX, color: c.muted },
+                        meta: { role: "starts-at", lane: lane.key }
+                    });
+                }
                 // the 0 V line and the lane's limits when they fall inside what is shown
                 shapes.push({ type: "line", name: "zero", xref: "paper", x0: 0, x1: 1, yref: ax, y0: 0, y1: 0,
                               line: { color: c.grid, width: 1 }, layer: "below" });
