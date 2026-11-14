@@ -738,6 +738,32 @@ def test_6b_ui_menu_behaviour_selfcheck():
     assert "ok ui_menu_selfcheck" in res.stdout and " 0 failed" in res.stdout
 
 
+def test_6c_field_macro_ids_and_relations():
+    from quam_state_manager.web.app import create_app
+    with tempfile.TemporaryDirectory() as tmp:
+        app = create_app(testing=True, instance_path=str(Path(tmp) / "_inst"))
+        with app.test_request_context():
+            from flask import render_template_string
+            r = lambda tpl, **kw: render_template_string('{% import "_ui.html" as ui %}' + tpl, **kw)
+            out = r("{{ ui.ui_field('Len', {'part': 'input', 'id': 'x'}) }}")
+            assert 'id="x"' in out and 'for="x"' in out, out
+            out = r("{{ ui.ui_field('Len', {'part': 'input', 'describedby': 'mine'}, hint='h') }}")
+            m = re.search(r'aria-describedby="mine (uif-[0-9a-f]{4}-\d+)-hint"', out)
+            assert m and f'id="{m.group(1)}"' in out, out
+            out = r("{{ ui.ui_field('Show', {'part': 'check', 'text': 'Spectators'}) }}")
+            fid = re.search(r'for="([^"]+)"', out).group(1)
+            assert f'<input type="checkbox" id="{fid}"' in out, out
+            out = r("{{ ui.ui_render({'part': 'field', 'id': 'X', 'label': 'A', 'control': {'part': 'input'}}) }}")
+            assert 'for="X"' in out and 'id="X"' in out, out
+            for bad, msg in (("{'part': 'input', 'id': 'a b'}", "ui menu id must be a non-empty string without whitespace: \"a b\""),
+                             ("{'id': 'q'}", "ui field control needs a part")):
+                with pytest.raises(ValueError) as ei:
+                    r("{{ ui.ui_field('A', " + bad + ") }}")
+                assert str(ei.value) == msg
+            out = r("{{ ui.ui_field('Source', {'part': 'chip', 'text': 's'}) }}")
+            assert "for=" not in out and 'class="ui-field-control" role="group" aria-labelledby=' in out, out
+
+
 def test_6_macro_and_ui_js_build_the_same_tree(ui_kit_html, tmp_path):
     node = shutil.which("node")
     if node is None:
@@ -785,18 +811,23 @@ def test_7g_reading_text_of_the_new_parts_is_aa_in_every_theme():
     assert not bad, bad
 
 
+# ui.js is the kit's own builder: it creates the kit-classed controls every other script should use.
+_SCRIPT_CONTROL_BUILDERS = {"ui.js"}
+
+
 def measure_script_controls():
-    """Selects / text inputs BUILT in static/*.js (createElement or markup
+    """A tag name held in a variable (createElement(tag)) cannot be seen by this measure.
+    Selects / text inputs BUILT in static/*.js (createElement or markup
     literals) with no styled class: a second number that only goes down."""
     known = _known_classes()
     out = {}
     for p in sorted(_STATIC.glob("*.js")):
-        if p.name.endswith(".min.js"):
+        if p.name.endswith(".min.js") or p.name in _SCRIPT_CONTROL_BUILDERS:
             continue
         t = _read(p)
-        n = len(re.findall(r"createElement\(\s*[\"'](?:select|input|textarea)[\"']\s*\)", t))
-        for m in re.finditer(r"<(select|input|textarea)\b([^<>]*)>", t):
-            if m.group(1) == "input":
+        n = len(re.findall(r"createElement\(\s*[\"'`](?:select|input|textarea)[\"'`]\s*\)", t, flags=re.I))
+        for m in re.finditer(r"<(select|input|textarea)\b([^<>]*)>", t, flags=re.I):
+            if m.group(1).lower() == "input":
                 tm = re.search(r"\btype=\\?[\"']([^\"'\\]*)", m.group(2))
                 if (tm.group(1).lower() if tm else "") not in _TEXT_INPUT_TYPES:
                     continue
@@ -818,6 +849,8 @@ def test_2d_no_new_bare_select_or_input_built_in_scripts():
 # A line colour closer than this (Euclidean RGB, 0-255 per channel) to a state
 # tone reads as that state. ~40 is about one step of a hue ramp.
 _LINE_STATE_MIN_DIST = 40
+# The one case that is exactly a state colour (exact equality is asserted for all others).
+_LINE_STATE_IDENTICAL = {("qm", 5)}
 _LINE_STATE_KNOWN = {
     ("light", 5), ("dark", 5),  # line 5 = palette 5 (yellow), 22 / 29 from the warning border: last-but-one on purpose
     ("light", 6), ("dark", 6),  # line 6 = palette 2 (amber), 39 / 37 from the warning border: last on purpose
@@ -839,9 +872,10 @@ def test_7h_line_colours_are_not_state_colours():
             c = _over(_resolve(f"var(--ui-line-{n})", env), page)
             # known (2026-11-14): in the QM theme plot-colorway-5 IS the warning text colour;
             # line 5 is rarely used and aliases may not add colours; fix in the theme palette.
+            if (t, n) not in _LINE_STATE_IDENTICAL:
+                assert c not in tones, f"{t}: --ui-line-{n} equals a state tone"
             if (t, n) in _LINE_STATE_KNOWN:
                 continue
-            assert c not in tones, f"{t}: --ui-line-{n} equals a state tone"
             near = [x for x in tones if _rgb_dist(c, x) < _LINE_STATE_MIN_DIST]
             assert not near, f"{t}: --ui-line-{n} is within {_LINE_STATE_MIN_DIST} (RGB distance) of a state tone {near}"
         firsts = [_resolve(f"var(--ui-line-{n})", env) for n in (1, 2, 3)]
@@ -861,6 +895,16 @@ if __name__ == "__main__":
 # These selectors were reviewed together when their feature styles moved
 # into the kit. New selectors require an explicit addition, as in stage 4.
 _STAGE6_SELECTORS = {
+    # the CZ gate status line and its delete offer
+    '.gate-status-list', '.gate-status-list .gate-status',
+    '.gate-status-list .gate-status + .gate-status', '.gate-status',
+    '.gate-status-row', '.gate-status-row:has(> .gate-status-details[open])',
+    '.gate-status-row > .ui-chip', '.gate-status-items', '.gate-status-details',
+    '.gate-status-details[open]', '.gate-status-details .ui-disclosure-summary',
+    '.gate-status-details-list', '.gate-status-details-list dd', '.gate-status-actions',
+    '.gate-status-edit', '.gate-status-activate', '.gate-status-delete',
+    '.gate-status-delete:hover', '.gate-delete-confirm', '.gate-delete-cancel', '.gate-status-slot:empty',
+    '.gate-delete-offer', '.gate-delete-list', '.gate-delete-actions',
     '.gen-rule-allcant',
     '.gen-rule-dim',
     '.gen-rule-grp-mark',

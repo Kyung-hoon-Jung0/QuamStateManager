@@ -762,14 +762,23 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.globals["cmp_equal"] = _cmp_equal
     # docs/308 4b: kit field ids (unique per process) and the menu id guard
     import itertools as _itertools
+    import json as _json
+    import secrets as _secrets
     _ui_ids = _itertools.count(1)
-    app.jinja_env.globals["ui_uid"] = lambda prefix="ui": f"{prefix}-{next(_ui_ids)}"
+    _ui_tok = _secrets.token_hex(2)   # once per process: a page left open across a restart never gets a repeated id
+    app.jinja_env.globals["ui_uid"] = lambda prefix="ui": f"{prefix}-{_ui_tok}-{next(_ui_ids)}"
 
     def _ui_valid_id(v):
         if not isinstance(v, str) or not v or any(c.isspace() for c in v):
-            raise ValueError("ui menu id must be a non-empty string without whitespace: " + repr(v))
+            raise ValueError("ui menu id must be a non-empty string without whitespace: " + _json.dumps(v))
         return ""
     app.jinja_env.globals["ui_valid_id"] = _ui_valid_id
+
+    def _ui_field_control(control):
+        if not isinstance(control, dict) or not control.get("part"):
+            raise ValueError("ui field control needs a part")
+        return ""
+    app.jinja_env.globals["ui_field_control"] = _ui_field_control
     # S10 C7: old -> new, unused snapshot template globals are retired.
     # `json_attr_safe` — may this value ride a data-value JSON attribute for
     # the per-value take? json.dumps emits bare NaN/Infinity (not JSON), so a

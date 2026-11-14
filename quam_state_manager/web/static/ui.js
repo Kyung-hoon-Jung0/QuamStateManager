@@ -38,11 +38,13 @@
     function chip(text) { return el("code", "ui-chip", text); }
     function badge(text, tone) { return el("span", "ui-badge ui-badge--" + (tone || "neutral"), text); }
     function count(text) { return el("span", "ui-count", text); }
-    function note(text) { return el("p", "ui-note", text); }
-    function check(text, checked, disabled) {
+    function note(text, id) { var n = el("p", "ui-note", text); if (id) n.id = id; return n; }
+    function check(text, checked, disabled, id, describedby) {
         var l = el("label", "ui-check");
         var i = document.createElement("input");
         i.type = "checkbox";
+        if (id) i.id = id;
+        if (describedby) i.setAttribute("aria-describedby", describedby);
         if (checked) i.setAttribute("checked", "");
         if (disabled) i.setAttribute("disabled", "");
         l.appendChild(i);
@@ -203,27 +205,41 @@
     function validId(v) {
         if (typeof v !== "string" || !v || /\s/.test(v)) throw new Error("ui menu id must be a non-empty string without whitespace: " + JSON.stringify(v));
     }
+    function uniq(list) { var out = []; list.forEach(function (x) { if (x && out.indexOf(x) < 0) out.push(x); }); return out; }
     function field(o) {
-        // Every field has an id; a single control is named by <label for> and
-        // described by hint + error; a group is named by the label text.
+        // Same rules as the macro: id = o.id, else control.id, else generated;
+        // input / select / check take it and are named by <label for>; any
+        // other part is named by the label text (unknown parts get a group
+        // wrapper). A caller's describedby / labelledby come first.
         var c = o.control || {};
-        var fid = c.id || uid("uif");
-        var group = c.part === "segmented" || c.part === "menu" || c.part === "toolbar";
-        var desc = [o.hint ? fid + "-hint" : null, o.error ? fid + "-error" : null].filter(Boolean).join(" ");
+        if (!o.control || !c.part) throw new Error("ui field control needs a part");
+        var fid = o.id || c.id || uid("uif");
+        validId(fid);
+        var single = c.part === "input" || c.part === "select" || c.part === "check";
+        var lb = fid + "-flabel";
+        var desc = uniq(String(c.describedby || "").split(/\s+/).concat([o.hint ? fid + "-hint" : null, o.error ? fid + "-error" : null])).join(" ");
+        var lab = uniq(String(c.labelledby || "").split(/\s+/).concat([lb])).join(" ");
         var f = el("div", "ui-field" + (o.inline ? " ui-field--inline" : ""));
         var h = el("div", "ui-field-head");
         var l;
-        if (group) { l = el("span", "ui-field-label", o.label); l.id = fid + "-flabel"; }
-        else { l = el("label", "ui-field-label", o.label); l.setAttribute("for", fid); }
+        if (single) { l = el("label", "ui-field-label", o.label); l.setAttribute("for", fid); }
+        else { l = el("span", "ui-field-label", o.label); l.id = lb; }
         h.appendChild(l);
         if (o.source) h.appendChild(badge(o.source.text, o.source.tone));
         f.appendChild(h);
-        var lb = fid + "-flabel", ctl;
-        if (c.part === "segmented") ctl = segmented(c.options, c.label || o.label, lb);
-        else if (c.part === "toolbar") ctl = toolbar(c.items, c.label || o.label, lb);
-        else if (c.part === "menu") ctl = menu(Object.assign({}, c, { id: fid, label: c.label || o.label, labelledby: lb }));
+        var ctl;
+        if (c.part === "segmented") ctl = segmented(c.options, c.label || o.label, lab);
+        else if (c.part === "toolbar") ctl = toolbar(c.items, c.label || o.label, lab);
+        else if (c.part === "menu") ctl = menu(Object.assign({}, c, { id: fid, label: c.label || o.label, labelledby: lab }));
         else if (c.part === "select" || c.part === "input") ctl = render(Object.assign({}, c, { id: fid, label: null, describedby: desc || null }));
-        else ctl = render(c);
+        else if (c.part === "check") ctl = check(c.text, c.checked, c.disabled, fid, desc || null);
+        else {
+            ctl = el("div", "ui-field-control");
+            ctl.setAttribute("role", "group");
+            ctl.setAttribute("aria-labelledby", lab);
+            if (desc) ctl.setAttribute("aria-describedby", desc);
+            add(ctl, render(c));
+        }
         add(f, ctl);
         if (o.hint) { var hn = el("p", "ui-field-hint", o.hint); hn.id = fid + "-hint"; f.appendChild(hn); }
         if (o.error) { var e = el("p", "ui-field-error", o.error); e.id = fid + "-error"; e.setAttribute("role", "alert"); f.appendChild(e); }
@@ -431,7 +447,7 @@
             case "chip": return chip(s.text);
             case "badge": return badge(s.text, s.tone);
             case "count": return count(s.text);
-            case "note": return note(s.text);
+            case "note": return note(s.text, s.id);
             case "check": return check(s.text, s.checked, s.disabled);
             case "pill": return pill(s.text, s.tone);
             case "path": return path(s.text);
@@ -447,6 +463,7 @@
             case "checks": return checks(s.checks, s.label);
             case "slot": return slot(s);
             case "grid2": return grid2(s.items);
+            case "field-stack": { var fs = el("div", "ui-field-stack ui-field-stack--dense"); (s.items || []).forEach(function (x) { add(fs, render(x)); }); return fs; }
             case "placeholder": return el("div", "ui-placeholder", s.text);
             case "line": { var ln = el("span"); ln.appendChild(lineDot(s.line)); ln.appendChild(document.createTextNode(String(s.text))); return ln; }
             case "dialog": return dialog(s);

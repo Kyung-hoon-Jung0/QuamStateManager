@@ -1,0 +1,470 @@
+"""What a CZ gate owns (core.gate_parts): the one set the gate delete and the
+check record's content hash read."""
+from __future__ import annotations
+
+import copy
+
+from quam_state_manager.core import cz_gate_build as cgb
+from quam_state_manager.core import gate_parts as gp
+from quam_state_manager.core.pointer_resolver import target_path
+from tests.cz_gate_chip import add_gate, chip, reverse, square
+
+M = "qubit_pairs.q1-q2.macros.cz_sq"
+OP = "qubits.q1.z.operations.cz_sq_pulse_q1_q2"
+
+
+def test_macro_owned_gate_owns_its_operation():
+    s, plan = add_gate(chip())
+    assert plan["direction"] == cgb.MACRO_OWNS
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"], parts
+    assert parts["operations"] == [OP]
+    assert parts["pulses"] == [M + ".flux_pulse_qubit"]
+    assert parts["paths"] == [M, OP]
+    assert not parts["active"] and parts["alias"] is None
+
+
+def test_two_line_gate_owns_both_operations():
+    s, _ = add_gate(chip(), pulses=square(coupler=True))
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"], parts
+    assert parts["operations"] == sorted(
+        [OP, "qubit_pairs.q1-q2.coupler.operations.cz_sq_coupler_pulse_q1_q2"])
+
+
+def test_reverse_direction_gate_owns_the_operation_it_names():
+    s, plan = add_gate(reverse(chip()))
+    assert plan["direction"] == cgb.OPERATION_OWNS
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"], parts
+    assert parts["operations"] == [OP]
+    assert parts["pulses"] == []
+
+
+def test_a_general_operation_the_macro_names_stays():
+    s, _ = add_gate(reverse(chip()))
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"] = "const"
+    s["qubits"]["q1"]["z"]["operations"].pop("cz_sq_pulse_q1_q2")
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["operations"] == []
+    assert parts["kept"] == ["qubits.q1.z.operations.const"]
+
+
+def test_spectator_operation_by_the_name_rule():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["z"]["operations"]["cz_sq_spectator_pulse_q1_q2"] = {"amplitude": 0.0}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert "qubits.q3.z.operations.cz_sq_spectator_pulse_q1_q2" in parts["operations"]
+
+
+def test_shared_operation_is_refused_naming_the_other_gate():
+    s, _ = add_gate(chip())
+    other = copy.deepcopy(s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"])
+    other["flux_pulse_qubit"] = "#/qubits/q1/z/operations/cz_sq_pulse_q1_q2"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_other"] = other
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("also used by qubit_pairs.q1-q2.macros.cz_other.flux_pulse_qubit" in r
+               for r in parts["refusals"]), parts["refusals"]
+
+
+def test_a_reference_from_outside_is_refused():
+    s, _ = add_gate(chip())
+    s["qubits"]["q2"]["amp_ref"] = "#/qubit_pairs/q1-q2/macros/cz_sq/flux_pulse_qubit/amplitude"
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("qubits.q2.amp_ref" in r for r in parts["refusals"])
+
+
+def test_active_gate_carries_the_alias():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "#./cz_sq"
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"] and parts["active"]
+    assert parts["alias"] == "qubit_pairs.q1-q2.macros.cz"
+
+
+def test_not_a_gate():
+    parts = gp.gate_parts(chip(), "q1-q2", "cz_none")
+    assert not parts["ok"] and parts["refusals"]
+
+
+def test_content_hash_follows_the_operation_too():
+    s, _ = add_gate(reverse(chip()))
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["amplitude"] = 0.2
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+    assert gp.content_hash(s, "q1-q2", "nope") is None
+
+
+def test_gate_of_path_for_an_operation_and_a_macro_field():
+    s, _ = add_gate(reverse(chip()))
+    assert gp.gate_of_path(s, OP) == ("q1-q2", "cz_sq")
+    assert gp.gate_of_path(s, M + ".flux_pulse_qubit") == ("q1-q2", "cz_sq")
+    assert gp.gate_of_path(s, "qubits.q1.z.operations.const") is None
+
+
+def test_rename_keeps_pulse_id_equal_to_the_key_and_every_reference_resolves():
+    from quam_state_manager.core import regen_merge
+    s, _ = add_gate(chip(), pulses=square(coupler=True))
+    renamed = regen_merge.rename_source_qubits(s, {}, {"q1": "qa", "q2": "qb"})[0]
+    macro = renamed["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]
+    key = macro["flux_pulse_qubit"]["id"]
+    assert key == "cz_sq_pulse_qa_qb"
+    assert key in renamed["qubits"]["qa"]["z"]["operations"]
+    for holder, ref in gp._walk_refs(renamed, ()):
+        segs = target_path(renamed, ref, holder)
+        node = renamed
+        for seg in segs or []:
+            if seg == "inferred_id" or seg == "inferred_duration":
+                break
+            assert isinstance(node, dict) and seg in node, (holder, ref)
+            node = node[seg]
+
+
+def test_any_other_macro_naming_the_operation_is_a_refusal():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["swap"] = {"__class__": "lab.Swap",
+                                                    "flux_pulse": "cz_sq_pulse_q1_q2"}
+    s["qubits"]["q3"]["macros"] = {"park": {"pulse_ref": "#/qubits/q1/z/operations/cz_sq_pulse_q1_q2"}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    text = " ".join(parts["refusals"])
+    assert "qubit_pairs.q1-q2.macros.swap.flux_pulse" in text
+    assert "qubits.q3.macros.park.pulse_ref" in text
+
+
+def test_a_plain_name_on_two_lines_of_an_unknown_class_is_refused():
+    s = chip()
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_lab"] = {"__class__": "lab.CZX", "flux_pulse": "shared_op"}
+    for q in ("q1", "q2"):
+        s["qubits"][q]["z"]["operations"]["shared_op"] = {"amplitude": 0.1}
+    parts = gp.gate_parts(s, "q1-q2", "cz_lab")
+    assert not parts["ok"]
+    assert any("qubits.q1.z.operations.shared_op and qubits.q2.z.operations.shared_op" in r
+               for r in parts["refusals"])
+
+
+def test_the_qubit_slot_plays_on_the_moving_line_only():
+    s = chip()
+    s["qubit_pairs"]["q1-q2"]["moving_qubit"] = "target"
+    from quam_state_manager.core import cz_gate_build as cgb2
+    m = cgb2._cz_skeleton()
+    m["flux_pulse_qubit"] = "cz_y_op"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_y"] = m
+    for q in ("q1", "q2"):
+        s["qubits"][q]["z"]["operations"]["cz_y_op"] = {"amplitude": 0.1}
+    parts = gp.gate_parts(s, "q1-q2", "cz_y")
+    assert parts["operations"] == ["qubits.q2.z.operations.cz_y_op"]
+
+
+def test_non_dict_shapes_never_raise():
+    for bad in ("x", [1], 3, None):
+        parts = gp.gate_parts({"qubit_pairs": bad}, "q1-q2", "cz_sq")
+        assert not parts["ok"]
+        assert gp.gate_of_path({"qubit_pairs": bad}, "qubit_pairs.q1-q2.macros.cz_sq") is None
+    assert not gp.gate_parts("x", "p", "g")["ok"]
+
+
+def _gate_with_op_key():
+    s, _ = add_gate(chip())
+    return s, "cz_sq_pulse_q1_q2"
+
+
+def test_a_plain_name_nested_in_the_same_qubit_macro_is_a_refusal():
+    for shape, field in (({"pulses": {"main": None}}, "pulses.main"), ({"pulses": [None]}, "pulses.0")):
+        s, key = _gate_with_op_key()
+        m = copy.deepcopy(shape)
+        if isinstance(m["pulses"], dict):
+            m["pulses"]["main"] = key
+        else:
+            m["pulses"][0] = key
+        s["qubits"]["q1"]["macros"] = {"x": m}
+        parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+        assert not parts["ok"]
+        assert any("qubits.q1.macros.x." + field in r for r in parts["refusals"]), parts["refusals"]
+
+
+def test_a_plain_name_on_an_unrelated_owner_or_under_note_does_not_count():
+    s, key = _gate_with_op_key()
+    s["qubits"]["q3"]["macros"] = {"x": {"pulses": {"main": key}}}
+    s["qubit_pairs"]["q2-q3"]["macros"]["other"] = {"pulses": [key]}
+    s["qubits"]["q1"]["macros"] = {"y": {"note": key, "id": key}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["ok"], parts["refusals"]
+
+
+def test_a_reference_in_a_list_deep_in_any_macro_counts():
+    s, key = _gate_with_op_key()
+    s["qubits"]["q3"]["macros"] = {"x": {"seq": [{"a": "#/qubits/q1/z/operations/" + key}]}}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("qubits.q3.macros.x.seq.0.a" in r for r in parts["refusals"])
+
+
+def test_numbers_equal_in_value_hash_equal():
+    s, _ = add_gate(chip())
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    p = s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]
+    p["length"] = float(p["length"])
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["phase_shift_control"] = 0
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["phase_shift_control"] = False
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def _const_gate():
+    s = reverse(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_old"]["flux_pulse_qubit"] = "const"
+    return s
+
+
+def test_the_hash_covers_a_kept_operation_the_gate_plays():
+    s = _const_gate()
+    h = gp.content_hash(s, "q1-q2", "cz_old")
+    s["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = 0.77
+    assert gp.content_hash(s, "q1-q2", "cz_old") != h
+    parts = gp.gate_parts(s, "q1-q2", "cz_old")
+    assert "qubits.q1.z.operations.const" in parts["kept"]
+    assert "qubits.q1.z.operations.const" not in parts["paths"]
+
+
+def test_the_hash_follows_a_reference_to_its_value_not_its_text():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["shared_amp"] = 0.3
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]["amplitude"] = "#/qubits/q3/shared_amp"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["shared_amp"] = 0.31
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+    s["qubits"]["q3"]["shared_amp"] = 0.3
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_the_hash_ignores_an_unrelated_operation_and_the_rest_of_the_qubit():
+    s, _ = add_gate(chip())
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = 0.5
+    s["qubits"]["q1"]["f_01"] = 5.1e9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_numbers_exact_and_never_raising():
+    n = gp._norm_numbers
+    assert n(1) == n(1.0) and n(-0.0) == n(0.0) and n(0) == n(-0.0)
+    assert n(2**53) != n(2**53 + 1)
+    assert n(True) != n(1) and n("1") != n(1)
+    assert n(10**400) == ["int", str(10**400)]
+    assert n(float("inf")) != n(float("-inf"))
+    assert n(0.1) != n(0.10000000000000002)
+
+
+def test_a_plain_name_under_any_non_descriptive_key_counts():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "flux_gate_op": "cz_sq_pulse_q1_q2"}
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert not parts["ok"]
+    assert any("qubit_pairs.q1-q2.macros.cz_two.flux_gate_op" in r for r in parts["refusals"])
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "label": "cz_sq_pulse_q1_q2"}
+    assert gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+
+
+def test_a_plain_cz_name_is_the_alias():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz"] = "cz_sq"
+    parts = gp.gate_parts(s, "q1-q2", "cz_sq")
+    assert parts["active"] and parts["alias"] == "qubit_pairs.q1-q2.macros.cz"
+    assert gp.active_gate("q1-q2", s["qubit_pairs"]["q1-q2"]["macros"]) == "cz_sq"
+
+
+def test_a_reference_to_a_qubit_hashes_which_one_only():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q1"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["f_01"] = 5.2e9            # a component: only which one
+    s["qubits"]["q1"]["xy"]["operations"]["x180"] = {"amplitude": 0.3}
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["amplitude"] = 0.9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h   # played, reached as an operation
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["qubit_ref"] = "#/qubits/q2"
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_pulse_reached_by_reference_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["z"]["extra_pulse"] = {"amplitude": 0.2, "length": 40}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"] = "#/qubits/q1/z/extra_pulse"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["extra_pulse"]["amplitude"] = 0.21
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_list_reached_by_reference_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["wf"] = [0.1, 0.2]
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["samples"] = "#/qubits/q3/wf"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["wf"][0] = 0.15
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_two_step_chain_is_followed_to_its_value():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["a"] = "#/qubits/q3/b"
+    s["qubits"]["q3"]["b"] = 0.4
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["flux_pulse_qubit"]["amplitude"] = "#/qubits/q3/a"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["b"] = 0.41
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_reference_cycle_through_two_objects_terminates_and_is_stable():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["x"] = {"other": "#/qubits/q3/y", "v": 1}
+    s["qubits"]["q3"]["y"] = {"back": "#/qubits/q3/x", "v": 2}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["extra"] = "#/qubits/q3/x"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    assert h == gp.content_hash(s, "q1-q2", "cz_sq")
+
+
+def test_a_descriptive_key_anywhere_on_the_path_exempts():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "note": ["cz_sq_pulse_q1_q2"]}
+    assert gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_two"] = {"__class__": "lab.G", "flux_gate_op": ["cz_sq_pulse_q1_q2"]}
+    assert not gp.gate_parts(s, "q1-q2", "cz_sq")["ok"]
+
+
+def test_a_cycle_is_cut_where_it_closes():
+    import json as _json
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["x"] = {"other": "#/qubits/q3/y", "v": 1}
+    s["qubits"]["q3"]["y"] = {"back": "#/qubits/q3/x", "v": 2}
+    out = gp._resolved(s, "#/qubits/q3/x", ("qubit_pairs", "q1-q2", "macros", "cz_sq", "extra"))
+    assert out == {"other": {"back": ["cycle", "qubits.q3.x"], "v": 2}, "v": 1}, _json.dumps(out)
+
+
+def test_a_reference_to_a_channel_hashes_which_one_only():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["line"] = "#/qubits/q1/z"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["z"]["joint_offset"] = 0.12
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_parameter_dict_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["extras"] = {"cz_params": {"a": 1.0, "b": 2.0}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["params"] = "#/qubits/q1/extras/cz_params"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["extras"]["cz_params"]["b"] = 2.5
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_another_channels_operation_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["z"]["operations"]["cz_sq_pulse_q1_q2"]["amplitude"] = "#/qubits/q3/z/operations/const"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["z"]["operations"]["const"]["length"] = 120
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_component_rule():
+    assert gp.is_component((), {}) and gp.is_component(("qubits",), {})
+    assert gp.is_component(("qubits", "q1"), {}) and gp.is_component(("qubit_pairs", "p"), {})
+    assert gp.is_component(("ports", "a", "b"), {}) and gp.is_component(("qubits", "q1", "z"), {"operations": {}})
+    assert not gp.is_component(("x", "y"), {"operations": {}})
+    assert not gp.is_component(("qubits", "q1", "z", "operations", "k"), {"amplitude": 1})
+    assert not gp.is_component(("qubits", "q3", "wf"), [1, 2])
+
+
+def test_a_pulse_like_dict_with_an_operations_key_is_walked():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["p"] = {"amplitude": 0.1, "operations": {"a": 1}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["x"] = "#/qubits/q3/p"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["p"]["amplitude"] = 0.2
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_a_whole_coupler_is_a_component():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["c"] = "#/qubit_pairs/q1-q2/coupler"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["coupler"]["offset"] = 0.3
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_port_scalar_is_a_component_even_through_a_chain():
+    s, _ = add_gate(chip())
+    s["ports"] = {"o1": {"offset": 0.01}}
+    s["qubits"]["q3"]["via"] = "#/ports/o1/offset"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["z"] = "#/ports/o1/offset"
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["z2"] = "#/qubits/q3/via"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["ports"]["o1"]["offset"] = 0.02
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_a_number_referred_to_directly_is_covered():
+    s, _ = add_gate(chip())
+    s["qubits"]["q1"]["f_01"] = 5.0e9
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["f"] = "#/qubits/q1/f_01"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q1"]["f_01"] = 5.1e9
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_the_hop_limit_hashes_a_marker():
+    s, _ = add_gate(chip())
+    assert gp.RESOLVE_DEPTH == 8
+    n = 11                     # more hops than the limit
+    for i in range(n):
+        s["qubits"]["q3"][f"h{i}"] = f"#/qubits/q3/h{i + 1}"
+    s["qubits"]["q3"][f"h{n}"] = 0.5
+    out = gp._resolved(s, "#/qubits/q3/h0", ("x",))
+    assert out[0] == "depth", out
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["deep"] = "#/qubits/q3/h0"
+    h1 = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"][f"h{n}"] = 0.6          # past the limit: not seen
+    s2 = {"qubits": {"q3": {f"h{i}": f"#/qubits/q3/h{i + 1}" for i in range(n)}}}
+    s2["qubits"]["q3"][f"h{n}"] = 0.5
+    assert gp._resolved(s2, "#/qubits/q3/h0", ("x",))[0] == "depth"
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h1 != h
+
+
+def test_a_channel_like_dict_five_deep_is_walked():
+    s, _ = add_gate(chip())
+    s["qubit_pairs"]["q1-q2"]["coupler"]["sub"] = {"chan": {"operations": {}, "gain": 1.0}}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["c"] = "#/qubit_pairs/q1-q2/coupler/sub/chan"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubit_pairs"]["q1-q2"]["coupler"]["sub"]["chan"]["gain"] = 2.0
+    assert gp.content_hash(s, "q1-q2", "cz_sq") != h
+
+
+def test_the_first_target_under_ports_is_not_followed():
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["v"] = 0.1
+    s["ports"] = {"a": "#/qubits/q3/v"}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["p"] = "#/ports/a"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    s["qubits"]["q3"]["v"] = 0.2
+    assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+
+
+def test_the_hash_does_not_depend_on_the_pulse_catalog():
+    from quam_state_manager.core import pulse_catalog
+    s, _ = add_gate(chip())
+    s["qubits"]["q3"]["p"] = {"operations": {"a": 1}, "__class__": "lab.Shape", "w": 1}
+    s["qubit_pairs"]["q1-q2"]["macros"]["cz_sq"]["x"] = "#/qubits/q3/p"
+    h = gp.content_hash(s, "q1-q2", "cz_sq")
+    pulse_catalog.apply_chip_classes({"lab.Shape": {
+        "importable": True, "canonical": "lab.Shape",
+        "bases": ["quam.components.pulses.Pulse"], "fields": {}}})
+    try:
+        assert gp.content_hash(s, "q1-q2", "cz_sq") == h
+    finally:
+        pulse_catalog.apply_chip_classes(None)
+    assert gp._pulse_like({"__class__": "a.b.SquarePulse"})
+    assert not gp._pulse_like({"__class__": "a.b.Shape"})

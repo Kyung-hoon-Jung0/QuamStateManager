@@ -88,6 +88,16 @@ specs.forEach((s, i) => {
     ok(parts.has(p), "the page samples the '" + p + "' part");
 });
 
+// every id reference on the page (after ui.js filled its slots) names an id that exists
+const dangling = [];
+doc.querySelectorAll("[aria-describedby], [aria-labelledby], [aria-controls], label[for]").forEach((n) => {
+    ["aria-describedby", "aria-labelledby", "aria-controls", "for"].forEach((a) => {
+        if (!n.hasAttribute(a)) return;
+        n.getAttribute(a).split(/\s+/).filter(Boolean).forEach((id) => { if (!doc.getElementById(id)) dangling.push(a + "=" + id); });
+    });
+});
+ok(dangling.length === 0, "no dangling id reference on the sample page: " + dangling.join(", "));
+
 // escaping: a hostile string is text on the ui.js side (the macro side is Jinja autoescape, pinned in pytest)
 const evil = '<img src=x onerror="window.__pwned=1">';
 const n = window.UI.render({ part: "item", chip: evil, title: evil, body: [evil], note: evil, badge: { text: evil } });

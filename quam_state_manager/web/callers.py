@@ -81,6 +81,7 @@ PERSON_ONLY = {
     "main.generate_proposals_context": "recording the wizard's draft chip",
     "main.generate_rules_apply": "adding a gate rule to pairs",
     "main.api_pulse_gaussian_cz_apply_several": "adding Gaussian CZ pulses to several pairs",
+    "main.api_cz_gate_make_active": "making a CZ gate the pair's active gate",
 }
 
 #: The person's guardrails: an attempt on one is itself worth a journal line.

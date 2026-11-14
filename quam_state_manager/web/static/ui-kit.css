@@ -989,6 +989,10 @@
 .ui-field.ui-field--inline { display: grid; grid-template-columns: var(--ui-field-label-w) minmax(0, 1fr); align-items: center; column-gap: var(--ui-gap-3); row-gap: var(--ui-gap-1); }
 .ui-field--inline > .ui-field-head { grid-column: 1; }
 .ui-field--inline > .ui-field-hint, .ui-field--inline > .ui-field-error { grid-column: 2; }
+.ui-field-control { min-width: 0; }
+/* a control in a stacked field keeps its own width; --block fills the column */
+.ui-field > .ui-input-unit, .ui-field > .ui-input, .ui-field > .ui-select, .ui-field > .ui-menu { align-self: flex-start; }
+.ui-field > .ui-input-unit--block, .ui-field > .ui-input--block, .ui-field > .ui-select--block, .ui-field > .ui-menu--block { align-self: stretch; }
 .ui-field-stack { display: flex; flex-direction: column; gap: var(--ui-gap-3); }
 .ui-field-stack--dense { gap: var(--ui-gap-2); }
 
@@ -1596,3 +1600,26 @@ table.data-table td { font-variant-numeric: tabular-nums; }
 .ui-menu-list > .ui-option[aria-disabled="true"] { cursor: default; background: transparent; }
 .ui-menu-list > .ui-option[aria-disabled="true"] > .ui-option-title { color: var(--ui-text-3); }
 .ui-input-unit > .ui-input.ui-input[aria-invalid="true"], .ui-input-unit > .ui-input.ui-input[aria-invalid="true"]:focus { box-shadow: none; }
+
+/* CZ gate status line (_gate_status.html) and its delete offer (_gate_delete_offer.html):
+   one row per gate, a hairline between rows */
+.gate-status-list { margin: var(--ui-gap-2) 0; }
+.gate-status { display: flex; flex-direction: column; }
+.gate-status-list .gate-status { padding: 0 var(--ui-gap-3); }
+.gate-status-list .gate-status + .gate-status { border-top: var(--ui-bw) solid var(--ui-border); }
+.gate-status-row { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-height: var(--ui-icon-btn); }
+.gate-status-row:has(> .gate-status-details[open]) { flex-wrap: wrap; }
+.gate-status-items { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--ui-gap-1); min-width: 0; overflow: hidden; }
+.gate-status-row > .ui-chip, .gate-status-details { flex: 0 0 auto; }
+.gate-status-details { margin: 0; }
+.gate-status-details[open] { flex-basis: 100%; order: 10; }
+.gate-status-details .ui-disclosure-summary { font-weight: var(--ui-fw-normal); font-size: var(--ui-fs-xs); color: var(--ui-text-2); }
+.gate-status-details-list { margin: var(--ui-gap-1) 0; overflow-wrap: anywhere; }
+.gate-status-details-list dd { margin: 0 0 var(--ui-gap-1) var(--ui-gap-3); }
+.gate-status-actions { display: flex; flex-wrap: nowrap; flex: 0 0 auto; align-items: center; gap: var(--ui-gap-1); margin-left: auto; }
+.gate-status-edit, .gate-status-activate, .gate-status-delete, .gate-delete-confirm, .gate-delete-cancel { width: auto; margin: 0; }
+.gate-status-delete:hover { color: var(--ui-danger-text); border-color: var(--ui-danger-border); }
+.gate-status-slot:empty { display: none; }
+.gate-delete-offer { display: flex; flex-direction: column; gap: var(--ui-gap-1); padding-bottom: var(--ui-gap-1); }
+.gate-delete-list { margin: 0; padding-left: var(--ui-gap-4); font-size: var(--ui-fs-sm); }
+.gate-delete-actions { justify-content: flex-start; margin-left: 0; }

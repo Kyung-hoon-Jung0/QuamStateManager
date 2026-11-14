@@ -1408,19 +1408,19 @@
    "json:pulse-qubit-defaults-data": {
     "q0": {
      "anharmonicity": {
-      "note": "placeholder: this qubit stores no anharmonicity -- set it",
+      "note": "placeholder: this qubit stores no anharmonicity — set it",
       "value": null
      }
     },
     "q1": {
      "anharmonicity": {
-      "note": "placeholder: this qubit stores no anharmonicity -- set it",
+      "note": "placeholder: this qubit stores no anharmonicity — set it",
       "value": null
      }
     },
     "q2": {
      "anharmonicity": {
-      "note": "placeholder: this qubit stores no anharmonicity -- set it",
+      "note": "placeholder: this qubit stores no anharmonicity — set it",
       "value": null
      }
     }
