@@ -667,8 +667,14 @@ def check_fit(run_id: int):
         return store.get_value(dotted)
 
     verdicts = gates.evaluate_run(run_obj, fam, targets, current_value_of=current_value_of)
+    # per target: only a pass may be proposed for writing; every other
+    # target is named with its reasons so the value is not offered
+    do_not_write = {t: list(getattr(v, "reasons", []) or [])
+                    for t, v in verdicts.items()
+                    if getattr(v, "verdict", None) != "pass"}
     return jsonify(ok=True, run_id=run_id, family=getattr(fam, "key", None) or str(fam),
-                   verdicts={t: _jsonable(v) for t, v in verdicts.items()})
+                   verdicts={t: _jsonable(v) for t, v in verdicts.items()},
+                   all_pass=not do_not_write, do_not_write=do_not_write)
 
 
 # ------------------------------------------------------------------ notes

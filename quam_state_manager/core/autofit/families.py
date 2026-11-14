@@ -267,7 +267,22 @@ class ExtremumInsideSweep:
     The range is min..max of the axis actually recorded in the run's ds_raw
     (never the node's parameter defaults); the half-span is (max - min) / 2,
     so a descending or off-centre sweep is judged the same way. Endpoints
-    count as inside.
+    count as inside (edge margin 0): a vertex near the edge of a centred sweep
+    already proposes a move close to the half-span, which the move cap below
+    bounds, and a wider margin would reject a vertex the data did bracket.
+
+    Optional curvature check: when ``curvature_key`` names the fit's quadratic
+    coefficient, a coefficient whose sign contradicts ``expect`` (``max`` wants
+    a negative coefficient, ``min`` a positive one) means the fitted turning
+    point is the opposite kind of extremum: not a pass. A zero or missing
+    coefficient leaves the check unevaluated.
+
+    A rule that cannot read its inputs (no vertex, a non-finite vertex, no
+    axis, fewer than 2 axis points) never passes the target: it is a suspect
+    (unverifiable) with the reason, not a pass and not a guessed fail.
+
+    Applies to: ``ramsey_vs_flux`` only. Its curvature check stays off because
+    the stored quadratic term's sign convention differs between setups.
 
     ``move``:
       ``relative``: the axis is an offset from the current setting, so the
@@ -281,6 +296,8 @@ class ExtremumInsideSweep:
     unit: str = ""
     move: str = "relative"
     state_path: str | None = None
+    curvature_key: str | None = None
+    expect: str = "max"
 
 
 @dataclass(frozen=True)

@@ -497,8 +497,12 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
     name = "extremum check"
     vertex = fam_mod.fit_value(fam, entry, rule.key)
     if vertex is None:
-        return "not_evaluated", (f"{name} not evaluated: the fit does not "
-                                 f"record {rule.key}")
+        raw_v = (entry or {}).get(rule.key)
+        if raw_v is None:
+            return "not_evaluated", (f"{name} not evaluated: the fit does not "
+                                     f"record {rule.key}")
+        return "not_evaluated", (f"{name} not evaluated: {rule.key} is not a "
+                                 f"finite number ({raw_v!r})")
     folder = _attr(run, "folder_path", None)
     raw = Path(folder) / "ds_raw.h5" if folder else None
     if raw is None or not raw.exists():
@@ -539,6 +543,15 @@ def _extremum_inside_sweep(run, fam: Family, entry: dict, target: str, *,
     if move is not None and move > half:
         return "fail", (f"proposed move {move * k:.2f}{u} is larger than the "
                         f"sweep half-span {half * k:.2f}{u}")
+    if rule.curvature_key:
+        c = fam_mod.fit_value(fam, entry, rule.curvature_key)
+        if c is not None and c != 0:
+            want_neg = rule.expect == "max"
+            if (c < 0) != want_neg:
+                got = "minimum" if c > 0 else "maximum"
+                return "fail", (f"fit curvature {rule.curvature_key}={c:.4g} "
+                                f"makes the vertex a {got}, but this "
+                                f"calibration expects a {rule.expect}imum")
     return "ok", ""
 
 
@@ -651,9 +664,9 @@ def evaluate_target(run, fam: Family, target: str, *,
             v.reasons.append(why)
             return v
         if status == "not_evaluated":
-            # same convention as the G4 bands on a missing value: the verdict
-            # is not changed, but the check says it could not run and why
-            v.reasons.append(why)
+            # the proposed value is the extremum itself: an unread range is
+            # never a pass (and never a guessed fail)
+            suspects.append(("unverifiable", why))
     v.checks.setdefault("G4_plausibility", "ok")
 
     # --- G3: raw-data feature cross-check (family-gated) --------------------

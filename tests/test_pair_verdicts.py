@@ -144,6 +144,14 @@ class TestCheckFitRoute:
         assert set(r["verdicts"]) == {"q1", "q2"}
         assert r["verdicts"]["q2"]["verdict"] == "fail"
 
+    def test_a_target_that_did_not_pass_is_named_not_to_write(self, client):
+        r = client.get("/api/agent/check-fit/3").get_json()
+        assert r["all_pass"] is False
+        assert "q2" in r["do_not_write"] and r["do_not_write"]["q2"]
+        assert all(r["verdicts"][t]["verdict"] != "pass" for t in r["do_not_write"])
+        assert all(r["verdicts"][t]["verdict"] == "pass"
+                   for t in set(r["verdicts"]) - set(r["do_not_write"]))
+
 
 # -- B: the operational gate ---------------------------------------------------
 
