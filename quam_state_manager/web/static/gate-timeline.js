@@ -12,17 +12,23 @@
  *
  * Layout: one Plotly figure, one y axis per drawn lane stacked by domain, all
  * traces on the single x axis, so a zoom or pan on any lane moves every lane
- * while a lane's own y zoom stays its own. Rendering goes through
- * window._plotlyRender, sizing through window.PlotHost, colours through
- * window.PlotTheme and CSS variables read at run time (no colour literals).
+ * while a lane's own y zoom stays its own. Lane titles sit horizontally in the
+ * left margin; each segment's two-line text sits in a band of the lane kept
+ * free of data (top band, and a bottom band when a lane has several segments
+ * and labels alternate rows). Rendering goes through window._plotlyRender,
+ * sizing through window.PlotHost, colours through window.PlotTheme and CSS
+ * variables read at run time (no colour literals).
  */
 (function () {
     "use strict";
 
-    var LANE_PX = 96;          // fixed height per lane: 16 lanes scroll in the host, labels never overlap
+    var GATE_PX = 110;         // fixed lane heights: many lanes scroll in the host, labels never overlap
+    var SPECT_PX = 64;
     var GAP_PX = 14;
-    var MARGIN = { l: 150, r: 16, t: 8, b: 40 };
-    var HEAD_ROOM = 0.45;      // share of a lane's span kept above the data for the segment text
+    var BAND_PX = 36;          // a two-line segment text band
+    var TOP_AXIS_LANES = 6;    // more drawn lanes than this: time ticks at the top too
+    var MAX_HOVER_POINTS = 4000;
+    var CHAR_PX = 6.2;         // average width of a 10-11 px character, for fitting text
 
     var FLAG_TEXT = {
         over_range: "over the port range",
@@ -58,7 +64,8 @@
         return n;
     }
     function num(x) { return typeof x === "number" && isFinite(x); }
-    function fmtV(v) { return num(v) ? (+v.toPrecision(4)) + " V" : "?"; }
+    function fmt(v) { return String(+v.toPrecision(3)); }
+    function fmtV(v) { return num(v) ? fmt(v) + " V" : "?"; }
 
     /* The value a lane plays at time t, from its samples only.
        Inside a segment (start <= t < end, or t == end of the last one that ends
@@ -93,26 +100,52 @@
         return val.operation + ": " + fmtV(val.v);
     }
 
-    function laneTitle(lane) {
+    function titleLines(lane) {
         var lines = [lane.label || lane.key];
         if (lane.port) lines.push(lane.port);
-        if (num(lane.offset_v) && lane.offset_v !== 0) lines.push("offset " + fmtV(lane.offset_v));
-        if (!lane.limit_v) lines.push("range not known");
-        return lines.join("<br>");
+        var lim = lane.limit_v && num(lane.limit_v[0]) && num(lane.limit_v[1])
+            ? "limit " + fmt(lane.limit_v[0]) + " to " + fmt(lane.limit_v[1]) + " V" : "range not known";
+        if (num(lane.offset_v) && lane.offset_v !== 0) lim += ", offset " + fmtV(lane.offset_v);
+        lines.push(lim);
+        return lines;
+    }
+    function laneTitle(lane) {
+        var l = titleLines(lane);
+        return "<b>" + l[0] + "</b><br>" + l.slice(1).join("<br>");
     }
 
-    function laneExtent(lane, showSim) {
-        var lo = 0, hi = 0;
+    /* Line 2 of a segment's text, from the received samples only. */
+    function levelText(s) {
+        var vs = (s.v || []).filter(num);
+        var len = (num(s.length_ns) ? s.length_ns : "?") + " ns";
+        if (!vs.length) return "no samples, " + len;
+        var mx = Math.max.apply(null, vs), mn = Math.min.apply(null, vs);
+        if (mx === mn) return "level " + fmtV(mx) + ", " + len;
+        return "max " + fmtV(mx) + (mn < 0 ? ", min " + fmtV(mn) : "") + ", " + len;
+    }
+    function shorten(name, maxChars) {
+        if (name.length <= maxChars) return name;
+        if (maxChars < 5) return name.slice(0, Math.max(1, maxChars - 1)) + "…";
+        var keep = maxChars - 1, head = Math.ceil(keep / 2);
+        return name.slice(0, head) + "…" + name.slice(name.length - (keep - head));
+    }
+
+    function dataExtent(lane, showSim) {
+        var lo = Infinity, hi = -Infinity;
         function take(v) { if (num(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } }
         (lane.segments || []).forEach(function (s) { (s.v || []).forEach(take); });
-        if (lane.limit_v) { take(lane.limit_v[0]); take(lane.limit_v[1]); }
         if (showSim && lane.sim) (lane.sim.v || []).forEach(take);
-        return [lo, hi];
+        if (lo === Infinity) { lo = 0; hi = 0; }
+        return [Math.min(lo, 0), Math.max(hi, 0)];   // 0 V stays visible
     }
-    function padded(ext) {
+    /* The y range that puts the data in the lane's middle band and leaves the
+       text bands (px) free above and, when used, below. */
+    function bandedRange(ext, lanePx, topPx, botPx) {
         var span = ext[1] - ext[0];
-        if (!(span > 0)) span = 1;
-        return [ext[0] - 0.08 * span, ext[1] + HEAD_ROOM * span];
+        if (!(span > 0)) span = Math.max(Math.abs(ext[0]), Math.abs(ext[1]), 0.01);
+        var dataPx = Math.max(12, lanePx - topPx - botPx - 6);
+        var perPx = span / dataPx;
+        return [ext[0] - (botPx + 3) * perPx, ext[1] + (topPx + 3) * perPx];
     }
 
     function render(host, data, opts) {
@@ -158,10 +191,14 @@
             };
         }
 
-        // Toolbar: vertical scale (kit segmented control) and the simulation switch.
+        // Toolbar: vertical scale (kit segmented control), the spectator group
+        // summary with its unfold control, and the simulation switch.
+        // role=toolbar, not group: the base stylesheet stretches every
+        // [role=group] to the full width.
         var bar = el("div", "ui-actions ui-actions--start");
+        bar.setAttribute("data-gate-timeline-bar", "");
         var seg = el("div", "ui-segmented");
-        seg.setAttribute("role", "group");
+        seg.setAttribute("role", "toolbar");
         seg.setAttribute("aria-label", "Vertical scale");
         var scaleBtns = [["lane", "Per lane"], ["common", "Common V scale"]].map(function (o) {
             var b = el("button", "ui-segmented-opt", o[1]);
@@ -172,6 +209,17 @@
             return b;
         });
         bar.appendChild(seg);
+        var foldText = null, foldBtn = null;
+        if (spect.length) {
+            foldText = el("span", "ui-note");
+            foldText.setAttribute("data-spectator-summary", "");
+            foldBtn = el("button", "btn-sm secondary");
+            foldBtn.type = "button";
+            foldBtn.setAttribute("data-fold", "");
+            on(foldBtn, "click", function () { handle.setFold(!state.fold); });
+            bar.appendChild(foldText);
+            bar.appendChild(foldBtn);
+        }
         var simBox = null;
         if (anySim) {
             var lab = el("label", "ui-check");
@@ -189,116 +237,171 @@
         plot.setAttribute("data-gate-timeline-plot", "");
         root.appendChild(plot);
 
-        // Spectator group: folded it is one summary row with the unfold control.
-        var foldRow = null, foldText = null, foldBtn = null;
-        if (spect.length) {
-            foldRow = el("div", "ui-actions ui-actions--start");
-            foldRow.setAttribute("data-spectator-summary", "");
-            foldText = el("span", "ui-note");
-            foldBtn = el("button", "btn-sm secondary");
-            foldBtn.type = "button";
-            foldBtn.setAttribute("data-fold", "");
-            on(foldBtn, "click", function () { handle.setFold(!state.fold); });
-            foldRow.appendChild(foldText);
-            foldRow.appendChild(foldBtn);
-            root.appendChild(foldRow);
-        }
         var notesBox = el("div");
         notesInto(notesBox);
         root.appendChild(notesBox);
 
         function drawnLanes() { return state.fold ? gate.slice() : gate.concat(spect); }
 
-        function allTimes(drawn) {
-            var seen = {}, out = [];
+        /* Hover grid: every 1 ns over the drawn span (coarser only past
+           MAX_HOVER_POINTS) plus every sample and edge, so the unified readout
+           appears at any time on the axis. */
+        function hoverTimes(drawn) {
+            var lo = Infinity, hi = -Infinity, seen = {}, out = [];
+            function add(t) { if (num(t) && !seen[t]) { seen[t] = 1; out.push(t); } }
             drawn.forEach(function (l) {
                 (l.segments || []).forEach(function (s) {
-                    (s.t_ns || []).concat([s.start_ns, s.end_ns]).forEach(function (t) {
-                        if (num(t) && !seen[t]) { seen[t] = 1; out.push(t); }
-                    });
+                    if (num(s.start_ns)) lo = Math.min(lo, s.start_ns);
+                    if (num(s.end_ns)) hi = Math.max(hi, s.end_ns);
+                    (s.t_ns || []).forEach(add);
+                    add(s.start_ns); add(s.end_ns);
                 });
             });
+            if (lo !== Infinity) {
+                var step = Math.max(1, Math.ceil((hi - lo) / MAX_HOVER_POINTS));
+                for (var t = Math.floor(lo); t <= hi; t += step) add(t);
+            }
             return out.sort(function (a, b) { return a - b; });
+        }
+
+        function spanOf(drawn) {
+            var lo = Infinity, hi = -Infinity;
+            drawn.forEach(function (l) {
+                (l.segments || []).forEach(function (s) {
+                    lo = Math.min(lo, s.start_ns); hi = Math.max(hi, s.end_ns);
+                });
+                if (state.showSim && l.sim && (l.sim.t_ns || []).length) {
+                    lo = Math.min(lo, l.sim.t_ns[0]); hi = Math.max(hi, l.sim.t_ns[l.sim.t_ns.length - 1]);
+                }
+            });
+            return lo === Infinity ? [0, 1] : [lo, Math.max(hi, lo + 1)];
         }
 
         function figure() {
             var c = theme();
             var drawn = drawnLanes();
             var n = drawn.length;
-            var plotPx = n * LANE_PX + Math.max(0, n - 1) * GAP_PX;
+            var heights = drawn.map(function (l) { return l.group === "spectator" ? SPECT_PX : GATE_PX; });
+            var plotPx = heights.reduce(function (a, b) { return a + b; }, 0) + Math.max(0, n - 1) * GAP_PX;
+            var longest = 0;
+            drawn.forEach(function (l) {
+                titleLines(l).forEach(function (s) { longest = Math.max(longest, s.length); });
+            });
+            var topAxis = n > TOP_AXIS_LANES;
+            var margin = { l: Math.ceil(longest * CHAR_PX) + 64, r: 16, t: topAxis ? 34 : 8, b: 40 };
+            var span = spanOf(drawn);
+            var widthPx = Math.max(200, ((host.clientWidth || 900) - margin.l - margin.r));
+            var pxPerNs = widthPx / (span[1] - span[0]);
             var traces = [], shapes = [], annotations = [];
             var layout = {
-                margin: MARGIN,
-                height: plotPx + MARGIN.t + MARGIN.b,
+                margin: margin,
+                height: plotPx + margin.t + margin.b,
                 showlegend: false,
                 hovermode: "x unified",
                 hoversubplots: "axis",
+                hoverdistance: -1,
                 font: { size: 11, color: c.text },
-                xaxis: { title: { text: "time (ns)" }, zeroline: false, anchor: "y" + (n > 1 ? n : "") },
+                xaxis: { title: { text: "time (ns)" }, zeroline: false, anchor: "y" + (n > 1 ? n : ""),
+                         range: span.slice() },
                 shapes: shapes,
                 annotations: annotations
             };
+            if (topAxis) {
+                layout.xaxis2 = { overlaying: "x", matches: "x", side: "top", anchor: "y", showgrid: false,
+                                  zeroline: false };
+                // an axis with no trace is not drawn: one empty trace carries the top ticks
+                traces.push({ x: span.slice(), y: [null, null], xaxis: "x2", yaxis: "y", type: "scatter",
+                              mode: "lines", hoverinfo: "skip", meta: { role: "top-axis" } });
+            }
+            // per lane: which text rows it uses (several segments alternate top / bottom)
+            var plan = drawn.map(function (lane) {
+                var segs = (lane.segments || []).slice().sort(function (a, b) { return a.start_ns - b.start_ns; });
+                return { segs: segs, bottom: segs.length > 1 };
+            });
             var common = null;
             if (state.scale === "common") {
                 var lo = 0, hi = 0;
                 drawn.forEach(function (l) {
-                    var e = laneExtent(l, state.showSim);
+                    var e = dataExtent(l, state.showSim);
                     lo = Math.min(lo, e[0]); hi = Math.max(hi, e[1]);
                 });
-                common = padded([lo, hi]);
+                common = bandedRange([lo, hi], Math.min.apply(null, heights), BAND_PX,
+                                     plan.some(function (p) { return p.bottom; }) ? BAND_PX : 0);
             }
-            var times = allTimes(drawn);
+            var times = hoverTimes(drawn);
+            var y = 0;
             drawn.forEach(function (lane, i) {
                 var ax = i === 0 ? "y" : "y" + (i + 1);
                 var axKey = i === 0 ? "yaxis" : "yaxis" + (i + 1);
-                var top = 1 - (i * (LANE_PX + GAP_PX)) / plotPx;
-                var bottom = Math.max(0, top - LANE_PX / plotPx);
+                var lanePx = heights[i];
+                var top = 1 - y / plotPx;
+                var bottom = Math.max(0, 1 - (y + lanePx) / plotPx);
+                y += lanePx + GAP_PX;
+                var spectLane = lane.group === "spectator";
+                var range = common ? common.slice()
+                    : bandedRange(dataExtent(lane, state.showSim), lanePx, BAND_PX, plan[i].bottom ? BAND_PX : 0);
                 layout[axKey] = {
-                    domain: [bottom, top],
-                    range: common ? common.slice() : padded(laneExtent(lane, state.showSim)),
-                    autorange: false,
-                    title: { text: laneTitle(lane), standoff: 6 },
-                    zeroline: false, gridcolor: c.grid, automargin: true,
-                    ticksuffix: " V", nticks: 4
+                    domain: [bottom, top], range: range, autorange: false, fixedrange: false,
+                    zeroline: false, gridcolor: c.grid, automargin: false,
+                    ticksuffix: " V", nticks: spectLane ? 2 : 4, tickfont: { size: 10 }
                 };
-                // the 0 V line and, when known, the lane's limits: faint
+                // the lane title, horizontal, in the left margin
+                annotations.push({
+                    xref: "paper", yref: ax + " domain", x: 0, y: 0.5, xanchor: "right", yanchor: "middle",
+                    xshift: -46, align: "right", showarrow: false, text: laneTitle(lane),
+                    font: { size: spectLane ? 9 : 10, color: c.text },
+                    meta: { role: "lane-title", lane: lane.key }
+                });
+                // the 0 V line and the lane's limits when they fall inside what is shown
                 shapes.push({ type: "line", name: "zero", xref: "paper", x0: 0, x1: 1, yref: ax, y0: 0, y1: 0,
                               line: { color: c.grid, width: 1 }, layer: "below" });
                 if (lane.limit_v) {
-                    lane.limit_v.forEach(function (y) {
-                        if (!num(y)) return;
-                        shapes.push({ type: "line", name: "limit", xref: "paper", x0: 0, x1: 1, yref: ax, y0: y, y1: y,
-                                      line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.6, layer: "below" });
+                    lane.limit_v.forEach(function (lim) {
+                        if (!num(lim) || lim < range[0] || lim > range[1]) return;
+                        shapes.push({ type: "line", name: "limit", xref: "paper", x0: 0, x1: 1, yref: ax, y0: lim, y1: lim,
+                                      line: { color: c.muted, width: 1, dash: "dot" }, opacity: 0.7, layer: "below" });
                     });
                 }
-                (lane.segments || []).forEach(function (s) {
+                var segs = plan[i].segs;
+                segs.forEach(function (s, k) {
+                    var flagged = (s.flags || []).length > 0;
+                    var col = flagged ? c.flag : c.trace;
                     traces.push({
                         x: (s.t_ns || []).slice(), y: (s.v || []).slice(),
                         xaxis: "x", yaxis: ax, type: "scatter", mode: "lines",
-                        line: { color: c.trace, width: 2, shape: "hv" },
+                        line: { color: col, width: 2, shape: "hv" },
                         name: lane.key + " " + (s.operation || ""),
-                        meta: { role: "segment", lane: lane.key, operation: s.operation },
+                        meta: { role: "segment", lane: lane.key, operation: s.operation, flagged: flagged },
                         hoverinfo: "skip"
                     });
-                    var bits = [s.operation || "", "peak " + fmtV(s.peak_v), (num(s.length_ns) ? s.length_ns : "?") + " ns"];
-                    var extra = (s.flags || []).map(function (f) { return FLAG_TEXT[f] || f; });
-                    if (s.truncated) extra.push(TRUNCATED_TEXT);
-                    annotations.push({
-                        xref: "x", yref: ax + " domain", x: (s.start_ns + s.end_ns) / 2, y: 1,
-                        yanchor: "top", showarrow: false,
-                        text: bits.join(" 00b7 ") + (extra.length ? "<br>" + extra.join("; ") : ""),
-                        font: { size: 10, color: extra.length ? c.flag : c.text },
-                        meta: { role: "segment-text", lane: lane.key, operation: s.operation }
-                    });
-                    if ((s.flags || []).length) {
-                        traces.push({
-                            x: [(s.start_ns + s.end_ns) / 2], y: [num(s.peak_v) ? s.peak_v : 0],
-                            xaxis: "x", yaxis: ax, type: "scatter", mode: "markers",
-                            marker: { color: c.flag, size: 10, symbol: "x" },
-                            meta: { role: "flag", lane: lane.key, operation: s.operation, flags: s.flags.slice() },
-                            hoverinfo: "skip"
+                    // truncated: a faint band over the part that was not received, no line
+                    var ts = s.t_ns || [];
+                    if (s.truncated && ts.length && ts[ts.length - 1] < s.end_ns) {
+                        shapes.push({ type: "rect", name: "not-received", xref: "x", x0: ts[ts.length - 1], x1: s.end_ns,
+                                      yref: ax + " domain", y0: 0, y1: 1, fillcolor: c.grid, opacity: 0.35,
+                                      line: { width: 0 }, layer: "below" });
+                        annotations.push({
+                            xref: "x", yref: ax + " domain", x: (ts[ts.length - 1] + s.end_ns) / 2, y: 0.5,
+                            showarrow: false, text: "not received", font: { size: 10, color: c.muted },
+                            meta: { role: "not-received", lane: lane.key, operation: s.operation }
                         });
                     }
+                    // two-line text at the segment start; several segments alternate rows
+                    var row = plan[i].bottom && k % 2 === 1 ? "bottom" : "top";
+                    var next = segs[k + (plan[i].bottom ? 2 : 1)];
+                    var name = s.operation || "";
+                    if (next) name = shorten(name, Math.max(4, Math.floor((next.start_ns - s.start_ns) * pxPerNs / CHAR_PX) - 1));
+                    var extra = (s.flags || []).map(function (f) { return FLAG_TEXT[f] || f; });
+                    if (s.truncated) extra.push(TRUNCATED_TEXT);
+                    var line2 = levelText(s) + (extra.length ? ", " + extra.join(", ") : "");
+                    annotations.push({
+                        xref: "x", yref: ax + " domain", x: s.start_ns, xanchor: "left", align: "left",
+                        y: row === "top" ? 1 : 0, yanchor: row === "top" ? "top" : "bottom",
+                        showarrow: false, text: name + "<br>" + line2,
+                        font: { size: 10, color: flagged ? c.flag : c.text },
+                        meta: { role: "segment-text", lane: lane.key, operation: s.operation, row: row,
+                                name: name, line2: line2 }
+                    });
                 });
                 if (lane.sim && state.showSim) {
                     traces.push({
@@ -332,7 +435,7 @@
                 b.setAttribute("aria-pressed", onNow ? "true" : "false");
             });
             if (simBox) simBox.checked = state.showSim;
-            if (foldRow) {
+            if (foldBtn) {
                 foldText.textContent = spect.length + " spectator line" + (spect.length === 1 ? "" : "s");
                 foldBtn.textContent = state.fold ? "Show" : "Hide";
                 foldBtn.setAttribute("aria-expanded", state.fold ? "false" : "true");
@@ -360,6 +463,9 @@
             setFold: function (b) { state.fold = !!b; draw(); },
             setShowSim: function (b) { state.showSim = !!b; draw(); },
             valuesAt: function (t) { return lanes.map(function (l) { return laneValueAt(l, t); }); },
+            readout: function (t) {
+                return lanes.map(function (l) { return { key: l.key, text: readout(laneValueAt(l, t)) }; });
+            },
             laneCount: function () {
                 return { gate: gate.length, spectator: spect.length, drawn: drawnLanes().length };
             },
@@ -370,5 +476,5 @@
         return handle;
     }
 
-    window.GateTimeline = { render: render, valueAt: laneValueAt };
+    window.GateTimeline = { render: render, valueAt: laneValueAt, readout: readout };
 })();

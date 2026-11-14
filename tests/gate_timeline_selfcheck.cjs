@@ -63,13 +63,17 @@ function seg(op, t, v, extra) {
                            truncated: false, flags: [] }, extra || {});
 }
 
+const title = (fig, key) => fig.layout.annotations.find((a) => a.meta && a.meta.role === 'lane-title' && a.meta.lane === key);
+const segText = (fig, key) => fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text' && a.meta.lane === key);
+
 const shaped = seg('cz_x_pulse_q1_q2', [63, 64, 65, 66, 115], [0.0, 0.05, 0.1, 0.05, 0.0]);
 const DATA = {
     lanes: [
-        lane('q1.z', 'gate', [shaped]),
-        lane('q2.z', 'gate', [seg('flux_a', [10, 30], [-0.2, -0.2]), seg('flux_b', [50, 60], [0.1, 0.1])], { limit_v: null }),
+        lane('q1.z', 'gate', [shaped], { limit_v: [-0.5, 0.08] }),
+        lane('q2.z', 'gate', [seg('flux_a_long_operation_name', [10, 30], [-0.07, -0.07]), seg('flux_b', [50, 60], [0.1, 0.1]),
+                              seg('flux_c', [62, 70], [0.05, 0.05])], { limit_v: null }),
         lane('coupler_q1_q2', 'gate', [seg('bip', [20, 21, 22, 40], [0.3, -0.3, 0.3, 0.0],
-                                           { flags: ['over_range', 'bad_length'] })],
+                                           { flags: ['over_range', 'bad_length'] }), seg('late', [900, 1000], [0.1, 0.1])],
              { limit_v: [-0.25, 0.25], offset_v: 0.05, sim: { t_ns: [20, 30, 40], v: [0.29, -0.1, 0.01] } }),
         lane('q3.z', 'spectator', [seg('park', [0, 100, 200], [0.02, 0.02, 0.02], { truncated: true, end_ns: 300 })]),
     ],
@@ -85,9 +89,18 @@ let ya = yAxes(fig.layout);
 ok(ya.length === 3 && h.laneCount().drawn === 3, 'folded: one y axis per drawn lane (3)');
 ok(xAxes(fig.layout).length === 1 && fig.data.every((t) => t.xaxis === 'x'), 'one shared x axis for every trace');
 ok(ya.every((k, i) => i === 0 || fig.layout[k].domain[1] < fig.layout[ya[i - 1]].domain[0]), 'lane rows stacked without overlap');
-ok(fig.layout.hovermode === 'x unified', 'hover is one unified readout');
+ok(fig.layout.hovermode === 'x unified' && fig.layout.hoverdistance === -1, 'hover is one unified readout at any distance');
 ok(JSON.stringify(h.laneCount()) === JSON.stringify({ gate: 3, spectator: 1, drawn: 3 }), 'laneCount folded');
-ok(fig.layout.yaxis.title.text.startsWith('q1.z') && fig.layout.yaxis3.title.text.startsWith('coupler_q1_q2'), 'gate lanes on top in order');
+ok(title(fig, 'q1.z').y === 0.5 && title(fig, 'q1.z').yref === 'y domain' && title(fig, 'coupler_q1_q2').yref === 'y3 domain',
+   'gate lanes on top in order');
+
+// lane titles: horizontal, in the margin, wide enough
+const t3 = title(fig, 'coupler_q1_q2');
+ok(t3.xref === 'paper' && t3.x === 0 && t3.xanchor === 'right' && !t3.textangle && ya.every((k) => !fig.layout[k].title || !fig.layout[k].title.text),
+   'lane titles are horizontal margin text, no rotated axis title');
+ok(t3.text === '<b>coupler_q1_q2</b><br>con1 / 1 / 13<br>limit -0.25 to 0.25 V, offset 0.05 V', 'title lines: label, port, limit, offset');
+ok(/range not known/.test(title(fig, 'q2.z').text) && !/offset/.test(title(fig, 'q1.z').text), 'unknown range said; offset only when not 0');
+ok(fig.layout.margin.l >= '<b>limit -0.25 to 0.25 V, offset 0.05 V'.length * 5, 'left margin fits the longest title line');
 
 // samples value by value, gaps not joined
 const segs = role(fig, 'segment');
@@ -95,7 +108,7 @@ const want = DATA.lanes.slice(0, 3).flatMap((l, i) => l.segments.map((s) => ({ s
 ok(segs.length === want.length && want.every((w, k) =>
     segs[k].yaxis === w.ax && JSON.stringify(segs[k].x) === JSON.stringify(w.s.t_ns) &&
     JSON.stringify(segs[k].y) === JSON.stringify(w.s.v)), 'trace points equal the input t_ns / v');
-ok(segs.filter((t) => t.meta.lane === 'q2.z').length === 2, 'two segments with idle between are two traces (gap not joined)');
+ok(segs.filter((t) => t.meta.lane === 'q2.z').length === 3, 'segments with idle between are separate traces (gap not joined)');
 ok(segs[1].x[0] === 10 && segs[0].x[0] === 63, 'each lane starts where its start_ns says');
 
 // valuesAt
@@ -108,20 +121,23 @@ ok(at(500, 'q1.z').operation === null && at(0, 'q1.z').v === null, 'valuesAt out
 ok(at(250, 'q3.z').operation === 'park' && at(250, 'q3.z').v === null, 'truncated: past the received samples v is null');
 ok(h.valuesAt(64).length === 4, 'valuesAt lists every lane, folded spectators too');
 const hov = role(fig, 'hover').find((t) => t.meta.lane === 'q2.z');
-ok(hov && hov.text[hov.x.indexOf(40)] === 'idle' && hov.text[hov.x.indexOf(10)] === 'flux_a: -0.2 V', 'hover text is the valuesAt readout');
+ok(hov && hov.text[hov.x.indexOf(40)] === 'idle' && hov.text[hov.x.indexOf(10)] === 'flux_a_long_operation_name: -0.07 V', 'hover text is the valuesAt readout');
+ok([...Array(106).keys()].map((i) => i + 10).every((t) => hov.x.includes(t)), 'hover grid has every 1 ns over the drawn span');
 
-// scales
+// scales fit the data, not the limits
 const r1 = fig.layout.yaxis.range, r2 = fig.layout.yaxis2.range;
 ok(JSON.stringify(r1) !== JSON.stringify(r2), 'per lane: each lane has its own range');
-ok(r2[0] < -0.2 && r2[1] > 0.1 && r2[0] <= 0 && r2[1] >= 0, 'per lane: an all-negative lane shows its data and 0 V');
-ok(r1[0] <= -0.5 && r1[1] >= 0.5, 'per lane: the range covers known limits');
+ok(r1[0] <= 0 && r1[1] >= 0.1 && r1[1] < 0.3 && r1[0] > -0.1, 'per lane: range fits the data (0..0.1 V), not the 0.5 V limit');
+ok(r2[0] < -0.07 && r2[1] > 0.1, 'per lane: an all-negative segment and 0 V stay visible');
 h.setScale('common');
 fig = last();
 ya = yAxes(fig.layout);
 ok(ya.every((k) => JSON.stringify(fig.layout[k].range) === JSON.stringify(fig.layout.yaxis.range)), 'common: all lanes share one range');
-ok(fig.layout.yaxis.range[0] <= -0.5 && fig.layout.yaxis.range[1] >= 0.5, 'common: range covers every lane');
+ok(fig.layout.yaxis.range[0] <= -0.3 && fig.layout.yaxis.range[1] >= 0.3 && fig.layout.yaxis.range[1] < 1.5, 'common: range covers the data of every lane');
 const segBtns = [...host.querySelectorAll('.ui-segmented .ui-segmented-opt')];
 ok(segBtns.length === 2 && segBtns[1].classList.contains('ui-segmented-on') && segBtns[1].getAttribute('aria-pressed') === 'true', 'segmented control shows common');
+ok(host.querySelector('.ui-segmented').getAttribute('role') !== 'group' && host.querySelector('.ui-segmented').getAttribute('aria-label') === 'Vertical scale',
+   'scale switch is not a stretched [role=group] and keeps its label');
 segBtns[0].click();
 fig = last();
 ok(JSON.stringify(fig.layout.yaxis.range) !== JSON.stringify(fig.layout.yaxis2.range), 'clicking Per lane goes back to own ranges');
@@ -129,20 +145,33 @@ ok(JSON.stringify(fig.layout.yaxis.range) !== JSON.stringify(fig.layout.yaxis2.r
 // zero and limit lines
 const shapesOf = (ax, name) => fig.layout.shapes.filter((s) => s.yref === ax && s.name === name);
 ok(['y', 'y2', 'y3'].every((ax) => shapesOf(ax, 'zero').length === 1), 'every lane has its 0 V line');
-ok(shapesOf('y', 'limit').length === 2 && shapesOf('y2', 'limit').length === 0 && shapesOf('y3', 'limit').length === 2,
-   'limit lines only where limit_v is known');
-ok(/range not known/.test(fig.layout.yaxis2.title.text) && !/range not known/.test(fig.layout.yaxis.title.text), 'unknown range said in the label');
-ok(/offset 0\.05 V/.test(fig.layout.yaxis3.title.text) && !/offset/.test(fig.layout.yaxis.title.text), 'offset shown only when not 0');
+ok(shapesOf('y', 'limit').length === 1 && shapesOf('y', 'limit')[0].y0 === 0.08, 'only the limit inside the shown range is drawn');
+ok(shapesOf('y2', 'limit').length === 0 && shapesOf('y3', 'limit').length === 2, 'no limit line when unknown; an over-range lane shows the limits it crosses');
 
-// segment text, flags, truncated
-const texts = fig.layout.annotations.filter((a) => a.meta && a.meta.role === 'segment-text');
-const tq1 = texts.find((a) => a.meta.lane === 'q1.z');
-ok(tq1 && /cz_x_pulse_q1_q2/.test(tq1.text) && /peak 0\.1 V/.test(tq1.text) && /52 ns/.test(tq1.text), 'segment text: name, peak, length');
-ok(tq1.y === 1 && tq1.yanchor === 'top' && fig.layout.yaxis.range[1] > 0.5 * 1.2, 'segment text sits in head room above the data');
-const tc = texts.find((a) => a.meta.lane === 'coupler_q1_q2');
+// segment text
+const tq1 = segText(fig, 'q1.z')[0];
+ok(tq1.text === 'cz_x_pulse_q1_q2<br>max 0.1 V, 52 ns' && tq1.x === 63 && tq1.xanchor === 'left', 'shaped text: name, max, length at the segment start');
+ok(!/\\u00b7|00b7|·/.test(tq1.text), 'no middle-dot separator');
+const tq2 = segText(fig, 'q2.z');
+ok(tq2[0].meta.line2 === 'level -0.07 V, 20 ns', 'negative constant shows its negative level');
+ok(segText(fig, 'coupler_q1_q2')[0].meta.line2.startsWith('max 0.3 V, min -0.3 V, 20 ns'), 'max and min when below 0');
+ok(tq2.map((a) => a.meta.row).join() === 'top,bottom,top' && tq2[1].yanchor === 'bottom', 'several segments alternate label rows');
+ok(tq2[0].meta.name.includes('…') && tq2[0].meta.name.length < 'flux_a_long_operation_name'.length && tq2[1].meta.name === 'flux_b',
+   'a name that would reach the next label in its row is shortened in the middle');
+ok(tq1.y === 1 && tq1.yanchor === 'top', 'segment text sits in the top band');
+{   // the data stays out of the text bands: max data below the top band, min above the bottom band
+    const lanePx = 110, band = 36, per = (r) => (r[1] - r[0]) / lanePx;
+    ok(r1[1] - 0.1 >= band * per(r1) - 1e-9, 'top text band is free of data');
+    ok(-0.07 - r2[0] >= band * per(r2) - 1e-9, 'bottom text band is free of data');
+}
+
+// flags: the segment itself and its text in the flag colour, no marker
+const coupler = segs.find((t) => t.meta.lane === 'coupler_q1_q2');
+const tc = segText(fig, 'coupler_q1_q2')[0];
 ok(/over the port range/.test(tc.text) && /length is not a multiple of 4 ns/.test(tc.text), 'flag texts');
-ok(role(fig, 'flag').length === 1 && role(fig, 'flag')[0].x[0] === 30 && role(fig, 'flag')[0].yaxis === 'y3', 'flag marker on its segment');
-ok(!/over the port range/.test(tq1.text), 'no flag text on a clean segment');
+ok(coupler.line.color === tc.font.color && coupler.line.color !== segs[0].line.color, 'flagged segment and its text in the flag colour');
+ok(role(fig, 'flag').length === 0 && !fig.data.some((t) => t.mode === 'markers' && t.marker && t.marker.symbol), 'no marker on the trace');
+ok(tq1.font.color === fig.layout.font.color || tq1.font.color !== tc.font.color, 'clean segment text not in the flag colour');
 
 // sim
 ok(role(fig, 'sim').length === 1 && role(fig, 'sim')[0].yaxis === 'y3' && role(fig, 'sim')[0].line.dash === 'dot', 'sim drawn on its lane, visibly different');
@@ -151,15 +180,25 @@ fig = last();
 ok(role(fig, 'sim').length === 0, 'sim switched off');
 h.setShowSim(true);
 
-// fold
-const foldBtn = host.querySelector('[data-fold]');
-ok(host.querySelector('[data-spectator-summary] .ui-note').textContent === '1 spectator line', 'summary row names the spectator count');
-foldBtn.click();
+// fold: the summary sits in the toolbar
+const bar = host.querySelector('[data-gate-timeline-bar]');
+const plotEl = host.querySelector('[data-gate-timeline-plot]');
+ok(bar.querySelector('[data-spectator-summary]').textContent === '1 spectator line' && bar.querySelector('[data-fold]'), 'summary and control in the toolbar');
+ok(bar.compareDocumentPosition(plotEl) & 4 && [...plotEl.parentNode.children].slice([...plotEl.parentNode.children].indexOf(plotEl) + 1)
+   .every((n) => !n.querySelector('button')), 'below the chart only the notes');
+host.querySelector('[data-fold]').click();
 fig = last();
 ok(h.laneCount().drawn === 4 && yAxes(fig.layout).length === 4, 'unfold: spectator lane drawn');
-const tq3 = fig.layout.annotations.find((a) => a.meta && a.meta.lane === 'q3.z');
-ok(tq3 && /only part of this waveform was received/.test(tq3.text), 'truncated text');
-ok(fig.layout.yaxis4.title.text.startsWith('q3.z'), 'spectator below the gate lanes');
+const tq3 = segText(fig, 'q3.z')[0];
+ok(tq3 && /only part of this waveform was received/.test(tq3.text) && tq3.x === 0, 'truncated text at the segment start');
+const nr = fig.layout.shapes.filter((s) => s.name === 'not-received');
+ok(nr.length === 1 && nr[0].x0 === 200 && nr[0].x1 === 300 && nr[0].yref === 'y4 domain', 'not-received band from the last sample to end_ns');
+ok(fig.layout.annotations.some((a) => a.meta && a.meta.role === 'not-received' && a.text === 'not received'), 'not-received words');
+ok(segs.length && role(fig, 'segment').find((t) => t.meta.lane === 'q3.z').x.slice(-1)[0] === 200, 'no line invented past the received samples');
+const d1 = fig.layout.yaxis.domain, d4 = fig.layout.yaxis4.domain;
+ok((d4[1] - d4[0]) < (d1[1] - d1[0]) * 0.7, 'spectator lane is compact');
+ok(fig.layout.yaxis4.nticks === 2, 'spectator lane has two y ticks');
+ok(title(fig, 'q3.z').yref === 'y4 domain', 'spectator below the gate lanes');
 h.setFold(true);
 ok(h.laneCount().drawn === 3, 'fold again');
 
@@ -179,9 +218,10 @@ ok(!host.querySelector('[data-gate-timeline]') && host.childNodes.length === 0, 
 ok(window.__live <= liveBefore - 3, 'destroy removes its listeners');
 ok(window.__host.purge === purgeBefore + 1 && window.__host.unobserve >= 1, 'destroy purges and unobserves');
 
-// no spectators -> no summary row
+// no spectators -> no summary
 const h0 = GT.render(host, { lanes: DATA.lanes.slice(0, 1), notes: [] });
-ok(!host.querySelector('[data-spectator-summary]') && h0.laneCount().drawn === 1, 'no spectator lane: no summary row');
+ok(!host.querySelector('[data-spectator-summary]') && h0.laneCount().drawn === 1, 'no spectator lane: no summary');
+ok(!last().layout.xaxis2, 'few lanes: no top time axis');
 h0.destroy();
 
 // 16 spectators
@@ -189,22 +229,27 @@ const many = { lanes: [DATA.lanes[0]].concat(Array.from({ length: 16 }, (_, i) =
     lane('q' + (i + 4) + '.z', 'spectator', [seg('park', [0, 50], [0.01 * i, 0.01 * i])]))), notes: [] };
 const h16 = GT.render(host, many, {});
 fig = last();
-ok(yAxes(fig.layout).length === 1 && /16 spectator lines/.test(host.textContent), '16 spectators folded: one summary row');
+ok(yAxes(fig.layout).length === 1 && /16 spectator lines/.test(host.textContent), '16 spectators folded: one summary');
 h16.setFold(false);
 fig = last();
 ya = yAxes(fig.layout);
 ok(ya.length === 17, '16 spectators unfolded: 17 lanes');
-const lanePx = ya.map((k) => (fig.layout[k].domain[1] - fig.layout[k].domain[0]) * (fig.layout.height - 48));
-ok(lanePx.every((p) => p >= 80) && ya.every((k, i) => i === 0 || fig.layout[k].domain[1] < fig.layout[ya[i - 1]].domain[0]),
-   '17 lanes keep their fixed height and do not overlap');
-ok(ya.every((k, i) => fig.layout[k].title.text.startsWith(many.lanes[i].key)), 'every unfolded lane is labelled');
+const plotH = fig.layout.height - fig.layout.margin.t - fig.layout.margin.b;
+const lanePx = ya.map((k) => (fig.layout[k].domain[1] - fig.layout[k].domain[0]) * plotH);
+ok(lanePx.slice(1).every((p) => Math.abs(p - lanePx[1]) < 0.5 && p >= 50) && lanePx[0] > lanePx[1] &&
+   ya.every((k, i) => i === 0 || fig.layout[k].domain[1] < fig.layout[ya[i - 1]].domain[0]),
+   '17 lanes keep their fixed heights and do not overlap');
+ok(many.lanes.every((l, i) => title(fig, l.key) && title(fig, l.key).yref === axRef(i) + ' domain'), 'every unfolded lane is labelled');
+ok(fig.layout.xaxis2 && fig.layout.xaxis2.side === 'top' && fig.layout.xaxis2.matches === 'x' &&
+   role(fig, 'top-axis').length === 1 && fig.data.every((t) => t.xaxis === 'x' || t.meta.role === 'top-axis'),
+   'many lanes: time ticks at the top too, matched to the one time axis');
 h16.destroy();
 
 // cannot_draw and empty
 const hc = GT.render(host, { lanes: DATA.lanes, notes: ['note a'], cannot_draw: 'cannot draw: for loop over n' });
 const nRenders = window.__renders.length;
-ok(host.querySelector('.ui-state--empty').textContent === 'cannot draw: for loop over n' && /note a/.test(host.textContent),
-   'cannot_draw: statement and notes shown');
+const st = host.querySelector('.ui-state--empty');
+ok(st && st.textContent === 'cannot draw: for loop over n' && /note a/.test(host.textContent), 'cannot_draw: statement and notes shown');
 ok(hc.laneCount().drawn === 0 && !host.querySelector('[data-gate-timeline-plot]'), 'cannot_draw: no lanes drawn');
 hc.destroy();
 const he = GT.render(host, { lanes: [], notes: [] });
